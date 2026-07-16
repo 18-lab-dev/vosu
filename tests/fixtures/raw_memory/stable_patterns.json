@@ -1,0 +1,23 @@
+{
+  "base_address": 65536,
+  "gap_bytes": 37,
+  "wildcard_byte": 238,
+  "patterns": [
+    {"signature":"F8 01 74 04 83 65","offset":0},
+    {"signature":"5E 5F 5D C3 A1 ?? ?? ?? ?? 89 ?? 04","offset":0},
+    {"signature":"8B CE 83 3D ?? ?? ?? ?? 00 75 ?? 80","offset":4},
+    {"signature":"74 2C 85 FF 75 28 A1 ?? ?? ?? ?? 8D 15","offset":0},
+    {"signature":"83 E0 20 85 C0 7E 2F","offset":0},
+    {"signature":"8D 45 EC 50 8B 0D ?? ?? ?? ?? 8B D7 39 09 E8 ?? ?? ?? ?? 85 C0 74 ?? 8B 4D EC","offset":6},
+    {"signature":"8D 7D D0 B9 08 00 00 00 33 C0 F3 AB 8B CE 89 4D DC B9","offset":42},
+    {"signature":"7D 15 A1 ?? ?? ?? ?? 85 C0","offset":0},
+    {"signature":"55 8B EC 80 3D ?? ?? ?? ?? 00 75 26 80 3D","offset":0},
+    {"signature":"48 83 F8 04 73 1E","offset":-4},
+    {"signature":"C8 FF ?? ?? ?? ?? ?? 81 0D ?? ?? ?? ?? ?? 08 00 00","offset":9},
+    {"signature":"55 8B EC 83 EC 08 A1 ?? ?? ?? ?? 85 C0","offset":7},
+    {"signature":"FF 15 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8B 48 54 33 D2","offset":7},
+    {"signature":"B8 0B 00 00 8B 35","offset":-11},
+    {"signature":"8B 0D ?? ?? ?? ?? 85 C0 74 05 8B 50 30","offset":-4},
+    {"signature":"A1 ?? ?? ?? ?? 89 46 04 8B D6 E8","offset":1}
+  ]
+}

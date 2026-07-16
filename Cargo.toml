@@ -1,0 +1,86 @@
+[workspace]
+members = [".", "crates/vosu-lazer-pp", "crates/vosu-test-harness"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96.1"
+license = "LGPL-3.0-only"
+
+[package]
+name = "vosu"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+build = "build.rs"
+
+[package.metadata.vosu]
+source-commit = "1a67fd64cc38fe60306328dde0a429e3211ca4ed"
+osu-calculator-revision = "97e94babde9d5ecbe574ecdd33509db27452cd0f"
+lazer-calculator-commit = "9a22c4c74f8e584fa64133a79a204dd045646bac"
+homepage-css-sha256 = "79548dbfcacaf5a2a2d2f1bcda541e78a9e767ff3f2d325daaaf10b81d02e5bc"
+asset-manifest = "assets/SHA256SUMS"
+
+[features]
+default = []
+test-harness = []
+
+[dependencies]
+arc-swap = "1.8.2"
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws", "query", "original-uri", "matched-path", "tracing"] }
+bytes = "=1.12.1"
+chrono = { version = "0.4.44", features = ["serde"] }
+dotenvy = "0.15.7"
+futures-util = "0.3.32"
+indexmap = { version = "2.13.0", features = ["serde"] }
+md-5 = "0.11.0"
+memchr = "=2.8.3"
+notify = "=8.2.0"
+open = "=5.4.0"
+reqwest = { version = "=0.13.4", default-features = false, features = ["rustls", "stream", "json"] }
+rosu-map = "=0.2.1"
+rosu-mods = "=0.4.0"
+rosu-pp = "=4.0.1"
+rust-embed = { version = "=8.12.0", features = ["debug-embed"] }
+semver = "=1.0.28"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = { version = "=1.0.150", features = ["preserve_order"] }
+serde-value = "=0.7.0"
+sha2 = "=0.11.0"
+sysinfo = { version = "=0.39.5", default-features = false, features = ["system"] }
+tempfile = "3.26.0"
+thiserror = "2.0.18"
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util", "signal"] }
+tokio-util = { version = "0.7.18", features = ["io", "rt"] }
+vosu-lazer-pp = { path = "crates/vosu-lazer-pp" }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["fmt", "env-filter", "ansi", "registry"] }
+url = "2.5.8"
+wgpu = { version = "=30.0.0", default-features = false, features = ["std", "vulkan", "gles", "dx12"] }
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging"] }
+wmi = "=0.18.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "=0.2.186"
+
+[dev-dependencies]
+criterion = "0.7.0"
+parking_lot = "0.12.5"
+
+[[bench]]
+name = "hot_paths"
+harness = false
+
+[build-dependencies]
+winresource = "=0.1.31"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

@@ -1,0 +1,235 @@
+{
+  "revision": "97e94babde9d5ecbe574ecdd33509db27452cd0f",
+  "files": [
+    {
+      "path": "catch-diffcalc-test.osu",
+      "sha256": "dd0dd4c622933d01a1cef7e4e4d3b2b66b346af328e539cef4ea60e6882ff404"
+    },
+    {
+      "path": "catch/basic-hyperdash-expected-conversion.json",
+      "sha256": "b4b29b5178ab63550d6889109c4f938f284a775fbe0de0780a9a041fe295821c"
+    },
+    {
+      "path": "catch/basic-hyperdash.osu",
+      "sha256": "808067860e83322c8dbc967fb478deeb76bc56e323a38d1985a1734c5f5971fd"
+    },
+    {
+      "path": "catch/high-speed-multiplier-precision-expected-conversion.json",
+      "sha256": "d67a2e7260bb66b22105a0692e79b910bec4df1c82c1e4b40c7d2f7ba20de980"
+    },
+    {
+      "path": "catch/high-speed-multiplier-precision.osu",
+      "sha256": "daecc03b4754452a925cc0edafe0fb10f1ba302bafff703b6449e1ce021f1b27"
+    },
+    {
+      "path": "catch/slider-expected-conversion.json",
+      "sha256": "a3c3a8be1c8f4fc1f98bc6c7163898cf6a05708ae08abd0b553354a68fa2e88e"
+    },
+    {
+      "path": "catch/slider.osu",
+      "sha256": "1f529ffdb8e21d5a43ce670dcf18c53ddf841e7623a0f0e69b19ac695142d46c"
+    },
+    {
+      "path": "catch/spinner-and-circles-expected-conversion.json",
+      "sha256": "5b59a4750d6fc612871e54b465d6fa5d76a6c87e368ccb964d4dc72f0e2c3f67"
+    },
+    {
+      "path": "catch/spinner-and-circles.osu",
+      "sha256": "959ac2a00f37fb158ce310892a263836bc69921ce6336d35d8d0fc3277a9d83e"
+    },
+    {
+      "path": "catch/tiny-ticks-expected-conversion.json",
+      "sha256": "4f32b0a439443cc578241342b0e1b2f072c2a929a83ebb2f558eb737cbcc1ecf"
+    },
+    {
+      "path": "catch/tiny-ticks.osu",
+      "sha256": "c2663b6db3c15f3b2342a0dffd9a0ab327a8596630f22fab8c825a71eecfb67c"
+    },
+    {
+      "path": "mania-diffcalc-test.osu",
+      "sha256": "3348b119b076d68f1de2fb9e5c932365e7d9ea0730839aea2a622ca45d84bf7c"
+    },
+    {
+      "path": "mania/10K-expected-conversion.json",
+      "sha256": "5ada1722969eaa84e6d718583443871a070904fd7f16e1d3ab18de3e90aab53f"
+    },
+    {
+      "path": "mania/10K.osu",
+      "sha256": "52a5b000c49be42b742d9b6c5e748d21495f4545cae70cad6dd2639651aab8bf"
+    },
+    {
+      "path": "mania/18K-expected-conversion.json",
+      "sha256": "43b7c4b6c1afe9300a19947d14765886fd7d89d3efef3e86c5b032098b6282db"
+    },
+    {
+      "path": "mania/18K.osu",
+      "sha256": "eeffd1786cd7175a2723977bd03a384a98049870ba5f20923710f00eea5eb55e"
+    },
+    {
+      "path": "mania/1K-expected-conversion.json",
+      "sha256": "f89070d8e45390dc86eab0d9d29c89e6e4a9b43c1e64a1615c809c0e06e47a00"
+    },
+    {
+      "path": "mania/1K.osu",
+      "sha256": "535c3a00ff32855a579e48c94a1e0621f6b0a072c9dec8c2cd093c071e14081a"
+    },
+    {
+      "path": "mania/7K-expected-conversion.json",
+      "sha256": "baa32640fa5f5c25f4664e5a919cf2302648e9fc6460cda5f0080fef90c2b516"
+    },
+    {
+      "path": "mania/7K.osu",
+      "sha256": "c6c4522e71cff822f59be26b1c62c23dd7d36a290b015972fb726fdfa9992a57"
+    },
+    {
+      "path": "mania/basic-expected-conversion.json",
+      "sha256": "12ace02652c8e9e416b6fb1dab6212c7a3adb92ea63c805a07df4f555d36bfc9"
+    },
+    {
+      "path": "mania/basic.osu",
+      "sha256": "4f2686e78977549448119814dc187b4b049c14028cb6c65aab7ec818e34af599"
+    },
+    {
+      "path": "mania/mania-specific-spinner-expected-conversion.json",
+      "sha256": "83dd9da6cc8693ad63ff72b4a1b027d9e2b2f795456aa3a0a0d53768ab62f95f"
+    },
+    {
+      "path": "mania/mania-specific-spinner.osu",
+      "sha256": "42347415473de412907e86d4957dc19a8f12cc33960978cc725c8baa34e49452"
+    },
+    {
+      "path": "mania/zero-length-slider-expected-conversion.json",
+      "sha256": "7b8faf4566163ba24c54cc82dcb14952ec0d7e02af6ebca8eeac9b8da1d682ee"
+    },
+    {
+      "path": "mania/zero-length-slider.osu",
+      "sha256": "61a4b9d1239104cb296a41336b9cd9746bdd049be9e2b4c194bf627c91105df0"
+    },
+    {"path":"catch-branches/cs-left.osu","sha256":"53c5cd77dae1ac12d81eb5ca11d5b229423a59239dc6418bbaac4de3515cb6d6"},
+    {"path":"catch-branches/cs-right.osu","sha256":"f9a95b5f3be9d288061a58aced1c0bc67e9d1bb3531e1ab74d1714643adfbedc"},
+    {"path":"catch-branches/direction-left.osu","sha256":"599bd6c88c5aca06b752f1b1c0403d745f1b30249de84235b546a46ec5e93c15"},
+    {"path":"catch-branches/direction-right.osu","sha256":"a1ae4e44160133327beab3a7ab3cb814f86088397313cd454d46202c976910c3"},
+    {"path":"catch-branches/hyperdash-left.osu","sha256":"281892df27c7bea9a4ba83e74e0c785134e5fa2ae53bd8f0aa819cacf3a82098"},
+    {"path":"catch-branches/hyperdash-right.osu","sha256":"5791bfe3d2c0ae1e7be6baa362ec66781802af3b36e41dd9681c28ccaaf4302f"},
+    {"path":"catch-branches/movement-left.osu","sha256":"798b22af75f52f2d769ae7409acccd5a835d8f45c60fa887036346b1026f38e8"},
+    {"path":"catch-branches/movement-right.osu","sha256":"0316fdbfc056bd56b5010e4c462d2b982f300fc394c2ac453115e5c7ac5d7deb"},
+    {"path":"catch-branches/sections-left.osu","sha256":"5f070bc6e5d426ff937e07381b938734ce9266195d5486145ab39f1b0e455b81"},
+    {"path":"catch-branches/sections-right.osu","sha256":"4df1cae621c24410c95efcc35c0875206014e035bece0ea7a02e7f36317d621f"},
+    {"path":"taiko-branches/group-two-left.osu","sha256":"ba5b07dbbd654215ecdace247b79fbd61bfa4a70482bfe0005d5b5b92d541bb3"},
+    {"path":"taiko-branches/group-two-right.osu","sha256":"749ec9a0b67dba4310eb1bff54036f4a19b6889422f0fdf78b510ca6b5ae92c2"},
+    {"path":"taiko-branches/island-left.osu","sha256":"7b3b8cd92a1727a34ba67626242d6c9fb9f662e1bdd9804599577203842b6dfd"},
+    {"path":"taiko-branches/island-right.osu","sha256":"9f739f240c93b89c87801be68124a9b2dfec5680b808494660ad3da84bd0e575"},
+    {"path":"taiko-branches/long-gap-left.osu","sha256":"2a3a0b5e65636bafaa8f4423f42ee42e3b1f25bb2ab2cefa6531ad7b5de3e0a9"},
+    {"path":"taiko-branches/long-gap-right.osu","sha256":"ea0094d8ff73f1fa095f418be72888584817191654323d503578d1683471c6a1"},
+    {"path":"taiko-branches/mono-left.osu","sha256":"46d9d1740acc758aff199b737506ec6cdf102a56a3089040393699900fb4a877"},
+    {"path":"taiko-branches/mono-right.osu","sha256":"51b146258e2c4fb72e45a8611e726da55a2c66c1188893231472def122910793"},
+    {"path":"taiko-branches/nonhit-left.osu","sha256":"e7ca7676d540d4520bddb71990971c74a1b8d28b004e6f186e231dfe265e47f5"},
+    {"path":"taiko-branches/nonhit-right.osu","sha256":"33e872a2101fec4d67f6ff72c37d2aa4972adf3ff1b7e998032e4c1099c9c840"},
+    {"path":"taiko-branches/reading-band-left.osu","sha256":"8705ef0f3b81fe9fb582697b84f5b4107df2b50269be2ab6b5b5062e201585ec"},
+    {"path":"taiko-branches/reading-band-right.osu","sha256":"26aa9fdd16b67d6ad1d9b99b2e6770b88efca60001d65156758205f142d63a21"},
+    {
+      "path": "mania-branches/hold-control.osu",
+      "sha256": "f7d6baac06c60e94f26869083d521132a65a197dc2f2c2a243c92065c6bfd547"
+    },
+    {
+      "path": "mania-branches/hold-nested.osu",
+      "sha256": "a4f87a4448d09a2456d91d241bfca6d5f426943424f39682d2d7048be2e1b564"
+    },
+    {
+      "path": "mania-branches/individual-alternate.osu",
+      "sha256": "3d5ac8e5e140b1b97ab90587246772053b8adf62e29074b3c70a4f0465ab5f76"
+    },
+    {
+      "path": "mania-branches/individual-jack.osu",
+      "sha256": "c098e1e3abcffb9819bd396428c400e36cf735a3bf6be2b85e0a9e861e2d260c"
+    },
+    {
+      "path": "mania-branches/overall-chord.osu",
+      "sha256": "fbfd76d47f73f9e98ffc0de7a0258225ef49176428b01854737a1fe4b565139d"
+    },
+    {
+      "path": "mania-branches/overall-separated.osu",
+      "sha256": "2eb383ae960cc469d202a2a245146233c771d8f346807c716ba1305336c3bb63"
+    },
+    {
+      "path": "osu-branches/agility.osu",
+      "sha256": "5351c9f4afe8a505fe7c1eb80a9ebfb6052223408d247d46cb93c6375dab7c00"
+    },
+    {
+      "path": "osu-branches/flow.osu",
+      "sha256": "2bc2aad6022afa7e9e634b9961ef3cd9a5b7797b9babe2272ed11823537689d1"
+    },
+    {
+      "path": "osu-branches/reading-fl.osu",
+      "sha256": "e7ad1c74b89521bfa9b0e3389431ee7e0a97675e7377e58d5fc29eb30cd212a3"
+    },
+    {
+      "path": "osu-branches/sections.osu",
+      "sha256": "a4892fa14f69722d890051b45cbad271ecd0d11e6f0f07851f24c57d535c2574"
+    },
+    {
+      "path": "osu-branches/sliders.osu",
+      "sha256": "c07d4430fddcef84038f2d22ac1eef2cd6d930c0f930235a20edade9f636aaae"
+    },
+    {
+      "path": "osu-branches/snap.osu",
+      "sha256": "02d6eb26da9a114d02a7051821ac45372869f9295724999c806468b935027d64"
+    },
+    {
+      "path": "osu-branches/speed-rhythm.osu",
+      "sha256": "9274471e51b4435bda6eb2cfb77e95ed9e25e82987093ea661f1faa0dec4b564"
+    },
+    {
+      "path": "osu-diffcalc-test.osu",
+      "sha256": "fb4586ae5fda057a19a578e1f3a0949b896231f7a789e795cab6fba9a12dda49"
+    },
+    {
+      "path": "score-multiplier/CatchScoreMultiplierTest.cs",
+      "sha256": "6b0eb6153a7c90a0fa4b20924742d5a631f6906a929eef34975f5e7bb4b769c5"
+    },
+    {
+      "path": "score-multiplier/ManiaScoreMultiplierTest.cs",
+      "sha256": "bb3525da92f4f65a0decd23fb14753a909553d6defc516304a0c4796c5e11255"
+    },
+    {
+      "path": "score-multiplier/OsuScoreMultiplierTest.cs",
+      "sha256": "abbb177d3b73204870dfd9a22af055951e78bafefa68d2b710472480d8eaf953"
+    },
+    {
+      "path": "score-multiplier/ScoreMultiplierCalculatorTest.cs",
+      "sha256": "d24a6f407227c27111df01a9572c367d4d80389c87cf2a8e8bad784257f40eb2"
+    },
+    {
+      "path": "score-multiplier/TaikoScoreMultiplierTest.cs",
+      "sha256": "f7281ad8562fd7d500bd63ed4a7b92e1eda90e0f1d06c43783ee8986305ba1cb"
+    },
+    {
+      "path": "taiko-diffcalc-test.osu",
+      "sha256": "42bb1b88f492512a11160279a20ddb509d703971d3f322224ee875e6caa16fda"
+    },
+    {
+      "path": "taiko/basic-expected-conversion.json",
+      "sha256": "0ae08db726ad3f969ae2b3b4f6b6762937e658b5100f65f9c3351a8275d8b228"
+    },
+    {
+      "path": "taiko/basic.osu",
+      "sha256": "aed907a8fcfa419cb86ef7ccb11f2a008c8dd9ef64480b0760fddf329e0b332e"
+    },
+    {
+      "path": "taiko/sample-to-type-conversions-expected-conversion.json",
+      "sha256": "340327d9c8508ce0f193dc72c022d01961077db91e9a324a2f3f3335f2af382f"
+    },
+    {
+      "path": "taiko/sample-to-type-conversions.osu",
+      "sha256": "65367d40ae5d0de9f4c4adaea621d1b5827f510c6f81d5f643c1ddce85630f7e"
+    },
+    {
+      "path": "taiko/slider-conversion-v14-expected-conversion.json",
+      "sha256": "95a5a82e2ff402ed8d3f12f39034c9015963b6031cbadd7331bc6af3bf09f631"
+    },
+    {
+      "path": "taiko/slider-conversion-v14.osu",
+      "sha256": "ece4771427084d68bcc0c4d2d74074b1922978ca6613243eeafd8783e0a63076"
+    }
+  ]
+}

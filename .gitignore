@@ -1,0 +1,39 @@
+# Rust and release build output
+/target/
+/dist/
+/release-smoke/
+*.profraw
+
+# Python caches and coverage output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*
+/coverage/
+/htmlcov/
+
+# Local environment and application configuration
+.env
+.env.*
+!.env.example
+/vosu.env
+
+# Editor and operating-system metadata
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Generated development-tool output
+.cargo-ok
+/tools/oracle/reference/lazer-calculator/lib/native/dist/
+
+# Local Windows verification output
+/windows-ci-current*.log
+/windows-ci-current*-result.txt
+/windows-negative-release-guard.log
+/updater_visibility_probe

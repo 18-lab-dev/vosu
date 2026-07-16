@@ -1,0 +1,84 @@
+<html>
+
+<head>
+  <title>vosu dashboard v1.5</title>
+  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico" />
+  <link rel="stylesheet" href="/assets/homepage.min.css" />
+  <link rel="stylesheet" href="/assets/icons/style.css" />
+  <link rel="stylesheet" href="/assets/fonts/style.css" />
+</head>
+
+<body>
+  <header class="flexer">
+    <a href="https://vosu.app" target="_blank" class="flexer">
+      <i class="icon-link"></i>
+      website
+    </a>
+    <div>‧</div>
+    <a href="https://osuck.link/vosu" target="_blank" class="flexer">
+      <i class="icon-github"></i>
+      github
+    </a>
+    <div>‧</div>
+    <a href="https://osuck.link/vosu-discord" target="_blank" class="flexer">
+      <i class="icon-discord"></i>
+      discord
+    </a>
+    <div>‧</div>
+    <a onclick="showDonateModal()" class="flexer clickable">
+      <span class="rainbow-donate">Donate</span>
+      <span>❤️</span>
+    </a>
+    <label class="flexer indent-left devmode si-checkbox">
+      <input type="checkbox" name="devMode" id="devMode" value="false" />
+      <div>DevMode</div>
+      <span class="status"></span>
+      <span class="checkmark"></span>
+    </label>
+  </header>
+  <div class="hidden update-available">
+    <div>New version available. {OLD} => {NEW}</div>
+    <div>click here to run update</div>
+  </div>
+  <main>
+    <div class="flexer links">
+      <a href="https://github.com/vosuapp/vosu/wiki" target="_blank" class="flexer button open-button">
+        wiki
+        <i class="icon-link"></i>
+      </a>
+      <a target="_blank" class="flexer button open-folder-button" n="vosu.exe">
+        <i class="icon-folder"></i>
+        open vosu folder
+      </a>
+      <a href="/local-overlays" class="flexer indent-left button open-button">
+        How to install local counter
+      </a>
+    </div>
+    <div class="flexer tabs">
+      <a href="/settings" class="tab-item">
+        <i class="icon-settings"></i>
+        Settings
+      </a>
+      <a href="/" class="indent-left tab-item">Installed{{LOCAL_AMOUNT}}</a>
+      <a href="/available" class="tab-item">Available{{AVAILABLE_AMOUNT}}</a>
+      <a class="tab-item"></a>
+      <a href="https://osuck.link/vosu-counter-submit" target="_blank" class="indent-left tab-item">
+        <span>Submit your pp counter</span>
+        <i class="icon-link"></i>
+      </a>
+    </div>
+    {{SEARCH}}
+    <div class="results">{{LIST}}</div>
+  </main>
+  <footer>
+    <span>
+      created by
+      <a href="https://kotrik.ru/" target="_blank">KotRik</a>,
+      <a href="https://github.com/xxCherry" target="_blank">Cherry</a>
+    </span>
+  </footer>
+  <script src="/assets/vue.js"></script>
+  <script type="module" src="/assets/homepage.js"></script>
+</body>
+
+</html>

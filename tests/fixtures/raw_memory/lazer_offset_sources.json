@@ -1,0 +1,8 @@
+{
+  "cache_version": "2026.701.0",
+  "remote_version": "2026.702.0",
+  "remote_responses": [
+    {"endpoint": "https://tosu.app/offsets", "status": 503},
+    {"endpoint": "https://osuck.net/offsets", "status": 200}
+  ]
+}

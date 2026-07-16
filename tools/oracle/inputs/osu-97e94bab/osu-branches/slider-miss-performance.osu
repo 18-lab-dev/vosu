@@ -1,0 +1,57 @@
+osu file format v14
+
+[General]
+AudioLeadIn:0
+PreviewTime:-1
+Countdown:0
+SampleSet:Normal
+StackLeniency:0.7
+Mode:0
+LetterboxInBreaks:0
+WidescreenStoryboard:0
+
+[Metadata]
+Title:slider miss performance discriminator
+TitleUnicode:slider miss performance discriminator
+Artist:oracle
+ArtistUnicode:oracle
+Creator:oracle
+Version:target
+Source:
+Tags:osu effective miss slider tail tick accuracy
+BeatmapID:0
+BeatmapSetID:-1
+
+[Difficulty]
+HPDrainRate:7
+CircleSize:4
+OverallDifficulty:9
+ApproachRate:9.5
+SliderMultiplier:1.4
+SliderTickRate:2
+
+[TimingPoints]
+0,400,4,2,0,100,1,0
+3600,-66.6666666666667,4,2,0,100,0,0
+
+[HitObjects]
+64,64,1000,1,0,0:0:0:0:
+448,320,1180,1,0,0:0:0:0:
+96,288,1360,2,0,B|256:64|416:288,2,420
+416,64,2100,1,0,0:0:0:0:
+96,320,2280,2,0,L|416:320,3,360
+448,96,3100,1,0,0:0:0:0:
+64,96,3280,2,0,P|256:320|448:96,2,420
+256,192,4040,1,0,0:0:0:0:
+64,320,4220,2,0,B|256:64|448:320,3,480
+448,64,5120,1,0,0:0:0:0:
+64,64,5300,2,0,L|448:64,2,420
+256,320,6040,1,0,0:0:0:0:
+448,192,6220,2,0,B|256:320|64:192,3,480
+64,320,7120,1,0,0:0:0:0:
+448,320,7300,2,0,L|64:320,2,420
+256,64,8040,1,0,0:0:0:0:
+64,192,8220,2,0,P|256:64|448:192,3,480
+448,64,9120,1,0,0:0:0:0:
+64,64,9300,2,0,B|256:320|448:64,2,420
+256,192,10040,1,0,0:0:0:0:

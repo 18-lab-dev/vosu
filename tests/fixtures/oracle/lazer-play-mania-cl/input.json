@@ -1,0 +1,444 @@
+{
+  "id": "lazer-play-mania-cl",
+  "tags": [
+    "play",
+    "lazer",
+    "mania",
+    "CL"
+  ],
+  "source": "lazer",
+  "status": 2,
+  "mode": 3,
+  "mods": {
+    "checksum": "cl",
+    "number": 0,
+    "name": "CL",
+    "array": [
+      {
+        "acronym": "CL"
+      }
+    ],
+    "rate": 1
+  },
+  "services": {
+    "bassDensity": {
+      "density": 0
+    },
+    "global": {
+      "isWatchingReplay": false,
+      "isReplayUiHidden": false,
+      "isMultiSpectating": false,
+      "showInterface": false,
+      "chatStatus": 0,
+      "status": 2,
+      "paused": false,
+      "gameTime": 0,
+      "playTime": 0,
+      "menuMods": {
+        "checksum": "cl",
+        "number": 0,
+        "name": "CL",
+        "array": [
+          {
+            "acronym": "CL"
+          }
+        ],
+        "rate": 1
+      },
+      "gameFolder": "",
+      "skinFolder": "",
+      "songsFolder": ""
+    },
+    "menu": {
+      "gamemode": 3,
+      "artist": "",
+      "artistOriginal": "",
+      "title": "",
+      "titleOriginal": "",
+      "audioFilename": "",
+      "backgroundFilename": "",
+      "folder": "",
+      "creator": "",
+      "filename": "",
+      "difficulty": "",
+      "mapID": 0,
+      "setID": 0,
+      "checksum": "",
+      "rankedStatus": 0,
+      "mp3Length": 0
+    },
+    "gameplay": {
+      "failed": false,
+      "retries": 0,
+      "playerName": "",
+      "mode": 3,
+      "mods": {
+        "checksum": "cl",
+        "number": 0,
+        "name": "CL",
+        "array": [
+          {
+            "acronym": "CL"
+          }
+        ],
+        "rate": 1
+      },
+      "score": 0,
+      "playerHP": 0,
+      "playerHPSmooth": 0,
+      "accuracy": 100,
+      "statistics": {
+        "perfect": 0,
+        "great": 0,
+        "good": 0,
+        "ok": 0,
+        "meh": 0,
+        "miss": 0,
+        "smallTickMiss": 0,
+        "smallTickHit": 0,
+        "largeTickMiss": 0,
+        "largeTickHit": 0,
+        "smallBonus": 0,
+        "largeBonus": 0,
+        "ignoreMiss": 0,
+        "ignoreHit": 0,
+        "comboBreak": 0,
+        "sliderTailHit": 0,
+        "legacyComboIncrease": 0
+      },
+      "maximumStatistics": {
+        "perfect": 0,
+        "great": 0,
+        "good": 0,
+        "ok": 0,
+        "meh": 0,
+        "miss": 0,
+        "smallTickMiss": 0,
+        "smallTickHit": 0,
+        "largeTickMiss": 0,
+        "largeTickHit": 0,
+        "smallBonus": 0,
+        "largeBonus": 0,
+        "ignoreMiss": 0,
+        "ignoreHit": 0,
+        "comboBreak": 0,
+        "sliderTailHit": 0,
+        "legacyComboIncrease": 0
+      },
+      "combo": 0,
+      "maxCombo": 0,
+      "hitSB": 0,
+      "unstableRate": 0,
+      "gradeCurrent": "",
+      "gradeExpected": "",
+      "keyOverlay": [],
+      "hitErrors": [],
+      "isLeaderboardVisible": false,
+      "leaderboardPlayer": {
+        "name": "",
+        "score": 0,
+        "combo": 0,
+        "maxCombo": 0,
+        "mods": {
+          "checksum": "",
+          "number": 0,
+          "name": "",
+          "array": [],
+          "rate": 1
+        },
+        "statistics": {
+          "perfect": 0,
+          "great": 0,
+          "good": 0,
+          "ok": 0,
+          "meh": 0,
+          "miss": 0,
+          "smallTickMiss": 0,
+          "smallTickHit": 0,
+          "largeTickMiss": 0,
+          "largeTickHit": 0,
+          "smallBonus": 0,
+          "largeBonus": 0,
+          "ignoreMiss": 0,
+          "ignoreHit": 0,
+          "comboBreak": 0,
+          "sliderTailHit": 0,
+          "legacyComboIncrease": 0
+        },
+        "team": 0,
+        "position": 0,
+        "isPassing": false
+      },
+      "leaderboardScores": [],
+      "isReplayUiHidden": false
+    },
+    "resultScreen": {
+      "onlineId": 0,
+      "playerName": "",
+      "mods": {
+        "checksum": "cl",
+        "number": 0,
+        "name": "CL",
+        "array": [
+          {
+            "acronym": "CL"
+          }
+        ],
+        "rate": 1
+      },
+      "mode": 3,
+      "maxCombo": 0,
+      "score": 0,
+      "statistics": {
+        "perfect": 0,
+        "great": 0,
+        "good": 0,
+        "ok": 0,
+        "meh": 0,
+        "miss": 0,
+        "smallTickMiss": 0,
+        "smallTickHit": 0,
+        "largeTickMiss": 0,
+        "largeTickHit": 0,
+        "smallBonus": 0,
+        "largeBonus": 0,
+        "ignoreMiss": 0,
+        "ignoreHit": 0,
+        "comboBreak": 0,
+        "sliderTailHit": 0,
+        "legacyComboIncrease": 0
+      },
+      "maximumStatistics": {
+        "perfect": 0,
+        "great": 0,
+        "good": 0,
+        "ok": 0,
+        "meh": 0,
+        "miss": 0,
+        "smallTickMiss": 0,
+        "smallTickHit": 0,
+        "largeTickMiss": 0,
+        "largeTickHit": 0,
+        "smallBonus": 0,
+        "largeBonus": 0,
+        "ignoreMiss": 0,
+        "ignoreHit": 0,
+        "comboBreak": 0,
+        "sliderTailHit": 0,
+        "legacyComboIncrease": 0
+      },
+      "grade": "",
+      "date": "",
+      "accuracy": 0,
+      "pp": 0,
+      "fcPP": 0
+    },
+    "beatmapPP": {
+      "mode": 3,
+      "isKiai": false,
+      "isBreak": false,
+      "timings": {
+        "firstObj": 0,
+        "full": 0
+      },
+      "previewtime": 0,
+      "ppAcc": {
+        "90": 0,
+        "91": 0,
+        "92": 0,
+        "93": 0,
+        "94": 0,
+        "95": 0,
+        "96": 0,
+        "97": 0,
+        "98": 0,
+        "99": 0,
+        "100": 0
+      },
+      "strains": [],
+      "strainsAll": {
+        "series": [],
+        "xaxis": []
+      },
+      "calculatedMapAttributes": {
+        "ar": 0,
+        "arConverted": 0,
+        "cs": 0,
+        "csConverted": 0,
+        "hp": 0,
+        "hpConverted": 0,
+        "od": 0,
+        "odConverted": 0,
+        "circles": 0,
+        "sliders": 0,
+        "spinners": 0,
+        "holds": 0,
+        "maxCombo": 0,
+        "fullStars": 0,
+        "stars": 0
+      },
+      "currAttributes": {
+        "stars": 0,
+        "pp": 0,
+        "fcPP": 0,
+        "maxAchievable": 0
+      },
+      "currPPAttributes": {
+        "ppAim": 0,
+        "ppSpeed": 0,
+        "ppAccuracy": 0,
+        "ppDifficulty": 0,
+        "ppFlashlight": 0,
+        "pp": 0
+      },
+      "fcPPAttributes": {
+        "ppAim": 0,
+        "ppSpeed": 0,
+        "ppAccuracy": 0,
+        "ppDifficulty": 0,
+        "ppFlashlight": 0,
+        "pp": 0
+      },
+      "realtimeBPM": 0,
+      "commonBPM": 0,
+      "minBPM": 0,
+      "maxBPM": 0,
+      "breaks": [],
+      "timingPoints": []
+    },
+    "settings": {
+      "leaderboardType": 0,
+      "progressBarType": 0,
+      "sortType": 0,
+      "groupType": 0,
+      "resolution": {
+        "fullscreen": false,
+        "width": 0,
+        "height": 0,
+        "widthFullscreen": 0,
+        "heightFullscreen": 0
+      },
+      "client": {
+        "updateAvailable": false,
+        "branch": 0,
+        "version": ""
+      },
+      "scoreMeter": {
+        "type": 0,
+        "size": 0
+      },
+      "cursor": {
+        "useSkinCursor": false,
+        "autoSize": false,
+        "size": 0,
+        "menuSize": 0
+      },
+      "mouse": {
+        "rawInput": false,
+        "disableButtons": false,
+        "disableWheel": false,
+        "sensitivity": 0
+      },
+      "tablet": {
+        "enabled": false,
+        "x": 0,
+        "y": 0,
+        "width": 0,
+        "height": 0,
+        "rotation": 0,
+        "pressureThreshold": 0
+      },
+      "mania": {
+        "speedBPMScale": false,
+        "usePerBeatmapSpeedScale": false,
+        "scrollSpeed": 0,
+        "scrollDirection": 0
+      },
+      "skin": {
+        "useDefaultSkinInEditor": false,
+        "ignoreBeatmapSkins": false,
+        "tintSliderBall": false,
+        "useTaikoSkin": false,
+        "name": ""
+      },
+      "audio": {
+        "ignoreBeatmapSounds": false,
+        "useSkinSamples": false,
+        "volume": {
+          "masterInactive": 0,
+          "master": 0,
+          "music": 0,
+          "effect": 0
+        },
+        "offset": {
+          "universal": 0
+        }
+      },
+      "background": {
+        "storyboard": false,
+        "video": false,
+        "blur": 0,
+        "dim": 0
+      },
+      "keybinds": {
+        "osu": {
+          "k1": "",
+          "k2": "",
+          "smokeKey": ""
+        },
+        "fruits": {
+          "k1": "",
+          "k2": "",
+          "Dash": ""
+        },
+        "taiko": {
+          "innerLeft": "",
+          "innerRight": "",
+          "outerLeft": "",
+          "outerRight": ""
+        },
+        "quickRetry": ""
+      }
+    },
+    "user": {
+      "rawLoginStatus": 0,
+      "rawBanchoStatus": 0,
+      "id": 0,
+      "name": "",
+      "playMode": 0,
+      "rankedScore": 0,
+      "level": 0,
+      "accuracy": 0,
+      "performancePoints": 0,
+      "playCount": 0,
+      "rank": 0,
+      "countryCode": 0,
+      "backgroundColour": 0,
+      "matchmaking": null
+    },
+    "rankedPlay": {},
+    "tourneyManager": {
+      "ipcState": 0,
+      "leftStars": 0,
+      "rightStars": 0,
+      "bestOf": 0,
+      "starsVisible": false,
+      "scoreVisible": false,
+      "firstTeamName": "",
+      "secondTeamName": "",
+      "firstTeamScore": 0,
+      "secondTeamScore": 0,
+      "messages": [],
+      "userAccuracy": 0,
+      "userRankedScore": 0,
+      "userPlayCount": 0,
+      "userGlobalRank": 0,
+      "userPP": 0,
+      "userName": "",
+      "userCountry": "",
+      "userID": 0
+    },
+    "lazerMultiSpectating": {}
+  },
+  "preciseClients": []
+}

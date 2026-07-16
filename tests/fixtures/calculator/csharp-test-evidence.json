@@ -1,0 +1,27 @@
+{
+    "schema":  1,
+    "osuRevision":  "97e94babde9d5ecbe574ecdd33509db27452cd0f",
+    "dotnetVersion":  "8.0.422",
+    "tests":  [
+                  {
+                      "project":  "osu.Game.Rulesets.Osu.Tests/osu.Game.Rulesets.Osu.Tests.csproj",
+                      "filter":  "FullyQualifiedName~OsuScoreMultiplierTest",
+                      "stdoutSha256":  "432b47821475fac4e6eb0466b9c6412ec6288df1af0fc54eddd209ab50d821fc"
+                  },
+                  {
+                      "project":  "osu.Game.Rulesets.Taiko.Tests/osu.Game.Rulesets.Taiko.Tests.csproj",
+                      "filter":  "FullyQualifiedName~TaikoScoreMultiplierTest|FullyQualifiedName~TaikoBeatmapConversionTest",
+                      "stdoutSha256":  "3d1d156ad8a6e6e0f107fb3ed272ae18cff42501a31a7406a68c0791b968e3b1"
+                  },
+                  {
+                      "project":  "osu.Game.Rulesets.Catch.Tests/osu.Game.Rulesets.Catch.Tests.csproj",
+                      "filter":  "FullyQualifiedName~CatchScoreMultiplierTest|FullyQualifiedName~CatchBeatmapConversionTest",
+                      "stdoutSha256":  "6217a1a28e75838d6d6e124ba35a9c4bfbd84f3fdbf87bfe9cd097c11459dfdf"
+                  },
+                  {
+                      "project":  "osu.Game.Rulesets.Mania.Tests/osu.Game.Rulesets.Mania.Tests.csproj",
+                      "filter":  "FullyQualifiedName~ManiaScoreMultiplierTest|FullyQualifiedName~ManiaBeatmapConversionTest",
+                      "stdoutSha256":  "36cf97c91aaa66fa2da6e75c536a7700378a3bbcf1e8b2847fbb1eeba5ff360e"
+                  }
+              ]
+}

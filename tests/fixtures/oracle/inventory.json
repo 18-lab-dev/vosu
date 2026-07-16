@@ -1,0 +1,240 @@
+{
+  "format": 1,
+  "revisions": {
+    "tosu": "1a67fd64cc38fe60306328dde0a429e3211ca4ed",
+    "lazerCalculator": "9a22c4c74f8e584fa64133a79a204dd045646bac",
+    "osu": "97e94babde9d5ecbe574ecdd33509db27452cd0f",
+    "calculatorPackage": "0.5.0-20260702-main.0",
+    "calculatorManifestSha256": "2cc4c2390a89968b952ff0a6d2dcff4309bb530c4fd6f46920c13b1b86a21852"
+  },
+  "requiredCoverage": [
+    "no-client",
+    "defaults",
+    "menu",
+    "play",
+    "result",
+    "lobby",
+    "stable",
+    "lazer",
+    "osu",
+    "taiko",
+    "catch",
+    "mania",
+    "HD",
+    "FL",
+    "DT",
+    "HT",
+    "CL",
+    "DA",
+    "structured-speed",
+    "leaderboard-empty",
+    "leaderboard-populated",
+    "stable-tournament",
+    "lazer-tournament",
+    "precise-short-keys",
+    "multi-IPC",
+    "SC-equal-BPM",
+    "SC-range-BPM",
+    "known-omissions",
+    "placeholders"
+  ],
+  "cases": [
+    {
+      "id": "no-client",
+      "tags": [
+        "no-client"
+      ],
+      "input": "no-client/input.json",
+      "expected": {
+        "v1": "no-client/v1.json",
+        "v2": "no-client/v2.json",
+        "v2-precise": "no-client/v2-precise.json",
+        "sc": "no-client/sc.json"
+      }
+    },
+    {
+      "id": "stable-defaults",
+      "tags": [
+        "defaults",
+        "stable",
+        "menu",
+        "leaderboard-empty",
+        "known-omissions",
+        "placeholders"
+      ],
+      "input": "stable-defaults/input.json",
+      "expected": {
+        "v1": "stable-defaults/v1.json",
+        "v2": "stable-defaults/v2.json",
+        "v2-precise": "stable-defaults/v2-precise.json",
+        "sc": "stable-defaults/sc.json"
+      }
+    },
+    {
+      "id": "lazer-menu-hd",
+      "tags": [
+        "lazer",
+        "menu",
+        "HD"
+      ],
+      "input": "lazer-menu-hd/input.json",
+      "expected": {
+        "v1": "lazer-menu-hd/v1.json",
+        "v2": "lazer-menu-hd/v2.json",
+        "v2-precise": "lazer-menu-hd/v2-precise.json",
+        "sc": "lazer-menu-hd/sc.json"
+      }
+    },
+    {
+      "id": "stable-play-osu-fl",
+      "tags": [
+        "play",
+        "stable",
+        "osu",
+        "FL",
+        "leaderboard-populated"
+      ],
+      "input": "stable-play-osu-fl/input.json",
+      "expected": {
+        "v1": "stable-play-osu-fl/v1.json",
+        "v2": "stable-play-osu-fl/v2.json",
+        "v2-precise": "stable-play-osu-fl/v2-precise.json",
+        "sc": "stable-play-osu-fl/sc.json"
+      }
+    },
+    {
+      "id": "lazer-play-taiko-dt",
+      "tags": [
+        "play",
+        "lazer",
+        "taiko",
+        "DT",
+        "structured-speed"
+      ],
+      "input": "lazer-play-taiko-dt/input.json",
+      "expected": {
+        "v1": "lazer-play-taiko-dt/v1.json",
+        "v2": "lazer-play-taiko-dt/v2.json",
+        "v2-precise": "lazer-play-taiko-dt/v2-precise.json",
+        "sc": "lazer-play-taiko-dt/sc.json"
+      }
+    },
+    {
+      "id": "stable-result-catch-ht",
+      "tags": [
+        "result",
+        "stable",
+        "catch",
+        "HT"
+      ],
+      "input": "stable-result-catch-ht/input.json",
+      "expected": {
+        "v1": "stable-result-catch-ht/v1.json",
+        "v2": "stable-result-catch-ht/v2.json",
+        "v2-precise": "stable-result-catch-ht/v2-precise.json",
+        "sc": "stable-result-catch-ht/sc.json"
+      }
+    },
+    {
+      "id": "lazer-play-mania-cl",
+      "tags": [
+        "play",
+        "lazer",
+        "mania",
+        "CL"
+      ],
+      "input": "lazer-play-mania-cl/input.json",
+      "expected": {
+        "v1": "lazer-play-mania-cl/v1.json",
+        "v2": "lazer-play-mania-cl/v2.json",
+        "v2-precise": "lazer-play-mania-cl/v2-precise.json",
+        "sc": "lazer-play-mania-cl/sc.json"
+      }
+    },
+    {
+      "id": "lazer-menu-da",
+      "tags": [
+        "lazer",
+        "menu",
+        "DA"
+      ],
+      "input": "lazer-menu-da/input.json",
+      "expected": {
+        "v1": "lazer-menu-da/v1.json",
+        "v2": "lazer-menu-da/v2.json",
+        "v2-precise": "lazer-menu-da/v2-precise.json",
+        "sc": "lazer-menu-da/sc.json"
+      }
+    },
+    {
+      "id": "stable-tournament",
+      "tags": [
+        "stable-tournament",
+        "stable",
+        "multi-IPC"
+      ],
+      "input": "stable-tournament/input.json",
+      "expected": {
+        "v1": "stable-tournament/v1.json",
+        "v2": "stable-tournament/v2.json",
+        "v2-precise": "stable-tournament/v2-precise.json",
+        "sc": "stable-tournament/sc.json"
+      }
+    },
+    {
+      "id": "lazer-lobby-tournament",
+      "tags": [
+        "lazer-tournament",
+        "lazer",
+        "lobby",
+        "multi-IPC"
+      ],
+      "input": "lazer-lobby-tournament/input.json",
+      "expected": {
+        "v1": "lazer-lobby-tournament/v1.json",
+        "v2": "lazer-lobby-tournament/v2.json",
+        "v2-precise": "lazer-lobby-tournament/v2-precise.json",
+        "sc": "lazer-lobby-tournament/sc.json"
+      }
+    },
+    {
+      "id": "precise-short-keys",
+      "tags": [
+        "precise-short-keys"
+      ],
+      "input": "precise-short-keys/input.json",
+      "expected": {
+        "v1": "precise-short-keys/v1.json",
+        "v2": "precise-short-keys/v2.json",
+        "v2-precise": "precise-short-keys/v2-precise.json",
+        "sc": "precise-short-keys/sc.json"
+      }
+    },
+    {
+      "id": "sc-equal-bpm",
+      "tags": [
+        "SC-equal-BPM"
+      ],
+      "input": "sc-equal-bpm/input.json",
+      "expected": {
+        "v1": "sc-equal-bpm/v1.json",
+        "v2": "sc-equal-bpm/v2.json",
+        "v2-precise": "sc-equal-bpm/v2-precise.json",
+        "sc": "sc-equal-bpm/sc.json"
+      }
+    },
+    {
+      "id": "sc-range-bpm",
+      "tags": [
+        "SC-range-BPM"
+      ],
+      "input": "sc-range-bpm/input.json",
+      "expected": {
+        "v1": "sc-range-bpm/v1.json",
+        "v2": "sc-range-bpm/v2.json",
+        "v2-precise": "sc-range-bpm/v2-precise.json",
+        "sc": "sc-range-bpm/sc.json"
+      }
+    }
+  ]
+}

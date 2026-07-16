@@ -1,0 +1,221 @@
+name: Release daemon
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: Validate and package Linux release
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate release tag and package version
+        run: python scripts/package-release.py validate-tag --tag "$RELEASE_TAG"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.1
+          components: rustfmt, clippy
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint all targets and features
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Test all targets and features
+        run: cargo test --workspace --all-targets --all-features --locked
+
+      - name: Test native process memory and self-read
+        run: cargo test --locked --test process_memory -- --nocapture
+
+      - name: Test native updater recovery
+        run: cargo test --locked --test updater_native -- --nocapture
+
+      - name: Build daemon
+        run: cargo build --release --locked --no-default-features --target x86_64-unknown-linux-gnu
+
+      - name: Prove test harness cannot enter release builds
+        shell: bash
+        run: |
+          if cargo build --release --locked --features test-harness --target x86_64-unknown-linux-gnu; then
+            echo "release build unexpectedly accepted the test-harness feature" >&2
+            exit 1
+          fi
+
+      - name: Package daemon and license
+        run: >-
+          python scripts/package-release.py package
+          --platform linux
+          --tag "$RELEASE_TAG"
+          --binary target/x86_64-unknown-linux-gnu/release/vosu
+          --output dist
+
+      - name: Extract validated package
+        run: >-
+          python scripts/package-release.py extract
+          --platform linux
+          --tag "$RELEASE_TAG"
+          --archive "dist/vosu-linux-$RELEASE_TAG.zip"
+          --destination release-smoke/linux
+
+      - name: Smoke-test packaged production daemon
+        env:
+          VOSU_RELEASE_SMOKE_BINARY: ${{ github.workspace }}/release-smoke/linux/vosu
+        run: cargo test --locked --test release_smoke -- --ignored --nocapture
+
+      - name: Upload Linux release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist/vosu-linux-${{ github.ref_name }}.zip
+          if-no-files-found: error
+
+  windows:
+    name: Validate, sign, and package Windows release
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate release tag and package version
+        run: python scripts/package-release.py validate-tag --tag "$env:RELEASE_TAG"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.1
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint all targets and features
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Test all targets and features
+        run: cargo test --workspace --all-targets --all-features --locked
+
+      - name: Test native process memory and self-read
+        run: cargo test --locked --test process_memory -- --nocapture
+
+      - name: Test native updater recovery
+        run: cargo test --locked --test updater_native -- --nocapture
+
+      - name: Build daemon
+        run: cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc
+
+      - name: Prove test harness cannot enter release builds
+        shell: bash
+        run: |
+          if cargo build --release --locked --features test-harness --target x86_64-pc-windows-msvc; then
+            echo "release build unexpectedly accepted the test-harness feature" >&2
+            exit 1
+          fi
+
+      - name: Upload unsigned daemon for SignPath
+        id: upload-unsigned-windows
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-vosu-windows-${{ github.ref_name }}
+          path: target/x86_64-pc-windows-msvc/release/vosu.exe
+          if-no-files-found: error
+
+      - name: Submit tagged daemon to SignPath
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: signpath/github-action-submit-signing-request@v1.1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: 5b025426-9c79-4f04-87e8-64cf64131d0b
+          project-slug: vosu
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.upload-unsigned-windows.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Package signed daemon and license
+        run: >-
+          python scripts/package-release.py package
+          --platform windows
+          --tag "$env:RELEASE_TAG"
+          --binary signed/vosu.exe
+          --output dist
+
+      - name: Extract validated package
+        run: >-
+          python scripts/package-release.py extract
+          --platform windows
+          --tag "$env:RELEASE_TAG"
+          --archive "dist/vosu-windows-${env:RELEASE_TAG}.zip"
+          --destination release-smoke/windows
+
+      - name: Smoke-test packaged production daemon
+        env:
+          VOSU_RELEASE_SMOKE_BINARY: ${{ github.workspace }}\release-smoke\windows\vosu.exe
+        run: cargo test --locked --test release_smoke -- --ignored --nocapture
+
+      - name: Verify signature and Windows resources
+        shell: pwsh
+        run: >-
+          ./scripts/verify-windows-release.ps1
+          -Binary "release-smoke/windows/vosu.exe"
+          -Tag "$env:RELEASE_TAG"
+
+      - name: Upload Windows release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist/vosu-windows-${{ github.ref_name }}.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish exact release assets
+    needs:
+      - linux
+      - windows
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download packaged archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify complete release asset set
+        run: >-
+          python scripts/package-release.py verify-set
+          --tag "$RELEASE_TAG"
+          --directory dist
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          files: |
+            dist/vosu-windows-${{ github.ref_name }}.zip
+            dist/vosu-linux-${{ github.ref_name }}.zip

@@ -1,0 +1,85 @@
+use rosu_map::util::Pos;
+
+use crate::{
+    Difficulty,
+    any::CalculateError,
+    model::{
+        beatmap::Beatmap,
+        mode::{ConvertError, IGameMode},
+    },
+};
+
+pub use self::{
+    attributes::{OsuDifficultyAttributes, OsuPerformanceAttributes},
+    difficulty::gradual::OsuGradualDifficulty,
+    performance::{InspectOsuPerformance, OsuPerformance, gradual::OsuGradualPerformance},
+    preprocessing::{
+        apply_random, apply_target_practice, apply_target_practice_difficulty, seed_to_i32,
+    },
+    score_state::{OsuHitResults, OsuScoreOrigin, OsuScoreState},
+    strains::OsuStrains,
+};
+
+mod attributes;
+mod convert;
+mod difficulty;
+mod legacy_score_miss_calc;
+mod legacy_score_simulator;
+mod object;
+mod performance;
+mod preprocessing;
+mod score_state;
+mod strains;
+mod utils;
+
+const PLAYFIELD_BASE_SIZE: Pos = Pos::new(512.0, 384.0);
+
+/// Marker type for [`GameMode::Osu`].
+///
+/// [`GameMode::Osu`]: rosu_map::section::general::GameMode::Osu
+pub struct Osu;
+
+impl IGameMode for Osu {
+    type DifficultyAttributes = OsuDifficultyAttributes;
+    type Strains = OsuStrains;
+    type Performance<'map> = OsuPerformance<'map>;
+    type HitResults = OsuHitResults;
+    type GradualDifficulty = OsuGradualDifficulty;
+    type GradualPerformance = OsuGradualPerformance;
+
+    fn difficulty(
+        difficulty: &Difficulty,
+        map: &Beatmap,
+    ) -> Result<Self::DifficultyAttributes, ConvertError> {
+        difficulty::difficulty(difficulty, map)
+    }
+
+    fn checked_difficulty(
+        difficulty: &Difficulty,
+        map: &Beatmap,
+    ) -> Result<Self::DifficultyAttributes, CalculateError> {
+        difficulty::checked_difficulty(difficulty, map)
+    }
+
+    fn strains(difficulty: &Difficulty, map: &Beatmap) -> Result<Self::Strains, ConvertError> {
+        strains::strains(difficulty, map)
+    }
+
+    fn performance(map: &Beatmap) -> Self::Performance<'_> {
+        OsuPerformance::new(map)
+    }
+
+    fn gradual_difficulty(
+        difficulty: Difficulty,
+        map: &Beatmap,
+    ) -> Result<Self::GradualDifficulty, ConvertError> {
+        OsuGradualDifficulty::new(difficulty, map)
+    }
+
+    fn gradual_performance(
+        difficulty: Difficulty,
+        map: &Beatmap,
+    ) -> Result<Self::GradualPerformance, ConvertError> {
+        OsuGradualPerformance::new(difficulty, map)
+    }
+}

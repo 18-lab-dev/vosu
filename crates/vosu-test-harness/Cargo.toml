@@ -1,0 +1,24 @@
+[package]
+name = "vosu-test-harness"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+bytes = "=1.12.1"
+futures-util = "0.3.32"
+parking_lot = "0.12.5"
+reqwest = { version = "=0.13.4", default-features = false, features = ["rustls", "json"] }
+serde_json = "=1.0.150"
+tempfile = "3.26.0"
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util"] }
+tokio-util = { version = "0.7.18", features = ["rt"] }
+tokio-tungstenite = "0.29.0"
+vosu = { path = "../..", features = ["test-harness"] }
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }

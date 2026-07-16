@@ -1,0 +1,69 @@
+name: Rust CI
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.1
+          components: rustfmt, clippy
+          targets: ${{ matrix.target }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint all targets and features
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Test all targets and features
+        run: cargo test --workspace --all-targets --all-features --locked
+
+      - name: Test native process memory and self-read
+        run: cargo test --locked --test process_memory -- --nocapture
+
+      - name: Test native updater recovery
+        run: cargo test --locked --test updater_native -- --nocapture
+
+      - name: Build daemon release
+        run: cargo build --release --locked --no-default-features --target ${{ matrix.target }}
+
+      - name: Prove test harness cannot enter release builds
+        shell: bash
+        run: |
+          if cargo build --release --locked --features test-harness --target "${{ matrix.target }}"; then
+            echo "release build unexpectedly accepted the test-harness feature" >&2
+            exit 1
+          fi

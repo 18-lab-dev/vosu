@@ -1,0 +1,27 @@
+osu file format v14
+
+[General]
+Mode:0
+
+[Metadata]
+Title:golden
+Artist:vosu
+Creator:vosu
+Version:engines
+
+[Difficulty]
+HPDrainRate:5
+CircleSize:4
+OverallDifficulty:8
+ApproachRate:9
+SliderMultiplier:1.4
+SliderTickRate:1
+
+[TimingPoints]
+0,500,4,2,1,100,1,0
+
+[HitObjects]
+64,192,1000,1,0,0:0:0:0:
+256,192,1500,2,0,B|320:192,1,140
+448,192,2200,1,0,0:0:0:0:
+128,192,2800,8,0,3500
