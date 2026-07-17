@@ -62,7 +62,7 @@ async fn supervisor_shutdown_aborts_a_worker_tree_after_its_deadline() {
 }
 
 #[tokio::test]
-async fn four_hub_tasks_join_without_lingering() {
+async fn five_hub_tasks_join_without_lingering() {
     let provider = Arc::new(SnapshotProviders::new(
         Arc::new(ManagerSnapshot::not_ready(
             0,
@@ -70,7 +70,7 @@ async fn four_hub_tasks_join_without_lingering() {
         )),
         Arc::new(ProductionSnapshotEncoder),
     ));
-    let hubs = WebSocketHubs::start(provider);
+    let hubs = WebSocketHubs::start(provider.clone(), provider, Duration::ZERO);
     hubs.shutdown().await;
 }
 

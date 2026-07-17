@@ -16,12 +16,13 @@ fn exact_methods_never_add_head_or_options() {
 }
 
 #[test]
-fn only_five_exact_websocket_paths_reach_upgrade_delegate() {
+fn only_six_exact_websocket_paths_reach_upgrade_delegate() {
     let paths = [
         ("/ws", Endpoint::WsV1),
         ("/tokens", Endpoint::WsTokens),
         ("/websocket/v2", Endpoint::WsV2),
         ("/websocket/v2/precise", Endpoint::WsV2Precise),
+        ("/websocket/v2/subscribe", Endpoint::WsV2Subscribe),
         ("/websocket/commands", Endpoint::WsCommands),
     ];
     for (path, endpoint) in paths {
@@ -35,6 +36,7 @@ fn only_five_exact_websocket_paths_reach_upgrade_delegate() {
         "/websocket",
         "/websocket/",
         "/websocket/v2/near-miss",
+        "/websocket/v2/subscribe/",
         "/websocket/commands/extra",
     ] {
         assert_eq!(classify(&Method::GET, path), None, "{path}");

@@ -66,7 +66,7 @@ flowchart TB
 | Multi-instance publication and focus selection | `src/runtime/worker.rs`, `src/api/snapshot.rs` | `ProductionStateSupervisor`, `publish_manager_snapshot`, `SnapshotManager` |
 | Public schema construction | `src/api/v1.rs`, `src/api/v2.rs`, `src/api/precise.rs`, `src/api/sc.rs` | schema `build`/`encode` functions, `ProductionSnapshotEncoder` |
 | HTTP routing and authorization | `src/server/routes.rs`, `src/server/auth.rs`, `src/server/service/*` | `Endpoint`, `RouteProviders`, `ProductionRouteDelegate` |
-| WebSocket publication and commands | `src/server/websocket.rs`, `src/server/commands.rs`, `src/runtime/worker.rs` | `WebSocketHub`, `CommandProcessor`, `WebSocketHubs` |
+| WebSocket publication, subscriptions, and commands | `src/server/websocket.rs`, `src/server/v2_subscription.rs`, `src/server/commands.rs`, `src/runtime/worker.rs` | `WebSocketHub`, `V2SubscriptionHub`, `CommandProcessor`, `WebSocketHubs` |
 | Listener bind/reload/drain | `src/server/runtime.rs` | `ListenerRuntime`, `AxumListenerFactory`, `ListenerOwner` |
 | Live and endpoint calculation | `src/calculation/*`, `crates/vosu-lazer-pp/src/lib.rs` | `LiveStateCalculationBackend`, `LiveBeatmapEngine`, `LegacyRosuEngine` |
 | Filesystem and platform paths | `src/platform.rs`, `src/server/files.rs` | `Paths`, `safe_child`, `resolve_resource` |
@@ -114,7 +114,7 @@ sequenceDiagram
 
 The reducer in `src/state/bundle/reducer.rs` applies raw values, retention rules, status transitions, beatmap/gameplay calculation updates, and derives the next read context/capture plan. It emits an immutable `StateBundleSnapshot`. `ProductionStateSupervisor` accepts a worker publication only when its PID generation is still desired, combines all current instance snapshots with lifecycle focus and runtime settings, and publishes one `ManagerSnapshot` through the atomic `SnapshotManager`.
 
-Regular and precise notifications remain independent. `src/runtime/projection.rs::SnapshotProviders::publish` wakes precise consumers for every atomic replacement but does not wake regular consumers for a precise-only replacement. Four independently running hubs—v1, stream companion, v2, and v2 precise—use their configured poll cadence (`src/runtime/worker.rs::WebSocketHubs`). HTTP always loads the latest snapshot on request.
+Regular and precise notifications remain independent. `src/runtime/projection.rs::SnapshotProviders::publish` wakes precise consumers for every atomic replacement but does not wake regular consumers for a precise-only replacement. Four compatibility hubs—v1, stream companion, v2, and v2 precise—use their configured poll cadence, while the dedicated selected-field v2 hub consumes precise notifications and applies its per-client debounce (`src/runtime/worker.rs::WebSocketHubs`). HTTP always loads the latest snapshot on request.
 
 ### API and server publication
 
@@ -122,7 +122,7 @@ Regular and precise notifications remain independent. `src/runtime/projection.rs
 
 `src/server/routes.rs` classifies exact methods and paths into typed `Endpoint` values, enforces authorization and request-body limits, and delegates state, calculation, files/pages, counters, settings, reports, updates, and WebSocket upgrades through narrow provider traits. `src/server/runtime.rs::ListenerRuntime` resolves and binds desired targets, retains the old effective listener if replacement resolution/bind fails, and drains superseded listeners. `ListenerOwner::start` does not report readiness until the initial address is actually bound.
 
-WebSocket connection ownership lives in `src/server/websocket.rs::WebSocketHub`; publication tasks live in `WebSocketHubs`. Shutdown seals registration and sends protocol close 1001 before cancelling publication loops. Commands are parsed and dispatched by `src/server/commands.rs::CommandProcessor`; relay lifecycle is kept separate in `src/server/service/relay.rs`.
+Compatibility WebSocket connection ownership lives in `src/server/websocket.rs::WebSocketHub`; selected-field v2 subscriptions use the separate `src/server/v2_subscription.rs::V2SubscriptionHub`. Publication tasks live in `WebSocketHubs`. Both hub types bound each client to one pending state frame and shutdown seals registration and sends protocol close 1001 before cancelling publication loops. Commands are parsed and dispatched by `src/server/commands.rs::CommandProcessor`; relay lifecycle remains separate in `src/server/service/relay.rs`, and the selected-field endpoint does not register a command or relay client.
 
 ### Calculation path
 

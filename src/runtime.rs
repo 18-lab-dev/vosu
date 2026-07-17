@@ -70,6 +70,7 @@ use crate::{
             SnapshotStateProvider, UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints,
             WebSocketRelaySink,
         },
+        v2_subscription::{V2SubscriptionHub, V2SubscriptionProvider, V2SubscriptionSnapshot},
         websocket::{
             Filter, Schema as WebSocketSchema, StateProvider as WebSocketStateProvider,
             StateSnapshot as WebSocketStateSnapshot, WebSocketHub,
@@ -78,7 +79,7 @@ use crate::{
     state::{
         PollIntervalUpdates, ReadContext, RegularCapturePlan, SnapshotPublisher,
         SourcePreciseReader, SourceRegularReader, StateBundle, StateBundleSnapshot,
-        StateWorkerError, StateWorkerHandle, spawn_state_worker,
+        StateWorkerError, StateWorkerHandle, duration_from_millis_saturating, spawn_state_worker,
     },
     updater::{
         LATEST_RELEASE_API, NativePlatform, RELEASE_PLATFORM, RecoveryAction, StartupDispatch,

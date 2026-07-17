@@ -9,6 +9,7 @@ use std::{
 };
 
 use tempfile::TempDir;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 struct ChildGuard(Option<Child>);
 impl Drop for ChildGuard {
@@ -49,6 +50,100 @@ async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
     }
 }
 
+async fn websocket_connect(port: u16, path: &str) -> (tokio::net::TcpStream, Vec<u8>) {
+    let mut stream = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+        .await
+        .unwrap();
+    stream
+        .write_all(
+            format!(
+                "GET {path} HTTP/1.1\r\n\
+                 Host: localhost\r\n\
+                 Connection: Upgrade\r\n\
+                 Upgrade: websocket\r\n\
+                 Sec-WebSocket-Version: 13\r\n\
+                 Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+
+    let mut response = Vec::new();
+    let header_end = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(offset) = response.windows(4).position(|window| window == b"\r\n\r\n") {
+                break offset + 4;
+            }
+            let mut chunk = [0_u8; 1024];
+            let read = stream.read(&mut chunk).await.unwrap();
+            assert_ne!(read, 0, "daemon closed during WebSocket upgrade");
+            response.extend_from_slice(&chunk[..read]);
+        }
+    })
+    .await
+    .expect("WebSocket upgrade timed out");
+    assert!(
+        response[..header_end].starts_with(b"HTTP/1.1 101"),
+        "unexpected WebSocket upgrade response: {}",
+        String::from_utf8_lossy(&response[..header_end])
+    );
+    (stream, response.split_off(header_end))
+}
+
+fn masked_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+    assert!(payload.len() < 126);
+    let mask = [0x12, 0x34, 0x56, 0x78];
+    let mut frame = Vec::with_capacity(payload.len() + 6);
+    frame.extend_from_slice(&[0x80 | opcode, 0x80 | payload.len() as u8]);
+    frame.extend_from_slice(&mask);
+    frame.extend(
+        payload
+            .iter()
+            .enumerate()
+            .map(|(index, byte)| byte ^ mask[index % mask.len()]),
+    );
+    frame
+}
+
+async fn read_server_frame(
+    stream: &mut tokio::net::TcpStream,
+    buffered: &mut Vec<u8>,
+) -> (u8, Vec<u8>) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while buffered.len() < 2 {
+            let mut chunk = [0_u8; 1024];
+            let read = stream.read(&mut chunk).await.unwrap();
+            assert_ne!(read, 0, "daemon closed before WebSocket frame");
+            buffered.extend_from_slice(&chunk[..read]);
+        }
+        assert_eq!(buffered[1] & 0x80, 0, "server frames must not be masked");
+        let short_len = (buffered[1] & 0x7f) as usize;
+        let (header_len, payload_len) = match short_len {
+            126 => {
+                while buffered.len() < 4 {
+                    let mut chunk = [0_u8; 1024];
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    assert_ne!(read, 0, "daemon closed inside WebSocket header");
+                    buffered.extend_from_slice(&chunk[..read]);
+                }
+                (4, u16::from_be_bytes([buffered[2], buffered[3]]) as usize)
+            }
+            127 => panic!("smoke frame unexpectedly exceeds 64 KiB"),
+            len => (2, len),
+        };
+        while buffered.len() < header_len + payload_len {
+            let mut chunk = [0_u8; 1024];
+            let read = stream.read(&mut chunk).await.unwrap();
+            assert_ne!(read, 0, "daemon closed inside WebSocket payload");
+            buffered.extend_from_slice(&chunk[..read]);
+        }
+        let frame: Vec<_> = buffered.drain(..header_len + payload_len).collect();
+        (frame[0] & 0x0f, frame[header_len..].to_vec())
+    })
+    .await
+    .expect("server WebSocket frame timed out")
+}
 fn assert_no_update_artifacts(root: &Path) {
     if !root.exists() {
         return;
@@ -134,6 +229,33 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert_eq!(
         not_ready.text().await.unwrap(),
         r#"{"error":"osu is not ready/running"}"#
+    );
+
+    let (mut subscription, mut buffered) = websocket_connect(port, "/websocket/v2/subscribe").await;
+    subscription
+        .write_all(&masked_frame(0x1, br#"["/play/score"]"#))
+        .await
+        .unwrap();
+    let (opcode, payload) = read_server_frame(&mut subscription, &mut buffered).await;
+    assert_eq!(opcode, 0x1, "initial subscription message must be text");
+    let initial: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+    let initial = initial
+        .as_array()
+        .expect("initial subscription frame must be an array");
+    assert_eq!(initial.len(), 3);
+    assert_eq!(initial[0], 0);
+    assert!(initial[1].as_u64().is_some(), "revision must be an integer");
+    assert_eq!(initial[2], serde_json::json!([]));
+
+    subscription
+        .write_all(&masked_frame(0x8, &1000_u16.to_be_bytes()))
+        .await
+        .unwrap();
+    let (opcode, payload) = read_server_frame(&mut subscription, &mut buffered).await;
+    assert_eq!(opcode, 0x8, "daemon must complete the WebSocket close");
+    assert!(
+        payload.is_empty() || payload.starts_with(&1000_u16.to_be_bytes()),
+        "unexpected close payload: {payload:?}"
     );
 
     let catalog = client

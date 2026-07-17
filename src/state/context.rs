@@ -184,7 +184,7 @@ impl From<watch::Receiver<Arc<crate::config::Config>>> for PollIntervalUpdates {
     }
 }
 
-pub(super) fn duration_from_millis_saturating(milliseconds: f64) -> Duration {
+pub(crate) fn duration_from_millis_saturating(milliseconds: f64) -> Duration {
     let seconds = milliseconds / 1_000.0;
     if !seconds.is_finite() || seconds >= Duration::MAX.as_secs_f64() {
         Duration::MAX

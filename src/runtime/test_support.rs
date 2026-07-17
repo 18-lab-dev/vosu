@@ -57,7 +57,7 @@ impl TestProductionComposition {
 }
 
 /// Builds the ordinary production `ProductionServices`,
-/// `ProductionRouteDelegate`, four hubs, `RouteProviders`, and Axum listener.
+/// `ProductionRouteDelegate`, five hubs, `RouteProviders`, and Axum listener.
 /// Only the updater and hardened network policy are injected.
 #[cfg(feature = "test-harness")]
 pub async fn start_test_production_composition(
@@ -92,7 +92,7 @@ pub async fn start_test_production_composition(
         counter_facade,
         relays.clone(),
     ));
-    let hubs = WebSocketHubs::start(snapshots.clone());
+    let hubs = WebSocketHubs::start(snapshots.clone(), snapshots.clone(), Duration::ZERO);
     let endpoints = options
         .network
         .endpoints()
@@ -140,6 +140,7 @@ pub async fn start_test_production_composition(
             v2: hubs.v2.clone(),
             precise: hubs.v2_precise.clone(),
             commands: hubs.v1.clone(),
+            subscriptions: hubs.v2_subscription.clone(),
             processor: processor.clone(),
             relays: relays.clone(),
         },

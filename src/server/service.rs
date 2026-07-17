@@ -42,6 +42,10 @@ use super::{
         ProviderFuture, ResponseFlushBarrier, ResponseFlushRegistry, RouteDelegate,
         StateJsonProvider, StateRoute,
     },
+    v2_subscription::{
+        SubscriptionRequestError, V2SubscriptionHub, V2SubscriptionOutbound,
+        parse_subscription_request,
+    },
     websocket::{self, Connection, Inbound, Outbound, UpgradeCallbackTracker, WebSocketHub},
 };
 
@@ -88,6 +92,28 @@ mod tests {
         }
         fn capture(&self, _: websocket::Schema) -> Option<Arc<dyn websocket::StateSnapshot>> {
             None
+        }
+    }
+
+    impl crate::server::v2_subscription::V2SubscriptionSnapshot for NoState {
+        fn revision(&self) -> u64 {
+            *self.events.borrow()
+        }
+
+        fn document(&self) -> Result<Option<Value>, ApiError> {
+            Ok(None)
+        }
+    }
+
+    impl crate::server::v2_subscription::V2SubscriptionProvider for NoState {
+        fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+            self.events.clone()
+        }
+
+        fn capture(&self) -> Arc<dyn crate::server::v2_subscription::V2SubscriptionSnapshot> {
+            Arc::new(NoState {
+                events: self.events.clone(),
+            })
         }
     }
 

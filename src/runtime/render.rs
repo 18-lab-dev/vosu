@@ -445,6 +445,15 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
                 "Interval of time, in milliseconds, between polling of precise game data. (KeyOverlayData, HitErrorData)",
                 &settings_number("PRECISE_DATA_POLL_RATE", config.precise_data_poll_rate, 0),
             ),
+            settings_item(
+                "V2 Subscription Debounce",
+                "The minimum interval between selected-field WebSocket frames, in milliseconds.",
+                &settings_number(
+                    "V2_SUBSCRIPTION_DEBOUNCE",
+                    config.v2_subscription_debounce,
+                    0,
+                ),
+            ),
         ],
     );
     let server = settings_group(

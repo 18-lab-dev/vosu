@@ -6,7 +6,9 @@ use std::time::Duration;
 use bytes::Bytes;
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use tokio::sync::watch;
-use vosu::api::{ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot};
+use vosu::api::{
+    ApiError, ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
+};
 use vosu::calculation::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
     Ruleset as BeatmapRuleset, ScoringMode,
@@ -18,6 +20,9 @@ use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, Stable
 use vosu::model::enums::ClientType;
 use vosu::process::{
     MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
+};
+use vosu::server::v2_subscription::{
+    V2SubscriptionHub, V2SubscriptionOutbound, V2SubscriptionProvider, V2SubscriptionSnapshot,
 };
 use vosu::server::websocket::{
     Filter, Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub,
@@ -463,12 +468,155 @@ fn bench_publication(c: &mut Criterion) {
     group.finish();
 }
 
+const SUBSCRIPTION_PLAN_VALUES: usize = 1_000;
+
+struct SubscriptionSnapshot {
+    revision: u64,
+    document_builds: Arc<AtomicUsize>,
+}
+
+impl V2SubscriptionSnapshot for SubscriptionSnapshot {
+    fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn document(&self) -> Result<Option<serde_json::Value>, ApiError> {
+        self.document_builds.fetch_add(1, Ordering::Relaxed);
+        let clients: Vec<_> = (0..SUBSCRIPTION_PLAN_VALUES)
+            .map(|index| serde_json::Value::from(index as u64))
+            .collect();
+        Ok(Some(serde_json::json!({
+            "revision": self.revision,
+            "clients": clients,
+        })))
+    }
+}
+
+struct SubscriptionProvider {
+    revision: AtomicU64,
+    document_builds: Arc<AtomicUsize>,
+    event: watch::Sender<u64>,
+}
+
+impl SubscriptionProvider {
+    fn new() -> Self {
+        let (event, _) = watch::channel(0);
+        Self {
+            revision: AtomicU64::new(0),
+            document_builds: Arc::new(AtomicUsize::new(0)),
+            event,
+        }
+    }
+
+    fn publish(&self) {
+        let revision = self.revision.fetch_add(1, Ordering::AcqRel) + 1;
+        self.event.send_replace(revision);
+    }
+}
+
+impl V2SubscriptionProvider for SubscriptionProvider {
+    fn subscribe(&self) -> watch::Receiver<u64> {
+        self.event.subscribe()
+    }
+
+    fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot> {
+        Arc::new(SubscriptionSnapshot {
+            revision: self.revision.load(Ordering::Acquire),
+            document_builds: Arc::clone(&self.document_builds),
+        })
+    }
+}
+
+fn bench_v2_subscription(c: &mut Criterion) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut group = c.benchmark_group("v2_subscription");
+
+    for plan_kind in ["shared_plan", "distinct_plans"] {
+        for clients in [1_usize, 100, 1_000] {
+            let provider = Arc::new(SubscriptionProvider::new());
+            let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
+            let mut connections = Vec::with_capacity(clients);
+            let mut receivers = Vec::with_capacity(clients);
+            for index in 0..clients {
+                let (connection, receiver) = hub.connect();
+                let pointers = if plan_kind == "shared_plan" {
+                    vec!["/revision".to_owned(), "/clients/0".to_owned()]
+                } else {
+                    vec![format!("/clients/{index}"), "/revision".to_owned()]
+                };
+                connection.subscribe(pointers).unwrap();
+                connections.push(connection);
+                receivers.push(receiver);
+            }
+
+            let runner = runtime.spawn({
+                let hub = hub.clone();
+                async move { hub.run().await }
+            });
+            runtime.block_on(async {
+                for receiver in &mut receivers {
+                    assert!(matches!(
+                        receiver.recv().await,
+                        Some(V2SubscriptionOutbound::Text(_))
+                    ));
+                }
+                assert_eq!(provider.document_builds.load(Ordering::Relaxed), 1);
+
+                provider.publish();
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                assert_eq!(provider.document_builds.load(Ordering::Relaxed), 1);
+
+                for connection in &connections {
+                    connection.write_completed();
+                }
+                for receiver in &mut receivers {
+                    assert!(matches!(
+                        receiver.recv().await,
+                        Some(V2SubscriptionOutbound::Text(_))
+                    ));
+                }
+                assert_eq!(provider.document_builds.load(Ordering::Relaxed), 2);
+                for connection in &connections {
+                    connection.write_completed();
+                }
+            });
+
+            group.throughput(Throughput::Elements(clients as u64));
+            group.bench_with_input(BenchmarkId::new(plan_kind, clients), &clients, |b, _| {
+                b.iter(|| {
+                    runtime.block_on(async {
+                        let before = provider.document_builds.load(Ordering::Relaxed);
+                        provider.publish();
+                        for receiver in &mut receivers {
+                            assert!(matches!(
+                                receiver.recv().await,
+                                Some(V2SubscriptionOutbound::Text(_))
+                            ));
+                        }
+                        assert_eq!(provider.document_builds.load(Ordering::Relaxed), before + 1);
+                        for connection in &connections {
+                            connection.write_completed();
+                        }
+                    })
+                });
+            });
+            hub.shutdown();
+            runtime.block_on(runner).unwrap();
+        }
+    }
+    group.finish();
+}
+
 fn hot_paths(c: &mut Criterion) {
     bench_batch_scan(c);
     bench_snapshot_reads(c);
     bench_map_calculation(c);
     bench_serializers(c);
     bench_publication(c);
+    bench_v2_subscription(c);
 }
 
 criterion_group!(benches, hot_paths);

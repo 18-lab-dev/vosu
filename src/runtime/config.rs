@@ -57,6 +57,7 @@ pub(super) fn apply_config_values(
     boolean!("ENABLE_INGAME_OVERLAY", enable_ingame_overlay);
     number!("POLL_RATE", poll_rate);
     number!("PRECISE_DATA_POLL_RATE", precise_data_poll_rate);
+    number!("V2_SUBSCRIPTION_DEBOUNCE", v2_subscription_debounce);
     number!("SERVER_PORT", server_port);
     number!("INGAME_OVERLAY_MAX_FPS", ingame_overlay_max_fps);
     string!("SERVER_IP", server_ip);

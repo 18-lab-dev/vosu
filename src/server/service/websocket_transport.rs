@@ -157,3 +157,192 @@ async fn bridge_socket(
     }
     connection.lock().await.cleanup();
 }
+
+const V2_SUBSCRIPTION_HANDSHAKE_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(5);
+const V2_SUBSCRIPTION_TERMINAL_DRAIN_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(1);
+
+async fn drain_v2_subscription_writer(writer: Pin<&mut impl Future<Output = ()>>) {
+    let _ = tokio::time::timeout(V2_SUBSCRIPTION_TERMINAL_DRAIN_TIMEOUT, writer).await;
+}
+
+async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub) {
+    let deadline = tokio::time::Instant::now() + V2_SUBSCRIPTION_HANDSHAKE_TIMEOUT;
+    let (connection, mut outbound) = hub.connect();
+    let connection = Arc::new(connection);
+    let (mut sink, mut stream) = socket.split();
+    let (peer_closed_tx, mut peer_closed_rx) = tokio::sync::mpsc::channel::<()>(1);
+
+    let writer_connection = Arc::clone(&connection);
+    let writer = async move {
+        loop {
+            let frame = tokio::select! {
+                biased;
+                peer_closed = peer_closed_rx.recv() => {
+                    if peer_closed.is_some() {
+                        let _ = sink.flush().await;
+                    }
+                    break;
+                }
+                frame = outbound.recv() => frame,
+            };
+            let Some(frame) = frame else { break };
+            let data_frame = matches!(frame, V2SubscriptionOutbound::Text(_));
+            let terminal = matches!(frame, V2SubscriptionOutbound::Close { .. });
+            let message = match frame {
+                V2SubscriptionOutbound::Text(bytes) | V2SubscriptionOutbound::Error(bytes) => {
+                    match Utf8Bytes::try_from(bytes) {
+                        Ok(text) => Message::Text(text),
+                        Err(_) => {
+                            let _ = sink
+                                .send(Message::Close(Some(CloseFrame {
+                                    code: 1011,
+                                    reason: Utf8Bytes::from_static(""),
+                                })))
+                                .await;
+                            break;
+                        }
+                    }
+                }
+                V2SubscriptionOutbound::Pong(bytes) => Message::Pong(bytes),
+                V2SubscriptionOutbound::Close { code } => {
+                    Message::Close(Some(CloseFrame {
+                        code,
+                        reason: Utf8Bytes::from_static(""),
+                    }))
+                }
+            };
+            if sink.send(message).await.is_err() {
+                break;
+            }
+            if data_frame {
+                writer_connection.write_completed();
+            }
+            if terminal {
+                let _ = sink.flush().await;
+                break;
+            }
+        }
+    };
+
+    let reader_connection = Arc::clone(&connection);
+    let reader = async move {
+        let handshake = async {
+            loop {
+                let Some(frame) = stream.next().await else {
+                    return Err(true);
+                };
+                match frame {
+                    Ok(Message::Text(text)) => {
+                        let pointers = match parse_subscription_request(text.as_bytes()) {
+                            Ok(pointers) => pointers,
+                            Err(SubscriptionRequestError::InvalidRequest) => {
+                                reader_connection.invalid_request();
+                                return Err(false);
+                            }
+                            Err(SubscriptionRequestError::InvalidPointer) => {
+                                reader_connection.invalid_pointer();
+                                return Err(false);
+                            }
+                            Err(SubscriptionRequestError::AlreadySubscribed) => unreachable!(),
+                        };
+                        match reader_connection.subscribe(pointers) {
+                            Ok(()) => return Ok(()),
+                            Err(SubscriptionRequestError::InvalidRequest) => {
+                                reader_connection.invalid_request();
+                                return Err(false);
+                            }
+                            Err(SubscriptionRequestError::InvalidPointer) => {
+                                reader_connection.invalid_pointer();
+                                return Err(false);
+                            }
+                            Err(SubscriptionRequestError::AlreadySubscribed) => return Err(false),
+                        }
+                    }
+                    Ok(Message::Binary(_)) => {
+                        reader_connection.unsupported_data();
+                        return Err(false);
+                    }
+                    Ok(Message::Ping(data)) => {
+                        if !reader_connection.send_pong(data).await {
+                            return Err(false);
+                        }
+                    }
+                    Ok(Message::Pong(_)) => {}
+                    Ok(Message::Close(_)) => return Err(true),
+                    Err(error) => {
+                        let message = error.to_string().to_ascii_lowercase();
+                        reader_connection.protocol_error(if message.contains("too long")
+                            || message.contains("too large")
+                            || message.contains("capacity")
+                            || message.contains("message size")
+                        {
+                            1009
+                        } else {
+                            1002
+                        });
+                        return Err(false);
+                    }
+                }
+            }
+        };
+        match tokio::time::timeout_at(deadline, handshake).await {
+            Ok(Ok(())) => {}
+            Ok(Err(peer_closed)) => return peer_closed,
+            Err(_) => {
+                reader_connection.subscription_timed_out();
+                return false;
+            }
+        }
+
+        loop {
+            let Some(frame) = stream.next().await else {
+                return true;
+            };
+            match frame {
+                Ok(Message::Text(_)) => {
+                    let _ = reader_connection.subscribe(Vec::new());
+                    return false;
+                }
+                Ok(Message::Binary(_)) => {
+                    reader_connection.unsupported_data();
+                    return false;
+                }
+                Ok(Message::Ping(data)) => {
+                    if !reader_connection.send_pong(data).await {
+                        return false;
+                    }
+                }
+                Ok(Message::Pong(_)) => {}
+                Ok(Message::Close(_)) => return true,
+                Err(error) => {
+                    let message = error.to_string().to_ascii_lowercase();
+                    reader_connection.protocol_error(if message.contains("too long")
+                        || message.contains("too large")
+                        || message.contains("capacity")
+                        || message.contains("message size")
+                    {
+                        1009
+                    } else {
+                        1002
+                    });
+                    return false;
+                }
+            }
+        }
+    };
+    tokio::pin!(writer);
+    tokio::pin!(reader);
+
+    tokio::select! {
+        _ = &mut writer => {}
+        peer_closed = &mut reader => {
+            if peer_closed {
+                let _ = peer_closed_tx.try_send(());
+            }
+            drain_v2_subscription_writer(writer.as_mut()).await;
+        }
+    }
+    connection.cleanup();
+}

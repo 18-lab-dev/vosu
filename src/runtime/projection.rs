@@ -482,6 +482,38 @@ impl StateJsonProvider for SnapshotProviders {
     }
 }
 
+struct V2SubscriptionSnapshotView {
+    snapshot: Arc<CombinedSnapshot>,
+}
+
+impl V2SubscriptionSnapshot for V2SubscriptionSnapshotView {
+    fn revision(&self) -> u64 {
+        self.snapshot.manager().revision()
+    }
+
+    fn document(&self) -> Result<Option<serde_json::Value>, ApiError> {
+        match crate::api::v2::encode(&self.snapshot) {
+            Ok(document) => serde_json::from_slice(&document)
+                .map(Some)
+                .map_err(|error| ApiError::serialization(error.to_string())),
+            Err(ApiError::NotReady) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl V2SubscriptionProvider for SnapshotProviders {
+    fn subscribe(&self) -> watch::Receiver<u64> {
+        self.precise_event.subscribe()
+    }
+
+    fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot> {
+        Arc::new(V2SubscriptionSnapshotView {
+            snapshot: self.snapshots.load(),
+        })
+    }
+}
+
 pub(super) struct WebSocketSnapshotView {
     snapshot: Arc<CombinedSnapshot>,
     schema: ApiSchema,

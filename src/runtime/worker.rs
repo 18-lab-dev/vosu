@@ -1,34 +1,45 @@
 use super::*;
 
-/// Exactly four state publication loops. Connections are owned by their hubs;
+/// Exactly five state publication loops. Connections are owned by their hubs;
 /// shutdown cancels every loop and joins it before the provider can be dropped.
 pub struct WebSocketHubs {
     pub v1: WebSocketHub,
     pub stream_companion: WebSocketHub,
     pub v2: WebSocketHub,
     pub v2_precise: WebSocketHub,
+    pub v2_subscription: V2SubscriptionHub,
     tasks: Vec<JoinHandle<()>>,
 }
 
 impl WebSocketHubs {
-    pub fn start(provider: Arc<dyn WebSocketStateProvider>) -> Self {
+    pub fn start(
+        provider: Arc<dyn WebSocketStateProvider>,
+        subscription_provider: Arc<dyn V2SubscriptionProvider>,
+        debounce: Duration,
+    ) -> Self {
         let v1 = WebSocketHub::new(WebSocketSchema::V1, Arc::clone(&provider));
         let stream_companion =
             WebSocketHub::new(WebSocketSchema::StreamCompanion, Arc::clone(&provider));
         let v2 = WebSocketHub::new(WebSocketSchema::V2, Arc::clone(&provider));
         let v2_precise = WebSocketHub::new(WebSocketSchema::V2Precise, provider);
-        let tasks = [&v1, &stream_companion, &v2, &v2_precise]
+        let v2_subscription = V2SubscriptionHub::new(subscription_provider, debounce);
+        let mut tasks = [&v1, &stream_companion, &v2, &v2_precise]
             .into_iter()
             .map(|hub| {
                 let hub = hub.clone();
                 tokio::spawn(async move { hub.run().await })
             })
-            .collect();
+            .collect::<Vec<_>>();
+        tasks.push(tokio::spawn({
+            let hub = v2_subscription.clone();
+            async move { hub.run().await }
+        }));
         Self {
             v1,
             stream_companion,
             v2,
             v2_precise,
+            v2_subscription,
             tasks,
         }
     }
@@ -41,10 +52,12 @@ impl WebSocketHubs {
         self.stream_companion.close_all(1001).await;
         self.v2.close_all(1001).await;
         self.v2_precise.close_all(1001).await;
+        self.v2_subscription.close_all(1001);
         self.v1.shutdown();
         self.stream_companion.shutdown();
         self.v2.shutdown();
         self.v2_precise.shutdown();
+        self.v2_subscription.shutdown();
         for task in self.tasks {
             let _ = task.await;
         }

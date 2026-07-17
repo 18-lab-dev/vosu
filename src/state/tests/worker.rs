@@ -346,6 +346,11 @@ fn poll_duration_saturates_without_panicking() {
     );
     assert_eq!(duration_from_millis_saturating(1.0e100), Duration::MAX);
     assert_eq!(duration_from_millis_saturating(-1.0), Duration::ZERO);
+    assert_eq!(duration_from_millis_saturating(0.0), Duration::ZERO);
+    assert_eq!(
+        duration_from_millis_saturating(0.125),
+        Duration::from_nanos(125_000)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

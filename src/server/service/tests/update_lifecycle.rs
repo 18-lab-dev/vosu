@@ -73,7 +73,8 @@
         let sc = WebSocketHub::new(websocket::Schema::StreamCompanion, state.clone());
         let v2 = WebSocketHub::new(websocket::Schema::V2, state.clone());
         let precise = WebSocketHub::new(websocket::Schema::V2Precise, state.clone());
-        let commands = WebSocketHub::new(websocket::Schema::V1, state);
+        let commands = WebSocketHub::new(websocket::Schema::V1, state.clone());
+        let subscriptions = V2SubscriptionHub::new(state.clone(), std::time::Duration::ZERO);
         let relays = Arc::new(WebSocketRelaySink::new());
         let command_providers = Arc::new(CommandProviders);
         let processor = Arc::new(CommandProcessor::new(
@@ -99,6 +100,7 @@
                     v2,
                     precise,
                     commands: commands.clone(),
+                    subscriptions,
                     processor,
                     relays: relays.clone(),
                 },

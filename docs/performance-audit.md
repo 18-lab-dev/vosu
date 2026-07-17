@@ -4,7 +4,7 @@
 
 This audit found eight opportunities worth measuring. They are **candidates, not promises**: except where explicitly described as a local observation, their impact is inferred from static control-flow, allocation, ownership, and queue analysis. The highest-priority candidates are Linux idle discovery, repeated live-calculator work during map load, unbounded state-publication retention plus per-publication manager reconstruction, and filtered WebSocket projection per client.
 
-The safest sequence is to repair measurement first, instrument the production boundaries, and then change only paths shown to matter. Any optimization must preserve public API compatibility, one-point immutable atomic snapshots, generation/staleness checks, bounded latest-only delivery, the separation between live and legacy calculators, filesystem and authorization checks, and Linux/Windows semantics.
+The safest sequence is to repair measurement first, instrument the production boundaries, and then change only paths shown to matter. Any optimization must preserve public API compatibility, one-point immutable atomic snapshots, generation/staleness checks, the existing bounded/latest-only capture and client-delivery stages, the separation between live and legacy calculators, filesystem and authorization checks, and Linux/Windows semantics; the currently unbounded supervisor queue should become bounded rather than propagating unboundedness elsewhere.
 
 ## Scope, evidence, and limitations
 
@@ -27,7 +27,7 @@ Important limitations:
 
 | Priority | Candidate | Static evidence | Primary validation |
 | --- | --- | --- | --- |
-| P0 | Linux two-stage discovery at 10 Hz while idle | `/proc` enumeration and classification repeat every 100 ms until an instance exists | Idle CPU/syscall profile with realistic `/proc` populations |
+| P0 | Linux two-stage discovery while idle | Broad `/proc` enumeration repeats after a 100 ms idle delay until an instance exists | Idle CPU/syscall profile with realistic `/proc` populations |
 | P0 | Repeated live-calculator work per map load | Difficulty/performance work is recomputed across initial, strains, and accuracy-table paths | Invocation counters, large-map CPU/allocation benchmark, output parity |
 | P0 | Coalesced state publication and manager rebuild | Unbounded publication queue retains snapshots; supervisor rebuilds ordered manager metadata for each publication | Injected supervisor delay and multi-instance queue/RSS profile |
 | P1 | Precise hit-error history and mod-context cloning | Every precise publication copies cumulative hit errors; the precise loop separately clones variable-size mod context | Allocation profile versus hit-error/mod cardinality and cadence |
@@ -38,11 +38,11 @@ Important limitations:
 
 ## Detailed findings
 
-### 1. Linux idle discovery repeats broad work at 10 Hz
+### 1. Linux idle discovery repeats broad work up to about 10 times per second
 
 **Classification:** P0, **Hypothesis** (unmeasured CPU and syscall impact).
 
-**Source and mechanism.** [`InstanceRuntime`](../src/instance.rs) uses `EMPTY_DISCOVERY_INTERVAL` of 100 ms and calls `InstanceManager::discover` until an instance is present. On Linux, [`NativeProcessProvider::enumerate`](../src/instance/discovery.rs) first calls [`enumerate_processes_at`](../src/process/linux.rs), which reads command line, executable link, ELF bitness, and process name for every numeric `/proc` entry. It then calls `resolve_osu_path` for every descriptor before `classify_candidates` discards non-osu! processes. The classifier's required named-first/fallback semantics therefore run after the expensive per-process work, producing ten full discovery cycles per second while idle.
+**Source and mechanism.** [`InstanceRuntime`](../src/instance.rs) uses `EMPTY_DISCOVERY_INTERVAL` of 100 ms and calls `InstanceManager::discover` until an instance is present. On Linux, [`NativeProcessProvider::enumerate`](../src/instance/discovery.rs) first calls [`enumerate_processes_at`](../src/process/linux.rs), which reads command line, executable link, ELF bitness, and process name for every numeric `/proc` entry. It then calls `resolve_osu_path` for every descriptor before `classify_candidates` discards non-osu! processes. The classifier's required named-first/fallback semantics therefore run after the expensive per-process work. Because the 100 ms sleep follows each cycle, the idle rate approaches but does not exceed roughly ten scans per second.
 
 **Safe direction.** Measure first, then split Linux enumeration into a cheap name-only pass and read command line, executable/bitness, and root only for name candidates, while preserving the current named-first/fallback classification and failure behavior. Consider bounded idle backoff only as a second step with a prompt wake mechanism so newly started processes are not hidden indefinitely.
 
@@ -90,7 +90,7 @@ Important limitations:
 
 **Classification:** P1, **Hypothesis** (native backend is absent from current benchmarks).
 
-**Source and mechanism.** [`LinuxMemory::read_many_inner`](../src/process/linux.rs) calls `mapped_regions`, creates chunk and iovec vectors, and invokes `process_vm_readv`; `read_many` retries failed batches as individual reads. Repeated `read_many` calls in one logical capture therefore repeat `/proc/<pid>/maps` parsing and temporary construction. The regular and precise orchestration in [`StateReaders`](../src/state/readers.rs), [`StableMemory`](../src/memory/stable/readers.rs), and [`LazerMemory`](../src/memory/lazer/reader.rs) determines whether independent field reads can be safely grouped. Windows has different staging/copy/retry behavior in [`src/process/windows.rs`](../src/process/windows.rs).
+**Source and mechanism.** [`LinuxProcessMemory::read_many_inner`](../src/process/linux.rs) calls `mapped_regions`, creates chunk and iovec vectors, and invokes `process_vm_readv`; short successful reads retry the remaining chunk suffix, while an error propagates and `read_many` zero-fills every destination. Repeated `read_many` calls in one logical capture therefore repeat `/proc/<pid>/maps` parsing and temporary construction. The regular and precise orchestration in [`SourceRegularReader`](../src/state/readers.rs), [`SourcePreciseReader`](../src/state/readers.rs), [`StableMemory`](../src/memory/stable/readers.rs), and [`LazerMemory`](../src/memory/lazer/reader.rs) determines whether independent field reads can be safely grouped. Windows has different staging/copy/retry behavior in [`src/process/windows.rs`](../src/process/windows.rs).
 
 **Safe direction.** Trace first. Where one capture issues multiple independent native batches, construct one bounded capture plan and reuse scratch capacity or one maps snapshot within that operation. Keep decoding above the OS backend and fall back with the same all-or-error semantics. Do not introduce a long-lived maps cache without an invalidation design.
 
@@ -124,13 +124,13 @@ Important limitations:
 
 ### 8. Bound whole-log and catalog response memory
 
-**Classification:** P1, **Hypothesis** (source-established size bounds, unmeasured peak RSS).
+**Classification:** P1, **Hypothesis** (source-established whole-read behavior and catalog bound; unmeasured peak RSS).
 
-**Source and mechanism.** [`read_newest_logs`](../src/report.rs) reads up to ten retained logs with `read_to_string`, then parses/owns line strings before [`ReportBodyStream`](../src/report.rs) renders them. [`logging::retention`](../src/logging/retention.rs) permits roughly 100 MiB retained logs, so raw and parsed representations can overlap. Separately, [`StreamingClient::request_inner`](../src/net/streaming.rs) accumulates non-file responses in memory; [`CatalogService`](../src/server/catalog.rs) allows `CATALOG_MAX_BYTES` of 1 GiB and then deserializes while retaining the response body. A malicious or accidental near-limit response can therefore create a large transient spike.
+**Source and mechanism.** [`read_newest_logs`](../src/report.rs) reads up to ten retained logs with `read_to_string`, then parses/owns line strings before [`ReportBodyStream`](../src/report.rs) renders them. [`logging::retention`](../src/logging/retention.rs) begins cleanup when total logs reach 100 MiB but never deletes `latest.log`, so that threshold is not a hard bound; raw and parsed representations can overlap, and an active latest log can exceed the threshold. Separately, [`StreamingClient::request_inner`](../src/net/streaming.rs) accumulates non-file responses in memory; [`CatalogService`](../src/server/catalog.rs) allows `CATALOG_MAX_BYTES` of 1 GiB and then deserializes while retaining the response body. A malicious or accidental near-limit response can therefore create a large transient spike.
 
 **Safe direction.** For reports, parse and escape logs incrementally or impose a documented report-specific byte budget while preserving ordering and redaction. For catalogs, lower the endpoint-specific cap to a justified size and/or stream JSON decoding from a bounded reader without retaining both complete encoded and decoded forms.
 
-**Invariant/risk.** Preserve report escaping/redaction, newest-log ordering, cancellation, catalog schema/redirect/TLS policy, and download limits. Do not weaken updater archive size, extraction, path, signature/checksum, or atomic-install protections while generalizing streaming code.
+**Invariant/risk.** Preserve report escaping/redaction, newest-log ordering, cancellation, catalog schema/redirect/TLS policy, and download limits. Do not weaken updater archive size, extraction, path, published-checksum, or atomic-install protections while generalizing streaming code.
 
 **Validation experiment.** Generate retained logs near the configured limit and valid/malformed catalog responses at stepped sizes. Measure peak RSS, allocations, first-byte/total latency, cancellation cleanup, and concurrent-request amplification. Assert exact report escaping/order and catalog results; verify deterministic rejection immediately above every new bound.
 
@@ -142,7 +142,7 @@ Important limitations:
 4. **Use the right tools.** Criterion is suitable for isolated CPU/allocation comparisons once fixtures represent the path. Use a sampling profiler for daemon CPU and a heap/RSS profiler for retained/transient memory. Record host, revision, configuration, fixtures, sample controls, and confidence intervals in [benchmarks.md](benchmarks.md).
 5. **Gate changes on behavior.** Performance comparisons must be paired with API byte parity, live parity where applicable, generation/staleness tests, queue-bound tests, platform-specific process tests, and security boundary tests. A faster result that changes semantics is a regression.
 
-Lower-priority, cold/control-plane candidates should stay behind the roadmap above: [`RuntimeConfig::save`](../src/runtime/config.rs) clones a JSON object on settings writes; [`RelayWorker`](../src/server/service/relay.rs) has an unbounded event input and serial bounded recipient sends; [`ConfigStore`](../src/config/store.rs) uses unbounded command/save queues; [`ReloadableCounterService::reload_static_root`](../src/counters/service.rs) retains retired generations until shutdown; and [`RuntimePages::render`](../src/runtime/service.rs) can repeat recursive counter discovery per page/search request. Validate each with burst/reload/request profiles and explicit queue/retention metrics before changing it. Preserve configuration publish barriers, relay targeting/replies, counter path validation, and static-root lifecycle semantics.
+Lower-priority, cold/control-plane candidates should stay behind the roadmap above: [`RuntimeConfig::save`](../src/runtime/config.rs) clones a JSON object on settings writes; [`RelayWorker`](../src/server/service/relay.rs) has an unbounded event input and serial bounded recipient sends; [`ConfigStore`](../src/config/store.rs) uses unbounded `StoreCommand` and filesystem-event queues; [`ReloadableCounterService::reload_static_root`](../src/counters/service.rs) retains retired generations until shutdown; and [`RuntimePages::render`](../src/runtime/service.rs) can repeat recursive counter discovery per page/search request. Validate each with burst/reload/request profiles and explicit queue/retention metrics before changing it. Preserve configuration publish barriers, relay targeting/replies, counter path validation, and static-root lifecycle semantics.
 
 ## Reviewed designs that should not be changed without evidence
 

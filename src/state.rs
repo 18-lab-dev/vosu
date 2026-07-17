@@ -12,6 +12,4 @@ pub use readers::*;
 pub use worker::*;
 
 #[cfg(test)]
-use context::duration_from_millis_saturating;
-#[cfg(test)]
 mod tests;

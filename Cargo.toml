@@ -52,7 +52,7 @@ sha2 = "=0.11.0"
 sysinfo = { version = "=0.39.5", default-features = false, features = ["system"] }
 tempfile = "3.26.0"
 thiserror = "2.0.18"
-tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util", "signal"] }
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util", "signal", "test-util"] }
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 vosu-lazer-pp = { path = "crates/vosu-lazer-pp" }
 tracing = "=0.1.44"

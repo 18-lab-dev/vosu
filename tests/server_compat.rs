@@ -271,7 +271,7 @@ fn authorization_matrix_requires_both_peer_and_authoritative_header() {
 async fn rejected_origin_is_403_not_found_and_never_reaches_upgrade() {
     let response = dispatch(
         Method::GET,
-        "/websocket/v2",
+        "/websocket/v2/subscribe",
         Some("http://evil.invalid"),
         Body::empty(),
     )

@@ -66,6 +66,7 @@ ENABLE_INGAME_OVERLAY=false
 
 POLL_RATE=150
 PRECISE_DATA_POLL_RATE=10
+V2_SUBSCRIPTION_DEBOUNCE=0
 
 INGAME_OVERLAY_KEYBIND=Control + Shift + Space
 INGAME_OVERLAY_MAX_FPS=60
@@ -95,6 +96,7 @@ fn defaults_and_serialization_match_source_bytes() {
             "ENABLE_KEY_OVERLAY",
             "POLL_RATE",
             "PRECISE_DATA_POLL_RATE",
+            "V2_SUBSCRIPTION_DEBOUNCE",
             "SHOW_MP_COMMANDS",
             "READ_MANIA_SCROLL_SPEED",
             "SERVER_IP",
@@ -135,18 +137,22 @@ UNKNOWN_BINDING=true",
 }
 
 #[test]
-fn only_polling_minima_are_clamped_and_warned() {
-    let mut store = ConfigDocument::parse("POLL_RATE=-5\nPRECISE_DATA_POLL_RATE=0");
+fn schema_minima_are_clamped_and_warned() {
+    let mut store = ConfigDocument::parse(
+        "POLL_RATE=-5\nPRECISE_DATA_POLL_RATE=0\nV2_SUBSCRIPTION_DEBOUNCE=-0.25",
+    );
     let warnings = store.refresh(
         "\
 POLL_RATE=-5
 PRECISE_DATA_POLL_RATE=0
+V2_SUBSCRIPTION_DEBOUNCE=-0.25
 SERVER_PORT=-1
 INGAME_OVERLAY_MAX_FPS=-2",
     );
 
     assert_eq!(store.config().poll_rate, 100.0);
     assert_eq!(store.config().precise_data_poll_rate, 1.0);
+    assert_eq!(store.config().v2_subscription_debounce, 0.0);
     assert_eq!(store.config().server_port, -1.0);
     assert_eq!(store.config().ingame_overlay_max_fps, -2.0);
     assert_eq!(
@@ -154,6 +160,7 @@ INGAME_OVERLAY_MAX_FPS=-2",
         [
             "Config %POLL_RATE% value %-5% is below the minimum %100%, clamping.",
             "Config %PRECISE_DATA_POLL_RATE% value %0% is below the minimum %1%, clamping.",
+            "Config %V2_SUBSCRIPTION_DEBOUNCE% value %-0.25% below minimum %0%, clamping.",
         ]
     );
 }

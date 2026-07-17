@@ -137,6 +137,7 @@ Edit `vosu.env`. The daemon watches the file and applies supported changes witho
 | `ENABLE_KEY_OVERLAY` | `true` | Publish key-overlay data in compatible schemas. |
 | `POLL_RATE` | `150` | Regular state interval in milliseconds; minimum `100`. |
 | `PRECISE_DATA_POLL_RATE` | `10` | Precise state interval in milliseconds; minimum `1`. |
+| `V2_SUBSCRIPTION_DEBOUNCE` | `0` | Minimum interval in milliseconds between selected-field WebSocket frames; minimum `0`, fractional values supported. |
 | `SHOW_MP_COMMANDS` | `false` | Include multiplayer commands where supported. |
 | `READ_MANIA_SCROLL_SPEED` | `true` | Read mania scroll speed. |
 | `SERVER_IP` | `127.0.0.1` | Listener hostname or address. |
@@ -219,9 +220,12 @@ POST bodies are capped at 1 MiB. Generated reports escape machine, configuration
 | `/tokens` | streamCompanion regular state |
 | `/websocket/v2` | vosu v2 regular state |
 | `/websocket/v2/precise` | vosu precise state |
+| `/websocket/v2/subscribe` | Selected fields from the vosu v2 document |
 | `/websocket/commands` | Counter, settings, filter commands, and the retained `__ingame__` browser flow |
 
 Unknown near-miss paths do not upgrade. Frames and assembled messages are limited to 1 MiB. Slow clients receive the latest state instead of building an unbounded backlog. The [upstream tosu wiki](https://github.com/tosuapp/tosu/wiki) documents the compatibility schemas and filter examples.
+
+The selected-field endpoint expects one text message within five seconds: a JSON array of 1–256 non-overlapping RFC 6901 JSON Pointers into `/json/v2`. It sends compact initial `[0, revision, values]` and update `[1, revision, values, removedIds]` arrays; selector IDs are their zero-based request positions. The selection is immutable, so changing fields requires reconnecting. This endpoint has no command channel.
 
 ## Maintainer documentation
 

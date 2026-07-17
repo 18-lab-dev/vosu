@@ -12,6 +12,7 @@ pub struct Config {
     pub enable_key_overlay: bool,
     pub poll_rate: f64,
     pub precise_data_poll_rate: f64,
+    pub v2_subscription_debounce: f64,
     pub show_mp_commands: bool,
     pub read_mania_scroll_speed: bool,
     pub server_ip: String,
@@ -33,6 +34,7 @@ impl Default for Config {
             enable_key_overlay: true,
             poll_rate: 150.0,
             precise_data_poll_rate: 10.0,
+            v2_subscription_debounce: 0.0,
             show_mp_commands: false,
             read_mania_scroll_speed: true,
             server_ip: "127.0.0.1".to_owned(),
@@ -55,6 +57,7 @@ pub enum ConfigKey {
     EnableKeyOverlay,
     PollRate,
     PreciseDataPollRate,
+    V2SubscriptionDebounce,
     ShowMpCommands,
     ReadManiaScrollSpeed,
     ServerIp,
@@ -100,7 +103,7 @@ impl Default for ConfigSchema {
     }
 }
 
-const SCHEMA_ITEMS: [ConfigItem; 16] = [
+const SCHEMA_ITEMS: [ConfigItem; 17] = [
     item(
         ConfigKey::EnableAutoUpdate,
         "ENABLE_AUTOUPDATE",
@@ -142,6 +145,12 @@ const SCHEMA_ITEMS: [ConfigItem; 16] = [
         "PRECISE_DATA_POLL_RATE",
         ConfigDefault::Number(10.0),
         Some(1.0),
+    ),
+    item(
+        ConfigKey::V2SubscriptionDebounce,
+        "V2_SUBSCRIPTION_DEBOUNCE",
+        ConfigDefault::Number(0.0),
+        Some(0.0),
     ),
     item(
         ConfigKey::ShowMpCommands,
@@ -219,7 +228,7 @@ pub const DEFAULT_SCHEMA: ConfigSchema = ConfigSchema {
 
 /// The source's serialization order, which intentionally differs from schema
 /// declaration order.
-pub const BINDING_ORDER: [&str; 16] = [
+pub const BINDING_ORDER: [&str; 17] = [
     "DEBUG_LOG",
     "ENABLE_AUTOUPDATE",
     "OPEN_DASHBOARD_ON_STARTUP",
@@ -230,6 +239,7 @@ pub const BINDING_ORDER: [&str; 16] = [
     "ENABLE_INGAME_OVERLAY",
     "POLL_RATE",
     "PRECISE_DATA_POLL_RATE",
+    "V2_SUBSCRIPTION_DEBOUNCE",
     "INGAME_OVERLAY_KEYBIND",
     "INGAME_OVERLAY_MAX_FPS",
     "SERVER_IP",
@@ -243,7 +253,7 @@ pub const NEWLINE_INSERTIONS: [&str; 6] = [
     "OPEN_DASHBOARD_ON_STARTUP",
     "READ_MANIA_SCROLL_SPEED",
     "ENABLE_INGAME_OVERLAY",
-    "PRECISE_DATA_POLL_RATE",
+    "V2_SUBSCRIPTION_DEBOUNCE",
     "INGAME_OVERLAY_MAX_FPS",
     "ALLOWED_IPS",
 ];

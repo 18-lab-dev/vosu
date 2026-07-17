@@ -187,6 +187,10 @@ fn exact_endpoint_classification_rejects_near_misses() {
         Some(Endpoint::V2Precise)
     );
     assert_eq!(
+        Endpoint::classify("/websocket/v2/subscribe"),
+        Some(Endpoint::V2Subscribe)
+    );
+    assert_eq!(
         Endpoint::classify("/websocket/commands"),
         Some(Endpoint::Commands)
     );
@@ -202,6 +206,7 @@ fn handshake_gate_matrix_never_upgrades_denied_or_unknown_requests() {
         ("/tokens", Endpoint::StreamCompanion),
         ("/websocket/v2", Endpoint::V2),
         ("/websocket/v2/precise", Endpoint::V2Precise),
+        ("/websocket/v2/subscribe", Endpoint::V2Subscribe),
         ("/websocket/commands", Endpoint::Commands),
     ];
     for (path, endpoint) in endpoints {
@@ -236,7 +241,7 @@ fn handshake_gate_matrix_never_upgrades_denied_or_unknown_requests() {
 }
 
 #[tokio::test]
-async fn real_axum_handshake_returns_101_only_for_exact_five_paths() {
+async fn real_axum_handshake_returns_101_only_for_exact_six_paths() {
     use axum::{Router, body::Body, http::StatusCode};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -305,6 +310,7 @@ async fn real_axum_handshake_returns_101_only_for_exact_five_paths() {
         "/tokens",
         "/websocket/v2",
         "/websocket/v2/precise",
+        "/websocket/v2/subscribe",
         "/websocket/commands",
     ] {
         assert_eq!(
@@ -312,7 +318,12 @@ async fn real_axum_handshake_returns_101_only_for_exact_five_paths() {
             StatusCode::SWITCHING_PROTOCOLS
         );
     }
-    for path in ["/ws/", "/websocket/v2/precise/", "/websocket/unknown"] {
+    for path in [
+        "/ws/",
+        "/websocket/v2/precise/",
+        "/websocket/v2/subscribe/",
+        "/websocket/unknown",
+    ] {
         assert_eq!(request_status(address, path).await, StatusCode::NOT_FOUND);
     }
     server.abort();

@@ -62,11 +62,26 @@ fn precise_only_publication_does_not_wake_regular_subscribers() {
         manager(1, precise(1.0)),
         Arc::new(ProductionSnapshotEncoder),
     );
-    let regular_rx = providers.subscribe(WebSocketSchema::V2);
-    let precise_rx = providers.subscribe(WebSocketSchema::V2Precise);
+    let regular_rx = WebSocketStateProvider::subscribe(&providers, WebSocketSchema::V2);
+    let precise_rx =
+        WebSocketStateProvider::subscribe(&providers, WebSocketSchema::V2Precise);
     providers.publish(manager(2, precise(2.0)));
     assert!(!regular_rx.has_changed().unwrap());
     assert!(precise_rx.has_changed().unwrap());
+}
+
+#[test]
+fn v2_subscription_capture_keeps_not_ready_revision_and_missing_document() {
+    let providers = SnapshotProviders::new(
+        Arc::new(ManagerSnapshot::not_ready(
+            17,
+            ApiRuntimeSettings::default(),
+        )),
+        Arc::new(ProductionSnapshotEncoder),
+    );
+    let snapshot = V2SubscriptionProvider::capture(&providers);
+    assert_eq!(snapshot.revision(), 17);
+    assert_eq!(snapshot.document().unwrap(), None);
 }
 #[tokio::test]
 async fn signal_completion_cancels_the_shared_runtime_token() {

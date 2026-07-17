@@ -64,6 +64,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         "ENABLE_KEY_OVERLAY",
         "POLL_RATE",
         "PRECISE_DATA_POLL_RATE",
+        "V2_SUBSCRIPTION_DEBOUNCE",
         "SERVER_IP",
         "SERVER_PORT",
         "ALLOWED_IPS",
@@ -79,6 +80,26 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
             "{binding}"
         );
     }
+    assert!(settings.contains("V2 Subscription Debounce"));
+    assert!(settings.contains(
+        "The minimum interval between selected-field WebSocket frames, in milliseconds."
+    ));
+    assert!(settings.contains(
+        r#"data-id="V2_SUBSCRIPTION_DEBOUNCE"><button title="[Click] decrements by 1&#10;[Shift + Click] by 10" class="decr">-</button><input type="number" value="0" min="0" max="">"#
+    ));
+}
+
+#[test]
+fn settings_save_maps_fractional_v2_subscription_debounce() {
+    let mut config = Config::default();
+    apply_config_values(
+        &mut config,
+        serde_json::json!({"V2_SUBSCRIPTION_DEBOUNCE": 0.125})
+            .as_object()
+            .unwrap(),
+    );
+
+    assert_eq!(config.v2_subscription_debounce, 0.125);
 }
 
 #[test]

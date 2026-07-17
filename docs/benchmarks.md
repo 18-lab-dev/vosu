@@ -17,6 +17,7 @@ Names below are the complete benchmark IDs from `benches/hot_paths.rs`.
 | `serializers_cold` | `v1`, `v2`, `v2_precise`, `stream_companion` | Encoding a newly constructed synthetic API snapshot. Snapshot construction is batched outside the timed routine. |
 | `serialization_cache` | `v1_bytes_clone`, `v2_bytes_clone`, `v2_precise_bytes_clone`, `stream_companion_bytes_clone` | Re-encoding the same pre-warmed snapshot, exercising each encoder's cached `Bytes` return path. |
 | `publication` | `unfiltered_clients/1`, `unfiltered_clients/100`, `unfiltered_clients/1000` | One in-memory publication delivered to and acknowledged by 1, 100, or 1,000 unfiltered hub connections on a current-thread Tokio runtime. Throughput is declared as the client count. |
+| `v2_subscription` | `shared_plan/1`, `shared_plan/100`, `shared_plan/1000`, `distinct_plans/1`, `distinct_plans/100`, `distinct_plans/1000` | One due revision dispatched through the public selected-field hub/provider APIs to 1, 100, or 1,000 in-memory connections. Shared clients use one identical ordered plan; distinct clients each use a different ordered plan. Throughput is declared as the client count. |
 
 ## Running and selecting benchmarks
 
@@ -34,6 +35,12 @@ Criterion 0.7.0 accepts a positional substring filter after Cargo's `--`:
 ```sh
 cargo bench --locked --package vosu --bench hot_paths -- raw_snapshot_reads
 cargo bench --locked --package vosu --bench hot_paths -- serializers_cold/v2
+```
+
+Run only the selected-field subscription dispatch cases with:
+
+```sh
+cargo bench --locked --package vosu --bench hot_paths -- v2_subscription
 ```
 
 The second example matches both `serializers_cold/v2` and
@@ -120,6 +127,53 @@ In particular:
 - Publication uses an in-memory provider, receivers, and a generation-number
   payload. It excludes TCP, HTTP upgrade, WebSocket framing, network backpressure,
   client parsing, and real schema serialization.
+- V2 subscription dispatch uses a current-thread Tokio runtime, public
+  `V2SubscriptionHub`/provider APIs, and in-memory bounded receivers. Every case
+  materializes the same synthetic document containing a changing revision and
+  a fixed 1,000-element array. `shared_plan` clients all select the ordered
+  `["/revision", "/clients/0"]` plan; client `i` in `distinct_plans` selects
+  `["/clients/i", "/revision"]`. All subscriptions are installed before the hub
+  task starts.
+- Each timed V2 subscription iteration publishes one due revision, waits for
+  one text frame per client, asserts exactly one document build, and marks every
+  write complete. Fixture setup separately verifies that publishing while every
+  client is pending does not build a document, then verifies catch-up after
+  writes reopen. The timed result includes provider publication, synthetic
+  document construction, selection, frame encoding, bounded-channel delivery,
+  receiver draining, counter assertions, and write completion. It excludes
+  TCP, HTTP/WebSocket framing, browser parsing, socket backpressure, and a real
+  `/json/v2` snapshot.
+- No allocator instrumentation was enabled for the V2 subscription run.
+  Allocations performed by document construction and dispatch contribute to
+  elapsed time, while connection, plan, runtime, and initial-frame setup occur
+  outside the timed iterations. There are no allocation-count or byte-count
+  observations.
+
+## Local V2 subscription observation: 2026-07-16
+
+This is a **non-portable observation, not a performance promise, acceptance
+threshold, or comparison with a baseline**.
+
+- Command: `cargo bench --locked --package vosu --bench hot_paths -- v2_subscription`
+- Host: AMD Ryzen 9 9950X3D, 16 cores / 32 threads, 123 GiB RAM
+- OS: x86_64 Linux 7.1.3-1-cachyos-bore
+- Compiler: `rustc 1.96.1 (31fca3adb 2026-06-26)`
+- Criterion: 0.7.0 defaults listed above; Plotters backend (gnuplot unavailable)
+- Timestamp after completion: 2026-07-16T23:44:43-04:00
+- Allocation observation: no allocation profiler or counting allocator was
+  used; only elapsed time was measured.
+
+The table reports Criterion's arithmetic-mean point estimate and 95% confidence
+interval from the `new/estimates.json` files written by this run.
+
+| Benchmark ID | Mean | 95% confidence interval |
+| --- | ---: | ---: |
+| `v2_subscription/shared_plan/1` | 7.719 µs | 7.705–7.734 µs |
+| `v2_subscription/shared_plan/100` | 45.249 µs | 45.228–45.271 µs |
+| `v2_subscription/shared_plan/1000` | 378.374 µs | 377.694–379.115 µs |
+| `v2_subscription/distinct_plans/1` | 8.004 µs | 7.996–8.012 µs |
+| `v2_subscription/distinct_plans/100` | 68.774 µs | 68.737–68.815 µs |
+| `v2_subscription/distinct_plans/1000` | 707.751 µs | 707.147–708.353 µs |
 
 ## Local observation: 2026-07-16
 

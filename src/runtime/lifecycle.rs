@@ -108,7 +108,11 @@ impl ProductionRuntime {
             counter_facade,
             relays.clone(),
         ));
-        let hubs = WebSocketHubs::start(self.snapshots.clone());
+        let hubs = WebSocketHubs::start(
+            self.snapshots.clone(),
+            self.snapshots.clone(),
+            duration_from_millis_saturating(config.v2_subscription_debounce),
+        );
         let services = ProductionServices::with_native_report_probe(
             PageService,
             Arc::new(RuntimePages {
@@ -141,6 +145,7 @@ impl ProductionRuntime {
                 v2: hubs.v2.clone(),
                 precise: hubs.v2_precise.clone(),
                 commands: hubs.v1.clone(),
+                subscriptions: hubs.v2_subscription.clone(),
                 processor: processor.clone(),
                 relays: relays.clone(),
             },
@@ -302,6 +307,13 @@ impl RuntimeHooks for ProductionRuntime {
                                 poll_duration(effective.poll_rate),
                                 poll_duration(effective.precise_data_poll_rate),
                             );
+                            if let Some(hubs) = self.hubs.lock().await.as_ref() {
+                                hubs.v2_subscription.set_debounce(
+                                    duration_from_millis_saturating(
+                                        effective.v2_subscription_debounce,
+                                    ),
+                                );
+                            }
                             match listen_target(&effective) {
                                 Ok(target) => {
                                     let mut listener = self.listener.lock().await;

@@ -62,7 +62,7 @@ impl ConfigDocument {
         self.validate()
     }
 
-    /// Clamps only the two polling minima.
+    /// Clamps schema-defined polling and subscription minima.
     pub fn validate(&mut self) -> Vec<String> {
         let mut warnings = Vec::new();
 
@@ -80,6 +80,14 @@ impl ConfigDocument {
                 format_number(self.config.precise_data_poll_rate)
             ));
             self.config.precise_data_poll_rate = 1.0;
+        }
+
+        if self.config.v2_subscription_debounce < 0.0 {
+            warnings.push(format!(
+                "Config %V2_SUBSCRIPTION_DEBOUNCE% value %{}% below minimum %0%, clamping.",
+                format_number(self.config.v2_subscription_debounce)
+            ));
+            self.config.v2_subscription_debounce = 0.0;
         }
 
         warnings
@@ -122,6 +130,7 @@ impl ConfigDocument {
         match key {
             ConfigKey::PollRate => self.config.poll_rate = value,
             ConfigKey::PreciseDataPollRate => self.config.precise_data_poll_rate = value,
+            ConfigKey::V2SubscriptionDebounce => self.config.v2_subscription_debounce = value,
             ConfigKey::ServerPort => self.config.server_port = value,
             ConfigKey::IngameOverlayMaxFps => self.config.ingame_overlay_max_fps = value,
             _ => unreachable!("schema number key has number storage"),
@@ -147,6 +156,7 @@ impl ConfigDocument {
             "ENABLE_KEY_OVERLAY" => self.config.enable_key_overlay.to_string(),
             "POLL_RATE" => format_number(self.config.poll_rate),
             "PRECISE_DATA_POLL_RATE" => format_number(self.config.precise_data_poll_rate),
+            "V2_SUBSCRIPTION_DEBOUNCE" => format_number(self.config.v2_subscription_debounce),
             "SHOW_MP_COMMANDS" => self.config.show_mp_commands.to_string(),
             "READ_MANIA_SCROLL_SPEED" => self.config.read_mania_scroll_speed.to_string(),
             "SERVER_IP" => self.config.server_ip.clone(),

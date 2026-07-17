@@ -66,6 +66,7 @@ pub enum Endpoint {
     WsTokens,
     WsV2,
     WsV2Precise,
+    WsV2Subscribe,
     WsCommands,
 }
 
@@ -344,6 +345,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, request: Request)
                     | Endpoint::WsTokens
                     | Endpoint::WsV2
                     | Endpoint::WsV2Precise
+                    | Endpoint::WsV2Subscribe
                     | Endpoint::WsCommands
             )
         )
@@ -417,6 +419,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/tokens" if get => Some(WsTokens),
         "/websocket/v2" if get => Some(WsV2),
         "/websocket/v2/precise" if get => Some(WsV2Precise),
+        "/websocket/v2/subscribe" if get => Some(WsV2Subscribe),
         "/websocket/commands" if get => Some(WsCommands),
         _ if get && path.contains("/api/ingame") => Some(Ingame),
         _ if get && path.starts_with("/api/counters/search/") => Some(CounterSearch),
