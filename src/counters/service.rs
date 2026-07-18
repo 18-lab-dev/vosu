@@ -628,6 +628,9 @@ fn recursive_named_files(
                 continue;
             }
             if metadata.is_dir() {
+                if name == "node_modules" {
+                    continue;
+                }
                 if honor_ignore && entry.path().join("ignore.txt").exists() {
                     continue;
                 }

@@ -150,7 +150,7 @@ Authorization requires an allowed network peer and, when supplied, an allowed `O
 
 ## Dashboard and counters
 
-The dashboard at `/` discovers counters recursively below the static root. A counter normally contains `index.html`. `metadata.txt` can add a name, author links, description, version, and `WxH` size. An immediate `ignore.txt` excludes its directory from discovery. Mutation APIs accept counter names containing one normal path component.
+The dashboard at `/` discovers counters recursively below the static root. A counter normally contains `index.html`. `metadata.txt` can add a name, author links, description, version, and `WxH` size. An immediate `ignore.txt` excludes its directory from discovery, and directories named `node_modules` are never traversed. Mutation APIs accept counter names containing one normal path component.
 
 Counter `settings.json` files support text, color, number, checkbox, button, options, commands, textarea, password, and header entries. Values are stored at `<config>/settings/<counter>.values.json`. The `/settings` page handles daemon and counter settings.
 

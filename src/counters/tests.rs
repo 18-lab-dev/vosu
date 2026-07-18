@@ -137,6 +137,25 @@ fn discovers_metadata_html_order_and_immediate_ignore_scope() {
 }
 
 #[test]
+fn discovery_skips_counters_nested_under_node_modules() {
+    let (root, service, _, _) = fixture();
+    let overlay = root.path().join("static/overlay");
+    let dependency = overlay.join("node_modules/dependency");
+    std::fs::create_dir_all(&dependency).unwrap();
+    std::fs::write(overlay.join("index.html"), "").unwrap();
+    std::fs::write(dependency.join("index.html"), "").unwrap();
+
+    let folder_names = service
+        .discover()
+        .unwrap()
+        .into_iter()
+        .map(|counter| counter.folder_name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(folder_names, ["overlay"]);
+}
+
+#[test]
 fn settings_union_migrates_coerces_and_roundtrips_compact_values() {
     let (root, service, _, _) = fixture();
     let folder = root.path().join("static/counter");
