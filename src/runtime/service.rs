@@ -105,17 +105,6 @@ pub(super) struct RuntimeCounterFacade {
     pub(super) counters: Arc<ReloadableCounterService>,
 }
 
-impl CounterProvider for RuntimeCounterFacade {
-    fn local_counters(&self) -> Result<serde_json::Value, String> {
-        serde_json::to_value(
-            self.counters
-                .discover()
-                .map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())
-    }
-}
-
 impl SettingsProvider for RuntimeCounterFacade {
     fn get(&self, overlay: &str) -> Result<serde_json::Value, String> {
         self.counters
@@ -125,19 +114,12 @@ impl SettingsProvider for RuntimeCounterFacade {
     }
 
     fn save(&self, overlay: &str, body: serde_json::Value) -> Result<(), String> {
-        if overlay == "__ingame__" {
-            self.counters
-                .save_ingame_values(&body)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        } else {
-            let payload: Vec<crate::counters::SettingInput> =
-                serde_json::from_value(body).map_err(|error| error.to_string())?;
-            self.counters
-                .save_user_values(overlay, &payload)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        }
+        let payload: Vec<crate::counters::SettingInput> =
+            serde_json::from_value(body).map_err(|error| error.to_string())?;
+        self.counters
+            .save_user_values(overlay, &payload)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -215,11 +197,6 @@ impl PageDataProvider for RuntimePages {
                 self.update_version.as_deref(),
             ))
         })
-    }
-
-    fn ingame_counters(&self) -> Result<serde_json::Value, String> {
-        serde_json::to_value(self.counters.discover().unwrap_or_default())
-            .map_err(|error| error.to_string())
     }
 
     fn search_counters(

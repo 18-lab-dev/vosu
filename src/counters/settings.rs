@@ -12,16 +12,12 @@ use super::model::{CompactValues, CounterSetting, SettingInput, SettingType};
 pub enum SettingsError {
     #[error("invalid counter name")]
     InvalidName,
-    #[error("body payload is not array")]
-    InvalidPayload,
     #[error("counter folder does not exist")]
     MissingCounter,
     #[error("counter folder is a symbolic link or escapes the static root")]
     UnsafeCounterPath,
     #[error("settings file is a symbolic link")]
     UnsafeSettingsFile,
-    #[error("__ingame__ settings must be a JSON object")]
-    InvalidIngameValues,
     #[error("settings I/O failed: {0}")]
     Io(#[from] io::Error),
     #[error("settings JSON failed: {0}")]
@@ -55,17 +51,13 @@ impl SettingsStore {
         let values_path = self.values_path(name);
         reject_symlink(&definition)?;
         reject_symlink(&values_path)?;
-        if name != "__ingame__" && !definition.exists() {
+        if !definition.exists() {
             atomic_json(&definition, &Vec::<CounterSetting>::new())?;
         }
         if !values_path.exists() {
             atomic_json(&values_path, &CompactValues::new())?;
         }
-        let settings = if name == "__ingame__" {
-            Vec::new()
-        } else {
-            read_json_or(&definition, Vec::new())?
-        };
+        let settings = read_json_or(&definition, Vec::new())?;
         let values = read_json_or(&values_path, CompactValues::new())?;
         Ok((settings, values))
     }
@@ -97,9 +89,6 @@ impl SettingsStore {
         payload: &[SettingInput],
     ) -> Result<CompactValues, SettingsError> {
         validate_component(name)?;
-        if name == "__ingame__" {
-            return Err(SettingsError::InvalidPayload);
-        }
         let (settings, mut values) = self.load(name)?;
         for item in payload {
             let id = sanitize_id(&item.unique_id);
@@ -126,27 +115,12 @@ impl SettingsStore {
         Ok(values)
     }
 
-    pub fn save_ingame_values(&self, values: &Value) -> Result<CompactValues, SettingsError> {
-        let object = values
-            .as_object()
-            .ok_or(SettingsError::InvalidIngameValues)?
-            .clone();
-        fs::create_dir_all(&self.settings_root)?;
-        self.migrate_legacy("__ingame__")?;
-        reject_symlink(&self.values_path("__ingame__"))?;
-        atomic_json(&self.values_path("__ingame__"), values)?;
-        Ok(object)
-    }
-
     pub fn save_developer_settings(
         &self,
         name: &str,
         mut settings: Vec<CounterSetting>,
     ) -> Result<Vec<CounterSetting>, SettingsError> {
         validate_component(name)?;
-        if name == "__ingame__" {
-            return Err(SettingsError::InvalidName);
-        }
         self.require_counter_directory(name)?;
         for setting in &mut settings {
             setting.unique_id = sanitize_id(&setting.unique_id);
@@ -174,9 +148,6 @@ impl SettingsStore {
     }
 
     fn require_counter_directory(&self, name: &str) -> Result<(), SettingsError> {
-        if name == "__ingame__" {
-            return Ok(());
-        }
         let path = self.static_root.join(name);
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {

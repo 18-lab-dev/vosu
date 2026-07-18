@@ -77,11 +77,7 @@
         let subscriptions = V2SubscriptionHub::new(state.clone(), std::time::Duration::ZERO);
         let relays = Arc::new(WebSocketRelaySink::new());
         let command_providers = Arc::new(CommandProviders);
-        let processor = Arc::new(CommandProcessor::new(
-            command_providers.clone(),
-            command_providers,
-            relays.clone(),
-        ));
+        let processor = Arc::new(CommandProcessor::new(command_providers, relays.clone()));
         let unused = Arc::new(UnusedServices);
         let update_started = CancellationToken::new();
         let updater = Arc::new(UpdatedServices(update_started.clone()));
@@ -130,7 +126,7 @@
             .unwrap();
         client
             .write_all(
-                b"GET /websocket/commands?l=__ingame__ HTTP/1.1\r\n\
+                b"GET /websocket/commands?l=counter HTTP/1.1\r\n\
 Host: localhost\r\n\
 Connection: Upgrade\r\n\
 Upgrade: websocket\r\n\
@@ -164,7 +160,7 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             .unwrap();
         closing_client
             .write_all(
-                b"GET /websocket/commands?l=__ingame__ HTTP/1.1\r\n\
+                b"GET /websocket/commands?l=counter HTTP/1.1\r\n\
 Host: localhost\r\n\
 Connection: Upgrade\r\n\
 Upgrade: websocket\r\n\

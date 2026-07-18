@@ -19,7 +19,7 @@ The daemon was written from scratch in Rust. The upstream project defines the co
 
 `vosu` reads live state from osu!stable and osu!lazer, then serves the dashboard, counters, reports, and compatible HTTP/WebSocket APIs. It is one native daemon: no Node.js, Electron, .NET, or C# runtime is required.
 
-This build does not ship or launch the former Electron/asdf-overlay in-game overlay. The compatible browser page, settings data, and command WebSocket remain available.
+This build does not provide the former Electron/asdf-overlay in-game overlay or an embedded replacement. External overlay software can consume the documented HTTP and WebSocket APIs; [ADR 0008](docs/decisions/0008-external-in-game-overlays.md) records this product boundary.
 
 ## Why this build
 
@@ -143,28 +143,16 @@ Edit `vosu.env`. The daemon watches the file and applies supported changes witho
 | `SERVER_IP` | `127.0.0.1` | Listener hostname or address. |
 | `SERVER_PORT` | `24050` | Listener port. |
 | `STATIC_FOLDER_PATH` | `./static` | Counter root; the default maps to the data directory. |
-| `ENABLE_INGAME_OVERLAY` | `false` | Retained for data compatibility; see below. |
-| `INGAME_OVERLAY_KEYBIND` | `Control + Shift + Space` | Retained overlay setting. |
-| `INGAME_OVERLAY_MAX_FPS` | `60` | Retained overlay setting. |
 | `ALLOWED_IPS` | `127.0.0.1,localhost,absolute` | Peer IP patterns and allowed Origin/Referer host tokens. |
 
 Authorization requires an allowed network peer and, when supplied, an allowed `Origin` or `Referer`. A hostname token does not allow an arbitrary remote peer. Keep the default loopback listener unless remote access is intentionally configured and protected.
 
-### Deferred in-game overlay
-
-`ENABLE_INGAME_OVERLAY` is parsed, stored, and written back for migration compatibility. If set to `true`, the daemon logs:
-
-```text
-In-game overlay is unavailable in the Rust daemon-only build; ENABLE_INGAME_OVERLAY is ignored.
-```
-
-The `/api/ingame` browser page, command WebSocket, and `__ingame__.values.json` remain available to compatible browser clients. This build never downloads or launches a native or Electron in-game overlay.
 
 ## Dashboard and counters
 
 The dashboard at `/` discovers counters recursively below the static root. A counter normally contains `index.html`. `metadata.txt` can add a name, author links, description, version, and `WxH` size. An immediate `ignore.txt` excludes its directory from discovery. Mutation APIs accept counter names containing one normal path component.
 
-Counter `settings.json` files support text, color, number, checkbox, button, options, commands, textarea, password, and header entries. Values are stored at `<config>/settings/<counter>.values.json`. The `/settings` page handles daemon and counter settings. `__ingame__.values.json` remains available for browser-client compatibility.
+Counter `settings.json` files support text, color, number, checkbox, button, options, commands, textarea, password, and header entries. Values are stored at `<config>/settings/<counter>.values.json`. The `/settings` page handles daemon and counter settings.
 
 The counter catalog is served from `https://vosu.app/api.json`. Production counter downloads require HTTPS. Redirects are bounded; HTTPS-to-HTTP downgrades and loopback, private, or reserved destinations are rejected. ZIP paths, symlinks, entry counts, and expanded size are checked before same-filesystem replacement.
 
@@ -200,7 +188,6 @@ File routes enforce root containment and support validated single HTTP byte rang
 
 - `GET /`, `/settings`, `/local-overlays`, `/available`, `/favicon.ico`
 - `GET /assets/{path}` and the fallback counter-static route
-- `GET /api/ingame...`
 - `POST /api/settingsSave`
 - `GET /api/runUpdates`
 - `GET /api/generateReport`
@@ -221,7 +208,7 @@ POST bodies are capped at 1 MiB. Generated reports escape machine, configuration
 | `/websocket/v2` | vosu v2 regular state |
 | `/websocket/v2/precise` | vosu precise state |
 | `/websocket/v2/subscribe` | Selected fields from the vosu v2 document |
-| `/websocket/commands` | Counter, settings, filter commands, and the retained `__ingame__` browser flow |
+| `/websocket/commands` | Counter settings and filter commands |
 
 Unknown near-miss paths do not upgrade. Frames and assembled messages are limited to 1 MiB. Slow clients receive the latest state instead of building an unbounded backlog. The [upstream tosu wiki](https://github.com/tosuapp/tosu/wiki) documents the compatibility schemas and filter examples.
 

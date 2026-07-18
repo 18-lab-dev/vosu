@@ -40,8 +40,7 @@ use vosu::{
         auth::{AuthorizationPolicy, RequestHeaders},
         catalog::decode_response,
         commands::{
-            CommandAction, CommandClient, CommandProcessor, CounterProvider, Relay, RelaySink,
-            SettingsProvider,
+            CommandAction, CommandClient, CommandProcessor, Relay, RelaySink, SettingsProvider,
         },
         files::{
             ByteRange, MissingKind, RangeError, ResourceOutcome, content_type, parse_range,
@@ -359,7 +358,7 @@ fn file_range_mime_and_path_security_matrix_is_strict() {
 #[test]
 fn embedded_pages_and_assets_preserve_status_mime_and_no_cache_contract() {
     let pages = PageService;
-    let dashboard = pages.lookup_get("/", false, None);
+    let dashboard = pages.lookup_get("/", false);
     assert!(matches!(dashboard, PageLookup::Dynamic(_)));
     let css = pages.asset("homepage.min.css");
     assert_eq!(css.status, 200);
@@ -520,12 +519,6 @@ fn enum_mod_accuracy_grade_and_hit_boundaries_are_wire_stable() {
     assert!(fix_decimals_to(1.0, 101).is_err());
 }
 
-struct StaticCounters;
-impl CounterProvider for StaticCounters {
-    fn local_counters(&self) -> Result<Value, String> {
-        Ok(json!([{"name":"one"}]))
-    }
-}
 struct StaticSettings;
 impl SettingsProvider for StaticSettings {
     fn get(&self, overlay: &str) -> Result<Value, String> {
@@ -542,11 +535,7 @@ impl RelaySink for NullRelays {
 
 #[tokio::test]
 async fn command_frames_decode_target_filter_and_shutdown_without_debounce_leak() {
-    let processor = CommandProcessor::new(
-        Arc::new(StaticCounters),
-        Arc::new(StaticSettings),
-        Arc::new(NullRelays),
-    );
+    let processor = CommandProcessor::new(Arc::new(StaticSettings), Arc::new(NullRelays));
     let client = CommandClient::from_query(7, Some("counter%20name")).unwrap();
     assert_eq!(client.overlay, "counter name");
     assert!(matches!(

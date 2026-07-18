@@ -18,9 +18,6 @@ pub struct Config {
     pub server_ip: String,
     pub server_port: f64,
     pub static_folder_path: String,
-    pub enable_ingame_overlay: bool,
-    pub ingame_overlay_keybind: String,
-    pub ingame_overlay_max_fps: f64,
     pub allowed_ips: String,
 }
 
@@ -40,9 +37,6 @@ impl Default for Config {
             server_ip: "127.0.0.1".to_owned(),
             server_port: 24_050.0,
             static_folder_path: "./static".to_owned(),
-            enable_ingame_overlay: false,
-            ingame_overlay_keybind: "Control + Shift + Space".to_owned(),
-            ingame_overlay_max_fps: 60.0,
             allowed_ips: "127.0.0.1,localhost,absolute".to_owned(),
         }
     }
@@ -63,9 +57,6 @@ pub enum ConfigKey {
     ServerIp,
     ServerPort,
     StaticFolderPath,
-    EnableIngameOverlay,
-    IngameOverlayKeybind,
-    IngameOverlayMaxFps,
     AllowedIps,
 }
 
@@ -103,7 +94,7 @@ impl Default for ConfigSchema {
     }
 }
 
-const SCHEMA_ITEMS: [ConfigItem; 17] = [
+const SCHEMA_ITEMS: [ConfigItem; 14] = [
     item(
         ConfigKey::EnableAutoUpdate,
         "ENABLE_AUTOUPDATE",
@@ -183,24 +174,6 @@ const SCHEMA_ITEMS: [ConfigItem; 17] = [
         None,
     ),
     item(
-        ConfigKey::EnableIngameOverlay,
-        "ENABLE_INGAME_OVERLAY",
-        ConfigDefault::Boolean(false),
-        None,
-    ),
-    item(
-        ConfigKey::IngameOverlayKeybind,
-        "INGAME_OVERLAY_KEYBIND",
-        ConfigDefault::String("Control + Shift + Space"),
-        None,
-    ),
-    item(
-        ConfigKey::IngameOverlayMaxFps,
-        "INGAME_OVERLAY_MAX_FPS",
-        ConfigDefault::Number(60.0),
-        None,
-    ),
-    item(
         ConfigKey::AllowedIps,
         "ALLOWED_IPS",
         ConfigDefault::String("127.0.0.1,localhost,absolute"),
@@ -228,7 +201,7 @@ pub const DEFAULT_SCHEMA: ConfigSchema = ConfigSchema {
 
 /// The source's serialization order, which intentionally differs from schema
 /// declaration order.
-pub const BINDING_ORDER: [&str; 17] = [
+pub const BINDING_ORDER: [&str; 14] = [
     "DEBUG_LOG",
     "ENABLE_AUTOUPDATE",
     "OPEN_DASHBOARD_ON_STARTUP",
@@ -236,12 +209,9 @@ pub const BINDING_ORDER: [&str; 17] = [
     "CALCULATE_PP",
     "READ_MANIA_SCROLL_SPEED",
     "ENABLE_KEY_OVERLAY",
-    "ENABLE_INGAME_OVERLAY",
     "POLL_RATE",
     "PRECISE_DATA_POLL_RATE",
     "V2_SUBSCRIPTION_DEBOUNCE",
-    "INGAME_OVERLAY_KEYBIND",
-    "INGAME_OVERLAY_MAX_FPS",
     "SERVER_IP",
     "SERVER_PORT",
     "ALLOWED_IPS",
@@ -249,11 +219,10 @@ pub const BINDING_ORDER: [&str; 17] = [
 ];
 
 /// A blank line is inserted after each of these bindings.
-pub const NEWLINE_INSERTIONS: [&str; 6] = [
+pub const NEWLINE_INSERTIONS: [&str; 5] = [
     "OPEN_DASHBOARD_ON_STARTUP",
     "READ_MANIA_SCROLL_SPEED",
-    "ENABLE_INGAME_OVERLAY",
+    "ENABLE_KEY_OVERLAY",
     "V2_SUBSCRIPTION_DEBOUNCE",
-    "INGAME_OVERLAY_MAX_FPS",
     "ALLOWED_IPS",
 ];

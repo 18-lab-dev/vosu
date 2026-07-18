@@ -479,29 +479,6 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
             ),
         ],
     );
-    let overlay = settings_group(
-        "Overlay",
-        &[
-            settings_item(
-                "In-Game Overlay",
-                "Show the in-game overlay in the game, toggleable via a custom keybind.",
-                &format!(
-                    "{}{}",
-                    settings_switch("ENABLE_INGAME_OVERLAY", config.enable_ingame_overlay),
-                    settings_text(
-                        "INGAME_OVERLAY_KEYBIND",
-                        &config.ingame_overlay_keybind,
-                        " -keybind"
-                    )
-                ),
-            ),
-            settings_item(
-                "Overlay Frame Rate",
-                "The maximum frame rate at which the overlay will be rendered.<br>In most cases, this value should not exceed the refresh rate of your monitor.",
-                &settings_number("INGAME_OVERLAY_MAX_FPS", config.ingame_overlay_max_fps, 1),
-            ),
-        ],
-    );
     let advanced = settings_group(
         "Advanced",
         &[
@@ -522,7 +499,7 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
             ),
         ],
     );
-    format!(r#"<div class="settings">{general}{data}{server}{overlay}{advanced}</div>"#)
+    format!(r#"<div class="settings">{general}{data}{server}{advanced}</div>"#)
 }
 
 pub(super) fn escape_html(value: &str) -> String {

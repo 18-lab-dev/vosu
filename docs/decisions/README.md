@@ -13,6 +13,7 @@ These records document load-bearing choices visible in the current vosu implemen
 | [0005](0005-root-confined-file-serving.md) | Accepted | Serve files through root-confined retained handles |
 | [0006](0006-transactional-self-update.md) | Accepted | Perform self-updates as durable transactions |
 | [0007](0007-vosu-clean-cutover.md) | Accepted | Adopt vosu as the sole product identity with a one-time state migration |
+| [0008](0008-external-in-game-overlays.md) | Accepted | Keep in-game overlays outside vosu |
 
 See the system context in [Architecture](../architecture.md) and the measured hot paths in [Benchmarks](../benchmarks.md).
 

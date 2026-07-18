@@ -157,14 +157,6 @@ fn count_inputs_use_bounded_javascript_numeric_coercion() {
 }
 
 #[test]
-fn ingame_route_retains_source_substring_matching() {
-    assert_eq!(
-        classify(&Method::GET, "/prefix/api/ingame/suffix"),
-        Some(Endpoint::Ingame)
-    );
-}
-
-#[test]
 fn cors_is_applied_to_error_envelopes() {
     for response in [
         not_found(),

@@ -87,7 +87,7 @@ body {
   color: var(--text-1);
 }
 
-body:not(.ingame) {
+body {
   justify-content: center;
   flex-direction: column;
   display: flex;
@@ -156,7 +156,7 @@ header {
   font-size: 0.9em;
 }
 
-body:not(.ingame) main {
+body main {
   display: grid;
   min-height: 0;
   margin-top: 2em;
@@ -1687,9 +1687,6 @@ hr.modal-space {
 }
 
 
-.ingame_keybind {
-  width: 25em !important;
-}
 
 @keyframes rainbow-text-flow {
   0% {

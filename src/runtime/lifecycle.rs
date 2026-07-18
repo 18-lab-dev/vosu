@@ -103,11 +103,7 @@ impl ProductionRuntime {
             counters: Arc::clone(&counters),
         });
         let relays = Arc::new(WebSocketRelaySink::new());
-        let processor = Arc::new(CommandProcessor::new(
-            counter_facade.clone(),
-            counter_facade,
-            relays.clone(),
-        ));
+        let processor = Arc::new(CommandProcessor::new(counter_facade, relays.clone()));
         let hubs = WebSocketHubs::start(
             self.snapshots.clone(),
             self.snapshots.clone(),

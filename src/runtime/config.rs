@@ -54,15 +54,12 @@ pub(super) fn apply_config_values(
     boolean!("ENABLE_KEY_OVERLAY", enable_key_overlay);
     boolean!("SHOW_MP_COMMANDS", show_mp_commands);
     boolean!("READ_MANIA_SCROLL_SPEED", read_mania_scroll_speed);
-    boolean!("ENABLE_INGAME_OVERLAY", enable_ingame_overlay);
     number!("POLL_RATE", poll_rate);
     number!("PRECISE_DATA_POLL_RATE", precise_data_poll_rate);
     number!("V2_SUBSCRIPTION_DEBOUNCE", v2_subscription_debounce);
     number!("SERVER_PORT", server_port);
-    number!("INGAME_OVERLAY_MAX_FPS", ingame_overlay_max_fps);
     string!("SERVER_IP", server_ip);
     string!("STATIC_FOLDER_PATH", static_folder_path);
-    string!("INGAME_OVERLAY_KEYBIND", ingame_overlay_keybind);
     string!("ALLOWED_IPS", allowed_ips);
 }
 

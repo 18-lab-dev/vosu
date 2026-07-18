@@ -121,7 +121,6 @@ impl ConfigDocument {
             ConfigKey::EnableKeyOverlay => self.config.enable_key_overlay = value,
             ConfigKey::ShowMpCommands => self.config.show_mp_commands = value,
             ConfigKey::ReadManiaScrollSpeed => self.config.read_mania_scroll_speed = value,
-            ConfigKey::EnableIngameOverlay => self.config.enable_ingame_overlay = value,
             _ => unreachable!("schema boolean key has boolean storage"),
         }
     }
@@ -132,7 +131,6 @@ impl ConfigDocument {
             ConfigKey::PreciseDataPollRate => self.config.precise_data_poll_rate = value,
             ConfigKey::V2SubscriptionDebounce => self.config.v2_subscription_debounce = value,
             ConfigKey::ServerPort => self.config.server_port = value,
-            ConfigKey::IngameOverlayMaxFps => self.config.ingame_overlay_max_fps = value,
             _ => unreachable!("schema number key has number storage"),
         }
     }
@@ -141,7 +139,6 @@ impl ConfigDocument {
         match key {
             ConfigKey::ServerIp => self.config.server_ip = value,
             ConfigKey::StaticFolderPath => self.config.static_folder_path = value,
-            ConfigKey::IngameOverlayKeybind => self.config.ingame_overlay_keybind = value,
             ConfigKey::AllowedIps => self.config.allowed_ips = value,
             _ => unreachable!("schema string key has string storage"),
         }
@@ -162,9 +159,6 @@ impl ConfigDocument {
             "SERVER_IP" => self.config.server_ip.clone(),
             "SERVER_PORT" => format_number(self.config.server_port),
             "STATIC_FOLDER_PATH" => self.config.static_folder_path.clone(),
-            "ENABLE_INGAME_OVERLAY" => self.config.enable_ingame_overlay.to_string(),
-            "INGAME_OVERLAY_KEYBIND" => self.config.ingame_overlay_keybind.clone(),
-            "INGAME_OVERLAY_MAX_FPS" => format_number(self.config.ingame_overlay_max_fps),
             "ALLOWED_IPS" => self.config.allowed_ips.clone(),
             _ => unreachable!("binding order contains only schema bindings"),
         }

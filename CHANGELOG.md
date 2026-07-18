@@ -14,6 +14,10 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 - Added an idempotent, one-time migration for existing state. Linux moves non-conflicting files from former `tosu` XDG config, data, and cache roots into the corresponding `vosu` roots. On every platform, former `tosu.env` values fill gaps in `vosu.env`; current values win, deprecated bindings are dropped, and the former file is removed only after successful replacement. Normal operation then reads and writes only vosu locations.
 - Kept the upstream tosu name only where it identifies the compatibility source, provenance, parity fixtures, migration inputs, or the historical release record below. No permanent product aliases were added.
 
+### In-game overlay removal
+
+- Removed the retained in-game overlay configuration bindings, `/api/ingame`, dedicated browser assets, `__ingame__` storage, and the command WebSocket catalog flow. vosu no longer provides an embedded in-game overlay; external overlay software can continue to consume the remaining documented APIs.
+
 ### Documentation
 
 - Updated installation, configuration, API, architecture, benchmark workflow, ownership, and release documentation for the vosu cutover.

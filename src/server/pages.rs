@@ -133,12 +133,9 @@ impl EffectiveListener {
             .expect("listener authority always forms a valid HTTP URL")
     }
 
-    pub fn available_url(&self, ingame: bool) -> Url {
+    pub fn available_url(&self) -> Url {
         let mut url = self.dashboard_url();
         url.set_path("/available");
-        if ingame {
-            url.set_query(Some("ingame=true"));
-        }
         url
     }
 
@@ -173,19 +170,6 @@ impl PageService {
         embedded_named("homepage.html").unwrap_or_else(EmbeddedResponse::not_found)
     }
 
-    pub fn ingame_page(&self, counters: &serde_json::Value) -> EmbeddedResponse {
-        let Some(asset) = ServerAssets::get("ingame.html") else {
-            return EmbeddedResponse::not_found();
-        };
-        let mut body = Vec::with_capacity(asset.data.len() + 64);
-        body.extend_from_slice(asset.data.as_ref());
-        body.extend_from_slice(b"\n\n\n<script>\rwindow.COUNTERS = ");
-        serde_json::to_writer(&mut body, counters)
-            .expect("serializing a serde_json::Value cannot fail");
-        body.extend_from_slice(b"\r</script>\n");
-        EmbeddedResponse::ok("text/html; charset=utf-8", body)
-    }
-
     pub fn asset(&self, requested: &str) -> EmbeddedResponse {
         let Some(name) = safe_asset_name(requested) else {
             return EmbeddedResponse::not_found();
@@ -197,19 +181,8 @@ impl PageService {
         embedded_named("favicon.ico").unwrap_or_else(EmbeddedResponse::not_found)
     }
 
-    /// Classify retained GET pages. `/api/ingame` intentionally follows the
-    /// source regular-expression route and therefore matches within the path.
-    pub fn lookup_get(
-        &self,
-        path: &str,
-        settings_overlay_query_present: bool,
-        ingame_counters: Option<&serde_json::Value>,
-    ) -> PageLookup {
-        if path.contains("/api/ingame") {
-            return PageLookup::Embedded(
-                self.ingame_page(ingame_counters.unwrap_or(&serde_json::Value::Array(Vec::new()))),
-            );
-        }
+    /// Classify retained GET pages.
+    pub fn lookup_get(&self, path: &str, settings_overlay_query_present: bool) -> PageLookup {
         if path == "/favicon.ico" {
             return PageLookup::Embedded(self.favicon());
         }
@@ -370,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn pages_assets_missing_and_regex_ingame_are_classified() {
+    fn pages_assets_missing_and_special_routes_are_classified() {
         let pages = PageService;
         assert_eq!(
             pages.dashboard_template().body.as_ref(),
@@ -383,33 +356,13 @@ mod tests {
         assert_eq!(pages.asset("missing.js").status, 404);
         assert_eq!(pages.asset("../homepage.html").status, 404);
         assert_eq!(pages.asset("missing.js").content_type, "text/html");
-        assert!(matches!(
-            pages.lookup_get("/prefix/api/ingame/suffix", false, None),
-            PageLookup::Embedded(_)
-        ));
         assert_eq!(
-            pages.lookup_get("/.well-known/x", false, None),
+            pages.lookup_get("/.well-known/x", false),
             PageLookup::NotFound
         );
         assert_eq!(
-            pages.lookup_get("/settings", true, None),
+            pages.lookup_get("/settings", true),
             PageLookup::Dynamic(DynamicPage::EmptySettings)
-        );
-    }
-
-    #[test]
-    fn ingame_preserves_html_and_appends_json_without_html_reencoding() {
-        let pages = PageService;
-        let counters = serde_json::json!([{"name":"A < B","version":"1"}]);
-        let response = pages.ingame_page(&counters);
-        let original = include_bytes!("../../assets/server/ingame.html");
-        assert!(response.body.starts_with(original));
-        assert!(response.body.ends_with(b"\r</script>\n"));
-        assert!(
-            response
-                .body
-                .windows(b"A < B".len())
-                .any(|window| window == b"A < B")
         );
     }
 
@@ -483,8 +436,8 @@ mod tests {
         let hostname = EffectiveListener::new("localhost", "127.0.0.1:3210".parse().unwrap());
         assert_eq!(hostname.dashboard_url().as_str(), "http://localhost:3210/");
         assert_eq!(
-            hostname.available_url(true).as_str(),
-            "http://localhost:3210/available?ingame=true"
+            hostname.available_url().as_str(),
+            "http://localhost:3210/available"
         );
 
         let ipv6 = EffectiveListener::new("::1", "[::1]:24050".parse().unwrap());

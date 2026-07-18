@@ -207,21 +207,17 @@
 
         let sink = Arc::new(WebSocketRelaySink::new());
         let providers = Arc::new(CommandProviders);
-        let processor = Arc::new(CommandProcessor::new(
-            providers.clone(),
-            providers,
-            sink.clone(),
-        ));
+        let processor = Arc::new(CommandProcessor::new(providers, sink.clone()));
         sink.bind_processor(&processor);
 
         let client_id = namespaced_client_id(COMMANDS_CHANNEL, local_id).unwrap();
-        let client = CommandClient::from_query(client_id, Some("__ingame__")).unwrap();
+        let client = CommandClient::from_query(client_id, Some("counter")).unwrap();
         let _registration = sink.register(COMMANDS_CHANNEL, client, &connection);
         for value in [1, 2] {
             sink.relay(Relay {
                 except: None,
                 command: "updateSettings".into(),
-                overlay: "__ingame__".into(),
+                overlay: "counter".into(),
                 payload: Some(format!(r#"{{"value":{value}}}"#)),
             });
         }

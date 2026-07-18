@@ -119,12 +119,6 @@ mod tests {
 
     struct CommandProviders;
 
-    impl super::super::commands::CounterProvider for CommandProviders {
-        fn local_counters(&self) -> Result<Value, String> {
-            Ok(json!(["counter"]))
-        }
-    }
-
     impl super::super::commands::SettingsProvider for CommandProviders {
         fn get(&self, _: &str) -> Result<Value, String> {
             Ok(json!({}))
@@ -143,9 +137,6 @@ mod tests {
             _: Option<String>,
         ) -> ProviderFuture<'_, Result<EmbeddedResponse, String>> {
             Box::pin(async { Err("unused".into()) })
-        }
-        fn ingame_counters(&self) -> Result<Value, String> {
-            Ok(json!([]))
         }
         fn search_counters(
             &self,

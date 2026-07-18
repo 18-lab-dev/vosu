@@ -20,11 +20,6 @@ use framing::{error_value, parse_filters, reply};
 
 pub const SAVE_DEBOUNCE: Duration = Duration::from_millis(500);
 
-/// Counter catalog boundary. Production supplies the actual counter store.
-pub trait CounterProvider: Send + Sync + 'static {
-    fn local_counters(&self) -> Result<Value, String>;
-}
-
 /// Counter settings boundary. Values are the compact browser-facing map.
 pub trait SettingsProvider: Send + Sync + 'static {
     fn get(&self, overlay: &str) -> Result<Value, String>;
@@ -83,7 +78,6 @@ struct SaveCoordinator {
 }
 
 pub struct CommandProcessor {
-    counters: Arc<dyn CounterProvider>,
     settings: Arc<dyn SettingsProvider>,
     relays: Arc<dyn RelaySink>,
     save: Mutex<SaveCoordinator>,
@@ -95,14 +89,9 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl CommandProcessor {
-    pub fn new(
-        counters: Arc<dyn CounterProvider>,
-        settings: Arc<dyn SettingsProvider>,
-        relays: Arc<dyn RelaySink>,
-    ) -> Self {
+    pub fn new(settings: Arc<dyn SettingsProvider>, relays: Arc<dyn RelaySink>) -> Self {
         let (sender, receiver) = watch::channel(None);
         Self {
-            counters,
             settings,
             relays,
             save: Mutex::new(SaveCoordinator {
@@ -131,17 +120,6 @@ impl CommandProcessor {
         let payload = second.map_or(data, |index| &data[index + 1..]);
 
         match command {
-            "getOverlays" | "getCounters" => {
-                let message = if client.overlay != "__ingame__" || overlay != client.overlay {
-                    error_value("Wrong overlay")
-                } else {
-                    match self.counters.local_counters() {
-                        Ok(value) => value,
-                        Err(error) => error_value(error),
-                    }
-                };
-                reply(command, Some(message))
-            }
             "getSettings" => {
                 let message = if overlay != client.overlay {
                     error_value("Wrong overlay")
@@ -182,16 +160,6 @@ impl CommandProcessor {
             }
             _ => reply(command, None),
         }
-    }
-
-    /// Relays a catalog refresh as `getOverlays:__ingame__:`.
-    pub fn refresh_overlays(&self) {
-        self.relays.relay(Relay {
-            except: None,
-            command: "getOverlays".into(),
-            overlay: "__ingame__".into(),
-            payload: None,
-        });
     }
 
     /// Relays a settings refresh only to clients whose decoded `l` matches.
@@ -393,12 +361,6 @@ mod tests {
         relays: Mutex<Vec<Relay>>,
     }
 
-    impl CounterProvider for Providers {
-        fn local_counters(&self) -> Result<Value, String> {
-            Ok(serde_json::json!([{"name":"counter"}]))
-        }
-    }
-
     impl SettingsProvider for Providers {
         fn get(&self, overlay: &str) -> Result<Value, String> {
             if overlay == "broken" {
@@ -421,8 +383,7 @@ mod tests {
 
     fn setup(overlay: &str) -> (Arc<Providers>, CommandProcessor, CommandClient) {
         let providers = Arc::new(Providers::default());
-        let processor =
-            CommandProcessor::new(providers.clone(), providers.clone(), providers.clone());
+        let processor = CommandProcessor::new(providers.clone(), providers.clone());
         let client = CommandClient {
             id: 7,
             overlay: overlay.into(),
@@ -438,27 +399,15 @@ mod tests {
     }
 
     #[test]
-    fn malformed_wrong_overlay_unknown_and_catalog_envelopes() {
-        let (_, processor, ingame) = setup("__ingame__");
-        assert_eq!(processor.process(&ingame, "no-colon"), CommandAction::NoAck);
+    fn malformed_and_unknown_envelopes() {
+        let (_, processor, client) = setup("counter");
+        assert_eq!(processor.process(&client, "no-colon"), CommandAction::NoAck);
         assert_eq!(
-            processor.process(&ingame, "getSettings:%GG"),
+            processor.process(&client, "getSettings:%GG"),
             CommandAction::NoAck
         );
         assert_eq!(
-            reply_json(processor.process(&ingame, "getOverlays:other")),
-            serde_json::json!({"command":"getOverlays","message":{"error":"Wrong overlay"}})
-        );
-        assert_eq!(
-            reply_json(processor.process(&ingame, "getOverlays:__ingame__")),
-            serde_json::json!({"command":"getOverlays","message":[{"name":"counter"}]})
-        );
-        assert_eq!(
-            reply_json(processor.process(&ingame, "getCounters:__ingame__")),
-            serde_json::json!({"command":"getCounters","message":[{"name":"counter"}]})
-        );
-        assert_eq!(
-            reply_json(processor.process(&ingame, "future:overlay")),
+            reply_json(processor.process(&client, "future:counter")),
             serde_json::json!({"command":"future"})
         );
     }
@@ -698,18 +647,14 @@ mod tests {
     #[test]
     fn internal_refresh_and_relay_targeting_match_source() {
         let (providers, processor, client) = setup("overlay");
-        processor.refresh_overlays();
         processor.refresh_settings("overlay");
         let relays = lock_unpoisoned(&providers.relays);
-        assert_eq!(relays[0].command, "getOverlays");
-        assert_eq!(relays[0].overlay, "__ingame__");
         assert!(CommandProcessor::relay_frame(&client, &relays[0]).is_some());
-        assert!(CommandProcessor::relay_frame(&client, &relays[1]).is_some());
         let other = CommandClient {
             id: 9,
             overlay: "other".into(),
         };
-        assert_eq!(CommandProcessor::relay_frame(&other, &relays[1]), None);
+        assert_eq!(CommandProcessor::relay_frame(&other, &relays[0]), None);
         let excluded = Relay {
             except: Some(7),
             command: "updateSettings".into(),

@@ -15,7 +15,6 @@ use crate::config::{Config, ConfigChanged};
 pub const ARCHIVE_WARNING: &str = "It appears you are running %vosu% from an archive. Please extract it to a folder before running.";
 pub const ONEDRIVE_WARNING: &str = "%vosu% cannot run from a OneDrive folder due to potential sync conflicts and performance issues.";
 pub const ONEDRIVE_MOVE_WARNING: &str = "Please move %vosu% to a different folder.";
-pub const OVERLAY_WARNING: &str = "In-game overlay is unavailable in the Rust daemon-only build; ENABLE_INGAME_OVERLAY is ignored.";
 
 /// A value produced by the source application's permissive argument grammar.
 #[derive(Clone, Debug, PartialEq)]
@@ -424,15 +423,9 @@ impl<H: RuntimeHooks> App<H> {
             }
         }
 
-        if self.config.enable_ingame_overlay {
-            self.hooks.warn(OVERLAY_WARNING).await?;
-        }
         self.hooks.start_runtime().await?;
 
         while let Some(change) = self.hooks.next_config_change().await? {
-            if !change.old.enable_ingame_overlay && change.new.enable_ingame_overlay {
-                self.hooks.warn(OVERLAY_WARNING).await?;
-            }
             self.config = change.new;
         }
         Ok(StartupOutcome::Started)
@@ -679,61 +672,5 @@ mod tests {
         );
         assert_eq!(bypassed.run().await.unwrap(), StartupOutcome::Started);
         assert_eq!(bypassed.hooks().events, ["update:false", "runtime"]);
-    }
-
-    #[tokio::test]
-    async fn overlay_warning_is_startup_and_false_to_true_edge_triggered_without_mutation() {
-        let initial = Config {
-            enable_ingame_overlay: true,
-            ..Config::default()
-        };
-        let mut disabled = initial.clone();
-        disabled.enable_ingame_overlay = false;
-        let mut enabled_again = disabled.clone();
-        enabled_again.enable_ingame_overlay = true;
-        let hooks = RecordingHooks {
-            events: Vec::new(),
-            changes: [
-                ConfigChanged {
-                    old: Arc::new(initial.clone()),
-                    new: Arc::new(initial.clone()),
-                },
-                ConfigChanged {
-                    old: Arc::new(initial.clone()),
-                    new: Arc::new(disabled.clone()),
-                },
-                ConfigChanged {
-                    old: Arc::new(disabled),
-                    new: Arc::new(enabled_again.clone()),
-                },
-                ConfigChanged {
-                    old: Arc::new(enabled_again.clone()),
-                    new: Arc::new(enabled_again),
-                },
-            ]
-            .into(),
-        };
-        let mut app = App::new(
-            StartupArgs::default(),
-            EnvironmentSnapshot::default(),
-            PathBuf::from("/vosu"),
-            StartupPlatform::Other,
-            Arc::new(initial),
-            hooks,
-        );
-        assert_eq!(app.run().await.unwrap(), StartupOutcome::Started);
-        assert_eq!(
-            app.hooks().events,
-            [
-                "update:true",
-                &format!("warn:{OVERLAY_WARNING}"),
-                "runtime",
-                &format!("warn:{OVERLAY_WARNING}")
-            ]
-        );
-        assert!(
-            app.config.enable_ingame_overlay,
-            "warning must not coerce persisted config"
-        );
     }
 }

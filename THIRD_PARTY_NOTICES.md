@@ -15,7 +15,7 @@ The files below are embedded from `assets/server/`; the exact bytes currently sh
 - **Copyright:** Copyright (c) 2018-present Yuxi (Evan) You and Vue contributors
 - **License:** MIT
 - **License source:** <https://github.com/vuejs/core/blob/v3.5.4/LICENSE>
-- **Use:** retained dashboard and in-game-compatible browser pages (`homepage.html` and `ingame.html` load `/assets/vue.js`)
+- **Use:** retained dashboard page (`homepage.html` loads `/assets/vue.js`)
 
 ### Roboto
 
@@ -35,10 +35,10 @@ The files below are embedded from `assets/server/`; the exact bytes currently sh
 
 ### Retained images and other static files
 
-- **Material:** `assets/server/images/39979.png`, `usdt-qr-code.png`, `discord-5865f2.svg`, `github-000000.svg`, and `twitter-1DA1F2.svg`; also the retained `favicon.ico`, HTML, JavaScript, CSS/SCSS, and report template.
-- **Provenance:** the images, icon, stylesheets, and browser-page sources originated in `packages/server/assets` at the pinned upstream tosu source revision. The vosu HTML, JavaScript, and report template deliberately replace first-party names, links, API endpoints, executable names, and UI text; those branded files are therefore not byte-for-byte upstream copies. `39979.png` is the dashboard/game-page fallback image; `usdt-qr-code.png` is the donation address image; the three named SVGs are service badges used for author/catalog links.
-- **License statement:** no separate license metadata or author declaration accompanies these individual image/static files in the pinned source tree. Their upstream provenance is the tosu distribution under its root LGPL-3.0-only notice, and the customized files are distributed as part of vosu under the root LGPL-3.0-only license. This file makes no additional license claim for service names, logos, or trademarks.
-- **Evidence in this tree:** use sites in `assets/server/homepage.js`, `homepage.html`, and `ingame.html`, plus the complete current file hashes in `assets/SHA256SUMS`.
+- **Material:** `assets/server/images/39979.png`, `usdt-qr-code.png`, `discord-5865f2.svg`, `github-000000.svg`, and `twitter-1DA1F2.svg`; also retained `favicon.ico`, HTML, JavaScript, CSS/SCSS, and report template.
+- **Provenance:** images, icon, stylesheets, and browser-page sources originated in `packages/server/assets` at the pinned upstream tosu source revision. vosu HTML, JavaScript, and report template deliberately replace first-party names, links, API endpoints, executable names, and UI text; branded files therefore are not byte-for-byte upstream copies. `39979.png` is the dashboard loading fallback image; `usdt-qr-code.png` is the donation address image; the three named SVGs are service badges used in author/catalog links.
+- **License statement:** no separate license metadata or author declaration accompanies the individual image/static files in the pinned source tree. Their upstream provenance is the tosu distribution under its root LGPL-3.0-only notice, and the customized files are distributed as part of vosu under the root LGPL-3.0-only license. This file makes no additional license claim about service names, logos, or trademarks.
+- **Evidence in tree:** use sites in `assets/server/homepage.js` and `homepage.html`, plus complete current file hashes in `assets/SHA256SUMS`.
 
 ## Native live-calculation sources
 

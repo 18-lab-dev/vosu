@@ -28,8 +28,7 @@ impl ProductionRouteDelegate {
             Endpoint::SettingsSave => self.settings_save(body).await,
             Endpoint::RunUpdates => self.run_updates(response_flush_barrier(&request)).await,
             Endpoint::GenerateReport => self.generate_report().await,
-            Endpoint::Ingame
-            | Endpoint::Asset
+            Endpoint::Asset
             | Endpoint::Favicon
             | Endpoint::Root
             | Endpoint::Settings
@@ -101,7 +100,6 @@ impl ProductionRouteDelegate {
         match parsed {
             Ok(download) => match self.services.counters.download(&download).await {
                 Ok(()) => {
-                    self.services.websocket.processor.refresh_overlays();
                     json_response(StatusCode::OK, json!({ "status": "Finished" }))
                 }
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
@@ -130,10 +128,7 @@ impl ProductionRouteDelegate {
         {
             None => json_response(StatusCode::OK, json!({ "error": "no folder name" })),
             Some(name) => match self.services.counters.delete(name) {
-                Ok(()) => {
-                    self.services.websocket.processor.refresh_overlays();
-                    json_response(StatusCode::OK, json!({ "status": "deleted" }))
-                }
+                Ok(()) => json_response(StatusCode::OK, json!({ "status": "deleted" })),
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
             },
         }
@@ -228,11 +223,9 @@ impl ProductionRouteDelegate {
     }
 
     async fn page(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
-        let ingame = self.services.page_data.ingame_counters().ok();
         let lookup = {
             let path = request.uri().path();
             match endpoint {
-                Endpoint::Ingame => self.services.pages.lookup_get(path, false, ingame.as_ref()),
                 Endpoint::Asset => PageLookup::Embedded(
                     self.services
                         .pages
@@ -249,7 +242,6 @@ impl ProductionRouteDelegate {
                         .query()
                         .and_then(|query| decoded_query_value(query, "overlay"))
                         .is_some_and(|value| !value.is_empty()),
-                    ingame.as_ref(),
                 ),
                 _ => unreachable!(),
             }

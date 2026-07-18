@@ -8,14 +8,12 @@ const BACKUP_SERVER_PORT = document.querySelector('*[data-id="SERVER_PORT"] inpu
 
 
 const downloading = [];
-let selected_keys = [];
 
 
 const search_bar = document.querySelector('.search-bar');
 const available_overlays = document.querySelector('a[href="/available"]');
 const installed_overlays = document.querySelector('a[href="/"]');
 
-const keybind_div = document.querySelector('[data-id="INGAME_OVERLAY_KEYBIND"]');
 
 let timer;
 
@@ -633,7 +631,6 @@ const showSettings = {
     },
   },
   setup(props) {
-    const is_ingame = window.location.pathname == '/api/ingame';
     const settings = ref([]);
 
 
@@ -730,10 +727,8 @@ const showSettings = {
 
 
     async function updateSettings(event) {
-      if (!is_ingame) {
-        const confirmed = confirm(`Update settings?`);
-        if (!confirmed) return;
-      };
+      const confirmed = confirm(`Update settings?`);
+      if (!confirmed) return;
 
       const element = event.target;
 
@@ -811,10 +806,8 @@ const showSettings = {
 
     function removeCommand(ind, ind2) {
       const item = settings.value[ind2];
-      if (!is_ingame) {
-        const confirmed = confirm(`Delete command?`);
-        if (!confirmed) return;
-      };
+      const confirmed = confirm(`Delete command?`);
+      if (!confirmed) return;
 
       item.value.splice(ind, 1);
     };
@@ -1721,11 +1714,6 @@ window.onstorage = (e) => {
   }
 };
 
-if (queryParams.has('ingame')) {
-  document.querySelector('.tabs')?.remove();
-  document.querySelector('.links')?.remove();
-  document.querySelector('.submit-counter')?.remove();
-};
 
 
 
@@ -1737,68 +1725,6 @@ if (window.location.pathname == '/settings' && queryParams.has('overlay')) {
   loadCounterSettings(queryParams.get('overlay'), '.results', true);
 };
 
-if (window.location.pathname == '/settings' && !queryParams.has('overlay') && keybind_div) {
-  const keybindInput = keybind_div.children[0];
-  let previousKeybind = keybindInput.value;
-
-  keybindInput.addEventListener('focus', () => {
-    keybindInput.value = '...';
-    window.addEventListener('keydown', handleKey);
-    window.addEventListener('keyup', handleKey);
-  });
-
-  keybindInput.addEventListener('blur', () => {
-    if (keybindInput.value === '...') keybindInput.value = previousKeybind;
-
-    window.removeEventListener('keydown', handleKey);
-    window.removeEventListener('keyup', handleKey);
-    checkSettingsChanges();
-  });
-
-  const handleKey = (event) => {
-    event.preventDefault();
-    const key = event.key === ' ' ? 'Space' : event.key;
-    const formattedKey = key.charAt(0).toUpperCase() + key.slice(1).toLowerCase();
-
-    if (event.type === 'keydown') {
-      if (key === 'Escape') {
-        keybindInput.value = previousKeybind;
-        keybindInput.blur();
-        return;
-      }
-
-      if (selected_keys.length >= 4) {
-        displayNotification({
-          element: keybindInput,
-          text: `You can only bind up to 4 keys!`,
-          classes: ['red'],
-          delay: 2000,
-        });
-
-        selected_keys = [];
-        keybindInput.blur();
-        return;
-      }
-
-      if (!selected_keys.some(k => k.key === formattedKey)) {
-        selected_keys.push({ code: event.keyCode, key: formattedKey });
-        selected_keys.sort((a, b) => {
-          const modifierOrder = ['Meta', 'Control', 'Shift', 'Alt'];
-          const isModifierA = modifierOrder.includes(a.key.split('+')[0]);
-          const isModifierB = modifierOrder.includes(b.key.split('+')[0]);
-          if (isModifierA !== isModifierB) return isModifierA ? -1 : 1;
-          return a.key.localeCompare(b.key, undefined, { numeric: true });
-        });
-        keybindInput.value = selected_keys.map(k => k.key).join(' + ');
-      }
-    } else if (event.type === 'keyup') {
-      selected_keys = selected_keys.filter(k => k.code !== event.keyCode);
-      if (selected_keys.length === 0) keybindInput.blur();
-
-      previousKeybind = keybindInput.value;
-    }
-  }
-}
 
 function showDonateModal() {
   displayModal(`

@@ -182,7 +182,7 @@ fn settings_union_migrates_coerces_and_roundtrips_compact_values() {
 }
 
 #[test]
-fn developer_update_and_ingame_values_are_preserved() {
+fn developer_update_requires_yes_query() {
     let (root, service, _, _) = fixture();
     std::fs::create_dir_all(root.path().join("static/counter")).unwrap();
     assert!(
@@ -194,25 +194,6 @@ fn developer_update_and_ingame_values_are_preserved() {
         .save_developer_settings("counter", all_settings(), Some("yes"))
         .unwrap();
     assert_eq!(saved.len(), 10);
-    let ingame_folder = root.path().join("static/__ingame__");
-    std::fs::create_dir(&ingame_folder).unwrap();
-    std::fs::write(
-        ingame_folder.join("settings.values.json"),
-        r#"{"legacy":true}"#,
-    )
-    .unwrap();
-    let ingame = json!({"fps-limit": 60, "nested": {"enabled": true}, "items": [1, "two"]});
-    service.save_ingame_settings(&ingame).unwrap();
-    let (_, values) = service.get_settings("__ingame__").unwrap();
-    assert_eq!(Value::Object(values), ingame);
-    assert!(ingame_folder.join("settings.old-values.json").exists());
-    assert!(
-        service
-            .settings()
-            .save_user_values("__ingame__", &[])
-            .is_err()
-    );
-    assert!(!root.path().join("static/__ingame__/settings.json").exists());
 }
 
 #[tokio::test]
@@ -534,26 +515,6 @@ fn settings_reject_missing_and_symlink_counter_directories_without_creating_file
 
 #[cfg(unix)]
 #[test]
-fn ingame_migration_rejects_symlinked_legacy_parent() {
-    use std::os::unix::fs::symlink;
-    let (root, service, _, _) = fixture();
-    let outside = root.path().join("outside-ingame");
-    std::fs::create_dir(&outside).unwrap();
-    let legacy = outside.join("settings.values.json");
-    std::fs::write(&legacy, r#"{"outside":true}"#).unwrap();
-    symlink(&outside, root.path().join("static/__ingame__")).unwrap();
-    assert!(matches!(
-        service.save_ingame_settings(&json!({"new": true})),
-        Err(CounterError::Settings(SettingsError::UnsafeCounterPath))
-    ));
-    assert_eq!(
-        std::fs::read_to_string(legacy).unwrap(),
-        r#"{"outside":true}"#
-    );
-}
-
-#[cfg(unix)]
-#[test]
 fn discovery_rejects_symlinked_settings_file() {
     use std::os::unix::fs::symlink;
     let (root, service, _, _) = fixture();
@@ -628,21 +589,4 @@ async fn shutdown_cancels_and_joins_active_installs() {
             .await,
         Err(CounterError::ShuttingDown)
     ));
-}
-
-#[test]
-fn overlays_catalog_by_exact_name_author_and_version() {
-    let (root, service, _, _) = fixture();
-    let folder = root.path().join("static/counter");
-    std::fs::create_dir(&folder).unwrap();
-    std::fs::write(
-        folder.join("metadata.txt"),
-        "Name: A\nAuthor: B\nVersion: 1.0",
-    )
-    .unwrap();
-    let mut remote = service.discover().unwrap().remove(0);
-    remote.version = "2.0".into();
-    let overlaid = service.overlay_catalog(vec![remote]).unwrap();
-    assert!(overlaid[0].downloaded);
-    assert!(overlaid[0].updatable);
 }

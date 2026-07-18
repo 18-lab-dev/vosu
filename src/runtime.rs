@@ -57,7 +57,7 @@ use crate::{
     server::{
         auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},
         catalog::{CatalogOverlay, CatalogService, LocalOverlay},
-        commands::{CommandProcessor, CounterProvider, SettingsProvider},
+        commands::{CommandProcessor, SettingsProvider},
         pages::{DynamicPage, EmbeddedResponse, PageService},
         routes::{CachedJson, RequestAuthorizer, RouteProviders, StateJsonProvider, StateRoute},
         runtime::{

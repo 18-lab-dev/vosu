@@ -214,7 +214,6 @@ pub trait PageDataProvider: Send + Sync {
         page: DynamicPage,
         authority: Option<String>,
     ) -> ProviderFuture<'_, Result<EmbeddedResponse, String>>;
-    fn ingame_counters(&self) -> Result<Value, String>;
     fn search_counters(
         &self,
         query: &str,

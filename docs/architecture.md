@@ -13,7 +13,6 @@ Important constraints visible in the code are:
 - Regular and precise sampling have independent configured cadences, but all state transitions are serialized before publication (`src/state/worker.rs::spawn_state_worker_with_clock`).
 - Public payloads must represent one atomic state point; wire schemas never assemble independently loaded pieces (`src/api.rs`, `src/api/snapshot.rs::SnapshotManager`).
 - Calculation compatibility has two contracts: state-driven live calculation uses the dedicated calculator crate, while the calculation endpoint follows the legacy rosu-pp-js-compatible builder (`src/calculation/engine.rs`).
-- The process is a daemon-only build. Startup explicitly reports that the in-game overlay setting is unavailable (`src/app.rs::OVERLAY_WARNING`).
 
 ## System context
 
@@ -29,7 +28,7 @@ flowchart LR
     Parity -. compares against pinned upstream daemon .-> Reference[upstream tosu parity reference]
 ```
 
-The product boundary is the single `vosu` process. osu! is an observed external process; consumers, release services, and the local filesystem are external dependencies. `tools/live-parity/run.py` is not a production container: it orchestrates deterministic upstream-tosu-versus-vosu captures for the supported Windows/stable, Windows/lazer, and Linux/lazer matrix declared in `tools/live-parity/live_parity.py`.
+The product boundary is the single `vosu` process. osu! is an observed external process; consumers, including independent overlay software, release services, and the local filesystem are external dependencies. [ADR 0008](decisions/0008-external-in-game-overlays.md) keeps in-game overlay UI and state outside this boundary. `tools/live-parity/run.py` is not a production container: it orchestrates deterministic upstream-tosu-versus-vosu captures for the supported Windows/stable, Windows/lazer, and Linux/lazer matrix declared in `tools/live-parity/live_parity.py`.
 
 ## Containers and ownership
 

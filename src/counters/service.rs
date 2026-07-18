@@ -196,10 +196,6 @@ impl ReloadableCounterService {
         self.current.load_full().discover()
     }
 
-    pub fn overlay_catalog(&self, catalog: Vec<Counter>) -> Result<Vec<Counter>, CounterError> {
-        self.current.load_full().overlay_catalog(catalog)
-    }
-
     pub async fn download(&self, request: &DownloadRequest) -> Result<(), CounterError> {
         self.current.load_full().download(request).await
     }
@@ -237,13 +233,6 @@ impl ReloadableCounterService {
             .save_developer_settings(name, settings, update_query)
     }
 
-    pub fn save_ingame_settings(
-        &self,
-        values: &Value,
-    ) -> Result<serde_json::Map<String, Value>, CounterError> {
-        self.current.load_full().save_ingame_settings(values)
-    }
-
     pub async fn save_user_settings_debounced(
         &self,
         name: String,
@@ -279,17 +268,6 @@ impl ReloadableCounterService {
             .load_full()
             .settings()
             .save_user_values(name, payload)?)
-    }
-
-    pub fn save_ingame_values(
-        &self,
-        values: &Value,
-    ) -> Result<serde_json::Map<String, Value>, CounterError> {
-        Ok(self
-            .current
-            .load_full()
-            .settings()
-            .save_ingame_values(values)?)
     }
 
     pub async fn shutdown(&self) {
@@ -401,21 +379,6 @@ impl CounterService {
         Ok(counters)
     }
 
-    pub fn overlay_catalog(&self, mut catalog: Vec<Counter>) -> Result<Vec<Counter>, CounterError> {
-        let local = self.discover()?;
-        for item in &mut catalog {
-            if let Some(found) = local
-                .iter()
-                .find(|candidate| candidate.name == item.name && candidate.author == item.author)
-            {
-                item.downloaded = true;
-                item.updatable =
-                    !item.version.is_empty() && !item.version.eq_ignore_ascii_case(&found.version);
-            }
-        }
-        Ok(catalog)
-    }
-
     pub fn parse_download_request(
         raw_url_capture: &str,
         name_query: Option<&str>,
@@ -519,13 +482,6 @@ impl CounterService {
             return Err(CounterError::InvalidName);
         }
         Ok(self.settings.save_developer_settings(name, settings)?)
-    }
-
-    pub fn save_ingame_settings(
-        &self,
-        values: &Value,
-    ) -> Result<serde_json::Map<String, Value>, CounterError> {
-        Ok(self.settings.save_ingame_values(values)?)
     }
 
     pub async fn save_user_settings_debounced(

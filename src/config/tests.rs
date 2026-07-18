@@ -62,14 +62,10 @@ CALCULATE_PP=true
 READ_MANIA_SCROLL_SPEED=true
 
 ENABLE_KEY_OVERLAY=true
-ENABLE_INGAME_OVERLAY=false
 
 POLL_RATE=150
 PRECISE_DATA_POLL_RATE=10
 V2_SUBSCRIPTION_DEBOUNCE=0
-
-INGAME_OVERLAY_KEYBIND=Control + Shift + Space
-INGAME_OVERLAY_MAX_FPS=60
 
 SERVER_IP=127.0.0.1
 SERVER_PORT=24050
@@ -102,9 +98,6 @@ fn defaults_and_serialization_match_source_bytes() {
             "SERVER_IP",
             "SERVER_PORT",
             "STATIC_FOLDER_PATH",
-            "ENABLE_INGAME_OVERLAY",
-            "INGAME_OVERLAY_KEYBIND",
-            "INGAME_OVERLAY_MAX_FPS",
             "ALLOWED_IPS",
         ]
     );
@@ -119,7 +112,6 @@ ENABLE_AUTOUPDATE=1
 OPEN_DASHBOARD_ON_STARTUP=true
 SERVER_PORT=not-a-number
 POLL_RATE=0x96
-INGAME_OVERLAY_MAX_FPS=-12.5
 STATIC_FOLDER_PATH=\"folder # retained\" # ignored comment
 SERVER_IP: localhost
 UNKNOWN_BINDING=true",
@@ -131,7 +123,6 @@ UNKNOWN_BINDING=true",
     assert!(config.open_dashboard_on_startup);
     assert_eq!(config.server_port, 24_050.0);
     assert_eq!(config.poll_rate, 150.0);
-    assert_eq!(config.ingame_overlay_max_fps, -12.5);
     assert_eq!(config.static_folder_path, "folder # retained");
     assert_eq!(config.server_ip, "localhost");
 }
@@ -146,15 +137,13 @@ fn schema_minima_are_clamped_and_warned() {
 POLL_RATE=-5
 PRECISE_DATA_POLL_RATE=0
 V2_SUBSCRIPTION_DEBOUNCE=-0.25
-SERVER_PORT=-1
-INGAME_OVERLAY_MAX_FPS=-2",
+SERVER_PORT=-1",
     );
 
     assert_eq!(store.config().poll_rate, 100.0);
     assert_eq!(store.config().precise_data_poll_rate, 1.0);
     assert_eq!(store.config().v2_subscription_debounce, 0.0);
     assert_eq!(store.config().server_port, -1.0);
-    assert_eq!(store.config().ingame_overlay_max_fps, -2.0);
     assert_eq!(
         warnings,
         [
