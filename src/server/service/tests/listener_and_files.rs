@@ -141,7 +141,15 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
                 buffered.extend_from_slice(&chunk[..read]);
             }
             let frame: Vec<_> = buffered.drain(..header_len + payload_len).collect();
-            (frame[0] & 0x0f, frame[header_len..].to_vec())
+            let opcode = frame[0] & 0x0f;
+            let payload = frame[header_len..].to_vec();
+            if opcode == 0x8 {
+                client
+                    .write_all(&masked_client_frame(0x8, &payload))
+                    .await
+                    .unwrap();
+            }
+            (opcode, payload)
         })
         .await
         .expect("server frame must arrive")

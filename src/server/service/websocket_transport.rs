@@ -173,8 +173,10 @@ async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub
     let connection = Arc::new(connection);
     let (mut sink, mut stream) = socket.split();
     let (peer_closed_tx, mut peer_closed_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (terminal_sent_tx, mut terminal_sent_rx) = tokio::sync::oneshot::channel::<()>();
 
     let writer_connection = Arc::clone(&connection);
+    let mut terminal_sent_tx = Some(terminal_sent_tx);
     let writer = async move {
         loop {
             let frame = tokio::select! {
@@ -195,12 +197,24 @@ async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub
                     match Utf8Bytes::try_from(bytes) {
                         Ok(text) => Message::Text(text),
                         Err(_) => {
-                            let _ = sink
+                            if sink
                                 .send(Message::Close(Some(CloseFrame {
                                     code: 1011,
                                     reason: Utf8Bytes::from_static(""),
                                 })))
+                                .await
+                                .is_ok()
+                            {
+                                let _ = sink.flush().await;
+                                if let Some(terminal_sent_tx) = terminal_sent_tx.take() {
+                                    let _ = terminal_sent_tx.send(());
+                                }
+                                let _ = tokio::time::timeout(
+                                    V2_SUBSCRIPTION_TERMINAL_DRAIN_TIMEOUT,
+                                    peer_closed_rx.recv(),
+                                )
                                 .await;
+                            }
                             break;
                         }
                     }
@@ -221,6 +235,14 @@ async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub
             }
             if terminal {
                 let _ = sink.flush().await;
+                if let Some(terminal_sent_tx) = terminal_sent_tx.take() {
+                    let _ = terminal_sent_tx.send(());
+                }
+                let _ = tokio::time::timeout(
+                    V2_SUBSCRIPTION_TERMINAL_DRAIN_TIMEOUT,
+                    peer_closed_rx.recv(),
+                )
+                .await;
                 break;
             }
         }
@@ -289,9 +311,28 @@ async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub
         };
         match tokio::time::timeout_at(deadline, handshake).await {
             Ok(Ok(())) => {}
-            Ok(Err(peer_closed)) => return peer_closed,
+            Ok(Err(true)) => return true,
+            Ok(Err(false)) => {
+                let _ = (&mut terminal_sent_rx).await;
+                while let Some(frame) = stream.next().await {
+                    match frame {
+                        Ok(Message::Close(_)) => return true,
+                        Err(_) => return false,
+                        _ => {}
+                    }
+                }
+                return false;
+            }
             Err(_) => {
                 reader_connection.subscription_timed_out();
+                let _ = (&mut terminal_sent_rx).await;
+                while let Some(frame) = stream.next().await {
+                    match frame {
+                        Ok(Message::Close(_)) => return true,
+                        Err(_) => return false,
+                        _ => {}
+                    }
+                }
                 return false;
             }
         }
@@ -303,15 +344,15 @@ async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub
             match frame {
                 Ok(Message::Text(_)) => {
                     let _ = reader_connection.subscribe(Vec::new());
-                    return false;
+                    break;
                 }
                 Ok(Message::Binary(_)) => {
                     reader_connection.unsupported_data();
-                    return false;
+                    break;
                 }
                 Ok(Message::Ping(data)) => {
                     if !reader_connection.send_pong(data).await {
-                        return false;
+                        break;
                     }
                 }
                 Ok(Message::Pong(_)) => {}
@@ -327,10 +368,19 @@ async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub
                     } else {
                         1002
                     });
-                    return false;
+                    break;
                 }
             }
         }
+        let _ = (&mut terminal_sent_rx).await;
+        while let Some(frame) = stream.next().await {
+            match frame {
+                Ok(Message::Close(_)) => return true,
+                Err(_) => return false,
+                _ => {}
+            }
+        }
+        false
     };
     tokio::pin!(writer);
     tokio::pin!(reader);

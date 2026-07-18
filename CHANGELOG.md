@@ -18,6 +18,10 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 
 - Removed the retained in-game overlay configuration bindings, `/api/ingame`, dedicated browser assets, `__ingame__` storage, and the command WebSocket catalog flow. vosu no longer provides an embedded in-game overlay; external overlay software can continue to consume the remaining documented APIs.
 
+### Reliability
+
+- Completed server-initiated WebSocket close handshakes with a bounded wait for peer acknowledgement, preventing Windows connection resets from dropping v2 subscription terminal close codes.
+
 ### Documentation
 
 - Updated installation, configuration, API, architecture, benchmark workflow, ownership, and release documentation for the vosu cutover.

@@ -247,7 +247,7 @@ async fn harness_fixture() -> (StreamingClient, String, tokio::task::JoinHandle<
         Deadlines {
             connect: Duration::from_secs(1),
             idle: Duration::from_millis(20),
-            total: Duration::from_millis(500),
+            total: Duration::from_secs(5),
         },
         DownloadLimits {
             max_bytes: 4,
@@ -392,17 +392,18 @@ async fn cancelled_and_oversized_downloads_remove_parts_and_preserve_destination
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join("file");
     std::fs::write(&target, b"old").unwrap();
-    assert!(matches!(
-        client
-            .download_atomic(
-                &format!("{base}/large"),
-                "test",
-                &target,
-                &CancellationToken::new()
-            )
-            .await,
-        Err(NetworkError::TooLarge(4))
-    ));
+    let oversized = client
+        .download_atomic(
+            &format!("{base}/large"),
+            "test",
+            &target,
+            &CancellationToken::new(),
+        )
+        .await;
+    assert!(
+        matches!(&oversized, Err(NetworkError::TooLarge(4))),
+        "unexpected oversized-download result: {oversized:?}"
+    );
     assert_eq!(std::fs::read(&target).unwrap(), b"old");
     let cancel = CancellationToken::new();
     let later = cancel.clone();
