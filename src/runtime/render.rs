@@ -242,6 +242,11 @@ pub(super) fn render_counter_card(
             ))
         })
         .collect::<String>();
+    let overlay_identity = if external {
+        String::new()
+    } else {
+        format!(r#" data-overlay-id="{}""#, escape_html(folder))
+    };
     let buttons = if external {
         let update = if updatable {
             format!(
@@ -270,7 +275,7 @@ pub(super) fn render_counter_card(
         format!(r#"<div class="buttons-group flexer indent-left">{update}{main}</div>"#)
     } else {
         format!(
-            r#"<div class="calu buttons-group flexer indent-left" n="{}" a="{}" v="{}"><button class="button settings-builder-button flexer" n="{}"><i class="icon-builder"></i></button>{}<button class="button open-button flexer" n="{}"><span>Open Folder</span></button><button class="button delete-button flexer" n="{}"><span>Delete</span></button></div>"#,
+            r#"<div class="calu buttons-group flexer indent-left" n="{}" a="{}" v="{}"><button class="button pin-button flexer" type="button" aria-pressed="false" title="Pin overlay" aria-label="Pin overlay"><span>Pin</span></button><button class="button settings-builder-button flexer" n="{}"><i class="icon-builder"></i></button>{}<button class="button open-button flexer" n="{}"><span>Open Folder</span></button><button class="button delete-button flexer" n="{}"><span>Delete</span></button></div>"#,
             escape_html(name),
             escape_html(author),
             escape_html(version),
@@ -340,7 +345,7 @@ pub(super) fn render_counter_card(
         )
     };
     format!(
-        r#"<div class="result-item{status}"><div class="ri-head flexer"><div><h4 class="flexer">{} v{}{customisable}</h4><div class="ri-links flexer"><span>by {}</span>{links}</div></div>{buttons}</div><hr><div class="ri-gallery flexer">{gallery}</div>{footer}</div>"#,
+        r#"<div class="result-item{status}"{overlay_identity}><div class="ri-head flexer"><div><h4 class="flexer">{} v{}{customisable}</h4><div class="ri-links flexer"><span>by {}</span>{links}</div></div>{buttons}</div><hr><div class="ri-gallery flexer">{gallery}</div>{footer}</div>"#,
         escape_html(name),
         escape_html(version),
         escape_html(author),

@@ -179,6 +179,8 @@ Authorization requires an allowed network peer and, when supplied, an allowed `O
 
 The dashboard at `/` discovers counters recursively below the static root. A counter normally contains `index.html`. `metadata.txt` can add a name, author links, description, version, and `WxH` size. An immediate `ignore.txt` excludes its directory from discovery, and directories named `node_modules` are never traversed. Mutation APIs accept counter names containing one normal path component.
 
+Installed counter cards can be pinned; pinned cards stay above unpinned cards in their saved order and can be reordered by dragging. Shift-click a counter URL to open it in a new window instead of copying it. Press `/` outside an editable control to focus the dashboard search.
+
 Counter `settings.json` files support text, color, number, checkbox, button, options, commands, textarea, password, and header entries. Values are stored at `<config>/settings/<counter>.values.json`. The `/settings` page handles daemon and counter settings.
 
 The counter catalog is served from `https://vosu.app/api.json`. Production counter downloads require HTTPS. Redirects are bounded; HTTPS-to-HTTP downgrades and loopback, private, or reserved destinations are rejected. ZIP paths, symlinks, entry counts, and expanded size are checked before same-filesystem replacement.

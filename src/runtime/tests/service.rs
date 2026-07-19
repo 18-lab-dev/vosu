@@ -215,6 +215,56 @@ fn counter_cards_use_absolute_obs_url_and_source_resolution_rules() {
 }
 
 #[test]
+fn installed_counter_cards_emit_escaped_identity_and_pin_control() {
+    let card = render_counter_card(
+        "Counter",
+        "Author",
+        "1.0",
+        r#"folder<&""#,
+        false,
+        false,
+        false,
+        None,
+        &[],
+        false,
+        false,
+        &[],
+        &[],
+        "localhost:24050",
+    );
+
+    assert!(card.starts_with(
+        r#"<div class="result-item" data-overlay-id="folder&lt;&amp;&quot;">"#
+    ));
+    assert!(card.contains(
+        r#"<button class="button pin-button flexer" type="button" aria-pressed="false" title="Pin overlay" aria-label="Pin overlay"><span>Pin</span></button>"#
+    ));
+}
+
+#[test]
+fn catalog_counter_cards_do_not_emit_identity_or_pin_control() {
+    let card = render_counter_card(
+        "Counter",
+        "Author",
+        "1.0",
+        "catalog-folder",
+        true,
+        false,
+        false,
+        Some("https://example.com/counter.zip"),
+        &[],
+        false,
+        false,
+        &[],
+        &[],
+        "localhost:24050",
+    );
+
+    assert!(!card.contains("data-overlay-id"));
+    assert!(!card.contains("pin-button"));
+}
+
+#[test]
 fn production_catalog_query_matches_source_token_rules() {
     assert_eq!(normalize_catalog_query("!HD SC"), "hd sc");
     assert!(matches_catalog_query(

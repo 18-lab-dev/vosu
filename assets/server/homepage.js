@@ -14,6 +14,14 @@ const search_bar = document.querySelector('.search-bar');
 const available_overlays = document.querySelector('a[href="/available"]');
 const installed_overlays = document.querySelector('a[href="/"]');
 
+const PINNED_OVERLAYS_KEY = 'vosu.pinned-overlays.v1';
+const isInstalledPage = window.location.pathname === '/';
+
+let pinnedOverlayIds = [];
+let installedOverlayIds = new Set();
+let installedOverlayOrder = new Map();
+let draggedOverlayId = null;
+
 
 let timer;
 
@@ -1190,6 +1198,120 @@ function copyText(element) {
   });
 }
 
+function storePinnedOverlayIds() {
+  try {
+    localStorage.setItem(PINNED_OVERLAYS_KEY, JSON.stringify(pinnedOverlayIds));
+  } catch (error) {
+    console.error('Unable to save pinned overlays', error);
+  };
+}
+
+function readPinnedOverlayIds() {
+  let storedIds = [];
+
+  try {
+    const value = JSON.parse(localStorage.getItem(PINNED_OVERLAYS_KEY) || '[]');
+    if (Array.isArray(value)) storedIds = value;
+  } catch (error) {
+    console.error('Unable to read pinned overlays', error);
+  };
+
+  const seen = new Set();
+  pinnedOverlayIds = storedIds.filter((id) => {
+    if (typeof id !== 'string' || seen.has(id) || !installedOverlayIds.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  storePinnedOverlayIds();
+}
+
+function clearPinDragState() {
+  document.querySelectorAll('.result-item.dragging, .result-item.drag-over').forEach((card) => {
+    card.classList.remove('dragging', 'drag-over');
+  });
+  draggedOverlayId = null;
+}
+
+function renderPinnedOverlays() {
+  if (!isInstalledPage) return;
+
+  const results = document.querySelector('.results');
+  if (!results) return;
+
+  const cards = Array.from(results.querySelectorAll('.result-item[data-overlay-id]'));
+  const cardsById = new Map(cards.map((card) => [card.dataset.overlayId, card]));
+  const pinnedIds = new Set(pinnedOverlayIds);
+
+  cards.forEach((card) => {
+    const id = card.dataset.overlayId;
+    const isPinned = pinnedIds.has(id);
+    const pinButton = card.querySelector('.pin-button');
+
+    card.draggable = true;
+    card.classList.toggle('pinned', isPinned);
+
+    if (pinButton) {
+      const action = isPinned ? 'Unpin' : 'Pin';
+      const text = pinButton.querySelector('span');
+      pinButton.setAttribute('aria-pressed', String(isPinned));
+      pinButton.setAttribute('aria-label', `${action} ${id}`);
+      pinButton.setAttribute('title', `${action} overlay`);
+      if (text) text.textContent = action;
+      else pinButton.textContent = action;
+      pinButton.classList.toggle('pinned', isPinned);
+      pinButton.draggable = false;
+    };
+  });
+
+  const orderedCards = pinnedOverlayIds
+    .map((id) => cardsById.get(id))
+    .filter(Boolean);
+  const unpinnedCards = cards
+    .filter((card) => !pinnedIds.has(card.dataset.overlayId))
+    .sort((a, b) => {
+      const aIndex = installedOverlayOrder.get(a.dataset.overlayId) ?? Number.MAX_SAFE_INTEGER;
+      const bIndex = installedOverlayOrder.get(b.dataset.overlayId) ?? Number.MAX_SAFE_INTEGER;
+      return aIndex - bIndex;
+    });
+
+  [...orderedCards, ...unpinnedCards].forEach((card) => results.appendChild(card));
+}
+
+function initializeInstalledOverlayPins({ sanitize = false } = {}) {
+  if (!isInstalledPage) return;
+
+  const cards = Array.from(document.querySelectorAll('.results .result-item[data-overlay-id]'));
+  if (sanitize) {
+    installedOverlayIds = new Set(cards.map((card) => card.dataset.overlayId));
+    installedOverlayOrder = new Map(cards.map((card, index) => [card.dataset.overlayId, index]));
+    readPinnedOverlayIds();
+  };
+
+  renderPinnedOverlays();
+}
+
+function toggleOverlayPin(card) {
+  const id = card?.dataset.overlayId;
+  if (!id || !installedOverlayIds.has(id)) return;
+
+  const index = pinnedOverlayIds.indexOf(id);
+  if (index === -1) {
+    pinnedOverlayIds.push(id);
+  } else {
+    pinnedOverlayIds.splice(index, 1);
+  };
+
+  storePinnedOverlayIds();
+  renderPinnedOverlays();
+}
+
+function removeOverlayPin(id) {
+  installedOverlayIds.delete(id);
+  installedOverlayOrder.delete(id);
+  pinnedOverlayIds = pinnedOverlayIds.filter((pinnedId) => pinnedId !== id);
+  storePinnedOverlayIds();
+}
+
 async function deleteCounter(element) {
   const folderName = decodeURI(element.attributes.n?.value || '');
 
@@ -1229,7 +1351,9 @@ async function deleteCounter(element) {
   endDownload(element, `delete-${folderName}`, 'Deleted');
 
   const results = document.querySelector('.results');
-  results.removeChild(element.parentElement.parentElement.parentElement);
+  const card = element.closest('.result-item');
+  if (card?.dataset.overlayId) removeOverlayPin(card.dataset.overlayId);
+  if (card) results.removeChild(card);
 
   const newTotal = document.querySelectorAll('.calu').length || 0;
   localStorage.setItem('total-installed-overlays', newTotal);
@@ -1247,21 +1371,7 @@ async function openCounter(element) {
 
   const download = await fetch(`/api/counters/open/${folderName}`);
   const json = await download.json();
-
-
-  let success_text = `PP Counter Opened: ${folderName}`;
-  let target = element.parentElement.parentElement.parentElement;
-
-
-  if (folderName == 'vosu.exe') {
-    success_text = 'vosu folder opened';
-    target = element.parentElement;
-  }
-  else if (folderName == 'static.exe') {
-    success_text = 'Static folder opened';
-    target = element;
-  };
-
+  const target = element.parentElement.parentElement.parentElement;
 
   if (json.error != null) {
     if (typeof json.error == 'object') {
@@ -1282,7 +1392,37 @@ async function openCounter(element) {
 
   displayNotification({
     element: target,
-    text: success_text,
+    text: `PP Counter Opened: ${folderName}`,
+    classes: ['green'],
+    delay: 3000,
+  });
+};
+
+async function openCounterRoot(element) {
+  const request = await fetch('/api/counters/open-root');
+  const json = await request.json();
+  const target = element.parentElement;
+
+  if (json.error != null) {
+    if (typeof json.error == 'object') {
+      try {
+        json.error = JSON.stringify(json.error);
+      } catch (error) { };
+    };
+
+    displayNotification({
+      element: target,
+      text: `Error while opening counter folder: ${json.error}`,
+      classes: ['red'],
+      delay: 3000,
+    });
+
+    return;
+  };
+
+  displayNotification({
+    element: target,
+    text: 'Counter folder opened',
     classes: ['green'],
     delay: 3000,
   });
@@ -1306,6 +1446,7 @@ async function startSearch(search) {
     const response = await request.text();
 
     document.querySelector('.results').innerHTML = response;
+    initializeInstalledOverlayPins();
   } catch (error) {
     console.error(error);
     displayNotification({
@@ -1570,6 +1711,20 @@ search_bar?.addEventListener('keydown', handleInput);
 
 window.addEventListener('click', (event) => {
   const t = event.target;
+  const pinButton = t?.closest?.('.pin-button');
+  if (pinButton) {
+    event.preventDefault();
+    toggleOverlayPin(pinButton.closest('.result-item[data-overlay-id]'));
+    return;
+  };
+
+  const installedUrl = t?.closest?.('.result-item[data-overlay-id] [nf][nft="url"]');
+  if (event.shiftKey && installedUrl) {
+    const openedWindow = window.open(installedUrl.getAttribute('nfv'), '_blank', 'noopener,noreferrer');
+    if (openedWindow) openedWindow.opener = null;
+    return;
+  };
+
 
   if (t?.classList.value.includes('dl-button')) {
     const id = t.attributes.l?.value;
@@ -1591,8 +1746,9 @@ window.addEventListener('click', (event) => {
     return;
   };
   if (t?.classList.value.includes(' delete-button')) return deleteCounter(t);
-  if (t?.classList.value.includes(' open-button')) return openCounter(t);
-  if (t?.classList.value.includes(' open-folder-button')) return openCounter(t);
+  const rootButton = t?.closest?.('.open-folder-button, .open-root-button');
+  if (rootButton) return openCounterRoot(rootButton);
+  if (t?.hasAttribute('n') && t.classList.contains('open-button')) return openCounter(t);
 
 
 
@@ -1627,6 +1783,59 @@ window.addEventListener('click', (event) => {
 });
 
 
+document.addEventListener('dragstart', (event) => {
+  const card = event.target?.closest?.('.result-item[data-overlay-id]');
+  const id = card?.dataset.overlayId;
+  if (!isInstalledPage || !id || !installedOverlayIds.has(id)) return;
+
+  draggedOverlayId = id;
+  card.classList.add('dragging');
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', id);
+});
+
+document.addEventListener('dragover', (event) => {
+  if (!draggedOverlayId) return;
+
+  const card = event.target?.closest?.('.result-item[data-overlay-id]');
+  if (!card || card.dataset.overlayId === draggedOverlayId) return;
+
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('.result-item.drag-over').forEach((item) => {
+    if (item !== card) item.classList.remove('drag-over');
+  });
+  card.classList.add('drag-over');
+});
+
+document.addEventListener('drop', (event) => {
+  if (!draggedOverlayId) return;
+
+  const card = event.target?.closest?.('.result-item[data-overlay-id]');
+  if (!card || card.dataset.overlayId === draggedOverlayId) {
+    clearPinDragState();
+    return;
+  };
+
+  event.preventDefault();
+  const reorderedIds = pinnedOverlayIds.filter((id) => id !== draggedOverlayId);
+  const targetIndex = reorderedIds.indexOf(card.dataset.overlayId);
+  let insertAt = targetIndex === -1 ? reorderedIds.length : targetIndex;
+
+  if (targetIndex !== -1 && event.clientY > card.getBoundingClientRect().top + card.offsetHeight / 2) {
+    insertAt += 1;
+  };
+
+  reorderedIds.splice(insertAt, 0, draggedOverlayId);
+  pinnedOverlayIds = reorderedIds;
+  storePinnedOverlayIds();
+  clearPinDragState();
+  renderPinnedOverlays();
+});
+
+document.addEventListener('dragend', clearPinDragState);
+
+
 document.addEventListener('mousedown', function (event) {
   if (event.button !== 0) return;
   closeModal(event);
@@ -1640,6 +1849,16 @@ document.addEventListener('keydown', (event) => {
     closeModal(null);
     return;
   };
+
+  if (event.key !== '/' || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || !search_bar) return;
+
+  const target = event.target;
+  const isEditable = target?.isContentEditable
+    || target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
+  if (isEditable) return;
+
+  search_bar.focus();
+  if (document.activeElement === search_bar) event.preventDefault();
 });
 
 
@@ -1654,6 +1873,8 @@ if (serverInstalledMatch) {
 } else if (installed_overlays) {
   installed_overlays.innerHTML = `Installed (${cachedInstalled})`;
 }
+
+initializeInstalledOverlayPins({ sanitize: true });
 
 
 
@@ -1691,7 +1912,6 @@ window.onload = async () => {
       counter.prepend(button);
     }
 
-    if (search_bar) setTimeout(() => search_bar.focus(), 100);
     window.showDonateModal = showDonateModal;
   } catch (e) {
     console.log(e);
@@ -1700,6 +1920,11 @@ window.onload = async () => {
 
 // dynamically update values on all opened tabs.
 window.onstorage = (e) => {
+  if (e.key === PINNED_OVERLAYS_KEY && isInstalledPage) {
+    readPinnedOverlayIds();
+    renderPinnedOverlays();
+  }
+
   if (e.key === 'total-installed-overlays' && installed_overlays) {
     installed_overlays.innerHTML = `Installed (${e.newValue})`;
     if (window.location.pathname === '/') setTimeout(() => window.location.reload(), 250);
