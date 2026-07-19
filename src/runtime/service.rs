@@ -143,7 +143,8 @@ impl PageDataProvider for RuntimePages {
             let config = self.config.current();
             let authority = authority.unwrap_or_else(|| configured_authority(&config));
             let local = self.counters.discover().unwrap_or_default();
-            let (list, local_count, available_count) = match page {
+            let local_count = Some(local.len());
+            let (list, available_count) = match page {
                 DynamicPage::Dashboard => {
                     let html = render_local_counters(&local, None, &authority);
                     (
@@ -152,15 +153,12 @@ impl PageDataProvider for RuntimePages {
                         } else {
                             html
                         },
-                        Some(local.len()),
                         None,
                     )
                 }
-                DynamicPage::Settings => {
-                    (render_runtime_settings(&self.config.current()), None, None)
-                }
-                DynamicPage::EmptySettings => (String::new(), None, None),
-                DynamicPage::LocalOverlays => (local_overlay_instructions(), None, None),
+                DynamicPage::Settings => (render_runtime_settings(&self.config.current()), None),
+                DynamicPage::EmptySettings => (String::new(), None),
+                DynamicPage::LocalOverlays => (local_overlay_instructions(), None),
                 DynamicPage::Available => {
                     let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
                     match self.catalog.fetch(&installed, &self.shutdown).await {
@@ -173,13 +171,11 @@ impl PageDataProvider for RuntimePages {
                                 } else {
                                     html
                                 },
-                                Some(local.len()),
                                 Some(count),
                             )
                         }
                         Err(error) => (
                             format!("Error: {}", escape_html(&error.to_string())),
-                            Some(0),
                             Some(0),
                         ),
                     }

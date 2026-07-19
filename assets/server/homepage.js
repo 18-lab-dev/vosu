@@ -1643,12 +1643,17 @@ document.addEventListener('keydown', (event) => {
 });
 
 
-// Use cached values if available before updating with real values.
+// Prefer the server-rendered installed count; fall back to cached values when absent.
 const cachedAvailable = +localStorage.getItem('total-available-overlays') || 0;
 const cachedInstalled = +localStorage.getItem('total-installed-overlays') || 0;
+const serverInstalledMatch = installed_overlays?.textContent.match(/^Installed\s*\((\d+)\)\s*$/);
 
 if (available_overlays) available_overlays.innerHTML = `Available (${cachedAvailable})`;
-if (installed_overlays) installed_overlays.innerHTML = `Installed (${cachedInstalled})`;
+if (serverInstalledMatch) {
+  localStorage.setItem('total-installed-overlays', Number(serverInstalledMatch[1]));
+} else if (installed_overlays) {
+  installed_overlays.innerHTML = `Installed (${cachedInstalled})`;
+}
 
 
 
@@ -1663,16 +1668,8 @@ window.onload = async () => {
       available_overlays.innerHTML = `Available (${available.length})`;
       localStorage.setItem('total-available-overlays', available.length);
     }
-
     const installed = document.querySelectorAll('.calu');
-    if (installed_overlays) {
-      if (window.location.pathname === '/' && cachedInstalled !== installed.length) {
-        installed_overlays.innerHTML = `Installed (${installed.length})`;
-        localStorage.setItem('total-installed-overlays', installed.length);
-      } else {
-        installed_overlays.innerHTML = `Installed (${cachedInstalled})`;
-      }
-    }
+
 
     for (let i = 0; i < installed.length; i++) {
       const counter = installed[i];

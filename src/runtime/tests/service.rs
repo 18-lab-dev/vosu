@@ -86,6 +86,56 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     ));
 }
 
+#[tokio::test]
+async fn dynamic_pages_keep_discovered_installed_count_when_catalog_fetch_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let static_root = root.path().join("static");
+    for name in ["first", "second"] {
+        let counter = static_root.join(name);
+        std::fs::create_dir_all(&counter).unwrap();
+        std::fs::write(counter.join("index.html"), "").unwrap();
+    }
+
+    let counters = Arc::new(ReloadableCounterService::production(
+        static_root,
+        root.path().join("settings"),
+        root.path().join("cache"),
+    ));
+    let config = Arc::new(
+        ConfigStore::initialize(root.path().join("vosu.env"))
+            .await
+            .unwrap(),
+    );
+    let shutdown = CancellationToken::new();
+    shutdown.cancel();
+    let pages = RuntimePages {
+        pages: PageService,
+        counters: Arc::clone(&counters),
+        catalog: CatalogService::production("test"),
+        config: Arc::clone(&config),
+        shutdown,
+        update_version: None,
+    };
+
+    let dashboard = pages
+        .render(DynamicPage::Dashboard, None)
+        .await
+        .unwrap();
+    let dashboard = String::from_utf8(dashboard.body.to_vec()).unwrap();
+    assert!(dashboard.contains("Installed (2)"));
+
+    let unavailable = pages
+        .render(DynamicPage::Available, None)
+        .await
+        .unwrap();
+    let unavailable = String::from_utf8(unavailable.body.to_vec()).unwrap();
+    assert!(unavailable.contains("Installed (2)"));
+    assert!(unavailable.contains("Error:"));
+
+    counters.shutdown().await;
+    config.shutdown().await.unwrap();
+}
+
 #[test]
 fn settings_save_maps_fractional_v2_subscription_debounce() {
     let mut config = Config::default();
