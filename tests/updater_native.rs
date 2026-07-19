@@ -1,23 +1,27 @@
 use std::{
     ffi::OsString,
-    fs, io,
+    fs,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::Child,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
-use vosu::updater::{
-    EncodedOsString, INSTALL_RECORD_NAME, InstallPhase, InstallRecord, ProcessIdentity,
-    RecoveryAction, StartupIntent, StartupReadiness, TransactionGuard, UpdateCut, UpdateError,
-    UpdatePlatform, finish_ready_cleanup, load_record, parse_startup_update_args,
-    recover_dead_transaction, recover_startup_update, run_helper,
+use vosu::{
+    platform::atomic_replace,
+    updater::{
+        EncodedOsString, INSTALL_RECORD_NAME, InstallPhase, InstallRecord, ProcessIdentity,
+        RecoveryAction, StartupIntent, StartupReadiness, TransactionGuard, UpdateCut, UpdateError,
+        UpdatePlatform, finish_ready_cleanup, load_record, parse_startup_update_args,
+        recover_dead_transaction, recover_startup_update, run_helper,
+    },
 };
 
 fn digest(bytes: &[u8]) -> String {
@@ -228,7 +232,16 @@ impl Fixture {
     }
 
     fn persist(&self) {
-        fs::write(&self.record_path, serde_json::to_vec(&self.record).unwrap()).unwrap();
+        let temp_path = self
+            .root
+            .path()
+            .join(format!("{}-{}.tmp", INSTALL_RECORD_NAME, self.record.nonce));
+        let bytes = serde_json::to_vec(&self.record).unwrap();
+        let mut file = fs::File::create(&temp_path).unwrap();
+        file.write_all(&bytes).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        atomic_replace(&temp_path, &self.record_path).unwrap();
     }
 
     fn assert_target(&self, expected: &[u8]) {
@@ -506,12 +519,58 @@ fn helper_waits_past_legacy_two_second_window_for_durable_handoff_ack() {
             move || run_helper(&record_path, &token, platform.as_ref())
         });
 
+        let load_deadline = Instant::now() + Duration::from_secs(5);
+        while platform.live_owner_polls.load(Ordering::Acquire) == usize::MAX {
+            assert!(
+                Instant::now() < load_deadline,
+                "helper did not load and authorize the initial handoff candidate"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
         std::thread::sleep(Duration::from_millis(2_100));
         fixture.record.helper = Some(platform.identity.clone());
         fixture.record.phase = InstallPhase::HandedOff;
+        fs::remove_file(&fixture.record_path).unwrap();
+        let missing_poll = platform.live_owner_polls.load(Ordering::Acquire);
+        let missing_deadline = Instant::now() + Duration::from_secs(5);
+        while platform.live_owner_polls.load(Ordering::Acquire) == missing_poll {
+            assert!(
+                Instant::now() < missing_deadline,
+                "helper did not retry the missing authorized handoff record"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        fs::write(&fixture.record_path, b"{").unwrap();
+        let invalid_poll = platform.live_owner_polls.load(Ordering::Acquire);
+        let invalid_deadline = Instant::now() + Duration::from_secs(5);
+        while platform.live_owner_polls.load(Ordering::Acquire) == invalid_poll {
+            assert!(
+                Instant::now() < invalid_deadline,
+                "helper did not retry the invalid authorized handoff record"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         fixture.persist();
+        let ack = fixture.record.work.join("helper.ack");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let acknowledged = loop {
+            if ack.is_file() {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
         platform.live_owner_polls.store(0, Ordering::Release);
-        helper.join().unwrap().unwrap();
+        let helper_result = helper.join().unwrap();
+        helper_result.unwrap();
+        assert!(
+            acknowledged,
+            "helper did not durably acknowledge the committed owner identity"
+        );
     });
 
     assert!(
@@ -539,6 +598,58 @@ fn helper_waits_past_legacy_two_second_window_for_durable_handoff_ack() {
         recover_startup_update(fixture.root.path(), platform.as_ref())
             .unwrap()
             .is_none()
+    );
+}
+
+fn run_helper_with_authorized_record_replacement(replacement: &[u8]) -> (UpdateError, Duration) {
+    let mut fixture = Fixture::new(InstallPhase::Prepared, Some(b"old"));
+    fs::remove_file(&fixture.record.backup).unwrap();
+    fixture.record.helper = None;
+    fixture.persist();
+    let platform = Arc::new(NativePlatform::new());
+    platform
+        .live_owner_polls
+        .store(usize::MAX, Ordering::Release);
+
+    std::thread::scope(|scope| {
+        let helper = scope.spawn({
+            let platform = Arc::clone(&platform);
+            let record_path = fixture.record_path.clone();
+            let token = fixture.record.token.clone();
+            move || run_helper(&record_path, &token, platform.as_ref())
+        });
+        let load_deadline = Instant::now() + Duration::from_secs(5);
+        while platform.live_owner_polls.load(Ordering::Acquire) == usize::MAX {
+            assert!(
+                Instant::now() < load_deadline,
+                "helper did not load and authorize the initial handoff candidate"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        fs::write(&fixture.record_path, replacement).unwrap();
+        let started = Instant::now();
+        (helper.join().unwrap().unwrap_err(), started.elapsed())
+    })
+}
+
+#[test]
+fn helper_waits_past_legacy_two_second_window_for_durable_handoff_ack_rejects_non_eof_json() {
+    let (error, elapsed) = run_helper_with_authorized_record_replacement(b"not json");
+    assert!(matches!(error, UpdateError::Json(error) if !error.is_eof()));
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "non-EOF JSON was retried for {elapsed:?}"
+    );
+}
+
+#[test]
+fn helper_waits_past_legacy_two_second_window_for_durable_handoff_ack_bounds_persistent_eof() {
+    let (error, elapsed) = run_helper_with_authorized_record_replacement(b"{");
+    assert!(matches!(error, UpdateError::Json(error) if error.is_eof()));
+    assert!(
+        elapsed >= Duration::from_secs(2) && elapsed < Duration::from_secs(5),
+        "persistent EOF retry lasted {elapsed:?}"
     );
 }
 

@@ -7,8 +7,41 @@ pub fn run_helper<P: UpdatePlatform>(
     platform: &P,
 ) -> Result<(), UpdateError> {
     let current = platform.current_identity()?;
+    let mut last_candidate: Option<InstallRecord> = None;
+    let mut eof_retry_deadline = None;
     let mut record = loop {
-        let candidate = load_record(record_path)?;
+        let candidate = match load_record(record_path) {
+            Ok(candidate) => {
+                eof_retry_deadline = None;
+                candidate
+            }
+            Err(UpdateError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
+                let Some(candidate) = last_candidate.as_ref() else {
+                    return Err(UpdateError::Io(error));
+                };
+                if !platform.identity_is_alive(&candidate.owner)? {
+                    return Err(UpdateError::HelperHandoff);
+                }
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            Err(UpdateError::Json(error)) if error.is_eof() => {
+                let Some(candidate) = last_candidate.as_ref() else {
+                    return Err(UpdateError::Json(error));
+                };
+                let deadline = *eof_retry_deadline
+                    .get_or_insert_with(|| Instant::now() + Duration::from_secs(2));
+                if Instant::now() >= deadline {
+                    return Err(UpdateError::Json(error));
+                }
+                if !platform.identity_is_alive(&candidate.owner)? {
+                    return Err(UpdateError::HelperHandoff);
+                }
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         if !constant_time_eq(candidate.token.as_bytes(), token.as_bytes()) {
             return Err(UpdateError::ReadinessAuthorization);
         }
@@ -19,6 +52,7 @@ pub fn run_helper<P: UpdatePlatform>(
             }
             Some(_) => return Err(UpdateError::ReadinessAuthorization),
             None if platform.identity_is_alive(&candidate.owner)? => {
+                last_candidate = Some(candidate);
                 std::thread::sleep(Duration::from_millis(5));
             }
             None => return Err(UpdateError::HelperHandoff),

@@ -396,7 +396,7 @@ impl PublicationProvider {
 
 impl StateProvider for PublicationProvider {
     fn poll_rate(&self, _schema: Schema) -> Duration {
-        Duration::from_secs(60)
+        Duration::from_millis(1)
     }
     fn subscribe(&self, _schema: Schema) -> watch::Receiver<u64> {
         self.event.subscribe()

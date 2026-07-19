@@ -81,10 +81,10 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
         (client, response.split_off(header_end))
     }
 
-    fn masked_client_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+    fn masked_client_frame_header(opcode: u8, payload_len: usize) -> Vec<u8> {
         let mask = [0x12, 0x34, 0x56, 0x78];
         let mut frame = vec![0x80 | opcode];
-        match payload.len() {
+        match payload_len {
             len @ 0..=125 => frame.push(0x80 | len as u8),
             len @ 126..=65535 => {
                 frame.push(0x80 | 126);
@@ -96,6 +96,12 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             }
         }
         frame.extend_from_slice(&mask);
+        frame
+    }
+
+    fn masked_client_frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
+        let mask = [0x12, 0x34, 0x56, 0x78];
+        let mut frame = masked_client_frame_header(opcode, payload.len());
         frame.extend(
             payload
                 .iter()
@@ -385,13 +391,16 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
         assert_eq!((opcode, close_code(&payload)), (0x8, 1003));
 
         let (mut malformed, mut buffered) = subscription_client(listener.address()).await;
-        malformed.write_all(&[0x81, 0x02, b'[', b']']).await.unwrap();
+        malformed.write_all(&[0x81, 0x00]).await.unwrap();
         let (opcode, payload) = server_frame(&mut malformed, &mut buffered).await;
         assert_eq!((opcode, close_code(&payload)), (0x8, 1002));
 
         let (mut oversized, mut buffered) = subscription_client(listener.address()).await;
+        // Declaring a frame above the configured bound is sufficient for tungstenite to
+        // reject it. Omitting the body leaves no unread TCP data that could turn the
+        // server's graceful close into an abortive reset on Windows.
         oversized
-            .write_all(&masked_client_frame(0x1, &vec![b'a'; 1_048_577]))
+            .write_all(&masked_client_frame_header(0x1, 1_048_577))
             .await
             .unwrap();
         let (opcode, payload) = server_frame(&mut oversized, &mut buffered).await;

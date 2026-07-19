@@ -24,14 +24,14 @@ cargo run --locked --no-default-features
 # CI checks
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --all-targets --all-features --locked
+cargo test --workspace --lib --bins --tests --examples --all-features --locked
 
 # Native release build (select the host target)
 cargo build --release --locked --no-default-features --target x86_64-unknown-linux-gnu
 cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc
 
-# Criterion hot paths; select the affected group or exact ID.
-# The unfiltered suite currently stalls in publication sampling; see docs/benchmarks.md.
+# Criterion hot paths; use the affected group or exact ID for scoped routine measurements.
+# The unfiltered suite is available when measuring all hot paths; see docs/benchmarks.md.
 cargo bench --locked --package vosu --bench hot_paths -- <benchmark-filter>
 ```
 

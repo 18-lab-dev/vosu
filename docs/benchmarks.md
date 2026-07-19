@@ -28,7 +28,8 @@ optimized bench profile. Run all benchmarks from the repository root:
 cargo bench --locked --package vosu --bench hot_paths
 ```
 
-The checked-in `publication` benchmark does not complete under Criterion's default sampling on the recorded host; see the local observation below. Until that benchmark is corrected, run the non-publication groups with filters for routine measurements instead of waiting on an unfiltered full-suite run.
+The corrected `publication` fixture uses a 1 ms poll interval and completes under
+Criterion's default sampling; see the current local observation below.
 
 Criterion 0.7.0 accepts a positional substring filter after Cargo's `--`:
 
@@ -175,7 +176,26 @@ interval from the `new/estimates.json` files written by this run.
 | `v2_subscription/distinct_plans/100` | 68.774 µs | 68.737–68.815 µs |
 | `v2_subscription/distinct_plans/1000` | 707.751 µs | 707.147–708.353 µs |
 
-## Local observation: 2026-07-16
+## Local publication observation: 2026-07-19
+
+This is a **non-portable observation, not a performance promise or acceptance
+threshold**.
+
+- Command: `cargo bench --locked --package vosu --bench hot_paths -- publication`
+- Host: AMD Ryzen 9 9950X3D, 16 cores / 32 threads, 123 GiB RAM
+- OS: x86_64 Linux 7.1.3-1-cachyos-bore
+- Criterion: 0.7.0 defaults; Plotters backend (gnuplot unavailable)
+- Wall time: 28.806 s
+
+With the corrected 1 ms fixture poll interval, all three client counts completed:
+
+| Benchmark ID | Mean | 95% confidence interval |
+| --- | ---: | ---: |
+| `publication/unfiltered_clients/1` | 2.0552 ms | 2.0531–2.0569 ms |
+| `publication/unfiltered_clients/100` | 2.0568 ms | 2.0510–2.0624 ms |
+| `publication/unfiltered_clients/1000` | 2.1035 ms | 2.0938–2.1130 ms |
+
+## Historical local observation: 2026-07-16
 
 This section is a **non-portable observation, not a performance promise or
 acceptance threshold**.

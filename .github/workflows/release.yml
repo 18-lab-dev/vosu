@@ -32,6 +32,19 @@ jobs:
           toolchain: 1.96.1
           components: rustfmt, clippy
           targets: x86_64-unknown-linux-gnu
+      - name: Cache Cargo registry, git database, and release lane artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-x86_64-unknown-linux-gnu-rust-1.96.1-release-package-mixed-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-${{ runner.os }}-x86_64-unknown-linux-gnu-rust-1.96.1-release-package-mixed-${{ hashFiles('**/Cargo.lock') }}-
+            cargo-${{ runner.os }}-x86_64-unknown-linux-gnu-rust-1.96.1-ci-release-build-release-${{ hashFiles('**/Cargo.lock') }}-
+            cargo-${{ runner.os }}-x86_64-unknown-linux-gnu-rust-1.96.1-ci-validation-debug-${{ hashFiles('**/Cargo.lock') }}-
+
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -39,8 +52,8 @@ jobs:
       - name: Lint all targets and features
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-      - name: Test all targets and features
-        run: cargo test --workspace --all-targets --all-features --locked
+      - name: Test workspace libraries, binaries, integration tests, and examples
+        run: cargo test --workspace --lib --bins --tests --examples --all-features --locked
 
       - name: Test native process memory and self-read
         run: cargo test --locked --test process_memory -- --nocapture
@@ -105,6 +118,19 @@ jobs:
           toolchain: 1.96.1
           components: rustfmt, clippy
           targets: x86_64-pc-windows-msvc
+      - name: Cache Cargo registry, git database, and release lane artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-x86_64-pc-windows-msvc-rust-1.96.1-release-package-mixed-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-${{ runner.os }}-x86_64-pc-windows-msvc-rust-1.96.1-release-package-mixed-${{ hashFiles('**/Cargo.lock') }}-
+            cargo-${{ runner.os }}-x86_64-pc-windows-msvc-rust-1.96.1-ci-release-build-release-${{ hashFiles('**/Cargo.lock') }}-
+            cargo-${{ runner.os }}-x86_64-pc-windows-msvc-rust-1.96.1-ci-validation-debug-${{ hashFiles('**/Cargo.lock') }}-
+
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -112,8 +138,8 @@ jobs:
       - name: Lint all targets and features
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-      - name: Test all targets and features
-        run: cargo test --workspace --all-targets --all-features --locked
+      - name: Test workspace libraries, binaries, integration tests, and examples
+        run: cargo test --workspace --lib --bins --tests --examples --all-features --locked
 
       - name: Test native process memory and self-read
         run: cargo test --locked --test process_memory -- --nocapture

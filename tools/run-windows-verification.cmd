@@ -14,7 +14,7 @@ if not defined VSROOT goto fail
 call "%VSROOT%\VC\Auxiliary\Build\vcvars64.bat" || goto fail
 cargo fmt --all -- --check >>"%LOG%" 2>&1 || goto fail
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings >>"%LOG%" 2>&1 || goto fail
-cargo test --workspace --all-targets --all-features --locked >>"%LOG%" 2>&1 || goto fail
+cargo test --workspace --lib --bins --tests --examples --all-features --locked >>"%LOG%" 2>&1 || goto fail
 cargo test --locked --test process_memory -- --nocapture >>"%LOG%" 2>&1 || goto fail
 cargo test --locked --test updater_native -- --nocapture >>"%LOG%" 2>&1 || goto fail
 cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc >>"%LOG%" 2>&1 || goto fail
