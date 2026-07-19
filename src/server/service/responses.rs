@@ -62,12 +62,30 @@ fn resolve_file_endpoint(
             target,
             selected_missing(selected),
         )?,
-        Endpoint::CounterStatic => files::resolve_encoded_resource(
-            selected.static_root.as_deref(),
-            path.trim_start_matches('/'),
-            target,
-            MissingKind::NotFound,
-        )?,
+        Endpoint::CounterStatic => {
+            let relative = path.trim_start_matches('/');
+            if path.ends_with('/') {
+                let index_path = format!("{relative}index.html");
+                match files::resolve_encoded_resource(
+                    selected.static_root.as_deref(),
+                    &index_path,
+                    target,
+                    MissingKind::NotFound,
+                )? {
+                    outcome @ (ResourceOutcome::File(_) | ResourceOutcome::Missing(_)) => outcome,
+                    ResourceOutcome::DirectoryIndex { .. } | ResourceOutcome::Redirect { .. } => {
+                        ResourceOutcome::Missing(MissingKind::NotFound)
+                    }
+                }
+            } else {
+                files::resolve_encoded_resource(
+                    selected.static_root.as_deref(),
+                    relative,
+                    target,
+                    MissingKind::NotFound,
+                )?
+            }
+        }
         _ => unreachable!(),
     };
     Ok(outcome)

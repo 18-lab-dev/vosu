@@ -175,14 +175,19 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     let static_root = roots.path().join("counter-static");
     let counter = static_root.join("seeded-counter");
     fs::create_dir_all(&counter).unwrap();
-    fs::write(
-        counter.join("index.html"),
-        "<!doctype html><title>Seeded</title>",
-    )
-    .unwrap();
+    let seeded_index = "<!doctype html><title>Seeded</title>";
+    fs::write(counter.join("index.html"), seeded_index).unwrap();
+    let seeded_script = b"window.seeded = true;\n";
+    fs::write(counter.join("app.js"), seeded_script).unwrap();
     fs::write(
         counter.join("metadata.txt"),
         "Name: Seeded Counter\nAuthor: CI\nVersion: 1.0\n640x480\n",
+    )
+    .unwrap();
+    fs::create_dir_all(
+        static_root
+            .join("directory-index-counter")
+            .join("index.html"),
     )
     .unwrap();
 
@@ -223,6 +228,60 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .unwrap();
     assert_eq!(css.status(), 200);
     assert!(!css.bytes().await.unwrap().is_empty());
+
+    let seeded_counter = client
+        .get(format!("{base}/seeded-counter/"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(seeded_counter.status(), 200);
+    assert_eq!(
+        seeded_counter.headers()[reqwest::header::CONTENT_TYPE],
+        "text/html; charset=utf-8"
+    );
+    assert_eq!(seeded_counter.text().await.unwrap(), seeded_index);
+
+    let no_redirect_client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let seeded_counter_redirect = no_redirect_client
+        .get(format!("{base}/seeded-counter?foo=bar"))
+        .send()
+        .await
+        .unwrap();
+    assert!(seeded_counter_redirect.status().is_redirection());
+    assert_eq!(
+        seeded_counter_redirect.headers()[reqwest::header::LOCATION],
+        "/seeded-counter/?foo=bar"
+    );
+
+    let missing_counter = no_redirect_client
+        .get(format!("{base}/definitely-missing"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_counter.status(), 404);
+
+    let seeded_script_response = no_redirect_client
+        .get(format!("{base}/seeded-counter/app%2Ejs"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(seeded_script_response.status(), 200);
+    assert_eq!(
+        seeded_script_response.bytes().await.unwrap().as_ref(),
+        seeded_script.as_slice()
+    );
+
+    let directory_index = no_redirect_client
+        .get(format!("{base}/directory-index-counter/"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(directory_index.status(), 404);
 
     let not_ready = client.get(format!("{base}/json/v2")).send().await.unwrap();
     assert_eq!(not_ready.status(), 500);
