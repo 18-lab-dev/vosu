@@ -1,0 +1,50 @@
+---
+type: Reference
+title: vosu code wiki quickstart
+description: Entry point for engineers and agents working on vosu, a native Rust daemon that reads osu! stable and lazer state and serves compatible HTTP and WebSocket APIs.
+resource: README.md
+tags: [vosu, rust, code-wiki, onboarding]
+---
+
+# vosu code wiki
+
+`vosu` is a single native Rust daemon for osu! telemetry, counters, reports, live calculations, and compatible APIs. It discovers osu! stable/lazer processes, reads memory without modifying the client, reduces samples into coherent immutable state, and serves dashboard, HTTP, and WebSocket consumers. The workspace targets Rust 1.96.1 and contains the production binary plus the `vosu-lazer-pp` calculation crate and a test-only harness (`Cargo.toml`).
+
+## Start here
+
+1. Read [Architecture overview](architecture/overview.md) for ownership, lifecycle, process generations, sampling, snapshots, and server boundaries.
+2. Use the [Source map](architecture/source-map.md) to find the owner of a concern before editing code.
+3. Follow [Runtime and configuration workflows](workflows/runtime-and-config.md) for startup, paths, reload, counters, listener behavior, and updates.
+4. Follow [Compatibility and calculation workflows](workflows/compatibility-and-calculation.md) when changing API schemas, WebSockets, precise state, parity, or pp calculations.
+5. Use the [Operations runbook](operations/runbook.md) for platform prerequisites, security boundaries, release/update handling, and troubleshooting.
+6. Use [Testing and verification](testing/verification.md) to choose the narrowest behavioral check and the broader CI/release gates.
+
+The repository’s detailed source documentation remains authoritative: [README.md](../README.md) is the product/operator contract, [docs/architecture.md](../docs/architecture.md) explains structural boundaries, [decision records](../docs/decisions/README.md) explain durable choices, and [benchmarks](../docs/benchmarks.md) contains machine-specific measurements.
+
+## Build and run
+
+Use the pinned toolchain and lockfile:
+
+```sh
+cargo build --locked --no-default-features
+cargo run --locked --no-default-features
+```
+
+The default listener is `127.0.0.1:24050`; the dashboard is `/`. Production builds use `--release --locked --no-default-features` for the native Linux or Windows target. No Node.js, Electron, .NET, or C# runtime is required because dashboard assets and offsets are vendored build inputs (`README.md`, `Cargo.toml`).
+
+## Recent direction
+
+Recent changes explain current hotspots: `9b67c55` introduced v2 selected-field subscriptions, `1f28910` completed WebSocket close handshakes, `cb676ee` added precise keypress state/timestamps across readers, reducers, APIs, and tests, `1ccd4cc` removed the embedded overlay boundary in favor of external consumers, and `6eb012c` added the precise input-validation harness. Treat these as compatibility-sensitive areas and use the targeted verification in [Testing and verification](testing/verification.md).
+
+## Documentation conventions
+
+- `src/` owns runtime behavior; `crates/` owns workspace subcrates; `tests/`, `benches/`, and `tools/` provide behavioral evidence and maintainer tooling.
+- Preserve exact routes, payloads, status behavior, bounded queues, process-generation checks, updater verification, and platform safety rules.
+- Extend the atomic snapshot path rather than reading independent state components from a route or wire builder.
+- Keep `tosu` references only where they are explicitly migration, upstream, parity, provenance, or historical evidence; the current product name is `vosu`.
+
+## Backlog
+
+- **Live parity operations cadence and pinned-artifact ownership** — anchor: `tools/live-parity/`, `AGENTS.md`; the repository defines the gate and supported matrix but not a recurring maintainer schedule.
+- **Quarantined updater transaction operator procedure** — anchor: `src/updater/transaction.rs`, `docs/architecture.md`; recovery behavior is documented, but a step-by-step diagnosis/escalation procedure is not explicit.
+- **Linux stable/Wine parity evidence** — anchor: `tools/live-parity/live_parity.py::SUPPORTED_MATRIX`; runtime support exists, while the inspected parity matrix currently lists Linux lazer rather than Linux stable.
