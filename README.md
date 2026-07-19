@@ -33,6 +33,8 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 
 ## Install
 
+### Portable archive
+
 Download `vosu-linux-v0.1.0.zip` or `vosu-windows-v0.1.0.zip` from the matching [GitHub release](https://github.com/vosuapp/vosu/releases), then:
 
 1. Extract the complete archive into a writable directory. Its root contains `vosu` or `vosu.exe`, plus `LICENSE`.
@@ -41,6 +43,31 @@ Download `vosu-linux-v0.1.0.zip` or `vosu-windows-v0.1.0.zip` from the matching 
 4. Open <http://127.0.0.1:24050/>. By default, vosu opens the dashboard after startup.
 
 Do not run the Windows executable directly from an archive or a OneDrive-controlled directory. The updater cannot provide safe replacement and rollback in those locations.
+
+### Manual per-user installation
+
+Install into a user-writable location so vosu can update itself without running as root or Administrator. After extracting the release archive, run:
+
+**Linux**
+
+```sh
+install -Dm755 vosu "$HOME/.local/bin/vosu"
+install -Dm644 LICENSE "$HOME/.local/share/licenses/vosu/LICENSE"
+"$HOME/.local/bin/vosu"
+```
+
+Add `$HOME/.local/bin` to `PATH` if you want to launch vosu as `vosu`.
+
+**Windows (PowerShell)**
+
+```powershell
+$installDir = Join-Path $env:LOCALAPPDATA "Programs\vosu"
+New-Item -ItemType Directory -Force $installDir | Out-Null
+Copy-Item .\vosu.exe, .\LICENSE $installDir
+& "$installDir\vosu.exe"
+```
+
+For a later manual upgrade, stop vosu, replace the executable and `LICENSE` with the files from the new complete archive, then restart it.
 
 ### Automatic updates
 
