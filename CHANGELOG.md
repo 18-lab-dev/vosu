@@ -21,6 +21,7 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 ### Reliability
 
 - Completed server-initiated WebSocket close handshakes with a bounded wait for peer acknowledgement, preventing Windows connection resets from dropping v2 subscription terminal close codes.
+- Made the Windows updater helper tolerate the brief missing-record window that can occur while the parent atomically replaces the durable handoff record, without retrying malformed or unauthenticated records.
 
 ### Documentation
 
