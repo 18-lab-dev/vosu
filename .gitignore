@@ -18,6 +18,7 @@ __pycache__/
 .env.*
 !.env.example
 /vosu.env
+.worktrees/
 
 # Editor and operating-system metadata
 .idea/
