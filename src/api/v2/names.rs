@@ -27,7 +27,7 @@ pub(super) fn game_state_name(v: i64) -> &'static str {
         _ => "",
     }
 }
-pub(super) fn ruleset_name(v: i64) -> &'static str {
+pub(crate) fn ruleset_name(v: i64) -> &'static str {
     match v {
         0 => "osu",
         1 => "taiko",

@@ -11,6 +11,9 @@ fn state_defaults_and_retry_retention_match_source_contract() {
     assert_eq!(snapshot.precise.status, GameState::Menu.value() as i64);
     let mut configured = StateBundle::new(ClientType::Stable, 10, Arc::new(EchoCalculation));
     configured.set_capture_config(false, true);
+    configured.gameplay.mode = 3;
+    configured.gameplay.keypress_mode = 3;
+    assert_eq!(configured.materialize_current().precise.mode, 3);
     let plan = configured.capture_plan();
     assert!(!plan.read_mania_scroll_speed);
     assert!(plan.show_mp_commands);
@@ -26,6 +29,7 @@ fn state_defaults_and_retry_retention_match_source_contract() {
     }];
     gameplay.player_name = "retained".into();
     gameplay.mode = 3;
+    gameplay.keypress_mode = 3;
     gameplay.mods.checksum = "mods".into();
     gameplay.leaderboard_scores.push(raw_leaderboard_player());
     gameplay.hit_errors.push(10.0);
@@ -34,9 +38,10 @@ fn state_defaults_and_retry_retention_match_source_contract() {
         (
             gameplay.retries,
             gameplay.player_name.as_str(),
-            gameplay.mode
+            gameplay.mode,
+            gameplay.keypress_mode,
         ),
-        (8, "retained", 3)
+        (8, "retained", 3, 3)
     );
     assert_eq!(gameplay.mods.checksum, "mods");
     assert_eq!(gameplay.leaderboard_scores.len(), 1);
@@ -166,10 +171,11 @@ async fn lazer_pause_clears_only_regular_gameplay_state() {
         vec![raw_leaderboard_player()],
     ))))
     .publish();
-    bundle
+    let active = bundle
         .apply_regular(active)
         .await
         .expect("active lazer gameplay");
+    assert_eq!(active.publication.precise.mode, 3);
     bundle.gameplay.hit_errors = vec![1.0, -1.0];
     bundle.gameplay.previous_hit_error_index = 2;
     bundle.precise_dirty = true;
@@ -205,6 +211,7 @@ async fn lazer_pause_clears_only_regular_gameplay_state() {
     );
     assert_eq!(paused.publication.precise.hit_errors.as_ref(), &[1.0, -1.0]);
     assert_eq!(paused.publication.precise.committed_hit_error_index, 2);
+    assert_eq!(paused.publication.precise.mode, 3);
 
     let resumed = RawRegularSnapshotBuilder::new(
         RegularCaptureContext::new(ClientType::Lazer, 11, 0, 3),
@@ -219,6 +226,7 @@ async fn lazer_pause_clears_only_regular_gameplay_state() {
     assert!(!resumed.publication.regular.global.paused);
     assert_eq!(resumed.publication.regular.gameplay.score, 123.0);
     assert_eq!(resumed.publication.regular.gameplay.mode, 3);
+    assert_eq!(resumed.publication.precise.mode, 3);
     assert_eq!(resumed.publication.regular.gameplay.combo, 51);
 }
 

@@ -8,6 +8,7 @@ pub struct GameplayState {
     pub retries: i64,
     pub player_name: String,
     pub mode: i64,
+    pub keypress_mode: i64,
     pub mods: CalculateMods,
     pub score: f64,
     pub player_hp_smooth: f64,
@@ -24,6 +25,8 @@ pub struct GameplayState {
     pub grade_current: String,
     pub grade_expected: String,
     pub key_overlay: Vec<KeyOverlayButton>,
+    pub keypresses: Vec<KeypressButton>,
+    pub keypress_identity_mode: Option<i64>,
     pub hit_errors: Vec<f64>,
     pub total_hit_errors: f64,
     pub previous_hit_error_index: i64,
@@ -44,6 +47,7 @@ impl Default for GameplayState {
             retries: 0,
             player_name: String::new(),
             mode: 0,
+            keypress_mode: 0,
             mods: default_calculated_mods(),
             score: 0.0,
             player_hp_smooth: 0.0,
@@ -60,6 +64,8 @@ impl Default for GameplayState {
             grade_current: String::new(),
             grade_expected: String::new(),
             key_overlay: Vec::new(),
+            keypresses: Vec::new(),
+            keypress_identity_mode: None,
             hit_errors: Vec::new(),
             total_hit_errors: 0.0,
             previous_hit_error_index: 0,
@@ -82,6 +88,7 @@ impl GameplayState {
                 self.retries,
                 self.player_name.clone(),
                 self.mode,
+                self.keypress_mode,
                 self.mods.clone(),
                 self.leaderboard_visible,
                 self.leaderboard_player.clone(),
@@ -97,13 +104,23 @@ impl GameplayState {
             &self.statistics,
         );
         self.grade_expected.clone_from(&self.grade_current);
-        if let Some((is_default_state, retries, player_name, mode, mods, visible, player, scores)) =
-            retained
+        if let Some((
+            is_default_state,
+            retries,
+            player_name,
+            mode,
+            keypress_mode,
+            mods,
+            visible,
+            player,
+            scores,
+        )) = retained
         {
             self.is_default_state = is_default_state;
             self.retries = retries;
             self.player_name = player_name;
             self.mode = mode;
+            self.keypress_mode = keypress_mode;
             self.mods = mods;
             self.leaderboard_visible = visible;
             self.leaderboard_player = player;
@@ -149,12 +166,19 @@ impl GameplayState {
     }
 
     pub(super) fn reset_keys(&mut self) {
+        self.keypress_identity_mode = None;
         if self.is_key_overlay_default_state {
             return;
         }
         for key in &mut self.key_overlay {
             key.is_pressed = false;
             key.count = 0;
+        }
+        for key in &mut self.keypresses {
+            key.is_pressed = false;
+            key.count = 0;
+            key.pressed_at = None;
+            key.released_at = None;
         }
         self.is_key_overlay_default_state = true;
     }
@@ -166,6 +190,7 @@ impl GameplayState {
         self.player_name.clone_from(&result.player_name);
         self.mods = result.mods.clone();
         self.mode = result.mode;
+        self.keypress_mode = result.mode;
         self.score = result.score;
         self.player_hp_smooth = result.player_hp_smooth;
         self.player_hp = result.player_hp;
@@ -356,7 +381,9 @@ pub struct RegularState {
 pub struct PreciseState {
     pub status: i64,
     pub play_time: f64,
+    pub mode: i64,
     pub key_overlay: Arc<Vec<KeyOverlayButton>>,
+    pub keypresses: Arc<Vec<KeypressButton>>,
     pub hit_errors: Arc<Vec<f64>>,
     pub total_hit_errors: f64,
     pub committed_hit_error_index: i64,

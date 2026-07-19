@@ -4,6 +4,7 @@ use bytes::Bytes;
 
 use crate::instance::{InstanceSettings, Pid};
 use crate::model::enums::ClientType;
+use crate::model::states::KeypressButton;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -41,7 +42,9 @@ fn precise(play_time: f64) -> Arc<PreciseState> {
     Arc::new(PreciseState {
         status: 0,
         play_time,
+        mode: 0,
         key_overlay: Arc::new(Vec::new()),
+        keypresses: Arc::new(Vec::new()),
         hit_errors: Arc::new(Vec::new()),
         total_hit_errors: 0.0,
         committed_hit_error_index: 0,
@@ -496,10 +499,18 @@ fn synthetic_live_state_worker_smoke_encodes_every_transition() {
                 let precise = Arc::new(PreciseState {
                     status: i64::from(status.value()),
                     play_time,
+                    mode: 0,
                     key_overlay: Arc::new(vec![KeyOverlayButton {
-                        name: "K1".to_owned(),
+                        name: "K1".into(),
                         is_pressed: generation.is_multiple_of(2),
                         count: generation as i64,
+                    }]),
+                    keypresses: Arc::new(vec![KeypressButton {
+                        name: "K1".into(),
+                        is_pressed: generation.is_multiple_of(2),
+                        count: generation as i64,
+                        pressed_at: generation.is_multiple_of(2).then_some(play_time),
+                        released_at: None,
                     }]),
                     hit_errors: Arc::new(vec![generation as f64]),
                     total_hit_errors: generation as f64,

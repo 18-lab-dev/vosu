@@ -170,6 +170,8 @@ Methods and paths are exact. Unsupported combinations return `404 Not Found`. St
 | `GET /json/v2/precise` | vosu precise snapshot |
 | `GET /api/calculate/pp` | Legacy `rosu-pp` calculation; uses the current beatmap unless `path` names a canonical regular `.osu` file |
 
+`/json/v2/precise` publishes low-latency input data at `PRECISE_DATA_POLL_RATE`. Its additive `keypresses` object contains the active ruleset in `mode` and every source-reported logical input in ordered `keys` entries (`name`, `isPressed`, `count`, `pressedAt`, and `releasedAt`) for stable and lazer; the legacy fixed `keys` object remains available. Edge timestamps are nullable gameplay milliseconds. They update only when the sampled state exposes that edge, so a count jump can report missed complete taps without fabricating timestamps.
+
 All calculation parameters are optional: `path`, `lazer`, `mode` (`0` osu, `1` taiko, `2` catch, `3` mania), `ar`, `cs`, `hp`, `od`, `clockRate`, `passedObjects`, `combo`, `nMisses`, `n100`, `n300`, `n50`, `nGeki`, `nKatu`, `mods` (legacy bits or a JSON mod object/array), `acc`, `sliderEndHits`, `smallTickHits`, `largeTickHits`, and `hitresultPriority`.
 
 ### Current game files

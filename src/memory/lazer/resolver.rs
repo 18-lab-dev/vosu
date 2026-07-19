@@ -217,7 +217,20 @@ impl LazerMemory {
         inline: bool,
         stride: usize,
     ) -> Result<Vec<usize>, MemoryError> {
+        self.list_items_bounded(list, inline, stride, MAX_COLLECTION)
+    }
+
+    pub(super) fn list_items_bounded(
+        &self,
+        list: usize,
+        inline: bool,
+        stride: usize,
+        max_size: usize,
+    ) -> Result<Vec<usize>, MemoryError> {
         let (size, items) = self.list_info(list)?;
+        if size > max_size {
+            return Err(corrupt("managed collection", list, "invalid size"));
+        }
         let mut out = Vec::with_capacity(size);
         for i in 0..size {
             let slot = add(

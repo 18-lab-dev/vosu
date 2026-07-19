@@ -362,16 +362,34 @@ pub struct KeyOverlay {
     pub m2: KeyOverlayButton,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Keypress {
+    pub name: std::sync::Arc<str>,
+    #[serde(rename = "isPressed")]
+    pub is_pressed: bool,
+    pub count: i64,
+    #[serde(rename = "pressedAt")]
+    pub pressed_at: Option<f64>,
+    #[serde(rename = "releasedAt")]
+    pub released_at: Option<f64>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Keypresses {
+    pub mode: NumberName,
+    pub keys: Vec<Keypress>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PreciseTourney {
     #[serde(rename = "ipcId", serialize_with = "serialize_js_number")]
     pub ipc_id: f64,
     pub keys: KeyOverlay,
+    pub keypresses: Keypresses,
     #[serde(rename = "hitErrors")]
     pub hit_errors: Vec<f64>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PreciseResponse {
     pub keys: KeyOverlay,
+    pub keypresses: Keypresses,
     #[serde(rename = "hitErrors")]
     pub hit_errors: Vec<f64>,
     pub tourney: Vec<PreciseTourney>,

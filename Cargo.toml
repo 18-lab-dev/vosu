@@ -45,7 +45,7 @@ rosu-mods = "=0.4.0"
 rosu-pp = "=4.0.1"
 rust-embed = { version = "=8.12.0", features = ["debug-embed"] }
 semver = "=1.0.28"
-serde = { version = "=1.0.228", features = ["derive"] }
+serde = { version = "=1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "=1.0.150", features = ["preserve_order"] }
 serde-value = "=0.7.0"
 sha2 = "=0.11.0"

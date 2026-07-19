@@ -6,7 +6,9 @@ use crate::calculation::progressive::{PerformanceAttributes, ProgressiveAttribut
 use crate::instance::InstanceSettings;
 use crate::model::enums::ClientType;
 use crate::model::memory::User;
-use crate::model::states::{CalculateMods, KeyOverlayButton, LeaderboardPlayer, Statistics};
+use crate::model::states::{
+    CalculateMods, KeyOverlayButton, KeypressButton, LeaderboardPlayer, Statistics,
+};
 use crate::state::{
     BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
     MenuState, PreciseState, RankedPlayState, RegularState, ResultScreenState, SettingsState,
@@ -94,16 +96,33 @@ fn snapshot_with_precise(
     let precise = Arc::new(PreciseState {
         status,
         play_time,
+        mode: 0,
         key_overlay: Arc::new(vec![
             KeyOverlayButton {
-                name: "K1".to_owned(),
+                name: "K1".into(),
                 is_pressed: true,
                 count: 1,
             },
             KeyOverlayButton {
-                name: "K2".to_owned(),
+                name: "K2".into(),
                 is_pressed: false,
                 count: 2,
+            },
+        ]),
+        keypresses: Arc::new(vec![
+            KeypressButton {
+                name: "K1".into(),
+                is_pressed: true,
+                count: 1,
+                pressed_at: Some(play_time),
+                released_at: None,
+            },
+            KeypressButton {
+                name: "K2".into(),
+                is_pressed: false,
+                count: 2,
+                pressed_at: None,
+                released_at: None,
             },
         ]),
         hit_errors: Arc::new(vec![-4.0, 5.0]),

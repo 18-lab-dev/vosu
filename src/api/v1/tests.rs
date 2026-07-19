@@ -7,7 +7,9 @@ use super::*;
 use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
 use crate::calculation::default_calculated_mods;
 use crate::model::memory::{LazerSpectator, User};
-use crate::model::states::{KeyOverlayButton as StateKey, TourneyManagerChatItem};
+use crate::model::states::{
+    KeyOverlayButton as StateKey, KeypressButton as StateKeypress, TourneyManagerChatItem,
+};
 use crate::state::{
     BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
     MenuState, PreciseState, RankedPlayState, ResultScreenState, SettingsState,
@@ -69,7 +71,9 @@ fn precise() -> PreciseState {
     PreciseState {
         status: 0,
         play_time: 0.0,
+        mode: 0,
         key_overlay: Arc::new(Vec::new()),
+        keypresses: Arc::new(Vec::new()),
         hit_errors: Arc::new(Vec::new()),
         total_hit_errors: 0.0,
         committed_hit_error_index: 0,
@@ -154,9 +158,16 @@ fn play_and_result_select_the_source_mods_and_precise_values() {
     play.beatmap.pp_acc.insert(95, 123.456);
     let mut precise = precise();
     precise.key_overlay = Arc::new(vec![StateKey {
-        name: "K1".to_owned(),
+        name: "K1".into(),
         is_pressed: true,
         count: 3,
+    }]);
+    precise.keypresses = Arc::new(vec![StateKeypress {
+        name: "K1".into(),
+        is_pressed: true,
+        count: 3,
+        pressed_at: Some(123.0),
+        released_at: None,
     }]);
     precise.hit_errors = Arc::new(vec![1.5]);
     precise.unstable_rate = 12.5;

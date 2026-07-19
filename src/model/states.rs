@@ -1,3 +1,5 @@
+use std::sync::{Arc, LazyLock};
+
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -55,10 +57,94 @@ pub struct Statistics {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyOverlayButton {
-    pub name: String,
+    pub name: Arc<str>,
     #[serde(rename = "isPressed")]
     pub is_pressed: bool,
     pub count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeypressButton {
+    pub name: Arc<str>,
+    pub is_pressed: bool,
+    pub count: i64,
+    pub pressed_at: Option<f64>,
+    pub released_at: Option<f64>,
+}
+
+static KEY_NAMES: LazyLock<[Arc<str>; 18]> = LazyLock::new(|| {
+    [
+        Arc::from("K1"),
+        Arc::from("K2"),
+        Arc::from("K3"),
+        Arc::from("K4"),
+        Arc::from("K5"),
+        Arc::from("K6"),
+        Arc::from("K7"),
+        Arc::from("K8"),
+        Arc::from("K9"),
+        Arc::from("K10"),
+        Arc::from("K11"),
+        Arc::from("K12"),
+        Arc::from("K13"),
+        Arc::from("K14"),
+        Arc::from("K15"),
+        Arc::from("K16"),
+        Arc::from("K17"),
+        Arc::from("K18"),
+    ]
+});
+
+static BUTTON_NAMES: LazyLock<[Arc<str>; 18]> = LazyLock::new(|| {
+    [
+        Arc::from("B1"),
+        Arc::from("B2"),
+        Arc::from("B3"),
+        Arc::from("B4"),
+        Arc::from("B5"),
+        Arc::from("B6"),
+        Arc::from("B7"),
+        Arc::from("B8"),
+        Arc::from("B9"),
+        Arc::from("B10"),
+        Arc::from("B11"),
+        Arc::from("B12"),
+        Arc::from("B13"),
+        Arc::from("B14"),
+        Arc::from("B15"),
+        Arc::from("B16"),
+        Arc::from("B17"),
+        Arc::from("B18"),
+    ]
+});
+
+static LEFT_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("L"));
+static RIGHT_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("R"));
+static DRUM_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("D"));
+static MOUSE_ONE_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("M1"));
+static MOUSE_TWO_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("M2"));
+
+impl KeyOverlayButton {
+    pub(crate) fn stable_name(mode: i64, index: usize) -> Arc<str> {
+        match (mode, index) {
+            (3, _) | (_, 4..) => Arc::clone(&KEY_NAMES[index]),
+            (2, 0) => Arc::clone(&LEFT_NAME),
+            (2, 1) => Arc::clone(&RIGHT_NAME),
+            (2, 2) => Arc::clone(&DRUM_NAME),
+            (2, 3) | (_, 3) => Arc::clone(&MOUSE_TWO_NAME),
+            (_, 0) => Arc::clone(&KEY_NAMES[0]),
+            (_, 1) => Arc::clone(&KEY_NAMES[1]),
+            (_, 2) => Arc::clone(&MOUSE_ONE_NAME),
+        }
+    }
+
+    pub(crate) fn lazer_button_count() -> usize {
+        BUTTON_NAMES.len()
+    }
+
+    pub(crate) fn lazer_name(index: usize) -> Arc<str> {
+        Arc::clone(&BUTTON_NAMES[index])
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

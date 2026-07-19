@@ -26,7 +26,9 @@ fn precise_only_publication_does_not_wake_regular_subscribers() {
         Arc::new(PreciseState {
             status: 2,
             play_time,
+            mode: 0,
             key_overlay: Arc::new(Vec::new()),
+            keypresses: Arc::new(Vec::new()),
             hit_errors: Arc::new(Vec::new()),
             total_hit_errors: 0.0,
             committed_hit_error_index: 0,

@@ -218,15 +218,24 @@ fn fractional_and_nonfinite_ipc_ids_follow_javascript_json() {
             count: 0,
         },
     };
+    let keypresses = Keypresses {
+        mode: NumberName {
+            number: Some(0),
+            name: "osu".to_owned(),
+        },
+        keys: Vec::new(),
+    };
     let dto = PreciseTourney {
         ipc_id: 7.25,
         keys: keys.clone(),
+        keypresses: keypresses.clone(),
         hit_errors: vec![],
     };
     assert!(json(&dto).starts_with(r#"{"ipcId":7.25,"keys":"#));
     let dto = PreciseTourney {
         ipc_id: f64::INFINITY,
         keys,
+        keypresses,
         hit_errors: vec![],
     };
     assert!(json(&dto).starts_with(r#"{"ipcId":null,"keys":"#));

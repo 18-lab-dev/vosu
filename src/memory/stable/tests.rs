@@ -133,6 +133,46 @@ fn fixture_patterns() -> StablePatterns {
         game_time_ptr: 0x1100,
     }
 }
+fn key_overlay_reader(length: i32) -> StableMemory {
+    key_overlay_reader_with_memory(length).0
+}
+
+fn key_overlay_reader_with_memory(length: i32) -> (StableMemory, Arc<SparseMemory>) {
+    let mut bytes = vec![0; 0x3000];
+    let ruleset_anchor = 0x1200usize;
+    let ruleset = 0x1300usize;
+    let overlay = 0x1400usize;
+    let nested = 0x1500usize;
+    let array = 0x1600usize;
+    put_u32(&mut bytes, 0x900 - 0xb, ruleset_anchor as u32);
+    put_u32(&mut bytes, ruleset_anchor + 4, ruleset as u32);
+    put_u32(&mut bytes, ruleset + 0xac, overlay as u32);
+    put_u32(&mut bytes, overlay + 0x10, nested as u32);
+    put_u32(&mut bytes, nested + 4, array as u32);
+    put_i32(&mut bytes, array + 4, length);
+    for index in 0..length.clamp(0, 18) as usize {
+        let button = 0x1800 + index * 0x40;
+        put_u32(&mut bytes, array + 8 + index * 4, button as u32);
+        put_i32(&mut bytes, button + 0x14, index as i32 + 10);
+        bytes[button + 0x1c] = u8::from(index % 2 == 0);
+    }
+    let memory = Arc::new(SparseMemory {
+        base: 0,
+        bytes,
+        reads: AtomicUsize::new(0),
+        batches: AtomicUsize::new(0),
+    });
+    let process = ProcessHandle::new(memory.clone(), ProcessBitness::X86);
+    (StableMemory::new(process, fixture_patterns()), memory)
+}
+
+fn key_overlay_buttons(reader: &mut StableMemory, mode: i64) -> KeyOverlay {
+    match reader.key_overlay(mode).unwrap() {
+        ReadStatus::Ready(buttons) => buttons,
+        other => panic!("{other:?}"),
+    }
+}
+
 #[test]
 fn ranked_status_keeps_stable_integer_exact() {
     for raw in [i32::MIN, -2, 0, 7, i32::MAX] {
@@ -226,6 +266,76 @@ fn every_public_method_has_a_deterministic_zero_memory_sentinel() {
     ));
     assert!(matches!(reader.settings().unwrap(), ReadStatus::NotReady));
 }
+#[test]
+fn key_overlay_decodes_short_mania_collections() {
+    let buttons = key_overlay_buttons(&mut key_overlay_reader(3), 3);
+    assert_eq!(
+        buttons,
+        [
+            KeyOverlayButton {
+                name: "K1".into(),
+                is_pressed: true,
+                count: 10,
+            },
+            KeyOverlayButton {
+                name: "K2".into(),
+                is_pressed: false,
+                count: 11,
+            },
+            KeyOverlayButton {
+                name: "K3".into(),
+                is_pressed: true,
+                count: 12,
+            },
+        ]
+    );
+}
+
+#[test]
+fn key_overlay_preserves_ruleset_names_and_returns_every_button() {
+    let expected = [
+        (0, ["K1", "K2", "M1", "M2", "K5"]),
+        (1, ["K1", "K2", "M1", "M2", "K5"]),
+        (2, ["L", "R", "D", "M2", "K5"]),
+        (3, ["K1", "K2", "K3", "K4", "K5"]),
+    ];
+    let mut reader = key_overlay_reader(5);
+    for (mode, names) in expected {
+        let buttons = key_overlay_buttons(&mut reader, mode);
+        assert_eq!(
+            buttons
+                .iter()
+                .map(|button| button.name.as_ref())
+                .collect::<Vec<_>>(),
+            names
+        );
+    }
+    let mania = key_overlay_buttons(&mut key_overlay_reader(18), 3);
+    assert_eq!((mania.len(), mania[17].name.as_ref()), (18, "K18"));
+    let mania_again = key_overlay_buttons(&mut key_overlay_reader(18), 3);
+    assert!(Arc::ptr_eq(&mania[17].name, &mania_again[17].name));
+}
+
+#[test]
+fn key_overlay_batches_all_button_states_after_pointer_decode() {
+    let (mut reader, memory) = key_overlay_reader_with_memory(18);
+    let buttons = key_overlay_buttons(&mut reader, 3);
+
+    assert_eq!(buttons.len(), 18);
+    assert_eq!(memory.batches.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn key_overlay_rejects_oversized_collections_before_reading_entries() {
+    assert!(matches!(
+        key_overlay_reader(19).key_overlay(3),
+        Err(MemoryError::Corrupt {
+            context: "stable key overlay",
+            ..
+        })
+    ));
+}
+
 #[test]
 fn accuracy_statistics_mod_order_and_defaults_match_source() {
     let no_mods = mods(0);

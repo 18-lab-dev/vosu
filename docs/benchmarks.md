@@ -14,7 +14,7 @@ Names below are the complete benchmark IDs from `benches/hot_paths.rs`.
 | `batch_scan` | `three_patterns_2mib` | Scanning one 2 MiB in-memory region for three patterns. Throughput is declared as 2 MiB per iteration. |
 | `raw_snapshot_reads` | `stable_regular_fields`, `lazer_regular_fields` | Calls to `global`, `menu`, and `gameplay` through the stable and lazer memory readers. |
 | `map_calculation` | `parse`, `full_difficulty_performance`, `gradual_all_objects`, `unchanged_cache_key` | Parsing, difficulty plus performance calculation, gradual difficulty, and an unchanged-key cache hit for the embedded five-object osu!standard map. Throughput is declared as five elements per iteration. |
-| `serializers_cold` | `v1`, `v2`, `v2_precise`, `stream_companion` | Encoding a newly constructed synthetic API snapshot. Snapshot construction is batched outside the timed routine. |
+| `serializers_cold` | `v1`, `v2`, `v2_precise`, `stream_companion` | Encoding a newly constructed synthetic API snapshot. The precise fixture carries 18 ordered mania keypresses. Snapshot construction is batched outside the timed routine. |
 | `serialization_cache` | `v1_bytes_clone`, `v2_bytes_clone`, `v2_precise_bytes_clone`, `stream_companion_bytes_clone` | Re-encoding the same pre-warmed snapshot, exercising each encoder's cached `Bytes` return path. |
 | `publication` | `unfiltered_clients/1`, `unfiltered_clients/100`, `unfiltered_clients/1000` | One in-memory publication delivered to and acknowledged by 1, 100, or 1,000 unfiltered hub connections on a current-thread Tokio runtime. Throughput is declared as the client count. |
 | `v2_subscription` | `shared_plan/1`, `shared_plan/100`, `shared_plan/1000`, `distinct_plans/1`, `distinct_plans/100`, `distinct_plans/1000` | One due revision dispatched through the public selected-field hub/provider APIs to 1, 100, or 1,000 in-memory connections. Shared clients use one identical ordered plan; distinct clients each use a different ordered plan. Throughput is declared as the client count. |
@@ -175,6 +175,22 @@ interval from the `new/estimates.json` files written by this run.
 | `v2_subscription/distinct_plans/1` | 8.004 µs | 7.996–8.012 µs |
 | `v2_subscription/distinct_plans/100` | 68.774 µs | 68.737–68.815 µs |
 | `v2_subscription/distinct_plans/1000` | 707.751 µs | 707.147–708.353 µs |
+
+## Local 18-key precise serialization observation: 2026-07-18
+
+This is a **non-portable observation, not a performance promise or acceptance
+threshold**.
+
+- Command: `cargo bench --locked --package vosu --bench hot_paths -- serializers_cold/v2_precise`
+- Host: AMD Ryzen 9 9950X3D, 16 cores / 32 threads, 123 GiB RAM
+- OS: x86_64 Linux 7.1.3-1-cachyos-bore
+- Compiler: `rustc 1.96.1 (31fca3adb 2026-06-26)`
+- Criterion: 0.7.0 defaults; Plotters backend (gnuplot unavailable)
+
+With the synthetic precise snapshot populated by all 18 mania inputs, Criterion
+reported `2.0756 µs` with a `2.0365–2.1139 µs` 95% confidence interval. Its
+stored-baseline comparison detected no statistically significant performance
+change (`p = 0.72`).
 
 ## Local publication observation: 2026-07-19
 

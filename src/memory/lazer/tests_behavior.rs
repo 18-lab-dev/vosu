@@ -240,6 +240,80 @@ fn key_overlay_uses_bindable_collection_and_all_button_names() {
             count: 42
         }]
     );
+    let ReadStatus::Ready(buttons_again) = decoder.key_overlay(3).unwrap() else {
+        panic!("not ready")
+    };
+    assert!(Arc::ptr_eq(&buttons[0].name, &buttons_again[0].name));
+}
+
+#[test]
+fn key_overlay_rejects_more_buttons_than_have_names() {
+    let offsets = LazerOffsets::embedded().unwrap();
+    let base = 0x1000usize;
+    let player = 0x3000usize;
+    let overlay = 0x4000usize;
+    let controller = 0x5000usize;
+    let bindable = 0x6000usize;
+    let collection = 0x7000usize;
+    let items = 0x8000usize;
+    let mut memory = SparseMemory::default();
+    memory.valid_base(base, &offsets);
+    memory.ptr(base + offsets.osu_game_osu_game_base.api_k_backing_field, 0);
+    memory.ptr(
+        base + offsets
+            .osu_game_osu_game_base
+            .spectator_client_k_backing_field,
+        0,
+    );
+    memory.ptr(
+        player
+            + offsets
+                .osu_game_screens_play_submitting_player
+                .api_k_backing_field,
+        0,
+    );
+    memory.ptr(
+        player
+            + offsets
+                .osu_game_screens_play_submitting_player
+                .spectator_client_k_backing_field,
+        0,
+    );
+    memory.ptr(
+        player
+            + offsets
+                .osu_game_screens_play_player
+                .hudoverlay_k_backing_field,
+        overlay,
+    );
+    memory.ptr(
+        overlay
+            + offsets
+                .osu_game_screens_play_hudoverlay
+                .input_count_controller,
+        controller,
+    );
+    memory.ptr(
+        controller
+            + offsets
+                .osu_game_screens_play_hud_input_count_controller
+                .triggers,
+        bindable,
+    );
+    memory.ptr(bindable + 0x18, collection);
+    memory.ptr(collection + 8, items);
+    memory.i32(collection + 0x10, 19);
+
+    let mut decoder = reader(Arc::new(memory));
+    decoder.set_resolved_state(base, player);
+
+    assert!(matches!(
+        decoder.key_overlay(3),
+        Err(MemoryError::Corrupt {
+            context: "managed collection",
+            ..
+        })
+    ));
 }
 #[test]
 fn settings_missing_required_config_key_is_a_hard_read_failure() {

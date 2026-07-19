@@ -18,6 +18,7 @@ use vosu::instance::InstanceSettings;
 use vosu::memory::lazer_offsets::LazerOffsets;
 use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns};
 use vosu::model::enums::ClientType;
+use vosu::model::states::KeypressButton;
 use vosu::process::{
     MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
 };
@@ -148,7 +149,19 @@ fn precise_state() -> PreciseState {
     PreciseState {
         status: 0,
         play_time: 0.0,
+        mode: 3,
         key_overlay: Arc::new(Vec::new()),
+        keypresses: Arc::new(
+            (1..=18)
+                .map(|index| KeypressButton {
+                    name: Arc::from(format!("K{index}")),
+                    is_pressed: index % 2 == 0,
+                    count: index,
+                    pressed_at: (index % 2 == 0).then_some(1_000.0),
+                    released_at: None,
+                })
+                .collect(),
+        ),
         hit_errors: Arc::new(Vec::new()),
         total_hit_errors: 0.0,
         committed_hit_error_index: 0,

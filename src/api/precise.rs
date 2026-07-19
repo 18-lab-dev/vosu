@@ -1,12 +1,17 @@
 //! Source-compatible `/json/v2/precise` wire builder.
 
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 use bytes::Bytes;
 
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerSnapshot};
-use crate::model::api::v2::{KeyOverlay, KeyOverlayButton, PreciseResponse, PreciseTourney};
-use crate::model::states::KeyOverlayButton as StateKeyOverlayButton;
+use crate::model::api::v2::{
+    KeyOverlay, KeyOverlayButton, Keypress, Keypresses, NumberName, PreciseResponse, PreciseTourney,
+};
+use crate::model::states::{
+    KeyOverlayButton as StateKeyOverlayButton, KeypressButton as StateKeypressButton,
+};
 
 /// Builds the exact V2 precise document from one immutable publication point.
 pub fn build(snapshot: &CombinedSnapshot) -> Result<PreciseResponse, ApiError> {
@@ -14,6 +19,7 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<PreciseResponse, ApiError> {
 
     Ok(PreciseResponse {
         keys: build_keys(&precise.key_overlay),
+        keypresses: build_keypresses(precise.mode, &precise.keypresses),
         hit_errors: precise.hit_errors.as_ref().clone(),
         tourney: build_tourney(snapshot.manager()),
     })
@@ -59,9 +65,29 @@ fn build_tourney(manager: &ManagerSnapshot) -> Vec<PreciseTourney> {
         .map(|(ipc_id, precise)| PreciseTourney {
             ipc_id,
             keys: build_keys(&precise.key_overlay),
+            keypresses: build_keypresses(precise.mode, &precise.keypresses),
             hit_errors: precise.hit_errors.as_ref().clone(),
         })
         .collect()
+}
+
+fn build_keypresses(mode: i64, buttons: &[StateKeypressButton]) -> Keypresses {
+    Keypresses {
+        mode: NumberName {
+            number: Some(mode),
+            name: crate::api::v2::names::ruleset_name(mode).to_owned(),
+        },
+        keys: buttons
+            .iter()
+            .map(|button| Keypress {
+                name: Arc::clone(&button.name),
+                is_pressed: button.is_pressed,
+                count: button.count,
+                pressed_at: button.pressed_at,
+                released_at: button.released_at,
+            })
+            .collect(),
+    }
 }
 
 fn build_keys(buttons: &[StateKeyOverlayButton]) -> KeyOverlay {
@@ -116,20 +142,39 @@ mod tests {
             ranked_play: RankedPlayState::default(),
         })
     }
-
     fn button(name: &str, is_pressed: bool, count: i64) -> StateKeyOverlayButton {
         StateKeyOverlayButton {
-            name: name.to_owned(),
+            name: name.into(),
             is_pressed,
             count,
         }
     }
 
     fn precise(keys: Vec<StateKeyOverlayButton>, hit_errors: Vec<f64>) -> Arc<PreciseState> {
+        precise_for_mode(0, keys, hit_errors)
+    }
+
+    fn precise_for_mode(
+        mode: i64,
+        keys: Vec<StateKeyOverlayButton>,
+        hit_errors: Vec<f64>,
+    ) -> Arc<PreciseState> {
+        let keypresses = keys
+            .iter()
+            .map(|key| StateKeypressButton {
+                name: Arc::clone(&key.name),
+                is_pressed: key.is_pressed,
+                count: key.count,
+                pressed_at: key.is_pressed.then_some(1234.0),
+                released_at: None,
+            })
+            .collect();
         Arc::new(PreciseState {
             status: 2,
             play_time: 1234.0,
+            mode,
             key_overlay: Arc::new(keys),
+            keypresses: Arc::new(keypresses),
             hit_errors: Arc::new(hit_errors),
             total_hit_errors: 0.0,
             committed_hit_error_index: 0,
@@ -187,30 +232,33 @@ mod tests {
 
     #[test]
     fn missing_keys_default_and_field_order_is_exact() {
-        let focused = bundle(1, precise(Vec::new(), Vec::new()));
+        let focused = bundle(1, precise_for_mode(99, Vec::new(), Vec::new()));
         let snapshot = snapshot(Some(10), vec![entry(10, focused, false, None)]);
 
         let encoded = encode(&snapshot).expect("precise response");
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
-            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"hitErrors":[],"tourney":[]}"#
+            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":99,"name":""},"keys":[]},"hitErrors":[],"tourney":[]}"#
         );
     }
 
     #[test]
     fn focused_updates_are_copied_exactly() {
-        let focused = bundle(
-            1,
-            precise(
-                vec![
-                    button("K1", true, 11),
-                    button("K2", false, 12),
-                    button("M1", true, 13),
-                    button("M2", false, 14),
-                ],
-                vec![-7.5, 2.25],
-            ),
+        let mut precise = precise_for_mode(
+            3,
+            vec![
+                button("K1", true, 11),
+                button("K2", false, 12),
+                button("M1", true, 13),
+                button("M2", false, 14),
+                button("K5", true, 15),
+                button("K6", false, 16),
+            ],
+            vec![-7.5, 2.25],
         );
+        let legacy = Arc::new(precise.key_overlay[..3].to_vec());
+        Arc::make_mut(&mut precise).key_overlay = legacy;
+        let focused = bundle(1, precise);
         let snapshot = snapshot(Some(10), vec![entry(10, focused, false, None)]);
         let response = build(&snapshot).expect("precise response");
 
@@ -239,10 +287,40 @@ mod tests {
             response.keys.m2,
             KeyOverlayButton {
                 is_pressed: false,
-                count: 14
+                count: 0
             }
         );
-        assert_eq!(response.hit_errors, vec![-7.5, 2.25]);
+        assert_eq!(
+            response.keypresses.mode,
+            NumberName {
+                number: Some(3),
+                name: "mania".to_owned(),
+            }
+        );
+        assert_eq!(
+            response
+                .keypresses
+                .keys
+                .iter()
+                .map(|key| {
+                    (
+                        key.name.as_ref(),
+                        key.is_pressed,
+                        key.count,
+                        key.pressed_at,
+                        key.released_at,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            [
+                ("K1", true, 11, Some(1234.0), None),
+                ("K2", false, 12, None, None),
+                ("M1", true, 13, Some(1234.0), None),
+                ("M2", false, 14, None, None),
+                ("K5", true, 15, Some(1234.0), None),
+                ("K6", false, 16, None, None),
+            ]
+        );
     }
 
     #[test]
@@ -269,15 +347,22 @@ mod tests {
     fn tournament_spectators_sort_by_ipc_id_not_pid_or_insertion_order() {
         let focused = bundle(1, precise(Vec::new(), Vec::new()));
         let manager = bundle(2, precise(Vec::new(), Vec::new()));
-        let ipc_30 = bundle(3, precise(vec![button("K1", true, 30)], vec![30.5]));
+        let ipc_30 = bundle(
+            3,
+            precise_for_mode(2, vec![button("K1", true, 30)], vec![30.5]),
+        );
         let ipc_2 = bundle(
             4,
-            precise(
+            precise_for_mode(
+                1,
                 vec![button("K1", false, 2), button("K2", true, 22)],
                 vec![-2.5],
             ),
         );
-        let ipc_infinity = bundle(5, precise(vec![button("K1", true, 99)], vec![99.0]));
+        let ipc_infinity = bundle(
+            5,
+            precise_for_mode(3, vec![button("K1", true, 99)], vec![99.0]),
+        );
         let snapshot = snapshot(
             Some(50),
             vec![
@@ -292,7 +377,49 @@ mod tests {
         let encoded = encode(&snapshot).expect("precise response");
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
-            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"hitErrors":[],"tourney":[{"ipcId":2.5,"keys":{"k1":{"isPressed":false,"count":2},"k2":{"isPressed":true,"count":22},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"hitErrors":[-2.5]},{"ipcId":30.25,"keys":{"k1":{"isPressed":true,"count":30},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"hitErrors":[30.5]},{"ipcId":null,"keys":{"k1":{"isPressed":true,"count":99},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"hitErrors":[99]}]}"#
+            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":0,"name":"osu"},"keys":[]},"hitErrors":[],"tourney":[{"ipcId":2.5,"keys":{"k1":{"isPressed":false,"count":2},"k2":{"isPressed":true,"count":22},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":1,"name":"taiko"},"keys":[{"name":"K1","isPressed":false,"count":2,"pressedAt":null,"releasedAt":null},{"name":"K2","isPressed":true,"count":22,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[-2.5]},{"ipcId":30.25,"keys":{"k1":{"isPressed":true,"count":30},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":2,"name":"fruits"},"keys":[{"name":"K1","isPressed":true,"count":30,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[30.5]},{"ipcId":null,"keys":{"k1":{"isPressed":true,"count":99},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":3,"name":"mania"},"keys":[{"name":"K1","isPressed":true,"count":99,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[99]}]}"#
+        );
+    }
+
+    #[test]
+    fn tournament_keypress_timestamps_are_isolated_per_spectator() {
+        let focused = bundle(1, precise(Vec::new(), Vec::new()));
+        let manager = bundle(2, precise(Vec::new(), Vec::new()));
+        let mut first = precise(vec![button("K1", true, 1)], Vec::new());
+        Arc::make_mut(&mut first).keypresses = Arc::new(vec![StateKeypressButton {
+            name: "K1".into(),
+            is_pressed: true,
+            count: 1,
+            pressed_at: Some(100.0),
+            released_at: Some(80.0),
+        }]);
+        let mut second = precise(vec![button("K1", false, 2)], Vec::new());
+        Arc::make_mut(&mut second).keypresses = Arc::new(vec![StateKeypressButton {
+            name: "K1".into(),
+            is_pressed: false,
+            count: 2,
+            pressed_at: Some(120.0),
+            released_at: Some(140.0),
+        }]);
+        let snapshot = snapshot(
+            Some(10),
+            vec![
+                entry(10, focused, false, None),
+                entry(20, manager, true, None),
+                entry(30, bundle(3, first), false, Some(1.0)),
+                entry(40, bundle(4, second), false, Some(2.0)),
+            ],
+        );
+
+        let response = build(&snapshot).expect("precise response");
+        assert_eq!(
+            (
+                response.tourney[0].keypresses.keys[0].pressed_at,
+                response.tourney[0].keypresses.keys[0].released_at,
+                response.tourney[1].keypresses.keys[0].pressed_at,
+                response.tourney[1].keypresses.keys[0].released_at,
+            ),
+            (Some(100.0), Some(80.0), Some(120.0), Some(140.0))
         );
     }
 

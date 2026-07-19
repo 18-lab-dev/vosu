@@ -241,9 +241,11 @@ fn precise_transition_validates_keys_appends_suffix_once_and_preserves_hits_on_e
     let context = bundle.apply_precise_inner(&precise);
     assert_eq!(bundle.gameplay.hit_errors, [-5.0, 5.0]);
     assert_eq!(bundle.gameplay.key_overlay[0].count, 0);
+    assert_eq!(bundle.gameplay.keypresses[0].count, 0);
     assert_eq!(bundle.gameplay.unstable_rate, 42.0);
     let epoch = context.reset_epoch;
     assert!(!bundle.gameplay.key_overlay[0].is_pressed);
+    assert!(!bundle.gameplay.keypresses[0].is_pressed);
     assert_eq!(
         (
             context.committed_hit_error_index,
@@ -267,4 +269,160 @@ fn precise_transition_validates_keys_appends_suffix_once_and_preserves_hits_on_e
     assert_eq!(bundle.gameplay.hit_errors, [-5.0, 5.0]);
     assert_eq!(exited.committed_hit_error_index, 2);
     assert_eq!(exited.accepted_precise_sequence, 2);
+}
+
+#[test]
+fn stable_precise_keys_keep_legacy_projection_and_complete_keypresses() {
+    let mut bundle = StateBundle::new(ClientType::Stable, 4, Arc::new(EchoCalculation));
+    bundle.global.status = GameState::Play.value() as i64;
+    bundle.global.play_time = 200.0;
+
+    let snapshot = |sequence, count| {
+        let keys = (1..=count)
+            .map(|index| KeyOverlayButton {
+                name: format!("K{index}").into(),
+                is_pressed: index % 2 == 0,
+                count: i64::from(index),
+            })
+            .collect();
+        RawPreciseSnapshotBuilder::new(
+            PreciseCaptureContext::new(
+                ClientType::Stable,
+                4,
+                0,
+                0,
+                default_calculated_mods(),
+                0,
+                0,
+            ),
+            sequence,
+            Ok(ReadStatus::Ready(GlobalPrecise {
+                status: GameState::Play.value() as i64,
+                time: 250.0,
+            })),
+        )
+        .key_overlay(Ok(ReadStatus::Ready(keys)))
+        .publish()
+    };
+
+    bundle.gameplay.keypress_mode = 3;
+    bundle.apply_precise_inner(&snapshot(1, 3));
+    assert!(bundle.gameplay.key_overlay.is_empty());
+    assert_eq!(bundle.gameplay.keypresses.len(), 3);
+
+    bundle.apply_precise_inner(&snapshot(2, 6));
+    assert_eq!(bundle.gameplay.key_overlay.len(), 3);
+    assert_eq!(bundle.gameplay.keypresses.len(), 6);
+    assert_eq!(bundle.gameplay.key_overlay[2].name.as_ref(), "K3");
+    assert_eq!(bundle.gameplay.keypresses[5].name.as_ref(), "K6");
+
+    bundle.gameplay.keypress_mode = 0;
+    bundle.apply_precise_inner(&snapshot(3, 6));
+    assert_eq!(bundle.gameplay.key_overlay.len(), 4);
+    assert_eq!(bundle.gameplay.keypresses.len(), 6);
+    assert_eq!(bundle.gameplay.key_overlay[3].name.as_ref(), "K4");
+}
+
+#[test]
+fn precise_keypress_timestamps_follow_observed_edges_and_reset_identity() {
+    let mut bundle = StateBundle::new(ClientType::Stable, 5, Arc::new(EchoCalculation));
+    bundle.gameplay.keypress_mode = 3;
+
+    let snapshot = |sequence, time, keys: &[(&str, bool, i64)]| {
+        RawPreciseSnapshotBuilder::new(
+            PreciseCaptureContext::new(
+                ClientType::Stable,
+                5,
+                0,
+                0,
+                default_calculated_mods(),
+                0,
+                0,
+            ),
+            sequence,
+            Ok(ReadStatus::Ready(GlobalPrecise {
+                status: GameState::Play.value() as i64,
+                time,
+            })),
+        )
+        .key_overlay(Ok(ReadStatus::Ready(
+            keys.iter()
+                .map(|(name, is_pressed, count)| KeyOverlayButton {
+                    name: (*name).into(),
+                    is_pressed: *is_pressed,
+                    count: *count,
+                })
+                .collect(),
+        )))
+        .publish()
+    };
+
+    bundle.apply_precise_inner(&snapshot(1, 200.0, &[("K1", false, 0)]));
+    assert_eq!(
+        (
+            bundle.gameplay.keypresses[0].pressed_at,
+            bundle.gameplay.keypresses[0].released_at,
+        ),
+        (None, None)
+    );
+
+    bundle.apply_precise_inner(&snapshot(2, 208.0, &[("K1", true, 1)]));
+    assert_eq!(
+        (
+            bundle.gameplay.keypresses[0].pressed_at,
+            bundle.gameplay.keypresses[0].released_at,
+        ),
+        (Some(208.0), None)
+    );
+
+    bundle.apply_precise_inner(&snapshot(3, 216.0, &[("K1", true, 1)]));
+    assert_eq!(bundle.gameplay.keypresses[0].pressed_at, Some(208.0));
+
+    bundle.apply_precise_inner(&snapshot(4, 224.0, &[("K1", true, 2)]));
+    assert_eq!(
+        (
+            bundle.gameplay.keypresses[0].count,
+            bundle.gameplay.keypresses[0].pressed_at,
+            bundle.gameplay.keypresses[0].released_at,
+        ),
+        (2, Some(208.0), None)
+    );
+
+    bundle.apply_precise_inner(&snapshot(5, 232.0, &[("K1", false, 2)]));
+    assert_eq!(
+        (
+            bundle.gameplay.keypresses[0].pressed_at,
+            bundle.gameplay.keypresses[0].released_at,
+        ),
+        (Some(208.0), Some(232.0))
+    );
+
+    bundle.gameplay.keypress_mode = 0;
+    bundle.apply_precise_inner(&snapshot(6, 240.0, &[("K1", false, 2)]));
+    assert_eq!(
+        (
+            bundle.gameplay.keypresses[0].pressed_at,
+            bundle.gameplay.keypresses[0].released_at,
+        ),
+        (None, None)
+    );
+
+    bundle.apply_precise_inner(&snapshot(7, 248.0, &[("M1", true, 3)]));
+    assert_eq!(
+        (
+            bundle.gameplay.keypresses[0].name.as_ref(),
+            bundle.gameplay.keypresses[0].pressed_at,
+            bundle.gameplay.keypresses[0].released_at,
+        ),
+        ("M1", Some(248.0), None)
+    );
+
+    bundle.reset_precise_epoch();
+    assert_eq!(
+        (
+            bundle.gameplay.keypresses[0].pressed_at,
+            bundle.gameplay.keypresses[0].released_at,
+        ),
+        (None, None)
+    );
 }

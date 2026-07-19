@@ -1,3 +1,5 @@
+const MAX_KEY_OVERLAY_BUTTONS: usize = 18;
+
 use super::*;
 
 impl SynchronizedMemoryReader for StableMemory {
@@ -166,22 +168,39 @@ impl MemoryReader for StableMemory {
         if a == 0 {
             return self.not_ready();
         }
-        if self.i32(self.add(a, 4)?)? < 4 {
+        let length = self.i32(self.add(a, 4)?)?;
+        if !(0..=MAX_KEY_OVERLAY_BUTTONS as i64).contains(&length) {
+            return Err(MemoryError::Corrupt {
+                context: "stable key overlay",
+                address: a,
+                message: "invalid button count",
+            });
+        }
+        if length == 0 {
             return Ok(ReadStatus::Ready(vec![]));
         }
-        let names = if mode == 2 {
-            ["L", "R", "D", "M2"]
-        } else {
-            ["K1", "K2", "M1", "M2"]
-        };
-        let n = if mode == 0 { 4 } else { 3 };
-        let mut out = Vec::with_capacity(n);
-        for (i, name) in names.iter().take(n).enumerate() {
-            let b = self.ptr(self.add(a, 8 + 4 * i)?)?;
+        let length = length as usize;
+        let mut pointers = [0u8; MAX_KEY_OVERLAY_BUTTONS * 4];
+        self.process
+            .read_exact(self.add(a, 8)?, &mut pointers[..length * 4])?;
+        let mut states = [[0u8; 9]; MAX_KEY_OVERLAY_BUTTONS];
+        let mut requests = Vec::with_capacity(length);
+        for (pointer, state) in pointers[..length * 4]
+            .chunks_exact(4)
+            .zip(states.iter_mut())
+        {
+            let button = u32::from_le_bytes(pointer.try_into().unwrap()) as usize;
+            requests.push(ReadRequest::new(self.add(button, 0x14)?, state));
+        }
+        self.process.read_many(&mut requests)?;
+        drop(requests);
+
+        let mut out = Vec::with_capacity(length);
+        for (index, state) in states[..length].iter().enumerate() {
             out.push(KeyOverlayButton {
-                name: (*name).into(),
-                is_pressed: self.process.read_u8(self.add(b, 0x1c)?)? != 0,
-                count: self.i32(self.add(b, 0x14)?)?,
+                name: KeyOverlayButton::stable_name(mode, index),
+                is_pressed: state[8] != 0,
+                count: i32::from_le_bytes(state[..4].try_into().unwrap()) as i64,
             })
         }
         Ok(ReadStatus::Ready(out))

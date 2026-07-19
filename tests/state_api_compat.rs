@@ -352,6 +352,7 @@ fn regular(input: &Input) -> RegularState {
             retries: integer(gameplay, "retries"),
             player_name: string(gameplay, "playerName"),
             mode: input.mode,
+            keypress_mode: input.mode,
             mods: gameplay_mods,
             score: number(gameplay, "score"),
             player_hp_smooth: number(gameplay, "playerHPSmooth"),
@@ -368,6 +369,17 @@ fn regular(input: &Input) -> RegularState {
             grade_current: string(gameplay, "gradeCurrent"),
             grade_expected: string(gameplay, "gradeExpected"),
             key_overlay: key_overlay.clone(),
+            keypresses: key_overlay
+                .iter()
+                .map(|key| vosu::model::states::KeypressButton {
+                    name: Arc::clone(&key.name),
+                    is_pressed: key.is_pressed,
+                    count: key.count,
+                    pressed_at: None,
+                    released_at: None,
+                })
+                .collect(),
+            keypress_identity_mode: Some(input.mode),
             hit_errors: serde_json::from_value(
                 gameplay
                     .get("hitErrors")
@@ -424,7 +436,9 @@ fn regular(input: &Input) -> RegularState {
 
 fn state(input: &Input) -> Arc<StateBundleSnapshot> {
     let regular = regular(input);
+    let mode = regular.gameplay.mode;
     let key_overlay = Arc::new(regular.gameplay.key_overlay.clone());
+    let keypresses = Arc::new(regular.gameplay.keypresses.clone());
     let hit_errors = Arc::new(regular.gameplay.hit_errors.clone());
     Arc::new(StateBundleSnapshot {
         source: if input.source.as_deref() == Some("lazer") {
@@ -436,9 +450,11 @@ fn state(input: &Input) -> Arc<StateBundleSnapshot> {
         reset_epoch: 0,
         regular: Arc::new(regular),
         precise: Arc::new(PreciseState {
+            mode,
             status: input.status,
             play_time: 0.0,
             key_overlay,
+            keypresses,
             hit_errors,
             total_hit_errors: 0.0,
             committed_hit_error_index: 0,
@@ -646,6 +662,24 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
                 expected
             };
             let actual = encode(schema, &snapshot);
+            let actual = if schema == "v2-precise" {
+                // `keypresses` is a vosu extension; pinned upstream fixtures attest the legacy fields.
+                let mut value: Value =
+                    serde_json::from_slice(&actual).expect("actual v2 precise must be valid");
+                let object = value.as_object_mut().expect("v2 precise must be an object");
+                object.shift_remove("keypresses");
+                if let Some(tourney) = object.get_mut("tourney").and_then(Value::as_array_mut) {
+                    for entry in tourney {
+                        entry
+                            .as_object_mut()
+                            .expect("v2 precise tournament entry must be an object")
+                            .shift_remove("keypresses");
+                    }
+                }
+                serde_json::to_vec(&value).expect("normalized v2 precise must encode")
+            } else {
+                actual
+            };
             assert_eq!(
                 String::from_utf8_lossy(&actual),
                 String::from_utf8_lossy(&expected),

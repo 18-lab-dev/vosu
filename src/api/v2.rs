@@ -130,7 +130,7 @@ impl Formatter for JsFormatter {
 }
 
 mod builders;
-mod names;
+pub(crate) mod names;
 mod tourney;
 
 use builders::*;

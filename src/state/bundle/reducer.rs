@@ -132,7 +132,9 @@ impl StateBundle {
         PreciseState {
             status: self.global.status,
             play_time: self.global.play_time,
+            mode: self.gameplay.keypress_mode,
             key_overlay: Arc::new(self.gameplay.key_overlay.clone()),
+            keypresses: Arc::new(self.gameplay.keypresses.clone()),
             hit_errors: Arc::new(self.gameplay.hit_errors.clone()),
             total_hit_errors: self.gameplay.total_hit_errors,
             committed_hit_error_index: self.gameplay.previous_hit_error_index,
@@ -450,6 +452,7 @@ impl StateBundle {
                             self.reset_precise_epoch();
                             self.gameplay.reset(false, self.source);
                         }
+                        let previous_mode = self.gameplay.mode;
                         let previous_combo = self.gameplay.combo;
                         let previous_unstable_rate = self.gameplay.unstable_rate;
                         self.gameplay.apply_score(
@@ -457,8 +460,9 @@ impl StateBundle {
                             self.source,
                             self.menu.object_count.unwrap_or(0),
                         );
-                        self.precise_dirty |= previous_unstable_rate.to_bits()
-                            != self.gameplay.unstable_rate.to_bits();
+                        self.precise_dirty |= previous_mode != self.gameplay.mode
+                            || previous_unstable_rate.to_bits()
+                                != self.gameplay.unstable_rate.to_bits();
                         if self.source == ClientType::Lazer && previous_combo > self.gameplay.combo
                         {
                             self.gameplay.reset_quick();
@@ -649,7 +653,7 @@ impl StateBundle {
         }
         if self.global.status == GameState::Play.value() as i64 && self.global.play_time >= 150.0 {
             if let Some(Ok(ReadStatus::Ready(keys))) = snapshot.key_overlay() {
-                self.gameplay.key_overlay = keys
+                let sanitized: Vec<_> = keys
                     .iter()
                     .cloned()
                     .map(|mut key| {
@@ -660,6 +664,51 @@ impl StateBundle {
                         key
                     })
                     .collect();
+                let identities_match = self.gameplay.keypress_identity_mode
+                    == Some(self.gameplay.keypress_mode)
+                    && sanitized.len() == self.gameplay.keypresses.len()
+                    && sanitized
+                        .iter()
+                        .zip(&self.gameplay.keypresses)
+                        .all(|(current, previous)| current.name == previous.name);
+                self.gameplay.keypresses = sanitized
+                    .iter()
+                    .enumerate()
+                    .map(|(index, key)| {
+                        let previous = identities_match.then(|| &self.gameplay.keypresses[index]);
+                        let (pressed_at, released_at) = match previous {
+                            Some(previous) if previous.is_pressed == key.is_pressed => {
+                                (previous.pressed_at, previous.released_at)
+                            }
+                            Some(previous) if key.is_pressed => {
+                                (Some(self.global.play_time), previous.released_at)
+                            }
+                            Some(previous) => (previous.pressed_at, Some(self.global.play_time)),
+                            None if key.is_pressed => (Some(self.global.play_time), None),
+                            None => (None, None),
+                        };
+                        KeypressButton {
+                            name: Arc::clone(&key.name),
+                            is_pressed: key.is_pressed,
+                            count: key.count,
+                            pressed_at,
+                            released_at,
+                        }
+                    })
+                    .collect();
+                self.gameplay.keypress_identity_mode = Some(self.gameplay.keypress_mode);
+                self.gameplay.key_overlay = if self.source == ClientType::Lazer {
+                    sanitized
+                } else if sanitized.len() < 4 {
+                    Vec::new()
+                } else {
+                    let legacy_len = if self.gameplay.keypress_mode == 0 {
+                        4
+                    } else {
+                        3
+                    };
+                    sanitized[..legacy_len].to_vec()
+                };
                 self.gameplay.is_key_overlay_default_state = false;
             }
             if let Some(Ok(ReadStatus::Ready(errors))) = snapshot.hit_errors() {

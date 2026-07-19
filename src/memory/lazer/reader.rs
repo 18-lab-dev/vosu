@@ -146,7 +146,8 @@ impl MemoryReader for LazerMemory {
                 .triggers,
         )?)?;
         let collection = self.ptr(add(bindable, 0x18)?)?;
-        let list = self.list_items(collection, false, 8)?;
+        let list =
+            self.list_items_bounded(collection, false, 8, KeyOverlayButton::lazer_button_count())?;
         let mut out = Vec::with_capacity(list.len());
         for (i, trigger) in list.into_iter().enumerate() {
             let count_bindable = self.ptr(add(trigger, 0x208)?)?;
@@ -157,7 +158,7 @@ impl MemoryReader for LazerMemory {
                 ReadRequest::new(add(trigger, 0x1f4)?, &mut pressed_bytes),
             ])?;
             out.push(KeyOverlayButton {
-                name: format!("B{}", i + 1),
+                name: KeyOverlayButton::lazer_name(i),
                 is_pressed: pressed_bytes[0] == 1,
                 count: i32::from_le_bytes(count_bytes) as i64,
             })
