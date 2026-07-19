@@ -9,6 +9,7 @@ This directory explains how **vosu** is built and why its load-bearing boundarie
 | [Architecture](architecture.md) | System context, component ownership, runtime flows, deployment, concurrency, and risks | A module boundary, lifecycle, data flow, or deployment model changes |
 | [Architecture decisions](decisions/README.md) | The rationale and consequences of durable technical choices | A load-bearing choice is introduced, replaced, or deliberately reversed |
 | [Benchmarks](benchmarks.md) | Criterion methodology, benchmark coverage, local observations, and regression workflow | A hot path, fixture, benchmark method, or measured baseline changes |
+| [Precise input validation](input-validation.md) | Maintainer harness workflow, evidence interpretation, troubleshooting, and maintenance triggers | Harness commands, evidence requirements, troubleshooting guidance, or platform coverage changes |
 | [Performance and memory audit](performance-audit.md) | Prioritized CPU, allocation, and retained-memory opportunities with validation plans | Performance investigations change priorities, evidence, or measurement coverage |
 | [Agent instructions](../AGENTS.md) | Exact commands, repository hazards, invariants, and verification expectations for coding agents | A command, ownership boundary, recurring hazard, or required check changes |
 | [Claude Code entry point](../CLAUDE.md) | Claude-specific loading of the shared agent instructions | Claude requires guidance that does not apply to other agents |
