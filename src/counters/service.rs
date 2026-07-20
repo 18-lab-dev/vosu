@@ -200,6 +200,10 @@ impl ReloadableCounterService {
         self.current.load_full().download(request).await
     }
 
+    pub fn open_root(&self) -> Result<(), CounterError> {
+        self.current.load_full().open_root()
+    }
+
     pub fn open(&self, name: &str) -> Result<(), CounterError> {
         self.current.load_full().open(name)
     }
@@ -440,6 +444,11 @@ impl CounterService {
             }
             done.await;
         }
+    }
+
+    pub fn open_root(&self) -> Result<(), CounterError> {
+        self.opener.open(&self.static_root)?;
+        Ok(())
     }
 
     pub fn open(&self, name: &str) -> Result<(), CounterError> {

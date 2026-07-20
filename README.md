@@ -234,6 +234,7 @@ File routes enforce root containment and support validated single HTTP byte rang
 - `GET /api/counters/search/{query}`
 - `GET /api/counters/download/{url}?name=<counter>&update=<value>`
 - `GET /api/counters/open/{name}`
+- `GET /api/counters/open-root` opens the configured counter/static root.
 - `GET /api/counters/delete/{name}`
 - `GET|POST /api/counters/settings/{name}`
 

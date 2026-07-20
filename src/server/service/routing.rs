@@ -23,6 +23,7 @@ impl ProductionRouteDelegate {
             Endpoint::CounterSearch => self.counter_search(request).await,
             Endpoint::CounterDownload => self.counter_download(request).await,
             Endpoint::CounterOpen => self.counter_open(&request),
+            Endpoint::CounterOpenRoot => self.counter_open_root(),
             Endpoint::CounterDelete => self.counter_delete(&request),
             Endpoint::CounterSettings => self.counter_settings(request, body).await,
             Endpoint::SettingsSave => self.settings_save(body).await,
@@ -104,6 +105,13 @@ impl ProductionRouteDelegate {
                 }
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
             },
+            Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
+        }
+    }
+
+    fn counter_open_root(&self) -> Response {
+        match self.services.counters.open_root() {
+            Ok(()) => json_response(StatusCode::OK, json!({ "status": "opened" })),
             Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
         }
     }

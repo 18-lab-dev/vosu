@@ -300,10 +300,14 @@ fn open_delete_reject_traversal_and_symlink_escape() {
     let (root, service, opener, _) = fixture();
     let counter = root.path().join("static/counter");
     std::fs::create_dir(&counter).unwrap();
+    service.open_root().unwrap();
     assert!(service.open("../outside").is_err());
     assert!(service.delete("a/b").is_err());
     service.open("counter").unwrap();
-    assert_eq!(lock(&opener.0).as_slice(), std::slice::from_ref(&counter));
+    assert_eq!(
+        lock(&opener.0).as_slice(),
+        &[root.path().join("static"), counter.clone()]
+    );
     service.delete("counter").unwrap();
     assert!(!counter.exists());
 
@@ -418,8 +422,12 @@ async fn reloadable_service_switches_assets_counters_settings_and_mutations_atom
         "root-b"
     );
     assert!(settings_root.join("beta.values.json").exists());
+    service.open_root().unwrap();
     service.open("beta").unwrap();
-    assert_eq!(lock(&opener.0).as_slice(), &[root_b.join("beta")]);
+    assert_eq!(
+        lock(&opener.0).as_slice(),
+        &[root_b.clone(), root_b.join("beta")]
+    );
 
     service
         .download(&DownloadRequest {

@@ -14,6 +14,19 @@ fn exact_methods_never_add_head_or_options() {
         Some(Endpoint::SettingsSave)
     );
 }
+#[test]
+fn counter_root_open_is_an_exact_get_route() {
+    assert_eq!(
+        classify(&Method::GET, "/api/counters/open-root"),
+        Some(Endpoint::CounterOpenRoot)
+    );
+    assert_eq!(classify(&Method::POST, "/api/counters/open-root"), None);
+    assert_eq!(classify(&Method::GET, "/api/counters/open-root/"), None);
+    assert_eq!(
+        classify(&Method::GET, "/api/counters/open/counter"),
+        Some(Endpoint::CounterOpen)
+    );
+}
 
 #[test]
 fn only_six_exact_websocket_paths_reach_upgrade_delegate() {
