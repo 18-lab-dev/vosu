@@ -170,6 +170,8 @@ pub struct EngineOutput {
     pub original_difficulty: DifficultyValues,
     pub converted_difficulty: DifficultyValues,
     pub difficulty: DifficultyAttributes,
+    pub hit_windows: vosu_lazer_pp::HitWindows,
+    pub catch_spatial_window: Option<vosu_lazer_pp::CatchSpatialWindow>,
     pub performance: PerformanceAttributes,
     pub maximum_score: ScoreData,
     pub pp_by_accuracy: BTreeMap<u8, f64>,

@@ -22,6 +22,10 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 
 - Added persistent pinning and drag-and-drop ordering for installed counters, Shift-click URL opening, `/` search focus, and the reference magenta–iris–cyan dark dashboard palette.
 
+### API
+
+- Added `beatmap.stats.timingWindows` to v2 responses for stable and lazer across all rulesets, including map-aware speed-mod and osu!mania Classic/ScoreV2 windows. osu!catch exposes its spatial `300` catch boundary in playfield units; unsupported judgements are omitted.
+
 ### Reliability
 
 - Completed server-initiated WebSocket close handshakes with a bounded wait for peer acknowledgement, preventing Windows connection resets from dropping v2 subscription terminal close codes.

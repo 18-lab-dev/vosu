@@ -662,21 +662,49 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
                 expected
             };
             let actual = encode(schema, &snapshot);
-            let actual = if schema == "v2-precise" {
-                // `keypresses` is a vosu extension; pinned upstream fixtures attest the legacy fields.
+            let actual = if matches!(schema, "v2" | "v2-precise") {
                 let mut value: Value =
-                    serde_json::from_slice(&actual).expect("actual v2 precise must be valid");
-                let object = value.as_object_mut().expect("v2 precise must be an object");
-                object.shift_remove("keypresses");
-                if let Some(tourney) = object.get_mut("tourney").and_then(Value::as_array_mut) {
-                    for entry in tourney {
-                        entry
-                            .as_object_mut()
-                            .expect("v2 precise tournament entry must be an object")
-                            .shift_remove("keypresses");
+                    serde_json::from_slice(&actual).expect("actual v2 output must be valid");
+                let object = value.as_object_mut().expect("v2 output must be an object");
+                if schema == "v2-precise" {
+                    // `keypresses` is a vosu extension; pinned upstream fixtures attest the legacy fields.
+                    object.shift_remove("keypresses");
+                    if let Some(tourney) = object.get_mut("tourney").and_then(Value::as_array_mut) {
+                        for entry in tourney {
+                            entry
+                                .as_object_mut()
+                                .expect("v2 precise tournament entry must be an object")
+                                .shift_remove("keypresses");
+                        }
+                    }
+                } else {
+                    // `timingWindows` is a vosu extension; pinned upstream fixtures attest the legacy fields.
+                    if let Some(stats) = object
+                        .get_mut("beatmap")
+                        .and_then(Value::as_object_mut)
+                        .and_then(|beatmap| beatmap.get_mut("stats"))
+                        .and_then(Value::as_object_mut)
+                    {
+                        stats.shift_remove("timingWindows");
+                    }
+                    if let Some(clients) = object
+                        .get_mut("tourney")
+                        .and_then(Value::as_object_mut)
+                        .and_then(|tourney| tourney.get_mut("clients"))
+                        .and_then(Value::as_array_mut)
+                    {
+                        for client in clients {
+                            client
+                                .get_mut("beatmap")
+                                .and_then(Value::as_object_mut)
+                                .and_then(|beatmap| beatmap.get_mut("stats"))
+                                .and_then(Value::as_object_mut)
+                                .expect("v2 tournament client beatmap stats must be an object")
+                                .shift_remove("timingWindows");
+                        }
                     }
                 }
-                serde_json::to_vec(&value).expect("normalized v2 precise must encode")
+                serde_json::to_vec(&value).expect("normalized v2 output must encode")
             } else {
                 actual
             };

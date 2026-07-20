@@ -160,6 +160,21 @@ pub fn hit_window(mode: Ruleset, od: f64, result: HitResult) -> Result<Option<f6
     Ok(Some(window))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct HitWindows {
+    pub miss: Option<f64>,
+    pub meh: Option<f64>,
+    pub ok: Option<f64>,
+    pub good: Option<f64>,
+    pub great: Option<f64>,
+    pub perfect: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CatchSpatialWindow {
+    pub half_width: f64,
+}
+
 /// Returns the hit window used by the playable beatmap's per-object scoring.
 ///
 /// Mania Classic changes windows based on whether the map was converted,
@@ -207,6 +222,62 @@ pub fn hit_window_for_map(
     };
 
     Ok(Some(window))
+}
+
+/// Computes osu!catch's spatial half-width in playfield units from circle size.
+///
+/// Mirrors osu!catch's `Catcher.CalculateCatchWidth`, also used by rosu-pp.
+fn catch_spatial_window(cs: f32) -> f64 {
+    const BASE_SIZE: f32 = 106.75;
+    const ALLOWED_CATCH_RANGE: f32 = 0.8;
+
+    let scale = (f64::from(1.0_f32)
+        - f64::from(0.7_f32) * ((f64::from(cs) - 5.0) / 5.0)) as f32;
+    f64::from(BASE_SIZE * scale.abs() * ALLOWED_CATCH_RANGE * 0.5)
+}
+
+/// Returns osu!catch's spatial catch boundary for the playable beatmap.
+///
+/// The half-width uses post-difficulty-mod circle size and playfield units.
+/// Clock rate does not affect it.
+pub fn catch_spatial_window_for_map(map: &ParsedBeatmap) -> Option<CatchSpatialWindow> {
+    (map.mode() == Ruleset::Catch).then(|| CatchSpatialWindow {
+        half_width: catch_spatial_window(map.map.cs),
+    })
+}
+
+/// Returns every temporal hit window supported by the playable beatmap.
+///
+/// Values use the playable map's post-difficulty-mod overall difficulty and
+/// do not include any clock-rate adjustment.
+pub fn hit_windows_for_map(map: &ParsedBeatmap) -> Result<HitWindows, Error> {
+    let od = f64::from(map.map.od);
+    let window = |result| hit_window_for_map(map, od, result);
+
+    match map.mode() {
+        Ruleset::Osu => Ok(HitWindows {
+            miss: window(HitResult::Miss)?,
+            meh: window(HitResult::Meh)?,
+            ok: window(HitResult::Ok)?,
+            great: window(HitResult::Great)?,
+            ..HitWindows::default()
+        }),
+        Ruleset::Taiko => Ok(HitWindows {
+            miss: window(HitResult::Miss)?,
+            ok: window(HitResult::Ok)?,
+            great: window(HitResult::Great)?,
+            ..HitWindows::default()
+        }),
+        Ruleset::Catch => Ok(HitWindows::default()),
+        Ruleset::Mania => Ok(HitWindows {
+            miss: window(HitResult::Miss)?,
+            meh: window(HitResult::Meh)?,
+            ok: window(HitResult::Ok)?,
+            good: window(HitResult::Good)?,
+            great: window(HitResult::Great)?,
+            perfect: window(HitResult::Perfect)?,
+        }),
+    }
 }
 
 pub fn hit_window_numeric(mode: i32, od: f64, result: i32) -> Result<Option<f64>, Error> {

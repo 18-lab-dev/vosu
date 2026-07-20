@@ -2,11 +2,61 @@ use std::sync::Arc;
 
 use super::*;
 use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
+use crate::calculation::beatmap::{
+    AppliedMod, BeatmapCache, BeatmapInput, ModSet, ParsedBeatmap, Ruleset, ScoringMode,
+};
+use crate::calculation::state_backend::LiveBeatmapEngine;
 use crate::instance::InstanceSettings;
 use crate::state::{
     RegularState, StateBundle, StateBundleSnapshot, StateCalculationBackend,
     StateCalculationFuture, StateCalculationRequest, TourneyUserState,
 };
+
+fn parsed_timing_map(
+    original_mode: Ruleset,
+    effective_mode: Ruleset,
+    source: ClientType,
+    mods: Vec<AppliedMod>,
+    clock_rate: f64,
+) -> Arc<ParsedBeatmap> {
+    let content = format!(
+        "osu file format v14\n\
+         [General]\n\
+         Mode:{}\n\
+         [Difficulty]\n\
+         HPDrainRate:5\n\
+         CircleSize:5\n\
+         OverallDifficulty:5\n\
+         ApproachRate:5\n\
+         [TimingPoints]\n\
+         0,500,4,2,1,80,1,0\n\
+         [HitObjects]\n\
+         64,192,1000,1,0,0:0:0:0:\n",
+        original_mode.id()
+    );
+    let mods = ModSet::new("timing-test", mods, clock_rate).unwrap();
+    BeatmapCache::new(LiveBeatmapEngine)
+        .load(
+            BeatmapInput::Content {
+                content: &content,
+                identity_path: None,
+            },
+            effective_mode,
+            &mods,
+            match source {
+                ClientType::Stable => ScoringMode::Stable,
+                ClientType::Lazer => ScoringMode::Lazer,
+            },
+        )
+        .unwrap()
+}
+
+fn applied_mod(acronym: &str) -> AppliedMod {
+    AppliedMod {
+        acronym: acronym.to_owned(),
+        settings_json: None,
+    }
+}
 
 struct NeverCalculate;
 impl StateCalculationBackend for NeverCalculate {
@@ -355,6 +405,123 @@ fn default_builder_has_exact_root_order_and_source_default_tourney() {
 }
 
 #[test]
+fn timing_windows_cover_both_clients_and_all_rulesets_with_live_maps() {
+    let cases: &[(Ruleset, &[&str])] = &[
+        (Ruleset::Osu, &["0", "50", "100", "300"]),
+        (Ruleset::Taiko, &["0", "100", "300"]),
+        (Ruleset::Catch, &["300"]),
+        (Ruleset::Mania, &["0", "50", "100", "katu", "300", "geki"]),
+    ];
+
+    for source in [ClientType::Stable, ClientType::Lazer] {
+        for &(mode, expected_keys) in cases {
+            let mods = if source == ClientType::Stable {
+                vec![applied_mod("CL")]
+            } else {
+                Vec::new()
+            };
+            let parsed = parsed_timing_map(mode, mode, source, mods, 1.0);
+            let windows = serde_json::to_value(timing_windows(Some(&parsed))).unwrap();
+            let object = windows.as_object().unwrap();
+            assert_eq!(object.len(), expected_keys.len(), "{source:?} {mode:?}");
+            for key in expected_keys {
+                assert!(
+                    object.contains_key(*key),
+                    "{source:?} {mode:?} missing {key}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn timing_windows_round_osu_dt_once_at_the_api_edge() {
+    let parsed = parsed_timing_map(
+        Ruleset::Osu,
+        Ruleset::Osu,
+        ClientType::Lazer,
+        vec![applied_mod("DT")],
+        1.5,
+    );
+    assert_eq!(
+        serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
+        serde_json::json!({"0": 266.67, "50": 99.67, "100": 66.33, "300": 33.0})
+    );
+}
+
+#[test]
+fn timing_windows_use_classic_map_values_for_stable_converted_mania() {
+    let parsed = parsed_timing_map(
+        Ruleset::Osu,
+        Ruleset::Mania,
+        ClientType::Stable,
+        vec![applied_mod("CL")],
+        1.0,
+    );
+    assert_eq!(
+        serde_json::to_value(timing_windows(Some(&parsed))).unwrap()["300"],
+        serde_json::json!(34.5)
+    );
+}
+
+#[test]
+fn timing_windows_use_score_v2_map_values_for_stable_mania() {
+    let parsed = parsed_timing_map(
+        Ruleset::Mania,
+        Ruleset::Mania,
+        ClientType::Stable,
+        vec![applied_mod("CL"), applied_mod("SV2")],
+        1.0,
+    );
+    let windows = serde_json::to_value(timing_windows(Some(&parsed))).unwrap();
+    assert_eq!(windows["300"], serde_json::json!(49.5));
+    assert_eq!(windows["geki"], serde_json::json!(19.5));
+}
+
+#[test]
+fn timing_windows_expose_catch_spatial_boundary_for_all_clients_and_speeds() {
+    for source in [ClientType::Stable, ClientType::Lazer] {
+        for (mods, clock_rate) in [(Vec::new(), 1.0), (vec![applied_mod("DT")], 1.5)] {
+            let parsed =
+                parsed_timing_map(Ruleset::Catch, Ruleset::Catch, source, mods, clock_rate);
+            let state = StateBundle::new(source, 1, Arc::new(NeverCalculate)).snapshot();
+            let stats = serde_json::to_value(build_stats(&state.regular, Some(&parsed))).unwrap();
+            assert_eq!(
+                stats["timingWindows"],
+                serde_json::json!({"300": 42.7}),
+                "{source:?} at {clock_rate}x",
+            );
+            assert!(
+                stats["stars"].get("hitWindow").is_none(),
+                "Catch spatial units leaked into stars.hitWindow for {source:?} at {clock_rate}x",
+            );
+            assert_eq!(parsed.engine.difficulty.hit_window, None);
+        }
+    }
+}
+
+#[test]
+fn timing_windows_are_empty_for_missing_maps_and_default_responses() {
+    assert_eq!(
+        serde_json::to_value(timing_windows(None)).unwrap(),
+        serde_json::json!({})
+    );
+
+    for source in [ClientType::Stable, ClientType::Lazer] {
+        let response: serde_json::Value =
+            serde_json::from_slice(&encode(&default_snapshot(source)).unwrap()).unwrap();
+        assert_eq!(
+            response
+                .get("beatmap")
+                .and_then(|beatmap| beatmap.get("stats"))
+                .and_then(|stats| stats.get("timingWindows")),
+            Some(&serde_json::json!({})),
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
 fn stable_tournament_is_sorted_by_fractional_ipc_id_not_pid() {
     let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
     let manager = manager_entry(50, Arc::clone(&base), true, None);
@@ -638,5 +805,5 @@ fn lazer_lobby_without_spectator_data_omits_tourney() {
     let response = build(&snapshot).unwrap();
     assert!(response.tourney.is_none());
     assert!(!json(&response).contains("\"tourney\":"));
-    assert_eq!(zero_stats().stars.aim, Some(0.0));
+    assert_eq!(zero_stats(TimingWindows::default()).stars.aim, Some(0.0));
 }

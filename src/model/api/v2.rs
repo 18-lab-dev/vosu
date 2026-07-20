@@ -153,6 +153,26 @@ pub struct Objects {
     pub holds: i64,
     pub total: i64,
 }
+/// Per-result judgement boundaries.
+///
+/// Values are milliseconds except osu!catch's `300`, which is the spatial
+/// half-width from the catcher's centre in playfield units.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TimingWindows {
+    #[serde(rename = "0", skip_serializing_if = "Option::is_none")]
+    pub h0: Option<f64>,
+    #[serde(rename = "50", skip_serializing_if = "Option::is_none")]
+    pub h50: Option<f64>,
+    #[serde(rename = "100", skip_serializing_if = "Option::is_none")]
+    pub h100: Option<f64>,
+    #[serde(rename = "300", skip_serializing_if = "Option::is_none")]
+    pub h300: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geki: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub katu: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Stats {
     pub stars: Stars,
@@ -160,6 +180,8 @@ pub struct Stats {
     pub cs: Cs,
     pub od: Od,
     pub hp: Hp,
+    #[serde(rename = "timingWindows")]
+    pub timing_windows: TimingWindows,
     pub bpm: Bpm,
     pub objects: Objects,
     #[serde(rename = "maxCombo")]

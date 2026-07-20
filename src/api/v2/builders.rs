@@ -379,7 +379,9 @@ pub(super) fn build_stats(state: &RegularState, parsed: Option<&ParsedBeatmap>) 
             rhythm: truthy(attrs.and_then(|v| v.rhythm)),
             color: truthy(attrs.and_then(|v| v.color)),
             reading: truthy(attrs.and_then(|v| v.reading)),
-            hit_window: truthy(attrs.and_then(|v| v.hit_window)),
+            hit_window: parsed
+                .and_then(|p| p.engine.hit_windows.great)
+                .map(fix_decimals),
             total: fix_decimals(attrs.map_or(0.0, |v| v.stars)),
         },
         ar: Ar {
@@ -398,6 +400,7 @@ pub(super) fn build_stats(state: &RegularState, parsed: Option<&ParsedBeatmap>) 
             original: fix_decimals(original.map_or(0.0, |v| v.drain_rate)),
             converted: fix_decimals(converted.map_or(0.0, |v| v.drain_rate)),
         },
+        timing_windows: timing_windows(parsed),
         bpm: Bpm {
             realtime: fix_decimals_to(state.beatmap.event_status.bpm, 4)
                 .unwrap_or(state.beatmap.event_status.bpm),
@@ -413,6 +416,27 @@ pub(super) fn build_stats(state: &RegularState, parsed: Option<&ParsedBeatmap>) 
             total: circles + sliders + spinners + holds,
         },
         max_combo: parsed.map_or(0, |v| i64::from(v.engine.maximum_score.max_combo)),
+    }
+}
+
+pub(super) fn timing_windows(parsed: Option<&ParsedBeatmap>) -> TimingWindows {
+    let Some(parsed) = parsed else {
+        return TimingWindows::default();
+    };
+    let windows = &parsed.engine.hit_windows;
+    let h300 = parsed
+        .engine
+        .catch_spatial_window
+        .map(|window| window.half_width)
+        .or(windows.great);
+
+    TimingWindows {
+        h0: windows.miss.map(fix_decimals),
+        h50: windows.meh.map(fix_decimals),
+        h100: windows.ok.map(fix_decimals),
+        h300: h300.map(fix_decimals),
+        geki: windows.perfect.map(fix_decimals),
+        katu: windows.good.map(fix_decimals),
     }
 }
 

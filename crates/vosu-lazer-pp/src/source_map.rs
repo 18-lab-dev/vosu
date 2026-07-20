@@ -196,8 +196,8 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
     SourcePort {
         scope: "wrapper.hit-windows",
         baseline: ROSU,
-        target: "lib/native/HitWindows.cs",
-        rust: "src/lib.rs hit_windows",
+        target: "lib/native/HitWindows.cs; osu.Game.Rulesets.Catch/UI/Catcher.cs",
+        rust: "src/scoring.rs {hit_window,hit_window_for_map,hit_windows_for_map,catch_spatial_window_for_map}; vendor/rosu-pp/src/catch/catcher.rs",
     },
     SourcePort {
         scope: "wrapper.data-attribute-strain-conversion",

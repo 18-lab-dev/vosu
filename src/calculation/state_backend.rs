@@ -40,6 +40,17 @@ impl BeatmapEngine for LiveBeatmapEngine {
         };
         let mods = structured_mods(request.mods)?;
         engine.apply_mods(&mut map, &mods).map_err(engine_error)?;
+        let base_hit_windows = vosu_lazer_pp::hit_windows_for_map(&map).map_err(engine_error)?;
+        let catch_spatial_window = vosu_lazer_pp::catch_spatial_window_for_map(&map);
+        let scale_window = |window: Option<f64>| window.map(|window| window / request.clock_rate);
+        let hit_windows = vosu_lazer_pp::HitWindows {
+            miss: scale_window(base_hit_windows.miss),
+            meh: scale_window(base_hit_windows.meh),
+            ok: scale_window(base_hit_windows.ok),
+            good: scale_window(base_hit_windows.good),
+            great: scale_window(base_hit_windows.great),
+            perfect: scale_window(base_hit_windows.perfect),
+        };
         let config = vosu_lazer_pp::DifficultyConfig::default();
         let original = engine.original_beatmap_difficulty(&map);
         let converted = engine.beatmap_difficulty(&map);
@@ -85,11 +96,10 @@ impl BeatmapEngine for LiveBeatmapEngine {
                 rhythm: nonzero(difficulty.rhythm),
                 color: nonzero(difficulty.color),
                 reading: nonzero(difficulty.reading),
-                hit_window: Some(vosu_lazer_pp::great_hit_window(
-                    live_ruleset(request.effective_mode),
-                    f64::from(converted.overall_difficulty),
-                )),
+                hit_window: hit_windows.great,
             },
+            hit_windows,
+            catch_spatial_window,
             performance: PerformanceAttributes {
                 pp: performance.pp,
                 accuracy: nonzero(performance.accuracy),
@@ -704,6 +714,55 @@ fn statistics(value: &Statistics) -> HitStatistics {
         ignore_hit: value.ignore_hit,
         combo_break: value.combo_break,
         slider_tail_hit: value.slider_tail_hit,
+    }
+}
+
+#[cfg(test)]
+mod hit_window_tests {
+    use super::*;
+
+    const OSU_OD5: &str = r#"osu file format v14
+
+[General]
+Mode:0
+
+[Difficulty]
+HPDrainRate:5
+CircleSize:4
+OverallDifficulty:5
+ApproachRate:5
+
+[TimingPoints]
+0,500,4,2,1,80,1,0
+
+[HitObjects]
+256,192,1000,1,0,0:0:0:0:
+"#;
+
+    #[test]
+    fn live_engine_scales_map_aware_hit_windows_once_for_dt() {
+        let output = LiveBeatmapEngine
+            .calculate(EngineRequest {
+                content: OSU_OD5,
+                original_mode: BeatmapRuleset::Osu,
+                effective_mode: BeatmapRuleset::Osu,
+                mods: &[AppliedMod {
+                    acronym: "DT".to_owned(),
+                    settings_json: None,
+                }],
+                clock_rate: 1.5,
+                scoring_mode: ScoringMode::Lazer,
+            })
+            .unwrap();
+
+        let windows = output.hit_windows;
+        assert_eq!(windows.great, Some(33.0));
+        assert_eq!(output.difficulty.hit_window, windows.great);
+        assert!((windows.ok.unwrap() - 66.333_333_333_333_33).abs() < 1e-9);
+        assert!((windows.meh.unwrap() - 99.666_666_666_666_67).abs() < 1e-9);
+        assert!((windows.miss.unwrap() - 266.666_666_666_666_7).abs() < 1e-9);
+        assert_eq!(windows.good, None);
+        assert_eq!(windows.perfect, None);
     }
 }
 

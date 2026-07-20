@@ -297,12 +297,12 @@ pub(super) fn build_lazer_client(
             total_pp: client.user.performance_points,
         },
         beatmap: TourneyBeatmap {
-            stats: zero_stats(),
+            stats: zero_stats(timing_windows(state.beatmap.parsed.as_deref())),
         },
         play,
     })
 }
-pub(super) fn zero_stats() -> Stats {
+pub(super) fn zero_stats(timing_windows: TimingWindows) -> Stats {
     Stats {
         stars: Stars {
             live: 0.0,
@@ -329,6 +329,7 @@ pub(super) fn zero_stats() -> Stats {
             original: 0.0,
             converted: 0.0,
         },
+        timing_windows,
         hp: Hp {
             original: 0.0,
             converted: 0.0,
