@@ -22,7 +22,7 @@ flowchart LR
     Config[vosu.env and local files] -->|watch and reload| Vosu
     Vosu -->|HTTP JSON, files, pages| Client[overlay or API client]
     Vosu -->|WebSocket state and commands| Client
-    Vosu -->|release and offset HTTPS| Remote[qt715/vosu releases and offset sources]
+    Vosu -->|release and offset HTTPS| Remote[shiruviaa/vosu releases and offset sources]
     Vosu -->|logs, cache, settings, downloads| Disk[vosu platform application roots]
     Parity[tools/live-parity] -. captures and compares .-> Vosu
     Parity -. compares against pinned upstream daemon .-> Reference[upstream tosu parity reference]

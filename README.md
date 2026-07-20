@@ -35,7 +35,7 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 
 ### Portable archive
 
-Download `vosu-linux-v0.1.0.zip` or `vosu-windows-v0.1.0.zip` from the matching [GitHub release](https://github.com/qt715/vosu/releases), then:
+Download `vosu-linux-v0.1.0.zip` or `vosu-windows-v0.1.0.zip` from the matching [GitHub release](https://github.com/shiruviaa/vosu/releases), then:
 
 1. Extract the complete archive into a writable directory. Its root contains `vosu` or `vosu.exe`, plus `LICENSE`.
 2. On Linux, restore the executable bit if your archive tool removed it: `chmod +x vosu`.
@@ -71,7 +71,7 @@ For a later manual upgrade, stop vosu, replace the executable and `LICENSE` with
 
 ### Automatic updates
 
-`ENABLE_AUTOUPDATE=true` follows stable `qt715/vosu` releases. The updater verifies the selected platform archive against its published SHA-256 digest, stages exactly one root executable, and uses a crash-recoverable helper and rollback flow.
+`ENABLE_AUTOUPDATE=true` follows stable `shiruviaa/vosu` releases. The updater verifies the selected platform archive against its published SHA-256 digest, stages exactly one root executable, and uses a crash-recoverable helper and rollback flow.
 
 `GET /api/runUpdates` starts the same update path. Set `ENABLE_AUTOUPDATE=false` or launch with `--update=false` to disable the startup check. `--update=true` enables it for one launch.
 
