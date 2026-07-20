@@ -1,3 +1,10 @@
+---
+type: Architecture Decision Record
+title: Keep calculation contracts and engines separate
+description: Accepted decision to preserve distinct live-state and legacy endpoint calculation contracts and compatibility semantics.
+tags: [architecture, decision, adr, calculation, compatibility]
+---
+
 # ADR 0004: Keep calculation contracts and engines separate
 
 ## Status
@@ -32,5 +39,5 @@ The separation is visible in [`calculation.rs`](../../src/calculation.rs), [`cal
 
 ## Related documentation
 
-- [Architecture](../architecture.md)
-- [Benchmarks](../benchmarks.md) — calculator results and timings are tied to the recorded code, inputs, build, and machine.
+- [Architecture](../architecture/overview.md)
+- [Benchmarks](../testing/benchmarks.md) — calculator results and timings are tied to the recorded code, inputs, build, and machine.

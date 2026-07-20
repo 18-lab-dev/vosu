@@ -1,3 +1,10 @@
+---
+type: Benchmark Guide
+title: vosu benchmarks
+description: Criterion benchmark scope, reproducible comparison workflow, fixture limitations, and machine-local observations.
+tags: [testing, benchmarks, criterion, performance]
+---
+
 # Benchmarks
 
 The repository has one Criterion benchmark target, `hot_paths`, declared with

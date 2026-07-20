@@ -37,7 +37,7 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 ### Documentation
 
 - Updated installation, configuration, API, architecture, benchmark workflow, ownership, and release documentation for the vosu cutover.
-- Recorded the durable clean-cutover and state-migration decision in [ADR 0007](docs/decisions/0007-vosu-clean-cutover.md).
+- Recorded the durable clean-cutover and state-migration decision in [ADR 0007](openwiki/decisions/0007-vosu-clean-cutover.md).
 
 ## Historical releases
 

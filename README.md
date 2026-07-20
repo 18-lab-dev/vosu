@@ -19,7 +19,7 @@ The daemon was written from scratch in Rust. The upstream project defines the co
 
 `vosu` reads live state from osu!stable and osu!lazer, then serves the dashboard, counters, reports, and compatible HTTP/WebSocket APIs. It is one native daemon: no Node.js, Electron, .NET, or C# runtime is required.
 
-This build does not provide the former Electron/asdf-overlay in-game overlay or an embedded replacement. External overlay software can consume the documented HTTP and WebSocket APIs; [ADR 0008](docs/decisions/0008-external-in-game-overlays.md) records this product boundary.
+This build does not provide the former Electron/asdf-overlay in-game overlay or an embedded replacement. External overlay software can consume the documented HTTP and WebSocket APIs; [ADR 0008](openwiki/decisions/0008-external-in-game-overlays.md) records this product boundary.
 
 ## Why this build
 
@@ -28,7 +28,7 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 | **Native runtime** | A single Rust daemon with embedded dashboard assets and offsets. |
 | **Verified compatibility** | gosuMemory v1, streamCompanion, and vosu v2 HTTP/WebSocket behavior are checked against the pinned upstream tosu reference with live parity captures. |
 | **Linux support** | Native osu!lazer and osu!stable through Wine are supported alongside Windows stable and lazer. |
-| **Measured performance** | Criterion covers memory scanning, snapshot reads, calculations, serialization, caching, and publication. Results and limits are recorded in [benchmarks](docs/benchmarks.md). |
+| **Measured performance** | Criterion covers memory scanning, snapshot reads, calculations, serialization, caching, and publication. Results and limits are recorded in the [benchmark guide](openwiki/testing/benchmarks.md). |
 | **Agent-ready repository** | A pinned toolchain, explicit source ownership, runnable checks, architecture notes, and decision records keep automated changes reviewable. Start with [AGENTS.md](AGENTS.md). |
 
 ## Install
@@ -208,7 +208,7 @@ Hit-error fields use the same object shape across v1, streamCompanion, v2, and v
 `/json/v2/precise` publishes low-latency input data at `PRECISE_DATA_POLL_RATE`. Its additive `keypresses` object contains the active ruleset in `mode` and every source-reported logical input in ordered `keys` entries (`name`, `isPressed`, `count`, `pressedAt`, and `releasedAt`) for stable and lazer; the legacy fixed `keys` object remains available. Edge timestamps are nullable gameplay milliseconds. They update only when the sampled state exposes that edge, so a count jump can report missed complete taps without fabricating timestamps.
 Maintainers can run the zero-dependency harness with `cd tools/input-validation && uv run python run.py ...`. `capture` accounts for precise transitions and `scan-maps` selects long-note-heavy mania maps. `autoplay <map.osu>` and `live-autoplay <map.osu>` generate deterministic plans for osu!, taiko, catch, and mania, then inject them through Windows `SendInput` or Linux `/dev/uinput`; live mania plans additionally support bounded seeded timing jitter. Standard-mode and catch pointer injection requires `--playfield x,y,width,height`; Linux also requires the full compositor layout as `--desktop x,y,width,height`, not only the target monitor. Default controls are `Z` for osu!, `F,J,D,K` for taiko plan controls `DON_LEFT,DON_RIGHT,KAT_LEFT,KAT_RIGHT`, pointer-only for catch, and `D,F,J,K` for 4-key mania.
 
-Maintainer workflow, evidence interpretation, troubleshooting, and maintenance triggers are documented in the [precise input validation guide](docs/input-validation.md).
+Maintainer workflow, evidence interpretation, troubleshooting, and maintenance triggers are documented in the [precise input validation guide](openwiki/testing/input-validation.md).
 
 `navigate` follows keyboard paths from an unobstructed idle logo: lazer uses `P,P,P` for song select and `P,P,M,M` for multiplayer, while stable uses `P,P,P` and `P,P,M`. Navigation key-down onsets default to 100 ms apart. Optional song-select search text uses 1 ms key-down onset spacing. Use each command's `--help` for backend, timing, geometry, and key-map options.
 
@@ -261,11 +261,11 @@ The selected-field endpoint expects one text message within five seconds: a JSON
 
 | Document | Scope |
 | --- | --- |
-| [Documentation map](docs/README.md) | Where project information belongs |
-| [Architecture](docs/architecture.md) | Runtime boundaries, flows, deployment, and risks |
-| [Decision records](docs/decisions/README.md) | Durable design choices and their consequences |
-| [Benchmarks](docs/benchmarks.md) | Criterion coverage, method, results, and limitations |
-| [Coding-agent instructions](AGENTS.md) | Source ownership, invariants, commands, and verification |
+| [Maintainer documentation](openwiki/index.md) | Navigation, information boundaries, and review conventions |
+| [Architecture](openwiki/architecture/index.md) | Runtime boundaries, flows, deployment, and risks |
+| [Decision records](openwiki/decisions/index.md) | Durable design choices and their consequences |
+| [Benchmarks](openwiki/testing/benchmarks.md) | Criterion coverage, method, results, and limitations |
+| [Testing and verification](openwiki/testing/verification.md) | Change-specific evidence and release checks |
 
 ## License
 

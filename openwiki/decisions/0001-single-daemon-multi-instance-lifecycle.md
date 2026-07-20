@@ -1,3 +1,10 @@
+---
+type: Architecture Decision Record
+title: One daemon owns deterministic multi-instance lifecycle
+description: Accepted decision for one daemon to own deterministic discovery, generations, selection, and publication across multiple osu! processes.
+tags: [architecture, decision, adr, lifecycle, multi-instance]
+---
+
 # ADR 0001: One daemon owns a deterministic multi-instance lifecycle
 
 ## Status
@@ -32,5 +39,5 @@ This policy is implemented by [`InstanceManager`](../../src/instance.rs), proces
 
 ## Related documentation
 
-- [Architecture](../architecture.md)
-- [Benchmarks](../benchmarks.md) — discovery and publication measurements, when present, are observations rather than selection guarantees.
+- [Architecture](../architecture/overview.md)
+- [Benchmarks](../testing/benchmarks.md) — discovery and publication measurements, when present, are observations rather than selection guarantees.

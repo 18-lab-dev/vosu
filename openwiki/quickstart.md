@@ -19,7 +19,7 @@ tags: [vosu, rust, code-wiki, onboarding]
 5. Use the [Operations runbook](operations/runbook.md) for platform prerequisites, security boundaries, release/update handling, and troubleshooting.
 6. Use [Testing and verification](testing/verification.md) to choose the narrowest behavioral check and the broader CI/release gates.
 
-The repository’s detailed source documentation remains authoritative: [README.md](../README.md) is the product/operator contract, [docs/architecture.md](../docs/architecture.md) explains structural boundaries, [decision records](../docs/decisions/README.md) explain durable choices, and [benchmarks](../docs/benchmarks.md) contains machine-specific measurements.
+The repository’s detailed source documentation remains authoritative: [README.md](../README.md) is the product/operator contract, the [architecture overview](architecture/overview.md) explains structural boundaries, [decision records](decisions/index.md) explain durable choices, and [benchmarks](testing/benchmarks.md) contain machine-specific measurements. See the [documentation index and conventions](index.md) for the complete map.
 
 ## Build and run
 
@@ -46,5 +46,5 @@ Recent changes explain current hotspots: the dashboard now persists pinned count
 ## Backlog
 
 - **Live parity operations cadence and pinned-artifact ownership** — anchor: `tools/live-parity/`, `AGENTS.md`; the repository defines the gate and supported matrix but not a recurring maintainer schedule.
-- **Quarantined updater transaction operator procedure** — anchor: `src/updater/transaction.rs`, `docs/architecture.md`; recovery behavior is documented, but a step-by-step diagnosis/escalation procedure is not explicit.
+- **Quarantined updater transaction operator procedure** — anchor: `src/updater/transaction.rs`, [architecture overview](architecture/overview.md); recovery behavior is documented, but a step-by-step diagnosis/escalation procedure is not explicit.
 - **Linux stable/Wine parity evidence** — anchor: `tools/live-parity/live_parity.py::SUPPORTED_MATRIX`; runtime support exists, while the inspected parity matrix currently lists Linux lazer rather than Linux stable.

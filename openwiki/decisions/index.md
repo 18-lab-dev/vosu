@@ -1,3 +1,10 @@
+---
+type: Reference
+title: vosu architecture decision records
+description: Index of accepted, load-bearing architecture decisions enforced by the current vosu implementation.
+tags: [architecture, decisions, adr, maintainers]
+---
+
 # Architecture decision records
 
 These records document load-bearing choices visible in the current vosu implementation. They explain the constraints the code enforces; they do not reconstruct motives or dates that are not present in the repository.
@@ -15,7 +22,7 @@ These records document load-bearing choices visible in the current vosu implemen
 | [0007](0007-vosu-clean-cutover.md) | Accepted | Adopt vosu as the sole product identity with a one-time state migration |
 | [0008](0008-external-in-game-overlays.md) | Accepted | Keep in-game overlays outside vosu |
 
-See the system context in [Architecture](../architecture.md) and the measured hot paths in [Benchmarks](../benchmarks.md).
+See the system context in [Architecture](../architecture/overview.md) and the measured hot paths in [Benchmarks](../testing/benchmarks.md).
 
 ## Adding or changing a decision
 

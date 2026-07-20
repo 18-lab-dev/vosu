@@ -1,3 +1,10 @@
+---
+type: Architecture Decision Record
+title: Serve files through root-confined retained handles
+description: Accepted decision to serve attacker-selected paths through validated relative children and retained root-confined filesystem handles.
+tags: [architecture, decision, adr, filesystem, security]
+---
+
 # ADR 0005: Serve files through root-confined retained handles
 
 ## Status
@@ -34,5 +41,5 @@ The boundary is implemented in [`server/files.rs`](../../src/server/files.rs), d
 
 ## Related documentation
 
-- [Architecture](../architecture.md)
-- [Benchmarks](../benchmarks.md) — file-serving measurements do not weaken the confinement contract.
+- [Architecture](../architecture/overview.md)
+- [Benchmarks](../testing/benchmarks.md) — file-serving measurements do not weaken the confinement contract.

@@ -1,3 +1,10 @@
+---
+type: Architecture Decision Record
+title: Publish immutable, latest-only API snapshots
+description: Accepted decision to reduce state into immutable atomic snapshots and coalesce pending publications to the latest state per process.
+tags: [architecture, decision, adr, snapshots, concurrency]
+---
+
 # ADR 0002: Publish immutable, latest-only API snapshots
 
 ## Status
@@ -33,5 +40,5 @@ The contracts are implemented in [`api/snapshot.rs`](../../src/api/snapshot.rs),
 
 ## Related documentation
 
-- [Architecture](../architecture.md)
-- [Benchmarks](../benchmarks.md) — snapshot and encoding results characterize measured builds and machines, not a latency promise.
+- [Architecture](../architecture/overview.md)
+- [Benchmarks](../testing/benchmarks.md) — snapshot and encoding results characterize measured builds and machines, not a latency promise.

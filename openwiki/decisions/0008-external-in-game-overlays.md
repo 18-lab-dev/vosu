@@ -1,3 +1,10 @@
+---
+type: Architecture Decision Record
+title: Keep in-game overlays outside vosu
+description: Accepted decision to keep overlay rendering and UI ownership outside the native vosu telemetry daemon.
+tags: [architecture, decision, adr, overlays, boundaries]
+---
+
 # ADR 0008: Keep in-game overlays outside vosu
 
 - **Status:** Accepted
@@ -42,5 +49,5 @@ Rejected because it would expand the native telemetry daemon into a separate int
 ## Related documentation
 
 - [User-facing product and API boundary](../../README.md)
-- [Architecture](../architecture.md)
-- [Architecture decision record index](README.md)
+- [Architecture](../architecture/overview.md)
+- [Architecture decision record index](index.md)

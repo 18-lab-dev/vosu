@@ -1,3 +1,10 @@
+---
+type: Architecture Decision Record
+title: Perform self-updates as durable transactions
+description: Accepted decision to validate, record, recover, and commit self-updates through durable single-owner transactions.
+tags: [architecture, decision, adr, updater, reliability]
+---
+
 # ADR 0006: Perform self-updates as durable transactions
 
 ## Status
@@ -33,5 +40,5 @@ The transaction and recovery rules are in [`updater/transaction.rs`](../../src/u
 
 ## Related documentation
 
-- [Architecture](../architecture.md)
-- [Benchmarks](../benchmarks.md) — update correctness is defined by transaction invariants, not benchmark timing.
+- [Architecture](../architecture/overview.md)
+- [Benchmarks](../testing/benchmarks.md) — update correctness is defined by transaction invariants, not benchmark timing.
