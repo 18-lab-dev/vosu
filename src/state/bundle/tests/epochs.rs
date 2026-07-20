@@ -80,7 +80,7 @@ async fn pre_object_reset_advances_epoch_and_clears_hits_but_preserves_keys() {
         count: 3,
     }];
     bundle.gameplay.is_key_overlay_default_state = false;
-    bundle.gameplay.hit_errors = vec![4.0];
+    bundle.gameplay.hit_errors = press_hit_errors(vec![4.0]);
     bundle.gameplay.total_hit_errors = 4.0;
     bundle.gameplay.previous_hit_error_index = 1;
     let regular = RawRegularSnapshotBuilder::new(
@@ -102,7 +102,7 @@ async fn pre_object_reset_advances_epoch_and_clears_hits_but_preserves_keys() {
     assert_eq!(committed.context.reset_epoch, 1);
     assert_eq!(committed.publication.precise.key_overlay[0].count, 3);
     assert!(committed.publication.precise.key_overlay[0].is_pressed);
-    assert!(committed.publication.precise.hit_errors.is_empty());
+    assert!(committed.publication.precise.hit_errors.all.is_empty());
     assert_eq!(committed.publication.precise.committed_hit_error_index, 0);
     assert_eq!(bundle.calculation_reset_generation, 0);
 }
@@ -115,7 +115,7 @@ async fn old_map_timing_is_ignored_until_new_map_metadata_is_accepted() {
     bundle.beatmap.checksum = Some("old".into());
     bundle.beatmap.first_object_time = Some(1_000);
     bundle.gameplay.is_default_state = false;
-    bundle.gameplay.hit_errors = vec![7.0];
+    bundle.gameplay.hit_errors = press_hit_errors(vec![7.0]);
     bundle.gameplay.total_hit_errors = 7.0;
     bundle.gameplay.previous_hit_error_index = 1;
     let new_map = RawRegularSnapshotBuilder::new(
@@ -131,7 +131,7 @@ async fn old_map_timing_is_ignored_until_new_map_metadata_is_accepted() {
         .await
         .expect("mismatched metadata is rejected");
     assert_eq!(failed_metadata.context.reset_epoch, 0);
-    assert_eq!(bundle.gameplay.hit_errors, [7.0]);
+    assert_eq!(bundle.gameplay.hit_errors.all, [7.0]);
     assert_eq!(bundle.beatmap.checksum.as_deref(), Some("old"));
 
     bundle.beatmap.checksum = Some("new".into());
@@ -153,7 +153,7 @@ async fn old_map_timing_is_ignored_until_new_map_metadata_is_accepted() {
         .await
         .expect("accepted new metadata timing applies");
     assert_eq!(accepted.context.reset_epoch, 1);
-    assert!(bundle.gameplay.hit_errors.is_empty());
+    assert!(bundle.gameplay.hit_errors.all.is_empty());
 }
 
 #[tokio::test]
@@ -233,13 +233,10 @@ fn precise_transition_validates_keys_appends_suffix_once_and_preserves_hits_on_e
         is_pressed: true,
         count: 1_000_001,
     }])))
-    .hit_errors(Ok(ReadStatus::Ready(HitErrors {
-        index: 2,
-        array: vec![-5.0, 5.0],
-    })))
+    .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(2, vec![-5.0, 5.0]))))
     .publish();
     let context = bundle.apply_precise_inner(&precise);
-    assert_eq!(bundle.gameplay.hit_errors, [-5.0, 5.0]);
+    assert_eq!(bundle.gameplay.hit_errors.all, [-5.0, 5.0]);
     assert_eq!(bundle.gameplay.key_overlay[0].count, 0);
     assert_eq!(bundle.gameplay.keypresses[0].count, 0);
     assert_eq!(bundle.gameplay.unstable_rate, 42.0);
@@ -266,9 +263,42 @@ fn precise_transition_validates_keys_appends_suffix_once_and_preserves_hits_on_e
     let exited = bundle.apply_precise_inner(&exit);
     assert_eq!(bundle.gameplay.key_overlay[0].count, 0);
     assert_eq!(exited.reset_epoch, epoch);
-    assert_eq!(bundle.gameplay.hit_errors, [-5.0, 5.0]);
+    assert_eq!(bundle.gameplay.hit_errors.all, [-5.0, 5.0]);
     assert_eq!(exited.committed_hit_error_index, 2);
     assert_eq!(exited.accepted_precise_sequence, 2);
+}
+
+#[test]
+fn hold_aggregate_suffix_reclassifies_prior_press_without_changing_all_or_ur_sum() {
+    let mut bundle = StateBundle::new(ClientType::Lazer, 3, Arc::new(EchoCalculation));
+    bundle.global.status = GameState::Play.value() as i64;
+    bundle.global.play_time = 200.0;
+    bundle.gameplay.is_default_state = false;
+    bundle.gameplay.hit_errors = press_hit_errors(vec![-2.0]);
+    bundle.gameplay.total_hit_errors = -2.0;
+    bundle.gameplay.previous_hit_error_index = 2;
+    let precise = RawPreciseSnapshotBuilder::new(
+        PreciseCaptureContext::new(ClientType::Lazer, 3, 0, 0, default_calculated_mods(), 0, 2),
+        1,
+        Ok(ReadStatus::Ready(GlobalPrecise {
+            status: GameState::Play.value() as i64,
+            time: 250.0,
+        })),
+    )
+    .hit_errors(Ok(ReadStatus::Ready(HitErrors {
+        index: 3,
+        errors: HitErrorArray::default(),
+        release_correction: Some(-2.0),
+    })))
+    .publish();
+
+    bundle.apply_precise_inner(&precise);
+
+    assert_eq!(bundle.gameplay.hit_errors.all, [-2.0]);
+    assert!(bundle.gameplay.hit_errors.press.is_empty());
+    assert_eq!(bundle.gameplay.hit_errors.release, [-2.0]);
+    assert_eq!(bundle.gameplay.total_hit_errors, -2.0);
+    assert_eq!(bundle.gameplay.previous_hit_error_index, 3);
 }
 
 #[test]

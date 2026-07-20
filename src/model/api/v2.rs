@@ -1,4 +1,7 @@
-use crate::model::{memory::RankedPlay, states::CalculateMods};
+use crate::model::{
+    memory::RankedPlay,
+    states::{CalculateMods, HitErrorArray},
+};
 use serde::{Deserialize, Serialize};
 mod settings;
 
@@ -331,7 +334,7 @@ pub struct Play {
     pub health_bar: HealthBar,
     pub hits: PlayHits,
     #[serde(rename = "hitErrorArray")]
-    pub hit_error_array: Vec<f64>,
+    pub hit_error_array: HitErrorArray,
     pub combo: Combo,
     pub mods: CalculateMods,
     pub rank: Rank,
@@ -406,14 +409,14 @@ pub struct PreciseTourney {
     pub keys: KeyOverlay,
     pub keypresses: Keypresses,
     #[serde(rename = "hitErrors")]
-    pub hit_errors: Vec<f64>,
+    pub hit_errors: HitErrorArray,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PreciseResponse {
     pub keys: KeyOverlay,
     pub keypresses: Keypresses,
     #[serde(rename = "hitErrors")]
-    pub hit_errors: Vec<f64>,
+    pub hit_errors: HitErrorArray,
     pub tourney: Vec<PreciseTourney>,
 }
 

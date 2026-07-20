@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use super::enums::RankedPlayStage;
 use super::states::{
-    CalculateMods, KeyOverlayButton, LeaderboardPlayer, MultiplayerTeamType, SettingsObject,
-    Statistics, TourneyManagerChatItem,
+    CalculateMods, HitErrorArray, KeyOverlayButton, LeaderboardPlayer, MultiplayerTeamType,
+    SettingsObject, Statistics, TourneyManagerChatItem,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,7 +129,10 @@ pub type Mp3Length = f64;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HitErrors {
     pub index: i64,
-    pub array: Vec<f64>,
+    #[serde(flatten)]
+    pub errors: HitErrorArray,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_correction: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

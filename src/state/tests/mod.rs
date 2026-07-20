@@ -18,7 +18,7 @@ use crate::model::memory::{
     Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney, TourneyChat,
     TourneyUser, User,
 };
-use crate::model::states::{CalculateMods, Statistics, TourneyManagerChatItem};
+use crate::model::states::{CalculateMods, HitErrorArray, Statistics, TourneyManagerChatItem};
 use crate::process::{MemoryRead, ReadStatus};
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -285,7 +285,12 @@ impl PreciseSnapshotReader for FakePrecise {
         )
         .hit_errors(Ok(ReadStatus::Ready(HitErrors {
             index: context.committed_hit_error_index + 1,
-            array: vec![1.0],
+            errors: HitErrorArray {
+                all: vec![1.0],
+                press: vec![1.0],
+                release: Vec::new(),
+            },
+            release_correction: None,
         })))
         .publish())
     }

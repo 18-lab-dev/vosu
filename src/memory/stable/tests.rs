@@ -221,6 +221,37 @@ fn all_sixteen_signatures_resolve_in_order_with_signed_offsets() {
     );
 }
 #[test]
+fn stable_hit_errors_are_appended_to_all_and_press() {
+    let mut bytes = vec![0; 0x3000];
+    let ruleset_anchor = 0x1200usize;
+    let ruleset = 0x1300usize;
+    let gameplay = 0x1400usize;
+    let score = 0x1500usize;
+    let list = 0x1600usize;
+    let items = 0x1700usize;
+    put_u32(&mut bytes, 0x900 - 0xb, ruleset_anchor as u32);
+    put_u32(&mut bytes, ruleset_anchor + 4, ruleset as u32);
+    put_u32(&mut bytes, ruleset + 0x64, gameplay as u32);
+    put_u32(&mut bytes, gameplay + 0x38, score as u32);
+    put_u32(&mut bytes, score + 0x38, list as u32);
+    put_u32(&mut bytes, list + 4, items as u32);
+    put_i32(&mut bytes, list + 0xc, 2);
+    put_i32(&mut bytes, items + LEADER_START, -4);
+    put_i32(&mut bytes, items + LEADER_START + 4, 7);
+    let mut reader = StableMemory::new(handle(0, bytes), fixture_patterns());
+
+    let ReadStatus::Ready(suffix) = reader.hit_errors(0).unwrap() else {
+        panic!("stable hit errors ready");
+    };
+
+    assert_eq!(suffix.index, 2);
+    assert_eq!(suffix.errors.all, [-4.0, 7.0]);
+    assert_eq!(suffix.errors.press, [-4.0, 7.0]);
+    assert!(suffix.errors.release.is_empty());
+    assert_eq!(suffix.release_correction, None);
+}
+
+#[test]
 fn every_public_method_has_a_deterministic_zero_memory_sentinel() {
     let mut reader = StableMemory::new(handle(0, vec![0; 0x8000]), fixture_patterns());
     assert!(matches!(

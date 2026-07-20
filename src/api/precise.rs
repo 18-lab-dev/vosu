@@ -121,6 +121,7 @@ mod tests {
     use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
     use crate::instance::{InstanceSettings, Pid};
     use crate::model::enums::ClientType;
+    use crate::model::states::HitErrorArray;
     use crate::state::{
         BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
         MenuState, PreciseState, RankedPlayState, RegularState, ResultScreenState, SettingsState,
@@ -175,7 +176,11 @@ mod tests {
             mode,
             key_overlay: Arc::new(keys),
             keypresses: Arc::new(keypresses),
-            hit_errors: Arc::new(hit_errors),
+            hit_errors: Arc::new(HitErrorArray {
+                all: hit_errors.clone(),
+                press: hit_errors,
+                release: Vec::new(),
+            }),
             total_hit_errors: 0.0,
             committed_hit_error_index: 0,
             unstable_rate: 0.0,
@@ -238,7 +243,7 @@ mod tests {
         let encoded = encode(&snapshot).expect("precise response");
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
-            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":99,"name":""},"keys":[]},"hitErrors":[],"tourney":[]}"#
+            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":99,"name":""},"keys":[]},"hitErrors":{"all":[],"press":[],"release":[]},"tourney":[]}"#
         );
     }
 
@@ -256,6 +261,11 @@ mod tests {
             ],
             vec![-7.5, 2.25],
         );
+        Arc::make_mut(&mut precise).hit_errors = Arc::new(HitErrorArray {
+            all: vec![-7.5, 2.25],
+            press: vec![-7.5],
+            release: vec![2.25],
+        });
         let legacy = Arc::new(precise.key_overlay[..3].to_vec());
         Arc::make_mut(&mut precise).key_overlay = legacy;
         let focused = bundle(1, precise);
@@ -321,6 +331,10 @@ mod tests {
                 ("K6", false, 16, None, None),
             ]
         );
+        assert_eq!(
+            serde_json::to_value(response.hit_errors).unwrap(),
+            serde_json::json!({"all": [-7.5, 2.25], "press": [-7.5], "release": [2.25]})
+        );
     }
 
     #[test]
@@ -377,7 +391,7 @@ mod tests {
         let encoded = encode(&snapshot).expect("precise response");
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
-            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":0,"name":"osu"},"keys":[]},"hitErrors":[],"tourney":[{"ipcId":2.5,"keys":{"k1":{"isPressed":false,"count":2},"k2":{"isPressed":true,"count":22},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":1,"name":"taiko"},"keys":[{"name":"K1","isPressed":false,"count":2,"pressedAt":null,"releasedAt":null},{"name":"K2","isPressed":true,"count":22,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[-2.5]},{"ipcId":30.25,"keys":{"k1":{"isPressed":true,"count":30},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":2,"name":"fruits"},"keys":[{"name":"K1","isPressed":true,"count":30,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[30.5]},{"ipcId":null,"keys":{"k1":{"isPressed":true,"count":99},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":3,"name":"mania"},"keys":[{"name":"K1","isPressed":true,"count":99,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[99]}]}"#
+            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":0,"name":"osu"},"keys":[]},"hitErrors":{"all":[],"press":[],"release":[]},"tourney":[{"ipcId":2.5,"keys":{"k1":{"isPressed":false,"count":2},"k2":{"isPressed":true,"count":22},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":1,"name":"taiko"},"keys":[{"name":"K1","isPressed":false,"count":2,"pressedAt":null,"releasedAt":null},{"name":"K2","isPressed":true,"count":22,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[-2.5],"press":[-2.5],"release":[]}},{"ipcId":30.25,"keys":{"k1":{"isPressed":true,"count":30},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":2,"name":"fruits"},"keys":[{"name":"K1","isPressed":true,"count":30,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[30.5],"press":[30.5],"release":[]}},{"ipcId":null,"keys":{"k1":{"isPressed":true,"count":99},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":3,"name":"mania"},"keys":[{"name":"K1","isPressed":true,"count":99,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[99],"press":[99],"release":[]}}]}"#
         );
     }
 

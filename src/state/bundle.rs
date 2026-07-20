@@ -23,8 +23,8 @@ use crate::model::memory::{
     ResultScreen as RawResultScreen, Score, Tourney as RawTourney, User as RawUser,
 };
 use crate::model::states::{
-    CalculateMods, KeyOverlayButton, KeypressButton, LeaderboardPlayer, SettingsObject, Statistics,
-    TourneyManagerChatItem,
+    CalculateMods, HitErrorArray, KeyOverlayButton, KeypressButton, LeaderboardPlayer,
+    SettingsObject, Statistics, TourneyManagerChatItem,
 };
 use crate::process::{MemoryRead, ReadStatus};
 

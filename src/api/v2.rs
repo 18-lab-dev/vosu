@@ -14,7 +14,7 @@ use crate::calculation::{calculate_grade, fix_decimals, fix_decimals_to, to_lega
 use crate::model::api::v2::*;
 use crate::model::enums::ClientType;
 use crate::model::memory::{LazerSpectatorEntry, User};
-use crate::model::states::{CalculateMods, LeaderboardPlayer, SettingsObject};
+use crate::model::states::{CalculateMods, HitErrorArray, LeaderboardPlayer, SettingsObject};
 use crate::state::{GameplayState, RegularState};
 
 pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {

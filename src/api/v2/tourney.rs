@@ -256,7 +256,7 @@ pub(super) fn build_lazer_client(
             large_tick_hits: hits.large_tick_hits,
             slider_breaks: 0,
         }),
-        hit_error_array: vec![],
+        hit_error_array: Default::default(),
         combo: Combo {
             current: score.combo,
             max: score.max_combo,

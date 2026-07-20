@@ -18,7 +18,7 @@ use vosu::instance::InstanceSettings;
 use vosu::memory::lazer_offsets::LazerOffsets;
 use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns};
 use vosu::model::enums::ClientType;
-use vosu::model::states::KeypressButton;
+use vosu::model::states::{HitErrorArray, KeypressButton};
 use vosu::process::{
     MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
 };
@@ -162,7 +162,7 @@ fn precise_state() -> PreciseState {
                 })
                 .collect(),
         ),
-        hit_errors: Arc::new(Vec::new()),
+        hit_errors: Arc::new(HitErrorArray::default()),
         total_hit_errors: 0.0,
         committed_hit_error_index: 0,
         unstable_rate: 0.0,

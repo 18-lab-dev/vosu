@@ -423,7 +423,10 @@ impl LazerMemory {
         })
     }
 
-    pub(super) fn read_hit_event(&self, address: usize) -> Result<Option<f64>, MemoryError> {
+    pub(super) fn read_hit_event(
+        &self,
+        address: usize,
+    ) -> Result<Option<HitErrorEvent>, MemoryError> {
         let mut object_bytes = [0u8; 8];
         let mut error_bytes = [0u8; 8];
         let mut result_bytes = [0u8; 4];
@@ -448,6 +451,9 @@ impl LazerMemory {
         if !allowed_size {
             return Ok(None);
         }
+        if mode == 3 && size == 0x88 {
+            return Ok(Some(HitErrorEvent::ManiaHoldAggregate));
+        }
         let result = i32::from_le_bytes(result_bytes);
         let allowed = match mode {
             0 => matches!(result, 3 | 2 | 5 | 10),
@@ -458,6 +464,6 @@ impl LazerMemory {
         if !allowed {
             return Ok(None);
         }
-        Ok(Some(f64::from_le_bytes(error_bytes)))
+        Ok(Some(HitErrorEvent::Timing(f64::from_le_bytes(error_bytes))))
     }
 }

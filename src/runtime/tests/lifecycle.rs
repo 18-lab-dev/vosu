@@ -2,6 +2,7 @@
 fn precise_only_publication_does_not_wake_regular_subscribers() {
     use crate::{
         instance::InstanceSettings,
+        model::states::HitErrorArray,
         state::{
             BassDensityState, BeatmapPPState, GameplayState, GlobalState,
             LazerMultiSpectatingState, MenuState, PreciseState, RankedPlayState, RegularState,
@@ -29,7 +30,7 @@ fn precise_only_publication_does_not_wake_regular_subscribers() {
             mode: 0,
             key_overlay: Arc::new(Vec::new()),
             keypresses: Arc::new(Vec::new()),
-            hit_errors: Arc::new(Vec::new()),
+            hit_errors: Arc::new(HitErrorArray::default()),
             total_hit_errors: 0.0,
             committed_hit_error_index: 0,
             unstable_rate: 0.0,

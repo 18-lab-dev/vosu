@@ -1,3 +1,4 @@
+use crate::model::states::HitErrorArray;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -220,7 +221,7 @@ pub struct GameplayHits {
     #[serde(rename = "unstableRate")]
     pub unstable_rate: f64,
     #[serde(rename = "hitErrorArray")]
-    pub hit_error_array: Vec<f64>,
+    pub hit_error_array: HitErrorArray,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -390,7 +391,7 @@ pub struct TourneyHits {
     #[serde(rename = "unstableRate")]
     pub unstable_rate: f64,
     #[serde(rename = "hitErrorArray")]
-    pub hit_error_array: Vec<f64>,
+    pub hit_error_array: HitErrorArray,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

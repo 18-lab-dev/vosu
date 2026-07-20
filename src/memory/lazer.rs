@@ -17,8 +17,8 @@ use crate::model::memory::{
     User,
 };
 use crate::model::states::{
-    CalculateMods, KeyOverlayButton, LeaderboardPlayer, Mod, MultiplayerTeamType, Statistics,
-    TourneyManagerChatItem,
+    CalculateMods, HitErrorArray, KeyOverlayButton, LeaderboardPlayer, Mod, MultiplayerTeamType,
+    Statistics, TourneyManagerChatItem,
 };
 use crate::process::{MemoryError, MemoryRead, Pattern, ProcessHandle, ReadRequest, ReadStatus};
 

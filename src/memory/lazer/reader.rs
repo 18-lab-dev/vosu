@@ -169,7 +169,8 @@ impl MemoryReader for LazerMemory {
         if self.player_loading {
             return Ok(ReadStatus::Ready(HitErrors {
                 index: 0,
-                array: vec![],
+                errors: HitErrorArray::default(),
+                release_correction: None,
             }));
         }
         let p = required_non_null(self.player()?, "hit errors player", self.current_screen)?;
@@ -186,21 +187,9 @@ impl MemoryReader for LazerMemory {
                 .hit_events,
         )?)?;
         let (size, items) = self.hybrid_list_info(list)?;
-        let mut index = last.max(0) as usize;
-        let mut array = Vec::new();
-        while index < size {
-            let item = add(items, index * 0x40)?;
-            match self.read_hit_event(item)? {
-                Some(v) if hit_error_out_of_range(v) => break,
-                Some(v) => array.push(v),
-                None => {}
-            }
-            index += 1;
-        }
-        Ok(ReadStatus::Ready(HitErrors {
-            index: index as i64,
-            array,
-        }))
+        Ok(ReadStatus::Ready(
+            self.read_hit_error_suffix(items, size, last)?,
+        ))
     }
     fn global(&mut self) -> MemoryRead<Global> {
         self.selected_gamemode = self.read_gamemode()?;
@@ -593,5 +582,62 @@ impl MemoryReader for LazerMemory {
         #[cfg(windows)]
         let _ = self.read_windows_input_settings(&mut values);
         Ok(ReadStatus::Ready(values))
+    }
+}
+
+impl LazerMemory {
+    pub(super) fn read_hit_error_suffix(
+        &self,
+        items: usize,
+        size: usize,
+        last: i64,
+    ) -> Result<HitErrors, MemoryError> {
+        let start_index = last.max(0) as usize;
+        let mut index = start_index;
+        let mut errors = HitErrorArray::default();
+        let mut release_correction = None;
+        let mut cached_event = None;
+        while index < size {
+            let item = add(items, index * 0x40)?;
+            let event = match cached_event.take() {
+                Some(event) => event,
+                None => self.read_hit_event(item)?,
+            };
+            match event {
+                Some(HitErrorEvent::Timing(value)) if hit_error_out_of_range(value) => break,
+                Some(HitErrorEvent::Timing(value)) => {
+                    errors.all.push(value);
+                    let next_is_hold_aggregate = if self.selected_gamemode == 3 && index + 1 < size
+                    {
+                        let next = self.read_hit_event(add(items, (index + 1) * 0x40)?)?;
+                        cached_event = Some(next);
+                        matches!(next, Some(HitErrorEvent::ManiaHoldAggregate))
+                    } else {
+                        false
+                    };
+                    if next_is_hold_aggregate {
+                        errors.release.push(value);
+                    } else {
+                        errors.press.push(value);
+                    }
+                }
+                Some(HitErrorEvent::ManiaHoldAggregate) if index == start_index && index > 0 => {
+                    let previous = add(items, (index - 1) * 0x40)?;
+                    if let Some(HitErrorEvent::Timing(value)) = self.read_hit_event(previous)?
+                        && !hit_error_out_of_range(value)
+                    {
+                        release_correction = Some(value);
+                    }
+                }
+                Some(HitErrorEvent::ManiaHoldAggregate) => {}
+                None => {}
+            }
+            index += 1;
+        }
+        Ok(HitErrors {
+            index: index as i64,
+            errors,
+            release_correction,
+        })
     }
 }

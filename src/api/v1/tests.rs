@@ -8,7 +8,8 @@ use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
 use crate::calculation::default_calculated_mods;
 use crate::model::memory::{LazerSpectator, User};
 use crate::model::states::{
-    KeyOverlayButton as StateKey, KeypressButton as StateKeypress, TourneyManagerChatItem,
+    HitErrorArray, KeyOverlayButton as StateKey, KeypressButton as StateKeypress,
+    TourneyManagerChatItem,
 };
 use crate::state::{
     BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
@@ -74,7 +75,7 @@ fn precise() -> PreciseState {
         mode: 0,
         key_overlay: Arc::new(Vec::new()),
         keypresses: Arc::new(Vec::new()),
-        hit_errors: Arc::new(Vec::new()),
+        hit_errors: Arc::new(HitErrorArray::default()),
         total_hit_errors: 0.0,
         committed_hit_error_index: 0,
         unstable_rate: 0.0,
@@ -169,7 +170,11 @@ fn play_and_result_select_the_source_mods_and_precise_values() {
         pressed_at: Some(123.0),
         released_at: None,
     }]);
-    precise.hit_errors = Arc::new(vec![1.5]);
+    precise.hit_errors = Arc::new(HitErrorArray {
+        all: vec![1.5, -2.25],
+        press: vec![1.5],
+        release: vec![-2.25],
+    });
     precise.unstable_rate = 12.5;
     precise.status = i64::from(GameState::Play.value());
     precise.play_time = 123.0;
@@ -177,7 +182,10 @@ fn play_and_result_select_the_source_mods_and_precise_values() {
     let play = serde_json::to_value(build(&play_snapshot).unwrap()).unwrap();
     assert_eq!(play["menu"]["mods"], json!({"num": 64, "str": "DT"}));
     assert_eq!(play["gameplay"]["hits"]["300"], 7);
-    assert_eq!(play["gameplay"]["hits"]["hitErrorArray"], json!([1.5]));
+    assert_eq!(
+        play["gameplay"]["hits"]["hitErrorArray"],
+        json!({"all": [1.5, -2.25], "press": [1.5], "release": [-2.25]})
+    );
     assert_eq!(
         play["gameplay"]["keyOverlay"]["k1"],
         json!({"isPressed": true, "count": 3})
@@ -190,6 +198,9 @@ fn play_and_result_select_the_source_mods_and_precise_values() {
     assert!(encoded.contains(
             "\"pp\":{\"90\":0,\"91\":0,\"92\":0,\"93\":0,\"94\":0,\"95\":123.46,\"96\":0,\"97\":0,\"98\":0,\"99\":0,\"100\":0"
         ));
+    assert!(
+        encoded.contains(r#""hitErrorArray":{"all":[1.5,-2.25],"press":[1.5],"release":[-2.25]}"#)
+    );
     assert!(encoded.contains(
             "\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":7,\"geki\":0,\"katu\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0"
         ));
@@ -317,6 +328,10 @@ fn stable_spectators_sort_fractional_ipc_ids_and_chat_maps_teams() {
         value["tourney"]["ipcClients"][0]["gameplay"]["hits"]["unstableRate"],
         4.5
     );
+    assert_eq!(
+        value["tourney"]["ipcClients"][0]["gameplay"]["hits"]["hitErrorArray"],
+        json!({"all": [], "press": [], "release": []})
+    );
     let finite = spectator(50, 3.5, "finite");
     let infinite = spectator(60, f64::INFINITY, "infinite");
     let nan = spectator(70, f64::NAN, "nan");
@@ -435,6 +450,10 @@ fn lazer_lobby_preserves_client_order_and_source_placeholders() {
         value["tourney"]["ipcClients"][0]["gameplay"]["hits"]["sliderBreaks"],
         0
     );
+    assert_eq!(
+        value["tourney"]["ipcClients"][0]["gameplay"]["hits"]["hitErrorArray"],
+        json!({"all": [], "press": [], "release": []})
+    );
     assert!(
         value["tourney"]["ipcClients"][0]["gameplay"]["hits"]
             .get("maxThisPlay")
@@ -445,6 +464,7 @@ fn lazer_lobby_preserves_client_order_and_source_placeholders() {
         ""
     );
     let encoded = String::from_utf8(encode(&snapshot).unwrap().to_vec()).unwrap();
+    assert!(encoded.contains(r#""hitErrorArray":{"all":[],"press":[],"release":[]}"#));
     assert!(!encoded.contains("9007199254740993"));
     assert!(!encoded.contains("9007199254740995"));
 }

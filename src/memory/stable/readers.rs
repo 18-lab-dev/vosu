@@ -222,16 +222,22 @@ impl MemoryReader for StableMemory {
         let items = self.ptr(self.add(b, 4)?)?;
         let size = self.process.read_i32(self.add(b, 0xc)?)?.max(0) as i64;
         let mut index = last.max(0);
-        let mut out = vec![];
+        let mut errors = HitErrorArray::default();
         while index < size {
             let e = self.i32(self.add(items, LEADER_START + 4 * index as usize)?)?;
             if !(-10_000..=10_000).contains(&e) {
                 break;
             }
-            out.push(e as f64);
+            let value = e as f64;
+            errors.all.push(value);
+            errors.press.push(value);
             index += 1
         }
-        Ok(ReadStatus::Ready(HitErrors { index, array: out }))
+        Ok(ReadStatus::Ready(HitErrors {
+            index,
+            errors,
+            release_correction: None,
+        }))
     }
     fn global(&mut self) -> MemoryRead<Global> {
         let menu = mods(self.ptr2(self.patterns.menu_mods_ptr)? as i64);

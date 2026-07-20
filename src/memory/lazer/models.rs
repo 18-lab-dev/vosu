@@ -71,6 +71,12 @@ pub(super) const MANIA_MOD_CATEGORIES: [&[&str]; 6] = [
     &["TD", "SV2"],
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum HitErrorEvent {
+    Timing(f64),
+    ManiaHoldAggregate,
+}
+
 /// Source-faithful osu!lazer managed-memory decoder.
 pub struct LazerMemory {
     pub(super) process: ProcessHandle,

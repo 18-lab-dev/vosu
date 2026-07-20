@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use super::*;
 use crate::model::enums::ClientType;
 use crate::model::memory::*;
-use crate::model::states::CalculateMods;
+use crate::model::states::{CalculateMods, HitErrorArray};
 use crate::process::{MemoryError, MemoryRead, ReadStatus};
 
 fn mods(checksum: &str) -> CalculateMods {
@@ -183,7 +183,12 @@ fn precise_acceptance_requires_exact_base_and_new_sequence() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 14,
-        array: vec![-2.0, 3.0],
+        errors: HitErrorArray {
+            all: vec![-2.0, 3.0],
+            press: vec![-2.0, 3.0],
+            release: Vec::new(),
+        },
+        release_correction: None,
     })))
     .publish();
 
@@ -241,7 +246,12 @@ fn suffix_cannot_contain_more_hits_than_consumed_source_positions() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 5,
-        array: vec![1.0],
+        errors: HitErrorArray {
+            all: vec![1.0],
+            press: vec![1.0],
+            release: Vec::new(),
+        },
+        release_correction: None,
     })))
     .publish();
     assert_eq!(

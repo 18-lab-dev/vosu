@@ -320,7 +320,7 @@ impl RawPreciseSnapshot {
             }
             let consumed = usize::try_from(self.ending_index - self.capture.start_index)
                 .map_err(|_| PreciseSequenceError::HitErrorSuffixExceedsConsumedRange)?;
-            if suffix.array.len() > consumed {
+            if suffix.errors.all.len() > consumed {
                 return Err(PreciseSequenceError::HitErrorSuffixExceedsConsumedRange);
             }
         }

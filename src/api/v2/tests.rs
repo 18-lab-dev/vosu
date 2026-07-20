@@ -279,14 +279,14 @@ fn fractional_and_nonfinite_ipc_ids_follow_javascript_json() {
         ipc_id: 7.25,
         keys: keys.clone(),
         keypresses: keypresses.clone(),
-        hit_errors: vec![],
+        hit_errors: Default::default(),
     };
     assert!(json(&dto).starts_with(r#"{"ipcId":7.25,"keys":"#));
     let dto = PreciseTourney {
         ipc_id: f64::INFINITY,
         keys,
         keypresses,
-        hit_errors: vec![],
+        hit_errors: Default::default(),
     };
     assert!(json(&dto).starts_with(r#"{"ipcId":null,"keys":"#));
 }
@@ -402,6 +402,37 @@ fn default_builder_has_exact_root_order_and_source_default_tourney() {
     }
     assert!(!text.contains("\"rankedPlay\":"));
     assert!(text.ends_with(r#""clients":[]}}"#));
+    assert!(text.contains(r#""hitErrorArray":{"all":[],"press":[],"release":[]}"#));
+}
+
+#[test]
+fn play_threads_press_and_release_hit_errors_with_exact_wire_shape() {
+    let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
+    let mut precise = (*base.precise).clone();
+    precise.hit_errors = Arc::new(HitErrorArray {
+        all: vec![-3.5, 6.25],
+        press: vec![-3.5],
+        release: vec![6.25],
+    });
+    let state = Arc::new(StateBundleSnapshot {
+        source: base.source,
+        generation: base.generation,
+        reset_epoch: base.reset_epoch,
+        regular: Arc::clone(&base.regular),
+        precise: Arc::new(precise),
+    });
+    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+        1,
+        Some(10),
+        true,
+        ApiRuntimeSettings::default(),
+        [manager_entry(10, state, false, None)],
+    )));
+
+    assert!(
+        json(&build(&snapshot).unwrap().play)
+            .contains(r#""hitErrorArray":{"all":[-3.5,6.25],"press":[-3.5],"release":[6.25]}"#)
+    );
 }
 
 #[test]
@@ -569,6 +600,7 @@ fn stable_tournament_is_sorted_by_fractional_ipc_id_not_pid() {
     );
     let encoded = json(&tourney);
     assert!(encoded.find(r#""ipcId":2.25"#).unwrap() < encoded.find(r#""ipcId":7.5"#).unwrap());
+    assert!(encoded.contains(r#""hitErrorArray":{"all":[],"press":[],"release":[]}"#));
 }
 #[test]
 fn stable_tournament_missing_user_projects_source_zero_defaults() {

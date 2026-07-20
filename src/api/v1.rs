@@ -702,7 +702,7 @@ fn lazer_gameplay(score: &Score, selected: SelectedMods) -> TourneyGameplay {
                 max_this_play: String::new(),
             },
             unstable_rate: 0.0,
-            hit_error_array: Vec::new(),
+            hit_error_array: Default::default(),
         },
         combo: Combo {
             current: score.combo,

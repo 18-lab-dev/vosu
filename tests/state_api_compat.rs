@@ -25,7 +25,8 @@ use vosu::{
         enums::ClientType,
         memory::{LazerSpectator, ResultScreen as RawResultScreen, User as RawUser},
         states::{
-            CalculateMods, KeyOverlayButton, LeaderboardPlayer, Statistics, TourneyManagerChatItem,
+            CalculateMods, HitErrorArray, KeyOverlayButton, LeaderboardPlayer, Statistics,
+            TourneyManagerChatItem,
         },
     },
     state::{
@@ -174,6 +175,47 @@ fn mods(value: &Value) -> CalculateMods {
 
 fn statistics(value: &Value) -> Statistics {
     serde_json::from_value(value.clone()).expect("fixture Statistics must be valid")
+}
+
+fn hit_errors(value: &Value) -> HitErrorArray {
+    let press: Vec<f64> = serde_json::from_value(
+        value
+            .get("hitErrors")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+    )
+    .expect("hit errors");
+
+    HitErrorArray {
+        all: press.clone(),
+        press,
+        release: Vec::new(),
+    }
+}
+
+fn split_legacy_hit_error_arrays(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                if matches!(key.as_str(), "hitErrorArray" | "hitErrors") && value.is_array() {
+                    let all = value.take();
+                    *value = serde_json::json!({
+                        "all": all.clone(),
+                        "press": all,
+                        "release": [],
+                    });
+                } else {
+                    split_legacy_hit_error_arrays(value);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                split_legacy_hit_error_arrays(value);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -380,13 +422,7 @@ fn regular(input: &Input) -> RegularState {
                 })
                 .collect(),
             keypress_identity_mode: Some(input.mode),
-            hit_errors: serde_json::from_value(
-                gameplay
-                    .get("hitErrors")
-                    .cloned()
-                    .unwrap_or_else(|| Value::Array(Vec::new())),
-            )
-            .expect("hit errors"),
+            hit_errors: hit_errors(gameplay),
             total_hit_errors: 0.0,
             previous_hit_error_index: 0,
             previous_play_time: 0.0,
@@ -660,6 +696,13 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
                 serde_json::to_vec(&value).expect("normalized v2 fixture must encode")
             } else {
                 expected
+            };
+            // Preserve the pinned upstream fixture bytes while asserting vosu's split shape.
+            let expected = {
+                let mut value: Value =
+                    serde_json::from_slice(&expected).expect("expected fixture must be valid JSON");
+                split_legacy_hit_error_arrays(&mut value);
+                serde_json::to_vec(&value).expect("adapted expected fixture must encode")
             };
             let actual = encode(schema, &snapshot);
             let actual = if matches!(schema, "v2" | "v2-precise") {

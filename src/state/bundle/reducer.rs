@@ -712,8 +712,37 @@ impl StateBundle {
                 self.gameplay.is_key_overlay_default_state = false;
             }
             if let Some(Ok(ReadStatus::Ready(errors))) = snapshot.hit_errors() {
-                self.gameplay.total_hit_errors += errors.array.iter().sum::<f64>();
-                self.gameplay.hit_errors.extend_from_slice(&errors.array);
+                if let Some(value) = errors.release_correction {
+                    let matches_last_all = self
+                        .gameplay
+                        .hit_errors
+                        .all
+                        .last()
+                        .is_some_and(|last| last.to_bits() == value.to_bits());
+                    let matches_last_press = self
+                        .gameplay
+                        .hit_errors
+                        .press
+                        .last()
+                        .is_some_and(|last| last.to_bits() == value.to_bits());
+                    if matches_last_all && matches_last_press {
+                        self.gameplay.hit_errors.press.pop();
+                        self.gameplay.hit_errors.release.push(value);
+                    }
+                }
+                self.gameplay.total_hit_errors += errors.errors.all.iter().sum::<f64>();
+                self.gameplay
+                    .hit_errors
+                    .all
+                    .extend_from_slice(&errors.errors.all);
+                self.gameplay
+                    .hit_errors
+                    .press
+                    .extend_from_slice(&errors.errors.press);
+                self.gameplay
+                    .hit_errors
+                    .release
+                    .extend_from_slice(&errors.errors.release);
                 self.gameplay.previous_hit_error_index = errors.index;
             }
         } else {

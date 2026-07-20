@@ -25,6 +25,7 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 ### API
 
 - Added `beatmap.stats.timingWindows` to v2 responses for stable and lazer across all rulesets, including map-aware speed-mod and osu!mania Classic/ScoreV2 windows. osu!catch exposes its spatial `300` catch boundary in playfield units; unsupported judgements are omitted.
+- Split every public hit-error field into ordered `all`, `press`, and `release` arrays, with osu!lazer mania hold-note releases classified separately.
 
 ### Reliability
 

@@ -11,7 +11,8 @@ use crate::model::memory::{
     TourneyUser, User,
 };
 use crate::model::states::{
-    CalculateMods, KeyOverlayButton, LeaderboardPlayer, Mod, Statistics, TourneyManagerChatItem,
+    CalculateMods, HitErrorArray, KeyOverlayButton, LeaderboardPlayer, Mod, Statistics,
+    TourneyManagerChatItem,
 };
 use crate::process::{
     MemoryError, MemoryRead, Pattern, ProcessHandle, ReadRequest, ReadStatus, checked_address_add,

@@ -457,7 +457,7 @@ pub(super) fn build_play(
     gameplay: &GameplayState,
     attrs: Option<&crate::calculation::progressive::ProgressiveAttributes>,
     mods: &CalculateMods,
-    precise_hits: &[f64],
+    precise_hits: &HitErrorArray,
 ) -> Play {
     let a = attrs.copied().unwrap_or_default();
     let s = &gameplay.statistics;
@@ -483,7 +483,7 @@ pub(super) fn build_play(
             small_tick_hits: s.small_tick_hit,
             large_tick_hits: s.large_tick_hit,
         }),
-        hit_error_array: precise_hits.to_vec(),
+        hit_error_array: precise_hits.clone(),
         combo: Combo {
             current: gameplay.combo,
             max: gameplay.max_combo,

@@ -7,7 +7,7 @@ use crate::instance::InstanceSettings;
 use crate::model::enums::ClientType;
 use crate::model::memory::User;
 use crate::model::states::{
-    CalculateMods, KeyOverlayButton, KeypressButton, LeaderboardPlayer, Statistics,
+    CalculateMods, HitErrorArray, KeyOverlayButton, KeypressButton, LeaderboardPlayer, Statistics,
 };
 use crate::state::{
     BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
@@ -125,7 +125,11 @@ fn snapshot_with_precise(
                 released_at: None,
             },
         ]),
-        hit_errors: Arc::new(vec![-4.0, 5.0]),
+        hit_errors: Arc::new(HitErrorArray {
+            all: vec![-4.0, 5.0],
+            press: vec![-4.0],
+            release: vec![5.0],
+        }),
         total_hit_errors: 1.0,
         committed_hit_error_index: 2,
         unstable_rate: 12.345,
@@ -203,7 +207,23 @@ fn menu_and_play_select_exact_modes_mods_paths_and_precise_values() {
     assert_eq!(menu_result.song_selection_ranking_type, 4);
     assert_eq!(menu_result.bancho_country, "US");
     assert_eq!(menu_result.bancho_is_connected, 1);
-    assert_eq!(menu_result.hit_errors, vec![-4.0, 5.0]);
+    assert_eq!(
+        menu_result.hit_errors,
+        HitErrorArray {
+            all: vec![-4.0, 5.0],
+            press: vec![-4.0],
+            release: vec![5.0],
+        }
+    );
+    assert_eq!(
+        serde_json::to_value(&menu_result).unwrap()["hitErrors"],
+        serde_json::json!({"all": [-4.0, 5.0], "press": [-4.0], "release": [5.0]})
+    );
+    assert!(
+        serde_json::to_string(&menu_result)
+            .unwrap()
+            .contains(r#""hitErrors":{"all":[-4.0,5.0],"press":[-4.0],"release":[5.0]}"#)
+    );
     assert_eq!(menu_result.unstable_rate, 12.35);
     assert_eq!(
         menu_result.osu_90_pp, 0.0,

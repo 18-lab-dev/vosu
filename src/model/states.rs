@@ -147,6 +147,13 @@ impl KeyOverlayButton {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HitErrorArray {
+    pub all: Vec<f64>,
+    pub press: Vec<f64>,
+    pub release: Vec<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LeaderboardPlayer {
     #[serde(rename = "userId")]

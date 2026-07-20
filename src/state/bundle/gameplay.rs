@@ -27,7 +27,7 @@ pub struct GameplayState {
     pub key_overlay: Vec<KeyOverlayButton>,
     pub keypresses: Vec<KeypressButton>,
     pub keypress_identity_mode: Option<i64>,
-    pub hit_errors: Vec<f64>,
+    pub hit_errors: HitErrorArray,
     pub total_hit_errors: f64,
     pub previous_hit_error_index: i64,
     pub previous_play_time: f64,
@@ -66,7 +66,7 @@ impl Default for GameplayState {
             key_overlay: Vec::new(),
             keypresses: Vec::new(),
             keypress_identity_mode: None,
-            hit_errors: Vec::new(),
+            hit_errors: HitErrorArray::default(),
             total_hit_errors: 0.0,
             previous_hit_error_index: 0,
             previous_play_time: 0.0,
@@ -160,7 +160,9 @@ impl GameplayState {
     }
 
     pub(super) fn reset_hit_errors(&mut self) {
-        self.hit_errors.clear();
+        self.hit_errors.all.clear();
+        self.hit_errors.press.clear();
+        self.hit_errors.release.clear();
         self.total_hit_errors = 0.0;
         self.previous_hit_error_index = 0;
     }
@@ -245,17 +247,18 @@ impl GameplayState {
         };
     }
 
-    fn calculate_ur(&self) -> f64 {
-        if self.hit_errors.is_empty() {
+    pub(super) fn calculate_ur(&self) -> f64 {
+        if self.hit_errors.all.is_empty() {
             return 0.0;
         }
-        let mean = self.total_hit_errors / self.hit_errors.len() as f64;
+        let mean = self.total_hit_errors / self.hit_errors.all.len() as f64;
         let variance = self
             .hit_errors
+            .all
             .iter()
             .map(|hit| (hit - mean).powi(2))
             .sum::<f64>()
-            / self.hit_errors.len() as f64;
+            / self.hit_errors.all.len() as f64;
         variance.sqrt() * 10.0
     }
 }
@@ -384,7 +387,7 @@ pub struct PreciseState {
     pub mode: i64,
     pub key_overlay: Arc<Vec<KeyOverlayButton>>,
     pub keypresses: Arc<Vec<KeypressButton>>,
-    pub hit_errors: Arc<Vec<f64>>,
+    pub hit_errors: Arc<HitErrorArray>,
     pub total_hit_errors: f64,
     pub committed_hit_error_index: i64,
     pub unstable_rate: f64,

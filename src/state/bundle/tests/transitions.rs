@@ -32,7 +32,7 @@ fn state_defaults_and_retry_retention_match_source_contract() {
     gameplay.keypress_mode = 3;
     gameplay.mods.checksum = "mods".into();
     gameplay.leaderboard_scores.push(raw_leaderboard_player());
-    gameplay.hit_errors.push(10.0);
+    gameplay.hit_errors.all.push(10.0);
     gameplay.reset(true, ClientType::Stable);
     assert_eq!(
         (
@@ -67,7 +67,22 @@ fn state_defaults_and_retry_retention_match_source_contract() {
     assert_eq!(non_retry.grade_current, expected_non_retry_grade);
     assert_eq!(non_retry.grade_expected, expected_non_retry_grade);
 
-    assert!(gameplay.hit_errors.is_empty());
+    assert_eq!(gameplay.hit_errors, HitErrorArray::default());
+}
+
+#[test]
+fn unstable_rate_uses_all_errors_including_releases() {
+    let gameplay = GameplayState {
+        hit_errors: HitErrorArray {
+            all: vec![0.0, 10.0],
+            press: vec![0.0],
+            release: vec![10.0],
+        },
+        total_hit_errors: 10.0,
+        ..GameplayState::default()
+    };
+
+    assert_eq!(gameplay.calculate_ur(), 50.0);
 }
 
 #[tokio::test]
@@ -176,7 +191,7 @@ async fn lazer_pause_clears_only_regular_gameplay_state() {
         .await
         .expect("active lazer gameplay");
     assert_eq!(active.publication.precise.mode, 3);
-    bundle.gameplay.hit_errors = vec![1.0, -1.0];
+    bundle.gameplay.hit_errors = press_hit_errors(vec![1.0, -1.0]);
     bundle.gameplay.previous_hit_error_index = 2;
     bundle.precise_dirty = true;
 
@@ -209,7 +224,10 @@ async fn lazer_pause_clears_only_regular_gameplay_state() {
             .leaderboard_scores
             .is_empty()
     );
-    assert_eq!(paused.publication.precise.hit_errors.as_ref(), &[1.0, -1.0]);
+    assert_eq!(
+        paused.publication.precise.hit_errors.all.as_slice(),
+        &[1.0, -1.0]
+    );
     assert_eq!(paused.publication.precise.committed_hit_error_index, 2);
     assert_eq!(paused.publication.precise.mode, 3);
 
@@ -541,7 +559,7 @@ async fn backward_seek_after_first_object_retains_accumulated_hit_errors() {
     bundle.previous_time = 204_737.0;
     bundle.beatmap.first_object_time = Some(820);
     bundle.gameplay.is_default_state = false;
-    bundle.gameplay.hit_errors = vec![0.0, 1.0, -1.0];
+    bundle.gameplay.hit_errors = press_hit_errors(vec![0.0, 1.0, -1.0]);
     bundle.gameplay.previous_hit_error_index = 3;
 
     let snapshot = RawRegularSnapshotBuilder::new(
@@ -556,7 +574,7 @@ async fn backward_seek_after_first_object_retains_accumulated_hit_errors() {
         .await
         .expect("backward seek remains in the active play epoch");
 
-    assert_eq!(bundle.gameplay.hit_errors, [0.0, 1.0, -1.0]);
+    assert_eq!(bundle.gameplay.hit_errors.all, [0.0, 1.0, -1.0]);
     assert_eq!(bundle.gameplay.previous_hit_error_index, 3);
     assert_eq!(bundle.calculation_reset_generation, 0);
 }
@@ -645,10 +663,7 @@ async fn precise_publication_reuses_regular_arc_and_regular_reuses_clean_precise
             time: 510.0,
         })),
     )
-    .hit_errors(Ok(ReadStatus::Ready(HitErrors {
-        index: 1,
-        array: vec![2.0],
-    })))
+    .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(1, vec![2.0]))))
     .publish();
     let precise_publication = bundle
         .apply_precise(precise)

@@ -5,6 +5,22 @@ use crate::memory::snapshot::{
 };
 use crate::model::memory::{Global as RawGlobal, GlobalPrecise, HitErrors};
 use crate::process::ReadStatus;
+
+fn press_hit_errors(values: Vec<f64>) -> HitErrorArray {
+    HitErrorArray {
+        all: values.clone(),
+        press: values,
+        release: Vec::new(),
+    }
+}
+
+fn hit_error_suffix(index: i64, values: Vec<f64>) -> HitErrors {
+    HitErrors {
+        index,
+        errors: press_hit_errors(values),
+        release_correction: None,
+    }
+}
 struct RecordingCalculation {
     requests: Arc<std::sync::Mutex<Vec<StateCalculationRequest>>>,
 }

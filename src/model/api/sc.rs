@@ -1,3 +1,4 @@
+use crate::model::states::HitErrorArray;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
@@ -190,7 +191,7 @@ pub struct Response {
     #[serde(rename = "maxGrade", skip_serializing_if = "Option::is_none")]
     pub max_grade: Option<i64>,
     #[serde(rename = "hitErrors")]
-    pub hit_errors: Vec<f64>,
+    pub hit_errors: HitErrorArray,
     pub mods: String,
     #[serde(rename = "modsEnum")]
     pub mods_enum: i64,
