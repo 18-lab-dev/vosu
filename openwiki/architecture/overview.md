@@ -33,7 +33,7 @@ osu! process
 
 ## Sampling, reduction, and generations
 
-Each ready process generation has regular and precise blocking capture paths plus one serialized reducer (`src/state/worker.rs`). Regular capture uses one-slot backpressure; precise capture is latest-only so high-frequency observations overwrite stale work instead of accumulating. The reducer rejects stale source/generation/sequence/context samples, applies retention and gameplay transitions in `src/state/bundle/`, and emits immutable state.
+Each ready process generation has regular and precise blocking capture paths plus one serialized reducer (`src/state/worker.rs`). Regular capture uses one-slot backpressure; precise capture is latest-only so high-frequency observations overwrite stale work instead of accumulating. The reducer rejects stale source/generation/sequence/context samples, applies retention and gameplay transitions in `src/state/bundle/`, and emits immutable state. Hit errors are retained as aggregate, press, and release streams; a lazer mania hold aggregate can correct the most recent press classification before publication.
 
 `ProductionStateSupervisor` accepts worker publications only when PID and generation are still desired. This prevents stale workers, reused PIDs, and late calculations from replacing current state. The unbounded worker-to-supervisor publication channel remains a documented memory-pressure risk under a persistently stalled supervisor.
 

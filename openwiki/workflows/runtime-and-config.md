@@ -18,7 +18,9 @@ Configuration lives in `vosu.env`. `ConfigStore` watches it, validates changes, 
 
 Linux uses XDG config/data/cache roots; Windows uses the executable directory. `src/platform.rs` centralizes these rules. First startup performs an idempotent migration from former `tosu` locations without overwriting current state; after migration normal reads and writes use only `vosu` paths. Relative custom static paths are resolved from the launch directory, while default static roots map to the platform data root.
 
-Counters are discovered recursively below the static root. `index.html` is the normal entrypoint; `metadata.txt` enriches catalog data; immediate `ignore.txt` excludes a directory; `node_modules` is never traversed. Counter values belong in central settings paths, not mutable source assets.
+Counters are discovered recursively below the static root. `index.html` is the normal entrypoint; `metadata.txt` enriches catalog data; immediate `ignore.txt` excludes a directory; `node_modules` is never traversed. Counter values belong in central settings paths, not mutable source assets. The dashboard opens the configured static root through `GET /api/counters/open-root`; both success and opener failure are returned as JSON with HTTP 200, using either `{"status":"opened"}` or `{"error":...}`.
+
+Counter static serving resolves a trailing-slash counter path to its `index.html`, redirects a non-slash directory request to the slash form, and returns 404 instead of exposing a directory index when the index is absent. If catalog retrieval fails, the Available page still retains the locally discovered installed count while rendering the catalog error.
 
 ## Listener and shutdown
 
@@ -26,7 +28,7 @@ Counters are discovered recursively below the static root. `index.html` is the n
 
 ## Self-update
 
-The updater separates release selection, metadata/digest validation, staging, transaction records, platform helper behavior, and startup recovery (`src/updater/`). Production updates select the exact platform archive, require the published SHA-256 digest, stage one root executable, atomically replace the current binary, and retain rollback/crash recovery state. `ENABLE_AUTOUPDATE=false` or `--update=false` disables startup checks; `GET /api/runUpdates` starts the explicit path.
+The updater separates release selection, metadata/digest validation, staging, transaction records, platform helper behavior, and startup recovery (`src/updater/`). Production updates select the exact platform archive from `https://api.github.com/repos/qt715/vosu/releases/latest`, require the published SHA-256 digest, stage one root executable, atomically replace the current binary, and retain rollback/crash recovery state. `ENABLE_AUTOUPDATE=false` or `--update=false` disables startup checks; `GET /api/runUpdates` starts the explicit path.
 
 Do not bypass the transaction boundary from routes or scripts. If recovery quarantines an ambiguous prior transaction, preserve the evidence and consult the updater implementation/tests; a complete operator escalation procedure remains a documented backlog item.
 

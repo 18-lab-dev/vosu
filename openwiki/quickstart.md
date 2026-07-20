@@ -8,7 +8,7 @@ tags: [vosu, rust, code-wiki, onboarding]
 
 # vosu code wiki
 
-`vosu` is a single native Rust daemon for osu! telemetry, counters, reports, live calculations, and compatible APIs. It discovers osu! stable/lazer processes, reads memory without modifying the client, reduces samples into coherent immutable state, and serves dashboard, HTTP, and WebSocket consumers. The workspace targets Rust 1.96.1 and contains the production binary plus the `vosu-lazer-pp` calculation crate and a test-only harness (`Cargo.toml`).
+`vosu` is a single native Rust daemon for osu! telemetry, counters, reports, live calculations, and compatible APIs. It discovers osu! stable/lazer processes, reads memory without modifying the client, reduces samples into coherent immutable state, and serves dashboard, HTTP, and WebSocket consumers. The dashboard supports persistent installed-counter pinning and drag ordering, Shift-click URL opening, and `/` search focus (`assets/server/homepage.js`). The workspace targets Rust 1.96.1 and contains the production binary plus the `vosu-lazer-pp` calculation crate and a test-only harness (`Cargo.toml`).
 
 ## Start here
 
@@ -34,7 +34,7 @@ The default listener is `127.0.0.1:24050`; the dashboard is `/`. Production buil
 
 ## Recent direction
 
-Recent changes explain current hotspots: `9b67c55` introduced v2 selected-field subscriptions, `1f28910` completed WebSocket close handshakes, `cb676ee` added precise keypress state/timestamps across readers, reducers, APIs, and tests, `1ccd4cc` removed the embedded overlay boundary in favor of external consumers, and `6eb012c` added the precise input-validation harness. Treat these as compatibility-sensitive areas and use the targeted verification in [Testing and verification](testing/verification.md).
+Recent changes explain current hotspots: the dashboard now persists pinned counter order; compatibility payloads classify hit errors into `all`, `press`, and `release`; and v2 parsed beatmap stats expose mode-aware `timingWindows`. Earlier changes added v2 selected-field subscriptions, WebSocket close handshakes, precise keypress state/timestamps, external consumers, and the precise input-validation harness. Treat these as compatibility-sensitive areas and use the targeted verification in [Testing and verification](testing/verification.md).
 
 ## Documentation conventions
 

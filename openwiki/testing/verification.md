@@ -14,7 +14,8 @@ tags: [testing, ci, parity, benchmarks, release]
 - Configuration/counters: affected unit tests plus `cargo test --locked --test config_compat`.
 - Process/memory: affected tests plus `cargo test --locked --test process_memory -- --nocapture` on every affected native OS.
 - Updater/release: `updater_compat`, native `updater_native`, and `release_smoke` for package/startup changes.
-- Calculation/state: `vosu-lazer-pp` tests, `performance_invariants`, and live parity when observable schemas or timing can change.
+- Calculation/state: `vosu-lazer-pp` tests, `performance_invariants`, and live parity when observable schemas or timing can change; for v2 stats, cover parsed/missing maps, modes, mods, clock rate, and catch timing-window semantics.
+- Compatibility payloads: assert `hitErrors`/`hitErrorArray` object fields (`all`, `press`, `release`) across v1, stream companion, v2, precise, play, and tournament fixtures; include the lazer mania hold release-correction case.
 - Hot paths: the affected Criterion group in `benches/hot_paths.rs`, compared on the same machine; record observations in `docs/benchmarks.md`, not as universal thresholds.
 
 ## CI baseline
