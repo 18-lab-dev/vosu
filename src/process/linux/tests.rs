@@ -241,22 +241,48 @@ fn scanner_region_read_uses_direct_native_io() {
 }
 
 #[test]
-fn eperm_has_exact_privilege_guidance_and_failure_zeroes_every_output() {
-    let (_fixture, denied, _) = memory_fixture(
-        MockMode::Error(libc::EPERM),
+fn permission_errors_are_typed_and_failed_reads_zero_every_output() {
+    for errno in [libc::EPERM, libc::EACCES] {
+        let (_fixture, denied, _) =
+            memory_fixture(MockMode::Error(errno), 1024, "1000-3000 rw-p 0 00:00 0\n");
+        let mut first = [7; 4];
+        let mut second = [8; 4];
+        let mut requests = [
+            ReadRequest::new(0x1000, &mut first),
+            ReadRequest::new(0x2000, &mut second),
+        ];
+        let error = denied
+            .read_many(&mut requests)
+            .expect_err("permission denial");
+
+        assert!(matches!(
+            &error,
+            MemoryError::PermissionDenied {
+                address: 0x1000,
+                len: 8,
+                ..
+            }
+        ));
+        assert_eq!(first, [0; 4]);
+        assert_eq!(second, [0; 4]);
+        assert!(error.to_string().contains(PERMISSION_GUIDANCE));
+    }
+}
+
+#[test]
+fn ordinary_syscall_fault_remains_an_ordinary_read_error() {
+    let (_fixture, fault, _) = memory_fixture(
+        MockMode::Error(libc::EFAULT),
         1024,
-        "1000-3000 rw-p 0 00:00 0\n",
+        "1000-2000 rw-p 0 00:00 0\n",
     );
-    let mut first = [7; 4];
-    let mut second = [8; 4];
-    let mut requests = [
-        ReadRequest::new(0x1000, &mut first),
-        ReadRequest::new(0x2000, &mut second),
-    ];
-    let error = denied.read_many(&mut requests).expect_err("EPERM");
-    assert_eq!(first, [0; 4]);
-    assert_eq!(second, [0; 4]);
-    assert!(error.to_string().contains(EPERM_GUIDANCE));
+    let mut bytes = [7; 4];
+    let error = fault
+        .read_exact(0x1000, &mut bytes)
+        .expect_err("read fault");
+
+    assert!(matches!(error, MemoryError::Read { .. }));
+    assert_eq!(bytes, [0; 4]);
 }
 
 #[test]

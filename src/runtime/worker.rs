@@ -307,6 +307,7 @@ impl ProductionStateSupervisor {
         lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
         config: watch::Receiver<Arc<crate::config::Config>>,
         snapshots: Arc<SnapshotProviders>,
+        logger: Logger,
     ) -> Self {
         let cancel = CancellationToken::new();
         let task_cancel = cancel.clone();
@@ -314,6 +315,7 @@ impl ProductionStateSupervisor {
             lifecycle,
             config,
             snapshots,
+            logger,
             task_cancel,
         ));
         Self { cancel, task }
@@ -337,6 +339,7 @@ pub(super) async fn run_state_supervisor(
     mut lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
     mut config: watch::Receiver<Arc<crate::config::Config>>,
     snapshots: Arc<SnapshotProviders>,
+    logger: Logger,
     cancel: CancellationToken,
 ) {
     let publications = Arc::new(StatePublicationQueue::default());
@@ -364,14 +367,22 @@ pub(super) async fn run_state_supervisor(
 
         let worker_config = config.clone();
         let worker_publications = Arc::clone(&publications);
+        let worker_logger = logger.clone();
         workers
             .reconcile(&desired, |pid, _generation, worker_cancel| {
                 let entry = ready.get(&pid).expect("desired entry").clone();
                 let publications = Arc::clone(&worker_publications);
                 let worker_config = worker_config.clone();
+                let logger = worker_logger.clone();
                 tokio::spawn(async move {
-                    run_instance_state_worker(entry, worker_config, publications, worker_cancel)
-                        .await;
+                    run_instance_state_worker(
+                        entry,
+                        worker_config,
+                        publications,
+                        logger,
+                        worker_cancel,
+                    )
+                    .await;
                 })
             })
             .await;
@@ -423,10 +434,42 @@ pub(super) fn poll_duration(milliseconds: f64) -> Duration {
     }
 }
 
+pub(super) async fn initialize_state_worker<T, F, Fut, L>(
+    cancel: &CancellationToken,
+    retry_delay: Duration,
+    mut initialize: F,
+    mut log_permission_denied: L,
+) -> Option<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Option<T>, StateWorkerError>>,
+    L: FnMut(&StateWorkerError),
+{
+    loop {
+        if cancel.is_cancelled() {
+            return None;
+        }
+        match initialize().await {
+            Ok(Some(worker)) => return Some(worker),
+            Err(error @ StateWorkerError::MemoryPermissionDenied { .. }) => {
+                log_permission_denied(&error);
+                return None;
+            }
+            Ok(None) | Err(_) => {
+                tokio::select! {
+                    _ = cancel.cancelled() => return None,
+                    _ = tokio::time::sleep(retry_delay) => {}
+                }
+            }
+        }
+    }
+}
+
 pub(super) async fn run_instance_state_worker(
     entry: InstanceGeneration,
     config: watch::Receiver<Arc<crate::config::Config>>,
     publications: Arc<StatePublicationQueue>,
+    logger: Logger,
     cancel: CancellationToken,
 ) {
     let publisher = Arc::new(StatePublicationSink {
@@ -435,26 +478,26 @@ pub(super) async fn run_instance_state_worker(
         publications,
     });
     let synchronization = Arc::new(Mutex::new(ReaderSynchronization::default()));
-    let worker = loop {
-        if cancel.is_cancelled() {
-            return;
-        }
-        match create_state_worker(
-            &entry,
-            config.clone(),
-            Arc::clone(&publisher),
-            Arc::clone(&synchronization),
-        )
-        .await
-        {
-            Ok(Some(worker)) => break worker,
-            Ok(None) | Err(_) => {
-                tokio::select! {
-                    _ = cancel.cancelled() => return,
-                    _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-                }
-            }
-        }
+    let worker = initialize_state_worker(
+        &cancel,
+        Duration::from_secs(1),
+        || {
+            let entry = entry.clone();
+            let config = config.clone();
+            let publisher = Arc::clone(&publisher);
+            let synchronization = Arc::clone(&synchronization);
+            async move { create_state_worker(&entry, config, publisher, synchronization).await }
+        },
+        |error| {
+            logger.error(format!(
+                "State initialization stopped for PID {} ({:?}, generation {}): {error}",
+                entry.pid, entry.client, entry.generation
+            ));
+        },
+    )
+    .await;
+    let Some(worker) = worker else {
+        return;
     };
     cancel.cancelled().await;
     let _ = worker.shutdown().await;
@@ -478,14 +521,13 @@ pub(super) async fn create_state_worker(
         move || -> Result<Option<PreparedReaders>, StateWorkerError> {
             match client {
                 ClientType::Stable => {
-                    let patterns = match StablePatterns::resolve(&process)
-                        .map_err(|error| StateWorkerError::Capture(error.to_string()))?
-                    {
-                        crate::process::ReadStatus::Ready(patterns) => patterns,
-                        crate::process::ReadStatus::NotReady
-                        | crate::process::ReadStatus::Unchanged
-                        | crate::process::ReadStatus::Unsupported(_) => return Ok(None),
-                    };
+                    let patterns =
+                        match StablePatterns::resolve(&process).map_err(StateWorkerError::from)? {
+                            crate::process::ReadStatus::Ready(patterns) => patterns,
+                            crate::process::ReadStatus::NotReady
+                            | crate::process::ReadStatus::Unchanged
+                            | crate::process::ReadStatus::Unsupported(_) => return Ok(None),
+                        };
                     Ok(Some(PreparedReaders::Stable(
                         StableMemory::new(process.clone(), patterns),
                         StableMemory::new(process, patterns),
@@ -500,7 +542,7 @@ pub(super) async fn create_state_worker(
                         LazerMemory::new(process.clone(), Arc::clone(&offsets), pattern.clone());
                     if !regular
                         .resolve_game_base()
-                        .map_err(|error| StateWorkerError::Capture(error.to_string()))?
+                        .map_err(StateWorkerError::from)?
                     {
                         return Ok(None);
                     }

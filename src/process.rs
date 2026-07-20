@@ -78,6 +78,12 @@ pub enum MemoryError {
         operation: &'static str,
         message: String,
     },
+    #[error("permission denied reading {len} bytes at {address:#x}: {message}")]
+    PermissionDenied {
+        address: usize,
+        len: usize,
+        message: String,
+    },
     #[error("failed to read {len} bytes at {address:#x}: {message}")]
     Read {
         address: usize,

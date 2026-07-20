@@ -169,6 +169,7 @@ impl ProductionRuntime {
             instances.subscribe_current(),
             self.config.subscribe_current(),
             self.snapshots.clone(),
+            self.logger.clone(),
         );
         self.snapshots.set_poll_rates(
             poll_duration(config.poll_rate),
@@ -526,6 +527,12 @@ pub async fn run_cli() -> io::Result<()> {
         ));
     }
     logger.info("Starting %vosu%");
+    #[cfg(target_os = "linux")]
+    if ordinary_role
+        && let Some(warning) = crate::platform::cap_sys_ptrace_warning(&resolver.executable)
+    {
+        logger.warn(warning);
+    }
     for warning in config.warnings() {
         logger.warn(warning.clone());
     }

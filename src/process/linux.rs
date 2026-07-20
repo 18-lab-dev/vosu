@@ -11,7 +11,8 @@ use super::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadReques
 
 const MAX_PROC_FILE: u64 = 1024 * 1024;
 const MAX_COMM_FILE: u64 = 4096;
-const EPERM_GUIDANCE: &str = "Consider running with sudo or using setcap:\n  sudo /path/to/vosu\n  sudo setcap cap_sys_ptrace=eip /path/to/vosu";
+const PERMISSION_GUIDANCE: &str =
+    "Grant vosu CAP_SYS_PTRACE before starting it:\n  sudo setcap cap_sys_ptrace=eip /path/to/vosu";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinuxProcessMetadata {
@@ -224,12 +225,16 @@ impl LinuxProcessMemory {
         self.syscall
             .readv(self.pid, local, remote)
             .map_err(|errno| {
-                let message = if errno == libc::EPERM {
-                    EPERM_GUIDANCE.to_owned()
+                let message = io::Error::from_raw_os_error(errno).to_string();
+                if matches!(errno, libc::EPERM | libc::EACCES) {
+                    MemoryError::PermissionDenied {
+                        address,
+                        len,
+                        message: format!("{message}. {PERMISSION_GUIDANCE}"),
+                    }
                 } else {
-                    io::Error::from_raw_os_error(errno).to_string()
-                };
-                read_error(address, len, message)
+                    read_error(address, len, message)
+                }
             })
     }
 }

@@ -32,6 +32,7 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 - Completed server-initiated WebSocket close handshakes with a bounded wait for peer acknowledgement, preventing Windows connection resets from dropping v2 subscription terminal close codes.
 - Made the Windows updater helper tolerate the brief missing-record window that can occur while the parent atomically replaces the durable handoff record, without retrying malformed or unauthenticated records.
 - Fixed dashboard navigation links so they no longer trigger counter-folder API calls, and made both folder controls open the configured counter root without fake executable names.
+- Added a Linux startup warning when the running daemon lacks effective `CAP_SYS_PTRACE`, and made `process_vm_readv` permission denials emit one terminal error per osu! process generation instead of retrying silently.
 
 ### Documentation
 

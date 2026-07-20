@@ -88,6 +88,29 @@ impl ProcessMemory for TestMemory {
     }
 }
 
+struct PermissionDeniedMemory;
+
+impl ProcessMemory for PermissionDeniedMemory {
+    fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+        Err(MemoryError::PermissionDenied {
+            address,
+            len: dst.len(),
+            message: "permission denied".to_owned(),
+        })
+    }
+
+    fn read_many(&self, _reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        unreachable!("scanner uses read_exact")
+    }
+
+    fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
+        Ok(vec![MemoryRegion {
+            address: 0x1000,
+            size: 16,
+        }])
+    }
+}
+
 fn handle(memory: Arc<TestMemory>) -> ProcessHandle {
     ProcessHandle::new(memory, ProcessBitness::X64)
 }
@@ -366,4 +389,27 @@ fn unreadable_regions_are_skipped_without_leaking_partial_matches() {
         process.scan_all(&pattern("AA", false)).unwrap(),
         vec![0x2000]
     );
+}
+
+#[test]
+fn permission_denials_stop_scanning_instead_of_appearing_unreadable() {
+    let process = ProcessHandle::new(Arc::new(PermissionDeniedMemory), ProcessBitness::X64);
+    let target = pattern("AA", false);
+
+    assert!(matches!(
+        process.scan_first(&target),
+        Err(MemoryError::PermissionDenied {
+            address: 0x1000,
+            len: 16,
+            ..
+        })
+    ));
+    assert!(matches!(
+        process.scan_first_valid(&target, |_| Ok(false)),
+        Err(MemoryError::PermissionDenied {
+            address: 0x1000,
+            len: 16,
+            ..
+        })
+    ));
 }

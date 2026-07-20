@@ -149,6 +149,23 @@ fn nonempty_env(resolver: &impl PathResolver, name: &str) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
+pub(crate) fn cap_sys_ptrace_warning(executable: &Path) -> Option<String> {
+    cap_sys_ptrace_warning_for(linux::cap_sys_ptrace_effective(), executable)
+}
+
+#[cfg(target_os = "linux")]
+fn cap_sys_ptrace_warning_for(capability: io::Result<bool>, executable: &Path) -> Option<String> {
+    match capability {
+        Ok(true) => None,
+        Ok(false) => Some(format!(
+            "CAP_SYS_PTRACE is not effective; memory reads may fail. Grant only this capability with `sudo setcap cap_sys_ptrace=eip /absolute/path/to/vosu`; current executable: {executable:?}."
+        )),
+        Err(error) => Some(format!(
+            "Could not inspect this process's effective Linux capabilities; memory reads may fail: {error}"
+        )),
+    }
+}
+#[cfg(target_os = "linux")]
 fn platform_roots(
     resolver: &impl PathResolver,
     program: &Path,
@@ -205,7 +222,7 @@ fn migrate_legacy_directory(legacy: &Path, target: &Path) -> io::Result<()> {
 }
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::{PathResolver, Paths};
+    use super::{PathResolver, Paths, cap_sys_ptrace_warning_for};
     use std::collections::BTreeMap;
     use std::ffi::OsString;
     use std::io;
@@ -244,6 +261,45 @@ mod tests {
         fn env_var(&self, name: &str) -> Option<OsString> {
             self.env.get(name).cloned()
         }
+    }
+
+    #[test]
+    fn capability_warning_is_absent_when_cap_sys_ptrace_is_effective() {
+        let warning =
+            cap_sys_ptrace_warning_for(Ok(true), PathBuf::from("/opt/vosu/vosu").as_path());
+
+        assert_eq!(warning, None);
+    }
+
+    #[test]
+    fn capability_warning_gives_narrow_remediation_when_cap_sys_ptrace_is_missing() {
+        let warning =
+            cap_sys_ptrace_warning_for(Ok(false), PathBuf::from("/opt/vosu/vosu").as_path());
+
+        assert_eq!(
+            warning.as_deref(),
+            Some(
+                "CAP_SYS_PTRACE is not effective; memory reads may fail. Grant only this capability with `sudo setcap cap_sys_ptrace=eip /absolute/path/to/vosu`; current executable: \"/opt/vosu/vosu\"."
+            )
+        );
+    }
+
+    #[test]
+    fn capability_warning_reports_inspection_failure_without_claiming_capability_is_missing() {
+        let warning = cap_sys_ptrace_warning_for(
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "status unavailable",
+            )),
+            PathBuf::from("/opt/vosu/vosu").as_path(),
+        );
+
+        assert_eq!(
+            warning.as_deref(),
+            Some(
+                "Could not inspect this process's effective Linux capabilities; memory reads may fail: status unavailable"
+            )
+        );
     }
 
     #[test]

@@ -315,12 +315,10 @@ fn scan_region(
         let read_len = remaining.min(capacity);
         let window = &mut scratch.bytes[..read_len];
         let address = region_address(region, base)?;
-        if handle
-            .memory
-            .read_scanner_region_exact(address, window)
-            .is_err()
-        {
-            return Ok(false);
+        match handle.memory.read_scanner_region_exact(address, window) {
+            Ok(()) => {}
+            Err(error @ MemoryError::PermissionDenied { .. }) => return Err(error),
+            Err(_) => return Ok(false),
         }
 
         let starts = if max_pattern_len == 0 {
@@ -365,12 +363,10 @@ fn scan_region_until(
         let read_len = remaining.min(capacity);
         let window = &mut scratch.bytes[..read_len];
         let address = region_address(region, base)?;
-        if handle
-            .memory
-            .read_scanner_region_exact(address, window)
-            .is_err()
-        {
-            return Ok(ScanRegionOutcome::Unreadable);
+        match handle.memory.read_scanner_region_exact(address, window) {
+            Ok(()) => {}
+            Err(error @ MemoryError::PermissionDenied { .. }) => return Err(error),
+            Err(_) => return Ok(ScanRegionOutcome::Unreadable),
         }
         let starts = if max_pattern_len == 0 {
             0

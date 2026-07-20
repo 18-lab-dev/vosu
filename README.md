@@ -114,13 +114,13 @@ Run vosu as the same desktop user as osu!. Tournament and debug-client processes
 
 On Linux, vosu can also read the osu! path from `${XDG_DATA_HOME:-$HOME/.local/share}/osuconfig/osupath`.
 
-`process_vm_readv` must be permitted. If ptrace policy blocks same-user reads, use the distribution-appropriate ptrace configuration or grant only the required capability to the binary:
+On Linux, `process_vm_readv` must be permitted. During ordinary startup vosu checks the running process's effective capability set and warns if `CAP_SYS_PTRACE` is not effective, or if that check cannot be completed. The warning does not stop startup, but memory reads may fail. To grant only the required capability, replace the path below with the exact vosu binary path:
 
 ```sh
-sudo setcap cap_sys_ptrace=eip ./vosu
+sudo setcap cap_sys_ptrace=eip /absolute/path/to/vosu
 ```
 
-Do not run the dashboard service as root to bypass ptrace policy. Pattern or offset resolution may remain pending and retry while the process is alive; that alone does not confirm support for a game build.
+Do not run vosu as root to bypass ptrace policy. Pattern or offset resolution may remain pending and retry while the process is alive; that alone does not confirm support for a game build.
 
 ## Files and migration
 

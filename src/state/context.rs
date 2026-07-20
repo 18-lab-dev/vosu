@@ -13,6 +13,7 @@ use crate::memory::snapshot::{
 };
 use crate::model::enums::{ClientType, GameState};
 use crate::model::states::{CalculateMods, TourneyManagerChatItem};
+use crate::process::MemoryError;
 
 pub type TransitionFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, StateWorkerError>> + Send + 'a>>;
@@ -20,6 +21,11 @@ pub type TransitionFuture<'a, T> =
 #[derive(Debug)]
 pub enum StateWorkerError {
     Capture(String),
+    MemoryPermissionDenied {
+        address: usize,
+        len: usize,
+        message: String,
+    },
     Transition(String),
     Publish(String),
     ChannelClosed(&'static str),
@@ -31,6 +37,14 @@ impl Display for StateWorkerError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Capture(message) => write!(f, "memory capture failed: {message}"),
+            Self::MemoryPermissionDenied {
+                address,
+                len,
+                message,
+            } => write!(
+                f,
+                "memory capture permission denied reading {len} bytes at {address:#x}: {message}"
+            ),
             Self::Transition(message) => write!(f, "state transition failed: {message}"),
             Self::Publish(message) => write!(f, "state publication failed: {message}"),
             Self::ChannelClosed(channel) => write!(f, "state worker channel closed: {channel}"),
@@ -43,6 +57,23 @@ impl Display for StateWorkerError {
 }
 
 impl Error for StateWorkerError {}
+
+impl From<MemoryError> for StateWorkerError {
+    fn from(error: MemoryError) -> Self {
+        match error {
+            MemoryError::PermissionDenied {
+                address,
+                len,
+                message,
+            } => Self::MemoryPermissionDenied {
+                address,
+                len,
+                message,
+            },
+            error => Self::Capture(error.to_string()),
+        }
+    }
+}
 
 /// Reducer-owned context copied into every precise capture.
 #[derive(Debug, Clone, PartialEq)]
