@@ -2,9 +2,9 @@
 
 ## Executive summary
 
-This audit found eight opportunities worth measuring. They are **candidates, not promises**: except where explicitly described as a local observation, their impact is inferred from static control-flow, allocation, ownership, and queue analysis. The highest-priority candidates are Linux idle discovery, repeated live-calculator work during map load, unbounded state-publication retention plus per-publication manager reconstruction, and filtered WebSocket projection per client.
+This audit found eight opportunities worth measuring. They are **candidates, not promises**: except where explicitly described as a local observation, their impact is inferred from static control-flow, allocation, ownership, and queue analysis. The highest-priority candidates are Linux idle discovery, repeated live-calculator work during map load, repeated manager reconstruction after coalesced state publication, and filtered WebSocket projection per client.
 
-The safest sequence is to repair measurement first, instrument the production boundaries, and then change only paths shown to matter. Any optimization must preserve public API compatibility, one-point immutable atomic snapshots, generation/staleness checks, the existing bounded/latest-only capture and client-delivery stages, the separation between live and legacy calculators, filesystem and authorization checks, and Linux/Windows semantics; the currently unbounded supervisor queue should become bounded rather than propagating unboundedness elsewhere.
+The safest sequence is to repair measurement first, instrument the production boundaries, and then change only paths shown to matter. Any optimization must preserve public API compatibility, one-point immutable atomic snapshots, generation/staleness checks, the existing bounded/latest-only capture, supervisor handoff, and client-delivery stages, the separation between live and legacy calculators, filesystem and authorization checks, and Linux/Windows semantics.
 
 ## Scope, evidence, and limitations
 
@@ -29,7 +29,7 @@ Important limitations:
 | --- | --- | --- | --- |
 | P0 | Linux two-stage discovery while idle | Broad `/proc` enumeration repeats after a 100 ms idle delay until an instance exists | Idle CPU/syscall profile with realistic `/proc` populations |
 | P0 | Repeated live-calculator work per map load | Difficulty/performance work is recomputed across initial, strains, and accuracy-table paths | Invocation counters, large-map CPU/allocation benchmark, output parity |
-| P0 | Coalesced state publication and manager rebuild | Unbounded publication queue retains snapshots; supervisor rebuilds ordered manager metadata for each publication | Injected supervisor delay and multi-instance queue/RSS profile |
+| P1 | Manager snapshot rebuild after coalesced state publication | Per-PID latest-only slots bound retained state; supervisor still rebuilds ordered manager metadata after each drained batch | Injected supervisor delay and multi-instance allocation/RSS profile |
 | P1 | Precise hit-error history and mod-context cloning | Every precise publication copies cumulative hit errors; the precise loop separately clones variable-size mod context | Allocation profile versus hit-error/mod cardinality and cadence |
 | P1 | Native remote-read batching | Linux reparses maps and allocates chunks/iovecs per `read_many`; capture readers issue multiple logical reads | Syscall/allocation trace against live stable and lazer processes |
 | P1 | Filtered WebSocket projection duplication | Every filtered client independently builds and serializes projection trees | 1/10/100-client CPU, allocations, RSS, and byte-parity run |
@@ -62,17 +62,19 @@ Important limitations:
 
 **Validation experiment.** Count difficulty, conversion, strain, and performance invocations for map load. Benchmark representative large maps for every supported ruleset and representative mods, recording CPU, allocation bytes, and peak RSS. Require bit-for-bit result equality and live-parity checks before and after reuse.
 
-### 3. State publications should be bounded/coalesced; manager metadata should not be rebuilt blindly
+### 3. State publications are coalesced; manager metadata is still rebuilt
 
-**Classification:** P0, **Hypothesis** (unmeasured backlog and per-publication allocation).
+**Classification:** P1, **Partially resolved** (bounded retention is covered; remaining rebuild cost is unmeasured).
 
-**Source and mechanism.** [`run_state_supervisor`](../src/runtime/worker.rs) creates an unbounded `mpsc` channel; [`StatePublicationSink::publish`](../src/runtime/worker.rs) sends an `Arc<StateBundleSnapshot>` for each worker publication. A delayed supervisor can therefore retain an unbounded number of complete immutable snapshots. For every received publication, the supervisor also reconstructs `ready` and `desired` maps; `publish_manager_snapshot` creates another ready vector, semantic map, and instance values; [`ManagerSnapshot::new`](../src/api/snapshot.rs) collects another ordered map. This is repeated even when lifecycle metadata did not change.
+**Current mechanism.** [`StatePublicationQueue`](../src/runtime/worker.rs) retains at most one pending immutable snapshot per PID. A publication from the same generation replaces the pending value, while a late lower generation cannot replace a newer one. [`run_state_supervisor`](../src/runtime/worker.rs) drains pending PIDs in deterministic order, rechecks each PID/generation against the desired lifecycle state, and emits one atomic manager snapshot for the batch. Focused regressions cover same-generation replacement, independent PIDs, deterministic ordering, and higher-generation precedence.
 
-**Safe direction.** Replace the unbounded stream with a bounded, per-PID/generation latest-only slot or explicit coalescing policy. Separately retain lifecycle-derived ordered metadata between lifecycle/config changes and update only state `Arc`/revision fields where possible.
+The supervisor still reconstructs `ready` and `desired` maps on each loop; `publish_manager_snapshot` creates another ready vector, semantic map, and instance values; [`ManagerSnapshot::new`](../src/api/snapshot.rs) collects another ordered map. The latest-only handoff removes queue-age and unbounded-retention latency, but this reconstruction may still allocate more than necessary under high publication rates.
 
-**Invariant/risk.** A newer generation must never be replaced by an older queued state. Preserve stale-publication rejection, cancellation/join behavior, deterministic PID order, focus/role semantics, semantic revisions, and one atomic all-instance `ManagerSnapshot`. Backpressure/coalescing must be explicit rather than an unbounded queue disguised behind tasks.
+**Safe direction.** Retain lifecycle-derived ordered metadata between lifecycle/config changes and update only state `Arc`/revision fields where measurements show that reconstruction matters.
 
-**Validation experiment.** Add instrumentation for queue depth, oldest age, coalesced count, supervisor-loop time, allocations, and RSS. Run 1/8/32 workers with injected supervisor delays and mixed generation replacement. Verify that memory stays bounded, the latest accepted state is published, no stale generation reappears, and atomic snapshot tests/live parity remain unchanged.
+**Invariant/risk.** Preserve stale-publication rejection, cancellation/join behavior, deterministic PID order, focus/role semantics, semantic revisions, and one atomic all-instance `ManagerSnapshot`. A newer generation must never be replaced by an older publication.
+
+**Validation experiment.** Instrument coalesced count, supervisor-loop time, allocations, and RSS. Run 1/8/32 workers with injected supervisor delays and mixed generation replacement. Verify bounded pending state, latest accepted publication, no stale generation reappearance, and unchanged atomic snapshot tests/live parity.
 
 ### 4. Precise publication copies cumulative history and mod context
 

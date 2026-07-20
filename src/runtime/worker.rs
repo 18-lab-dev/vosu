@@ -216,28 +216,82 @@ impl PidWorkerRegistry {
     }
 }
 
-#[derive(Clone)]
 pub(super) struct StatePublication {
-    pid: u32,
-    generation: u64,
-    snapshot: Arc<StateBundleSnapshot>,
+    pub(super) pid: u32,
+    pub(super) generation: u64,
+    pub(super) snapshot: Arc<StateBundleSnapshot>,
 }
 
+#[derive(Default)]
+struct StatePublicationQueueState {
+    closed: bool,
+    pending: BTreeMap<u32, StatePublication>,
+}
+
+#[derive(Default)]
+pub(super) struct StatePublicationQueue {
+    state: Mutex<StatePublicationQueueState>,
+    notified: tokio::sync::Notify,
+}
+
+impl StatePublicationQueue {
+    pub(super) fn publish(&self, publication: StatePublication) -> Result<(), StateWorkerError> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed {
+            return Err(StateWorkerError::Publish("state supervisor stopped".into()));
+        }
+
+        let should_replace = state
+            .pending
+            .get(&publication.pid)
+            .is_none_or(|pending| pending.generation <= publication.generation);
+        if should_replace {
+            state.pending.insert(publication.pid, publication);
+            drop(state);
+            self.notified.notify_one();
+        }
+        Ok(())
+    }
+
+    pub(super) fn drain(&self) -> BTreeMap<u32, StatePublication> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::mem::take(&mut state.pending)
+    }
+
+    async fn notified(&self) {
+        self.notified.notified().await;
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        state.pending.clear();
+    }
+}
+
+#[derive(Clone)]
 pub(super) struct StatePublicationSink {
     pid: u32,
     generation: u64,
-    sender: mpsc::UnboundedSender<StatePublication>,
+    publications: Arc<StatePublicationQueue>,
 }
 
 impl SnapshotPublisher<Arc<StateBundleSnapshot>> for StatePublicationSink {
     fn publish(&self, snapshot: Arc<StateBundleSnapshot>) -> Result<(), StateWorkerError> {
-        self.sender
-            .send(StatePublication {
-                pid: self.pid,
-                generation: self.generation,
-                snapshot,
-            })
-            .map_err(|_| StateWorkerError::Publish("state supervisor stopped".into()))
+        self.publications.publish(StatePublication {
+            pid: self.pid,
+            generation: self.generation,
+            snapshot,
+        })
     }
 }
 
@@ -285,7 +339,7 @@ pub(super) async fn run_state_supervisor(
     snapshots: Arc<SnapshotProviders>,
     cancel: CancellationToken,
 ) {
-    let (publications, mut publication_rx) = mpsc::unbounded_channel();
+    let publications = Arc::new(StatePublicationQueue::default());
     let mut workers = PidWorkerRegistry::default();
     let mut states = BTreeMap::<u32, Arc<StateBundleSnapshot>>::new();
     let mut state_revisions = BTreeMap::<u32, u64>::new();
@@ -309,14 +363,15 @@ pub(super) async fn run_state_supervisor(
         state_revisions.retain(|pid, _| desired.contains_key(pid));
 
         let worker_config = config.clone();
-        let sender = publications.clone();
+        let worker_publications = Arc::clone(&publications);
         workers
             .reconcile(&desired, |pid, _generation, worker_cancel| {
                 let entry = ready.get(&pid).expect("desired entry").clone();
-                let sender = sender.clone();
+                let publications = Arc::clone(&worker_publications);
                 let worker_config = worker_config.clone();
                 tokio::spawn(async move {
-                    run_instance_state_worker(entry, worker_config, sender, worker_cancel).await;
+                    run_instance_state_worker(entry, worker_config, publications, worker_cancel)
+                        .await;
                 })
             })
             .await;
@@ -344,16 +399,18 @@ pub(super) async fn run_state_supervisor(
                     poll_duration(config_value.precise_data_poll_rate),
                 );
             }
-            publication = publication_rx.recv() => {
-                let Some(publication) = publication else { break; };
-                if desired.get(&publication.pid).copied() == Some(publication.generation) {
-                    states.insert(publication.pid, publication.snapshot);
-                    let revision = state_revisions.entry(publication.pid).or_default();
-                    *revision = revision.saturating_add(1);
+            _ = publications.notified() => {
+                for (pid, publication) in publications.drain() {
+                    if desired.get(&pid).copied() == Some(publication.generation) {
+                        states.insert(pid, publication.snapshot);
+                        let revision = state_revisions.entry(pid).or_default();
+                        *revision = revision.saturating_add(1);
+                    }
                 }
             }
         }
     }
+    publications.close();
     workers.shutdown().await;
 }
 
@@ -369,13 +426,13 @@ pub(super) fn poll_duration(milliseconds: f64) -> Duration {
 pub(super) async fn run_instance_state_worker(
     entry: InstanceGeneration,
     config: watch::Receiver<Arc<crate::config::Config>>,
-    sender: mpsc::UnboundedSender<StatePublication>,
+    publications: Arc<StatePublicationQueue>,
     cancel: CancellationToken,
 ) {
     let publisher = Arc::new(StatePublicationSink {
         pid: entry.pid,
         generation: entry.generation,
-        sender,
+        publications,
     });
     let synchronization = Arc::new(Mutex::new(ReaderSynchronization::default()));
     let worker = loop {

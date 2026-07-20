@@ -23,7 +23,7 @@ use arc_swap::ArcSwap;
 use bytes::Bytes;
 use serde::Serialize;
 use tokio::{
-    sync::{Mutex as AsyncMutex, broadcast, mpsc, watch},
+    sync::{Mutex as AsyncMutex, broadcast, watch},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
@@ -123,6 +123,8 @@ mod tests {
         Mutex,
         atomic::{AtomicUsize, Ordering},
     };
+
+    use tokio::sync::mpsc;
 
     use super::*;
 
