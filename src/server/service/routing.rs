@@ -294,7 +294,7 @@ impl ProductionRouteDelegate {
             StaticFallback::CounterPath { index_path, .. } => {
                 let current = self.services.beatmap.files();
                 let target = request.uri().to_string();
-                let outcome = files::resolve_encoded_resource(
+                let outcome = files::resolve_encoded_counter_resource(
                     current.static_root.as_deref(),
                     index_path.trim_start_matches('/'),
                     &target,

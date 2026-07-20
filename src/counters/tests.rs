@@ -155,6 +155,125 @@ fn discovery_skips_counters_nested_under_node_modules() {
     assert_eq!(folder_names, ["overlay"]);
 }
 
+#[cfg(unix)]
+#[test]
+fn discovery_follows_outside_directory_symlink_under_alias_name() {
+    use std::os::unix::fs::symlink;
+
+    let (root, service, _, _) = fixture();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("index.html"), "").unwrap();
+    symlink(outside.path(), root.path().join("static/alias")).unwrap();
+
+    let folder_names = service
+        .discover()
+        .unwrap()
+        .into_iter()
+        .map(|counter| counter.folder_name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(folder_names, ["alias"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn discovery_mounted_alias_skips_descendant_directory_symlink_that_escapes_target() {
+    use std::os::unix::fs::symlink;
+
+    let (root, service, _, _) = fixture();
+    let alias_target = tempfile::tempdir().unwrap();
+    let escaped = tempfile::tempdir().unwrap();
+    std::fs::write(alias_target.path().join("index.html"), "").unwrap();
+    std::fs::write(escaped.path().join("index.html"), "").unwrap();
+    symlink(escaped.path(), alias_target.path().join("unservable")).unwrap();
+    symlink(alias_target.path(), root.path().join("static/alias")).unwrap();
+
+    let folder_names = service
+        .discover()
+        .unwrap()
+        .into_iter()
+        .map(|counter| counter.folder_name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(folder_names, ["alias"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn discovery_does_not_promote_directory_alias_nested_under_ordinary_counter() {
+    use std::os::unix::fs::symlink;
+
+    let (root, service, _, _) = fixture();
+    let ordinary = root.path().join("static/ordinary");
+    let nested_target = tempfile::tempdir().unwrap();
+    std::fs::create_dir(&ordinary).unwrap();
+    std::fs::write(ordinary.join("index.html"), "").unwrap();
+    std::fs::write(nested_target.path().join("index.html"), "").unwrap();
+    symlink(nested_target.path(), ordinary.join("nested-alias")).unwrap();
+
+    let folder_names = service
+        .discover()
+        .unwrap()
+        .into_iter()
+        .map(|counter| counter.folder_name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(folder_names, ["ordinary"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn discovery_stops_top_level_directory_symlink_cycles() {
+    use std::os::unix::fs::symlink;
+
+    let (root, service, _, _) = fixture();
+    let overlay = root.path().join("static/overlay");
+    std::fs::create_dir(&overlay).unwrap();
+    std::fs::write(overlay.join("index.html"), "").unwrap();
+    symlink(root.path().join("static"), root.path().join("static/loop")).unwrap();
+
+    let folder_names = service
+        .discover()
+        .unwrap()
+        .into_iter()
+        .map(|counter| counter.folder_name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(folder_names, ["overlay"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn discovery_skips_unresolvable_and_file_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let (root, service, _, _) = fixture();
+    let static_root = root.path().join("static");
+    let overlay = static_root.join("overlay");
+    let linked_file = static_root.join("linked-file");
+    std::fs::create_dir(&overlay).unwrap();
+    std::fs::create_dir(&linked_file).unwrap();
+    std::fs::write(overlay.join("index.html"), "").unwrap();
+    std::fs::write(root.path().join("outside-index.html"), "").unwrap();
+    symlink(
+        root.path().join("outside-index.html"),
+        linked_file.join("index.html"),
+    )
+    .unwrap();
+    symlink(root.path().join("missing"), static_root.join("dangling")).unwrap();
+    symlink("loop-b", static_root.join("loop-a")).unwrap();
+    symlink("loop-a", static_root.join("loop-b")).unwrap();
+
+    let folder_names = service
+        .discover()
+        .unwrap()
+        .into_iter()
+        .map(|counter| counter.folder_name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(folder_names, ["overlay"]);
+}
+
 #[test]
 fn settings_union_migrates_coerces_and_roundtrips_compact_values() {
     let (root, service, _, _) = fixture();
@@ -296,7 +415,7 @@ async fn parses_raw_download_input_once_and_honors_update_lifecycle() {
 }
 
 #[test]
-fn open_delete_reject_traversal_and_symlink_escape() {
+fn open_follows_directory_symlink_and_delete_unlinks_symlinks() {
     let (root, service, opener, _) = fixture();
     let counter = root.path().join("static/counter");
     std::fs::create_dir(&counter).unwrap();
@@ -317,9 +436,24 @@ fn open_delete_reject_traversal_and_symlink_escape() {
         let outside = root.path().join("outside");
         std::fs::create_dir(&outside).unwrap();
         symlink(&outside, root.path().join("static/link")).unwrap();
-        assert!(matches!(service.open("link"), Err(CounterError::Symlink)));
-        assert!(matches!(service.delete("link"), Err(CounterError::Symlink)));
+        service.open("link").unwrap();
+        assert_eq!(
+            lock(&opener.0).last(),
+            Some(&root.path().join("static/link"))
+        );
+        service.delete("link").unwrap();
+        assert!(std::fs::symlink_metadata(root.path().join("static/link")).is_err());
         assert!(outside.exists());
+        let outside_file = root.path().join("outside-file");
+        std::fs::write(&outside_file, "").unwrap();
+        symlink(&outside_file, root.path().join("static/file-link")).unwrap();
+        assert!(matches!(
+            service.open("file-link"),
+            Err(CounterError::Symlink)
+        ));
+        service.delete("file-link").unwrap();
+        assert!(std::fs::symlink_metadata(root.path().join("static/file-link")).is_err());
+        assert!(outside_file.exists());
         symlink(
             root.path().join("gone"),
             root.path().join("static/dangling"),
@@ -329,10 +463,8 @@ fn open_delete_reject_traversal_and_symlink_escape() {
             service.open("dangling"),
             Err(CounterError::Symlink)
         ));
-        assert!(matches!(
-            service.delete("dangling"),
-            Err(CounterError::Symlink)
-        ));
+        service.delete("dangling").unwrap();
+        assert!(std::fs::symlink_metadata(root.path().join("static/dangling")).is_err());
     }
 }
 
@@ -505,7 +637,7 @@ async fn reloadable_service_keeps_one_debounce_generation_across_root_changes() 
 }
 
 #[test]
-fn settings_reject_missing_and_symlink_counter_directories_without_creating_files() {
+fn settings_reject_missing_and_non_directory_aliases_without_creating_files() {
     let (root, service, _, _) = fixture();
     assert!(matches!(
         service.get_settings("missing"),
@@ -517,15 +649,27 @@ fn settings_reject_missing_and_symlink_counter_directories_without_creating_file
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
+        let file_target = root.path().join("outside-file");
+        std::fs::write(&file_target, "not a directory").unwrap();
+        symlink(&file_target, root.path().join("static/file-alias")).unwrap();
+        assert!(matches!(
+            service.get_settings("file-alias"),
+            Err(CounterError::Settings(SettingsError::UnsafeCounterPath))
+        ));
+        symlink(
+            root.path().join("missing-target"),
+            root.path().join("static/dangling-alias"),
+        )
+        .unwrap();
+        assert!(matches!(
+            service.get_settings("dangling-alias"),
+            Err(CounterError::Settings(SettingsError::UnsafeCounterPath))
+        ));
+        assert!(!service.settings().values_path("file-alias").exists());
+        assert!(!service.settings().values_path("dangling-alias").exists());
         let outside = root.path().join("outside");
         std::fs::create_dir(&outside).unwrap();
         std::fs::write(outside.join("settings.json"), "[]").unwrap();
-        symlink(&outside, root.path().join("static/linked")).unwrap();
-        assert!(matches!(
-            service.get_settings("linked"),
-            Err(CounterError::Settings(SettingsError::UnsafeCounterPath))
-        ));
-        assert!(!service.settings().values_path("linked").exists());
         let ordinary = root.path().join("static/ordinary");
         std::fs::create_dir(&ordinary).unwrap();
         symlink(
@@ -538,6 +682,78 @@ fn settings_reject_missing_and_symlink_counter_directories_without_creating_file
             Err(CounterError::Settings(SettingsError::UnsafeSettingsFile))
         ));
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn settings_support_top_level_symlinked_overlay_directories() {
+    use std::os::unix::fs::symlink;
+
+    let (root, service, _, _) = fixture();
+    let outside = root.path().join("outside-overlay");
+    std::fs::create_dir(&outside).unwrap();
+    // The alias itself is the mount declaration; no index marker is required.
+    std::fs::write(
+        outside.join("settings.json"),
+        serde_json::to_vec(&all_settings()).unwrap(),
+    )
+    .unwrap();
+    symlink(&outside, root.path().join("static/linked")).unwrap();
+
+    let (settings, _) = service.get_settings("linked").unwrap();
+
+    assert_eq!(settings.len(), all_settings().len());
+}
+
+#[cfg(unix)]
+#[test]
+fn settings_keep_alias_values_separate_and_reject_symlinked_definitions() {
+    use std::os::unix::fs::symlink;
+
+    let (root, service, _, _) = fixture();
+    let outside = root.path().join("outside-overlay");
+    std::fs::create_dir(&outside).unwrap();
+    // Settings authorization follows the same top-level alias contract as serving.
+    std::fs::write(
+        outside.join("settings.json"),
+        serde_json::to_vec(&all_settings()).unwrap(),
+    )
+    .unwrap();
+    symlink(&outside, root.path().join("static/linked")).unwrap();
+    service
+        .settings()
+        .save_user_values(
+            "linked",
+            &[SettingInput {
+                unique_id: "text".into(),
+                value: json!("alias"),
+            }],
+        )
+        .unwrap();
+    assert_eq!(
+        service.get_counter_values("linked").unwrap()["text"],
+        "alias"
+    );
+    assert!(service.settings().values_path("linked").exists());
+
+    let external_values = root.path().join("external-settings.values.json");
+    std::fs::write(&external_values, "{}").unwrap();
+    std::fs::remove_file(service.settings().values_path("linked")).unwrap();
+    symlink(&external_values, service.settings().values_path("linked")).unwrap();
+    assert!(matches!(
+        service.get_settings("linked"),
+        Err(CounterError::Settings(SettingsError::UnsafeSettingsFile))
+    ));
+    std::fs::remove_file(service.settings().values_path("linked")).unwrap();
+
+    let external_definition = root.path().join("external-settings.json");
+    std::fs::write(&external_definition, "[]").unwrap();
+    std::fs::remove_file(outside.join("settings.json")).unwrap();
+    symlink(&external_definition, outside.join("settings.json")).unwrap();
+    assert!(matches!(
+        service.get_settings("linked"),
+        Err(CounterError::Settings(SettingsError::UnsafeSettingsFile))
+    ));
 }
 
 #[cfg(unix)]

@@ -134,6 +134,11 @@ struct OpenedChild {
 
 #[cfg(target_os = "linux")]
 fn secure_open(child: &SafeChild) -> Result<OpenedChild, SafePathError> {
+    secure_open_linux(child)
+}
+
+#[cfg(target_os = "linux")]
+fn secure_open_linux(child: &SafeChild) -> Result<OpenedChild, SafePathError> {
     use std::ffi::CString;
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;
@@ -210,16 +215,31 @@ fn secure_open_linux_fallback(
     child: &SafeChild,
     root_file: &fs::File,
 ) -> Result<fs::File, SafePathError> {
-    use std::os::fd::AsRawFd;
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
 
-    // Follow the final symlink exactly once, then validate the resulting retained
-    // handle. The pathname is never used again, so a concurrent rename/symlink
-    // swap cannot change what handlers stream or enumerate.
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK)
-        .open(child.root.join(&child.relative))?;
+    let relative = if child.relative.as_os_str().is_empty() {
+        CString::new(".").expect("static string has no NUL")
+    } else {
+        CString::new(child.relative.as_os_str().as_bytes())
+            .map_err(|_| SafePathError::InvalidComponent)?
+    };
+    let fd = unsafe {
+        // SAFETY: relative is NUL terminated; a successful descriptor is owned below.
+        libc::openat(
+            root_file.as_raw_fd(),
+            relative.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    let file = unsafe {
+        // SAFETY: openat returned a unique owned descriptor.
+        fs::File::from_raw_fd(fd)
+    };
     let root_final = fs::read_link(format!("/proc/self/fd/{}", root_file.as_raw_fd()))?;
     let target_final = fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
     if !target_final.starts_with(&root_final) {
@@ -230,6 +250,11 @@ fn secure_open_linux_fallback(
 
 #[cfg(windows)]
 fn secure_open(child: &SafeChild) -> Result<OpenedChild, SafePathError> {
+    secure_open_windows(child)
+}
+
+#[cfg(windows)]
+fn secure_open_windows(child: &SafeChild) -> Result<OpenedChild, SafePathError> {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::HANDLE;
@@ -275,6 +300,13 @@ fn secure_open(child: &SafeChild) -> Result<OpenedChild, SafePathError> {
         .read(true)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
         .open(&child.root)?;
+    if !root_file.metadata()?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            "configured root is not a directory",
+        )
+        .into());
+    }
     let canonical_root = final_path(&root_file)?;
     let file = fs::OpenOptions::new()
         .read(true)
@@ -319,6 +351,15 @@ pub fn resolve_resource(
         }
         Err(error) => return Err(error),
     };
+    resolve_child(child, decoded_request, request_target, missing)
+}
+
+fn resolve_child(
+    child: SafeChild,
+    decoded_request: &str,
+    request_target: &str,
+    missing: MissingKind,
+) -> Result<ResourceOutcome, SafePathError> {
     let opened = match secure_open(&child) {
         Ok(opened) => opened,
         Err(SafePathError::EscapesRoot | SafePathError::InvalidComponent) => {
@@ -372,6 +413,75 @@ pub fn resolve_encoded_resource(
         Err(error) => return Err(error),
     };
     resolve_resource(root, &decoded, request_target, missing)
+}
+
+/// Decode and resolve a counter resource. A top-level directory symlink is an
+/// explicitly configured, separately confined mount.
+pub fn resolve_encoded_counter_resource(
+    root: Option<&Path>,
+    encoded_request: &str,
+    request_target: &str,
+    missing: MissingKind,
+) -> Result<ResourceOutcome, SafePathError> {
+    let decoded = match decode_request_path(encoded_request) {
+        Ok(decoded) => decoded,
+        Err(SafePathError::InvalidEncoding | SafePathError::InvalidComponent) => {
+            return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
+        }
+        Err(error) => return Err(error),
+    };
+    let Some(root) = root else {
+        return Ok(ResourceOutcome::Missing(missing));
+    };
+    let logical_child = match safe_child(root, &decoded) {
+        Ok(child) => child,
+        Err(SafePathError::InvalidComponent | SafePathError::EscapesRoot) => {
+            return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
+        }
+        Err(error) => return Err(error),
+    };
+
+    let mut components = logical_child.relative.components();
+    let Some(alias_name) = components.next() else {
+        return resolve_child(logical_child, &decoded, request_target, missing);
+    };
+    let alias_path = root.join(alias_name.as_os_str());
+    let is_symlink = match fs::symlink_metadata(&alias_path) {
+        Ok(metadata) => metadata.file_type().is_symlink(),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            false
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if !is_symlink {
+        return resolve_child(logical_child, &decoded, request_target, missing);
+    }
+
+    let is_directory = fs::metadata(&alias_path)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false);
+    if !is_directory {
+        return resolve_child(logical_child, &decoded, request_target, missing);
+    }
+    let mut relative = PathBuf::new();
+    for component in components {
+        relative.push(component.as_os_str());
+    }
+
+    resolve_child(
+        SafeChild {
+            root: alias_path,
+            relative,
+        },
+        &decoded,
+        request_target,
+        missing,
+    )
 }
 
 fn target_path_ends_in_slash(target: &str) -> bool {

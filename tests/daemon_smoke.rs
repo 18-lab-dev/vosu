@@ -190,6 +190,27 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
             .join("index.html"),
     )
     .unwrap();
+    #[cfg(unix)]
+    let (alias_index, alias_asset) = {
+        let outside_counter = roots.path().join("outside-static-root");
+        fs::create_dir_all(&outside_counter).unwrap();
+        let index = b"<!doctype html><title>External Alias</title>";
+        fs::write(outside_counter.join("index.html"), index).unwrap();
+        let asset = b"window.externalAlias = true;\n";
+        fs::write(outside_counter.join("alias.js"), asset).unwrap();
+        fs::write(
+            outside_counter.join("metadata.txt"),
+            "Name: External Alias Counter\nAuthor: CI\nVersion: 1.0\n640x480\n",
+        )
+        .unwrap();
+        fs::write(
+            outside_counter.join("settings.json"),
+            r#"[{"uniqueID":"title","type":"text","title":"Title","value":"alias"}]"#,
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&outside_counter, static_root.join("external-alias")).unwrap();
+        (index.as_slice(), asset.as_slice())
+    };
 
     // The old `tosu` root and `tosu.env` are one-time migration inputs.
     let old_config_dir = config_home.join("tosu");
@@ -275,6 +296,27 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         seeded_script_response.bytes().await.unwrap().as_ref(),
         seeded_script.as_slice()
     );
+    #[cfg(unix)]
+    {
+        let alias = no_redirect_client
+            .get(format!("{base}/external-alias/"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(alias.status(), 200);
+        assert_eq!(alias.bytes().await.unwrap().as_ref(), alias_index);
+
+        let alias_asset_response = no_redirect_client
+            .get(format!("{base}/external-alias/alias.js"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(alias_asset_response.status(), 200);
+        assert_eq!(
+            alias_asset_response.bytes().await.unwrap().as_ref(),
+            alias_asset
+        );
+    }
 
     let directory_index = no_redirect_client
         .get(format!("{base}/directory-index-counter/"))
@@ -325,6 +367,38 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert_eq!(catalog.status(), 200);
     let body = catalog.text().await.unwrap();
     assert!(body.contains("Seeded Counter"), "counter response: {body}");
+    #[cfg(unix)]
+    {
+        let alias_catalog = client
+            .get(format!("{base}/api/counters/search/alias"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(alias_catalog.status(), 200);
+        let alias_body = alias_catalog.text().await.unwrap();
+        assert!(
+            alias_body.contains("External Alias Counter"),
+            "counter response: {alias_body}"
+        );
+        assert!(
+            alias_body.contains("/external-alias/"),
+            "counter alias missing from response: {alias_body}"
+        );
+        let alias_settings = client
+            .get(format!("{base}/api/counters/settings/external-alias"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(alias_settings.status(), 200);
+        assert!(
+            alias_settings
+                .text()
+                .await
+                .unwrap()
+                .contains(r#""uniqueID":"title""#),
+            "symlinked overlay settings were not returned"
+        );
+    }
 
     let rejected = client.get(format!(
         "{base}/api/counters/download/http%3A%2F%2F127.0.0.1%3A9%2Fcounter.zip?name=blocked&update=false"

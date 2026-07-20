@@ -452,12 +452,20 @@ impl CounterService {
     }
 
     pub fn open(&self, name: &str) -> Result<(), CounterError> {
-        let path = self.safe_counter_path(name, true)?;
+        let path = self.openable_counter_path(name)?;
         self.opener.open(&path)?;
         Ok(())
     }
 
     pub fn delete(&self, name: &str) -> Result<(), CounterError> {
+        validate_component(name).map_err(|_| CounterError::InvalidName)?;
+        let candidate = self.static_root.join(name);
+        if let Ok(metadata) = fs::symlink_metadata(&candidate)
+            && metadata.file_type().is_symlink()
+        {
+            remove_counter_symlink(&candidate, &metadata.file_type())?;
+            return Ok(());
+        }
         let path = self.safe_counter_path(name, true)?;
         if path.is_dir() {
             fs::remove_dir_all(path)?;
@@ -517,6 +525,26 @@ impl CounterService {
         Ok(true)
     }
 
+    fn openable_counter_path(&self, name: &str) -> Result<PathBuf, CounterError> {
+        validate_component(name).map_err(|_| CounterError::InvalidName)?;
+        let path = self.static_root.join(name);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(CounterError::Missing);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.file_type().is_symlink() {
+            return if fs::metadata(&path).is_ok_and(|target| target.is_dir()) {
+                Ok(path)
+            } else {
+                Err(CounterError::Symlink)
+            };
+        }
+        self.safe_counter_path(name, true)
+    }
+
     fn safe_counter_path(&self, name: &str, must_exist: bool) -> Result<PathBuf, CounterError> {
         validate_component(name).map_err(|_| CounterError::InvalidName)?;
         let path = self.static_root.join(name);
@@ -540,6 +568,22 @@ impl CounterService {
             return Err(CounterError::InvalidName);
         }
         Ok(path)
+    }
+}
+
+#[cfg(not(windows))]
+fn remove_counter_symlink(path: &Path, _file_type: &fs::FileType) -> io::Result<()> {
+    fs::remove_file(path)
+}
+
+#[cfg(windows)]
+fn remove_counter_symlink(path: &Path, file_type: &fs::FileType) -> io::Result<()> {
+    use std::os::windows::fs::FileTypeExt;
+
+    if file_type.is_symlink_dir() {
+        fs::remove_dir(path)
+    } else {
+        fs::remove_file(path)
     }
 }
 
@@ -623,6 +667,8 @@ fn recursive_named_files(
         dir: &Path,
         filename: &str,
         honor_ignore: bool,
+        allow_top_level_alias: bool,
+        active_directories: &mut std::collections::HashSet<PathBuf>,
         out: &mut Vec<(SystemTime, PathBuf)>,
     ) -> io::Result<()> {
         let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
@@ -632,29 +678,53 @@ fn recursive_named_files(
             if name.to_string_lossy().starts_with('.') {
                 continue;
             }
-            let metadata = fs::symlink_metadata(entry.path())?;
-            if metadata.file_type().is_symlink() {
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            let is_symlink = metadata.file_type().is_symlink();
+            let is_directory = if is_symlink {
+                match fs::metadata(&path) {
+                    Ok(target_metadata) => target_metadata.is_dir(),
+                    Err(_) => false,
+                }
+            } else {
+                metadata.is_dir()
+            };
+            if is_symlink && !allow_top_level_alias {
                 continue;
             }
-            if metadata.is_dir() {
+            if is_directory {
                 if name == "node_modules" {
                     continue;
                 }
-                if honor_ignore && entry.path().join("ignore.txt").exists() {
+                if honor_ignore && path.join("ignore.txt").exists() {
                     continue;
                 }
-                walk(&entry.path(), filename, false, out)?;
-            } else if name == filename {
-                out.push((
-                    metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-                    entry.path(),
-                ));
+                let canonical = match fs::canonicalize(&path) {
+                    Ok(canonical) => canonical,
+                    Err(_) if is_symlink => continue,
+                    Err(error) => return Err(error),
+                };
+                if active_directories.insert(canonical.clone()) {
+                    let result = walk(&path, filename, false, false, active_directories, out);
+                    active_directories.remove(&canonical);
+                    result?;
+                }
+            } else if !is_symlink && name == filename {
+                out.push((metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH), path));
             }
         }
         Ok(())
     }
     let mut found = Vec::new();
-    walk(root, filename, immediate_ignore, &mut found)?;
+    let mut active_directories = std::collections::HashSet::from([fs::canonicalize(root)?]);
+    walk(
+        root,
+        filename,
+        immediate_ignore,
+        true,
+        &mut active_directories,
+        &mut found,
+    )?;
     found.sort_by(|(left_time, left_path), (right_time, right_path)| {
         left_time
             .cmp(right_time)

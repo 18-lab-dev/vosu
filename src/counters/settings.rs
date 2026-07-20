@@ -1,4 +1,4 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -14,7 +14,7 @@ pub enum SettingsError {
     InvalidName,
     #[error("counter folder does not exist")]
     MissingCounter,
-    #[error("counter folder is a symbolic link or escapes the static root")]
+    #[error("counter folder is unsafe or escapes static root")]
     UnsafeCounterPath,
     #[error("settings file is a symbolic link")]
     UnsafeSettingsFile,
@@ -44,10 +44,10 @@ impl SettingsStore {
 
     pub fn load(&self, name: &str) -> Result<(Vec<CounterSetting>, CompactValues), SettingsError> {
         validate_component(name)?;
-        self.require_counter_directory(name)?;
+        let counter_dir = self.require_counter_directory(name)?;
         fs::create_dir_all(&self.settings_root)?;
-        self.migrate_legacy(name)?;
-        let definition = self.definition_path(name);
+        self.migrate_legacy(name, &counter_dir)?;
+        let definition = counter_dir.join("settings.json");
         let values_path = self.values_path(name);
         reject_symlink(&definition)?;
         reject_symlink(&values_path)?;
@@ -121,7 +121,7 @@ impl SettingsStore {
         mut settings: Vec<CounterSetting>,
     ) -> Result<Vec<CounterSetting>, SettingsError> {
         validate_component(name)?;
-        self.require_counter_directory(name)?;
+        let counter_dir = self.require_counter_directory(name)?;
         for setting in &mut settings {
             setting.unique_id = sanitize_id(&setting.unique_id);
             setting.value = match setting.kind {
@@ -130,9 +130,8 @@ impl SettingsStore {
                 _ => setting.value.clone(),
             };
         }
-        let path = self.definition_path(name);
+        let path = counter_dir.join("settings.json");
         reject_symlink(&path)?;
-        fs::create_dir_all(path.parent().expect("definition has parent"))?;
         atomic_json(&path, &settings)?;
         Ok(settings)
     }
@@ -140,14 +139,7 @@ impl SettingsStore {
     pub fn values_path(&self, name: &str) -> PathBuf {
         self.settings_root.join(format!("{name}.values.json"))
     }
-    fn definition_path(&self, name: &str) -> PathBuf {
-        self.static_root.join(name).join("settings.json")
-    }
-    fn legacy_path(&self, name: &str) -> PathBuf {
-        self.static_root.join(name).join("settings.values.json")
-    }
-
-    fn require_counter_directory(&self, name: &str) -> Result<(), SettingsError> {
+    fn require_counter_directory(&self, name: &str) -> Result<PathBuf, SettingsError> {
         let path = self.static_root.join(name);
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
@@ -156,39 +148,23 @@ impl SettingsStore {
                 SettingsError::Io(error)
             }
         })?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(SettingsError::UnsafeCounterPath);
+        if metadata.file_type().is_symlink() {
+            let target = fs::metadata(&path).map_err(|_| SettingsError::UnsafeCounterPath)?;
+            if !target.is_dir() {
+                return Err(SettingsError::UnsafeCounterPath);
+            }
+            return Ok(path);
         }
         let root = fs::canonicalize(&self.static_root)?;
-        let canonical = fs::canonicalize(path)?;
-        if canonical.parent() != Some(root.as_path()) {
+        let canonical = fs::canonicalize(&path)?;
+        if !metadata.is_dir() || canonical.parent() != Some(root.as_path()) {
             return Err(SettingsError::UnsafeCounterPath);
         }
-        Ok(())
+        Ok(canonical)
     }
 
-    fn validate_legacy_parent(&self, name: &str) -> Result<(), SettingsError> {
-        let parent = self.static_root.join(name);
-        match fs::symlink_metadata(&parent) {
-            Ok(metadata) => {
-                if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                    return Err(SettingsError::UnsafeCounterPath);
-                }
-                let root = fs::canonicalize(&self.static_root)?;
-                let canonical = fs::canonicalize(parent)?;
-                if canonical.parent() != Some(root.as_path()) {
-                    return Err(SettingsError::UnsafeCounterPath);
-                }
-                Ok(())
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    fn migrate_legacy(&self, name: &str) -> Result<(), SettingsError> {
-        let legacy = self.legacy_path(name);
-        self.validate_legacy_parent(name)?;
+    fn migrate_legacy(&self, name: &str, counter_dir: &Path) -> Result<(), SettingsError> {
+        let legacy = counter_dir.join("settings.values.json");
         reject_symlink(&legacy)?;
         reject_symlink(&self.values_path(name))?;
         if !legacy.exists() {
@@ -299,9 +275,4 @@ fn sync_parent(path: &Path) -> io::Result<()> {
 #[cfg(not(unix))]
 fn sync_parent(_: &Path) -> io::Result<()> {
     Ok(())
-}
-
-#[allow(dead_code)]
-fn _open_no_follow(path: &Path) -> io::Result<File> {
-    OpenOptions::new().read(true).open(path)
 }

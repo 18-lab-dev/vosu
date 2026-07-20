@@ -66,7 +66,7 @@ fn resolve_file_endpoint(
             let relative = path.trim_start_matches('/');
             if path.ends_with('/') {
                 let index_path = format!("{relative}index.html");
-                match files::resolve_encoded_resource(
+                match files::resolve_encoded_counter_resource(
                     selected.static_root.as_deref(),
                     &index_path,
                     target,
@@ -78,7 +78,7 @@ fn resolve_file_endpoint(
                     }
                 }
             } else {
-                files::resolve_encoded_resource(
+                files::resolve_encoded_counter_resource(
                     selected.static_root.as_deref(),
                     relative,
                     target,

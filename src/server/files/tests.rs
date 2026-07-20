@@ -81,6 +81,123 @@ fn symlinks_cannot_escape_and_open_handle_survives_path_swap() {
     assert_eq!(content, "inside");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn top_level_counter_directory_alias_is_an_explicit_mount() {
+    use std::io::Read;
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().unwrap();
+    let alias_target = tempfile::tempdir().unwrap();
+    let escaped = tempfile::tempdir().unwrap();
+    fs::create_dir_all(alias_target.path().join("counter/assets")).unwrap();
+    fs::create_dir(alias_target.path().join("unmarked")).unwrap();
+    fs::write(
+        alias_target.path().join("counter/index.html"),
+        b"counter index",
+    )
+    .unwrap();
+    fs::write(
+        alias_target.path().join("counter/assets/app.js"),
+        b"counter asset",
+    )
+    .unwrap();
+    fs::write(alias_target.path().join("unmarked/private.txt"), b"private").unwrap();
+    fs::write(escaped.path().join("secret.txt"), b"secret").unwrap();
+    symlink(alias_target.path(), root.path().join("alias")).unwrap();
+    symlink(escaped.path(), alias_target.path().join("counter/escape")).unwrap();
+
+    assert!(matches!(
+        resolve_encoded_resource(
+            Some(root.path()),
+            "alias/counter/assets/app.js",
+            "/alias/counter/assets/app.js",
+            MissingKind::NotFound,
+        )
+        .unwrap(),
+        ResourceOutcome::Missing(MissingKind::NotFound)
+    ));
+
+    let ResourceOutcome::File(mut target) = resolve_encoded_counter_resource(
+        Some(root.path()),
+        "alias/counter/assets/app.js",
+        "/alias/counter/assets/app.js",
+        MissingKind::NotFound,
+    )
+    .unwrap() else {
+        panic!("expected alias target asset");
+    };
+    let mut content = String::new();
+    target.file.read_to_string(&mut content).unwrap();
+    assert_eq!(content, "counter asset");
+
+    let ResourceOutcome::File(mut target) = resolve_encoded_counter_resource(
+        Some(root.path()),
+        "alias/unmarked/private.txt",
+        "/alias/unmarked/private.txt",
+        MissingKind::NotFound,
+    )
+    .unwrap() else {
+        panic!("expected unmarked alias target asset");
+    };
+    content.clear();
+    target.file.read_to_string(&mut content).unwrap();
+    assert_eq!(content, "private");
+    assert!(matches!(
+        resolve_encoded_counter_resource(
+            Some(root.path()),
+            "alias/counter/escape/secret.txt",
+            "/alias/counter/escape/secret.txt",
+            MissingKind::NotFound,
+        )
+        .unwrap(),
+        ResourceOutcome::Missing(MissingKind::NotFound)
+    ));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn nested_directory_alias_is_not_mounted_and_file_alias_uses_generic_resolution() {
+    use std::io::Read;
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().unwrap();
+    let alias_target = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("ordinary")).unwrap();
+    fs::write(alias_target.path().join("index.html"), b"outside").unwrap();
+    symlink(
+        alias_target.path(),
+        root.path().join("ordinary/nested-alias"),
+    )
+    .unwrap();
+    assert!(matches!(
+        resolve_encoded_counter_resource(
+            Some(root.path()),
+            "ordinary/nested-alias/index.html",
+            "/ordinary/nested-alias/index.html",
+            MissingKind::NotFound,
+        )
+        .unwrap(),
+        ResourceOutcome::Missing(MissingKind::NotFound)
+    ));
+
+    fs::write(root.path().join("real.txt"), b"inside").unwrap();
+    symlink("real.txt", root.path().join("counter.css")).unwrap();
+    let ResourceOutcome::File(mut target) = resolve_encoded_counter_resource(
+        Some(root.path()),
+        "counter.css",
+        "/counter.css",
+        MissingKind::NotFound,
+    )
+    .unwrap() else {
+        panic!("expected in-root file alias");
+    };
+    assert_eq!(target.content_type, "text/css; charset=utf-8");
+    let mut content = String::new();
+    target.file.read_to_string(&mut content).unwrap();
+    assert_eq!(content, "inside");
+}
+
 #[test]
 fn resource_outcomes_keep_readiness_and_current_file_distinct() {
     let root = tempfile::tempdir().unwrap();
