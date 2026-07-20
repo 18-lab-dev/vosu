@@ -16,7 +16,7 @@ Adopt **vosu** as the sole current product identity and make a clean cutover acr
 
 - use `vosu` for the package, crates, executable, API terminology, logs and metadata;
 - use `vosu.env`, `VOSU_*`, and `vosu` platform data roots for configuration and state;
-- publish `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip` from `vosuapp/vosu`;
+- publish `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip` from `qt715/vosu`;
 - use <https://vosu.app> for first-party services and identity;
 - reject former executable, archive, environment-variable, updater, and package names rather than accepting aliases.
 

@@ -9,7 +9,7 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 - The clean-cutover vosu package and release line starts at **0.1.0**.
 - Renamed the current product, Rust package, executable, API terminology, logs, and updater metadata to **vosu**. Workspace crates are now `vosu-lazer-pp` and `vosu-test-harness`.
 - Renamed configuration and operational interfaces to `vosu.env`, `VOSU_*`, vosu XDG roots, and `.vosu-update.json`. Current operation does not accept former branded aliases.
-- Release archives are now `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip`, each containing the matching `vosu` or `vosu.exe` root executable. Automatic updates follow `vosuapp/vosu`.
+- Release archives are now `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip`, each containing the matching `vosu` or `vosu.exe` root executable. Automatic updates follow `qt715/vosu`.
 - First-party catalog, offset, and identity URLs now use <https://vosu.app>.
 - Added an idempotent, one-time migration for existing state. Linux moves non-conflicting files from former `tosu` XDG config, data, and cache roots into the corresponding `vosu` roots. On every platform, former `tosu.env` values fill gaps in `vosu.env`; current values win, deprecated bindings are dropped, and the former file is removed only after successful replacement. Normal operation then reads and writes only vosu locations.
 - Kept the upstream tosu name only where it identifies the compatibility source, provenance, parity fixtures, migration inputs, or the historical release record below. No permanent product aliases were added.

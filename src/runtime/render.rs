@@ -360,10 +360,10 @@ pub(super) fn local_overlay_instructions() -> String {
     r#"<div class="settings">
         <h3>How to Add Your Own Counter <a>Locally</a></h3>
         <p>
-          1. <b>Create a new folder</b>:<br>- First, create a <a>new folder</a> inside your <a class="button open-button small" n="static.exe">static folder</a>.<br><br>
+          1. <b>Create a new folder</b>:<br>- First, create a <a>new folder</a> inside your <a class="button open-button open-root-button small">static folder</a>.<br><br>
           2. <b>Move your pp counter files</b>:<br>- Next, move <a>your pp counter</a> files into the newly created folder.<br><br>
           3. <b>Download and place metadata file</b>:<br>- Download the <a
-             href="https://raw.githubusercontent.com/vosuapp/counters/master/quickstart/metadata.txt"
+             href="https://raw.githubusercontent.com/qt715/counters/master/quickstart/metadata.txt"
              target="_blank">metadata.txt</a> file and place it in the counter folder.<br><br>
           4. <b>Fill out the metadata file</b>:<br>- Finally, <a>open</a> the metadata.txt file and <a>fill out</a> the necessary information.
         </p>
