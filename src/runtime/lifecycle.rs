@@ -164,7 +164,7 @@ impl ProductionRuntime {
                 return Err(error);
             }
         };
-        let instances = InstanceRuntime::start(NativeProcessProvider, loader);
+        let instances = InstanceRuntime::start(NativeProcessProvider::default(), loader);
         let supervisor = ProductionStateSupervisor::start(
             instances.subscribe_current(),
             self.config.subscribe_current(),

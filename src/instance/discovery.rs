@@ -1,5 +1,10 @@
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+use tokio::sync::Notify;
+
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+use std::io;
 #[cfg(any(target_os = "linux", windows))]
 use std::path::Path;
 use std::path::PathBuf;
@@ -34,6 +39,11 @@ pub struct ClassifiedCandidate {
     pub client: ClientType,
 }
 
+fn is_linux_candidate_name(name: &OsStr) -> bool {
+    let name = name.to_string_lossy();
+    name.contains("osu!") || name.contains("osulazer.exe")
+}
+
 /// Pure source-compatible candidate reduction. Linux performs a named first pass;
 /// only an empty first pass enables the broad `osu!` lazer fallback.
 #[must_use]
@@ -63,6 +73,7 @@ pub fn classify_candidates(
             let named: BTreeMap<_, _> = processes
                 .iter()
                 .enumerate()
+                .filter(|(_, process)| is_linux_candidate_name(&process.name))
                 .filter_map(|(index, process)| {
                     let name = process.name.to_string_lossy();
                     (name.contains("osu!.exe") || name.contains("osulazer.exe")).then_some((
@@ -77,7 +88,11 @@ pub fn classify_candidates(
                 .collect();
             let fallback = named.is_empty();
             let mut candidates = named;
-            for (index, process) in processes.iter().enumerate() {
+            for (index, process) in processes
+                .iter()
+                .enumerate()
+                .filter(|(_, process)| is_linux_candidate_name(&process.name))
+            {
                 if process.name.to_string_lossy().contains("osu!") {
                     candidates
                         .entry(process.pid)
@@ -109,17 +124,91 @@ pub trait ProcessProvider: Send + Sync {
     fn platform(&self) -> DiscoveryPlatform;
     fn enumerate(&self) -> Result<Vec<ProcessDescriptor>, MemoryError>;
     fn open(&self, pid: Pid) -> Result<ProcessHandle, MemoryError>;
+    /// Inspects one PID. Generic providers retain source compatibility through
+    /// an enumeration-based default; native Linux overrides this without scanning.
+    fn inspect(&self, pid: Pid) -> Result<Option<ProcessDescriptor>, MemoryError> {
+        Ok(self
+            .enumerate()?
+            .into_iter()
+            .find(|process| process.pid == pid))
+    }
     fn foreground_pid(&self) -> Option<Pid> {
         None
     }
     fn supports_focus(&self) -> bool {
         self.platform() == DiscoveryPlatform::Windows
     }
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    fn discovery_notifier(&self) -> Option<&Notify> {
+        None
+    }
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    fn discovery_events_healthy(&self) -> bool {
+        false
+    }
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    fn discovery_event_count(&self) -> u64 {
+        0
+    }
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    fn discovery_reconciliation_request_count(&self) -> u64 {
+        0
+    }
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    fn drain_discovery_events(&self) -> (Vec<Pid>, Vec<Pid>, bool) {
+        (Vec::new(), Vec::new(), false)
+    }
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    fn replace_tracked_tgids(&self, _tgids: &[Pid]) {}
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+#[derive(Debug)]
+pub struct NativeProcessProvider {
+    events: Option<super::events::LinuxProcessEvents>,
+}
+
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+impl NativeProcessProvider {
+    pub fn open_process_events(mode: Option<super::events::ProcessEventMode>) -> io::Result<Self> {
+        Ok(Self {
+            events: mode
+                .map(super::events::LinuxProcessEvents::open)
+                .transpose()?,
+        })
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+impl Default for NativeProcessProvider {
+    fn default() -> Self {
+        Self {
+            events: super::events::LinuxProcessEvents::from_environment(),
+        }
+    }
+}
+
+#[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 #[derive(Debug, Default)]
 pub struct NativeProcessProvider;
+
+#[cfg(target_os = "linux")]
+fn linux_descriptor(process: crate::process::LinuxProcessMetadata) -> ProcessDescriptor {
+    let root = crate::process::resolve_osu_path(process.pid).unwrap_or_else(|_| {
+        process
+            .executable
+            .parent()
+            .unwrap_or(Path::new("/"))
+            .to_path_buf()
+    });
+    ProcessDescriptor {
+        pid: process.pid,
+        name: process.name,
+        bitness: process.bitness,
+        arguments: StartupArgs::parse(process.command_line),
+        root,
+    }
+}
 
 #[cfg(target_os = "linux")]
 impl ProcessProvider for NativeProcessProvider {
@@ -128,31 +217,76 @@ impl ProcessProvider for NativeProcessProvider {
     }
 
     fn enumerate(&self) -> Result<Vec<ProcessDescriptor>, MemoryError> {
-        Ok(crate::process::enumerate_processes()?
-            .into_iter()
-            .map(|process| {
-                let root = crate::process::resolve_osu_path(process.pid).unwrap_or_else(|_| {
-                    process
-                        .executable
-                        .parent()
-                        .unwrap_or(Path::new("/"))
-                        .to_path_buf()
-                });
-                ProcessDescriptor {
-                    pid: process.pid,
-                    name: process.name,
-                    bitness: process.bitness,
-                    arguments: StartupArgs::parse(process.command_line),
-                    root,
-                }
-            })
-            .collect())
+        Ok(
+            crate::process::enumerate_processes_matching(is_linux_candidate_name)?
+                .into_iter()
+                .map(linux_descriptor)
+                .collect(),
+        )
+    }
+
+    fn inspect(&self, pid: Pid) -> Result<Option<ProcessDescriptor>, MemoryError> {
+        Ok(
+            crate::process::process_metadata_matching(pid, is_linux_candidate_name)?
+                .map(linux_descriptor),
+        )
     }
 
     fn open(&self, pid: Pid) -> Result<ProcessHandle, MemoryError> {
         let bitness = crate::process::process_bitness(pid)?;
         let memory = crate::process::open_process(pid)?;
         Ok(ProcessHandle::new(Arc::new(memory), bitness))
+    }
+
+    #[cfg(feature = "linux-process-events")]
+    fn discovery_notifier(&self) -> Option<&Notify> {
+        self.events.as_ref().map(|events| events.notifier())
+    }
+
+    #[cfg(feature = "linux-process-events")]
+    fn discovery_events_healthy(&self) -> bool {
+        self.events
+            .as_ref()
+            .is_some_and(super::events::LinuxProcessEvents::healthy)
+    }
+
+    #[cfg(feature = "linux-process-events")]
+    fn discovery_event_count(&self) -> u64 {
+        self.events
+            .as_ref()
+            .map_or(0, super::events::LinuxProcessEvents::event_count)
+    }
+
+    #[cfg(feature = "linux-process-events")]
+    fn discovery_reconciliation_request_count(&self) -> u64 {
+        self.events.as_ref().map_or(
+            0,
+            super::events::LinuxProcessEvents::reconciliation_request_count,
+        )
+    }
+
+    #[cfg(feature = "linux-process-events")]
+    fn drain_discovery_events(&self) -> (Vec<Pid>, Vec<Pid>, bool) {
+        let Some(events) = self.events.as_ref() else {
+            return (Vec::new(), Vec::new(), false);
+        };
+        let batch = events.drain();
+        let mut inspect = Vec::new();
+        let mut exit = Vec::new();
+        for event in batch.events {
+            match event.kind {
+                super::events::ProcessEventKind::Inspect => inspect.push(event.tgid),
+                super::events::ProcessEventKind::Exit => exit.push(event.tgid),
+            }
+        }
+        (inspect, exit, batch.needs_reconcile)
+    }
+
+    #[cfg(feature = "linux-process-events")]
+    fn replace_tracked_tgids(&self, tgids: &[Pid]) {
+        if let Some(events) = self.events.as_ref() {
+            events.replace_tracked(tgids.iter().copied());
+        }
     }
 }
 
