@@ -260,7 +260,10 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         seeded_counter.headers()[reqwest::header::CONTENT_TYPE],
         "text/html; charset=utf-8"
     );
-    assert_eq!(seeded_counter.text().await.unwrap(), seeded_index);
+    assert_eq!(
+        seeded_counter.text().await.unwrap(),
+        format!(r#"{seeded_index}<script>window.COUNTER_PATH="seeded-counter";</script>"#)
+    );
 
     let no_redirect_client = reqwest::Client::builder()
         .no_proxy()
@@ -304,7 +307,13 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
             .await
             .unwrap();
         assert_eq!(alias.status(), 200);
-        assert_eq!(alias.bytes().await.unwrap().as_ref(), alias_index);
+        let mut expected_alias = alias_index.to_vec();
+        expected_alias
+            .extend_from_slice(br#"<script>window.COUNTER_PATH="external-alias";</script>"#);
+        assert_eq!(
+            alias.bytes().await.unwrap().as_ref(),
+            expected_alias.as_slice()
+        );
 
         let alias_asset_response = no_redirect_client
             .get(format!("{base}/external-alias/alias.js"))

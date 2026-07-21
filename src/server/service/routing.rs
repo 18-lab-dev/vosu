@@ -275,6 +275,14 @@ impl ProductionRouteDelegate {
     async fn file(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
         let current = self.services.beatmap.files();
         let path = request.uri().path();
+        let counter_html_path = (endpoint == Endpoint::CounterStatic).then(|| {
+            let relative = path.trim_start_matches('/');
+            if path.ends_with('/') {
+                format!("{relative}index.html")
+            } else {
+                relative.to_owned()
+            }
+        });
         let target = request.uri().to_string();
         let outcome = match resolve_file_endpoint(endpoint, &current, path, &target) {
             Ok(outcome) => outcome,
@@ -285,7 +293,11 @@ impl ProductionRouteDelegate {
             .get(header::RANGE)
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        resource_response(outcome, range).await
+        if let Some(encoded_html_path) = counter_html_path {
+            counter_resource_response(outcome, range, &encoded_html_path).await
+        } else {
+            resource_response(outcome, range).await
+        }
     }
 
     async fn static_fallback(&self, fallback: StaticFallback, request: Request<Body>) -> Response {
@@ -306,7 +318,7 @@ impl ProductionRouteDelegate {
                     .and_then(|value| value.to_str().ok())
                     .map(str::to_owned);
                 match outcome {
-                    Ok(value) => resource_response(value, range).await,
+                    Ok(value) => counter_resource_response(value, range, &index_path).await,
                     Err(_) => not_found(),
                 }
             }

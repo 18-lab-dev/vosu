@@ -275,6 +275,90 @@
     }
 
     #[tokio::test]
+    async fn full_counter_html_appends_decoded_logical_parent_without_changing_original_body() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("index.html");
+        let original = b"<main>original counter</main>";
+        std::fs::write(&path, original).unwrap();
+        let outcome = resolve_exact(
+            Some(directory.path()),
+            Some(Path::new("index.html")),
+            MissingKind::NotFound,
+        )
+        .unwrap();
+
+        let response =
+            counter_resource_response(outcome, None, "nested%20counter/index.html").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let declared_length = response.headers()[header::CONTENT_LENGTH]
+            .to_str()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(declared_length, body.len());
+        assert!(body.starts_with(original));
+        let appended = std::str::from_utf8(&body[original.len()..]).unwrap();
+        assert!(appended.contains(r#"window.COUNTER_PATH="nested counter""#));
+    }
+
+    #[tokio::test]
+    async fn counter_path_script_escapes_html_terminators_and_javascript_line_separators() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("index.html");
+        let original = b"<!doctype html><title>counter</title>";
+        std::fs::write(&path, original).unwrap();
+        let outcome = resolve_exact(
+            Some(directory.path()),
+            Some(Path::new("index.html")),
+            MissingKind::NotFound,
+        )
+        .unwrap();
+
+        let response = counter_resource_response(
+            outcome,
+            None,
+            "evil%3C%2Fscript%3E%26%E2%80%A8%E2%80%A9/index.html",
+        )
+        .await;
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(body.starts_with(original));
+        let appended = std::str::from_utf8(&body[original.len()..]).unwrap();
+        assert!(appended.contains(
+            r#"window.COUNTER_PATH="evil\u003C/script\u003E\u0026\u2028\u2029""#
+        ));
+        assert_eq!(appended.matches("</script>").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn partial_counter_html_preserves_range_body_and_headers_without_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("index.html");
+        std::fs::write(&path, b"abcdef").unwrap();
+        let outcome = resolve_exact(
+            Some(directory.path()),
+            Some(Path::new("index.html")),
+            MissingKind::NotFound,
+        )
+        .unwrap();
+
+        let response =
+            counter_resource_response(outcome, Some("bytes=1-3".into()), "counter/index.html")
+                .await;
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[header::CONTENT_LENGTH], "3");
+        assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 1-3/6");
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body, Bytes::from_static(b"bcd"));
+    }
+
+    #[tokio::test]
     async fn unavailable_current_file_uses_exact_not_ready_envelope() {
         let response =
             resource_response(ResourceOutcome::Missing(MissingKind::NotReady), None).await;
