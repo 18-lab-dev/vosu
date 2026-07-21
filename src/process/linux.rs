@@ -108,7 +108,29 @@ impl LinuxProcessMemory {
         )
     }
 
-    fn read_many_inner(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+    fn read_many_direct(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        let mut chunks = Vec::with_capacity(reads.len());
+        for (request_index, request) in reads.iter().enumerate() {
+            if request.dst.is_empty() {
+                continue;
+            }
+            request.address.checked_add(request.dst.len()).ok_or(
+                super::MemoryError::AddressOverflow {
+                    base: request.address,
+                    offset: request.dst.len(),
+                },
+            )?;
+            chunks.push(Chunk {
+                request_index,
+                offset: 0,
+                address: request.address,
+                len: request.dst.len(),
+            });
+        }
+        self.read_chunks(reads, &chunks)
+    }
+
+    fn read_many_fallback(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
         let regions = self.mapped_regions(false)?;
         let mut chunks = Vec::new();
         for (request_index, request) in reads.iter().enumerate() {
@@ -125,7 +147,7 @@ impl LinuxProcessMemory {
                         read_error(
                             address,
                             request.dst.len() - offset,
-                            "address is outside a readable mapping",
+                            "address is outside readable mapping",
                         )
                     })?;
                 let available = region.address.saturating_add(region.size) - address;
@@ -145,7 +167,14 @@ impl LinuxProcessMemory {
                 offset += len;
             }
         }
+        self.read_chunks(reads, &chunks)
+    }
 
+    fn read_chunks(
+        &self,
+        reads: &mut [ReadRequest<'_>],
+        chunks: &[Chunk],
+    ) -> Result<(), MemoryError> {
         let max = self.syscall.iov_max().max(1);
         for batch in chunks.chunks(max) {
             self.read_batch(reads, batch)?;
@@ -275,7 +304,10 @@ impl ProcessMemory for LinuxProcessMemory {
     }
 
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
-        let result = self.read_many_inner(reads);
+        let result = match self.read_many_direct(reads) {
+            Err(MemoryError::Read { .. }) => self.read_many_fallback(reads),
+            result => result,
+        };
         if result.is_err() {
             for read in reads {
                 read.dst.fill(0);
