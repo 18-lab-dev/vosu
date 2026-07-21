@@ -20,6 +20,7 @@ Names below are the complete benchmark IDs from `benches/hot_paths.rs`.
 | --- | --- | --- |
 | `batch_scan` | `three_patterns_2mib` | Scanning one 2 MiB in-memory region for three patterns. Throughput is declared as 2 MiB per iteration. |
 | `raw_snapshot_reads` | `stable_regular_fields`, `lazer_regular_fields` | Calls to `global`, `menu`, and `gameplay` through the stable and lazer memory readers. |
+| `linux_process_memory` | `current_process_64_bytes` | Linux-only `process_vm_readv` of 64 bytes from the benchmark process through the production `ProcessMemory` reader. Throughput is declared as 64 bytes per iteration. |
 | `map_calculation` | `parse`, `full_difficulty_performance`, `gradual_all_objects`, `unchanged_cache_key` | Parsing, difficulty plus performance calculation, gradual difficulty, and an unchanged-key cache hit for the embedded five-object osu!standard map. Throughput is declared as five elements per iteration. |
 | `serializers_cold` | `v1`, `v2`, `v2_precise`, `stream_companion` | Encoding a newly constructed synthetic API snapshot. The precise fixture carries 18 ordered mania keypresses. Snapshot construction is batched outside the timed routine. |
 | `serialization_cache` | `v1_bytes_clone`, `v2_bytes_clone`, `v2_precise_bytes_clone`, `stream_companion_bytes_clone` | Re-encoding the same pre-warmed snapshot, exercising each encoder's cached `Bytes` return path. |
@@ -43,6 +44,7 @@ Criterion 0.7.0 accepts a positional substring filter after Cargo's `--`:
 ```sh
 cargo bench --locked --package vosu --bench hot_paths -- raw_snapshot_reads
 cargo bench --locked --package vosu --bench hot_paths -- serializers_cold/v2
+cargo bench --locked --package vosu --bench hot_paths -- linux_process_memory
 ```
 
 Run only the selected-field subscription dispatch cases with:
@@ -116,11 +118,14 @@ For a defensible comparison:
 These benchmarks isolate code paths; they are not end-to-end workload models.
 In particular:
 
-- `SliceMemory` reads from an `Arc<[u8]>` and copies slices in the benchmark
-  process. `read_many` is a loop over those copies and `readable_regions`
-  returns one synthetic region. **The memory benchmarks do not measure OS
-  process-memory reads**, syscalls, cross-process access, page faults,
-  permissions, or a live osu! process.
+- `raw_snapshot_reads` uses `SliceMemory`, which reads from an `Arc<[u8]>` and
+  copies slices in the benchmark process. `read_many` is a loop over those
+  copies and `readable_regions` returns one synthetic region. It does not
+  measure OS process-memory reads.
+- The Linux-only `linux_process_memory` case reads 64 bytes from the benchmark
+  process through the production `ProcessMemory` implementation. It measures
+  the real `process_vm_readv` syscall and reader overhead, but not cross-process
+  permissions, page faults, a large request batch, or a live osu! object graph.
 - Snapshot reads use a zero-filled 64 KiB fixture, placeholder stable addresses,
   and pre-resolved synthetic lazer addresses. They do not model realistic
   object graphs or changing game state.
@@ -217,6 +222,35 @@ With the corrected 1 ms fixture poll interval, all three client counts completed
 | `publication/unfiltered_clients/1` | 2.0552 ms | 2.0531–2.0569 ms |
 | `publication/unfiltered_clients/100` | 2.0568 ms | 2.0510–2.0624 ms |
 | `publication/unfiltered_clients/1000` | 2.1035 ms | 2.0938–2.1130 ms |
+
+## Local Linux process-memory comparison: 2026-07-21
+
+This is a **non-portable observation, not a performance promise or acceptance
+threshold**.
+
+- Baseline source: `b25cd52`, with only the identical benchmark fixture added.
+- Patched source: `2d7f949`, with the same benchmark fixture.
+- Commands:
+  `cargo bench --locked --package vosu --bench hot_paths -- linux_process_memory --save-baseline before-maps-fast-path`
+  and the corresponding strict `--baseline before-maps-fast-path` run.
+- Both runs used the same `/tmp/vosu-criterion-target` target and Criterion
+  directory on the same machine.
+- Host: AMD Ryzen 9 9950X3D, 16 cores / 32 threads, 123 GiB RAM
+- OS: x86_64 Linux 7.1.4-1-cachyos-bore
+- Compiler: `rustc 1.96.1 (31fca3adb 2026-06-26)`
+- Criterion: 0.7.0 defaults; Plotters backend (gnuplot unavailable)
+
+The table reports Criterion's arithmetic-mean point estimate and 95% confidence
+interval:
+
+| Source | Mean | 95% confidence interval |
+| --- | ---: | ---: |
+| Before: parse `/proc/<pid>/maps` before the read | 8.2092 µs | 8.1961–8.2228 µs |
+| After: direct read with mapping-aware fallback | 189.592 ns | 189.315–189.952 ns |
+
+The strict comparison reported a 97.690% mean-time reduction
+(`p = 0.00 < 0.05`), or approximately 43.3 times the throughput for this
+single-read fixture.
 
 ## Historical local observation: 2026-07-16
 

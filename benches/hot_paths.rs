@@ -623,10 +623,31 @@ fn bench_v2_subscription(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(target_os = "linux")]
+fn bench_linux_process_memory(c: &mut Criterion) {
+    let source = black_box([0x5a_u8; 64]);
+    let address = source.as_ptr() as usize;
+    let memory = vosu::process::open_process(std::process::id()).expect("open benchmark process");
+    let mut group = c.benchmark_group("linux_process_memory");
+    group.throughput(Throughput::Bytes(source.len() as u64));
+    group.bench_function("current_process_64_bytes", |b| {
+        b.iter(|| {
+            let mut destination = [0_u8; 64];
+            memory
+                .read_exact(black_box(address), black_box(&mut destination))
+                .expect("read benchmark process");
+            black_box(destination)
+        });
+    });
+    group.finish();
+}
+
 fn hot_paths(c: &mut Criterion) {
     bench_batch_scan(c);
     bench_snapshot_reads(c);
     bench_map_calculation(c);
+    #[cfg(target_os = "linux")]
+    bench_linux_process_memory(c);
     bench_serializers(c);
     bench_publication(c);
     bench_v2_subscription(c);
