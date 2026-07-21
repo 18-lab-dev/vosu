@@ -184,6 +184,11 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         "Name: Seeded Counter\nAuthor: CI\nVersion: 1.0\n640x480\n",
     )
     .unwrap();
+    fs::write(
+        counter.join("settings.json"),
+        r#"[{"uniqueID":"title","type":"text","title":"Title","value":"seeded"}]"#,
+    )
+    .unwrap();
     fs::create_dir_all(
         static_root
             .join("directory-index-counter")
@@ -217,6 +222,13 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     fs::create_dir_all(&old_config_dir).unwrap();
     let port = available_port();
     fs::write(old_config_dir.join("tosu.env"), config(port, &static_root)).unwrap();
+    let old_settings_dir = old_config_dir.join("settings");
+    fs::create_dir_all(&old_settings_dir).unwrap();
+    fs::write(
+        old_settings_dir.join("seeded-counter.values.json"),
+        r#"{"title":"persisted seeded"}"#,
+    )
+    .unwrap();
 
     let binary = std::env::var_os("VOSU_RELEASE_SMOKE_BINARY")
         .unwrap_or_else(|| env!("CARGO_BIN_EXE_vosu").into());
@@ -376,6 +388,28 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert_eq!(catalog.status(), 200);
     let body = catalog.text().await.unwrap();
     assert!(body.contains("Seeded Counter"), "counter response: {body}");
+    let seeded_settings = client
+        .get(format!("{base}/api/counters/settings/seeded-counter"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(seeded_settings.status(), 200);
+    let seeded_settings: serde_json::Value = seeded_settings.json().await.unwrap();
+    assert_eq!(
+        seeded_settings,
+        serde_json::json!({
+            "settings": [{
+                "uniqueID": "title",
+                "type": "text",
+                "title": "Title",
+                "description": "",
+                "value": "seeded"
+            }],
+            "values": {
+                "title": "persisted seeded"
+            }
+        })
+    );
     #[cfg(unix)]
     {
         let alias_catalog = client

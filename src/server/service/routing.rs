@@ -149,9 +149,9 @@ impl ProductionRouteDelegate {
         }
         if request.method() == axum::http::Method::GET {
             return match self.services.counters.get_settings(&name) {
-                Ok((settings, _)) => json_response(
+                Ok((settings, values)) => json_response(
                     StatusCode::OK,
-                    serde_json::to_value(settings).unwrap_or(Value::Null),
+                    json!({ "settings": settings, "values": values }),
                 ),
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
             };
