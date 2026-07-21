@@ -436,22 +436,23 @@ impl WebSocketHub {
                     },
                     changed = local_wake.changed() => {
                         if changed.is_err() { break; }
-                        Some((true, None))
+                        Some((true, None, true))
                     },
                     changed = writable.changed() => {
                         if changed.is_err() { break; }
-                        Some((true, Some(*writable.borrow())))
+                        Some((true, Some(*writable.borrow()), true))
                     },
-                    _ = tokio::time::sleep_until(next_send_at) => Some((false, None)),
+                    _ = tokio::time::sleep_until(next_send_at) => Some((false, None, false)),
                 };
-                if let Some((only_if_new, ceiling)) = wake_delivery {
+                if let Some((only_if_new, ceiling, forced)) = wake_delivery {
                     only_new_generation = only_if_new;
                     generation_ceiling = ceiling;
-                    force_delivery = true;
+                    force_delivery = forced;
                 }
                 continue;
             }
 
+            let cadence_due = !force_delivery;
             if has_writable && let Some(snapshot) = self.0.provider.capture(self.0.schema) {
                 let generation = snapshot.generation();
                 if generation_ceiling.is_some_and(|ceiling| generation > ceiling) {
@@ -488,7 +489,10 @@ impl WebSocketHub {
             generation_ceiling = None;
             force_delivery = false;
             only_new_generation = false;
-            next_send_at = tokio::time::Instant::now() + self.0.provider.poll_rate(self.0.schema);
+            if cadence_due {
+                next_send_at =
+                    tokio::time::Instant::now() + self.0.provider.poll_rate(self.0.schema);
+            }
         }
     }
 }
