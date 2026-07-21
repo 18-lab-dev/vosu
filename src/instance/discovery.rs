@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 #[cfg(any(target_os = "linux", windows))]
 use std::path::Path;
 use std::path::PathBuf;
@@ -34,6 +34,11 @@ pub struct ClassifiedCandidate {
     pub client: ClientType,
 }
 
+fn is_linux_candidate_name(name: &OsStr) -> bool {
+    let name = name.to_string_lossy();
+    name.contains("osu!") || name.contains("osulazer.exe")
+}
+
 /// Pure source-compatible candidate reduction. Linux performs a named first pass;
 /// only an empty first pass enables the broad `osu!` lazer fallback.
 #[must_use]
@@ -63,6 +68,7 @@ pub fn classify_candidates(
             let named: BTreeMap<_, _> = processes
                 .iter()
                 .enumerate()
+                .filter(|(_, process)| is_linux_candidate_name(&process.name))
                 .filter_map(|(index, process)| {
                     let name = process.name.to_string_lossy();
                     (name.contains("osu!.exe") || name.contains("osulazer.exe")).then_some((
@@ -77,7 +83,11 @@ pub fn classify_candidates(
                 .collect();
             let fallback = named.is_empty();
             let mut candidates = named;
-            for (index, process) in processes.iter().enumerate() {
+            for (index, process) in processes
+                .iter()
+                .enumerate()
+                .filter(|(_, process)| is_linux_candidate_name(&process.name))
+            {
                 if process.name.to_string_lossy().contains("osu!") {
                     candidates
                         .entry(process.pid)
@@ -128,25 +138,27 @@ impl ProcessProvider for NativeProcessProvider {
     }
 
     fn enumerate(&self) -> Result<Vec<ProcessDescriptor>, MemoryError> {
-        Ok(crate::process::enumerate_processes()?
-            .into_iter()
-            .map(|process| {
-                let root = crate::process::resolve_osu_path(process.pid).unwrap_or_else(|_| {
-                    process
-                        .executable
-                        .parent()
-                        .unwrap_or(Path::new("/"))
-                        .to_path_buf()
-                });
-                ProcessDescriptor {
-                    pid: process.pid,
-                    name: process.name,
-                    bitness: process.bitness,
-                    arguments: StartupArgs::parse(process.command_line),
-                    root,
-                }
-            })
-            .collect())
+        Ok(
+            crate::process::enumerate_processes_matching(is_linux_candidate_name)?
+                .into_iter()
+                .map(|process| {
+                    let root = crate::process::resolve_osu_path(process.pid).unwrap_or_else(|_| {
+                        process
+                            .executable
+                            .parent()
+                            .unwrap_or(Path::new("/"))
+                            .to_path_buf()
+                    });
+                    ProcessDescriptor {
+                        pid: process.pid,
+                        name: process.name,
+                        bitness: process.bitness,
+                        arguments: StartupArgs::parse(process.command_line),
+                        root,
+                    }
+                })
+                .collect(),
+        )
     }
 
     fn open(&self, pid: Pid) -> Result<ProcessHandle, MemoryError> {

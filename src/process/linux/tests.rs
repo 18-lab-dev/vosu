@@ -123,6 +123,38 @@ fn enumerates_numeric_proc_entries_and_preserves_nul_arguments() {
 }
 
 #[test]
+fn matching_enumeration_filters_on_comm_before_reading_expensive_metadata() {
+    let fixture = fixture();
+    add_process(
+        fixture.path(),
+        7,
+        2,
+        b"osu!\0",
+        "1000-2000 rw-p 0 00:00 0\n",
+    );
+    let helper = fixture.path().join("42");
+    fs::create_dir(&helper).expect("helper process directory");
+    fs::write(helper.join("comm"), b"helper\n").expect("helper comm");
+    fs::write(fixture.path().join("7/comm"), b"osu!.exe\n").expect("candidate comm");
+
+    let mut saw_helper = false;
+    let found = enumerate_processes_matching_at(fixture.path(), |name| {
+        saw_helper |= name == "helper";
+        name.to_string_lossy().contains("osu!")
+    })
+    .expect("filtered enumeration");
+
+    assert!(
+        saw_helper,
+        "the filter must inspect comm before other metadata"
+    );
+    assert_eq!(
+        found.iter().map(|process| process.pid).collect::<Vec<_>>(),
+        [7]
+    );
+}
+
+#[test]
 fn comm_is_trimmed_and_bounded() {
     let fixture = fixture();
     add_process(

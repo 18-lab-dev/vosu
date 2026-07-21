@@ -307,10 +307,25 @@ pub fn open_process(pid: u32) -> Result<LinuxProcessMemory, MemoryError> {
 }
 
 pub fn enumerate_processes() -> Result<Vec<LinuxProcessMetadata>, MemoryError> {
-    enumerate_processes_at(Path::new("/proc"))
+    enumerate_processes_matching(|_| true)
 }
 
+/// Reads `comm` first and defers heavier metadata reads until `include` accepts it.
+pub fn enumerate_processes_matching(
+    include: impl FnMut(&OsStr) -> bool,
+) -> Result<Vec<LinuxProcessMetadata>, MemoryError> {
+    enumerate_processes_matching_at(Path::new("/proc"), include)
+}
+
+#[cfg(test)]
 fn enumerate_processes_at(proc_root: &Path) -> Result<Vec<LinuxProcessMetadata>, MemoryError> {
+    enumerate_processes_matching_at(proc_root, |_| true)
+}
+
+fn enumerate_processes_matching_at(
+    proc_root: &Path,
+    mut include: impl FnMut(&OsStr) -> bool,
+) -> Result<Vec<LinuxProcessMetadata>, MemoryError> {
     let entries = fs::read_dir(proc_root).map_err(|error| backend("enumerate /proc", error))?;
     let mut processes = Vec::new();
     for entry in entries.flatten() {
@@ -320,6 +335,12 @@ fn enumerate_processes_at(proc_root: &Path) -> Result<Vec<LinuxProcessMetadata>,
             continue;
         };
         let dir = entry.path();
+        let Ok(name) = process_name_at(&dir) else {
+            continue;
+        };
+        if !include(&name) {
+            continue;
+        }
         let Ok(command_line) = command_line_at(&dir) else {
             continue;
         };
@@ -327,9 +348,6 @@ fn enumerate_processes_at(proc_root: &Path) -> Result<Vec<LinuxProcessMetadata>,
             continue;
         };
         let Ok(bitness) = elf_bitness_at(&dir.join("exe")) else {
-            continue;
-        };
-        let Ok(name) = process_name_at(&dir) else {
             continue;
         };
         processes.push(LinuxProcessMetadata {

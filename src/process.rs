@@ -25,9 +25,9 @@ pub use windows::{
 pub mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{
-    LinuxProcessMemory, LinuxProcessMetadata, enumerate_processes, is_process_alive, open_process,
-    process_bitness, process_command_line, process_cwd, process_executable, process_name,
-    process_root, resolve_osu_path,
+    LinuxProcessMemory, LinuxProcessMetadata, enumerate_processes, enumerate_processes_matching,
+    is_process_alive, open_process, process_bitness, process_command_line, process_cwd,
+    process_executable, process_name, process_root, resolve_osu_path,
 };
 
 const MAX_MANAGED_STRING_LENGTH: usize = 4095;
