@@ -481,6 +481,92 @@ fn timing_windows_round_osu_dt_once_at_the_api_edge() {
 }
 
 #[test]
+fn timing_windows_apply_lazer_extended_da_before_clock_rate_scaling() {
+    let da = || AppliedMod {
+        acronym: "DA".to_owned(),
+        settings_json: Some(r#"{"overall_difficulty":11.0,"extended_limits":true}"#.to_owned()),
+    };
+
+    let parsed = parsed_timing_map(
+        Ruleset::Osu,
+        Ruleset::Osu,
+        ClientType::Lazer,
+        vec![da()],
+        1.0,
+    );
+    assert_eq!(
+        serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
+        serde_json::json!({"0": 400.0, "50": 89.5, "100": 51.5, "300": 13.5})
+    );
+
+    let parsed = parsed_timing_map(
+        Ruleset::Osu,
+        Ruleset::Osu,
+        ClientType::Lazer,
+        vec![da()],
+        1.5,
+    );
+    assert_eq!(
+        serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
+        serde_json::json!({"0": 266.67, "50": 59.67, "100": 34.33, "300": 9.0})
+    );
+}
+
+#[test]
+fn timing_windows_apply_lazer_extended_da_to_classic_mania() {
+    let difficulty_adjust = AppliedMod {
+        acronym: "DA".to_owned(),
+        settings_json: Some(r#"{"overall_difficulty":11.0,"extended_limits":true}"#.to_owned()),
+    };
+    let parsed = parsed_timing_map(
+        Ruleset::Mania,
+        Ruleset::Mania,
+        ClientType::Lazer,
+        vec![applied_mod("CL"), difficulty_adjust],
+        1.0,
+    );
+
+    assert_eq!(
+        serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
+        serde_json::json!({
+            "0": 158.5,
+            "50": 121.5,
+            "100": 97.5,
+            "katu": 67.5,
+            "300": 34.5,
+            "geki": 16.5,
+        })
+    );
+}
+
+#[test]
+fn timing_windows_match_lazer_mania_da_od_twelve_point_five() {
+    let difficulty_adjust = AppliedMod {
+        acronym: "DA".to_owned(),
+        settings_json: Some(r#"{"overall_difficulty":12.5,"extended_limits":true}"#.to_owned()),
+    };
+    let parsed = parsed_timing_map(
+        Ruleset::Mania,
+        Ruleset::Mania,
+        ClientType::Lazer,
+        vec![difficulty_adjust],
+        1.0,
+    );
+
+    assert_eq!(
+        serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
+        serde_json::json!({
+            "0": 150.5,
+            "50": 113.5,
+            "100": 89.5,
+            "katu": 59.5,
+            "300": 26.5,
+            "geki": 11.5,
+        })
+    );
+}
+
+#[test]
 fn timing_windows_use_classic_map_values_for_stable_converted_mania() {
     let parsed = parsed_timing_map(
         Ruleset::Osu,

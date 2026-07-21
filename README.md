@@ -201,7 +201,7 @@ Methods and paths are exact. Unsupported combinations return `404 Not Found`. St
 | `GET /json/v2/precise` | vosu precise snapshot |
 | `GET /api/calculate/pp` | Legacy `rosu-pp` calculation; uses the current beatmap unless `path` names a canonical regular `.osu` file |
 
-The v2 snapshot and matching WebSocket streams expose `beatmap.stats.timingWindows`. Values are maximum absolute judgement errors in milliseconds for osu!, taiko, and mania. For catch, only `"300"` is present and represents the spatial half-width from the catcher's centre in playfield units; unsupported judgements are omitted.
+The v2 snapshot and matching WebSocket streams expose `beatmap.stats.timingWindows`. Values are maximum absolute judgement errors in milliseconds for osu!, taiko, and mania, derived from the playable map after difficulty mods and scaled to real time after speed mods; osu!lazer Difficulty Adjust values above OD 10 are supported. For catch, only `"300"` is present and represents the spatial half-width from the catcher's centre in playfield units; unsupported judgements are omitted.
 
 Hit-error fields use the same object shape across v1, streamCompanion, v2, and v2 precise: `{"all":[],"press":[],"release":[]}`. `all` preserves timing-event order, `press` contains note presses, and `release` contains osu!lazer mania hold-note releases. Stable reports every timing error in `all` and `press` and leaves `release` empty.
 

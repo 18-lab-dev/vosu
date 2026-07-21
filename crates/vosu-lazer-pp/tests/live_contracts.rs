@@ -1257,6 +1257,158 @@ ApproachRate:5
 }
 
 #[test]
+fn difficulty_adjust_extended_od_reaches_playable_map_hit_windows() {
+    const NATIVE_TAIKO: &str = r#"osu file format v14
+
+[General]
+Mode:1
+
+[Difficulty]
+HPDrainRate:5
+CircleSize:5
+OverallDifficulty:5
+ApproachRate:5
+
+[TimingPoints]
+0,500,4,2,1,50,1,0
+
+[HitObjects]
+64,192,1000,1,0,0:0:0:0:
+"#;
+    const NATIVE_MANIA: &str = r#"osu file format v14
+
+[General]
+Mode:3
+
+[Difficulty]
+HPDrainRate:5
+CircleSize:4
+OverallDifficulty:5
+ApproachRate:5
+
+[TimingPoints]
+0,500,4,2,1,50,1,0
+
+[HitObjects]
+64,192,1000,1,0,0:0:0:0:
+"#;
+
+    let engine = LiveLazerEngine;
+    let source = engine.parse(OSU_TARGET_DIFFCALC_MAP).unwrap();
+    let difficulty_adjust = StructuredMod {
+        acronym: "DA".to_owned(),
+        settings: BTreeMap::from([
+            ("overall_difficulty".to_owned(), ModValue::Number(11.0)),
+            ("extended_limits".to_owned(), ModValue::Bool(true)),
+        ]),
+    };
+
+    let mut osu = source.clone();
+    engine
+        .apply_mods(&mut osu, std::slice::from_ref(&difficulty_adjust))
+        .unwrap();
+
+    assert_eq!(osu.debug_playable_map().od, 11.0);
+    assert_eq!(
+        hit_windows_for_map(&osu).unwrap(),
+        HitWindows {
+            miss: Some(400.0),
+            meh: Some(89.5),
+            ok: Some(51.5),
+            great: Some(13.5),
+            ..HitWindows::default()
+        },
+    );
+
+    let mut taiko = engine.parse_str(NATIVE_TAIKO).unwrap();
+    engine
+        .apply_mods(&mut taiko, std::slice::from_ref(&difficulty_adjust))
+        .unwrap();
+    assert_eq!(taiko.debug_playable_map().od, 11.0);
+    assert_eq!(
+        hit_windows_for_map(&taiko).unwrap(),
+        HitWindows {
+            miss: Some(64.5),
+            ok: Some(43.5),
+            great: Some(16.5),
+            ..HitWindows::default()
+        },
+    );
+
+    let mut mania = engine.parse_str(NATIVE_MANIA).unwrap();
+    engine
+        .apply_mods(&mut mania, std::slice::from_ref(&difficulty_adjust))
+        .unwrap();
+    assert_eq!(mania.debug_playable_map().od, 11.0);
+    assert_eq!(
+        hit_windows_for_map(&mania).unwrap(),
+        HitWindows {
+            miss: Some(155.5),
+            meh: Some(118.5),
+            ok: Some(94.5),
+            good: Some(64.5),
+            great: Some(31.5),
+            perfect: Some(12.5),
+        },
+    );
+}
+
+#[test]
+fn difficulty_adjust_extended_od_uses_classic_mania_windows() {
+    const NATIVE_MANIA: &str = r#"osu file format v14
+
+[General]
+Mode:3
+
+[Difficulty]
+HPDrainRate:5
+CircleSize:4
+OverallDifficulty:5
+ApproachRate:5
+
+[TimingPoints]
+0,500,4,2,1,50,1,0
+
+[HitObjects]
+64,192,1000,1,0,0:0:0:0:
+"#;
+
+    let engine = LiveLazerEngine;
+    let source = engine.parse(OSU_TARGET_DIFFCALC_MAP).unwrap();
+    let classic = StructuredMod {
+        acronym: "CL".to_owned(),
+        settings: BTreeMap::new(),
+    };
+    let difficulty_adjust = StructuredMod {
+        acronym: "DA".to_owned(),
+        settings: BTreeMap::from([
+            ("overall_difficulty".to_owned(), ModValue::Number(11.0)),
+            ("extended_limits".to_owned(), ModValue::Bool(true)),
+        ]),
+    };
+    let expected = HitWindows {
+        miss: Some(158.5),
+        meh: Some(121.5),
+        ok: Some(97.5),
+        good: Some(67.5),
+        great: Some(34.5),
+        perfect: Some(16.5),
+    };
+
+    let mut native = engine.parse_str(NATIVE_MANIA).unwrap();
+    engine
+        .apply_mods(&mut native, &[classic.clone(), difficulty_adjust.clone()])
+        .unwrap();
+    assert_eq!(hit_windows_for_map(&native).unwrap(), expected);
+
+    let mut converted = engine.convert(&source, Ruleset::Mania).unwrap();
+    engine
+        .apply_mods(&mut converted, &[classic, difficulty_adjust])
+        .unwrap();
+    assert_eq!(hit_windows_for_map(&converted).unwrap(), expected);
+}
+
+#[test]
 fn map_hit_windows_project_all_official_results_without_clock_rate() {
     const NATIVE_MANIA_OD5: &str = r#"osu file format v14
 
@@ -1291,7 +1443,7 @@ ApproachRate:5
     assert_eq!(
         hit_windows_for_map(&converted_classic).unwrap(),
         HitWindows {
-            miss: Some(167.5),
+            miss: Some(158.5),
             meh: Some(121.5),
             ok: Some(97.5),
             good: Some(67.5),

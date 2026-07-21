@@ -207,6 +207,7 @@ pub fn hit_window_for_map(
             }
             HitResult::Ok => 97.5,
             HitResult::Meh => 121.5,
+            HitResult::Miss => 158.5,
             _ => return hit_window(map.mode, od, result),
         }
     } else {
@@ -217,6 +218,7 @@ pub fn hit_window_for_map(
             HitResult::Good => (67.0 + 3.0 * inverted_od).floor() + 0.5,
             HitResult::Ok => (97.0 + 3.0 * inverted_od).floor() + 0.5,
             HitResult::Meh => (121.0 + 3.0 * inverted_od).floor() + 0.5,
+            HitResult::Miss => (158.0 + 3.0 * inverted_od).floor() + 0.5,
             _ => return hit_window(map.mode, od, result),
         }
     };
