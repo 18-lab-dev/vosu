@@ -85,13 +85,12 @@ impl ProcessTrackingControl for EbpfTrackingControl {
             .shadow
             .lock()
             .map_err(|_| io::Error::other("eBPF tracked-map shadow was poisoned"))?;
-        let removed = shadow.difference(tracked).copied().collect::<Vec<_>>();
-        for tgid in removed {
+        while let Some(tgid) = shadow.difference(tracked).next().copied() {
             delete_if_present(&self.tracked, &tgid.to_ne_bytes(), "tracked TGID")?;
             shadow.remove(&tgid);
         }
 
-        for tgid in tracked {
+        while let Some(tgid) = tracked.difference(&shadow).next().copied() {
             self.tracked
                 .update(&tgid.to_ne_bytes(), &[1], MapFlags::ANY)
                 .map_err(|error| {
@@ -99,7 +98,7 @@ impl ProcessTrackingControl for EbpfTrackingControl {
                         "cannot seed tracked TGID {tgid} in eBPF tracked map: {error}"
                     ))
                 })?;
-            shadow.insert(*tgid);
+            shadow.insert(tgid);
         }
         Ok(())
     }
