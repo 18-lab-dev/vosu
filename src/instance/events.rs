@@ -76,7 +76,7 @@ impl EventQueue {
                 if self.reconcile_untracked_exit {
                     return self.request_reconcile();
                 }
-                return false;
+                return self.pending.remove(&event.tgid).is_some();
             }
             ProcessEventKind::Exit => {
                 if self.exiting.len() == MAX_PENDING_EVENTS && !self.exiting.contains(&event.tgid) {
@@ -472,6 +472,15 @@ mod tests {
             tgid: 8,
             kind: ProcessEventKind::Exit,
         }));
+        assert!(queue.push(ProcessEvent {
+            tgid: 8,
+            kind: ProcessEventKind::Inspect,
+        }));
+        assert!(queue.push(ProcessEvent {
+            tgid: 8,
+            kind: ProcessEventKind::Exit,
+        }));
+        assert!(queue.drain().events.is_empty());
         assert!(queue.push(ProcessEvent {
             tgid: 7,
             kind: ProcessEventKind::Inspect,
