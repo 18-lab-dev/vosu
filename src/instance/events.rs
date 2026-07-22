@@ -253,7 +253,12 @@ impl LinuxProcessEvents {
                     events.clear();
                     match backend.poll(EVENT_POLL_TIMEOUT, &mut events) {
                         Ok(poll) => {
-                            loop_event_count.fetch_add(poll.observed, Ordering::Relaxed);
+                            if poll.observed != 0 {
+                                loop_event_count.fetch_add(poll.observed, Ordering::Relaxed);
+                            }
+                            if events.is_empty() && !poll.needs_reconcile {
+                                continue;
+                            }
                             let mut queue =
                                 loop_queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                             let reconcile_was_pending = queue.needs_reconcile;
