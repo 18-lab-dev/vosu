@@ -195,7 +195,12 @@ pub(super) fn open() -> io::Result<(Box<dyn ProcessEventLoop>, Arc<dyn ProcessTr
 
     let exec_link = attach_raw(&object, "process_exec", "sched_process_exec")?;
     let fork_link = attach_raw(&object, "process_fork", "sched_process_fork")?;
-    let exit_link = attach_raw(&object, "process_exit", "sched_process_exit")?;
+    let exit_program = if sched_process_exit_has_group_dead() {
+        "process_exit_group_dead"
+    } else {
+        "process_exit"
+    };
+    let exit_link = attach_raw(&object, exit_program, "sched_process_exit")?;
     let rename_link = attach_raw(&object, "task_rename", "task_rename")?;
 
     let tracked = clone_map_handle(&object, "tracked")?;
@@ -255,6 +260,33 @@ fn clone_map_handle(object: &Object, name: &str) -> io::Result<MapHandle> {
         })?;
     MapHandle::try_from(&map)
         .map_err(|error| io::Error::other(format!("cannot clone eBPF {name} map: {error}")))
+}
+
+fn sched_process_exit_has_group_dead() -> bool {
+    let Ok(release) = fs::read_to_string("/proc/sys/kernel/osrelease") else {
+        return false;
+    };
+    kernel_version_at_least(&release, 6, 16)
+}
+
+fn kernel_version_at_least(release: &str, required_major: u32, required_minor: u32) -> bool {
+    let mut components = release.trim().split('.');
+    let Some(major) = components.next().and_then(leading_u32) else {
+        return false;
+    };
+    let Some(minor) = components.next().and_then(leading_u32) else {
+        return false;
+    };
+    (major, minor) >= (required_major, required_minor)
+}
+
+fn leading_u32(component: &str) -> Option<u32> {
+    let digits = component
+        .as_bytes()
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    component.get(..digits)?.parse().ok()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -442,6 +474,14 @@ mod tests {
         assert!(parse_nspid_depth("Name:\tvosu\n").is_err());
         assert!(parse_nspid_depth("NSpid:\t231 invalid\n").is_err());
         assert!(parse_nspid_depth("NSpid:\t\n").is_err());
+    }
+
+    #[test]
+    fn selects_group_dead_argument_only_on_supported_kernels() {
+        assert!(kernel_version_at_least("6.16.0", 6, 16));
+        assert!(kernel_version_at_least("7.1.4-zen1-1-zen", 6, 16));
+        assert!(!kernel_version_at_least("6.15.9", 6, 16));
+        assert!(!kernel_version_at_least("invalid", 6, 16));
     }
 
     #[test]

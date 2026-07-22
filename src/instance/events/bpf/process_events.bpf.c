@@ -209,32 +209,13 @@ int process_fork(struct bpf_raw_tracepoint_args *ctx)
     return 0;
 }
 
-SEC("raw_tracepoint/sched_process_exit")
-int process_exit(struct bpf_raw_tracepoint_args *ctx)
+static __always_inline int emit_exit(struct task_struct *task)
 {
-    struct task_struct *task = (struct task_struct *)ctx->args[0];
-    struct signal_struct *signal;
-    int live;
     __u32 tgid;
     __u8 *candidate;
     __u8 tombstone = 1;
     long result;
     char comm[TASK_COMM_LEN] = {};
-
-    /*
-     * do_exit() decrements signal->live before sched_process_exit. A shared
-     * zero identifies group-dead state without depending on the group_dead
-     * raw-tracepoint argument available on newer kernels. Concurrent hooks
-     * can all observe zero, so the tombstone below selects one emitter.
-     */
-    if (bpf_core_read(&signal, sizeof(signal), &task->signal) ||
-        !signal ||
-        bpf_core_read(&live, sizeof(live), &signal->live.counter)) {
-        record_drop();
-        return 0;
-    }
-    if (live != 0)
-        return 0;
 
     if (bpf_core_read(&tgid, sizeof(tgid), &task->tgid)) {
         record_drop();
@@ -267,6 +248,37 @@ int process_exit(struct bpf_raw_tracepoint_args *ctx)
     if (result && result != -ENOENT)
         record_drop();
     return emit_event(tgid, EVENT_EXIT);
+}
+
+SEC("raw_tracepoint/sched_process_exit")
+int process_exit(struct bpf_raw_tracepoint_args *ctx)
+{
+    struct task_struct *task = (struct task_struct *)ctx->args[0];
+    struct signal_struct *signal;
+    int live;
+
+    /*
+     * Linux before 6.16 does not expose group_dead as the second raw
+     * tracepoint argument. do_exit() has already decremented signal->live,
+     * so zero identifies group-dead state on those kernels.
+     */
+    if (bpf_core_read(&signal, sizeof(signal), &task->signal) ||
+        !signal ||
+        bpf_core_read(&live, sizeof(live), &signal->live.counter)) {
+        record_drop();
+        return 0;
+    }
+    if (live != 0)
+        return 0;
+    return emit_exit(task);
+}
+
+SEC("raw_tracepoint/sched_process_exit")
+int process_exit_group_dead(struct bpf_raw_tracepoint_args *ctx)
+{
+    if (!ctx->args[1])
+        return 0;
+    return emit_exit((struct task_struct *)ctx->args[0]);
 }
 
 SEC("raw_tracepoint/task_rename")
