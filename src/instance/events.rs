@@ -94,17 +94,16 @@ impl EventQueue {
                 }
             }
         }
-        let insertion_index =
-            match self
-                .pending
-                .binary_search_by_key(&event.tgid, |pending| pending.tgid)
-            {
-                Ok(index) => {
-                    self.pending[index].kind = event.kind;
-                    return true;
-                }
-                Err(index) => index,
-            };
+        let insertion_index = match self
+            .pending
+            .binary_search_by_key(&event.tgid, |pending| pending.tgid)
+        {
+            Ok(index) => {
+                self.pending[index].kind = event.kind;
+                return true;
+            }
+            Err(index) => index,
+        };
         if self.pending.len() == MAX_PENDING_EVENTS {
             self.needs_reconcile = true;
             return false;
