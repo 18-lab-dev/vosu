@@ -5,7 +5,7 @@ use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use libbpf_rs::{
     ErrorKind, Link, MapCore, MapFlags, MapHandle, Object, ObjectBuilder, RingBuffer,
@@ -129,8 +129,18 @@ impl ProcessEventLoop for EbpfProcessEvents {
         timeout: Duration,
         events: &mut Vec<ProcessEvent>,
     ) -> io::Result<ProcessEventPoll> {
-        let timeout = timeout.min(Duration::from_millis(i32::MAX as u64));
-        let result = self.ring.poll_raw(timeout);
+        let mut timeout = timeout.min(Duration::from_millis(i32::MAX as u64));
+        let started = Instant::now();
+        let result = loop {
+            let result = self.ring.poll_raw(timeout);
+            if result != -libc::EINTR {
+                break result;
+            }
+            timeout = timeout.saturating_sub(started.elapsed());
+            if timeout.is_zero() {
+                break 0;
+            }
+        };
         if result < 0 {
             return Err(io::Error::other(format!(
                 "eBPF ring-buffer poll failed: {}",
