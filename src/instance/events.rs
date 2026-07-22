@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::env;
 use std::io;
 use std::sync::{
@@ -57,7 +57,7 @@ pub(super) struct ProcessEventBatch {
 
 #[derive(Debug, Default)]
 struct EventQueue {
-    pending: BTreeMap<Pid, ProcessEventKind>,
+    pending: Vec<ProcessEvent>,
     tracked: BTreeSet<Pid>,
     exiting: BTreeSet<Pid>,
     reconcile_untracked_exit: bool,
@@ -76,7 +76,14 @@ impl EventQueue {
                 if self.reconcile_untracked_exit {
                     return self.request_reconcile();
                 }
-                return self.pending.remove(&event.tgid).is_some();
+                let Ok(index) = self
+                    .pending
+                    .binary_search_by_key(&event.tgid, |pending| pending.tgid)
+                else {
+                    return false;
+                };
+                self.pending.remove(index);
+                return true;
             }
             ProcessEventKind::Exit => {
                 if self.exiting.len() == MAX_PENDING_EVENTS && !self.exiting.contains(&event.tgid) {
@@ -86,15 +93,22 @@ impl EventQueue {
                 }
             }
         }
-        if let Some(kind) = self.pending.get_mut(&event.tgid) {
-            *kind = event.kind;
-            return true;
-        }
+        let insertion_index =
+            match self
+                .pending
+                .binary_search_by_key(&event.tgid, |pending| pending.tgid)
+            {
+                Ok(index) => {
+                    self.pending[index].kind = event.kind;
+                    return true;
+                }
+                Err(index) => index,
+            };
         if self.pending.len() == MAX_PENDING_EVENTS {
             self.needs_reconcile = true;
             return false;
         }
-        self.pending.insert(event.tgid, event.kind);
+        self.pending.insert(insertion_index, event);
         true
     }
 
@@ -106,10 +120,7 @@ impl EventQueue {
 
     fn drain(&mut self) -> ProcessEventBatch {
         ProcessEventBatch {
-            events: std::mem::take(&mut self.pending)
-                .into_iter()
-                .map(|(tgid, kind)| ProcessEvent { tgid, kind })
-                .collect(),
+            events: self.pending.drain(..).collect(),
             needs_reconcile: std::mem::take(&mut self.needs_reconcile),
         }
     }
