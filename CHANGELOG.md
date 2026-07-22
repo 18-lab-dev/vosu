@@ -36,7 +36,7 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 - Restored legacy counter compatibility by injecting the logical `window.COUNTER_PATH` into served counter HTML, allowing overlay settings WebSocket requests to identify the correct counter.
 - Kept legacy overlay WebSocket deadlines anchored to their configured cadence across staggered client write-completion and catch-up wakes, preventing slow overlays from postponing 100 ms updates for fast overlays.
 - Restored Linux gameplay snapshot freshness by reading valid process-memory batches directly instead of reparsing thousands of `/proc/<pid>/maps` entries for every primitive read; faults still retry through fresh mapping-aware validation.
-- Reduced Linux process-event overhead with idle-poll bypass, bounded sorted queue coalescing, direct inspect/exit batching, delta-only eBPF tracked-map synchronization, and early in-kernel candidate filtering; Linux 6.16+ also uses the `sched_process_exit` group-dead argument while older kernels retain the compatible fallback.
+- Reduced Linux process-event overhead with idle-poll bypass, bounded sorted queue coalescing, direct inspect/exit batching, delta-only eBPF tracked-map synchronization, early in-kernel candidate filtering, and reusable bounded CN_PROC receive storage; Linux 6.16+ also uses the `sched_process_exit` group-dead argument while older kernels retain the compatible fallback.
 
 ### Documentation
 

@@ -17,7 +17,7 @@ The final live comparison ran `/opt/osu/osu-headless`, which execs osu!lazer thr
 
 The technical result favors corrected eBPF where its prerequisites are deliberately provided. It does not settle deployment or legal questions. eBPF needs an explicit capability/service and memlock design, loss/reconciliation behavior remains necessary, and the BPF loader/object licensing needs legal review. The BPF `SEC("license")` token is a kernel loader compatibility declaration, **not** a legal license grant. Until those questions are resolved, do not select process events as an unconditional production default.
 
-The 2026-07-22 autoresearch continuation tightened both event paths and repeated the deterministic 50 Hz lifecycle workload. Across the final nine samples per backend, eBPF used 12.6% less total measured workload CPU and 36.6% less benchmark/runtime `RUSAGE_SELF` CPU than CN_PROC. It also delivered 5.7% faster add and 22.6% faster remove medians, but its `comm`-rename median remained 28.1% slower. Thus eBPF now beats CN_PROC on aggregate measured overhead and two of three latency operations; it does not beat CN_PROC on every operation.
+The 2026-07-22 autoresearch continuation tightened both event paths and repeated the deterministic 50 Hz lifecycle workload. Across the final nine samples per backend, eBPF used 11.4% less total measured workload CPU and 34.3% less benchmark/runtime `RUSAGE_SELF` CPU than CN_PROC. It also delivered 6.8% faster add and 26.7% faster remove medians, but its `comm`-rename median remained 17.6% slower. Thus eBPF now beats CN_PROC on aggregate measured overhead and two of three latency operations; it does not beat CN_PROC on every operation.
 
 ## Objective
 
@@ -247,23 +247,23 @@ Including idle, the JSON totals are 285 scans for polling and 12 scans each for 
 
 The primary metric is the sum of each backend's median lifecycle `RUSAGE_SELF + RUSAGE_CHILDREN` CPU. `RUSAGE_SELF` covers the benchmark, Tokio runtime, event backend, and discovery runtime. `RUSAGE_CHILDREN` covers reaped churn and lifecycle helpers, including BPF execution charged to those tasks. This continuation therefore reports both components rather than hiding process-generation cost. It is a fixed-throughput comparison, not a maximum-throughput search.
 
-The final comparison is the median of autoresearch runs 18, 19, and 22. Each run already contains three samples per backend, so every final backend column summarizes nine samples. Run 20 was excluded because its recorded secondary-metric payload did not match the captured benchmark output; its primary metric was unaffected, but it is not used in any aggregate below.
+The final comparison is the median of autoresearch runs 27, 28, and 30 on the retained tree. Each run already contains three samples per backend, so every final backend column summarizes nine samples.
 
 | Metric | CN_PROC median | eBPF median | eBPF vs CN_PROC |
 | --- | ---: | ---: | ---: |
 | Fixed churn completion | 500 / 50 Hz | 500 / 50 Hz | equal |
-| Total workload CPU | 263.279 ms | 230.112 ms | **12.6% lower** |
-| Benchmark/runtime self CPU | 101.364 ms | 64.292 ms | **36.6% lower** |
-| Reaped-child CPU | 160.248 ms | 165.820 ms | 3.5% higher |
-| Observed backend records | 1,166 | 80 | **93.1% lower** |
-| Runtime event wakes | 607 | 80 | **86.8% lower** |
-| Targeted inspections | 559 | 48 | **91.4% lower** |
-| Total workload voluntary context switches | 6,146 | 4,315 | **29.8% lower** |
-| Add latency | 210 us | 198 us | **5.7% lower** |
-| `comm`-rename latency | **128 us** | 164 us | 28.1% higher |
-| Remove latency | 106 us | **82 us** | **22.6% lower** |
+| Total workload CPU | 249.272 ms | 220.863 ms | **11.4% lower** |
+| Benchmark/runtime self CPU | 95.416 ms | 62.643 ms | **34.3% lower** |
+| Reaped-child CPU | 154.501 ms | 157.688 ms | 2.1% higher |
+| Observed backend records | 1,167 | 80 | **93.1% lower** |
+| Runtime event wakes | 609 | 79 | **87.0% lower** |
+| Targeted inspections | 561 | 47 | **91.6% lower** |
+| Total workload voluntary context switches | 6,141 | 4,330 | **29.5% lower** |
+| Add latency | 206 us | 192 us | **6.8% lower** |
+| `comm`-rename latency | **125 us** | 147 us | 17.6% higher |
+| Remove latency | 105 us | **77 us** | **26.7% lower** |
 
-All three final invocations completed their exact workload with healthy backends, zero timeout outcomes, and zero reconciliation requests. Their combined primary metrics were 492,245 us, 489,071 us, and 493,538 us; the 492,245 us median is 1.0% below the single 497,204 us baseline invocation. That baseline comparison is directional because it compares three final invocations with one baseline invocation and because child CPU remains noisy. The direct final eBPF-versus-CN_PROC table is the stronger within-workload result.
+All three final invocations completed their exact workload with healthy backends, zero timeout outcomes, and zero reconciliation requests. Their combined primary metrics were 469,063 us, 472,509 us, and 470,135 us; the 470,135 us median is 5.4% below the single 497,204 us baseline invocation. That baseline comparison is directional because it compares three final invocations with one baseline invocation and because child CPU remains noisy. The direct final eBPF-versus-CN_PROC table is the stronger within-workload result.
 
 ### Retained changes
 
@@ -277,8 +277,9 @@ The continuation retained changes only when the deterministic workload passed:
 6. `task_rename` reuses its already-computed candidate classification instead of scanning `comm` twice.
 7. Linux 6.16+ exit handling reads the tracepoint's `group_dead` argument directly; older kernels retain the CO-RE `signal->live` fallback.
 8. Interrupted ring-buffer polls retry within the original timeout instead of immediately marking the backend unhealthy.
+9. CN_PROC reuses one bounded 64 KiB receive buffer across polls instead of zero-initializing a fresh stack buffer for every drain.
 
-Two measured ideas were discarded: pre-looking up candidate state before delete did not lower eBPF CPU, and bypassing fork generation cleanup did not lower CPU and would break PID-reuse correctness. A packed shared state map was not attempted because userspace tracked-bit updates could race kernel candidate/tombstone updates. The dropped-record array was not memory-mapped because it is read only once per poll and is not the measured hot path.
+Measured ideas discarded during the continuation included candidate-state pre-lookup before delete, bypassing required fork generation cleanup, caching the dropped-record map handle, reusing process metadata during root resolution, and four-datagram `recvmmsg` batching. The batching trial kept exact workload behavior but raised CN_PROC self CPU from about 95.5 ms in the retained runs to 103.443 ms, so the single reusable `recvmsg` buffer remains. A packed shared state map was not attempted because userspace tracked-bit updates could race kernel candidate/tombstone updates. The dropped-record array was not memory-mapped because libbpf-rs has no public loaded-map mmap API; a manual atomic mapping would add kernel-capability and lifetime complexity to one counter read per poll without evidence that it is the dominant cost.
 
 ### Kernel-source conclusions
 
@@ -486,12 +487,12 @@ The completed continuation verified:
 - zero live reconciliation requests;
 - process-group termination/reap followed by disappearance of the observed target PID;
 - the twelve named JSON files as the source of the synthetic and live benchmark-result tables (environment and pinning facts came from the separately observed guest/host configuration);
-- the deterministic autoresearch harness over 23 logged invocations, including discarded and failed hypotheses;
+- the deterministic autoresearch harness over all 30 configured invocations, including discarded and failed hypotheses;
 - exclusion of run 20 after its logged secondary payload was found not to match its captured benchmark output;
-- a 497,204 us baseline combined metric and final unchanged-code combined metrics of 492,245, 489,071, and 493,538 us;
+- a 497,204 us baseline combined metric and final unchanged-code combined metrics of 469,063, 472,509, and 470,135 us;
 - nine final samples per event backend at exact 50 Hz/500-process churn, with healthy backends and zero timeout or reconciliation outcomes;
-- final medians of 263.279 ms CN_PROC versus 230.112 ms eBPF total workload CPU, and 101.364 ms versus 64.292 ms self CPU; and
-- direct verification that bypassing fork generation cleanup and pre-looking up candidate state did not improve the measured eBPF path.
+- final medians of 249.272 ms CN_PROC versus 220.863 ms eBPF total workload CPU, and 95.416 ms versus 62.643 ms self CPU; and
+- direct verification that a reusable CN_PROC receive buffer reduced self CPU consistently, while four-datagram batching, fork-generation bypass, and candidate-state pre-lookup did not improve their measured paths.
 
 The authoritative benchmark inputs are `/home/user/VMs/vosu-gaming/synthetic-poll.json`, `synthetic-cn-proc.json`, `synthetic-ebpf-final.json`, `live-poll-{1,2,3}.json`, `live-cn-proc-{1,2,3}.json`, and `live-ebpf-final-{1,2,3}.json`. They source the benchmark-result tables, not the environment or pinning tables. The earlier eBPF files and host measurements remain historical context only and do not replace these final results.
 
@@ -499,7 +500,7 @@ The authoritative benchmark inputs are `/home/user/VMs/vosu-gaming/synthetic-pol
 
 **Do not select process events as the unconditional production default yet.**
 
-Corrected eBPF is the strongest measured and technically preferred transport when a host passes explicit kernel, initial-PID-namespace, privilege, service, and licensing eligibility gates. In the final deterministic comparison it used 12.6% less total workload CPU and 36.6% less benchmark/runtime self CPU than CN_PROC, with 5.7% faster add and 22.6% faster removal. CN_PROC remained 28.1% faster for `comm` rename. eBPF is **not production-ready** until TGID generation identity, tracked-process metadata refresh, inspect-to-track exit ordering, conservative map-sync health behavior, and the remaining deployment and kernel-matrix gates are resolved and validated. CN_PROC is a no-added-capability but noisy alternative only where connector and initial-namespace eligibility checks pass. Polling remains the portable fallback.
+Corrected eBPF is the strongest measured and technically preferred transport when a host passes explicit kernel, initial-PID-namespace, privilege, service, and licensing eligibility gates. In the final deterministic comparison it used 11.4% less total workload CPU and 34.3% less benchmark/runtime self CPU than CN_PROC, with 6.8% faster add and 26.7% faster removal. CN_PROC remained 17.6% faster for `comm` rename. eBPF is **not production-ready** until TGID generation identity, tracked-process metadata refresh, inspect-to-track exit ordering, conservative map-sync health behavior, and the remaining deployment and kernel-matrix gates are resolved and validated. CN_PROC is a no-added-capability but noisy alternative only where the connector and initial-namespace eligibility gates pass. Polling remains the portable fallback and the only option where event eligibility fails.
 
 Before enabling eBPF in production:
 

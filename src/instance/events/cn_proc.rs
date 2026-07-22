@@ -163,11 +163,8 @@ impl ProcessEventLoop for CnProcEventLoop {
                 )));
             }
             if descriptor.revents & (libc::POLLIN | libc::POLLERR) != 0 {
-                let mut outcome = receive_available(
-                    self.socket.as_raw_fd(),
-                    &mut self.receive_buffer,
-                    events,
-                )?;
+                let mut outcome =
+                    receive_available(self.socket.as_raw_fd(), &mut self.receive_buffer, events)?;
                 if descriptor.revents & libc::POLLERR != 0 {
                     outcome.needs_reconcile = true;
                 }
