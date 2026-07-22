@@ -29,6 +29,7 @@ const ACK_TIMEOUT: Duration = Duration::from_secs(1);
 
 struct CnProcEventLoop {
     socket: OwnedFd,
+    receive_buffer: Box<[u8]>,
 }
 
 struct SubscriptionCleanup {
@@ -118,7 +119,10 @@ pub(super) fn open() -> io::Result<Box<dyn ProcessEventLoop>> {
     )?;
     cleanup.disarm();
 
-    Ok(Box::new(CnProcEventLoop { socket }))
+    Ok(Box::new(CnProcEventLoop {
+        socket,
+        receive_buffer: vec![0; RECEIVE_BUFFER_SIZE].into_boxed_slice(),
+    }))
 }
 
 impl ProcessEventLoop for CnProcEventLoop {
@@ -159,7 +163,11 @@ impl ProcessEventLoop for CnProcEventLoop {
                 )));
             }
             if descriptor.revents & (libc::POLLIN | libc::POLLERR) != 0 {
-                let mut outcome = receive_available(self.socket.as_raw_fd(), events)?;
+                let mut outcome = receive_available(
+                    self.socket.as_raw_fd(),
+                    &mut self.receive_buffer,
+                    events,
+                )?;
                 if descriptor.revents & libc::POLLERR != 0 {
                     outcome.needs_reconcile = true;
                 }
@@ -374,9 +382,9 @@ fn parse_ack_datagram(bytes: &[u8]) -> io::Result<bool> {
 
 fn receive_available(
     fd: libc::c_int,
+    buffer: &mut [u8],
     events: &mut Vec<ProcessEvent>,
 ) -> io::Result<ProcessEventPoll> {
-    let mut buffer = [0_u8; RECEIVE_BUFFER_SIZE];
     let mut outcome = ProcessEventPoll::default();
     for _ in 0..MAX_RECEIVES_PER_POLL {
         let mut iovec = libc::iovec {
