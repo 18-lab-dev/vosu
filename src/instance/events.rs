@@ -276,10 +276,11 @@ impl LinuxProcessEvents {
                             if poll.needs_reconcile {
                                 queue.request_reconcile();
                             }
-                            let mut accepted = false;
+                            let events_were_pending = !queue.pending.is_empty();
                             for event in events.drain(..) {
-                                accepted |= queue.push(event);
+                                queue.push(event);
                             }
+                            let accepted = !events_were_pending && !queue.pending.is_empty();
                             let reconcile = !reconcile_was_pending && queue.needs_reconcile;
                             record_reconciliation_request(
                                 &loop_reconciliation_request_count,
