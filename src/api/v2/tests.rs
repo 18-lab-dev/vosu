@@ -58,6 +58,13 @@ fn applied_mod(acronym: &str) -> AppliedMod {
     }
 }
 
+fn applied_mod_with_settings(acronym: &str, settings_json: &str) -> AppliedMod {
+    AppliedMod {
+        acronym: acronym.to_owned(),
+        settings_json: Some(settings_json.to_owned()),
+    }
+}
+
 struct NeverCalculate;
 impl StateCalculationBackend for NeverCalculate {
     fn calculate<'a>(&'a self, _: StateCalculationRequest) -> StateCalculationFuture<'a> {
@@ -466,6 +473,204 @@ fn timing_windows_cover_both_clients_and_all_rulesets_with_live_maps() {
 }
 
 #[test]
+fn timing_windows_match_difficulty_modifier_matrix_at_od_five() {
+    let cases = [
+        (
+            Ruleset::Osu,
+            "EZ",
+            serde_json::json!({"0": 400.0, "50": 174.5, "100": 119.5, "300": 64.5}),
+        ),
+        (
+            Ruleset::Osu,
+            "HR",
+            serde_json::json!({"0": 400.0, "50": 129.5, "100": 83.5, "300": 37.5}),
+        ),
+        (
+            Ruleset::Osu,
+            "DA",
+            serde_json::json!({"0": 400.0, "50": 119.5, "100": 75.5, "300": 31.5}),
+        ),
+        (
+            Ruleset::Taiko,
+            "EZ",
+            serde_json::json!({"0": 114.5, "100": 99.5, "300": 41.5}),
+        ),
+        (
+            Ruleset::Taiko,
+            "HR",
+            serde_json::json!({"0": 84.5, "100": 67.5, "300": 28.5}),
+        ),
+        (
+            Ruleset::Taiko,
+            "DA",
+            serde_json::json!({"0": 79.5, "100": 61.5, "300": 25.5}),
+        ),
+        (Ruleset::Catch, "EZ", serde_json::json!({"300": 57.65})),
+        (Ruleset::Catch, "HR", serde_json::json!({"300": 33.73})),
+        (Ruleset::Catch, "DA", serde_json::json!({"300": 30.74})),
+        (
+            Ruleset::Mania,
+            "EZ",
+            serde_json::json!({
+                "0": 242.5,
+                "50": 190.5,
+                "100": 156.5,
+                "katu": 114.5,
+                "300": 68.5,
+                "geki": 27.5,
+            }),
+        ),
+        (
+            Ruleset::Mania,
+            "HR",
+            serde_json::json!({
+                "0": 123.5,
+                "50": 97.5,
+                "100": 80.5,
+                "katu": 58.5,
+                "300": 35.5,
+                "geki": 13.5,
+            }),
+        ),
+        (
+            Ruleset::Mania,
+            "DA",
+            serde_json::json!({
+                "0": 164.5,
+                "50": 127.5,
+                "100": 103.5,
+                "katu": 73.5,
+                "300": 40.5,
+                "geki": 16.5,
+            }),
+        ),
+    ];
+
+    for (mode, acronym, expected) in cases {
+        let game_mod = if acronym == "DA" {
+            applied_mod_with_settings(acronym, r#"{"overall_difficulty":8.0,"circle_size":7.0}"#)
+        } else {
+            applied_mod(acronym)
+        };
+
+        for source in [ClientType::Lazer, ClientType::Stable] {
+            if source == ClientType::Stable && (acronym == "DA" || mode == Ruleset::Mania) {
+                continue;
+            }
+            let parsed = parsed_timing_map(mode, mode, source, vec![game_mod.clone()], 1.0);
+
+            assert_eq!(
+                serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
+                expected,
+                "{source:?} {mode:?} {acronym}",
+            );
+        }
+    }
+}
+
+#[test]
+fn timing_windows_match_stable_classic_mania_difficulty_modifiers() {
+    for (acronym, expected) in [
+        (
+            "EZ",
+            serde_json::json!({
+                "0": 242.5,
+                "50": 190.5,
+                "100": 156.5,
+                "katu": 114.5,
+                "300": 68.5,
+                "geki": 22.5,
+            }),
+        ),
+        (
+            "HR",
+            serde_json::json!({
+                "0": 123.5,
+                "50": 97.5,
+                "100": 80.5,
+                "katu": 58.5,
+                "300": 35.5,
+                "geki": 11.5,
+            }),
+        ),
+    ] {
+        let parsed = parsed_timing_map(
+            Ruleset::Mania,
+            Ruleset::Mania,
+            ClientType::Stable,
+            vec![applied_mod("CL"), applied_mod(acronym)],
+            1.0,
+        );
+
+        assert_eq!(
+            serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
+            expected,
+            "Stable Mania {acronym}",
+        );
+    }
+}
+
+#[test]
+fn timing_windows_project_fixed_mania_rates_after_source_rounding() {
+    for (acronym, clock_rate, lazer_expected, stable_perfect) in [
+        (
+            "DT",
+            1.5,
+            serde_json::json!({
+                "0": 173.0,
+                "50": 136.33,
+                "100": 112.33,
+                "katu": 82.33,
+                "300": 49.0,
+                "geki": 19.67,
+            }),
+            16.33,
+        ),
+        (
+            "HT",
+            0.75,
+            serde_json::json!({
+                "0": 172.67,
+                "50": 136.67,
+                "100": 112.67,
+                "katu": 82.0,
+                "300": 48.67,
+                "geki": 19.33,
+            }),
+            16.67,
+        ),
+    ] {
+        let lazer = parsed_timing_map(
+            Ruleset::Mania,
+            Ruleset::Mania,
+            ClientType::Lazer,
+            vec![applied_mod(acronym)],
+            clock_rate,
+        );
+        assert_eq!(
+            serde_json::to_value(timing_windows(Some(&lazer))).unwrap(),
+            lazer_expected,
+            "Lazer Mania {acronym}",
+        );
+
+        let stable = parsed_timing_map(
+            Ruleset::Mania,
+            Ruleset::Mania,
+            ClientType::Stable,
+            vec![applied_mod("CL"), applied_mod(acronym)],
+            clock_rate,
+        );
+        let mut stable_expected = lazer_expected;
+        stable_expected["geki"] = serde_json::json!(stable_perfect);
+        assert_eq!(
+            serde_json::to_value(timing_windows(Some(&stable))).unwrap(),
+            stable_expected,
+            "Stable Mania {acronym}",
+        );
+    }
+}
+
+#[test]
 fn timing_windows_round_osu_dt_once_at_the_api_edge() {
     let parsed = parsed_timing_map(
         Ruleset::Osu,
@@ -598,7 +803,11 @@ fn timing_windows_use_score_v2_map_values_for_stable_mania() {
 #[test]
 fn timing_windows_expose_catch_spatial_boundary_for_all_clients_and_speeds() {
     for source in [ClientType::Stable, ClientType::Lazer] {
-        for (mods, clock_rate) in [(Vec::new(), 1.0), (vec![applied_mod("DT")], 1.5)] {
+        for (mods, clock_rate) in [
+            (Vec::new(), 1.0),
+            (vec![applied_mod("DT")], 1.5),
+            (vec![applied_mod("HT")], 0.75),
+        ] {
             let parsed =
                 parsed_timing_map(Ruleset::Catch, Ruleset::Catch, source, mods, clock_rate);
             let state = StateBundle::new(source, 1, Arc::new(NeverCalculate)).snapshot();
