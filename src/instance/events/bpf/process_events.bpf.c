@@ -144,13 +144,9 @@ static __always_inline int clear_generation(__u32 tgid)
     return 0;
 }
 
-static __always_inline int inspect_candidate(__u32 tgid,
-                                             const char comm[TASK_COMM_LEN])
+static __always_inline int emit_candidate_inspection(__u32 tgid)
 {
     __u8 tracked = 1;
-
-    if (!candidate_comm(comm))
-        return 0;
 
     if (bpf_map_lookup_elem(&candidates, &tgid))
         return 0;
@@ -164,6 +160,14 @@ static __always_inline int inspect_candidate(__u32 tgid,
     }
 
     return emit_event(tgid, EVENT_INSPECT);
+}
+
+static __always_inline int inspect_candidate(__u32 tgid,
+                                             const char comm[TASK_COMM_LEN])
+{
+    if (!candidate_comm(comm))
+        return 0;
+    return emit_candidate_inspection(tgid);
 }
 
 SEC("raw_tracepoint/sched_process_exec")
@@ -293,7 +297,7 @@ int task_rename(struct bpf_raw_tracepoint_args *ctx)
             record_drop();
         return 0;
     }
-    return inspect_candidate(tgid, comm);
+    return emit_candidate_inspection(tgid);
 }
 
 /*
