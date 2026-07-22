@@ -14,7 +14,7 @@ fn main() {
     #[cfg(windows)]
     embed_windows_resource();
 
-    #[cfg(feature = "linux-process-events")]
+    #[cfg(all(feature = "linux-process-events", target_os = "linux"))]
     {
         let feature_enabled = std::env::var_os(LINUX_PROCESS_EVENTS_FEATURE).is_some();
         let target_is_linux = std::env::var(TARGET_OS).as_deref() == Ok("linux");
@@ -24,7 +24,7 @@ fn main() {
     }
 }
 
-#[cfg(feature = "linux-process-events")]
+#[cfg(all(feature = "linux-process-events", target_os = "linux"))]
 fn build_linux_process_events() {
     let source = "src/instance/events/bpf/process_events.bpf.c";
     let output =
