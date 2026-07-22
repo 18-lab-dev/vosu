@@ -499,6 +499,112 @@ async fn rapid_state_events_do_not_bypass_poll_rate() {
     runner.await.unwrap();
 }
 
+#[tokio::test(start_paused = true)]
+async fn staggered_write_completions_do_not_postpone_cadence() {
+    let poll_rate = Duration::from_millis(100);
+    let provider = Provider::new_with_poll_rate(true, poll_rate);
+    let hub = WebSocketHub::new(Schema::V2, provider);
+    let (connection_a, mut frames_a) = hub.connect();
+    let (connection_b, mut frames_b) = hub.connect();
+    let runner = tokio::spawn({
+        let hub = hub.clone();
+        async move { hub.run().await }
+    });
+
+    frames_a
+        .recv()
+        .await
+        .expect("A should receive initial frame");
+    frames_b
+        .recv()
+        .await
+        .expect("B should receive initial frame");
+
+    tokio::time::advance(Duration::from_millis(30)).await;
+    connection_a.write_completed();
+    tokio::task::yield_now().await;
+
+    tokio::time::advance(Duration::from_millis(30)).await;
+    connection_b.write_completed();
+    tokio::task::yield_now().await;
+
+    assert!(frames_a.try_recv().is_none());
+    assert!(frames_b.try_recv().is_none());
+
+    tokio::time::advance(Duration::from_millis(40)).await;
+    tokio::task::yield_now().await;
+
+    assert!(matches!(frames_a.try_recv(), Some(Outbound::Text(_))));
+    assert!(matches!(frames_b.try_recv(), Some(Outbound::Text(_))));
+
+    hub.shutdown();
+    runner.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn lagging_client_catch_up_does_not_postpone_shared_cadence() {
+    let poll_rate = Duration::from_millis(100);
+    let provider = Provider::new_with_poll_rate(true, poll_rate);
+    let hub = WebSocketHub::new(Schema::V2, provider.clone());
+    let (fast, mut fast_frames) = hub.connect();
+    let (slow, mut slow_frames) = hub.connect();
+    let runner = tokio::spawn({
+        let hub = hub.clone();
+        async move { hub.run().await }
+    });
+
+    fast_frames
+        .recv()
+        .await
+        .expect("fast client should receive generation 1");
+    slow_frames
+        .recv()
+        .await
+        .expect("slow client should receive generation 1");
+
+    tokio::time::advance(Duration::from_millis(10)).await;
+    fast.write_completed();
+    tokio::task::yield_now().await;
+
+    provider.generation.store(2, Ordering::Release);
+    provider.events.send_replace(2);
+    tokio::task::yield_now().await;
+
+    tokio::time::advance(Duration::from_millis(90)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(
+        fast_frames.try_recv(),
+        Some(Outbound::Text(Bytes::from_static(b"{\"generation\":2}")))
+    );
+    assert!(slow_frames.try_recv().is_none());
+
+    fast.write_completed();
+    tokio::task::yield_now().await;
+
+    tokio::time::advance(Duration::from_millis(10)).await;
+    slow.write_completed();
+    tokio::task::yield_now().await;
+    tokio::task::yield_now().await;
+    assert_eq!(
+        slow_frames.try_recv(),
+        Some(Outbound::Text(Bytes::from_static(b"{\"generation\":2}")))
+    );
+
+    tokio::time::advance(Duration::from_millis(89)).await;
+    tokio::task::yield_now().await;
+    assert!(fast_frames.try_recv().is_none());
+
+    tokio::time::advance(Duration::from_millis(1)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(
+        fast_frames.try_recv(),
+        Some(Outbound::Text(Bytes::from_static(b"{\"generation\":2}")))
+    );
+
+    hub.shutdown();
+    runner.await.unwrap();
+}
+
 #[tokio::test]
 async fn control_frames_bypass_a_full_data_slot() {
     let provider = Provider::new(true);

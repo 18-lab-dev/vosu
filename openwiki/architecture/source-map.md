@@ -26,7 +26,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Integration evidence | `tools/live-parity/`, `tools/oracle/` | Pinned parity captures, calculator provenance and diffs |
 | Precise validation | `tools/input-validation/` | Map scanning, navigation, autoplay, edge accounting and capture artifacts |
 | Behavioral contracts | `tests/`, `crates/vosu-test-harness/` | Compatibility, native, smoke, updater, state, performance and release tests |
-| Performance evidence | `benches/hot_paths.rs`, `docs/benchmarks.md` | Criterion hot paths and machine-specific comparisons |
+| Performance evidence | `benches/hot_paths.rs`, [benchmark guide](../testing/benchmarks.md) | Criterion hot paths and machine-specific comparisons |
 | Embedded inputs | `assets/`, `build.rs` | Dashboard, fonts, images, offsets and checksum-covered assets |
 
 ## Workspace boundaries
@@ -35,4 +35,4 @@ Start with the owning boundary below rather than searching the whole tree. The [
 
 ## Evidence hierarchy
 
-Use `README.md` for user-facing behavior and prerequisites, `docs/architecture.md` for current structural facts, ADRs for durable rationale, `AGENTS.md` for change verification and invariants, and tests/source for exact behavior. Vendored calculator code, oracle inputs, embedded assets, and checksum manifests are provenance-sensitive and should be changed only through their owning workflow.
+Use `README.md` for user-facing behavior and prerequisites, the [architecture overview](overview.md) for current structural facts, [decision records](../decisions/index.md) for durable rationale, `AGENTS.md` for change verification and invariants, and tests/source for exact behavior. Vendored calculator code, oracle inputs, embedded assets, and checksum manifests are provenance-sensitive and should be changed only through their owning workflow.

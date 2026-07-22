@@ -127,6 +127,22 @@ fn resolve_exact(
 }
 
 async fn resource_response(outcome: ResourceOutcome, range: Option<String>) -> Response {
+    resource_response_with_counter_path(outcome, range, None).await
+}
+
+async fn counter_resource_response(
+    outcome: ResourceOutcome,
+    range: Option<String>,
+    encoded_html_path: &str,
+) -> Response {
+    resource_response_with_counter_path(outcome, range, Some(encoded_html_path)).await
+}
+
+async fn resource_response_with_counter_path(
+    outcome: ResourceOutcome,
+    range: Option<String>,
+    encoded_html_path: Option<&str>,
+) -> Response {
     match outcome {
         ResourceOutcome::Missing(MissingKind::NotReady) => json_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -155,15 +171,40 @@ async fn resource_response(outcome: ResourceOutcome, range: Option<String>) -> R
                         .expect("valid range response");
                 }
             };
+            let suffix = if plan.status == StatusCode::OK.as_u16()
+                && plan.content_type == "text/html; charset=utf-8"
+            {
+                encoded_html_path.and_then(counter_path_script)
+            } else {
+                None
+            };
+            let content_length = if let Some(suffix) = suffix.as_ref() {
+                let Ok(suffix_length) = u64::try_from(suffix.len()) else {
+                    return internal_error("counter metadata length exceeds response limits");
+                };
+                let Some(content_length) = plan.content_length.checked_add(suffix_length) else {
+                    return internal_error("counter response length overflow");
+                };
+                content_length
+            } else {
+                plan.content_length
+            };
             let mut file = tokio::fs::File::from_std(target.file);
             if file.seek(SeekFrom::Start(plan.offset)).await.is_err() {
                 return internal_error("failed to seek file");
             }
-            let body = Body::from_stream(ReaderStream::new(file.take(plan.content_length)));
+            let suffix_stream = futures_util::stream::iter(
+                suffix
+                    .into_iter()
+                    .map(Ok::<Bytes, std::io::Error>),
+            );
+            let body = Body::from_stream(
+                ReaderStream::new(file.take(plan.content_length)).chain(suffix_stream),
+            );
             let mut builder = Response::builder()
                 .status(plan.status)
                 .header(header::CONTENT_TYPE, plan.content_type)
-                .header(header::CONTENT_LENGTH, plan.content_length);
+                .header(header::CONTENT_LENGTH, content_length);
             if let Some(value) = plan.accept_ranges {
                 builder = builder.header(header::ACCEPT_RANGES, value);
             }
@@ -173,6 +214,49 @@ async fn resource_response(outcome: ResourceOutcome, range: Option<String>) -> R
             builder.body(body).expect("valid file response")
         }
     }
+}
+
+fn counter_path_script(encoded_html_path: &str) -> Option<Bytes> {
+    let decoded_html_path = percent_decode_once(encoded_html_path).ok()?;
+    let logical_path = decoded_html_path.trim_start_matches('/');
+    let counter_path = logical_path
+        .rsplit_once('/')
+        .map_or("", |(parent, _)| parent);
+    let mut script = String::with_capacity(counter_path.len() + 48);
+    script.push_str("<script>window.COUNTER_PATH=");
+    push_javascript_string(&mut script, counter_path);
+    script.push_str(";</script>");
+    Some(Bytes::from(script))
+}
+
+fn push_javascript_string(output: &mut String, value: &str) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\u{0008}' => output.push_str("\\b"),
+            '\u{000C}' => output.push_str("\\f"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            '<' => output.push_str("\\u003C"),
+            '>' => output.push_str("\\u003E"),
+            '&' => output.push_str("\\u0026"),
+            '\u{2028}' => output.push_str("\\u2028"),
+            '\u{2029}' => output.push_str("\\u2029"),
+            '\u{0000}'..='\u{001F}' => {
+                let byte = character as u8;
+                output.push_str("\\u00");
+                output.push(HEX[usize::from(byte >> 4)] as char);
+                output.push(HEX[usize::from(byte & 0x0F)] as char);
+            }
+            _ => output.push(character),
+        }
+    }
+    output.push('"');
 }
 
 fn embedded_response(page: EmbeddedResponse) -> Response {

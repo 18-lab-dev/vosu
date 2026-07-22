@@ -12,6 +12,7 @@ enum MockMode {
     ShortFirst(usize),
     Error(i32),
     ErrorOnCall(usize),
+    ErrorFromCall(usize),
 }
 
 #[derive(Debug)]
@@ -43,6 +44,9 @@ impl ProcessVmReadv for MockSyscall {
             return Err(errno);
         }
         if matches!(self.mode, MockMode::ErrorOnCall(target) if target == call) {
+            return Err(libc::EFAULT);
+        }
+        if matches!(self.mode, MockMode::ErrorFromCall(target) if call >= target) {
             return Err(libc::EFAULT);
         }
         let total: usize = local.iter().map(|iov| iov.iov_len).sum();
@@ -386,6 +390,31 @@ fn exact_and_short_prefix_reads_complete_suffixes() {
     assert_eq!(bytes, [0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27]);
     assert_eq!(calls.calls.load(Ordering::SeqCst), 2);
 }
+#[test]
+fn ordinary_reads_do_not_require_maps_after_opening() {
+    let (fixture, memory, calls) =
+        memory_fixture(MockMode::Exact, 1024, "1000-3000 rw-p 0 00:00 0\n");
+    fs::remove_file(fixture.path().join("20/maps")).expect("remove maps");
+
+    let mut exact = [0; 4];
+    memory
+        .read_exact(0x1010, &mut exact)
+        .expect("direct exact read");
+    let mut first = [0; 2];
+    let mut second = [0; 2];
+    let mut requests = [
+        ReadRequest::new(0x2020, &mut first),
+        ReadRequest::new(0x2030, &mut second),
+    ];
+    memory
+        .read_many(&mut requests)
+        .expect("direct batched read");
+
+    assert_eq!(exact, [0x10, 0x11, 0x12, 0x13]);
+    assert_eq!(first, [0x20, 0x21]);
+    assert_eq!(second, [0x30, 0x31]);
+    assert_eq!(calls.calls.load(Ordering::SeqCst), 2);
+}
 
 #[test]
 fn scanner_region_read_uses_direct_native_io() {
@@ -410,7 +439,7 @@ fn scanner_region_read_uses_direct_native_io() {
 #[test]
 fn permission_errors_are_typed_and_failed_reads_zero_every_output() {
     for errno in [libc::EPERM, libc::EACCES] {
-        let (_fixture, denied, _) =
+        let (_fixture, denied, calls) =
             memory_fixture(MockMode::Error(errno), 1024, "1000-3000 rw-p 0 00:00 0\n");
         let mut first = [7; 4];
         let mut second = [8; 4];
@@ -433,7 +462,34 @@ fn permission_errors_are_typed_and_failed_reads_zero_every_output() {
         assert_eq!(first, [0; 4]);
         assert_eq!(second, [0; 4]);
         assert!(error.to_string().contains(PERMISSION_GUIDANCE));
+        assert_eq!(calls.calls.load(Ordering::SeqCst), 1);
     }
+}
+
+#[test]
+fn address_overflow_skips_syscalls_and_zeroes_every_output() {
+    let (_fixture, memory, calls) =
+        memory_fixture(MockMode::Exact, 1024, "1000-3000 rw-p 0 00:00 0\n");
+    let mut overflowing = [7; 2];
+    let mut ordinary = [8; 4];
+    let mut requests = [
+        ReadRequest::new(usize::MAX, &mut overflowing),
+        ReadRequest::new(0x1000, &mut ordinary),
+    ];
+    let error = memory
+        .read_many(&mut requests)
+        .expect_err("address overflow");
+
+    assert_eq!(
+        error,
+        MemoryError::AddressOverflow {
+            base: usize::MAX,
+            offset: 2,
+        }
+    );
+    assert_eq!(overflowing, [0; 2]);
+    assert_eq!(ordinary, [0; 4]);
+    assert_eq!(calls.calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -453,12 +509,14 @@ fn ordinary_syscall_fault_remains_an_ordinary_read_error() {
 }
 
 #[test]
-fn read_many_splits_at_iov_max_and_mapping_boundaries() {
-    let (_fixture, memory, calls) = memory_fixture(
-        MockMode::Exact,
-        2,
+fn fallback_splits_at_iov_max_and_current_mapping_boundaries() {
+    let (fixture, memory, calls) =
+        memory_fixture(MockMode::ErrorOnCall(0), 2, "2000-3000 rw-p 0 00:00 0\n");
+    fs::write(
+        fixture.path().join("20/maps"),
         concat!("1000-1004 rw-p 0 00:00 0\n", "1004-1100 rw-p 0 00:00 0\n"),
-    );
+    )
+    .expect("replace maps before fallback");
     let mut crossing = [0; 8];
     let mut one = [0; 1];
     let mut two = [0; 1];
@@ -467,15 +525,19 @@ fn read_many_splits_at_iov_max_and_mapping_boundaries() {
         ReadRequest::new(0x1010, &mut one),
         ReadRequest::new(0x1020, &mut two),
     ];
-    memory.read_many(&mut requests).expect("split batch read");
+    memory
+        .read_many(&mut requests)
+        .expect("fallback split batch read");
     assert_eq!(crossing, [0, 1, 2, 3, 4, 5, 6, 7]);
-    assert_eq!(calls.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(one, [0x10]);
+    assert_eq!(two, [0x20]);
+    assert_eq!(calls.calls.load(Ordering::SeqCst), 3);
 }
 
 #[test]
-fn failed_suffix_retry_zeroes_prior_successes() {
-    let (_fixture, memory, _) =
-        memory_fixture(MockMode::ErrorOnCall(1), 1, "1000-3000 rw-p 0 00:00 0\n");
+fn persistent_fallback_failure_zeroes_prior_direct_successes() {
+    let (_fixture, memory, calls) =
+        memory_fixture(MockMode::ErrorFromCall(1), 1, "1000-3000 rw-p 0 00:00 0\n");
     let mut first = [9; 4];
     let mut second = [9; 4];
     let mut requests = [
@@ -484,9 +546,10 @@ fn failed_suffix_retry_zeroes_prior_successes() {
     ];
     memory
         .read_many(&mut requests)
-        .expect_err("second batch fails");
+        .expect_err("direct and fallback reads fail");
     assert_eq!(first, [0; 4]);
     assert_eq!(second, [0; 4]);
+    assert_eq!(calls.calls.load(Ordering::SeqCst), 3);
 }
 
 #[test]

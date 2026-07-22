@@ -184,44 +184,100 @@ pub fn hit_window_for_map(
     od: f64,
     result: HitResult,
 ) -> Result<Option<f64>, Error> {
-    if map.mode != Ruleset::Mania || !map.classic_scoring() || map.mania_score_v2 {
+    if map.mode != Ruleset::Mania {
         return hit_window(map.mode, od, result);
     }
 
-    let window = if map.map.is_convert {
-        match result {
-            HitResult::Perfect => 16.5,
-            HitResult::Great => {
-                if od.round_ties_even() > 4.0 {
-                    34.5
-                } else {
-                    47.5
-                }
+    let raw_window = if map.classic_scoring() && !map.mania_score_v2 {
+        if map.map.is_convert {
+            match result {
+                HitResult::Perfect => 16.0,
+                HitResult::Great if od.round_ties_even() > 4.0 => 34.0,
+                HitResult::Great => 47.0,
+                HitResult::Good if od.round_ties_even() > 4.0 => 67.0,
+                HitResult::Good => 77.0,
+                HitResult::Ok => 97.0,
+                HitResult::Meh => 121.0,
+                HitResult::Miss => 158.0,
+                _ => return hit_window(map.mode, od, result),
             }
-            HitResult::Good => {
-                if od.round_ties_even() > 4.0 {
-                    67.5
-                } else {
-                    77.5
-                }
+        } else {
+            let inverted_od = (10.0 - od).clamp(0.0, 10.0);
+
+            match result {
+                HitResult::Perfect => 16.0,
+                HitResult::Great => 34.0 + 3.0 * inverted_od,
+                HitResult::Good => 67.0 + 3.0 * inverted_od,
+                HitResult::Ok => 97.0 + 3.0 * inverted_od,
+                HitResult::Meh => 121.0 + 3.0 * inverted_od,
+                HitResult::Miss => 158.0 + 3.0 * inverted_od,
+                _ => return hit_window(map.mode, od, result),
             }
-            HitResult::Ok => 97.5,
-            HitResult::Meh => 121.5,
-            _ => return hit_window(map.mode, od, result),
         }
     } else {
-        let inverted_od = (10.0 - od).clamp(0.0, 10.0);
+        let range = |max: f64, mid: f64, min: f64| {
+            if od > 5.0 {
+                mid + (min - mid) * (od - 5.0) / 5.0
+            } else if od < 5.0 {
+                mid + (max - mid) * (5.0 - od) / 5.0
+            } else {
+                mid
+            }
+        };
+
         match result {
-            HitResult::Perfect => 16.5,
-            HitResult::Great => (34.0 + 3.0 * inverted_od).floor() + 0.5,
-            HitResult::Good => (67.0 + 3.0 * inverted_od).floor() + 0.5,
-            HitResult::Ok => (97.0 + 3.0 * inverted_od).floor() + 0.5,
-            HitResult::Meh => (121.0 + 3.0 * inverted_od).floor() + 0.5,
+            HitResult::Perfect => range(22.4, 19.4, 13.9),
+            HitResult::Great => range(64.0, 49.0, 34.0),
+            HitResult::Good => range(97.0, 82.0, 67.0),
+            HitResult::Ok => range(127.0, 112.0, 97.0),
+            HitResult::Meh => range(151.0, 136.0, 121.0),
+            HitResult::Miss => range(188.0, 173.0, 158.0),
             _ => return hit_window(map.mode, od, result),
         }
     };
 
-    Ok(Some(window))
+    let (difficulty_multiplier, speed_multiplier) =
+        map.structured_mods
+            .iter()
+            .fold((1.0, 1.0), |(difficulty, speed), game_mod| {
+                let is_easy = game_mod.acronym.eq_ignore_ascii_case("EZ");
+                let is_hard_rock = game_mod.acronym.eq_ignore_ascii_case("HR");
+                let difficulty = if is_easy {
+                    difficulty / 1.4
+                } else if is_hard_rock {
+                    difficulty * 1.4
+                } else {
+                    difficulty
+                };
+                let is_faster = game_mod.acronym.eq_ignore_ascii_case("DT")
+                    || game_mod.acronym.eq_ignore_ascii_case("NC");
+                let is_slower = game_mod.acronym.eq_ignore_ascii_case("HT")
+                    || game_mod.acronym.eq_ignore_ascii_case("DC");
+                let default_speed = if is_faster {
+                    1.5
+                } else if is_slower {
+                    0.75
+                } else {
+                    return (difficulty, speed);
+                };
+                let configured = match game_mod.settings.get("speed_change") {
+                    Some(ModValue::Number(value)) if value.is_finite() => *value,
+                    Some(ModValue::String(value)) => value.parse().unwrap_or(default_speed),
+                    _ => default_speed,
+                };
+                let (min, max) = if is_faster {
+                    (1.01, 2.0)
+                } else {
+                    (0.5, 0.99)
+                };
+                let speed = (configured.clamp(min, max) * 100.0).round_ties_even() / 100.0;
+
+                (difficulty, speed)
+            });
+
+    Ok(Some(
+        (raw_window * speed_multiplier / difficulty_multiplier).floor() + 0.5,
+    ))
 }
 
 /// Computes osu!catch's spatial half-width in playfield units from circle size.

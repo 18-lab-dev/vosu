@@ -1,3 +1,10 @@
+---
+type: Architecture Decision Record
+title: Adopt vosu as the sole product identity
+description: Accepted decision for a clean vosu identity cutover with one-time migration of supported legacy state.
+tags: [architecture, decision, adr, identity, migration]
+---
+
 # ADR 0007: Adopt vosu as the sole product identity
 
 - **Status:** Accepted
@@ -16,7 +23,7 @@ Adopt **vosu** as the sole current product identity and make a clean cutover acr
 
 - use `vosu` for the package, crates, executable, API terminology, logs and metadata;
 - use `vosu.env`, `VOSU_*`, and `vosu` platform data roots for configuration and state;
-- publish `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip` from `qt715/vosu`;
+- publish `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip` from `shiruviaa/vosu`;
 - use <https://vosu.app> for first-party services and identity;
 - reject former executable, archive, environment-variable, updater, and package names rather than accepting aliases.
 
@@ -50,5 +57,5 @@ Rejected because current on-disk paths and configuration names are part of the p
 ## Related documentation
 
 - [User installation, configuration, and migration](../../README.md)
-- [Architecture](../architecture.md)
+- [Architecture](../architecture/overview.md)
 - [Agent instructions](../../AGENTS.md)

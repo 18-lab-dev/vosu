@@ -10,7 +10,7 @@
 - A branding change is complete only when case-sensitive and case-insensitive scans find no unexplained old-brand occurrences in live source, package metadata, lockfile package names, commands, configuration, CI, packaging, release paths, tests, or current documentation.
 - This operational map describes the post-cutover tree. Any old spelling not explicitly identified as migration, upstream, parity, provenance, or history is a defect.
 - This repository ships the native Rust daemon, not the former Electron/asdf-overlay application. Do not add Node, Electron, .NET, or C# runtime requirements to the daemon.
-- Read [README.md](README.md) for the user-facing contract. Use [architecture](docs/architecture.md), [decision records](docs/decisions/README.md), and [benchmarks](docs/benchmarks.md) for detail; keep this file operational.
+- Read [README.md](README.md) for the user-facing contract. Use the [architecture overview](openwiki/architecture/overview.md), [decision records](openwiki/decisions/index.md), and [benchmarks](openwiki/testing/benchmarks.md) for detail; keep this file operational.
 
 ## Toolchain and commands
 
@@ -31,7 +31,7 @@ cargo build --release --locked --no-default-features --target x86_64-unknown-lin
 cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc
 
 # Criterion hot paths; use the affected group or exact ID for scoped routine measurements.
-# The unfiltered suite is available when measuring all hot paths; see docs/benchmarks.md.
+# The unfiltered suite is available when measuring all hot paths; see openwiki/testing/benchmarks.md.
 cargo bench --locked --package vosu --bench hot_paths -- <benchmark-filter>
 ```
 
@@ -68,7 +68,7 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 - Process discovery or memory reading: affected unit tests and, on each affected native OS, `cargo test --locked --test process_memory -- --nocapture`.
 - Updater/release behavior: `cargo test --locked --test updater_compat`, native `cargo test --locked --test updater_native -- --nocapture`, and `cargo test --locked --test release_smoke` when packaging/startup changes.
 - Calculator/state semantics: affected `vosu-lazer-pp` tests and `cargo test --locked --test performance_invariants`; use live parity when observable live schemas or state timing can change.
-- Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in [docs/benchmarks.md](docs/benchmarks.md).
+- Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](openwiki/testing/benchmarks.md).
 - Before merging a Rust change, run the applicable native smoke path and the CI checks above; platform-specific code requires evidence from that platform.
 
 ## Compatibility and security invariants

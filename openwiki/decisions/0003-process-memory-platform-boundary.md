@@ -1,3 +1,10 @@
+---
+type: Architecture Decision Record
+title: Keep process-memory access behind platform boundary
+description: Accepted decision to isolate native process handles, reads, discovery, and target architecture behind Linux and Windows backends.
+tags: [architecture, decision, adr, process-memory, platform]
+---
+
 # ADR 0003: Keep process-memory access behind a platform boundary
 
 ## Status
@@ -33,5 +40,5 @@ The boundary lives in [`process.rs`](../../src/process.rs), with native implemen
 
 ## Related documentation
 
-- [Architecture](../architecture.md)
-- [Benchmarks](../benchmarks.md) — memory-read measurements are platform- and machine-specific observations.
+- [Architecture](../architecture/overview.md)
+- [Benchmarks](../testing/benchmarks.md) — memory-read measurements are platform- and machine-specific observations.

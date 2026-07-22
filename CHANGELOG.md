@@ -24,7 +24,7 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 
 ### API
 
-- Added `beatmap.stats.timingWindows` to v2 responses for stable and lazer across all rulesets, including map-aware speed-mod and osu!mania Classic/ScoreV2 windows. osu!catch exposes its spatial `300` catch boundary in playfield units; unsupported judgements are omitted.
+- Added `beatmap.stats.timingWindows` to v2 responses for stable and lazer across all rulesets, including map-aware speed mods, osu!lazer Difficulty Adjust values above OD 10, and osu!mania Classic/ScoreV2 windows. osu!catch exposes its spatial `300` catch boundary in playfield units; unsupported judgements are omitted.
 - Split every public hit-error field into ordered `all`, `press`, and `release` arrays, with osu!lazer mania hold-note releases classified separately.
 
 ### Reliability
@@ -33,11 +33,14 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 - Made the Windows updater helper tolerate the brief missing-record window that can occur while the parent atomically replaces the durable handoff record, without retrying malformed or unauthenticated records.
 - Fixed dashboard navigation links so they no longer trigger counter-folder API calls, and made both folder controls open the configured counter root without fake executable names.
 - Added a Linux startup warning when the running daemon lacks effective `CAP_SYS_PTRACE`, and made `process_vm_readv` permission denials emit one terminal error per osu! process generation instead of retrying silently.
+- Restored legacy counter compatibility by injecting the logical `window.COUNTER_PATH` into served counter HTML, allowing overlay settings WebSocket requests to identify the correct counter.
+- Kept legacy overlay WebSocket deadlines anchored to their configured cadence across staggered client write-completion and catch-up wakes, preventing slow overlays from postponing 100 ms updates for fast overlays.
+- Restored Linux gameplay snapshot freshness by reading valid process-memory batches directly instead of reparsing thousands of `/proc/<pid>/maps` entries for every primitive read; faults still retry through fresh mapping-aware validation.
 
 ### Documentation
 
 - Updated installation, configuration, API, architecture, benchmark workflow, ownership, and release documentation for the vosu cutover.
-- Recorded the durable clean-cutover and state-migration decision in [ADR 0007](docs/decisions/0007-vosu-clean-cutover.md).
+- Recorded the durable clean-cutover and state-migration decision in [ADR 0007](openwiki/decisions/0007-vosu-clean-cutover.md).
 
 ## Historical releases
 

@@ -602,7 +602,12 @@ fn decode_mod_fixture(acronym: &str, mode: i64) -> Mod {
             let current = 0x5000 + index * 0x100;
             memory.ptr(object + offset, outer);
             memory.ptr(outer + 0x60, current);
-            memory.put(current + 0x40, (4.0 + index as f32).to_le_bytes());
+            let value = if offset == 0x18 {
+                11.0
+            } else {
+                4.0 + index as f32
+            };
+            memory.put(current + 0x40, value.to_le_bytes());
         }
         let extended = 0x6000;
         memory.ptr(object + 0x20, extended);
@@ -616,6 +621,23 @@ fn decode_mod_fixture(acronym: &str, mode: i64) -> Mod {
     let mut decoder = reader(Arc::new(memory));
     decoder.selected_gamemode = mode;
     decoder.read_mod(acronym, object).unwrap()
+}
+
+#[test]
+fn difficulty_adjust_extended_od_survives_structured_mod_decoding() {
+    assert_eq!(
+        serde_json::to_value(decode_mod_fixture("DA", 0)).unwrap(),
+        serde_json::json!({
+            "acronym": "DA",
+            "settings": {
+                "approach_rate": 7.0,
+                "circle_size": 6.0,
+                "drain_rate": 4.0,
+                "overall_difficulty": 11.0,
+                "extended_limits": true,
+            },
+        }),
+    );
 }
 
 #[test]
