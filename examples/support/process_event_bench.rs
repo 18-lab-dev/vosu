@@ -79,6 +79,7 @@ struct ResourceUsage {
 struct PhaseMetrics {
     elapsed: Duration,
     usage: ResourceUsage,
+    child_usage: ResourceUsage,
     scans: u64,
     targeted_inspections: u64,
     events: u64,
@@ -409,12 +410,15 @@ async fn measure_idle(runtime: &Runtime, duration: Duration) -> io::Result<Phase
     let events_before = runtime.process_event_count();
     let event_wakes_before = runtime.event_wake_count();
     let reconciliation_requests_before = runtime.reconciliation_request_count();
-    let usage_before = get_resource_usage()?;
+    let usage_before = get_resource_usage(libc::RUSAGE_SELF)?;
+    let child_usage_before = get_resource_usage(libc::RUSAGE_CHILDREN)?;
     sleep_until(deadline).await;
-    let usage_after = get_resource_usage()?;
+    let usage_after = get_resource_usage(libc::RUSAGE_SELF)?;
+    let child_usage_after = get_resource_usage(libc::RUSAGE_CHILDREN)?;
     Ok(PhaseMetrics {
         elapsed: started.elapsed(),
         usage: subtract_resource_usage(usage_after, usage_before),
+        child_usage: subtract_resource_usage(child_usage_after, child_usage_before),
         scans: runtime.discovery_scan_count().saturating_sub(scans_before),
         targeted_inspections: runtime
             .targeted_inspection_count()
@@ -439,7 +443,8 @@ async fn measure_lifecycle_under_churn(
     let events_before = runtime.process_event_count();
     let event_wakes_before = runtime.event_wake_count();
     let reconciliation_requests_before = runtime.reconciliation_request_count();
-    let usage_before = get_resource_usage()?;
+    let usage_before = get_resource_usage(libc::RUSAGE_SELF)?;
+    let child_usage_before = get_resource_usage(libc::RUSAGE_CHILDREN)?;
     let phase_started = TokioInstant::now();
     let deadline = phase_started + args.churn_duration;
     let churn_task = tokio::spawn(run_unrelated_churn(
@@ -465,10 +470,12 @@ async fn measure_lifecycle_under_churn(
             .into());
         }
     };
-    let usage_after = get_resource_usage()?;
+    let usage_after = get_resource_usage(libc::RUSAGE_SELF)?;
+    let child_usage_after = get_resource_usage(libc::RUSAGE_CHILDREN)?;
     let metrics = PhaseMetrics {
         elapsed: phase_started.elapsed(),
         usage: subtract_resource_usage(usage_after, usage_before),
+        child_usage: subtract_resource_usage(child_usage_after, child_usage_before),
         scans: runtime.discovery_scan_count().saturating_sub(scans_before),
         targeted_inspections: runtime
             .targeted_inspection_count()
@@ -802,10 +809,10 @@ async fn sleep_until_iteration_phase(
     sleep_until(deadline).await;
 }
 
-fn get_resource_usage() -> io::Result<ResourceUsage> {
+fn get_resource_usage(who: libc::c_int) -> io::Result<ResourceUsage> {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
     // SAFETY: getrusage initializes the valid, uniquely borrowed output on success.
-    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+    if unsafe { libc::getrusage(who, usage.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: the successful call initialized the complete rusage value.
@@ -956,12 +963,28 @@ fn output_json(args: &Args, results: &Results) -> Value {
             "remove latency starts immediately before terminating an established target, includes termination and reap, and ends only when that exact PID disappears from the lifecycle snapshot",
             "unrelated /bin/true churn uses absolute spawn-slot deadlines for the fixed requested duration; missed slots are skipped, and churn cannot satisfy exact-PID lifecycle waits",
             "full-scan count is all completed reconciliation/discovery passes; targeted-inspection count is per-TGID delta inspection work; event-wake count is Tokio runtime process-event notifier branches taken, not OS or kernel wakeups; reconciliation-request count is newly latched backend or queue requests caused by source loss, parse/truncation, or bounded queue overflow, and excludes periodic five-second scans",
-            "self CPU includes the benchmark, Tokio runtime, event backend, and discovery runtime"
+            "unprefixed CPU and context-switch fields are RUSAGE_SELF for the benchmark, Tokio runtime, event backend, and discovery runtime; child fields are RUSAGE_CHILDREN for reaped churn and lifecycle helpers; total-workload fields saturating-sum self and child usage"
         ]
     })
 }
 
 fn phase_json(metrics: &PhaseMetrics) -> Value {
+    let child_user_cpu_us = duration_us(metrics.child_usage.user_cpu);
+    let child_system_cpu_us = duration_us(metrics.child_usage.system_cpu);
+    let total_workload_cpu = metrics
+        .usage
+        .user_cpu
+        .saturating_add(metrics.usage.system_cpu)
+        .saturating_add(metrics.child_usage.user_cpu)
+        .saturating_add(metrics.child_usage.system_cpu);
+    let total_workload_voluntary_context_switches = metrics
+        .usage
+        .voluntary_context_switches
+        .saturating_add(metrics.child_usage.voluntary_context_switches);
+    let total_workload_involuntary_context_switches = metrics
+        .usage
+        .involuntary_context_switches
+        .saturating_add(metrics.child_usage.involuntary_context_switches);
     json!({
         "duration_us": duration_us(metrics.elapsed),
         "event_count": metrics.events,
@@ -972,8 +995,15 @@ fn phase_json(metrics: &PhaseMetrics) -> Value {
         "targeted_inspection_count": metrics.targeted_inspections,
         "user_cpu_us": duration_us(metrics.usage.user_cpu),
         "system_cpu_us": duration_us(metrics.usage.system_cpu),
+        "child_user_cpu_us": child_user_cpu_us,
+        "child_system_cpu_us": child_system_cpu_us,
+        "total_workload_cpu_us": duration_us(total_workload_cpu),
         "voluntary_context_switches": metrics.usage.voluntary_context_switches,
-        "involuntary_context_switches": metrics.usage.involuntary_context_switches
+        "involuntary_context_switches": metrics.usage.involuntary_context_switches,
+        "child_voluntary_context_switches": metrics.child_usage.voluntary_context_switches,
+        "child_involuntary_context_switches": metrics.child_usage.involuntary_context_switches,
+        "total_workload_voluntary_context_switches": total_workload_voluntary_context_switches,
+        "total_workload_involuntary_context_switches": total_workload_involuntary_context_switches
     })
 }
 
