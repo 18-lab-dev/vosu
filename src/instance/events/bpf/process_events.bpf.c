@@ -113,7 +113,7 @@ static __always_inline int emit_event(__u32 tgid, __u8 kind)
     return 0;
 }
 
-static __always_inline int clear_generation(__u32 tgid)
+static __always_inline int clear_candidate(__u32 tgid)
 {
     long result;
 
@@ -122,6 +122,15 @@ static __always_inline int clear_generation(__u32 tgid)
         record_drop();
         return -1;
     }
+    return 0;
+}
+
+static __always_inline int clear_generation(__u32 tgid)
+{
+    long result;
+
+    if (clear_candidate(tgid))
+        return -1;
     result = bpf_map_delete_elem(&tracked, &tgid);
     if (result && result != -ENOENT) {
         record_drop();
@@ -168,7 +177,12 @@ int process_exec(struct bpf_raw_tracepoint_args *ctx)
         return 0;
     }
 
-    if (clear_generation(pid_tgid >> 32))
+    /*
+     * Fork cleared reused-TGID state. An exec stays in the same live
+     * generation, so preserve tracked membership and the impossible-for-live
+     * tombstone while forcing one post-exec candidate inspection.
+     */
+    if (clear_candidate(pid_tgid >> 32))
         return 0;
 
     return inspect_candidate(pid_tgid >> 32, comm);
