@@ -51,7 +51,8 @@ pub(super) trait ProcessTrackingControl: Send + Sync {
 
 #[derive(Debug, Default)]
 pub(super) struct ProcessEventBatch {
-    pub events: Vec<ProcessEvent>,
+    pub inspect: Vec<Pid>,
+    pub exit: Vec<Pid>,
     pub needs_reconcile: bool,
 }
 
@@ -119,8 +120,17 @@ impl EventQueue {
     }
 
     fn drain(&mut self) -> ProcessEventBatch {
+        let mut inspect = Vec::with_capacity(self.pending.len());
+        let mut exit = Vec::new();
+        for event in self.pending.drain(..) {
+            match event.kind {
+                ProcessEventKind::Inspect => inspect.push(event.tgid),
+                ProcessEventKind::Exit => exit.push(event.tgid),
+            }
+        }
         ProcessEventBatch {
-            events: self.pending.drain(..).collect(),
+            inspect,
+            exit,
             needs_reconcile: std::mem::take(&mut self.needs_reconcile),
         }
     }
@@ -492,7 +502,9 @@ mod tests {
             tgid: 8,
             kind: ProcessEventKind::Exit,
         }));
-        assert!(queue.drain().events.is_empty());
+        let batch = queue.drain();
+        assert!(batch.inspect.is_empty());
+        assert!(batch.exit.is_empty());
         assert!(queue.push(ProcessEvent {
             tgid: 7,
             kind: ProcessEventKind::Inspect,
@@ -504,13 +516,8 @@ mod tests {
         }));
 
         let batch = queue.drain();
-        assert_eq!(
-            batch.events,
-            [ProcessEvent {
-                tgid: 7,
-                kind: ProcessEventKind::Exit,
-            }]
-        );
+        assert_eq!(batch.exit, [7]);
+        assert!(batch.inspect.is_empty());
         assert!(!batch.needs_reconcile);
     }
 
@@ -526,7 +533,8 @@ mod tests {
             kind: ProcessEventKind::Exit,
         }));
         let batch = queue.drain();
-        assert!(batch.events.is_empty());
+        assert!(batch.inspect.is_empty());
+        assert!(batch.exit.is_empty());
         assert!(batch.needs_reconcile);
     }
 
@@ -540,7 +548,9 @@ mod tests {
                 tgid: 7,
                 kind: ProcessEventKind::Inspect,
             }));
-            assert!(queue.drain().events.is_empty());
+            let batch = queue.drain();
+            assert!(batch.inspect.is_empty());
+            assert!(batch.exit.is_empty());
         }
     }
 
@@ -558,13 +568,8 @@ mod tests {
         }));
 
         let batch = queue.drain();
-        assert_eq!(
-            batch.events,
-            [ProcessEvent {
-                tgid: 7,
-                kind: ProcessEventKind::Exit,
-            }]
-        );
+        assert_eq!(batch.exit, [7]);
+        assert!(batch.inspect.is_empty());
         assert!(batch.needs_reconcile);
 
         assert!(queue.push(ProcessEvent {
@@ -572,7 +577,8 @@ mod tests {
             kind: ProcessEventKind::Inspect,
         }));
         let batch = queue.drain();
-        assert!(batch.events.is_empty());
+        assert!(batch.inspect.is_empty());
+        assert!(batch.exit.is_empty());
         assert!(batch.needs_reconcile);
     }
 
@@ -585,13 +591,9 @@ mod tests {
                 tgid: 7,
                 kind: ProcessEventKind::Inspect,
             }));
-            assert_eq!(
-                queue.drain().events,
-                [ProcessEvent {
-                    tgid: 7,
-                    kind: ProcessEventKind::Inspect,
-                }]
-            );
+            let batch = queue.drain();
+            assert_eq!(batch.inspect, [7]);
+            assert!(batch.exit.is_empty());
         }
     }
 
@@ -613,13 +615,9 @@ mod tests {
             tgid: 7,
             kind: ProcessEventKind::Inspect,
         }));
-        assert_eq!(
-            queue.drain().events,
-            [ProcessEvent {
-                tgid: 7,
-                kind: ProcessEventKind::Inspect,
-            }]
-        );
+        let batch = queue.drain();
+        assert_eq!(batch.inspect, [7]);
+        assert!(batch.exit.is_empty());
     }
 
     #[test]

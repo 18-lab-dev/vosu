@@ -271,15 +271,7 @@ impl ProcessProvider for NativeProcessProvider {
             return (Vec::new(), Vec::new(), false);
         };
         let batch = events.drain();
-        let mut inspect = Vec::new();
-        let mut exit = Vec::new();
-        for event in batch.events {
-            match event.kind {
-                super::events::ProcessEventKind::Inspect => inspect.push(event.tgid),
-                super::events::ProcessEventKind::Exit => exit.push(event.tgid),
-            }
-        }
-        (inspect, exit, batch.needs_reconcile)
+        (batch.inspect, batch.exit, batch.needs_reconcile)
     }
 
     #[cfg(feature = "linux-process-events")]
