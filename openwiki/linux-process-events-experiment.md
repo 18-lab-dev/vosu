@@ -387,7 +387,7 @@ The final renamed-away preflight removed the observed PID in 11.919 ms. An earli
 
 The earlier post-mitigation 60-second run became unhealthy and refused output. The autoresearch continuation reproduced one unhealthy eBPF sample before adding bounded `EINTR` retry to the ring-buffer poll. Temporary error-site diagnostics did not reproduce the failure, so the exact earlier error remains unproven and must not be relabeled as definitively caused by `EINTR`.
 
-After the retry change, eight consecutive benchmark invocations completed with healthy eBPF samples; the three authoritative final invocations account for nine healthy eBPF samples. This is stronger stability evidence and removes a known false-unhealthy path, but it is not a deterministic regression for the original failure.
+After the retry change, ten consecutive benchmark invocations completed with healthy eBPF samples; the three authoritative final invocations account for nine healthy eBPF samples. This is stronger stability evidence and removes a known false-unhealthy path, but it is not a deterministic regression for the original failure.
 
 ### CN_PROC amplification: functional, still a concern
 
@@ -438,7 +438,7 @@ Host NVML could not initialize because the loaded host driver was 610.43.02 whil
 10. Exec/rename events for an already tracked process do not yet refresh immutable instance metadata.
 11. The inspect-to-tracked-map handoff is not atomic with exit delivery and can transiently miss an exit. The final code now requests reconciliation for an eBPF exit that arrives untracked, closing the recovery gap, but that recovery signal cannot make inspection and publication atomic.
 12. Tracked-map synchronization failure marks the backend unhealthy until restart, even if shadowed retries later converge.
-13. The earlier nondeterministic unhealthy transition did not recur in eight invocations after bounded ring-poll `EINTR` retry, including nine authoritative final eBPF samples, but temporary diagnostics did not establish the original cause.
+13. The earlier nondeterministic unhealthy transition did not recur in ten invocations after bounded ring-poll `EINTR` retry, including nine authoritative final eBPF samples, but temporary diagnostics did not establish the original cause.
 
 ## Design reflection
 
@@ -486,7 +486,7 @@ The completed continuation verified:
 - zero live reconciliation requests;
 - process-group termination/reap followed by disappearance of the observed target PID;
 - the twelve named JSON files as the source of the synthetic and live benchmark-result tables (environment and pinning facts came from the separately observed guest/host configuration);
-- the deterministic autoresearch harness over 22 logged invocations, including discarded and failed hypotheses;
+- the deterministic autoresearch harness over 23 logged invocations, including discarded and failed hypotheses;
 - exclusion of run 20 after its logged secondary payload was found not to match its captured benchmark output;
 - a 497,204 us baseline combined metric and final unchanged-code combined metrics of 492,245, 489,071, and 493,538 us;
 - nine final samples per event backend at exact 50 Hz/500-process churn, with healthy backends and zero timeout or reconciliation outcomes;
