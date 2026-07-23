@@ -122,6 +122,8 @@ where
     result
 }
 
+#[cold]
+#[inline(never)]
 fn read_error(address: usize, len: usize, count: usize) -> MemoryError {
     MemoryError::Read {
         address,
