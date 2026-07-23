@@ -54,7 +54,7 @@ where
             if end == start + 1 {
                 let request = &mut reads[start];
                 let expected = request.dst.len();
-                let (_ok, count) = read(request.address, request.dst);
+                let (ok, count) = read(request.address, request.dst);
                 let initialized = count.min(expected);
                 if initialized < expected {
                     let suffix_address = request.address.checked_add(initialized).ok_or(
@@ -72,14 +72,19 @@ where
                             suffix_count,
                         ));
                     }
+                } else if !ok {
+                    return Err(read_error(request.address, expected, count));
                 }
                 start = end;
                 continue;
             }
 
             let span_len = span_end - group_address;
-            let (_ok, count) = read(group_address, &mut scratch[..span_len]);
+            let (ok, count) = read(group_address, &mut scratch[..span_len]);
             let initialized = count.min(span_len);
+            if initialized == span_len && !ok {
+                return Err(read_error(group_address, span_len, count));
+            }
             for request in &mut reads[start..end] {
                 let offset = request.address - group_address;
                 let prefix = initialized.saturating_sub(offset).min(request.dst.len());
