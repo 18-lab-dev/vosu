@@ -13,6 +13,7 @@ where
     Err(read_error(address, expected, count))
 }
 
+#[inline(never)]
 pub(super) fn read_many_impl<F>(reads: &mut [ReadRequest<'_>], mut read: F) -> Result<(), MemoryError>
 where
     F: FnMut(usize, &mut [u8]) -> (bool, usize),
