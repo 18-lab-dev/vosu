@@ -159,12 +159,30 @@ fn hit_event_size_result_and_guard_rules_match_modes() {
     memory.i32(type_info + 4, 0xe8);
     memory.f64(event + 0x10, -12.5);
     memory.i32(event + 0x18, 3);
+    put_hit_event(&mut memory, event + 0x40, 0x58, 4.5, 2);
+    put_hit_event(&mut memory, event + 0x80, 0x88, 999.0, 0);
+    put_hit_event(&mut memory, event + 0xc0, 0x90, 999.0, 0);
+    put_hit_event(&mut memory, event + 0x100, 0x98, 999.0, 0);
     let mut reader = reader(Arc::new(memory));
     reader.selected_gamemode = 0;
     assert_eq!(
         reader.read_hit_event(event).unwrap(),
         Some(HitErrorEvent::Timing(-12.5))
     );
+    reader.selected_gamemode = 3;
+    assert_eq!(
+        reader.read_hit_event(event + 0x40).unwrap(),
+        Some(HitErrorEvent::Timing(4.5))
+    );
+    assert_eq!(
+        reader.read_hit_event(event + 0x80).unwrap(),
+        Some(HitErrorEvent::ManiaHoldAggregate)
+    );
+    assert_eq!(
+        reader.read_hit_event(event + 0xc0).unwrap(),
+        Some(HitErrorEvent::ManiaHoldAggregate)
+    );
+    assert_eq!(reader.read_hit_event(event + 0x100).unwrap(), None);
     reader.selected_gamemode = 2;
     assert_eq!(reader.read_hit_event(event).unwrap(), None);
 }
@@ -175,7 +193,7 @@ fn mania_suffix_preserves_event_order_and_splits_tail_before_hold_aggregate() {
     let mut memory = SparseMemory::default();
     put_hit_event(&mut memory, items, 0x58, 1.0, 2);
     put_hit_event(&mut memory, items + 0x40, 0x58, -2.0, 2);
-    put_hit_event(&mut memory, items + 0x80, 0x88, 999.0, 0);
+    put_hit_event(&mut memory, items + 0x80, 0x90, 999.0, 0);
     put_hit_event(&mut memory, items + 0xc0, 0x58, 3.0, 2);
     let mut reader = reader(Arc::new(memory));
     reader.selected_gamemode = 3;
@@ -186,26 +204,37 @@ fn mania_suffix_preserves_event_order_and_splits_tail_before_hold_aggregate() {
     assert_eq!(suffix.errors.all, [1.0, -2.0, 3.0]);
     assert_eq!(suffix.errors.press, [1.0, 3.0]);
     assert_eq!(suffix.errors.release, [-2.0]);
+    assert_eq!(
+        suffix.errors.all.len(),
+        suffix.errors.press.len() + suffix.errors.release.len()
+    );
     assert_eq!(suffix.release_correction, None);
 }
 
 #[test]
-fn mania_hold_aggregate_at_suffix_boundary_requests_tail_reclassification() {
+fn current_mania_hold_aggregate_at_suffix_boundary_requests_tail_reclassification() {
     let items = 0x10_000usize;
     let mut memory = SparseMemory::default();
     put_hit_event(&mut memory, items, 0x58, 1.0, 2);
     put_hit_event(&mut memory, items + 0x40, 0x58, -2.0, 2);
-    put_hit_event(&mut memory, items + 0x80, 0x88, 999.0, 0);
+    put_hit_event(&mut memory, items + 0x80, 0x90, 999.0, 0);
+    put_hit_event(&mut memory, items + 0xc0, 0x58, 3.0, 2);
     let mut reader = reader(Arc::new(memory));
     reader.selected_gamemode = 3;
 
     let before_marker = reader.read_hit_error_suffix(items, 2, 0).unwrap();
-    let marker_suffix = reader.read_hit_error_suffix(items, 3, 2).unwrap();
+    let marker_suffix = reader.read_hit_error_suffix(items, 4, 2).unwrap();
 
     assert_eq!(before_marker.errors.all, [1.0, -2.0]);
     assert_eq!(before_marker.errors.press, [1.0, -2.0]);
-    assert_eq!(marker_suffix.index, 3);
-    assert_eq!(marker_suffix.errors, HitErrorArray::default());
+    assert_eq!(marker_suffix.index, 4);
+    assert_eq!(marker_suffix.errors.all, [3.0]);
+    assert_eq!(marker_suffix.errors.press, [3.0]);
+    assert!(marker_suffix.errors.release.is_empty());
+    assert_eq!(
+        marker_suffix.errors.all.len(),
+        marker_suffix.errors.press.len() + marker_suffix.errors.release.len()
+    );
     assert_eq!(marker_suffix.release_correction, Some(-2.0));
 }
 

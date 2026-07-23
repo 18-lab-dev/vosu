@@ -69,8 +69,9 @@ def parser() -> argparse.ArgumentParser:
                 "The gate creates fresh controlled build roots, launches or attaches to and "
                 "attests the client, and requires distinct loopback ports. On Windows use "
                 "stable/lazer; on Linux use lazer. Manually traverse menu -> active play -> "
-                "paused -> result, then close the client. Artifact closures, hashes, process "
-                "identities, and socket ownership are attested."),
+                "paused -> result, then close the client. The optional mania-hold scenario "
+                "requires a mania map containing hold notes and judged tails. Artifact "
+                "closures, hashes, process identities, and socket ownership are attested."),
     )
     sub = p.add_subparsers(dest="action", required=True)
     sub.add_parser("config-schema", help="print the strict run-config JSON Schema")

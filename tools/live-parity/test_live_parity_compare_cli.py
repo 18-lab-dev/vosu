@@ -170,17 +170,119 @@ class CompareCliTests(unittest.TestCase):
                     {"error": "osu is not ready/running"}, 500, "not_ready"))
         return samples
 
-    def run_compare_samples(self, samples: list[Sample]) -> dict:
+    def run_compare_samples(
+            self, samples: list[Sample], *, scenario: str | None = None) -> dict:
         with tempfile.TemporaryDirectory() as tmp:
             capture = Path(tmp) / "capture.json"
             report = Path(tmp) / "report.json"
-            dump_capture(str(capture), samples, {
+            metadata = {
                 "poll_rate_ms": 150, "capture_interval_ms": 25,
                 "client_process_exit": {"observed_monotonic_ns": 4_000_000_000},
-            })
+            }
+            if scenario is not None:
+                metadata["scenario"] = scenario
+            dump_capture(str(capture), samples, metadata)
             with mock.patch.object(LIVE_RUN, "verify_capture_artifacts"):
                 LIVE_RUN.compare(str(capture), str(report))
             return json.loads(report.read_text(encoding="utf-8"))
+
+    def mania_hold_samples(
+            self, *, release: bool = True,
+            partition_matches: bool = True) -> list[Sample]:
+        samples = self.complete_samples()
+        release_errors = [2] if release else []
+        all_errors = [1, *release_errors] if partition_matches else [1]
+        for sample in samples:
+            if (sample.schema == "v2"
+                    and isinstance(sample.payload, dict)
+                    and sample.payload.get("state") == "play"):
+                sample.payload["play"]["mode"] = {
+                    "number": 3, "name": "mania"}
+                sample.payload["play"]["hitErrorArray"] = {
+                    "all": list(all_errors),
+                    "press": [1],
+                    "release": list(release_errors),
+                }
+        return samples
+
+    def test_general_capture_does_not_enable_mania_hold_contract(self) -> None:
+        report = self.run_compare_samples(self.complete_samples())
+        self.assertTrue(report["passed"])
+        self.assertEqual([], report["vosu_contract_failures"])
+
+    def test_valid_mania_hold_capture_passes_contract(self) -> None:
+        report = self.run_compare_samples(
+            self.mania_hold_samples(), scenario="mania-hold")
+        self.assertTrue(report["passed"])
+        self.assertEqual([], report["vosu_contract_failures"])
+        self.assertEqual("mania-hold", report["metadata"]["scenario"])
+
+    def test_mania_hold_capture_requires_release_event(self) -> None:
+        report = self.run_compare_samples(
+            self.mania_hold_samples(release=False), scenario="mania-hold")
+        self.assertFalse(report["passed"])
+        self.assertEqual("failed", report["status"])
+        self.assertTrue(any(
+            item["reason"] == "missing_mania_release_event"
+            for item in report["vosu_contract_failures"]))
+        self.assertEqual(
+            len(report["vosu_contract_failures"]),
+            report["summary"]["vosu_contract_failures"],
+        )
+
+    def test_mania_hold_capture_requires_hit_error_partition(self) -> None:
+        report = self.run_compare_samples(
+            self.mania_hold_samples(partition_matches=False),
+            scenario="mania-hold",
+        )
+        self.assertFalse(report["passed"])
+        failures = report["vosu_contract_failures"]
+        self.assertTrue(any(
+            item["reason"] == "hit_error_partition_mismatch"
+            and item["all"] == 1
+            and item["press"] == 1
+            and item["release"] == 1
+            for item in failures))
+        self.assertEqual("failed", report["summary"]["status"])
+
+    def test_mania_hold_malformed_mode_and_arrays_are_contract_failures(
+            self) -> None:
+        cases = (
+            (
+                "mode",
+                lambda play: play.__setitem__(
+                    "mode", {"number": "3", "name": "mania"}),
+                "malformed_mania_mode",
+                "/play/mode/number",
+            ),
+            (
+                "arrays",
+                lambda play: play.__setitem__(
+                    "hitErrorArray", {"all": [], "press": []}),
+                "missing_or_malformed_hit_error_partition",
+                "/play/hitErrorArray/release",
+            ),
+        )
+        for name, corrupt, expected_reason, expected_pointer in cases:
+            with self.subTest(case=name):
+                samples = self.mania_hold_samples()
+                for sample in samples:
+                    if (sample.schema == "v2"
+                            and isinstance(sample.payload, dict)
+                            and sample.payload.get("state") == "play"):
+                        corrupt(sample.payload["play"])
+                report = self.run_compare_samples(
+                    samples, scenario="mania-hold")
+                self.assertFalse(report["passed"])
+                self.assertEqual([], report["parity_mismatches"])
+                failures = report["vosu_contract_failures"]
+                self.assertTrue(any(
+                    item["reason"] == expected_reason
+                    and (
+                        item.get("pointer") == expected_pointer
+                        or expected_pointer in item.get("pointers", [])
+                    )
+                    for item in failures))
     def test_active_transport_error_cannot_be_hidden_by_adjacent_samples(self) -> None:
         samples = []
         replaced = False

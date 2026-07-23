@@ -393,6 +393,97 @@ def compare(capture_path: str, report_path: str) -> int:
     for key, stream in streams.items():
         active_streams[key] = [
             sample for sample in stream if context_is_active(sample)]
+
+    if metadata.get("scenario") == "mania-hold":
+        mania_observations = 0
+        release_events = 0
+        for transport in ("http", "websocket"):
+            for sample in active_streams[("vosu", "v2", transport)]:
+                payload = sample.payload
+                play = payload.get("play") if isinstance(payload, dict) else None
+                mode = play.get("mode") if isinstance(play, dict) else None
+                if not isinstance(mode, dict) or "number" not in mode:
+                    vosu_contract_failures.append({
+                        "category": "vosu_contract",
+                        "reason": "missing_mania_mode",
+                        "schema": "v2",
+                        "transport": transport,
+                        "monotonic_ns": sample.monotonic_ns,
+                        "pointer": "/play/mode/number",
+                    })
+                    continue
+                mode_number = mode["number"]
+                if (not isinstance(mode_number, int)
+                        or isinstance(mode_number, bool)):
+                    vosu_contract_failures.append({
+                        "category": "vosu_contract",
+                        "reason": "malformed_mania_mode",
+                        "schema": "v2",
+                        "transport": transport,
+                        "monotonic_ns": sample.monotonic_ns,
+                        "pointer": "/play/mode/number",
+                        "observed": mode_number,
+                    })
+                    continue
+                if mode_number != 3:
+                    continue
+                mania_observations += 1
+                hit_errors = play.get("hitErrorArray")
+                if not isinstance(hit_errors, dict):
+                    vosu_contract_failures.append({
+                        "category": "vosu_contract",
+                        "reason": "missing_or_malformed_hit_error_array",
+                        "schema": "v2",
+                        "transport": transport,
+                        "monotonic_ns": sample.monotonic_ns,
+                        "pointer": "/play/hitErrorArray",
+                    })
+                    continue
+                malformed = [
+                    name for name in ("all", "press", "release")
+                    if not isinstance(hit_errors.get(name), list)
+                ]
+                if malformed:
+                    vosu_contract_failures.append({
+                        "category": "vosu_contract",
+                        "reason": "missing_or_malformed_hit_error_partition",
+                        "schema": "v2",
+                        "transport": transport,
+                        "monotonic_ns": sample.monotonic_ns,
+                        "pointers": [
+                            f"/play/hitErrorArray/{name}" for name in malformed
+                        ],
+                    })
+                    continue
+                all_errors = hit_errors["all"]
+                press_errors = hit_errors["press"]
+                release_errors = hit_errors["release"]
+                if len(all_errors) != len(press_errors) + len(release_errors):
+                    vosu_contract_failures.append({
+                        "category": "vosu_contract",
+                        "reason": "hit_error_partition_mismatch",
+                        "schema": "v2",
+                        "transport": transport,
+                        "monotonic_ns": sample.monotonic_ns,
+                        "pointer": "/play/hitErrorArray",
+                        "all": len(all_errors),
+                        "press": len(press_errors),
+                        "release": len(release_errors),
+                    })
+                release_events += len(release_errors)
+        if mania_observations == 0:
+            vosu_contract_failures.append({
+                "category": "vosu_contract",
+                "reason": "missing_active_mania_observation",
+                "schema": "v2",
+            })
+        if release_events == 0:
+            vosu_contract_failures.append({
+                "category": "vosu_contract",
+                "reason": "missing_mania_release_event",
+                "schema": "v2",
+                "pointer": "/play/hitErrorArray/release",
+            })
     monotonic_samples = [
         sample for stream in active_streams.values() for sample in stream
     ]
