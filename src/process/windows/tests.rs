@@ -58,6 +58,59 @@ fn exact_read_rejects_and_zeroes_partial_data() {
 }
 
 #[test]
+fn singleton_false_full_read_is_error_and_zeroes_destination() {
+    let mut dst = [9u8; 4];
+    let mut reads = [ReadRequest::new(0x1234, &mut dst)];
+    let mut calls = 0;
+    let error = read_many_impl(&mut reads, |address, dst| {
+        calls += 1;
+        assert_eq!((address, dst.len()), (0x1234, 4));
+        dst.copy_from_slice(&[1, 2, 3, 4]);
+        (false, dst.len())
+    })
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        MemoryError::Read {
+            address: 0x1234,
+            len: 4,
+            ..
+        }
+    ));
+    assert_eq!(calls, 1);
+    assert_eq!(dst, [0; 4]);
+}
+
+#[test]
+fn merged_false_full_read_is_error_and_zeroes_destinations() {
+    let mut a = [9u8; 2];
+    let mut b = [9u8; 3];
+    let mut reads = [
+        ReadRequest::new(0x1008, &mut a),
+        ReadRequest::new(0x1010, &mut b),
+    ];
+    let mut calls = 0;
+    let error = read_many_impl(&mut reads, |address, dst| {
+        calls += 1;
+        assert_eq!((address, dst.len()), (0x1008, 11));
+        dst.copy_from_slice(&[1, 2, 9, 9, 9, 9, 9, 9, 3, 4, 5]);
+        (false, dst.len())
+    })
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        MemoryError::Read {
+            address: 0x1008,
+            len: 11,
+            ..
+        }
+    ));
+    assert_eq!(calls, 1);
+    assert_eq!(a, [0; 2]);
+    assert_eq!(b, [0; 3]);
+}
+
+#[test]
 fn short_coalesced_read_retries_suffix() {
     let mut a = [0u8; 2];
     let mut b = [0u8; 3];
@@ -123,6 +176,36 @@ fn page_boundary_keeps_reads_separate() {
             }
             2 => {
                 assert_eq!((address, dst.len()), (0x2000, 2));
+                dst.copy_from_slice(&[3, 4]);
+            }
+            _ => panic!("unexpected backend call"),
+        }
+        (true, dst.len())
+    })
+    .unwrap();
+    assert_eq!(calls, 2);
+    assert_eq!(a, [1, 2]);
+    assert_eq!(b, [3, 4]);
+}
+
+#[test]
+fn scratch_limit_keeps_distant_reads_separate() {
+    let mut a = [0u8; 2];
+    let mut b = [0u8; 2];
+    let mut reads = [
+        ReadRequest::new(0x1000, &mut a),
+        ReadRequest::new(0x1400, &mut b),
+    ];
+    let mut calls = 0;
+    read_many_impl(&mut reads, |address, dst| {
+        calls += 1;
+        match calls {
+            1 => {
+                assert_eq!((address, dst.len()), (0x1000, 2));
+                dst.copy_from_slice(&[1, 2]);
+            }
+            2 => {
+                assert_eq!((address, dst.len()), (0x1400, 2));
                 dst.copy_from_slice(&[3, 4]);
             }
             _ => panic!("unexpected backend call"),
