@@ -17,7 +17,7 @@ pub(super) fn read_many_impl<F>(reads: &mut [ReadRequest<'_>], mut read: F) -> R
 where
     F: FnMut(usize, &mut [u8]) -> (bool, usize),
 {
-    let mut scratch = [0u8; 4096];
+    let mut scratch = [0u8; 512];
     let result = (|| {
         let mut start = 0;
         while start < reads.len() {
@@ -29,6 +29,7 @@ where
             let group_address = reads[start].address;
             let page = group_address & !0xfff;
             let page_end = page | 0xfff;
+            let merge_end = page_end.min(group_address.saturating_add(scratch.len() - 1));
             let mut span_end = group_address.checked_add(reads[start].dst.len()).ok_or(
                 MemoryError::AddressOverflow {
                     base: group_address,
@@ -36,7 +37,7 @@ where
                 },
             )?;
             let mut end = start + 1;
-            if span_end - 1 <= page_end {
+            if span_end - 1 <= merge_end {
                 while end < reads.len() && !reads[end].dst.is_empty() {
                     let request_end = reads[end].address.checked_add(reads[end].dst.len()).ok_or(
                         MemoryError::AddressOverflow {
@@ -44,7 +45,7 @@ where
                             offset: reads[end].dst.len(),
                         },
                     )?;
-                    if reads[end].address < span_end || request_end - 1 > page_end {
+                    if reads[end].address < span_end || request_end - 1 > merge_end {
                         break;
                     }
                     span_end = request_end;
