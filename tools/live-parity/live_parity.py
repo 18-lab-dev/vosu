@@ -216,15 +216,17 @@ def _is_volatile(schema: str, parts: tuple[str, ...], active: bool) -> bool:
     return any(parts[:len(root)] == root for root in roots)
 
 
-def _is_dynamic_sequence(schema: str, parts: tuple[str, ...], active: bool) -> bool:
-    if not active:
-        return False
+def _is_hit_error_sequence(schema: str, parts: tuple[str, ...]) -> bool:
     return parts == {
         "precise": ("hitErrors",),
         "sc": ("hitErrors",),
         "v1": ("gameplay", "hits", "hitErrorArray"),
         "v2": ("play", "hitErrorArray"),
     }[schema]
+
+
+def _is_dynamic_sequence(schema: str, parts: tuple[str, ...], active: bool) -> bool:
+    return active and _is_hit_error_sequence(schema, parts)
 
 def _is_graph_float(schema: str, parts: tuple[str, ...]) -> bool:
     return (
@@ -309,6 +311,12 @@ def compare_pair(
     def walk(a: Any, b: Any, parts: tuple[str, ...]) -> None:
         if excluded(parts):
             return
+        if (
+                _is_hit_error_sequence(left.schema, parts)
+                and isinstance(a, list)
+                and isinstance(b, dict)
+                and isinstance(b.get("all"), list)):
+            b = b["all"]
         ka, kb = _kind(a), _kind(b)
         if ka != kb:
             add(parts, "type", a, b, f"type differs: {ka} != {kb}")

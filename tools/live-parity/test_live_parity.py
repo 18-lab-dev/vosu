@@ -486,6 +486,54 @@ class ComparatorTests(unittest.TestCase):
                     [], compare_pair(left, right, 300, active_override=True))
                 self.assertTrue(
                     compare_pair(left, right, 300, active_override=False))
+    def test_source_hit_error_lists_compare_against_vosu_all_only(self) -> None:
+        def payload(schema: str, hit_errors: object) -> dict:
+            if schema == "v1":
+                return {"gameplay": {"hits": {"hitErrorArray": hit_errors}}}
+            if schema == "v2":
+                return {"play": {"hitErrorArray": hit_errors}}
+            return {"hitErrors": hit_errors}
+
+        vosu_errors = {
+            "all": [2, 3],
+            "press": ["ignored"],
+            "release": {"ignored": True},
+        }
+        for schema in ("precise", "sc", "v1", "v2"):
+            with self.subTest(schema=schema):
+                active_source = Sample(
+                    "source", schema, 1, payload(schema, [1]))
+                vosu = Sample(
+                    "vosu", schema, 2, payload(schema, vosu_errors))
+                self.assertEqual(
+                    [],
+                    compare_pair(
+                        active_source, vosu, 300, active_override=True),
+                )
+
+                exact_source = Sample(
+                    "source", schema, 1, payload(schema, [2, 3]))
+                self.assertEqual(
+                    [],
+                    compare_pair(
+                        exact_source, vosu, 300, active_override=False),
+                )
+
+                short_source = Sample(
+                    "source", schema, 1, payload(schema, [2]))
+                mismatch = compare_pair(
+                    short_source, vosu, 300, active_override=False)
+                self.assertEqual("length", mismatch[0].comparator)
+
+    def test_hit_error_normalization_is_restricted_to_exact_paths(self) -> None:
+        left = Sample("source", "v2", 1, {"decoy": [2, 3]})
+        right = Sample("vosu", "v2", 2, {"decoy": {"all": [2, 3]}})
+        mismatch = compare_pair(left, right, 300, active_override=False)
+        self.assertEqual(
+            [("/decoy", "type")],
+            [(item.pointer, item.comparator) for item in mismatch],
+        )
+
     def test_result_gameplay_is_volatile_but_result_screen_is_exact(self) -> None:
         left = Sample(
             "source", "v2", 1,
