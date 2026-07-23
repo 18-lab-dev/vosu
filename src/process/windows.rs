@@ -386,8 +386,6 @@ impl ProcessMemory for WindowsProcessMemory {
     }
 }
 
-
-
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct ProcessBasicInformation64 {
@@ -629,7 +627,6 @@ fn last_error(operation: &'static str) -> MemoryError {
         &format!("Windows error {}", unsafe { GetLastError() }),
     )
 }
-
 
 #[cfg(test)]
 mod tests;

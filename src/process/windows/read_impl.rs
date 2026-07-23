@@ -1,6 +1,12 @@
 use super::{MemoryError, ReadRequest};
 
-pub(super) fn read_exact_impl<F>(address: usize, dst: &mut [u8], mut read: F) -> Result<(), MemoryError>
+const MERGED_READ_LIMIT: usize = 1024;
+
+pub(super) fn read_exact_impl<F>(
+    address: usize,
+    dst: &mut [u8],
+    mut read: F,
+) -> Result<(), MemoryError>
 where
     F: FnMut(usize, &mut [u8]) -> (bool, usize),
 {
@@ -13,12 +19,64 @@ where
     Err(read_error(address, expected, count))
 }
 
-#[inline(never)]
-pub(super) fn read_many_impl<F>(reads: &mut [ReadRequest<'_>], mut read: F) -> Result<(), MemoryError>
+pub(super) fn read_many_impl<F>(
+    reads: &mut [ReadRequest<'_>],
+    mut read: F,
+) -> Result<(), MemoryError>
 where
     F: FnMut(usize, &mut [u8]) -> (bool, usize),
 {
-    let mut scratch = [0u8; 1024];
+    if let [request] = reads {
+        let result = read_single(request, &mut read);
+        if result.is_err() {
+            request.dst.fill(0);
+        }
+        result
+    } else {
+        read_many_batched(reads, &mut read)
+    }
+}
+
+fn read_single<F>(request: &mut ReadRequest<'_>, read: &mut F) -> Result<(), MemoryError>
+where
+    F: FnMut(usize, &mut [u8]) -> (bool, usize),
+{
+    if request.dst.is_empty() {
+        return Ok(());
+    }
+
+    let expected = request.dst.len();
+    let (ok, count) = read(request.address, request.dst);
+    let initialized = count.min(expected);
+    if initialized < expected {
+        let suffix_address =
+            request
+                .address
+                .checked_add(initialized)
+                .ok_or(MemoryError::AddressOverflow {
+                    base: request.address,
+                    offset: initialized,
+                })?;
+        let (suffix_ok, suffix_count) = read(suffix_address, &mut request.dst[initialized..]);
+        if !suffix_ok || suffix_count != expected - initialized {
+            return Err(read_error(
+                suffix_address,
+                expected - initialized,
+                suffix_count,
+            ));
+        }
+    } else if !ok {
+        return Err(read_error(request.address, expected, count));
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn read_many_batched<F>(reads: &mut [ReadRequest<'_>], read: &mut F) -> Result<(), MemoryError>
+where
+    F: FnMut(usize, &mut [u8]) -> (bool, usize),
+{
+    let mut scratch = [0u8; MERGED_READ_LIMIT];
     let result = (|| {
         let mut start = 0;
         while start < reads.len() {
@@ -55,29 +113,7 @@ where
             }
 
             if end == start + 1 {
-                let request = &mut reads[start];
-                let expected = request.dst.len();
-                let (ok, count) = read(request.address, request.dst);
-                let initialized = count.min(expected);
-                if initialized < expected {
-                    let suffix_address = request.address.checked_add(initialized).ok_or(
-                        MemoryError::AddressOverflow {
-                            base: request.address,
-                            offset: initialized,
-                        },
-                    )?;
-                    let (suffix_ok, suffix_count) =
-                        read(suffix_address, &mut request.dst[initialized..]);
-                    if !suffix_ok || suffix_count != expected - initialized {
-                        return Err(read_error(
-                            suffix_address,
-                            expected - initialized,
-                            suffix_count,
-                        ));
-                    }
-                } else if !ok {
-                    return Err(read_error(request.address, expected, count));
-                }
+                read_single(&mut reads[start], read)?;
                 start = end;
                 continue;
             }
