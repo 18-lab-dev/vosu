@@ -36,6 +36,7 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 - Restored legacy counter compatibility by injecting the logical `window.COUNTER_PATH` into served counter HTML, allowing overlay settings WebSocket requests to identify the correct counter.
 - Kept legacy overlay WebSocket deadlines anchored to their configured cadence across staggered client write-completion and catch-up wakes, preventing slow overlays from postponing 100 ms updates for fast overlays.
 - Restored Linux gameplay snapshot freshness by reading valid process-memory batches directly instead of reparsing thousands of `/proc/<pid>/maps` entries for every primitive read; faults still retry through fresh mapping-aware validation.
+- Coalesced same-page gapped Windows process reads without heap allocation while retaining short-read retries and all-destination zeroing on errors.
 
 ### Documentation
 

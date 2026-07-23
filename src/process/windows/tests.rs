@@ -84,6 +84,84 @@ fn short_coalesced_read_retries_suffix() {
 }
 
 #[test]
+fn gapped_same_page_reads_once_and_scatters() {
+    let mut a = [0u8; 2];
+    let mut b = [0u8; 3];
+    let mut reads = [
+        ReadRequest::new(0x1008, &mut a),
+        ReadRequest::new(0x1010, &mut b),
+    ];
+    let mut calls = 0;
+    read_many_impl(&mut reads, |address, dst| {
+        calls += 1;
+        assert_eq!(address, 0x1008);
+        assert_eq!(dst.len(), 11);
+        dst.copy_from_slice(&[1, 2, 9, 9, 9, 9, 9, 9, 3, 4, 5]);
+        (true, dst.len())
+    })
+    .unwrap();
+    assert_eq!(calls, 1);
+    assert_eq!(a, [1, 2]);
+    assert_eq!(b, [3, 4, 5]);
+}
+
+#[test]
+fn page_boundary_keeps_reads_separate() {
+    let mut a = [0u8; 2];
+    let mut b = [0u8; 2];
+    let mut reads = [
+        ReadRequest::new(0x1ffe, &mut a),
+        ReadRequest::new(0x2000, &mut b),
+    ];
+    let mut calls = 0;
+    read_many_impl(&mut reads, |address, dst| {
+        calls += 1;
+        match calls {
+            1 => {
+                assert_eq!((address, dst.len()), (0x1ffe, 2));
+                dst.copy_from_slice(&[1, 2]);
+            }
+            2 => {
+                assert_eq!((address, dst.len()), (0x2000, 2));
+                dst.copy_from_slice(&[3, 4]);
+            }
+            _ => panic!("unexpected backend call"),
+        }
+        (true, dst.len())
+    })
+    .unwrap();
+    assert_eq!(calls, 2);
+    assert_eq!(a, [1, 2]);
+    assert_eq!(b, [3, 4]);
+}
+
+#[test]
+fn singleton_short_read_retries_only_suffix() {
+    let mut dst = [0u8; 4];
+    let mut reads = [ReadRequest::new(0x1234, &mut dst)];
+    let mut calls = 0;
+    read_many_impl(&mut reads, |address, dst| {
+        calls += 1;
+        match calls {
+            1 => {
+                assert_eq!((address, dst.len()), (0x1234, 4));
+                dst[..2].copy_from_slice(&[1, 2]);
+                (false, 2)
+            }
+            2 => {
+                assert_eq!((address, dst.len()), (0x1236, 2));
+                dst.copy_from_slice(&[3, 4]);
+                (true, 2)
+            }
+            _ => panic!("unexpected backend call"),
+        }
+    })
+    .unwrap();
+    assert_eq!(calls, 2);
+    assert_eq!(dst, [1, 2, 3, 4]);
+}
+
+#[test]
 fn final_failure_zeroes_every_destination() {
     let mut a = [9u8; 2];
     let mut b = [9u8; 2];

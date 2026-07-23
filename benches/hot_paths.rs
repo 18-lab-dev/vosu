@@ -623,6 +623,84 @@ fn bench_v2_subscription(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(target_os = "windows")]
+#[repr(align(4096))]
+struct BenchmarkPage([u8; 4096]);
+
+#[cfg(target_os = "windows")]
+fn bench_windows_process_memory(c: &mut Criterion) {
+    let backing = black_box(BenchmarkPage([0x5a_u8; 4096]));
+    let address = black_box(backing.0.as_ptr() as usize);
+    let memory = vosu::process::open_process(std::process::id()).expect("open benchmark process");
+    let mut group = c.benchmark_group("windows_process_memory");
+    group.throughput(Throughput::Bytes(64));
+
+    group.bench_function("read_exact_64_bytes", |b| {
+        b.iter(|| {
+            let mut destination = [0_u8; 64];
+            black_box(memory.read_exact(black_box(address), black_box(&mut destination)))
+                .expect("read benchmark process");
+            black_box(destination)
+        });
+    });
+
+    group.bench_function("read_many_single_64_bytes", |b| {
+        b.iter(|| {
+            let mut destination = [0_u8; 64];
+            let mut requests = [ReadRequest::new(
+                black_box(address),
+                black_box(&mut destination),
+            )];
+            black_box(memory.read_many(black_box(&mut requests))).expect("read benchmark process");
+            drop(requests);
+            black_box(destination)
+        });
+    });
+
+    group.bench_function("read_many_contiguous_8x8_bytes", |b| {
+        b.iter(|| {
+            let mut destinations = [[0_u8; 8]; 8];
+            let [first, second, third, fourth, fifth, sixth, seventh, eighth] = &mut destinations;
+            let mut requests = [
+                ReadRequest::new(black_box(address), black_box(first)),
+                ReadRequest::new(black_box(address + 8), black_box(second)),
+                ReadRequest::new(black_box(address + 16), black_box(third)),
+                ReadRequest::new(black_box(address + 24), black_box(fourth)),
+                ReadRequest::new(black_box(address + 32), black_box(fifth)),
+                ReadRequest::new(black_box(address + 40), black_box(sixth)),
+                ReadRequest::new(black_box(address + 48), black_box(seventh)),
+                ReadRequest::new(black_box(address + 56), black_box(eighth)),
+            ];
+            black_box(memory.read_many(black_box(&mut requests))).expect("read benchmark process");
+            drop(requests);
+            black_box(destinations)
+        });
+    });
+
+    group.bench_function("read_many_gapped_8x8_bytes", |b| {
+        b.iter(|| {
+            let mut destinations = [[0_u8; 8]; 8];
+            let [first, second, third, fourth, fifth, sixth, seventh, eighth] = &mut destinations;
+            let mut requests = [
+                ReadRequest::new(black_box(address), black_box(first)),
+                ReadRequest::new(black_box(address + 64), black_box(second)),
+                ReadRequest::new(black_box(address + 128), black_box(third)),
+                ReadRequest::new(black_box(address + 192), black_box(fourth)),
+                ReadRequest::new(black_box(address + 256), black_box(fifth)),
+                ReadRequest::new(black_box(address + 320), black_box(sixth)),
+                ReadRequest::new(black_box(address + 384), black_box(seventh)),
+                ReadRequest::new(black_box(address + 448), black_box(eighth)),
+            ];
+            black_box(memory.read_many(black_box(&mut requests))).expect("read benchmark process");
+            drop(requests);
+            black_box(destinations)
+        });
+    });
+
+    group.finish();
+    black_box(backing);
+}
+
 #[cfg(target_os = "linux")]
 fn bench_linux_process_memory(c: &mut Criterion) {
     let source = black_box([0x5a_u8; 64]);
@@ -648,6 +726,8 @@ fn hot_paths(c: &mut Criterion) {
     bench_map_calculation(c);
     #[cfg(target_os = "linux")]
     bench_linux_process_memory(c);
+    #[cfg(target_os = "windows")]
+    bench_windows_process_memory(c);
     bench_serializers(c);
     bench_publication(c);
     bench_v2_subscription(c);

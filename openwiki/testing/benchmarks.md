@@ -21,6 +21,7 @@ Names below are the complete benchmark IDs from `benches/hot_paths.rs`.
 | `batch_scan` | `three_patterns_2mib` | Scanning one 2 MiB in-memory region for three patterns. Throughput is declared as 2 MiB per iteration. |
 | `raw_snapshot_reads` | `stable_regular_fields`, `lazer_regular_fields` | Calls to `global`, `menu`, and `gameplay` through the stable and lazer memory readers. |
 | `linux_process_memory` | `current_process_64_bytes` | Linux-only `process_vm_readv` of 64 bytes from the benchmark process through the production `ProcessMemory` reader. Throughput is declared as 64 bytes per iteration. |
+| `windows_process_memory` | `read_exact_64_bytes`, `read_many_single_64_bytes`, `read_many_contiguous_8x8_bytes`, `read_many_gapped_8x8_bytes` | Windows-only current-process `ReadProcessMemory` calls through the production `ProcessMemory` reader. `read_many` uses ordered non-overlapping requests and merges a complete same-page span, including gaps, through one 4 KiB read. Throughput is declared as 64 bytes per iteration. |
 | `map_calculation` | `parse`, `full_difficulty_performance`, `gradual_all_objects`, `unchanged_cache_key` | Parsing, difficulty plus performance calculation, gradual difficulty, and an unchanged-key cache hit for the embedded five-object osu!standard map. Throughput is declared as five elements per iteration. |
 | `serializers_cold` | `v1`, `v2`, `v2_precise`, `stream_companion` | Encoding a newly constructed synthetic API snapshot. The precise fixture carries 18 ordered mania keypresses. Snapshot construction is batched outside the timed routine. |
 | `serialization_cache` | `v1_bytes_clone`, `v2_bytes_clone`, `v2_precise_bytes_clone`, `stream_companion_bytes_clone` | Re-encoding the same pre-warmed snapshot, exercising each encoder's cached `Bytes` return path. |
@@ -126,6 +127,7 @@ In particular:
   process through the production `ProcessMemory` implementation. It measures
   the real `process_vm_readv` syscall and reader overhead, but not cross-process
   permissions, page faults, a large request batch, or a live osu! object graph.
+- The Windows-only `windows_process_memory` cases call production `ProcessMemory` against the current benchmark process through native `ReadProcessMemory`: `read_exact_64_bytes` is one exact 64-byte request, while `read_many` covers singleton, contiguous, and gapped ordered non-overlapping requests in a synthetic `#[repr(align(4096))]` page. They measure current-process native syscalls and synthetic aligned same-page layouts, not cross-process faults or a live osu! process. Production `read_many` performs no heap allocation; it merges across gaps only when the complete span fits one 4 KiB page, retries unread suffixes after short reads, and zeroes all destinations if any read fails.
 - Snapshot reads use a zero-filled 64 KiB fixture, placeholder stable addresses,
   and pre-resolved synthetic lazer addresses. They do not model realistic
   object graphs or changing game state.
@@ -251,6 +253,46 @@ interval:
 The strict comparison reported a 97.690% mean-time reduction
 (`p = 0.00 < 0.05`), or approximately 43.3 times the throughput for this
 single-read fixture.
+
+## Local Windows process-memory comparison: 2026-07-22
+
+This is a **non-portable observation, not a performance promise or acceptance
+threshold**. These machine-local results do not generalize to other Windows
+versions, hardware, virtualization settings, or workloads.
+
+- Commands, in order:
+
+  ```sh
+  cargo bench --locked --package vosu --bench hot_paths -- windows_process_memory --save-baseline windows-read-many-before
+  cargo bench --locked --package vosu --bench hot_paths -- windows_process_memory --baseline windows-read-many-before
+  ```
+- Baseline and patched runs used the same guest, workspace, target directory,
+  and Criterion directory, with the exact `windows_process_memory` filter.
+- Guest: QEMU/KVM Windows 11 IoT Enterprise LTSC Evaluation 10.0.26100, with
+  8 logical processors and 16 GiB RAM.
+- Host CPU: AMD Ryzen 9 9950X3D
+- Compiler: Rust 1.96.1
+- Criterion: 0.7.0 defaults; Plotters backend
+
+The table reports Criterion's arithmetic-mean point estimate and 95% confidence
+interval:
+
+| Benchmark ID | Baseline mean | Baseline 95% confidence interval | Patched mean | Patched 95% confidence interval |
+| --- | ---: | ---: | ---: | ---: |
+| `windows_process_memory/read_exact_64_bytes` | 376.25 ns | 375.97–376.51 ns | 377.29 ns | 377.04–377.58 ns |
+| `windows_process_memory/read_many_single_64_bytes` | 406.34 ns | 406.05–406.64 ns | 392.52 ns | 392.24–392.83 ns |
+| `windows_process_memory/read_many_contiguous_8x8_bytes` | 422.63 ns | 422.45–422.81 ns | 429.25 ns | 412.84–453.37 ns |
+| `windows_process_memory/read_many_gapped_8x8_bytes` | 3.2451 µs | 3.2437–3.2465 µs | 415.66 ns | 415.50–415.84 ns |
+
+The strict comparison concluded:
+
+- `read_exact_64_bytes`: +0.3127%, classified as noise.
+- `read_many_single_64_bytes`: -3.8153% (`p = 0`).
+- `read_many_contiguous_8x8_bytes`: -1.0331% (`p = 0.32`), no change.
+- `read_many_gapped_8x8_bytes`: -87.192% (`p = 0`), with +680.79% throughput.
+
+These are non-portable, machine-local observations from one virtualized guest,
+not a production performance promise.
 
 ## Historical local observation: 2026-07-16
 

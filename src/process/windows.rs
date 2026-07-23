@@ -401,6 +401,7 @@ fn read_many_impl<F>(reads: &mut [ReadRequest<'_>], mut read: F) -> Result<(), M
 where
     F: FnMut(usize, &mut [u8]) -> (bool, usize),
 {
+    let mut scratch = [0u8; 4096];
     let result = (|| {
         let mut start = 0;
         while start < reads.len() {
@@ -408,36 +409,66 @@ where
                 start += 1;
                 continue;
             }
-            let page = reads[start].address & !0xfff;
-            let mut end = start + 1;
-            let mut next_address = reads[start]
-                .address
-                .checked_add(reads[start].dst.len())
-                .ok_or(MemoryError::AddressOverflow {
-                    base: reads[start].address,
+
+            let group_address = reads[start].address;
+            let page = group_address & !0xfff;
+            let mut span_end = group_address.checked_add(reads[start].dst.len()).ok_or(
+                MemoryError::AddressOverflow {
+                    base: group_address,
                     offset: reads[start].dst.len(),
-                })?;
-            while end < reads.len()
-                && reads[end].address == next_address
-                && (reads[end].address & !0xfff) == page
-            {
-                next_address = next_address.checked_add(reads[end].dst.len()).ok_or(
-                    MemoryError::AddressOverflow {
-                        base: next_address,
-                        offset: reads[end].dst.len(),
-                    },
-                )?;
-                end += 1;
+                },
+            )?;
+            let mut end = start + 1;
+            if ((span_end - 1) & !0xfff) == page {
+                while end < reads.len() && !reads[end].dst.is_empty() {
+                    let request_end = reads[end].address.checked_add(reads[end].dst.len()).ok_or(
+                        MemoryError::AddressOverflow {
+                            base: reads[end].address,
+                            offset: reads[end].dst.len(),
+                        },
+                    )?;
+                    if reads[end].address < span_end || ((request_end - 1) & !0xfff) != page {
+                        break;
+                    }
+                    span_end = request_end;
+                    end += 1;
+                }
             }
-            let total: usize = reads[start..end].iter().map(|r| r.dst.len()).sum();
-            let mut buffer = vec![0u8; total];
-            let (_ok, count) = read(reads[start].address, &mut buffer);
-            let initialized = count.min(total);
-            let mut offset = 0;
+
+            if end == start + 1 {
+                let request = &mut reads[start];
+                let expected = request.dst.len();
+                let (_ok, count) = read(request.address, request.dst);
+                let initialized = count.min(expected);
+                if initialized < expected {
+                    let suffix_address = request.address.checked_add(initialized).ok_or(
+                        MemoryError::AddressOverflow {
+                            base: request.address,
+                            offset: initialized,
+                        },
+                    )?;
+                    let (suffix_ok, suffix_count) =
+                        read(suffix_address, &mut request.dst[initialized..]);
+                    if !suffix_ok || suffix_count != expected - initialized {
+                        return Err(read_error(
+                            suffix_address,
+                            expected - initialized,
+                            suffix_count,
+                        ));
+                    }
+                }
+                start = end;
+                continue;
+            }
+
+            let span_len = span_end - group_address;
+            let (_ok, count) = read(group_address, &mut scratch[..span_len]);
+            let initialized = count.min(span_len);
             for request in &mut reads[start..end] {
+                let offset = request.address - group_address;
                 let prefix = initialized.saturating_sub(offset).min(request.dst.len());
                 if prefix != 0 {
-                    request.dst[..prefix].copy_from_slice(&buffer[offset..offset + prefix]);
+                    request.dst[..prefix].copy_from_slice(&scratch[offset..offset + prefix]);
                 }
                 if prefix < request.dst.len() {
                     let suffix_address = request.address.checked_add(prefix).ok_or(
@@ -456,7 +487,6 @@ where
                         ));
                     }
                 }
-                offset += request.dst.len();
             }
             start = end;
         }

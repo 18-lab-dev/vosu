@@ -1,4 +1,4 @@
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -270,7 +270,7 @@ pub(crate) fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), Set
 
 #[cfg(unix)]
 fn sync_parent(path: &Path) -> io::Result<()> {
-    File::open(path)?.sync_all()
+    fs::File::open(path)?.sync_all()
 }
 #[cfg(not(unix))]
 fn sync_parent(_: &Path) -> io::Result<()> {
