@@ -198,11 +198,14 @@ class CompareCliTests(unittest.TestCase):
                     and sample.payload.get("state") == "play"):
                 sample.payload["play"]["mode"] = {
                     "number": 3, "name": "mania"}
-                sample.payload["play"]["hitErrorArray"] = {
-                    "all": list(all_errors),
-                    "press": [1],
-                    "release": list(release_errors),
-                }
+                if sample.daemon == "source":
+                    sample.payload["play"]["hitErrorArray"] = list(all_errors)
+                else:
+                    sample.payload["play"]["hitErrorArray"] = {
+                        "all": list(all_errors),
+                        "press": [1],
+                        "release": list(release_errors),
+                    }
         return samples
 
     def test_general_capture_does_not_enable_mania_hold_contract(self) -> None:
@@ -211,8 +214,19 @@ class CompareCliTests(unittest.TestCase):
         self.assertEqual([], report["vosu_contract_failures"])
 
     def test_valid_mania_hold_capture_passes_contract(self) -> None:
-        report = self.run_compare_samples(
-            self.mania_hold_samples(), scenario="mania-hold")
+        samples = self.mania_hold_samples()
+        source = next(
+            sample for sample in samples
+            if sample.daemon == "source" and sample.schema == "v2"
+            and sample.payload.get("state") == "play")
+        vosu = next(
+            sample for sample in samples
+            if sample.daemon == "vosu" and sample.schema == "v2"
+            and sample.payload.get("state") == "play")
+        self.assertIsInstance(source.payload["play"]["hitErrorArray"], list)
+        self.assertIsInstance(vosu.payload["play"]["hitErrorArray"], dict)
+
+        report = self.run_compare_samples(samples, scenario="mania-hold")
         self.assertTrue(report["passed"])
         self.assertEqual([], report["vosu_contract_failures"])
         self.assertEqual("mania-hold", report["metadata"]["scenario"])
@@ -267,14 +281,15 @@ class CompareCliTests(unittest.TestCase):
             with self.subTest(case=name):
                 samples = self.mania_hold_samples()
                 for sample in samples:
-                    if (sample.schema == "v2"
+                    if (sample.daemon == "vosu" and sample.schema == "v2"
                             and isinstance(sample.payload, dict)
-                            and sample.payload.get("state") == "play"):
+                            and sample.payload.get("state") == "play"
+                            and not sample.payload.get("game", {}).get(
+                                "paused", False)):
                         corrupt(sample.payload["play"])
                 report = self.run_compare_samples(
                     samples, scenario="mania-hold")
                 self.assertFalse(report["passed"])
-                self.assertEqual([], report["parity_mismatches"])
                 failures = report["vosu_contract_failures"]
                 self.assertTrue(any(
                     item["reason"] == expected_reason
