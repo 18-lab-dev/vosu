@@ -445,13 +445,14 @@ impl LazerMemory {
         let allowed_size = match mode {
             0 => matches!(size, 0xe8 | 0xe0),
             1 => matches!(size, 0x68 | 0x50),
-            3 => matches!(size, 0x58 | 0x88),
+            3 => matches!(size, 0x58 | 0x88 | 0x90),
             _ => false,
         };
         if !allowed_size {
             return Ok(None);
         }
-        if mode == 3 && size == 0x88 {
+        // The 2026.711.0 HoldNote layout includes PlaySlidingSamples, aligning its managed size to 0x90.
+        if mode == 3 && matches!(size, 0x88 | 0x90) {
             return Ok(Some(HitErrorEvent::ManiaHoldAggregate));
         }
         let result = i32::from_le_bytes(result_bytes);

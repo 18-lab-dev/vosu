@@ -521,6 +521,8 @@ def capture(cfg: dict[str, Any], out: str, timeout: float, interval_ms: int) -> 
             "reference_capabilities": reference_capabilities,
             "barrier_times": barrier_times,
         }
+        if "scenario" in cfg:
+            metadata["scenario"] = cfg["scenario"]
         dump_capture(out, samples, metadata)
     finally:
         _close_windows_client_job(client)

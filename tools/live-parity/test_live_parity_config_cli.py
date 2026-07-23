@@ -123,6 +123,33 @@ class ConfigCliTests(unittest.TestCase):
             schema["properties"]["client_launch_mode"]["enum"],
         )
         self.assertEqual(3, len(schema["oneOf"]))
+        self.assertEqual(
+            ["mania-hold"], schema["properties"]["scenario"]["enum"])
+
+    def test_mania_hold_scenario_is_optional_and_strict(self) -> None:
+        general = self.run_check(self.config())
+        self.assertEqual(0, general.returncode, general.stderr)
+
+        mania = self.config()
+        mania["scenario"] = "mania-hold"
+        valid = self.run_check(mania)
+        self.assertEqual(0, valid.returncode, valid.stderr)
+
+        invalid = self.config()
+        invalid["scenario"] = "mania"
+        rejected = self.run_check(invalid)
+        self.assertEqual(2, rejected.returncode)
+        self.assertIn(
+            "scenario must be mania-hold when provided", rejected.stderr)
+
+    def test_cli_guidance_names_mania_hold_capture_requirements(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(HERE / "run.py"), "--help"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("mania-hold", result.stdout)
+        self.assertIn("hold notes and judged tails", result.stdout)
 
     def test_config_schema_exposes_native_reference_branch(self) -> None:
         schema = LIVE_RUN.config_schema()

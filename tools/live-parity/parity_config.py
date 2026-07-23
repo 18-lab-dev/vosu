@@ -57,6 +57,7 @@ def config_schema() -> dict[str, Any]:
                      "client_expected_sha256", "client_expected_version",
                      "os", "client", "poll_rate_ms", "daemons"],
         "properties": {
+            "scenario": {"enum": ["mania-hold"]},
             "source_mode": {"enum": ["node-build", "native-reference"]},
             "source_directory": {"type": "string", "minLength": 1},
             "source_reference": {
@@ -109,7 +110,7 @@ def load_config(path: str) -> dict[str, Any]:
         cfg = json.load(fh)
     errors: list[str] = []
     allowed_top = {
-        "source_mode", "source_directory", "source_reference",
+        "scenario", "source_mode", "source_directory", "source_reference",
         "client_executable", "client_args", "client_launch_mode",
         "client_expected_sha256", "client_expected_version",
         "os", "client", "poll_rate_ms", "daemons",
@@ -117,6 +118,8 @@ def load_config(path: str) -> dict[str, Any]:
     unknown = set(cfg) - allowed_top
     if unknown:
         errors.append("unknown configuration fields: " + ", ".join(sorted(unknown)))
+    if "scenario" in cfg and cfg["scenario"] != "mania-hold":
+        errors.append("scenario must be mania-hold when provided")
     source_mode = cfg.get("source_mode", "node-build")
     if source_mode not in {"node-build", "native-reference"}:
         errors.append("source_mode must be node-build or native-reference")
