@@ -17,7 +17,7 @@ pub(super) fn read_many_impl<F>(reads: &mut [ReadRequest<'_>], mut read: F) -> R
 where
     F: FnMut(usize, &mut [u8]) -> (bool, usize),
 {
-    let mut scratch = [0u8; 512];
+    let mut scratch = [0u8; 1024];
     let result = (|| {
         let mut start = 0;
         while start < reads.len() {
