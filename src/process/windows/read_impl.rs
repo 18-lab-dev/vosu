@@ -28,6 +28,7 @@ where
 
             let group_address = reads[start].address;
             let page = group_address & !0xfff;
+            let page_end = page | 0xfff;
             let mut span_end = group_address.checked_add(reads[start].dst.len()).ok_or(
                 MemoryError::AddressOverflow {
                     base: group_address,
@@ -35,7 +36,7 @@ where
                 },
             )?;
             let mut end = start + 1;
-            if ((span_end - 1) & !0xfff) == page {
+            if span_end - 1 <= page_end {
                 while end < reads.len() && !reads[end].dst.is_empty() {
                     let request_end = reads[end].address.checked_add(reads[end].dst.len()).ok_or(
                         MemoryError::AddressOverflow {
@@ -43,7 +44,7 @@ where
                             offset: reads[end].dst.len(),
                         },
                     )?;
-                    if reads[end].address < span_end || ((request_end - 1) & !0xfff) != page {
+                    if reads[end].address < span_end || request_end - 1 > page_end {
                         break;
                     }
                     span_end = request_end;
