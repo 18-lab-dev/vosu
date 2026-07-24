@@ -21,7 +21,7 @@ Names below are the complete benchmark IDs from `benches/hot_paths.rs`.
 | `batch_scan` | `three_patterns_2mib` | Scanning one 2 MiB in-memory region for three patterns. Throughput is declared as 2 MiB per iteration. |
 | `raw_snapshot_reads` | `stable_regular_fields`, `lazer_regular_fields` | Calls to `global`, `menu`, and `gameplay` through the stable and lazer memory readers. |
 | `linux_process_memory` | `current_process_64_bytes` | Linux-only `process_vm_readv` of 64 bytes from the benchmark process through the production `ProcessMemory` reader. Throughput is declared as 64 bytes per iteration. |
-| `windows_process_memory` | `read_exact_64_bytes`, `read_many_single_64_bytes`, `read_many_contiguous_8x8_bytes`, `read_many_gapped_8x8_bytes` | Windows-only current-process `ReadProcessMemory` calls through the production `ProcessMemory` reader. `read_many` uses ordered non-overlapping requests and merges a complete same-page span, including gaps, through one 4 KiB read. Throughput is declared as 64 bytes per iteration. |
+| `windows_process_memory` | `read_exact_64_bytes`, `read_many_single_64_bytes`, `read_many_contiguous_8x8_bytes`, `read_many_gapped_8x8_bytes` | Windows-only current-process `ReadProcessMemory` calls through the production `ProcessMemory` reader. `read_many` combines ordered non-overlapping requests only when their full span fits a fixed 1024-byte stack scratch and one 4 KiB page; singleton requests bypass the batching scratch. Throughput is declared as 64 bytes per iteration. |
 | `map_calculation` | `parse`, `full_difficulty_performance`, `gradual_all_objects`, `unchanged_cache_key` | Parsing, difficulty plus performance calculation, gradual difficulty, and an unchanged-key cache hit for the embedded five-object osu!standard map. Throughput is declared as five elements per iteration. |
 | `serializers_cold` | `v1`, `v2`, `v2_precise`, `stream_companion` | Encoding a newly constructed synthetic API snapshot. The precise fixture carries 18 ordered mania keypresses. Snapshot construction is batched outside the timed routine. |
 | `serialization_cache` | `v1_bytes_clone`, `v2_bytes_clone`, `v2_precise_bytes_clone`, `stream_companion_bytes_clone` | Re-encoding the same pre-warmed snapshot, exercising each encoder's cached `Bytes` return path. |
@@ -127,7 +127,7 @@ In particular:
   process through the production `ProcessMemory` implementation. It measures
   the real `process_vm_readv` syscall and reader overhead, but not cross-process
   permissions, page faults, a large request batch, or a live osu! object graph.
-- The Windows-only `windows_process_memory` cases call production `ProcessMemory` against the current benchmark process through native `ReadProcessMemory`: `read_exact_64_bytes` is one exact 64-byte request, while `read_many` covers singleton, contiguous, and gapped ordered non-overlapping requests in a synthetic `#[repr(align(4096))]` page. They measure current-process native syscalls and synthetic aligned same-page layouts, not cross-process faults or a live osu! process. Production `read_many` performs no heap allocation; it merges across gaps only when the complete span fits one 4 KiB page, retries unread suffixes after short reads, and zeroes all destinations if any read fails.
+- The Windows-only `windows_process_memory` cases call production `ProcessMemory` against the current benchmark process through native `ReadProcessMemory`: `read_exact_64_bytes` is one exact 64-byte request, while `read_many` covers singleton, contiguous, and gapped ordered non-overlapping requests in a synthetic `#[repr(align(4096))]` page. They measure current-process native syscalls and synthetic aligned same-page layouts, not cross-process faults or a live osu! process. Production `read_many` bypasses batching scratch for singleton requests; otherwise it uses a fixed 1024-byte stack scratch and merges across gaps only when the full span fits that capacity and one 4 KiB page, retries unread suffixes after short reads, rejects a false backend result even when the byte count equals expected, and zeroes all destinations if any read fails.
 - Snapshot reads use a zero-filled 64 KiB fixture, placeholder stable addresses,
   and pre-resolved synthetic lazer addresses. They do not model realistic
   object graphs or changing game state.
@@ -293,6 +293,29 @@ The strict comparison concluded:
 
 These are non-portable, machine-local observations from one virtualized guest,
 not a production performance promise.
+
+### Autoresearch follow-up
+
+The separate autoresearch run used:
+
+```sh
+bash autoresearch.sh
+```
+
+Methodology: 31 samples × 16,384 operations, reporting the median in ns/op
+for each workload on the same Windows 11 QEMU/KVM guest with Rust 1.96.1.
+The harness baseline and final canonical autoresearch medians were:
+
+| Workload | Harness baseline median | Final autoresearch median | Change |
+| --- | ---: | ---: | ---: |
+| `gapped` | 412.52 ns/op | 395.94 ns/op | -4.0192% |
+| `exact` | 374.82 ns/op | 372.36 ns/op | -0.6563% |
+| `singleton` | 392.07 ns/op | 370.68 ns/op | -5.4557% |
+| `contiguous` | 408.50 ns/op | 392.90 ns/op | -3.8188% |
+
+These are non-portable, machine-local observations from one virtualized guest;
+they are subject to benchmark noise and are not a production performance
+promise.
 
 ## Historical local observation: 2026-07-16
 

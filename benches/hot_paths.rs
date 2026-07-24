@@ -647,12 +647,14 @@ fn bench_windows_process_memory(c: &mut Criterion) {
     group.bench_function("read_many_single_64_bytes", |b| {
         b.iter(|| {
             let mut destination = [0_u8; 64];
-            let mut requests = [ReadRequest::new(
-                black_box(address),
-                black_box(&mut destination),
-            )];
-            black_box(memory.read_many(black_box(&mut requests))).expect("read benchmark process");
-            drop(requests);
+            {
+                let mut requests = [ReadRequest::new(
+                    black_box(address),
+                    black_box(&mut destination),
+                )];
+                black_box(memory.read_many(black_box(&mut requests)))
+                    .expect("read benchmark process");
+            }
             black_box(destination)
         });
     });
@@ -660,19 +662,22 @@ fn bench_windows_process_memory(c: &mut Criterion) {
     group.bench_function("read_many_contiguous_8x8_bytes", |b| {
         b.iter(|| {
             let mut destinations = [[0_u8; 8]; 8];
-            let [first, second, third, fourth, fifth, sixth, seventh, eighth] = &mut destinations;
-            let mut requests = [
-                ReadRequest::new(black_box(address), black_box(first)),
-                ReadRequest::new(black_box(address + 8), black_box(second)),
-                ReadRequest::new(black_box(address + 16), black_box(third)),
-                ReadRequest::new(black_box(address + 24), black_box(fourth)),
-                ReadRequest::new(black_box(address + 32), black_box(fifth)),
-                ReadRequest::new(black_box(address + 40), black_box(sixth)),
-                ReadRequest::new(black_box(address + 48), black_box(seventh)),
-                ReadRequest::new(black_box(address + 56), black_box(eighth)),
-            ];
-            black_box(memory.read_many(black_box(&mut requests))).expect("read benchmark process");
-            drop(requests);
+            {
+                let [first, second, third, fourth, fifth, sixth, seventh, eighth] =
+                    &mut destinations;
+                let mut requests = [
+                    ReadRequest::new(black_box(address), black_box(first)),
+                    ReadRequest::new(black_box(address + 8), black_box(second)),
+                    ReadRequest::new(black_box(address + 16), black_box(third)),
+                    ReadRequest::new(black_box(address + 24), black_box(fourth)),
+                    ReadRequest::new(black_box(address + 32), black_box(fifth)),
+                    ReadRequest::new(black_box(address + 40), black_box(sixth)),
+                    ReadRequest::new(black_box(address + 48), black_box(seventh)),
+                    ReadRequest::new(black_box(address + 56), black_box(eighth)),
+                ];
+                black_box(memory.read_many(black_box(&mut requests)))
+                    .expect("read benchmark process");
+            }
             black_box(destinations)
         });
     });
@@ -680,19 +685,22 @@ fn bench_windows_process_memory(c: &mut Criterion) {
     group.bench_function("read_many_gapped_8x8_bytes", |b| {
         b.iter(|| {
             let mut destinations = [[0_u8; 8]; 8];
-            let [first, second, third, fourth, fifth, sixth, seventh, eighth] = &mut destinations;
-            let mut requests = [
-                ReadRequest::new(black_box(address), black_box(first)),
-                ReadRequest::new(black_box(address + 64), black_box(second)),
-                ReadRequest::new(black_box(address + 128), black_box(third)),
-                ReadRequest::new(black_box(address + 192), black_box(fourth)),
-                ReadRequest::new(black_box(address + 256), black_box(fifth)),
-                ReadRequest::new(black_box(address + 320), black_box(sixth)),
-                ReadRequest::new(black_box(address + 384), black_box(seventh)),
-                ReadRequest::new(black_box(address + 448), black_box(eighth)),
-            ];
-            black_box(memory.read_many(black_box(&mut requests))).expect("read benchmark process");
-            drop(requests);
+            {
+                let [first, second, third, fourth, fifth, sixth, seventh, eighth] =
+                    &mut destinations;
+                let mut requests = [
+                    ReadRequest::new(black_box(address), black_box(first)),
+                    ReadRequest::new(black_box(address + 64), black_box(second)),
+                    ReadRequest::new(black_box(address + 128), black_box(third)),
+                    ReadRequest::new(black_box(address + 192), black_box(fourth)),
+                    ReadRequest::new(black_box(address + 256), black_box(fifth)),
+                    ReadRequest::new(black_box(address + 320), black_box(sixth)),
+                    ReadRequest::new(black_box(address + 384), black_box(seventh)),
+                    ReadRequest::new(black_box(address + 448), black_box(eighth)),
+                ];
+                black_box(memory.read_many(black_box(&mut requests)))
+                    .expect("read benchmark process");
+            }
             black_box(destinations)
         });
     });
