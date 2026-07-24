@@ -290,6 +290,7 @@ class CompareCliTests(unittest.TestCase):
                 report = self.run_compare_samples(
                     samples, scenario="mania-hold")
                 self.assertFalse(report["passed"])
+
                 failures = report["vosu_contract_failures"]
                 self.assertTrue(any(
                     item["reason"] == expected_reason
