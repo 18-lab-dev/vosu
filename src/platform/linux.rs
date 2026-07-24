@@ -1,5 +1,7 @@
 //! Linux-native platform integration.
 
+mod capabilities;
+
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
@@ -32,6 +34,10 @@ fn parse_cap_sys_ptrace_effective(status: &str) -> io::Result<bool> {
     })?;
 
     Ok(capabilities & (1_u64 << CAP_SYS_PTRACE_BIT) != 0)
+}
+
+pub(super) fn install_capability_service(executable: &Path) -> io::Result<()> {
+    capabilities::install(executable)
 }
 
 pub(super) fn platform_roots(

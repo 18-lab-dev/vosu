@@ -453,9 +453,57 @@ pub(super) async fn finish_runtime_run(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SetcapInvocation {
+    Absent,
+    Install,
+    Invalid,
+}
+
+pub(super) fn classify_setcap_invocation(raw_args: &[OsString]) -> SetcapInvocation {
+    let mentions_setcap = raw_args.iter().skip(1).any(|argument| {
+        argument == OsStr::new("--setcap")
+            || argument
+                .to_str()
+                .is_some_and(|argument| argument.starts_with("--setcap="))
+    });
+    if !mentions_setcap {
+        return SetcapInvocation::Absent;
+    }
+    if raw_args.len() == 2 && raw_args[1] == OsStr::new("--setcap") {
+        SetcapInvocation::Install
+    } else {
+        SetcapInvocation::Invalid
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_setcap_command() -> io::Result<()> {
+    let executable = env::current_exe()?;
+    crate::platform::install_capability_service(&executable)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn run_setcap_command() -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "--setcap is supported only on Linux",
+    ))
+}
+
 /// Runs the daemon with the real process environment and command line.
 pub async fn run_cli() -> io::Result<()> {
     let raw_args: Vec<OsString> = env::args_os().collect();
+    match classify_setcap_invocation(&raw_args) {
+        SetcapInvocation::Absent => {}
+        SetcapInvocation::Install => return run_setcap_command(),
+        SetcapInvocation::Invalid => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "--setcap must be used as the only command-line argument",
+            ));
+        }
+    }
     let args = StartupArgs::parse(raw_args.clone());
     let environment = EnvironmentSnapshot::capture();
     let resolver = SnapshotPathResolver {
