@@ -1,11 +1,11 @@
 use super::*;
 use crate::process::{MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
-use std::sync::atomic::AtomicUsize;
+use std::sync::{Mutex, atomic::AtomicUsize};
 
 #[derive(Debug)]
 struct FakeMemory {
     pid: Pid,
-    alive: AtomicBool,
+    alive: Arc<AtomicBool>,
     drops: Arc<AtomicUsize>,
 }
 impl Drop for FakeMemory {
@@ -31,24 +31,92 @@ impl ProcessMemory for FakeMemory {
     }
 }
 
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+type EventBatch = (Vec<Pid>, Vec<Pid>, bool);
+
 struct FakeProvider {
     platform: DiscoveryPlatform,
     processes: Vec<ProcessDescriptor>,
+    inspected_processes: Vec<ProcessDescriptor>,
     drops: Arc<AtomicUsize>,
+    alive: Arc<AtomicBool>,
     foreground: Option<Pid>,
+    open_alives: Arc<Mutex<Vec<Arc<AtomicBool>>>>,
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    notify: Option<Arc<Notify>>,
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    events_healthy: Arc<AtomicBool>,
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    enumerations: Arc<AtomicUsize>,
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    inspections: Arc<AtomicUsize>,
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    event_batch: Arc<Mutex<EventBatch>>,
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    enumeration_failures: Arc<AtomicUsize>,
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    inspection_failures: Arc<AtomicUsize>,
 }
 impl ProcessProvider for FakeProvider {
     fn platform(&self) -> DiscoveryPlatform {
         self.platform
     }
     fn enumerate(&self) -> Result<Vec<ProcessDescriptor>, MemoryError> {
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        self.enumerations.fetch_add(1, Ordering::SeqCst);
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        if self
+            .enumeration_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(MemoryError::Backend {
+                operation: "test enumerate",
+                message: "transient failure".to_owned(),
+            });
+        }
         Ok(self.processes.clone())
     }
+    fn inspect(&self, pid: Pid) -> Result<Option<ProcessDescriptor>, MemoryError> {
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        self.inspections.fetch_add(1, Ordering::SeqCst);
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        if self
+            .inspection_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(MemoryError::Backend {
+                operation: "test inspect",
+                message: "transient failure".to_owned(),
+            });
+        }
+        Ok(self
+            .inspected_processes
+            .iter()
+            .find(|process| process.pid == pid)
+            .cloned())
+    }
     fn open(&self, pid: Pid) -> Result<ProcessHandle, MemoryError> {
+        let alive = {
+            let mut open_alives = self
+                .open_alives
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if open_alives.is_empty() {
+                Arc::clone(&self.alive)
+            } else {
+                open_alives.remove(0)
+            }
+        };
         Ok(ProcessHandle::new(
             Arc::new(FakeMemory {
                 pid,
-                alive: AtomicBool::new(true),
+                alive,
                 drops: Arc::clone(&self.drops),
             }),
             ProcessBitness::X64,
@@ -56,6 +124,23 @@ impl ProcessProvider for FakeProvider {
     }
     fn foreground_pid(&self) -> Option<Pid> {
         self.foreground
+    }
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    fn discovery_notifier(&self) -> Option<&Notify> {
+        self.notify.as_deref()
+    }
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    fn discovery_events_healthy(&self) -> bool {
+        self.events_healthy.load(Ordering::SeqCst)
+    }
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    fn drain_discovery_events(&self) -> (Vec<Pid>, Vec<Pid>, bool) {
+        std::mem::take(
+            &mut *self
+                .event_batch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 }
 
@@ -72,9 +157,26 @@ fn descriptor(pid: Pid, name: &str, bitness: ProcessBitness, args: &[&str]) -> P
 fn provider(platform: DiscoveryPlatform, processes: Vec<ProcessDescriptor>) -> FakeProvider {
     FakeProvider {
         platform,
+        inspected_processes: processes.clone(),
         processes,
         drops: Arc::new(AtomicUsize::new(0)),
         foreground: None,
+        alive: Arc::new(AtomicBool::new(true)),
+        open_alives: Arc::new(Mutex::new(Vec::new())),
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        notify: None,
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        events_healthy: Arc::new(AtomicBool::new(false)),
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        enumerations: Arc::new(AtomicUsize::new(0)),
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        inspections: Arc::new(AtomicUsize::new(0)),
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        event_batch: Arc::new(Mutex::new((Vec::new(), Vec::new(), false))),
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        enumeration_failures: Arc::new(AtomicUsize::new(0)),
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        inspection_failures: Arc::new(AtomicUsize::new(0)),
     }
 }
 
@@ -95,7 +197,51 @@ fn windows_names_and_bitness_classify_and_btree_orders() {
         vec![9, 40]
     );
     assert_eq!(manager.instances[&9].client(), ClientType::Stable);
+
     assert_eq!(manager.instances[&40].client(), ClientType::Lazer);
+}
+
+#[test]
+fn targeted_discovery_inserts_only_the_requested_pid() {
+    let provider = provider(
+        DiscoveryPlatform::Linux,
+        vec![
+            descriptor(8, "osu!", ProcessBitness::X64, &[]),
+            descriptor(9, "osu!", ProcessBitness::X64, &[]),
+        ],
+    );
+    let mut manager = InstanceManager::default();
+
+    assert!(manager.discover_pid(&provider, 9).unwrap());
+    assert_eq!(manager.instances.keys().copied().collect::<Vec<_>>(), [9]);
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    {
+        assert_eq!(provider.inspections.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.enumerations.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[test]
+fn targeted_discovery_replaces_a_dead_same_pid_generation() {
+    let old_provider = provider(
+        DiscoveryPlatform::Linux,
+        vec![descriptor(9, "osu!", ProcessBitness::X64, &[])],
+    );
+    let old_alive = Arc::clone(&old_provider.alive);
+    let mut manager = InstanceManager::default();
+    assert!(manager.discover_pid(&old_provider, 9).unwrap());
+    let old = manager.instances[&9].clone();
+
+    old_alive.store(false, Ordering::SeqCst);
+    let new_provider = provider(
+        DiscoveryPlatform::Linux,
+        vec![descriptor(9, "osu!", ProcessBitness::X64, &[])],
+    );
+    assert!(manager.discover_pid(&new_provider, 9).unwrap());
+
+    assert!(old.lifecycle_token().is_cancelled());
+    assert_ne!(manager.instances[&9].generation(), old.generation());
+    assert!(manager.instances[&9].process().is_alive());
 }
 
 #[test]
@@ -468,4 +614,323 @@ async fn discovery_runtime_publishes_current_then_closes_after_joined_shutdown()
     assert_eq!(removed.revision, added.revision + 1);
     assert!(removed.instances.is_empty());
     assert!(subscriber.changed().await.is_err());
+}
+
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+#[tokio::test]
+async fn failed_full_scan_retries_early_and_counts_only_success() {
+    let provider = provider(DiscoveryPlatform::Linux, Vec::new());
+    provider.events_healthy.store(true, Ordering::SeqCst);
+    provider.enumeration_failures.store(1, Ordering::SeqCst);
+    let attempts = Arc::clone(&provider.enumerations);
+    let health = Arc::clone(&provider.events_healthy);
+    let cache = tempfile::tempdir().unwrap();
+    let embedded = crate::assets::DaemonAssets::get("offsets.json").unwrap();
+    let runtime = InstanceRuntime::start(
+        provider,
+        LazerOffsetLoader::new(
+            OfflineFetcher,
+            cache.path().to_owned(),
+            bytes::Bytes::copy_from_slice(&embedded.data),
+        ),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while attempts.load(Ordering::SeqCst) < 2 {
+            assert_eq!(runtime.discovery_scan_count(), 0);
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("failed healthy scan must retry before the five-second reconciliation");
+    assert_eq!(runtime.discovery_scan_count(), 1);
+    assert!(runtime.process_events_healthy());
+
+    health.store(false, Ordering::SeqCst);
+    assert!(!runtime.process_events_healthy());
+    runtime.shutdown().await;
+}
+
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+#[tokio::test]
+async fn failed_targeted_inspection_is_not_counted() {
+    let mut provider = provider(DiscoveryPlatform::Linux, Vec::new());
+    provider.inspected_processes = vec![descriptor(7, "osu!", ProcessBitness::X64, &[])];
+    provider.inspection_failures.store(1, Ordering::SeqCst);
+    let notify = Arc::new(Notify::new());
+    let attempts = Arc::clone(&provider.inspections);
+    let event_batch = Arc::clone(&provider.event_batch);
+    provider.notify = Some(Arc::clone(&notify));
+    provider.events_healthy.store(true, Ordering::SeqCst);
+    let cache = tempfile::tempdir().unwrap();
+    let embedded = crate::assets::DaemonAssets::get("offsets.json").unwrap();
+    let runtime = InstanceRuntime::start(
+        provider,
+        LazerOffsetLoader::new(
+            OfflineFetcher,
+            cache.path().to_owned(),
+            bytes::Bytes::copy_from_slice(&embedded.data),
+        ),
+    );
+
+    *event_batch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = (vec![7], Vec::new(), false);
+    notify.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while attempts.load(Ordering::SeqCst) < 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("failed targeted inspection");
+    assert_eq!(runtime.targeted_inspection_count(), 0);
+
+    *event_batch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = (vec![7], Vec::new(), false);
+    notify.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while runtime.targeted_inspection_count() < 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("successful targeted inspection");
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    runtime.shutdown().await;
+}
+
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+#[tokio::test]
+async fn full_reconcile_replaces_a_dead_same_pid_in_one_pass() {
+    let mut provider = provider(
+        DiscoveryPlatform::Linux,
+        vec![descriptor(7, "osu!", ProcessBitness::X64, &[])],
+    );
+    let old_alive = Arc::new(AtomicBool::new(true));
+    let new_alive = Arc::new(AtomicBool::new(true));
+    *provider
+        .open_alives
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        vec![Arc::clone(&old_alive), Arc::clone(&new_alive)];
+    let notify = Arc::new(Notify::new());
+    let event_batch = Arc::clone(&provider.event_batch);
+    provider.notify = Some(Arc::clone(&notify));
+    provider.events_healthy.store(true, Ordering::SeqCst);
+    let cache = tempfile::tempdir().unwrap();
+    let embedded = crate::assets::DaemonAssets::get("offsets.json").unwrap();
+    let runtime = InstanceRuntime::start(
+        provider,
+        LazerOffsetLoader::new(
+            OfflineFetcher,
+            cache.path().to_owned(),
+            bytes::Bytes::copy_from_slice(&embedded.data),
+        ),
+    );
+
+    let old = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let Some(instance) = runtime.manager().read().await.instances().get(&7) {
+                break instance.clone();
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("initial generation");
+    old_alive.store(false, Ordering::SeqCst);
+    *event_batch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = (Vec::new(), Vec::new(), true);
+    notify.notify_one();
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let replacement = runtime.manager().read().await.instances()[&7].clone();
+            if replacement.generation() != old.generation() {
+                assert!(replacement.process().is_alive());
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("same-pass replacement");
+    assert!(old.lifecycle_token().is_cancelled());
+    runtime.shutdown().await;
+}
+
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+#[tokio::test]
+async fn live_exit_is_retried_until_the_process_dies_without_another_event() {
+    let mut provider = provider(
+        DiscoveryPlatform::Linux,
+        vec![descriptor(7, "osu!", ProcessBitness::X64, &[])],
+    );
+    let notify = Arc::new(Notify::new());
+    let event_batch = Arc::clone(&provider.event_batch);
+    let alive = Arc::clone(&provider.alive);
+    provider.notify = Some(Arc::clone(&notify));
+    provider.events_healthy.store(true, Ordering::SeqCst);
+    let cache = tempfile::tempdir().unwrap();
+    let embedded = crate::assets::DaemonAssets::get("offsets.json").unwrap();
+    let runtime = InstanceRuntime::start(
+        provider,
+        LazerOffsetLoader::new(
+            OfflineFetcher,
+            cache.path().to_owned(),
+            bytes::Bytes::copy_from_slice(&embedded.data),
+        ),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !runtime.manager().read().await.instances().contains_key(&7) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("initial discovery");
+
+    *event_batch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = (Vec::new(), vec![7], false);
+    notify.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let drained = event_batch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .1
+                .is_empty();
+            if drained {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("live exit revalidation");
+    assert!(runtime.manager().read().await.instances().contains_key(&7));
+
+    alive.store(false, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while runtime.manager().read().await.instances().contains_key(&7) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pending exit confirmation");
+    runtime.shutdown().await;
+}
+
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+#[tokio::test]
+async fn process_event_wakes_are_targeted_and_loss_reconciles_once() {
+    let mut provider = provider(DiscoveryPlatform::Linux, Vec::new());
+    provider.inspected_processes = vec![descriptor(7, "osu!", ProcessBitness::X64, &[])];
+    let notify = Arc::new(Notify::new());
+    let enumerations = Arc::clone(&provider.enumerations);
+    let inspections = Arc::clone(&provider.inspections);
+    let event_batch = Arc::clone(&provider.event_batch);
+    let alive = Arc::clone(&provider.alive);
+    provider.notify = Some(Arc::clone(&notify));
+    provider.events_healthy.store(true, Ordering::SeqCst);
+    let cache = tempfile::tempdir().unwrap();
+    let embedded = crate::assets::DaemonAssets::get("offsets.json").unwrap();
+    let runtime = InstanceRuntime::start(
+        provider,
+        LazerOffsetLoader::new(
+            OfflineFetcher,
+            cache.path().to_owned(),
+            bytes::Bytes::copy_from_slice(&embedded.data),
+        ),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while enumerations.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("initial discovery");
+    let initial = enumerations.load(Ordering::SeqCst);
+
+    *event_batch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = (vec![7], vec![999], false);
+    notify.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while inspections.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("targeted inspection");
+    assert_eq!(enumerations.load(Ordering::SeqCst), initial);
+    assert_eq!(inspections.load(Ordering::SeqCst), 1);
+    assert_eq!(runtime.targeted_inspection_count(), 1);
+    assert!(runtime.manager().read().await.instances().contains_key(&7));
+
+    *event_batch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = (Vec::new(), vec![7], false);
+    notify.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let pending = event_batch
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .1
+                .is_empty();
+            if pending {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("live exit revalidation");
+    assert!(runtime.manager().read().await.instances().contains_key(&7));
+
+    alive.store(false, Ordering::SeqCst);
+    *event_batch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = (Vec::new(), vec![7], false);
+    notify.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while runtime.manager().read().await.instances().contains_key(&7) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("dead exit removal");
+
+    runtime
+        .manager()
+        .read()
+        .await
+        .lifecycle_changed
+        .notify_one();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert_eq!(enumerations.load(Ordering::SeqCst), initial);
+
+    *event_batch
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = (Vec::new(), Vec::new(), true);
+    notify.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while enumerations.load(Ordering::SeqCst) == initial {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("loss reconciliation");
+    assert_eq!(enumerations.load(Ordering::SeqCst), initial + 1);
+
+    notify.notify_one();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert_eq!(enumerations.load(Ordering::SeqCst), initial + 1);
+    runtime.shutdown().await;
 }

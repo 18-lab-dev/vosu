@@ -3,6 +3,9 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
+use std::os::fd::OwnedFd;
+#[cfg(feature = "linux-process-events")]
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -76,12 +79,14 @@ pub struct LinuxProcessMemory {
     pid: libc::pid_t,
     proc_root: PathBuf,
     syscall: Arc<dyn ProcessVmReadv>,
+    pidfd: Option<Arc<OwnedFd>>,
 }
 
 impl std::fmt::Debug for LinuxProcessMemory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LinuxProcessMemory")
             .field("pid", &self.pid)
+            .field("pidfd", &self.pidfd.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -89,14 +94,34 @@ impl std::fmt::Debug for LinuxProcessMemory {
 impl LinuxProcessMemory {
     #[must_use]
     pub fn new(pid: u32) -> Self {
-        Self::with_parts(pid, PathBuf::from("/proc"), Arc::new(LibcProcessVmReadv))
+        #[cfg(feature = "linux-process-events")]
+        let pidfd = open_pidfd(pid).map(Arc::new);
+        #[cfg(not(feature = "linux-process-events"))]
+        let pidfd = None;
+        Self::with_parts_and_pidfd(
+            pid,
+            PathBuf::from("/proc"),
+            Arc::new(LibcProcessVmReadv),
+            pidfd,
+        )
     }
 
+    #[cfg(test)]
     fn with_parts(pid: u32, proc_root: PathBuf, syscall: Arc<dyn ProcessVmReadv>) -> Self {
+        Self::with_parts_and_pidfd(pid, proc_root, syscall, None)
+    }
+
+    fn with_parts_and_pidfd(
+        pid: u32,
+        proc_root: PathBuf,
+        syscall: Arc<dyn ProcessVmReadv>,
+        pidfd: Option<Arc<OwnedFd>>,
+    ) -> Self {
         Self {
             pid: pid as libc::pid_t,
             proc_root,
             syscall,
+            pidfd,
         }
     }
 
@@ -276,6 +301,34 @@ struct Chunk {
     len: usize,
 }
 
+#[cfg(feature = "linux-process-events")]
+fn open_pidfd(pid: u32) -> Option<OwnedFd> {
+    // SAFETY: pidfd_open takes an integer PID and zero flags, and returns a new fd.
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+    if fd < 0 {
+        return None;
+    }
+    // SAFETY: a successful pidfd_open returns a uniquely owned descriptor.
+    Some(unsafe { OwnedFd::from_raw_fd(fd as libc::c_int) })
+}
+
+#[cfg(feature = "linux-process-events")]
+fn pidfd_poll_reports_exit(result: libc::c_int, revents: libc::c_short) -> bool {
+    result > 0 && revents & libc::POLLIN != 0
+}
+
+#[cfg(feature = "linux-process-events")]
+fn pidfd_is_alive(pidfd: &OwnedFd) -> bool {
+    let mut descriptor = libc::pollfd {
+        fd: pidfd.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: descriptor points to one initialized pollfd for this call.
+    let result = unsafe { libc::poll(&mut descriptor, 1, 0) };
+    !pidfd_poll_reports_exit(result, descriptor.revents)
+}
+
 impl ProcessMemory for LinuxProcessMemory {
     fn read_scanner_region_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
         if dst.is_empty() {
@@ -325,16 +378,23 @@ impl ProcessMemory for LinuxProcessMemory {
     }
 
     fn is_alive(&self) -> bool {
-        u32::try_from(self.pid).is_ok_and(is_process_alive)
+        #[cfg(feature = "linux-process-events")]
+        if let Some(pidfd) = self.pidfd.as_deref() {
+            return pidfd_is_alive(pidfd);
+        }
+        u32::try_from(self.pid).is_ok_and(|pid| is_process_alive_at(&self.proc_root, pid))
     }
 }
 
 pub fn open_process(pid: u32) -> Result<LinuxProcessMemory, MemoryError> {
     let memory = LinuxProcessMemory::new(pid);
-    if !is_process_alive(pid) {
+    if !memory.is_alive() {
         return Err(read_error(0, 0, "process is not alive"));
     }
     memory.mapped_regions(false)?;
+    if !memory.is_alive() {
+        return Err(read_error(0, 0, "process exited while opening"));
+    }
     Ok(memory)
 }
 
@@ -347,6 +407,52 @@ pub fn enumerate_processes_matching(
     include: impl FnMut(&OsStr) -> bool,
 ) -> Result<Vec<LinuxProcessMetadata>, MemoryError> {
     enumerate_processes_matching_at(Path::new("/proc"), include)
+}
+/// Inspects one process without enumerating `/proc`. The leader `comm` is read
+/// before any heavier metadata and rejected candidates stop there.
+pub fn process_metadata_matching(
+    pid: u32,
+    include: impl FnOnce(&OsStr) -> bool,
+) -> Result<Option<LinuxProcessMetadata>, MemoryError> {
+    process_metadata_matching_at(Path::new("/proc"), pid, include)
+}
+
+fn process_metadata_matching_at(
+    proc_root: &Path,
+    pid: u32,
+    include: impl FnOnce(&OsStr) -> bool,
+) -> Result<Option<LinuxProcessMetadata>, MemoryError> {
+    let dir = proc_root.join(pid.to_string());
+    let name = match read_process_name_at(&dir) {
+        Ok(bytes) => process_name_from_bytes(bytes)?,
+        Err(error) if process_disappeared(&error) => return Ok(None),
+        Err(error) => return Err(backend("read /proc comm", error)),
+    };
+    if !include(&name) {
+        return Ok(None);
+    }
+    let command_line = match read_command_line_at(&dir) {
+        Ok(bytes) => command_line_from_bytes(&bytes),
+        Err(error) if process_disappeared(&error) => return Ok(None),
+        Err(error) => return Err(backend("read /proc cmdline", error)),
+    };
+    let executable = match fs::read_link(dir.join("exe")) {
+        Ok(executable) => executable,
+        Err(error) if process_disappeared(&error) => return Ok(None),
+        Err(error) => return Err(backend("read /proc exe", error)),
+    };
+    let bitness = match read_elf_bitness_at(&dir.join("exe")) {
+        Ok(bytes) => elf_bitness_from_bytes(&bytes)?,
+        Err(error) if process_disappeared(&error) => return Ok(None),
+        Err(error) => return Err(backend("read ELF header", error)),
+    };
+    Ok(Some(LinuxProcessMetadata {
+        pid,
+        name,
+        command_line,
+        executable,
+        bitness,
+    }))
 }
 
 #[cfg(test)]
@@ -399,8 +505,15 @@ pub fn process_name(pid: u32) -> Result<OsString, MemoryError> {
 }
 
 fn process_name_at(dir: &Path) -> Result<OsString, MemoryError> {
-    let mut bytes = read_prefix(&dir.join("comm"), MAX_COMM_FILE + 1)
-        .map_err(|error| backend("read /proc comm", error))?;
+    let bytes = read_process_name_at(dir).map_err(|error| backend("read /proc comm", error))?;
+    process_name_from_bytes(bytes)
+}
+
+fn read_process_name_at(dir: &Path) -> io::Result<Vec<u8>> {
+    read_prefix(&dir.join("comm"), MAX_COMM_FILE + 1)
+}
+
+fn process_name_from_bytes(mut bytes: Vec<u8>) -> Result<OsString, MemoryError> {
     if bytes.len() > MAX_COMM_FILE as usize {
         return Err(backend_message(
             "read /proc comm",
@@ -413,18 +526,29 @@ fn process_name_at(dir: &Path) -> Result<OsString, MemoryError> {
     Ok(OsString::from_vec(bytes))
 }
 
+fn process_disappeared(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
+}
+
 pub fn process_command_line(pid: u32) -> Result<Vec<OsString>, MemoryError> {
     command_line_at(&Path::new("/proc").join(pid.to_string()))
 }
 
 fn command_line_at(dir: &Path) -> Result<Vec<OsString>, MemoryError> {
-    let bytes =
-        read_bounded(&dir.join("cmdline")).map_err(|error| backend("read /proc cmdline", error))?;
-    Ok(bytes
+    let bytes = read_command_line_at(dir).map_err(|error| backend("read /proc cmdline", error))?;
+    Ok(command_line_from_bytes(&bytes))
+}
+
+fn read_command_line_at(dir: &Path) -> io::Result<Vec<u8>> {
+    read_bounded(&dir.join("cmdline"))
+}
+
+fn command_line_from_bytes(bytes: &[u8]) -> Vec<OsString> {
+    bytes
         .split(|byte| *byte == 0)
         .filter(|part| !part.is_empty())
         .map(|part| OsString::from_vec(part.to_vec()))
-        .collect())
+        .collect()
 }
 
 pub fn process_executable(pid: u32) -> Result<PathBuf, MemoryError> {
@@ -455,7 +579,15 @@ pub fn process_bitness(pid: u32) -> Result<ProcessBitness, MemoryError> {
 }
 
 fn elf_bitness_at(path: &Path) -> Result<ProcessBitness, MemoryError> {
-    let bytes = read_prefix(path, 5).map_err(|error| backend("read ELF header", error))?;
+    let bytes = read_elf_bitness_at(path).map_err(|error| backend("read ELF header", error))?;
+    elf_bitness_from_bytes(&bytes)
+}
+
+fn read_elf_bitness_at(path: &Path) -> io::Result<Vec<u8>> {
+    read_prefix(path, 5)
+}
+
+fn elf_bitness_from_bytes(bytes: &[u8]) -> Result<ProcessBitness, MemoryError> {
     if bytes.len() < 5 || &bytes[..4] != b"\x7fELF" {
         return Err(backend_message(
             "read ELF header",

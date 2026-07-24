@@ -114,13 +114,17 @@ Run vosu as the same desktop user as osu!. Tournament and debug-client processes
 
 On Linux, vosu can also read the osu! path from `${XDG_DATA_HOME:-$HOME/.local/share}/osuconfig/osupath`.
 
-On Linux, `process_vm_readv` must be permitted. During ordinary startup vosu checks the running process's effective capability set and warns if `CAP_SYS_PTRACE` is not effective, or if that check cannot be completed. The warning does not stop startup, but memory reads may fail. To grant only the required capability, replace the path below with the exact vosu binary path:
+On Linux, `process_vm_readv` must be permitted. During ordinary startup vosu checks the running process's effective capability set and warns if `CAP_SYS_PTRACE` is not effective, or if that check cannot be completed. The warning does not stop startup, but memory reads may fail. Install the capabilities required by the exact vosu build with:
 
 ```sh
-sudo setcap cap_sys_ptrace=eip /absolute/path/to/vosu
+sudo vosu --setcap
 ```
 
-Do not run vosu as root to bypass ptrace policy. Pattern or offset resolution may remain pending and retry while the process is alive; that alone does not confirm support for a game build.
+`--setcap` must be the only argument. It uses the running executable's absolute path, installs `/etc/systemd/system/vosu-capabilities.service`, starts that one-shot service immediately, and exits without starting the daemon. A normal build receives only `CAP_SYS_PTRACE`; a build compiled with `linux-process-events` also receives `CAP_SYS_RESOURCE`, `CAP_PERFMON`, and `CAP_BPF` for eBPF loading.
+
+The service is deliberately not enabled at boot: automatically granting capabilities to a replaceable user-owned binary would create a privilege-escalation path. Executable replacement, including an automatic update, removes file capabilities. After replacing vosu at the same path, rerun `sudo systemctl start vosu-capabilities.service`; rerun `sudo vosu --setcap` if the executable path changed.
+
+Do not run the ordinary vosu daemon as root to bypass ptrace or eBPF policy. Pattern or offset resolution may remain pending and retry while the process is alive; that alone does not confirm support for a game build.
 
 ## Files and migration
 

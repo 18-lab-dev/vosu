@@ -7,7 +7,10 @@ use tokio_util::sync::CancellationToken;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+use std::sync::atomic::AtomicU64;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -27,7 +30,21 @@ type LazerResolverHandle = JoinHandle<Result<Arc<LazerOffsets>, LazerLoadError>>
 
 pub const EMPTY_DISCOVERY_INTERVAL: Duration = Duration::from_millis(100);
 pub const ACTIVE_DISCOVERY_INTERVAL: Duration = Duration::from_secs(1);
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+pub const EVENT_RECONCILIATION_INTERVAL: Duration = Duration::from_secs(5);
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+const MAX_PENDING_EXIT_CONFIRMATIONS: usize = 128;
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+const EXIT_CONFIRMATION_INITIAL_BACKOFF: Duration = Duration::from_millis(10);
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+const EXIT_CONFIRMATION_MAX_BACKOFF: Duration = Duration::from_millis(250);
+
 pub const WINDOWS_FOCUS_INTERVAL: Duration = Duration::from_millis(100);
+
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+mod events;
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+pub use events::{LinuxProcessEvents, ProcessEventMode};
 
 mod discovery;
 
@@ -299,44 +316,78 @@ impl InstanceManager {
         candidates.sort_unstable_by_key(|candidate| candidate.pid);
         let mut inserted = 0;
         for candidate in candidates {
-            if self.instances.contains_key(&candidate.pid) {
-                continue;
-            }
-            let descriptor = &processes[candidate.index];
-            if should_skip(&descriptor.arguments) {
-                continue;
-            }
-            let process = match provider.open(candidate.pid) {
-                Ok(process) => process,
-                Err(_) => continue,
-            };
-            if !process.is_alive() {
-                continue;
-            }
-            if process.process_id().is_some_and(|pid| pid != candidate.pid) {
-                continue;
-            }
-            self.next_generation = self
-                .next_generation
-                .checked_add(1)
-                .expect("instance generation exhausted");
-            let instance = Arc::new(Instance {
-                pid: candidate.pid,
-                generation: self.next_generation,
-                client: candidate.client,
-                process,
-                root: descriptor.root.clone(),
-                settings: InstanceSettings::from_arguments(&descriptor.arguments),
-                tournament_manager: AtomicBool::new(false),
-                lazer_offsets: ArcSwapOption::empty(),
-                lifecycle_cancel: CancellationToken::new(),
-                resolver_task: tokio::sync::Mutex::new(None),
-                lifecycle_changed: self.lifecycle_changed.clone(),
-            });
-            self.instances.insert(candidate.pid, instance);
-            inserted += 1;
+            inserted += usize::from(self.insert_descriptor(
+                provider,
+                &processes[candidate.index],
+                candidate.client,
+            ));
         }
         Ok(inserted)
+    }
+
+    /// Inspects and conditionally inserts exactly one PID.
+    pub fn discover_pid(
+        &mut self,
+        provider: &impl ProcessProvider,
+        pid: Pid,
+    ) -> Result<bool, MemoryError> {
+        if let Some(instance) = self.instances.get(&pid) {
+            if instance.process().is_alive() {
+                return Ok(false);
+            }
+            self.remove(pid);
+        }
+        let Some(descriptor) = provider.inspect(pid)? else {
+            return Ok(false);
+        };
+        let Some(candidate) =
+            classify_candidates(provider.platform(), std::slice::from_ref(&descriptor))
+                .into_iter()
+                .next()
+        else {
+            return Ok(false);
+        };
+        Ok(self.insert_descriptor(provider, &descriptor, candidate.client))
+    }
+
+    fn insert_descriptor(
+        &mut self,
+        provider: &impl ProcessProvider,
+        descriptor: &ProcessDescriptor,
+        client: ClientType,
+    ) -> bool {
+        if self.instances.contains_key(&descriptor.pid) || should_skip(&descriptor.arguments) {
+            return false;
+        }
+        let Ok(process) = provider.open(descriptor.pid) else {
+            return false;
+        };
+        if !process.is_alive()
+            || process
+                .process_id()
+                .is_some_and(|pid| pid != descriptor.pid)
+        {
+            return false;
+        }
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("instance generation exhausted");
+        let instance = Arc::new(Instance {
+            pid: descriptor.pid,
+            generation: self.next_generation,
+            client,
+            process,
+            root: descriptor.root.clone(),
+            settings: InstanceSettings::from_arguments(&descriptor.arguments),
+            tournament_manager: AtomicBool::new(false),
+            lazer_offsets: ArcSwapOption::empty(),
+            lifecycle_cancel: CancellationToken::new(),
+            resolver_task: tokio::sync::Mutex::new(None),
+            lifecycle_changed: self.lifecycle_changed.clone(),
+        });
+        self.instances.insert(descriptor.pid, instance);
+        true
     }
 
     /// Production discovery path: every newly observed lazer generation gets
@@ -501,8 +552,16 @@ pub struct InstanceRuntime<P, F> {
     manager: Arc<tokio::sync::RwLock<InstanceManager>>,
     lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
     cancel: CancellationToken,
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    discovery_scans: Arc<AtomicU64>,
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    targeted_inspections: Arc<AtomicU64>,
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    event_wakes: Arc<AtomicU64>,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
-    _provider: Arc<P>,
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    provider: Arc<P>,
+    _provider: PhantomData<fn() -> P>,
     _loader: Arc<LazerOffsetLoader<F>>,
 }
 
@@ -518,45 +577,248 @@ where
         let (lifecycle_sender, lifecycle) =
             watch::channel(Arc::new(InstanceLifecycleSnapshot::default()));
         let cancel = CancellationToken::new();
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        let discovery_scans = Arc::new(AtomicU64::new(0));
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        let targeted_inspections = Arc::new(AtomicU64::new(0));
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        let event_wakes = Arc::new(AtomicU64::new(0));
         let provider = Arc::new(provider);
         let loader = Arc::new(loader);
         let loop_manager = manager.clone();
         let loop_cancel = cancel.clone();
         let loop_provider = provider.clone();
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        let loop_discovery_scans = Arc::clone(&discovery_scans);
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        let loop_targeted_inspections = Arc::clone(&targeted_inspections);
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        let loop_event_wakes = Arc::clone(&event_wakes);
         let loop_loader = loader.clone();
         let task = tokio::spawn(async move {
+            #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+            let mut full_reconcile = true;
+            #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+            let mut process_wake = false;
+            #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+            let mut next_reconcile = tokio::time::Instant::now();
+            #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+            let mut pending_exits = BTreeMap::<u64, (Pid, tokio::time::Instant, Duration)>::new();
+
             loop {
                 if loop_cancel.is_cancelled() {
                     break;
                 }
-                let (interval, removed, pending_resolvers) = {
-                    let mut manager = loop_manager.write().await;
-                    let _ = manager.discover(loop_provider.as_ref());
-                    let removed = manager.take_dead();
-                    manager.poll_focus(loop_provider.as_ref());
-                    let pending_resolvers = manager
-                        .instances
+
+                #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+                {
+                    let (inspect, exit, lost) = if process_wake {
+                        loop_provider.drain_discovery_events()
+                    } else {
+                        (Vec::new(), Vec::new(), false)
+                    };
+                    process_wake = false;
+                    full_reconcile |= lost;
+
+                    let now = tokio::time::Instant::now();
+                    let (removed, pending_resolvers, interval, tracked, retry_reconcile) = {
+                        let mut manager = loop_manager.write().await;
+                        let mut removed = Vec::new();
+                        let mut retry_reconcile = false;
+                        if full_reconcile {
+                            removed.extend(manager.take_dead());
+                            match manager.discover(loop_provider.as_ref()) {
+                                Ok(_) => {
+                                    loop_discovery_scans.fetch_add(1, Ordering::Relaxed);
+                                }
+                                Err(_) => retry_reconcile = true,
+                            }
+                            manager.poll_focus(loop_provider.as_ref());
+                        } else {
+                            for pid in exit {
+                                let Some(instance) = manager.instances.get(&pid).cloned() else {
+                                    continue;
+                                };
+                                let generation = instance.generation();
+                                if instance.process().is_alive() {
+                                    if !pending_exits.contains_key(&generation)
+                                        && pending_exits.len() == MAX_PENDING_EXIT_CONFIRMATIONS
+                                        && let Some(evicted) = pending_exits
+                                            .iter()
+                                            .max_by_key(|(_, (_, deadline, _))| *deadline)
+                                            .map(|(&generation, _)| generation)
+                                    {
+                                        pending_exits.remove(&evicted);
+                                        retry_reconcile = true;
+                                    }
+                                    pending_exits.entry(generation).or_insert((
+                                        pid,
+                                        now + EXIT_CONFIRMATION_INITIAL_BACKOFF,
+                                        EXIT_CONFIRMATION_INITIAL_BACKOFF,
+                                    ));
+                                } else {
+                                    pending_exits.remove(&generation);
+                                    if manager
+                                        .instances
+                                        .get(&pid)
+                                        .is_some_and(|current| current.generation() == generation)
+                                        && let Some(instance) = manager.remove(pid)
+                                    {
+                                        removed.push(instance);
+                                    }
+                                }
+                            }
+
+                            let due = pending_exits
+                                .iter()
+                                .filter_map(|(&generation, &(_, deadline, _))| {
+                                    (deadline <= now).then_some(generation)
+                                })
+                                .collect::<Vec<_>>();
+                            for generation in due {
+                                let Some(&(pid, _, backoff)) = pending_exits.get(&generation)
+                                else {
+                                    continue;
+                                };
+                                let current = manager.instances.get(&pid);
+                                if current
+                                    .is_none_or(|instance| instance.generation() != generation)
+                                {
+                                    pending_exits.remove(&generation);
+                                } else if current
+                                    .is_some_and(|instance| !instance.process().is_alive())
+                                {
+                                    pending_exits.remove(&generation);
+                                    if let Some(instance) = manager.remove(pid) {
+                                        removed.push(instance);
+                                    }
+                                } else if let Some(pending) = pending_exits.get_mut(&generation) {
+                                    let next_backoff =
+                                        (backoff * 2).min(EXIT_CONFIRMATION_MAX_BACKOFF);
+                                    pending.1 = now + next_backoff;
+                                    pending.2 = next_backoff;
+                                }
+                            }
+
+                            for pid in inspect {
+                                let dead = manager
+                                    .instances
+                                    .get(&pid)
+                                    .is_some_and(|instance| !instance.process().is_alive());
+                                if dead && let Some(instance) = manager.remove(pid) {
+                                    removed.push(instance);
+                                }
+                                match manager.discover_pid(loop_provider.as_ref(), pid) {
+                                    Ok(_) => {
+                                        loop_targeted_inspections.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    Err(_) => retry_reconcile = true,
+                                }
+                            }
+                        }
+                        pending_exits.retain(|&generation, (pid, _, _)| {
+                            manager
+                                .instances
+                                .get(pid)
+                                .is_some_and(|instance| instance.generation() == generation)
+                        });
+                        let pending_resolvers = manager
+                            .instances
+                            .values()
+                            .filter(|instance| {
+                                instance.client() == ClientType::Lazer
+                                    && instance.lazer_offsets().is_none()
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        let interval =
+                            if retry_reconcile || !loop_provider.discovery_events_healthy() {
+                                manager.discovery_interval()
+                            } else {
+                                EVENT_RECONCILIATION_INTERVAL
+                            };
+                        let tracked = manager.instances.keys().copied().collect::<Vec<_>>();
+                        (
+                            removed,
+                            pending_resolvers,
+                            interval,
+                            tracked,
+                            retry_reconcile,
+                        )
+                    };
+                    loop_provider.replace_tracked_tgids(&tracked);
+                    if full_reconcile || retry_reconcile {
+                        next_reconcile = tokio::time::Instant::now() + interval;
+                        full_reconcile = false;
+                    }
+                    for instance in removed {
+                        instance.shutdown_lazer_resolver().await;
+                    }
+                    // Publish Add before a fast resolver can publish Ready.
+                    publish_lifecycle(&loop_manager, &lifecycle_sender).await;
+                    for instance in pending_resolvers {
+                        instance.start_lazer_resolver(loop_loader.clone()).await;
+                    }
+
+                    let wait_deadline = pending_exits
                         .values()
-                        .filter(|instance| {
-                            instance.client() == ClientType::Lazer
-                                && instance.lazer_offsets().is_none()
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    (manager.discovery_interval(), removed, pending_resolvers)
-                };
-                for instance in removed {
-                    instance.shutdown_lazer_resolver().await;
+                        .map(|(_, deadline, _)| *deadline)
+                        .min()
+                        .map_or(next_reconcile, |deadline| deadline.min(next_reconcile));
+                    if let Some(notifier) = loop_provider.discovery_notifier() {
+                        tokio::select! {
+                                () = loop_cancel.cancelled() => break,
+                                () = lifecycle_changed.notified() => {}
+                        () = notifier.notified() => {
+                            loop_event_wakes.fetch_add(1, Ordering::Relaxed);
+                            process_wake = true;
+                        },
+                                () = tokio::time::sleep_until(wait_deadline) => {
+                                    full_reconcile = wait_deadline == next_reconcile;
+                                },
+                            }
+                    } else {
+                        tokio::select! {
+                            () = loop_cancel.cancelled() => break,
+                            () = lifecycle_changed.notified() => {}
+                            () = tokio::time::sleep_until(wait_deadline) => {
+                                full_reconcile = wait_deadline == next_reconcile;
+                            },
+                        }
+                    }
+                    continue;
                 }
-                // Publish Add before a fast resolver can publish Ready.
-                publish_lifecycle(&loop_manager, &lifecycle_sender).await;
-                for instance in pending_resolvers {
-                    instance.start_lazer_resolver(loop_loader.clone()).await;
-                }
-                tokio::select! {
-                    () = loop_cancel.cancelled() => break,
-                    () = lifecycle_changed.notified() => {}
-                    () = tokio::time::sleep(interval) => {}
+
+                #[cfg(not(all(target_os = "linux", feature = "linux-process-events")))]
+                {
+                    let (interval, removed, pending_resolvers) = {
+                        let mut manager = loop_manager.write().await;
+                        let _ = manager.discover(loop_provider.as_ref());
+                        let removed = manager.take_dead();
+                        manager.poll_focus(loop_provider.as_ref());
+                        let pending_resolvers = manager
+                            .instances
+                            .values()
+                            .filter(|instance| {
+                                instance.client() == ClientType::Lazer
+                                    && instance.lazer_offsets().is_none()
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        (manager.discovery_interval(), removed, pending_resolvers)
+                    };
+                    for instance in removed {
+                        instance.shutdown_lazer_resolver().await;
+                    }
+                    publish_lifecycle(&loop_manager, &lifecycle_sender).await;
+                    for instance in pending_resolvers {
+                        instance.start_lazer_resolver(loop_loader.clone()).await;
+                    }
+                    tokio::select! {
+                        () = loop_cancel.cancelled() => break,
+                        () = lifecycle_changed.notified() => {}
+                        () = tokio::time::sleep(interval) => {}
+                    }
                 }
             }
 
@@ -573,8 +835,16 @@ where
             manager,
             lifecycle,
             cancel,
+            #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+            discovery_scans,
+            #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+            targeted_inspections,
+            #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+            event_wakes,
             task: tokio::sync::Mutex::new(Some(task)),
-            _provider: provider,
+            #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+            provider,
+            _provider: PhantomData,
             _loader: loader,
         }
     }
@@ -582,6 +852,42 @@ where
     #[must_use]
     pub fn manager(&self) -> Arc<tokio::sync::RwLock<InstanceManager>> {
         self.manager.clone()
+    }
+
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    #[must_use]
+    pub fn discovery_scan_count(&self) -> u64 {
+        self.discovery_scans.load(Ordering::Relaxed)
+    }
+
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    #[must_use]
+    pub fn targeted_inspection_count(&self) -> u64 {
+        self.targeted_inspections.load(Ordering::Relaxed)
+    }
+
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    #[must_use]
+    pub fn process_event_count(&self) -> u64 {
+        self.provider.discovery_event_count()
+    }
+
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    #[must_use]
+    pub fn event_wake_count(&self) -> u64 {
+        self.event_wakes.load(Ordering::Relaxed)
+    }
+
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    #[must_use]
+    pub fn reconciliation_request_count(&self) -> u64 {
+        self.provider.discovery_reconciliation_request_count()
+    }
+
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    #[must_use]
+    pub fn process_events_healthy(&self) -> bool {
+        self.provider.discovery_events_healthy()
     }
 
     /// Atomically subscribes to the current immutable lifecycle snapshot.

@@ -33,10 +33,12 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 - Made the Windows updater helper tolerate the brief missing-record window that can occur while the parent atomically replaces the durable handoff record, without retrying malformed or unauthenticated records.
 - Fixed dashboard navigation links so they no longer trigger counter-folder API calls, and made both folder controls open the configured counter root without fake executable names.
 - Added a Linux startup warning when the running daemon lacks effective `CAP_SYS_PTRACE`, and made `process_vm_readv` permission denials emit one terminal error per osu! process generation instead of retrying silently.
+- Added `sudo vosu --setcap` on Linux to install and run a non-boot-enabled one-shot systemd service against the current executable path. Standard builds receive `CAP_SYS_PTRACE`; eBPF-enabled builds also receive `CAP_SYS_RESOURCE`, `CAP_PERFMON`, and `CAP_BPF`.
 - Restored legacy counter compatibility by injecting the logical `window.COUNTER_PATH` into served counter HTML, allowing overlay settings WebSocket requests to identify the correct counter.
 - Kept legacy overlay WebSocket deadlines anchored to their configured cadence across staggered client write-completion and catch-up wakes, preventing slow overlays from postponing 100 ms updates for fast overlays.
 - Restored Linux gameplay snapshot freshness by reading valid process-memory batches directly instead of reparsing thousands of `/proc/<pid>/maps` entries for every primitive read; faults still retry through fresh mapping-aware validation.
 - Coalesced ordered, non-overlapping same-page Windows process reads only when their span fits a bounded 1 KiB stack scratch, dispatched singleton `read_many` requests directly, and rejected/zeroed false full-length backend reads while retaining short-read retries and all-destination zeroing on errors.
+- Reduced Linux process-event overhead with idle-poll bypass, bounded sorted queue coalescing, direct inspect/exit batching, delta-only eBPF tracked-map synchronization, early in-kernel candidate filtering, and reusable bounded CN_PROC receive storage; Linux 6.16+ also uses the `sched_process_exit` group-dead argument while older kernels retain the compatible fallback.
 
 ### Documentation
 

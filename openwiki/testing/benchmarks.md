@@ -299,7 +299,7 @@ not a production performance promise.
 The separate autoresearch run used:
 
 ```sh
-bash autoresearch.sh
+bash tools/autoresearch/windows-memory-bench.sh
 ```
 
 Methodology: 31 samples × 16,384 operations, reporting the median in ns/op

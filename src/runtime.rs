@@ -7,7 +7,7 @@
 use std::{
     collections::BTreeMap,
     env,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs,
     future::Future,
     io,

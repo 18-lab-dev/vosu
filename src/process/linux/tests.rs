@@ -159,6 +159,102 @@ fn matching_enumeration_filters_on_comm_before_reading_expensive_metadata() {
 }
 
 #[test]
+fn matching_single_pid_reads_comm_before_expensive_metadata() {
+    let fixture = fixture();
+    let helper = fixture.path().join("42");
+    fs::create_dir(&helper).expect("helper process directory");
+    fs::write(helper.join("comm"), b"helper\n").expect("helper comm");
+
+    let found = process_metadata_matching_at(fixture.path(), 42, |name| name == "osu!")
+        .expect("filtered inspection");
+    assert!(found.is_none());
+
+    add_process(
+        fixture.path(),
+        7,
+        2,
+        b"osu!\0",
+        "1000-2000 rw-p 0 00:00 0\n",
+    );
+    let found = process_metadata_matching_at(fixture.path(), 7, |name| name == "osu!")
+        .expect("targeted inspection")
+        .expect("candidate metadata");
+    assert_eq!(found.pid, 7);
+}
+
+#[test]
+fn matching_single_pid_returns_none_when_comm_disappeared() {
+    let fixture = fixture();
+
+    let found = process_metadata_matching_at(fixture.path(), 42, |_| true)
+        .expect("raced-away process inspection");
+
+    assert!(found.is_none());
+}
+
+#[test]
+fn matching_single_pid_returns_none_when_cmdline_disappeared() {
+    let fixture = fixture();
+    add_process(
+        fixture.path(),
+        42,
+        2,
+        b"osu!\0",
+        "1000-2000 rw-p 0 00:00 0\n",
+    );
+    let cmdline = fixture.path().join("42/cmdline");
+
+    let found = process_metadata_matching_at(fixture.path(), 42, |_| {
+        fs::remove_file(&cmdline).expect("remove raced-away cmdline");
+        true
+    })
+    .expect("raced-away process inspection");
+
+    assert!(found.is_none());
+}
+
+#[test]
+fn matching_single_pid_returns_none_when_exe_link_disappeared() {
+    let fixture = fixture();
+    add_process(
+        fixture.path(),
+        42,
+        2,
+        b"osu!\0",
+        "1000-2000 rw-p 0 00:00 0\n",
+    );
+    let exe = fixture.path().join("42/exe");
+
+    let found = process_metadata_matching_at(fixture.path(), 42, |_| {
+        fs::remove_file(&exe).expect("remove raced-away exe link");
+        true
+    })
+    .expect("raced-away process inspection");
+
+    assert!(found.is_none());
+}
+
+#[test]
+fn matching_single_pid_returns_none_when_exe_target_disappeared() {
+    let fixture = fixture();
+    let executable = add_process(
+        fixture.path(),
+        42,
+        2,
+        b"osu!\0",
+        "1000-2000 rw-p 0 00:00 0\n",
+    );
+
+    let found = process_metadata_matching_at(fixture.path(), 42, |_| {
+        fs::remove_file(&executable).expect("remove raced-away executable");
+        true
+    })
+    .expect("raced-away process inspection");
+
+    assert!(found.is_none());
+}
+
+#[test]
 fn comm_is_trimmed_and_bounded() {
     let fixture = fixture();
     add_process(
@@ -230,6 +326,36 @@ fn liveness_rejects_missing_and_zombie_processes() {
     assert!(!is_process_alive_at(fixture.path(), 11));
 }
 
+#[cfg(feature = "linux-process-events")]
+#[test]
+fn pidfd_poll_treats_only_exit_readiness_as_dead() {
+    assert!(pidfd_poll_reports_exit(1, libc::POLLIN));
+    assert!(!pidfd_poll_reports_exit(0, 0));
+    assert!(!pidfd_poll_reports_exit(-1, 0));
+    assert!(!pidfd_poll_reports_exit(1, libc::POLLERR));
+    assert!(!pidfd_poll_reports_exit(1, libc::POLLHUP));
+}
+
+#[cfg(feature = "linux-process-events")]
+#[test]
+fn pidfd_liveness_changes_only_when_retained_process_exits() {
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
+    let memory = LinuxProcessMemory::new(child.id());
+    assert!(memory.pidfd.is_some(), "pidfd_open must work on this Linux");
+    assert!(memory.is_alive());
+
+    child.kill().expect("kill sleep");
+    child.wait().expect("reap sleep");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while memory.is_alive() && std::time::Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    assert!(!memory.is_alive());
+}
+
 fn memory_fixture(
     mode: MockMode,
     max: usize,
@@ -240,6 +366,15 @@ fn memory_fixture(
     let syscall = MockSyscall::new(mode, max);
     let memory = LinuxProcessMemory::with_parts(20, fixture.path().to_path_buf(), syscall.clone());
     (fixture, memory, syscall)
+}
+
+#[test]
+fn numeric_liveness_fallback_keeps_proc_fixtures_working() {
+    let (fixture, memory, _) = memory_fixture(MockMode::Exact, 1024, "1000-2000 rw-p 0 00:00 0\n");
+    assert!(memory.pidfd.is_none());
+    assert!(memory.is_alive());
+    fs::write(fixture.path().join("20/stat"), "20 (osu!) Z 1 2").expect("zombie stat");
+    assert!(!memory.is_alive());
 }
 
 #[test]
