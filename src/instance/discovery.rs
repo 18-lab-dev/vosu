@@ -303,6 +303,23 @@ fn windows_instance_root(command_line: &str) -> PathBuf {
 #[derive(Debug, Default)]
 pub struct NativeProcessProvider;
 
+#[cfg(any(target_os = "linux", windows))]
+impl NativeProcessProvider {
+    pub fn new() -> Self {
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        {
+            Self::default()
+        }
+        #[cfg(any(
+            windows,
+            all(target_os = "linux", not(feature = "linux-process-events"))
+        ))]
+        {
+            Self
+        }
+    }
+}
+
 #[cfg(windows)]
 impl ProcessProvider for NativeProcessProvider {
     fn platform(&self) -> DiscoveryPlatform {
