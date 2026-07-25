@@ -38,6 +38,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes clang libbpf-dev libelf-dev
+          echo "C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu" >> "$GITHUB_ENV"
 
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@master

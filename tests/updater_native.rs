@@ -122,7 +122,7 @@ impl UpdatePlatform for NativePlatform {
             ));
         }
         fs::hard_link(target, backup)?;
-        fs::rename(staged, target)
+        atomic_replace(staged, target)
     }
 
     fn restore_backup(&self, target: &Path, backup: &Path) -> io::Result<()> {
