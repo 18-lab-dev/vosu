@@ -1,3 +1,10 @@
+---
+type: Experiment Report
+title: Linux process-event experiment
+description: Measured comparison of polling, CN_PROC, and eBPF process discovery, including corrected lifecycle behavior and production-readiness gates.
+tags: [linux, process-events, ebpf, cn-proc, performance]
+---
+
 # Linux process-event experiment
 
 **Dates:** 2026-07-20 host experiment; 2026-07-21 gaming-VM continuation; 2026-07-22 autoresearch continuation  
