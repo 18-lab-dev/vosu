@@ -151,8 +151,16 @@ fn nonempty_env(resolver: &impl PathResolver, name: &str) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn install_capability_service(executable: &Path) -> io::Result<()> {
-    linux::install_capability_service(executable)
+pub(crate) fn install_supported_capabilities(executable: &Path) -> io::Result<()> {
+    linux::install_supported_capabilities(executable)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn install_supported_capabilities(_executable: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "--setup is supported only on Linux",
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -165,7 +173,7 @@ fn cap_sys_ptrace_warning_for(capability: io::Result<bool>, executable: &Path) -
     match capability {
         Ok(true) => None,
         Ok(false) => Some(format!(
-            "CAP_SYS_PTRACE is not effective; memory reads may fail. Install this build's required capabilities with `sudo vosu --setcap`; current executable: {executable:?}."
+            "CAP_SYS_PTRACE is not effective; memory reads may fail. Install this build's required capabilities with `sudo vosu --setup`; current executable: {executable:?}."
         )),
         Err(error) => Some(format!(
             "Could not inspect this process's effective Linux capabilities; memory reads may fail: {error}"
@@ -286,7 +294,7 @@ mod tests {
         assert_eq!(
             warning.as_deref(),
             Some(
-                "CAP_SYS_PTRACE is not effective; memory reads may fail. Install this build's required capabilities with `sudo vosu --setcap`; current executable: \"/opt/vosu/vosu\"."
+                "CAP_SYS_PTRACE is not effective; memory reads may fail. Install this build's required capabilities with `sudo vosu --setup`; current executable: \"/opt/vosu/vosu\"."
             )
         );
     }

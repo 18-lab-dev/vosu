@@ -7,7 +7,7 @@
 use std::{
     collections::BTreeMap,
     env,
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     future::Future,
     io,
     path::{Path, PathBuf},
@@ -90,6 +90,7 @@ use crate::{
     },
 };
 
+mod cli;
 mod config;
 mod lifecycle;
 mod projection;
@@ -130,6 +131,7 @@ mod tests {
 
     use super::*;
 
+    include!("runtime/tests/cli.rs");
     include!("runtime/tests/worker.rs");
     include!("runtime/tests/projection.rs");
     include!("runtime/tests/service.rs");

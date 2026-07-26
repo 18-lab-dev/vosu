@@ -80,6 +80,45 @@ fn request_graceful_shutdown(child: &Child) {
     assert_ne!(result, 0, "send release daemon CTRL_BREAK_EVENT");
 }
 
+#[cfg(target_os = "linux")]
+fn assert_packaged_linux_cli_preflight(binary: &Path) {
+    let help = Command::new(binary)
+        .arg("--help")
+        .output()
+        .expect("run packaged Linux release --help preflight");
+    assert!(
+        help.status.success(),
+        "packaged Linux release --help failed with {}\nstdout:\n{}\nstderr:\n{}",
+        help.status,
+        String::from_utf8_lossy(&help.stdout),
+        String::from_utf8_lossy(&help.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&help.stdout).contains("-s, --setup"),
+        "packaged Linux release --help omitted -s, --setup\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&help.stdout),
+        String::from_utf8_lossy(&help.stderr),
+    );
+
+    for probe in [
+        "--vosu-internal-probe-backend=ebpf",
+        "--vosu-internal-probe-backend=cn-proc",
+    ] {
+        let output = Command::new(binary)
+            .arg(probe)
+            .output()
+            .unwrap_or_else(|error| panic!("run packaged Linux release probe {probe}: {error}"));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{stdout}\n{stderr}");
+        assert!(
+            !combined.contains("this vosu build does not include Linux process-event backends"),
+            "packaged Linux release probe {probe} reached a featureless backend path with {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            output.status,
+        );
+    }
+}
+
 fn assert_no_update_artifacts(root: &Path) {
     if !root.exists() {
         return;
@@ -119,6 +158,9 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         "release smoke path is not a file: {}",
         binary.display()
     );
+
+    #[cfg(target_os = "linux")]
+    assert_packaged_linux_cli_preflight(&binary);
 
     let roots = TempDir::new().expect("temporary release roots");
     let static_root = roots.path().join("static");

@@ -1,31 +1,4 @@
 #[test]
-fn setcap_command_accepts_only_the_standalone_flag() {
-    let invocation =
-        classify_setcap_invocation(&[OsString::from("vosu"), OsString::from("--setcap")]);
-
-    assert_eq!(invocation, SetcapInvocation::Install);
-}
-
-#[test]
-fn setcap_command_rejects_additional_arguments() {
-    let invocation = classify_setcap_invocation(&[
-        OsString::from("vosu"),
-        OsString::from("--setcap"),
-        OsString::from("--update=false"),
-    ]);
-
-    assert_eq!(invocation, SetcapInvocation::Invalid);
-}
-
-#[test]
-fn setcap_command_rejects_assigned_values() {
-    let invocation =
-        classify_setcap_invocation(&[OsString::from("vosu"), OsString::from("--setcap=true")]);
-
-    assert_eq!(invocation, SetcapInvocation::Invalid);
-}
-
-#[test]
 fn precise_only_publication_does_not_wake_regular_subscribers() {
     use crate::{
         instance::InstanceSettings,

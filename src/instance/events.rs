@@ -176,6 +176,13 @@ impl ProcessEventMode {
             )),
         }
     }
+
+    fn configured(value: Option<&str>) -> io::Result<Option<Self>> {
+        match value {
+            Some(value) => Self::parse(value),
+            None => Ok(Some(Self::Auto)),
+        }
+    }
     fn backend_name(self) -> &'static str {
         match self {
             Self::CnProc => "CN_PROC",
@@ -210,8 +217,15 @@ impl std::fmt::Debug for LinuxProcessEvents {
 
 impl LinuxProcessEvents {
     pub fn from_environment() -> Option<Self> {
-        let value = env::var("VOSU_PROCESS_EVENTS").unwrap_or_default();
-        let mode = match ProcessEventMode::parse(&value) {
+        let configured = match env::var("VOSU_PROCESS_EVENTS") {
+            Ok(value) => ProcessEventMode::configured(Some(&value)),
+            Err(env::VarError::NotPresent) => ProcessEventMode::configured(None),
+            Err(env::VarError::NotUnicode(_)) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "VOSU_PROCESS_EVENTS must be valid UTF-8",
+            )),
+        };
+        let mode = match configured {
             Ok(mode) => mode?,
             Err(error) => {
                 tracing::warn!(%error, "invalid Linux process-event mode; using polling");
@@ -484,18 +498,23 @@ mod tests {
     }
 
     #[test]
-    fn parses_explicit_modes_and_keeps_polling_default() {
-        assert_eq!(ProcessEventMode::parse("").unwrap(), None);
-        assert_eq!(ProcessEventMode::parse("poll").unwrap(), None);
+    fn absent_mode_uses_auto_while_explicit_polling_stays_disabled() {
         assert_eq!(
-            ProcessEventMode::parse("cn-proc").unwrap(),
+            ProcessEventMode::configured(None).unwrap(),
+            Some(ProcessEventMode::Auto)
+        );
+        for value in ["", "off", "poll"] {
+            assert_eq!(ProcessEventMode::configured(Some(value)).unwrap(), None);
+        }
+        assert_eq!(
+            ProcessEventMode::configured(Some("cn-proc")).unwrap(),
             Some(ProcessEventMode::CnProc)
         );
         assert_eq!(
-            ProcessEventMode::parse("ebpf").unwrap(),
+            ProcessEventMode::configured(Some("ebpf")).unwrap(),
             Some(ProcessEventMode::Ebpf)
         );
-        assert!(ProcessEventMode::parse("unknown").is_err());
+        assert!(ProcessEventMode::configured(Some("unknown")).is_err());
     }
 
     #[test]

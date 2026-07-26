@@ -73,27 +73,44 @@ For a later manual upgrade, stop vosu, replace the executable and `LICENSE` with
 
 `GET /api/runUpdates` starts the same update path. Set `ENABLE_AUTOUPDATE=false` or launch with `--update=false` to disable the startup check. `--update=true` enables it for one launch.
 
+## Command-line options
+
+The public command flags are standalone actions:
+
+```text
+-h, --help
+-s, --setup
+-g, --generate-offsets
+```
+
+`--help` prints usage. `--generate-offsets` atomically replaces `./offsets.json` with the offsets embedded in that vosu build; it exports the deployed asset and does not run the development-only osu!lazer regeneration workflow below. On Linux, `--setup` probes the process-event backends compiled into the current executable and installs the capabilities they require. Each action must be the executable's only argument.
+
+Insufficient setup authority is an error. Run `sudo vosu --setup`, or invoke it as a user with equivalent authority to set file capabilities; do not run the ordinary daemon as root.
+
 ## Build from source
 
 ### Requirements
 
 - Rust **1.96.1**, also pinned in `rust-toolchain.toml`
 - a native toolchain for `x86_64-unknown-linux-gnu` or `x86_64-pc-windows-msvc`
-- Linux: a GNU C toolchain and the Vulkan/OpenGL loader development files needed by `wgpu`
+- Linux: a GNU C toolchain, Clang, pkg-config, libelf/zlib development files, and the Vulkan/OpenGL loader development files needed by `wgpu`
 - Windows: MSVC build tools and the Windows SDK
 
 The dashboard and offsets are vendored build inputs. No frontend or managed-runtime toolchain is needed.
 
 ```sh
-cargo build --locked --no-default-features
-cargo run --locked --no-default-features
+cargo build --locked
+cargo run --locked
+cargo install --path . --locked
 ```
+
+Default Linux builds include `linux-process-events`, so a binary installed by the command above can probe eBPF and CN_PROC during `sudo vosu --setup`. Pass `--no-default-features` explicitly only when building a polling-only binary.
 
 Production builds:
 
 ```sh
 # Linux
-cargo build --release --locked --no-default-features --target x86_64-unknown-linux-gnu
+cargo build --release --locked --no-default-features --features linux-process-events --target x86_64-unknown-linux-gnu
 
 # Windows, from Developer PowerShell
 cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc
@@ -335,15 +352,19 @@ Run vosu as the same desktop user as osu!. Tournament and debug-client processes
 
 On Linux, vosu can also read the osu! path from `${XDG_DATA_HOME:-$HOME/.local/share}/osuconfig/osupath`.
 
-On Linux, `process_vm_readv` must be permitted. During ordinary startup vosu checks the running process's effective capability set and warns if `CAP_SYS_PTRACE` is not effective, or if that check cannot be completed. The warning does not stop startup, but memory reads may fail. Install the capabilities required by the exact vosu build with:
+Official Linux archives statically include libbpf and dynamically use the system `libelf.so.1` and `libz.so.1` libraries.
+
+On Linux, `process_vm_readv` must be permitted. During ordinary startup vosu checks the running process's effective capability set and warns if `CAP_SYS_PTRACE` is not effective, or if that check cannot be completed. The warning does not stop startup, but memory reads may fail. Configure the exact executable with:
 
 ```sh
-sudo vosu --setcap
+sudo vosu --setup
 ```
 
-`--setcap` must be the only argument. It uses the running executable's absolute path, installs `/etc/systemd/system/vosu-capabilities.service`, starts that one-shot service immediately, and exits without starting the daemon. A normal build receives only `CAP_SYS_PTRACE`; a build compiled with `linux-process-events` also receives `CAP_SYS_RESOURCE`, `CAP_PERFMON`, and `CAP_BPF` for eBPF loading.
+`--setup` directly invokes a trusted, root-owned `setcap` executable and exits without starting the daemon. A normal build receives only `CAP_SYS_PTRACE` and reports polling as its available discovery backend. A build compiled with `linux-process-events` first attempts its maximum compiled capability set. When that succeeds, it re-executes itself to probe eBPF and CN_PROC independently, then retains `CAP_SYS_RESOURCE`, `CAP_PERFMON`, and `CAP_BPF` only when eBPF actually works. If the maximum set is unavailable, setup retries with `CAP_SYS_PTRACE`, marks eBPF unavailable, and still probes CN_PROC before reporting polling as the final fallback. CN_PROC requires no additional file capability. Probe failures and the final capability set are printed.
 
-The service is deliberately not enabled at boot: automatically granting capabilities to a replaceable user-owned binary would create a privilege-escalation path. Executable replacement, including an automatic update, removes file capabilities. After replacing vosu at the same path, rerun `sudo systemctl start vosu-capabilities.service`; rerun `sudo vosu --setcap` if the executable path changed.
+If `setcap` lacks authority, setup exits unsuccessfully without starting the daemon. Executable replacement, including an automatic update, removes file capabilities, so rerun `sudo vosu --setup` after replacing vosu.
+
+With `linux-process-events` compiled, an unset `VOSU_PROCESS_EVENTS` selects `auto`: runtime tries eBPF, falls back to CN_PROC, then polling. Set `VOSU_PROCESS_EVENTS=off` or `poll` to force polling, or select `ebpf` or `cn-proc` explicitly.
 
 Do not run the ordinary vosu daemon as root to bypass ptrace or eBPF policy. Pattern or offset resolution may remain pending and retry while the process is alive; that alone does not confirm support for a game build.
 

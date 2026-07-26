@@ -116,6 +116,7 @@ The following license expressions come from the packages' Cargo metadata resolve
 - `memchr`: Unlicense OR MIT
 - `notify`: CC0-1.0
 - local `vosu-lazer-pp`: LGPL-3.0-only as an aggregate package; its separately identified vendored rosu-pp and osu!-derived inputs remain MIT
+- Linux-only `libbpf-rs` and build-time `libbpf-cargo`: LGPL-2.1-only OR BSD-2-Clause. Their transitive `libbpf-sys` binding is BSD-2-Clause and statically includes libbpf 1.7.0 under LGPL-2.1-only OR BSD-2-Clause. Linux releases dynamically link the system libelf (LGPL-2.1-or-later OR LGPL-3.0-or-later) and zlib (Zlib) libraries.
 
 ### Development-only packages
 

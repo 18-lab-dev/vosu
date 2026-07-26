@@ -62,12 +62,12 @@ jobs:
         run: cargo test --locked --test updater_native -- --nocapture
 
       - name: Build daemon
-        run: cargo build --release --locked --no-default-features --target x86_64-unknown-linux-gnu
+        run: cargo build --release --locked --no-default-features --features linux-process-events --target x86_64-unknown-linux-gnu
 
       - name: Prove test harness cannot enter release builds
         shell: bash
         run: |
-          if cargo build --release --locked --features test-harness --target x86_64-unknown-linux-gnu; then
+          if cargo build --release --locked --no-default-features --features linux-process-events,test-harness --target x86_64-unknown-linux-gnu; then
             echo "release build unexpectedly accepted the test-harness feature" >&2
             exit 1
           fi

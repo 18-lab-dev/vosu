@@ -55,7 +55,7 @@ lazer-offsets-sha256 = "46b62194a297a9d9c1964837cc1f9d40aedfcd6c41673fc3d91a846a
 asset-manifest = "assets/SHA256SUMS"
 
 [features]
-default = []
+default = ["linux-process-events"]
 linux-process-events = ["dep:libbpf-cargo", "dep:libbpf-rs"]
 test-harness = []
 [dependencies]
@@ -99,7 +99,7 @@ wmi = "=0.18.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "=0.2.186"
-libbpf-rs = { version = "=0.26.2", default-features = false, optional = true }
+libbpf-rs = { version = "=0.26.2", optional = true }
 
 [dev-dependencies]
 criterion = "0.7.0"
@@ -121,7 +121,7 @@ required-features = ["linux-process-events"]
 winresource = "=0.1.31"
 
 [target.'cfg(target_os = "linux")'.build-dependencies]
-libbpf-cargo = { version = "=0.26.2", default-features = false, optional = true }
+libbpf-cargo = { version = "=0.26.2", optional = true }
 
 [profile.release]
 lto = "thin"

@@ -36,7 +36,7 @@ fn parse_cap_sys_ptrace_effective(status: &str) -> io::Result<bool> {
     Ok(capabilities & (1_u64 << CAP_SYS_PTRACE_BIT) != 0)
 }
 
-pub(super) fn install_capability_service(executable: &Path) -> io::Result<()> {
+pub(super) fn install_supported_capabilities(executable: &Path) -> io::Result<()> {
     capabilities::install(executable)
 }
 
