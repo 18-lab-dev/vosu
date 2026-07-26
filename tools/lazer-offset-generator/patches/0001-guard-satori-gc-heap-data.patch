@@ -1,0 +1,45 @@
+diff --git a/src/coreclr/debug/daccess/request.cpp b/src/coreclr/debug/daccess/request.cpp
+index 72098c5dda79191f382fa658db86f7aa9822d52a..b6f299fc8c9ae95365d540acc8f89e55d4e5a44d 100644
+--- a/src/coreclr/debug/daccess/request.cpp
++++ b/src/coreclr/debug/daccess/request.cpp
+@@ -2720,5 +2720,11 @@ ClrDataAccess::GetGCHeapStaticData(struct DacpGcHeapDetails *detailsData)
+     }
+ 
+     SOSDacEnter();
+ 
++    if (g_heap_type == GC_HEAP_SATORI)
++    {
++        hr = E_NOTIMPL;
++        goto cleanup;
++    }
++
+     detailsData->heapAddr = NULL;
+@@ -2788,5 +2794,7 @@ ClrDataAccess::GetGCHeapStaticData(struct DacpGcHeapDetails *detailsData)
+         }
+     }
+ 
++cleanup:
++    ;
+     SOSDacLeave();
+     return hr;
+@@ -2906,7 +2914,20 @@ ClrDataAccess::GetGCHeapData(struct DacpGcHeapData *gcheapData)
+         goto cleanup;
+     }
+ 
++    // Satori does not populate the standard GC DAC globals. Report its
++    // topology while marking the unavailable GC structures invalid instead
++    // of dereferencing null pointers. Module and type inspection remains
++    // available to DAC clients.
++    if (gcHeapValue == GC_HEAP_SATORI)
++    {
++        gcheapData->g_max_generation = 2;
++        gcheapData->bServerMode = FALSE;
++        gcheapData->bGcStructuresValid = FALSE;
++        gcheapData->HeapCount = 1;
++        goto cleanup;
++    }
++
+     // Now we can get other important information about the heap
+     // We can use GCHeapUtilities::IsServerHeap here because we have already validated
+     // that the heap is in a valid state. We couldn't use it above, because IsServerHeap
+     // asserts if the heap type is GC_HEAP_INVALID.

@@ -34,6 +34,8 @@ Thumbs.db
 # Generated development-tool output
 .cargo-ok
 /tools/oracle/reference/lazer-calculator/lib/native/dist/
+/tools/lazer-offset-*/bin/
+/tools/lazer-offset-*/obj/
 
 # Local Windows verification output
 /windows-ci-current*.log
