@@ -149,7 +149,7 @@ impl PageDataProvider for RuntimePages {
                     let html = render_local_counters(&local, None, &authority);
                     (
                         if html.is_empty() {
-                            r#"<div class="no-results">No counters<br /><a href="/available">Go here to get one 👉</a></div>"#.to_owned()
+                            r#"<div class="empty-state"><h2>No local overlays yet</h2><p>Install an overlay from the Vosu catalog or add one from this computer.</p><a class="button button-primary" href="/available">Browse available overlays</a></div>"#.to_owned()
                         } else {
                             html
                         },
@@ -167,7 +167,7 @@ impl PageDataProvider for RuntimePages {
                             let html = render_catalog_counters(&remote, None, &authority);
                             (
                                 if html.is_empty() {
-                                    r#"<div class="no-results">Nice job!<br />You downloaded all available pp counters</div>"#.to_owned()
+                                    r#"<div class="empty-state"><h2>Everything is installed</h2><p>This Vosu instance already has every overlay currently listed in the catalog.</p></div>"#.to_owned()
                                 } else {
                                     html
                                 },

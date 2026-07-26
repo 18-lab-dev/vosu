@@ -1,337 +1,299 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
 <head>
-  <title>vosu Report</title>
-  <meta charset="UTF-8" />
-  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#100E18">
+  <title>Vosu diagnostic report</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100..900;1,100..900&display=swap');
-
     :root {
-      --text-1: #647a91;
-      --text-2: #8ca0b5;
-      --text-links: #6593c5;
-      --background-1: #191e25;
-
-      --block-1: #242d37;
-      --block-2: #333f4c;
+      color-scheme: dark;
+      --ink: #100e18;
+      --panel: #181423;
+      --panel-soft: #211b30;
+      --paper: #f9f7ff;
+      --muted: #bbb5ca;
+      --rose: #f45cad;
+      --cyan: #7ae1f8;
+      --line: rgba(249, 247, 255, 0.16);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     * {
-      position: relative;
-      padding: 0;
-      margin: 0;
       box-sizing: border-box;
-      min-width: 0;
-    }
-
-    a {
-      color: var(--text-links);
-    }
-
-    ::selection {
-      color: var(--background-1);
-      background-color: var(--text-links);
-    }
-
-    button {
-      font-size: 1em;
-      font-family: inherit;
-      font-weight: inherit;
-      font-style: inherit;
-      border: 0;
-      outline: 0;
-    }
-
-    .button {
-      white-space: nowrap;
-      text-decoration: none;
-      font-size: 0.9em;
-      font-weight: 700;
-      cursor: pointer;
-      padding: 0.4em 1em;
-      border-radius: 0.4em;
-
-      transition: 0.1s ease;
-      transition-property: translate, filter;
-
-      &>* {
-        pointer-events: none;
-      }
-
-      span {
-        display: block;
-        pointer-events: none;
-
-        transition: 0.3s ease;
-        transition-property: opacity, width;
-      }
-
-      img {
-        width: 1em;
-        height: 1em;
-
-        object-fit: cover;
-
-        transition: 0.3s ease;
-        transition-property: opacity, width, height;
-
-        animation: spin 1s infinite forwards linear;
-      }
-
-      &:hover {
-        filter: brightness(1.1);
-        translate: 0 -0.05em;
-      }
-
-      &:active {
-        filter: brightness(0.9);
-        translate: 0 0.1em;
-      }
     }
 
     html {
-      scrollbar-color: var(--text-links) var(--block-2);
+      min-width: 20rem;
+      min-height: 100%;
+      background: var(--ink);
     }
 
     body {
-      font-size: 20px;
-      font-family: "Roboto", sans-serif;
-      font-weight: 400;
-      font-style: normal;
-      justify-content: center;
-      flex-direction: column;
-      display: flex;
-      gap: 1.5em;
-
-      color: var(--text-1);
-      width: min(1200px, 100vw - 3em);
+      width: min(100% - 2rem, 78rem);
       min-height: 100vh;
       margin: 0 auto;
-      background-color: var(--background-1);
-
-
-      overflow-x: hidden;
+      color: var(--paper);
+      background: var(--ink);
     }
 
-    header {
-      justify-content: flex-start;
-      align-items: center;
-      display: flex;
-      margin-top: 1em;
-      padding: 0 0.5em;
+    a {
+      color: var(--cyan);
+      text-underline-offset: 0.2em;
+    }
 
-      .button {
-        margin-left: auto;
-      }
+    .report-header {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      padding: 2rem 0 1.5rem;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .report-mark {
+      flex: 0 0 auto;
+      width: 4rem;
+      height: 4rem;
+      border: 1px solid var(--line);
+      border-radius: 0.9rem;
+    }
+
+    .report-header h1,
+    .report-header p {
+      margin: 0;
+    }
+
+    .report-header h1 {
+      font-size: clamp(1.7rem, 5vw, 2.6rem);
+      line-height: 1;
+    }
+
+    .report-header p {
+      margin-top: 0.45rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
     }
 
     main {
       display: grid;
-      gap: 1.5em;
-    }
-
-    footer {
-      margin-top: auto;
+      gap: 1rem;
+      padding: 1.5rem 0 2rem;
     }
 
     .group {
-      h3 {
-        margin-left: 0.6em;
-        margin-bottom: 0.5em;
-      }
+      min-width: 0;
+    }
 
-      &:not(.instances):not(.counters):not(.logs) {
-        tr:first-child td {
-          padding-top: 0 !important;
-        }
-      }
+    .group h3 {
+      margin: 0 0 0.5rem;
+      color: var(--paper);
+      font-size: 1rem;
     }
 
     .group-content {
-      color: var(--text-2);
-      background-color: var(--block-1);
-      padding: 0.6em;
-      border-radius: 0.4em;
-
-      table {
-        font-weight: 500;
-        width: 100%;
-
-        border-collapse: collapse;
-
-        td {
-          padding: 0.6em 0em;
-        }
-
-        th {
-          font-weight: 700;
-          color: var(--text-links);
-        }
-
-        tr {
-          text-align: left;
-          border: solid;
-          border-width: 1px 0;
-          border-color: var(--text-1);
-        }
-
-        tr:first-child {
-          border-top: none;
-        }
-
-        tr:last-child {
-          border-bottom: none;
-
-          td {
-            padding-bottom: 0 !important;
-          }
-        }
-      }
+      min-width: 0;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 0.8rem;
+      background: var(--panel);
     }
 
-    .scrollable {
-      overflow-x: auto;
-      overflow-y: auto;
-      max-height: 38em;
-      scrollbar-color: var(--text-links) var(--block-2);
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+
+    th,
+    td {
+      padding: 0.72rem 0.8rem;
+      overflow-wrap: anywhere;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      color: var(--cyan);
+      font-size: 0.76rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      background: var(--panel-soft);
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
     }
 
     .highlight {
-      font-weight: 700;
-      color: var(--text-links);
+      color: var(--rose);
+      font-weight: 750;
     }
 
-    .vosu-cfg table {
-      font-size: 0.85em;
+    .scrollable {
+      max-height: 38rem;
+      overflow: auto;
+      scrollbar-color: var(--rose) var(--panel-soft);
     }
 
-    .logs {
-      font-size: 0.85em;
+    .vosu-cfg table,
+    .logs table {
+      font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      font-size: 0.8rem;
+    }
 
-      table {
-        width: fit-content !important;
-        white-space: nowrap;
+    .logs .message {
+      min-width: 24rem;
+    }
 
-        td {
-          padding: 0.6em 0.4em !important;
-        }
-      }
+    .logs .timestamp {
+      min-width: 8.5rem;
+    }
 
+    .logs .type {
+      min-width: 7rem;
+    }
 
-      th.type {
-        min-width: 6em;
-      }
+    .status-error,
+    .status-debugError {
+      color: #ff7a8a;
+      font-weight: 750;
+    }
+
+    .status-warning,
+    .status-warn {
+      color: #ffd479;
+      font-weight: 750;
     }
 
     .status-info {
-      color: #25d491
+      color: var(--cyan);
     }
 
-    .status-debug {
-      color: #63a8f3
+    .status-debug,
+    .status-trace {
+      color: var(--muted);
     }
 
-    .status-time {
-      color: #959595
+    footer {
+      padding: 1rem 0 2rem;
+      color: var(--muted);
+      font-size: 0.82rem;
+      border-top: 1px solid var(--line);
     }
 
-    .status-debugError {
-      color: #d87dd8
+    footer p {
+      margin: 0;
     }
 
-    .status-error {
-      color: #e26b6b
+    @media (max-width: 42rem) {
+      body {
+        width: min(100% - 1rem, 78rem);
+      }
+
+      .report-header {
+        align-items: flex-start;
+      }
+
+      th,
+      td {
+        padding: 0.6rem;
+      }
     }
 
-    .status-warn {
-      color: #dfdf53
+    @media print {
+      :root {
+        color-scheme: light;
+        --ink: #ffffff;
+        --panel: #ffffff;
+        --panel-soft: #f2eef8;
+        --paper: #100e18;
+        --muted: #4d465c;
+        --line: rgba(16, 14, 24, 0.2);
+      }
+
+      body {
+        width: 100%;
+      }
+
+      .scrollable {
+        max-height: none;
+        overflow: visible;
+      }
+
+      .group-content,
+      .report-mark {
+        break-inside: avoid;
+      }
     }
   </style>
 </head>
-
 <body>
-  <header>
+  <header class="report-header">
+    <svg class="report-mark" viewBox="0 0 1024 1024" role="img" aria-labelledby="report-mark-title report-mark-description" shape-rendering="geometricPrecision">
+      <title id="report-mark-title">Vosu</title>
+      <desc id="report-mark-description">The rose Vosu signal-V mark and cyan signal node on a rounded dark tile.</desc>
+      <rect width="1024" height="1024" rx="144" fill="#100E18"></rect>
+      <g aria-label="Vosu signal-V symbol" transform="translate(512 500) scale(6.2) translate(-128 -113)">
+        <path d="M18 36 H32 L64 94 L96 36 H110" transform="translate(64 46)" fill="none" stroke="#F45CAD" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"></path>
+        <circle cx="128" cy="140" r="10" fill="#100E18"></circle>
+        <circle cx="128" cy="140" r="5.5" fill="#7AE1F8"></circle>
+      </g>
+    </svg>
     <div>
-      <h1>Debug report</h1>
-      <p>Generated on {{TIME}} UTC</p>
+      <h1>Vosu diagnostic report</h1>
+      <p>Captured {{TIME}} UTC</p>
     </div>
-
-    <!-- <button class="button export-button" onclick="exportJson()">Export to JSON</button> -->
   </header>
 
   <main>
-    <div class="group os-cfg">
-      <h3>System Configuration</h3>
+    <section class="group os-cfg" aria-labelledby="system-heading">
+      <h3 id="system-heading">System Configuration</h3>
       <div class="group-content">
         <table>
-          <tr>
-            <td class="highlight">OS</td>
-            <td>{{SYSTEM_OS}}</td>
-          </tr>
-          <tr>
-            <td class="highlight">CPU</td>
-            <td>{{SYSTEM_CPU}}</td>
-          </tr>
-          <tr>
-            <td class="highlight">GPU</td>
-            <td>{{SYSTEM_GPUS}}</td>
-          </tr>
+          <tbody>
+            <tr><td class="highlight">System Type</td><td>{{SYSTEM_TYPE}}</td></tr>
+            <tr><td class="highlight">OS</td><td>{{SYSTEM_OS}}</td></tr>
+            <tr><td class="highlight">CPU</td><td>{{SYSTEM_CPU}}</td></tr>
+            <tr><td class="highlight">GPU</td><td>{{SYSTEM_GPUS}}</td></tr>
+          </tbody>
         </table>
       </div>
-    </div>
+    </section>
 
-    <div class="group vosu-cfg">
-      <h3>vosu Settings</h3>
-      <div class="group-content">
-        <table>{{VOSU_CONFIG}}</table>
+    <section class="group vosu-cfg" aria-labelledby="settings-heading">
+      <h3 id="settings-heading">vosu Settings</h3>
+      <div class="group-content scrollable">
+        <table><tbody>{{VOSU_CONFIG}}</tbody></table>
       </div>
-    </div>
+    </section>
 
-    <div class="group instances">
-      <h3>osu! Instances</h3>
-      <div class="group-content">
+    <section class="group instances" aria-labelledby="instances-heading">
+      <h3 id="instances-heading">osu! Instances</h3>
+      <div class="group-content scrollable">
         <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>pid</th>
-              <th>client</th>
-              <th>bitness</th>
-              <th>version</th>
-            </tr>
-          </thead>
-          {{INSTANCES}}
+          <thead><tr><th>#</th><th>PID</th><th>Client</th><th>Bitness</th><th>Version</th></tr></thead>
+          <tbody>{{INSTANCES}}</tbody>
         </table>
       </div>
-    </div>
+    </section>
 
-    <div class="group counters">
-      <h3>Installed Overlays</h3>
-      <div class="group-content">
+    <section class="group counters" aria-labelledby="overlays-heading">
+      <h3 id="overlays-heading">Installed Overlays</h3>
+      <div class="group-content scrollable">
         <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Name</th>
-              <th>Version</th>
-              <th>Author</th>
-              <th>Directory</th>
-            </tr>
-          </thead>
-          {{COUNTERS}}
+          <thead><tr><th>#</th><th>Name</th><th>Version</th><th>Author</th><th>Directory</th></tr></thead>
+          <tbody>{{COUNTERS}}</tbody>
         </table>
       </div>
-    </div>
+    </section>
 
     {{LOGS}}
   </main>
 
   <footer>
-    <p>This report was generated by <a href="https://github.com/shiruviaa/vosu">vosu</a> © 2026</p>
+    <p>Generated locally by <a href="https://github.com/shiruviaa/vosu">Vosu</a>. Review before sharing; reports can contain system and overlay details.</p>
   </footer>
 </body>
-
 </html>

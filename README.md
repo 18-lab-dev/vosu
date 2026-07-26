@@ -15,7 +15,7 @@
 
 > A vibe-coded, ground-up Rust rewrite of upstream [tosu](https://github.com/tosuapp/tosu), with first-class Linux support, measured hot paths, and a repository designed to work well with coding agents.
 
-The daemon was written from scratch in Rust. The upstream project defines the compatibility target and supplies pinned dashboard assets and calculator provenance; it is not a runtime dependency or a translated codebase.
+The daemon was written from scratch in Rust, and its embedded dashboard is a first-party vanilla HTML, CSS, and JavaScript interface. The upstream project defines the compatibility target and calculator provenance; it is not a runtime dependency or a translated codebase.
 
 `vosu` reads live state from osu!stable and osu!lazer, then serves the dashboard, counters, reports, and compatible HTTP/WebSocket APIs. It is one native daemon: no Node.js, Electron, .NET, or C# runtime is required.
 

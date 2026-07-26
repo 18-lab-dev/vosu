@@ -22,6 +22,8 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 ### Dashboard
 
 - Added persistent pinning and drag-and-drop ordering for installed counters, Shift-click URL opening, `/` search focus, and the reference magenta–iris–cyan dark dashboard palette.
+- Replaced the inherited tosu dashboard bundle, fonts, icon font, and image assets with a dependency-free first-party Vosu interface; applied the approved brand mark to the dashboard, reports, file indexes, browser favicon, and multi-resolution Windows executable icon.
+- Standardized installed-overlay previews on a responsive 5:3 viewport with a dark transparent canvas, aligned card rows and metadata footers, and preserved authored overlay backgrounds.
 
 ### API
 

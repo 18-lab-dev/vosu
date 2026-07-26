@@ -25,7 +25,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         Some(2),
         None,
         true,
-        r#"<div class="result-item">counter</div>"#,
+        r#"<article class="counter-card">counter</article>"#,
         None,
     );
     let html = String::from_utf8(page.body.to_vec()).unwrap();
@@ -34,12 +34,15 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         "{{AVAILABLE_AMOUNT}}",
         "{{SEARCH}}",
         "{{LIST}}",
+        "{{UPDATE_HIDDEN}}",
+        "{{CURRENT_VERSION}}",
+        "{{NEW_VERSION}}",
     ] {
         assert!(!html.contains(placeholder));
     }
-    assert!(html.contains("Installed (2)"));
+    assert!(html.contains(r#"data-count="installed">(2)</span>"#));
     assert!(html.contains("search-bar"));
-    assert!(html.contains(r#"class="result-item""#));
+    assert!(html.contains(r#"class="counter-card""#));
 
     let updated = render_homepage(
         PageService.dashboard_template(),
@@ -50,9 +53,9 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         Some("99.0.0"),
     );
     let updated = String::from_utf8(updated.body.to_vec()).unwrap();
-    assert!(updated.contains("update-available"));
-    assert!(!updated.contains("hidden update-available"));
-    assert!(!updated.contains("{OLD}"));
+    assert!(updated.contains(r#"id="update-notice""#));
+    assert!(!updated.contains(r#"class="update-notice" hidden"#));
+    assert!(!updated.contains("{{NEW_VERSION}}"));
     assert!(updated.contains("99.0.0"));
 
     let settings = render_runtime_settings(&Config::default());
@@ -77,12 +80,12 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
             "{binding}"
         );
     }
-    assert!(settings.contains("V2 Subscription Debounce"));
+    assert!(settings.contains("V2 subscription debounce"));
     assert!(settings.contains(
-        "The minimum interval between selected-field WebSocket frames, in milliseconds."
+        "Minimum milliseconds between selected-field WebSocket frames."
     ));
     assert!(settings.contains(
-        r#"data-id="V2_SUBSCRIPTION_DEBOUNCE"><button title="[Click] decrements by 1&#10;[Shift + Click] by 10" class="decr">-</button><input type="number" value="0" min="0" max="">"#
+        r#"data-id="V2_SUBSCRIPTION_DEBOUNCE" type="number" value="0" min="0" step="any""#
     ));
 }
 
@@ -122,14 +125,14 @@ async fn dynamic_pages_keep_discovered_installed_count_when_catalog_fetch_fails(
         .await
         .unwrap();
     let dashboard = String::from_utf8(dashboard.body.to_vec()).unwrap();
-    assert!(dashboard.contains("Installed (2)"));
+    assert!(dashboard.contains(r#"data-count="installed">(2)</span>"#));
 
     let unavailable = pages
         .render(DynamicPage::Available, None)
         .await
         .unwrap();
     let unavailable = String::from_utf8(unavailable.body.to_vec()).unwrap();
-    assert!(unavailable.contains("Installed (2)"));
+    assert!(unavailable.contains(r#"data-count="installed">(2)</span>"#));
     assert!(unavailable.contains("Error:"));
 
     counters.shutdown().await;
@@ -232,8 +235,8 @@ fn counter_cards_use_absolute_obs_url_and_source_resolution_rules() {
     );
     assert!(fixed.contains(r#"src="http://localhost:24050/folder/""#));
     assert!(fixed.contains(r#"width="640px" height="480px""#));
-    assert!(fixed.contains(r#"nfv="640" class="copyable">640</span> x"#));
-    assert!(fixed.contains(r#"nfv="480" class="copyable">480</span>"#));
+    assert!(fixed.contains(r#"data-copy-value="640 × 480""#));
+    assert!(fixed.contains(r#"<code>640 × 480</code>"#));
 
     let any = render_counter_card(
         "Counter",
@@ -252,11 +255,8 @@ fn counter_cards_use_absolute_obs_url_and_source_resolution_rules() {
         "127.0.0.1:24050",
     );
     assert!(any.contains(r#"width="500px" height="300px""#));
-    assert_eq!(
-        any.matches(r#"nfv="ANY" class="copyable">ANY</span>"#)
-            .count(),
-        2
-    );
+    assert!(any.contains(r#"data-copy-value="ANY × ANY""#));
+    assert!(any.contains(r#"<code>ANY × ANY</code>"#));
 
     let flexible = render_counter_card(
         "Counter",
@@ -297,10 +297,10 @@ fn installed_counter_cards_emit_escaped_identity_and_pin_control() {
     );
 
     assert!(card.starts_with(
-        r#"<div class="result-item" data-overlay-id="folder&lt;&amp;&quot;">"#
+        r#"<article class="counter-card" data-overlay-id="folder&lt;&amp;&quot;""#
     ));
     assert!(card.contains(
-        r#"<button class="button pin-button flexer" type="button" aria-pressed="false" title="Pin overlay" aria-label="Pin overlay"><span>Pin</span></button>"#
+        r#"<button class="button" type="button" data-action="toggle-pin" aria-pressed="false">Pin</button>"#
     ));
 }
 
@@ -315,7 +315,7 @@ fn catalog_counter_cards_do_not_emit_identity_or_pin_control() {
         false,
         false,
         Some("https://example.com/counter.zip"),
-        &[],
+        &["https://github.com/Author".to_owned()],
         false,
         false,
         &[],
@@ -324,7 +324,58 @@ fn catalog_counter_cards_do_not_emit_identity_or_pin_control() {
     );
 
     assert!(!card.contains("data-overlay-id"));
-    assert!(!card.contains("pin-button"));
+    assert!(!card.contains(r#"data-action="toggle-pin""#));
+    assert!(card.contains(r#">GitHub</a>"#));
+    assert!(!card.contains("<img"));
+}
+
+#[test]
+fn counter_card_links_require_absolute_http_or_https_urls() {
+    let author_links = [
+        "javascript:alert(1)".to_owned(),
+        "https://authors.example/profile".to_owned(),
+        "data:text/plain,unsafe".to_owned(),
+        "/same-origin/profile".to_owned(),
+        "http://authors.example/profile".to_owned(),
+    ];
+    let assets = [
+        "/same-origin/preview.png",
+        "https://cdn.example/preview.png",
+        "javascript:alert(1)",
+        "data:text/plain,unsafe",
+        "http://cdn.example/preview.png",
+    ];
+    let card = render_counter_card(
+        "Counter",
+        "Author",
+        "1.0",
+        "catalog-folder",
+        true,
+        false,
+        false,
+        None,
+        &author_links,
+        false,
+        false,
+        &assets,
+        &[],
+        "localhost:24050",
+    );
+
+    assert!(card.contains(r#"href="https://authors.example/profile""#));
+    assert!(card.contains(r#"href="http://authors.example/profile""#));
+    assert!(card.contains(r#"href="https://cdn.example/preview.png""#));
+    assert!(card.contains(r#"href="http://cdn.example/preview.png""#));
+    assert_eq!(card.matches(r#"class="author-link""#).count(), 2);
+    assert_eq!(card.matches(r#"<li><a href=""#).count(), 2);
+    for rejected in [
+        "javascript:alert(1)",
+        "data:text/plain,unsafe",
+        "/same-origin/profile",
+        "/same-origin/preview.png",
+    ] {
+        assert!(!card.contains(rejected), "{rejected} must be omitted");
+    }
 }
 
 #[test]

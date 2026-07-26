@@ -1,84 +1,109 @@
-<html>
-
+<!doctype html>
+<html lang="en">
 <head>
-  <title>vosu dashboard v1.5</title>
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico" />
-  <link rel="stylesheet" href="/assets/homepage.min.css" />
-  <link rel="stylesheet" href="/assets/icons/style.css" />
-  <link rel="stylesheet" href="/assets/fonts/style.css" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#100E18">
+  <title>Vosu dashboard</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="stylesheet" href="/assets/homepage.css">
+  <script src="/assets/homepage.js" defer></script>
 </head>
-
 <body>
-  <header class="flexer">
-    <a href="https://vosu.app" target="_blank" class="flexer">
-      <i class="icon-link"></i>
-      website
-    </a>
-    <div>‧</div>
-    <a href="https://github.com/shiruviaa/vosu" target="_blank" class="flexer">
-      <i class="icon-github"></i>
-      github
-    </a>
-    <div>‧</div>
-    <a href="https://osuck.link/vosu-discord" target="_blank" class="flexer">
-      <i class="icon-discord"></i>
-      discord
-    </a>
-    <div>‧</div>
-    <a onclick="showDonateModal()" class="flexer clickable">
-      <span class="rainbow-donate">Donate</span>
-      <span>❤️</span>
-    </a>
-    <label class="flexer indent-left devmode si-checkbox">
-      <input type="checkbox" name="devMode" id="devMode" value="false" />
-      <div>DevMode</div>
-      <span class="status"></span>
-      <span class="checkmark"></span>
-    </label>
-  </header>
-  <div class="hidden update-available">
-    <div>New version available. {OLD} => {NEW}</div>
-    <div>click here to run update</div>
-  </div>
-  <main>
-    <div class="flexer links">
-      <a href="https://github.com/shiruviaa/vosu" target="_blank" class="flexer button open-button">
-        repository
-        <i class="icon-link"></i>
-      </a>
-      <a target="_blank" class="flexer button open-folder-button">
-        <i class="icon-folder"></i>
-        open counter folder
-      </a>
-      <a href="/local-overlays" class="flexer indent-left button open-button">
-        How to install local counter
-      </a>
-    </div>
-    <div class="flexer tabs">
-      <a href="/settings" class="tab-item">
-        <i class="icon-settings"></i>
-        Settings
-      </a>
-      <a href="/" class="indent-left tab-item">Installed{{LOCAL_AMOUNT}}</a>
-      <a href="/available" class="tab-item">Available{{AVAILABLE_AMOUNT}}</a>
-      <a class="tab-item"></a>
-      <a href="https://osuck.link/vosu-counter-submit" target="_blank" class="indent-left tab-item">
-        <span>Submit your pp counter</span>
-        <i class="icon-link"></i>
-      </a>
-    </div>
-    {{SEARCH}}
-    <div class="results">{{LIST}}</div>
-  </main>
-  <footer>
-    <span>
-      created by
-      <a href="https://kotrik.ru/" target="_blank">KotRik</a>,
-      <a href="https://github.com/xxCherry" target="_blank">Cherry</a>
-    </span>
-  </footer>
-  <script src="/assets/vue.js"></script>
-  <script type="module" src="/assets/homepage.js"></script>
-</body>
+  <a class="skip-link" href="#main-content">Skip to dashboard content</a>
 
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Vosu dashboard home">
+      <svg class="brand-mark" viewBox="0 0 1024 1024" role="img" aria-labelledby="dashboard-mark-title dashboard-mark-description" shape-rendering="geometricPrecision">
+        <title id="dashboard-mark-title">Vosu</title>
+        <desc id="dashboard-mark-description">The rose Vosu signal-V mark and cyan signal node on a rounded dark tile.</desc>
+        <rect width="1024" height="1024" rx="144" fill="#100E18"></rect>
+        <g aria-label="Vosu signal-V symbol" transform="translate(512 500) scale(6.2) translate(-128 -113)">
+          <path d="M18 36 H32 L64 94 L96 36 H110" transform="translate(64 46)" fill="none" stroke="#F45CAD" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"></path>
+          <circle cx="128" cy="140" r="10" fill="#100E18"></circle>
+          <circle cx="128" cy="140" r="5.5" fill="#7AE1F8"></circle>
+        </g>
+      </svg>
+      <span class="brand-name">Vosu</span>
+      <span class="brand-context">Dashboard</span>
+    </a>
+
+    <nav class="header-links" aria-label="Vosu resources">
+      <a href="https://vosu.app" target="_blank" rel="noopener noreferrer">Website</a>
+      <a href="https://github.com/shiruviaa/vosu" target="_blank" rel="noopener noreferrer">Source</a>
+      <a href="/api/generateReport">Download report</a>
+    </nav>
+  </header>
+
+  <section id="update-notice" class="update-notice" {{UPDATE_HIDDEN}} aria-labelledby="update-title">
+    <div>
+      <p class="eyebrow">Vosu update</p>
+      <h2 id="update-title">Version {{NEW_VERSION}} is ready</h2>
+      <p>This daemon is running {{CURRENT_VERSION}}. Start the built-in updater when you are ready.</p>
+    </div>
+    <button class="button button-primary" type="button" data-action="app-update">Update Vosu</button>
+  </section>
+
+  <div class="dashboard-layout">
+    <aside class="sidebar" aria-label="Dashboard navigation">
+      <nav class="primary-nav">
+        <a class="nav-link" data-page="installed" href="/">
+          <span>Installed</span>
+          <span class="nav-count" data-count="installed">{{LOCAL_AMOUNT}}</span>
+        </a>
+        <a class="nav-link" data-page="available" href="/available">
+          <span>Available</span>
+          <span class="nav-count" data-count="available">{{AVAILABLE_AMOUNT}}</span>
+        </a>
+        <a class="nav-link" data-page="settings" href="/settings">Settings</a>
+      </nav>
+
+      <div class="sidebar-section">
+        <p class="sidebar-label">Overlay tools</p>
+        <button class="sidebar-action" type="button" data-action="open-root">Open overlays folder</button>
+        <a class="sidebar-action" href="/local-overlays">Add a local overlay</a>
+        <a class="sidebar-action" href="https://osuck.link/vosu-counter-submit" target="_blank" rel="noopener noreferrer">Submit an overlay</a>
+      </div>
+
+      <div class="sidebar-section developer-toggle">
+        <label for="developer-mode">
+          <span>Schema builder</span>
+          <input id="developer-mode" type="checkbox">
+        </label>
+        <p>Show developer controls for editing an overlay’s settings schema.</p>
+      </div>
+    </aside>
+
+    <main id="main-content" class="dashboard-main" tabindex="-1">
+      <header class="content-header">
+        <div>
+          <p class="eyebrow">Local Vosu service</p>
+          <h1 id="page-title">Overlays</h1>
+          <p id="page-summary" class="page-summary">Manage the overlays served by this Vosu instance.</p>
+        </div>
+        {{SEARCH}}
+      </header>
+
+      <section id="counter-results" class="results" aria-live="polite" aria-busy="false">
+        {{LIST}}
+      </section>
+    </main>
+  </div>
+
+  <dialog id="dashboard-dialog" class="dashboard-dialog" aria-labelledby="dialog-title">
+    <div class="dialog-frame">
+      <header class="dialog-header">
+        <div>
+          <h2 id="dialog-title"></h2>
+          <p id="dialog-description"></p>
+        </div>
+        <button class="icon-button" type="button" data-action="close-dialog" aria-label="Close dialog">Close</button>
+      </header>
+      <div id="dialog-body" class="dialog-body"></div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
 </html>

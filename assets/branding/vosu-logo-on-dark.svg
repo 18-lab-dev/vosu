@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="220" viewBox="0 0 800 220" role="img" aria-labelledby="vosu-logo-on-dark-title vosu-logo-on-dark-desc" shape-rendering="geometricPrecision">
+  <title id="vosu-logo-on-dark-title">Vosu logo on dark</title>
+  <desc id="vosu-logo-on-dark-desc">A continuous rose telemetry line forms a V with a cyan signal node beside a custom lowercase vosu wordmark, optimized for dark surfaces.</desc>
+  <g aria-label="Vosu symbol">
+    <path d="M18 36 H32 L64 94 L96 36 H110" transform="translate(64 46)" fill="none" stroke="#F45CAD" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="128" cy="140" r="10" fill="#100E18"/>
+    <circle cx="128" cy="140" r="5.5" fill="#7AE1F8"/>
+  </g>
+  <g aria-label="vosu" fill="none" stroke="#F9F7FF" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M250 80 L288 150 L326 80"/>
+    <path d="M405 80 C381 80 364 92 364 115 C364 138 381 150 405 150 C429 150 446 138 446 115 C446 92 429 80 405 80 Z"/>
+    <path d="M554 88 C542 81 529 78 516 80 C497 82 486 92 487 104 C488 116 498 120 521 122 C544 124 555 130 555 140 C555 150 542 155 525 155 C509 155 496 151 484 142"/>
+    <path d="M594 80 V124 C594 142 606 151 625 151 C644 151 656 142 656 124 V80"/>
+  </g>
+</svg>

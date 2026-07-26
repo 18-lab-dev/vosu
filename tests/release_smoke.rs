@@ -187,7 +187,7 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     assert!(!config_dir.join("vosu.env").exists());
     assert!(!config_dir.join("tosu.env").exists());
     let asset = client
-        .get(format!("{base}/assets/homepage.min.css"))
+        .get(format!("{base}/assets/homepage.css"))
         .send()
         .await
         .unwrap();

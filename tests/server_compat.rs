@@ -360,7 +360,7 @@ fn embedded_pages_and_assets_preserve_status_mime_and_no_cache_contract() {
     let pages = PageService;
     let dashboard = pages.lookup_get("/", false);
     assert!(matches!(dashboard, PageLookup::Dynamic(_)));
-    let css = pages.asset("homepage.min.css");
+    let css = pages.asset("homepage.css");
     assert_eq!(css.status, 200);
     assert_eq!(css.content_type, "text/css; charset=utf-8");
     assert!(!css.body.is_empty());

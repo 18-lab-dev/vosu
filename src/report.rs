@@ -407,11 +407,6 @@ fn render_report_head(report: &Report) -> String {
         .expect("retained report template contains LOGS insertion point");
 
     template_head
-        .replacen(
-            "<table>",
-            "<table><tr><td class=\"highlight\">System Type</td><td>{{SYSTEM_TYPE}}</td></tr>",
-            1,
-        )
         .replace("{{TIME}}", &escape_html(&iso_millis(report.date)))
         .replace("{{SYSTEM_TYPE}}", report.spec.system_type.as_str())
         .replace(

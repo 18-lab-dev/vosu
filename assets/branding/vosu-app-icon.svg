@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="vosu-app-icon-title vosu-app-icon-desc" shape-rendering="geometricPrecision">
+  <title id="vosu-app-icon-title">Vosu app icon</title>
+  <desc id="vosu-app-icon-desc">The rose Vosu signal-V mark and cyan signal node on a rounded dark tile.</desc>
+  <rect width="1024" height="1024" rx="144" fill="#100E18"/>
+  <g aria-label="Vosu signal-V symbol" transform="translate(512 500) scale(6.2) translate(-128 -113)">
+    <path d="M18 36 H32 L64 94 L96 36 H110" transform="translate(64 46)" fill="none" stroke="#F45CAD" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="128" cy="140" r="10" fill="#100E18"/>
+    <circle cx="128" cy="140" r="5.5" fill="#7AE1F8"/>
+  </g>
+</svg>

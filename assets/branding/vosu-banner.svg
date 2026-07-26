@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="vosu-banner-title vosu-banner-desc" shape-rendering="geometricPrecision">
+  <title id="vosu-banner-title">Vosu telemetry banner</title>
+  <desc id="vosu-banner-desc">The Vosu signal-V and lowercase wordmark with the product line Native osu! telemetry, counters, and compatible APIs in Rust.</desc>
+  <rect width="1280" height="640" fill="#100E18"/>
+  <g fill="none" stroke="#F9F7FF" stroke-width="1" stroke-opacity="0.045">
+    <path d="M64 96 H1216 M64 192 H1216 M64 320 H1216 M64 448 H1216 M64 544 H1216"/>
+    <path d="M160 64 V576 M320 64 V576 M480 64 V576 M640 64 V576 M800 64 V576 M960 64 V576 M1120 64 V576"/>
+  </g>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+    <path d="M80 112 H232 L248 96 H432" stroke="#F45CAD" stroke-opacity="0.42"/>
+    <path d="M848 96 H1032 L1048 112 H1200" stroke="#7AE1F8" stroke-opacity="0.30"/>
+    <path d="M80 544 H304 L320 528 H448" stroke="#F45CAD" stroke-opacity="0.24"/>
+    <path d="M832 528 H992 L1008 544 H1200" stroke="#7AE1F8" stroke-opacity="0.18"/>
+  </g>
+  <circle cx="248" cy="96" r="4" fill="#F45CAD"/>
+  <circle cx="1048" cy="112" r="4" fill="#7AE1F8"/>
+  <circle cx="320" cy="528" r="3" fill="#F45CAD" fill-opacity="0.64"/>
+  <circle cx="1008" cy="544" r="3" fill="#7AE1F8" fill-opacity="0.56"/>
+  <g transform="translate(94 138) scale(1.48)">
+    <g aria-label="Vosu symbol">
+      <path d="M18 36 H32 L64 94 L96 36 H110" transform="translate(64 46)" fill="none" stroke="#F45CAD" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="128" cy="140" r="10" fill="#100E18"/>
+      <circle cx="128" cy="140" r="5.5" fill="#7AE1F8"/>
+    </g>
+    <g aria-label="vosu" fill="none" stroke="#F9F7FF" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M250 80 L288 150 L326 80"/>
+      <path d="M405 80 C381 80 364 92 364 115 C364 138 381 150 405 150 C429 150 446 138 446 115 C446 92 429 80 405 80 Z"/>
+      <path d="M554 88 C542 81 529 78 516 80 C497 82 486 92 487 104 C488 116 498 120 521 122 C544 124 555 130 555 140 C555 150 542 155 525 155 C509 155 496 151 484 142"/>
+      <path d="M594 80 V124 C594 142 606 151 625 151 C644 151 656 142 656 124 V80"/>
+    </g>
+  </g>
+  <g aria-label="Native osu! telemetry, counters, and compatible APIs in Rust." transform="translate(171.5 424) scale(3)" fill="none" stroke="#F9F7FF" stroke-width="0.72" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.82">
+    <path d="M0 7V0L4 7V0" transform="translate(0 0)"/>
+    <path d="M3.9 7V3.8C3.9 2.6 3 2 1.9 2C0.8 2 0.1 2.5 0 3.3M3.9 4.2H1.8C0.6 4.2 0 4.8 0 5.7C0 6.6 0.7 7.1 1.8 7.1C2.7 7.1 3.4 6.7 3.9 6" transform="translate(5.35 0)"/>
+    <path d="M2 0V5.9C2 6.7 2.5 7 3.5 7M0.4 2H3.8" transform="translate(10.7 0)"/>
+    <path d="M2 2V7M2 0.1V0" transform="translate(15.85 0)"/>
+    <path d="M0 2L2.1 7L4.2 2" transform="translate(20.2 0)"/>
+    <path d="M0 4.6H4.1C4.1 2.9 3.3 2 2 2C0.7 2 0 3 0 4.5C0 6.1 0.8 7 2.2 7C3 7 3.6 6.8 4.2 6.3" transform="translate(25.75 0)"/>
+    <path d="M2.1 2C0.7 2 0 3 0 4.5C0 6 0.7 7 2.1 7C3.5 7 4.2 6 4.2 4.5C4.2 3 3.5 2 2.1 2Z" transform="translate(35.65 0)"/>
+    <path d="M4 2.7C3.3 2.2 2.7 2 1.9 2C0.8 2 0.1 2.5 0.1 3.3C0.1 4.2 0.8 4.5 2.1 4.6C3.5 4.7 4.2 5 4.2 5.8C4.2 6.6 3.4 7 2.2 7C1.3 7 0.6 6.8 0 6.3" transform="translate(41.2 0)"/>
+    <path d="M0 2V5C0 6.3 0.7 7 1.9 7C2.9 7 3.7 6.6 4.2 5.7M4.2 2V7" transform="translate(46.75 0)"/>
+    <path d="M1 0V4.7M1 6.9V7" transform="translate(52.3 0)"/>
+    <path d="M2 0V5.9C2 6.7 2.5 7 3.5 7M0.4 2H3.8" transform="translate(60 0)"/>
+    <path d="M0 4.6H4.1C4.1 2.9 3.3 2 2 2C0.7 2 0 3 0 4.5C0 6.1 0.8 7 2.2 7C3 7 3.6 6.8 4.2 6.3" transform="translate(65.15 0)"/>
+    <path d="M1 0V5.9C1 6.7 1.5 7 2.4 7" transform="translate(70.7 0)"/>
+    <path d="M0 4.6H4.1C4.1 2.9 3.3 2 2 2C0.7 2 0 3 0 4.5C0 6.1 0.8 7 2.2 7C3 7 3.6 6.8 4.2 6.3" transform="translate(74.55 0)"/>
+    <path d="M0 7V2M0 3.2C0.5 2.4 1 2 1.8 2C2.7 2 3.1 2.7 3.1 3.7V7M3.1 3.2C3.6 2.4 4.1 2 4.9 2C5.8 2 6.2 2.7 6.2 3.7V7" transform="translate(80.1 0)"/>
+    <path d="M0 4.6H4.1C4.1 2.9 3.3 2 2 2C0.7 2 0 3 0 4.5C0 6.1 0.8 7 2.2 7C3 7 3.6 6.8 4.2 6.3" transform="translate(87.65 0)"/>
+    <path d="M2 0V5.9C2 6.7 2.5 7 3.5 7M0.4 2H3.8" transform="translate(93.2 0)"/>
+    <path d="M0 7V2M0 3.5C0.8 2.4 1.8 2 3.1 2C3.5 2 3.8 2.1 4.1 2.2" transform="translate(98.35 0)"/>
+    <path d="M0 2L2.1 7L4.2 2M2.1 7C2.1 8.2 1.4 9 0.2 9" transform="translate(103.8 0)"/>
+    <path d="M1.5 6.8L0.9 8.2" transform="translate(109.35 0)"/>
+    <path d="M4 3C3.4 2.3 2.7 2 1.9 2C0.7 2 0 3 0 4.5C0 6.1 0.7 7 2 7C2.8 7 3.5 6.7 4.1 6" transform="translate(117.05 0)"/>
+    <path d="M2.1 2C0.7 2 0 3 0 4.5C0 6 0.7 7 2.1 7C3.5 7 4.2 6 4.2 4.5C4.2 3 3.5 2 2.1 2Z" transform="translate(122.5 0)"/>
+    <path d="M0 2V5C0 6.3 0.7 7 1.9 7C2.9 7 3.7 6.6 4.2 5.7M4.2 2V7" transform="translate(128.05 0)"/>
+    <path d="M0 7V2M0 3.3C0.7 2.4 1.5 2 2.4 2C3.6 2 4.2 2.8 4.2 4V7" transform="translate(133.6 0)"/>
+    <path d="M2 0V5.9C2 6.7 2.5 7 3.5 7M0.4 2H3.8" transform="translate(139.15 0)"/>
+    <path d="M0 4.6H4.1C4.1 2.9 3.3 2 2 2C0.7 2 0 3 0 4.5C0 6.1 0.8 7 2.2 7C3 7 3.6 6.8 4.2 6.3" transform="translate(144.3 0)"/>
+    <path d="M0 7V2M0 3.5C0.8 2.4 1.8 2 3.1 2C3.5 2 3.8 2.1 4.1 2.2" transform="translate(149.85 0)"/>
+    <path d="M4 2.7C3.3 2.2 2.7 2 1.9 2C0.8 2 0.1 2.5 0.1 3.3C0.1 4.2 0.8 4.5 2.1 4.6C3.5 4.7 4.2 5 4.2 5.8C4.2 6.6 3.4 7 2.2 7C1.3 7 0.6 6.8 0 6.3" transform="translate(155.3 0)"/>
+    <path d="M1.5 6.8L0.9 8.2" transform="translate(160.85 0)"/>
+    <path d="M3.9 7V3.8C3.9 2.6 3 2 1.9 2C0.8 2 0.1 2.5 0 3.3M3.9 4.2H1.8C0.6 4.2 0 4.8 0 5.7C0 6.6 0.7 7.1 1.8 7.1C2.7 7.1 3.4 6.7 3.9 6" transform="translate(168.55 0)"/>
+    <path d="M0 7V2M0 3.3C0.7 2.4 1.5 2 2.4 2C3.6 2 4.2 2.8 4.2 4V7" transform="translate(173.9 0)"/>
+    <path d="M4.2 0V7M4.2 4.2C4.2 2.7 3.2 2 2.1 2C0.7 2 0 3 0 4.6C0 6.2 0.7 7 2.1 7C3.2 7 4.2 6.3 4.2 4.8" transform="translate(179.45 0)"/>
+    <path d="M4 3C3.4 2.3 2.7 2 1.9 2C0.7 2 0 3 0 4.5C0 6.1 0.7 7 2 7C2.8 7 3.5 6.7 4.1 6" transform="translate(189.35 0)"/>
+    <path d="M2.1 2C0.7 2 0 3 0 4.5C0 6 0.7 7 2.1 7C3.5 7 4.2 6 4.2 4.5C4.2 3 3.5 2 2.1 2Z" transform="translate(194.8 0)"/>
+    <path d="M0 7V2M0 3.2C0.5 2.4 1 2 1.8 2C2.7 2 3.1 2.7 3.1 3.7V7M3.1 3.2C3.6 2.4 4.1 2 4.9 2C5.8 2 6.2 2.7 6.2 3.7V7" transform="translate(200.35 0)"/>
+    <path d="M0 9V2M0 4.2C0 2.7 1 2 2.1 2C3.5 2 4.2 3 4.2 4.6C4.2 6.2 3.5 7 2.1 7C1 7 0 6.3 0 4.8" transform="translate(207.9 0)"/>
+    <path d="M3.9 7V3.8C3.9 2.6 3 2 1.9 2C0.8 2 0.1 2.5 0 3.3M3.9 4.2H1.8C0.6 4.2 0 4.8 0 5.7C0 6.6 0.7 7.1 1.8 7.1C2.7 7.1 3.4 6.7 3.9 6" transform="translate(213.45 0)"/>
+    <path d="M2 0V5.9C2 6.7 2.5 7 3.5 7M0.4 2H3.8" transform="translate(218.8 0)"/>
+    <path d="M2 2V7M2 0.1V0" transform="translate(223.95 0)"/>
+    <path d="M0 0V7M0 4.2C0 2.7 1 2 2.1 2C3.5 2 4.2 3 4.2 4.6C4.2 6.2 3.5 7 2.1 7C1 7 0 6.3 0 4.8" transform="translate(228.3 0)"/>
+    <path d="M1 0V5.9C1 6.7 1.5 7 2.4 7" transform="translate(233.85 0)"/>
+    <path d="M0 4.6H4.1C4.1 2.9 3.3 2 2 2C0.7 2 0 3 0 4.5C0 6.1 0.8 7 2.2 7C3 7 3.6 6.8 4.2 6.3" transform="translate(237.7 0)"/>
+    <path d="M0 7L2 0L4 7M0.7 4.7H3.3" transform="translate(247.6 0)"/>
+    <path d="M0 7V0H2.1C4.6 0 4.6 4 2.1 4H0" transform="translate(252.95 0)"/>
+    <path d="M0 0H4M2 0V7M0 7H4" transform="translate(258.7 0)"/>
+    <path d="M4 2.7C3.3 2.2 2.7 2 1.9 2C0.8 2 0.1 2.5 0.1 3.3C0.1 4.2 0.8 4.5 2.1 4.6C3.5 4.7 4.2 5 4.2 5.8C4.2 6.6 3.4 7 2.2 7C1.3 7 0.6 6.8 0 6.3" transform="translate(264.05 0)"/>
+    <path d="M2 2V7M2 0.1V0" transform="translate(273.95 0)"/>
+    <path d="M0 7V2M0 3.3C0.7 2.4 1.5 2 2.4 2C3.6 2 4.2 2.8 4.2 4V7" transform="translate(278.3 0)"/>
+    <path d="M0 7V0H2C4.6 0 4.6 4 2 4H0M2.2 4L4.5 7" transform="translate(288.2 0)"/>
+    <path d="M0 2V5C0 6.3 0.7 7 1.9 7C2.9 7 3.7 6.6 4.2 5.7M4.2 2V7" transform="translate(294.05 0)"/>
+    <path d="M4 2.7C3.3 2.2 2.7 2 1.9 2C0.8 2 0.1 2.5 0.1 3.3C0.1 4.2 0.8 4.5 2.1 4.6C3.5 4.7 4.2 5 4.2 5.8C4.2 6.6 3.4 7 2.2 7C1.3 7 0.6 6.8 0 6.3" transform="translate(299.6 0)"/>
+    <path d="M2 0V5.9C2 6.7 2.5 7 3.5 7M0.4 2H3.8" transform="translate(305.15 0)"/>
+    <path d="M1 6.9V7" transform="translate(310.3 0)"/>
+  </g>
+</svg>

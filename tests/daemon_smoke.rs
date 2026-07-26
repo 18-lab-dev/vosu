@@ -291,7 +291,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert!(!config_home.join("vosu/vosu.env").exists());
     assert!(!config_home.join("vosu/tosu.env").exists());
     let css = client
-        .get(format!("{base}/assets/homepage.min.css"))
+        .get(format!("{base}/assets/homepage.css"))
         .send()
         .await
         .unwrap();

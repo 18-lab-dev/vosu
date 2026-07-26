@@ -20,31 +20,32 @@ pub(super) fn render_homepage(
     list: &str,
     update_version: Option<&str>,
 ) -> EmbeddedResponse {
+    let search = if search {
+        r#"<form class="search-form" role="search"><label for="counter-search">Search overlays</label><div class="search-control"><input id="counter-search" class="search-bar" type="search" autocomplete="off" placeholder="Name, author, or compatible client" aria-controls="counter-results"><kbd aria-hidden="true">/</kbd></div></form>"#
+    } else {
+        ""
+    };
     let body = String::from_utf8_lossy(&template.body)
         .replace(
             "{{LOCAL_AMOUNT}}",
-            &local_count.map_or_else(String::new, |count| format!(" ({count})")),
+            &local_count.map_or_else(String::new, |count| format!("({count})")),
         )
         .replace(
             "{{AVAILABLE_AMOUNT}}",
-            &available_count.map_or_else(String::new, |count| format!(" ({count})")),
+            &available_count.map_or_else(String::new, |count| format!("({count})")),
         )
+        .replace("{{SEARCH}}", search)
+        .replace("{{LIST}}", list)
         .replace(
-            "{{SEARCH}}",
-            if search {
-                r#"<input class="search-bar" type="text" placeholder="Type counter name to search..." />"#
-            } else {
+            "{{UPDATE_HIDDEN}}",
+            if update_version.is_some() {
                 ""
+            } else {
+                "hidden"
             },
         )
-        .replace("{{LIST}}", list);
-    let body = if let Some(new_version) = update_version {
-        body.replace("{OLD}", &current_version().to_string())
-            .replace("{NEW}", new_version)
-            .replace("hidden update-available", "update-available")
-    } else {
-        body
-    };
+        .replace("{{CURRENT_VERSION}}", &current_version().to_string())
+        .replace("{{NEW_VERSION}}", update_version.unwrap_or_default());
     EmbeddedResponse {
         body: Bytes::from(body),
         ..template
@@ -193,6 +194,11 @@ pub(super) fn render_catalog_counters(
         .collect()
 }
 
+fn parse_absolute_http_url(value: &str) -> Option<url::Url> {
+    let url = url::Url::parse(value).ok()?;
+    matches!(url.scheme(), "http" | "https").then_some(url)
+}
+
 // The renderer intentionally accepts the catalog fields directly to avoid an
 // allocation-only intermediate model at this internal rendering boundary.
 #[allow(clippy::too_many_arguments)]
@@ -213,85 +219,93 @@ pub(super) fn render_counter_card(
     authority: &str,
 ) -> String {
     let status = if updatable {
-        " updatable"
+        " is-updatable"
     } else if downloaded {
-        " downloaded"
+        " is-installed"
     } else {
         ""
     };
-    let customisable = if external && external_settings {
-        r#"<div class="external-exists flexer"><i class="icon-settings"></i> customisable</div>"#
+    let settings_badge = if external && external_settings {
+        r#"<span class="badge badge-cyan">Settings available</span>"#
     } else {
         ""
     };
-    let links = author_links
+    let author_links = author_links
         .iter()
-        .filter_map(|link| {
-            let icon = if link.contains("github.com") {
-                "/assets/images/github-000000.svg"
-            } else if link.contains("twitter.com") {
-                "/assets/images/twitter-1DA1F2.svg"
+        .filter_map(|link| parse_absolute_http_url(link))
+        .enumerate()
+        .map(|(index, link)| {
+            let link = link.as_str();
+            let label = if link.contains("github.com") {
+                "GitHub"
+            } else if link.contains("twitter.com") || link.contains("x.com") {
+                "X / Twitter"
             } else if link.contains("discord.gg") || link.contains("discord.com") {
-                "/assets/images/discord-5865f2.svg"
+                "Discord"
             } else {
-                return None;
+                "Website"
             };
-            Some(format!(
-                r#"<a href="{}" target="_blank"><img loading="lazy" src="{icon}" /></a>"#,
-                escape_html(link)
-            ))
+            format!(
+                r#"<a class="author-link" href="{}" target="_blank" rel="noopener noreferrer" aria-label="{} author link {}">{label}</a>"#,
+                escape_html(link),
+                escape_html(name),
+                index + 1,
+            )
         })
         .collect::<String>();
+    let author_links = if author_links.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<span class="author-links">{author_links}</span>"#)
+    };
     let overlay_identity = if external {
         String::new()
     } else {
         format!(r#" data-overlay-id="{}""#, escape_html(folder))
     };
-    let buttons = if external {
-        let update = if updatable {
+    let install_name = format!("{name} by {author}");
+    let actions = if external {
+        let update = if updatable && download_link.is_some() {
             format!(
-                r#"<button class="button update-button flexer" l="{}" n="{}" a="{}"><span>Update</span></button>"#,
+                r#"<button class="button button-cyan" type="button" data-action="update-counter" data-download-url="{}" data-install-name="{}">Update</button>"#,
                 escape_html(download_link.unwrap_or_default()),
-                escape_html(name),
-                escape_html(author)
+                escape_html(&install_name),
             )
         } else {
             String::new()
         };
-        let main = if download_link.is_some() && !downloaded {
+        let primary = if !downloaded && download_link.is_some() {
             format!(
-                r#"<button class="button dl-button flexer" l="{}" n="{}" a="{}"><span>Download</span></button>"#,
+                r#"<button class="button button-primary" type="button" data-action="download-counter" data-download-url="{}" data-install-name="{}">Install</button>"#,
                 escape_html(download_link.unwrap_or_default()),
-                escape_html(name),
-                escape_html(author)
+                escape_html(&install_name),
+            )
+        } else if downloaded {
+            format!(
+                r#"<button class="button" type="button" data-action="open-counter" data-folder="{}">Open folder</button>"#,
+                escape_html(&install_name),
             )
         } else {
-            format!(
-                r#"<button class="button open-button flexer" n="{} by {}"><span>Open Folder</span></button>"#,
-                escape_html(name),
-                escape_html(author)
-            )
+            r#"<button class="button" type="button" disabled>Unavailable</button>"#.to_owned()
         };
-        format!(r#"<div class="buttons-group flexer indent-left">{update}{main}</div>"#)
+        format!(r#"<div class="counter-actions">{update}{primary}</div>"#)
     } else {
+        let settings_action = if settings {
+            format!(
+                r#"<button class="button" type="button" data-action="counter-settings" data-folder="{}">Settings</button>"#,
+                escape_html(folder),
+            )
+        } else {
+            String::new()
+        };
         format!(
-            r#"<div class="calu buttons-group flexer indent-left" n="{}" a="{}" v="{}"><button class="button pin-button flexer" type="button" aria-pressed="false" title="Pin overlay" aria-label="Pin overlay"><span>Pin</span></button><button class="button settings-builder-button flexer" n="{}"><i class="icon-builder"></i></button>{}<button class="button open-button flexer" n="{}"><span>Open Folder</span></button><button class="button delete-button flexer" n="{}"><span>Delete</span></button></div>"#,
-            escape_html(name),
-            escape_html(author),
-            escape_html(version),
+            r#"<div class="counter-actions"><button class="button" type="button" data-action="toggle-pin" aria-pressed="false">Pin</button><button class="pin-order" type="button" data-action="pin-earlier" aria-label="Move pinned overlay earlier" title="Move earlier">↑</button><button class="pin-order" type="button" data-action="pin-later" aria-label="Move pinned overlay later" title="Move later">↓</button><button class="button builder-action" type="button" data-action="settings-builder" data-folder="{}">Edit schema</button>{settings_action}<button class="button" type="button" data-action="open-counter" data-folder="{}">Open folder</button><button class="button button-danger" type="button" data-action="delete-counter" data-folder="{}">Delete</button></div>"#,
             escape_html(folder),
-            if settings {
-                format!(
-                    r#"<button class="button settings-button flexer" n="{}"><span>Settings</span></button>"#,
-                    escape_html(folder)
-                )
-            } else {
-                String::new()
-            },
             escape_html(folder),
             escape_html(folder),
         )
     };
+
     let x = resolution.first().and_then(json_number).unwrap_or(-1.0);
     let y = resolution.get(1).and_then(json_number).unwrap_or(-1.0);
     let width = if x == -1.0 {
@@ -319,33 +333,50 @@ pub(super) fn render_counter_card(
         format_number(y)
     };
     let absolute_url = format!("http://{authority}/{folder}/");
-    let gallery = if assets.is_empty() {
-        format!(
-            r#"<iframe src="{}" loading="lazy" width="{width}" height="{height}" n="{}" scrolling="no" frameborder="0"></iframe>"#,
-            escape_html(&absolute_url),
-            escape_html(folder)
-        )
-    } else {
-        assets
+    let preview = if external {
+        let links = assets
             .iter()
-            .map(|url| format!(r#"<img loading="lazy" src="{}" />"#, escape_html(url)))
-            .collect()
+            .filter_map(|url| parse_absolute_http_url(url))
+            .enumerate()
+            .map(|(index, url)| {
+                format!(
+                    r#"<li><a href="{}" target="_blank" rel="noopener noreferrer">Preview {}</a></li>"#,
+                    escape_html(url.as_str()),
+                    index + 1,
+                )
+            })
+            .collect::<String>();
+        if links.is_empty() {
+            r#"<div class="preview-placeholder"><strong>Catalog overlay</strong><span>Install this overlay to preview it from your local Vosu server.</span></div>"#.to_owned()
+        } else {
+            format!(
+                r#"<div class="preview-links"><strong>Catalog preview links</strong><span>Media opens only when selected.</span><ul>{links}</ul></div>"#
+            )
+        }
+    } else {
+        format!(
+            r#"<iframe src="{}" loading="lazy" width="{width}" height="{height}" title="{} overlay preview"></iframe>"#,
+            escape_html(&absolute_url),
+            escape_html(name),
+        )
     };
-    let footer = if external {
+    let metadata = if external {
         String::new()
     } else {
+        let resolution_text = format!("{x_text} × {y_text}");
         format!(
-            r#"<div class="ri-footer flexer"><div>URL: <span nf nft="url" nfv="{}" class="copyable">/{}/</span></div><div>Resolution: <span nf nft="width" nfv="{}" class="copyable">{}</span> x <span nf nft="height" nfv="{}" class="copyable">{}</span></div></div>"#,
+            r#"<footer class="counter-card__metadata"><button class="metadata-copy" type="button" data-action="copy-metadata" data-copy-label="URL" data-copy-value="{}"><span>URL</span><code>/{}/</code></button><button class="metadata-copy" type="button" data-action="copy-metadata" data-copy-label="Resolution" data-copy-value="{}"><span>Resolution</span><code>{}</code></button></footer>"#,
             escape_html(&absolute_url),
             escape_html(folder),
-            escape_html(&x_text),
-            escape_html(&x_text),
-            escape_html(&y_text),
-            escape_html(&y_text)
+            escape_html(&resolution_text),
+            escape_html(&resolution_text),
         )
     };
     format!(
-        r#"<div class="result-item{status}"{overlay_identity}><div class="ri-head flexer"><div><h4 class="flexer">{} v{}{customisable}</h4><div class="ri-links flexer"><span>by {}</span>{links}</div></div>{buttons}</div><hr><div class="ri-gallery flexer">{gallery}</div>{footer}</div>"#,
+        r#"<article class="counter-card{status}"{overlay_identity} data-counter-name="{}" data-counter-author="{}" data-counter-version="{}"><header class="counter-card__header"><div class="counter-card__identity"><div class="counter-card__title-row"><h2>{}</h2><span class="counter-card__version">v{}</span>{settings_badge}</div><p class="counter-card__author"><span>by {}</span>{author_links}</p></div>{actions}</header><div class="counter-card__preview">{preview}</div>{metadata}</article>"#,
+        escape_html(name),
+        escape_html(author),
+        escape_html(version),
         escape_html(name),
         escape_html(version),
         escape_html(author),
@@ -353,52 +384,51 @@ pub(super) fn render_counter_card(
 }
 
 pub(super) fn empty_counter_search() -> String {
-    r#"<div class="no-results">No counters<br />Change your search phrase</div>"#.to_owned()
+    r#"<div class="empty-state"><h2>No matching overlays</h2><p>Try a shorter name, a different author, or another compatible client.</p></div>"#.to_owned()
 }
 
 pub(super) fn local_overlay_instructions() -> String {
-    r#"<div class="settings">
-        <h3>How to Add Your Own Counter <a>Locally</a></h3>
-        <p>
-          1. <b>Create a new folder</b>:<br>- First, create a <a>new folder</a> inside your <a class="button open-button open-root-button small">static folder</a>.<br><br>
-          2. <b>Move your pp counter files</b>:<br>- Next, move <a>your pp counter</a> files into the newly created folder.<br><br>
-          3. <b>Download and place metadata file</b>:<br>- Download the <a
-             href="https://raw.githubusercontent.com/qt715/counters/master/quickstart/metadata.txt"
-             target="_blank">metadata.txt</a> file and place it in the counter folder.<br><br>
-          4. <b>Fill out the metadata file</b>:<br>- Finally, <a>open</a> the metadata.txt file and <a>fill out</a> the necessary information.
-        </p>
-      </div>"#.to_owned()
+    r#"<section class="local-guide" aria-labelledby="local-guide-title"><header><h2 id="local-guide-title">Serve an overlay from this computer</h2><p>Vosu discovers local overlays beneath its configured overlays directory.</p></header><ol><li><h3>Open the overlays directory</h3><p>Create one folder for the overlay you want to serve.</p><button class="button button-primary" type="button" data-action="open-root">Open overlays folder</button></li><li><h3>Add the overlay files</h3><p>Place the overlay entry point and its supporting files in that folder. The usual entry point is <code>index.html</code>.</p></li><li><h3>Describe the overlay</h3><p>Add <code>metadata.txt</code> to provide its display name, author, version, links, and preferred resolution. The first-party quickstart repository includes an example.</p><a class="button" href="https://github.com/shiruviaa/vosu-overlay-quickstart" target="_blank" rel="noopener noreferrer">Open overlay quickstart</a></li><li><h3>Return to Installed</h3><p>Reload the Installed page. Vosu will discover the folder and expose its local URL, settings, and management actions.</p><a class="button" href="/">View installed overlays</a></li></ol></section>"#.to_owned()
 }
 
 pub(super) fn settings_switch(id: &str, checked: bool) -> String {
     format!(
-        r#"<label class="switch" data-id="{id}"><input type="checkbox" class="switch-thumb" {}><span class="switch-track"></span></label>"#,
+        r#"<input class="settings-control" id="setting-{}" data-id="{}" type="checkbox" {}>"#,
+        escape_html(id),
+        escape_html(id),
         if checked { "checked" } else { "" },
     )
 }
 
-pub(super) fn settings_text(id: &str, value: &str, class: &str) -> String {
+pub(super) fn settings_text(id: &str, value: &str, _class: &str) -> String {
     format!(
-        r#"<div class="text-input{class}" data-id="{id}"><input type="text" value="{}"></div>"#,
+        r#"<input class="settings-control" id="setting-{}" data-id="{}" type="text" value="{}">"#,
+        escape_html(id),
+        escape_html(id),
         escape_html(value),
     )
 }
 
 pub(super) fn settings_number(id: &str, value: f64, min: u32) -> String {
     format!(
-        r#"<div class="number-input" data-id="{id}"><button title="[Click] decrements by 1&#10;[Shift + Click] by 10" class="decr">-</button><input type="number" value="{value}" min="{min}" max=""><button title="[Click] increments by 1&#10;[Shift + Click] by 10" class="incr">+</button></div>"#,
+        r#"<input class="settings-control" id="setting-{}" data-id="{}" type="number" value="{value}" min="{min}" step="any">"#,
+        escape_html(id),
+        escape_html(id),
     )
 }
 
 pub(super) fn settings_item(name: &str, description: &str, inputs: &str) -> String {
     format!(
-        r#"<div class="settings-item-v2"><div>{inputs}<p>{name}</p></div><p>{description}</p></div>"#,
+        r#"<label class="settings-item"><span class="settings-item__copy"><span class="settings-item__name">{}</span><span class="settings-item__description">{}</span></span><span class="settings-item__control">{inputs}</span></label>"#,
+        escape_html(name),
+        escape_html(description),
     )
 }
 
 pub(super) fn settings_group(header: &str, items: &[String]) -> String {
     format!(
-        r#"<div class="settings-item-group"><p>{header}</p><div>{}</div></div>"#,
+        r#"<fieldset class="settings-group"><legend>{}</legend>{}</fieldset>"#,
+        escape_html(header),
         items.join("\n"),
     )
 }
@@ -408,13 +438,13 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         "General",
         &[
             settings_item(
-                "Auto Update Client",
-                "Check for updates on startup and automatically install newer versions if available.",
+                "Automatic updates",
+                "Check for a new Vosu release during startup and install it automatically.",
                 &settings_switch("ENABLE_AUTOUPDATE", config.enable_auto_update),
             ),
             settings_item(
-                "Open Dashboard on Startup",
-                "Automatically open the vosu dashboard in your default browser on startup.",
+                "Open dashboard at startup",
+                "Open this local dashboard in the default browser after Vosu starts.",
                 &settings_switch(
                     "OPEN_DASHBOARD_ON_STARTUP",
                     config.open_dashboard_on_startup,
@@ -423,36 +453,36 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         ],
     );
     let data = settings_group(
-        "Data Fetching",
+        "Game data",
         &[
             settings_item(
-                "RT PP Calculation",
-                "Allow real-time calculation of performance points.<br>Useful to turn off for tournaments or users who do not care about pp.",
+                "Calculate performance points",
+                "Compute live performance points. Disable this when overlays do not need PP data.",
                 &settings_switch("CALCULATE_PP", config.calculate_pp),
             ),
             settings_item(
-                "Mania Scroll Speed",
-                "Allow reading scrollSpeed from game memory.",
+                "Read mania scroll speed",
+                "Expose the current mania scroll speed from game memory.",
                 &settings_switch("READ_MANIA_SCROLL_SPEED", config.read_mania_scroll_speed),
             ),
             settings_item(
-                "Key Overlay Data",
-                "Allow retrieval of live keypress data for the [K1/K2/M1/M2] keys.",
+                "Read key overlay data",
+                "Expose live K1, K2, M1, and M2 input state to overlays.",
                 &settings_switch("ENABLE_KEY_OVERLAY", config.enable_key_overlay),
             ),
             settings_item(
-                "Common Poll Rate",
-                "Interval of time, in milliseconds, between polling of general game data.",
+                "Common poll interval",
+                "Milliseconds between reads of general game data.",
                 &settings_number("POLL_RATE", config.poll_rate, 100),
             ),
             settings_item(
-                "Precise Poll Rate",
-                "Interval of time, in milliseconds, between polling of precise game data. (KeyOverlayData, HitErrorData)",
+                "Precise poll interval",
+                "Milliseconds between reads of precise key and hit-error data.",
                 &settings_number("PRECISE_DATA_POLL_RATE", config.precise_data_poll_rate, 0),
             ),
             settings_item(
-                "V2 Subscription Debounce",
-                "The minimum interval between selected-field WebSocket frames, in milliseconds.",
+                "V2 subscription debounce",
+                "Minimum milliseconds between selected-field WebSocket frames.",
                 &settings_number(
                     "V2_SUBSCRIPTION_DEBOUNCE",
                     config.v2_subscription_debounce,
@@ -465,21 +495,21 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         "Server",
         &[
             settings_item(
-                "Server IP",
-                "The server IP address vosu will listen on.",
+                "Listener address",
+                "IP address where the Vosu HTTP server listens.",
                 &settings_text("SERVER_IP", &config.server_ip, ""),
             ),
             settings_item(
-                "Server Port",
-                "The server port vosu will listen on.<br>Must be between 1024 and 65535.",
+                "Listener port",
+                "Port for the Vosu HTTP server. Use a value from 1024 through 65535.",
                 &settings_text("SERVER_PORT", &config.server_port.to_string(), ""),
             ),
             settings_item(
-                "Allowed IPs",
-                "A comma-separated list of IP addresses that are allowed to connect to the server.<br>Server IP is automatically added to the list. | Supports wildcard support (eg. 192.168.*.*)",
+                "Allowed IP addresses",
+                "Comma-separated clients permitted to connect. Wildcard octets such as 192.168.*.* are supported.",
                 &format!(
-                    r#"<div class="textarea-input" data-id="ALLOWED_IPS"><textarea>{}</textarea></div>"#,
-                    escape_html(&config.allowed_ips)
+                    r#"<textarea class="settings-control" id="setting-ALLOWED_IPS" data-id="ALLOWED_IPS">{}</textarea>"#,
+                    escape_html(&config.allowed_ips),
                 ),
             ),
         ],
@@ -488,23 +518,25 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         "Advanced",
         &[
             settings_item(
-                "Debugging Mode",
-                "Allow logging of additional verbose data to the console.<br>May cause performance issues: Please do not enable unless troubleshooting.",
+                "Debug logging",
+                "Write verbose diagnostics. Enable this only while troubleshooting.",
                 &settings_switch("DEBUG_LOG", config.debug_log),
             ),
             settings_item(
-                "Show Multiplayer Commands",
-                "Show bancho multiplayer commands (!mp) in the tournament chat manager.",
+                "Show multiplayer commands",
+                "Expose Bancho multiplayer commands in tournament chat data.",
                 &settings_switch("SHOW_MP_COMMANDS", config.show_mp_commands),
             ),
             settings_item(
-                "Counters Directory",
-                "Path to the folder containing the vosu counters. (named 'static' by default)",
+                "Overlays directory",
+                "Directory Vosu scans for local overlays.",
                 &settings_text("STATIC_FOLDER_PATH", &config.static_folder_path, ""),
             ),
         ],
     );
-    format!(r#"<div class="settings">{general}{data}{server}{advanced}</div>"#)
+    format!(
+        r#"<form class="settings" id="runtime-settings"><header class="settings-header"><h2>Runtime configuration</h2><p>Review your changes, then save them together. Changing the listener address or port reconnects this page.</p></header><div class="settings-grid">{general}{data}{server}{advanced}</div><div class="settings-actions"><span class="settings-status" role="status">No unsaved changes</span><button class="button button-primary" type="submit">Save settings</button></div></form>"#
+    )
 }
 
 pub(super) fn escape_html(value: &str) -> String {

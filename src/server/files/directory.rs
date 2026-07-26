@@ -1,64 +1,104 @@
 use std::fmt::Write as _;
 use std::{fs, io};
 
-const OVERLAYS_STATIC: &str = r#"<html>
+const OVERLAYS_STATIC: &str = r##"<!doctype html>
+<html lang="en">
   <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#100E18">
     <title>{PAGE_URL}</title>
-    <link rel="icon" type="image/x-icon" href="/assets/favicon.ico" />
-    <link rel="stylesheet" href="/assets/fonts/style.css" />
-
+    <link rel="icon" href="/favicon.ico" sizes="any">
     <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #F9F7FF;
+        background: #100E18;
+      }
+
       * {
-        padding: 0;
-        margin: 0;
         box-sizing: border-box;
-        min-width: 0;
       }
 
       body {
-        font-size: 2.5em;
-        font-family: "Roboto", sans-serif;
-        font-weight: 400;
-        color: #c9abae;
-        background: #110d0d;
+        width: min(100% - 2rem, 72rem);
+        min-width: 18rem;
+        min-height: 100vh;
+        margin: 0 auto;
+        background:
+          radial-gradient(circle at top right, rgba(122, 225, 248, 0.12), transparent 26rem),
+          #100E18;
       }
 
-      ul {
-        margin: 30px;
-        list-style: decimal-leading-zero;
+      header {
+        padding: 2.5rem 0 1.25rem;
+        border-bottom: 1px solid rgba(249, 247, 255, 0.16);
+      }
+
+      .eyebrow {
+        margin: 0 0 0.4rem;
+        color: #F45CAD;
+        font-size: 0.75rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0;
+        overflow-wrap: anywhere;
+        font-size: clamp(1.6rem, 5vw, 2.8rem);
+      }
+
+      #overlays-list {
         display: grid;
-        grid-template-columns: 25% 25% 25% 25%;
-        padding: 0;
-        content-visibility: auto;
-        contain-intrinsic-size: 1000px;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+        gap: 0.65rem;
+        margin: 0;
+        padding: 1.5rem 0 3rem;
+        list-style: none;
       }
 
-      li {
-        margin-left: 2em;
+      #overlays-list li {
+        min-width: 0;
       }
 
-      a {
-        color: #b5616b;
-        text-decoration: underline;
-        text-underline-offset: 6px;
-        transition: 0.2s ease;
-        transition-property: text-underline-offset, color;
-        overflow-wrap: break-word;
+      #overlays-list a {
+        display: block;
+        min-height: 3rem;
+        padding: 0.8rem 0.9rem;
+        overflow-wrap: anywhere;
+        color: #7AE1F8;
+        font-weight: 650;
+        text-decoration: none;
+        background: #181423;
+        border: 1px solid rgba(249, 247, 255, 0.16);
+        border-radius: 0.65rem;
       }
 
-      a:hover {
-        color: #c9abae;
-        text-underline-offset: 4px;
+      #overlays-list a:hover {
+        color: #F9F7FF;
+        border-color: #F45CAD;
+      }
+
+      #overlays-list a:focus-visible {
+        outline: 0.2rem solid #7AE1F8;
+        outline-offset: 0.2rem;
       }
     </style>
   </head>
-
   <body>
+    <header>
+      <p class="eyebrow">Vosu file index</p>
+      <h1>{PAGE_URL}</h1>
+    </header>
     <ul id="overlays-list">
       {OVERLAYS_LIST}
     </ul>
   </body>
-</html>"#;
+</html>"##;
 
 #[cfg(target_os = "linux")]
 fn directory_entries(directory: &fs::File) -> io::Result<Vec<(String, bool)>> {
