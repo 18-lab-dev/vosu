@@ -40,6 +40,7 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 - Restored Linux gameplay snapshot freshness by reading valid process-memory batches directly instead of reparsing thousands of `/proc/<pid>/maps` entries for every primitive read; faults still retry through fresh mapping-aware validation.
 - Coalesced ordered, non-overlapping same-page Windows process reads only when their span fits a bounded 1 KiB stack scratch, dispatched singleton `read_many` requests directly, and rejected/zeroed false full-length backend reads while retaining short-read retries and all-destination zeroing on errors.
 - Reduced Linux process-event overhead with idle-poll bypass, bounded sorted queue coalescing, direct inspect/exit batching, delta-only eBPF tracked-map synchronization, early in-kernel candidate filtering, and reusable bounded CN_PROC receive storage; Linux 6.16+ also uses the `sched_process_exit` group-dead argument while older kernels retain the compatible fallback.
+- Logged the effective process-event backend (`eBPF`, `CN_PROC`, or polling) and active bound server IP/port at startup, plus endpoint changes after successful listener rebinds.
 
 ### Documentation
 

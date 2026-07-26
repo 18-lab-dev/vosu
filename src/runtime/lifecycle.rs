@@ -168,7 +168,27 @@ impl ProductionRuntime {
                 return Err(error);
             }
         };
-        let instances = InstanceRuntime::start(NativeProcessProvider::new(), loader);
+        let Some(effective_listener) = listener.state().effective else {
+            listener.stop_accepting();
+            hubs.shutdown().await;
+            listener.join().await;
+            processor.shutdown().await;
+            relays.shutdown().await;
+            counters.shutdown().await;
+            return Err(io::Error::other(
+                "listener start returned without effective address",
+            ));
+        };
+        self.logger.info(format!(
+            "Server IP and port: {}",
+            effective_listener.address
+        ));
+        let process_provider = NativeProcessProvider::new();
+        self.logger.info(format!(
+            "Process events backend: {}",
+            process_provider.process_event_backend_name()
+        ));
+        let instances = InstanceRuntime::start(process_provider, loader);
         let supervisor = ProductionStateSupervisor::start(
             instances.subscribe_current(),
             self.config.subscribe_current(),
@@ -318,12 +338,29 @@ impl RuntimeHooks for ProductionRuntime {
                             match listen_target(&effective) {
                                 Ok(target) => {
                                     let mut listener = self.listener.lock().await;
-                                    if let Some(listener) = listener.as_mut()
-                                        && let Err(error) = listener.stage(target).await
-                                    {
-                                        self.logger.warn(format!(
-                                            "Failed to bind requested listener; retaining previous listener: {error}"
-                                        ));
+                                    if let Some(listener) = listener.as_mut() {
+                                        let previous_address = listener
+                                            .state()
+                                            .effective
+                                            .map(|effective| effective.address);
+                                        match listener.stage(target).await {
+                                            Ok(()) => {
+                                                let effective_address = listener
+                                                    .state()
+                                                    .effective
+                                                    .map(|effective| effective.address);
+                                                if effective_address != previous_address
+                                                    && let Some(address) = effective_address
+                                                {
+                                                    self.logger.info(format!(
+                                                        "Server IP and port: {address}"
+                                                    ));
+                                                }
+                                            }
+                                            Err(error) => self.logger.warn(format!(
+                                                "Failed to bind requested listener; retaining previous listener: {error}"
+                                            )),
+                                        }
                                     }
                                 }
                                 Err(error) => self.logger.warn(format!(

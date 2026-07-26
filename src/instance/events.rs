@@ -176,6 +176,13 @@ impl ProcessEventMode {
             )),
         }
     }
+    fn backend_name(self) -> &'static str {
+        match self {
+            Self::CnProc => "CN_PROC",
+            Self::Ebpf => "eBPF",
+            Self::Auto => unreachable!("Auto process-event mode must resolve before storage"),
+        }
+    }
 }
 
 pub struct LinuxProcessEvents {
@@ -339,6 +346,11 @@ impl LinuxProcessEvents {
     }
 
     #[must_use]
+    pub(super) fn backend_name(&self) -> &'static str {
+        self.mode.backend_name()
+    }
+
+    #[must_use]
     pub fn healthy(&self) -> bool {
         self.healthy.load(Ordering::Acquire)
     }
@@ -484,6 +496,12 @@ mod tests {
             Some(ProcessEventMode::Ebpf)
         );
         assert!(ProcessEventMode::parse("unknown").is_err());
+    }
+
+    #[test]
+    fn concrete_modes_have_operator_facing_backend_names() {
+        assert_eq!(ProcessEventMode::CnProc.backend_name(), "CN_PROC");
+        assert_eq!(ProcessEventMode::Ebpf.backend_name(), "eBPF");
     }
 
     #[test]

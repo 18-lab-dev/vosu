@@ -257,6 +257,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .env("XDG_CONFIG_HOME", &config_home)
         .env("XDG_DATA_HOME", &data_home)
         .env("XDG_CACHE_HOME", &cache_home)
+        .env("VOSU_PROCESS_EVENTS", "poll")
         .env("HOME", roots.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -706,6 +707,22 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+
+    let latest_log = fs::read_to_string(data_home.join("vosu").join("logs").join("latest.log"))
+        .expect("read flushed production daemon log");
+    let info_messages: Vec<&str> = latest_log
+        .lines()
+        .filter_map(|line| line.split_once(" [info]   ").map(|(_, message)| message))
+        .collect();
+    assert!(
+        info_messages.contains(&"Process events backend: polling"),
+        "production log missing polling backend message:\n{latest_log}"
+    );
+    let server_message = format!("Server IP and port: 127.0.0.1:{port}");
+    assert!(
+        info_messages.contains(&server_message.as_str()),
+        "production log missing initial server endpoint message:\n{latest_log}"
+    );
 
     assert_no_update_artifacts(&cache_home.join("vosu"));
 }

@@ -318,6 +318,22 @@ impl NativeProcessProvider {
             Self
         }
     }
+
+    pub(crate) fn process_event_backend_name(&self) -> &'static str {
+        #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+        {
+            self.events
+                .as_ref()
+                .map_or("polling", super::events::LinuxProcessEvents::backend_name)
+        }
+        #[cfg(any(
+            windows,
+            all(target_os = "linux", not(feature = "linux-process-events"))
+        ))]
+        {
+            "polling"
+        }
+    }
 }
 
 #[cfg(windows)]
