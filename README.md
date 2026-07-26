@@ -1,8 +1,6 @@
 <div align="center">
 
-# vosu
-
-**Native osu! telemetry, counters, and compatible APIs in Rust.**
+<img src="assets/branding/vosu-banner.svg" alt="Vosu — Native osu! telemetry, counters, and compatible APIs in Rust." width="100%">
 
 <p>
   <a href="rust-toolchain.toml"><img alt="Rust 1.96.1" src="https://img.shields.io/badge/Rust-1.96.1-000000?style=flat-square"></a>
