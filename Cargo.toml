@@ -54,6 +54,7 @@ tempfile = "3.26.0"
 thiserror = "2.0.18"
 tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util", "signal", "test-util"] }
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
+toml = "=1.1.2"
 vosu-lazer-pp = { path = "crates/vosu-lazer-pp" }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["fmt", "env-filter", "ansi", "registry"] }

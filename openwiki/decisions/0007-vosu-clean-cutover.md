@@ -13,7 +13,7 @@ tags: [architecture, decision, adr, identity, migration]
 
 The native daemon is a ground-up Rust rewrite whose compatibility baseline and pinned evidence come from the upstream [tosu](https://github.com/tosuapp/tosu) project. Keeping the upstream name as the current product identity would blur ownership of the Rust implementation, its releases, first-party services, and its state on disk.
 
-A durable rename affects more than display text. Package and crate names, the executable, configuration and data roots, environment variables, API terminology, release archives, updater metadata, first-party endpoints, operational commands, and documentation form one public identity. Supporting both identities indefinitely would create ambiguous precedence, duplicate test surfaces, and updater and state-management paths that could diverge.
+A durable rename affects more than display text. Package and crate names, the executable, canonical TOML configuration and uppercase bindings, legacy migration inputs, data roots, API terminology, release archives, updater metadata, first-party endpoints, operational commands, and documentation form one public identity. Supporting both identities indefinitely would create ambiguous precedence, duplicate test surfaces, and updater and state-management paths that could diverge.
 
 Existing installations may nevertheless contain user configuration, counters, settings, cache data, and `tosu.env`. That state must survive the cutover without making the former name a permanent runtime interface.
 
@@ -22,12 +22,12 @@ Existing installations may nevertheless contain user configuration, counters, se
 Adopt **vosu** as the sole current product identity and make a clean cutover across the repository and release surface:
 
 - use `vosu` for the package, crates, executable, API terminology, logs and metadata;
-- use `vosu.env`, `VOSU_*`, and `vosu` platform data roots for configuration and state;
+- use flat typed TOML in `vosu.toml` with the current uppercase binding names, and `vosu` platform data roots for configuration and state;
 - publish `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip` from `shiruviaa/vosu`;
 - use <https://vosu.app> for first-party services and identity;
 - reject former executable, archive, environment-variable, updater, and package names rather than accepting aliases.
 
-Preserve user state through a one-time, idempotent migration. On Linux, move non-conflicting files from the former `tosu` XDG config, data, and cache roots into the corresponding `vosu` roots and remove empty former roots. On every platform, merge former `tosu.env` values into `vosu.env`, giving current values precedence and removing the former file only after successful replacement. After migration, read and write only vosu locations.
+Preserve user state through a one-time, idempotent migration. On Linux, move non-conflicting files from the former `tosu` XDG config, data, and cache roots into the corresponding `vosu` roots and remove empty former roots. On every platform, initialization layers defaults, `tosu.env`, `vosu.env`, and `vosu.toml` with precedence `vosu.toml > vosu.env > tosu.env > defaults`. It writes the canonical `vosu.toml` successfully before removing either readable legacy env file; malformed canonical TOML leaves all sources untouched. After migration, read, write, and watch only `vosu.toml`.
 
 Retain the string `tosu` only when its role is explicit and cannot truthfully be renamed: the upstream project and source revision, historical release records, one-time migration inputs, and parity or rejection fixtures that validate behavior against or away from the upstream identity. Provenance-pinned vendored inputs remain governed by their owning evidence workflow.
 

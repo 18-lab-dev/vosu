@@ -2,7 +2,7 @@ use super::document::ConfigDocument;
 use super::schema::Config;
 use arc_swap::ArcSwap;
 use sha2::{Digest, Sha256};
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -37,6 +37,26 @@ impl Default for ConfigStoreOptions {
         }
     }
 }
+pub(super) fn config_parent(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+pub(super) fn reject_target_symlink(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "configuration target must not be a symlink: {}",
+                path.display()
+            ),
+        )),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
 
 pub(super) fn persist_current(
     path: &Path,
@@ -59,11 +79,12 @@ pub(super) fn atomic_write(
     bytes: &[u8],
     replacer: &dyn AtomicReplace,
 ) -> io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    reject_target_symlink(path)?;
+    let parent = config_parent(path);
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("vosu.env");
+        .unwrap_or("vosu.toml");
     let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let temp = parent.join(format!(
         ".{file_name}.{}.{}.tmp",
@@ -79,9 +100,10 @@ pub(super) fn atomic_write(
         file.flush()?;
         file.sync_all()?;
         drop(file);
+        reject_target_symlink(path)?;
         replacer.replace(&temp, path)
     })();
-    if let Err(cleanup) = std::fs::remove_file(&temp)
+    if let Err(cleanup) = fs::remove_file(&temp)
         && cleanup.kind() != io::ErrorKind::NotFound
         && result.is_ok()
     {

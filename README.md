@@ -134,9 +134,10 @@ The daemon follows XDG directories and appends `vosu`:
 
 | Data | Path |
 | --- | --- |
-| Configuration | `${XDG_CONFIG_HOME:-$HOME/.config}/vosu/vosu.env` |
+| Configuration | `${XDG_CONFIG_HOME:-$HOME/.config}/vosu/vosu.toml` |
 | Counters | `${XDG_DATA_HOME:-$HOME/.local/share}/vosu/static/` |
-| Counter values | `${XDG_CONFIG_HOME:-$HOME/.config}/vosu/settings/<counter>.values.json` |
+| Counter schema | `${XDG_DATA_HOME:-$HOME/.local/share}/vosu/static/<counter>/settings.schema.toml` |
+| Counter values | `${XDG_CONFIG_HOME:-$HOME/.config}/vosu/settings/<counter>.settings.values.toml` |
 | Cache | `${XDG_CACHE_HOME:-$HOME/.cache}/vosu/` |
 
 ### Windows
@@ -145,19 +146,34 @@ The directory containing `vosu.exe` is the program, configuration, and data root
 
 | Data | Path |
 | --- | --- |
-| Configuration | `<program>/vosu.env` |
+| Configuration | `<program>/vosu.toml` |
 | Counters | `<program>/static/` |
-| Counter values | `<program>/settings/<counter>.values.json` |
+| Counter schema | `<program>/static/<counter>/settings.schema.toml` |
+| Counter values | `<program>/settings/<counter>.settings.values.toml` |
 | Cache | `<program>/.cache/` |
 | Logs | Runtime log directory below the program location |
 
 An absolute `STATIC_FOLDER_PATH` is used as written. A custom relative path is resolved from the launch directory. The defaults `./static` and `.\static` map to the platform data root.
 
-On first start after the rename, vosu performs a one-time, idempotent state migration. On Linux it moves files from the former `tosu` XDG config, data, and cache roots into the corresponding `vosu` roots without overwriting state already present there, then removes empty former roots. On every platform it merges the former `tosu.env` into `vosu.env`: values already in `vosu.env` win, deprecated bindings are dropped, and the former file is removed only after the replacement succeeds. After migration, vosu reads and writes only the new locations. Counter-local `settings.values.json` files still move to the central settings directory and remain in the counter directory as `settings.old-values.json`.
+On first start after the rename, vosu performs a one-time, idempotent state migration. On Linux it moves files from the former `tosu` XDG config, data, and cache roots into the corresponding `vosu` roots without overwriting state already present there, then removes empty former roots. On every platform, configuration migration layers defaults, readable `tosu.env`, readable `vosu.env`, and canonical `vosu.toml` with precedence `vosu.toml > vosu.env > tosu.env > defaults`. The legacy dotenv files are migration inputs only. It writes canonical TOML to `vosu.toml` through an atomic same-directory replacement; if canonical TOML is malformed at startup, all source files remain untouched. After migration, vosu reads and writes only canonical `vosu.toml`; legacy counter settings inputs remain untouched.
+For each counter, the package root's `settings.schema.toml` is the authoritative schema and developer schema saves write that file. Steady-state config storage contains only mutable values at `<config>/settings/<counter>.settings.values.toml`. When the root schema is missing, vosu creates it from root `settings.json` when present, otherwise by inferring setting types from scalar root `settings.toml`: strings become `text`, integers/floats become `number`, booleans become `checkbox`, and each key supplies `uniqueID`/`title` with the scalar as its default. Arrays, nested tables, and datetimes are rejected as ambiguous without creating a schema or modifying package inputs. Only after package sources does loading fall back to old config `<counter>.settings.toml` or `<counter>.settings.json`; every legacy counter schema and values input remains byte-for-byte untouched after canonical schema and values are created. Root JSON and TOML inputs remain untouched, and when both exist JSON defines the schema while TOML may seed values.
 
 ## Configuration
 
-Edit `vosu.env`. The daemon watches the file and applies supported changes without restarting. Writes use a temporary file in the same directory followed by atomic replacement.
+Edit `vosu.toml` in the platform configuration root. It is a flat, typed TOML document with uppercase binding names. The daemon watches its parent directory and applies supported changes without restarting. Writes use a temporary file in the same directory, flush and sync it, then atomically replace the target.
+
+```toml
+ENABLE_AUTOUPDATE = true
+OPEN_DASHBOARD_ON_STARTUP = true
+POLL_RATE = 150.0
+PRECISE_DATA_POLL_RATE = 10.0
+SERVER_IP = "127.0.0.1"
+SERVER_PORT = 24050.0
+STATIC_FOLDER_PATH = "./static"
+ALLOWED_IPS = "127.0.0.1,localhost,absolute"
+```
+
+At startup, malformed canonical TOML leaves every source file untouched. During watch reload, malformed TOML leaves the last-good runtime configuration and dependent resources active.
 
 | Binding | Default | Meaning |
 | --- | ---: | --- |
@@ -187,7 +203,7 @@ A top-level directory symlink directly below the static root is an explicit loca
 
 Installed counter cards can be pinned; pinned cards stay above unpinned cards in their saved order and can be reordered by dragging. Shift-click a counter URL to open it in a new window instead of copying it. Press `/` outside an editable control to focus the dashboard search.
 
-Counter `settings.json` files support text, color, number, checkbox, button, options, commands, textarea, password, and header entries. Values are stored at `<config>/settings/<counter>.values.json`. The `/settings` page handles daemon and counter settings.
+Counter settings support text, color, number, checkbox, button, options, commands, textarea, password, header entries. Each counter package owns its authoritative schema at `<static-root>/<counter>/settings.schema.toml`; only mutable values are stored centrally at `<config>/settings/<counter>.settings.values.toml`. `/settings` page handles daemon counter settings.
 
 The counter catalog is served from `https://vosu.app/api.json`. Production counter downloads require HTTPS. Redirects are bounded; HTTPS-to-HTTP downgrades and loopback, private, or reserved destinations are rejected. ZIP paths, symlinks, entry counts, and expanded size are checked before same-filesystem replacement.
 

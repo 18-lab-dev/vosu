@@ -1,4 +1,4 @@
-//! In-memory compatibility layer for the `vosu.env` configuration.
+//! Typed TOML-backed server configuration and live persistence.
 
 mod document;
 mod io;

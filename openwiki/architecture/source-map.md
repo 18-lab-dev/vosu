@@ -20,7 +20,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Public APIs | `src/api/`, `src/model/api/` | v1, stream companion, v2, precise schemas and serialization |
 | Server and transport | `src/server/`, `src/net/` | Exact routes, auth, files, pages, WebSockets, commands and streaming |
 | Calculation | `src/calculation/`, `crates/vosu-lazer-pp/` | Beatmaps, progressive state, live pp, legacy endpoint calculation |
-| Configuration and counters | `src/config/`, `src/counters/` | Watched `vosu.env`, migration, settings, discovery and downloads |
+| Configuration and counters | `src/config/`, `src/counters/` | Canonical `vosu.toml`, one-time legacy dotenv migration, settings, discovery and downloads |
 | Updating | `src/updater/` | Release selection, digest verification, staging, replacement, rollback |
 | Reports and logging | `src/report/`, `src/logging/` | Report rendering, escaping, retention and operational diagnostics |
 | Integration evidence | `tools/live-parity/`, `tools/oracle/` | Pinned parity captures, calculator provenance and diffs |

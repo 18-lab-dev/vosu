@@ -394,15 +394,22 @@ impl CounterDownloader for NoopDownloader {
 fn counter_metadata_settings_migration_and_traversal_are_end_to_end() {
     let root = TempDir::new().unwrap();
     let static_root = root.path().join("static");
+    let settings_root = root.path().join("settings");
     let folder = static_root.join("counter");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("index.html"), "ok").unwrap();
     std::fs::write(folder.join("metadata.txt"), "nAmE: Fancy ## ignored\nAUTHOR: Alice\nVersion:\nResolution: 640 x 480\nAuthorLinks: https://a, https://b\n").unwrap();
-    std::fs::write(folder.join("settings.json"), r#"[{"uniqueID":"title","type":"text","title":"Title","value":"default"},{"uniqueID":"enabled","type":"checkbox","title":"Enabled","value":false}]"#).unwrap();
-    std::fs::write(folder.join("settings.values.json"), r#"{"title":"legacy"}"#).unwrap();
+
+    let legacy_schema_path = folder.join("settings.json");
+    let legacy_schema = br#"[{"uniqueID":"title","type":"text","title":"Title","value":"default"},{"uniqueID":"enabled","type":"checkbox","title":"Enabled","value":false}]"#;
+    std::fs::write(&legacy_schema_path, legacy_schema).unwrap();
+    let legacy_values_path = folder.join("settings.values.json");
+    let legacy_values = br#"{"title":"legacy"}"#;
+    std::fs::write(&legacy_values_path, legacy_values).unwrap();
+
     let service = CounterService::new(
-        static_root,
-        root.path().join("settings"),
+        static_root.clone(),
+        settings_root.clone(),
         Arc::new(NoopOpener),
         Arc::new(NoopDownloader),
     );
@@ -412,9 +419,34 @@ fn counter_metadata_settings_migration_and_traversal_are_end_to_end() {
     assert_eq!(counters[0].name, "Fancy");
     assert_eq!(counters[0].resolution, vec![json!(640), json!(480)]);
     assert_eq!(counters[0].authorlinks, vec!["https://a", " https://b"]);
+    assert_eq!(counters[0].settings[0].unique_id, "title");
+    assert_eq!(counters[0].settings[1].unique_id, "enabled");
+    let registered_schema = counters[0].settings.clone();
+
+    let schema_path = service.settings().schema_path("counter");
+    let values_path = service.settings().values_path("counter");
+    assert_eq!(schema_path, folder.join("settings.schema.toml"));
+    assert_eq!(
+        values_path,
+        settings_root.join("counter.settings.values.toml")
+    );
+    assert!(schema_path.is_file());
+    assert!(values_path.is_file());
+    assert_eq!(std::fs::read(&legacy_schema_path).unwrap(), legacy_schema);
+    assert_eq!(std::fs::read(&legacy_values_path).unwrap(), legacy_values);
+
     let (_, values) = service.get_settings("counter").unwrap();
     assert_eq!(values["title"], "legacy");
-    assert!(folder.join("settings.old-values.json").exists());
+
+    let changed_legacy_schema = b"root JSON changed after registration";
+    std::fs::write(&legacy_schema_path, changed_legacy_schema).unwrap();
+    let rediscovered = service.discover().unwrap();
+    assert_eq!(rediscovered[0].settings, registered_schema);
+    assert_eq!(
+        std::fs::read(&legacy_schema_path).unwrap(),
+        changed_legacy_schema
+    );
+
     service
         .settings()
         .save_user_values(
@@ -425,12 +457,25 @@ fn counter_metadata_settings_migration_and_traversal_are_end_to_end() {
             }],
         )
         .unwrap();
-    assert_eq!(
-        service.get_counter_values("counter").unwrap()["enabled"],
-        true
+    assert!(values_path.is_file());
+
+    let restarted = CounterService::new(
+        static_root,
+        settings_root,
+        Arc::new(NoopOpener),
+        Arc::new(NoopDownloader),
     );
-    assert!(service.open("../outside").is_err());
-    assert!(service.delete("counter/child").is_err());
+    assert_eq!(restarted.discover().unwrap()[0].settings, registered_schema);
+    let persisted = restarted.get_counter_values("counter").unwrap();
+    assert_eq!(persisted["title"], "legacy");
+    assert_eq!(persisted["enabled"], true);
+    assert_eq!(
+        std::fs::read(&legacy_schema_path).unwrap(),
+        changed_legacy_schema
+    );
+    assert_eq!(std::fs::read(&legacy_values_path).unwrap(), legacy_values);
+    assert!(restarted.open("../outside").is_err());
+    assert!(restarted.delete("counter/child").is_err());
 }
 
 #[test]

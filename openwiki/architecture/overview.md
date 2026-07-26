@@ -28,7 +28,7 @@ Important constraints visible in the code are:
 ```mermaid
 flowchart LR
     Game[osu! stable or lazer] -->|process discovery and read-only memory access| Vosu[vosu daemon]
-    Config[vosu.env and local files] -->|watch and reload| Vosu
+    Config[vosu.toml and local files] -->|watch and reload| Vosu
     Vosu -->|HTTP JSON, files, pages| Client[overlay or API client]
     Vosu -->|WebSocket state and commands| Client
     Vosu -->|release and offset HTTPS| Remote[shiruviaa/vosu releases and vosu offset sources]
@@ -143,7 +143,7 @@ Beatmap parsing, timing/events, object graphs, and cache ownership are under `sr
 
 ## Configuration, files, and updates
 
-`ConfigStore` initializes `vosu.env` and performs the one-time merge from former `tosu.env`, publishes immutable `Arc<Config>` values through `ArcSwap`, emits broadcast transitions, and watches the current file using `notify` (`src/config/store.rs`). Current values win migration conflicts, and normal operation reads and writes only `vosu.env`. Programmatic updates publish immediately and schedule a debounced save. `register_before_publish` is a barrier for resources such as the static root that must be replaced before readers can observe the matching configuration. Runtime reload handling lives in `src/runtime/config.rs`; authorization and listener targets are reloadable rather than process globals.
+`ConfigStore` treats the platform config root's `vosu.toml` as the canonical flat, typed TOML document with uppercase binding names. Initialization layers defaults, `tosu.env`, `vosu.env`, and then canonical TOML, giving precedence `vosu.toml > vosu.env > tosu.env > defaults`; the dotenv files are migration inputs only. It writes the merged canonical bytes to a same-directory temporary file, flushes and syncs them, atomically replaces `vosu.toml`, and only then removes readable legacy inputs. Malformed canonical TOML fails startup before any write or removal. The parent-directory watcher reacts to create/modify events for the canonical path, parses complete valid documents, and leaves the last-good `Arc<Config>` published when a reload is malformed. Programmatic updates publish immediately and schedule a debounced atomic save. `register_before_publish` is a barrier for resources such as the static root that must be replaced before matching configuration becomes observable. Runtime reload handling lives in `src/runtime/config.rs`; authorization and listener targets are reloadable rather than process globals.
 
 `src/platform.rs::Paths` resolves program, launch, config, data, and cache roots and creates the latter three. On Linux, startup performs an idempotent one-time move from former `tosu` XDG roots to `vosu` roots without replacing already-current state. Default static content is under the data root; custom relative static paths are relative to the launch directory. `src/server/files.rs` owns percent decoding, containment checks, platform-secure opens, directory indexes, media ranges, and content types. Invalid, malformed, and escaping public paths collapse to not-found rather than exposing host filesystem details.
 

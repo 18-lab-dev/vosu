@@ -102,7 +102,7 @@ async fn dynamic_pages_keep_discovered_installed_count_when_catalog_fetch_fails(
         root.path().join("cache"),
     ));
     let config = Arc::new(
-        ConfigStore::initialize(root.path().join("vosu.env"))
+        ConfigStore::initialize(root.path().join("vosu.toml"))
             .await
             .unwrap(),
     );
@@ -136,17 +136,80 @@ async fn dynamic_pages_keep_discovered_installed_count_when_catalog_fetch_fails(
     config.shutdown().await.unwrap();
 }
 
+#[tokio::test]
+async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() {
+    let root = tempfile::tempdir().unwrap();
+    let config_path = root.path().join("vosu.toml");
+    let store = Arc::new(ConfigStore::initialize(config_path.clone()).await.unwrap());
+    let service = RuntimeConfig {
+        config: Arc::clone(&store),
+    };
+
+    service
+        .save(serde_json::json!({
+            "POLL_RATE": " 175.5 ",
+            "PRECISE_DATA_POLL_RATE": "\t12.25\n",
+            "V2_SUBSCRIPTION_DEBOUNCE": " 0.125 ",
+            "SERVER_PORT": " 24051 "
+        }))
+        .await
+        .unwrap();
+
+    let current = store.current();
+    assert_eq!(current.poll_rate, 175.5);
+    assert_eq!(current.precise_data_poll_rate, 12.25);
+    assert_eq!(current.v2_subscription_debounce, 0.125);
+    assert_eq!(
+        listen_target(&current).unwrap(),
+        ListenTarget::new("127.0.0.1", 24_051)
+    );
+
+    drop(service);
+    store.shutdown().await.unwrap();
+    drop(store);
+
+    let reloaded = ConfigStore::initialize(config_path).await.unwrap();
+    let current = reloaded.current();
+    assert_eq!(current.poll_rate, 175.5);
+    assert_eq!(current.precise_data_poll_rate, 12.25);
+    assert_eq!(current.v2_subscription_debounce, 0.125);
+    assert_eq!(current.server_port, 24_051.0);
+    reloaded.shutdown().await.unwrap();
+}
+
 #[test]
-fn settings_save_maps_fractional_v2_subscription_debounce() {
+fn settings_save_accepts_finite_json_numbers_and_ignores_invalid_or_nonfinite_values() {
     let mut config = Config::default();
     apply_config_values(
         &mut config,
-        serde_json::json!({"V2_SUBSCRIPTION_DEBOUNCE": 0.125})
-            .as_object()
-            .unwrap(),
+        serde_json::json!({
+            "POLL_RATE": 144.5,
+            "PRECISE_DATA_POLL_RATE": 8,
+            "V2_SUBSCRIPTION_DEBOUNCE": 0.25,
+            "SERVER_PORT": 24060
+        })
+        .as_object()
+        .unwrap(),
     );
 
-    assert_eq!(config.v2_subscription_debounce, 0.125);
+    assert_eq!(config.poll_rate, 144.5);
+    assert_eq!(config.precise_data_poll_rate, 8.0);
+    assert_eq!(config.v2_subscription_debounce, 0.25);
+    assert_eq!(config.server_port, 24_060.0);
+
+    let unchanged = config.clone();
+    apply_config_values(
+        &mut config,
+        serde_json::json!({
+            "POLL_RATE": "not-a-number",
+            "PRECISE_DATA_POLL_RATE": "NaN",
+            "V2_SUBSCRIPTION_DEBOUNCE": "inf",
+            "SERVER_PORT": "   "
+        })
+        .as_object()
+        .unwrap(),
+    );
+    assert_eq!(config, unchanged);
 }
 
 #[test]

@@ -1,7 +1,8 @@
-use super::parser::{format_number, parse_env, parse_real_number};
+use super::parser::{format_number, parse_toml};
 use super::schema::{
     BINDING_ORDER, Config, ConfigDefault, ConfigKey, DEFAULT_SCHEMA, NEWLINE_INSERTIONS,
 };
+use std::fmt::Write as _;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ConfigDocument {
@@ -13,11 +14,13 @@ impl ConfigDocument {
         Self { config }
     }
 
-    /// Parses an env document over the source defaults.
-    pub fn parse(content: &str) -> Self {
-        let mut store = Self::default();
-        store.refresh(content);
-        store
+    /// Parses a TOML document over the schema defaults.
+    pub fn parse(content: &str) -> Result<Self, toml::de::Error> {
+        let table = parse_toml(content)?;
+        let mut document = Self::default();
+        document.apply_table(&table);
+        let _ = document.validate();
+        Ok(document)
     }
 
     pub fn config(&self) -> &Config {
@@ -33,33 +36,44 @@ impl ConfigDocument {
     }
 
     /// Applies bindings present in `content`, retaining current values for
-    /// missing bindings exactly like `refreshConfig`.
+    /// missing bindings.
     ///
-    /// Unknown bindings and malformed env lines are ignored. Invalid numbers
-    /// use that binding's schema default; booleans are true only for the exact
-    /// unquoted value `true`. The returned messages reproduce source clamp
-    /// warnings and can later be forwarded to the logging subsystem.
-    pub fn refresh(&mut self, content: &str) -> Vec<String> {
-        let env = parse_env(content);
+    /// Unknown bindings are ignored. A known binding with the wrong TOML type,
+    /// including a non-finite number, is reset to that binding's schema
+    /// default. The document is parsed completely before any value is changed,
+    /// so a syntax error leaves the current configuration untouched.
+    pub fn refresh(&mut self, content: &str) -> Result<Vec<String>, toml::de::Error> {
+        let table = parse_toml(content)?;
+        self.apply_table(&table);
+        Ok(self.validate())
+    }
 
+    pub(super) fn apply_table(&mut self, table: &toml::Table) {
         for schema_item in DEFAULT_SCHEMA.items() {
-            let Some(raw) = env.get(schema_item.binding) else {
+            let Some(value) = table.get(schema_item.binding) else {
                 continue;
             };
 
             match schema_item.default {
-                ConfigDefault::Boolean(_) => {
-                    self.set_boolean(schema_item.key, raw == "true");
+                ConfigDefault::Boolean(default) => {
+                    self.set_boolean(schema_item.key, value.as_bool().unwrap_or(default));
                 }
                 ConfigDefault::Number(default) => {
-                    let value = parse_real_number(raw).unwrap_or(default);
+                    let value = match value {
+                        toml::Value::Integer(value) => *value as f64,
+                        toml::Value::Float(value) if value.is_finite() => *value,
+                        _ => default,
+                    };
                     self.set_number(schema_item.key, value);
                 }
-                ConfigDefault::String(_) => self.set_string(schema_item.key, raw.clone()),
+                ConfigDefault::String(default) => {
+                    self.set_string(
+                        schema_item.key,
+                        value.as_str().unwrap_or(default).to_owned(),
+                    );
+                }
             }
         }
-
-        self.validate()
     }
 
     /// Clamps schema-defined polling and subscription minima.
@@ -93,21 +107,23 @@ impl ConfigDocument {
         warnings
     }
 
-    /// Serializes with the exact source binding order and blank-line groups.
+    /// Serializes as canonical flat TOML in binding order and blank-line groups.
     pub fn serialize(&self) -> String {
-        let mut output = String::new();
+        let mut output = String::with_capacity(512);
 
         for (index, binding) in BINDING_ORDER.iter().enumerate() {
             if index != 0 {
                 output.push('\n');
             }
             output.push_str(binding);
-            output.push('=');
-            output.push_str(&self.value_for_binding(binding));
+            output.push_str(" = ");
+            write!(&mut output, "{}", self.toml_value_for_binding(binding))
+                .expect("writing to a String cannot fail");
             if NEWLINE_INSERTIONS.contains(binding) {
                 output.push('\n');
             }
         }
+        output.push('\n');
 
         output
     }
@@ -144,22 +160,24 @@ impl ConfigDocument {
         }
     }
 
-    pub(super) fn value_for_binding(&self, binding: &str) -> String {
+    fn toml_value_for_binding(&self, binding: &str) -> toml::Value {
         match binding {
-            "ENABLE_AUTOUPDATE" => self.config.enable_auto_update.to_string(),
-            "OPEN_DASHBOARD_ON_STARTUP" => self.config.open_dashboard_on_startup.to_string(),
-            "DEBUG_LOG" => self.config.debug_log.to_string(),
-            "CALCULATE_PP" => self.config.calculate_pp.to_string(),
-            "ENABLE_KEY_OVERLAY" => self.config.enable_key_overlay.to_string(),
-            "POLL_RATE" => format_number(self.config.poll_rate),
-            "PRECISE_DATA_POLL_RATE" => format_number(self.config.precise_data_poll_rate),
-            "V2_SUBSCRIPTION_DEBOUNCE" => format_number(self.config.v2_subscription_debounce),
-            "SHOW_MP_COMMANDS" => self.config.show_mp_commands.to_string(),
-            "READ_MANIA_SCROLL_SPEED" => self.config.read_mania_scroll_speed.to_string(),
-            "SERVER_IP" => self.config.server_ip.clone(),
-            "SERVER_PORT" => format_number(self.config.server_port),
-            "STATIC_FOLDER_PATH" => self.config.static_folder_path.clone(),
-            "ALLOWED_IPS" => self.config.allowed_ips.clone(),
+            "ENABLE_AUTOUPDATE" => toml::Value::Boolean(self.config.enable_auto_update),
+            "OPEN_DASHBOARD_ON_STARTUP" => {
+                toml::Value::Boolean(self.config.open_dashboard_on_startup)
+            }
+            "DEBUG_LOG" => toml::Value::Boolean(self.config.debug_log),
+            "CALCULATE_PP" => toml::Value::Boolean(self.config.calculate_pp),
+            "ENABLE_KEY_OVERLAY" => toml::Value::Boolean(self.config.enable_key_overlay),
+            "POLL_RATE" => toml::Value::Float(self.config.poll_rate),
+            "PRECISE_DATA_POLL_RATE" => toml::Value::Float(self.config.precise_data_poll_rate),
+            "V2_SUBSCRIPTION_DEBOUNCE" => toml::Value::Float(self.config.v2_subscription_debounce),
+            "SHOW_MP_COMMANDS" => toml::Value::Boolean(self.config.show_mp_commands),
+            "READ_MANIA_SCROLL_SPEED" => toml::Value::Boolean(self.config.read_mania_scroll_speed),
+            "SERVER_IP" => toml::Value::String(self.config.server_ip.clone()),
+            "SERVER_PORT" => toml::Value::Float(self.config.server_port),
+            "STATIC_FOLDER_PATH" => toml::Value::String(self.config.static_folder_path.clone()),
+            "ALLOWED_IPS" => toml::Value::String(self.config.allowed_ips.clone()),
             _ => unreachable!("binding order contains only schema bindings"),
         }
     }

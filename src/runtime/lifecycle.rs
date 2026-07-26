@@ -81,8 +81,7 @@ impl ProductionRuntime {
             self.paths.cache().join("offsets"),
             Bytes::copy_from_slice(&asset.data),
         );
-        let static_root = resolved_static_root(&self.paths, &config);
-        fs::create_dir_all(&static_root)?;
+        let static_root = resolved_static_root(&self.paths, &config)?;
         let counters = Arc::new(ReloadableCounterService::production(
             static_root,
             self.paths.config().join("settings"),
@@ -91,8 +90,13 @@ impl ProductionRuntime {
         {
             let counters = Arc::clone(&counters);
             let paths = self.paths.clone();
+            let logger = self.logger.clone();
             self.config.register_before_publish(move |next| {
-                counters.reload_static_root(resolved_static_root(&paths, next));
+                if let Err(error) = reload_counter_static_root(&paths, next, &counters) {
+                    logger.warn(format!(
+                        "Failed to resolve or create requested static root; retaining previous counter root: {error}"
+                    ));
+                }
             });
         }
         let beatmap = Arc::new(RuntimeBeatmap {
@@ -411,12 +415,18 @@ pub(super) fn listen_target(config: &Config) -> io::Result<ListenTarget> {
     ))
 }
 
-pub(super) fn resolved_static_root(paths: &Paths, config: &Config) -> PathBuf {
-    if matches!(config.static_folder_path.as_str(), "./static" | ".\\static") {
-        paths.data().join("static")
-    } else {
-        PathBuf::from(&config.static_folder_path)
-    }
+pub(super) fn resolved_static_root(paths: &Paths, config: &Config) -> io::Result<PathBuf> {
+    paths.static_path(&config.static_folder_path)
+}
+
+pub(super) fn reload_counter_static_root(
+    paths: &Paths,
+    config: &Config,
+    counters: &ReloadableCounterService,
+) -> io::Result<()> {
+    let static_root = resolved_static_root(paths, config)?;
+    counters.reload_static_root(static_root);
+    Ok(())
 }
 #[derive(Debug)]
 pub(super) struct StartupOwnerConflict;
@@ -522,7 +532,7 @@ pub async fn run_cli() -> io::Result<()> {
             Some(readiness)
         }
     };
-    let config = ConfigStore::initialize(paths.config().join("vosu.env")).await?;
+    let config = ConfigStore::initialize(paths.config().join("vosu.toml")).await?;
     let mut recovery_warning = None;
     if ordinary_role
         && matches!(

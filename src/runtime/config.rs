@@ -35,7 +35,11 @@ pub(super) fn apply_config_values(
     }
     macro_rules! number {
         ($key:literal, $field:ident) => {
-            if let Some(value) = values.get($key).and_then(|v| v.as_f64()) {
+            if let Some(value) = values
+                .get($key)
+                .and_then(json_number)
+                .filter(|value| value.is_finite())
+            {
                 config.$field = value;
             }
         };

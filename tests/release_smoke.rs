@@ -26,10 +26,17 @@ fn available_port() -> u16 {
         .port()
 }
 
-fn config(port: u16, static_root: &Path) -> String {
+fn legacy_config(port: u16, static_root: &Path) -> String {
     format!(
         "ENABLE_AUTOUPDATE=false\nOPEN_DASHBOARD_ON_STARTUP=false\nDEBUG_LOG=false\nPOLL_RATE=150\nPRECISE_DATA_POLL_RATE=10\nSERVER_IP=127.0.0.1\nSERVER_PORT={port}\nSTATIC_FOLDER_PATH={}\nALLOWED_IPS=127.0.0.1,localhost,absolute\n",
         static_root.display(),
+    )
+}
+
+fn toml_config(port: u16, static_root: &Path) -> String {
+    let static_root = toml::Value::String(static_root.to_string_lossy().into_owned());
+    format!(
+        "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nDEBUG_LOG = false\nPOLL_RATE = 150\nPRECISE_DATA_POLL_RATE = 10\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {port}\nSTATIC_FOLDER_PATH = {static_root}\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
     )
 }
 
@@ -137,12 +144,11 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         .to_path_buf();
     fs::create_dir_all(&config_dir).unwrap();
     let first_port = available_port();
-    // The former config filename is a one-time migration input for the packaged daemon.
-    fs::write(
-        config_dir.join("tosu.env"),
-        config(first_port, &static_root),
-    )
-    .unwrap();
+    let config_path = config_dir.join("vosu.toml");
+    // A valid current TOML file is authoritative over both legacy env inputs.
+    fs::write(&config_path, toml_config(first_port, &static_root)).unwrap();
+    fs::write(config_dir.join("vosu.env"), legacy_config(1, &static_root)).unwrap();
+    fs::write(config_dir.join("tosu.env"), legacy_config(2, &static_root)).unwrap();
 
     let mut command = Command::new(&binary);
     command
@@ -171,6 +177,15 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     let dashboard = wait_get(&client, &format!("{base}/")).await;
     assert_eq!(dashboard.status(), 200);
     assert!(dashboard.text().await.unwrap().contains("vosu"));
+    let canonical: toml::Table =
+        toml::from_str(&fs::read_to_string(&config_path).expect("read canonical packaged config"))
+            .expect("packaged daemon canonicalizes current TOML");
+    assert_eq!(
+        canonical.get("SERVER_PORT").and_then(toml::Value::as_float),
+        Some(f64::from(first_port))
+    );
+    assert!(!config_dir.join("vosu.env").exists());
+    assert!(!config_dir.join("tosu.env").exists());
     let asset = client
         .get(format!("{base}/assets/homepage.min.css"))
         .send()
@@ -224,13 +239,48 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
 
     let second_port = available_port();
     fs::write(
-        config_dir.join("vosu.env"),
-        config(second_port, &static_root),
+        &config_path,
+        format!("SERVER_PORT = {second_port}\nBROKEN = [\n"),
     )
     .unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let last_good_client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap();
+    let last_good = last_good_client
+        .get(format!("{base}/"))
+        .send()
+        .await
+        .expect("malformed TOML must retain the packaged listener");
+    assert_eq!(last_good.status(), 200);
+
+    fs::write(&config_path, toml_config(second_port, &static_root)).unwrap();
     let second_base = format!("http://127.0.0.1:{second_port}");
     let rebound = wait_get(&client, &format!("{second_base}/")).await;
     assert_eq!(rebound.status(), 200);
+
+    let saved = client
+        .post(format!("{second_base}/api/settingsSave"))
+        .json(&serde_json::json!({"SHOW_MP_COMMANDS": true}))
+        .send()
+        .await
+        .expect("save packaged uppercase JSON settings");
+    assert_eq!(saved.status(), 200);
+    assert_eq!(
+        saved.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({"status":"updated"})
+    );
+    let persisted: toml::Table =
+        toml::from_str(&fs::read_to_string(&config_path).expect("read packaged settingsSave TOML"))
+            .expect("packaged settingsSave persists typed TOML");
+    assert_eq!(
+        persisted
+            .get("SHOW_MP_COMMANDS")
+            .and_then(toml::Value::as_bool),
+        Some(true)
+    );
 
     let deleted = client
         .get(format!("{second_base}/api/counters/delete/seeded-counter"))
@@ -239,7 +289,8 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
         .unwrap();
     assert_eq!(deleted.status(), 200);
     assert!(!seeded.exists());
-    assert!(config_dir.join("vosu.env").is_file());
+    assert!(config_path.is_file());
+    assert!(!config_dir.join("vosu.env").exists());
     assert!(!config_dir.join("tosu.env").exists());
 
     request_graceful_shutdown(child.0.as_ref().unwrap());

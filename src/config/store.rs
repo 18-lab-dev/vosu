@@ -1,5 +1,5 @@
 use super::document::ConfigDocument;
-use super::io::{ConfigStoreOptions, hash_bytes, join_error, notify_error};
+use super::io::{ConfigStoreOptions, config_parent, hash_bytes, join_error, notify_error};
 use super::migration::initialize_file;
 use super::reload::{run_before_publish, run_store};
 use super::schema::Config;
@@ -20,7 +20,7 @@ pub struct ConfigChanged {
 
 pub(super) type BeforePublishHook = Arc<dyn Fn(&Config) + Send + Sync>;
 
-/// Live, atomically published configuration backed by `vosu.env`.
+/// Live, atomically published configuration backed by `vosu.toml`.
 pub struct ConfigStore {
     path: PathBuf,
     current: Arc<ArcSwap<Config>>,
@@ -38,9 +38,21 @@ pub(super) enum StoreCommand {
     Flush(oneshot::Sender<io::Result<()>>),
     Shutdown(oneshot::Sender<io::Result<()>>),
 }
+fn absolute_config_path(path: PathBuf) -> io::Result<PathBuf> {
+    let current_dir = std::env::current_dir()?;
+    Ok(absolute_config_path_from(path, &current_dir))
+}
+
+pub(super) fn absolute_config_path_from(path: PathBuf, current_dir: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        current_dir.join(path)
+    }
+}
 
 impl ConfigStore {
-    /// Migrates, loads, and begins watching the supplied `vosu.env` path.
+    /// Migrates, loads, and begins watching the supplied `vosu.toml` path.
     pub async fn initialize(path: impl Into<PathBuf>) -> io::Result<Self> {
         Self::initialize_with_options(path, ConfigStoreOptions::default()).await
     }
@@ -49,7 +61,7 @@ impl ConfigStore {
         path: impl Into<PathBuf>,
         options: ConfigStoreOptions,
     ) -> io::Result<Self> {
-        let path = path.into();
+        let path = absolute_config_path(path.into())?;
         let initialize_path = path.clone();
         let initialize_replace = options.atomic_replace.clone();
         let initial = tokio::task::spawn_blocking(move || {
@@ -82,7 +94,7 @@ impl ConfigStore {
             notify::Config::default(),
         )
         .map_err(notify_error)?;
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let parent = config_parent(&path);
         watcher
             .watch(parent, RecursiveMode::NonRecursive)
             .map_err(notify_error)?;

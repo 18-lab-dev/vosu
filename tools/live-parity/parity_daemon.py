@@ -99,7 +99,9 @@ def launch(cfg: dict[str, Any]) -> tuple[dict[str, subprocess.Popen[bytes]], dic
             cwd = spec.get("cwd")
             runtime_dir: Path | None = None
             seeded_config: Path | None = None
-            daemon_config = "\n".join([
+            # The upstream reference is intentionally kept on its legacy
+            # tosu.env fixture; only the Vosu daemon uses the canonical TOML.
+            legacy_source_env = "\n".join([
                 "DEBUG_LOG=false",
                 "ENABLE_AUTOUPDATE=false",
                 "OPEN_DASHBOARD_ON_STARTUP=false",
@@ -120,19 +122,51 @@ def launch(cfg: dict[str, Any]) -> tuple[dict[str, subprocess.Popen[bytes]], dic
                 "STATIC_FOLDER_PATH=./static",
                 "",
             ])
+            vosu_toml = "\n".join([
+                "DEBUG_LOG = false",
+                "ENABLE_AUTOUPDATE = false",
+                "OPEN_DASHBOARD_ON_STARTUP = false",
+                "",
+                "SHOW_MP_COMMANDS = false",
+                "CALCULATE_PP = true",
+                "READ_MANIA_SCROLL_SPEED = true",
+                "",
+                "ENABLE_KEY_OVERLAY = true",
+                "",
+                f"POLL_RATE = {cfg['poll_rate_ms']}.0",
+                "PRECISE_DATA_POLL_RATE = 10.0",
+                "V2_SUBSCRIPTION_DEBOUNCE = 0.0",
+                "",
+                'SERVER_IP = "127.0.0.1"',
+                f"SERVER_PORT = {port}.0",
+                'ALLOWED_IPS = "127.0.0.1,localhost,absolute"',
+                "",
+                'STATIC_FOLDER_PATH = "./static"',
+                "",
+            ])
+            config_path: Path
+            config_text: str
+            if name == "source":
+                config_text = legacy_source_env
+                config_name = "tosu.env"
+                config_root = "tosu"
+            else:
+                config_text = vosu_toml
+                config_name = "vosu.toml"
+                config_root = "vosu"
             if sys.platform == "win32":
                 if name == "source":
                     runtime_dir = _private_runtime_dir(
                         "vosu-live-parity-source-")
                     runtime_dirs.append(runtime_dir)
                     cwd = str(runtime_dir)
-                    config_path = runtime_dir / "vosu.env"
+                    config_path = runtime_dir / config_name
                 else:
                     config_path = Path(
-                        spec["command"][0]).resolve(strict=True).parent / "vosu.env"
+                        spec["command"][0]).resolve(strict=True).parent / config_name
                     if config_path.exists():
                         raise ValueError(
-                            "fresh vosu artifact directory contains vosu.env")
+                            "fresh vosu artifact directory contains vosu.toml")
                     seeded_config = config_path
                     seeded_configs.append(config_path)
             else:
@@ -147,9 +181,9 @@ def launch(cfg: dict[str, Any]) -> tuple[dict[str, subprocess.Popen[bytes]], dic
                     "XDG_DATA_HOME": str(runtime_dir / ".local" / "share"),
                     "XDG_CACHE_HOME": str(runtime_dir / ".cache"),
                 })
-                config_path = xdg_config / "vosu" / "vosu.env"
+                config_path = xdg_config / config_root / config_name
             config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_path.write_text(daemon_config, encoding="utf-8")
+            config_path.write_text(config_text, encoding="utf-8")
             process = subprocess.Popen(
                 spec["command"], cwd=cwd, env=env,
                 stdout=None, stderr=None, start_new_session=True)

@@ -32,13 +32,17 @@ pub(super) async fn run_store(
                         save_deadline = Some(tokio::time::Instant::now() + options.debounce);
                     }
                     Some(StoreCommand::Flush(reply)) => {
-                        save_deadline = None;
                         let result = persist_current(
                             &path,
                             &current,
                             options.atomic_replace.as_ref(),
                             &mut current_hash,
                         );
+                        save_deadline = if result.is_err() {
+                            Some(tokio::time::Instant::now() + options.debounce)
+                        } else {
+                            None
+                        };
                         let _ = reply.send(result);
                     }
                     Some(StoreCommand::Shutdown(reply)) => {
@@ -81,7 +85,9 @@ pub(super) async fn run_store(
                 };
                 let old = current.load_full();
                 let mut document = ConfigDocument::new((*old).clone());
-                document.refresh(content);
+                if document.refresh(content).is_err() {
+                    continue;
+                }
                 let new = Arc::new(document.into_config());
                 current_hash = hash;
                 if *old != *new {
@@ -92,13 +98,17 @@ pub(super) async fn run_store(
                 }
             }
             () = wait_for_deadline(save_deadline), if save_deadline.is_some() => {
-                save_deadline = None;
-                let _ = persist_current(
+                let result = persist_current(
                     &path,
                     &current,
                     options.atomic_replace.as_ref(),
                     &mut current_hash,
                 );
+                save_deadline = if result.is_err() {
+                    Some(tokio::time::Instant::now() + options.debounce)
+                } else {
+                    None
+                };
             }
         }
     }

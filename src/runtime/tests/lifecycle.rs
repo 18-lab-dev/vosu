@@ -256,3 +256,90 @@ async fn listener_accept_stop_is_separate_from_forced_drain_join() {
     assert_eq!(event_rx.recv().await, Some("hubs-closed-1001"));
     assert_eq!(event_rx.recv().await, Some("listener-joined"));
 }
+
+struct RuntimeTestPathResolver {
+    executable: PathBuf,
+    launch: PathBuf,
+    root: PathBuf,
+}
+
+impl PathResolver for RuntimeTestPathResolver {
+    fn current_exe(&self) -> io::Result<PathBuf> {
+        Ok(self.executable.clone())
+    }
+
+    fn launch_dir(&self) -> io::Result<PathBuf> {
+        Ok(self.launch.clone())
+    }
+
+    fn env_var(&self, name: &str) -> Option<OsString> {
+        let directory = match name {
+            "HOME" => "home",
+            "XDG_CONFIG_HOME" => "config",
+            "XDG_DATA_HOME" => "data",
+            "XDG_CACHE_HOME" => "cache",
+            _ => return None,
+        };
+        Some(self.root.join(directory).into_os_string())
+    }
+}
+
+fn runtime_test_paths(root: &Path) -> Paths {
+    let program = root.join("program");
+    let launch = root.join("launch");
+    fs::create_dir_all(&program).unwrap();
+    fs::create_dir_all(&launch).unwrap();
+    Paths::resolve(&RuntimeTestPathResolver {
+        executable: program.join("vosu"),
+        launch,
+        root: root.to_owned(),
+    })
+    .unwrap()
+}
+
+#[test]
+fn runtime_static_root_resolution_matches_paths_static_path_semantics() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = runtime_test_paths(root.path());
+    let mut config = Config::default();
+
+    for configured in ["", "./static", "./StAtIc", ".\\STATIC"] {
+        config.static_folder_path = configured.to_owned();
+        let resolved = resolved_static_root(&paths, &config).unwrap();
+        assert_eq!(resolved, paths.data().join("static"), "{configured:?}");
+        assert!(resolved.is_dir(), "{configured:?}");
+    }
+
+    config.static_folder_path = "custom/counters".to_owned();
+    let resolved = resolved_static_root(&paths, &config).unwrap();
+    assert_eq!(resolved, paths.launch().join("custom/counters"));
+    assert!(resolved.is_dir());
+}
+
+#[test]
+fn static_root_reload_creates_target_and_retains_previous_root_on_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = runtime_test_paths(root.path());
+    let initial = paths.launch().join("initial");
+    fs::create_dir_all(&initial).unwrap();
+    let counters = ReloadableCounterService::production(
+        initial,
+        paths.config().join("settings"),
+        paths.cache().join("downloads"),
+    );
+    let config = Config {
+        static_folder_path: "next/counters".to_owned(),
+        ..Config::default()
+    };
+    reload_counter_static_root(&paths, &config, &counters).unwrap();
+    let active = paths.launch().join("next/counters");
+    assert_eq!(counters.current_root(), active);
+    assert!(active.is_dir());
+    fs::write(paths.launch().join("blocked"), "not a directory").unwrap();
+    let blocked_config = Config {
+        static_folder_path: "blocked/counters".to_owned(),
+        ..Config::default()
+    };
+    assert!(reload_counter_static_root(&paths, &blocked_config, &counters).is_err());
+    assert_eq!(counters.current_root(), active);
+}

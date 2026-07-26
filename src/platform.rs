@@ -126,7 +126,7 @@ impl Paths {
         Ok(path)
     }
 
-    /// Returns the compatible counter settings filename.
+    /// Resolves the authoritative per-overlay values TOML path.
     ///
     /// Folder names are otherwise left untouched for source compatibility.
     pub fn settings_path(&self, folder: &str) -> io::Result<Option<PathBuf>> {
@@ -136,7 +136,9 @@ impl Paths {
 
         let settings = self.config.join("settings");
         std::fs::create_dir_all(&settings)?;
-        Ok(Some(settings.join(format!("{folder}.values.json"))))
+        Ok(Some(
+            settings.join(format!("{folder}.settings.values.toml")),
+        ))
     }
 }
 
@@ -365,7 +367,7 @@ mod tests {
 
         assert_eq!(
             paths.settings_path("minimal").expect("settings path"),
-            Some(home.join(".config/vosu/settings/minimal.values.json"))
+            Some(home.join(".config/vosu/settings/minimal.settings.values.toml"))
         );
         assert!(home.join(".config/vosu/settings").is_dir());
         assert_eq!(

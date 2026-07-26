@@ -11,6 +11,8 @@ use std::{
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
+use vosu::counters::SettingsStore;
+
 struct ChildGuard(Option<Child>);
 impl Drop for ChildGuard {
     fn drop(&mut self) {
@@ -29,10 +31,17 @@ fn available_port() -> u16 {
         .port()
 }
 
-fn config(port: u16, static_root: &Path) -> String {
+fn legacy_config(port: u16, static_root: &Path) -> String {
     format!(
         "ENABLE_AUTOUPDATE=false\nOPEN_DASHBOARD_ON_STARTUP=false\nDEBUG_LOG=false\nPOLL_RATE=150\nPRECISE_DATA_POLL_RATE=10\nSERVER_IP=127.0.0.1\nSERVER_PORT={port}\nSTATIC_FOLDER_PATH={}\nALLOWED_IPS=127.0.0.1,localhost,absolute\n",
         static_root.display(),
+    )
+}
+
+fn toml_config(port: u16, static_root: &Path) -> String {
+    let static_root = toml::Value::String(static_root.to_string_lossy().into_owned());
+    format!(
+        "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nDEBUG_LOG = false\nPOLL_RATE = 150\nPRECISE_DATA_POLL_RATE = 10\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {port}\nSTATIC_FOLDER_PATH = {static_root}\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
     )
 }
 
@@ -172,6 +181,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     let config_home = roots.path().join("config");
     let data_home = roots.path().join("data");
     let cache_home = roots.path().join("cache");
+    let settings_root = config_home.join("vosu").join("settings");
     let static_root = roots.path().join("counter-static");
     let counter = static_root.join("seeded-counter");
     fs::create_dir_all(&counter).unwrap();
@@ -184,11 +194,9 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         "Name: Seeded Counter\nAuthor: CI\nVersion: 1.0\n640x480\n",
     )
     .unwrap();
-    fs::write(
-        counter.join("settings.json"),
-        r#"[{"uniqueID":"title","type":"text","title":"Title","value":"seeded"}]"#,
-    )
-    .unwrap();
+    let legacy_schema_json_path = counter.join("settings.json");
+    let seeded_schema = br#"[{"uniqueID":"title","type":"text","title":"Title","value":"seeded"}]"#;
+    fs::write(&legacy_schema_json_path, seeded_schema).unwrap();
     fs::create_dir_all(
         static_root
             .join("directory-index-counter")
@@ -217,16 +225,28 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         (index.as_slice(), asset.as_slice())
     };
 
-    // The old `tosu` root and `tosu.env` are one-time migration inputs.
+    // The old `tosu` root and both env filenames are one-time migration inputs.
+    // The newer legacy filename must win over `tosu.env` for every binding.
     let old_config_dir = config_home.join("tosu");
+    let current_config = config_home.join("vosu").join("vosu.toml");
     fs::create_dir_all(&old_config_dir).unwrap();
     let port = available_port();
-    fs::write(old_config_dir.join("tosu.env"), config(port, &static_root)).unwrap();
+    fs::write(
+        old_config_dir.join("vosu.env"),
+        legacy_config(port, &static_root),
+    )
+    .unwrap();
+    fs::write(
+        old_config_dir.join("tosu.env"),
+        legacy_config(1, &static_root),
+    )
+    .unwrap();
     let old_settings_dir = old_config_dir.join("settings");
     fs::create_dir_all(&old_settings_dir).unwrap();
+    let legacy_values_json = br#"{"title":"persisted seeded"}"#;
     fs::write(
         old_settings_dir.join("seeded-counter.values.json"),
-        r#"{"title":"persisted seeded"}"#,
+        legacy_values_json,
     )
     .unwrap();
 
@@ -254,6 +274,21 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert_eq!(dashboard.status(), 200);
     let dashboard = dashboard.text().await.unwrap();
     assert!(dashboard.contains("vosu"));
+    let migrated: toml::Table =
+        toml::from_str(&fs::read_to_string(&current_config).expect("read migrated server TOML"))
+            .expect("legacy env migration writes valid TOML");
+    assert_eq!(
+        migrated.get("SERVER_PORT").and_then(toml::Value::as_float),
+        Some(f64::from(port))
+    );
+    assert_eq!(
+        migrated
+            .get("STATIC_FOLDER_PATH")
+            .and_then(toml::Value::as_str),
+        Some(static_root.to_string_lossy().as_ref())
+    );
+    assert!(!config_home.join("vosu/vosu.env").exists());
+    assert!(!config_home.join("vosu/tosu.env").exists());
     let css = client
         .get(format!("{base}/assets/homepage.min.css"))
         .send()
@@ -388,15 +423,36 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert_eq!(catalog.status(), 200);
     let body = catalog.text().await.unwrap();
     assert!(body.contains("Seeded Counter"), "counter response: {body}");
-    let seeded_settings = client
-        .get(format!("{base}/api/counters/settings/seeded-counter"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(seeded_settings.status(), 200);
-    let seeded_settings: serde_json::Value = seeded_settings.json().await.unwrap();
+
+    let settings_paths = SettingsStore::new(static_root.clone(), settings_root.clone());
+    let schema_toml_path = settings_paths.schema_path("seeded-counter");
+    let values_toml_path = settings_paths.values_path("seeded-counter");
     assert_eq!(
-        seeded_settings,
+        schema_toml_path,
+        counter.join("settings.schema.toml"),
+        "schema must be created in the counter package"
+    );
+    assert_eq!(
+        values_toml_path,
+        settings_root.join("seeded-counter.settings.values.toml"),
+        "mutable values must remain in the config settings directory"
+    );
+    assert!(
+        schema_toml_path.is_file(),
+        "authoritative schema TOML missing"
+    );
+    assert!(
+        values_toml_path.is_file(),
+        "authoritative values TOML missing"
+    );
+    let migrated_schema = fs::read(&schema_toml_path).unwrap();
+    assert_eq!(
+        fs::read(settings_root.join("seeded-counter.values.json")).unwrap(),
+        legacy_values_json,
+        "internal legacy values JSON must remain byte-identical after migration"
+    );
+
+    let expected_settings = |title: &str| {
         serde_json::json!({
             "settings": [{
                 "uniqueID": "title",
@@ -406,10 +462,84 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
                 "value": "seeded"
             }],
             "values": {
-                "title": "persisted seeded"
+                "title": title
             }
         })
+    };
+    let seeded_settings = client
+        .get(format!("{base}/api/counters/settings/seeded-counter"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(seeded_settings.status(), 200);
+    assert_eq!(
+        seeded_settings.json::<serde_json::Value>().await.unwrap(),
+        expected_settings("persisted seeded")
     );
+
+    let changed_legacy_schema = b"root JSON changed after registration";
+    fs::write(&legacy_schema_json_path, changed_legacy_schema).unwrap();
+    let rediscovered = client
+        .get(format!("{base}/api/counters/search/seeded"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rediscovered.status(), 200);
+    assert!(
+        rediscovered
+            .text()
+            .await
+            .unwrap()
+            .contains("Seeded Counter"),
+        "registered counter disappeared after root JSON changed"
+    );
+    let unchanged_settings = client
+        .get(format!("{base}/api/counters/settings/seeded-counter"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unchanged_settings
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        expected_settings("persisted seeded")
+    );
+    assert_eq!(
+        fs::read(&legacy_schema_json_path).unwrap(),
+        changed_legacy_schema
+    );
+    assert_eq!(
+        fs::read(&schema_toml_path).unwrap(),
+        migrated_schema,
+        "authoritative root schema changed after legacy root JSON mutation"
+    );
+
+    let saved = client
+        .post(format!("{base}/api/counters/settings/seeded-counter"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(r#"[{"uniqueID":"title","value":"saved over TOML"}]"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), 200);
+    assert_eq!(
+        saved.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({ "result": "success" })
+    );
+    let persisted_settings = client
+        .get(format!("{base}/api/counters/settings/seeded-counter"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        persisted_settings
+            .json::<serde_json::Value>()
+            .await
+            .unwrap(),
+        expected_settings("saved over TOML")
+    );
+    assert!(values_toml_path.is_file());
     #[cfg(unix)]
     {
         let alias_catalog = client
@@ -469,18 +599,79 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert!(disposition.contains("vosu-report-") && disposition.ends_with(".html\""));
     assert!(report.text().await.unwrap().contains("vosu"));
 
-    let next_port = available_port();
+    let malformed_port = available_port();
     fs::write(
-        config_home.join("vosu").join("vosu.env"),
-        config(next_port, &static_root),
+        &current_config,
+        format!("SERVER_PORT = {malformed_port}\nBROKEN = [\n"),
     )
     .unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let last_good_client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let last_good = last_good_client
+        .get(format!("{base}/json"))
+        .send()
+        .await
+        .expect("malformed TOML must leave the last-good listener accepting");
+    assert_eq!(last_good.status(), 500);
+    assert_eq!(
+        last_good.text().await.unwrap(),
+        r#"{"error":"osu is not ready/running"}"#
+    );
+
+    let next_port = available_port();
+    fs::write(&current_config, toml_config(next_port, &static_root)).unwrap();
     let next_base = format!("http://127.0.0.1:{next_port}");
     let rebound = wait_get(&client, &format!("{next_base}/json")).await;
     assert_eq!(rebound.status(), 500);
     assert_eq!(
         rebound.text().await.unwrap(),
         r#"{"error":"osu is not ready/running"}"#
+    );
+    let reloaded_settings = client
+        .get(format!("{next_base}/api/counters/settings/seeded-counter"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        reloaded_settings.json::<serde_json::Value>().await.unwrap(),
+        expected_settings("saved over TOML")
+    );
+    assert_eq!(
+        fs::read(&legacy_schema_json_path).unwrap(),
+        changed_legacy_schema
+    );
+    let saved = client
+        .post(format!("{next_base}/api/settingsSave"))
+        .json(&serde_json::json!({
+            "SHOW_MP_COMMANDS": true,
+            "V2_SUBSCRIPTION_DEBOUNCE": 0.125
+        }))
+        .send()
+        .await
+        .expect("save uppercase JSON server settings");
+    assert_eq!(saved.status(), 200);
+    assert_eq!(
+        saved.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({"status":"updated"})
+    );
+    let persisted: toml::Table =
+        toml::from_str(&fs::read_to_string(&current_config).expect("read settingsSave TOML"))
+            .expect("settingsSave persists valid typed TOML");
+    assert_eq!(
+        persisted
+            .get("SHOW_MP_COMMANDS")
+            .and_then(toml::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        persisted
+            .get("V2_SUBSCRIPTION_DEBOUNCE")
+            .and_then(toml::Value::as_float),
+        Some(0.125)
     );
 
     let deleted = client
@@ -491,11 +682,13 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert_eq!(deleted.status(), 200);
     assert!(!counter.exists());
 
+    assert!(current_config.is_file(), "migrated config missing");
+    assert!(!config_home.join("vosu/vosu.env").exists());
+    assert!(!config_home.join("vosu/tosu.env").exists());
     assert!(
-        config_home.join("vosu").join("vosu.env").is_file(),
-        "migrated config missing"
+        !old_config_dir.exists(),
+        "legacy config root was not removed"
     );
-    assert!(!old_config_dir.exists(), "legacy config was not removed");
 
     let pid = child.0.as_ref().unwrap().id() as libc::pid_t;
     let signal_result = unsafe { libc::kill(pid, libc::SIGTERM) };

@@ -8,7 +8,6 @@ use std::{
     collections::BTreeMap,
     env,
     ffi::{OsStr, OsString},
-    fs,
     future::Future,
     io,
     path::{Path, PathBuf},
@@ -18,6 +17,9 @@ use std::{
     },
     time::Duration,
 };
+
+#[cfg(any(test, feature = "test-harness"))]
+use std::fs;
 
 use arc_swap::ArcSwap;
 use bytes::Bytes;

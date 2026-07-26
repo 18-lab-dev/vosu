@@ -348,7 +348,7 @@ impl CounterService {
             .collect();
         let mut counters = Vec::new();
         for path in metadata {
-            let counter = parse_metadata(&self.static_root, &path)?;
+            let counter = parse_metadata(&self.static_root, &path, &self.settings)?;
             if !counter.name.is_empty() {
                 counters.push(counter);
             }
@@ -359,7 +359,7 @@ impl CounterService {
                 continue;
             }
             let folder_name = relative_folder(&self.static_root, directory)?;
-            let settings = read_settings_if_present(&directory.join("settings.json"))?;
+            let settings = load_discovered_settings(&self.settings, &folder_name)?;
             counters.push(Counter {
                 downloaded: false,
                 updatable: false,
@@ -587,7 +587,11 @@ fn remove_counter_symlink(path: &Path, file_type: &fs::FileType) -> io::Result<(
     }
 }
 
-pub fn parse_metadata(static_root: &Path, metadata_path: &Path) -> Result<Counter, CounterError> {
+pub fn parse_metadata(
+    static_root: &Path,
+    metadata_path: &Path,
+    settings_store: &SettingsStore,
+) -> Result<Counter, CounterError> {
     let text = fs::read_to_string(metadata_path)?;
     let mut fields = HashMap::new();
     for line in text.lines() {
@@ -603,6 +607,8 @@ pub fn parse_metadata(static_root: &Path, metadata_path: &Path) -> Result<Counte
         fields.insert(key.to_lowercase(), value);
     }
     let directory = metadata_path.parent().ok_or(CounterError::InvalidName)?;
+    let folder_name = relative_folder(static_root, directory)?;
+    let settings = load_discovered_settings(settings_store, &folder_name)?;
     let resolution = fields
         .remove("resolution")
         .map(|value| {
@@ -628,7 +634,7 @@ pub fn parse_metadata(static_root: &Path, metadata_path: &Path) -> Result<Counte
     Ok(Counter {
         downloaded: false,
         updatable: false,
-        folder_name: relative_folder(static_root, directory)?,
+        folder_name,
         name: fields.remove("name").unwrap_or_default(),
         author: fields.remove("author").unwrap_or_default(),
         version: fields
@@ -637,7 +643,7 @@ pub fn parse_metadata(static_root: &Path, metadata_path: &Path) -> Result<Counte
             .unwrap_or_else(|| "1.0".into()),
         resolution,
         authorlinks,
-        settings: read_settings_if_present(&directory.join("settings.json"))?,
+        settings,
         usecase: None,
         compatiblewith: None,
         assets: None,
@@ -744,14 +750,16 @@ fn relative_folder(root: &Path, directory: &Path) -> Result<String, CounterError
         .join("/"))
 }
 
-fn read_settings_if_present(path: &Path) -> Result<Vec<CounterSetting>, CounterError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(CounterError::Symlink),
-        Ok(_) => Ok(fs::read(path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+fn load_discovered_settings(
+    store: &SettingsStore,
+    folder_name: &str,
+) -> Result<Vec<CounterSetting>, CounterError> {
+    if validate_component(folder_name).is_err() {
+        return Ok(Vec::new());
+    }
+    match store.load(folder_name) {
+        Ok((settings, _)) => Ok(settings),
+        Err(SettingsError::UnsafeSettingsFile) => Err(CounterError::Symlink),
         Err(error) => Err(error.into()),
     }
 }

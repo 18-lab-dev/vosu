@@ -23,7 +23,7 @@ use vosu::{
         App, EnvironmentSnapshot, HookFuture, RuntimeHooks, StartupArgs, StartupOutcome,
         StartupPlatform,
     },
-    config::{Config, ConfigChanged, ConfigStore},
+    config::{Config, ConfigChanged, ConfigDocument, ConfigStore},
     counters::{CounterOpener, CounterService, DownloadRequest, HardenedCounterDownloader},
     net::{Deadlines, DownloadLimits, NetworkError, StreamingClient},
     runtime::{TestProductionCompositionOptions, start_test_production_composition},
@@ -375,15 +375,16 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
         .await
         .expect("start reserved outbound fixture");
     let roots = TempDir::new().expect("temporary production composition roots");
+    let config_path = roots.path().join("config/vosu.toml");
     let config = Arc::new(
-        ConfigStore::initialize(roots.path().join("config/vosu.env"))
+        ConfigStore::initialize(&config_path)
             .await
             .expect("initialize production config"),
     );
     let triggered = CancellationToken::new();
     let composition = start_test_production_composition(TestProductionCompositionOptions {
         target: ListenTarget::new("127.0.0.1", 0),
-        config,
+        config: Arc::clone(&config),
         static_root: roots.path().join("static"),
         settings_root: roots.path().join("settings"),
         cache_root: roots.path().join("cache"),
@@ -403,6 +404,30 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
         .await
         .expect("connect production v1 WebSocket");
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let saved = client
+        .post(format!("http://{address}/api/settingsSave"))
+        .json(&serde_json::json!({
+            "DEBUG_LOG": true,
+            "V2_SUBSCRIPTION_DEBOUNCE": 0.125
+        }))
+        .send()
+        .await
+        .expect("save uppercase JSON settings");
+    assert_eq!(saved.status(), 200);
+    assert_eq!(
+        saved
+            .json::<serde_json::Value>()
+            .await
+            .expect("decode settingsSave response"),
+        serde_json::json!({"status":"updated"})
+    );
+    let persisted = ConfigDocument::parse(
+        &std::fs::read_to_string(&config_path).expect("read persisted production config"),
+    )
+    .expect("settingsSave persists valid typed TOML");
+    assert!(persisted.config().debug_log);
+    assert_eq!(persisted.config().v2_subscription_debounce, 0.125);
+
     let response = client
         .get(format!("http://{address}/api/runUpdates"))
         .send()
@@ -438,6 +463,7 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
         other => panic!("expected WebSocket 1001 close, got {other:?}"),
     }
     shutdown.await.unwrap();
+    config.shutdown().await.expect("shutdown production config");
 
     let cache_entries: Vec<_> = std::fs::read_dir(roots.path().join("cache"))
         .into_iter()

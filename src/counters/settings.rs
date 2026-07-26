@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::Deserialize;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -22,12 +22,30 @@ pub enum SettingsError {
     Io(#[from] io::Error),
     #[error("settings JSON failed: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("settings TOML parsing failed: {0}")]
+    TomlParse(#[from] toml::de::Error),
+    #[error("settings TOML serialization failed: {0}")]
+    TomlSerialize(#[from] toml::ser::Error),
+    #[error("settings TOML conversion failed: {0}")]
+    TomlConversion(String),
 }
 
 #[derive(Clone, Debug)]
 pub struct SettingsStore {
     static_root: PathBuf,
     settings_root: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct SchemaDocument {
+    settings: Vec<CounterSetting>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceState {
+    Missing,
+    Present,
+    Symlink,
 }
 
 impl SettingsStore {
@@ -46,19 +64,8 @@ impl SettingsStore {
         validate_component(name)?;
         let counter_dir = self.require_counter_directory(name)?;
         fs::create_dir_all(&self.settings_root)?;
-        self.migrate_legacy(name, &counter_dir)?;
-        let definition = counter_dir.join("settings.json");
-        let values_path = self.values_path(name);
-        reject_symlink(&definition)?;
-        reject_symlink(&values_path)?;
-        if !definition.exists() {
-            atomic_json(&definition, &Vec::<CounterSetting>::new())?;
-        }
-        if !values_path.exists() {
-            atomic_json(&values_path, &CompactValues::new())?;
-        }
-        let settings = read_json_or(&definition, Vec::new())?;
-        let values = read_json_or(&values_path, CompactValues::new())?;
+        let settings = self.load_or_migrate_schema(name, &counter_dir)?;
+        let values = self.load_or_migrate_values(name, &counter_dir, &settings)?;
         Ok((settings, values))
     }
 
@@ -91,8 +98,16 @@ impl SettingsStore {
         validate_component(name)?;
         let (settings, mut values) = self.load(name)?;
         for item in payload {
-            let id = sanitize_id(&item.unique_id);
-            let Some(setting) = settings.iter().find(|setting| setting.unique_id == id) else {
+            let sanitized_id = sanitize_id(&item.unique_id);
+            let Some(setting) = settings
+                .iter()
+                .find(|setting| setting.unique_id == item.unique_id)
+                .or_else(|| {
+                    settings
+                        .iter()
+                        .find(|setting| setting.unique_id == sanitized_id)
+                })
+            else {
                 continue;
             };
             let value = match setting.kind {
@@ -100,7 +115,7 @@ impl SettingsStore {
                 SettingType::Checkbox => coerce_checkbox(item.value.clone()),
                 _ => item.value.clone(),
             };
-            values.insert(id, value);
+            values.insert(setting.unique_id.clone(), value);
         }
         Ok(values)
     }
@@ -111,8 +126,7 @@ impl SettingsStore {
         payload: &[SettingInput],
     ) -> Result<CompactValues, SettingsError> {
         let values = self.prepare_user_values(name, payload)?;
-        atomic_json(&self.values_path(name), &values)?;
-        Ok(values)
+        write_values_toml(&self.values_path(name), &values)
     }
 
     pub fn save_developer_settings(
@@ -121,24 +135,28 @@ impl SettingsStore {
         mut settings: Vec<CounterSetting>,
     ) -> Result<Vec<CounterSetting>, SettingsError> {
         validate_component(name)?;
-        let counter_dir = self.require_counter_directory(name)?;
+        self.require_counter_directory(name)?;
         for setting in &mut settings {
             setting.unique_id = sanitize_id(&setting.unique_id);
-            setting.value = match setting.kind {
-                SettingType::Number => coerce_number(setting.value.clone()),
-                SettingType::Checkbox => coerce_checkbox(setting.value.clone()),
-                _ => setting.value.clone(),
-            };
         }
-        let path = counter_dir.join("settings.json");
-        reject_symlink(&path)?;
-        atomic_json(&path, &settings)?;
+        normalize_settings(&mut settings);
+        write_schema_toml(&self.schema_path(name), &settings)?;
         Ok(settings)
     }
 
-    pub fn values_path(&self, name: &str) -> PathBuf {
-        self.settings_root.join(format!("{name}.values.json"))
+    pub fn schema_path(&self, name: &str) -> PathBuf {
+        self.static_root.join(name).join("settings.schema.toml")
     }
+
+    pub fn values_path(&self, name: &str) -> PathBuf {
+        self.settings_root
+            .join(format!("{name}.settings.values.toml"))
+    }
+
+    fn prior_xdg_schema_path(&self, name: &str) -> PathBuf {
+        self.settings_root.join(format!("{name}.settings.toml"))
+    }
+
     fn require_counter_directory(&self, name: &str) -> Result<PathBuf, SettingsError> {
         let path = self.static_root.join(name);
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
@@ -163,22 +181,90 @@ impl SettingsStore {
         Ok(canonical)
     }
 
-    fn migrate_legacy(&self, name: &str, counter_dir: &Path) -> Result<(), SettingsError> {
-        let legacy = counter_dir.join("settings.values.json");
-        reject_symlink(&legacy)?;
-        reject_symlink(&self.values_path(name))?;
-        if !legacy.exists() {
-            return Ok(());
+    fn load_or_migrate_schema(
+        &self,
+        name: &str,
+        counter_dir: &Path,
+    ) -> Result<Vec<CounterSetting>, SettingsError> {
+        let target = self.schema_path(name);
+        if checked_exists(&target)? {
+            let mut settings = read_schema_toml(&target)?;
+            normalize_settings(&mut settings);
+            return Ok(settings);
         }
+
+        let root_json = counter_dir.join("settings.json");
+        let root_toml = counter_dir.join("settings.toml");
+        let prior_xdg_toml = self.prior_xdg_schema_path(name);
+        let internal_json = self.settings_root.join(format!("{name}.settings.json"));
+
+        let mut settings = if checked_exists(&root_json)? {
+            read_json::<Vec<CounterSetting>>(&root_json)?
+        } else if checked_exists(&root_toml)? {
+            infer_schema_from_values_toml(read_toml(&root_toml)?)?
+        } else if checked_exists(&prior_xdg_toml)? {
+            read_schema_toml(&prior_xdg_toml)?
+        } else if checked_exists(&internal_json)? {
+            read_json::<Vec<CounterSetting>>(&internal_json)?
+        } else {
+            Vec::new()
+        };
+
+        normalize_settings(&mut settings);
+        if !create_schema_toml(&target, &settings)? {
+            let mut authoritative = read_schema_toml(&target)?;
+            normalize_settings(&mut authoritative);
+            return Ok(authoritative);
+        }
+        Ok(settings)
+    }
+
+    fn load_or_migrate_values(
+        &self,
+        name: &str,
+        counter_dir: &Path,
+        settings: &[CounterSetting],
+    ) -> Result<CompactValues, SettingsError> {
         let target = self.values_path(name);
-        fs::copy(&legacy, &target)?;
-        let old = legacy.with_file_name("settings.old-values.json");
-        reject_symlink(&old)?;
-        if old.exists() {
-            fs::remove_file(&old)?;
+        if checked_exists(&target)? {
+            return read_values_toml(&target);
         }
-        fs::rename(legacy, old)?;
-        Ok(())
+
+        let root_schema = self.schema_path(name);
+        let root_toml = counter_dir.join("settings.toml");
+        let internal_json = self.settings_root.join(format!("{name}.values.json"));
+        let root_json = counter_dir.join("settings.values.json");
+
+        let root_toml_state = source_state(&root_toml)?;
+        let root_schema_state = source_state(&root_schema)?;
+        let native_values = match (root_toml_state, root_schema_state) {
+            (SourceState::Symlink, _) | (_, SourceState::Symlink) => {
+                return Err(SettingsError::UnsafeSettingsFile);
+            }
+            (SourceState::Present, SourceState::Present) => {
+                let document = read_toml(&root_toml)?;
+                if is_schema_shaped(&document) {
+                    None
+                } else {
+                    Some(decode_values_document(document)?)
+                }
+            }
+            _ => None,
+        };
+        let values = if let Some(values) = native_values {
+            values
+        } else if checked_exists(&internal_json)? {
+            read_json::<CompactValues>(&internal_json)?
+        } else if checked_exists(&root_json)? {
+            read_json::<CompactValues>(&root_json)?
+        } else {
+            defaults_from_schema(settings)
+        };
+        let (created, values) = create_values_toml(&target, &values)?;
+        if !created {
+            return read_values_toml(&target);
+        }
+        Ok(values)
     }
 }
 
@@ -211,6 +297,7 @@ fn coerce_number(value: Value) -> Value {
             .map(Value::Number)
             .unwrap_or(Value::from(0)),
         Value::Bool(value) => Value::from(if value { 1 } else { 0 }),
+        Value::Null => Value::Null,
         _ => Value::from(0),
     }
 }
@@ -222,27 +309,341 @@ fn coerce_checkbox(value: Value) -> Value {
     }
 }
 
-fn read_json_or<T>(path: &Path, default: T) -> Result<T, SettingsError>
+fn normalize_settings(settings: &mut [CounterSetting]) {
+    for setting in settings {
+        setting.value = match setting.kind {
+            SettingType::Number => coerce_number(setting.value.clone()),
+            SettingType::Checkbox => coerce_checkbox(setting.value.clone()),
+            _ => setting.value.clone(),
+        };
+    }
+}
+
+fn defaults_from_schema(settings: &[CounterSetting]) -> CompactValues {
+    settings
+        .iter()
+        .filter(|setting| !setting.value.is_null())
+        .map(|setting| (setting.unique_id.clone(), setting.value.clone()))
+        .collect()
+}
+
+fn read_json<T>(path: &Path) -> Result<T, SettingsError>
 where
     T: serde::de::DeserializeOwned,
 {
-    match fs::read(path) {
-        Ok(bytes) => Ok(serde_json::from_slice(&bytes).unwrap_or(default)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(default),
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
+}
+
+fn read_toml(path: &Path) -> Result<toml::Value, SettingsError> {
+    Ok(toml::from_slice(&fs::read(path)?)?)
+}
+
+fn read_schema_toml(path: &Path) -> Result<Vec<CounterSetting>, SettingsError> {
+    decode_schema_document(read_toml(path)?)
+}
+
+fn decode_schema_document(document: toml::Value) -> Result<Vec<CounterSetting>, SettingsError> {
+    if !is_schema_shaped(&document) {
+        return Err(SettingsError::TomlConversion(
+            "schema document must contain a top-level settings array of tables".to_owned(),
+        ));
+    }
+    let json = toml_to_json(document, "settings schema")?;
+    serde_json::from_value::<SchemaDocument>(json)
+        .map(|document| document.settings)
+        .map_err(|error| {
+            SettingsError::TomlConversion(format!("invalid settings schema fields: {error}"))
+        })
+}
+
+fn is_schema_shaped(document: &toml::Value) -> bool {
+    let toml::Value::Table(table) = document else {
+        return false;
+    };
+    matches!(
+        table.get("settings"),
+        Some(toml::Value::Array(settings))
+            if settings
+                .iter()
+                .all(|setting| matches!(setting, toml::Value::Table(_)))
+    )
+}
+
+fn infer_schema_from_values_toml(
+    document: toml::Value,
+) -> Result<Vec<CounterSetting>, SettingsError> {
+    let toml::Value::Table(values) = document else {
+        return Err(SettingsError::TomlConversion(
+            "settings values must be a top-level TOML table".to_owned(),
+        ));
+    };
+
+    values
+        .into_iter()
+        .map(|(unique_id, value)| {
+            let kind = match &value {
+                toml::Value::String(_) => SettingType::Text,
+                toml::Value::Integer(_) | toml::Value::Float(_) => SettingType::Number,
+                toml::Value::Boolean(_) => SettingType::Checkbox,
+                toml::Value::Array(_) => {
+                    return Err(SettingsError::TomlConversion(format!(
+                        "cannot infer a setting type for array value {unique_id:?}"
+                    )));
+                }
+                toml::Value::Table(_) => {
+                    return Err(SettingsError::TomlConversion(format!(
+                        "cannot infer a setting type for table value {unique_id:?}"
+                    )));
+                }
+                toml::Value::Datetime(_) => {
+                    return Err(SettingsError::TomlConversion(format!(
+                        "cannot infer a setting type for datetime value {unique_id:?}"
+                    )));
+                }
+            };
+            let value = toml_to_json(value, &format!("settings value {unique_id:?}"))?;
+            Ok(CounterSetting {
+                title: unique_id.clone(),
+                unique_id,
+                unique_check: None,
+                kind,
+                options: None,
+                description: String::new(),
+                value,
+            })
+        })
+        .collect()
+}
+
+fn read_values_toml(path: &Path) -> Result<CompactValues, SettingsError> {
+    decode_values_document(read_toml(path)?)
+}
+
+fn decode_values_document(document: toml::Value) -> Result<CompactValues, SettingsError> {
+    match toml_to_json(document, "settings values")? {
+        Value::Object(values) => Ok(values),
+        _ => Err(SettingsError::TomlConversion(
+            "values document must be a top-level table".to_owned(),
+        )),
+    }
+}
+
+fn encode_schema_toml(settings: &[CounterSetting]) -> Result<String, SettingsError> {
+    let mut settings = match serde_json::to_value(settings)? {
+        Value::Array(settings) => settings,
+        _ => {
+            return Err(SettingsError::TomlConversion(
+                "settings schema did not serialize to an array".to_owned(),
+            ));
+        }
+    };
+    for setting in &mut settings {
+        let Value::Object(fields) = setting else {
+            return Err(SettingsError::TomlConversion(
+                "settings schema entry did not serialize to a table".to_owned(),
+            ));
+        };
+        if fields.get("value").is_some_and(Value::is_null) {
+            fields.remove("value");
+        }
+    }
+
+    let mut document = toml::Table::new();
+    document.insert(
+        "settings".to_owned(),
+        json_to_toml(&Value::Array(settings), "settings schema")?,
+    );
+    serialize_toml(toml::Value::Table(document))
+}
+
+fn write_schema_toml(path: &Path, settings: &[CounterSetting]) -> Result<(), SettingsError> {
+    let encoded = encode_schema_toml(settings)?;
+    atomic_bytes(path, encoded.as_bytes(), true)?;
+    Ok(())
+}
+
+fn create_schema_toml(path: &Path, settings: &[CounterSetting]) -> Result<bool, SettingsError> {
+    let encoded = encode_schema_toml(settings)?;
+    atomic_bytes(path, encoded.as_bytes(), false)
+}
+
+fn encode_values_toml(values: &CompactValues) -> Result<(CompactValues, String), SettingsError> {
+    let mut normalized = CompactValues::new();
+    let mut document = toml::Table::new();
+    for (id, value) in values {
+        if value.is_null() {
+            continue;
+        }
+        document.insert(id.clone(), json_to_toml(value, id)?);
+        normalized.insert(id.clone(), value.clone());
+    }
+    let encoded = serialize_toml(toml::Value::Table(document))?;
+    Ok((normalized, encoded))
+}
+
+fn write_values_toml(path: &Path, values: &CompactValues) -> Result<CompactValues, SettingsError> {
+    let (normalized, encoded) = encode_values_toml(values)?;
+    atomic_bytes(path, encoded.as_bytes(), true)?;
+    Ok(normalized)
+}
+
+fn create_values_toml(
+    path: &Path,
+    values: &CompactValues,
+) -> Result<(bool, CompactValues), SettingsError> {
+    let (normalized, encoded) = encode_values_toml(values)?;
+    let created = atomic_bytes(path, encoded.as_bytes(), false)?;
+    Ok((created, normalized))
+}
+
+fn serialize_toml(document: toml::Value) -> Result<String, SettingsError> {
+    let mut encoded = toml::to_string_pretty(&document)?;
+    if !encoded.ends_with('\n') {
+        encoded.push('\n');
+    }
+    Ok(encoded)
+}
+
+fn json_to_toml(value: &Value, context: &str) -> Result<toml::Value, SettingsError> {
+    match value {
+        Value::Null => Err(SettingsError::TomlConversion(format!(
+            "{context:?} contains null, which TOML cannot represent"
+        ))),
+        Value::Bool(value) => Ok(toml::Value::Boolean(*value)),
+        Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                Ok(toml::Value::Integer(value))
+            } else if let Some(value) = value.as_u64() {
+                i64::try_from(value).map(toml::Value::Integer).map_err(|_| {
+                    SettingsError::TomlConversion(format!(
+                        "{context:?} contains integer {value}, outside TOML's signed 64-bit range"
+                    ))
+                })
+            } else if let Some(value) = value.as_f64() {
+                Ok(toml::Value::Float(value))
+            } else {
+                Err(SettingsError::TomlConversion(format!(
+                    "{context:?} contains an unsupported JSON number"
+                )))
+            }
+        }
+        Value::String(value) => Ok(toml::Value::String(value.clone())),
+        Value::Array(values) => values
+            .iter()
+            .map(|value| json_to_toml(value, context))
+            .collect::<Result<Vec<_>, _>>()
+            .map(toml::Value::Array),
+        Value::Object(values) => {
+            let mut table = toml::Table::new();
+            for (key, value) in values {
+                table.insert(key.clone(), json_to_toml(value, context)?);
+            }
+            Ok(toml::Value::Table(table))
+        }
+    }
+}
+
+fn toml_to_json(value: toml::Value, context: &str) -> Result<Value, SettingsError> {
+    match value {
+        toml::Value::String(value) => Ok(Value::String(value)),
+        toml::Value::Integer(value) => Ok(Value::from(value)),
+        toml::Value::Float(value) => serde_json::Number::from_f64(value)
+            .map(Value::Number)
+            .ok_or_else(|| {
+                SettingsError::TomlConversion(format!(
+                    "{context:?} contains non-finite float {value}"
+                ))
+            }),
+        toml::Value::Boolean(value) => Ok(Value::Bool(value)),
+        toml::Value::Datetime(value) => Err(SettingsError::TomlConversion(format!(
+            "{context:?} contains TOML datetime {value}, which JSON settings cannot represent"
+        ))),
+        toml::Value::Array(values) => values
+            .into_iter()
+            .map(|value| toml_to_json(value, context))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        toml::Value::Table(values) => {
+            let mut object = serde_json::Map::new();
+            for (key, value) in values {
+                object.insert(key, toml_to_json(value, context)?);
+            }
+            Ok(Value::Object(object))
+        }
+    }
+}
+
+fn source_state(path: &Path) -> Result<SourceState, SettingsError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Ok(SourceState::Symlink),
+        Ok(_) => Ok(SourceState::Present),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(SourceState::Missing),
         Err(error) => Err(error.into()),
+    }
+}
+
+fn checked_exists(path: &Path) -> Result<bool, SettingsError> {
+    match source_state(path)? {
+        SourceState::Missing => Ok(false),
+        SourceState::Present => Ok(true),
+        SourceState::Symlink => Err(SettingsError::UnsafeSettingsFile),
     }
 }
 
 fn reject_symlink(path: &Path) -> Result<(), SettingsError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(SettingsError::UnsafeSettingsFile),
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
+    checked_exists(path).map(|_| ())
+}
+
+#[cfg(not(windows))]
+fn persist_noclobber(temp: tempfile::NamedTempFile, path: &Path) -> Result<bool, SettingsError> {
+    match temp.persist_noclobber(path) {
+        Ok(file) => {
+            drop(file);
+            Ok(true)
+        }
+        Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error.error.into()),
     }
 }
 
-pub(crate) fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), SettingsError> {
+#[cfg(windows)]
+fn persist_noclobber(temp: tempfile::NamedTempFile, path: &Path) -> Result<bool, SettingsError> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS};
+    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_WRITE_THROUGH, MoveFileExW};
+
+    let (file, temp_path) = temp.keep().map_err(|error| error.error)?;
+    drop(file);
+    let temp_wide = temp_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let path_wide = path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let moved = unsafe {
+        MoveFileExW(
+            temp_wide.as_ptr(),
+            path_wide.as_ptr(),
+            MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved != 0 {
+        return Ok(true);
+    }
+
+    let error = io::Error::last_os_error();
+    let _ = fs::remove_file(&temp_path);
+    match error.raw_os_error().map(|code| code as u32) {
+        Some(ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) => Ok(false),
+        _ => Err(error.into()),
+    }
+}
+
+fn atomic_bytes(path: &Path, value: &[u8], replace_existing: bool) -> Result<bool, SettingsError> {
     let parent = path.parent().ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "settings path has no parent")
     })?;
@@ -252,9 +653,22 @@ pub(crate) fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), Set
         .prefix(".settings-")
         .suffix(".tmp")
         .tempfile_in(parent)?;
-    serde_json::to_writer(&mut temp, value)?;
+    temp.write_all(value)?;
     temp.flush()?;
     temp.as_file().sync_all()?;
+
+    if !replace_existing {
+        let created = persist_noclobber(temp, path)?;
+        if !created {
+            // A developer write or another migration won the race. Treat its
+            // complete file as authoritative and never replace it.
+            reject_symlink(path)?;
+            return Ok(false);
+        }
+        sync_parent(parent)?;
+        return Ok(true);
+    }
+
     let (file, temp_path) = temp.keep().map_err(|error| error.error)?;
     // Windows does not allow replacing a file while this process still owns a
     // non-shareable handle to it. Close the temporary file before the rename,
@@ -265,7 +679,7 @@ pub(crate) fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), Set
         return Err(error.into());
     }
     sync_parent(parent)?;
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(unix)]
