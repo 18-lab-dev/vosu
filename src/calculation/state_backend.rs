@@ -40,9 +40,23 @@ impl BeatmapEngine for LiveBeatmapEngine {
         };
         let mods = structured_mods(request.mods)?;
         engine.apply_mods(&mut map, &mods).map_err(engine_error)?;
-        let base_hit_windows = vosu_lazer_pp::hit_windows_for_map(&map).map_err(engine_error)?;
+        let mania = request.effective_mode == BeatmapRuleset::Mania;
+        let base_hit_windows = if mania {
+            vosu_lazer_pp::hit_windows_for_map_without_speed_adjustment(&map)
+        } else {
+            vosu_lazer_pp::hit_windows_for_map(&map)
+        }
+        .map_err(engine_error)?;
         let catch_spatial_window = vosu_lazer_pp::catch_spatial_window_for_map(&map);
-        let scale_window = |window: Option<f64>| window.map(|window| window / request.clock_rate);
+        let scale_window = |window: Option<f64>| {
+            window.map(|window| {
+                if mania {
+                    window * request.clock_rate
+                } else {
+                    window / request.clock_rate
+                }
+            })
+        };
         let hit_windows = vosu_lazer_pp::HitWindows {
             miss: scale_window(base_hit_windows.miss),
             meh: scale_window(base_hit_windows.meh),

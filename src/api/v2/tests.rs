@@ -612,52 +612,68 @@ fn timing_windows_match_stable_classic_mania_difficulty_modifiers() {
 
 #[test]
 fn timing_windows_project_fixed_mania_rates_after_source_rounding() {
-    for (acronym, clock_rate, lazer_expected, stable_perfect) in [
+    for (label, game_mod, clock_rate, lazer_expected, stable_perfect) in [
         (
-            "DT",
+            "DT 1.5x",
+            applied_mod("DT"),
             1.5,
             serde_json::json!({
-                "0": 173.0,
-                "50": 136.33,
-                "100": 112.33,
-                "katu": 82.33,
-                "300": 49.0,
-                "geki": 19.67,
+                "0": 260.25,
+                "50": 204.75,
+                "100": 168.75,
+                "katu": 123.75,
+                "300": 74.25,
+                "geki": 29.25,
             }),
-            16.33,
+            24.75,
         ),
         (
-            "HT",
+            "HT 0.75x",
+            applied_mod("HT"),
             0.75,
             serde_json::json!({
-                "0": 172.67,
-                "50": 136.67,
-                "100": 112.67,
-                "katu": 82.0,
-                "300": 48.67,
-                "geki": 19.33,
+                "0": 130.13,
+                "50": 102.38,
+                "100": 84.38,
+                "katu": 61.88,
+                "300": 37.13,
+                "geki": 14.63,
             }),
-            16.67,
+            12.38,
+        ),
+        (
+            "DT 1.3x",
+            applied_mod_with_settings("DT", r#"{"speed_change":1.3}"#),
+            1.3,
+            serde_json::json!({
+                "0": 225.55,
+                "50": 177.45,
+                "100": 146.25,
+                "katu": 107.25,
+                "300": 64.35,
+                "geki": 25.35,
+            }),
+            21.45,
         ),
     ] {
         let lazer = parsed_timing_map(
             Ruleset::Mania,
             Ruleset::Mania,
             ClientType::Lazer,
-            vec![applied_mod(acronym)],
+            vec![game_mod.clone()],
             clock_rate,
         );
         assert_eq!(
             serde_json::to_value(timing_windows(Some(&lazer))).unwrap(),
             lazer_expected,
-            "Lazer Mania {acronym}",
+            "Lazer Mania {label}",
         );
 
         let stable = parsed_timing_map(
             Ruleset::Mania,
             Ruleset::Mania,
             ClientType::Stable,
-            vec![applied_mod("CL"), applied_mod(acronym)],
+            vec![applied_mod("CL"), game_mod],
             clock_rate,
         );
         let mut stable_expected = lazer_expected;
@@ -665,7 +681,7 @@ fn timing_windows_project_fixed_mania_rates_after_source_rounding() {
         assert_eq!(
             serde_json::to_value(timing_windows(Some(&stable))).unwrap(),
             stable_expected,
-            "Stable Mania {acronym}",
+            "Stable Mania {label}",
         );
     }
 }

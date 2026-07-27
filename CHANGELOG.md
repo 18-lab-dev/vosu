@@ -27,13 +27,14 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 
 ### API
 
-- Added `beatmap.stats.timingWindows` to v2 responses for stable and lazer across all rulesets, including map-aware speed mods, osu!lazer Difficulty Adjust values above OD 10, and osu!mania Classic/ScoreV2 windows. osu!catch exposes its spatial `300` catch boundary in playfield units; unsupported judgements are omitted.
+- Added `beatmap.stats.timingWindows` to stable and lazer v2 responses across all rulesets, including map-aware speed mods, osu!lazer Difficulty Adjust values above OD 10, and osu!mania Classic/ScoreV2 windows. osu! and taiko temporal windows scale to real time by `clockRate`; osu!mania source windows are rounded before `clockRate` multiplication, so the displayed `perfect` window changes from 19.5 ms at 1.0x to 25.35 ms at 1.3x. osu!catch exposes its spatial `300` catch boundary in playfield units; unsupported judgements are omitted.
 - Split every public hit-error field into ordered `all`, `press`, and `release` arrays, with osu!lazer mania hold-note releases classified separately.
 
 ### Reliability
 
 - Completed server-initiated WebSocket close handshakes with a bounded wait for peer acknowledgement, preventing Windows connection resets from dropping v2 subscription terminal close codes.
 - Made the Windows updater helper tolerate the brief missing-record window that can occur while the parent atomically replaces the durable handoff record, without retrying malformed or unauthenticated records.
+- Fixed lazer paused/repeated-time samples so they retain gameplay mode and mod identity without leaking gameplay or precise state after returning to the menu, preventing `.play.mods.rate`, realtime BPM, and osu!mania timing windows from flapping to NoMod between polls.
 - Fixed dashboard navigation links so they no longer trigger counter-folder API calls, and made both folder controls open the configured counter root without fake executable names.
 - Added a Linux startup warning when the running daemon lacks effective `CAP_SYS_PTRACE`, and made `process_vm_readv` permission denials emit one terminal error per osu! process generation instead of retrying silently.
 - Added standalone `-h`/`--help`, `-s`/`--setup`, and `-g`/`--generate-offsets` CLI actions. Offset generation atomically exports the build's embedded `offsets.json`.

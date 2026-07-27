@@ -133,13 +133,17 @@ impl GameplayState {
         self.calculated = ProgressiveAttributes::default();
     }
 
-    pub(super) fn reset_paused_regular(&mut self) {
-        self.is_default_state = true;
+    pub(super) fn reset_paused_regular(&mut self, score: Option<&Score>) {
+        self.is_default_state = false;
+        if let Some(score) = score {
+            self.mode = score.mode;
+            if !score.mods.array.is_empty() {
+                self.mods.clone_from(&score.mods);
+            }
+        }
         self.failed = false;
         self.retries = 0;
         self.player_name.clear();
-        self.mode = 0;
-        self.mods = default_calculated_mods();
         self.score = 0.0;
         self.player_hp_smooth = 0.0;
         self.player_hp = 0.0;

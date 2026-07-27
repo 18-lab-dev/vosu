@@ -8,6 +8,7 @@ use vosu_lazer_pp::{
     LiveLazerEngine, LiveScoreState, ModValue, Ruleset, ScoreInfoData, ScoreTotals, StructuredMod,
     all_hit_windows, calculate_total_score, catch_spatial_window_for_map, game_mods,
     great_hit_window, hit_window, hit_window_for_map, hit_window_numeric, hit_windows_for_map,
+    hit_windows_for_map_without_speed_adjustment,
 };
 
 const MAP: &[u8] = include_bytes!("fixture.osu");
@@ -1782,6 +1783,51 @@ ApproachRate:5
             perfect: Some(13.5),
         },
         "Classic ScoreV2 uses generic Mania raw windows with Hard Rock",
+    );
+}
+
+#[test]
+fn mania_hit_windows_without_speed_adjustment_ignore_custom_dt() {
+    const NATIVE_MANIA_OD5: &str = r#"osu file format v14
+
+[General]
+Mode:3
+
+[Difficulty]
+HPDrainRate:5
+CircleSize:5
+OverallDifficulty:5
+ApproachRate:5
+
+[TimingPoints]
+0,500,4,2,1,50,1,0
+
+[HitObjects]
+64,192,1000,1,0,0:0:0:0:
+"#;
+
+    let engine = LiveLazerEngine;
+    let mut map = engine.parse_str(NATIVE_MANIA_OD5).unwrap();
+    engine
+        .apply_mods(
+            &mut map,
+            &[StructuredMod {
+                acronym: "DT".to_owned(),
+                settings: BTreeMap::from([("speed_change".to_owned(), ModValue::Number(1.3))]),
+            }],
+        )
+        .unwrap();
+
+    assert_eq!(
+        hit_windows_for_map_without_speed_adjustment(&map).unwrap(),
+        HitWindows {
+            miss: Some(173.5),
+            meh: Some(136.5),
+            ok: Some(112.5),
+            good: Some(82.5),
+            great: Some(49.5),
+            perfect: Some(19.5),
+        },
     );
 }
 

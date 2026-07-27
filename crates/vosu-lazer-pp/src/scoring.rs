@@ -184,6 +184,15 @@ pub fn hit_window_for_map(
     od: f64,
     result: HitResult,
 ) -> Result<Option<f64>, Error> {
+    hit_window_for_map_with_speed_adjustment(map, od, result, true)
+}
+
+fn hit_window_for_map_with_speed_adjustment(
+    map: &ParsedBeatmap,
+    od: f64,
+    result: HitResult,
+    apply_speed_adjustment: bool,
+) -> Result<Option<f64>, Error> {
     if map.mode != Ruleset::Mania {
         return hit_window(map.mode, od, result);
     }
@@ -253,6 +262,9 @@ pub fn hit_window_for_map(
                     || game_mod.acronym.eq_ignore_ascii_case("NC");
                 let is_slower = game_mod.acronym.eq_ignore_ascii_case("HT")
                     || game_mod.acronym.eq_ignore_ascii_case("DC");
+                if !apply_speed_adjustment {
+                    return (difficulty, speed);
+                }
                 let default_speed = if is_faster {
                     1.5
                 } else if is_slower {
@@ -307,9 +319,25 @@ pub fn catch_spatial_window_for_map(map: &ParsedBeatmap) -> Option<CatchSpatialW
 /// Values use the playable map's post-difficulty-mod overall difficulty and
 /// do not include any clock-rate adjustment.
 pub fn hit_windows_for_map(map: &ParsedBeatmap) -> Result<HitWindows, Error> {
-    let od = f64::from(map.map.od);
-    let window = |result| hit_window_for_map(map, od, result);
+    hit_windows_for_map_with_speed_adjustment(map, true)
+}
 
+/// Returns temporal hit windows after difficulty mods but before osu!mania's
+/// speed-mod adjustment.
+pub fn hit_windows_for_map_without_speed_adjustment(
+    map: &ParsedBeatmap,
+) -> Result<HitWindows, Error> {
+    hit_windows_for_map_with_speed_adjustment(map, false)
+}
+
+fn hit_windows_for_map_with_speed_adjustment(
+    map: &ParsedBeatmap,
+    apply_speed_adjustment: bool,
+) -> Result<HitWindows, Error> {
+    let od = f64::from(map.map.od);
+    let window = |result| {
+        hit_window_for_map_with_speed_adjustment(map, od, result, apply_speed_adjustment)
+    };
     match map.mode() {
         Ruleset::Osu => Ok(HitWindows {
             miss: window(HitResult::Miss)?,

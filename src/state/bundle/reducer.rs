@@ -444,7 +444,8 @@ impl StateBundle {
                 }
                 self.previous_time = self.global.play_time;
                 if self.source == ClientType::Lazer && self.global.paused {
-                    self.gameplay.reset_paused_regular();
+                    self.gameplay
+                        .reset_paused_regular(snapshot.gameplay().and_then(ready));
                 } else {
                     if let Some(score) = snapshot.gameplay().and_then(ready) {
                         if !self.gameplay.is_default_state && score.mode != self.gameplay.mode {
