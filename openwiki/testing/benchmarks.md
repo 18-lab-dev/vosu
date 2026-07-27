@@ -164,6 +164,140 @@ In particular:
   outside the timed iterations. There are no allocation-count or byte-count
   observations.
 
+## End-to-end comparison with upstream tosu: 2026-07-26
+
+This is a **non-portable, machine-specific observation, not a performance
+promise, acceptance threshold, or portable baseline**. Every `tosu` label in
+this section refers explicitly to upstream tosu v4.25.1.
+
+### Environment, revisions, and trial design
+
+- Host: AMD Ryzen 9 9950X3D and NVIDIA GeForce RTX 5090.
+- Guests: sequential Windows and Linux virtual machines, each with 8 logical
+  CPUs.
+- Revisions: vosu `fed2fc71f35238e013feff44add60c9256768213`,
+  vosulay `8249a39ff7dc05365f59e47402d9945212bda3cd`, upstream
+  tosu v4.25.1, and osu!lazer 2026.726.0.
+- Design: three counterbalanced pairs per suite. Daemon and overlay trials used
+  30 seconds of warm-up followed by 120 seconds of measurement and an exact
+  10 Hz validator (1,201 requests). WebSocket trials used a 30-second
+  measurement window and an independent exact 10 Hz HTTP validator (301
+  requests).
+- Workload: the same Renatus/Autoplay gameplay for both products in a pair.
+  The Linux daemon comparison used osu!standard because upstream tosu's Linux
+  Mania reader repeatedly emitted performance-cast errors.
+
+The two kinds of statistics below must not be mixed. An **absolute** entry is
+the marginal median of the three per-product trial means. A **paired effect** is
+the median of the three relative comparisons calculated within matched,
+counterbalanced vosu/upstream-tosu trials. Consequently, the paired effects
+must not be derived from the two absolute columns.
+
+### Daemon and full `/json/v2` observations
+
+#### Windows guest
+
+| Metric | vosu absolute median | Upstream tosu absolute median | Median paired vosu effect |
+| --- | ---: | ---: | ---: |
+| CPU (% of one logical CPU) | 3.906627% | 3.815343% | 2.392537% higher |
+| Process-tree private memory | 10.518369 MiB | 104.724077 MiB | 89.956112% lower |
+| Process-tree working set | 39.954642 MiB | 119.597947 MiB | 65.861563% lower |
+| Full `/json/v2` payload | 22853.669421 B | 20991.446281 B | 9.003864% larger |
+
+#### Linux guest
+
+| Metric | vosu absolute median | Upstream tosu absolute median | Median paired vosu effect |
+| --- | ---: | ---: | ---: |
+| CPU (% of one logical CPU) | 4.374997% | 2.666665% | 61.556865% higher |
+| Process-tree private memory | 15.453545 MiB | 238.606308 MiB | 93.506964% lower |
+| Summed process-tree RSS | 18.772437 MiB | 248.356308 MiB | 92.410729% lower |
+| Full `/json/v2` payload | 50311.148760 B | 49395.719008 B | 1.853257% larger |
+
+vosu's modestly larger full `/json/v2` sample is expected partly from additive
+schema data. The current schema adds `beatmap.stats.timingWindows`, and
+`play.hitErrorArray` is structured as `{all, press, release}`. Values in
+`press` can repeat timing values also present in `all`, so this contribution to
+the size difference can grow as more objects are completed. This is schema
+enrichment, not evidence of serializer inefficiency. These fields are known
+contributors, not a claim that they are the only possible byte difference.
+
+Consumers that do not need the full document can use selected-field
+subscriptions, avoiding transmission of unused fields. The following
+observation requested only `/beatmap/time/live` and
+`/play/hitErrorArray/all` from vosu, while upstream tosu delivered its full
+snapshots.
+
+### Selected-field WebSocket observations
+
+#### Windows guest
+
+| Metric | vosu selected fields: absolute median | Upstream tosu full snapshots: absolute median | Median paired vosu effect |
+| --- | ---: | ---: | ---: |
+| Delivered frames/s | 59.750570 | 6.550088 | 9.124709x cadence |
+| Frame interarrival p50 | 16.378650 ms | 152.622150 ms | 89.267144% lower |
+| Frame interarrival p95 | 19.235875 ms | 154.937775 ms | 87.584774% lower |
+| Decoded JSON/s | 4200.266667 B/s | 127292.966667 B/s | 96.700135% lower |
+| Mean decoded frame | 70.324038 B | 19384.715736 B | 99.637219% smaller |
+
+#### Linux guest
+
+| Metric | vosu selected fields: absolute median | Upstream tosu full snapshots: absolute median | Median paired vosu effect |
+| --- | ---: | ---: | ---: |
+| Delivered frames/s | 99.998219 | 6.634251 | 15.079610x cadence |
+| Frame interarrival p50 | 10.114817 ms | 150.506520 ms | 93.281605% lower |
+| Frame interarrival p95 | 12.157455 ms | 152.502563 ms | 92.028032% lower |
+| Decoded JSON/s | 3033.933333 B/s | 324895.266667 B/s | 99.066474% lower |
+| Mean decoded frame | 30.422667 B | 48748.381910 B | 99.937592% smaller |
+
+Frame interarrival is the time between deliveries at the receiver. It measures
+delivery cadence, not one-way latency. Decoded JSON/s counts decoded JSON
+payload bytes and is not wire bandwidth; WebSocket framing, transport details,
+and the differing selected-field versus full-snapshot semantics prevent that
+interpretation.
+
+### Overlay paired-delta context
+
+A separate overlay exercise used the primary paired ON-OFF medians. `ON` was
+the game plus its required daemon plus the renderer/host; `OFF` was the same
+game plus its required daemon with the renderer/host disabled. Each value
+below is the median paired full-stack increase with the overlay enabled, not an
+absolute resource level. The delta captures all induced work, including work
+charged outside renderer processes. Both overlays rendered the same HTML at
+1280×720.
+
+| Metric | Upstream tosu on Windows, ON − OFF | vosulay on Linux, ON − OFF |
+| --- | ---: | ---: |
+| CPU | +31.114192 one-core percentage points (+3.8893% of 8-vCPU capacity) | +14.000311 one-core percentage points (+1.7500% of 8-vCPU capacity) |
+| Process-tree private memory | +384.654894 MiB | +412.209097 MiB |
+| Resident-memory measure | +498.781637 MiB working set | +1121.972011 MiB summed RSS |
+| GPU utilization | +12.214876 percentage points | +2.520661 percentage points |
+| VRAM | +19.181818 MiB | +107.512397 MiB |
+| GPU power | — | +11.568760 W |
+
+Windows and Linux use different display stacks and frame policies. These
+side-by-side overlay deltas are directional context only, not a
+platform-neutral contest or evidence of a cross-platform winner.
+
+### Limitations
+
+- This was one host, two specific virtualized guests, one set of revisions,
+  three trial pairs, and one gameplay scenario. The observations are
+  descriptive and should not be generalized to other machines, guest
+  configurations, maps, rulesets, sessions, or releases.
+- CPU percentage uses one logical CPU as 100%; each guest had 8 logical CPUs.
+  Process-tree memory sums can double-count shared pages, so private memory,
+  Windows working set, and Linux summed RSS are not interchangeable measures.
+- The Linux ruleset exception was required by repeated errors in upstream
+  tosu's Linux Mania reader and limits direct ruleset generalization.
+- Full `/json/v2` payload sizes include schema and live-content differences,
+  not just encoding work. The selected-field comparison intentionally carries
+  different payload semantics from upstream tosu's full snapshots.
+- Interarrival describes receiver-side delivery cadence rather than one-way
+  latency, and decoded JSON byte rate is not network bandwidth.
+- Overlay resource deltas are workload-, renderer-, display-stack-, and
+  frame-policy-dependent. In particular, the Windows upstream-tosu and Linux
+  vosulay columns must not be treated as an OS-normalized product comparison.
+
 ## Local V2 subscription observation: 2026-07-16
 
 This is a **non-portable observation, not a performance promise, acceptance
