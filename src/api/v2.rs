@@ -99,7 +99,9 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
 }
 
 pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
-    snapshot.encode_unfiltered(ApiSchema::V2, |snapshot| encode_dto(&build(snapshot)?))
+    snapshot.encode_unfiltered(ApiSchema::V2, |snapshot| {
+        encode_dto_with_capacity(&build(snapshot)?, 4 * 1024)
+    })
 }
 
 pub(crate) fn document(snapshot: &CombinedSnapshot) -> Result<Value, ApiError> {
@@ -133,7 +135,11 @@ fn normalize_javascript_numbers(value: &mut Value) -> Result<(), ApiError> {
 }
 
 pub(crate) fn encode_dto<T: Serialize>(value: &T) -> Result<Bytes, ApiError> {
-    let mut bytes = Vec::new();
+    encode_dto_with_capacity(value, 0)
+}
+
+fn encode_dto_with_capacity<T: Serialize>(value: &T, capacity: usize) -> Result<Bytes, ApiError> {
+    let mut bytes = Vec::with_capacity(capacity);
     let mut serializer = Serializer::with_formatter(&mut bytes, JsFormatter);
     value
         .serialize(&mut serializer)

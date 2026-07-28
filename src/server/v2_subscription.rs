@@ -597,24 +597,22 @@ impl V2SubscriptionHub {
             let baseline_id = baseline
                 .as_ref()
                 .map(|value| Arc::as_ptr(value) as *const () as usize);
-            let bytes = encoded
-                .entry((plan_id, baseline_id))
-                .or_insert_with(|| {
-                    #[cfg(test)]
+            let bytes = encoded.entry((plan_id, baseline_id)).or_insert_with(|| {
+                #[cfg(test)]
+                {
+                    self.0.encodings.fetch_add(1, Ordering::Relaxed);
+                    if lock(&self.0.failed_encoding_plan)
+                        .as_ref()
+                        .is_some_and(|failed| Arc::ptr_eq(failed, &plan))
                     {
-                        self.0.encodings.fetch_add(1, Ordering::Relaxed);
-                        if lock(&self.0.failed_encoding_plan)
-                            .as_ref()
-                            .is_some_and(|failed| Arc::ptr_eq(failed, &plan))
-                        {
-                            return Err(ApiError::serialization("fake outer frame failure"));
-                        }
+                        return Err(ApiError::serialization("fake outer frame failure"));
                     }
-                    match baseline.as_deref() {
-                        Some(old) => update_frame(revision, old, &current),
-                        None => initial_frame(revision, &current),
-                    }
-                });
+                }
+                match baseline.as_deref() {
+                    Some(old) => update_frame(revision, old, &current),
+                    None => initial_frame(revision, &current),
+                }
+            });
             let bytes = match bytes {
                 Ok(bytes) => bytes.clone(),
                 Err(_) => {

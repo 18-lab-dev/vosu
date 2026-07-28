@@ -173,7 +173,10 @@ fn finds_match_crossing_a_chunk_boundary_inside_one_region() {
         ScanScratch::new(4, usize::MAX).unwrap().bytes.len(),
         SCAN_CHUNK_SIZE + 3
     );
-    assert_eq!(ScanScratch::new(4, 64 * 1024).unwrap().bytes.len(), 64 * 1024);
+    assert_eq!(
+        ScanScratch::new(4, 64 * 1024).unwrap().bytes.len(),
+        64 * 1024
+    );
 
     assert_eq!(
         process.scan_first(&pattern("DE AD BE EF", false)).unwrap(),
@@ -220,8 +223,7 @@ fn mixed_pattern_overlap_partitions_candidate_starts_without_duplicates() {
     let short = pattern("AA", false);
     let long = pattern("AA AA AA AA AA AA AA AA", false);
 
-    let mut scratch =
-        ScanScratch::new(long.bytes().len(), memory.regions[0].region.size).unwrap();
+    let mut scratch = ScanScratch::new(long.bytes().len(), memory.regions[0].region.size).unwrap();
     let mut offsets = Vec::new();
     assert!(
         scan_region(
