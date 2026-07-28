@@ -568,6 +568,23 @@ fn failed_cas_and_full_queue_do_not_advance_baseline() {
     );
 }
 
+#[test]
+fn unchecked_sentinel_revision_still_delivers_the_initial_frame() {
+    let provider = FakeProvider::new(UNCHECKED, Some(json!({"a": 1})));
+    let hub = V2SubscriptionHub::new(provider, Duration::ZERO);
+    let (connection, mut receiver) = hub.connect();
+    connection.subscribe(vec!["/a".into()]).unwrap();
+
+    hub.dispatch(UNCHECKED);
+    assert_eq!(
+        text(receiver.try_recv().unwrap()),
+        json!([0, UNCHECKED, [[0, 1]]])
+    );
+    connection.write_completed();
+    hub.dispatch(UNCHECKED);
+    assert!(receiver.try_recv().is_none());
+}
+
 #[tokio::test]
 async fn document_failure_terminates_every_active_plan_including_pending_clients() {
     let provider = FakeProvider::new(1, Some(json!({"a": 1, "b": 2})));
@@ -714,6 +731,33 @@ async fn clients_use_independent_debounce_start_instants() {
         json!([1, 2, [[0, 2]], []])
     );
     assert_eq!(provider.builds.load(Ordering::Relaxed), 2);
+    hub.shutdown();
+    runner.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn debounce_increase_recomputes_from_the_original_queue_instant() {
+    let provider = FakeProvider::new(1, Some(json!({"a": 1})));
+    let hub = V2SubscriptionHub::new(provider.clone(), Duration::from_millis(1));
+    let runner = tokio::spawn({
+        let hub = hub.clone();
+        async move { hub.run().await }
+    });
+    let (connection, mut receiver) = hub.connect();
+    connection.subscribe(vec!["/a".into()]).unwrap();
+    let _ = receiver.recv().await.unwrap();
+    connection.write_completed();
+    provider.publish(2, Some(json!({"a": 2})));
+    hub.set_debounce(Duration::from_millis(2));
+
+    tokio::time::advance(Duration::from_micros(1999)).await;
+    tokio::task::yield_now().await;
+    assert!(receiver.try_recv().is_none());
+    tokio::time::advance(Duration::from_micros(1)).await;
+    assert_eq!(
+        text(receiver.recv().await.unwrap()),
+        json!([1, 2, [[0, 2]], []])
+    );
     hub.shutdown();
     runner.await.unwrap();
 }

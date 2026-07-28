@@ -517,8 +517,9 @@ impl V2SubscriptionHub {
             if client.state.load(Ordering::Acquire) != OPEN {
                 continue;
             }
-            let initial = lock(&client.baseline).is_none();
-            if !initial && client.checked_revision.load(Ordering::Acquire) == source_revision {
+            if client.checked_revision.load(Ordering::Acquire) == source_revision
+                && (source_revision != UNCHECKED || lock(&client.baseline).is_some())
+            {
                 continue;
             }
             if !debounce.is_zero()
