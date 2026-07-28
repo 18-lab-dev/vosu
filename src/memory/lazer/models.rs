@@ -77,6 +77,14 @@ pub(super) enum HitErrorEvent {
     ManiaHoldAggregate,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct PrecisePlayerCache {
+    pub(super) screen: usize,
+    pub(super) player: usize,
+    pub(super) key_used: bool,
+    pub(super) hit_used: bool,
+}
+
 /// Source-faithful osu!lazer managed-memory decoder.
 pub struct LazerMemory {
     pub(super) process: ProcessHandle,
@@ -84,6 +92,7 @@ pub struct LazerMemory {
     pub(super) pattern: LazerPattern,
     pub(super) game_base_address: RwLock<usize>,
     pub(super) current_screen: usize,
+    pub(super) precise_player: Option<PrecisePlayerCache>,
     pub(super) selected_gamemode: i64,
     pub(super) scoring_display_mode: i32,
     pub(super) watching_replay: bool,

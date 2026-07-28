@@ -165,10 +165,7 @@ impl MemoryReader for StableMemory {
                     ReadRequest::new(self.add(x, 8)?, &mut right_bytes),
                 ])?;
                 self.with_random_seed(
-                    mods(
-                        (i32::from_le_bytes(left_bytes) ^ i32::from_le_bytes(right_bytes))
-                            as i64,
-                    ),
+                    mods((i32::from_le_bytes(left_bytes) ^ i32::from_le_bytes(right_bytes)) as i64),
                     r,
                     mode,
                 )?

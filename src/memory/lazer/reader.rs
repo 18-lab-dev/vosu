@@ -17,6 +17,34 @@ impl SynchronizedMemoryReader for LazerMemory {
     }
 }
 
+impl LazerMemory {
+    fn precise_key_player(&mut self) -> Result<usize, MemoryError> {
+        let screen = self.current_screen;
+        if let Some(cache) = self.precise_player.as_mut()
+            && !cache.key_used
+        {
+            cache.key_used = true;
+            if cache.screen == screen {
+                return Ok(cache.player);
+            }
+        }
+        self.player()
+    }
+
+    fn precise_hit_player(&mut self) -> Result<usize, MemoryError> {
+        let screen = self.current_screen;
+        if let Some(cache) = self.precise_player.as_mut()
+            && !cache.hit_used
+        {
+            cache.hit_used = true;
+            if cache.screen == screen {
+                return Ok(cache.player);
+            }
+        }
+        self.player()
+    }
+}
+
 impl MemoryReader for LazerMemory {
     fn audio_velocity_base(&mut self) -> MemoryRead<AudioVelocityBase> {
         let logo = self.ptr(add(
@@ -126,7 +154,11 @@ impl MemoryReader for LazerMemory {
         if self.player_loading {
             return Ok(ReadStatus::Ready(Vec::new()));
         }
-        let player = required_non_null(self.player()?, "key overlay player", self.current_screen)?;
+        let player = required_non_null(
+            self.precise_key_player()?,
+            "key overlay player",
+            self.current_screen,
+        )?;
         let overlay = self.ptr(add(
             player,
             self.offsets
@@ -146,10 +178,21 @@ impl MemoryReader for LazerMemory {
                 .triggers,
         )?)?;
         let collection = self.ptr(add(bindable, 0x18)?)?;
-        let list =
-            self.list_items_bounded(collection, false, 8, KeyOverlayButton::lazer_button_count())?;
-        let mut out = Vec::with_capacity(list.len());
-        for (i, trigger) in list.into_iter().enumerate() {
+        let (size, items) = self.list_info(collection)?;
+        if size > KeyOverlayButton::lazer_button_count() {
+            return Err(corrupt("managed collection", collection, "invalid size"));
+        }
+        let mut triggers = [0; KeyOverlayButton::lazer_button_count()];
+        for (i, trigger) in triggers[..size].iter_mut().enumerate() {
+            let slot = add(
+                items,
+                i.checked_mul(8)
+                    .ok_or(MemoryError::AddressOverflow { base: i, offset: 8 })?,
+            )?;
+            *trigger = self.ptr(slot)?;
+        }
+        let mut out = Vec::with_capacity(size);
+        for (i, trigger) in triggers[..size].iter().copied().enumerate() {
             let count_bindable = self.ptr(add(trigger, 0x208)?)?;
             let mut count_bytes = [0u8; 4];
             let mut pressed_bytes = [0u8; 1];
@@ -173,7 +216,11 @@ impl MemoryReader for LazerMemory {
                 release_correction: None,
             }));
         }
-        let p = required_non_null(self.player()?, "hit errors player", self.current_screen)?;
+        let p = required_non_null(
+            self.precise_hit_player()?,
+            "hit errors player",
+            self.current_screen,
+        )?;
         let processor = self.ptr(add(
             p,
             self.offsets
@@ -192,12 +239,15 @@ impl MemoryReader for LazerMemory {
         ))
     }
     fn global(&mut self) -> MemoryRead<Global> {
+        self.precise_player = None;
         self.selected_gamemode = self.read_gamemode()?;
         self.current_screen = self.get_current_screen()?;
         if self.current_screen == 0 {
             return self.not_ready();
         }
-        self.menu_mods = self.selected_mods()?;
+        if let Some(menu_mods) = self.selected_mods()? {
+            self.menu_mods = menu_mods;
+        }
         let player = self.player()?;
         let is_loader = if player == 0 {
             self.check_player_loader(self.current_screen)?
@@ -270,6 +320,7 @@ impl MemoryReader for LazerMemory {
             ReadStatus::Unchanged => return Ok(ReadStatus::Unchanged),
             ReadStatus::Unsupported(reason) => return Ok(ReadStatus::Unsupported(reason)),
         };
+        self.precise_player = None;
         Ok(ReadStatus::Ready(Global {
             is_watching_replay: self.watching_replay,
             is_replay_ui_hidden: !self.replay_settings_overlay,
@@ -285,6 +336,7 @@ impl MemoryReader for LazerMemory {
         }))
     }
     fn global_precise(&mut self) -> MemoryRead<GlobalPrecise> {
+        self.precise_player = None;
         if self.current_screen == 0 {
             return self.not_ready();
         }
@@ -334,6 +386,12 @@ impl MemoryReader for LazerMemory {
         self.status = status as i64;
         self.player_loading = is_loader;
         let time = js_round_number(self.current_time()?);
+        self.precise_player = (player != 0).then_some(PrecisePlayerCache {
+            screen: self.current_screen,
+            player,
+            key_used: false,
+            hit_used: false,
+        });
         Ok(ReadStatus::Ready(GlobalPrecise {
             status: status as i64,
             time,

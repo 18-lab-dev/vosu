@@ -742,62 +742,76 @@ impl StateBundle {
         }
         if self.global.status == GameState::Play.value() as i64 && self.global.play_time >= 150.0 {
             if let Some(Ok(ReadStatus::Ready(keys))) = snapshot.key_overlay() {
-                let sanitized: Vec<_> = keys
-                    .iter()
-                    .cloned()
-                    .map(|mut key| {
-                        if !(0..=1_000_000).contains(&key.count) {
-                            key.is_pressed = false;
-                            key.count = 0;
-                        }
-                        key
-                    })
-                    .collect();
                 let identities_match = self.gameplay.keypress_identity_mode
                     == Some(self.gameplay.keypress_mode)
-                    && sanitized.len() == self.gameplay.keypresses.len()
-                    && sanitized
+                    && keys.len() == self.gameplay.keypresses.len()
+                    && keys
                         .iter()
                         .zip(&self.gameplay.keypresses)
                         .all(|(current, previous)| current.name == previous.name);
-                self.gameplay.keypresses = sanitized
-                    .iter()
-                    .enumerate()
-                    .map(|(index, key)| {
-                        let previous = identities_match.then(|| &self.gameplay.keypresses[index]);
-                        let (pressed_at, released_at) = match previous {
-                            Some(previous) if previous.is_pressed == key.is_pressed => {
-                                (previous.pressed_at, previous.released_at)
+                let values_match = identities_match
+                    && keys
+                        .iter()
+                        .zip(&self.gameplay.keypresses)
+                        .all(|(current, previous)| {
+                            let valid = (0..=1_000_000).contains(&current.count);
+                            previous.is_pressed == (valid && current.is_pressed)
+                                && previous.count == if valid { current.count } else { 0 }
+                        });
+                if !values_match {
+                    let sanitized: Vec<_> = keys
+                        .iter()
+                        .cloned()
+                        .map(|mut key| {
+                            if !(0..=1_000_000).contains(&key.count) {
+                                key.is_pressed = false;
+                                key.count = 0;
                             }
-                            Some(previous) if key.is_pressed => {
-                                (Some(self.global.play_time), previous.released_at)
+                            key
+                        })
+                        .collect();
+                    self.gameplay.keypresses = sanitized
+                        .iter()
+                        .enumerate()
+                        .map(|(index, key)| {
+                            let previous =
+                                identities_match.then(|| &self.gameplay.keypresses[index]);
+                            let (pressed_at, released_at) = match previous {
+                                Some(previous) if previous.is_pressed == key.is_pressed => {
+                                    (previous.pressed_at, previous.released_at)
+                                }
+                                Some(previous) if key.is_pressed => {
+                                    (Some(self.global.play_time), previous.released_at)
+                                }
+                                Some(previous) => {
+                                    (previous.pressed_at, Some(self.global.play_time))
+                                }
+                                None if key.is_pressed => (Some(self.global.play_time), None),
+                                None => (None, None),
+                            };
+                            KeypressButton {
+                                name: Arc::clone(&key.name),
+                                is_pressed: key.is_pressed,
+                                count: key.count,
+                                pressed_at,
+                                released_at,
                             }
-                            Some(previous) => (previous.pressed_at, Some(self.global.play_time)),
-                            None if key.is_pressed => (Some(self.global.play_time), None),
-                            None => (None, None),
-                        };
-                        KeypressButton {
-                            name: Arc::clone(&key.name),
-                            is_pressed: key.is_pressed,
-                            count: key.count,
-                            pressed_at,
-                            released_at,
-                        }
-                    })
-                    .collect();
-                self.gameplay.keypress_identity_mode = Some(self.gameplay.keypress_mode);
-                self.gameplay.key_overlay = if self.source == ClientType::Lazer {
-                    sanitized
-                } else if sanitized.len() < 4 {
-                    Vec::new()
-                } else {
-                    let legacy_len = if self.gameplay.keypress_mode == 0 {
-                        4
+                        })
+                        .collect();
+                    self.gameplay.keypress_identity_mode = Some(self.gameplay.keypress_mode);
+                    self.gameplay.key_overlay = if self.source == ClientType::Lazer {
+                        sanitized
+                    } else if sanitized.len() < 4 {
+                        Vec::new()
                     } else {
-                        3
+                        let legacy_len = if self.gameplay.keypress_mode == 0 {
+                            4
+                        } else {
+                            3
+                        };
+                        sanitized[..legacy_len].to_vec()
                     };
-                    sanitized[..legacy_len].to_vec()
-                };
+                }
                 self.gameplay.is_key_overlay_default_state = false;
             }
             if let Some(Ok(ReadStatus::Ready(errors))) = snapshot.hit_errors() {

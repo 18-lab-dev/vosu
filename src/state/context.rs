@@ -7,9 +7,10 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use crate::memory::ReaderSynchronization;
+#[cfg(test)]
+use crate::memory::snapshot::PreciseCaptureContext;
 use crate::memory::snapshot::{
-    InstanceEpoch, PreciseCaptureContext, RawPreciseSnapshot, RawRegularSnapshot,
-    RegularCaptureContext,
+    InstanceEpoch, RawPreciseSnapshot, RawRegularSnapshot, RegularCaptureContext,
 };
 use crate::model::enums::{ClientType, GameState};
 use crate::model::states::{CalculateMods, TourneyManagerChatItem};
@@ -95,6 +96,7 @@ impl ReadContext {
         InstanceEpoch::new(self.instance_generation, self.reset_epoch)
     }
 
+    #[cfg(test)]
     pub(super) fn precise_capture(&self) -> PreciseCaptureContext {
         PreciseCaptureContext::new(
             self.source,

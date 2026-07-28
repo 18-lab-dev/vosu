@@ -340,7 +340,8 @@ fn backend_request(
     root: &Path,
     beatmap_path: PathBuf,
 ) -> StateCalculationRequest {
-    let snapshot = crate::state::StateBundle::new(ClientType::Stable, 1, backend.clone()).snapshot();
+    let snapshot =
+        crate::state::StateBundle::new(ClientType::Stable, 1, backend.clone()).snapshot();
     let mods = crate::calculation::default_calculated_mods();
     StateCalculationRequest {
         input: crate::state::CalculationInput {
@@ -508,9 +509,7 @@ fn reset_and_errors_do_not_leave_stale_progression_or_replace_valid_preparation(
 
     let mut invalid_rate = reset.clone();
     invalid_rate.input.mods.rate = 0.0;
-    assert!(
-        LiveStateCalculationBackend::calculate_sync(&backend.state, invalid_rate).is_err()
-    );
+    assert!(LiveStateCalculationBackend::calculate_sync(&backend.state, invalid_rate).is_err());
     assert_eq!(preparation_counts(&backend), (1, 2, 1));
 
     let mut missing = reset.clone();

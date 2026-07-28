@@ -2,8 +2,8 @@ use super::*;
 
 pub(super) use crate::process::{MemoryRegion, ProcessBitness, ProcessMemory};
 use std::collections::BTreeMap;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicUsize;
 pub(super) use std::sync::atomic::Ordering;
 
 #[derive(Default)]

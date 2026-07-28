@@ -138,8 +138,8 @@ impl KeyOverlayButton {
         }
     }
 
-    pub(crate) fn lazer_button_count() -> usize {
-        BUTTON_NAMES.len()
+    pub(crate) const fn lazer_button_count() -> usize {
+        18
     }
 
     pub(crate) fn lazer_name(index: usize) -> Arc<str> {

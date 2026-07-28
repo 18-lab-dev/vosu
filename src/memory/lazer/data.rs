@@ -460,14 +460,14 @@ impl LazerMemory {
         })
     }
 
-    pub(super) fn selected_mods(&mut self) -> Result<CalculateMods, MemoryError> {
+    pub(super) fn selected_mods(&mut self) -> Result<Option<CalculateMods>, MemoryError> {
         let _ = self.ensure_mod_mapping(self.selected_gamemode);
         let selected = self.ptr(add(
             self.game_base()?,
             self.offsets.osu_desktop_osu_game_desktop.selected_mods,
         )?)?;
         if selected == 0 || self.process.read_u8(add(selected, 0x50)?)? == 1 {
-            return Ok(self.menu_mods.clone());
+            return Ok(None);
         }
         let list = self.ptr(add(selected, 0x20)?)?;
         let mut mods = Vec::new();
@@ -477,7 +477,7 @@ impl LazerMemory {
                 mods.push(self.read_mod(acronym, object)?)
             }
         }
-        Ok(calculate_mods(mods))
+        Ok(Some(calculate_mods(mods)))
     }
     #[cfg(windows)]
     pub(super) fn read_windows_input_settings(

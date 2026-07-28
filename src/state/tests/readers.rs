@@ -493,11 +493,20 @@ fn precise_capture_reuses_template_and_invalidates_every_acceptance_field() {
         }};
     }
 
-    assert_invalidates!(|value: &mut ReadContext| value.source = ClientType::Stable, true);
-    assert_invalidates!(|value: &mut ReadContext| value.instance_generation += 1, true);
+    assert_invalidates!(
+        |value: &mut ReadContext| value.source = ClientType::Stable,
+        true
+    );
+    assert_invalidates!(
+        |value: &mut ReadContext| value.instance_generation += 1,
+        true
+    );
     assert_invalidates!(|value: &mut ReadContext| value.reset_epoch += 1, true);
     assert_invalidates!(|value: &mut ReadContext| value.mode += 1, true);
-    assert_invalidates!(|value: &mut ReadContext| value.mods = mods("changed"), false);
+    assert_invalidates!(
+        |value: &mut ReadContext| value.mods = mods("changed"),
+        false
+    );
     assert_invalidates!(
         |value: &mut ReadContext| value.committed_hit_error_index += 1,
         true

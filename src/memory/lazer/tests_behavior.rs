@@ -573,10 +573,7 @@ fn global_precise_player_fast_path_skips_screen_classification_and_reuses_player
                 .replay_score_k_backing_field,
         0x80_000,
     );
-    memory.ptr(
-        base + offsets.osu_game_osu_game_base.beatmap_clock,
-        clock,
-    );
+    memory.ptr(base + offsets.osu_game_osu_game_base.beatmap_clock, clock);
     memory.ptr(
         clock
             + offsets
@@ -634,7 +631,11 @@ fn global_precise_player_fast_path_skips_screen_classification_and_reuses_player
             .osu_game_osu_game_base
             .multiplayer_client_k_backing_field,
     ] {
-        assert_eq!(memory.read_count(address), 0, "unexpected read at {address:#x}");
+        assert_eq!(
+            memory.read_count(address),
+            0,
+            "unexpected read at {address:#x}"
+        );
     }
 }
 

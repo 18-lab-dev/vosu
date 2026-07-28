@@ -8,6 +8,7 @@ impl LazerMemory {
             pattern,
             game_base_address: RwLock::new(0),
             current_screen: 0,
+            precise_player: None,
             selected_gamemode: 0,
             scoring_display_mode: 0,
             watching_replay: false,
@@ -42,6 +43,7 @@ impl LazerMemory {
             .write()
             .expect("lazer base lock poisoned") = game_base;
         self.current_screen = current_screen;
+        self.precise_player = None;
     }
 
     pub fn resolve_game_base(&mut self) -> Result<bool, MemoryError> {
@@ -187,8 +189,17 @@ impl LazerMemory {
             stack,
             self.offsets.osu_framework_screens_screen_stack.stack,
         )?)?;
-        let items = self.list_items(list, false, 8)?;
-        Ok(items.last().copied().unwrap_or(0))
+        let (size, items) = self.list_info(list)?;
+        let mut current = 0;
+        for i in 0..size {
+            let slot = add(
+                items,
+                i.checked_mul(8)
+                    .ok_or(MemoryError::AddressOverflow { base: i, offset: 8 })?,
+            )?;
+            current = self.ptr(slot)?;
+        }
+        Ok(current)
     }
 
     pub(super) fn list_info(&self, list: usize) -> Result<(usize, usize), MemoryError> {

@@ -64,8 +64,11 @@ struct PreciseSlot {
 impl PreciseSlot {
     fn replace(&self, value: Result<Arc<RawPreciseSnapshot>, StateWorkerError>) {
         if let Ok(mut slot) = self.value.lock() {
+            let should_notify = slot.is_none();
             *slot = Some(value);
-            self.changed.notify_one();
+            if should_notify {
+                self.changed.notify_one();
+            }
         }
     }
 

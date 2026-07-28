@@ -505,15 +505,17 @@ fn precise_global_reuses_validated_pointer_chains_without_changing_values() {
     let ReadStatus::Ready(second) = reader.global_precise().unwrap() else {
         panic!()
     };
-    assert_eq!(first, GlobalPrecise {
-        status: 2,
-        time: -123.0,
-    });
+    assert_eq!(
+        first,
+        GlobalPrecise {
+            status: 2,
+            time: -123.0,
+        }
+    );
     assert_eq!(second, first);
     assert_eq!(memory.reads.load(Ordering::Relaxed), 6);
     assert_eq!(memory.batches.load(Ordering::Relaxed), 2);
 }
-
 
 #[test]
 fn precise_global_pointer_replacement_never_returns_cached_values() {

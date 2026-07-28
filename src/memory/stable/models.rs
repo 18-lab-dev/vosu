@@ -96,14 +96,12 @@ impl StableMemory {
     }
     pub(super) fn ruleset(&mut self) -> Result<usize, MemoryError> {
         let result = (|| {
-            let anchor =
-                self.patterns
-                    .rulesets_addr
-                    .checked_sub(0xb)
-                    .ok_or(MemoryError::AddressOverflow {
-                        base: self.patterns.rulesets_addr,
-                        offset: 0xb,
-                    })?;
+            let anchor = self.patterns.rulesets_addr.checked_sub(0xb).ok_or(
+                MemoryError::AddressOverflow {
+                    base: self.patterns.rulesets_addr,
+                    offset: 0xb,
+                },
+            )?;
             if self.ruleset_container == 0 {
                 let container = self.ptr(anchor)?;
                 let ruleset = self.ptr(self.add(container, 4)?)?;
@@ -113,10 +111,7 @@ impl StableMemory {
                 let mut ruleset_bytes = [0; 4];
                 let batch = self.process.read_many(&mut [
                     ReadRequest::new(anchor, &mut container_bytes),
-                    ReadRequest::new(
-                        self.add(self.ruleset_container, 4)?,
-                        &mut ruleset_bytes,
-                    ),
+                    ReadRequest::new(self.add(self.ruleset_container, 4)?, &mut ruleset_bytes),
                 ]);
                 if batch.is_err() {
                     let container = self.ptr(anchor)?;
@@ -190,11 +185,7 @@ impl StableMemory {
         Ok((container, value))
     }
     pub(super) fn status_value(&mut self) -> Result<i64, MemoryError> {
-        match self.cached_i32_chain(
-            self.patterns.status_ptr,
-            self.status_container,
-            false,
-        ) {
+        match self.cached_i32_chain(self.patterns.status_ptr, self.status_container, false) {
             Ok((container, value)) => {
                 self.status_container = container;
                 Ok(value)

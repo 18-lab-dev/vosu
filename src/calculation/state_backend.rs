@@ -258,9 +258,7 @@ struct PreparedMods {
 
 impl PreparedMods {
     fn matches(&self, mods: &CalculateMods, client: ClientType) -> bool {
-        self.client == client
-            && self.rate_bits == mods.rate.to_bits()
-            && self.source == mods.array
+        self.client == client && self.rate_bits == mods.rate.to_bits() && self.source == mods.array
     }
 }
 
@@ -503,12 +501,9 @@ impl LiveStateCalculationBackend {
         if !prepared_hit {
             let requested_mode = ruleset(request.input.mode)?;
             let beatmap_mode = beatmap_ruleset(requested_mode);
-            let mods_hit = state
-                .prepared_mods
-                .as_ref()
-                .is_some_and(|prepared| {
-                    prepared.matches(&request.input.mods, request.input.client_scoring)
-                });
+            let mods_hit = state.prepared_mods.as_ref().is_some_and(|prepared| {
+                prepared.matches(&request.input.mods, request.input.client_scoring)
+            });
             let mut candidate_mods = if mods_hit {
                 None
             } else {

@@ -8,7 +8,7 @@ use std::os::fd::OwnedFd;
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
@@ -80,6 +80,7 @@ pub struct LinuxProcessMemory {
     pid: libc::pid_t,
     proc_root: PathBuf,
     syscall: Arc<dyn ProcessVmReadv>,
+    iov_max: OnceLock<usize>,
     pidfd: Option<Arc<OwnedFd>>,
 }
 
@@ -123,6 +124,7 @@ impl LinuxProcessMemory {
             proc_root,
             syscall,
             pidfd,
+            iov_max: OnceLock::new(),
         }
     }
 
@@ -231,8 +233,11 @@ impl LinuxProcessMemory {
                 chunk.address,
             );
         }
-        let max = self.syscall.iov_max().max(1);
-        for batch in chunks.chunks(max) {
+        if chunks.is_empty() {
+            return Ok(());
+        }
+        let iov_max = *self.iov_max.get_or_init(|| self.syscall.iov_max().max(1));
+        for batch in chunks.chunks(iov_max) {
             self.read_batch(reads, batch)?;
         }
         Ok(())

@@ -249,9 +249,12 @@ impl StatePublicationQueue {
             .get(&publication.pid)
             .is_none_or(|pending| pending.generation <= publication.generation);
         if should_replace {
+            let should_notify = state.pending.is_empty();
             state.pending.insert(publication.pid, publication);
             drop(state);
-            self.notified.notify_one();
+            if should_notify {
+                self.notified.notify_one();
+            }
         }
         Ok(())
     }

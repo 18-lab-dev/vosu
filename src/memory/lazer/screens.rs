@@ -28,23 +28,20 @@ impl LazerMemory {
             return Ok(false);
         }
         let submitting = &self.offsets.osu_game_screens_play_submitting_player;
-        if self.ptr(add(address, submitting.api_k_backing_field)?)? == self.api()?
+        let submitting_api = self.ptr(add(address, submitting.api_k_backing_field)?)?;
+        let game_base = self.game_base()?;
+        let base = &self.offsets.osu_game_osu_game_base;
+        let api = self.ptr(add(game_base, base.api_k_backing_field)?)?;
+        if submitting_api == api
             && self.ptr(add(address, submitting.spectator_client_k_backing_field)?)?
-                == self.spectator_client()?
+                == self.ptr(add(game_base, base.spectator_client_k_backing_field)?)?
         {
             return Ok(true);
         }
         let replay = &self.offsets.osu_game_screens_play_player;
-        Ok(
-            self.ptr(add(address, replay.api_k_backing_field)?)? == self.api()?
-                && self.ptr(add(address, replay.score_manager_k_backing_field)?)?
-                    == self.ptr(add(
-                        self.game_base()?,
-                        self.offsets
-                            .osu_game_osu_game_base
-                            .score_manager_k_backing_field,
-                    )?)?,
-        )
+        Ok(self.ptr(add(address, replay.api_k_backing_field)?)? == api
+            && self.ptr(add(address, replay.score_manager_k_backing_field)?)?
+                == self.ptr(add(game_base, base.score_manager_k_backing_field)?)?)
     }
     pub(super) fn check_player_loader(&self, address: usize) -> Result<bool, MemoryError> {
         if address == 0 {
