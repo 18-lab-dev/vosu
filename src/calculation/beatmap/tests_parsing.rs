@@ -132,6 +132,42 @@
     }
 
     #[test]
+    fn identityless_content_reuses_only_exact_source_and_dimensions() {
+        let mut cache = BeatmapCache::new(RecordingEngine::default());
+        let base = mods("base", 1.0);
+        fn input(content: &str) -> BeatmapInput<'_> {
+            BeatmapInput::Content {
+                content,
+                identity_path: None,
+            }
+        }
+        let first = cache
+            .load(input(OSU), Ruleset::Osu, &base, ScoringMode::Stable)
+            .unwrap();
+        let same = cache
+            .load(input(OSU), Ruleset::Osu, &base, ScoringMode::Stable)
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &same));
+        assert_eq!(cache.parse_count(), 1);
+
+        let changed_mode = cache
+            .load(input(OSU), Ruleset::Taiko, &base, ScoringMode::Stable)
+            .unwrap();
+        assert!(!Arc::ptr_eq(&same, &changed_mode));
+        let changed_content = OSU.replace("Title:Title", "Title:Other");
+        let changed = cache
+            .load(
+                input(&changed_content),
+                Ruleset::Taiko,
+                &base,
+                ScoringMode::Stable,
+            )
+            .unwrap();
+        assert!(!Arc::ptr_eq(&changed_mode, &changed));
+        assert_eq!(cache.parse_count(), 3);
+    }
+
+    #[test]
     fn only_osu_maps_are_converted_and_all_requested_modes_are_supported() {
         let mut cache = BeatmapCache::new(RecordingEngine::default());
         for mode in [Ruleset::Osu, Ruleset::Taiko, Ruleset::Catch, Ruleset::Mania] {

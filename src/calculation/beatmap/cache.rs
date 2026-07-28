@@ -41,6 +41,25 @@ impl<E: BeatmapEngine> BeatmapCache<E> {
         mods: &ModSet,
         scoring_mode: ScoringMode,
     ) -> Result<Arc<ParsedBeatmap>, BeatmapError> {
+        if let BeatmapInput::Content {
+            content,
+            identity_path: None,
+        } = &input
+            && let Some(current) = &self.current
+        {
+            let key = current.cache_key();
+            if key.canonical_path.is_none()
+                && key.input_path.is_none()
+                && key.memory_identity.is_none()
+                && key.requested_mode == requested_mode
+                && key.mod_checksum == mods.checksum
+                && key.clock_rate_bits == mods.clock_rate().to_bits()
+                && key.scoring_mode == scoring_mode
+                && current.source() == *content
+            {
+                return Ok(Arc::clone(current));
+            }
+        }
         if let BeatmapInput::PathWithIdentity {
             path,
             memory_identity,
