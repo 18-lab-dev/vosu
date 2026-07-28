@@ -1,5 +1,11 @@
 use super::*;
 
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+
+use serde_json::value::RawValue;
+
+use crate::calculation::beatmap::StrainGraph;
+
 pub(super) fn select_mods(state: &RegularState, status: i64) -> &CalculateMods {
     match status {
         2 => &state.gameplay.mods,
@@ -537,9 +543,55 @@ pub(super) fn build_leaderboard(
         rank: String::new(),
     }
 }
-pub(super) fn build_performance(state: &RegularState) -> Performance {
+struct EncodedGraphCache {
+    source: Weak<StrainGraph>,
+    encoded: Arc<RawValue>,
+}
+
+fn encode_graph_once(source: &Arc<StrainGraph>, graph: &Graph) -> Result<Arc<RawValue>, ApiError> {
+    static CACHE: OnceLock<Mutex<Option<EncodedGraphCache>>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let source_weak = Arc::downgrade(source);
+    if let Some(cached) = cache.as_ref()
+        && cached.source.ptr_eq(&source_weak)
+    {
+        return Ok(Arc::clone(&cached.encoded));
+    }
+
+    let bytes = super::encode_dto(graph)?;
+    let json = String::from_utf8(bytes.to_vec())
+        .map_err(|error| ApiError::serialization(error.to_string()))?;
+    let encoded = Arc::<RawValue>::from(
+        RawValue::from_string(json).map_err(|error| ApiError::serialization(error.to_string()))?,
+    );
+    *cache = Some(EncodedGraphCache {
+        source: source_weak,
+        encoded: Arc::clone(&encoded),
+    });
+    Ok(encoded)
+}
+
+pub(super) fn build_performance(state: &RegularState) -> Result<Performance, ApiError> {
     let value = |n: u8| fix_decimals(state.beatmap.pp_acc.get(&n).copied().unwrap_or(0.0));
-    Performance {
+    let mut graph = Graph {
+        series: state
+            .beatmap
+            .graph
+            .series
+            .iter()
+            .map(|s| Series {
+                name: s.name.clone(),
+                data: s.data.clone(),
+            })
+            .collect(),
+        xaxis: state.beatmap.graph.x_axis.clone(),
+        encoded: None,
+    };
+    graph.encoded = Some(encode_graph_once(&state.beatmap.graph, &graph)?);
+    Ok(Performance {
         accuracy: Accuracy {
             acc_90: value(90),
             acc_91: value(91),
@@ -553,20 +605,8 @@ pub(super) fn build_performance(state: &RegularState) -> Performance {
             acc_99: value(99),
             acc_100: value(100),
         },
-        graph: Graph {
-            series: state
-                .beatmap
-                .graph
-                .series
-                .iter()
-                .map(|s| Series {
-                    name: s.name.clone(),
-                    data: s.data.clone(),
-                })
-                .collect(),
-            xaxis: state.beatmap.graph.x_axis.clone(),
-        },
-    }
+        graph,
+    })
 }
 pub(super) fn build_results(state: &RegularState) -> ResultsScreen {
     let r = &state.result_screen;

@@ -281,20 +281,43 @@ impl StatePublicationQueue {
     }
 }
 
-#[derive(Clone)]
 pub(super) struct StatePublicationSink {
     pid: u32,
     generation: u64,
     publications: Arc<StatePublicationQueue>,
+    last_snapshot: Mutex<Option<Arc<StateBundleSnapshot>>>,
+}
+
+impl StatePublicationSink {
+    pub(super) fn new(pid: u32, generation: u64, publications: Arc<StatePublicationQueue>) -> Self {
+        Self {
+            pid,
+            generation,
+            publications,
+            last_snapshot: Mutex::new(None),
+        }
+    }
 }
 
 impl SnapshotPublisher<Arc<StateBundleSnapshot>> for StatePublicationSink {
     fn publish(&self, snapshot: Arc<StateBundleSnapshot>) -> Result<(), StateWorkerError> {
+        let mut last_snapshot = self
+            .last_snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if last_snapshot
+            .as_ref()
+            .is_some_and(|previous| equivalent_state_snapshots(previous, &snapshot))
+        {
+            return Ok(());
+        }
         self.publications.publish(StatePublication {
             pid: self.pid,
             generation: self.generation,
-            snapshot,
-        })
+            snapshot: Arc::clone(&snapshot),
+        })?;
+        *last_snapshot = Some(snapshot);
+        Ok(())
     }
 }
 
@@ -416,9 +439,12 @@ pub(super) async fn run_state_supervisor(
             _ = publications.notified() => {
                 for (pid, publication) in publications.drain() {
                     if desired.get(&pid).copied() == Some(publication.generation) {
-                        states.insert(pid, publication.snapshot);
-                        let revision = state_revisions.entry(pid).or_default();
-                        *revision = revision.saturating_add(1);
+                        update_state_publication(
+                            &mut states,
+                            &mut state_revisions,
+                            pid,
+                            publication.snapshot,
+                        );
                     }
                 }
             }
@@ -426,6 +452,31 @@ pub(super) async fn run_state_supervisor(
     }
     publications.close();
     workers.shutdown().await;
+}
+
+fn equivalent_state_snapshots(current: &StateBundleSnapshot, next: &StateBundleSnapshot) -> bool {
+    current.source == next.source
+        && current.generation == next.generation
+        && current.reset_epoch == next.reset_epoch
+        && Arc::ptr_eq(&current.regular, &next.regular)
+        && Arc::ptr_eq(&current.precise, &next.precise)
+}
+
+pub(super) fn update_state_publication(
+    states: &mut BTreeMap<u32, Arc<StateBundleSnapshot>>,
+    state_revisions: &mut BTreeMap<u32, u64>,
+    pid: u32,
+    snapshot: Arc<StateBundleSnapshot>,
+) {
+    let unchanged = states
+        .get(&pid)
+        .is_some_and(|current| equivalent_state_snapshots(current, &snapshot));
+    if unchanged {
+        return;
+    }
+    states.insert(pid, snapshot);
+    let revision = state_revisions.entry(pid).or_default();
+    *revision = revision.saturating_add(1);
 }
 
 pub(super) fn poll_duration(milliseconds: f64) -> Duration {
@@ -475,11 +526,11 @@ pub(super) async fn run_instance_state_worker(
     logger: Logger,
     cancel: CancellationToken,
 ) {
-    let publisher = Arc::new(StatePublicationSink {
-        pid: entry.pid,
-        generation: entry.generation,
+    let publisher = Arc::new(StatePublicationSink::new(
+        entry.pid,
+        entry.generation,
         publications,
-    });
+    ));
     let synchronization = Arc::new(Mutex::new(ReaderSynchronization::default()));
     let worker = initialize_state_worker(
         &cancel,
@@ -673,7 +724,10 @@ pub(super) fn publish_manager_snapshot(
             })
             .collect(),
     };
-    let revision = revisions.observe(semantics);
+    let (revision, changed) = revisions.observe_with_change(semantics);
+    if !changed {
+        return;
+    }
     let entries = ready.into_iter().map(|(entry, state)| {
         ManagerInstanceSnapshot::new(
             entry.pid,
@@ -709,11 +763,17 @@ pub(super) struct ManagerSemantics {
 }
 
 impl SemanticRevision {
-    pub(super) fn observe(&mut self, semantics: ManagerSemantics) -> u64 {
-        if self.previous.as_ref() != Some(&semantics) {
+    fn observe_with_change(&mut self, semantics: ManagerSemantics) -> (u64, bool) {
+        let changed = self.previous.as_ref() != Some(&semantics);
+        if changed {
             self.revision = self.revision.saturating_add(1);
             self.previous = Some(semantics);
         }
-        self.revision
+        (self.revision, changed)
+    }
+
+    #[cfg(test)]
+    pub(super) fn observe(&mut self, semantics: ManagerSemantics) -> u64 {
+        self.observe_with_change(semantics).0
     }
 }

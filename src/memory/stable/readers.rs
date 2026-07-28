@@ -115,8 +115,8 @@ impl MemoryReader for StableMemory {
         let mut mode_bytes = [0; 4];
         let mut x_bytes = [0; 4];
         self.process.read_many(&mut [
-            ReadRequest::new(self.add(b, 0x64)?, &mut mode_bytes),
             ReadRequest::new(self.add(b, 0x1c)?, &mut x_bytes),
+            ReadRequest::new(self.add(b, 0x64)?, &mut mode_bytes),
         ])?;
         let mode = i32::from_le_bytes(mode_bytes) as i64;
         self.gameplay_mode = mode;
@@ -135,8 +135,8 @@ impl MemoryReader for StableMemory {
         let mut h_bytes = [0; 8];
         let mut smooth_bytes = [0; 8];
         self.process.read_many(&mut [
-            ReadRequest::new(self.add(hp, 0x1c)?, &mut h_bytes),
             ReadRequest::new(self.add(hp, 0x14)?, &mut smooth_bytes),
+            ReadRequest::new(self.add(hp, 0x1c)?, &mut h_bytes),
         ])?;
         let h = f64::from_le_bytes(h_bytes);
         let smooth = f64::from_le_bytes(smooth_bytes);
@@ -161,8 +161,8 @@ impl MemoryReader for StableMemory {
                 let mut left_bytes = [0; 4];
                 let mut right_bytes = [0; 4];
                 self.process.read_many(&mut [
-                    ReadRequest::new(self.add(x, 0xc)?, &mut left_bytes),
                     ReadRequest::new(self.add(x, 8)?, &mut right_bytes),
+                    ReadRequest::new(self.add(x, 0xc)?, &mut left_bytes),
                 ])?;
                 self.with_random_seed(
                     mods((i32::from_le_bytes(left_bytes) ^ i32::from_le_bytes(right_bytes)) as i64),

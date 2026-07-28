@@ -213,8 +213,8 @@ impl StableMemory {
         let mut tail = [0u8; 14];
         let mut maximum = [0u8; 2];
         self.process.read_many(&mut [
-            ReadRequest::new(self.add(base, 0x88)?, &mut tail),
             ReadRequest::new(self.add(base, 0x68)?, &mut maximum),
+            ReadRequest::new(self.add(base, 0x88)?, &mut tail),
         ])?;
         let mut values = [0i64; 8];
         for (index, bytes) in tail.chunks_exact(2).enumerate() {

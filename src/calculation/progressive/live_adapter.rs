@@ -215,7 +215,7 @@ impl ProgressiveBeatmap for LiveProgressiveBeatmap {
 
     fn calculate_accuracy(&self, score: &ScoreInput) -> Result<f64, Self::Error> {
         self.engine
-            .calculate_accuracy(&self.map, live_score(score)?)
+            .calculate_accuracy_from_attrs(&self.map, &self.full_difficulty, live_score(score)?)
             .map_err(Into::into)
     }
 
@@ -225,7 +225,13 @@ impl ProgressiveBeatmap for LiveProgressiveBeatmap {
         score: &ScoreInput,
     ) -> Result<PerformanceAttributes, Self::Error> {
         self.engine
-            .performance_data_from_attrs(&self.map, &self.config, difficulty, live_score(score)?)
+            .performance_data_from_attrs_with_context(
+                &self.map,
+                &self.config,
+                difficulty,
+                &self.full_difficulty,
+                live_score(score)?,
+            )
             .map(performance_attributes)
             .map_err(Into::into)
     }

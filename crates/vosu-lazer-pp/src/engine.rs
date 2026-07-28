@@ -136,12 +136,19 @@ impl LiveLazerEngine {
     ) -> Result<f64, Error> {
         let attrs = self.difficulty(map, &DifficultyConfig::default())?;
 
-        Ok(calculate_accuracy(
-            map.mode(),
-            &score,
-            config_classic(map, &DifficultyConfig::default()),
-            ScoreTotals::from_difficulty(&attrs),
-        ))
+        calculate_accuracy_from_difficulty_attrs(map, &attrs, &score)
+    }
+
+    /// Calculate wrapper-compatible accuracy from retained difficulty attributes.
+    pub fn calculate_accuracy_from_attrs(
+        &self,
+        map: &ParsedBeatmap,
+        attrs: &DifficultyAttrsData,
+        score: ScoreInfoData,
+    ) -> Result<f64, Error> {
+        let attrs = difficulty_attrs_from_data(map, attrs)?;
+
+        calculate_accuracy_from_difficulty_attrs(map, attrs, &score)
     }
 
     /// Calculate performance from the exact wrapper score DTO.
@@ -179,8 +186,9 @@ impl LiveLazerEngine {
     /// produced by [`LiveLazerEngine::difficulty_data`].
     ///
     /// This mirrors the wrapper overload that consumes
-    /// `DifficultyAttributes.Inner`; it intentionally does not recalculate
-    /// difficulty from the beatmap.
+    /// `DifficultyAttributes.Inner`. Retained attributes supply the calculated
+    /// difficulty values while current map attributes supply live playable
+    /// context such as hit windows.
     pub fn performance_data_from_attrs(
         &self,
         map: &ParsedBeatmap,
@@ -189,38 +197,43 @@ impl LiveLazerEngine {
         score: ScoreInfoData,
     ) -> Result<PerformanceAttrsData, Error> {
         let difficulty = build_difficulty(map, config)?;
-        let mods = difficulty.get_mods().clone();
         let classic = config_classic(map, config);
-        let attrs = attrs
-            .inner
-            .as_ref()
-            .ok_or(Error::MissingDifficultyAttributes)?;
-        let actual_mode = difficulty_attrs_mode(attrs);
-        if actual_mode != map.mode() {
-            return Err(Error::DifficultyModeMismatch {
-                expected: map.mode(),
-                actual: actual_mode,
-            });
-        }
+        let retained_attrs = difficulty_attrs_from_data(map, attrs)?;
         let current_attrs = self.difficulty(map, config)?;
-        let attrs = apply_current_performance_context(attrs, &current_attrs);
 
-        if use_signed_performance(map.mode(), &score) {
-            return Ok(signed_performance_data(&attrs, &mods, classic, &score));
-        }
+        performance_data_from_difficulty_attrs(
+            map,
+            retained_attrs,
+            &current_attrs,
+            difficulty.get_mods(),
+            classic,
+            score,
+        )
+    }
 
-        let state = score_to_live(map.mode(), score)?;
-        let performance = Performance::new(attrs)
-            .mods(mods)
-            .state(performance_score_state(map.mode(), state))
-            .lazer(!classic);
-        let performance = if map.mode() == Ruleset::Osu {
-            performance.accuracy(state.accuracy * 100.0)
-        } else {
-            performance
-        };
+    /// Calculate performance from retained difficulty attributes using
+    /// separately supplied current playable-map context.
+    pub fn performance_data_from_attrs_with_context(
+        &self,
+        map: &ParsedBeatmap,
+        config: &DifficultyConfig,
+        retained_attrs: &DifficultyAttrsData,
+        current_attrs: &DifficultyAttrsData,
+        score: ScoreInfoData,
+    ) -> Result<PerformanceAttrsData, Error> {
+        let difficulty = build_difficulty(map, config)?;
+        let classic = config_classic(map, config);
+        let retained_attrs = difficulty_attrs_from_data(map, retained_attrs)?;
+        let current_attrs = difficulty_attrs_from_data(map, current_attrs)?;
 
-        Ok(PerformanceAttrsData::from(&performance.calculate()))
+        performance_data_from_difficulty_attrs(
+            map,
+            retained_attrs,
+            current_attrs,
+            difficulty.get_mods(),
+            classic,
+            score,
+        )
     }
 
     pub fn gradual_difficulty(
@@ -402,6 +415,84 @@ fn difficulty_attrs_mode(attrs: &DifficultyAttributes) -> Ruleset {
         DifficultyAttributes::Catch(_) => Ruleset::Catch,
         DifficultyAttributes::Mania(_) => Ruleset::Mania,
     }
+}
+
+fn validate_difficulty_attrs_mode(
+    map: &ParsedBeatmap,
+    attrs: &DifficultyAttributes,
+) -> Result<(), Error> {
+    let actual_mode = difficulty_attrs_mode(attrs);
+
+    if actual_mode != map.mode() {
+        return Err(Error::DifficultyModeMismatch {
+            expected: map.mode(),
+            actual: actual_mode,
+        });
+    }
+
+    Ok(())
+}
+
+fn difficulty_attrs_from_data<'a>(
+    map: &ParsedBeatmap,
+    attrs: &'a DifficultyAttrsData,
+) -> Result<&'a DifficultyAttributes, Error> {
+    let attrs = attrs
+        .inner
+        .as_ref()
+        .ok_or(Error::MissingDifficultyAttributes)?;
+
+    validate_difficulty_attrs_mode(map, attrs)?;
+
+    Ok(attrs)
+}
+
+fn calculate_accuracy_from_difficulty_attrs(
+    map: &ParsedBeatmap,
+    attrs: &DifficultyAttributes,
+    score: &ScoreInfoData,
+) -> Result<f64, Error> {
+    validate_difficulty_attrs_mode(map, attrs)?;
+
+    Ok(calculate_accuracy(
+        map.mode(),
+        score,
+        config_classic(map, &DifficultyConfig::default()),
+        ScoreTotals::from_difficulty(attrs),
+    ))
+}
+
+fn performance_data_from_difficulty_attrs(
+    map: &ParsedBeatmap,
+    retained_attrs: &DifficultyAttributes,
+    current_attrs: &DifficultyAttributes,
+    mods: &GameMods,
+    classic: bool,
+    score: ScoreInfoData,
+) -> Result<PerformanceAttrsData, Error> {
+    validate_difficulty_attrs_mode(map, retained_attrs)?;
+    validate_difficulty_attrs_mode(map, current_attrs)?;
+
+    let attrs = apply_current_performance_context(retained_attrs, current_attrs);
+
+    if use_signed_performance(map.mode(), &score) {
+        return Ok(signed_performance_data(
+            &attrs, mods, classic, &score,
+        ));
+    }
+
+    let state = score_to_live(map.mode(), score)?;
+    let performance = Performance::new(attrs)
+        .mods(mods.clone())
+        .state(performance_score_state(map.mode(), state))
+        .lazer(!classic);
+    let performance = if map.mode() == Ruleset::Osu {
+        performance.accuracy(state.accuracy * 100.0)
+    } else {
+        performance
+    };
+
+    Ok(PerformanceAttrsData::from(&performance.calculate()))
 }
 
 fn apply_current_performance_context(

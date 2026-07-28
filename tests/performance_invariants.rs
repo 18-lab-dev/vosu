@@ -118,6 +118,7 @@ struct BatchMemory {
     bytes: Arc<[u8]>,
     batch_calls: AtomicUsize,
     batch_requests: AtomicUsize,
+    mergeable_batch_calls: AtomicUsize,
     forbidden_exact_calls: AtomicUsize,
     forbidden_exact_ranges: Arc<[(usize, usize)]>,
 }
@@ -133,6 +134,37 @@ impl BatchMemory {
             .ok_or_else(|| fixture_error("outside fixture"))?;
         dst.copy_from_slice(source);
         Ok(())
+    }
+
+    fn is_windows_mergeable_batch(reads: &[ReadRequest<'_>]) -> bool {
+        let Some(first) = reads.first() else {
+            return false;
+        };
+        if reads.len() < 2 || first.dst.is_empty() {
+            return false;
+        }
+        let group_address = first.address;
+        let page_end = (group_address & !0xfff) | 0xfff;
+        let merge_end = page_end.min(group_address.saturating_add(1023));
+        let Some(mut span_end) = group_address.checked_add(first.dst.len()) else {
+            return false;
+        };
+        if span_end - 1 > merge_end {
+            return false;
+        }
+        for request in &reads[1..] {
+            if request.dst.is_empty() {
+                return false;
+            }
+            let Some(request_end) = request.address.checked_add(request.dst.len()) else {
+                return false;
+            };
+            if request.address < span_end || request_end - 1 > merge_end {
+                return false;
+            }
+            span_end = request_end;
+        }
+        true
     }
 }
 
@@ -152,6 +184,9 @@ impl ProcessMemory for BatchMemory {
         self.batch_calls.fetch_add(1, Ordering::Relaxed);
         self.batch_requests
             .fetch_add(reads.len(), Ordering::Relaxed);
+        if Self::is_windows_mergeable_batch(reads) {
+            self.mergeable_batch_calls.fetch_add(1, Ordering::Relaxed);
+        }
         for read in reads {
             self.copy(read.address, read.dst)?;
         }
@@ -337,6 +372,7 @@ fn stable_groups_snapshot_reads_while_lazer_audio_matches_source_reads() {
         bytes: stable_bytes.into(),
         batch_calls: AtomicUsize::new(0),
         batch_requests: AtomicUsize::new(0),
+        mergeable_batch_calls: AtomicUsize::new(0),
         forbidden_exact_calls: AtomicUsize::new(0),
         forbidden_exact_ranges: Arc::from([(0x1388, 14), (0x1368, 2)]),
     });
@@ -348,8 +384,13 @@ fn stable_groups_snapshot_reads_while_lazer_audio_matches_source_reads() {
         stable.gameplay(1_000.0, Some(1_000)).unwrap(),
         vosu::process::ReadStatus::Ready(_)
     ));
-    assert_eq!(stable_memory.batch_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(stable_memory.batch_requests.load(Ordering::Relaxed), 2);
+    let batch_calls = stable_memory.batch_calls.load(Ordering::Relaxed);
+    assert!(batch_calls > 0);
+    assert_eq!(
+        stable_memory.mergeable_batch_calls.load(Ordering::Relaxed),
+        batch_calls
+    );
+    assert!(stable_memory.batch_requests.load(Ordering::Relaxed) > batch_calls);
     assert_eq!(
         stable_memory.forbidden_exact_calls.load(Ordering::Relaxed),
         0
@@ -394,6 +435,7 @@ fn stable_groups_snapshot_reads_while_lazer_audio_matches_source_reads() {
         bytes: lazer_bytes.into(),
         batch_calls: AtomicUsize::new(0),
         batch_requests: AtomicUsize::new(0),
+        mergeable_batch_calls: AtomicUsize::new(0),
         forbidden_exact_calls: AtomicUsize::new(0),
         forbidden_exact_ranges: Arc::from([(array + 0x10, 160)]),
     });

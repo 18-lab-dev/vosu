@@ -320,6 +320,50 @@ fn retained_attrs_use_current_playable_difficulty_context_in_all_affected_modes(
 }
 
 #[test]
+fn attrs_backed_paths_use_the_supplied_immutable_context() {
+    let engine = LiveLazerEngine;
+    let mut map = engine.parse(OSU_TARGET_DIFFCALC_MAP).unwrap();
+    let config = DifficultyConfig::default();
+    let full = engine.difficulty_data(&map, &config).unwrap();
+    let score = ScoreInfoData::from(full_state(Ruleset::Osu));
+    let performance = engine
+        .performance_data_from_attrs_with_context(&map, &config, &full, &full, score)
+        .unwrap();
+    let accuracy = engine
+        .calculate_accuracy_from_attrs(&map, &full, score)
+        .unwrap();
+
+    engine
+        .apply_mods(
+            &mut map,
+            &[StructuredMod {
+                acronym: "DA".to_owned(),
+                settings: BTreeMap::from([("overallDifficulty".to_owned(), ModValue::Number(1.0))]),
+            }],
+        )
+        .unwrap();
+
+    assert_eq!(
+        engine
+            .performance_data_from_attrs_with_context(&map, &config, &full, &full, score)
+            .unwrap(),
+        performance,
+    );
+    assert_eq!(
+        engine
+            .calculate_accuracy_from_attrs(&map, &full, score)
+            .unwrap(),
+        accuracy,
+    );
+    assert_ne!(
+        engine
+            .performance_data_from_attrs(&map, &config, &full, score)
+            .unwrap(),
+        performance,
+    );
+}
+
+#[test]
 fn retained_attrs_reject_every_cross_mode_pair() {
     let engine = LiveLazerEngine;
     let source = engine.parse(OSU_TARGET_DIFFCALC_MAP).unwrap();

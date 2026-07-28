@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
 use crate::model::{
     memory::RankedPlay,
     states::{CalculateMods, HitErrorArray},
 };
+use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 mod settings;
 
 pub use settings::*;
@@ -450,10 +454,33 @@ pub struct Series {
     pub name: String,
     pub data: Vec<f64>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Graph {
     pub series: Vec<Series>,
     pub xaxis: Vec<f64>,
+    #[serde(skip)]
+    pub(crate) encoded: Option<Arc<RawValue>>,
+}
+
+impl PartialEq for Graph {
+    fn eq(&self, other: &Self) -> bool {
+        self.series == other.series && self.xaxis == other.xaxis
+    }
+}
+
+impl Serialize for Graph {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if let Some(encoded) = &self.encoded {
+            return encoded.serialize(serializer);
+        }
+        let mut graph = serializer.serialize_struct("Graph", 2)?;
+        graph.serialize_field("series", &self.series)?;
+        graph.serialize_field("xaxis", &self.xaxis)?;
+        graph.end()
+    }
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Performance {

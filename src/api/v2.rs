@@ -68,7 +68,7 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
             .iter()
             .map(|player| build_leaderboard(player, source, state.gameplay.mode))
             .collect(),
-        performance: build_performance(state),
+        performance: build_performance(state)?,
         results_screen: build_results(state),
         folders: Folders {
             game: state.global.game_folder.clone(),

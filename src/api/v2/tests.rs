@@ -214,13 +214,13 @@ fn mode_and_lazer_team_fixture_matches_source_contract() {
 fn performance_uses_disabled_defaults_and_retained_state_projection() {
     let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
     let mut regular = (*base.regular).clone();
-    let disabled = build_performance(&regular);
+    let disabled = build_performance(&regular).unwrap();
     assert_eq!(disabled.accuracy.acc_90, 0.0);
     assert_eq!(disabled.accuracy.acc_100, 0.0);
 
     regular.beatmap.pp_acc.insert(90, 321.0);
     regular.beatmap.pp_acc.insert(100, 654.0);
-    let retained = build_performance(&regular);
+    let retained = build_performance(&regular).unwrap();
     assert_eq!(retained.accuracy.acc_90, 321.0);
     assert_eq!(retained.accuracy.acc_100, 654.0);
     assert!(regular.beatmap.parsed.is_none());

@@ -74,6 +74,56 @@ fn publication_queue_never_replaces_a_new_generation_with_late_stale_work() {
     assert_eq!(drained[&7].snapshot.reset_epoch, 40);
 }
 
+#[test]
+fn equivalent_state_publication_preserves_revision_and_snapshot() {
+    let first = state_publication(7, 1, 10).snapshot;
+    let equivalent = Arc::new(StateBundleSnapshot {
+        source: first.source,
+        generation: first.generation,
+        reset_epoch: first.reset_epoch,
+        regular: Arc::clone(&first.regular),
+        precise: Arc::clone(&first.precise),
+    });
+    let mut states = BTreeMap::new();
+    let mut revisions = BTreeMap::new();
+
+    update_state_publication(&mut states, &mut revisions, 7, Arc::clone(&first));
+    update_state_publication(&mut states, &mut revisions, 7, equivalent);
+    assert_eq!(revisions[&7], 1);
+    assert!(Arc::ptr_eq(&states[&7], &first));
+
+    update_state_publication(
+        &mut states,
+        &mut revisions,
+        7,
+        state_publication(7, 1, 10).snapshot,
+    );
+    assert_eq!(revisions[&7], 2);
+}
+
+#[test]
+fn publication_sink_suppresses_equivalent_snapshots() {
+    let queue = Arc::new(StatePublicationQueue::default());
+    let sink = StatePublicationSink::new(7, 1, Arc::clone(&queue));
+    let first = state_publication(7, 1, 10).snapshot;
+    let equivalent = Arc::new(StateBundleSnapshot {
+        source: first.source,
+        generation: first.generation,
+        reset_epoch: first.reset_epoch,
+        regular: Arc::clone(&first.regular),
+        precise: Arc::clone(&first.precise),
+    });
+
+    sink.publish(first).unwrap();
+    assert_eq!(queue.drain().len(), 1);
+    sink.publish(equivalent).unwrap();
+    assert!(queue.drain().is_empty());
+
+    sink.publish(state_publication(7, 1, 10).snapshot)
+        .unwrap();
+    assert_eq!(queue.drain().len(), 1);
+}
+
 #[tokio::test]
 async fn registry_add_remove_restart_and_complete_join() {
     let starts = Arc::new(Mutex::new(Vec::new()));
