@@ -531,6 +531,114 @@ fn current_time_and_mp3_length_preserve_javascript_rounding_and_nonfinite_values
     );
 }
 #[test]
+fn global_precise_player_fast_path_skips_screen_classification_and_reuses_player() {
+    let offsets = LazerOffsets::embedded().unwrap();
+    let base = 0x10_000usize;
+    let screen = 0x20_000usize;
+    let api = 0x30_000usize;
+    let spectator_client = 0x40_000usize;
+    let clock = 0x50_000usize;
+    let source = 0x60_000usize;
+    let drawable = 0x70_000usize;
+    let submitting = &offsets.osu_game_screens_play_submitting_player;
+    let mut memory = SparseMemory::default();
+    memory.valid_base(base, &offsets);
+    memory.ptr(
+        base + offsets.osu_game_osu_game_base.api_k_backing_field,
+        api,
+    );
+    memory.ptr(
+        base + offsets
+            .osu_game_osu_game_base
+            .spectator_client_k_backing_field,
+        spectator_client,
+    );
+    memory.ptr(screen + submitting.api_k_backing_field, api);
+    memory.ptr(
+        screen + submitting.spectator_client_k_backing_field,
+        spectator_client,
+    );
+    memory.ptr(screen + 0x3f0, 0);
+    memory.ptr(
+        screen
+            + offsets
+                .osu_game_screens_play_player
+                .drawable_ruleset_k_backing_field,
+        drawable,
+    );
+    memory.ptr(
+        drawable
+            + offsets
+                .osu_game_rulesets_ui_drawable_ruleset
+                .replay_score_k_backing_field,
+        0x80_000,
+    );
+    memory.ptr(
+        base + offsets.osu_game_osu_game_base.beatmap_clock,
+        clock,
+    );
+    memory.ptr(
+        clock
+            + offsets
+                .osu_game_beatmaps_framed_beatmap_clock
+                .final_clock_source,
+        source,
+    );
+    memory.f64(
+        source
+            + offsets
+                .osu_framework_timing_framed_clock
+                .current_time_k_backing_field,
+        321.5,
+    );
+    let memory = Arc::new(memory);
+    let mut decoder = reader(memory.clone());
+    decoder.set_resolved_state(base, screen);
+
+    let ReadStatus::Ready(value) = decoder.global_precise().unwrap() else {
+        panic!("not ready")
+    };
+    assert_eq!(value.status, GameState::Play.value() as i64);
+    assert_eq!(value.time, 322.0);
+    assert!(decoder.watching_replay);
+    assert!(!decoder.spectating);
+    assert!(!decoder.player_loading);
+    assert_eq!(
+        memory.read_count(screen + submitting.spectator_client_k_backing_field),
+        1,
+    );
+    let song_select = offsets
+        .osu_game_screens_select_solo_song_select
+        .as_ref()
+        .map(|group| group.game_k_backing_field)
+        .or_else(|| {
+            offsets
+                .osu_game_screens_select_v2_solo_song_select
+                .as_ref()
+                .map(|group| group.game_k_backing_field)
+        })
+        .unwrap_or(
+            offsets
+                .osu_game_screens_select_song_select
+                .game_k_backing_field,
+        );
+    for address in [
+        screen + offsets.osu_game_screens_osu_screen.logo_k_backing_field,
+        screen
+            + offsets
+                .osu_game_screens_ranking_solo_results_screen
+                .api_k_backing_field,
+        screen + song_select,
+        screen + offsets.osu_game_screens_edit_editor.api_k_backing_field,
+        base + offsets
+            .osu_game_osu_game_base
+            .multiplayer_client_k_backing_field,
+    ] {
+        assert_eq!(memory.read_count(address), 0, "unexpected read at {address:#x}");
+    }
+}
+
+#[test]
 fn user_ranked_score_crosses_the_javascript_number_boundary() {
     let offsets = LazerOffsets::embedded().unwrap();
     let user = 0x1000usize;

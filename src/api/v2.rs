@@ -102,6 +102,36 @@ pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
     snapshot.encode_unfiltered(ApiSchema::V2, |snapshot| encode_dto(&build(snapshot)?))
 }
 
+pub(crate) fn document(snapshot: &CombinedSnapshot) -> Result<Value, ApiError> {
+    let mut document = serde_json::to_value(build(snapshot)?)
+        .map_err(|error| ApiError::serialization(error.to_string()))?;
+    normalize_javascript_numbers(&mut document)?;
+    Ok(document)
+}
+
+fn normalize_javascript_numbers(value: &mut Value) -> Result<(), ApiError> {
+    match value {
+        Value::Number(number) if number.is_f64() => {
+            let value = number.as_f64().expect("checked f64 JSON number");
+            *number = crate::calculation::js_json_number(value)
+                .parse()
+                .map_err(|error: serde_json::Error| ApiError::serialization(error.to_string()))?;
+        }
+        Value::Array(values) => {
+            for value in values {
+                normalize_javascript_numbers(value)?;
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values_mut() {
+                normalize_javascript_numbers(value)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub(crate) fn encode_dto<T: Serialize>(value: &T) -> Result<Bytes, ApiError> {
     let mut bytes = Vec::new();
     let mut serializer = Serializer::with_formatter(&mut bytes, JsFormatter);

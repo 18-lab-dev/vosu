@@ -129,6 +129,43 @@ fn manager_entry(
 }
 
 #[test]
+fn subscription_document_matches_decoded_encoding_for_ready_and_not_ready_snapshots() {
+    for source in [ClientType::Stable, ClientType::Lazer] {
+        let snapshot = default_snapshot(source);
+        let decoded: Value = serde_json::from_slice(&encode(&snapshot).unwrap()).unwrap();
+        assert_eq!(document(&snapshot).unwrap(), decoded);
+    }
+
+    let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
+    let mut precise = (*base.precise).clone();
+    precise.play_time = f64::NAN;
+    let state = Arc::new(StateBundleSnapshot {
+        source: base.source,
+        generation: base.generation,
+        reset_epoch: base.reset_epoch,
+        regular: Arc::clone(&base.regular),
+        precise: Arc::new(precise),
+    });
+    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+        2,
+        Some(10),
+        true,
+        ApiRuntimeSettings::default(),
+        [manager_entry(10, state, false, None)],
+    )));
+    let decoded: Value = serde_json::from_slice(&encode(&snapshot).unwrap()).unwrap();
+    assert_eq!(decoded["beatmap"]["time"]["live"], Value::Null);
+    assert_eq!(document(&snapshot).unwrap(), decoded);
+
+    let not_ready = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::not_ready(
+        3,
+        ApiRuntimeSettings::default(),
+    )));
+    assert!(matches!(encode(&not_ready), Err(ApiError::NotReady)));
+    assert!(matches!(document(&not_ready), Err(ApiError::NotReady)));
+}
+
+#[test]
 fn source_enum_names_cover_every_mode() {
     assert_eq!(
         (0..=3).map(ruleset_name).collect::<Vec<_>>(),

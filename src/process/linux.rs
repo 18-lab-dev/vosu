@@ -16,6 +16,7 @@ const MAX_PROC_FILE: u64 = 1024 * 1024;
 const MAX_COMM_FILE: u64 = 4096;
 const PERMISSION_GUIDANCE: &str =
     "Grant vosu CAP_SYS_PTRACE before starting it:\n  sudo setcap cap_sys_ptrace=eip /path/to/vosu";
+const STACK_IOVEC_CAPACITY: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinuxProcessMetadata {
@@ -134,7 +135,14 @@ impl LinuxProcessMemory {
     }
 
     fn read_many_direct(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
-        let mut chunks = Vec::with_capacity(reads.len());
+        let mut stack_chunks = [Chunk {
+            request_index: 0,
+            offset: 0,
+            address: 0,
+            len: 0,
+        }; STACK_IOVEC_CAPACITY];
+        let mut chunk_count = 0;
+        let mut heap_chunks: Option<Vec<Chunk>> = None;
         for (request_index, request) in reads.iter().enumerate() {
             if request.dst.is_empty() {
                 continue;
@@ -145,14 +153,31 @@ impl LinuxProcessMemory {
                     offset: request.dst.len(),
                 },
             )?;
-            chunks.push(Chunk {
+            let chunk = Chunk {
                 request_index,
                 offset: 0,
                 address: request.address,
                 len: request.dst.len(),
-            });
+            };
+            if let Some(chunks) = &mut heap_chunks {
+                chunks.push(chunk);
+            } else if chunk_count < STACK_IOVEC_CAPACITY {
+                stack_chunks[chunk_count] = chunk;
+                chunk_count += 1;
+            } else {
+                let mut chunks = Vec::with_capacity(reads.len());
+                chunks.extend_from_slice(&stack_chunks);
+                chunks.push(chunk);
+                heap_chunks = Some(chunks);
+            }
         }
-        self.read_chunks(reads, &chunks)
+        if let Some(chunks) = heap_chunks {
+            self.read_chunks(reads, &chunks)
+        } else if chunk_count == 0 {
+            Ok(())
+        } else {
+            self.read_chunks(reads, &stack_chunks[..chunk_count])
+        }
     }
 
     fn read_many_fallback(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
@@ -200,9 +225,63 @@ impl LinuxProcessMemory {
         reads: &mut [ReadRequest<'_>],
         chunks: &[Chunk],
     ) -> Result<(), MemoryError> {
+        if let [chunk] = chunks {
+            return self.read_one(
+                &mut reads[chunk.request_index].dst[chunk.offset..chunk.offset + chunk.len],
+                chunk.address,
+            );
+        }
         let max = self.syscall.iov_max().max(1);
         for batch in chunks.chunks(max) {
             self.read_batch(reads, batch)?;
+        }
+        Ok(())
+    }
+
+    fn read_one(&self, dst: &mut [u8], address: usize) -> Result<(), MemoryError> {
+        let len = dst.len();
+        let mut local = [libc::iovec {
+            iov_base: dst.as_mut_ptr().cast(),
+            iov_len: len,
+        }];
+        let remote = [libc::iovec {
+            iov_base: address as *mut libc::c_void,
+            iov_len: len,
+        }];
+        let completed = self.call(&mut local, &remote, address, len)?;
+        if completed == len {
+            return Ok(());
+        }
+        if completed > len {
+            return Err(read_error(
+                address,
+                len,
+                "process_vm_readv returned more bytes than requested",
+            ));
+        }
+
+        let suffix_address = address + completed;
+        let suffix_len = len - completed;
+        let mut suffix_local = [libc::iovec {
+            iov_base: dst[completed..].as_mut_ptr().cast(),
+            iov_len: suffix_len,
+        }];
+        let suffix_remote = [libc::iovec {
+            iov_base: suffix_address as *mut libc::c_void,
+            iov_len: suffix_len,
+        }];
+        let retried = self.call(
+            &mut suffix_local,
+            &suffix_remote,
+            suffix_address,
+            suffix_len,
+        )?;
+        if retried != suffix_len {
+            return Err(read_error(
+                suffix_address,
+                suffix_len,
+                "short process_vm_readv retry",
+            ));
         }
         Ok(())
     }
@@ -212,6 +291,36 @@ impl LinuxProcessMemory {
         reads: &mut [ReadRequest<'_>],
         chunks: &[Chunk],
     ) -> Result<(), MemoryError> {
+        if chunks.len() <= STACK_IOVEC_CAPACITY {
+            let mut local: [libc::iovec; STACK_IOVEC_CAPACITY] =
+                std::array::from_fn(|_| libc::iovec {
+                    iov_base: std::ptr::null_mut(),
+                    iov_len: 0,
+                });
+            let mut remote: [libc::iovec; STACK_IOVEC_CAPACITY] =
+                std::array::from_fn(|_| libc::iovec {
+                    iov_base: std::ptr::null_mut(),
+                    iov_len: 0,
+                });
+            for (index, chunk) in chunks.iter().enumerate() {
+                let ptr = reads[chunk.request_index].dst[chunk.offset..].as_mut_ptr();
+                local[index] = libc::iovec {
+                    iov_base: ptr.cast(),
+                    iov_len: chunk.len,
+                };
+                remote[index] = libc::iovec {
+                    iov_base: chunk.address as *mut libc::c_void,
+                    iov_len: chunk.len,
+                };
+            }
+            return self.read_batch_iov(
+                reads,
+                chunks,
+                &mut local[..chunks.len()],
+                &remote[..chunks.len()],
+            );
+        }
+
         let mut local = Vec::with_capacity(chunks.len());
         let mut remote = Vec::with_capacity(chunks.len());
         for chunk in chunks {
@@ -225,8 +334,18 @@ impl LinuxProcessMemory {
                 iov_len: chunk.len,
             });
         }
+        self.read_batch_iov(reads, chunks, &mut local, &remote)
+    }
+
+    fn read_batch_iov(
+        &self,
+        reads: &mut [ReadRequest<'_>],
+        chunks: &[Chunk],
+        local: &mut [libc::iovec],
+        remote: &[libc::iovec],
+    ) -> Result<(), MemoryError> {
         let expected: usize = chunks.iter().map(|chunk| chunk.len).sum();
-        let completed = self.call(&mut local, &remote, chunks[0].address, expected)?;
+        let completed = self.call(local, remote, chunks[0].address, expected)?;
         if completed == expected {
             return Ok(());
         }
@@ -334,17 +453,7 @@ impl ProcessMemory for LinuxProcessMemory {
         if dst.is_empty() {
             return Ok(());
         }
-        let len = dst.len();
-        let result = {
-            let mut request = [ReadRequest::new(address, dst)];
-            let chunks = [Chunk {
-                request_index: 0,
-                offset: 0,
-                address,
-                len,
-            }];
-            self.read_batch(&mut request, &chunks)
-        };
+        let result = self.read_one(dst, address);
         if result.is_err() {
             dst.fill(0);
         }
@@ -764,6 +873,42 @@ fn read_error(address: usize, len: usize, message: impl Into<String>) -> MemoryE
         address,
         len,
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod empty_read_tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct NoSyscall;
+
+    impl ProcessVmReadv for NoSyscall {
+        fn readv(
+            &self,
+            _pid: libc::pid_t,
+            _local: &mut [libc::iovec],
+            _remote: &[libc::iovec],
+        ) -> Result<usize, i32> {
+            panic!("empty reads must not issue process_vm_readv")
+        }
+
+        fn iov_max(&self) -> usize {
+            panic!("empty reads must not prepare an iovec batch")
+        }
+    }
+
+    #[test]
+    fn empty_reads_do_not_prepare_or_issue_native_io() {
+        let memory = LinuxProcessMemory::with_parts(20, PathBuf::new(), Arc::new(NoSyscall));
+
+        memory.read_exact(usize::MAX, &mut []).expect("exact read");
+        memory
+            .read_scanner_region_exact(usize::MAX, &mut [])
+            .expect("scanner read");
+        let mut empty = [];
+        let mut reads = [ReadRequest::new(usize::MAX, &mut empty)];
+        memory.read_many(&mut reads).expect("batched read");
     }
 }
 

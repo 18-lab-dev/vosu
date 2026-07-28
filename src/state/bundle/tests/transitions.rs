@@ -957,3 +957,129 @@ async fn precise_publication_reuses_regular_arc_and_regular_reuses_clean_precise
     assert!(!Arc::ptr_eq(&precise_publication.regular, &next.regular));
     assert!(Arc::ptr_eq(&precise_publication.precise, &next.precise));
 }
+
+#[test]
+fn precise_publication_reuses_only_unchanged_nested_arcs() {
+    let mut bundle = StateBundle::new(ClientType::Stable, 16, Arc::new(EchoCalculation));
+    bundle.global.status = GameState::Play.value() as i64;
+    bundle.global.play_time = 500.0;
+    bundle.gameplay.keypress_mode = 3;
+    bundle.gameplay.key_overlay = vec![KeyOverlayButton {
+        name: Arc::from("K1"),
+        is_pressed: true,
+        count: 1,
+    }];
+    bundle.gameplay.keypresses = vec![KeypressButton {
+        name: Arc::from("K1"),
+        is_pressed: true,
+        count: 1,
+        pressed_at: Some(500.0),
+        released_at: None,
+    }];
+    bundle.gameplay.hit_errors = HitErrorArray {
+        all: vec![-4.0],
+        press: vec![-4.0],
+        release: Vec::new(),
+    };
+    bundle.gameplay.total_hit_errors = -4.0;
+    bundle.gameplay.previous_hit_error_index = 1;
+    bundle.gameplay.unstable_rate = 2.5;
+
+    let first = bundle.publish_precise_state();
+    assert_eq!(
+        (
+            first.precise.status,
+            first.precise.play_time,
+            first.precise.mode,
+            first.precise.total_hit_errors,
+            first.precise.committed_hit_error_index,
+            first.precise.unstable_rate,
+        ),
+        (GameState::Play.value() as i64, 500.0, 3, -4.0, 1, 2.5),
+    );
+
+    let unchanged = bundle.publish_precise_state();
+    assert!(!Arc::ptr_eq(&first.precise, &unchanged.precise));
+    assert!(Arc::ptr_eq(
+        &first.precise.key_overlay,
+        &unchanged.precise.key_overlay,
+    ));
+    assert!(Arc::ptr_eq(
+        &first.precise.keypresses,
+        &unchanged.precise.keypresses,
+    ));
+    assert!(Arc::ptr_eq(
+        &first.precise.hit_errors,
+        &unchanged.precise.hit_errors,
+    ));
+
+    bundle.global.play_time = 508.0;
+    let time_updated = bundle.publish_precise_state();
+    assert!(!Arc::ptr_eq(&unchanged.precise, &time_updated.precise));
+    assert_eq!(time_updated.precise.play_time, 508.0);
+    assert!(Arc::ptr_eq(
+        &unchanged.precise.key_overlay,
+        &time_updated.precise.key_overlay,
+    ));
+    assert!(Arc::ptr_eq(
+        &unchanged.precise.keypresses,
+        &time_updated.precise.keypresses,
+    ));
+    assert!(Arc::ptr_eq(
+        &unchanged.precise.hit_errors,
+        &time_updated.precise.hit_errors,
+    ));
+
+    bundle.gameplay.key_overlay[0].count = 2;
+    let overlay_updated = bundle.publish_precise_state();
+    assert!(!Arc::ptr_eq(
+        &time_updated.precise.key_overlay,
+        &overlay_updated.precise.key_overlay,
+    ));
+    assert_eq!(overlay_updated.precise.key_overlay[0].count, 2);
+    assert!(Arc::ptr_eq(
+        &time_updated.precise.keypresses,
+        &overlay_updated.precise.keypresses,
+    ));
+    assert!(Arc::ptr_eq(
+        &time_updated.precise.hit_errors,
+        &overlay_updated.precise.hit_errors,
+    ));
+
+    bundle.gameplay.keypresses[0].pressed_at = Some(508.0);
+    let keypress_updated = bundle.publish_precise_state();
+    assert!(Arc::ptr_eq(
+        &overlay_updated.precise.key_overlay,
+        &keypress_updated.precise.key_overlay,
+    ));
+    assert!(!Arc::ptr_eq(
+        &overlay_updated.precise.keypresses,
+        &keypress_updated.precise.keypresses,
+    ));
+    assert_eq!(
+        keypress_updated.precise.keypresses[0].pressed_at,
+        Some(508.0),
+    );
+    assert!(Arc::ptr_eq(
+        &overlay_updated.precise.hit_errors,
+        &keypress_updated.precise.hit_errors,
+    ));
+
+    bundle.gameplay.hit_errors.all.push(6.0);
+    bundle.gameplay.hit_errors.release.push(6.0);
+    let hit_updated = bundle.publish_precise_state();
+    assert!(Arc::ptr_eq(
+        &keypress_updated.precise.key_overlay,
+        &hit_updated.precise.key_overlay,
+    ));
+    assert!(Arc::ptr_eq(
+        &keypress_updated.precise.keypresses,
+        &hit_updated.precise.keypresses,
+    ));
+    assert!(!Arc::ptr_eq(
+        &keypress_updated.precise.hit_errors,
+        &hit_updated.precise.hit_errors,
+    ));
+    assert_eq!(hit_updated.precise.hit_errors.all, [-4.0, 6.0]);
+    assert_eq!(hit_updated.precise.hit_errors.release, [6.0]);
+}

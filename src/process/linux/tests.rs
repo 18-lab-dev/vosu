@@ -417,6 +417,70 @@ fn ordinary_reads_do_not_require_maps_after_opening() {
 }
 
 #[test]
+fn direct_batch_at_stack_capacity_preserves_request_order() {
+    let (_fixture, memory, calls) =
+        memory_fixture(MockMode::Exact, 1024, "1000-3000 rw-p 0 00:00 0\n");
+    let mut destinations = [[0; 1]; STACK_IOVEC_CAPACITY];
+    let mut requests: Vec<_> = destinations
+        .iter_mut()
+        .enumerate()
+        .map(|(index, dst)| ReadRequest::new(0x1000 + index, dst))
+        .collect();
+
+    memory
+        .read_many(&mut requests)
+        .expect("capacity-sized direct batch");
+
+    for (index, destination) in destinations.iter().enumerate() {
+        assert_eq!(*destination, [index as u8]);
+    }
+    assert_eq!(calls.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn direct_batch_skips_empty_entries() {
+    let (_fixture, memory, calls) =
+        memory_fixture(MockMode::Exact, 1024, "1000-3000 rw-p 0 00:00 0\n");
+    let mut first = [0; 1];
+    let mut empty = [];
+    let mut second = [0; 1];
+    let mut requests = [
+        ReadRequest::new(0x1010, &mut first),
+        ReadRequest::new(usize::MAX, &mut empty),
+        ReadRequest::new(0x1020, &mut second),
+    ];
+
+    memory
+        .read_many(&mut requests)
+        .expect("direct batch with empty entry");
+
+    assert_eq!(first, [0x10]);
+    assert_eq!(second, [0x20]);
+    assert_eq!(calls.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn direct_batch_above_stack_capacity_uses_exact_fallback_path() {
+    let (_fixture, memory, calls) =
+        memory_fixture(MockMode::Exact, 1024, "1000-3000 rw-p 0 00:00 0\n");
+    let mut destinations = [[0; 1]; STACK_IOVEC_CAPACITY + 1];
+    let mut requests: Vec<_> = destinations
+        .iter_mut()
+        .enumerate()
+        .map(|(index, dst)| ReadRequest::new(0x1000 + index, dst))
+        .collect();
+
+    memory
+        .read_many(&mut requests)
+        .expect("above-capacity direct batch");
+
+    for (index, destination) in destinations.iter().enumerate() {
+        assert_eq!(*destination, [index as u8]);
+    }
+    assert_eq!(calls.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn scanner_region_read_uses_direct_native_io() {
     let (fixture, memory, calls) =
         memory_fixture(MockMode::Exact, 1024, "1000-2000 rw-p 0 00:00 0\n");

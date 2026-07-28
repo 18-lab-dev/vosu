@@ -492,10 +492,8 @@ impl V2SubscriptionSnapshot for V2SubscriptionSnapshotView {
     }
 
     fn document(&self) -> Result<Option<serde_json::Value>, ApiError> {
-        match crate::api::v2::encode(&self.snapshot) {
-            Ok(document) => serde_json::from_slice(&document)
-                .map(Some)
-                .map_err(|error| ApiError::serialization(error.to_string())),
+        match crate::api::v2::document(&self.snapshot) {
+            Ok(document) => Ok(Some(document)),
             Err(ApiError::NotReady) => Ok(None),
             Err(error) => Err(error),
         }

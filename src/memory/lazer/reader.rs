@@ -199,10 +199,14 @@ impl MemoryReader for LazerMemory {
         }
         self.menu_mods = self.selected_mods()?;
         let player = self.player()?;
-        let is_loader = self.check_player_loader(self.current_screen)?;
+        let is_loader = if player == 0 {
+            self.check_player_loader(self.current_screen)?
+        } else {
+            false
+        };
         if player != 0 {
             let spectator = self.check_spectator(self.current_screen)?;
-            let replay = self.check_watching_replay(self.current_screen)?;
+            let replay = self.check_watching_replay(self.current_screen, player)?;
             if replay && spectator {
                 self.watching_replay = false;
                 self.spectating = true
@@ -284,21 +288,16 @@ impl MemoryReader for LazerMemory {
         if self.current_screen == 0 {
             return self.not_ready();
         }
-        let is_result = self.check_result(self.current_screen)?;
-        let is_song_select = self.check_song_select(self.current_screen)?;
-        let is_loader = self.check_player_loader(self.current_screen)?;
-        let is_editor = self.check_editor(self.current_screen)?;
-        let is_multi_select = self.check_multi_select(self.current_screen)?;
-        let multi_room = self.multi_room()?;
-        let is_player = self.player()? != 0;
-        let playing = is_player || is_loader;
+        let player = self.player()?;
+        let is_loader = if player == 0 {
+            self.check_player_loader(self.current_screen)?
+        } else {
+            false
+        };
+        let playing = player != 0 || is_loader;
         if playing {
             let spectator = self.check_spectator(self.current_screen)?;
-            let replay = if is_player {
-                self.check_watching_replay(self.current_screen)?
-            } else {
-                false
-            };
+            let replay = self.check_watching_replay(self.current_screen, player)?;
             if replay && spectator {
                 self.watching_replay = false;
                 self.spectating = true
@@ -312,18 +311,25 @@ impl MemoryReader for LazerMemory {
         }
         let status = if playing {
             GameState::Play.value()
-        } else if is_song_select {
-            GameState::SelectPlay.value()
-        } else if is_result {
-            GameState::ResultScreen.value()
-        } else if is_editor {
-            GameState::Edit.value()
-        } else if is_multi_select {
-            GameState::SelectMulti.value()
-        } else if multi_room != 0 {
-            GameState::Lobby.value()
         } else {
-            GameState::Menu.value()
+            let is_result = self.check_result(self.current_screen)?;
+            let is_song_select = self.check_song_select(self.current_screen)?;
+            let is_editor = self.check_editor(self.current_screen)?;
+            let is_multi_select = self.check_multi_select(self.current_screen)?;
+            let multi_room = self.multi_room()?;
+            if is_song_select {
+                GameState::SelectPlay.value()
+            } else if is_result {
+                GameState::ResultScreen.value()
+            } else if is_editor {
+                GameState::Edit.value()
+            } else if is_multi_select {
+                GameState::SelectMulti.value()
+            } else if multi_room != 0 {
+                GameState::Lobby.value()
+            } else {
+                GameState::Menu.value()
+            }
         };
         self.status = status as i64;
         self.player_loading = is_loader;

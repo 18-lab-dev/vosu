@@ -106,8 +106,11 @@ impl LazerMemory {
                         .session_statics_k_backing_field,
                 )?)?)
     }
-    pub(super) fn check_watching_replay(&self, address: usize) -> Result<bool, MemoryError> {
-        let player = self.player()?;
+    pub(super) fn check_watching_replay(
+        &self,
+        address: usize,
+        player: usize,
+    ) -> Result<bool, MemoryError> {
         if player == 0 || address == 0 {
             return Ok(false);
         }

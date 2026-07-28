@@ -3,12 +3,14 @@ use super::*;
 pub(super) use crate::process::{MemoryRegion, ProcessBitness, ProcessMemory};
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Mutex;
 pub(super) use std::sync::atomic::Ordering;
 
 #[derive(Default)]
 pub(super) struct SparseMemory {
     pub(super) bytes: BTreeMap<usize, u8>,
     pub(super) batches: AtomicUsize,
+    reads: Mutex<BTreeMap<usize, usize>>,
 }
 
 impl SparseMemory {
@@ -42,10 +44,28 @@ impl SparseMemory {
             self.put(object + 0xc + index * 2, unit.to_le_bytes());
         }
     }
+    pub(super) fn read_count(&self, address: usize) -> usize {
+        self.reads
+            .lock()
+            .expect("sparse read counts lock poisoned")
+            .get(&address)
+            .copied()
+            .unwrap_or_default()
+    }
 }
 
 impl ProcessMemory for SparseMemory {
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+        *self
+            .reads
+            .lock()
+            .map_err(|_| MemoryError::Read {
+                address,
+                len: dst.len(),
+                message: "sparse read counts lock poisoned".into(),
+            })?
+            .entry(address)
+            .or_default() += 1;
         let len = dst.len();
         for (index, byte) in dst.iter_mut().enumerate() {
             *byte = *self

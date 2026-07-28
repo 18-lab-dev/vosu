@@ -98,7 +98,7 @@ impl StateBundle {
             precise: self
                 .published_precise
                 .clone()
-                .unwrap_or_else(|| Arc::new(self.build_precise_state())),
+                .unwrap_or_else(|| Arc::new(self.build_precise_state(None))),
         })
     }
 
@@ -108,7 +108,7 @@ impl StateBundle {
             generation: self.generation,
             reset_epoch: self.reset_epoch,
             regular: Arc::new(self.build_regular_state()),
-            precise: Arc::new(self.build_precise_state()),
+            precise: Arc::new(self.build_precise_state(None)),
         })
     }
 
@@ -128,14 +128,33 @@ impl StateBundle {
         }
     }
 
-    pub(super) fn build_precise_state(&self) -> PreciseState {
+    pub(super) fn build_precise_state(&self, prior: Option<&PreciseState>) -> PreciseState {
+        let key_overlay = prior
+            .filter(|state| state.key_overlay.as_ref() == &self.gameplay.key_overlay)
+            .map_or_else(
+                || Arc::new(self.gameplay.key_overlay.clone()),
+                |state| Arc::clone(&state.key_overlay),
+            );
+        let keypresses = prior
+            .filter(|state| state.keypresses.as_ref() == &self.gameplay.keypresses)
+            .map_or_else(
+                || Arc::new(self.gameplay.keypresses.clone()),
+                |state| Arc::clone(&state.keypresses),
+            );
+        let hit_errors = prior
+            .filter(|state| state.hit_errors.as_ref() == &self.gameplay.hit_errors)
+            .map_or_else(
+                || Arc::new(self.gameplay.hit_errors.clone()),
+                |state| Arc::clone(&state.hit_errors),
+            );
+
         PreciseState {
             status: self.global.status,
             play_time: self.global.play_time,
             mode: self.gameplay.keypress_mode,
-            key_overlay: Arc::new(self.gameplay.key_overlay.clone()),
-            keypresses: Arc::new(self.gameplay.keypresses.clone()),
-            hit_errors: Arc::new(self.gameplay.hit_errors.clone()),
+            key_overlay,
+            keypresses,
+            hit_errors,
             total_hit_errors: self.gameplay.total_hit_errors,
             committed_hit_error_index: self.gameplay.previous_hit_error_index,
             unstable_rate: self.gameplay.unstable_rate,
@@ -148,7 +167,8 @@ impl StateBundle {
             self.published_regular = Some(Arc::new(next));
         }
         if self.precise_dirty || self.published_precise.is_none() {
-            self.published_precise = Some(Arc::new(self.build_precise_state()));
+            let next = self.build_precise_state(self.published_precise.as_deref());
+            self.published_precise = Some(Arc::new(next));
         }
         self.precise_dirty = false;
         self.snapshot()
@@ -158,7 +178,8 @@ impl StateBundle {
         if self.published_regular.is_none() {
             self.published_regular = Some(Arc::new(self.build_regular_state()));
         }
-        self.published_precise = Some(Arc::new(self.build_precise_state()));
+        let next = self.build_precise_state(self.published_precise.as_deref());
+        self.published_precise = Some(Arc::new(next));
         self.precise_dirty = false;
         self.snapshot()
     }
