@@ -466,8 +466,26 @@ impl ProcessMemory for LinuxProcessMemory {
     }
 
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
-        let mut request = [ReadRequest::new(address, dst)];
-        self.read_many(&mut request)
+        if dst.is_empty() {
+            return Ok(());
+        }
+        address
+            .checked_add(dst.len())
+            .ok_or(MemoryError::AddressOverflow {
+                base: address,
+                offset: dst.len(),
+            })?;
+        let result = match self.read_one(dst, address) {
+            Err(MemoryError::Read { .. }) => {
+                let mut request = [ReadRequest::new(address, dst)];
+                self.read_many_fallback(&mut request)
+            }
+            result => result,
+        };
+        if result.is_err() {
+            dst.fill(0);
+        }
+        result
     }
 
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
