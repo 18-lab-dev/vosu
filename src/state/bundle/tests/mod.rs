@@ -47,6 +47,27 @@ impl StateCalculationBackend for RecordingCalculation {
     }
 }
 
+struct RecordingEmptyCalculation {
+    requests: Arc<std::sync::Mutex<Vec<StateCalculationRequest>>>,
+}
+
+impl StateCalculationBackend for RecordingEmptyCalculation {
+    fn calculate<'a>(&'a self, request: StateCalculationRequest) -> StateCalculationFuture<'a> {
+        self.requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(request.clone());
+        Box::pin(async move {
+            Ok(StateCalculationResult {
+                key: request.key,
+                beatmap: None,
+                gameplay: None,
+                result: None,
+            })
+        })
+    }
+}
+
 struct ControlledCalculation {
     requests: Arc<std::sync::Mutex<Vec<StateCalculationRequest>>>,
     failures: Arc<std::sync::atomic::AtomicUsize>,

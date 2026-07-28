@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
 use super::beatmap::{
     AppliedMod, BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, DifficultyAttributes,
-    DifficultyValues, EngineOutput, EngineRequest, ModSet, PeakStrains, PerformanceAttributes,
-    Ruleset as BeatmapRuleset, ScoreData, ScoringMode,
+    DifficultyValues, EngineOutput, EngineRequest, ModSet, ParsedBeatmap, PeakStrains,
+    PerformanceAttributes, Ruleset as BeatmapRuleset, ScoreData, ScoringMode,
 };
 use super::progressive::{
     CalculationOutcome, ClientScoring, GameplayCacheKey, GameplayCalculator, GameplayFrame,
@@ -16,7 +16,7 @@ use super::progressive::{
 };
 use super::{mods_checksum, mods_for_calculation, safe_join};
 use crate::model::enums::ClientType;
-use crate::model::states::{Mod, Statistics};
+use crate::model::states::{CalculateMods, Mod, Statistics};
 use crate::state::{
     BeatmapCalculationUpdate, CalculationPhase, StateCalculationBackend, StateCalculationFuture,
     StateCalculationRequest, StateCalculationResult, StateWorkerError,
@@ -245,8 +245,61 @@ fn applied_mods(mods: &[Mod]) -> Vec<AppliedMod> {
         .collect()
 }
 
+struct PreparedMods {
+    source: Vec<Mod>,
+    rate_bits: u64,
+    client: ClientType,
+    sanitized: Vec<Mod>,
+    checksum: String,
+    mod_set: ModSet,
+    live: Option<Vec<vosu_lazer_pp::StructuredMod>>,
+    generation: u64,
+}
+
+impl PreparedMods {
+    fn matches(&self, mods: &CalculateMods, client: ClientType) -> bool {
+        self.client == client
+            && self.rate_bits == mods.rate.to_bits()
+            && self.source == mods.array
+    }
+}
+
+struct PreparedMap {
+    path: PathBuf,
+    memory_identity: String,
+    requested_mode: i64,
+    scoring: ScoringMode,
+    mods_generation: u64,
+    reset_generation: u64,
+    parsed: Arc<ParsedBeatmap>,
+    mode: Ruleset,
+    background_filename: Option<String>,
+}
+
+impl PreparedMap {
+    fn matches(
+        &self,
+        request: &StateCalculationRequest,
+        scoring: ScoringMode,
+        mods_generation: u64,
+    ) -> bool {
+        self.path == request.input.beatmap_path
+            && self.memory_identity == request.input.checksum
+            && self.requested_mode == request.input.mode
+            && self.scoring == scoring
+            && self.mods_generation == mods_generation
+            && self.reset_generation == request.calculation_reset_generation
+    }
+}
+
 struct BackendState {
     cache: BeatmapCache<LiveBeatmapEngine>,
+    prepared_mods: Option<PreparedMods>,
+    prepared_map: Option<PreparedMap>,
+    #[cfg(test)]
+    mods_preparation_count: u64,
+    #[cfg(test)]
+    map_preparation_count: u64,
     live_key: Option<String>,
     live: Option<Arc<LiveProgressiveBeatmap>>,
     reset_generation_seen: Option<u64>,
@@ -338,6 +391,12 @@ impl Default for BackendState {
     fn default() -> Self {
         Self {
             cache: BeatmapCache::new(LiveBeatmapEngine),
+            prepared_mods: None,
+            prepared_map: None,
+            #[cfg(test)]
+            mods_preparation_count: 0,
+            #[cfg(test)]
+            map_preparation_count: 0,
             live_key: None,
             live: None,
             reset_generation_seen: None,
@@ -428,33 +487,174 @@ impl LiveStateCalculationBackend {
             BeatmapReadiness::Load => {}
         }
 
-        let requested_mode = ruleset(request.input.mode)?;
-        let beatmap_mode = beatmap_ruleset(requested_mode);
         let scoring = scoring_mode(request.input.client_scoring);
-        let sanitized_mods = mods_for_calculation(
-            &request.input.mods.array,
-            request.input.client_scoring == ClientType::Lazer,
-        );
-        let sanitized_mods_checksum = mods_checksum(&sanitized_mods);
-        let mod_set = ModSet::new(
-            sanitized_mods_checksum.clone(),
-            applied_mods(&sanitized_mods),
-            request.input.mods.rate,
-        )
-        .map_err(transition_error)?;
-        let parsed = state
-            .cache
-            .load(
-                BeatmapInput::PathWithIdentity {
-                    path: &request.input.beatmap_path,
-                    memory_identity: &request.input.checksum,
-                },
-                beatmap_mode,
-                &mod_set,
+        let prepared_hit = state
+            .prepared_mods
+            .as_ref()
+            .filter(|prepared| prepared.matches(&request.input.mods, request.input.client_scoring))
+            .and_then(|mods| {
+                state
+                    .prepared_map
+                    .as_ref()
+                    .filter(|map| map.matches(&request, scoring, mods.generation))
+            })
+            .is_some();
+
+        if !prepared_hit {
+            let requested_mode = ruleset(request.input.mode)?;
+            let beatmap_mode = beatmap_ruleset(requested_mode);
+            let mods_hit = state
+                .prepared_mods
+                .as_ref()
+                .is_some_and(|prepared| {
+                    prepared.matches(&request.input.mods, request.input.client_scoring)
+                });
+            let mut candidate_mods = if mods_hit {
+                None
+            } else {
+                let sanitized = mods_for_calculation(
+                    &request.input.mods.array,
+                    request.input.client_scoring == ClientType::Lazer,
+                );
+                let checksum = mods_checksum(&sanitized);
+                let mod_set = ModSet::new(
+                    checksum.clone(),
+                    applied_mods(&sanitized),
+                    request.input.mods.rate,
+                )
+                .map_err(transition_error)?;
+                let generation = state
+                    .prepared_mods
+                    .as_ref()
+                    .map_or(0, |prepared| prepared.generation.wrapping_add(1));
+                Some(PreparedMods {
+                    source: request.input.mods.array.clone(),
+                    rate_bits: request.input.mods.rate.to_bits(),
+                    client: request.input.client_scoring,
+                    sanitized,
+                    checksum,
+                    mod_set,
+                    live: None,
+                    generation,
+                })
+            };
+
+            let parsed = {
+                let BackendState {
+                    cache,
+                    prepared_mods,
+                    ..
+                } = &mut *state;
+                let mod_set = candidate_mods
+                    .as_ref()
+                    .map(|prepared| &prepared.mod_set)
+                    .or_else(|| prepared_mods.as_ref().map(|prepared| &prepared.mod_set))
+                    .expect("prepared mods exist before loading a beatmap");
+                cache
+                    .load(
+                        BeatmapInput::PathWithIdentity {
+                            path: &request.input.beatmap_path,
+                            memory_identity: &request.input.checksum,
+                        },
+                        beatmap_mode,
+                        mod_set,
+                        scoring,
+                    )
+                    .map_err(transition_error)?
+            };
+            let mode = progressive_ruleset(parsed.effective_mode);
+            let prepared_mods = candidate_mods
+                .as_ref()
+                .or(state.prepared_mods.as_ref())
+                .expect("prepared mods exist after loading a beatmap");
+            let live_key = format!(
+                "{}:{}:{}:{}:{:?}",
+                parsed.cache_key().source_checksum,
+                parsed.effective_mode as u8,
+                prepared_mods.checksum,
+                prepared_mods.rate_bits,
+                scoring
+            );
+            let replacement_live = if state.live_key.as_deref() == Some(&live_key) {
+                None
+            } else {
+                let mods = if let Some(candidate) = candidate_mods.as_mut() {
+                    if candidate.live.is_none() {
+                        candidate.live = Some(
+                            calculate_mods(&candidate.sanitized)
+                                .map_err(StateWorkerError::Transition)?,
+                        );
+                    }
+                    candidate
+                        .live
+                        .as_deref()
+                        .expect("validated candidate live mods exist")
+                } else {
+                    let prepared = state
+                        .prepared_mods
+                        .as_mut()
+                        .expect("prepared mods exist before creating a live beatmap");
+                    if prepared.live.is_none() {
+                        prepared.live = Some(
+                            calculate_mods(&prepared.sanitized)
+                                .map_err(StateWorkerError::Transition)?,
+                        );
+                    }
+                    prepared
+                        .live
+                        .as_deref()
+                        .expect("validated live mods exist before engine setup")
+                };
+                let live = LiveProgressiveBeatmap::new(parsed.source().as_bytes(), mode, mods)
+                    .map_err(|error| StateWorkerError::Transition(error.to_string()))?;
+                Some((Arc::new(live), live_key))
+            };
+
+            if let Some(candidate) = candidate_mods {
+                state.prepared_mods = Some(candidate);
+                #[cfg(test)]
+                {
+                    state.mods_preparation_count += 1;
+                }
+            }
+            if let Some((live, live_key)) = replacement_live {
+                state.live = Some(live);
+                state.live_key = Some(live_key);
+                state.gameplay = GameplayCalculator::default();
+                state.reset_baseline_pending = true;
+                state.result.reset();
+            }
+            let mods_generation = state
+                .prepared_mods
+                .as_ref()
+                .expect("prepared mods exist after loading a beatmap")
+                .generation;
+            state.prepared_map = Some(PreparedMap {
+                path: request.input.beatmap_path.clone(),
+                memory_identity: request.input.checksum.clone(),
+                requested_mode: request.input.mode,
                 scoring,
-            )
-            .map_err(transition_error)?;
-        let mode = progressive_ruleset(parsed.effective_mode);
+                mods_generation,
+                reset_generation: request.calculation_reset_generation,
+                mode,
+                background_filename: parsed_background_filename(
+                    request.input.client_scoring,
+                    &parsed.metadata.background_file,
+                ),
+                parsed,
+            });
+            #[cfg(test)]
+            {
+                state.map_preparation_count += 1;
+            }
+        }
+
+        let prepared = state
+            .prepared_map
+            .as_ref()
+            .expect("successful preparation stores a beatmap");
+        let parsed = Arc::clone(&prepared.parsed);
+        let mode = prepared.mode;
         let mp3_length = request.current.regular.menu.mp3_length;
         let mut beatmap_update = BeatmapCalculationUpdate::from_parsed_reusing(
             Arc::clone(&parsed),
@@ -462,28 +662,7 @@ impl LiveStateCalculationBackend {
             mp3_length,
             Some(&request.current.regular.beatmap),
         );
-        beatmap_update.background_filename = parsed_background_filename(
-            request.input.client_scoring,
-            &parsed.metadata.background_file,
-        );
-
-        let live_key = format!(
-            "{}:{}:{}:{:?}",
-            parsed.cache_key().source_checksum,
-            parsed.effective_mode as u8,
-            sanitized_mods_checksum,
-            scoring
-        );
-        if state.live_key.as_deref() != Some(&live_key) {
-            let mods = calculate_mods(&sanitized_mods).map_err(StateWorkerError::Transition)?;
-            let live = LiveProgressiveBeatmap::new(parsed.source().as_bytes(), mode, &mods)
-                .map_err(|error| StateWorkerError::Transition(error.to_string()))?;
-            state.live = Some(Arc::new(live));
-            state.live_key = Some(live_key);
-            state.gameplay = GameplayCalculator::default();
-            state.reset_baseline_pending = true;
-            state.result.reset();
-        }
+        beatmap_update.background_filename = prepared.background_filename.clone();
         if state.reset_baseline_pending {
             state.gameplay.reset_for_retry(
                 parsed

@@ -334,3 +334,196 @@ fn concrete_progressive_adapter_preserves_accuracy_and_fc_score_fields() {
     assert!(result.performance().pp.is_finite());
     assert!(result.performance().fc_pp >= result.performance().pp);
 }
+
+fn backend_request(
+    backend: &Arc<LiveStateCalculationBackend>,
+    root: &Path,
+    beatmap_path: PathBuf,
+) -> StateCalculationRequest {
+    let snapshot = crate::state::StateBundle::new(ClientType::Stable, 1, backend.clone()).snapshot();
+    let mods = crate::calculation::default_calculated_mods();
+    StateCalculationRequest {
+        input: crate::state::CalculationInput {
+            game_folder: root.to_owned(),
+            songs_folder: root.to_owned(),
+            menu_folder: Some("set".to_owned()),
+            filename: Some("map.osu".to_owned()),
+            beatmap_path,
+            checksum: "memory-identity".to_owned(),
+            mode: 0,
+            mods: mods.clone(),
+            client_scoring: ClientType::Stable,
+        },
+        key: crate::state::StateCalculationKey {
+            instance_generation: 1,
+            reset_epoch: 0,
+            checksum: "memory-identity".to_owned(),
+            mode: 0,
+            mods_checksum: mods.checksum.clone(),
+        },
+        phase: CalculationPhase::Menu,
+        entry: Arc::clone(&snapshot),
+        current: snapshot,
+        mods,
+        calculate_pp: true,
+        play_time: 500.0,
+        calculation_reset_generation: 0,
+        gameplay: None,
+        result: None,
+    }
+}
+
+fn backend_test_paths(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let root = std::env::temp_dir().join(format!(
+        "vosu-state-backend-{name}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time is after the Unix epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("create backend test directory");
+    let first = root.join("map.osu");
+    let second = root.join("other.osu");
+    std::fs::write(&first, OSU).expect("write first backend test beatmap");
+    std::fs::write(&second, OSU).expect("write second backend test beatmap");
+    (root, first, second)
+}
+
+fn preparation_counts(backend: &LiveStateCalculationBackend) -> (u64, u64, u64) {
+    let state = backend.state.lock().expect("backend state lock");
+    (
+        state.mods_preparation_count,
+        state.map_preparation_count,
+        state.cache.parse_count(),
+    )
+}
+
+#[test]
+fn steady_requests_reuse_prepared_mods_map_and_live_metadata() {
+    let (root, first, second) = backend_test_paths("steady");
+    let backend = Arc::new(LiveStateCalculationBackend::new());
+    let request = backend_request(&backend, &root, first);
+
+    let initial =
+        LiveStateCalculationBackend::calculate_sync(&backend.state, request.clone()).unwrap();
+    let repeated =
+        LiveStateCalculationBackend::calculate_sync(&backend.state, request.clone()).unwrap();
+    assert_eq!(preparation_counts(&backend), (1, 1, 1));
+    let mut redundant_mods_field_changed = request.clone();
+    redundant_mods_field_changed.mods.rate = 2.0;
+    LiveStateCalculationBackend::calculate_sync(&backend.state, redundant_mods_field_changed)
+        .unwrap();
+    assert_eq!(preparation_counts(&backend), (1, 1, 1));
+    {
+        let state = backend.state.lock().expect("backend state lock");
+        let prepared = state.prepared_mods.as_ref().expect("prepared mods");
+        let mut settings_changed = request.input.mods.clone();
+        settings_changed.array.push(Mod {
+            acronym: "HD".to_owned(),
+            settings: Some(indexmap::IndexMap::from([(
+                "setting".to_owned(),
+                serde_json::json!(1),
+            )])),
+        });
+        assert!(!prepared.matches(&settings_changed, ClientType::Stable));
+        let mut rate_changed = request.input.mods.clone();
+        rate_changed.rate = 1.25;
+        assert!(!prepared.matches(&rate_changed, ClientType::Stable));
+        assert!(!prepared.matches(&request.input.mods, ClientType::Lazer));
+    }
+
+    let initial = initial.beatmap.expect("initial beatmap update");
+    let repeated = repeated.beatmap.expect("repeated beatmap update");
+    assert_eq!(initial.original_mode, repeated.original_mode);
+    assert_eq!(initial.background_filename, repeated.background_filename);
+    assert_eq!(initial.first_object_time, repeated.first_object_time);
+    assert_eq!(initial.full_pp, repeated.full_pp);
+    assert_eq!(initial.source_key, repeated.source_key);
+    assert_eq!(initial.pp_acc, repeated.pp_acc);
+    assert_eq!(initial.event_status, repeated.event_status);
+    assert_eq!(initial.graph, repeated.graph);
+    assert!(Arc::ptr_eq(
+        initial.parsed.as_ref().expect("initial parsed map"),
+        repeated.parsed.as_ref().expect("repeated parsed map")
+    ));
+
+    let mut changed = request.clone();
+    changed.input.checksum = "other-identity".to_owned();
+    LiveStateCalculationBackend::calculate_sync(&backend.state, changed).unwrap();
+    assert_eq!(preparation_counts(&backend), (1, 2, 2));
+    let live_before_rate = {
+        let state = backend.state.lock().expect("backend state lock");
+        Arc::clone(state.live.as_ref().expect("prepared live beatmap"))
+    };
+
+    let mut changed = request.clone();
+    changed.input.mods.rate = 1.25;
+    LiveStateCalculationBackend::calculate_sync(&backend.state, changed).unwrap();
+    assert_eq!(preparation_counts(&backend), (2, 3, 3));
+    {
+        let state = backend.state.lock().expect("backend state lock");
+        assert!(!Arc::ptr_eq(
+            &live_before_rate,
+            state.live.as_ref().expect("rate-adjusted live beatmap")
+        ));
+    }
+
+    let mut changed = request.clone();
+    changed.input.mods.array.push(Mod {
+        acronym: "HD".to_owned(),
+        settings: None,
+    });
+    LiveStateCalculationBackend::calculate_sync(&backend.state, changed).unwrap();
+    assert_eq!(preparation_counts(&backend), (3, 4, 4));
+
+    let mut changed = request.clone();
+    changed.input.mode = 1;
+    LiveStateCalculationBackend::calculate_sync(&backend.state, changed).unwrap();
+    assert_eq!(preparation_counts(&backend), (4, 5, 5));
+
+    let mut changed = request.clone();
+    changed.input.client_scoring = ClientType::Lazer;
+    LiveStateCalculationBackend::calculate_sync(&backend.state, changed).unwrap();
+    assert_eq!(preparation_counts(&backend), (5, 6, 6));
+
+    let mut changed = request;
+    changed.input.beatmap_path = second;
+    LiveStateCalculationBackend::calculate_sync(&backend.state, changed).unwrap();
+    assert_eq!(preparation_counts(&backend), (6, 7, 7));
+    std::fs::remove_dir_all(root).expect("remove backend test directory");
+}
+
+#[test]
+fn reset_and_errors_do_not_leave_stale_progression_or_replace_valid_preparation() {
+    let (root, first, _) = backend_test_paths("reset-errors");
+    let backend = Arc::new(LiveStateCalculationBackend::new());
+    let request = backend_request(&backend, &root, first);
+    LiveStateCalculationBackend::calculate_sync(&backend.state, request.clone()).unwrap();
+
+    let mut reset = request.clone();
+    reset.calculation_reset_generation = 1;
+    LiveStateCalculationBackend::calculate_sync(&backend.state, reset.clone()).unwrap();
+    assert_eq!(preparation_counts(&backend), (1, 2, 1));
+
+    let mut invalid_rate = reset.clone();
+    invalid_rate.input.mods.rate = 0.0;
+    assert!(
+        LiveStateCalculationBackend::calculate_sync(&backend.state, invalid_rate).is_err()
+    );
+    assert_eq!(preparation_counts(&backend), (1, 2, 1));
+
+    let mut missing = reset.clone();
+    missing.input.beatmap_path = root.join("missing.osu");
+    missing.input.checksum = "missing".to_owned();
+    missing.input.mods.array.push(Mod {
+        acronym: "HD".to_owned(),
+        settings: None,
+    });
+    assert!(LiveStateCalculationBackend::calculate_sync(&backend.state, missing).is_err());
+    assert_eq!(preparation_counts(&backend), (1, 2, 1));
+
+    LiveStateCalculationBackend::calculate_sync(&backend.state, reset).unwrap();
+    assert_eq!(preparation_counts(&backend), (1, 2, 1));
+    std::fs::remove_dir_all(root).expect("remove backend test directory");
+}

@@ -426,3 +426,84 @@ fn source_capture_gates_and_dispatches_reducer_planned_branches_in_order() {
         "fresh precise play status drives keys and hits despite prior menu context",
     );
 }
+
+#[test]
+fn precise_capture_reuses_template_and_invalidates_every_acceptance_field() {
+    let (_key_tx, key_rx) = watch::channel(false);
+    let mut reader = SourcePreciseReader::new(
+        LoggingMemoryReader {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            gameplay_first_object_time: Arc::new(Mutex::new(None)),
+            synchronization: ReaderSynchronization::default(),
+            status: GameState::Menu.value() as i64,
+            global_not_ready: false,
+            menu_not_ready: false,
+            result_not_ready: false,
+            dependents_ready: false,
+            precise_global: None,
+            full_menu_checksum: None,
+        },
+        key_rx,
+    );
+    let synchronization = ReaderSynchronization::default();
+    let mut sequence = 0u64;
+    let mut base = context(ClientType::Lazer);
+
+    sequence += 1;
+    let first = reader
+        .capture_precise(&base, sequence, synchronization)
+        .expect("first precise capture");
+    base.status = GameState::Menu.value() as i64;
+    base.play_time = 0.0;
+    base.latest_precise_global_sequence = 99;
+    sequence += 1;
+    let unchanged_acceptance = reader
+        .capture_precise(&base, sequence, synchronization)
+        .expect("reused precise capture");
+    assert!(std::ptr::eq(
+        first.capture(),
+        unchanged_acceptance.capture()
+    ));
+    assert!(std::ptr::eq(
+        first.capture().mods(),
+        unchanged_acceptance.capture().mods()
+    ));
+
+    macro_rules! assert_invalidates {
+        ($change:expr, $reuse_mods:expr) => {{
+            sequence += 1;
+            let baseline = reader
+                .capture_precise(&base, sequence, synchronization)
+                .expect("baseline precise capture");
+            let mut changed = base.clone();
+            ($change)(&mut changed);
+            sequence += 1;
+            let updated = reader
+                .capture_precise(&changed, sequence, synchronization)
+                .expect("updated precise capture");
+            assert!(
+                !std::ptr::eq(baseline.capture(), updated.capture()),
+                "acceptance-field update must replace the cached template"
+            );
+            assert_eq!(
+                std::ptr::eq(baseline.capture().mods(), updated.capture().mods()),
+                $reuse_mods,
+                "only a mods update may replace immutable mod storage"
+            );
+        }};
+    }
+
+    assert_invalidates!(|value: &mut ReadContext| value.source = ClientType::Stable, true);
+    assert_invalidates!(|value: &mut ReadContext| value.instance_generation += 1, true);
+    assert_invalidates!(|value: &mut ReadContext| value.reset_epoch += 1, true);
+    assert_invalidates!(|value: &mut ReadContext| value.mode += 1, true);
+    assert_invalidates!(|value: &mut ReadContext| value.mods = mods("changed"), false);
+    assert_invalidates!(
+        |value: &mut ReadContext| value.committed_hit_error_index += 1,
+        true
+    );
+    assert_invalidates!(
+        |value: &mut ReadContext| value.accepted_precise_sequence += 1,
+        true
+    );
+}

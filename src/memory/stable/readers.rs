@@ -10,6 +10,9 @@ impl SynchronizedMemoryReader for StableMemory {
     ) {
         self.show_mp_commands = show_mp_commands;
         self.read_mania_scroll_speed = read_mania_scroll_speed;
+        self.ruleset_container = 0;
+        self.status_container = 0;
+        self.play_time_container = 0;
     }
 }
 
@@ -98,14 +101,26 @@ impl MemoryReader for StableMemory {
         if g == 0 {
             return self.not_ready();
         }
-        let b = self.ptr(self.add(g, 0x38)?)?;
-        let hp = self.ptr(self.add(g, 0x40)?)?;
+        let mut b_bytes = [0; 4];
+        let mut hp_bytes = [0; 4];
+        self.process.read_many(&mut [
+            ReadRequest::new(self.add(g, 0x38)?, &mut b_bytes),
+            ReadRequest::new(self.add(g, 0x40)?, &mut hp_bytes),
+        ])?;
+        let b = u32::from_le_bytes(b_bytes) as usize;
+        let hp = u32::from_le_bytes(hp_bytes) as usize;
         if b == 0 || hp == 0 {
             return self.not_ready();
         }
-        let mode = self.i32(self.add(b, 0x64)?)?;
+        let mut mode_bytes = [0; 4];
+        let mut x_bytes = [0; 4];
+        self.process.read_many(&mut [
+            ReadRequest::new(self.add(b, 0x64)?, &mut mode_bytes),
+            ReadRequest::new(self.add(b, 0x1c)?, &mut x_bytes),
+        ])?;
+        let mode = i32::from_le_bytes(mode_bytes) as i64;
         self.gameplay_mode = mode;
-        let x = self.ptr(self.add(b, 0x1c)?)?;
+        let x = u32::from_le_bytes(x_bytes) as usize;
         let vals = if score_has_started(play_time, first_object_time) {
             self.score_counts(b)?
         } else {
@@ -117,8 +132,14 @@ impl MemoryReader for StableMemory {
         } else {
             self.i32(self.add(r, 0xf8)?)?
         } as f64;
-        let h = self.process.read_f64(self.add(hp, 0x1c)?)?;
-        let smooth = self.process.read_f64(self.add(hp, 0x14)?)?;
+        let mut h_bytes = [0; 8];
+        let mut smooth_bytes = [0; 8];
+        self.process.read_many(&mut [
+            ReadRequest::new(self.add(hp, 0x1c)?, &mut h_bytes),
+            ReadRequest::new(self.add(hp, 0x14)?, &mut smooth_bytes),
+        ])?;
+        let h = f64::from_le_bytes(h_bytes);
+        let smooth = f64::from_le_bytes(smooth_bytes);
         let smooth = if smooth == 0.0 || smooth.is_nan() {
             0.0
         } else {
@@ -136,11 +157,22 @@ impl MemoryReader for StableMemory {
                 8,
             )?)?,
             player_name: self.string_ptr(self.add(b, 0x28)?)?,
-            mods: self.with_random_seed(
-                mods(self.i32(self.add(x, 0xc)?)? ^ self.i32(self.add(x, 8)?)?),
-                r,
-                mode,
-            )?,
+            mods: {
+                let mut left_bytes = [0; 4];
+                let mut right_bytes = [0; 4];
+                self.process.read_many(&mut [
+                    ReadRequest::new(self.add(x, 0xc)?, &mut left_bytes),
+                    ReadRequest::new(self.add(x, 8)?, &mut right_bytes),
+                ])?;
+                self.with_random_seed(
+                    mods(
+                        (i32::from_le_bytes(left_bytes) ^ i32::from_le_bytes(right_bytes))
+                            as i64,
+                    ),
+                    r,
+                    mode,
+                )?
+            },
             mode,
             score,
             player_hp_smooth: smooth,
@@ -184,15 +216,52 @@ impl MemoryReader for StableMemory {
         self.process
             .read_exact(self.add(a, 8)?, &mut pointers[..length * 4])?;
         let mut states = [[0u8; 9]; MAX_KEY_OVERLAY_BUTTONS];
-        let mut requests = Vec::with_capacity(length);
-        for (pointer, state) in pointers[..length * 4]
-            .chunks_exact(4)
-            .zip(states.iter_mut())
-        {
+        let mut addresses = [0usize; MAX_KEY_OVERLAY_BUTTONS];
+        for (index, pointer) in pointers[..length * 4].chunks_exact(4).enumerate() {
             let button = u32::from_le_bytes(pointer.try_into().unwrap()) as usize;
-            requests.push(ReadRequest::new(self.add(button, 0x14)?, state));
+            addresses[index] = self.add(button, 0x14)?;
         }
-        self.process.read_many(&mut requests)?;
+        let [
+            state0,
+            state1,
+            state2,
+            state3,
+            state4,
+            state5,
+            state6,
+            state7,
+            state8,
+            state9,
+            state10,
+            state11,
+            state12,
+            state13,
+            state14,
+            state15,
+            state16,
+            state17,
+        ] = &mut states;
+        let mut requests = [
+            ReadRequest::new(addresses[0], state0),
+            ReadRequest::new(addresses[1], state1),
+            ReadRequest::new(addresses[2], state2),
+            ReadRequest::new(addresses[3], state3),
+            ReadRequest::new(addresses[4], state4),
+            ReadRequest::new(addresses[5], state5),
+            ReadRequest::new(addresses[6], state6),
+            ReadRequest::new(addresses[7], state7),
+            ReadRequest::new(addresses[8], state8),
+            ReadRequest::new(addresses[9], state9),
+            ReadRequest::new(addresses[10], state10),
+            ReadRequest::new(addresses[11], state11),
+            ReadRequest::new(addresses[12], state12),
+            ReadRequest::new(addresses[13], state13),
+            ReadRequest::new(addresses[14], state14),
+            ReadRequest::new(addresses[15], state15),
+            ReadRequest::new(addresses[16], state16),
+            ReadRequest::new(addresses[17], state17),
+        ];
+        self.process.read_many(&mut requests[..length])?;
         drop(requests);
 
         let mut out = Vec::with_capacity(length);
@@ -249,11 +318,11 @@ impl MemoryReader for StableMemory {
             .read_u8(self.ptr(self.add(self.patterns.can_run_slowly_addr, 0x46)?)?)?
             == 1;
         let game_time = self.ptr2(self.patterns.game_time_ptr)? as i64;
-        let status = self.ptr2(self.patterns.status_ptr)? as i64;
+        let status = self.status_value()?;
         let play_time = if status == 3 {
             0.0
         } else {
-            self.i32(self.ptr(self.add(self.patterns.play_time_addr, 5)?)?)? as f64
+            self.play_time_value()? as f64
         };
         let sc = self.ptr(self.add(self.patterns.settings_class_addr, 8)?)?;
         let songs_ptr = self.ptr(self.add(self.ptr(self.add(sc, 0xb8)?)?, 4)?)?;
@@ -295,11 +364,11 @@ impl MemoryReader for StableMemory {
         }))
     }
     fn global_precise(&mut self) -> MemoryRead<GlobalPrecise> {
-        let status = self.ptr2(self.patterns.status_ptr)? as i64;
+        let status = self.status_value()?;
         let time = if status == 3 {
             0.0
         } else {
-            self.i32(self.ptr(self.add(self.patterns.play_time_addr, 5)?)?)? as f64
+            self.play_time_value()? as f64
         };
         Ok(ReadStatus::Ready(GlobalPrecise { status, time }))
     }

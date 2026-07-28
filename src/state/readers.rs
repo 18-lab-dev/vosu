@@ -7,7 +7,8 @@ use super::{
     StateWorkerError,
 };
 use crate::memory::snapshot::{
-    RawPreciseSnapshot, RawPreciseSnapshotBuilder, RawRegularSnapshot, RawRegularSnapshotBuilder,
+    PreciseCaptureContext, RawPreciseSnapshot, RawPreciseSnapshotBuilder, RawRegularSnapshot,
+    RawRegularSnapshotBuilder,
 };
 use crate::memory::{ReaderSynchronization, SynchronizedMemoryReader};
 use crate::model::enums::{ClientType, GameState};
@@ -164,6 +165,7 @@ impl KeyOverlayUpdates {
 pub struct SourcePreciseReader<R> {
     pub(super) reader: R,
     enable_key_overlay: KeyOverlayUpdates,
+    capture_template: Option<Arc<PreciseCaptureContext>>,
 }
 
 impl<R> SourcePreciseReader<R> {
@@ -171,7 +173,41 @@ impl<R> SourcePreciseReader<R> {
         Self {
             reader,
             enable_key_overlay: enable_key_overlay.into(),
+            capture_template: None,
         }
+    }
+
+    fn capture_context(&mut self, context: &ReadContext) -> Arc<PreciseCaptureContext> {
+        if let Some(capture) = &self.capture_template {
+            if capture.matches(
+                context.source,
+                context.epoch(),
+                context.mode,
+                &context.mods,
+                context.committed_hit_error_index,
+                context.accepted_precise_sequence,
+            ) {
+                return capture.clone();
+            }
+        }
+
+        let mods = self
+            .capture_template
+            .as_ref()
+            .filter(|capture| capture.mods() == &context.mods)
+            .map(|capture| capture.shared_mods())
+            .unwrap_or_else(|| Arc::new(context.mods.clone()));
+        let capture = Arc::new(PreciseCaptureContext::new_shared(
+            context.source,
+            context.instance_generation,
+            context.reset_epoch,
+            context.mode,
+            mods,
+            context.committed_hit_error_index,
+            context.accepted_precise_sequence,
+        ));
+        self.capture_template = Some(capture.clone());
+        capture
     }
 }
 
@@ -189,8 +225,9 @@ impl<R: SynchronizedMemoryReader + 'static> PreciseSnapshotReader for SourcePrec
             Ok(crate::process::ReadStatus::Ready(value)) => (value.status, value.time),
             _ => (context.status, context.play_time),
         };
+        let capture = self.capture_context(context);
         let mut snapshot =
-            RawPreciseSnapshotBuilder::new(context.precise_capture(), produced_sequence, global);
+            RawPreciseSnapshotBuilder::new_shared(capture, produced_sequence, global);
         if status == GameState::Play.value() as i64 && play_time >= 150.0 {
             if self.enable_key_overlay.current() {
                 snapshot = snapshot.key_overlay(self.reader.key_overlay(context.mode));

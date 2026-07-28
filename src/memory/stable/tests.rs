@@ -13,9 +13,8 @@ struct SparseMemory {
     reads: AtomicUsize,
     batches: AtomicUsize,
 }
-impl ProcessMemory for SparseMemory {
-    fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
-        self.reads.fetch_add(1, Ordering::Relaxed);
+impl SparseMemory {
+    fn copy(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
         let start = address
             .checked_sub(self.base)
             .ok_or_else(|| MemoryError::Read {
@@ -40,10 +39,17 @@ impl ProcessMemory for SparseMemory {
         dst.copy_from_slice(source);
         Ok(())
     }
+}
+impl ProcessMemory for SparseMemory {
+    fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.copy(address, dst)
+    }
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
         self.batches.fetch_add(1, Ordering::Relaxed);
         for read in reads {
-            self.read_exact(read.address, read.dst)?;
+            self.copy(read.address, read.dst)?;
         }
         Ok(())
     }
@@ -454,6 +460,130 @@ fn adjacent_score_fields_use_read_many_batch() {
         [1, 2, 3, 4, 5, 6, 7, 8]
     );
     assert_eq!(memory.batches.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn steady_ruleset_reads_validate_and_fetch_the_chain_in_one_backend_call() {
+    let mut bytes = vec![0; 0x1400];
+    put_u32(&mut bytes, 0x8f5, 0x1000);
+    put_u32(&mut bytes, 0x1004, 0x1100);
+    let memory = Arc::new(SparseMemory {
+        base: 0,
+        bytes,
+        reads: AtomicUsize::new(0),
+        batches: AtomicUsize::new(0),
+    });
+    let process = ProcessHandle::new(memory.clone(), ProcessBitness::X86);
+    let mut reader = StableMemory::new(process, fixture_patterns());
+
+    assert_eq!(reader.ruleset().unwrap(), 0x1100);
+    assert_eq!(memory.reads.load(Ordering::Relaxed), 2);
+    assert_eq!(reader.ruleset().unwrap(), 0x1100);
+    assert_eq!(memory.reads.load(Ordering::Relaxed), 3);
+    assert_eq!(memory.batches.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn precise_global_reuses_validated_pointer_chains_without_changing_values() {
+    let mut bytes = vec![0; 0x1400];
+    put_u32(&mut bytes, 0xb00, 0x1200);
+    put_u32(&mut bytes, 0x1200, 2);
+    put_u32(&mut bytes, 0x305, 0x1210);
+    put_i32(&mut bytes, 0x1210, -123);
+    let memory = Arc::new(SparseMemory {
+        base: 0,
+        bytes,
+        reads: AtomicUsize::new(0),
+        batches: AtomicUsize::new(0),
+    });
+    let process = ProcessHandle::new(memory.clone(), ProcessBitness::X86);
+    let mut reader = StableMemory::new(process, fixture_patterns());
+
+    let ReadStatus::Ready(first) = reader.global_precise().unwrap() else {
+        panic!()
+    };
+    let ReadStatus::Ready(second) = reader.global_precise().unwrap() else {
+        panic!()
+    };
+    assert_eq!(first, GlobalPrecise {
+        status: 2,
+        time: -123.0,
+    });
+    assert_eq!(second, first);
+    assert_eq!(memory.reads.load(Ordering::Relaxed), 6);
+    assert_eq!(memory.batches.load(Ordering::Relaxed), 2);
+}
+
+
+#[test]
+fn precise_global_pointer_replacement_never_returns_cached_values() {
+    let mut initial = vec![0; 0x1600];
+    put_u32(&mut initial, 0xb00, 0x1400);
+    put_u32(&mut initial, 0x1400, 2);
+    put_u32(&mut initial, 0x305, 0x1410);
+    put_i32(&mut initial, 0x1410, 100);
+    let memory = Arc::new(MutableMemory {
+        bytes: ArcSwap::from_pointee(initial),
+        batches: AtomicUsize::new(0),
+    });
+    let process = ProcessHandle::new(memory.clone(), ProcessBitness::X86);
+    let mut reader = StableMemory::new(process, fixture_patterns());
+    assert_eq!(
+        reader.global_precise().unwrap(),
+        ReadStatus::Ready(GlobalPrecise {
+            status: 2,
+            time: 100.0,
+        })
+    );
+
+    let mut replacement = vec![0; 0x1200];
+    put_u32(&mut replacement, 0xb00, 0x1000);
+    put_u32(&mut replacement, 0x1000, 4);
+    put_u32(&mut replacement, 0x305, 0x1010);
+    put_i32(&mut replacement, 0x1010, 200);
+    memory.bytes.store(Arc::new(replacement));
+    assert_eq!(
+        reader.global_precise().unwrap(),
+        ReadStatus::Ready(GlobalPrecise {
+            status: 4,
+            time: 200.0,
+        })
+    );
+}
+#[test]
+fn ruleset_cache_tracks_replacement_invalidates_on_failure_and_recovers() {
+    let mut initial = vec![0; 0x1600];
+    put_u32(&mut initial, 0x8f5, 0x1400);
+    put_u32(&mut initial, 0x1404, 0x1500);
+    let memory = Arc::new(MutableMemory {
+        bytes: ArcSwap::from_pointee(initial),
+        batches: AtomicUsize::new(0),
+    });
+    let process = ProcessHandle::new(memory.clone(), ProcessBitness::X86);
+    let mut reader = StableMemory::new(process, fixture_patterns());
+    assert_eq!(reader.ruleset().unwrap(), 0x1500);
+
+    let mut replacement = vec![0; 0x1200];
+    put_u32(&mut replacement, 0x8f5, 0x1000);
+    put_u32(&mut replacement, 0x1004, 0x1100);
+    memory.bytes.store(Arc::new(replacement));
+    assert_eq!(reader.ruleset().unwrap(), 0x1100);
+    assert_eq!(reader.ruleset_container, 0x1000);
+
+    memory.bytes.store(Arc::new(vec![0; 0x8f5]));
+    assert!(reader.ruleset().is_err());
+    assert_eq!(reader.ruleset_container, 0);
+
+    let mut recovered = vec![0; 0x1800];
+    put_u32(&mut recovered, 0x8f5, 0x1400);
+    put_u32(&mut recovered, 0x1404, 0x1500);
+    memory.bytes.store(Arc::new(recovered));
+    assert_eq!(reader.ruleset().unwrap(), 0x1500);
+
+    reader.synchronize_capture_config(false, true);
+    assert_eq!(reader.status_container, 0);
+    assert_eq!(reader.play_time_container, 0);
+    assert_eq!(reader.ruleset_container, 0);
 }
 #[test]
 fn unknown_first_object_and_falsy_settings_preserve_source_sentinels() {

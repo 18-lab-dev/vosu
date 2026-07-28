@@ -140,6 +140,14 @@ impl RawPreciseSnapshotBuilder {
         produced_sequence: u64,
         global: MemoryRead<GlobalPrecise>,
     ) -> Self {
+        Self::new_shared(Arc::new(capture), produced_sequence, global)
+    }
+
+    pub(crate) fn new_shared(
+        capture: Arc<PreciseCaptureContext>,
+        produced_sequence: u64,
+        global: MemoryRead<GlobalPrecise>,
+    ) -> Self {
         let ending_index = capture.start_index();
         Self {
             snapshot: RawPreciseSnapshot {

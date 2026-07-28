@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::model::enums::ClientType;
 use crate::model::memory::{
     AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerSpectator,
@@ -73,7 +75,7 @@ pub struct PreciseCaptureContext {
     source: ClientType,
     epoch: InstanceEpoch,
     mode: i64,
-    mods: CalculateMods,
+    mods: Arc<CalculateMods>,
     start_index: i64,
     base_accepted_precise_sequence: u64,
 }
@@ -86,6 +88,26 @@ impl PreciseCaptureContext {
         reset_epoch: u64,
         mode: i64,
         mods: CalculateMods,
+        start_index: i64,
+        base_accepted_precise_sequence: u64,
+    ) -> Self {
+        Self::new_shared(
+            source,
+            instance_generation,
+            reset_epoch,
+            mode,
+            Arc::new(mods),
+            start_index,
+            base_accepted_precise_sequence,
+        )
+    }
+
+    pub(crate) fn new_shared(
+        source: ClientType,
+        instance_generation: u64,
+        reset_epoch: u64,
+        mode: i64,
+        mods: Arc<CalculateMods>,
         start_index: i64,
         base_accepted_precise_sequence: u64,
     ) -> Self {
@@ -116,7 +138,11 @@ impl PreciseCaptureContext {
 
     #[must_use]
     pub fn mods(&self) -> &CalculateMods {
-        &self.mods
+        self.mods.as_ref()
+    }
+
+    pub(crate) fn shared_mods(&self) -> Arc<CalculateMods> {
+        self.mods.clone()
     }
 
     #[must_use]
@@ -143,7 +169,7 @@ impl PreciseCaptureContext {
         self.source == source
             && self.epoch == epoch
             && self.mode == mode
-            && self.mods == *mods
+            && self.mods.as_ref() == mods
             && self.start_index == committed_hit_error_index
             && self.base_accepted_precise_sequence == accepted_precise_sequence
     }
@@ -264,7 +290,7 @@ pub enum PreciseSequenceError {
 /// Complete latest-only precise observation and its unacknowledged suffix base.
 #[derive(Debug)]
 pub struct RawPreciseSnapshot {
-    pub(super) capture: PreciseCaptureContext,
+    pub(super) capture: Arc<PreciseCaptureContext>,
     pub(super) produced_sequence: u64,
     pub(super) ending_index: i64,
     pub(super) global: MemoryRead<GlobalPrecise>,
@@ -275,7 +301,7 @@ pub struct RawPreciseSnapshot {
 impl RawPreciseSnapshot {
     #[must_use]
     pub fn capture(&self) -> &PreciseCaptureContext {
-        &self.capture
+        self.capture.as_ref()
     }
 
     #[must_use]

@@ -10,6 +10,9 @@ pub struct StableMemory {
     pub(super) chat_address: usize,
     pub(super) mania_speed_address: usize,
     pub(super) gameplay_mode: i64,
+    pub(super) ruleset_container: usize,
+    pub(super) status_container: usize,
+    pub(super) play_time_container: usize,
     pub show_mp_commands: bool,
     pub read_mania_scroll_speed: bool,
 }
@@ -26,6 +29,9 @@ impl StableMemory {
             chat_address: 0,
             mania_speed_address: 0,
             gameplay_mode: 0,
+            ruleset_container: 0,
+            status_container: 0,
+            play_time_container: 0,
             show_mp_commands: false,
             read_mania_scroll_speed: true,
         }
@@ -43,6 +49,9 @@ impl StableMemory {
         self.binding_positions.clear();
         self.config_identity = 0;
         self.binding_identity = 0;
+        self.ruleset_container = 0;
+        self.status_container = 0;
+        self.play_time_container = 0;
     }
     pub(super) fn with_random_seed(
         &self,
@@ -85,16 +94,129 @@ impl StableMemory {
     pub(super) fn string_ptr(&self, a: usize) -> Result<String, MemoryError> {
         self.string(self.ptr(a)?)
     }
-    pub(super) fn ruleset(&self) -> Result<usize, MemoryError> {
-        let anchor =
-            self.patterns
-                .rulesets_addr
-                .checked_sub(0xb)
-                .ok_or(MemoryError::AddressOverflow {
-                    base: self.patterns.rulesets_addr,
-                    offset: 0xb,
-                })?;
-        self.ptr(self.add(self.ptr(anchor)?, 4)?)
+    pub(super) fn ruleset(&mut self) -> Result<usize, MemoryError> {
+        let result = (|| {
+            let anchor =
+                self.patterns
+                    .rulesets_addr
+                    .checked_sub(0xb)
+                    .ok_or(MemoryError::AddressOverflow {
+                        base: self.patterns.rulesets_addr,
+                        offset: 0xb,
+                    })?;
+            if self.ruleset_container == 0 {
+                let container = self.ptr(anchor)?;
+                let ruleset = self.ptr(self.add(container, 4)?)?;
+                Ok((container, ruleset))
+            } else {
+                let mut container_bytes = [0; 4];
+                let mut ruleset_bytes = [0; 4];
+                let batch = self.process.read_many(&mut [
+                    ReadRequest::new(anchor, &mut container_bytes),
+                    ReadRequest::new(
+                        self.add(self.ruleset_container, 4)?,
+                        &mut ruleset_bytes,
+                    ),
+                ]);
+                if batch.is_err() {
+                    let container = self.ptr(anchor)?;
+                    let ruleset = self.ptr(self.add(container, 4)?)?;
+                    Ok((container, ruleset))
+                } else {
+                    let container = u32::from_le_bytes(container_bytes) as usize;
+                    if container == self.ruleset_container {
+                        Ok((container, u32::from_le_bytes(ruleset_bytes) as usize))
+                    } else {
+                        Ok((container, self.ptr(self.add(container, 4)?)?))
+                    }
+                }
+            }
+        })();
+        match result {
+            Ok((container, ruleset)) => {
+                self.ruleset_container = container;
+                Ok(ruleset)
+            }
+            Err(error) => {
+                self.ruleset_container = 0;
+                Err(error)
+            }
+        }
+    }
+    fn cached_i32_chain(
+        &self,
+        anchor: usize,
+        cached_container: usize,
+        signed: bool,
+    ) -> Result<(usize, i64), MemoryError> {
+        if cached_container == 0 {
+            let container = self.ptr(anchor)?;
+            let value = if signed {
+                self.process.read_i32(container)? as i64
+            } else {
+                self.process.read_u32(container)? as i64
+            };
+            return Ok((container, value));
+        }
+        let mut container_bytes = [0; 4];
+        let mut value_bytes = [0; 4];
+        let batch = self.process.read_many(&mut [
+            ReadRequest::new(anchor, &mut container_bytes),
+            ReadRequest::new(cached_container, &mut value_bytes),
+        ]);
+        if batch.is_err() {
+            let container = self.ptr(anchor)?;
+            let value = if signed {
+                self.process.read_i32(container)? as i64
+            } else {
+                self.process.read_u32(container)? as i64
+            };
+            return Ok((container, value));
+        }
+        let container = u32::from_le_bytes(container_bytes) as usize;
+        if container != cached_container {
+            let value = if signed {
+                self.process.read_i32(container)? as i64
+            } else {
+                self.process.read_u32(container)? as i64
+            };
+            return Ok((container, value));
+        }
+        let value = if signed {
+            i32::from_le_bytes(value_bytes) as i64
+        } else {
+            u32::from_le_bytes(value_bytes) as i64
+        };
+        Ok((container, value))
+    }
+    pub(super) fn status_value(&mut self) -> Result<i64, MemoryError> {
+        match self.cached_i32_chain(
+            self.patterns.status_ptr,
+            self.status_container,
+            false,
+        ) {
+            Ok((container, value)) => {
+                self.status_container = container;
+                Ok(value)
+            }
+            Err(error) => {
+                self.status_container = 0;
+                Err(error)
+            }
+        }
+    }
+    pub(super) fn play_time_value(&mut self) -> Result<i64, MemoryError> {
+        let anchor = self.add(self.patterns.play_time_addr, 5)?;
+        match self.cached_i32_chain(anchor, self.play_time_container, true) {
+            Ok((container, value)) => {
+                self.play_time_container = container;
+                Ok(value)
+            }
+            Err(error) => {
+                self.play_time_container = 0;
+                Err(error)
+            }
+        }
     }
     pub(super) fn score_counts(&self, base: usize) -> Result<[i64; 8], MemoryError> {
         let mut tail = [0u8; 14];

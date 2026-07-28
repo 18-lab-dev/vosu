@@ -102,14 +102,72 @@ impl StateBundle {
         })
     }
 
-    pub(super) fn materialize_current(&self) -> Arc<StateBundleSnapshot> {
+    fn regular_matches_current(&self, state: &RegularState) -> bool {
+        state.global == self.global
+            && state.settings == self.settings
+            && state.beatmap == self.beatmap
+            && state.menu == self.menu
+            && state.bass_density == self.bass_density
+            && state.gameplay == self.gameplay
+            && state.result_screen == self.result_screen
+            && state.tourney == self.tourney
+            && state.user == self.user
+            && state.lazer_multi_spectating == self.lazer_multi_spectating
+            && state.ranked_play == self.ranked_play
+    }
+
+    fn precise_matches_current(&self, state: &PreciseState) -> bool {
+        state.status == self.global.status
+            && state.play_time == self.global.play_time
+            && state.mode == self.gameplay.keypress_mode
+            && state.key_overlay.as_ref() == &self.gameplay.key_overlay
+            && state.keypresses.as_ref() == &self.gameplay.keypresses
+            && state.hit_errors.as_ref() == &self.gameplay.hit_errors
+            && state.total_hit_errors == self.gameplay.total_hit_errors
+            && state.committed_hit_error_index == self.gameplay.previous_hit_error_index
+            && state.unstable_rate == self.gameplay.unstable_rate
+    }
+
+    fn materialize_current_reusing(
+        &self,
+        prior: Option<&StateBundleSnapshot>,
+    ) -> Arc<StateBundleSnapshot> {
+        let regular = prior
+            .map(|snapshot| &snapshot.regular)
+            .filter(|state| self.regular_matches_current(state))
+            .cloned()
+            .or_else(|| {
+                self.published_regular
+                    .as_ref()
+                    .filter(|state| self.regular_matches_current(state))
+                    .cloned()
+            })
+            .unwrap_or_else(|| Arc::new(self.build_regular_state()));
+        let prior_precise = prior
+            .map(|snapshot| snapshot.precise.as_ref())
+            .or(self.published_precise.as_deref());
+        let precise = prior
+            .map(|snapshot| &snapshot.precise)
+            .filter(|state| self.precise_matches_current(state))
+            .cloned()
+            .or_else(|| {
+                self.published_precise
+                    .as_ref()
+                    .filter(|state| self.precise_matches_current(state))
+                    .cloned()
+            })
+            .unwrap_or_else(|| Arc::new(self.build_precise_state(prior_precise)));
         Arc::new(StateBundleSnapshot {
             source: self.source,
             generation: self.generation,
             reset_epoch: self.reset_epoch,
-            regular: Arc::new(self.build_regular_state()),
-            precise: Arc::new(self.build_precise_state(None)),
+            regular,
+            precise,
         })
+    }
+
+    pub(super) fn materialize_current(&self) -> Arc<StateBundleSnapshot> {
+        self.materialize_current_reusing(None)
     }
 
     pub(super) fn build_regular_state(&self) -> RegularState {
@@ -338,7 +396,7 @@ impl StateBundle {
     pub(super) async fn apply_regular_inner(
         &mut self,
         snapshot: &RawRegularSnapshot,
-    ) -> Result<(), StateWorkerError> {
+    ) -> Result<Option<Arc<StateBundleSnapshot>>, StateWorkerError> {
         let regular_global_is_stale =
             snapshot.context().base_precise_global_sequence < self.latest_precise_global_sequence;
         self.refresh_config();
@@ -347,7 +405,7 @@ impl StateBundle {
             self.global.game_folder = self.instance_root.to_string_lossy().into_owned();
         }
         match snapshot.global() {
-            Ok(ReadStatus::NotReady) if self.source == ClientType::Lazer => return Ok(()),
+            Ok(ReadStatus::NotReady) if self.source == ClientType::Lazer => return Ok(None),
             Ok(ReadStatus::NotReady) => {}
             Ok(ReadStatus::Ready(raw_global)) => {
                 let play_time_changed = self.global.play_time != raw_global.play_time;
@@ -386,7 +444,7 @@ impl StateBundle {
 
         if let Some(menu_read) = snapshot.menu() {
             match menu_read {
-                Ok(ReadStatus::NotReady) => return Ok(()),
+                Ok(ReadStatus::NotReady) => return Ok(None),
                 Ok(ReadStatus::Ready(raw_menu)) => {
                     self.menu.apply(
                         raw_menu,
@@ -406,7 +464,7 @@ impl StateBundle {
             && let Some(result_read) = snapshot.result_screen()
         {
             match result_read {
-                Ok(ReadStatus::NotReady) => return Ok(()),
+                Ok(ReadStatus::NotReady) => return Ok(None),
                 Ok(ReadStatus::Ready(result)) => self.result_screen.apply(result, self.source),
                 _ => {}
             }
@@ -587,7 +645,7 @@ impl StateBundle {
             } else {
                 CalculationPhase::Menu
             };
-            let current = self.materialize_current();
+            let current = self.materialize_current_reusing(Some(&entry));
             let game_folder = PathBuf::from(&self.global.game_folder);
             let songs_folder = PathBuf::from(&self.global.songs_folder);
             let menu_folder = self.menu.folder.clone();
@@ -614,7 +672,7 @@ impl StateBundle {
                 input,
                 phase,
                 entry,
-                current,
+                current: Arc::clone(&current),
                 mods: calculation_mods.clone(),
                 calculate_pp: self.calculate_pp,
                 play_time: self.global.play_time,
@@ -622,10 +680,16 @@ impl StateBundle {
                 gameplay: snapshot.gameplay().and_then(ready).cloned(),
                 result: snapshot.result_screen().and_then(ready).cloned(),
             };
+            let mut current_is_reusable = true;
             match self.calculation.calculate(request).await {
                 Ok(result) => {
                     let outcome = self.apply_calculation(result, &key, &calculation_mods);
                     if outcome != CalculationApplyOutcome::Mismatched {
+                        current_is_reusable = !matches!(
+                            outcome,
+                            CalculationApplyOutcome::Applied
+                                | CalculationApplyOutcome::AppliedRetryable
+                        );
                         if matches!(
                             outcome,
                             CalculationApplyOutcome::Applied
@@ -663,8 +727,11 @@ impl StateBundle {
                 }
                 Err(error) => return Err(error),
             }
+            if current_is_reusable {
+                return Ok(Some(current));
+            }
         }
-        Ok(())
+        Ok(None)
     }
 
     pub(super) fn apply_precise_inner(&mut self, snapshot: &RawPreciseSnapshot) -> ReadContext {
@@ -804,11 +871,18 @@ impl SnapshotTransition for StateBundle {
         snapshot: Arc<RawRegularSnapshot>,
     ) -> TransitionFuture<'a, RegularTransition<Self::Publication>> {
         Box::pin(async move {
-            self.apply_regular_inner(&snapshot).await?;
+            let reusable_publication = self.apply_regular_inner(&snapshot).await?;
             let (mode, mods) = self.current_mode_mods(self.global.status);
             let context = self.context(mode, mods);
             let next_capture = self.capture_plan();
-            let publication = self.publish_regular_state();
+            let publication = if let Some(publication) = reusable_publication {
+                self.published_regular = Some(Arc::clone(&publication.regular));
+                self.published_precise = Some(Arc::clone(&publication.precise));
+                self.precise_dirty = false;
+                publication
+            } else {
+                self.publish_regular_state()
+            };
             Ok(RegularTransition {
                 publication,
                 context,

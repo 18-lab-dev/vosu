@@ -729,6 +729,63 @@ async fn first_play_calculation_uses_fresh_score_mode_and_mods() {
 }
 
 #[tokio::test]
+async fn retry_calculation_reuses_entry_and_publishes_exact_current_snapshot() {
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut bundle = StateBundle::new(
+        ClientType::Stable,
+        37,
+        Arc::new(RecordingEmptyCalculation {
+            requests: Arc::clone(&requests),
+        }),
+    );
+    let transition = |sequence, play_time, combo| {
+        RawRegularSnapshotBuilder::new(
+            RegularCaptureContext::new(ClientType::Stable, 37, 0, sequence),
+            Ok(ReadStatus::Ready(raw_global(GameState::Play, play_time))),
+        )
+        .menu(Ok(ReadStatus::Ready(RawMenu::Full(menu("retry-map")))))
+        .gameplay(Ok(ReadStatus::Ready(score(0, combo))))
+        .publish()
+    };
+
+    let before_retry = bundle
+        .apply_regular(transition(1, 500, 50))
+        .await
+        .expect("initial gameplay publication")
+        .publication;
+    let retried = bundle
+        .apply_regular(transition(2, 100, 10))
+        .await
+        .expect("retry publication");
+
+    let requests = requests
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(requests.len(), 2);
+    let retry = &requests[1];
+    assert!(Arc::ptr_eq(&retry.entry.regular, &before_retry.regular));
+    assert!(!Arc::ptr_eq(&retry.entry.regular, &retry.current.regular));
+    assert_eq!(retry.entry.regular.global.play_time, 500.0);
+    assert_eq!(retry.current.regular.global.play_time, 100.0);
+    assert_eq!(retry.entry.regular.gameplay.combo, 50);
+    assert_eq!(retry.current.regular.gameplay.combo, 10);
+    assert!(Arc::ptr_eq(
+        &retry.entry.regular.beatmap.graph,
+        &retry.current.regular.beatmap.graph,
+    ));
+    assert!(Arc::ptr_eq(
+        &retry.current.regular,
+        &retried.publication.regular,
+    ));
+    assert!(Arc::ptr_eq(
+        &retry.current.precise,
+        &retried.publication.precise,
+    ));
+    assert_eq!(retried.publication.reset_epoch, retried.context.reset_epoch);
+    assert!(retried.context.reset_epoch > before_retry.reset_epoch);
+}
+
+#[tokio::test]
 async fn editor_graph_change_retries_same_time_after_transient_failure() {
     let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
     let failures = Arc::new(std::sync::atomic::AtomicUsize::new(0));

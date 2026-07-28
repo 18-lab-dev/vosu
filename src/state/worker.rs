@@ -177,8 +177,9 @@ where
         value: Mutex::new(None),
         changed: Notify::new(),
     });
-    let (context_tx, context_rx) = watch::channel(initial_context.clone());
-    let live_context = Arc::new(Mutex::new(initial_context.clone()));
+    let shared_initial_context = Arc::new(initial_context.clone());
+    let (context_tx, context_rx) = watch::channel(shared_initial_context.clone());
+    let live_context = Arc::new(Mutex::new(shared_initial_context));
 
     let first_request = RegularCaptureRequest {
         context: RegularCaptureContext::new(
@@ -303,10 +304,11 @@ where
                     }
                     publisher.publish(committed.publication)?;
                     context = committed.context;
+                    let shared_context = Arc::new(context.clone());
                     if let Ok(mut current) = reducer_context.lock() {
-                        *current = context.clone();
+                        *current = shared_context.clone();
                     }
-                    context_tx.send_replace(context.clone());
+                    context_tx.send_replace(shared_context);
                     regular_sequence = regular_sequence.saturating_add(1);
                     current_capture = committed.next_capture;
                     let request = RegularCaptureRequest {
@@ -371,10 +373,11 @@ where
                                 context.accepted_precise_sequence = sequence;
                             }
                         }
+                        let shared_context = Arc::new(context.clone());
                         if let Ok(mut current) = reducer_context.lock() {
-                            *current = context.clone();
+                            *current = shared_context.clone();
                         }
-                        context_tx.send_replace(context.clone());
+                        context_tx.send_replace(shared_context);
                     }
                 }
                 _ = tokio::time::sleep(Duration::from_millis(10)) => {}
