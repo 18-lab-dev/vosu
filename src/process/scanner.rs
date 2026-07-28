@@ -108,7 +108,7 @@ impl ProcessHandle {
     /// Returns the first match in region order, then ascending offset order.
     pub fn scan_first(&self, pattern: &Pattern) -> Result<Option<usize>, MemoryError> {
         let regions = self.memory.readable_regions()?;
-        let mut scratch = ScanScratch::new(pattern.bytes.len())?;
+        let mut scratch = ScanScratch::new(pattern.bytes.len(), max_region_size(&regions))?;
 
         for region in &regions {
             let mut first = None;
@@ -149,7 +149,7 @@ impl ProcessHandle {
             return Ok(None);
         }
         let regions = self.memory.readable_regions()?;
-        let mut scratch = ScanScratch::new(pattern.bytes.len())?;
+        let mut scratch = ScanScratch::new(pattern.bytes.len(), max_region_size(&regions))?;
         for region in regions {
             let mut accepted = None;
             let outcome = scan_region_until(
@@ -185,7 +185,7 @@ impl ProcessHandle {
         }
 
         let regions = self.memory.readable_regions()?;
-        let mut scratch = ScanScratch::new(pattern.bytes.len())?;
+        let mut scratch = ScanScratch::new(pattern.bytes.len(), max_region_size(&regions))?;
         let mut matches = Vec::new();
 
         for region in regions {
@@ -227,7 +227,7 @@ impl ProcessHandle {
             .map(|pattern| pattern.bytes.len())
             .max()
             .unwrap_or(0);
-        let mut scratch = ScanScratch::new(max_len)?;
+        let mut scratch = ScanScratch::new(max_len, max_region_size(&regions))?;
         let mut found = vec![false; patterns.len()];
         let mut results = Vec::with_capacity(patterns.len());
 
@@ -278,20 +278,24 @@ impl ProcessHandle {
     }
 }
 
+fn max_region_size(regions: &[MemoryRegion]) -> usize {
+    regions.iter().map(|region| region.size).max().unwrap_or(0)
+}
+
 struct ScanScratch {
     bytes: Box<[u8]>,
 }
 
 impl ScanScratch {
-    fn new(max_pattern_len: usize) -> Result<Self, MemoryError> {
+    fn new(max_pattern_len: usize, max_region_size: usize) -> Result<Self, MemoryError> {
         let overlap = max_pattern_len.saturating_sub(1);
-        let capacity =
-            SCAN_CHUNK_SIZE
-                .checked_add(overlap)
-                .ok_or(MemoryError::AddressOverflow {
-                    base: SCAN_CHUNK_SIZE,
-                    offset: overlap,
-                })?;
+        let capacity = SCAN_CHUNK_SIZE
+            .checked_add(overlap)
+            .ok_or(MemoryError::AddressOverflow {
+                base: SCAN_CHUNK_SIZE,
+                offset: overlap,
+            })?
+            .min(max_region_size);
         Ok(Self {
             bytes: vec![0; capacity].into_boxed_slice(),
         })
