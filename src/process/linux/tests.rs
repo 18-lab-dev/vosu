@@ -551,8 +551,21 @@ fn address_overflow_skips_syscalls_and_zeroes_every_output() {
             offset: 2,
         }
     );
+    drop(requests);
     assert_eq!(overflowing, [0; 2]);
     assert_eq!(ordinary, [0; 4]);
+    overflowing = [7; 2];
+    let exact_error = memory
+        .read_exact(usize::MAX, &mut overflowing)
+        .expect_err("single-read address overflow");
+    assert_eq!(
+        exact_error,
+        MemoryError::AddressOverflow {
+            base: usize::MAX,
+            offset: 2,
+        }
+    );
+    assert_eq!(overflowing, [0; 2]);
     assert_eq!(calls.calls.load(Ordering::SeqCst), 0);
 }
 

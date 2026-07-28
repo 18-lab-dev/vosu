@@ -469,12 +469,13 @@ impl ProcessMemory for LinuxProcessMemory {
         if dst.is_empty() {
             return Ok(());
         }
-        address
-            .checked_add(dst.len())
-            .ok_or(MemoryError::AddressOverflow {
+        if address.checked_add(dst.len()).is_none() {
+            dst.fill(0);
+            return Err(MemoryError::AddressOverflow {
                 base: address,
                 offset: dst.len(),
-            })?;
+            });
+        }
         let result = match self.read_one(dst, address) {
             Err(MemoryError::Read { .. }) => {
                 let mut request = [ReadRequest::new(address, dst)];
