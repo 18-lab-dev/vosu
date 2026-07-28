@@ -570,11 +570,11 @@ impl V2SubscriptionHub {
             (revision, document)
         };
 
-        let mut extracted: HashMap<Arc<Plan>, Arc<[Option<Value>]>> = HashMap::new();
-        let mut encoded: HashMap<(Arc<Plan>, Option<usize>), Result<Bytes, ApiError>> =
-            HashMap::new();
+        let mut extracted: HashMap<usize, Arc<[Option<Value>]>> = HashMap::new();
+        let mut encoded: HashMap<(usize, Option<usize>), Result<Bytes, ApiError>> = HashMap::new();
         for (id, client, plan) in eligible {
-            let current = match extracted.entry(Arc::clone(&plan)) {
+            let plan_id = Arc::as_ptr(&plan) as usize;
+            let current = match extracted.entry(plan_id) {
                 Entry::Occupied(entry) => Arc::clone(entry.get()),
                 Entry::Vacant(entry) => {
                     #[cfg(test)]
@@ -591,7 +591,7 @@ impl V2SubscriptionHub {
                 .as_ref()
                 .map(|value| Arc::as_ptr(value) as *const () as usize);
             let bytes = encoded
-                .entry((Arc::clone(&plan), baseline_id))
+                .entry((plan_id, baseline_id))
                 .or_insert_with(|| {
                     #[cfg(test)]
                     {
