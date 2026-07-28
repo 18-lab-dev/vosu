@@ -521,7 +521,9 @@ impl V2SubscriptionHub {
             if !initial && client.checked_revision.load(Ordering::Acquire) == source_revision {
                 continue;
             }
-            if let Some(queued) = *lock(&client.last_queue_at) {
+            if !debounce.is_zero()
+                && let Some(queued) = *lock(&client.last_queue_at)
+            {
                 let Some(deadline) = queued.checked_add(debounce) else {
                     continue;
                 };
@@ -570,8 +572,11 @@ impl V2SubscriptionHub {
             (revision, document)
         };
 
-        let mut extracted: HashMap<usize, Arc<[Option<Value>]>> = HashMap::new();
-        let mut encoded: HashMap<(usize, Option<usize>), Result<Bytes, ApiError>> = HashMap::new();
+        let plan_capacity = lock(&self.0.plans).len().min(eligible.len());
+        let mut extracted: HashMap<usize, Arc<[Option<Value>]>> =
+            HashMap::with_capacity(plan_capacity);
+        let mut encoded: HashMap<(usize, Option<usize>), Result<Bytes, ApiError>> =
+            HashMap::with_capacity(plan_capacity);
         for (id, client, plan) in eligible {
             let plan_id = Arc::as_ptr(&plan) as usize;
             let current = match extracted.entry(plan_id) {

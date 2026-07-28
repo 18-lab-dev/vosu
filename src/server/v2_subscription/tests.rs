@@ -719,9 +719,9 @@ async fn clients_use_independent_debounce_start_instants() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn debounce_increase_recomputes_from_the_original_queue_instant() {
+async fn zero_to_nonzero_debounce_uses_the_original_queue_instant() {
     let provider = FakeProvider::new(1, Some(json!({"a": 1})));
-    let hub = V2SubscriptionHub::new(provider.clone(), Duration::from_millis(1));
+    let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
     let runner = tokio::spawn({
         let hub = hub.clone();
         async move { hub.run().await }
