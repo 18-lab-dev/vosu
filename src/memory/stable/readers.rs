@@ -238,28 +238,29 @@ impl MemoryReader for StableMemory {
             state16,
             state17,
         ] = &mut states;
-        let mut requests = [
-            ReadRequest::new(addresses[0], state0),
-            ReadRequest::new(addresses[1], state1),
-            ReadRequest::new(addresses[2], state2),
-            ReadRequest::new(addresses[3], state3),
-            ReadRequest::new(addresses[4], state4),
-            ReadRequest::new(addresses[5], state5),
-            ReadRequest::new(addresses[6], state6),
-            ReadRequest::new(addresses[7], state7),
-            ReadRequest::new(addresses[8], state8),
-            ReadRequest::new(addresses[9], state9),
-            ReadRequest::new(addresses[10], state10),
-            ReadRequest::new(addresses[11], state11),
-            ReadRequest::new(addresses[12], state12),
-            ReadRequest::new(addresses[13], state13),
-            ReadRequest::new(addresses[14], state14),
-            ReadRequest::new(addresses[15], state15),
-            ReadRequest::new(addresses[16], state16),
-            ReadRequest::new(addresses[17], state17),
-        ];
-        self.process.read_many(&mut requests[..length])?;
-        drop(requests);
+        {
+            let mut requests = [
+                ReadRequest::new(addresses[0], state0),
+                ReadRequest::new(addresses[1], state1),
+                ReadRequest::new(addresses[2], state2),
+                ReadRequest::new(addresses[3], state3),
+                ReadRequest::new(addresses[4], state4),
+                ReadRequest::new(addresses[5], state5),
+                ReadRequest::new(addresses[6], state6),
+                ReadRequest::new(addresses[7], state7),
+                ReadRequest::new(addresses[8], state8),
+                ReadRequest::new(addresses[9], state9),
+                ReadRequest::new(addresses[10], state10),
+                ReadRequest::new(addresses[11], state11),
+                ReadRequest::new(addresses[12], state12),
+                ReadRequest::new(addresses[13], state13),
+                ReadRequest::new(addresses[14], state14),
+                ReadRequest::new(addresses[15], state15),
+                ReadRequest::new(addresses[16], state16),
+                ReadRequest::new(addresses[17], state17),
+            ];
+            self.process.read_many(&mut requests[..length])?;
+        }
 
         let mut out = Vec::with_capacity(length);
         for (index, state) in states[..length].iter().enumerate() {

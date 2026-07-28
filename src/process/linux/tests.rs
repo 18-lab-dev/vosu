@@ -536,13 +536,15 @@ fn address_overflow_skips_syscalls_and_zeroes_every_output() {
         memory_fixture(MockMode::Exact, 1024, "1000-3000 rw-p 0 00:00 0\n");
     let mut overflowing = [7; 2];
     let mut ordinary = [8; 4];
-    let mut requests = [
-        ReadRequest::new(usize::MAX, &mut overflowing),
-        ReadRequest::new(0x1000, &mut ordinary),
-    ];
-    let error = memory
-        .read_many(&mut requests)
-        .expect_err("address overflow");
+    let error = {
+        let mut requests = [
+            ReadRequest::new(usize::MAX, &mut overflowing),
+            ReadRequest::new(0x1000, &mut ordinary),
+        ];
+        memory
+            .read_many(&mut requests)
+            .expect_err("address overflow")
+    };
 
     assert_eq!(
         error,
@@ -551,7 +553,6 @@ fn address_overflow_skips_syscalls_and_zeroes_every_output() {
             offset: 2,
         }
     );
-    drop(requests);
     assert_eq!(overflowing, [0; 2]);
     assert_eq!(ordinary, [0; 4]);
     overflowing = [7; 2];

@@ -178,17 +178,17 @@ impl<R> SourcePreciseReader<R> {
     }
 
     fn capture_context(&mut self, context: &ReadContext) -> Arc<PreciseCaptureContext> {
-        if let Some(capture) = &self.capture_template {
-            if capture.matches(
+        if let Some(capture) = &self.capture_template
+            && capture.matches(
                 context.source,
                 context.epoch(),
                 context.mode,
                 &context.mods,
                 context.committed_hit_error_index,
                 context.accepted_precise_sequence,
-            ) {
-                return capture.clone();
-            }
+            )
+        {
+            return capture.clone();
         }
 
         let mods = self
