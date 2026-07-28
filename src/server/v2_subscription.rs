@@ -12,6 +12,7 @@ use std::{
 
 use arc_swap::ArcSwap;
 use bytes::Bytes;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::{mpsc, watch};
@@ -574,10 +575,10 @@ impl V2SubscriptionHub {
         };
 
         let plan_capacity = lock(&self.0.plans).len().min(eligible.len());
-        let mut extracted: HashMap<usize, Arc<[Option<Value>]>> =
-            HashMap::with_capacity(plan_capacity);
-        let mut encoded: HashMap<(usize, Option<usize>), Result<Bytes, ApiError>> =
-            HashMap::with_capacity(plan_capacity);
+        let mut extracted: FxHashMap<usize, Arc<[Option<Value>]>> =
+            FxHashMap::with_capacity_and_hasher(plan_capacity, FxBuildHasher::default());
+        let mut encoded: FxHashMap<(usize, Option<usize>), Result<Bytes, ApiError>> =
+            FxHashMap::with_capacity_and_hasher(plan_capacity, FxBuildHasher::default());
         for (id, client, plan) in eligible {
             let plan_id = Arc::as_ptr(&plan) as usize;
             let current = match extracted.entry(plan_id) {

@@ -3228,6 +3228,7 @@ dependencies = [
  "rosu-mods",
  "rosu-pp",
  "rust-embed",
+ "rustc-hash 2.1.3",
  "semver",
  "serde",
  "serde-value",

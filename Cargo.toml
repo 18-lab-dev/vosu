@@ -75,6 +75,7 @@ rosu-map = "=0.2.1"
 rosu-mods = "=0.4.0"
 rosu-pp = "=4.0.1"
 rust-embed = { version = "=8.12.0", features = ["debug-embed"] }
+rustc-hash = "=2.1.3"
 semver = "=1.0.28"
 serde = { version = "=1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
