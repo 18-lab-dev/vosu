@@ -298,6 +298,210 @@ platform-neutral contest or evidence of a cross-platform winner.
   frame-policy-dependent. In particular, the Windows upstream-tosu and Linux
   vosulay columns must not be treated as an OS-normalized product comparison.
 
+## Follow-up upstream comparison: 2026-07-28
+
+This is a **non-portable, machine-specific observation, not a performance
+promise, acceptance threshold, or portable baseline**. It records a follow-up
+Linux daemon comparison and a separate host-browser dashboard comparison.
+Every `tosu` label below refers explicitly to upstream tosu v4.25.1.
+
+### Linux daemon CPU and memory
+
+The tested vosu revision was
+`02c688424ad4215238c52911dac539ebaad0c41d`. The exact production build
+command was:
+
+```sh
+cargo build --release --locked --no-default-features --target x86_64-unknown-linux-gnu
+```
+
+The vosu binary had SHA-256
+`3318f9456b9ebf02a680cc9da445e5351f5aeac28236db0fe64b3b8e570c10c9`;
+the official tosu v4.25.1 binary had SHA-256
+`8472f135528d89c0a03de09f52dfdf890bb71f1df46e4d03ee067d1950163e39`.
+Both ran as the unprivileged `vosu` user with `cap_sys_ptrace=eip`. Only the
+process-tree sampler ran privileged so it could read `smaps_rollup`;
+`ptrace_scope` was not lowered.
+
+Both configurations used 150 ms normal and 10 ms precise polling, port 24050,
+and disabled update installation, dashboards, and in-game overlays. Each
+product completed three counterbalanced trials. Every trial had a 30-second
+warmup followed by 120 seconds of measurement, `/json/v2` scheduled at 10 Hz
+(1,201 successful requests), and process-tree CPU/private/RSS sampling at
+1 Hz. Before every trial, the API had to report a progressing active snapshot
+from osu!lazer 2026.726.0 running Renatus [Insane], osu!standard, with
+Autoplay.
+
+Headline values below are marginal medians of the three trial-level
+duration-weighted CPU means or mean-memory values. The reduction column is
+calculated from those two absolute medians; it is not a paired-effect
+statistic.
+
+| Metric | vosu absolute median | Upstream tosu absolute median | Reduction from upstream absolute median |
+| --- | ---: | ---: | ---: |
+| CPU (% of one logical CPU) | 1.175% | 1.867% | 37.1% lower |
+| Process-tree private memory | 15.12 MiB | 230.06 MiB | 93.4% lower |
+| Summed process-tree RSS | 18.46 MiB | 239.67 MiB | 92.3% lower |
+
+The result repeated without overlapping trial ranges:
+
+- CPU: vosu 1.158–1.192%; upstream tosu 1.833–1.867%.
+- Private memory: vosu 14.88–16.68 MiB; upstream tosu
+  229.56–241.65 MiB.
+- RSS: vosu 18.22–20.14 MiB; upstream tosu 239.17–251.28 MiB.
+
+The current vosu build therefore beat this upstream release in both requested
+daemon resource dimensions without another source change. Raw CSVs, active
+workload gates, launch provenance, harness, and analysis are under
+`/home/user/VMs/benchmarks-2026-07-28/linux/`. `summary.json` has SHA-256
+`1b4c9289bf1fd8f72e8d14d3effec1dfbd89a066fd8f71eff55c30f999915ea1`.
+
+### Memory-to-client propagation latency
+
+This experiment compared vosu's forced polling, `CN_PROC`, and eBPF
+process-event modes with official tosu v4.25.1. It measures the already
+attached telemetry path, not process-discovery latency. The game was already
+running before each daemon started, so the selected process-event backend
+could affect discovery and attachment but was not expected to change vosu's
+post-attachment memory-read or WebSocket publication path.
+
+The tested vosu artifact was built from revision
+`02c688424ad4215238c52911dac539ebaad0c41d` with the repository's canonical
+production command:
+
+```sh
+cargo build --release --locked --no-default-features --features linux-process-events --target x86_64-unknown-linux-gnu
+```
+
+The measured binary had SHA-256
+`2a2ef22235d184b7071fdee13057bf6b3b86cb8e57c87d9adcd457f32c3e49d3`.
+The official tosu v4.25.1 binary had SHA-256
+`8472f135528d89c0a03de09f52dfdf890bb71f1df46e4d03ee067d1950163e39`.
+The same 8-vCPU Linux guest used above ran kernel `7.1.4-zen1-1-zen`.
+Vosu ran with the exact forced values `poll`, `cn-proc`, and `ebpf`.
+`CN_PROC` and eBPF passed an unprivileged backend-open probe before every
+trial, every daemon log named the requested backend exactly once, and no
+fallback, source-failure, or reconciliation marker appeared. Official tosu's
+internal process backend is opaque, so no backend attribution is claimed for
+its column.
+
+Four trials per variant used a cyclic 4×4 Latin square. After an exact workload
+gate and 10-second warm-up, an independent direct-memory observer sampled
+osu!lazer at an absolute 1 ms cadence while a Node client received the common
+full `/websocket/v2` stream. The workload was continuously required to remain
+osu!lazer 2026.726.0, Renatus [Insane], osu!standard, exact `AT`-only
+Autoplay, with the pinned beatmap and mods checksums. The 30-second source
+window was followed by a 1-second client drain.
+
+The primary event is a newly observed cumulative hit-error index and exact
+value. Its latency is:
+
+```text
+client callback CLOCK_MONOTONIC ns - direct-memory read_end CLOCK_MONOTONIC ns
+```
+
+Every source event had to appear at the same cumulative index and value in the
+first qualifying client frame. A skipped direct-observer count, unmatched or
+right-censored event, value mismatch, negative latency, clock-calibration
+failure, workload change, or target-PID change rejected the trial. All 16
+trials passed. Each variant contributed 584 primary events. The secondary
+metric uses first crossings of 500 ms `beatmap.time.live` thresholds; it is a
+continuous-field proxy rather than a discrete source event.
+
+| Variant | Primary pooled p50 | Primary pooled p95 | Primary pooled p99 | Primary pooled mean | Secondary pooled p50 | Secondary pooled p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| vosu polling | 81.784 ms | 147.901 ms | 156.381 ms | 81.388 ms | 79.761 ms | 145.319 ms |
+| vosu `CN_PROC` | 75.616 ms | 145.388 ms | 154.514 ms | 79.237 ms | 75.254 ms | 145.342 ms |
+| vosu eBPF | 77.370 ms | 146.840 ms | 154.248 ms | 79.775 ms | 78.729 ms | 145.762 ms |
+| Official tosu v4.25.1 | 80.721 ms | 148.568 ms | 155.119 ms | 83.399 ms | 79.857 ms | 146.082 ms |
+
+The primary p50 values span 6.168 ms and the p95 values span 3.180 ms across
+all four variants, against a configured 150 ms normal publication interval.
+`CN_PROC` recorded the lowest pooled p50 and p95. Its four trial p50 values
+ranged from 74.258 to 80.072 ms, while the ranges for polling, eBPF, and
+official tosu were 78.390–83.679, 75.563–80.898, and 79.456–84.996 ms,
+respectively. These overlapping ranges and small, non-monotonic differences
+do not establish a latency winner. In particular, this experiment found no
+causal post-attachment propagation-latency advantage from `CN_PROC` or eBPF.
+A separate process-start experiment would be required to compare
+discovery/attachment wake-up latency.
+
+The same 31 boundary snapshots and 30 capture-end CPU intervals per trial
+provided resource context. CPU is percent of one logical CPU; private and RSS
+are sums over the live daemon process tree.
+
+| Variant | Pooled CPU mean | Pooled CPU p95 | Pooled private mean | Pooled RSS mean |
+| --- | ---: | ---: | ---: | ---: |
+| vosu polling | 1.083% | 2.001% | 15.407 MiB | 19.056 MiB |
+| vosu `CN_PROC` | 1.067% | 2.001% | 15.359 MiB | 19.056 MiB |
+| vosu eBPF | 1.067% | 2.000% | 15.567 MiB | 19.381 MiB |
+| Official tosu v4.25.1 | 1.533% | 2.002% | 226.955 MiB | 236.660 MiB |
+
+Every observer produced exactly 35,000 rows. Across trials, the worst
+trial-level p95 observer dispatch lateness was 0.083 ms and the worst p95
+direct-read duration was 0.015 ms. Node-to-`CLOCK_MONOTONIC` calibration had a
+worst maximum round-trip of 2.662 ms and a corresponding maximum uncertainty
+of 1.331 ms. All primary and secondary diagnostic sets were empty.
+
+This is direct-memory-**observation**-to-client-receipt latency. It is not the
+unknown physical field-mutation time, process-discovery latency, one-way
+server latency, or WebSocket cadence in isolation. The 1 ms observer can see a
+mutation after it occurred, and product-specific frame production,
+serialization, scheduling, and correlated cumulative frames remain
+confounders. Comparisons are descriptive and do not prove a causal backend
+effect.
+
+Raw CSVs, daemon logs, exact workload gates, launch provenance, frozen
+harness, strict analyzer, and report are under
+`/home/user/VMs/benchmarks-2026-07-28/backend-latency/`.
+`summary.json` has SHA-256
+`ca81a4ea905b3561d5b014c135633cfa2301157a937ade46f759fd777076a542`;
+`report.md` has SHA-256
+`8ac7196a7a447ce641cf0d7da9d1047965f25d723c61e50ee0219bdbe0c6159c`;
+the 135-file `SHA256SUMS` manifest has SHA-256
+`b9f51b259fe7008b378698b274b1d069a065a78add4ee6210acc6e1ad94b9980`.
+
+### Dashboard browser workload
+
+This workload measures browser behavior separately from daemon CPU and memory.
+Chrome 150 loaded each dashboard on the Linux host at 1280×800 with the same
+one-counter, 640×360 static iframe fixture. Ten trials per product used a
+fresh browser context, disabled and cleared cache, and alternated which
+product ran first. Readiness required the installed counter card and its
+iframe document to be complete. Chrome DevTools Protocol metrics then covered
+a 10-second steady window.
+
+| Lower-is-better metric | vosu median (p95) | Upstream tosu median (p95) |
+| --- | ---: | ---: |
+| Local fixture ready | 60.25 ms (61.0) | 27.40 ms (28.9) |
+| Navigation response end | 1.20 ms (1.4) | 1.80 ms (4.3) |
+| Window load | 55.40 ms (56.4) | 24.50 ms (26.3) |
+| First contentful paint | 36.0 ms (36.0) | 24.0 ms (32.0) |
+| Largest contentful paint | 36.0 ms (36.0) | 34.0 ms (40.0) |
+| First-party requests | 5 (5) | 10 (10) |
+| First-party encoded transfer | 484.18 KiB (484.18) | 414.69 KiB (414.69) |
+| JavaScript heap after 10 seconds | 2.580 MiB (2.580) | 2.398 MiB (2.398) |
+| Main-thread task time during 10 seconds | 1.919 ms (2.023) | 76.134 ms (83.790) |
+| Style recalculation during 10 seconds | 0 ms (0) | 11.436 ms (12.747) |
+
+Upstream tosu reached the local dashboard sooner and used less transfer and
+JavaScript heap. vosu used half as many first-party requests and 97.5% less
+total main-thread task time in the steady window. The LCP distribution was
+mixed: upstream tosu had the lower median, while vosu had the lower p95. The
+comparison therefore does not support calling either dashboard uniformly
+faster.
+
+Upstream tosu also made one unconditional request per trial to
+`https://tosu.app/api.json`, with a median 6.29 KiB encoded response. That
+request is excluded from the first-party transfer row and reported separately
+so unavailable or cached remote catalog behavior cannot masquerade as local
+dashboard performance. vosu made no external request.
+
+Raw per-trial timings and request records are in
+`/home/user/VMs/benchmarks-2026-07-28/dashboard/results.json` with SHA-256
+`c4ab228b56b8380e25dda4be27cd37da84d3329c6a34e132b26ecb47763ace60`.
+The browser harness is archived beside it as `run-dashboard-benchmark.js`.
+
 ## Local V2 subscription observation: 2026-07-16
 
 This is a **non-portable observation, not a performance promise, acceptance
