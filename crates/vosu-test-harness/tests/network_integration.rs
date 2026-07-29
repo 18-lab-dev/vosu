@@ -195,7 +195,7 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
         request
             .user_agent
             .as_deref()
-            .is_some_and(|value| value.starts_with("vosu/0.1.0"))
+            .is_some_and(|value| value.starts_with("vosu/0.2.0"))
     }));
     assert!(
         requests

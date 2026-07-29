@@ -33,7 +33,7 @@ use vosu::net::{
 use zip::write::SimpleFileOptions;
 
 pub const RESERVED_HOST: &str = "vosu-harness.invalid";
-pub const USER_AGENT: &str = "vosu/0.1.0 (https://vosu.app; i@kotrik.ru)";
+pub const USER_AGENT: &str = "vosu/0.2.0 (https://vosu.app; i@kotrik.ru)";
 
 /// Fixed endpoint set injected into an in-process application.
 #[derive(Clone, Debug, Eq, PartialEq)]

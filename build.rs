@@ -51,10 +51,10 @@ fn embed_windows_resource() {
         .set("CompanyName", "KotRik")
         .set("LegalCopyright", "© KotRik. All rights reserved.")
         .set("FileDescription", "vosu Rust daemon")
-        .set("FileVersion", "0.1.0.0")
-        .set("ProductVersion", "0.1.0.0")
-        .set_version_info(VersionInfo::FILEVERSION, version_quad(0, 1, 0, 0))
-        .set_version_info(VersionInfo::PRODUCTVERSION, version_quad(0, 1, 0, 0));
+        .set("FileVersion", "0.2.0.0")
+        .set("ProductVersion", "0.2.0.0")
+        .set_version_info(VersionInfo::FILEVERSION, version_quad(0, 2, 0, 0))
+        .set_version_info(VersionInfo::PRODUCTVERSION, version_quad(0, 2, 0, 0));
     resource
         .compile()
         .expect("failed to compile Windows resources");
