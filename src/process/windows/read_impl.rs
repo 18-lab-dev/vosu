@@ -1,6 +1,7 @@
 use super::{MemoryError, ReadRequest};
 
 const MERGED_READ_LIMIT: usize = 4096;
+const STACK_READ_LIMIT: usize = 1024;
 
 pub(super) fn read_exact_impl<F>(
     address: usize,
@@ -76,7 +77,8 @@ fn read_many_batched<F>(reads: &mut [ReadRequest<'_>], read: &mut F) -> Result<(
 where
     F: FnMut(usize, &mut [u8]) -> (bool, usize),
 {
-    let mut scratch = [0u8; MERGED_READ_LIMIT];
+    let mut stack_scratch = [0u8; STACK_READ_LIMIT];
+    let mut large_scratch = Vec::new();
     let result = (|| {
         let mut start = 0;
         while start < reads.len() {
@@ -88,7 +90,7 @@ where
             let group_address = reads[start].address;
             let page = group_address & !0xfff;
             let page_end = page | 0xfff;
-            let merge_end = page_end.min(group_address.saturating_add(scratch.len() - 1));
+            let merge_end = page_end.min(group_address.saturating_add(MERGED_READ_LIMIT - 1));
             let mut span_end = group_address.checked_add(reads[start].dst.len()).ok_or(
                 MemoryError::AddressOverflow {
                     base: group_address,
@@ -119,7 +121,13 @@ where
             }
 
             let span_len = span_end - group_address;
-            let (ok, count) = read(group_address, &mut scratch[..span_len]);
+            let scratch = if span_len <= stack_scratch.len() {
+                &mut stack_scratch[..span_len]
+            } else {
+                large_scratch.resize(span_len, 0);
+                &mut large_scratch[..]
+            };
+            let (ok, count) = read(group_address, scratch);
             let initialized = count.min(span_len);
             if initialized == span_len && !ok {
                 return Err(read_error(group_address, span_len, count));
