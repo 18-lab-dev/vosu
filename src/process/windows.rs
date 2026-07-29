@@ -116,28 +116,24 @@ const INITIAL_PROCESS_BUFFER_SIZE: usize = 64 * 1024;
 const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC000_0004u32 as i32;
 
 pub fn enumerate_processes() -> Result<Vec<ProcessEntry>, MemoryError> {
-    let mut storage = Vec::new();
-    enumerate_processes_matching_with_buffer(&mut storage, |_| true)
+    enumerate_processes_matching(|_| true)
 }
 
-pub(crate) fn enumerate_processes_matching_with_buffer(
-    storage: &mut Vec<usize>,
+pub(crate) fn enumerate_processes_matching(
     predicate: impl FnMut(&[u16]) -> bool,
 ) -> Result<Vec<ProcessEntry>, MemoryError> {
-    if storage.len() < INITIAL_PROCESS_BUFFER_SIZE.div_ceil(size_of::<usize>()) {
-        storage.resize(INITIAL_PROCESS_BUFFER_SIZE.div_ceil(size_of::<usize>()), 0);
-    }
-    enumerate_processes_with_buffer(storage, predicate)
+    enumerate_processes_with_buffer(predicate)
 }
 
 fn enumerate_processes_with_buffer(
-    storage: &mut Vec<usize>,
     mut predicate: impl FnMut(&[u16]) -> bool,
 ) -> Result<Vec<ProcessEntry>, MemoryError> {
+    let mut byte_capacity = INITIAL_PROCESS_BUFFER_SIZE;
+
     loop {
-        let byte_capacity = storage.len() * size_of::<usize>();
         let buffer_size = u32::try_from(byte_capacity)
             .map_err(|_| backend("NtQuerySystemInformation", "process list exceeds 4 GiB"))?;
+        let mut storage = vec![0usize; byte_capacity.div_ceil(size_of::<usize>())];
         let mut returned = 0u32;
         // SAFETY: storage is writable for buffer_size bytes and returned is a valid output.
         let status = unsafe {
@@ -150,12 +146,11 @@ fn enumerate_processes_with_buffer(
         };
 
         if status == STATUS_INFO_LENGTH_MISMATCH {
-            let required = (returned as usize).max(
+            byte_capacity = (returned as usize).max(
                 byte_capacity
                     .checked_mul(2)
                     .ok_or_else(|| backend("NtQuerySystemInformation", "buffer size overflow"))?,
             );
-            storage.resize(required.div_ceil(size_of::<usize>()), 0);
             continue;
         }
         nt_success(status, "NtQuerySystemInformation(SystemProcessInformation)")?;
