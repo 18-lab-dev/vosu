@@ -7,24 +7,29 @@ use std::{
     sync::Arc,
 };
 
-use windows_sys::Win32::{
-    Foundation::{
-        CloseHandle, ERROR_NO_MORE_FILES, GetLastError, HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE,
-    },
-    System::{
-        Diagnostics::{Debug::ReadProcessMemory, ToolHelp::*},
-        LibraryLoader::{GetModuleHandleW, GetProcAddress},
-        Memory::{
-            MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
-            VirtualQueryEx,
+use windows_sys::{
+    Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation},
+    Win32::{
+        Foundation::{
+            CloseHandle, ERROR_NO_MORE_FILES, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+            STILL_ACTIVE,
         },
-        SystemInformation::{IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_I386},
-        Threading::{
-            GetExitCodeProcess, IsWow64Process2, OpenProcess, PROCESS_QUERY_INFORMATION,
-            PROCESS_VM_READ,
+        System::{
+            Diagnostics::{Debug::ReadProcessMemory, ToolHelp::*},
+            LibraryLoader::{GetModuleHandleW, GetProcAddress},
+            Memory::{
+                MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
+                VirtualQueryEx,
+            },
+            SystemInformation::{IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_I386},
+            Threading::{
+                GetExitCodeProcess, IsWow64Process2, OpenProcess, PROCESS_QUERY_INFORMATION,
+                PROCESS_VM_READ,
+            },
+            WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
+        UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
     },
-    UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
 };
 
 use super::{MemoryError, MemoryRegion, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest};
@@ -107,26 +112,141 @@ pub struct ModuleEntry {
     pub path: String,
 }
 
+const INITIAL_PROCESS_BUFFER_SIZE: usize = 64 * 1024;
+const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC000_0004u32 as i32;
+
 pub fn enumerate_processes() -> Result<Vec<ProcessEntry>, MemoryError> {
-    let snapshot = Snapshot::create(TH32CS_SNAPPROCESS, 0)?;
-    let mut raw: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
-    raw.dwSize = size_of::<PROCESSENTRY32W>() as u32;
-    let mut entries = Vec::new();
-    // SAFETY: raw has the required size and remains writable for each API call.
-    let mut ok = unsafe { Process32FirstW(snapshot.0.raw(), &mut raw) };
-    while ok != 0 {
-        entries.push(ProcessEntry {
-            pid: raw.th32ProcessID,
-            parent_pid: raw.th32ParentProcessID,
-            thread_count: raw.cntThreads,
-            base_priority: raw.pcPriClassBase,
-            executable: wide_array(&raw.szExeFile),
-        });
-        ok = unsafe { Process32NextW(snapshot.0.raw(), &mut raw) };
+    let mut byte_capacity = INITIAL_PROCESS_BUFFER_SIZE;
+
+    loop {
+        let buffer_size = u32::try_from(byte_capacity)
+            .map_err(|_| backend("NtQuerySystemInformation", "process list exceeds 4 GiB"))?;
+        let mut storage = vec![0usize; byte_capacity.div_ceil(size_of::<usize>())];
+        let mut returned = 0u32;
+        // SAFETY: storage is writable for buffer_size bytes and returned is a valid output.
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SystemProcessInformation,
+                storage.as_mut_ptr().cast(),
+                buffer_size,
+                &mut returned,
+            )
+        };
+
+        if status == STATUS_INFO_LENGTH_MISMATCH {
+            byte_capacity = (returned as usize).max(
+                byte_capacity
+                    .checked_mul(2)
+                    .ok_or_else(|| backend("NtQuerySystemInformation", "buffer size overflow"))?,
+            );
+            continue;
+        }
+        nt_success(status, "NtQuerySystemInformation(SystemProcessInformation)")?;
+
+        let byte_len = returned as usize;
+        if byte_len == 0 || byte_len > storage.len() * size_of::<usize>() {
+            return Err(backend(
+                "NtQuerySystemInformation",
+                "invalid process list length",
+            ));
+        }
+        // SAFETY: storage remains alive and initialized; byte_len was validated above.
+        let bytes =
+            unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), byte_len) };
+        return decode_system_processes(bytes);
     }
-    finish_enumeration("Process32NextW")?;
+}
+
+fn decode_system_processes(bytes: &[u8]) -> Result<Vec<ProcessEntry>, MemoryError> {
+    let mut entries = Vec::new();
+    let mut offset = 0usize;
+
+    loop {
+        let remaining = bytes
+            .len()
+            .checked_sub(offset)
+            .ok_or_else(|| backend("SystemProcessInformation", "entry offset overflow"))?;
+        if remaining < size_of::<SYSTEM_PROCESS_INFORMATION>() {
+            return Err(backend(
+                "SystemProcessInformation",
+                "truncated process entry",
+            ));
+        }
+        let address = bytes.as_ptr() as usize + offset;
+        if !address.is_multiple_of(std::mem::align_of::<SYSTEM_PROCESS_INFORMATION>()) {
+            return Err(backend(
+                "SystemProcessInformation",
+                "misaligned process entry",
+            ));
+        }
+        // SAFETY: size and alignment were checked; the system owns the record layout.
+        let raw = unsafe { &*bytes.as_ptr().add(offset).cast::<SYSTEM_PROCESS_INFORMATION>() };
+        let pid = u32::try_from(raw.UniqueProcessId as usize)
+            .map_err(|_| backend("SystemProcessInformation", "process id exceeds u32"))?;
+        let parent_pid = u32::try_from(raw.Reserved2 as usize)
+            .map_err(|_| backend("SystemProcessInformation", "parent process id exceeds u32"))?;
+        entries.push(ProcessEntry {
+            pid,
+            parent_pid,
+            thread_count: raw.NumberOfThreads,
+            base_priority: raw.BasePriority,
+            executable: system_process_name(raw, bytes)?,
+        });
+
+        let next = raw.NextEntryOffset as usize;
+        if next == 0 {
+            break;
+        }
+        if next < size_of::<SYSTEM_PROCESS_INFORMATION>() || next > remaining {
+            return Err(backend(
+                "SystemProcessInformation",
+                "invalid next process offset",
+            ));
+        }
+        offset = offset
+            .checked_add(next)
+            .ok_or_else(|| backend("SystemProcessInformation", "entry offset overflow"))?;
+    }
+
     entries.sort_unstable_by_key(|entry| entry.pid);
     Ok(entries)
+}
+
+fn system_process_name(
+    process: &SYSTEM_PROCESS_INFORMATION,
+    bytes: &[u8],
+) -> Result<String, MemoryError> {
+    let length = process.ImageName.Length as usize;
+    if length == 0 {
+        return Ok(String::new());
+    }
+    if !length.is_multiple_of(size_of::<u16>()) || process.ImageName.Buffer.is_null() {
+        return Err(backend(
+            "SystemProcessInformation",
+            "invalid process image name",
+        ));
+    }
+
+    let buffer_start = bytes.as_ptr() as usize;
+    let name_start = process.ImageName.Buffer as usize;
+    let relative = name_start
+        .checked_sub(buffer_start)
+        .ok_or_else(|| backend("SystemProcessInformation", "image name precedes buffer"))?;
+    let name_end = relative
+        .checked_add(length)
+        .ok_or_else(|| backend("SystemProcessInformation", "image name length overflow"))?;
+    if name_end > bytes.len() || !name_start.is_multiple_of(std::mem::align_of::<u16>()) {
+        return Err(backend(
+            "SystemProcessInformation",
+            "image name lies outside process buffer",
+        ));
+    }
+
+    // SAFETY: bounds, byte length, and u16 alignment were checked above.
+    let units = unsafe {
+        std::slice::from_raw_parts(process.ImageName.Buffer, length / size_of::<u16>())
+    };
+    Ok(String::from_utf16_lossy(units))
 }
 
 pub fn enumerate_threads(pid: Option<u32>) -> Result<Vec<ThreadEntry>, MemoryError> {
