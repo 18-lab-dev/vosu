@@ -1,9 +1,7 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    let worker_threads = std::thread::available_parallelism().map_or(1, |count| count.get().min(4));
     let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(worker_threads)
         .enable_all()
         .build()
     {
