@@ -2,8 +2,6 @@ use std::path::MAIN_SEPARATOR;
 
 use chrono::{DateTime, Utc};
 
-use super::mods::js_number;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("decimal amount must be between 0 and 100")]
 pub struct DecimalPlacesError;
@@ -137,8 +135,20 @@ pub fn js_json_number(value: f64) -> String {
     if value == 0.0 {
         return "0".into();
     }
-    let number = serde_json::Number::from_f64(value).expect("finite number");
-    js_number(&number)
+    super::mods::finite_ecma_number(value).as_str().to_owned()
+}
+
+pub(crate) fn write_js_json_number<W>(writer: &mut W, value: f64) -> std::io::Result<()>
+where
+    W: ?Sized + std::io::Write,
+{
+    if !value.is_finite() {
+        writer.write_all(b"null")
+    } else if value == 0.0 {
+        writer.write_all(b"0")
+    } else {
+        writer.write_all(super::mods::finite_ecma_number(value).as_str().as_bytes())
+    }
 }
 
 pub fn safe_join_with_separator<I, S>(paths: I, separator: char) -> String

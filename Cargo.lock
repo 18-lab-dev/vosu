@@ -3249,6 +3249,7 @@ dependencies = [
  "winresource",
  "wmi",
  "zip",
+ "zmij",
 ]
 
 [[package]]

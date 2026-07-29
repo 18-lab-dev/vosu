@@ -14,7 +14,7 @@ use serde_json::ser::{Formatter, Serializer};
 
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
 use crate::calculation::{
-    calculate_grade, fix_decimals, fix_decimals_to, js_json_number, to_legacy_hits,
+    calculate_grade, fix_decimals, fix_decimals_to, to_legacy_hits, write_js_json_number,
 };
 use crate::model::api::v1::*;
 use crate::model::enums::{ClientType, CountryCodes, GameState};
@@ -289,14 +289,14 @@ impl Formatter for JsFormatter {
     where
         W: ?Sized + Write,
     {
-        writer.write_all(js_json_number(f64::from(value)).as_bytes())
+        write_js_json_number(writer, f64::from(value))
     }
 
     fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
     where
         W: ?Sized + Write,
     {
-        writer.write_all(js_json_number(value).as_bytes())
+        write_js_json_number(writer, value)
     }
 }
 

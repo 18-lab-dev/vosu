@@ -168,7 +168,7 @@ impl serde_json::ser::Formatter for JsFormatter {
     where
         W: ?Sized + io::Write,
     {
-        io::Write::write_all(writer, js_json_number(value).as_bytes())
+        crate::calculation::write_js_json_number(writer, value)
     }
 }
 

@@ -154,14 +154,14 @@ impl Formatter for JsFormatter {
     where
         W: ?Sized + Write,
     {
-        writer.write_all(crate::calculation::js_json_number(f64::from(value)).as_bytes())
+        crate::calculation::write_js_json_number(writer, f64::from(value))
     }
 
     fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
     where
         W: ?Sized + Write,
     {
-        writer.write_all(crate::calculation::js_json_number(value).as_bytes())
+        crate::calculation::write_js_json_number(writer, value)
     }
 }
 

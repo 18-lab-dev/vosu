@@ -495,6 +495,36 @@ fn decimal_fixing_matches_javascript_edge_behavior() {
 }
 
 #[test]
+fn allocation_free_json_number_writer_matches_ecmascript_boundaries() {
+    let cases = [
+        (0.0, "0"),
+        (-0.0, "0"),
+        (f64::NAN, "null"),
+        (f64::INFINITY, "null"),
+        (f64::NEG_INFINITY, "null"),
+        (f64::MIN_POSITIVE, "2.2250738585072014e-308"),
+        (-1.0, "-1"),
+        (1.0, "1"),
+        (42.0, "42"),
+        (f64::from_bits(1), "5e-324"),
+        (f64::MAX, "1.7976931348623157e+308"),
+        (1e-7, "1e-7"),
+        (1e-6, "0.000001"),
+        (1e20, "100000000000000000000"),
+        (1e21, "1e+21"),
+        (1_000_000_000_000_000_128.0, "1000000000000000100"),
+        (-1e20, "-100000000000000000000"),
+    ];
+
+    for (value, expected) in cases {
+        let mut output = Vec::new();
+        write_js_json_number(&mut output, value).expect("write JSON number");
+        assert_eq!(output, expected.as_bytes(), "value {value:?}");
+        assert_eq!(js_json_number(value), expected, "value {value:?}");
+    }
+}
+
+#[test]
 fn dotnet_date_masks_kind_bits_and_truncates_to_milliseconds() {
     let expected = Utc.with_ymd_and_hms(2024, 1, 2, 3, 4, 5).unwrap();
     let ticks = (expected.timestamp_millis() as i128 * 10_000

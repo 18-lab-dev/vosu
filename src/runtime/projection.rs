@@ -207,10 +207,10 @@ pub(super) fn write_projection_json(
                 bytes
                     .extend_from_slice(value.as_u64().expect("checked u64").to_string().as_bytes());
             } else {
-                bytes.extend_from_slice(
-                    crate::calculation::js_json_number(value.as_f64().expect("JSON number"))
-                        .as_bytes(),
-                );
+                crate::calculation::write_js_json_number(
+                    bytes,
+                    value.as_f64().expect("JSON number"),
+                )?;
             }
         }
         ProjectionValue::String(value) => serde_json::to_writer(bytes, value)?,

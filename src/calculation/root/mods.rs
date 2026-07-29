@@ -310,6 +310,135 @@ pub(super) fn js_number(number: &serde_json::Number) -> String {
     ecma_number_to_string(number.as_f64().unwrap_or(f64::NAN))
 }
 
+pub(super) struct EcmaNumberBuffer {
+    bytes: [u8; 32],
+    len: usize,
+}
+
+impl EcmaNumberBuffer {
+    fn format(value: f64) -> Self {
+        debug_assert!(value.is_finite() && value != 0.0);
+
+        let negative = value.is_sign_negative();
+        let mut raw_buffer = zmij::Buffer::new();
+        let raw = raw_buffer.format_finite(value.abs()).as_bytes();
+        let exponent_index = raw.iter().position(|byte| matches!(byte, b'e' | b'E'));
+        let mantissa = &raw[..exponent_index.unwrap_or(raw.len())];
+        let exponent = exponent_index.map_or(0, |index| parse_decimal(&raw[index + 1..]));
+        let point_before_exponent = mantissa
+            .iter()
+            .position(|byte| *byte == b'.')
+            .unwrap_or(mantissa.len()) as i32;
+
+        let mut digits = [0_u8; 24];
+        let mut digits_len = 0;
+        for &byte in mantissa {
+            if byte != b'.' {
+                digits[digits_len] = byte;
+                digits_len += 1;
+            }
+        }
+        let leading = digits[..digits_len]
+            .iter()
+            .take_while(|byte| **byte == b'0')
+            .count();
+        let mut trailing = digits_len;
+        while trailing > leading + 1 && digits[trailing - 1] == b'0' {
+            trailing -= 1;
+        }
+        let digits = &digits[leading..trailing];
+        let point = point_before_exponent + exponent - leading as i32;
+
+        let mut output = Self {
+            bytes: [0; 32],
+            len: 0,
+        };
+        if negative {
+            output.push(b'-');
+        }
+        if point > 21 || point <= -6 {
+            output.push(digits[0]);
+            if digits.len() > 1 {
+                output.push(b'.');
+                output.extend(&digits[1..]);
+            }
+            output.push(b'e');
+            let scientific_exponent = point - 1;
+            if scientific_exponent >= 0 {
+                output.push(b'+');
+            } else {
+                output.push(b'-');
+            }
+            output.push_decimal(scientific_exponent.unsigned_abs());
+        } else if point <= 0 {
+            output.extend(b"0.");
+            output.repeat(b'0', (-point) as usize);
+            output.extend(digits);
+        } else if point as usize >= digits.len() {
+            output.extend(digits);
+            output.repeat(b'0', point as usize - digits.len());
+        } else {
+            output.extend(&digits[..point as usize]);
+            output.push(b'.');
+            output.extend(&digits[point as usize..]);
+        }
+        output
+    }
+
+    fn push(&mut self, byte: u8) {
+        self.bytes[self.len] = byte;
+        self.len += 1;
+    }
+
+    fn extend(&mut self, bytes: &[u8]) {
+        let end = self.len + bytes.len();
+        self.bytes[self.len..end].copy_from_slice(bytes);
+        self.len = end;
+    }
+
+    fn repeat(&mut self, byte: u8, count: usize) {
+        for _ in 0..count {
+            self.push(byte);
+        }
+    }
+
+    fn push_decimal(&mut self, mut value: u32) {
+        let mut reversed = [0_u8; 3];
+        let mut len = 0;
+        loop {
+            reversed[len] = b'0' + (value % 10) as u8;
+            len += 1;
+            value /= 10;
+            if value == 0 {
+                break;
+            }
+        }
+        for byte in reversed[..len].iter().rev() {
+            self.push(*byte);
+        }
+    }
+
+    pub(super) fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..self.len]).expect("number output is ASCII")
+    }
+}
+
+fn parse_decimal(bytes: &[u8]) -> i32 {
+    let (negative, digits) = match bytes.first() {
+        Some(b'-') => (true, &bytes[1..]),
+        Some(b'+') => (false, &bytes[1..]),
+        _ => (false, bytes),
+    };
+    let value = digits
+        .iter()
+        .fold(0_i32, |value, byte| value * 10 + i32::from(byte - b'0'));
+    if negative { -value } else { value }
+}
+
+pub(super) fn finite_ecma_number(value: f64) -> EcmaNumberBuffer {
+    EcmaNumberBuffer::format(value)
+}
+
 fn ecma_number_to_string(value: f64) -> String {
     if value == 0.0 {
         return "0".into();
@@ -324,58 +453,7 @@ fn ecma_number_to_string(value: f64) -> String {
         }
         .into();
     }
-    let negative = value.is_sign_negative();
-    let raw = value.abs().to_string();
-    let (mantissa, exponent) = raw
-        .split_once(['e', 'E'])
-        .map_or((raw.as_str(), 0), |(mantissa, exponent)| {
-            (mantissa, exponent.parse::<i32>().unwrap())
-        });
-    let point_before_exponent = mantissa.find('.').unwrap_or(mantissa.len()) as i32;
-    let mut digits = mantissa
-        .chars()
-        .filter(|character| *character != '.')
-        .collect::<String>();
-    let leading = digits.bytes().take_while(|byte| *byte == b'0').count();
-    if leading != 0 {
-        digits.drain(..leading);
-    }
-    if digits.is_empty() {
-        return "0".into();
-    }
-    let point = point_before_exponent + exponent - leading as i32;
-    while digits.ends_with('0') && digits.len() > 1 {
-        digits.pop();
-    }
-    let mut output = String::new();
-    if negative {
-        output.push('-');
-    }
-    if point > 21 || point <= -6 {
-        output.push(digits.as_bytes()[0] as char);
-        if digits.len() > 1 {
-            output.push('.');
-            output.push_str(&digits[1..]);
-        }
-        output.push('e');
-        let scientific_exponent = point - 1;
-        if scientific_exponent >= 0 {
-            output.push('+');
-        }
-        output.push_str(&scientific_exponent.to_string());
-    } else if point <= 0 {
-        output.push_str("0.");
-        output.extend(std::iter::repeat_n('0', (-point) as usize));
-        output.push_str(&digits);
-    } else if point as usize >= digits.len() {
-        output.push_str(&digits);
-        output.extend(std::iter::repeat_n('0', point as usize - digits.len()));
-    } else {
-        output.push_str(&digits[..point as usize]);
-        output.push('.');
-        output.push_str(&digits[point as usize..]);
-    }
-    output
+    finite_ecma_number(value).as_str().to_owned()
 }
 
 fn round_mod_settings(mods: &mut [Mod]) {

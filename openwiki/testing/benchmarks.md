@@ -668,6 +668,40 @@ mean was 1,004.81 ns/iteration with a 95% confidence interval of
 983.30–1,033.86 ns/iteration. This is a non-portable, machine-local observation,
 not a production performance promise.
 
+### Allocation-free serializer follow-up
+
+The formatter comparison used the same Windows guest and toolchain:
+
+```powershell
+cargo bench --locked --offline --target x86_64-pc-windows-msvc --bench hot_paths -- serializers_cold
+```
+
+Both revisions used Criterion 0.7.0 defaults, a 3-second warm-up, and 100
+samples. The table reports arithmetic-mean point estimates from
+`new/estimates.json`; the change is candidate versus baseline.
+
+| Benchmark ID | Allocating baseline | Stack-writer candidate | Change |
+| --- | ---: | ---: | ---: |
+| `serializers_cold/v1` | 7,143.29 ns | 6,262.72 ns | -12.3272% |
+| `serializers_cold/v2` | 12,907.53 ns | 11,131.86 ns | -13.7568% |
+| `serializers_cold/v2_precise` | 5,388.56 ns | 3,458.17 ns | -35.8238% |
+| `serializers_cold/stream_companion` | 9,934.88 ns | 9,022.38 ns | -9.1848% |
+
+Criterion classified `v1`, `v2`, and `stream_companion` as improved with
+`p < 0.05`. The noisy `v2_precise` baseline produced a wide confidence interval,
+so Criterion classified that row as no statistically significant change despite
+the lower point estimate. Exact JSON-number boundary tests cover positive and
+negative zero, integral floats, finite extrema, subnormal values, non-finite
+values, and the ECMAScript fixed/exponent thresholds.
+
+The Windows-only `mimalloc` candidate was rejected. One matched harness run
+reduced process cycle counts, but aggregate CPU time moved in the opposite
+direction and idle private bytes rose from approximately 3.9 MiB to
+40,480,768 bytes. The system allocator remains in use.
+
+These are non-portable, machine-local observations from one virtualized guest;
+they are not production performance promises.
+
 ## Historical local observation: 2026-07-16
 
 This section is a **non-portable observation, not a performance promise or
