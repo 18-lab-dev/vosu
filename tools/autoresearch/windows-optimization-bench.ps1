@@ -22,6 +22,28 @@ $invariant = [Globalization.CultureInfo]::InvariantCulture
 $daemon = $null
 $failure = $null
 
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class ProcessCycleCounter
+{
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryProcessCycleTime(IntPtr processHandle, out ulong cycleTime);
+
+    public static ulong Read(IntPtr processHandle)
+    {
+        ulong cycleTime;
+        if (!QueryProcessCycleTime(processHandle, out cycleTime))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "QueryProcessCycleTime failed");
+        }
+        return cycleTime;
+    }
+}
+'@
+
 function Assert-Leaf([string]$Path, [string]$Description) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "$Description does not exist: $Path"
@@ -232,14 +254,17 @@ SERVER_PORT = 24050
         }
     }
 
-    $cpuSamples = New-Object 'double[]' $sampleCount
+    $cycleSamples = New-Object 'double[]' $sampleCount
     $privateSamples = New-Object 'double[]' $sampleCount
+    $daemon.Refresh()
+    $aggregateStartTicks = $daemon.TotalProcessorTime.Ticks
+    $aggregateTimer = [Diagnostics.Stopwatch]::StartNew()
     for ($index = 0; $index -lt $sampleCount; $index++) {
         $daemon.Refresh()
         if ($daemon.HasExited) {
             throw "vosu exited before sample $($index + 1)"
         }
-        $beforeTicks = $daemon.TotalProcessorTime.Ticks
+        $beforeCycles = [ProcessCycleCounter]::Read($daemon.Handle)
         $timer = [Diagnostics.Stopwatch]::StartNew()
         Start-Sleep -Seconds 1
         $timer.Stop()
@@ -247,16 +272,23 @@ SERVER_PORT = 24050
         if ($daemon.HasExited) {
             throw "vosu exited during sample $($index + 1)"
         }
-        $processorTicks = $daemon.TotalProcessorTime.Ticks - $beforeTicks
-        if ($processorTicks -lt 0 -or $timer.Elapsed.TotalSeconds -le 0.0) {
-            throw "Invalid processor-time observation in sample $($index + 1)"
+        $cycleDelta = [ProcessCycleCounter]::Read($daemon.Handle) - $beforeCycles
+        if ($cycleDelta -le 0 -or $timer.Elapsed.TotalSeconds -le 0.0) {
+            throw "Invalid process-cycle observation in sample $($index + 1)"
         }
-        $cpuSamples[$index] = ([double]$processorTicks * 100.0) / $timer.Elapsed.TotalSeconds
+        $cycleSamples[$index] = [double]$cycleDelta / $timer.Elapsed.TotalSeconds
         $privateSamples[$index] = [double]$daemon.PrivateMemorySize64
     }
+    $aggregateTimer.Stop()
+    $processorTicks = $daemon.TotalProcessorTime.Ticks - $aggregateStartTicks
+    if ($processorTicks -le 0 -or $aggregateTimer.Elapsed.TotalSeconds -le 0.0) {
+        throw 'Invalid aggregate processor-time observation'
+    }
 
-    $idleCpu = Get-Median $cpuSamples
+    $idleCycles = Get-Median $cycleSamples
+    $idleCpu = ([double]$processorTicks * 100.0) / $aggregateTimer.Elapsed.TotalSeconds
     $idlePrivateBytes = Get-Median $privateSamples
+    Assert-PositiveFinite $idleCycles 'windows_idle_cpu_cycles_per_s'
     Assert-PositiveFinite $idleCpu 'windows_idle_cpu_ns_per_s'
     Assert-PositiveFinite $idlePrivateBytes 'windows_idle_private_bytes'
 
@@ -320,6 +352,7 @@ SERVER_PORT = 24050
     $memoryGeomean = [Math]::Exp($logSum / $memoryNames.Count)
     Assert-PositiveFinite $memoryGeomean 'windows_memory_geomean_ns'
 
+    [Console]::Out.WriteLine('METRIC windows_idle_cpu_cycles_per_s=' + (Format-Metric $idleCycles))
     [Console]::Out.WriteLine('METRIC windows_idle_cpu_ns_per_s=' + (Format-Metric $idleCpu))
     [Console]::Out.WriteLine('METRIC windows_idle_private_bytes=' + (Format-Metric $idlePrivateBytes))
     [Console]::Out.WriteLine('METRIC windows_memory_geomean_ns=' + (Format-Metric $memoryGeomean))
