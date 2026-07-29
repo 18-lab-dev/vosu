@@ -313,12 +313,13 @@ SERVER_PORT = 24050
         throw "Windows memory benchmark failed with exit code $($memoryProcess.ExitCode): $memoryError"
     }
 
-    $memoryNames = @(
+    $geomeanNames = @(
         'windows_read_many_gapped_ns',
         'windows_read_exact_ns',
         'windows_read_many_single_ns',
         'windows_read_many_contiguous_ns'
     )
+    $memoryNames = $geomeanNames + @('windows_read_many_wide_ns')
     $memoryValues = @{}
     foreach ($line in @(Get-Content -LiteralPath $memoryStdout)) {
         if ($line -notmatch '^METRIC\s+([^=]+)=(.+)$') {
@@ -346,10 +347,10 @@ SERVER_PORT = 24050
     }
 
     $logSum = 0.0
-    foreach ($name in $memoryNames) {
+    foreach ($name in $geomeanNames) {
         $logSum += [Math]::Log([double]$memoryValues[$name])
     }
-    $memoryGeomean = [Math]::Exp($logSum / $memoryNames.Count)
+    $memoryGeomean = [Math]::Exp($logSum / $geomeanNames.Count)
     Assert-PositiveFinite $memoryGeomean 'windows_memory_geomean_ns'
 
     [Console]::Out.WriteLine('METRIC windows_idle_cpu_cycles_per_s=' + (Format-Metric $idleCycles))

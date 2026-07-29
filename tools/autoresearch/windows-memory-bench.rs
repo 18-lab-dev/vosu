@@ -282,10 +282,21 @@ fn run() -> Result<(), String> {
         "read_many gapped",
     )?;
 
+    let wide_addresses = std::array::from_fn(|index| base + 256 + index * 480);
+    let wide_expected: [&[u8]; REQUEST_COUNT] =
+        std::array::from_fn(|index| &page_bytes[256 + index * 480..256 + index * 480 + 8]);
+    let wide_ns = bench_read_many_grouped(
+        process,
+        &wide_addresses,
+        &wide_expected,
+        "read_many wide",
+    )?;
+
     println!("METRIC windows_read_many_gapped_ns={gapped_ns:.2}");
     println!("METRIC windows_read_exact_ns={exact_ns:.2}");
     println!("METRIC windows_read_many_single_ns={singleton_ns:.2}");
     println!("METRIC windows_read_many_contiguous_ns={contiguous_ns:.2}");
+    println!("METRIC windows_read_many_wide_ns={wide_ns:.2}");
     Ok(())
 }
 
