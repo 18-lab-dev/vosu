@@ -928,6 +928,7 @@ input[type="checkbox"].settings-control {
   min-height: 0;
   padding: 1.15rem;
   overflow: auto;
+  scroll-padding-block-end: 4.5rem;
 }
 
 .dialog-form {
@@ -938,19 +939,37 @@ input[type="checkbox"].settings-control {
 .dialog-actions {
   position: sticky;
   bottom: -1.15rem;
+  z-index: 1;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.6rem;
+  align-items: center;
   justify-content: flex-end;
   margin: 0 -1.15rem -1.15rem;
-  padding: 0.85rem 1.15rem;
-  border-top: 1px solid var(--line);
+  padding: 0.9rem 1.15rem;
+  border-top: 1px solid var(--line-strong);
   background: var(--ink-raised);
+  box-shadow: 0 -0.6rem 1rem -0.7rem rgba(0, 0, 0, 0.55);
 }
 
 .counter-settings-list,
 .builder-list {
   display: grid;
   gap: 0.85rem;
+}
+
+.counter-settings-heading {
+  margin: 0.85rem 0 0;
+  padding-bottom: 0.5rem;
+  color: var(--paper);
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.005em;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.counter-settings-heading:first-child {
+  margin-top: 0;
 }
 
 .counter-setting,
@@ -961,11 +980,20 @@ input[type="checkbox"].settings-control {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--ink);
+  transition: border-color 120ms ease;
+}
+
+.counter-setting:focus-within,
+.builder-item:focus-within {
+  border-color: var(--line-strong);
 }
 
 .counter-setting legend {
   padding-inline: 0.35rem;
-  font-weight: 800;
+  color: var(--paper);
+  font-size: 0.95rem;
+  font-weight: 750;
+  letter-spacing: 0.005em;
 }
 
 .setting-description {
@@ -989,27 +1017,74 @@ input[type="checkbox"].settings-control {
 .field-label textarea,
 .field-label select,
 .command-field input,
-.command-field select {
+.command-field select,
+.counter-setting > textarea.setting-value,
+.counter-setting > select.setting-value,
+.counter-setting > input.setting-value:not([type="checkbox"]) {
   width: 100%;
   min-height: 2.5rem;
-  padding: 0.55rem 0.65rem;
+  padding: 0.55rem 0.7rem;
   color: var(--paper);
   background: var(--ink-soft);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.field-label textarea {
+.field-label input:not(:disabled):hover,
+.field-label textarea:not(:disabled):hover,
+.field-label select:not(:disabled):hover,
+.command-field input:not(:disabled):hover,
+.command-field select:not(:disabled):hover,
+.counter-setting > .setting-value:not(:disabled):hover {
+  border-color: var(--paper-muted);
+}
+
+.field-label input:focus,
+.field-label textarea:focus,
+.field-label select:focus,
+.command-field input:focus,
+.command-field select:focus,
+.counter-setting > .setting-value:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 0.2rem rgba(122, 225, 248, 0.12);
+}
+
+.field-label input:disabled,
+.field-label textarea:disabled,
+.field-label select:disabled,
+.command-field input:disabled,
+.command-field select:disabled,
+.counter-setting > .setting-value:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.field-label textarea,
+.counter-setting > textarea.setting-value {
   min-height: 6rem;
   resize: vertical;
 }
 
 .field-label input[type="checkbox"],
-.command-field input[type="checkbox"] {
-  width: 1.3rem;
-  min-height: 1.3rem;
+.command-field input[type="checkbox"],
+.counter-setting > input[type="checkbox"].setting-value {
+  width: 1.35rem;
+  min-height: 1.35rem;
+  height: 1.35rem;
+  margin: 0;
   padding: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
   accent-color: var(--rose);
+  cursor: pointer;
+}
+
+.counter-setting > input[type="color"].setting-value {
+  width: 4rem;
+  padding: 0.25rem;
+  cursor: pointer;
 }
 
 .command-list {
@@ -1021,8 +1096,14 @@ input[type="checkbox"].settings-control {
   display: grid;
   gap: 0.65rem;
   padding: 0.75rem;
+  background: var(--ink-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
+  transition: border-color 120ms ease;
+}
+
+.command-row:focus-within {
+  border-color: var(--line-strong);
 }
 
 .command-fields,
@@ -1035,6 +1116,7 @@ input[type="checkbox"].settings-control {
 .command-field {
   display: grid;
   gap: 0.3rem;
+  min-width: 0;
   color: var(--paper-muted);
   font-size: 0.78rem;
   font-weight: 700;
