@@ -125,7 +125,7 @@ winresource = "=0.1.31"
 libbpf-cargo = { version = "=0.26.2", optional = true }
 
 [profile.release]
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 strip = "symbols"
 panic = "abort"
