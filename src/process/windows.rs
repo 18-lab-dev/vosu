@@ -112,7 +112,7 @@ pub struct ModuleEntry {
     pub path: String,
 }
 
-const INITIAL_PROCESS_BUFFER_SIZE: usize = 256 * 1024;
+const INITIAL_PROCESS_BUFFER_SIZE: usize = 192 * 1024;
 const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC000_0004u32 as i32;
 
 pub fn enumerate_processes() -> Result<Vec<ProcessEntry>, MemoryError> {
