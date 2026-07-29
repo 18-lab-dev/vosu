@@ -1,6 +1,6 @@
 use super::{MemoryError, ReadRequest};
 
-const MERGED_READ_LIMIT: usize = 1024;
+const MERGED_READ_LIMIT: usize = 4096;
 
 pub(super) fn read_exact_impl<F>(
     address: usize,
