@@ -303,7 +303,7 @@ impl MemoryReader for StableMemory {
         Ok(ReadStatus::Ready(HitErrors {
             index,
             errors,
-            release_correction: None,
+            release_corrections: Vec::new(),
         }))
     }
     fn global(&mut self) -> MemoryRead<Global> {

@@ -398,7 +398,13 @@ def compare(capture_path: str, report_path: str) -> int:
         mania_observations = 0
         release_events = 0
         for transport in ("http", "websocket"):
-            for sample in active_streams[("vosu", "v2", transport)]:
+            active_mania_samples = active_streams[("vosu", "v2", transport)]
+            completed_mania_samples = [
+                sample for sample in streams[("vosu", "v2", transport)]
+                if barrier_of(sample) == "result"
+            ]
+            for sample in active_mania_samples + completed_mania_samples:
+                completed = barrier_of(sample) == "result"
                 payload = sample.payload
                 play = payload.get("play") if isinstance(payload, dict) else None
                 mode = play.get("mode") if isinstance(play, dict) else None
@@ -427,7 +433,8 @@ def compare(capture_path: str, report_path: str) -> int:
                     continue
                 if mode_number != 3:
                     continue
-                mania_observations += 1
+                if not completed:
+                    mania_observations += 1
                 hit_errors = play.get("hitErrorArray")
                 if not isinstance(hit_errors, dict):
                     vosu_contract_failures.append({
@@ -458,7 +465,9 @@ def compare(capture_path: str, report_path: str) -> int:
                 all_errors = hit_errors["all"]
                 press_errors = hit_errors["press"]
                 release_errors = hit_errors["release"]
-                if len(all_errors) != len(press_errors) + len(release_errors):
+                press_count = len(press_errors)
+                release_count = len(release_errors)
+                if len(all_errors) != press_count + release_count:
                     vosu_contract_failures.append({
                         "category": "vosu_contract",
                         "reason": "hit_error_partition_mismatch",
@@ -467,10 +476,88 @@ def compare(capture_path: str, report_path: str) -> int:
                         "monotonic_ns": sample.monotonic_ns,
                         "pointer": "/play/hitErrorArray",
                         "all": len(all_errors),
-                        "press": len(press_errors),
-                        "release": len(release_errors),
+                        "press": press_count,
+                        "release": release_count,
                     })
-                release_events += len(release_errors)
+                release_events += release_count
+
+                beatmap = payload.get("beatmap")
+                stats = beatmap.get("stats") if isinstance(beatmap, dict) else None
+                objects = stats.get("objects") if isinstance(stats, dict) else None
+                malformed_counts = [
+                    name for name in ("circles", "holds")
+                    if (
+                        not isinstance(objects, dict)
+                        or not isinstance(objects.get(name), int)
+                        or isinstance(objects.get(name), bool)
+                        or objects[name] < 0
+                    )
+                ]
+                if malformed_counts:
+                    vosu_contract_failures.append({
+                        "category": "vosu_contract",
+                        "reason": "missing_or_malformed_mania_object_counts",
+                        "schema": "v2",
+                        "transport": transport,
+                        "monotonic_ns": sample.monotonic_ns,
+                        "pointers": [
+                            f"/beatmap/stats/objects/{name}"
+                            for name in malformed_counts
+                        ],
+                        "observed": {
+                            name: objects.get(name)
+                            if isinstance(objects, dict) else None
+                            for name in malformed_counts
+                        },
+                    })
+                    continue
+                circles = objects["circles"]
+                holds = objects["holds"]
+                maximum_press = circles + holds
+                if press_count > maximum_press:
+                    vosu_contract_failures.append({
+                        "category": "vosu_contract",
+                        "reason": "mania_press_count_exceeds_object_bound",
+                        "schema": "v2",
+                        "transport": transport,
+                        "monotonic_ns": sample.monotonic_ns,
+                        "pointer": "/play/hitErrorArray/press",
+                        "press": press_count,
+                        "circles": circles,
+                        "holds": holds,
+                        "maximum_press": maximum_press,
+                    })
+
+                if not completed:
+                    continue
+                hits = play.get("hits")
+                misses = hits.get("0") if isinstance(hits, dict) else None
+                if (not isinstance(misses, int) or isinstance(misses, bool)
+                        or misses < 0):
+                    vosu_contract_failures.append({
+                        "category": "vosu_contract",
+                        "reason": "missing_or_malformed_mania_hit_statistics",
+                        "schema": "v2",
+                        "transport": transport,
+                        "monotonic_ns": sample.monotonic_ns,
+                        "pointer": "/play/hits/0",
+                        "observed": misses,
+                    })
+                    continue
+                minimum_release = max(0, holds - misses)
+                if release_count < minimum_release:
+                    vosu_contract_failures.append({
+                        "category": "vosu_contract",
+                        "reason": "mania_release_count_below_completed_bound",
+                        "schema": "v2",
+                        "transport": transport,
+                        "monotonic_ns": sample.monotonic_ns,
+                        "pointer": "/play/hitErrorArray/release",
+                        "release": release_count,
+                        "holds": holds,
+                        "misses": misses,
+                        "minimum_release": minimum_release,
+                    })
         if mania_observations == 0:
             vosu_contract_failures.append({
                 "category": "vosu_contract",

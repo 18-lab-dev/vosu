@@ -3,7 +3,7 @@ use crate::memory::snapshot::{
     PreciseCaptureContext, RawPreciseSnapshotBuilder, RawRegularSnapshotBuilder,
     RegularCaptureContext,
 };
-use crate::model::memory::{Global as RawGlobal, GlobalPrecise, HitErrors};
+use crate::model::memory::{Global as RawGlobal, GlobalPrecise, HitErrors, ReleaseCorrection};
 use crate::process::ReadStatus;
 
 fn press_hit_errors(values: Vec<f64>) -> HitErrorArray {
@@ -18,7 +18,7 @@ fn hit_error_suffix(index: i64, values: Vec<f64>) -> HitErrors {
     HitErrors {
         index,
         errors: press_hit_errors(values),
-        release_correction: None,
+        release_corrections: Vec::new(),
     }
 }
 struct RecordingCalculation {

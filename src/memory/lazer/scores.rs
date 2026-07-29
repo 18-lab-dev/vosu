@@ -445,15 +445,19 @@ impl LazerMemory {
         let allowed_size = match mode {
             0 => matches!(size, 0xe8 | 0xe0),
             1 => matches!(size, 0x68 | 0x50),
-            3 => matches!(size, 0x58 | 0x88 | 0x90),
+            3 => matches!(size, 0x58 | 0x88),
             _ => false,
         };
         if !allowed_size {
             return Ok(None);
         }
-        // The 2026.711.0 HoldNote layout includes PlaySlidingSamples, aligning its managed size to 0x90.
-        if mode == 3 && matches!(size, 0x88 | 0x90) {
-            return Ok(Some(HitErrorEvent::ManiaHoldAggregate));
+        // DynamicMethod ldflda on installed osu! 2026.711/CoreCLR 8.0.28 and
+        // 2026.726/CoreCLR 8.0.29 AppImages measured the 0x88 BaseSize
+        // HoldNote.<Tail>k__BackingField at +0x60; +0x68 is Body.
+        if mode == 3 && size == 0x88 {
+            return Ok(Some(HitErrorEvent::ManiaHoldAggregate {
+                tail: self.ptr(add(object, 0x60)?)?,
+            }));
         }
         let result = i32::from_le_bytes(result_bytes);
         let allowed = match mode {
@@ -465,6 +469,9 @@ impl LazerMemory {
         if !allowed {
             return Ok(None);
         }
-        Ok(Some(HitErrorEvent::Timing(f64::from_le_bytes(error_bytes))))
+        Ok(Some(HitErrorEvent::Timing {
+            value: f64::from_le_bytes(error_bytes),
+            object,
+        }))
     }
 }

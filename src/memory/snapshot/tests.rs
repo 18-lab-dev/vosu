@@ -188,7 +188,7 @@ fn precise_acceptance_requires_exact_base_and_new_sequence() {
             press: vec![-2.0, 3.0],
             release: Vec::new(),
         },
-        release_correction: None,
+        release_corrections: Vec::new(),
     })))
     .publish();
 
@@ -251,7 +251,7 @@ fn suffix_cannot_contain_more_hits_than_consumed_source_positions() {
             press: vec![1.0],
             release: Vec::new(),
         },
-        release_correction: None,
+        release_corrections: Vec::new(),
     })))
     .publish();
     assert_eq!(

@@ -195,13 +195,23 @@ class CompareCliTests(unittest.TestCase):
         for sample in samples:
             if (sample.schema == "v2"
                     and isinstance(sample.payload, dict)
-                    and sample.payload.get("state") == "play"):
-                sample.payload["play"]["mode"] = {
-                    "number": 3, "name": "mania"}
+                    and sample.payload.get("state") in {"play", "result"}):
+                play = sample.payload["play"]
+                play["mode"] = {"number": 3, "name": "mania"}
+                play["hits"]["0"] = 0
+                sample.payload["beatmap"]["stats"] = {
+                    "objects": {
+                        "circles": 1,
+                        "sliders": 0,
+                        "spinners": 0,
+                        "holds": 1,
+                        "total": 2,
+                    },
+                }
                 if sample.daemon == "source":
-                    sample.payload["play"]["hitErrorArray"] = list(all_errors)
+                    play["hitErrorArray"] = list(all_errors)
                 else:
-                    sample.payload["play"]["hitErrorArray"] = {
+                    play["hitErrorArray"] = {
                         "all": list(all_errors),
                         "press": [1],
                         "release": list(release_errors),
@@ -213,7 +223,7 @@ class CompareCliTests(unittest.TestCase):
         self.assertTrue(report["passed"])
         self.assertEqual([], report["vosu_contract_failures"])
 
-    def test_valid_mania_hold_capture_passes_contract(self) -> None:
+    def test_valid_completed_mania_hold_capture_passes_contract(self) -> None:
         samples = self.mania_hold_samples()
         source = next(
             sample for sample in samples
@@ -230,6 +240,140 @@ class CompareCliTests(unittest.TestCase):
         self.assertTrue(report["passed"])
         self.assertEqual([], report["vosu_contract_failures"])
         self.assertEqual("mania-hold", report["metadata"]["scenario"])
+
+    def test_completed_mania_hold_enforces_both_structural_bounds(self) -> None:
+        samples = self.mania_hold_samples()
+        press_errors = list(range(3373))
+        release_errors = list(range(68))
+        all_errors = [*press_errors, *release_errors]
+        for sample in samples:
+            if (sample.schema != "v2"
+                    or not isinstance(sample.payload, dict)
+                    or sample.payload.get("state") != "result"):
+                continue
+            sample.payload["beatmap"]["stats"]["objects"].update({
+                "circles": 1203,
+                "holds": 1154,
+                "total": 2357,
+            })
+            sample.payload["play"]["hits"]["0"] = 70
+            if sample.daemon == "source":
+                sample.payload["play"]["hitErrorArray"] = list(all_errors)
+            else:
+                sample.payload["play"]["hitErrorArray"] = {
+                    "all": list(all_errors),
+                    "press": list(press_errors),
+                    "release": list(release_errors),
+                }
+
+        report = self.run_compare_samples(samples, scenario="mania-hold")
+        self.assertFalse(report["passed"])
+        failures = report["vosu_contract_failures"]
+        self.assertTrue(any(
+            item["reason"] == "mania_press_count_exceeds_object_bound"
+            and item["pointer"] == "/play/hitErrorArray/press"
+            and item["transport"] == "http"
+            and item["monotonic_ns"] == 3_000_000_000
+            and item["press"] == 3373
+            and item["circles"] == 1203
+            and item["holds"] == 1154
+            and item["maximum_press"] == 2357
+            for item in failures
+        ))
+        self.assertTrue(any(
+            item["reason"] == "mania_release_count_below_completed_bound"
+            and item["pointer"] == "/play/hitErrorArray/release"
+            and item["transport"] == "websocket"
+            and item["monotonic_ns"] == 3_000_000_000
+            and item["release"] == 68
+            and item["holds"] == 1154
+            and item["misses"] == 70
+            and item["minimum_release"] == 1084
+            for item in failures
+        ))
+
+    def test_active_mania_hold_does_not_apply_completed_release_bound(
+            self) -> None:
+        samples = self.mania_hold_samples()
+        for sample in samples:
+            if (sample.schema != "v2"
+                    or not isinstance(sample.payload, dict)
+                    or sample.payload.get("state") != "play"
+                    or sample.monotonic_ns != 1_300_000_000):
+                continue
+            if sample.daemon == "source":
+                sample.payload["play"]["hitErrorArray"] = [1]
+            else:
+                sample.payload["play"]["hitErrorArray"] = {
+                    "all": [1],
+                    "press": [1],
+                    "release": [],
+                }
+
+        report = self.run_compare_samples(samples, scenario="mania-hold")
+        self.assertTrue(report["passed"])
+        self.assertFalse(any(
+            item["reason"] == "mania_release_count_below_completed_bound"
+            and item.get("monotonic_ns") == 1_300_000_000
+            for item in report["vosu_contract_failures"]
+        ))
+
+    def test_completed_mania_hold_rejects_malformed_required_counts(
+            self) -> None:
+        cases = (
+            (
+                "objects",
+                lambda payload: payload["beatmap"]["stats"]["objects"].__setitem__(
+                    "circles", "1203"),
+                "missing_or_malformed_mania_object_counts",
+                "/beatmap/stats/objects/circles",
+            ),
+            (
+                "missing-objects",
+                lambda payload: payload["beatmap"]["stats"]["objects"].pop(
+                    "holds"),
+                "missing_or_malformed_mania_object_counts",
+                "/beatmap/stats/objects/holds",
+            ),
+            (
+                "hits",
+                lambda payload: payload["play"]["hits"].__setitem__("0", "70"),
+                "missing_or_malformed_mania_hit_statistics",
+                "/play/hits/0",
+            ),
+            (
+                "missing-hits",
+                lambda payload: payload["play"]["hits"].pop("0"),
+                "missing_or_malformed_mania_hit_statistics",
+                "/play/hits/0",
+            ),
+        )
+        for name, corrupt, expected_reason, expected_pointer in cases:
+            with self.subTest(case=name):
+                samples = self.mania_hold_samples()
+                completed = next(
+                    sample for sample in samples
+                    if sample.daemon == "vosu"
+                    and sample.schema == "v2"
+                    and sample.transport == "http"
+                    and isinstance(sample.payload, dict)
+                    and sample.payload.get("state") == "result"
+                )
+                corrupt(completed.payload)
+
+                report = self.run_compare_samples(
+                    samples, scenario="mania-hold")
+                self.assertFalse(report["passed"])
+                self.assertTrue(any(
+                    item["reason"] == expected_reason
+                    and (
+                        item.get("pointer") == expected_pointer
+                        or expected_pointer in item.get("pointers", [])
+                    )
+                    and item["transport"] == "http"
+                    and item["monotonic_ns"] == 3_000_000_000
+                    for item in report["vosu_contract_failures"]
+                ))
 
     def test_mania_hold_capture_requires_release_event(self) -> None:
         report = self.run_compare_samples(

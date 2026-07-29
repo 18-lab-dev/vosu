@@ -269,16 +269,24 @@ fn precise_transition_validates_keys_appends_suffix_once_and_preserves_hits_on_e
 }
 
 #[test]
-fn hold_aggregate_suffix_reclassifies_prior_press_without_changing_all_or_ur_sum() {
+fn boundary_corrections_reclassify_exact_prior_presses_in_timing_order() {
     let mut bundle = StateBundle::new(ClientType::Lazer, 3, Arc::new(EchoCalculation));
     bundle.global.status = GameState::Play.value() as i64;
     bundle.global.play_time = 200.0;
     bundle.gameplay.is_default_state = false;
-    bundle.gameplay.hit_errors = press_hit_errors(vec![-2.0]);
-    bundle.gameplay.total_hit_errors = -2.0;
-    bundle.gameplay.previous_hit_error_index = 2;
+    let simultaneous_tail_and_ordinary_error = -2.0;
+    let all = vec![
+        11.0,
+        simultaneous_tail_and_ordinary_error,
+        simultaneous_tail_and_ordinary_error,
+        7.0,
+        13.0,
+    ];
+    bundle.gameplay.hit_errors = press_hit_errors(all.clone());
+    bundle.gameplay.total_hit_errors = all.iter().sum();
+    bundle.gameplay.previous_hit_error_index = 40;
     let precise = RawPreciseSnapshotBuilder::new(
-        PreciseCaptureContext::new(ClientType::Lazer, 3, 0, 0, default_calculated_mods(), 0, 2),
+        PreciseCaptureContext::new(ClientType::Lazer, 3, 0, 0, default_calculated_mods(), 0, 40),
         1,
         Ok(ReadStatus::Ready(GlobalPrecise {
             status: GameState::Play.value() as i64,
@@ -286,19 +294,84 @@ fn hold_aggregate_suffix_reclassifies_prior_press_without_changing_all_or_ur_sum
         })),
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
-        index: 3,
+        index: 42,
         errors: HitErrorArray::default(),
-        release_correction: Some(-2.0),
+        release_corrections: vec![
+            ReleaseCorrection {
+                value: 7.0,
+                press_offset: 1,
+            },
+            ReleaseCorrection {
+                value: simultaneous_tail_and_ordinary_error,
+                press_offset: 3,
+            },
+        ],
     })))
     .publish();
 
     bundle.apply_precise_inner(&precise);
 
-    assert_eq!(bundle.gameplay.hit_errors.all, [-2.0]);
-    assert!(bundle.gameplay.hit_errors.press.is_empty());
-    assert_eq!(bundle.gameplay.hit_errors.release, [-2.0]);
-    assert_eq!(bundle.gameplay.total_hit_errors, -2.0);
-    assert_eq!(bundle.gameplay.previous_hit_error_index, 3);
+    assert_eq!(bundle.gameplay.hit_errors.all, all);
+    assert_eq!(
+        bundle.gameplay.hit_errors.press,
+        [11.0, simultaneous_tail_and_ordinary_error, 13.0]
+    );
+    assert_eq!(
+        bundle.gameplay.hit_errors.release,
+        [simultaneous_tail_and_ordinary_error, 7.0]
+    );
+    assert_eq!(bundle.gameplay.hit_errors.press.len(), 3);
+    assert_eq!(bundle.gameplay.hit_errors.release.len(), 2);
+    assert_eq!(bundle.gameplay.total_hit_errors, 27.0);
+    assert_eq!(bundle.gameplay.previous_hit_error_index, 42);
+}
+
+#[test]
+fn invalid_boundary_corrections_leave_hit_errors_unchanged() {
+    let mut bundle = StateBundle::new(ClientType::Lazer, 3, Arc::new(EchoCalculation));
+    bundle.global.status = GameState::Play.value() as i64;
+    bundle.global.play_time = 200.0;
+    bundle.gameplay.is_default_state = false;
+    let all = vec![1.0, -0.0, 3.0];
+    bundle.gameplay.hit_errors = press_hit_errors(all.clone());
+    bundle.gameplay.total_hit_errors = 4.0;
+    bundle.gameplay.previous_hit_error_index = 8;
+    let precise = RawPreciseSnapshotBuilder::new(
+        PreciseCaptureContext::new(ClientType::Lazer, 3, 0, 0, default_calculated_mods(), 0, 8),
+        1,
+        Ok(ReadStatus::Ready(GlobalPrecise {
+            status: GameState::Play.value() as i64,
+            time: 250.0,
+        })),
+    )
+    .hit_errors(Ok(ReadStatus::Ready(HitErrors {
+        index: 10,
+        errors: HitErrorArray::default(),
+        release_corrections: vec![
+            ReleaseCorrection {
+                value: 0.0,
+                press_offset: 1,
+            },
+            ReleaseCorrection {
+                value: 3.0,
+                press_offset: usize::MAX,
+            },
+        ],
+    })))
+    .publish();
+
+    bundle.apply_precise_inner(&precise);
+
+    assert_eq!(bundle.gameplay.hit_errors.all, all);
+    assert_eq!(bundle.gameplay.hit_errors.press, [1.0, -0.0, 3.0]);
+    assert_eq!(
+        bundle.gameplay.hit_errors.press[1].to_bits(),
+        (-0.0_f64).to_bits()
+    );
+    assert_eq!(bundle.gameplay.hit_errors.press.len(), 3);
+    assert!(bundle.gameplay.hit_errors.release.is_empty());
+    assert_eq!(bundle.gameplay.total_hit_errors, 4.0);
+    assert_eq!(bundle.gameplay.previous_hit_error_index, 10);
 }
 
 #[test]

@@ -29,6 +29,7 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 
 - Added `beatmap.stats.timingWindows` to stable and lazer v2 responses across all rulesets, including map-aware speed mods, osu!lazer Difficulty Adjust values above OD 10, and osu!mania Classic/ScoreV2 windows. osu! and taiko temporal windows scale to real time by `clockRate`; osu!mania source windows are rounded before `clockRate` multiplication, so the displayed `perfect` window changes from 19.5 ms at 1.0x to 25.35 ms at 1.3x. osu!catch exposes its spatial `300` catch boundary in playfield units; unsupported judgements are omitted.
 - Split every public hit-error field into ordered `all`, `press`, and `release` arrays, with osu!lazer mania hold-note releases classified separately.
+- Corrected osu!lazer mania hold-release classification to read each hold's measured `TailNote` reference instead of its adjacent body reference, then match exact tail objects across interleaved chords and snapshot boundaries; osu! and taiko timing errors remain press-only.
 
 ### Reliability
 

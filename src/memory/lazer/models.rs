@@ -73,8 +73,8 @@ pub(super) const MANIA_MOD_CATEGORIES: [&[&str]; 6] = [
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum HitErrorEvent {
-    Timing(f64),
-    ManiaHoldAggregate,
+    Timing { value: f64, object: usize },
+    ManiaHoldAggregate { tail: usize },
 }
 
 #[derive(Clone, Copy)]

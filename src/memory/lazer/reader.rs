@@ -213,7 +213,7 @@ impl MemoryReader for LazerMemory {
             return Ok(ReadStatus::Ready(HitErrors {
                 index: 0,
                 errors: HitErrorArray::default(),
-                release_correction: None,
+                release_corrections: Vec::new(),
             }));
         }
         let p = required_non_null(
@@ -658,50 +658,111 @@ impl LazerMemory {
     ) -> Result<HitErrors, MemoryError> {
         let start_index = last.max(0) as usize;
         let mut index = start_index;
-        let mut errors = HitErrorArray::default();
-        let mut release_correction = None;
-        let mut cached_event = None;
+        let mut suffix_events = Vec::new();
         while index < size {
-            let item = add(items, index * 0x40)?;
-            let event = match cached_event.take() {
-                Some(event) => event,
-                None => self.read_hit_event(item)?,
-            };
+            let event = self.read_hit_event(add(items, index * 0x40)?)?;
             match event {
-                Some(HitErrorEvent::Timing(value)) if hit_error_out_of_range(value) => break,
-                Some(HitErrorEvent::Timing(value)) => {
-                    errors.all.push(value);
-                    let next_is_hold_aggregate = if self.selected_gamemode == 3 && index + 1 < size
-                    {
-                        let next = self.read_hit_event(add(items, (index + 1) * 0x40)?)?;
-                        cached_event = Some(next);
-                        matches!(next, Some(HitErrorEvent::ManiaHoldAggregate))
-                    } else {
-                        false
-                    };
-                    if next_is_hold_aggregate {
-                        errors.release.push(value);
-                    } else {
-                        errors.press.push(value);
-                    }
+                Some(HitErrorEvent::Timing { value, .. }) if hit_error_out_of_range(value) => {
+                    break;
                 }
-                Some(HitErrorEvent::ManiaHoldAggregate) if index == start_index && index > 0 => {
-                    let previous = add(items, (index - 1) * 0x40)?;
-                    if let Some(HitErrorEvent::Timing(value)) = self.read_hit_event(previous)?
-                        && !hit_error_out_of_range(value)
-                    {
-                        release_correction = Some(value);
-                    }
-                }
-                Some(HitErrorEvent::ManiaHoldAggregate) => {}
+                Some(event) => suffix_events.push(event),
                 None => {}
             }
             index += 1;
         }
+
+        let suffix_tails: Vec<_> = suffix_events
+            .iter()
+            .filter_map(|event| match event {
+                HitErrorEvent::ManiaHoldAggregate { tail } => Some(*tail),
+                HitErrorEvent::Timing { .. } => None,
+            })
+            .collect();
+        let mut errors = HitErrorArray::default();
+        for event in &suffix_events {
+            if let HitErrorEvent::Timing { value, object } = *event {
+                errors.all.push(value);
+                if self.selected_gamemode == 3 && suffix_tails.contains(&object) {
+                    errors.release.push(value);
+                } else {
+                    errors.press.push(value);
+                }
+            }
+        }
+
+        let mut correction_tails = Vec::new();
+        if self.selected_gamemode == 3 && start_index > 0 {
+            for tail in suffix_tails {
+                let timing_is_in_suffix = suffix_events.iter().any(
+                    |event| matches!(event, HitErrorEvent::Timing { object, .. } if *object == tail),
+                );
+                if !timing_is_in_suffix && !correction_tails.contains(&tail) {
+                    correction_tails.push(tail);
+                }
+            }
+        }
+
+        let mut prior_events = Vec::new();
+        let mut found_targets = vec![false; correction_tails.len()];
+        let mut prior_index = start_index;
+        while prior_index > 0 && found_targets.iter().any(|found| !found) {
+            prior_index -= 1;
+            if let Some(event) = self.read_hit_event(add(items, prior_index * 0x40)?)? {
+                if let HitErrorEvent::Timing { value, object } = event
+                    && !hit_error_out_of_range(value)
+                {
+                    for (tail, found) in correction_tails.iter().zip(&mut found_targets) {
+                        if object == *tail {
+                            *found = true;
+                        }
+                    }
+                }
+                prior_events.push(event);
+            }
+        }
+        prior_events.reverse();
+
+        let mut release_corrections = Vec::new();
+        for tail in correction_tails {
+            let Some(target_index) = prior_events.iter().rposition(
+                |event| matches!(event, HitErrorEvent::Timing { object, .. } if *object == tail),
+            ) else {
+                continue;
+            };
+            let HitErrorEvent::Timing { value, .. } = prior_events[target_index] else {
+                unreachable!();
+            };
+            if hit_error_out_of_range(value) {
+                continue;
+            }
+            let interval = &prior_events[target_index + 1..];
+            let interval_tails: Vec<_> = interval
+                .iter()
+                .filter_map(|event| match event {
+                    HitErrorEvent::ManiaHoldAggregate { tail } => Some(*tail),
+                    HitErrorEvent::Timing { .. } => None,
+                })
+                .collect();
+            let press_offset = interval
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        HitErrorEvent::Timing { value, object }
+                            if !hit_error_out_of_range(*value) && !interval_tails.contains(object)
+                    )
+                })
+                .count();
+            release_corrections.push(ReleaseCorrection {
+                value,
+                press_offset,
+            });
+        }
+
         Ok(HitErrors {
             index: index as i64,
             errors,
-            release_correction,
+            release_corrections,
         })
     }
 }

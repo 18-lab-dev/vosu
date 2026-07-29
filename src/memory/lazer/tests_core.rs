@@ -1,6 +1,10 @@
 use super::test_support::*;
 use super::*;
 
+fn hit_object(address: usize) -> usize {
+    0x100_000 + address
+}
+
 fn put_hit_event(
     memory: &mut SparseMemory,
     address: usize,
@@ -8,13 +12,20 @@ fn put_hit_event(
     error: f64,
     result: i32,
 ) {
-    let object = 0x100_000 + address;
+    let object = hit_object(address);
     let type_info = 0x200_000 + address;
     memory.ptr(address, object);
     memory.ptr(object, type_info);
     memory.i32(type_info + 4, type_size);
     memory.f64(address + 0x10, error);
     memory.i32(address + 0x18, result);
+}
+
+fn put_hold_aggregate(memory: &mut SparseMemory, address: usize, type_size: i32, tail: usize) {
+    put_hit_event(memory, address, type_size, 999.0, 0);
+    let object = hit_object(address);
+    memory.ptr(object + 0x60, tail);
+    memory.ptr(object + 0x68, 0x300_000 + address);
 }
 
 #[test]
@@ -149,10 +160,11 @@ fn managed_collection_layouts_and_statistics_are_exact() {
 }
 
 #[test]
-fn hit_event_size_result_and_guard_rules_match_modes() {
+fn hit_event_size_result_and_identity_rules_match_modes() {
     let event = 0x1000usize;
     let object = 0x2000usize;
     let type_info = 0x3000usize;
+    let tail_88 = 0x4000usize;
     let mut memory = SparseMemory::default();
     memory.ptr(event, object);
     memory.ptr(object, type_info);
@@ -160,82 +172,161 @@ fn hit_event_size_result_and_guard_rules_match_modes() {
     memory.f64(event + 0x10, -12.5);
     memory.i32(event + 0x18, 3);
     put_hit_event(&mut memory, event + 0x40, 0x58, 4.5, 2);
-    put_hit_event(&mut memory, event + 0x80, 0x88, 999.0, 0);
+    put_hold_aggregate(&mut memory, event + 0x80, 0x88, tail_88);
     put_hit_event(&mut memory, event + 0xc0, 0x90, 999.0, 0);
     put_hit_event(&mut memory, event + 0x100, 0x98, 999.0, 0);
     let mut reader = reader(Arc::new(memory));
     reader.selected_gamemode = 0;
     assert_eq!(
         reader.read_hit_event(event).unwrap(),
-        Some(HitErrorEvent::Timing(-12.5))
+        Some(HitErrorEvent::Timing {
+            value: -12.5,
+            object,
+        })
     );
     reader.selected_gamemode = 3;
     assert_eq!(
         reader.read_hit_event(event + 0x40).unwrap(),
-        Some(HitErrorEvent::Timing(4.5))
+        Some(HitErrorEvent::Timing {
+            value: 4.5,
+            object: hit_object(event + 0x40),
+        })
     );
     assert_eq!(
         reader.read_hit_event(event + 0x80).unwrap(),
-        Some(HitErrorEvent::ManiaHoldAggregate)
+        Some(HitErrorEvent::ManiaHoldAggregate { tail: tail_88 })
     );
-    assert_eq!(
-        reader.read_hit_event(event + 0xc0).unwrap(),
-        Some(HitErrorEvent::ManiaHoldAggregate)
-    );
+    assert_eq!(reader.read_hit_event(event + 0xc0).unwrap(), None);
     assert_eq!(reader.read_hit_event(event + 0x100).unwrap(), None);
     reader.selected_gamemode = 2;
     assert_eq!(reader.read_hit_event(event).unwrap(), None);
 }
 
 #[test]
-fn mania_suffix_preserves_event_order_and_splits_tail_before_hold_aggregate() {
+fn non_mania_duplicate_timings_remain_press_only() {
     let items = 0x10_000usize;
     let mut memory = SparseMemory::default();
-    put_hit_event(&mut memory, items, 0x58, 1.0, 2);
+    put_hit_event(&mut memory, items, 0xe8, -2.0, 3);
+    put_hit_event(&mut memory, items + 0x40, 0xe0, -2.0, 10);
+    put_hit_event(&mut memory, items + 0x80, 0x68, -2.0, 5);
+    put_hit_event(&mut memory, items + 0xc0, 0x50, -2.0, 2);
+    let mut reader = reader(Arc::new(memory));
+
+    for mode in [0, 1] {
+        reader.selected_gamemode = mode;
+        let suffix = reader.read_hit_error_suffix(items, 4, 0).unwrap();
+        assert_eq!(suffix.errors.all, [-2.0, -2.0]);
+        assert_eq!(suffix.errors.press, [-2.0, -2.0]);
+        assert!(suffix.errors.release.is_empty());
+        assert!(suffix.release_corrections.is_empty());
+    }
+
+    reader.selected_gamemode = 2;
+    let catch = reader.read_hit_error_suffix(items, 4, 0).unwrap();
+    assert!(catch.errors.all.is_empty());
+    assert!(catch.release_corrections.is_empty());
+}
+
+#[test]
+fn mania_suffix_classifies_interleaved_duplicate_timings_by_object_identity() {
+    let items = 0x10_000usize;
+    let mut memory = SparseMemory::default();
+    put_hit_event(&mut memory, items, 0x58, 7.0, 2);
     put_hit_event(&mut memory, items + 0x40, 0x58, -2.0, 2);
-    put_hit_event(&mut memory, items + 0x80, 0x90, 999.0, 0);
-    put_hit_event(&mut memory, items + 0xc0, 0x58, 3.0, 2);
+    put_hit_event(&mut memory, items + 0x80, 0x58, -2.0, 2);
+    put_hold_aggregate(&mut memory, items + 0xc0, 0x88, hit_object(items + 0x40));
+    put_hit_event(&mut memory, items + 0x100, 0x58, -2.0, 2);
+    put_hit_event(&mut memory, items + 0x140, 0x58, -2.0, 2);
+    put_hold_aggregate(&mut memory, items + 0x180, 0x88, hit_object(items + 0x100));
     let mut reader = reader(Arc::new(memory));
     reader.selected_gamemode = 3;
 
-    let suffix = reader.read_hit_error_suffix(items, 4, 0).unwrap();
+    let suffix = reader.read_hit_error_suffix(items, 7, 0).unwrap();
 
-    assert_eq!(suffix.index, 4);
-    assert_eq!(suffix.errors.all, [1.0, -2.0, 3.0]);
-    assert_eq!(suffix.errors.press, [1.0, 3.0]);
-    assert_eq!(suffix.errors.release, [-2.0]);
+    assert_eq!(suffix.index, 7);
+    assert_eq!(suffix.errors.all, [7.0, -2.0, -2.0, -2.0, -2.0]);
+    assert_eq!(suffix.errors.press, [7.0, -2.0, -2.0]);
+    assert_eq!(suffix.errors.release, [-2.0, -2.0]);
     assert_eq!(
         suffix.errors.all.len(),
         suffix.errors.press.len() + suffix.errors.release.len()
     );
-    assert_eq!(suffix.release_correction, None);
+    assert!(suffix.release_corrections.is_empty());
 }
 
 #[test]
-fn current_mania_hold_aggregate_at_suffix_boundary_requests_tail_reclassification() {
+fn suffix_boundary_correction_targets_prior_press_offset_and_skips_known_tail() {
     let items = 0x10_000usize;
     let mut memory = SparseMemory::default();
-    put_hit_event(&mut memory, items, 0x58, 1.0, 2);
-    put_hit_event(&mut memory, items + 0x40, 0x58, -2.0, 2);
-    put_hit_event(&mut memory, items + 0x80, 0x90, 999.0, 0);
-    put_hit_event(&mut memory, items + 0xc0, 0x58, 3.0, 2);
+    put_hit_event(&mut memory, items, 0x58, -2.0, 2);
+    put_hit_event(&mut memory, items + 0x40, 0x58, 10.0, 2);
+    put_hit_event(&mut memory, items + 0x80, 0x58, 20.0, 2);
+    put_hit_event(&mut memory, items + 0xc0, 0x58, 30.0, 2);
+    put_hold_aggregate(&mut memory, items + 0x100, 0x88, hit_object(items + 0x80));
+    put_hit_event(&mut memory, items + 0x140, 0x58, 40.0, 2);
+    put_hold_aggregate(&mut memory, items + 0x180, 0x88, hit_object(items));
+    put_hit_event(&mut memory, items + 0x1c0, 0x58, 50.0, 2);
     let mut reader = reader(Arc::new(memory));
     reader.selected_gamemode = 3;
 
-    let before_marker = reader.read_hit_error_suffix(items, 2, 0).unwrap();
-    let marker_suffix = reader.read_hit_error_suffix(items, 4, 2).unwrap();
+    let before_boundary = reader.read_hit_error_suffix(items, 6, 0).unwrap();
+    let suffix = reader.read_hit_error_suffix(items, 8, 6).unwrap();
 
-    assert_eq!(before_marker.errors.all, [1.0, -2.0]);
-    assert_eq!(before_marker.errors.press, [1.0, -2.0]);
-    assert_eq!(marker_suffix.index, 4);
-    assert_eq!(marker_suffix.errors.all, [3.0]);
-    assert_eq!(marker_suffix.errors.press, [3.0]);
-    assert!(marker_suffix.errors.release.is_empty());
+    assert_eq!(before_boundary.errors.press, [-2.0, 10.0, 30.0, 40.0]);
+    assert_eq!(before_boundary.errors.release, [20.0]);
+    assert!(before_boundary.release_corrections.is_empty());
+    assert_eq!(suffix.errors.all, [50.0]);
+    assert_eq!(suffix.errors.press, [50.0]);
+    assert!(suffix.errors.release.is_empty());
     assert_eq!(
-        marker_suffix.errors.all.len(),
-        marker_suffix.errors.press.len() + marker_suffix.errors.release.len()
+        suffix.release_corrections,
+        [ReleaseCorrection {
+            value: -2.0,
+            press_offset: 3,
+        }]
     );
-    assert_eq!(marker_suffix.release_correction, Some(-2.0));
+    assert_eq!(
+        suffix.errors.all.len(),
+        suffix.errors.press.len() + suffix.errors.release.len()
+    );
+}
+
+#[test]
+fn suffix_boundary_emits_multiple_identity_corrections_from_one_press_vector() {
+    let items = 0x10_000usize;
+    let mut memory = SparseMemory::default();
+    put_hit_event(&mut memory, items, 0x58, -2.0, 2);
+    put_hit_event(&mut memory, items + 0x40, 0x58, 10.0, 2);
+    put_hit_event(&mut memory, items + 0x80, 0x58, -2.0, 2);
+    put_hit_event(&mut memory, items + 0xc0, 0x58, 20.0, 2);
+    put_hold_aggregate(&mut memory, items + 0x100, 0x88, hit_object(items));
+    put_hit_event(&mut memory, items + 0x140, 0x58, -2.0, 2);
+    put_hold_aggregate(&mut memory, items + 0x180, 0x88, hit_object(items + 0x80));
+    let mut reader = reader(Arc::new(memory));
+    reader.selected_gamemode = 3;
+
+    let suffix = reader.read_hit_error_suffix(items, 7, 4).unwrap();
+
+    assert_eq!(suffix.errors.all, [-2.0]);
+    assert_eq!(suffix.errors.press, [-2.0]);
+    assert!(suffix.errors.release.is_empty());
+    assert_eq!(
+        suffix.release_corrections,
+        [
+            ReleaseCorrection {
+                value: -2.0,
+                press_offset: 3,
+            },
+            ReleaseCorrection {
+                value: -2.0,
+                press_offset: 1,
+            },
+        ]
+    );
+    assert_eq!(
+        suffix.errors.all.len(),
+        suffix.errors.press.len() + suffix.errors.release.len()
+    );
 }
 
 #[test]
@@ -505,7 +596,7 @@ fn loading_sentinels_and_display_score_boundaries_match_source() {
         ReadStatus::Ready(HitErrors {
             index: 0,
             errors: HitErrorArray::default(),
-            release_correction: None,
+            release_corrections: Vec::new(),
         })
     );
     assert_eq!(display_score(3, 765_432.0, 100), 765_432.0);

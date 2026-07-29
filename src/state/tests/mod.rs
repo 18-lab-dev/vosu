@@ -290,7 +290,7 @@ impl PreciseSnapshotReader for FakePrecise {
                 press: vec![1.0],
                 release: Vec::new(),
             },
-            release_correction: None,
+            release_corrections: Vec::new(),
         })))
         .publish())
     }

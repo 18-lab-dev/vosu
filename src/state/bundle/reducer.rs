@@ -815,22 +815,22 @@ impl StateBundle {
                 self.gameplay.is_key_overlay_default_state = false;
             }
             if let Some(Ok(ReadStatus::Ready(errors))) = snapshot.hit_errors() {
-                if let Some(value) = errors.release_correction {
-                    let matches_last_all = self
-                        .gameplay
-                        .hit_errors
-                        .all
-                        .last()
-                        .is_some_and(|last| last.to_bits() == value.to_bits());
-                    let matches_last_press = self
-                        .gameplay
-                        .hit_errors
-                        .press
-                        .last()
-                        .is_some_and(|last| last.to_bits() == value.to_bits());
-                    if matches_last_all && matches_last_press {
-                        self.gameplay.hit_errors.press.pop();
-                        self.gameplay.hit_errors.release.push(value);
+                let mut release_corrections: Vec<_> = errors.release_corrections.iter().collect();
+                release_corrections
+                    .sort_by_key(|correction| std::cmp::Reverse(correction.press_offset));
+                for correction in release_corrections {
+                    let Some(position) =
+                        correction.press_offset.checked_add(1).and_then(|distance| {
+                            self.gameplay.hit_errors.press.len().checked_sub(distance)
+                        })
+                    else {
+                        continue;
+                    };
+                    if self.gameplay.hit_errors.press[position].to_bits()
+                        == correction.value.to_bits()
+                    {
+                        self.gameplay.hit_errors.press.remove(position);
+                        self.gameplay.hit_errors.release.push(correction.value);
                     }
                 }
                 self.gameplay.total_hit_errors += errors.errors.all.iter().sum::<f64>();

@@ -254,7 +254,7 @@ fn stable_hit_errors_are_appended_to_all_and_press() {
     assert_eq!(suffix.errors.all, [-4.0, 7.0]);
     assert_eq!(suffix.errors.press, [-4.0, 7.0]);
     assert!(suffix.errors.release.is_empty());
-    assert_eq!(suffix.release_correction, None);
+    assert!(suffix.release_corrections.is_empty());
 }
 
 #[test]

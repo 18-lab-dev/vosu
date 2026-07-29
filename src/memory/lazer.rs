@@ -13,8 +13,8 @@ use crate::model::enums::{GameState, RankedPlayStage};
 use crate::model::memory::{
     AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerSpectator,
     LazerSpectatorEntry, Leaderboard, MatchmakingStats, Menu, MenuChecksum, MenuFull, Mp3Length,
-    RankedPlay, RankedPlayUserInfo, ResultScreen, Settings, Tourney, TourneyChat, TourneyUser,
-    User,
+    RankedPlay, RankedPlayUserInfo, ReleaseCorrection, ResultScreen, Settings, Tourney,
+    TourneyChat, TourneyUser, User,
 };
 use crate::model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton, LeaderboardPlayer, Mod, MultiplayerTeamType,

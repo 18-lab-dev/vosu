@@ -131,8 +131,14 @@ pub struct HitErrors {
     pub index: i64,
     #[serde(flatten)]
     pub errors: HitErrorArray,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub release_correction: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub release_corrections: Vec<ReleaseCorrection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReleaseCorrection {
+    pub value: f64,
+    pub press_offset: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
