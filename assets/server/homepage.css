@@ -937,19 +937,29 @@ input[type="checkbox"].settings-control {
 }
 
 .dialog-actions {
-  position: sticky;
-  bottom: -1.15rem;
   z-index: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
   align-items: center;
   justify-content: flex-end;
-  margin: 0 -1.15rem -1.15rem;
   padding: 0.9rem 1.15rem;
   border-top: 1px solid var(--line-strong);
   background: var(--ink-raised);
   box-shadow: 0 -0.6rem 1rem -0.7rem rgba(0, 0, 0, 0.55);
+}
+
+.dashboard-dialog .dialog-actions {
+  position: sticky;
+  bottom: -1.15rem;
+  margin: 0 -1.15rem -1.15rem;
+}
+
+.inline-counter-settings .dialog-actions {
+  position: static;
+  margin: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
 }
 
 .counter-settings-list,
