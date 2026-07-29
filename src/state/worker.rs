@@ -204,10 +204,9 @@ where
         .name("vosu-regular-reader".into())
         .spawn(move || {
             while !regular_clock.is_cancelled() {
-                let permit = match permit_rx.recv_timeout(Duration::from_millis(20)) {
+                let permit = match permit_rx.recv() {
                     Ok(value) => value,
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(std::sync::mpsc::RecvError) => break,
                 };
                 let mut request = match permit {
                     RegularPermit::Initial(request) => request,

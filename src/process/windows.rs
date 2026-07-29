@@ -4,14 +4,14 @@ use std::{
     ffi::{CStr, c_void},
     fmt,
     mem::{offset_of, size_of},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use windows_sys::{
     Wdk::System::SystemInformation::{NtQuerySystemInformation, SystemProcessInformation},
     Win32::{
         Foundation::{
-            CloseHandle, ERROR_NO_MORE_FILES, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+            CloseHandle, ERROR_NO_MORE_FILES, FILETIME, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
             STILL_ACTIVE,
         },
         System::{
@@ -23,8 +23,8 @@ use windows_sys::{
             },
             SystemInformation::{IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_I386},
             Threading::{
-                GetExitCodeProcess, IsWow64Process2, OpenProcess, PROCESS_QUERY_INFORMATION,
-                PROCESS_VM_READ,
+                GetExitCodeProcess, GetProcessTimes, IsWow64Process2, OpenProcess,
+                PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
             },
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
@@ -373,9 +373,39 @@ impl WindowsProcessMemory {
         }
     }
 
+    pub(crate) fn creation_time(&self) -> Result<u64, MemoryError> {
+        let mut creation = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut exit = creation;
+        let mut kernel = creation;
+        let mut user = creation;
+        // SAFETY: all output pointers refer to initialized local FILETIME values.
+        if unsafe {
+            GetProcessTimes(
+                self.handle.raw(),
+                &mut creation,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            )
+        } == 0
+        {
+            return Err(last_error("GetProcessTimes"));
+        }
+        Ok((u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime))
+    }
+
     pub fn command_line(&self) -> Result<String, MemoryError> {
+        self.command_line_for_bitness(self.bitness()?)
+    }
+
+    pub(crate) fn command_line_for_bitness(
+        &self,
+        bitness: ProcessBitness,
+    ) -> Result<String, MemoryError> {
         let ntdll = Ntdll::load()?;
-        let bitness = self.bitness()?;
         let descriptor = match bitness {
             ProcessBitness::X64 => {
                 let mut pbi: ProcessBasicInformation64 = unsafe { std::mem::zeroed() };
@@ -635,18 +665,28 @@ struct Ntdll {
 }
 
 impl Ntdll {
-    fn load() -> Result<Self, MemoryError> {
+    fn load() -> Result<&'static Self, MemoryError> {
+        static INSTANCE: OnceLock<Ntdll> = OnceLock::new();
+
+        if let Some(ntdll) = INSTANCE.get() {
+            return Ok(ntdll);
+        }
+
         const NTDLL: &[u16] = &[110, 116, 100, 108, 108, 46, 100, 108, 108, 0];
         // GetModuleHandle deliberately does not load a new library.
         let module = unsafe { GetModuleHandleW(NTDLL.as_ptr()) };
         if module.is_null() {
             return Err(last_error("GetModuleHandleW(ntdll.dll)"));
         }
-        Ok(Self {
+        let loaded = Self {
             query_process: resolve_required(module, c"NtQueryInformationProcess")?,
             query_timer: resolve_optional(module, c"NtQueryTimerResolution"),
             set_timer: resolve_optional(module, c"NtSetTimerResolution"),
-        })
+        };
+        let _ = INSTANCE.set(loaded);
+        Ok(INSTANCE
+            .get()
+            .expect("ntdll export cache initialized by this call"))
     }
 }
 

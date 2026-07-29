@@ -10,6 +10,8 @@ use std::path::Path;
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
+#[cfg(windows)]
+use std::sync::{Mutex, OnceLock};
 
 use crate::app::StartupArgs;
 use crate::model::enums::ClientType;
@@ -313,6 +315,20 @@ fn windows_instance_root(command_line: &str) -> PathBuf {
 }
 
 #[cfg(windows)]
+#[derive(Debug, Clone)]
+struct CachedWindowsMetadata {
+    creation_time: u64,
+    bitness: ProcessBitness,
+    command_line: String,
+}
+
+#[cfg(windows)]
+fn windows_metadata_cache() -> &'static Mutex<BTreeMap<Pid, CachedWindowsMetadata>> {
+    static CACHE: OnceLock<Mutex<BTreeMap<Pid, CachedWindowsMetadata>>> = OnceLock::new();
+    CACHE.get_or_init(Mutex::default)
+}
+
+#[cfg(windows)]
 #[derive(Debug, Default)]
 pub struct NativeProcessProvider;
 
@@ -356,22 +372,48 @@ impl ProcessProvider for NativeProcessProvider {
     }
 
     fn enumerate(&self) -> Result<Vec<ProcessDescriptor>, MemoryError> {
-        let mut result = Vec::new();
-        for process in
-            crate::process::windows::enumerate_processes_matching(is_windows_candidate_name)?
-        {
-            let Ok(bitness) = crate::process::process_bitness(process.pid) else {
+        let processes =
+            crate::process::windows::enumerate_processes_matching(is_windows_candidate_name)?;
+        let mut metadata = windows_metadata_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        metadata.retain(|pid, _| processes.iter().any(|process| process.pid == *pid));
+
+        let mut result = Vec::with_capacity(processes.len());
+        for process in processes {
+            let Ok(memory) = crate::process::WindowsProcessMemory::open(process.pid) else {
                 continue;
             };
-            let Ok(command_line) = crate::process::process_command_line(process.pid) else {
+            let Ok(creation_time) = memory.creation_time() else {
                 continue;
+            };
+            let cached = metadata
+                .get(&process.pid)
+                .filter(|cached| cached.creation_time == creation_time)
+                .cloned();
+            let process_metadata = if let Some(cached) = cached {
+                cached
+            } else {
+                let Ok(bitness) = memory.bitness() else {
+                    continue;
+                };
+                let Ok(command_line) = memory.command_line_for_bitness(bitness) else {
+                    continue;
+                };
+                let cached = CachedWindowsMetadata {
+                    creation_time,
+                    bitness,
+                    command_line,
+                };
+                metadata.insert(process.pid, cached.clone());
+                cached
             };
             result.push(ProcessDescriptor {
                 pid: process.pid,
                 name: process.executable.into(),
-                bitness,
-                arguments: StartupArgs::parse_command_line(&command_line),
-                root: windows_instance_root(&command_line),
+                bitness: process_metadata.bitness,
+                arguments: StartupArgs::parse_command_line(&process_metadata.command_line),
+                root: windows_instance_root(&process_metadata.command_line),
             });
         }
         Ok(result)
