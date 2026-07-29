@@ -189,7 +189,7 @@ fn page_boundary_keeps_reads_separate() {
 }
 
 #[test]
-fn scratch_limit_keeps_distant_reads_separate() {
+fn wide_same_page_reads_once_and_scatters() {
     let mut a = [0u8; 2];
     let mut b = [0u8; 2];
     let mut reads = [
@@ -199,21 +199,13 @@ fn scratch_limit_keeps_distant_reads_separate() {
     let mut calls = 0;
     read_many_impl(&mut reads, |address, dst| {
         calls += 1;
-        match calls {
-            1 => {
-                assert_eq!((address, dst.len()), (0x1000, 2));
-                dst.copy_from_slice(&[1, 2]);
-            }
-            2 => {
-                assert_eq!((address, dst.len()), (0x1400, 2));
-                dst.copy_from_slice(&[3, 4]);
-            }
-            _ => panic!("unexpected backend call"),
-        }
+        assert_eq!((address, dst.len()), (0x1000, 0x402));
+        dst[..2].copy_from_slice(&[1, 2]);
+        dst[0x400..].copy_from_slice(&[3, 4]);
         (true, dst.len())
     })
     .unwrap();
-    assert_eq!(calls, 2);
+    assert_eq!(calls, 1);
     assert_eq!(a, [1, 2]);
     assert_eq!(b, [3, 4]);
 }
