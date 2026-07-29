@@ -23,6 +23,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Linux native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang libbpf-dev libelf-dev
+          echo "C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu" >> "$GITHUB_ENV"
+
       - name: Validate release tag and package version
         run: python scripts/package-release.py validate-tag --tag "$RELEASE_TAG"
 
