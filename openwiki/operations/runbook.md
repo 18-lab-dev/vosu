@@ -11,7 +11,7 @@ tags: [operations, runbook, security, release, troubleshooting]
 ## Launch checklist
 
 - Use Rust 1.96.1 and `--locked` for source builds.
-- Run `cargo run --locked --no-default-features` for local development.
+- Run `cargo run --locked` for local development (use `--no-default-features` only for a polling-only Linux build).
 - Run the daemon as the same desktop user as osu!.
 - Confirm `127.0.0.1:24050` is reachable before investigating API readiness.
 - Check that the client process is supported and that stable/lazer path and offset resolution can complete.
@@ -36,6 +36,8 @@ Startup precedence is `vosu.toml > vosu.env > tosu.env > defaults`. The two `.en
 The dashboard’s installed cards persist pin state in browser local storage, keep pinned cards first, and support drag reordering. Shift-click a counter URL to open it in a new window, or press `/` outside an editable control to focus search. If catalog retrieval fails, the Available page can show an error while retaining the locally discovered installed count.
 
 ## Platform access
+
+Linux builds require a GNU C toolchain, Clang, pkg-config, and libelf/zlib development files (`README.md`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`). The default `linux-process-events` feature uses `libbpf-cargo` to compile an eBPF program at build time via `build.rs`. CI installs these with `sudo apt-get install --yes clang libbpf-dev libelf-dev`.
 
 Linux stable uses Wine process discovery and native reads; lazer requires an exposed `osu!.deps.json` layout. `VOSU_OSU_PATH` can override path discovery. If ptrace policy blocks same-user reads, use the distribution-appropriate configuration or narrowly grant `cap_sys_ptrace`; do not run the dashboard as root. Windows requires supported native process combinations and MSVC-built releases.
 

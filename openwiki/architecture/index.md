@@ -1,11 +1,5 @@
----
-type: Documentation Index
-title: "Architecture"
-description: "Current structure, source ownership, runtime boundaries, and performance investigations."
----
-
 # Files
 
-- [vosu runtime architecture overview](overview.md) - Source-grounded overview of vosu’s single-daemon composition root, process discovery, native memory boundary, regular and precise sampling, atomic snapshots, calculations, and HTTP/WebSocket publication.
+- [vosu runtime architecture overview](overview.md) - Maintainer map of vosu’s runtime boundaries, process discovery, native memory access, state reduction, atomic publication, calculation contracts, configuration, files, updates, and failure behavior.
+- [Performance and memory audit](performance-audit.md) - Evidence-based performance and memory opportunities, invariants, validation experiments, and designs to preserve.
 - [vosu source map](source-map.md) - Practical ownership map for navigating the vosu Rust workspace, tests, documentation, assets, and compatibility tooling.
-- [vosu performance audit](performance-audit.md) - Prioritized CPU, allocation, and retained-memory opportunities with evidence and validation plans.

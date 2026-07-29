@@ -41,7 +41,8 @@ The product boundary is the single `vosu` process. osu! is an observed external 
 
 ## Containers and ownership
 
-```mermaid
+<!-- openwiki: mermaid parse failed and this diagram was converted to a text fence so it does not break rendering. Fix the diagram source and restore the mermaid fence. Parser error: Heuristic: an unescaped angle bracket inside a label breaks rendering; rephrase the label. -->
+```text
 flowchart TB
     Entry[src/main.rs] --> Runtime[src/runtime/lifecycle.rs<br/>ProductionRuntime]
     Runtime --> Config[src/config<br/>ConfigStore]
@@ -66,7 +67,7 @@ flowchart TB
 | Concern | Primary ownership | Main entry points |
 |---|---|---|
 | Startup and process-wide lifecycle | `src/app.rs`, `src/runtime/lifecycle.rs` | `App::run`, `run_cli`, `ProductionRuntime::compose` |
-| Client discovery, generations, focus | `src/instance.rs`, `src/instance/discovery.rs` | `InstanceRuntime`, `InstanceManager`, `classify_candidates` |
+| Client discovery, generations, focus | `src/instance.rs`, `src/instance/discovery.rs`, `src/instance/events.rs` | `InstanceRuntime`, `InstanceManager`, `classify_candidates`, `LinuxProcessEvents` |
 | Native process access | `src/process.rs`, `src/process/linux.rs`, `src/process/windows.rs` | `ProcessMemory`, `ProcessHandle`, platform backends |
 | Signature/offset scanning | `src/process/scanner.rs`, `src/memory/stable/signatures.rs`, `src/memory/lazer_{loader,offsets,version}.rs` | `Pattern`, `StablePatterns`, `LazerOffsetLoader` |
 | Raw client decoding | `src/memory/stable/*`, `src/memory/lazer/*`, `src/memory/snapshot/*` | `MemoryReader`, `StableMemory`, `LazerMemory`, raw snapshots |
@@ -112,6 +113,8 @@ sequenceDiagram
 
 `InstanceRuntime` repeatedly asks `NativeProcessProvider` for candidates. `src/instance/discovery.rs::classify_candidates` performs platform-specific classification; Linux uses a named first pass before its broader lazer fallback. `InstanceManager` validates and opens candidates, assigns a monotonically increasing generation, removes dead processes, and deterministically selects tournament manager first or otherwise the lowest matching PID. A reused PID therefore becomes a new generation rather than mutating an existing worker.
 
+When compiled with the default `linux-process-events` feature on Linux, `src/instance/events.rs::LinuxProcessEvents` supplements polling-based discovery with kernel process-event notifications. `VOSU_PROCESS_EVENTS` selects `auto` (default), `ebpf`, `cn-proc`, or `poll`; auto tries eBPF, falls back to CN_PROC, then polling. The eBPF backend (`src/instance/events/ebpf.rs`) uses a BPF ring buffer and requires `CAP_BPF`, `CAP_PERFMON`, and `CAP_SYS_RESOURCE`; the CN_PROC backend (`src/instance/events/cn_proc.rs`) uses netlink connector messages and requires no extra file capability. `sudo vosu --setup` probes and persists the available capability set.
+
 `src/process.rs::ProcessMemory` is the object-safe syscall boundary. Platform backends own native handles and must either fill every requested destination or return an error. `ProcessHandle` adds pointer-width-aware primitive, managed collection, batch, liveness, and module operations above that boundary. Stable signature discovery and lazer offset resolution stay outside the OS backend. Each lazer generation starts at most one lifecycle-owned offset resolver and is not eligible for a state worker until immutable offsets are installed; stable generations are ready immediately (`Instance::start_lazer_resolver`, `ProductionStateSupervisor::run_state_supervisor`).
 
 `src/memory.rs::MemoryReader` is the client-decoding boundary. Stable and lazer implementations translate client-specific pointers and sentinels into typed raw snapshots and `ReadStatus`. Regular and precise reader instances are independent because their blocking capture threads cannot share mutable pointer caches. `ReaderSynchronization` copies only the small address state needed by lazer precise capture; stable leaves it empty.
@@ -154,6 +157,7 @@ Beatmap parsing, timing/events, object graphs, and cache ownership are under `sr
 - The workspace builds one `vosu` binary and the internal `vosu-lazer-pp` calculation crate; `vosu-test-harness` is test support, not a production process (`Cargo.toml`).
 - Windows supports stable and lazer discovery/memory access. Linux supports native lazer and stable through Wine. For Wine installs, `src/process/linux.rs::resolve_osu_path` resolves the game root from `VOSU_OSU_PATH`, `${XDG_DATA_HOME:-$HOME/.local/share}/osuconfig/osupath`, or the target command line. The formal `tools/live-parity/live_parity.py::SUPPORTED_MATRIX` currently lists Linux/lazer but not Linux/stable; that tooling matrix is narrower than runtime support.
 - Native backends are selected with `cfg(windows)` and `cfg(target_os = "linux")`; there is no generic production process provider for other operating systems.
+- The default `linux-process-events` feature enables the eBPF/CN_PROC process-event backends on Linux; without it, discovery uses polling only. Production Linux releases build with `--no-default-features --features linux-process-events` (`README.md`, `.github/workflows/release.yml`).
 - Release builds use thin LTO, one codegen unit, stripped symbols, and abort-on-panic (`Cargo.toml`). Panic therefore terminates the daemon rather than unwinding production resources.
 
 ## Concurrency and failure behavior

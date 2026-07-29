@@ -1,9 +1,3 @@
----
-type: Documentation Index
-title: "Workflows"
-description: "Files and subdirectories in Workflows."
----
-
 # Files
 
 - [vosu compatibility and calculation workflows](compatibility-and-calculation.md) - Guide to preserving vosu’s HTTP/WebSocket schemas, precise state, selected-field subscriptions, live calculation, legacy calculation, and parity evidence.

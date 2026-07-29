@@ -26,11 +26,11 @@ The repository’s detailed source documentation remains authoritative: [README.
 Use the pinned toolchain and lockfile:
 
 ```sh
-cargo build --locked --no-default-features
-cargo run --locked --no-default-features
+cargo build --locked
+cargo run --locked
 ```
 
-The default listener is `127.0.0.1:24050`; the dashboard is `/`. Production builds use `--release --locked --no-default-features` for the native Linux or Windows target. No Node.js, Electron, .NET, or C# runtime is required because dashboard assets and offsets are vendored build inputs (`README.md`, `Cargo.toml`).
+The default listener is `127.0.0.1:24050`; the dashboard is `/`. On Linux, default builds include the `linux-process-events` feature, which requires Clang, libelf, and zlib development files; pass `--no-default-features` only for a polling-only binary. Production Linux releases build with `--release --locked --no-default-features --features linux-process-events`; Windows releases use `--release --locked --no-default-features` (`README.md`, `.github/workflows/release.yml`). No Node.js, Electron, .NET, or C# runtime is required for daemon builds because dashboard assets and offsets are vendored build inputs (`README.md`, `Cargo.toml`).
 
 ## Recent direction
 
