@@ -3,7 +3,7 @@
 use std::{
     ffi::{CStr, c_void},
     fmt,
-    mem::{MaybeUninit, offset_of, size_of},
+    mem::{offset_of, size_of},
     sync::Arc,
 };
 
@@ -133,13 +133,7 @@ fn enumerate_processes_with_buffer(
     loop {
         let buffer_size = u32::try_from(byte_capacity)
             .map_err(|_| backend("NtQuerySystemInformation", "process list exceeds 4 GiB"))?;
-        let word_capacity = byte_capacity.div_ceil(size_of::<usize>());
-        let mut storage = Vec::<MaybeUninit<usize>>::with_capacity(word_capacity);
-        // SAFETY: MaybeUninit values require no initialization; the system call writes the
-        // returned byte range before it is read.
-        unsafe {
-            storage.set_len(word_capacity);
-        }
+        let mut storage = vec![0usize; byte_capacity.div_ceil(size_of::<usize>())];
         let mut returned = 0u32;
         // SAFETY: storage is writable for buffer_size bytes and returned is a valid output.
         let status = unsafe {
@@ -168,8 +162,7 @@ fn enumerate_processes_with_buffer(
                 "invalid process list length",
             ));
         }
-        // SAFETY: a successful call initialized the returned byte range, and byte_len was
-        // validated against the allocation above.
+        // SAFETY: storage remains alive and initialized; byte_len was validated above.
         let bytes = unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), byte_len) };
         return decode_system_processes_matching(bytes, &mut predicate);
     }
