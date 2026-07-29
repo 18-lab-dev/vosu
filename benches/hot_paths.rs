@@ -705,6 +705,29 @@ fn bench_windows_process_memory(c: &mut Criterion) {
         });
     });
 
+    group.bench_function("read_many_wide_8x8_bytes", |b| {
+        b.iter(|| {
+            let mut destinations = [[0_u8; 8]; 8];
+            {
+                let [first, second, third, fourth, fifth, sixth, seventh, eighth] =
+                    &mut destinations;
+                let mut requests = [
+                    ReadRequest::new(black_box(address + 256), black_box(first)),
+                    ReadRequest::new(black_box(address + 736), black_box(second)),
+                    ReadRequest::new(black_box(address + 1_216), black_box(third)),
+                    ReadRequest::new(black_box(address + 1_696), black_box(fourth)),
+                    ReadRequest::new(black_box(address + 2_176), black_box(fifth)),
+                    ReadRequest::new(black_box(address + 2_656), black_box(sixth)),
+                    ReadRequest::new(black_box(address + 3_136), black_box(seventh)),
+                    ReadRequest::new(black_box(address + 3_616), black_box(eighth)),
+                ];
+                black_box(memory.read_many(black_box(&mut requests)))
+                    .expect("read benchmark process");
+            }
+            black_box(destinations)
+        });
+    });
+
     group.finish();
     black_box(backing);
 }
