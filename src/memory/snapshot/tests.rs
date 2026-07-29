@@ -189,6 +189,7 @@ fn precise_acceptance_requires_exact_base_and_new_sequence() {
             release: Vec::new(),
         },
         release_corrections: Vec::new(),
+        stable_replay_frames: None,
     })))
     .publish();
 
@@ -252,6 +253,7 @@ fn suffix_cannot_contain_more_hits_than_consumed_source_positions() {
             release: Vec::new(),
         },
         release_corrections: Vec::new(),
+        stable_replay_frames: None,
     })))
     .publish();
     assert_eq!(

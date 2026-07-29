@@ -101,6 +101,9 @@ fn put_u32(bytes: &mut [u8], address: usize, value: u32) {
 fn put_i32(bytes: &mut [u8], address: usize, value: i32) {
     bytes[address..address + 4].copy_from_slice(&value.to_le_bytes())
 }
+fn put_f32(bytes: &mut [u8], address: usize, value: f32) {
+    bytes[address..address + 4].copy_from_slice(&value.to_le_bytes())
+}
 fn put_string(bytes: &mut [u8], address: usize, value: &str) {
     put_i32(bytes, address + 4, value.encode_utf16().count() as i32);
     for (index, unit) in value.encode_utf16().enumerate() {
@@ -255,6 +258,93 @@ fn stable_hit_errors_are_appended_to_all_and_press() {
     assert_eq!(suffix.errors.press, [-4.0, 7.0]);
     assert!(suffix.errors.release.is_empty());
     assert!(suffix.release_corrections.is_empty());
+}
+
+#[test]
+fn stable_mania_replay_frames_remain_cached_until_hit_errors_are_acknowledged() {
+    let mut bytes = vec![0; 0x4000];
+    let ruleset_anchor = 0x1200usize;
+    let ruleset = 0x1300usize;
+    let gameplay = 0x1400usize;
+    let score = 0x1500usize;
+    let error_list = 0x1600usize;
+    let error_items = 0x1700usize;
+    let replay_list = 0x1800usize;
+    let replay_items = 0x1900usize;
+    let frames = [0x1a00usize, 0x1b00, 0x1c00];
+    put_u32(&mut bytes, 0x900 - 0xb, ruleset_anchor as u32);
+    put_u32(&mut bytes, ruleset_anchor + 4, ruleset as u32);
+    put_u32(&mut bytes, ruleset + 0x64, gameplay as u32);
+    put_u32(&mut bytes, gameplay + 0x38, score as u32);
+    put_u32(&mut bytes, score + 0x38, error_list as u32);
+    put_u32(&mut bytes, error_list + 4, error_items as u32);
+    put_i32(&mut bytes, error_list + 0xc, 1);
+    put_i32(&mut bytes, error_items + LEADER_START, 3);
+    put_u32(&mut bytes, score + 0x34, replay_list as u32);
+    put_u32(&mut bytes, replay_list + 4, replay_items as u32);
+    put_i32(&mut bytes, replay_list + 0xc, frames.len() as i32);
+    for (index, frame) in frames.into_iter().enumerate() {
+        put_u32(
+            &mut bytes,
+            replay_items + LEADER_START + 4 * index,
+            frame as u32,
+        );
+    }
+    for (frame, keys, y, time) in [
+        (frames[0], 256.0, -500.0, -12_345),
+        (frames[1], 1.0, 0.0, 103),
+        (frames[2], 0.0, 0.0, 110),
+    ] {
+        put_f32(&mut bytes, frame + 4, keys);
+        put_f32(&mut bytes, frame + 8, y);
+        put_i32(&mut bytes, frame + 0x10, time);
+    }
+    let mut reader = StableMemory::new(handle(0, bytes), fixture_patterns());
+    reader.synchronize_precise(ReaderSynchronization::default(), 3);
+
+    let ReadStatus::Ready(first) = reader.hit_errors(0).unwrap() else {
+        panic!("stable mania hit errors ready");
+    };
+    let batch = first.stable_replay_frames.unwrap();
+    assert_eq!(batch.start_index, 0);
+    assert_eq!(batch.index, 3);
+    assert_eq!(
+        batch.frames,
+        [
+            StableReplayFrame {
+                time: -12_345,
+                keys: 256,
+                y: -500.0,
+            },
+            StableReplayFrame {
+                time: 103,
+                keys: 1,
+                y: 0.0,
+            },
+            StableReplayFrame {
+                time: 110,
+                keys: 0,
+                y: 0.0,
+            },
+        ]
+    );
+
+    let ReadStatus::Ready(unacknowledged) = reader.hit_errors(0).unwrap() else {
+        panic!("unacknowledged stable mania hit errors ready");
+    };
+    assert_eq!(unacknowledged.stable_replay_frames.unwrap(), batch);
+
+    let ReadStatus::Ready(acknowledged) = reader.hit_errors(1).unwrap() else {
+        panic!("acknowledged stable mania hit errors ready");
+    };
+    assert_eq!(
+        acknowledged.stable_replay_frames.unwrap(),
+        StableReplayFrameBatch {
+            start_index: 3,
+            index: 3,
+            frames: Vec::new(),
+        }
+    );
 }
 
 #[test]

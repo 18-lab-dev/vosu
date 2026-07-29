@@ -358,6 +358,13 @@ impl ParsedBeatmap {
     pub const fn clock_rate(&self) -> f64 {
         self.clock_rate
     }
+    // Standard-to-mania lane conversion is stable-version-specific. Keep
+    // converted maps press-only instead of guessing release assignments.
+    pub(crate) fn mania_judgement_events(&self) -> Option<Vec<ManiaJudgementEvent>> {
+        (self.original_mode == Ruleset::Mania)
+            .then(|| source_mania_judgement_events(&self.source))
+            .flatten()
+    }
 
     pub fn event_status(&self, time: f64, clock_rate: f64) -> EventStatus {
         let upper = self

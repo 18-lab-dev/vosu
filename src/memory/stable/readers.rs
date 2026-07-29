@@ -1,4 +1,5 @@
 const MAX_KEY_OVERLAY_BUTTONS: usize = 18;
+const MAX_REPLAY_FRAMES: i64 = 500_000;
 
 use super::*;
 
@@ -13,6 +14,110 @@ impl SynchronizedMemoryReader for StableMemory {
         self.ruleset_container = 0;
         self.status_container = 0;
         self.play_time_container = 0;
+    }
+
+    fn synchronize_precise(&mut self, _state: ReaderSynchronization, mode: i64) {
+        self.gameplay_mode = mode;
+    }
+}
+
+impl StableMemory {
+    fn reset_replay_frames(&mut self, score: usize, error_index: i64) {
+        self.replay_score = score;
+        self.replay_error_index = error_index;
+        self.replay_frame_index = 0;
+        self.replay_cache_start = 0;
+        self.replay_frames.clear();
+    }
+
+    fn replay_frame_batch(
+        &mut self,
+        score: usize,
+        acknowledged_error_index: i64,
+    ) -> Result<Option<StableReplayFrameBatch>, MemoryError> {
+        if self.gameplay_mode != 3 {
+            return Ok(None);
+        }
+        if self.replay_score != score || acknowledged_error_index < self.replay_error_index {
+            self.reset_replay_frames(score, acknowledged_error_index);
+        } else if acknowledged_error_index > self.replay_error_index {
+            self.replay_error_index = acknowledged_error_index;
+            self.replay_cache_start = self.replay_frame_index;
+            self.replay_frames.clear();
+        }
+
+        let list = self.ptr(self.add(score, 0x34)?)?;
+        if list == 0 {
+            return Ok(None);
+        }
+        let items = self.ptr(self.add(list, 4)?)?;
+        let size = self.process.read_i32(self.add(list, 0xc)?)?.max(0) as i64;
+        if size > MAX_REPLAY_FRAMES {
+            return Err(MemoryError::Corrupt {
+                context: "stable replay frames",
+                address: list,
+                message: "invalid frame count",
+            });
+        }
+        if size < self.replay_frame_index {
+            self.reset_replay_frames(score, acknowledged_error_index);
+        }
+
+        let count = (size - self.replay_frame_index).max(0) as usize;
+        if count > 0 {
+            let pointer_address = self.add(
+                items,
+                LEADER_START + 4 * self.replay_frame_index.max(0) as usize,
+            )?;
+            let mut pointer_bytes = vec![0; count * 4];
+            self.process
+                .read_exact(pointer_address, &mut pointer_bytes)?;
+            let mut frame_bytes = vec![[0; 16]; count];
+            let addresses = pointer_bytes
+                .chunks_exact(4)
+                .map(|bytes| {
+                    let frame = u32::from_le_bytes(bytes.try_into().unwrap()) as usize;
+                    self.add(frame, 4)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut requests = addresses
+                .iter()
+                .copied()
+                .zip(frame_bytes.iter_mut())
+                .map(|(address, bytes)| ReadRequest::new(address, bytes))
+                .collect::<Vec<_>>();
+            self.process.read_many(&mut requests)?;
+
+            let mut frames = Vec::with_capacity(count);
+            for bytes in frame_bytes {
+                let keys = f32::from_le_bytes(bytes[..4].try_into().unwrap());
+                let y = f32::from_le_bytes(bytes[4..8].try_into().unwrap());
+                if !keys.is_finite()
+                    || keys.fract() != 0.0
+                    || !(0.0..=262_143.0).contains(&keys)
+                    || !y.is_finite()
+                {
+                    return Err(MemoryError::Corrupt {
+                        context: "stable replay frames",
+                        address: list,
+                        message: "invalid mania replay frame",
+                    });
+                }
+                frames.push(StableReplayFrame {
+                    time: i32::from_le_bytes(bytes[12..].try_into().unwrap()) as i64,
+                    keys: keys as u32,
+                    y,
+                });
+            }
+            self.replay_frames.extend(frames);
+            self.replay_frame_index = size;
+        }
+
+        Ok(Some(StableReplayFrameBatch {
+            start_index: self.replay_cache_start,
+            index: self.replay_frame_index,
+            frames: self.replay_frames.clone(),
+        }))
     }
 }
 
@@ -300,10 +405,12 @@ impl MemoryReader for StableMemory {
             errors.press.push(value);
             index += 1
         }
+        let stable_replay_frames = self.replay_frame_batch(s, last.max(0))?;
         Ok(ReadStatus::Ready(HitErrors {
             index,
             errors,
             release_corrections: Vec::new(),
+            stable_replay_frames,
         }))
     }
     fn global(&mut self) -> MemoryRead<Global> {

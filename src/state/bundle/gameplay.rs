@@ -1,4 +1,308 @@
+use std::collections::{HashMap, VecDeque, hash_map::Entry};
+
 use super::*;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct StableReplayTransition {
+    time: i64,
+    lane: u8,
+    kind: ManiaJudgementKind,
+}
+
+type StableJudgementOrder = (i64, usize, u8);
+type StableJudgementMatch = (usize, usize, ManiaJudgementKind, StableJudgementOrder);
+
+const STABLE_MANIA_METADATA_MAX_FAILURES: u64 = 10;
+const STABLE_MANIA_METADATA_MAX_WAIT: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum StableManiaMetadata {
+    Pending,
+    Ready(Vec<ManiaJudgementEvent>),
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+enum StableManiaMetadataState {
+    #[default]
+    Uninitialized,
+    Pending {
+        target_checksum: Option<String>,
+        started_at: Instant,
+        failure_baseline: u64,
+    },
+    Ready {
+        target_checksum: Option<String>,
+    },
+    Unavailable {
+        target_checksum: Option<String>,
+    },
+}
+
+impl StableManiaMetadataState {
+    fn target_checksum(&self) -> Option<Option<&str>> {
+        match self {
+            Self::Uninitialized => None,
+            Self::Pending {
+                target_checksum, ..
+            }
+            | Self::Ready { target_checksum }
+            | Self::Unavailable { target_checksum } => Some(target_checksum.as_deref()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(super) struct StableManiaHitErrorState {
+    metadata: StableManiaMetadataState,
+    events: Vec<ManiaJudgementEvent>,
+    used_events: Vec<bool>,
+    transition_indexes: HashMap<StableReplayTransition, usize>,
+    used_transitions: Vec<bool>,
+    pending: VecDeque<f64>,
+    replay_frame_index: i64,
+    last_keys: u32,
+    last_order: Option<StableJudgementOrder>,
+}
+
+impl StableManiaHitErrorState {
+    pub(super) fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    pub(super) fn needs_metadata(&self, target_checksum: Option<&str>) -> bool {
+        match &self.metadata {
+            StableManiaMetadataState::Uninitialized | StableManiaMetadataState::Pending { .. } => {
+                true
+            }
+            StableManiaMetadataState::Ready {
+                target_checksum: current,
+            }
+            | StableManiaMetadataState::Unavailable {
+                target_checksum: current,
+            } => current.as_deref() != target_checksum,
+        }
+    }
+
+    fn apply_frames(&mut self, batch: &StableReplayFrameBatch) -> bool {
+        let Some(expected_len) = batch.index.checked_sub(batch.start_index) else {
+            return false;
+        };
+        if batch.start_index < 0
+            || expected_len < 0
+            || expected_len as usize != batch.frames.len()
+            || batch.index < self.replay_frame_index
+            || batch.start_index > self.replay_frame_index
+        {
+            return false;
+        }
+        let Some(offset) = self
+            .replay_frame_index
+            .checked_sub(batch.start_index)
+            .map(|value| value as usize)
+            .filter(|offset| *offset <= batch.frames.len())
+        else {
+            return false;
+        };
+        for frame in &batch.frames[offset..] {
+            if frame.y == -500.0 {
+                continue;
+            }
+            let keys = frame.keys & ((1 << 18) - 1);
+            let changed = self.last_keys ^ keys;
+            for lane in 0..18 {
+                let mask = 1 << lane;
+                if changed & mask == 0 {
+                    continue;
+                }
+                let transition = StableReplayTransition {
+                    time: frame.time,
+                    lane,
+                    kind: if keys & mask == 0 {
+                        ManiaJudgementKind::Release
+                    } else {
+                        ManiaJudgementKind::Press
+                    },
+                };
+                if let Entry::Vacant(entry) = self.transition_indexes.entry(transition) {
+                    entry.insert(self.used_transitions.len());
+                    self.used_transitions.push(false);
+                }
+            }
+            self.last_keys = keys;
+        }
+        self.replay_frame_index = batch.index;
+        true
+    }
+
+    fn prepare_target(
+        &mut self,
+        target_checksum: Option<&str>,
+        calculation_failures: u64,
+        now: Instant,
+    ) {
+        if self.metadata.target_checksum() == Some(target_checksum) {
+            return;
+        }
+        let target_checksum = target_checksum.map(str::to_owned);
+        let can_rebind = matches!(
+            &self.metadata,
+            StableManiaMetadataState::Uninitialized | StableManiaMetadataState::Pending { .. }
+        ) || matches!(&self.metadata, StableManiaMetadataState::Ready { .. })
+            && self.last_order.is_none();
+        if can_rebind {
+            self.events.clear();
+            self.used_events.clear();
+            self.last_order = None;
+            self.metadata = StableManiaMetadataState::Pending {
+                target_checksum,
+                started_at: now,
+                failure_baseline: calculation_failures,
+            };
+        } else {
+            self.events.clear();
+            self.used_events.clear();
+            self.metadata = StableManiaMetadataState::Unavailable { target_checksum };
+        }
+    }
+
+    fn disable(&mut self) {
+        let target_checksum = self.metadata.target_checksum().flatten().map(str::to_owned);
+        self.metadata = StableManiaMetadataState::Unavailable { target_checksum };
+    }
+
+    fn observe_metadata(
+        &mut self,
+        observation: StableManiaMetadata,
+        calculation_failures: u64,
+        now: Instant,
+    ) {
+        if matches!(
+            &self.metadata,
+            StableManiaMetadataState::Ready { .. } | StableManiaMetadataState::Unavailable { .. }
+        ) {
+            return;
+        }
+        match observation {
+            StableManiaMetadata::Ready(events) => {
+                let target_checksum = self.metadata.target_checksum().flatten().map(str::to_owned);
+                self.used_events = vec![false; events.len()];
+                self.events = events;
+                self.metadata = StableManiaMetadataState::Ready { target_checksum };
+            }
+            StableManiaMetadata::Unavailable => self.disable(),
+            StableManiaMetadata::Pending => {
+                let exhausted = match &self.metadata {
+                    StableManiaMetadataState::Pending {
+                        started_at,
+                        failure_baseline,
+                        ..
+                    } => {
+                        now.saturating_duration_since(*started_at) >= STABLE_MANIA_METADATA_MAX_WAIT
+                            || calculation_failures.saturating_sub(*failure_baseline)
+                                > STABLE_MANIA_METADATA_MAX_FAILURES
+                    }
+                    StableManiaMetadataState::Uninitialized
+                    | StableManiaMetadataState::Ready { .. }
+                    | StableManiaMetadataState::Unavailable { .. } => false,
+                };
+                if exhausted {
+                    self.disable();
+                }
+            }
+        }
+    }
+
+    fn next_judgement(&self, value: f64) -> Result<Option<StableJudgementMatch>, ()> {
+        if !value.is_finite() || value.fract() != 0.0 {
+            return Err(());
+        }
+        let error = value as i64;
+        let mut best = None;
+        for (event_index, event) in self.events.iter().enumerate() {
+            if self.used_events[event_index] {
+                continue;
+            }
+            let Some(time) = event.target.checked_add(error) else {
+                continue;
+            };
+            let transition = StableReplayTransition {
+                time,
+                lane: event.lane,
+                kind: event.kind,
+            };
+            let Some(&transition_index) = self.transition_indexes.get(&transition) else {
+                continue;
+            };
+            if self.used_transitions[transition_index] {
+                continue;
+            }
+            let order = (
+                time,
+                event.object_index,
+                u8::from(event.kind == ManiaJudgementKind::Release),
+            );
+            if self.last_order.is_some_and(|last| order < last)
+                || best
+                    .as_ref()
+                    .is_some_and(|(_, _, _, best_order)| order >= *best_order)
+            {
+                continue;
+            }
+            best = Some((event_index, transition_index, event.kind, order));
+        }
+        Ok(best)
+    }
+
+    pub(super) fn partition(
+        &mut self,
+        values: &[f64],
+        batch: &StableReplayFrameBatch,
+        target_checksum: Option<&str>,
+        calculation_failures: u64,
+        metadata: Option<StableManiaMetadata>,
+        now: Instant,
+    ) -> (Vec<f64>, Vec<f64>) {
+        self.prepare_target(target_checksum, calculation_failures, now);
+        if !self.apply_frames(batch) {
+            self.disable();
+        }
+        self.pending.extend(values.iter().copied());
+        if let Some(metadata) = metadata {
+            self.observe_metadata(metadata, calculation_failures, now);
+        }
+
+        let mut press = Vec::new();
+        let mut release = Vec::new();
+        if matches!(&self.metadata, StableManiaMetadataState::Unavailable { .. }) {
+            press.extend(self.pending.drain(..));
+            return (press, release);
+        }
+        if !matches!(&self.metadata, StableManiaMetadataState::Ready { .. }) {
+            return (press, release);
+        }
+        while let Some(&value) = self.pending.front() {
+            let judgement = match self.next_judgement(value) {
+                Ok(Some(judgement)) => judgement,
+                Ok(None) => break,
+                Err(()) => {
+                    self.disable();
+                    press.extend(self.pending.drain(..));
+                    break;
+                }
+            };
+            let (event_index, transition_index, kind, order) = judgement;
+            self.used_events[event_index] = true;
+            self.used_transitions[transition_index] = true;
+            self.last_order = Some(order);
+            self.pending.pop_front();
+            match kind {
+                ManiaJudgementKind::Press => press.push(value),
+                ManiaJudgementKind::Release => release.push(value),
+            }
+        }
+        (press, release)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GameplayState {
@@ -421,4 +725,264 @@ pub struct StateCalculationKey {
     pub checksum: String,
     pub mode: i64,
     pub mods_checksum: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::memory::StableReplayFrame;
+
+    #[test]
+    fn stable_mania_errors_wait_for_replay_transitions_and_partition_release_judgements() {
+        let events = vec![
+            ManiaJudgementEvent {
+                target: 100,
+                lane: 0,
+                object_index: 0,
+                kind: ManiaJudgementKind::Press,
+            },
+            ManiaJudgementEvent {
+                target: 200,
+                lane: 1,
+                object_index: 1,
+                kind: ManiaJudgementKind::Press,
+            },
+            ManiaJudgementEvent {
+                target: 400,
+                lane: 1,
+                object_index: 1,
+                kind: ManiaJudgementKind::Release,
+            },
+            ManiaJudgementEvent {
+                target: 250,
+                lane: 2,
+                object_index: 2,
+                kind: ManiaJudgementKind::Press,
+            },
+        ];
+        let frames = vec![
+            StableReplayFrame {
+                time: -12_345,
+                keys: 256,
+                y: -500.0,
+            },
+            StableReplayFrame {
+                time: 103,
+                keys: 1,
+                y: 0.0,
+            },
+            StableReplayFrame {
+                time: 110,
+                keys: 0,
+                y: 0.0,
+            },
+            StableReplayFrame {
+                time: 190,
+                keys: 2,
+                y: 0.0,
+            },
+            StableReplayFrame {
+                time: 350,
+                keys: 0,
+                y: 0.0,
+            },
+        ];
+        let mut state = StableManiaHitErrorState::default();
+        let now = Instant::now();
+
+        let first = state.partition(
+            &[3.0, -10.0, -50.0],
+            &StableReplayFrameBatch {
+                start_index: 0,
+                index: 4,
+                frames: frames[..4].to_vec(),
+            },
+            Some("map"),
+            0,
+            Some(StableManiaMetadata::Pending),
+            now,
+        );
+        assert_eq!(first, (Vec::new(), Vec::new()));
+
+        let second = state.partition(
+            &[],
+            &StableReplayFrameBatch {
+                start_index: 0,
+                index: 5,
+                frames,
+            },
+            Some("map"),
+            0,
+            Some(StableManiaMetadata::Ready(events)),
+            now + STABLE_MANIA_METADATA_MAX_WAIT,
+        );
+        assert_eq!(second, (vec![3.0, -10.0], vec![-50.0]));
+    }
+
+    #[test]
+    fn pending_metadata_falls_back_after_target_local_failure_limit() {
+        let mut state = StableManiaHitErrorState::default();
+        let now = Instant::now();
+        let batch = StableReplayFrameBatch {
+            start_index: 0,
+            index: 0,
+            frames: Vec::new(),
+        };
+
+        assert_eq!(
+            state.partition(
+                &[4.0],
+                &batch,
+                Some("map"),
+                100,
+                Some(StableManiaMetadata::Pending),
+                now,
+            ),
+            (Vec::new(), Vec::new())
+        );
+        for failures in 101..=110 {
+            assert_eq!(
+                state.partition(
+                    &[],
+                    &batch,
+                    Some("map"),
+                    failures,
+                    Some(StableManiaMetadata::Pending),
+                    now,
+                ),
+                (Vec::new(), Vec::new())
+            );
+        }
+        assert_eq!(
+            state.partition(
+                &[],
+                &batch,
+                Some("map"),
+                111,
+                Some(StableManiaMetadata::Pending),
+                now,
+            ),
+            (vec![4.0], Vec::new())
+        );
+    }
+
+    #[test]
+    fn pending_metadata_falls_back_at_deadline_and_stays_press_only() {
+        let mut state = StableManiaHitErrorState::default();
+        let now = Instant::now();
+        let batch = StableReplayFrameBatch {
+            start_index: 0,
+            index: 0,
+            frames: Vec::new(),
+        };
+
+        assert_eq!(
+            state.partition(
+                &[5.0],
+                &batch,
+                Some("map"),
+                0,
+                Some(StableManiaMetadata::Pending),
+                now,
+            ),
+            (Vec::new(), Vec::new())
+        );
+        assert_eq!(
+            state.partition(
+                &[],
+                &batch,
+                Some("map"),
+                0,
+                Some(StableManiaMetadata::Pending),
+                now + STABLE_MANIA_METADATA_MAX_WAIT - Duration::from_millis(1),
+            ),
+            (Vec::new(), Vec::new())
+        );
+        assert_eq!(
+            state.partition(
+                &[],
+                &batch,
+                Some("map"),
+                0,
+                Some(StableManiaMetadata::Pending),
+                now + STABLE_MANIA_METADATA_MAX_WAIT,
+            ),
+            (vec![5.0], Vec::new())
+        );
+        assert_eq!(
+            state.partition(
+                &[6.0],
+                &batch,
+                Some("map"),
+                0,
+                None,
+                now + STABLE_MANIA_METADATA_MAX_WAIT,
+            ),
+            (vec![6.0], Vec::new())
+        );
+    }
+
+    #[test]
+    fn provisional_target_rebind_preserves_pending_errors_and_replay_stream() {
+        let events = vec![
+            ManiaJudgementEvent {
+                target: 200,
+                lane: 1,
+                object_index: 0,
+                kind: ManiaJudgementKind::Press,
+            },
+            ManiaJudgementEvent {
+                target: 400,
+                lane: 1,
+                object_index: 0,
+                kind: ManiaJudgementKind::Release,
+            },
+        ];
+        let frames = vec![
+            StableReplayFrame {
+                time: 200,
+                keys: 2,
+                y: 0.0,
+            },
+            StableReplayFrame {
+                time: 390,
+                keys: 0,
+                y: 0.0,
+            },
+        ];
+        for provisional_target in [None, Some("old-map")] {
+            let mut state = StableManiaHitErrorState::default();
+            let now = Instant::now();
+            assert_eq!(
+                state.partition(
+                    &[-10.0],
+                    &StableReplayFrameBatch {
+                        start_index: 0,
+                        index: 2,
+                        frames: frames.clone(),
+                    },
+                    provisional_target,
+                    5,
+                    Some(StableManiaMetadata::Pending),
+                    now,
+                ),
+                (Vec::new(), Vec::new())
+            );
+            assert_eq!(
+                state.partition(
+                    &[],
+                    &StableReplayFrameBatch {
+                        start_index: 2,
+                        index: 2,
+                        frames: Vec::new(),
+                    },
+                    Some("current-map"),
+                    0,
+                    Some(StableManiaMetadata::Ready(events.clone())),
+                    now,
+                ),
+                (Vec::new(), vec![-10.0])
+            );
+        }
+    }
 }

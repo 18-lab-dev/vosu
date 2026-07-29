@@ -214,6 +214,7 @@ impl MemoryReader for LazerMemory {
                 index: 0,
                 errors: HitErrorArray::default(),
                 release_corrections: Vec::new(),
+                stable_replay_frames: None,
             }));
         }
         let p = required_non_null(
@@ -763,6 +764,7 @@ impl LazerMemory {
             index: index as i64,
             errors,
             release_corrections,
+            stable_replay_frames: None,
         })
     }
 }

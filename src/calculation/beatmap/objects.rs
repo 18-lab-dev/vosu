@@ -42,6 +42,19 @@ pub(super) struct SourceObjectTimes {
     pub(super) duration_end: f64,
     pub(super) first_start: f64,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ManiaJudgementKind {
+    Press,
+    Release,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ManiaJudgementEvent {
+    pub(crate) target: i64,
+    pub(crate) lane: u8,
+    pub(crate) object_index: usize,
+    pub(crate) kind: ManiaJudgementKind,
+}
 
 fn sample_info_valid(value: &str) -> bool {
     if value.is_empty() {
@@ -215,6 +228,52 @@ pub(super) fn parse_raw_hit_object(line: &str) -> Option<(RawLastObject, i64)> {
         return None;
     };
     Some((object, kind))
+}
+pub(super) fn source_mania_judgement_events(source: &str) -> Option<Vec<ManiaJudgementEvent>> {
+    let keys = section_integer_value(source, "Difficulty", "CircleSize")?;
+    if !(1..=18).contains(&keys) {
+        return None;
+    }
+    let keys = keys as usize;
+    let mut events = Vec::new();
+    let mut object_index = 0;
+    for (section, line) in SourceLineScanner::new(source) {
+        if section != "HitObjects" || line.is_empty() {
+            continue;
+        }
+        let x = line
+            .split(',')
+            .next()
+            .and_then(|value| parse_integer_prefix(js_trim(value), MAX_COORDINATE_VALUE))?;
+        let (object, _) = parse_raw_hit_object(line)?;
+        let lane = ((x.clamp(0, 511) as usize * keys) / 512).min(keys - 1) as u8;
+        let current_object_index = object_index;
+        object_index += 1;
+        match object {
+            RawLastObject::Instant { start } => events.push(ManiaJudgementEvent {
+                target: start as i64,
+                lane,
+                object_index: current_object_index,
+                kind: ManiaJudgementKind::Press,
+            }),
+            RawLastObject::Hold { start, end } => {
+                events.push(ManiaJudgementEvent {
+                    target: start as i64,
+                    lane,
+                    object_index: current_object_index,
+                    kind: ManiaJudgementKind::Press,
+                });
+                events.push(ManiaJudgementEvent {
+                    target: end as i64,
+                    lane,
+                    object_index: current_object_index,
+                    kind: ManiaJudgementKind::Release,
+                });
+            }
+            RawLastObject::Slider { .. } | RawLastObject::Spinner { .. } => return None,
+        }
+    }
+    (!events.is_empty()).then_some(events)
 }
 
 pub(super) fn source_visible_lengths(

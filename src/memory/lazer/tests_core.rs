@@ -597,6 +597,7 @@ fn loading_sentinels_and_display_score_boundaries_match_source() {
             index: 0,
             errors: HitErrorArray::default(),
             release_corrections: Vec::new(),
+            stable_replay_frames: None,
         })
     );
     assert_eq!(display_score(3, 765_432.0, 100), 765_432.0);

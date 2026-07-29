@@ -12,6 +12,7 @@ fn source_section_bit(section: &str) -> u8 {
     match section {
         "General" => 1 << 0,
         "Metadata" => 1 << 1,
+        "Difficulty" => 1 << 5,
         "Events" => 1 << 2,
         "TimingPoints" => 1 << 3,
         "HitObjects" => 1 << 4,

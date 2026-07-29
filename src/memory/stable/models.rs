@@ -15,6 +15,11 @@ pub struct StableMemory {
     pub(super) play_time_container: usize,
     pub show_mp_commands: bool,
     pub read_mania_scroll_speed: bool,
+    pub(super) replay_score: usize,
+    pub(super) replay_error_index: i64,
+    pub(super) replay_frame_index: i64,
+    pub(super) replay_cache_start: i64,
+    pub(super) replay_frames: Vec<StableReplayFrame>,
 }
 
 impl StableMemory {
@@ -34,6 +39,11 @@ impl StableMemory {
             play_time_container: 0,
             show_mp_commands: false,
             read_mania_scroll_speed: true,
+            replay_score: 0,
+            replay_error_index: 0,
+            replay_frame_index: 0,
+            replay_cache_start: 0,
+            replay_frames: Vec::new(),
         }
     }
     pub fn resolve(process: ProcessHandle) -> MemoryRead<Self> {

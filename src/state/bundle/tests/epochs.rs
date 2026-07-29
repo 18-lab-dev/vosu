@@ -1,4 +1,64 @@
 use super::*;
+use crate::calculation::beatmap::{
+    BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
+    Ruleset, ScoringMode,
+};
+use crate::model::memory::{StableReplayFrame, StableReplayFrameBatch};
+use md5::{Digest, Md5};
+use std::fmt::Write as _;
+
+struct MetadataTestEngine;
+
+impl BeatmapEngine for MetadataTestEngine {
+    fn calculate(&self, _request: EngineRequest<'_>) -> Result<EngineOutput, BeatmapError> {
+        Ok(EngineOutput::default())
+    }
+}
+
+fn native_mania_map(label: &str) -> (String, Arc<ParsedBeatmap>) {
+    native_mania_map_with_identity(label, None)
+}
+
+fn native_mania_map_with_identity(
+    label: &str,
+    memory_identity: Option<&str>,
+) -> (String, Arc<ParsedBeatmap>) {
+    let source = format!(
+        r#"osu file format v14
+[General]
+Mode:3
+[Metadata]
+Title:{label}
+Artist:Artist
+Creator:Mapper
+Version:Test
+[Difficulty]
+CircleSize:4
+[HitObjects]
+128,192,200,128,0,400:0:0:0:0:
+"#
+    );
+    let mut checksum = String::with_capacity(32);
+    for byte in Md5::digest(source.as_bytes()) {
+        write!(checksum, "{byte:02x}").unwrap();
+    }
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("map.osu");
+    std::fs::write(&path, source).unwrap();
+    let mods = ModSet::new("mods", Vec::new(), 1.0).unwrap();
+    let parsed = BeatmapCache::new(MetadataTestEngine)
+        .load(
+            BeatmapInput::PathWithIdentity {
+                path: &path,
+                memory_identity: memory_identity.unwrap_or(&checksum),
+            },
+            Ruleset::Mania,
+            &mods,
+            ScoringMode::Stable,
+        )
+        .unwrap();
+    (checksum, parsed)
+}
 
 #[tokio::test]
 async fn changed_beatmap_projection_publishes_a_new_regular_arc() {
@@ -306,6 +366,7 @@ fn boundary_corrections_reclassify_exact_prior_presses_in_timing_order() {
                 press_offset: 3,
             },
         ],
+        stable_replay_frames: None,
     })))
     .publish();
 
@@ -357,6 +418,7 @@ fn invalid_boundary_corrections_leave_hit_errors_unchanged() {
                 press_offset: usize::MAX,
             },
         ],
+        stable_replay_frames: None,
     })))
     .publish();
 
@@ -528,4 +590,151 @@ fn precise_keypress_timestamps_follow_observed_edges_and_reset_identity() {
         ),
         (None, None)
     );
+}
+
+#[test]
+fn stale_parsed_map_waits_for_current_mania_metadata() {
+    let (checksum_a, parsed_a) = native_mania_map("A");
+    let target_b = "stable-memory-checksum-b";
+    let (source_b, parsed_b) = native_mania_map_with_identity("B", Some(target_b));
+    assert_ne!(checksum_a, source_b);
+    let mut bundle = StateBundle::new(ClientType::Stable, 44, Arc::new(EchoCalculation));
+    bundle.global.status = GameState::Play.value() as i64;
+    bundle.global.play_time = 250.0;
+    bundle.menu.checksum = Some(target_b.into());
+    bundle.beatmap.checksum = Some(checksum_a.clone());
+    bundle.beatmap.source_key = Some(checksum_a);
+    bundle.beatmap.parsed = Some(parsed_a);
+    bundle.calculation_failures = 1;
+    let frames = vec![
+        StableReplayFrame {
+            time: 200,
+            keys: 2,
+            y: 0.0,
+        },
+        StableReplayFrame {
+            time: 390,
+            keys: 0,
+            y: 0.0,
+        },
+    ];
+    let first = RawPreciseSnapshotBuilder::new(
+        PreciseCaptureContext::new(
+            ClientType::Stable,
+            44,
+            0,
+            3,
+            default_calculated_mods(),
+            0,
+            0,
+        ),
+        1,
+        Ok(ReadStatus::Ready(GlobalPrecise {
+            status: GameState::Play.value() as i64,
+            time: 250.0,
+        })),
+    )
+    .hit_errors(Ok(ReadStatus::Ready(HitErrors {
+        index: 1,
+        errors: HitErrorArray {
+            all: vec![-10.0],
+            press: vec![-10.0],
+            release: Vec::new(),
+        },
+        release_corrections: Vec::new(),
+        stable_replay_frames: Some(StableReplayFrameBatch {
+            start_index: 0,
+            index: 2,
+            frames,
+        }),
+    })))
+    .publish();
+
+    bundle.apply_precise_inner(&first);
+    assert_eq!(bundle.gameplay.hit_errors.all, [-10.0]);
+    assert!(bundle.gameplay.hit_errors.press.is_empty());
+    assert!(bundle.gameplay.hit_errors.release.is_empty());
+
+    bundle.beatmap.checksum = Some(target_b.into());
+    bundle.beatmap.source_key = Some(source_b);
+    bundle.beatmap.parsed = Some(parsed_b);
+    bundle.calculation_failures = 0;
+    let second = RawPreciseSnapshotBuilder::new(
+        PreciseCaptureContext::new(
+            ClientType::Stable,
+            44,
+            0,
+            3,
+            default_calculated_mods(),
+            1,
+            1,
+        ),
+        2,
+        Ok(ReadStatus::Ready(GlobalPrecise {
+            status: GameState::Play.value() as i64,
+            time: 258.0,
+        })),
+    )
+    .hit_errors(Ok(ReadStatus::Ready(HitErrors {
+        index: 1,
+        errors: HitErrorArray::default(),
+        release_corrections: Vec::new(),
+        stable_replay_frames: Some(StableReplayFrameBatch {
+            start_index: 2,
+            index: 2,
+            frames: Vec::new(),
+        }),
+    })))
+    .publish();
+
+    bundle.apply_precise_inner(&second);
+    assert!(bundle.gameplay.hit_errors.press.is_empty());
+    assert_eq!(bundle.gameplay.hit_errors.release, [-10.0]);
+}
+
+#[test]
+fn resolved_missing_mania_metadata_is_immediately_press_only() {
+    let checksum = "missing-map";
+    let mut bundle = StateBundle::new(ClientType::Stable, 45, Arc::new(EchoCalculation));
+    bundle.global.status = GameState::Play.value() as i64;
+    bundle.global.play_time = 250.0;
+    bundle.menu.checksum = Some(checksum.into());
+    bundle.beatmap.checksum = Some(checksum.into());
+    bundle.previous_state_key = format!("{checksum}:3:");
+    let snapshot = RawPreciseSnapshotBuilder::new(
+        PreciseCaptureContext::new(
+            ClientType::Stable,
+            45,
+            0,
+            3,
+            default_calculated_mods(),
+            0,
+            0,
+        ),
+        1,
+        Ok(ReadStatus::Ready(GlobalPrecise {
+            status: GameState::Play.value() as i64,
+            time: 250.0,
+        })),
+    )
+    .hit_errors(Ok(ReadStatus::Ready(HitErrors {
+        index: 1,
+        errors: HitErrorArray {
+            all: vec![7.0],
+            press: vec![7.0],
+            release: Vec::new(),
+        },
+        release_corrections: Vec::new(),
+        stable_replay_frames: Some(StableReplayFrameBatch {
+            start_index: 0,
+            index: 0,
+            frames: Vec::new(),
+        }),
+    })))
+    .publish();
+
+    bundle.apply_precise_inner(&snapshot);
+    assert_eq!(bundle.gameplay.hit_errors.all, [7.0]);
+    assert_eq!(bundle.gameplay.hit_errors.press, [7.0]);
+    assert!(bundle.gameplay.hit_errors.release.is_empty());
 }

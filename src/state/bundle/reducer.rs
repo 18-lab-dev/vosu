@@ -27,6 +27,7 @@ impl StateBundle {
             menu: MenuState::default(),
             bass_density: BassDensityState::default(),
             gameplay: GameplayState::default(),
+            stable_mania_hit_errors: StableManiaHitErrorState::default(),
             result_screen: ResultScreenState::default(),
             tourney: TourneyManagerState::default(),
             user: UserState::default(),
@@ -251,6 +252,7 @@ impl StateBundle {
         self.increment_epoch();
         self.gameplay.reset_keys();
         self.gameplay.reset_hit_errors();
+        self.stable_mania_hit_errors.reset();
         self.gameplay.unstable_rate = 0.0;
         self.precise_dirty = true;
     }
@@ -258,6 +260,7 @@ impl StateBundle {
     pub(super) fn reset_hit_epoch(&mut self) {
         self.increment_epoch();
         self.gameplay.reset_hit_errors();
+        self.stable_mania_hit_errors.reset();
         self.gameplay.unstable_rate = 0.0;
         self.precise_dirty = true;
     }
@@ -734,6 +737,35 @@ impl StateBundle {
         Ok(None)
     }
 
+    fn stable_mania_metadata(&self, snapshot: &RawPreciseSnapshot) -> StableManiaMetadata {
+        let Some(checksum) = self.menu.checksum.as_deref() else {
+            return StableManiaMetadata::Pending;
+        };
+        if self.beatmap.checksum.as_deref() == Some(checksum)
+            && let (Some(source_key), Some(parsed)) = (
+                self.beatmap.source_key.as_deref(),
+                self.beatmap.parsed.as_ref(),
+            )
+            && parsed.cache_key().source_checksum == source_key
+            && parsed.cache_key().memory_identity.as_deref() == Some(checksum)
+        {
+            return parsed
+                .mania_judgement_events()
+                .map_or(StableManiaMetadata::Unavailable, StableManiaMetadata::Ready);
+        }
+
+        let desired_state_key = format!(
+            "{checksum}:{}:{}",
+            snapshot.capture().mode(),
+            snapshot.capture().mods().checksum
+        );
+        if self.previous_state_key == desired_state_key && self.calculation_failures == 0 {
+            StableManiaMetadata::Unavailable
+        } else {
+            StableManiaMetadata::Pending
+        }
+    }
+
     pub(super) fn apply_precise_inner(&mut self, snapshot: &RawPreciseSnapshot) -> ReadContext {
         if let Ok(ReadStatus::Ready(global)) = snapshot.global() {
             self.global.status = global.status;
@@ -838,14 +870,39 @@ impl StateBundle {
                     .hit_errors
                     .all
                     .extend_from_slice(&errors.errors.all);
-                self.gameplay
-                    .hit_errors
-                    .press
-                    .extend_from_slice(&errors.errors.press);
-                self.gameplay
-                    .hit_errors
-                    .release
-                    .extend_from_slice(&errors.errors.release);
+                let stable_partition =
+                    if self.source == ClientType::Stable && snapshot.capture().mode() == 3 {
+                        errors.stable_replay_frames.as_ref().map(|batch| {
+                            let target_checksum = self.menu.checksum.as_deref();
+                            let metadata = self
+                                .stable_mania_hit_errors
+                                .needs_metadata(target_checksum)
+                                .then(|| self.stable_mania_metadata(snapshot));
+                            self.stable_mania_hit_errors.partition(
+                                &errors.errors.all,
+                                batch,
+                                target_checksum,
+                                self.calculation_failures,
+                                metadata,
+                                Instant::now(),
+                            )
+                        })
+                    } else {
+                        None
+                    };
+                if let Some((press, release)) = stable_partition {
+                    self.gameplay.hit_errors.press.extend(press);
+                    self.gameplay.hit_errors.release.extend(release);
+                } else {
+                    self.gameplay
+                        .hit_errors
+                        .press
+                        .extend_from_slice(&errors.errors.press);
+                    self.gameplay
+                        .hit_errors
+                        .release
+                        .extend_from_slice(&errors.errors.release);
+                }
                 self.gameplay.previous_hit_error_index = errors.index;
             }
         } else {

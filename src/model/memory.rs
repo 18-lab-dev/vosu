@@ -126,6 +126,20 @@ pub struct Score {
 pub type Gameplay = Score;
 pub type Mp3Length = f64;
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct StableReplayFrame {
+    pub time: i64,
+    pub keys: u32,
+    pub y: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StableReplayFrameBatch {
+    pub start_index: i64,
+    pub index: i64,
+    pub frames: Vec<StableReplayFrame>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HitErrors {
     pub index: i64,
@@ -133,6 +147,8 @@ pub struct HitErrors {
     pub errors: HitErrorArray,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub release_corrections: Vec<ReleaseCorrection>,
+    #[serde(skip)]
+    pub stable_replay_frames: Option<StableReplayFrameBatch>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

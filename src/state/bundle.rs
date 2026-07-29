@@ -13,14 +13,17 @@ use super::{
     PreciseTransition, ReadContext, RegularCapturePlan, RegularTransition, SnapshotTransition,
     StateWorkerError, TransitionFuture,
 };
-use crate::calculation::beatmap::{EventStatus, ParsedBeatmap, StrainGraph};
+use crate::calculation::beatmap::{
+    EventStatus, ManiaJudgementEvent, ManiaJudgementKind, ParsedBeatmap, StrainGraph,
+};
 use crate::calculation::progressive::{ProgressiveAttributes, ResultPerformance};
 use crate::calculation::{calculate_grade, default_calculated_mods, safe_join};
 use crate::memory::snapshot::{RawPreciseSnapshot, RawRegularSnapshot};
 use crate::model::enums::{ClientType, GameState};
 use crate::model::memory::{
     LazerSpectator, Menu as RawMenu, MenuFull, RankedPlay as RawRankedPlay,
-    ResultScreen as RawResultScreen, Score, Tourney as RawTourney, User as RawUser,
+    ResultScreen as RawResultScreen, Score, StableReplayFrameBatch, Tourney as RawTourney,
+    User as RawUser,
 };
 use crate::model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton, KeypressButton, LeaderboardPlayer,
@@ -94,6 +97,7 @@ pub struct StateBundle {
     menu: MenuState,
     bass_density: BassDensityState,
     gameplay: GameplayState,
+    stable_mania_hit_errors: StableManiaHitErrorState,
     result_screen: ResultScreenState,
     tourney: TourneyManagerState,
     user: UserState,

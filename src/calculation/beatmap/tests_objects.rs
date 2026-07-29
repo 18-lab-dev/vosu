@@ -438,3 +438,47 @@ ApproachRate:9
             "missing hold extras fall back to the start time"
         );
     }
+
+    #[test]
+    fn native_mania_objects_expose_ordered_press_and_release_judgements() {
+        let source = r#"osu file format v14
+[General]
+Mode:3
+[Difficulty]
+CircleSize:4
+[HitObjects]
+0,192,100,1,0,0:0:0:0:
+128,192,200,128,0,400:0:0:0:0:
+511,192,300,1,0,0:0:0:0:
+"#;
+
+        assert_eq!(
+            source_mania_judgement_events(source).unwrap(),
+            [
+                ManiaJudgementEvent {
+                    target: 100,
+                    lane: 0,
+                    object_index: 0,
+                    kind: ManiaJudgementKind::Press,
+                },
+                ManiaJudgementEvent {
+                    target: 200,
+                    lane: 1,
+                    object_index: 1,
+                    kind: ManiaJudgementKind::Press,
+                },
+                ManiaJudgementEvent {
+                    target: 400,
+                    lane: 1,
+                    object_index: 1,
+                    kind: ManiaJudgementKind::Release,
+                },
+                ManiaJudgementEvent {
+                    target: 300,
+                    lane: 3,
+                    object_index: 2,
+                    kind: ManiaJudgementKind::Press,
+                },
+            ]
+        );
+    }
