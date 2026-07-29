@@ -155,14 +155,6 @@ pub(crate) fn install_supported_capabilities(executable: &Path) -> io::Result<()
     linux::install_supported_capabilities(executable)
 }
 
-#[cfg(not(target_os = "linux"))]
-pub(crate) fn install_supported_capabilities(_executable: &Path) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "--setup is supported only on Linux",
-    ))
-}
-
 #[cfg(target_os = "linux")]
 pub(crate) fn cap_sys_ptrace_warning(executable: &Path) -> Option<String> {
     cap_sys_ptrace_warning_for(linux::cap_sys_ptrace_effective(), executable)
