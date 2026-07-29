@@ -36,11 +36,7 @@ const REQUEST_COUNT: usize = 8;
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetCurrentProcess() -> *mut c_void;
-}
-
-#[link(name = "ntdll")]
-unsafe extern "system" {
-    fn NtReadVirtualMemory(
+    fn ReadProcessMemory(
         process: *mut c_void,
         base_address: *const c_void,
         buffer: *mut c_void,
@@ -90,16 +86,16 @@ fn raw_read(process: *mut c_void, address: usize, dst: &mut [u8]) -> (bool, usiz
     // SAFETY: the process handle is the current-process pseudo-handle; the source points
     // into this process's live page and the destination is the valid mutable slice supplied
     // by the caller.
-    let status = unsafe {
-        NtReadVirtualMemory(
+    let ok = unsafe {
+        ReadProcessMemory(
             process,
             address as *const c_void,
             dst.as_mut_ptr() as *mut c_void,
             dst.len(),
             &mut bytes_read,
-        )
+        ) != 0
     };
-    (status >= 0, bytes_read)
+    (ok, bytes_read)
 }
 
 fn checked_read_exact(

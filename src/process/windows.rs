@@ -4,7 +4,7 @@ use std::{
     ffi::{CStr, c_void},
     fmt,
     mem::{offset_of, size_of},
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 
 use windows_sys::{
@@ -15,7 +15,7 @@ use windows_sys::{
             STILL_ACTIVE,
         },
         System::{
-            Diagnostics::ToolHelp::*,
+            Diagnostics::{Debug::ReadProcessMemory, ToolHelp::*},
             LibraryLoader::{GetModuleHandleW, GetProcAddress},
             Memory::{
                 MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
@@ -342,18 +342,15 @@ pub fn foreground_process_id() -> Option<u32> {
 pub struct WindowsProcessMemory {
     pid: u32,
     handle: OwnedHandle,
-    read_memory: NtReadVirtualMemory,
 }
 
 impl WindowsProcessMemory {
     pub fn open(pid: u32) -> Result<Self, MemoryError> {
-        let read_memory = Ntdll::load()?.read_memory;
         // SAFETY: OpenProcess returns an owned handle and inherit is disabled.
         let handle = unsafe { OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, 0, pid) };
         Ok(Self {
             pid,
             handle: OwnedHandle::new(handle, "OpenProcess")?,
-            read_memory,
         })
     }
 
@@ -454,8 +451,8 @@ impl WindowsProcessMemory {
         }
         let mut read = 0;
         // SAFETY: the destination is valid for its full length; the remote pointer is treated as opaque.
-        let status = unsafe {
-            (self.read_memory)(
+        let ok = unsafe {
+            ReadProcessMemory(
                 self.handle.raw(),
                 address as *const c_void,
                 dst.as_mut_ptr().cast(),
@@ -463,7 +460,7 @@ impl WindowsProcessMemory {
                 &mut read,
             )
         };
-        (status >= 0, read)
+        (ok != 0, read)
     }
 }
 
@@ -628,34 +625,25 @@ fn decode_unicode_descriptor(bytes: &[u8], wow64: bool) -> Result<UnicodeDescrip
 
 type NtQueryInformationProcess =
     unsafe extern "system" fn(HANDLE, u32, *mut c_void, u32, *mut u32) -> i32;
-type NtReadVirtualMemory =
-    unsafe extern "system" fn(HANDLE, *const c_void, *mut c_void, usize, *mut usize) -> i32;
 type NtQueryTimerResolution = unsafe extern "system" fn(*mut u32, *mut u32, *mut u32) -> i32;
 type NtSetTimerResolution = unsafe extern "system" fn(u32, u8, *mut u32) -> i32;
 
 struct Ntdll {
     query_process: NtQueryInformationProcess,
-    read_memory: NtReadVirtualMemory,
     query_timer: Option<NtQueryTimerResolution>,
     set_timer: Option<NtSetTimerResolution>,
 }
 
 impl Ntdll {
-    fn load() -> Result<&'static Self, MemoryError> {
-        static RESOLVED: LazyLock<Result<Ntdll, MemoryError>> = LazyLock::new(Ntdll::resolve);
-        RESOLVED.as_ref().map_err(Clone::clone)
-    }
-
-    fn resolve() -> Result<Self, MemoryError> {
-        const NTDLL_NAME: &[u16] = &[110, 116, 100, 108, 108, 46, 100, 108, 108, 0];
+    fn load() -> Result<Self, MemoryError> {
+        const NTDLL: &[u16] = &[110, 116, 100, 108, 108, 46, 100, 108, 108, 0];
         // GetModuleHandle deliberately does not load a new library.
-        let module = unsafe { GetModuleHandleW(NTDLL_NAME.as_ptr()) };
+        let module = unsafe { GetModuleHandleW(NTDLL.as_ptr()) };
         if module.is_null() {
             return Err(last_error("GetModuleHandleW(ntdll.dll)"));
         }
         Ok(Self {
             query_process: resolve_required(module, c"NtQueryInformationProcess")?,
-            read_memory: resolve_required(module, c"NtReadVirtualMemory")?,
             query_timer: resolve_optional(module, c"NtQueryTimerResolution"),
             set_timer: resolve_optional(module, c"NtSetTimerResolution"),
         })
