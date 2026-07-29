@@ -392,6 +392,7 @@ async fn shutdown_aborts_a_parked_transition_and_joins_readers() {
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_joins_precise_even_when_regular_panics() {
+    let regular_entered = Arc::new(AtomicBool::new(false));
     let precise_entered = Arc::new(AtomicBool::new(false));
     let precise_dropped = Arc::new(AtomicBool::new(false));
     let precise_gate = Arc::new((Mutex::new(false), Condvar::new()));
@@ -401,7 +402,9 @@ async fn shutdown_joins_precise_even_when_regular_panics() {
         precise: Duration::from_secs(1),
     });
     let worker = spawn_state_worker_with_clock(
-        PanickingRegular,
+        PanickingRegular {
+            entered: regular_entered.clone(),
+        },
         BlockingPrecise {
             entered: precise_entered.clone(),
             gate: precise_gate.clone(),
@@ -425,6 +428,7 @@ async fn shutdown_joins_precise_even_when_regular_panics() {
     );
 
     wait_until(|| precise_entered.load(Ordering::Acquire)).await;
+    wait_until(|| regular_entered.load(Ordering::Acquire)).await;
     let shutdown = tokio::spawn(worker.shutdown());
     tokio::time::sleep(Duration::from_millis(20)).await;
     let returned_before_precise_finished = shutdown.is_finished();

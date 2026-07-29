@@ -296,13 +296,16 @@ impl PreciseSnapshotReader for FakePrecise {
     }
 }
 
-struct PanickingRegular;
+struct PanickingRegular {
+    entered: Arc<AtomicBool>,
+}
 
 impl RegularSnapshotReader for PanickingRegular {
     fn capture_regular(
         &mut self,
         _request: &RegularCaptureRequest,
     ) -> Result<Arc<RawRegularSnapshot>, StateWorkerError> {
+        self.entered.store(true, Ordering::Release);
         panic!("regular reader panic fixture");
     }
 }
