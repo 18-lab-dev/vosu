@@ -116,6 +116,18 @@ const INITIAL_PROCESS_BUFFER_SIZE: usize = 64 * 1024;
 const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC000_0004u32 as i32;
 
 pub fn enumerate_processes() -> Result<Vec<ProcessEntry>, MemoryError> {
+    enumerate_processes_matching(|_| true)
+}
+
+pub(crate) fn enumerate_processes_matching(
+    predicate: impl FnMut(&[u16]) -> bool,
+) -> Result<Vec<ProcessEntry>, MemoryError> {
+    enumerate_processes_with_buffer(predicate)
+}
+
+fn enumerate_processes_with_buffer(
+    mut predicate: impl FnMut(&[u16]) -> bool,
+) -> Result<Vec<ProcessEntry>, MemoryError> {
     let mut byte_capacity = INITIAL_PROCESS_BUFFER_SIZE;
 
     loop {
@@ -151,13 +163,15 @@ pub fn enumerate_processes() -> Result<Vec<ProcessEntry>, MemoryError> {
             ));
         }
         // SAFETY: storage remains alive and initialized; byte_len was validated above.
-        let bytes =
-            unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), byte_len) };
-        return decode_system_processes(bytes);
+        let bytes = unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), byte_len) };
+        return decode_system_processes_matching(bytes, &mut predicate);
     }
 }
 
-fn decode_system_processes(bytes: &[u8]) -> Result<Vec<ProcessEntry>, MemoryError> {
+fn decode_system_processes_matching(
+    bytes: &[u8],
+    mut predicate: impl FnMut(&[u16]) -> bool,
+) -> Result<Vec<ProcessEntry>, MemoryError> {
     let mut entries = Vec::new();
     let mut offset = 0usize;
 
@@ -180,18 +194,27 @@ fn decode_system_processes(bytes: &[u8]) -> Result<Vec<ProcessEntry>, MemoryErro
             ));
         }
         // SAFETY: size and alignment were checked; the system owns the record layout.
-        let raw = unsafe { &*bytes.as_ptr().add(offset).cast::<SYSTEM_PROCESS_INFORMATION>() };
-        let pid = u32::try_from(raw.UniqueProcessId as usize)
-            .map_err(|_| backend("SystemProcessInformation", "process id exceeds u32"))?;
-        let parent_pid = u32::try_from(raw.Reserved2 as usize)
-            .map_err(|_| backend("SystemProcessInformation", "parent process id exceeds u32"))?;
-        entries.push(ProcessEntry {
-            pid,
-            parent_pid,
-            thread_count: raw.NumberOfThreads,
-            base_priority: raw.BasePriority,
-            executable: system_process_name(raw, bytes)?,
-        });
+        let raw = unsafe {
+            &*bytes
+                .as_ptr()
+                .add(offset)
+                .cast::<SYSTEM_PROCESS_INFORMATION>()
+        };
+        let name = system_process_name_units(raw, bytes)?;
+        if predicate(name) {
+            let pid = u32::try_from(raw.UniqueProcessId as usize)
+                .map_err(|_| backend("SystemProcessInformation", "process id exceeds u32"))?;
+            let parent_pid = u32::try_from(raw.Reserved2 as usize).map_err(|_| {
+                backend("SystemProcessInformation", "parent process id exceeds u32")
+            })?;
+            entries.push(ProcessEntry {
+                pid,
+                parent_pid,
+                thread_count: raw.NumberOfThreads,
+                base_priority: raw.BasePriority,
+                executable: String::from_utf16_lossy(name),
+            });
+        }
 
         let next = raw.NextEntryOffset as usize;
         if next == 0 {
@@ -212,13 +235,13 @@ fn decode_system_processes(bytes: &[u8]) -> Result<Vec<ProcessEntry>, MemoryErro
     Ok(entries)
 }
 
-fn system_process_name(
+fn system_process_name_units<'a>(
     process: &SYSTEM_PROCESS_INFORMATION,
-    bytes: &[u8],
-) -> Result<String, MemoryError> {
+    bytes: &'a [u8],
+) -> Result<&'a [u16], MemoryError> {
     let length = process.ImageName.Length as usize;
     if length == 0 {
-        return Ok(String::new());
+        return Ok(&[]);
     }
     if !length.is_multiple_of(size_of::<u16>()) || process.ImageName.Buffer.is_null() {
         return Err(backend(
@@ -243,10 +266,9 @@ fn system_process_name(
     }
 
     // SAFETY: bounds, byte length, and u16 alignment were checked above.
-    let units = unsafe {
-        std::slice::from_raw_parts(process.ImageName.Buffer, length / size_of::<u16>())
-    };
-    Ok(String::from_utf16_lossy(units))
+    let units =
+        unsafe { std::slice::from_raw_parts(process.ImageName.Buffer, length / size_of::<u16>()) };
+    Ok(units)
 }
 
 pub fn enumerate_threads(pid: Option<u32>) -> Result<Vec<ThreadEntry>, MemoryError> {

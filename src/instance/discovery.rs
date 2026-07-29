@@ -283,6 +283,19 @@ impl ProcessProvider for NativeProcessProvider {
 }
 
 #[cfg(windows)]
+fn is_windows_candidate_name(name: &[u16]) -> bool {
+    fn equals_ascii_case_insensitive(wide: &[u16], ascii: &[u8]) -> bool {
+        wide.len() == ascii.len()
+            && wide.iter().zip(ascii).all(|(&wide, &ascii)| {
+                u8::try_from(wide).is_ok_and(|unit| unit.eq_ignore_ascii_case(&ascii))
+            })
+    }
+
+    equals_ascii_case_insensitive(name, b"osu!.exe")
+        || equals_ascii_case_insensitive(name, b"osulazer.exe")
+}
+
+#[cfg(windows)]
 fn windows_instance_root(command_line: &str) -> PathBuf {
     if let Some(path) = std::env::var_os("VOSU_OSU_PATH").filter(|path| !path.is_empty()) {
         return PathBuf::from(path);
@@ -344,12 +357,9 @@ impl ProcessProvider for NativeProcessProvider {
 
     fn enumerate(&self) -> Result<Vec<ProcessDescriptor>, MemoryError> {
         let mut result = Vec::new();
-        for process in crate::process::enumerate_processes()? {
-            if !(process.executable.eq_ignore_ascii_case("osu!.exe")
-                || process.executable.eq_ignore_ascii_case("osulazer.exe"))
-            {
-                continue;
-            }
+        for process in
+            crate::process::windows::enumerate_processes_matching(is_windows_candidate_name)?
+        {
             let Ok(bitness) = crate::process::process_bitness(process.pid) else {
                 continue;
             };
