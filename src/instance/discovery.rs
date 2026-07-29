@@ -10,6 +10,8 @@ use std::path::Path;
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
+#[cfg(windows)]
+use std::sync::Mutex;
 
 use crate::app::StartupArgs;
 use crate::model::enums::ClientType;
@@ -314,7 +316,9 @@ fn windows_instance_root(command_line: &str) -> PathBuf {
 
 #[cfg(windows)]
 #[derive(Debug, Default)]
-pub struct NativeProcessProvider;
+pub struct NativeProcessProvider {
+    process_buffer: Mutex<Vec<usize>>,
+}
 
 #[cfg(any(target_os = "linux", windows))]
 impl NativeProcessProvider {
@@ -323,10 +327,11 @@ impl NativeProcessProvider {
         {
             Self::default()
         }
-        #[cfg(any(
-            windows,
-            all(target_os = "linux", not(feature = "linux-process-events"))
-        ))]
+        #[cfg(windows)]
+        {
+            Self::default()
+        }
+        #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
         {
             Self
         }
@@ -356,10 +361,15 @@ impl ProcessProvider for NativeProcessProvider {
     }
 
     fn enumerate(&self) -> Result<Vec<ProcessDescriptor>, MemoryError> {
+        let mut process_buffer = self
+            .process_buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut result = Vec::new();
-        for process in
-            crate::process::windows::enumerate_processes_matching(is_windows_candidate_name)?
-        {
+        for process in crate::process::windows::enumerate_processes_matching_with_buffer(
+            &mut process_buffer,
+            is_windows_candidate_name,
+        )? {
             let Ok(bitness) = crate::process::process_bitness(process.pid) else {
                 continue;
             };
