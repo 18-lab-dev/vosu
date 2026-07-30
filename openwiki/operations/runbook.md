@@ -8,6 +8,16 @@ tags: [operations, runbook, security, release, troubleshooting]
 
 # Operations runbook
 
+## Manual OpenWiki maintenance
+
+Run documentation updates locally from the repository root with the installed OpenWiki CLI and the maintainer’s local OpenAI/Codex subscription:
+
+```sh
+openwiki code --update --print
+```
+
+Pass a focused prompt when only one area changed, then inspect `git diff -- openwiki` and keep only evidence-backed edits. The supported maintenance path is local; do not recreate `.github/workflows/openwiki-update.yml` or add scheduled/manual GitHub Actions for documentation updates. `openwiki --help` is the live reference for installed CLI options.
+
 ## Launch checklist
 
 - Use Rust 1.96.1 and `--locked` for source builds.

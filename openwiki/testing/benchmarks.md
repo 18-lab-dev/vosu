@@ -67,6 +67,8 @@ only the matching benchmark directories.
 
 ### Named baselines
 
+The current Windows read-many implementation merges ordered requests within one 4 KiB page, uses fixed stack scratch through 1 KiB, and switches to allocation-backed scratch for larger same-page spans; singleton requests bypass batching scratch. A 3,368-byte wide shape is covered by `read_many_wide_8x8_bytes` and the Windows read tests. This is a native-reader implementation detail, not evidence that synthetic current-process benchmarks model live cross-process reads.
+
 A plain Criterion run uses and overwrites the machine-local baseline named
 `base`. Prefer a descriptive named baseline for regression work:
 

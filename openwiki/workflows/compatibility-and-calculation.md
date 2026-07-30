@@ -26,6 +26,8 @@ Live calculation is state-driven: beatmap readiness, parsing/cache state, gamepl
 
 V2 beatmap stats now expose `timingWindows` when a map is parsed. The values come from the calculation engine’s mode-aware hit windows after mods: temporal windows are clock-rate-scaled, while osu!catch’s `300` is its spatial half-width. An unparsed/missing map serializes an empty object. Do not expose `stars.hitWindow` for osu!catch: its `timingWindows.300` is spatial, not a temporal great window; `stars.hitWindow` applies only when the parsed engine provides a temporal great window. Verify mode/mod combinations rather than treating these as fixed difficulty metadata (`src/api/v2/builders.rs`, `src/api/v2/tests.rs`, `src/model/api/v2.rs`, `crates/vosu-lazer-pp/src/scoring.rs`).
 
+JSON number formatting is shared across v1, stream companion, v2, and runtime projection writers through `src/calculation/root/helpers.rs::write_js_json_number`. The formatter writes finite ECMAScript-compatible numbers directly to the output, emits `null` for non-finite values, normalizes signed zero to `0`, and avoids the former temporary `String` allocation; boundary tests in `src/calculation/root/tests.rs` cover the representation thresholds and special values. Preserve this helper when changing serializers rather than reintroducing per-value allocation.
+
 Pinned calculator and upstream revisions are declared in `Cargo.toml` metadata and evidenced under `tools/oracle/` and the vendored `vosu-lazer-pp` sources. Treat these inputs as provenance rather than ordinary application code.
 
 ## Verification workflow

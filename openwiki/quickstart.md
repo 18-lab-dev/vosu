@@ -21,6 +21,10 @@ tags: [vosu, rust, code-wiki, onboarding]
 
 The repository’s detailed source documentation remains authoritative: [README.md](../README.md) is the product/operator contract, the [architecture overview](architecture/overview.md) explains structural boundaries, [decision records](decisions/index.md) explain durable choices, and [benchmarks](testing/benchmarks.md) contain machine-specific measurements. See the [documentation index and conventions](index.md) for the complete map.
 
+## Maintain this wiki locally
+
+OpenWiki updates are run manually from the repository root with the installed OpenWiki CLI and the maintainer’s local OpenAI/Codex subscription; CI recurrence is intentionally not part of the supported maintenance path. Run `openwiki code --update --print` for a one-shot update, optionally adding a focused message such as `openwiki code --update --print "refresh docs for recent runtime changes"`. Use `openwiki --help` to verify the installed CLI’s current options. Review the resulting `openwiki/` diff before committing; do not add or recreate a scheduled or manual GitHub Actions workflow for this task.
+
 ## Build and run
 
 Use the pinned toolchain and lockfile:
