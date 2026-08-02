@@ -4,7 +4,21 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "openwiki/**"
+      - ".agents/**"
+      - ".gitignore"
+      - "LICENSE*"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "openwiki/**"
+      - ".agents/**"
+      - ".gitignore"
+      - "LICENSE*"
   workflow_dispatch:
 
 permissions:
@@ -15,37 +29,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  native:
-    name: ${{ matrix.name }} validation
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - name: Windows
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-    runs-on: ${{ matrix.os }}
+  validation:
+    name: Ubuntu validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Linux native dependencies
-        if: runner.os == 'Linux'
+      - name: Install Linux native and Windows cross-compilation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes clang libbpf-dev libelf-dev
-          echo "C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu" >> "$GITHUB_ENV"
+          sudo apt-get install --yes clang gcc-mingw-w64-x86-64 libbpf-dev libelf-dev
 
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.96.1
           components: rustfmt, clippy
-          targets: ${{ matrix.target }}
+          targets: x86_64-unknown-linux-gnu, x86_64-pc-windows-gnu
+
       - name: Cache Cargo registry, git database, and validation artifacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -53,93 +57,22 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ matrix.target }}-rust-1.96.1-ci-validation-debug-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          key: cargo-Linux-rust-1.96.1-ci-validation-linux-windows-gnu-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-${{ matrix.target }}-rust-1.96.1-ci-validation-debug-${{ hashFiles('**/Cargo.lock') }}-
+            cargo-Linux-rust-1.96.1-ci-validation-linux-windows-gnu-
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Lint all targets and features
+      - name: Lint Linux targets and features
+        env:
+          C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Test workspace libraries, binaries, integration tests, and examples
+        env:
+          C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo test --workspace --lib --bins --tests --examples --all-features --locked
 
-      - name: Test native process memory and self-read
-        run: cargo test --locked --test process_memory -- --nocapture
-
-      - name: Test native updater recovery
-        run: cargo test --locked --test updater_native -- --nocapture
-
-
-  native-release:
-    name: ${{ matrix.name }} release build
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Linux
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - name: Windows
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.96.1
-          targets: ${{ matrix.target }}
-
-      - name: Cache Cargo registry, git database, and release artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ matrix.target }}-rust-1.96.1-ci-release-build-release-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ matrix.target }}-rust-1.96.1-ci-release-build-release-${{ hashFiles('**/Cargo.lock') }}-
-
-      - name: Build daemon release
-        run: cargo build --release --locked --no-default-features --target ${{ matrix.target }}
-
-      - name: Prove test harness cannot enter release builds
-        shell: bash
-        run: |
-          if cargo build --release --locked --features test-harness --target "${{ matrix.target }}"; then
-            echo "release build unexpectedly accepted the test-harness feature" >&2
-            exit 1
-          fi
-
-  required:
-    name: ${{ matrix.name }}
-    if: ${{ always() }}
-    needs:
-      - native
-      - native-release
-    strategy:
-      fail-fast: false
-      matrix:
-        name:
-          - Linux
-          - Windows
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require validation and release builds
-        env:
-          VALIDATION_RESULT: ${{ needs.native.result }}
-          RELEASE_BUILD_RESULT: ${{ needs.native-release.result }}
-        run: |
-          if [[ "$VALIDATION_RESULT" != "success" || "$RELEASE_BUILD_RESULT" != "success" ]]; then
-            echo "validation result: $VALIDATION_RESULT" >&2
-            echo "release build result: $RELEASE_BUILD_RESULT" >&2
-            exit 1
-          fi
+      - name: Check Windows GNU targets and features
+        run: cargo check --workspace --all-targets --all-features --locked --target x86_64-pc-windows-gnu

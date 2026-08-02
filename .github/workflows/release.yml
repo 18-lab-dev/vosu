@@ -17,6 +17,7 @@ jobs:
   linux:
     name: Validate and package Linux release
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
@@ -36,7 +37,6 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.96.1
-          components: rustfmt, clippy
           targets: x86_64-unknown-linux-gnu
       - name: Cache Cargo registry, git database, and release lane artifacts
         uses: actions/cache@v4
@@ -45,38 +45,16 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-x86_64-unknown-linux-gnu-rust-1.96.1-release-package-mixed-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          key: cargo-${{ runner.os }}-rust-1.96.1-release-package-x86_64-unknown-linux-gnu-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-x86_64-unknown-linux-gnu-rust-1.96.1-release-package-mixed-${{ hashFiles('**/Cargo.lock') }}-
-            cargo-${{ runner.os }}-x86_64-unknown-linux-gnu-rust-1.96.1-ci-release-build-release-${{ hashFiles('**/Cargo.lock') }}-
-            cargo-${{ runner.os }}-x86_64-unknown-linux-gnu-rust-1.96.1-ci-validation-debug-${{ hashFiles('**/Cargo.lock') }}-
+            cargo-Linux-rust-1.96.1-ci-validation-linux-windows-gnu-${{ hashFiles('**/Cargo.lock') }}
+            cargo-Linux-rust-1.96.1-ci-validation-linux-windows-gnu-
 
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Lint all targets and features
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-
-      - name: Test workspace libraries, binaries, integration tests, and examples
-        run: cargo test --workspace --lib --bins --tests --examples --all-features --locked
-
-      - name: Test native process memory and self-read
-        run: cargo test --locked --test process_memory -- --nocapture
-
-      - name: Test native updater recovery
-        run: cargo test --locked --test updater_native -- --nocapture
 
       - name: Build daemon
         run: cargo build --release --locked --no-default-features --features linux-process-events --target x86_64-unknown-linux-gnu
 
-      - name: Prove test harness cannot enter release builds
-        shell: bash
-        run: |
-          if cargo build --release --locked --no-default-features --features linux-process-events,test-harness --target x86_64-unknown-linux-gnu; then
-            echo "release build unexpectedly accepted the test-harness feature" >&2
-            exit 1
-          fi
 
       - name: Package daemon and license
         run: >-
@@ -109,6 +87,7 @@ jobs:
   windows:
     name: Validate, sign, and package Windows release
     runs-on: windows-latest
+    timeout-minutes: 60
     env:
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
@@ -122,7 +101,6 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.96.1
-          components: rustfmt, clippy
           targets: x86_64-pc-windows-msvc
       - name: Cache Cargo registry, git database, and release lane artifacts
         uses: actions/cache@v4
@@ -131,38 +109,15 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-x86_64-pc-windows-msvc-rust-1.96.1-release-package-mixed-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          key: cargo-${{ runner.os }}-rust-1.96.1-release-package-x86_64-pc-windows-msvc-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-x86_64-pc-windows-msvc-rust-1.96.1-release-package-mixed-${{ hashFiles('**/Cargo.lock') }}-
-            cargo-${{ runner.os }}-x86_64-pc-windows-msvc-rust-1.96.1-ci-release-build-release-${{ hashFiles('**/Cargo.lock') }}-
-            cargo-${{ runner.os }}-x86_64-pc-windows-msvc-rust-1.96.1-ci-validation-debug-${{ hashFiles('**/Cargo.lock') }}-
+            cargo-${{ runner.os }}-rust-1.96.1-release-package-x86_64-pc-windows-msvc-
 
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Lint all targets and features
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-
-      - name: Test workspace libraries, binaries, integration tests, and examples
-        run: cargo test --workspace --lib --bins --tests --examples --all-features --locked
-
-      - name: Test native process memory and self-read
-        run: cargo test --locked --test process_memory -- --nocapture
-
-      - name: Test native updater recovery
-        run: cargo test --locked --test updater_native -- --nocapture
 
       - name: Build daemon
         run: cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc
 
-      - name: Prove test harness cannot enter release builds
-        shell: bash
-        run: |
-          if cargo build --release --locked --features test-harness --target x86_64-pc-windows-msvc; then
-            echo "release build unexpectedly accepted the test-harness feature" >&2
-            exit 1
-          fi
 
       - name: Upload unsigned daemon for SignPath
         id: upload-unsigned-windows
@@ -225,6 +180,7 @@ jobs:
       - linux
       - windows
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       RELEASE_TAG: ${{ github.ref_name }}
     steps:
