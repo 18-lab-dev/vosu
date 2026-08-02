@@ -31,6 +31,7 @@ concurrency:
 jobs:
   validation:
     name: Ubuntu validation
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -38,17 +39,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Linux native and Windows cross-compilation dependencies
+      - name: Install Linux native and MSVC cross-compilation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes clang gcc-mingw-w64-x86-64 libbpf-dev libelf-dev
+          sudo apt-get install --yes clang libbpf-dev libelf-dev
 
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.96.1
-          components: rustfmt, clippy
-          targets: x86_64-unknown-linux-gnu, x86_64-pc-windows-gnu
+          components: rustfmt, clippy, llvm-tools
+          targets: x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc
+
+      - name: Install pinned cargo-xwin
+        uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2.85.6
+        with:
+          tool: cargo-xwin@0.23.0
+          fallback: none
 
       - name: Cache Cargo registry, git database, and validation artifacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -56,10 +63,11 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cache/cargo-xwin
             target
-          key: cargo-Linux-rust-1.96.1-ci-validation-linux-windows-gnu-${{ hashFiles('**/Cargo.lock') }}
+          key: cargo-Linux-rust-1.96.1-ci-validation-linux-windows-msvc-xwin-0.23.0-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            cargo-Linux-rust-1.96.1-ci-validation-linux-windows-gnu-
+            cargo-Linux-rust-1.96.1-ci-validation-linux-windows-msvc-xwin-0.23.0-
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -74,5 +82,39 @@ jobs:
           C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo test --workspace --lib --bins --tests --examples --all-features --locked
 
-      - name: Check Windows GNU targets and features
-        run: cargo check --workspace --all-targets --all-features --locked --target x86_64-pc-windows-gnu
+      - name: Lint Windows MSVC targets and features
+        run: cargo xwin clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
+
+  windows-native:
+    name: Windows MSVC native verification
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.1
+          components: clippy
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo registry, git database, and native verification artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-Windows-rust-1.96.1-ci-native-msvc-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-Windows-rust-1.96.1-ci-native-msvc-
+
+      - name: Lint native Windows MSVC targets and features
+        run: cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
+
+      - name: Test native Windows MSVC workspace
+        run: cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc
