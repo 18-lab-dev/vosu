@@ -18,13 +18,14 @@ use std::sync::{
 use std::time::Duration;
 
 use crate::app::StartupArgs;
+use crate::logging::Logger;
 use crate::memory::lazer_loader::{
     LazerLoadError, LazerOffsetLoader, OffsetFetcher, resolve_for_instance,
+    resolve_for_instance_with_logger,
 };
 use crate::memory::lazer_offsets::LazerOffsets;
 use crate::model::enums::ClientType;
 use crate::process::{MemoryError, ProcessHandle};
-
 pub type Pid = u32;
 type LazerResolverHandle = JoinHandle<Result<Arc<LazerOffsets>, LazerLoadError>>;
 
@@ -172,6 +173,29 @@ impl Instance {
     where
         F: OffsetFetcher + 'static,
     {
+        self.start_lazer_resolver_inner(loader, None).await
+    }
+
+    /// Starts a resolver that reports every failed offset attempt to the daemon log.
+    pub(crate) async fn start_lazer_resolver_with_logger<F>(
+        self: &Arc<Self>,
+        loader: Arc<LazerOffsetLoader<F>>,
+        logger: Logger,
+    ) -> bool
+    where
+        F: OffsetFetcher + 'static,
+    {
+        self.start_lazer_resolver_inner(loader, Some(logger)).await
+    }
+
+    async fn start_lazer_resolver_inner<F>(
+        self: &Arc<Self>,
+        loader: Arc<LazerOffsetLoader<F>>,
+        logger: Option<Logger>,
+    ) -> bool
+    where
+        F: OffsetFetcher + 'static,
+    {
         if self.client != ClientType::Lazer || self.lifecycle_cancel.is_cancelled() {
             return false;
         }
@@ -181,7 +205,10 @@ impl Instance {
         }
         let instance = self.clone();
         *task = Some(tokio::spawn(async move {
-            resolve_for_instance(loader, instance).await
+            match logger {
+                Some(logger) => resolve_for_instance_with_logger(loader, instance, logger).await,
+                None => resolve_for_instance(loader, instance).await,
+            }
         }));
         true
     }
@@ -268,6 +295,15 @@ impl Default for InstanceLifecycleSnapshot {
         }
     }
 }
+#[derive(Debug)]
+enum InsertOutcome {
+    Inserted,
+    AlreadyTracked,
+    SkippedStartupArguments,
+    OpenFailed(MemoryError),
+    DeadAfterOpen,
+    PidMismatch { expected: Pid, actual: Pid },
+}
 
 #[derive(Debug)]
 pub struct InstanceManager {
@@ -275,6 +311,7 @@ pub struct InstanceManager {
     focus: FocusState,
     next_generation: u64,
     lifecycle_changed: Arc<Notify>,
+    discovery_failures: BTreeMap<Pid, String>,
 }
 
 impl Default for InstanceManager {
@@ -284,6 +321,7 @@ impl Default for InstanceManager {
             focus: FocusState::default(),
             next_generation: 0,
             lifecycle_changed: Arc::new(Notify::new()),
+            discovery_failures: BTreeMap::new(),
         }
     }
 }
@@ -311,16 +349,37 @@ impl InstanceManager {
     /// Discovers candidates once. A successfully validated native handle is moved into
     /// the instance; failed/skipped probes are dropped immediately.
     pub fn discover(&mut self, provider: &impl ProcessProvider) -> Result<usize, MemoryError> {
+        self.discover_inner(provider, None)
+    }
+
+    /// Discovers candidates and records actionable probe failures.
+    pub(crate) fn discover_with_logger(
+        &mut self,
+        provider: &impl ProcessProvider,
+        logger: &Logger,
+    ) -> Result<usize, MemoryError> {
+        self.discover_inner(provider, Some(logger))
+    }
+
+    fn discover_inner(
+        &mut self,
+        provider: &impl ProcessProvider,
+        logger: Option<&Logger>,
+    ) -> Result<usize, MemoryError> {
         let processes = provider.enumerate()?;
         let mut candidates = classify_candidates(provider.platform(), &processes);
         candidates.sort_unstable_by_key(|candidate| candidate.pid);
         let mut inserted = 0;
         for candidate in candidates {
-            inserted += usize::from(self.insert_descriptor(
-                provider,
+            let outcome =
+                self.insert_descriptor(provider, &processes[candidate.index], candidate.client);
+            self.log_insert_outcome(
+                logger,
                 &processes[candidate.index],
                 candidate.client,
-            ));
+                &outcome,
+            );
+            inserted += usize::from(matches!(outcome, InsertOutcome::Inserted));
         }
         Ok(inserted)
     }
@@ -330,6 +389,26 @@ impl InstanceManager {
         &mut self,
         provider: &impl ProcessProvider,
         pid: Pid,
+    ) -> Result<bool, MemoryError> {
+        self.discover_pid_inner(provider, pid, None)
+    }
+
+    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+    /// Inspects one PID and records actionable probe failures.
+    pub(crate) fn discover_pid_with_logger(
+        &mut self,
+        provider: &impl ProcessProvider,
+        pid: Pid,
+        logger: &Logger,
+    ) -> Result<bool, MemoryError> {
+        self.discover_pid_inner(provider, pid, Some(logger))
+    }
+
+    fn discover_pid_inner(
+        &mut self,
+        provider: &impl ProcessProvider,
+        pid: Pid,
+        logger: Option<&Logger>,
     ) -> Result<bool, MemoryError> {
         if let Some(instance) = self.instances.get(&pid) {
             if instance.process().is_alive() {
@@ -347,7 +426,9 @@ impl InstanceManager {
         else {
             return Ok(false);
         };
-        Ok(self.insert_descriptor(provider, &descriptor, candidate.client))
+        let outcome = self.insert_descriptor(provider, &descriptor, candidate.client);
+        self.log_insert_outcome(logger, &descriptor, candidate.client, &outcome);
+        Ok(matches!(outcome, InsertOutcome::Inserted))
     }
 
     fn insert_descriptor(
@@ -355,19 +436,27 @@ impl InstanceManager {
         provider: &impl ProcessProvider,
         descriptor: &ProcessDescriptor,
         client: ClientType,
-    ) -> bool {
-        if self.instances.contains_key(&descriptor.pid) || should_skip(&descriptor.arguments) {
-            return false;
+    ) -> InsertOutcome {
+        if self.instances.contains_key(&descriptor.pid) {
+            return InsertOutcome::AlreadyTracked;
         }
-        let Ok(process) = provider.open(descriptor.pid) else {
-            return false;
+        if should_skip(&descriptor.arguments) {
+            return InsertOutcome::SkippedStartupArguments;
+        }
+        let process = match provider.open(descriptor.pid) {
+            Ok(process) => process,
+            Err(error) => return InsertOutcome::OpenFailed(error),
         };
-        if !process.is_alive()
-            || process
-                .process_id()
-                .is_some_and(|pid| pid != descriptor.pid)
+        if !process.is_alive() {
+            return InsertOutcome::DeadAfterOpen;
+        }
+        if let Some(actual) = process.process_id()
+            && actual != descriptor.pid
         {
-            return false;
+            return InsertOutcome::PidMismatch {
+                expected: descriptor.pid,
+                actual,
+            };
         }
         self.next_generation = self
             .next_generation
@@ -387,7 +476,52 @@ impl InstanceManager {
             lifecycle_changed: self.lifecycle_changed.clone(),
         });
         self.instances.insert(descriptor.pid, instance);
-        true
+        InsertOutcome::Inserted
+    }
+
+    fn log_insert_outcome(
+        &mut self,
+        logger: Option<&Logger>,
+        descriptor: &ProcessDescriptor,
+        client: ClientType,
+        outcome: &InsertOutcome,
+    ) {
+        let Some(logger) = logger else {
+            return;
+        };
+        let pid = descriptor.pid;
+        match outcome {
+            InsertOutcome::Inserted => {
+                self.discovery_failures.remove(&pid);
+                logger.info(format!(
+                    "Found osu! process PID {pid} ({client:?}); probing memory"
+                ));
+            }
+            InsertOutcome::AlreadyTracked => {}
+            InsertOutcome::SkippedStartupArguments => {}
+            InsertOutcome::OpenFailed(error) => {
+                let message = format!("PID {pid} open failed: {error}");
+                if self.discovery_failures.get(&pid) != Some(&message) {
+                    logger.warn(format!("osu! process candidate rejected: {message}"));
+                    self.discovery_failures.insert(pid, message);
+                }
+            }
+            InsertOutcome::DeadAfterOpen => {
+                let message = format!("PID {pid} exited while opening its memory map");
+                if self.discovery_failures.get(&pid) != Some(&message) {
+                    logger.warn(format!("osu! process candidate rejected: {message}"));
+                    self.discovery_failures.insert(pid, message);
+                }
+            }
+            InsertOutcome::PidMismatch { expected, actual } => {
+                let message =
+                    format!("PID changed during open (expected {expected}, got {actual})");
+                if self.discovery_failures.get(expected) != Some(&message) {
+                    logger.warn(format!("osu! process candidate rejected: {message}"));
+                    self.discovery_failures.insert(*expected, message);
+                }
+            }
+        }
     }
 
     /// Production discovery path: every newly observed lazer generation gets
@@ -571,6 +705,18 @@ where
     F: OffsetFetcher + 'static,
 {
     pub fn start(provider: P, loader: LazerOffsetLoader<F>) -> Self {
+        Self::start_inner(provider, loader, None)
+    }
+
+    pub(crate) fn start_with_logger(
+        provider: P,
+        loader: LazerOffsetLoader<F>,
+        logger: Logger,
+    ) -> Self {
+        Self::start_inner(provider, loader, Some(logger))
+    }
+
+    fn start_inner(provider: P, loader: LazerOffsetLoader<F>, logger: Option<Logger>) -> Self {
         let manager_value = InstanceManager::default();
         let lifecycle_changed = manager_value.lifecycle_changed.clone();
         let manager = Arc::new(tokio::sync::RwLock::new(manager_value));
@@ -583,6 +729,7 @@ where
         let targeted_inspections = Arc::new(AtomicU64::new(0));
         #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
         let event_wakes = Arc::new(AtomicU64::new(0));
+        let loop_logger = logger.clone();
         let provider = Arc::new(provider);
         let loader = Arc::new(loader);
         let loop_manager = manager.clone();
@@ -604,6 +751,8 @@ where
             let mut next_reconcile = tokio::time::Instant::now();
             #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
             let mut pending_exits = BTreeMap::<u64, (Pid, tokio::time::Instant, Duration)>::new();
+            let mut initial_scan_reported = false;
+            let mut last_discovery_error = None::<String>;
 
             loop {
                 if loop_cancel.is_cancelled() {
@@ -627,11 +776,36 @@ where
                         let mut retry_reconcile = false;
                         if full_reconcile {
                             removed.extend(manager.take_dead());
-                            match manager.discover(loop_provider.as_ref()) {
-                                Ok(_) => {
+                            let result = if let Some(logger) = loop_logger.as_ref() {
+                                manager.discover_with_logger(loop_provider.as_ref(), logger)
+                            } else {
+                                manager.discover(loop_provider.as_ref())
+                            };
+                            match result {
+                                Ok(inserted) => {
+                                    last_discovery_error = None;
                                     loop_discovery_scans.fetch_add(1, Ordering::Relaxed);
+                                    if !initial_scan_reported {
+                                        initial_scan_reported = true;
+                                        if let Some(logger) = loop_logger.as_ref() {
+                                            logger.info(format!(
+                                                "Initial process discovery completed: {inserted} osu! instance(s)"
+                                            ));
+                                        }
+                                    }
                                 }
-                                Err(_) => retry_reconcile = true,
+                                Err(error) => {
+                                    retry_reconcile = true;
+                                    let message = error.to_string();
+                                    if last_discovery_error.as_deref() != Some(&message) {
+                                        if let Some(logger) = loop_logger.as_ref() {
+                                            logger.error(format!(
+                                                "Process discovery scan failed: {message}"
+                                            ));
+                                        }
+                                        last_discovery_error = Some(message);
+                                    }
+                                }
                             }
                             manager.poll_focus(loop_provider.as_ref());
                         } else {
@@ -708,11 +882,27 @@ where
                                 if dead && let Some(instance) = manager.remove(pid) {
                                     removed.push(instance);
                                 }
-                                match manager.discover_pid(loop_provider.as_ref(), pid) {
+                                let result = if let Some(logger) = loop_logger.as_ref() {
+                                    manager.discover_pid_with_logger(
+                                        loop_provider.as_ref(),
+                                        pid,
+                                        logger,
+                                    )
+                                } else {
+                                    manager.discover_pid(loop_provider.as_ref(), pid)
+                                };
+                                match result {
                                     Ok(_) => {
                                         loop_targeted_inspections.fetch_add(1, Ordering::Relaxed);
                                     }
-                                    Err(_) => retry_reconcile = true,
+                                    Err(error) => {
+                                        retry_reconcile = true;
+                                        if let Some(logger) = loop_logger.as_ref() {
+                                            logger.error(format!(
+                                                "Targeted process inspection failed for PID {pid}: {error}"
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -757,7 +947,16 @@ where
                     // Publish Add before a fast resolver can publish Ready.
                     publish_lifecycle(&loop_manager, &lifecycle_sender).await;
                     for instance in pending_resolvers {
-                        instance.start_lazer_resolver(loop_loader.clone()).await;
+                        if let Some(logger) = loop_logger.as_ref() {
+                            instance
+                                .start_lazer_resolver_with_logger(
+                                    loop_loader.clone(),
+                                    logger.clone(),
+                                )
+                                .await;
+                        } else {
+                            instance.start_lazer_resolver(loop_loader.clone()).await;
+                        }
                     }
 
                     let wait_deadline = pending_exits
@@ -793,7 +992,35 @@ where
                 {
                     let (interval, removed, pending_resolvers) = {
                         let mut manager = loop_manager.write().await;
-                        let _ = manager.discover(loop_provider.as_ref());
+                        let result = if let Some(logger) = loop_logger.as_ref() {
+                            manager.discover_with_logger(loop_provider.as_ref(), logger)
+                        } else {
+                            manager.discover(loop_provider.as_ref())
+                        };
+                        match result {
+                            Ok(inserted) => {
+                                last_discovery_error = None;
+                                if !initial_scan_reported {
+                                    initial_scan_reported = true;
+                                    if let Some(logger) = loop_logger.as_ref() {
+                                        logger.info(format!(
+                                            "Initial process discovery completed: {inserted} osu! instance(s)"
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                let message = error.to_string();
+                                if last_discovery_error.as_deref() != Some(&message) {
+                                    if let Some(logger) = loop_logger.as_ref() {
+                                        logger.error(format!(
+                                            "Process discovery scan failed: {message}"
+                                        ));
+                                    }
+                                    last_discovery_error = Some(message);
+                                }
+                            }
+                        }
                         let removed = manager.take_dead();
                         manager.poll_focus(loop_provider.as_ref());
                         let pending_resolvers = manager
@@ -807,13 +1034,22 @@ where
                             .collect::<Vec<_>>();
                         (manager.discovery_interval(), removed, pending_resolvers)
                     };
+                    for instance in pending_resolvers {
+                        if let Some(logger) = loop_logger.as_ref() {
+                            instance
+                                .start_lazer_resolver_with_logger(
+                                    loop_loader.clone(),
+                                    logger.clone(),
+                                )
+                                .await;
+                        } else {
+                            instance.start_lazer_resolver(loop_loader.clone()).await;
+                        }
+                    }
                     for instance in removed {
                         instance.shutdown_lazer_resolver().await;
                     }
                     publish_lifecycle(&loop_manager, &lifecycle_sender).await;
-                    for instance in pending_resolvers {
-                        instance.start_lazer_resolver(loop_loader.clone()).await;
-                    }
                     tokio::select! {
                         () = loop_cancel.cancelled() => break,
                         () = lifecycle_changed.notified() => {}

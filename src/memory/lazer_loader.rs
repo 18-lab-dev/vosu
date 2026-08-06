@@ -10,10 +10,10 @@ use bytes::Bytes;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
+use super::lazer_offsets::{LazerOffsets, LazerOffsetsError, validate_version};
+use crate::logging::Logger;
 pub use crate::net::{AddressResolver, ResolverFuture as ResolveFuture};
 use crate::net::{Deadlines, DestinationPolicy, DownloadLimits, StreamingClient};
-
-use super::lazer_offsets::{LazerOffsets, LazerOffsetsError, validate_version};
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub const RETRY_DELAYS: [Duration; 5] = [
@@ -182,6 +182,7 @@ impl<F: OffsetFetcher> LazerOffsetLoader<F> {
         }
 
         let user_agent = format!("vosu/{version} (https://vosu.app; i@kotrik.ru)");
+        let mut failures = Vec::with_capacity(self.endpoints.len());
         for endpoint in &self.endpoints {
             if cancel.is_cancelled() {
                 return Err(LazerLoadError::Cancelled);
@@ -191,14 +192,29 @@ impl<F: OffsetFetcher> LazerOffsetLoader<F> {
                 () = cancel.cancelled() => return Err(LazerLoadError::Cancelled),
                 response = self.fetcher.fetch(&url, &user_agent, REQUEST_TIMEOUT) => response,
             };
-            let Ok(response) = response else { continue };
+            let response = match response {
+                Ok(response) => response,
+                Err(error) => {
+                    failures.push(format!("{endpoint}: {error}"));
+                    continue;
+                }
+            };
             if !(200..300).contains(&response.status) {
+                failures.push(format!("{endpoint}: HTTP {}", response.status));
                 continue;
             }
-            let Ok(offsets) = LazerOffsets::from_json(&response.body) else {
-                continue;
+            let offsets = match LazerOffsets::from_json(&response.body) {
+                Ok(offsets) => offsets,
+                Err(error) => {
+                    failures.push(format!("{endpoint}: invalid offsets: {error}"));
+                    continue;
+                }
             };
             if offsets.osu_version != version {
+                failures.push(format!(
+                    "{endpoint}: returned osu! version {}",
+                    offsets.osu_version
+                ));
                 continue;
             }
             if cancel.is_cancelled() {
@@ -208,7 +224,12 @@ impl<F: OffsetFetcher> LazerOffsetLoader<F> {
             let _ = install_cache(&cache_path, &response.body, cancel);
             return Ok(Arc::new(offsets));
         }
-        Err(LazerLoadError::Unavailable(version.to_owned()))
+        let detail = if failures.is_empty() {
+            "no offset endpoints configured".to_owned()
+        } else {
+            failures.join("; ")
+        };
+        Err(LazerLoadError::Unavailable(format!("{version}: {detail}")))
     }
 }
 
@@ -237,14 +258,29 @@ pub fn install_cache(target: &Path, bytes: &[u8], cancel: &CancellationToken) ->
 /// Repeatedly discovers a version and resolves offsets without instance churn.
 /// The attempt is immediate; failures wait 30/60/120/240/300 seconds, capped.
 pub async fn retry_pending<D, Fut, S>(
-    mut discover: D,
-    mut sleep: S,
+    discover: D,
+    sleep: S,
     cancel: CancellationToken,
 ) -> Result<Arc<LazerOffsets>, LazerLoadError>
 where
     D: FnMut(CancellationToken) -> Fut,
     Fut: Future<Output = Result<Arc<LazerOffsets>, LazerLoadError>>,
     S: FnMut(Duration) -> Pin<Box<dyn Future<Output = ()> + Send>>,
+{
+    retry_pending_with_observer(discover, sleep, cancel, |_| {}).await
+}
+
+async fn retry_pending_with_observer<D, Fut, S, O>(
+    mut discover: D,
+    mut sleep: S,
+    cancel: CancellationToken,
+    mut observe: O,
+) -> Result<Arc<LazerOffsets>, LazerLoadError>
+where
+    D: FnMut(CancellationToken) -> Fut,
+    Fut: Future<Output = Result<Arc<LazerOffsets>, LazerLoadError>>,
+    S: FnMut(Duration) -> Pin<Box<dyn Future<Output = ()> + Send>>,
+    O: FnMut(&LazerLoadError) + Send,
 {
     let mut retry = 0usize;
     loop {
@@ -254,7 +290,9 @@ where
         match discover(cancel.child_token()).await {
             Ok(offsets) => return Ok(offsets),
             Err(LazerLoadError::Cancelled) => return Err(LazerLoadError::Cancelled),
-            Err(_) => {}
+            Err(error) => {
+                observe(&error);
+            }
         }
         let delay = RETRY_DELAYS[retry.min(RETRY_DELAYS.len() - 1)];
         retry = retry.saturating_add(1);
@@ -274,14 +312,37 @@ pub async fn resolve_for_instance<F>(
 where
     F: OffsetFetcher + 'static,
 {
+    resolve_for_instance_inner(loader, instance, None).await
+}
+
+pub(crate) async fn resolve_for_instance_with_logger<F>(
+    loader: Arc<LazerOffsetLoader<F>>,
+    instance: Arc<crate::instance::Instance>,
+    logger: Logger,
+) -> Result<Arc<LazerOffsets>, LazerLoadError>
+where
+    F: OffsetFetcher + 'static,
+{
+    resolve_for_instance_inner(loader, instance, Some(logger)).await
+}
+
+async fn resolve_for_instance_inner<F>(
+    loader: Arc<LazerOffsetLoader<F>>,
+    instance: Arc<crate::instance::Instance>,
+    logger: Option<Logger>,
+) -> Result<Arc<LazerOffsets>, LazerLoadError>
+where
+    F: OffsetFetcher + 'static,
+{
     if instance.client() != crate::model::enums::ClientType::Lazer {
         return Err(LazerLoadError::Unavailable("not a lazer instance".into()));
     }
     if let Some(offsets) = instance.lazer_offsets() {
         return Ok(offsets);
     }
+    let pid = instance.pid();
     let cancel = instance.lifecycle_token();
-    let offsets = retry_pending(
+    let offsets = retry_pending_with_observer(
         {
             let loader = loader.clone();
             let instance = instance.clone();
@@ -296,8 +357,10 @@ where
                         LazerLoadError::Unavailable("target PID is unavailable".into())
                     })?;
                     let version =
-                        super::lazer_version::discover_for_process(pid).map_err(|_| {
-                            LazerLoadError::Unavailable("osu! version is pending".into())
+                        super::lazer_version::discover_for_process(pid).map_err(|error| {
+                            LazerLoadError::Unavailable(format!(
+                                "osu! version discovery failed: {error}"
+                            ))
                         })?;
                     loader.resolve(&version, &attempt_cancel).await
                 }
@@ -305,6 +368,13 @@ where
         },
         tokio_sleep,
         cancel,
+        move |error| {
+            if let Some(logger) = logger.as_ref() {
+                logger.warn(format!(
+                    "Lazer offset resolution failed for PID {pid}; retrying: {error}"
+                ));
+            }
+        },
     )
     .await?;
     if instance.install_lazer_offsets(offsets.clone()) {
@@ -458,6 +528,34 @@ mod tests {
                 .to_string_lossy()
                 .starts_with(".offsets-")
         }));
+    }
+
+    #[tokio::test]
+    async fn failed_offset_sources_include_each_endpoint_diagnostic() {
+        let fetcher = FakeFetcher::default();
+        fetcher
+            .push(Err(FetchError {
+                message: "offline".into(),
+            }))
+            .await;
+        fetcher
+            .push(Ok(FetchResponse {
+                status: 503,
+                body: Bytes::new(),
+            }))
+            .await;
+        let loader = LazerOffsetLoader::new(
+            fetcher,
+            tempfile::tempdir().unwrap().path().to_owned(),
+            embedded_bytes(),
+        );
+        let error = loader
+            .resolve("2026.518.0", &CancellationToken::new())
+            .await
+            .expect_err("all sources should fail");
+        let message = error.to_string();
+        assert!(message.contains("https://vosu.app/offsets: request failed: offline"));
+        assert!(message.contains("https://osuck.net/offsets: HTTP 503"));
     }
 
     #[tokio::test]

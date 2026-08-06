@@ -188,7 +188,8 @@ impl ProductionRuntime {
             "Process events backend: {}",
             process_provider.process_event_backend_name()
         ));
-        let instances = InstanceRuntime::start(process_provider, loader);
+        let instances =
+            InstanceRuntime::start_with_logger(process_provider, loader, self.logger.clone());
         let supervisor = ProductionStateSupervisor::start(
             instances.subscribe_current(),
             self.config.subscribe_current(),
