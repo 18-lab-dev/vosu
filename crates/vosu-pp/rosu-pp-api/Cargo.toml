@@ -1,0 +1,26 @@
+[package]
+name = "vosu-rosu-pp-api"
+version = "4.0.1"
+edition.workspace = true
+rust-version.workspace = true
+authors = ["MaxOhn <ohn.m@hotmail.de>"]
+license = "MIT"
+repository = "https://github.com/MaxOhn/rosu-pp"
+description = "Pinned local MIT source fork of rosu-pp for vosu"
+publish = false
+[lib]
+name = "rosu_pp"
+path = "src/lib.rs"
+
+[features]
+default = []
+sync = []
+tracing = ["rosu-map/tracing"]
+oracle-debug = []
+
+[dependencies]
+rosu-map = { package = "vosu-rosu-map", path = "../rosu-map-api" }
+rosu-mods = "=0.4.0"
+
+[dev-dependencies]
+proptest = "1.11.0"

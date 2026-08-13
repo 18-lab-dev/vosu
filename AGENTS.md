@@ -54,7 +54,7 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 - `src/state/`, `src/instance/`, `src/process/`, `src/memory.rs`, `src/platform.rs`: process discovery, native memory reads, snapshots, and polling lifecycle.
 - `src/config/`, `src/counters/`: watched configuration, migration, settings, counter discovery/download/storage.
 - `src/updater/`: release selection, verified staging, replacement, rollback, and recovery.
-- `src/calculation.rs` and `crates/vosu-lazer-pp/`: stable and lazer performance calculation; the latter contains provenance-pinned upstream-derived code.
+- `src/calculation.rs` and `crates/vosu-pp/`: stable and lazer performance calculation; the latter is a clean-room facade over provenance-pinned MIT source forks.
 - `src/runtime/`, `src/app.rs`, `src/logging/`, `src/report/`: daemon orchestration and operational services.
 - `crates/vosu-test-harness/`: integration-test support only. `tests/` holds compatibility, native, smoke, and performance contracts. `benches/hot_paths.rs` holds Criterion benchmarks.
 - `tools/live-parity/`: deterministic live capture, attestation, comparison, and diff tooling. `tools/oracle/` holds calculator provenance/evidence tooling.
@@ -67,7 +67,7 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 - Configuration or counter persistence: affected unit tests plus `cargo test --locked --test config_compat` (and the relevant server compatibility test for counter APIs).
 - Process discovery or memory reading: affected unit tests and, on each affected native OS, `cargo test --locked --test process_memory -- --nocapture`.
 - Updater/release behavior: `cargo test --locked --test updater_compat`, native `cargo test --locked --test updater_native -- --nocapture`, and `cargo test --locked --test release_smoke` when packaging/startup changes.
-- Calculator/state semantics: affected `vosu-lazer-pp` tests and `cargo test --locked --test performance_invariants`; use live parity when observable live schemas or state timing can change.
+- Calculator/state semantics: affected `vosu-pp` tests and `cargo test --locked --test performance_invariants`; use live parity when observable live schemas or state timing can change.
 - Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](openwiki/testing/benchmarks.md).
 - Before merging a Rust change, run the applicable native smoke path and the CI checks above; platform-specific code requires evidence from that platform.
 
@@ -83,7 +83,7 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 ## Vendored, generated, and documentation boundaries
 
 - `assets/server/` and `assets/offsets.json` are vendored embedded inputs, not a frontend build workspace. Any byte change must preserve provenance and update `assets/SHA256SUMS`; update the matching `package.metadata.vosu` pins/hashes and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) when their evidence changes.
-- Treat `crates/vosu-lazer-pp/vendor/`, `tools/oracle/reference/`, oracle inputs, and calculator fixtures as provenance-pinned upstream evidence. Do not casually reformat or hand-normalize them; use the owning oracle/provenance tooling and preserve licenses, revision records, manifests, and source mappings.
+- Treat `crates/vosu-pp/rosu-pp-api/` and `crates/vosu-pp/rosu-map-api/`, `tools/oracle/reference/`, oracle inputs, and calculator fixtures as provenance-pinned upstream evidence. Do not casually reformat or hand-normalize them; use the owning oracle/provenance tooling and preserve licenses, revision records, manifests, and source mappings.
 - Do not hand-edit `Cargo.lock`; regenerate it with Cargo and review the dependency change. Recompute checksum manifests from the exact retained bytes and review the provenance change.
 - Update README user contracts when commands, requirements, configuration, routes, installation, or runtime behavior change. Update architecture for structural boundaries, add an ADR for a durable decision, and update benchmark notes only with reproducible measurements.
 

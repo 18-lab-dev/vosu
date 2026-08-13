@@ -2,7 +2,7 @@
 //!
 //! `LegacyRosuEngine` intentionally maps the rosu-pp-js 4.0.1 builder in its
 //! original setter order. The live calculator is re-exported from the separate
-//! `vosu-lazer-pp` crate so callers cannot accidentally route both contracts
+//! `vosu-pp` crate so callers cannot accidentally route both contracts
 //! through this legacy builder.
 
 use rosu_map::section::general::GameMode;
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize, de::DeserializeSeed};
 use thiserror::Error;
 
 #[allow(unused_imports)]
-pub use vosu_lazer_pp::{
+pub use vosu_pp::{
     DifficultyConfig as LiveDifficultyConfig, Error as LiveError, GradualDifficulty, HitResult,
     LiveLazerEngine, LiveScoreState, ModValue, ParsedBeatmap as LiveBeatmap, Ruleset, ScoreTotals,
     StructuredMod, hit_window,

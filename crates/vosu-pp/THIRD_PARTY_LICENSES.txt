@@ -1,0 +1,199 @@
+vosu-pp native live calculator
+====================================
+
+Scope and provenance
+--------------------
+
+The production calculator is a clean-room Rust implementation in
+`crates/vosu-pp/src`. Its production module ownership is:
+
+- `src/lib.rs` and `src/model.rs`: public facade and wire models.
+- `src/beatmap.rs` and `src/mods.rs`: parsing, conversion, mod decoding, and playable-map lifecycle.
+- `src/data.rs` and `src/difficulty.rs`: difficulty and strain projections.
+- `src/performance.rs`: full and retained-attribute performance calculation.
+- `src/gradual.rs`: prefix calculation, skipping, rewind, score, and performance.
+- `rosu-pp-api/src`: an in-tree clean-room fork of MIT `rosu-pp` 4.0.1,
+  forward-ported to the pinned MIT osu! revision below. Catch conversion
+  retains osu!stable legacy slider approximation and timestamp/progress
+  semantics in `catch/object/juice_stream.rs`.
+- `rosu-map-api/src`: an in-tree clean-room fork of MIT `rosu-map` 0.2.1,
+  with ppy-aligned circular-arc tolerance, degeneracy epsilon,
+  `Math.Acos` float-argument promotion, f64-promoted vector-length
+  calculation, and the legacy offset curve API used by catch conversion.
+- `src/scoring.rs`: accuracy, score simulation, and total score.
+- `src/hit_windows.rs`: temporal and catch spatial windows.
+- `src/score_multiplier.rs`: ruleset score-multiplier calculations.
+- `src/source_map.rs`: machine-readable clean-room behavior attribution.
+
+The implementation was written against the MIT upstream snapshots below. The
+source map records which source owns each behavior and where its Rust port
+lives.
+
+Verified MIT upstream inputs
+----------------------------
+
+### MaxOhn/rosu-pp
+
+- **Revision:** `27a67242cad155a2767f5a25a423ca4ec3e3c274` (`v4.0.1`)
+- **Source:** <https://github.com/MaxOhn/rosu-pp/tree/27a67242cad155a2767f5a25a423ca4ec3e3c274>
+- **License:** MIT
+- **License file:** <https://github.com/MaxOhn/rosu-pp/blob/27a67242cad155a2767f5a25a423ca4ec3e3c274/LICENSE>
+- **Verified license SHA-256:** `cb22ef972b1b59f0d185927c4e45dfb49fbba53cff511e2d2f3d2a107b31d623`
+- **Copyright:** Copyright (c) 2021 Max
+
+### ppy/osu
+
+- **Revision:** `97e94babde9d5ecbe574ecdd33509db27452cd0f`
+- **Source:** <https://github.com/ppy/osu/tree/97e94babde9d5ecbe574ecdd33509db27452cd0f>
+- **License:** MIT
+- **License file:** <https://github.com/ppy/osu/blob/97e94babde9d5ecbe574ecdd33509db27452cd0f/LICENCE>
+- **Verified license SHA-256:** `2e73c7c4295cc3da18697ac982f64a4ec449e0781e8f4c59318216e13998864a`
+- **Copyright:** Copyright (c) 2025 ppy Pty Ltd <contact@ppy.sh>.
+
+### ppy/osu-framework
+
+- **Revision:** `a0b031e7ff6c83d81da26fcbece7d25edbd222b4`
+- **Source:** <https://github.com/ppy/osu-framework/tree/a0b031e7ff6c83d81da26fcbece7d25edbd222b4>
+- **License:** MIT
+- **License file:** <https://github.com/ppy/osu-framework/blob/a0b031e7ff6c83d81da26fcbece7d25edbd222b4/LICENCE>
+- **Verified license SHA-256:** `d07e3ce383a24bdc4665208e0ca3730e433ea1e8235b67a301a2b26335692c8e`
+- **Copyright:** Copyright (c) 2024 ppy Pty Ltd <contact@ppy.sh>.
+
+### MaxOhn/rosu-map
+
+- **Version:** `0.2.1`
+- **Revision:** `333dd2bea78e518d39c20932c828011f21d3305e` (`v0.2.1`)
+- **Source:** <https://github.com/MaxOhn/rosu-map/tree/333dd2bea78e518d39c20932c828011f21d3305e>
+- **License:** MIT
+- **License file:** <https://github.com/MaxOhn/rosu-map/blob/333dd2bea78e518d39c20932c828011f21d3305e/LICENSE>
+- **Verified license SHA-256:** `0354bcd52e08e0464a41cf202b6bb7dc8a779bec206ae7b218544ec2ed360079`
+
+The four license files were read from fresh external checkouts at the exact
+revisions above. Their complete MIT texts are reproduced below; the digests
+and links let an auditor verify the retained text against the pinned sources.
+
+The following paths are the relevant upstream files and types consulted for
+the corresponding production modules.
+
+| `rosu-map-api/src` | `src/section/hit_objects/slider/{curve.rs,path.rs}` and `src/util/pos.rs` | `osu.Framework/Utils/{PathApproximator,CircularArcProperties,Precision}.cs`; `osuTK.Vector2.Length` |
+| `rosu-pp-api/src/catch/object/juice_stream.rs` | `src/catch/object/juice_stream.rs`; `src/model/hit_object.rs` legacy curve wrapper | `osu.Game.Rulesets.Catch/Objects/JuiceStream.cs`; `osu.Game.Rulesets.Catch/Objects/SliderEventGenerator.cs` |
+| `src/lib.rs`, `src/model.rs` | `src/lib.rs`; `src/any/{attributes.rs,score_state.rs}` | `osu.Game/Rulesets/Ruleset.cs`; `osu.Game/Scoring/ScoreInfo.cs` |
+| `src/data.rs`, `src/difficulty.rs` | `src/any/{attributes.rs,strains.rs}` and mode-specific `attributes.rs`, `strains.rs` | mode-specific difficulty attributes and calculators |
+| `src/performance.rs` | `src/any/performance/mod.rs`; mode-specific performance attributes | mode-specific performance calculators |
+| `src/gradual.rs` | `src/any/difficulty/gradual.rs`; `Difficulty::passed_objects` | ruleset difficulty hit-object prefix semantics |
+| `src/scoring.rs` | `src/any/score_state.rs`; mode score-state types | mode-specific score processors and hit-result weights |
+| `src/hit_windows.rs` | public beatmap attribute builder | `OsuHitWindows.cs`, `TaikoHitWindows.cs`, `ManiaHitWindows.cs`, catch catcher sizing |
+| `src/score_multiplier.rs` | structured mod settings supplied through `rosu-mods` | `OsuScoreMultiplierCalculatorV2.cs`, `TaikoScoreMultiplierCalculator.cs`, `CatchScoreMultiplierCalculator.cs`, `ManiaScoreMultiplierCalculator.cs` |
+
+Historical parity evidence (not a production source)
+------------------------------------------------------
+
+`tools/oracle/reference/lazer-calculator` is retained as historical parity
+evidence only. It records former tosuapp/lazer-calculator behavior for
+comparison and audit history; it is **not** a production source, build input,
+crate dependency, or runtime dependency. Production code does not derive
+from, include, vendor, or compile that directory.
+
+The repository still declares `LGPL-3.0-only` for the vosu workspace and the
+`vosu-pp` package, with the authoritative texts at the root `LICENSE`
+and `crates/vosu-pp/LICENSE`. That package-level declaration is retained
+pending the separate relicensing commit and does not change the MIT terms of
+the upstream inputs above. No LGPL-licensed wrapper-derived code remains in
+the production calculator.
+
+MIT license text (MaxOhn/rosu-pp)
+---------------------------------
+
+MIT License
+
+Copyright (c) 2021 Max
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+MIT license text (ppy/osu)
+--------------------------
+
+Copyright (c) 2025 ppy Pty Ltd <contact@ppy.sh>.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+MIT license text (ppy/osu-framework)
+------------------------------------
+
+Copyright (c) 2024 ppy Pty Ltd <contact@ppy.sh>.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+MIT license text (MaxOhn/rosu-map)
+---------------------------------
+
+
+MIT License
+
+Copyright (c) 2024 MaxOhn
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

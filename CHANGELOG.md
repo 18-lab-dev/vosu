@@ -4,12 +4,16 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 
 ## Unreleased
 
+### Calculation
+
+- Replaced the LGPL-derived native live calculator with a clean-room Rust implementation based on pinned MIT `rosu-pp` 4.0.1 and MIT `ppy/osu` revision `97e94babde9d5ecbe574ecdd33509db27452cd0f`; retained the former calculator tree only as non-production historical parity evidence.
+
 ## 0.2.0 — 2026-07-28
 
 ### Product identity and clean cutover
 
 - The clean-cutover vosu package and release line starts at **0.1.0**.
-- Renamed the current product, Rust package, executable, API terminology, logs, and updater metadata to **vosu**. Workspace crates are now `vosu-lazer-pp` and `vosu-test-harness`.
+- Renamed the current product, Rust package, executable, API terminology, logs, and updater metadata to `vosu`. Workspace crates are now `vosu-pp` and `vosu-test-harness`.
 - Canonical server configuration is the flat, typed `vosu.toml` document with uppercase binding names. Former environment-variable interfaces are migration inputs only; current operation does not accept them as configuration aliases.
 - Release archives are now `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip`, each containing the matching `vosu` or `vosu.exe` root executable. Automatic updates follow `shiruviaa/vosu`.
 - First-party catalog, offset, and identity URLs now use <https://vosu.app>.

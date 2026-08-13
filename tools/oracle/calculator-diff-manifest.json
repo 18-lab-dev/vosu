@@ -30,7 +30,7 @@
       ],
       "location": "osu! repository diff 28c846b4..97e94babde9d5ecbe574ecdd33509db27452cd0f",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src; src/{lib,data,score_multiplier,signed_osu,signed_taiko}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src; src/{lib,data,model,scoring,score_multiplier}.rs",
       "delta": "Aggregate pinned diff 28c846b4 -> 97e94bab plus wrapper 9a22c4c is decomposed into the separately located branch/constant items; no floating revision is accepted."
     },
     {
@@ -50,7 +50,7 @@
       ],
       "location": "osu.Game/Rulesets/Difficulty/Skills/{HarmonicSkill,VariableSkill}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/any/difficulty/skills/{harmonic,variable}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/difficulty/skills/{harmonic,variable}.rs",
       "delta": "28c846b4 stateless section peaks -> 97e94bab queues variable sections, finalizes the live peak exactly once, and HarmonicSkill accumulates ObjectWeightSum."
     },
     {
@@ -70,7 +70,7 @@
       ],
       "location": "osu.Game/Beatmaps/Beatmap.cs timing-point BPM selection",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/beatmap/bpm.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/beatmap/bpm.rs",
       "delta": "Target Beatmap.cs timing selection computes BPM from uninherited timing points under the current clock rate rather than scanning gameplay ticks; Rust bpm.rs replays equal/ranged timing sections."
     },
     {
@@ -89,7 +89,7 @@
       ],
       "location": "osu.Game/Rulesets/Scoring/{ScoreInfo,HitResult}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/any/{score_state,hit_result,hitresult_generator}.rs; src/lib.rs ScoreInfoData",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{score_state,hit_result,hitresult_generator}.rs; src/lib.rs ScoreInfoData",
       "delta": "Target ScoreInfo/HitResult counters and wrapper ScoreInfoData.cs:9-110 retain signed hit-result values and all tick/slider/bonus fields instead of unsigned or partial score state."
     },
     {
@@ -108,7 +108,7 @@
       ],
       "location": "osu.Game/Rulesets/Mods and osu.Game/Rulesets/Scoring mod settings",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/mods.rs; src/lib.rs StructuredMod",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/mods.rs; src/lib.rs StructuredMod",
       "delta": "Target ruleset APIMod conversion applies acronym plus each typed setting independently; unknown settings are ignored without rejecting known settings; DT/HT/DA/MR/CL fixture vectors replay coercion and precedence."
     },
     {
@@ -206,7 +206,7 @@
       ],
       "location": "osu.Game/Beatmaps/WorkingBeatmap.cs; osu.Game.Rulesets.Osu/Beatmaps/OsuBeatmapProcessor.cs; osu.Game.Rulesets.Osu/Objects/OsuHitObject.cs; osu.Game.Rulesets.Osu/Difficulty",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/{convert,object,preprocessing}.rs; vendor/rosu-pp/src/osu/difficulty/{object,gradual}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/{convert,object,preprocessing}.rs; crates/vosu-pp/rosu-pp-api/src/osu/difficulty/{object,gradual}.rs",
       "delta": "28c846b4 generic playable preprocessing -> 97e94bab target WorkingBeatmap pipeline, nested slider defaults, integer TimePreempt stack threshold, modern/legacy stacking, reflection, and target difficulty-object fields."
     },
     {
@@ -225,7 +225,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/Skills/{Aim,Speed,Flashlight,Reading}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
       "delta": "28c846b4 floating TimePreempt stack comparisons -> 97e94bab DifficultyRangeInt TimePreempt, (int)TimePreempt * StackLeniency, and integer-truncated modern circle stack timing."
     },
     {
@@ -244,7 +244,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/Evaluators/{Aim,Speed,Flashlight,Reading,Rhythm}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/difficulty/evaluators/{aim,speed,flashlight,reading,rhythm}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/difficulty/evaluators/{aim,speed,flashlight,reading,rhythm}.rs",
       "delta": "28c846b4 single slider angle candidate -> 97e94bab Angle=min(raw prior-slider-head candidate, lazy-end slider candidate using nested[^2])."
     },
     {
@@ -263,7 +263,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyCalculator.cs; osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyAttributes.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
       "delta": "28c846b4 attributes without target reading/difficult-count metadata -> 97e94bab reading attribute ID 47 and difficult strain count ID 49 with target rating values."
     },
     {
@@ -282,7 +282,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuPerformanceCalculator.cs; osu.Game.Rulesets.Osu/Utils/OsuLegacyScoreSimulator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/performance; vendor/rosu-pp/src/osu/legacy_score_miss_calc.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/performance; crates/vosu-pp/rosu-pp-api/src/osu/legacy_score_miss_calc.rs",
       "delta": "Target OsuPerformanceCalculator adds reading performance/attribute propagation and target OsuLegacyScoreSimulator effective-miss calculation; rich HD+FL map proves nonzero reading/aim/flashlight and exact full performance."
     },
     {
@@ -302,7 +302,7 @@
       ],
       "location": "lib/native/Internal/{ScoreSimulator,AccuracyCalculator}.cs; lib/native/PlayBeatmap.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "src/signed_osu.rs; src/lib.rs",
+      "rustLocation": "src/scoring.rs; src/model.rs",
       "delta": "Pinned wrapper ScoreSimulator.cs osu branches and ScoreInfoData.cs:9-110 preserve every signed counter, slider-tail count, Classic accuracy denominator, and non-finite accuracy replacement."
     },
     {
@@ -321,7 +321,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Beatmaps/TaikoBeatmapConverter.cs; osu.Game.Rulesets.Taiko/Difficulty/TaikoDifficultyCalculator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/{convert,object,difficulty}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/{convert,object,difficulty}.rs",
       "delta": "Target TaikoBeatmapConverter plus DifficultyCalculator creates rate-aware difficulty objects with full HitWindowGreat before rhythm/colour/reading/stamina evaluation; pinned rich conversion replays 238 objects."
     },
     {
@@ -340,7 +340,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/Skills and osu.Game.Rulesets.Taiko/Difficulty/Evaluators",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/difficulty/skills; vendor/rosu-pp/src/taiko/difficulty/evaluators",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/skills; crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/evaluators",
       "delta": "28c846b4 rhythm evaluator -> 97e94bab non-Hit=0, full HitWindowGreat, max(sameRhythm,samePattern), group logistic .35/2, single .3/2, long-gap logistic(mid=1.75,k=20), and reading logistic 360..480/12 or 480..640/16."
     },
     {
@@ -359,7 +359,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/TaikoPerformanceCalculator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/performance; src/signed_taiko.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/performance; src/{performance,scoring}.rs",
       "delta": "28c846b4 post-scaled stamina attribute -> 97e94bab stores stamina before scaling and derives CountTopWeightedStrains(value); GetObjectStrains renamed/reframed as GetObjectDifficulties."
     },
     {
@@ -378,7 +378,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Beatmaps/CatchBeatmapConverter.cs; osu.Game.Rulesets.Catch/Difficulty/CatchDifficultyHitObject.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/catch/{convert,difficulty/object}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/{convert,difficulty/object}.rs",
       "delta": "28c846b4 movement without repetition damping -> 97e94bab scans at most 10 prior objects, counts direction/zero or spacing-ratio-delta > .05 breaks, and multiplies distanceAddition by 0.7^count."
     },
     {
@@ -397,7 +397,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/{CatchDifficultyCalculator,Skills/Movement}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/catch/difficulty",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/difficulty",
       "delta": "28c846b4 central clock-rate preprocessing -> 97e94bab ruleset-local clockRate and half catcher width in CreateDifficultyHitObjects; numeric width remains CalculateCatchWidth * .5 with CS>5.5 shrink .0625."
     },
     {
@@ -417,7 +417,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/CatchPerformanceCalculator.cs; lib/native/Internal/ScoreSimulator.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/catch/performance; src/lib.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/performance; src/lib.rs",
       "delta": "Pinned wrapper catch ScoreSimulator.cs:177-207 and ScoreInfoData.cs:9-110 preserve signed fruit/droplet/tiny pools through accuracy and performance mapping."
     },
     {
@@ -436,7 +436,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Beatmaps/ManiaBeatmapConverter.cs; osu.Game.Rulesets.Mania/Beatmaps/Patterns",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/{convert,convert/pattern}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/{convert,convert/pattern}.rs",
       "delta": "Pinned target converter has comment/visual-only changes relative to baseline; retained vectors prove structural conversion compatibility and deliberately claim no numeric calculator delta."
     },
     {
@@ -455,7 +455,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Difficulty/{ManiaDifficultyCalculator,Skills/Strain}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/difficulty",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/difficulty",
       "delta": "Pinned target ManiaDifficultyCalculator/OverallStrainEvaluator/Skills/Strain relocates clock-rate hook and replaces Math.Pow with exact DiffUtils.Pow; core numeric formula is otherwise unchanged."
     },
     {
@@ -474,7 +474,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Difficulty/ManiaPerformanceCalculator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/performance",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/performance",
       "delta": "Pinned target ManiaPerformanceCalculator relocates rate handling and uses DiffUtils.Pow; core performance formula is otherwise unchanged."
     },
     {
@@ -532,7 +532,7 @@
       ],
       "location": "lib/patches/0001-Gradual-diff-calculator.patch; lib/native/GradualDifficulty.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
       "delta": "Pinned wrapper GradualDifficulty.cs:18-76 plus patch 0001 lines 479-482,560-576,673-703 adds empty-map guard, advance/skip/time/end prefix control, and exposed processed difficulty objects; fresh replay is a new calculator, not rewind."
     },
     {
@@ -628,7 +628,7 @@
       ],
       "location": "lib/native/LazerMod.cs APIMod conversion and settings coercion",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "src/lib.rs deserialize_mods; vendor/rosu-pp/src/model/mods.rs",
+      "rustLocation": "src/lib.rs deserialize_mods; crates/vosu-pp/rosu-pp-api/src/model/mods.rs",
       "delta": "Pinned wrapper LazerMod.cs plus osu! APIMod.cs:49-77 converts each structured setting independently, preserves typed values, and catches unknown settings without discarding the known mod."
     },
     {
@@ -648,7 +648,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/Skills/{Aim,Speed,Flashlight,Reading}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
       "delta": "28c846b4 floating TimePreempt stack comparisons -> 97e94bab DifficultyRangeInt TimePreempt, (int)TimePreempt * StackLeniency, and integer-truncated modern circle stack timing."
     },
     {
@@ -668,7 +668,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/Skills/{Aim,Speed,Flashlight,Reading}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
       "delta": "28c846b4 floating TimePreempt stack comparisons -> 97e94bab DifficultyRangeInt TimePreempt, (int)TimePreempt * StackLeniency, and integer-truncated modern circle stack timing."
     },
     {
@@ -688,7 +688,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/Skills/{Aim,Speed,Flashlight,Reading}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
       "delta": "28c846b4 floating TimePreempt stack comparisons -> 97e94bab DifficultyRangeInt TimePreempt, (int)TimePreempt * StackLeniency, and integer-truncated modern circle stack timing."
     },
     {
@@ -708,7 +708,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/Skills/{Aim,Speed,Flashlight,Reading}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
       "delta": "28c846b4 floating TimePreempt stack comparisons -> 97e94bab DifficultyRangeInt TimePreempt, (int)TimePreempt * StackLeniency, and integer-truncated modern circle stack timing."
     },
     {
@@ -728,7 +728,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/Skills/{Aim,Speed,Flashlight,Reading}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
       "delta": "28c846b4 floating TimePreempt stack comparisons -> 97e94bab DifficultyRangeInt TimePreempt, (int)TimePreempt * StackLeniency, and integer-truncated modern circle stack timing."
     },
     {
@@ -748,7 +748,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/Skills/{Aim,Speed,Flashlight,Reading}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
       "delta": "28c846b4 floating TimePreempt stack comparisons -> 97e94bab DifficultyRangeInt TimePreempt, (int)TimePreempt * StackLeniency, and integer-truncated modern circle stack timing."
     },
     {
@@ -768,7 +768,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/Skills/{Aim,Speed,Flashlight,Reading}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/difficulty/skills/{aim,speed,flashlight,reading}.rs",
       "delta": "28c846b4 floating TimePreempt stack comparisons -> 97e94bab DifficultyRangeInt TimePreempt, (int)TimePreempt * StackLeniency, and integer-truncated modern circle stack timing."
     },
     {
@@ -788,7 +788,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyCalculator.cs; osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyAttributes.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
       "delta": "28c846b4 attributes without target reading/difficult-count metadata -> 97e94bab reading attribute ID 47 and difficult strain count ID 49 with target rating values."
     },
     {
@@ -808,7 +808,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyCalculator.cs; osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyAttributes.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
       "delta": "28c846b4 attributes without target reading/difficult-count metadata -> 97e94bab reading attribute ID 47 and difficult strain count ID 49 with target rating values."
     },
     {
@@ -828,7 +828,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyCalculator.cs; osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyAttributes.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
       "delta": "28c846b4 attributes without target reading/difficult-count metadata -> 97e94bab reading attribute ID 47 and difficult strain count ID 49 with target rating values."
     },
     {
@@ -848,7 +848,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyCalculator.cs; osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyAttributes.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
       "delta": "28c846b4 attributes without target reading/difficult-count metadata -> 97e94bab reading attribute ID 47 and difficult strain count ID 49 with target rating values."
     },
     {
@@ -868,7 +868,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyCalculator.cs; osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyAttributes.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
       "delta": "28c846b4 attributes without target reading/difficult-count metadata -> 97e94bab reading attribute ID 47 and difficult strain count ID 49 with target rating values."
     },
     {
@@ -888,7 +888,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyCalculator.cs; osu.Game.Rulesets.Osu/Difficulty/OsuDifficultyAttributes.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/{attributes,difficulty/mod,difficulty/rating}.rs",
       "delta": "28c846b4 attributes without target reading/difficult-count metadata -> 97e94bab reading attribute ID 47 and difficult strain count ID 49 with target rating values."
     },
     {
@@ -908,7 +908,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuPerformanceCalculator.cs; osu.Game.Rulesets.Osu/Utils/OsuLegacyScoreSimulator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/performance; vendor/rosu-pp/src/osu/legacy_score_miss_calc.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/performance; crates/vosu-pp/rosu-pp-api/src/osu/legacy_score_miss_calc.rs",
       "delta": "Target OsuPerformanceCalculator adds reading performance/attribute propagation and target OsuLegacyScoreSimulator effective-miss calculation; rich HD+FL map proves nonzero reading/aim/flashlight and exact full performance."
     },
     {
@@ -928,7 +928,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuPerformanceCalculator.cs; osu.Game.Rulesets.Osu/Utils/OsuLegacyScoreSimulator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/performance; vendor/rosu-pp/src/osu/legacy_score_miss_calc.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/performance; crates/vosu-pp/rosu-pp-api/src/osu/legacy_score_miss_calc.rs",
       "delta": "Target OsuPerformanceCalculator adds reading performance/attribute propagation and target OsuLegacyScoreSimulator effective-miss calculation; rich HD+FL map proves nonzero reading/aim/flashlight and exact full performance."
     },
     {
@@ -948,7 +948,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuPerformanceCalculator.cs; osu.Game.Rulesets.Osu/Utils/OsuLegacyScoreSimulator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/performance; vendor/rosu-pp/src/osu/legacy_score_miss_calc.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/performance; crates/vosu-pp/rosu-pp-api/src/osu/legacy_score_miss_calc.rs",
       "delta": "Target OsuPerformanceCalculator adds reading performance/attribute propagation and target OsuLegacyScoreSimulator effective-miss calculation; rich HD+FL map proves nonzero reading/aim/flashlight and exact full performance."
     },
     {
@@ -968,7 +968,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuPerformanceCalculator.cs; osu.Game.Rulesets.Osu/Utils/OsuLegacyScoreSimulator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/performance; vendor/rosu-pp/src/osu/legacy_score_miss_calc.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/performance; crates/vosu-pp/rosu-pp-api/src/osu/legacy_score_miss_calc.rs",
       "delta": "Target OsuPerformanceCalculator adds reading performance/attribute propagation and target OsuLegacyScoreSimulator effective-miss calculation; rich HD+FL map proves nonzero reading/aim/flashlight and exact full performance."
     },
     {
@@ -988,7 +988,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuPerformanceCalculator.cs; osu.Game.Rulesets.Osu/Utils/OsuLegacyScoreSimulator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/performance; vendor/rosu-pp/src/osu/legacy_score_miss_calc.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/performance; crates/vosu-pp/rosu-pp-api/src/osu/legacy_score_miss_calc.rs",
       "delta": "Target OsuPerformanceCalculator adds reading performance/attribute propagation and target OsuLegacyScoreSimulator effective-miss calculation; rich HD+FL map proves nonzero reading/aim/flashlight and exact full performance."
     },
     {
@@ -1007,7 +1007,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuPerformanceCalculator.cs; osu.Game.Rulesets.Osu/Utils/OsuLegacyScoreSimulator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/performance; vendor/rosu-pp/src/osu/legacy_score_miss_calc.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/performance; crates/vosu-pp/rosu-pp-api/src/osu/legacy_score_miss_calc.rs",
       "delta": "Target OsuPerformanceCalculator adds reading performance/attribute propagation and target OsuLegacyScoreSimulator effective-miss calculation; rich HD+FL map proves nonzero reading/aim/flashlight and exact full performance."
     },
     {
@@ -1026,7 +1026,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuPerformanceCalculator.cs; osu.Game.Rulesets.Osu/Utils/OsuLegacyScoreSimulator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/performance; vendor/rosu-pp/src/osu/legacy_score_miss_calc.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/performance; crates/vosu-pp/rosu-pp-api/src/osu/legacy_score_miss_calc.rs",
       "delta": "Target OsuPerformanceCalculator adds reading performance/attribute propagation and target OsuLegacyScoreSimulator effective-miss calculation; rich HD+FL map proves nonzero reading/aim/flashlight and exact full performance."
     },
     {
@@ -1045,7 +1045,7 @@
       ],
       "location": "osu.Game.Rulesets.Osu/Difficulty/OsuPerformanceCalculator.cs; osu.Game.Rulesets.Osu/Utils/OsuLegacyScoreSimulator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/osu/performance; vendor/rosu-pp/src/osu/legacy_score_miss_calc.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu/performance; crates/vosu-pp/rosu-pp-api/src/osu/legacy_score_miss_calc.rs",
       "delta": "Target OsuPerformanceCalculator adds reading performance/attribute propagation and target OsuLegacyScoreSimulator effective-miss calculation; rich HD+FL map proves nonzero reading/aim/flashlight and exact full performance."
     },
     {
@@ -1064,7 +1064,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/Skills and osu.Game.Rulesets.Taiko/Difficulty/Evaluators",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/difficulty/skills; vendor/rosu-pp/src/taiko/difficulty/evaluators",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/skills; crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/evaluators",
       "delta": "28c846b4 rhythm evaluator -> 97e94bab non-Hit=0, full HitWindowGreat, max(sameRhythm,samePattern), group logistic .35/2, single .3/2, long-gap logistic(mid=1.75,k=20), and reading logistic 360..480/12 or 480..640/16."
     },
     {
@@ -1083,7 +1083,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/Skills and osu.Game.Rulesets.Taiko/Difficulty/Evaluators",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/difficulty/skills; vendor/rosu-pp/src/taiko/difficulty/evaluators",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/skills; crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/evaluators",
       "delta": "28c846b4 rhythm evaluator -> 97e94bab non-Hit=0, full HitWindowGreat, max(sameRhythm,samePattern), group logistic .35/2, single .3/2, long-gap logistic(mid=1.75,k=20), and reading logistic 360..480/12 or 480..640/16."
     },
     {
@@ -1102,7 +1102,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/Skills and osu.Game.Rulesets.Taiko/Difficulty/Evaluators",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/difficulty/skills; vendor/rosu-pp/src/taiko/difficulty/evaluators",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/skills; crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/evaluators",
       "delta": "28c846b4 rhythm evaluator -> 97e94bab non-Hit=0, full HitWindowGreat, max(sameRhythm,samePattern), group logistic .35/2, single .3/2, long-gap logistic(mid=1.75,k=20), and reading logistic 360..480/12 or 480..640/16."
     },
     {
@@ -1121,7 +1121,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/Skills and osu.Game.Rulesets.Taiko/Difficulty/Evaluators",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/difficulty/skills; vendor/rosu-pp/src/taiko/difficulty/evaluators",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/skills; crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/evaluators",
       "delta": "28c846b4 rhythm evaluator -> 97e94bab non-Hit=0, full HitWindowGreat, max(sameRhythm,samePattern), group logistic .35/2, single .3/2, long-gap logistic(mid=1.75,k=20), and reading logistic 360..480/12 or 480..640/16."
     },
     {
@@ -1140,7 +1140,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/Skills and osu.Game.Rulesets.Taiko/Difficulty/Evaluators",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/difficulty/skills; vendor/rosu-pp/src/taiko/difficulty/evaluators",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/skills; crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/evaluators",
       "delta": "28c846b4 rhythm evaluator -> 97e94bab non-Hit=0, full HitWindowGreat, max(sameRhythm,samePattern), group logistic .35/2, single .3/2, long-gap logistic(mid=1.75,k=20), and reading logistic 360..480/12 or 480..640/16."
     },
     {
@@ -1159,7 +1159,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/Skills and osu.Game.Rulesets.Taiko/Difficulty/Evaluators",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/difficulty/skills; vendor/rosu-pp/src/taiko/difficulty/evaluators",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/skills; crates/vosu-pp/rosu-pp-api/src/taiko/difficulty/evaluators",
       "delta": "28c846b4 rhythm evaluator -> 97e94bab non-Hit=0, full HitWindowGreat, max(sameRhythm,samePattern), group logistic .35/2, single .3/2, long-gap logistic(mid=1.75,k=20), and reading logistic 360..480/12 or 480..640/16."
     },
     {
@@ -1178,7 +1178,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/TaikoPerformanceCalculator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/performance; src/signed_taiko.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/performance; src/{performance,scoring}.rs",
       "delta": "28c846b4 post-scaled stamina attribute -> 97e94bab stores stamina before scaling and derives CountTopWeightedStrains(value); GetObjectStrains renamed/reframed as GetObjectDifficulties."
     },
     {
@@ -1197,7 +1197,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/TaikoPerformanceCalculator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/performance; src/signed_taiko.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/performance; src/{performance,scoring}.rs",
       "delta": "28c846b4 post-scaled stamina attribute -> 97e94bab stores stamina before scaling and derives CountTopWeightedStrains(value); GetObjectStrains renamed/reframed as GetObjectDifficulties."
     },
     {
@@ -1216,7 +1216,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/TaikoPerformanceCalculator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/performance; src/signed_taiko.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/performance; src/{performance,scoring}.rs",
       "delta": "28c846b4 post-scaled stamina attribute -> 97e94bab stores stamina before scaling and derives CountTopWeightedStrains(value); GetObjectStrains renamed/reframed as GetObjectDifficulties."
     },
     {
@@ -1235,7 +1235,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Difficulty/TaikoPerformanceCalculator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/taiko/performance; src/signed_taiko.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/performance; src/{performance,scoring}.rs",
       "delta": "28c846b4 post-scaled stamina attribute -> 97e94bab stores stamina before scaling and derives CountTopWeightedStrains(value); GetObjectStrains renamed/reframed as GetObjectDifficulties."
     },
     {
@@ -1254,7 +1254,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Beatmaps/CatchBeatmapConverter.cs; osu.Game.Rulesets.Catch/Difficulty/CatchDifficultyHitObject.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/catch/{convert,difficulty/object}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/{convert,difficulty/object}.rs",
       "delta": "28c846b4 movement without repetition damping -> 97e94bab scans at most 10 prior objects, counts direction/zero or spacing-ratio-delta > .05 breaks, and multiplies distanceAddition by 0.7^count."
     },
     {
@@ -1273,7 +1273,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Beatmaps/CatchBeatmapConverter.cs; osu.Game.Rulesets.Catch/Difficulty/CatchDifficultyHitObject.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/catch/{convert,difficulty/object}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/{convert,difficulty/object}.rs",
       "delta": "28c846b4 movement without repetition damping -> 97e94bab scans at most 10 prior objects, counts direction/zero or spacing-ratio-delta > .05 breaks, and multiplies distanceAddition by 0.7^count."
     },
     {
@@ -1292,7 +1292,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Beatmaps/CatchBeatmapConverter.cs; osu.Game.Rulesets.Catch/Difficulty/CatchDifficultyHitObject.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/catch/{convert,difficulty/object}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/{convert,difficulty/object}.rs",
       "delta": "28c846b4 movement without repetition damping -> 97e94bab scans at most 10 prior objects, counts direction/zero or spacing-ratio-delta > .05 breaks, and multiplies distanceAddition by 0.7^count."
     },
     {
@@ -1311,7 +1311,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Beatmaps/CatchBeatmapConverter.cs; osu.Game.Rulesets.Catch/Difficulty/CatchDifficultyHitObject.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/catch/{convert,difficulty/object}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/{convert,difficulty/object}.rs",
       "delta": "28c846b4 movement without repetition damping -> 97e94bab scans at most 10 prior objects, counts direction/zero or spacing-ratio-delta > .05 breaks, and multiplies distanceAddition by 0.7^count."
     },
     {
@@ -1330,7 +1330,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/{CatchDifficultyCalculator,Skills/Movement}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/catch/difficulty",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/difficulty",
       "delta": "28c846b4 central clock-rate preprocessing -> 97e94bab ruleset-local clockRate and half catcher width in CreateDifficultyHitObjects; numeric width remains CalculateCatchWidth * .5 with CS>5.5 shrink .0625."
     },
     {
@@ -1349,7 +1349,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/{CatchDifficultyCalculator,Skills/Movement}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/catch/difficulty",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/difficulty",
       "delta": "28c846b4 central clock-rate preprocessing -> 97e94bab ruleset-local clockRate and half catcher width in CreateDifficultyHitObjects; numeric width remains CalculateCatchWidth * .5 with CS>5.5 shrink .0625."
     },
     {
@@ -1368,7 +1368,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/{CatchDifficultyCalculator,Skills/Movement}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/catch/difficulty",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/difficulty",
       "delta": "28c846b4 central clock-rate preprocessing -> 97e94bab ruleset-local clockRate and half catcher width in CreateDifficultyHitObjects; numeric width remains CalculateCatchWidth * .5 with CS>5.5 shrink .0625."
     },
     {
@@ -1387,7 +1387,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/{CatchDifficultyCalculator,Skills/Movement}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/catch/difficulty",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/difficulty",
       "delta": "28c846b4 central clock-rate preprocessing -> 97e94bab ruleset-local clockRate and half catcher width in CreateDifficultyHitObjects; numeric width remains CalculateCatchWidth * .5 with CS>5.5 shrink .0625."
     },
     {
@@ -1407,7 +1407,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/CatchPerformanceCalculator.cs; lib/native/Internal/ScoreSimulator.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/catch/performance; src/lib.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/performance; src/lib.rs",
       "delta": "Pinned wrapper catch ScoreSimulator.cs:177-207 and ScoreInfoData.cs:9-110 preserve signed fruit/droplet/tiny pools through accuracy and performance mapping."
     },
     {
@@ -1427,7 +1427,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/CatchPerformanceCalculator.cs; lib/native/Internal/ScoreSimulator.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/catch/performance; src/lib.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/performance; src/lib.rs",
       "delta": "Pinned wrapper catch ScoreSimulator.cs:177-207 and ScoreInfoData.cs:9-110 preserve signed fruit/droplet/tiny pools through accuracy and performance mapping."
     },
     {
@@ -1447,7 +1447,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/CatchPerformanceCalculator.cs; lib/native/Internal/ScoreSimulator.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/catch/performance; src/lib.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/performance; src/lib.rs",
       "delta": "Pinned wrapper catch ScoreSimulator.cs:177-207 and ScoreInfoData.cs:9-110 preserve signed fruit/droplet/tiny pools through accuracy and performance mapping."
     },
     {
@@ -1467,7 +1467,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/CatchPerformanceCalculator.cs; lib/native/Internal/ScoreSimulator.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/catch/performance; src/lib.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/performance; src/lib.rs",
       "delta": "Pinned wrapper catch ScoreSimulator.cs:177-207 and ScoreInfoData.cs:9-110 preserve signed fruit/droplet/tiny pools through accuracy and performance mapping."
     },
     {
@@ -1487,7 +1487,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/CatchPerformanceCalculator.cs; lib/native/Internal/ScoreSimulator.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/catch/performance; src/lib.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/performance; src/lib.rs",
       "delta": "Pinned wrapper catch ScoreSimulator.cs:177-207 and ScoreInfoData.cs:9-110 preserve signed fruit/droplet/tiny pools through accuracy and performance mapping."
     },
     {
@@ -1507,7 +1507,7 @@
       ],
       "location": "osu.Game.Rulesets.Catch/Difficulty/CatchPerformanceCalculator.cs; lib/native/Internal/ScoreSimulator.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/catch/performance; src/lib.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/catch/performance; src/lib.rs",
       "delta": "Pinned wrapper catch ScoreSimulator.cs:177-207 and ScoreInfoData.cs:9-110 preserve signed fruit/droplet/tiny pools through accuracy and performance mapping."
     },
     {
@@ -1526,7 +1526,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Beatmaps/ManiaBeatmapConverter.cs; osu.Game.Rulesets.Mania/Beatmaps/Patterns",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/{convert,convert/pattern}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/{convert,convert/pattern}.rs",
       "delta": "Pinned target converter has comment/visual-only changes relative to baseline; retained vectors prove structural conversion compatibility and deliberately claim no numeric calculator delta."
     },
     {
@@ -1545,7 +1545,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Beatmaps/ManiaBeatmapConverter.cs; osu.Game.Rulesets.Mania/Beatmaps/Patterns",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/{convert,convert/pattern}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/{convert,convert/pattern}.rs",
       "delta": "Pinned target converter has comment/visual-only changes relative to baseline; retained vectors prove structural conversion compatibility and deliberately claim no numeric calculator delta."
     },
     {
@@ -1564,7 +1564,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Beatmaps/ManiaBeatmapConverter.cs; osu.Game.Rulesets.Mania/Beatmaps/Patterns",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/{convert,convert/pattern}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/{convert,convert/pattern}.rs",
       "delta": "Pinned target converter has comment/visual-only changes relative to baseline; retained vectors prove structural conversion compatibility and deliberately claim no numeric calculator delta."
     },
     {
@@ -1583,7 +1583,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Beatmaps/ManiaBeatmapConverter.cs; osu.Game.Rulesets.Mania/Beatmaps/Patterns",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/{convert,convert/pattern}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/{convert,convert/pattern}.rs",
       "delta": "Pinned target converter has comment/visual-only changes relative to baseline; retained vectors prove structural conversion compatibility and deliberately claim no numeric calculator delta."
     },
     {
@@ -1602,7 +1602,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Beatmaps/ManiaBeatmapConverter.cs; osu.Game.Rulesets.Mania/Beatmaps/Patterns",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/{convert,convert/pattern}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/{convert,convert/pattern}.rs",
       "delta": "Pinned target converter has comment/visual-only changes relative to baseline; retained vectors prove structural conversion compatibility and deliberately claim no numeric calculator delta."
     },
     {
@@ -1621,7 +1621,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Beatmaps/ManiaBeatmapConverter.cs; osu.Game.Rulesets.Mania/Beatmaps/Patterns",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/{convert,convert/pattern}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/{convert,convert/pattern}.rs",
       "delta": "Pinned target converter has comment/visual-only changes relative to baseline; retained vectors prove structural conversion compatibility and deliberately claim no numeric calculator delta."
     },
     {
@@ -1640,7 +1640,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Beatmaps/ManiaBeatmapConverter.cs; osu.Game.Rulesets.Mania/Beatmaps/Patterns",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/{convert,convert/pattern}.rs",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/{convert,convert/pattern}.rs",
       "delta": "Pinned target converter has comment/visual-only changes relative to baseline; retained vectors prove structural conversion compatibility and deliberately claim no numeric calculator delta."
     },
     {
@@ -1659,7 +1659,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Difficulty/{ManiaDifficultyCalculator,Skills/Strain}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/difficulty",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/difficulty",
       "delta": "Pinned target ManiaDifficultyCalculator/OverallStrainEvaluator/Skills/Strain relocates clock-rate hook and replaces Math.Pow with exact DiffUtils.Pow; core numeric formula is otherwise unchanged."
     },
     {
@@ -1678,7 +1678,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Difficulty/{ManiaDifficultyCalculator,Skills/Strain}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/difficulty",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/difficulty",
       "delta": "Pinned target ManiaDifficultyCalculator/OverallStrainEvaluator/Skills/Strain relocates clock-rate hook and replaces Math.Pow with exact DiffUtils.Pow; core numeric formula is otherwise unchanged."
     },
     {
@@ -1697,7 +1697,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Difficulty/{ManiaDifficultyCalculator,Skills/Strain}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/difficulty",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/difficulty",
       "delta": "Pinned target ManiaDifficultyCalculator/OverallStrainEvaluator/Skills/Strain relocates clock-rate hook and replaces Math.Pow with exact DiffUtils.Pow; core numeric formula is otherwise unchanged."
     },
     {
@@ -1716,7 +1716,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Difficulty/{ManiaDifficultyCalculator,Skills/Strain}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/difficulty",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/difficulty",
       "delta": "Pinned target ManiaDifficultyCalculator/OverallStrainEvaluator/Skills/Strain relocates clock-rate hook and replaces Math.Pow with exact DiffUtils.Pow; core numeric formula is otherwise unchanged."
     },
     {
@@ -1735,7 +1735,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Difficulty/{ManiaDifficultyCalculator,Skills/Strain}.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/difficulty",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/difficulty",
       "delta": "Pinned target ManiaDifficultyCalculator/OverallStrainEvaluator/Skills/Strain relocates clock-rate hook and replaces Math.Pow with exact DiffUtils.Pow; core numeric formula is otherwise unchanged."
     },
     {
@@ -1754,7 +1754,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Difficulty/ManiaPerformanceCalculator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/performance",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/performance",
       "delta": "Pinned target ManiaPerformanceCalculator relocates rate handling and uses DiffUtils.Pow; core performance formula is otherwise unchanged."
     },
     {
@@ -1773,7 +1773,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Difficulty/ManiaPerformanceCalculator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/performance",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/performance",
       "delta": "Pinned target ManiaPerformanceCalculator relocates rate handling and uses DiffUtils.Pow; core performance formula is otherwise unchanged."
     },
     {
@@ -1792,7 +1792,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Difficulty/ManiaPerformanceCalculator.cs",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/mania/performance",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/performance",
       "delta": "Pinned target ManiaPerformanceCalculator relocates rate handling and uses DiffUtils.Pow; core performance formula is otherwise unchanged."
     },
     {
@@ -1811,7 +1811,7 @@
       ],
       "location": "osu.Game/Rulesets/Mods and osu.Game/Rulesets/Scoring mod settings",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/mods.rs; src/lib.rs StructuredMod",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/mods.rs; src/lib.rs StructuredMod",
       "delta": "Target ruleset APIMod conversion applies acronym plus each typed setting independently; unknown settings are ignored without rejecting known settings; DT/HT/DA/MR/CL fixture vectors replay coercion and precedence."
     },
     {
@@ -1830,7 +1830,7 @@
       ],
       "location": "osu.Game/Rulesets/Mods and osu.Game/Rulesets/Scoring mod settings",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/mods.rs; src/lib.rs StructuredMod",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/mods.rs; src/lib.rs StructuredMod",
       "delta": "Target ruleset APIMod conversion applies acronym plus each typed setting independently; unknown settings are ignored without rejecting known settings; DT/HT/DA/MR/CL fixture vectors replay coercion and precedence."
     },
     {
@@ -1849,7 +1849,7 @@
       ],
       "location": "osu.Game/Rulesets/Mods and osu.Game/Rulesets/Scoring mod settings",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/mods.rs; src/lib.rs StructuredMod",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/mods.rs; src/lib.rs StructuredMod",
       "delta": "Target ruleset APIMod conversion applies acronym plus each typed setting independently; unknown settings are ignored without rejecting known settings; DT/HT/DA/MR/CL fixture vectors replay coercion and precedence."
     },
     {
@@ -1868,7 +1868,7 @@
       ],
       "location": "osu.Game/Rulesets/Mods and osu.Game/Rulesets/Scoring mod settings",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/mods.rs; src/lib.rs StructuredMod",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/mods.rs; src/lib.rs StructuredMod",
       "delta": "Target ruleset APIMod conversion applies acronym plus each typed setting independently; unknown settings are ignored without rejecting known settings; DT/HT/DA/MR/CL fixture vectors replay coercion and precedence."
     },
     {
@@ -1888,7 +1888,7 @@
       ],
       "location": "osu.Game/Rulesets/Mods and osu.Game/Rulesets/Scoring mod settings",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/mods.rs; src/lib.rs StructuredMod",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/mods.rs; src/lib.rs StructuredMod",
       "delta": "Target ruleset APIMod conversion applies acronym plus each typed setting independently; unknown settings are ignored without rejecting known settings; DT/HT/DA/MR/CL fixture vectors replay coercion and precedence."
     },
     {
@@ -1908,7 +1908,7 @@
       ],
       "location": "osu.Game/Rulesets/Mods and osu.Game/Rulesets/Scoring mod settings",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/mods.rs; src/lib.rs StructuredMod",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/mods.rs; src/lib.rs StructuredMod",
       "delta": "Target ruleset APIMod conversion applies acronym plus each typed setting independently; unknown settings are ignored without rejecting known settings; DT/HT/DA/MR/CL fixture vectors replay coercion and precedence."
     },
     {
@@ -1928,7 +1928,7 @@
       ],
       "location": "osu.Game/Rulesets/Mods and osu.Game/Rulesets/Scoring mod settings",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/mods.rs; src/lib.rs StructuredMod",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/mods.rs; src/lib.rs StructuredMod",
       "delta": "Target ruleset APIMod conversion applies acronym plus each typed setting independently; unknown settings are ignored without rejecting known settings; DT/HT/DA/MR/CL fixture vectors replay coercion and precedence."
     },
     {
@@ -1947,7 +1947,7 @@
       ],
       "location": "osu.Game/Rulesets/Mods and osu.Game/Rulesets/Scoring mod settings",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/mods.rs; src/lib.rs StructuredMod",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/mods.rs; src/lib.rs StructuredMod",
       "delta": "Target ruleset APIMod conversion applies acronym plus each typed setting independently; unknown settings are ignored without rejecting known settings; DT/HT/DA/MR/CL fixture vectors replay coercion and precedence."
     },
     {
@@ -1966,7 +1966,7 @@
       ],
       "location": "lib/patches/0001-Gradual-diff-calculator.patch; lib/native/GradualDifficulty.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
       "delta": "Pinned wrapper GradualDifficulty.cs:18-76 plus patch 0001 lines 479-482,560-576,673-703 adds empty-map guard, advance/skip/time/end prefix control, and exposed processed difficulty objects; fresh replay is a new calculator, not rewind."
     },
     {
@@ -1985,7 +1985,7 @@
       ],
       "location": "lib/patches/0001-Gradual-diff-calculator.patch; lib/native/GradualDifficulty.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
       "delta": "Pinned wrapper GradualDifficulty.cs:18-76 plus patch 0001 lines 479-482,560-576,673-703 adds empty-map guard, advance/skip/time/end prefix control, and exposed processed difficulty objects; fresh replay is a new calculator, not rewind."
     },
     {
@@ -2005,7 +2005,7 @@
       ],
       "location": "lib/patches/0001-Gradual-diff-calculator.patch; lib/native/GradualDifficulty.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
       "delta": "Pinned wrapper GradualDifficulty.cs:18-76 plus patch 0001 lines 479-482,560-576,673-703 adds empty-map guard, advance/skip/time/end prefix control, and exposed processed difficulty objects; fresh replay is a new calculator, not rewind."
     },
     {
@@ -2025,7 +2025,7 @@
       ],
       "location": "lib/patches/0001-Gradual-diff-calculator.patch; lib/native/GradualDifficulty.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
       "delta": "Pinned wrapper GradualDifficulty.cs:18-76 plus patch 0001 lines 479-482,560-576,673-703 adds empty-map guard, advance/skip/time/end prefix control, and exposed processed difficulty objects; fresh replay is a new calculator, not rewind."
     },
     {
@@ -2044,7 +2044,7 @@
       ],
       "location": "lib/patches/0001-Gradual-diff-calculator.patch; lib/native/GradualDifficulty.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
       "delta": "Pinned wrapper GradualDifficulty.cs:18-76 plus patch 0001 lines 479-482,560-576,673-703 adds empty-map guard, advance/skip/time/end prefix control, and exposed processed difficulty objects; fresh replay is a new calculator, not rewind."
     },
     {
@@ -2063,7 +2063,7 @@
       ],
       "location": "lib/patches/0001-Gradual-diff-calculator.patch; lib/native/GradualDifficulty.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
       "delta": "Pinned wrapper GradualDifficulty.cs:18-76 plus patch 0001 lines 479-482,560-576,673-703 adds empty-map guard, advance/skip/time/end prefix control, and exposed processed difficulty objects; fresh replay is a new calculator, not rewind."
     },
     {
@@ -2082,7 +2082,7 @@
       ],
       "location": "lib/patches/0001-Gradual-diff-calculator.patch; lib/native/GradualDifficulty.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
       "delta": "Pinned wrapper GradualDifficulty.cs:18-76 plus patch 0001 lines 479-482,560-576,673-703 adds empty-map guard, advance/skip/time/end prefix control, and exposed processed difficulty objects; fresh replay is a new calculator, not rewind."
     },
     {
@@ -2101,7 +2101,7 @@
       ],
       "location": "lib/patches/0001-Gradual-diff-calculator.patch; lib/native/GradualDifficulty.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
       "delta": "Pinned wrapper GradualDifficulty.cs:18-76 plus patch 0001 lines 479-482,560-576,673-703 adds empty-map guard, advance/skip/time/end prefix control, and exposed processed difficulty objects; fresh replay is a new calculator, not rewind."
     },
     {
@@ -2120,7 +2120,7 @@
       ],
       "location": "lib/patches/0001-Gradual-diff-calculator.patch; lib/native/GradualDifficulty.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
       "delta": "Pinned wrapper GradualDifficulty.cs:18-76 plus patch 0001 lines 479-482,560-576,673-703 adds empty-map guard, advance/skip/time/end prefix control, and exposed processed difficulty objects; fresh replay is a new calculator, not rewind."
     },
     {
@@ -2139,7 +2139,7 @@
       ],
       "location": "lib/patches/0001-Gradual-diff-calculator.patch; lib/native/GradualDifficulty.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "vendor/rosu-pp/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/any/{difficulty,performance}/gradual.rs; src/lib.rs GradualCalculator",
       "delta": "Pinned wrapper GradualDifficulty.cs:18-76 plus patch 0001 lines 479-482,560-576,673-703 adds empty-map guard, advance/skip/time/end prefix control, and exposed processed difficulty objects; fresh replay is a new calculator, not rewind."
     },
     {
@@ -2583,7 +2583,7 @@
       ],
       "location": "lib/native/LazerMod.cs APIMod conversion and settings coercion",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "src/lib.rs deserialize_mods; vendor/rosu-pp/src/model/mods.rs",
+      "rustLocation": "src/lib.rs deserialize_mods; crates/vosu-pp/rosu-pp-api/src/model/mods.rs",
       "delta": "Pinned wrapper LazerMod.cs plus osu! APIMod.cs:49-77 converts each structured setting independently, preserves typed values, and catches unknown settings without discarding the known mod."
     },
     {
@@ -2603,7 +2603,7 @@
       ],
       "location": "lib/native/LazerMod.cs APIMod conversion and settings coercion",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "src/lib.rs deserialize_mods; vendor/rosu-pp/src/model/mods.rs",
+      "rustLocation": "src/lib.rs deserialize_mods; crates/vosu-pp/rosu-pp-api/src/model/mods.rs",
       "delta": "Pinned wrapper LazerMod.cs plus osu! APIMod.cs:49-77 converts each structured setting independently, preserves typed values, and catches unknown settings without discarding the known mod."
     },
     {
@@ -2623,7 +2623,7 @@
       ],
       "location": "lib/native/LazerMod.cs APIMod conversion and settings coercion",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "src/lib.rs deserialize_mods; vendor/rosu-pp/src/model/mods.rs",
+      "rustLocation": "src/lib.rs deserialize_mods; crates/vosu-pp/rosu-pp-api/src/model/mods.rs",
       "delta": "Pinned wrapper LazerMod.cs plus osu! APIMod.cs:49-77 converts each structured setting independently, preserves typed values, and catches unknown settings without discarding the known mod."
     },
     {
@@ -2643,7 +2643,7 @@
       ],
       "location": "lib/native/LazerMod.cs APIMod conversion and settings coercion",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "src/lib.rs deserialize_mods; vendor/rosu-pp/src/model/mods.rs",
+      "rustLocation": "src/lib.rs deserialize_mods; crates/vosu-pp/rosu-pp-api/src/model/mods.rs",
       "delta": "Pinned wrapper LazerMod.cs plus osu! APIMod.cs:49-77 converts each structured setting independently, preserves typed values, and catches unknown settings without discarding the known mod."
     },
     {
@@ -2662,7 +2662,7 @@
       ],
       "location": "lib/native/LazerMod.cs APIMod conversion and settings coercion",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "src/lib.rs deserialize_mods; vendor/rosu-pp/src/model/mods.rs",
+      "rustLocation": "src/lib.rs deserialize_mods; crates/vosu-pp/rosu-pp-api/src/model/mods.rs",
       "delta": "Pinned wrapper LazerMod.cs plus osu! APIMod.cs:49-77 converts each structured setting independently, preserves typed values, and catches unknown settings without discarding the known mod."
     },
     {
@@ -2871,7 +2871,7 @@
       ],
       "location": "osu.Game/Rulesets/Mods and osu.Game/Rulesets/Scoring mod settings",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/mods.rs; src/lib.rs StructuredMod",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/mods.rs; src/lib.rs StructuredMod",
       "delta": "Target taiko Random mod applies fixed seed 12345 through the actual ruleset preprocessing pipeline; the pinned rich map records exact C# difficulty, strains, score, accuracy, performance, and gradual outputs for Rust replay."
     },
     {
@@ -2890,7 +2890,7 @@
       ],
       "location": "osu.Game/Rulesets/Mods and osu.Game/Rulesets/Scoring mod settings",
       "baselineLocation": "rosu-pp v4.0.1 source",
-      "rustLocation": "vendor/rosu-pp/src/model/mods.rs; src/lib.rs StructuredMod",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/model/mods.rs; src/lib.rs StructuredMod",
       "delta": "Target mania Random mod applies fixed seed 12345 through the actual ruleset preprocessing pipeline; the pinned rich map records exact C# difficulty, strains, score, accuracy, performance, and gradual outputs for Rust replay."
     },
     {
@@ -2954,7 +2954,7 @@
       ],
       "location": "osu.Game/Beatmaps/WorkingBeatmap.cs:317-349; osu.Game.Rulesets.Osu/Mods/OsuModFreezeFrame.cs:18-87; osu.Game.Rulesets.Osu/Difficulty/Preprocessing/OsuDifficultyHitObject.cs:44-47,155-170",
       "baselineLocation": "rosu-pp v4.0.1 uses one AR preempt and has no FR playable preprocessing",
-      "rustLocation": "vendor/rosu-pp/src/osu conversion/difficulty preprocessing; src/lib.rs playable_map",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/osu conversion/difficulty preprocessing; src/lib.rs playable_map",
       "delta": "After stacking, target FR adds StartTime-lastNewComboTime to every non-spinner TimePreempt while combo heads add zero; reading visibility uses adjusted per-object preempt while stack offsets retain original AR preempt."
     },
     {
@@ -2974,7 +2974,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Mods/TaikoModSimplifiedRhythm.cs:20-132",
       "baselineLocation": "rosu-pp v4.0.1 has no SR playable transform",
-      "rustLocation": "vendor/rosu-pp/src/taiko/convert.rs apply_simplified_rhythm",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/convert.rs apply_simplified_rhythm",
       "delta": "Enabled one-third conversion removes rhythm index mod 3 == 1, retimes index mod 3 == 2 to prior+beatLength/adjustedRhythm, and stable-sorts by StartTime."
     },
     {
@@ -2994,7 +2994,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Mods/TaikoModSimplifiedRhythm.cs:20-132",
       "baselineLocation": "rosu-pp v4.0.1 has no SR playable transform",
-      "rustLocation": "vendor/rosu-pp/src/taiko/convert.rs apply_simplified_rhythm",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/convert.rs apply_simplified_rhythm",
       "delta": "Enabled one-sixth conversion removes rhythm index mod 3 == 1, retimes index mod 3 == 2, preserves cross-pass inPattern state, and stable-sorts."
     },
     {
@@ -3014,7 +3014,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Mods/TaikoModSimplifiedRhythm.cs:20-132",
       "baselineLocation": "rosu-pp v4.0.1 has no SR playable transform",
-      "rustLocation": "vendor/rosu-pp/src/taiko/convert.rs apply_simplified_rhythm",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/convert.rs apply_simplified_rhythm",
       "delta": "Enabled one-eighth conversion removes alternating notes from closest-divisor eighth patterns before later conversion passes."
     },
     {
@@ -3034,7 +3034,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Mods/TaikoModSimplifiedRhythm.cs:20-132",
       "baselineLocation": "rosu-pp v4.0.1 has no SR playable transform",
-      "rustLocation": "vendor/rosu-pp/src/taiko/convert.rs apply_simplified_rhythm",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/convert.rs apply_simplified_rhythm",
       "delta": "With all settings enabled target runs 1/8 then 1/6 then 1/3 while retaining inPattern across passes, producing an order-sensitive stable-sorted result."
     },
     {
@@ -3055,7 +3055,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Mods/TaikoModSwap.cs:16-35",
       "baselineLocation": "rosu-pp v4.0.1 does not eagerly apply SW",
-      "rustLocation": "vendor/rosu-pp/src/taiko/convert.rs apply_swap",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/convert.rs apply_swap",
       "delta": "Each SW toggles every Taiko hit Centre to Rim and Rim to Centre in input mod order."
     },
     {
@@ -3075,7 +3075,7 @@
       ],
       "location": "osu.Game.Rulesets.Taiko/Mods/TaikoModSwap.cs:16-35",
       "baselineLocation": "rosu-pp v4.0.1 does not eagerly apply SW",
-      "rustLocation": "vendor/rosu-pp/src/taiko/convert.rs ordered apply_swap",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/taiko/convert.rs ordered apply_swap",
       "delta": "Two ordered SW instances toggle the complete colour pattern twice and therefore exactly cancel."
     },
     {
@@ -3096,7 +3096,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Mods/ManiaModHoldOff.cs:18-63",
       "baselineLocation": "rosu-pp v4.0.1 facade lacks real HO map mutation",
-      "rustLocation": "vendor/rosu-pp/src/mania/convert/mod.rs apply_map_mods",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/convert/mod.rs apply_map_mods",
       "delta": "HO replaces every hold with a normal note at its head and stable-sorts the result."
     },
     {
@@ -3117,7 +3117,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Mods/ManiaModInvert.cs:18-77",
       "baselineLocation": "rosu-pp v4.0.1 facade lacks real IN map mutation",
-      "rustLocation": "vendor/rosu-pp/src/mania/convert/mod.rs apply_map_mods",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/convert/mod.rs apply_map_mods",
       "delta": "IN creates per-column holds between consecutive locations with max(duration/2,duration-beatLength/4), clears breaks, and stable-sorts."
     },
     {
@@ -3138,7 +3138,7 @@
       ],
       "location": "osu.Game.Rulesets.Mania/Mods/ManiaModMirror.cs:14-26",
       "baselineLocation": "rosu-pp v4.0.1 facade lacks real MR map mutation",
-      "rustLocation": "vendor/rosu-pp/src/mania/convert/mod.rs apply_map_mods",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/convert/mod.rs apply_map_mods",
       "delta": "MR maps every column to TotalColumns-column-1 after conversion transforms."
     },
     {
@@ -3158,7 +3158,7 @@
       ],
       "location": "osu.Game/Beatmaps/WorkingBeatmap.cs:290-349; osu.Game.Rulesets.Mania/Mods/{ManiaModHoldOff,ManiaModInvert,ManiaModMirror,ManiaModRandom}.cs",
       "baselineLocation": "rosu-pp v4.0.1 facade lacks ordered real map mutation",
-      "rustLocation": "vendor/rosu-pp/src/mania/convert/mod.rs apply_map_mods",
+      "rustLocation": "crates/vosu-pp/rosu-pp-api/src/mania/convert/mod.rs apply_map_mods",
       "delta": "Target applies converter mods, then HO/IN after conversion, then ordered MR/RD beatmap transforms; fixed-seed RD uses C# Random OrderBy permutation."
     },
     {
@@ -3188,7 +3188,7 @@
       "authority": "calculator-wrapper",
       "location": "lib/native/PlayBeatmap.cs:93-105,123-139 and osu! 97e94bab ruleset GetAdjustedDisplayDifficulty implementations",
       "baselineLocation": "rosu-pp v4.0.1 mode difficulty/performance builders and raw BeatmapAttributesBuilder display projection",
-      "rustLocation": "crates/vosu-lazer-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
+      "rustLocation": "crates/vosu-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
       "delta": "GetBeatmapDifficulty and ruleset GetAdjustedDisplayDifficulty execute the playable-map difficulty application followed by the display-adjustment fold in authoritative mod order rather than reading raw metadata.",
       "requires": [
         "wrapper.display.osu.exact"
@@ -3203,7 +3203,7 @@
       "authority": "calculator-wrapper",
       "location": "lib/native/PlayBeatmap.cs:93-105,123-139 and osu! 97e94bab ruleset GetAdjustedDisplayDifficulty implementations",
       "baselineLocation": "rosu-pp v4.0.1 mode difficulty/performance builders and raw BeatmapAttributesBuilder display projection",
-      "rustLocation": "crates/vosu-lazer-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
+      "rustLocation": "crates/vosu-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
       "delta": "osu display difficulty projects AR and OD through the ordered DT/HT/NC/DC/AS/WU/WD effective rate, including mixed and duplicate fixed-rate mods and clamped configured rates.",
       "requires": [
         "wrapper.display.osu.ordered-rate-surface"
@@ -3218,7 +3218,7 @@
       "authority": "calculator-wrapper",
       "location": "lib/native/PlayBeatmap.cs:93-105,123-139 and osu! 97e94bab ruleset GetAdjustedDisplayDifficulty implementations",
       "baselineLocation": "rosu-pp v4.0.1 mode difficulty/performance builders and raw BeatmapAttributesBuilder display projection",
-      "rustLocation": "crates/vosu-lazer-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
+      "rustLocation": "crates/vosu-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
       "delta": "taiko display difficulty projects OD through the ordered DT/HT/NC/DC/AS/WU/WD effective rate, including mixed and duplicate fixed-rate mods and clamped configured rates.",
       "requires": [
         "wrapper.display.taiko.ordered-rate-surface"
@@ -3233,7 +3233,7 @@
       "authority": "calculator-wrapper",
       "location": "lib/native/PlayBeatmap.cs:93-105,123-139 and osu! 97e94bab ruleset GetAdjustedDisplayDifficulty implementations",
       "baselineLocation": "rosu-pp v4.0.1 mode difficulty/performance builders and raw BeatmapAttributesBuilder display projection",
-      "rustLocation": "crates/vosu-lazer-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
+      "rustLocation": "crates/vosu-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
       "delta": "catch display difficulty projects AR through the ordered DT/HT/NC/DC/WU/WD effective rate, including mixed and duplicate fixed-rate mods and clamped configured rates.",
       "requires": [
         "wrapper.display.catch.ordered-rate-surface"
@@ -3248,7 +3248,7 @@
       "authority": "calculator-wrapper",
       "location": "lib/native/PlayBeatmap.cs:93-105,123-139 and osu! 97e94bab ruleset GetAdjustedDisplayDifficulty implementations",
       "baselineLocation": "rosu-pp v4.0.1 mode difficulty/performance builders and raw BeatmapAttributesBuilder display projection",
-      "rustLocation": "crates/vosu-lazer-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
+      "rustLocation": "crates/vosu-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
       "delta": "mania display difficulty derives OD from the HR/EZ-adjusted perfect hit window and projects native or converted key count into CS instead of applying osu-style display attributes.",
       "requires": [
         "wrapper.display.mania.hr-ez-key-count"
@@ -3263,7 +3263,7 @@
       "authority": "calculator-wrapper",
       "location": "lib/native/PlayBeatmap.cs:93-105,123-139 and osu! 97e94bab ruleset GetAdjustedDisplayDifficulty implementations",
       "baselineLocation": "rosu-pp v4.0.1 mode difficulty/performance builders and raw BeatmapAttributesBuilder display projection",
-      "rustLocation": "crates/vosu-lazer-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
+      "rustLocation": "crates/vosu-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
       "delta": "pinned target mania display difficulty intentionally leaves OD and key-count projection invariant under DT/HT/NC/DC/AS/WU/WD rates while HR/EZ and key-count mods remain observable.",
       "requires": [
         "wrapper.display.mania.no-rate-invariance"
@@ -3278,7 +3278,7 @@
       "authority": "calculator-wrapper",
       "location": "lib/native/PlayBeatmap.cs:93-105,123-139 and osu! 97e94bab ruleset GetAdjustedDisplayDifficulty implementations",
       "baselineLocation": "rosu-pp v4.0.1 mode difficulty/performance builders and raw BeatmapAttributesBuilder display projection",
-      "rustLocation": "crates/vosu-lazer-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
+      "rustLocation": "crates/vosu-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
       "delta": "osu performance accepts retained same-mode difficulty attributes while the current playable input changes under HR or DA and evaluates exact pinned output from those retained attributes.",
       "requires": [
         "wrapper.retained-attrs.osu.hr-da"
@@ -3293,7 +3293,7 @@
       "authority": "calculator-wrapper",
       "location": "lib/native/PlayBeatmap.cs:93-105,123-139 and osu! 97e94bab ruleset GetAdjustedDisplayDifficulty implementations",
       "baselineLocation": "rosu-pp v4.0.1 mode difficulty/performance builders and raw BeatmapAttributesBuilder display projection",
-      "rustLocation": "crates/vosu-lazer-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
+      "rustLocation": "crates/vosu-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
       "delta": "taiko performance accepts retained same-mode difficulty attributes while the current playable input changes under HR or DA and evaluates exact pinned output from those retained attributes.",
       "requires": [
         "wrapper.retained-attrs.taiko.hr-da"
@@ -3308,7 +3308,7 @@
       "authority": "calculator-wrapper",
       "location": "lib/native/PlayBeatmap.cs:93-105,123-139 and osu! 97e94bab ruleset GetAdjustedDisplayDifficulty implementations",
       "baselineLocation": "rosu-pp v4.0.1 mode difficulty/performance builders and raw BeatmapAttributesBuilder display projection",
-      "rustLocation": "crates/vosu-lazer-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
+      "rustLocation": "crates/vosu-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
       "delta": "catch performance accepts retained same-mode difficulty attributes while the current playable input changes under HR or DA and evaluates exact pinned output from those retained attributes.",
       "requires": [
         "wrapper.retained-attrs.catch.hr-da"
@@ -3323,7 +3323,7 @@
       "authority": "calculator-wrapper",
       "location": "lib/native/PlayBeatmap.cs:93-105,123-139 and osu! 97e94bab ruleset GetAdjustedDisplayDifficulty implementations",
       "baselineLocation": "rosu-pp v4.0.1 mode difficulty/performance builders and raw BeatmapAttributesBuilder display projection",
-      "rustLocation": "crates/vosu-lazer-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
+      "rustLocation": "crates/vosu-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
       "delta": "all twelve ordered cross-mode difficulty-attribute and performance-calculator pairings reject the mismatched ruleset instead of interpreting foreign attribute data.",
       "requires": [
         "wrapper.retained-attrs.cross-mode-throws"

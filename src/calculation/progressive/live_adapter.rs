@@ -7,7 +7,7 @@ use super::{
 
 #[derive(Debug)]
 pub enum LiveAdapterError {
-    Engine(vosu_lazer_pp::Error),
+    Engine(vosu_pp::Error),
     ScoreField(&'static str, i64),
 }
 
@@ -24,31 +24,29 @@ impl fmt::Display for LiveAdapterError {
 
 impl std::error::Error for LiveAdapterError {}
 
-impl From<vosu_lazer_pp::Error> for LiveAdapterError {
-    fn from(value: vosu_lazer_pp::Error) -> Self {
+impl From<vosu_pp::Error> for LiveAdapterError {
+    fn from(value: vosu_pp::Error) -> Self {
         Self::Engine(value)
     }
 }
 
-fn live_ruleset(mode: Ruleset) -> vosu_lazer_pp::Ruleset {
+fn live_ruleset(mode: Ruleset) -> vosu_pp::Ruleset {
     match mode {
-        Ruleset::Osu => vosu_lazer_pp::Ruleset::Osu,
-        Ruleset::Taiko => vosu_lazer_pp::Ruleset::Taiko,
-        Ruleset::Catch => vosu_lazer_pp::Ruleset::Catch,
-        Ruleset::Mania => vosu_lazer_pp::Ruleset::Mania,
+        Ruleset::Osu => vosu_pp::Ruleset::Osu,
+        Ruleset::Taiko => vosu_pp::Ruleset::Taiko,
+        Ruleset::Catch => vosu_pp::Ruleset::Catch,
+        Ruleset::Mania => vosu_pp::Ruleset::Mania,
     }
 }
 
-pub(super) fn live_score(
-    score: &ScoreInput,
-) -> Result<vosu_lazer_pp::ScoreInfoData, LiveAdapterError> {
+pub(super) fn live_score(score: &ScoreInput) -> Result<vosu_pp::ScoreInfoData, LiveAdapterError> {
     fn i32_field(name: &'static str, value: i64) -> Result<i32, LiveAdapterError> {
         value
             .try_into()
             .map_err(|_| LiveAdapterError::ScoreField(name, value))
     }
 
-    Ok(vosu_lazer_pp::ScoreInfoData {
+    Ok(vosu_pp::ScoreInfoData {
         total_score: score.total_score,
         is_legacy_score: score.is_legacy_score,
         accuracy: score.accuracy,
@@ -72,7 +70,7 @@ pub(super) fn live_score(
     })
 }
 
-fn performance_attributes(value: vosu_lazer_pp::PerformanceAttrsData) -> PerformanceAttributes {
+fn performance_attributes(value: vosu_pp::PerformanceAttrsData) -> PerformanceAttributes {
     PerformanceAttributes {
         pp: value.pp,
         accuracy: value.accuracy,
@@ -91,10 +89,10 @@ fn performance_attributes(value: vosu_lazer_pp::PerformanceAttrsData) -> Perform
 /// it, while full/current/result performance all receive the complete signed
 /// score DTO including explicit accuracy.
 pub struct LiveProgressiveBeatmap {
-    engine: vosu_lazer_pp::LiveLazerEngine,
-    map: vosu_lazer_pp::ParsedBeatmap,
-    config: vosu_lazer_pp::DifficultyConfig,
-    full_difficulty: vosu_lazer_pp::DifficultyAttrsData,
+    engine: vosu_pp::LiveLazerEngine,
+    map: vosu_pp::ParsedBeatmap,
+    config: vosu_pp::DifficultyConfig,
+    full_difficulty: vosu_pp::DifficultyAttrsData,
     max_score: ScoreInput,
 }
 
@@ -102,9 +100,9 @@ impl LiveProgressiveBeatmap {
     pub fn new(
         bytes: &[u8],
         mode: Ruleset,
-        mods: &[vosu_lazer_pp::StructuredMod],
+        mods: &[vosu_pp::StructuredMod],
     ) -> Result<Self, LiveAdapterError> {
-        let engine = vosu_lazer_pp::LiveLazerEngine;
+        let engine = vosu_pp::LiveLazerEngine;
         let parsed = engine.parse(bytes)?;
         let mut map = if parsed.mode() == live_ruleset(mode) {
             parsed
@@ -112,7 +110,7 @@ impl LiveProgressiveBeatmap {
             engine.convert(&parsed, live_ruleset(mode))?
         };
         engine.apply_mods(&mut map, mods)?;
-        let config = vosu_lazer_pp::DifficultyConfig::default();
+        let config = vosu_pp::DifficultyConfig::default();
         let full_difficulty = engine.difficulty_data(&map, &config)?;
         let mut max_score = score_input(engine.create_score(&map, 1.0)?);
         max_score.max_combo = i64::from(full_difficulty.max_combo);
@@ -127,7 +125,7 @@ impl LiveProgressiveBeatmap {
     }
 }
 
-fn score_input(score: vosu_lazer_pp::ScoreInfoData) -> ScoreInput {
+fn score_input(score: vosu_pp::ScoreInfoData) -> ScoreInput {
     ScoreInput {
         total_score: score.total_score,
         is_legacy_score: score.is_legacy_score,
@@ -153,12 +151,12 @@ fn score_input(score: vosu_lazer_pp::ScoreInfoData) -> ScoreInput {
 }
 
 pub struct LiveGradualProgression {
-    gradual: vosu_lazer_pp::GradualDifficulty,
+    gradual: vosu_pp::GradualDifficulty,
 }
 
 impl GradualProgression for LiveGradualProgression {
     type Error = LiveAdapterError;
-    type Difficulty = vosu_lazer_pp::DifficultyAttrsData;
+    type Difficulty = vosu_pp::DifficultyAttrsData;
 
     fn skip_to_time(&mut self, play_time: f64) -> Result<usize, Self::Error> {
         Ok(self.gradual.skip_to_time(play_time))
@@ -187,7 +185,7 @@ impl GradualProgression for LiveGradualProgression {
 
 impl ProgressiveBeatmap for LiveProgressiveBeatmap {
     type Error = LiveAdapterError;
-    type Difficulty = vosu_lazer_pp::DifficultyAttrsData;
+    type Difficulty = vosu_pp::DifficultyAttrsData;
     type Gradual = LiveGradualProgression;
 
     fn create_gradual(&self) -> Result<Self::Gradual, Self::Error> {

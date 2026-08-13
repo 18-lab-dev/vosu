@@ -77,7 +77,7 @@ function parseArgs(argv: string[]): Options {
     source: resolve(required("source")),
     calculatorSource: resolve(required("calculator-source")),
     manifest: resolve(values.get("manifest") ?? "tools/oracle/calculator-diff-manifest.json"),
-    map: resolve(values.get("map") ?? "crates/vosu-lazer-pp/tests/fixture.osu"),
+    map: resolve(values.get("map") ?? "crates/vosu-pp/tests/fixture.osu"),
     out: resolve(required("out")),
     binding: values.has("binding") ? resolve(required("binding")) : undefined,
     verifyOnly,

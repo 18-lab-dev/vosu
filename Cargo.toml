@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-lazer-pp", "crates/vosu-test-harness"]
+members = [".", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-test-harness"]
 resolver = "3"
 
 [workspace.package]
@@ -19,7 +19,9 @@ build = "build.rs"
 [package.metadata.vosu]
 source-commit = "1a67fd64cc38fe60306328dde0a429e3211ca4ed"
 osu-calculator-revision = "97e94babde9d5ecbe574ecdd33509db27452cd0f"
-lazer-calculator-commit = "9a22c4c74f8e584fa64133a79a204dd045646bac"
+rosu-pp-revision = "27a67242cad155a2767f5a25a423ca4ec3e3c274"
+rosu-map-revision = "333dd2bea78e518d39c20932c828011f21d3305e"
+osu-framework-revision = "a0b031e7ff6c83d81da26fcbece7d25edbd222b4"
 homepage-css-sha256 = "53bf104af52fa507e01df47061f9a3c823c61aa46bb5d3b7e5fe5d1cd6a92b79"
 lazer-offsets-osu-version = "2026.726.0"
 lazer-offsets-release-tag = "2026.726.0-lazer"
@@ -87,7 +89,7 @@ thiserror = "2.0.18"
 tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util", "signal", "test-util"] }
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 toml = "=1.1.2"
-vosu-lazer-pp = { path = "crates/vosu-lazer-pp" }
+vosu-pp = { path = "crates/vosu-pp" }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["fmt", "env-filter", "ansi", "registry"] }
 url = "2.5.8"

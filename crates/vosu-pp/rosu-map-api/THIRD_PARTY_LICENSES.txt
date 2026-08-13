@@ -1,0 +1,26 @@
+vosu-rosu-map
+=============
+
+This crate is an in-tree fork of MIT-licensed MaxOhn/rosu-map 0.2.1.
+
+- Upstream: https://github.com/MaxOhn/rosu-map
+- Version: 0.2.1
+- License: MIT (see LICENSE, Copyright (c) 2024 MaxOhn)
+- Clean-room input: the fresh crates.io rosu-map 0.2.1 source used by the
+  vosu workspace.
+
+Local behavioral deltas
+-----------------------
+
+The fork aligns slider geometry with the pinned ppy/osu source at revision
+`97e94babde9d5ecbe574ecdd33509db27452cd0f`:
+
+- `src/section/hit_objects/slider/curve.rs` uses the target circular-arc
+  tolerance `0.1` (the fresh rosu-map source defaults to `0.125`).
+- Circular-arc degeneracy uses ppy's `Precision.FLOAT_EPSILON` (`1e-3`).
+- Circular-arc subdivision evaluates the `float` argument to `Math.Acos` and
+  then promotes it to `double`, matching C# overload resolution.
+- `src/util/pos.rs` computes vector length with a single-precision square
+  root, matching osuTK `Vector2.Length`.
+
+These are the only production changes in this fork.

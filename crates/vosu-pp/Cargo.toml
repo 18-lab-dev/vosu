@@ -1,0 +1,31 @@
+[package]
+name = "vosu-pp"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "LGPL-3.0-only"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+oracle-debug = ["rosu-pp/oracle-debug"]
+[dependencies]
+rosu-map = { package = "vosu-rosu-map", path = "rosu-map-api" }
+rosu-mods = { version = "=0.4.0", features = ["serde"] }
+rosu-pp = { package = "vosu-rosu-pp-api", path = "rosu-pp-api", features = ["sync"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+thiserror = "=2.0.18"
+
+[[test]]
+name = "live_contracts"
+required-features = ["oracle-debug"]
+
+[[test]]
+name = "oracle_parity"
+required-features = ["oracle-debug"]
+[dev-dependencies]
+rosu-pp = { package = "vosu-rosu-pp-api", path = "rosu-pp-api", features = ["sync", "oracle-debug"] }

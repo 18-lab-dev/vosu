@@ -27,7 +27,7 @@ pub struct LiveBeatmapEngine;
 
 impl BeatmapEngine for LiveBeatmapEngine {
     fn calculate(&self, request: EngineRequest<'_>) -> Result<EngineOutput, BeatmapError> {
-        let engine = vosu_lazer_pp::LiveLazerEngine;
+        let engine = vosu_pp::LiveLazerEngine;
         let parsed = engine
             .parse(request.content.as_bytes())
             .map_err(engine_error)?;
@@ -41,8 +41,8 @@ impl BeatmapEngine for LiveBeatmapEngine {
         let mods = structured_mods(request.mods)?;
         engine.apply_mods(&mut map, &mods).map_err(engine_error)?;
         let mania = request.effective_mode == BeatmapRuleset::Mania;
-        let map_hit_windows = vosu_lazer_pp::hit_windows_for_map(&map).map_err(engine_error)?;
-        let catch_spatial_window = vosu_lazer_pp::catch_spatial_window_for_map(&map);
+        let map_hit_windows = vosu_pp::hit_windows_for_map(&map).map_err(engine_error)?;
+        let catch_spatial_window = vosu_pp::catch_spatial_window_for_map(&map);
         let project_window = |window: Option<f64>| {
             window.map(|window| {
                 if mania {
@@ -52,7 +52,7 @@ impl BeatmapEngine for LiveBeatmapEngine {
                 }
             })
         };
-        let hit_windows = vosu_lazer_pp::HitWindows {
+        let hit_windows = vosu_pp::HitWindows {
             miss: project_window(map_hit_windows.miss),
             meh: project_window(map_hit_windows.meh),
             ok: project_window(map_hit_windows.ok),
@@ -60,7 +60,7 @@ impl BeatmapEngine for LiveBeatmapEngine {
             great: project_window(map_hit_windows.great),
             perfect: project_window(map_hit_windows.perfect),
         };
-        let config = vosu_lazer_pp::DifficultyConfig::default();
+        let config = vosu_pp::DifficultyConfig::default();
         let original = engine.original_beatmap_difficulty(&map);
         let converted = engine.beatmap_difficulty(&map);
         let difficulty = engine
@@ -127,11 +127,11 @@ impl BeatmapEngine for LiveBeatmapEngine {
     }
 }
 
-fn engine_error(error: vosu_lazer_pp::Error) -> BeatmapError {
+fn engine_error(error: vosu_pp::Error) -> BeatmapError {
     BeatmapError::Engine(error.to_string())
 }
 
-fn difficulty_values(value: vosu_lazer_pp::BeatmapDifficultyData) -> DifficultyValues {
+fn difficulty_values(value: vosu_pp::BeatmapDifficultyData) -> DifficultyValues {
     DifficultyValues {
         approach_rate: f64::from(value.approach_rate),
         circle_size: f64::from(value.circle_size),
@@ -148,7 +148,7 @@ fn nonnegative_u32(value: i32) -> u32 {
     value.max(0) as u32
 }
 
-fn strain_map(value: vosu_lazer_pp::StrainsData) -> BTreeMap<String, PeakStrains> {
+fn strain_map(value: vosu_pp::StrainsData) -> BTreeMap<String, PeakStrains> {
     let mut result = BTreeMap::new();
     for (name, peak) in [
         ("aim", value.aim),
@@ -165,7 +165,7 @@ fn strain_map(value: vosu_lazer_pp::StrainsData) -> BTreeMap<String, PeakStrains
         result.insert(
             name.to_owned(),
             PeakStrains {
-                section_length: f64::from(peak.section_length),
+                section_length: peak.section_length,
                 values: peak.value,
             },
         );
@@ -173,7 +173,7 @@ fn strain_map(value: vosu_lazer_pp::StrainsData) -> BTreeMap<String, PeakStrains
     result
 }
 
-fn structured_mods(mods: &[AppliedMod]) -> Result<Vec<vosu_lazer_pp::StructuredMod>, BeatmapError> {
+fn structured_mods(mods: &[AppliedMod]) -> Result<Vec<vosu_pp::StructuredMod>, BeatmapError> {
     mods.iter()
         .map(|value| {
             let settings = match value.settings_json.as_deref() {
@@ -181,7 +181,7 @@ fn structured_mods(mods: &[AppliedMod]) -> Result<Vec<vosu_lazer_pp::StructuredM
                     .map_err(|error| BeatmapError::Engine(error.to_string()))?,
                 None => BTreeMap::new(),
             };
-            Ok(vosu_lazer_pp::StructuredMod {
+            Ok(vosu_pp::StructuredMod {
                 acronym: value.acronym.clone(),
                 settings,
             })
@@ -189,7 +189,7 @@ fn structured_mods(mods: &[AppliedMod]) -> Result<Vec<vosu_lazer_pp::StructuredM
         .collect()
 }
 
-fn calculate_mods(mods: &[Mod]) -> Result<Vec<vosu_lazer_pp::StructuredMod>, String> {
+fn calculate_mods(mods: &[Mod]) -> Result<Vec<vosu_pp::StructuredMod>, String> {
     mods.iter()
         .map(|value| {
             let settings = value
@@ -200,14 +200,12 @@ fn calculate_mods(mods: &[Mod]) -> Result<Vec<vosu_lazer_pp::StructuredMod>, Str
                         .iter()
                         .map(|(key, value)| {
                             let value = match value {
-                                Value::Bool(value) => vosu_lazer_pp::ModValue::Bool(*value),
+                                Value::Bool(value) => vosu_pp::ModValue::Bool(*value),
                                 Value::Number(value) => value
                                     .as_f64()
-                                    .map(vosu_lazer_pp::ModValue::Number)
+                                    .map(vosu_pp::ModValue::Number)
                                     .ok_or_else(|| format!("mod setting `{key}` is not finite"))?,
-                                Value::String(value) => {
-                                    vosu_lazer_pp::ModValue::String(value.clone())
-                                }
+                                Value::String(value) => vosu_pp::ModValue::String(value.clone()),
                                 _ => {
                                     return Err(format!(
                                         "mod setting `{key}` must be boolean, number, or string"
@@ -220,7 +218,7 @@ fn calculate_mods(mods: &[Mod]) -> Result<Vec<vosu_lazer_pp::StructuredMod>, Str
                 })
                 .transpose()?
                 .unwrap_or_default();
-            Ok(vosu_lazer_pp::StructuredMod {
+            Ok(vosu_pp::StructuredMod {
                 acronym: value.acronym.clone(),
                 settings,
             })
@@ -247,7 +245,7 @@ struct PreparedMods {
     sanitized: Vec<Mod>,
     checksum: String,
     mod_set: ModSet,
-    live: Option<Vec<vosu_lazer_pp::StructuredMod>>,
+    live: Option<Vec<vosu_pp::StructuredMod>>,
     generation: u64,
 }
 
@@ -856,12 +854,12 @@ fn progressive_ruleset(mode: BeatmapRuleset) -> Ruleset {
     }
 }
 
-fn live_ruleset(mode: BeatmapRuleset) -> vosu_lazer_pp::Ruleset {
+fn live_ruleset(mode: BeatmapRuleset) -> vosu_pp::Ruleset {
     match mode {
-        BeatmapRuleset::Osu => vosu_lazer_pp::Ruleset::Osu,
-        BeatmapRuleset::Taiko => vosu_lazer_pp::Ruleset::Taiko,
-        BeatmapRuleset::Catch => vosu_lazer_pp::Ruleset::Catch,
-        BeatmapRuleset::Mania => vosu_lazer_pp::Ruleset::Mania,
+        BeatmapRuleset::Osu => vosu_pp::Ruleset::Osu,
+        BeatmapRuleset::Taiko => vosu_pp::Ruleset::Taiko,
+        BeatmapRuleset::Catch => vosu_pp::Ruleset::Catch,
+        BeatmapRuleset::Mania => vosu_pp::Ruleset::Mania,
     }
 }
 

@@ -685,4 +685,4 @@ The selected-field endpoint expects one text message within five seconds: a JSON
 
 ## License
 
-Licensed under [GNU LGPL v3.0 only](LICENSE). Bundled asset and dependency notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Additional calculator notices are retained in [`crates/vosu-lazer-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-lazer-pp/THIRD_PARTY_LICENSES.txt).
+Licensed under [GNU LGPL v3.0 only](LICENSE). Bundled asset and dependency notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Additional calculator notices are retained in [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt).
