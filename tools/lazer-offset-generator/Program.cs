@@ -53,11 +53,14 @@ internal static partial class Program
     private const string Usage = """
         Usage: lazer-offset-generator --target-host <executable> --assembly-dir <path> \
             --dac <matching libmscordaccore.so> --template <path> [--output <path>]
+        Usage: lazer-offset-generator --pid <lazer-process-id> \
+            --dac <matching libmscordaccore.so> --template <path> [--output <path>]
 
-        Launch the target host as a direct child, attach with ClrMD, and replace every
-        offset in the ordered template. The DAC must carry the pinned Satori version,
-        source-commit, and compatibility-patch markers. JSON is written to stdout unless
-        --output is supplied.
+        The first form launches the target host as a direct child. The second form
+        attaches to the already-running lazer process. Both forms replace every
+        offset in the ordered template. The first form requires the pinned Satori
+        DAC markers; the live-process form requires a DAC matching the target CLR.
+        JSON is written to stdout unless --output is supplied.
         """;
 
     public static int Main(string[] args)
@@ -72,41 +75,51 @@ internal static partial class Program
             }
 
             TemplateSchema template = TemplateSchema.Load(options.TemplatePath!);
-            using ValidatedDac dac = OpenValidatedDac(options.DacPath!);
-            using PinnedRuntimeFiles runtimeFiles =
-                PinnedRuntimeFiles.Open(options.TargetHostPath!);
-            OwnedTargetHost targetHost = OwnedTargetHost.Start(
-                options.TargetHostPath!,
-                options.TemplatePath!,
-                options.AssemblyDirectory!,
-                runtimeFiles.IdentityToken,
-                template.ClrTypeCount,
-                template.SourceSha256);
+            using ValidatedDac dac = options.ProcessId is null
+                ? OpenValidatedDac(options.DacPath!)
+                : OpenLiveDac(options.DacPath!);
 
             byte[] json;
-            try
+            if (options.ProcessId is int processId)
             {
-                GenerationResult result;
+                json = Serialize(
+                    template,
+                    Generate(processId, dac.LoaderPath, template));
+            }
+            else
+            {
+                using PinnedRuntimeFiles runtimeFiles =
+                    PinnedRuntimeFiles.Open(options.TargetHostPath!);
+                OwnedTargetHost targetHost = OwnedTargetHost.Start(
+                    options.TargetHostPath!,
+                    options.TemplatePath!,
+                    options.AssemblyDirectory!,
+                    runtimeFiles.IdentityToken,
+                    template.ClrTypeCount,
+                    template.SourceSha256);
                 try
                 {
-                    result = Generate(targetHost.ProcessId, dac.LoaderPath, template);
+                    try
+                    {
+                        json = Serialize(
+                            template,
+                            Generate(targetHost.ProcessId, dac.LoaderPath, template));
+                    }
+                    catch (GeneratorException error)
+                    {
+                        string? exitDiagnostic = targetHost.TryDescribeExit();
+                        if (exitDiagnostic is null)
+                            throw;
+
+                        throw new GeneratorException($"{error.Message}; {exitDiagnostic}", error);
+                    }
                 }
-                catch (GeneratorException error)
+                finally
                 {
-                    string? exitDiagnostic = targetHost.TryDescribeExit();
-                    if (exitDiagnostic is null)
-                        throw;
-
-                    throw new GeneratorException($"{error.Message}; {exitDiagnostic}", error);
+                    targetHost.TerminateAndReap();
                 }
-
-                json = Serialize(template, result);
+                runtimeFiles.VerifyUnchanged();
             }
-            finally
-            {
-                targetHost.TerminateAndReap();
-            }
-            runtimeFiles.VerifyUnchanged();
 
             if (options.OutputPath is null)
                 WriteStdout(json);
@@ -138,7 +151,13 @@ internal static partial class Program
         RegexOptions.CultureInvariant)]
     private static partial Regex TargetReadyPattern();
 
-    private static ValidatedDac OpenValidatedDac(string path)
+    private static ValidatedDac OpenValidatedDac(string path) =>
+        OpenDac(path, validateMarkers: true);
+
+    private static ValidatedDac OpenLiveDac(string path) =>
+        OpenDac(path, validateMarkers: false);
+
+    private static ValidatedDac OpenDac(string path, bool validateMarkers)
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -156,19 +175,22 @@ internal static partial class Program
                 FileAccess.Read,
                 FileShare.Read);
             stream = CreateSealedDacSnapshot(source);
-            if (!ContainsAsciiMarker(stream, ExpectedDacVersionMarker))
+            if (validateMarkers)
             {
-                throw new GeneratorException(
-                    $"DAC '{path}' does not carry expected version marker " +
-                    $"'{ExpectedDacVersionMarker}'");
-            }
+                if (!ContainsAsciiMarker(stream, ExpectedDacVersionMarker))
+                {
+                    throw new GeneratorException(
+                        $"DAC '{path}' does not carry expected version marker " +
+                        $"'{ExpectedDacVersionMarker}'");
+                }
 
-            stream.Position = 0;
-            if (!ContainsAsciiMarker(stream, ExpectedDacProvenanceMarker))
-            {
-                throw new GeneratorException(
-                    $"DAC '{path}' does not carry expected Satori provenance marker " +
-                    $"'{ExpectedDacProvenanceMarker}'");
+                stream.Position = 0;
+                if (!ContainsAsciiMarker(stream, ExpectedDacProvenanceMarker))
+                {
+                    throw new GeneratorException(
+                        $"DAC '{path}' does not carry expected Satori provenance marker " +
+                        $"'{ExpectedDacProvenanceMarker}'");
+                }
             }
 
             long descriptor = stream.SafeFileHandle.DangerousGetHandle().ToInt64();
@@ -874,7 +896,10 @@ internal static partial class Program
         }
     }
 
-    private static GenerationResult Generate(int processId, string dacPath, TemplateSchema template)
+    private static GenerationResult Generate(
+        int processId,
+        string dacPath,
+        TemplateSchema template)
     {
         DataTarget target;
         try
@@ -909,7 +934,10 @@ internal static partial class Program
                         "runtime selection would be ambiguous");
                 }
 
-                using ClrRuntime runtime = CreateRuntime(target.ClrVersions[0], processId, dacPath);
+                using ClrRuntime runtime = CreateRuntime(
+                    target.ClrVersions[0],
+                    processId,
+                    dacPath);
                 ClrModule[] modules = runtime.EnumerateModules().ToArray();
                 if (modules.Length == 0)
                     throw new GeneratorException($"the CLR in process {processId} exposes no loaded modules");
@@ -971,7 +999,10 @@ internal static partial class Program
         }
     }
 
-    private static ClrRuntime CreateRuntime(ClrInfo clrInfo, int processId, string dacPath)
+    private static ClrRuntime CreateRuntime(
+        ClrInfo clrInfo,
+        int processId,
+        string dacPath)
     {
         try
         {
@@ -1670,6 +1701,7 @@ internal sealed record TemplateSchema(
 
 internal sealed record CommandLine(
     string? TargetHostPath,
+    int? ProcessId,
     string? DacPath,
     string? AssemblyDirectory,
     string? TemplatePath,
@@ -1679,9 +1711,10 @@ internal sealed record CommandLine(
     public static CommandLine Parse(string[] args)
     {
         if (args.Length == 1 && args[0] is "--help" or "-h")
-            return new CommandLine(null, null, null, null, null, ShowHelp: true);
+            return new CommandLine(null, null, null, null, null, null, ShowHelp: true);
 
         string? targetHostPath = null;
+        int? processId = null;
         string? dacPath = null;
         string? assemblyDirectory = null;
         string? templatePath = null;
@@ -1696,6 +1729,11 @@ internal sealed record CommandLine(
                     if (targetHostPath is not null)
                         throw new UsageException("option '--target-host' may be supplied only once");
                     targetHostPath = ReadPath(args, ref index, argument);
+                    break;
+                case "--pid":
+                    if (processId is not null)
+                        throw new UsageException("option '--pid' may be supplied only once");
+                    processId = ReadProcessId(args, ref index, argument);
                     break;
                 case "--dac":
                     if (dacPath is not null)
@@ -1725,17 +1763,29 @@ internal sealed record CommandLine(
             }
         }
 
-        if (targetHostPath is null)
-            throw new UsageException("missing required option '--target-host <executable>'");
         if (dacPath is null)
             throw new UsageException("missing required option '--dac <matching libmscordaccore.so>'");
-        if (assemblyDirectory is null)
-            throw new UsageException("missing required option '--assembly-dir <path>'");
         if (templatePath is null)
             throw new UsageException("missing required option '--template <path>'");
+        if (processId is null)
+        {
+            if (targetHostPath is null)
+                throw new UsageException(
+                    "missing required option '--target-host <executable>' or '--pid <lazer-process-id>'");
+            if (assemblyDirectory is null)
+                throw new UsageException("missing required option '--assembly-dir <path>'");
+        }
+        else
+        {
+            if (targetHostPath is not null)
+                throw new UsageException("option '--target-host' cannot be combined with '--pid'");
+            if (assemblyDirectory is not null)
+                throw new UsageException("option '--assembly-dir' cannot be combined with '--pid'");
+        }
 
         return new CommandLine(
             targetHostPath,
+            processId,
             dacPath,
             assemblyDirectory,
             templatePath,
@@ -1751,14 +1801,34 @@ internal sealed record CommandLine(
         return value;
     }
 
+    private static int ReadProcessId(string[] args, ref int index, string option)
+    {
+        string value = ReadValue(args, ref index, option);
+        if (!int.TryParse(
+                value,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out int processId) ||
+            processId <= 0)
+        {
+            throw new UsageException($"option '{option}' requires a positive process ID");
+        }
+
+        return processId;
+    }
+
     private static string ReadValue(string[] args, ref int index, string option)
     {
         if (index + 1 >= args.Length)
             throw new UsageException($"option '{option}' requires a value");
 
         string value = args[++index];
-        if (value is "--target-host" or "--dac" or "--assembly-dir" or "--template" or "--output" or "--help" or "-h")
+        if (value is "--target-host" or "--pid" or "--dac" or "--assembly-dir" or
+            "--template" or "--output" or "--help" or "-h")
+        {
             throw new UsageException($"option '{option}' requires a value");
+        }
+
         return value;
     }
 }

@@ -1,6 +1,6 @@
-use super::cli::{
-    CliCommand, CommandInvocation, HELP_TEXT, classify_command_invocation, export_offsets_to,
-};
+use super::cli::{CliCommand, CommandInvocation, HELP_TEXT, classify_command_invocation};
+#[cfg(target_os = "linux")]
+use super::cli::validate_generated_offsets;
 #[cfg(target_os = "linux")]
 use super::cli::BackendProbe;
 
@@ -149,28 +149,24 @@ fn help_lists_every_public_short_and_long_form() {
     for forms in ["-h, --help", "-s, --setup", "-g, --generate-offsets"] {
         assert!(HELP_TEXT.contains(forms), "help omitted {forms}");
     }
+    assert!(
+        HELP_TEXT.contains("vosu offset cache"),
+        "help omitted generated-offset destination"
+    );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
-fn offset_export_replaces_the_target_with_exact_embedded_bytes() {
-    let directory = tempfile::tempdir().expect("temporary export directory");
-    let destination = directory.path().join("offsets.json");
-    std::fs::write(&destination, b"stale offsets").expect("seed existing offsets");
+fn generated_offsets_must_match_the_running_client_version() {
     let embedded = DaemonAssets::get("offsets.json").expect("embedded offsets");
+    let offsets =
+        crate::memory::lazer_offsets::LazerOffsets::from_json(&embedded.data).expect("offsets");
 
-    assert_eq!(
-        export_offsets_to(directory.path()).expect("export offsets"),
-        destination
-    );
-    let exported = std::fs::read(&destination).expect("read exported offsets");
-    assert_eq!(exported.as_slice(), embedded.data.as_ref());
-    assert_eq!(
-        std::fs::read_dir(directory.path())
-            .expect("read export directory")
-            .count(),
-        1,
-        "temporary export file was left behind"
-    );
+    validate_generated_offsets(&embedded.data, &offsets.osu_version)
+        .expect("embedded offsets should satisfy generated-output validation");
+    let error = validate_generated_offsets(&embedded.data, "0.0.0")
+        .expect_err("a different client version was accepted");
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
 }
 
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]

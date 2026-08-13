@@ -83,9 +83,117 @@ The public command flags are standalone actions:
 -g, --generate-offsets
 ```
 
-`--help` prints usage. `--generate-offsets` atomically replaces `./offsets.json` with the offsets embedded in that vosu build; it exports the deployed asset and does not run the development-only osu!lazer regeneration workflow below. On Linux, `--setup` probes the process-event backends compiled into the current executable and installs the capabilities they require. Each action must be the executable's only argument.
+`--help` prints usage. On Linux, `--generate-offsets` finds exactly one running
+64-bit osu!lazer client, invokes the lazer offset generator in live-process mode,
+and atomically writes validated offsets for that client's version to the vosu
+offset cache: `$XDG_CACHE_HOME/vosu/offsets/<version>.json`, defaulting to
+`$HOME/.cache/vosu/offsets/<version>.json`. Set `VOSU_LAZER_OFFSET_GENERATOR` to
+the built generator path when it is not beside the vosu executable or under the
+repository's standard tool output path. Set `VOSU_LAZER_OFFSET_DAC` when the
+client's matching `libmscordaccore.so` is not beside its executable. The
+command requires the Linux generator and does not use the embedded offsets as
+generated output. On Linux, `--setup` probes the process-event backends
+compiled into the current executable and installs the capabilities they
+require. Each action must be the executable's only argument.
 
 Insufficient setup authority is an error. Run `sudo vosu --setup`, or invoke it as a user with equivalent authority to set file capabilities; do not run the ordinary daemon as root.
+
+`--generate-offsets` is a Linux-only maintainer action. A release archive
+contains the vosu daemon and `LICENSE`, not the managed offset generator. The
+action attaches to one already-running native 64-bit osu!lazer client; it does
+not launch osu! and it does not modify the daemon's embedded offsets.
+
+There is no separate prebuilt generator package in the current release. Build
+the tool from a matching vosu source checkout as shown below.
+
+#### After installing the release binary
+
+Install prerequisites before running the action:
+
+- a native 64-bit osu!lazer client, already running as the same desktop user;
+- a DAC built for the exact CLR loaded by the client; the client's bundled
+  `libmscordaccore.so` is not necessarily the DAC for osu!'s Satori runtime;
+- the .NET 8 SDK and access to NuGet to restore the generator's locked package;
+- Git, unless a vosu source checkout is already available.
+
+The SDK is required; installing only a .NET runtime is insufficient. On Arch
+Linux, install it with:
+
+```sh
+sudo pacman -S dotnet-sdk-8.0
+dotnet --list-sdks
+```
+
+Build the generator from a checkout, then point the installed daemon at its
+absolute path:
+
+```sh
+git clone https://github.com/shiruviaa/vosu.git
+cd vosu
+dotnet restore tools/lazer-offset-generator/lazer-offset-generator.csproj \
+  --source https://api.nuget.org/v3/index.json --locked-mode
+dotnet build tools/lazer-offset-generator/lazer-offset-generator.csproj \
+  --configuration Release --no-restore
+export VOSU_LAZER_OFFSET_GENERATOR="$PWD/tools/lazer-offset-generator/bin/Release/net8.0/lazer-offset-generator"
+sudo setcap cap_sys_ptrace=ep "$VOSU_LAZER_OFFSET_GENERATOR"
+getcap "$VOSU_LAZER_OFFSET_GENERATOR"
+/path/to/vosu --generate-offsets
+```
+
+`vosu --setup` grants capabilities to the daemon executable, but the
+generator is a separate process and must have `CAP_SYS_PTRACE` itself. Do not
+run the daemon as root. If the daemon's attach still fails, run
+`sudo /path/to/vosu --setup` once and retry as the desktop user.
+
+For osu!lazer builds using ppy/Satori, use the patched DAC produced by the
+reproducible workflow below rather than assuming the AppImage's bundled DAC
+matches. Set it explicitly, for example:
+
+```sh
+export VOSU_LAZER_OFFSET_DAC=/tmp/satori-source/artifacts/bin/coreclr/linux.x64.Release/libmscordaccore.so
+```
+
+#### From a cloned repository
+
+The repository workflow needs the Rust, native-library, and .NET prerequisites
+listed in [Requirements](#requirements). From the repository root:
+
+```sh
+dotnet restore tools/lazer-offset-generator/lazer-offset-generator.csproj \
+  --source https://api.nuget.org/v3/index.json --locked-mode
+dotnet build tools/lazer-offset-generator/lazer-offset-generator.csproj \
+  --configuration Release --no-restore
+cargo build --locked --no-default-features
+export VOSU_LAZER_OFFSET_GENERATOR="$PWD/tools/lazer-offset-generator/bin/Release/net8.0/lazer-offset-generator"
+sudo setcap cap_sys_ptrace=ep target/debug/vosu
+sudo setcap cap_sys_ptrace=ep "$VOSU_LAZER_OFFSET_GENERATOR"
+cargo run --locked --no-default-features -- --generate-offsets
+```
+
+`cargo run` builds the daemon with the pinned Rust toolchain before invoking
+the action. The generated file is stored in the vosu offset cache, not in
+the repository checkout. The output is not copied to `assets/offsets.json`
+automatically; updating the embedded repository asset requires the
+reproducible workflow below and its provenance/checksum review.
+
+If no client, generator, or DAC can be found, or if attach, version, or JSON
+validation fails, the command returns an error and leaves an existing
+`<version>.json` cache entry unchanged. Close extra osu!lazer instances, ensure
+the daemon and client run as the same user, and check that the client exposes
+`osu!.deps.json` before retrying. A `PTRACE_ATTACH` error from ClrMD usually
+means the generator itself lacks `CAP_SYS_PTRACE`; reapply the `setcap`
+command above after rebuilding it. Only after both executables have the
+required capability should you adjust a host ptrace policy, and never by
+running vosu as root.
+Live-process mode can only resolve types that the target runtime has
+constructed. If a client has not visited every required screen, use the
+target-host workflow below with the same client assembly directory and write
+the validated `<version>.json` result to the offset cache.
+
+If ClrMD reports `Mismatched dac` with `expected: 0.0`, the selected DAC is
+not the patched Satori DAC for the loaded `libcoreclr.so`. Set
+`VOSU_LAZER_OFFSET_DAC` to the DAC produced by the reproducible workflow
+above; do not bypass this mismatch.
 
 ## Build from source
 
@@ -96,7 +204,11 @@ Insufficient setup authority is an error. Run `sudo vosu --setup`, or invoke it 
 - Linux: a GNU C toolchain, Clang, pkg-config, libelf/zlib development files, and the Vulkan/OpenGL loader development files needed by `wgpu`
 - Windows: MSVC build tools and the Windows SDK
 
-The dashboard and offsets are vendored build inputs. No frontend or managed-runtime toolchain is needed.
+The dashboard and embedded offsets are vendored build inputs. No frontend or
+managed-runtime toolchain is needed for the daemon build. The live
+offset-generation action additionally requires the .NET 8 SDK and a locked
+NuGet restore; the reproducible asset workflow below has further maintainer
+tool prerequisites.
 
 ```sh
 cargo build --locked
@@ -118,7 +230,49 @@ cargo build --release --locked --no-default-features --target x86_64-pc-windows-
 
 The `test-harness` feature is development-only. `build.rs` rejects it in release profiles; it is not a production switch.
 
-### Regenerating osu!lazer offsets
+### Reproducibly update the vendored osu!lazer offsets asset
+
+The live workflow above is for a currently running client and local output.
+To replace `assets/offsets.json` in the repository, use the exact source and
+runtime workflow below. It records the release, runtime, DAC, and generator
+inputs needed for a reviewable update; after generation, review the asset
+diff and update its checksum and provenance metadata as described below.
+
+#### Build only the patched Satori DAC
+
+The AppImage's bundled DAC is the Microsoft runtime DAC and may not match
+osu!'s patched Satori `libcoreclr.so`. For live generation, build the pinned
+Satori DAC first. The following is the DAC-only portion of the workflow; run it
+from the repository root after installing the prerequisites above:
+
+```sh
+set -eu
+SATORI_ROOT=/tmp/satori-source
+SATORI_REVISION=098d0ed17cf8f965d79be6e3d870a895a6dbbe04
+SATORI_DAC_PATCH="$PWD/tools/lazer-offset-generator/patches/0001-guard-satori-gc-heap-data.patch"
+SATORI_DAC_PATCH_SHA256=e0aaf89fff93b05dad0a4fc272683cbc852a3f51fd8d5b27ac8d91bafd3a597a
+
+git clone --branch 2025.807.0 --depth 1 https://github.com/ppy/Satori.git "$SATORI_ROOT"
+git -C "$SATORI_ROOT" checkout --detach "$SATORI_REVISION"
+printf '%s  %s\n' "$SATORI_DAC_PATCH_SHA256" "$SATORI_DAC_PATCH" |
+  sha256sum --check --strict
+git -C "$SATORI_ROOT" apply --check "$SATORI_DAC_PATCH"
+git -C "$SATORI_ROOT" apply "$SATORI_DAC_PATCH"
+(
+  cd "$SATORI_ROOT"
+  ./build.sh clr.nativeprereqs -c Release
+  printf 'static char sccsid[] __attribute__((used)) = "@(#)Version 0.0 @Commit: %s @Patch: %s";\n' \
+    "$SATORI_REVISION" "$SATORI_DAC_PATCH_SHA256" > artifacts/obj/_version.c
+  ./src/coreclr/build-runtime.sh -x64 -os linux -release -component debug
+)
+export VOSU_LAZER_OFFSET_DAC="$SATORI_ROOT/artifacts/bin/coreclr/linux.x64.Release/libmscordaccore.so"
+test -f "$VOSU_LAZER_OFFSET_DAC"
+```
+
+Then rebuild the generator, reapply its capability, and run `vosu -g` as
+described above. Do not point `VOSU_LAZER_OFFSET_DAC` at the AppImage's
+`libmscordaccore.so` when the loaded `libcoreclr.so` is the pinned Satori build.
+
 
 When a lazer release is not yet available from either offset endpoint, the Linux x64 maintainer tools can derive the embedded asset from an exact release source checkout under the release's exact runtime. They require the .NET 8 SDK, `curl`, `bsdtar`, binutils, zlib development headers, an executable `/dev/shm` tmpfs, and the [Satori Linux build prerequisites](https://github.com/ppy/Satori/blob/098d0ed17cf8f965d79be6e3d870a895a6dbbe04/.github/workflows/build.yml) only while generating offsets; vosu builds and releases remain Rust-only.
 
@@ -463,7 +617,7 @@ Methods and paths are exact. Unsupported combinations return `404 Not Found`. St
 | `GET /json/v2/precise` | vosu precise snapshot |
 | `GET /api/calculate/pp` | Legacy `rosu-pp` calculation; uses the current beatmap unless `path` names a canonical regular `.osu` file |
 
-The v2 snapshot and matching WebSocket streams expose `beatmap.stats.timingWindows`. For osu! and taiko, temporal judgement windows are maximum absolute errors in milliseconds scaled to real time by `clockRate`. For osu!mania, the source timing window is rounded before `clockRate` multiplication, so the displayed base `perfect` window of 19.5 ms at 1.0x becomes 25.35 ms at 1.3x. For catch, only `"300"` is present and represents the spatial half-width of the catcher's centre in playfield units; unsupported judgements are omitted.
+The v2 snapshot and matching WebSocket streams expose `beatmap.stats.timingWindows`. For osu! and taiko, temporal judgement windows are maximum absolute errors in milliseconds scaled to real time by `clockRate`. For osu!mania, gameplay rate is applied to the source timing window before floor-plus-half quantization, so the displayed base `perfect` window of 19.5 ms at 1.0x becomes 25.5 ms at 1.3x. For catch, only `"300"` is present and represents the spatial half-width of the catcher's centre in playfield units; unsupported judgements are omitted.
 
 Hit-error fields use the same object shape across v1, streamCompanion, v2, and v2 precise: `{"all":[],"press":[],"release":[]}`. `all` preserves timing-event order, `press` contains note presses, and `release` contains osu!lazer mania hold-note releases. Stable reports every timing error in `all` and `press` and leaves `release` empty.
 

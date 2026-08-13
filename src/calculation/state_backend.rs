@@ -41,29 +41,24 @@ impl BeatmapEngine for LiveBeatmapEngine {
         let mods = structured_mods(request.mods)?;
         engine.apply_mods(&mut map, &mods).map_err(engine_error)?;
         let mania = request.effective_mode == BeatmapRuleset::Mania;
-        let base_hit_windows = if mania {
-            vosu_lazer_pp::hit_windows_for_map_without_speed_adjustment(&map)
-        } else {
-            vosu_lazer_pp::hit_windows_for_map(&map)
-        }
-        .map_err(engine_error)?;
+        let map_hit_windows = vosu_lazer_pp::hit_windows_for_map(&map).map_err(engine_error)?;
         let catch_spatial_window = vosu_lazer_pp::catch_spatial_window_for_map(&map);
-        let scale_window = |window: Option<f64>| {
+        let project_window = |window: Option<f64>| {
             window.map(|window| {
                 if mania {
-                    window * request.clock_rate
+                    window
                 } else {
                     window / request.clock_rate
                 }
             })
         };
         let hit_windows = vosu_lazer_pp::HitWindows {
-            miss: scale_window(base_hit_windows.miss),
-            meh: scale_window(base_hit_windows.meh),
-            ok: scale_window(base_hit_windows.ok),
-            good: scale_window(base_hit_windows.good),
-            great: scale_window(base_hit_windows.great),
-            perfect: scale_window(base_hit_windows.perfect),
+            miss: project_window(map_hit_windows.miss),
+            meh: project_window(map_hit_windows.meh),
+            ok: project_window(map_hit_windows.ok),
+            good: project_window(map_hit_windows.good),
+            great: project_window(map_hit_windows.great),
+            perfect: project_window(map_hit_windows.perfect),
         };
         let config = vosu_lazer_pp::DifficultyConfig::default();
         let original = engine.original_beatmap_difficulty(&map);

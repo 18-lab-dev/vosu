@@ -648,49 +648,49 @@ fn timing_windows_match_stable_classic_mania_difficulty_modifiers() {
 }
 
 #[test]
-fn timing_windows_project_fixed_mania_rates_after_source_rounding() {
+fn timing_windows_apply_gameplay_rate_before_floor_plus_half_quantization_for_mania() {
     for (label, game_mod, clock_rate, lazer_expected, stable_perfect) in [
         (
             "DT 1.5x",
             applied_mod("DT"),
             1.5,
             serde_json::json!({
-                "0": 260.25,
-                "50": 204.75,
-                "100": 168.75,
-                "katu": 123.75,
-                "300": 74.25,
-                "geki": 29.25,
+                "0": 259.5,
+                "50": 204.5,
+                "100": 168.5,
+                "katu": 123.5,
+                "300": 73.5,
+                "geki": 29.5,
             }),
-            24.75,
+            24.5,
         ),
         (
             "HT 0.75x",
             applied_mod("HT"),
             0.75,
             serde_json::json!({
-                "0": 130.13,
-                "50": 102.38,
-                "100": 84.38,
-                "katu": 61.88,
-                "300": 37.13,
-                "geki": 14.63,
+                "0": 129.5,
+                "50": 102.5,
+                "100": 84.5,
+                "katu": 61.5,
+                "300": 36.5,
+                "geki": 14.5,
             }),
-            12.38,
+            12.5,
         ),
         (
             "DT 1.3x",
             applied_mod_with_settings("DT", r#"{"speed_change":1.3}"#),
             1.3,
             serde_json::json!({
-                "0": 225.55,
-                "50": 177.45,
-                "100": 146.25,
-                "katu": 107.25,
-                "300": 64.35,
-                "geki": 25.35,
+                "0": 224.5,
+                "50": 176.5,
+                "100": 145.5,
+                "katu": 106.5,
+                "300": 63.5,
+                "geki": 25.5,
             }),
-            21.45,
+            20.5,
         ),
     ] {
         let lazer = parsed_timing_map(
