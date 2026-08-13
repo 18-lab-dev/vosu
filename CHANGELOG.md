@@ -3,6 +3,10 @@
 All notable user-visible changes to vosu are documented here. Entries below the Unreleased section are retained release history and use the product names and artifact names that were current at the time.
 
 ## Unreleased
+### Licensing
+
+- Project-authored code and documentation are now dual-licensed under `MIT OR Apache-2.0`; canonical texts are provided in `LICENSE-MIT` and `LICENSE-APACHE`, while release archives retain the root `LICENSE` member.
+- Retained third-party and provenance-pinned material remains under its own terms; see `THIRD_PARTY_NOTICES.md` and the calculator attribution file.
 
 ### Calculation
 
@@ -111,6 +115,6 @@ These changes deliberately reject unsafe or ambiguous inputs instead of reproduc
 
 ### Licensing and retained development references
 
-- The project remains `LGPL-3.0-only`; the existing root `LICENSE` is unchanged and authoritative.
+- This historical release was licensed `LGPL-3.0-only`; its existing root `LICENSE` was unchanged and authoritative at that release.
 - Added third-party notices for embedded Vue, Roboto, IcoMoon-generated icons, retained images/static assets, Rust crates, the pinned rosu/osu! calculator inputs, and the pinned lazer-calculator reference.
 - Retained oracle generators, source-revision manifests, reference sources/licenses, and committed golden fixtures for reproducible parity work. Generated Python bytecode and oracle/package build caches are not release inputs and are removed.

@@ -16,7 +16,7 @@ Run documentation updates locally from the repository root with the installed Op
 openwiki code --update --print
 ```
 
-Pass a focused prompt when only one area changed, then inspect `git diff -- openwiki` and keep only evidence-backed edits. The supported maintenance path is local; do not recreate `.github/workflows/openwiki-update.yml` or add scheduled/manual GitHub Actions for documentation updates. `openwiki --help` is the live reference for installed CLI options.
+Pass a focused prompt when only one area changed, then inspect `git diff -- openwiki` and keep only evidence-backed edits. The supported maintenance path is local; do not recreate the removed `.github/workflows/openwiki-update.yml` or add scheduled/manual GitHub Actions for documentation updates. `openwiki --help` is the live reference for installed CLI options.
 
 ## Launch checklist
 

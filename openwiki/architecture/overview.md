@@ -54,7 +54,7 @@ flowchart TB
     Reducer --> Snapshot[src/api/snapshot.rs<br/>SnapshotManager]
     Snapshot --> Schemas[src/api/{v1,v2,precise,sc}.rs]
     Schemas --> Server[src/server/*<br/>Axum HTTP and WebSocket]
-    Reducer --> Calc[src/calculation/* and<br/>crates/vosu-lazer-pp]
+    Reducer --> Calc[src/calculation/* and<br/>crates/vosu-pp]
     Config --> Runtime
     Runtime --> Update[src/updater/*]
 ```
@@ -76,7 +76,7 @@ flowchart TB
 | HTTP routing and authorization | `src/server/routes.rs`, `src/server/auth.rs`, `src/server/service/*` | `Endpoint`, `RouteProviders`, `ProductionRouteDelegate` |
 | WebSocket publication, subscriptions, and commands | `src/server/websocket.rs`, `src/server/v2_subscription.rs`, `src/server/commands.rs`, `src/runtime/worker.rs` | `WebSocketHub`, `V2SubscriptionHub`, `CommandProcessor`, `WebSocketHubs` |
 | Listener bind/reload/drain | `src/server/runtime.rs` | `ListenerRuntime`, `AxumListenerFactory`, `ListenerOwner` |
-| Live and endpoint calculation | `src/calculation/*`, `crates/vosu-lazer-pp/src/lib.rs` | `LiveStateCalculationBackend`, `LiveBeatmapEngine`, `LegacyRosuEngine` |
+| Live and endpoint calculation | `src/calculation/*`, `crates/vosu-pp/src/lib.rs` | `LiveStateCalculationBackend`, `LiveBeatmapEngine`, `LegacyRosuEngine` |
 | Filesystem and platform paths | `src/platform.rs`, `src/server/files.rs` | `Paths`, `safe_child`, `resolve_resource` |
 | Configuration | `src/config/*` | `ConfigStore`, `ConfigDocument`, `ConfigSchema` |
 | Self-update | `src/updater/*` | startup recovery, release validation, prepare/transaction/platform stages |
@@ -136,7 +136,7 @@ Compatibility WebSocket connection ownership lives in `src/server/websocket.rs::
 
 There are two intentional paths:
 
-1. **Live state calculation.** Regular state transitions build requests in `src/state/bundle/calculation.rs`. `src/calculation/state_backend.rs::LiveStateCalculationBackend` resolves beatmap readiness, parsing/cache state, gameplay/result progression, and runs blocking work outside the async reducer. `LiveBeatmapEngine` delegates difficulty, strains, and performance to `crates/vosu-lazer-pp`, whose ruleset implementations and pinned upstream revisions are declared in its `src/lib.rs`. Results return to the reducer only when their state key and calculation generation are still current.
+1. **Live state calculation.** Regular state transitions build requests in `src/state/bundle/calculation.rs`. `src/calculation/state_backend.rs::LiveStateCalculationBackend` resolves beatmap readiness, parsing/cache state, gameplay/result progression, and runs blocking work outside the async reducer. `LiveBeatmapEngine` delegates difficulty, strains, and performance to the clean-room `crates/vosu-pp` facade, whose `rosu-map-api` and `rosu-pp-api` workspace members preserve pinned upstream evidence and licensing boundaries. Results return to the reducer only when their state key and calculation generation are still current.
 2. **Calculation endpoint.** `src/server/service/providers.rs::LegacyCalculateProvider` selects either the current beatmap or a canonical regular `.osu` file supplied by the query, maps the request, and invokes `src/calculation/engine.rs::LegacyRosuEngine`. This preserves the legacy rosu-pp-js-compatible setter order and must not be silently routed through the live calculator contract.
 
 Beatmap parsing, timing/events, object graphs, and cache ownership are under `src/calculation/beatmap/*`; progressive gameplay/result state is under `src/calculation/progressive/*`.
@@ -151,7 +151,7 @@ Beatmap parsing, timing/events, object graphs, and cache ownership are under `sr
 
 ## Deployment variants
 
-- The workspace builds one `vosu` binary and the internal `vosu-lazer-pp` calculation crate; `vosu-test-harness` is test support, not a production process (`Cargo.toml`).
+- The workspace builds one `vosu` binary, the internal `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, and `vosu-test-harness`; the harness is test support, not a production process (`Cargo.toml`).
 - Windows supports stable and lazer discovery/memory access. Linux supports native lazer and stable through Wine. For Wine installs, `src/process/linux.rs::resolve_osu_path` resolves the game root from `VOSU_OSU_PATH`, `${XDG_DATA_HOME:-$HOME/.local/share}/osuconfig/osupath`, or the target command line. The formal `tools/live-parity/live_parity.py::SUPPORTED_MATRIX` currently lists Linux/lazer but not Linux/stable; that tooling matrix is narrower than runtime support.
 - Native backends are selected with `cfg(windows)` and `cfg(target_os = "linux")`; there is no generic production process provider for other operating systems.
 - Release builds use thin LTO, one codegen unit, stripped symbols, and abort-on-panic (`Cargo.toml`). Panic therefore terminates the daemon rather than unwinding production resources.
@@ -172,7 +172,7 @@ Beatmap parsing, timing/events, object graphs, and cache ownership are under `sr
 2. **Target-process races.** Addresses can become stale between discovery and reads. Keep native reads all-or-error, validate lengths/addresses, preserve generation and context checks, and never move decoding into platform syscall code.
 3. **High-frequency work.** Precise polling can be much faster than regular polling. Avoid allocations, blocking Tokio tasks, or unbounded fan-out on `MemoryReader`, reducer, projection, and WebSocket hot paths. Use the measured evidence in [benchmarks](../testing/benchmarks.md), not assumed throughput.
 4. **Atomicity regressions.** Loading focus, regular state, precise state, or configuration independently in a wire builder can expose impossible combinations. Extend `ManagerSnapshot`/`CombinedSnapshot` and publish once instead.
-5. **Calculator revision coupling.** `vosu-lazer-pp` records exact calculator and osu! revisions. Upgrading `rosu-pp` or sharing the legacy endpoint engine with live calculation changes observable results and requires an explicit decision record.
+5. **Calculator revision coupling.** `vosu-pp` records exact `rosu-pp`, `rosu-map`, and osu! framework revisions in workspace metadata and provenance inputs. Upgrading those sources or sharing the legacy endpoint engine with live calculation changes observable results and requires an explicit decision record.
 6. **Filesystem and updater safety.** Path containment, canonicalization, atomic replacement, durable install phases, and startup recovery are security/reliability boundaries. Do not bypass them from route handlers or ad-hoc update code.
 7. **Platform asymmetry.** Focus, module enumeration, process opening, secure file opening, paths, and executable replacement differ by OS. A change verified on one backend is not evidence for the other.
 8. **Abort-on-panic.** Release panic strategy makes unchecked assumptions process-fatal. Treat `expect` sites on runtime data and poisoned synchronization recovery as architecture-sensitive.

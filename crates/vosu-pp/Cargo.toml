@@ -3,7 +3,7 @@ name = "vosu-pp"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-license = "LGPL-3.0-only"
+license.workspace = true
 publish = false
 
 [lib]

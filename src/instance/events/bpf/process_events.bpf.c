@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-only
+// SPDX-License-Identifier: MIT OR Apache-2.0
 #include <linux/bpf.h>
 #include <linux/errno.h>
 #include <bpf/bpf_core_read.h>
@@ -313,8 +313,7 @@ int task_rename(struct bpf_raw_tracepoint_args *ctx)
 }
 
 /*
- * LGPL-3.0-only incorporates GPLv3 with additional permissions. Linux's BPF
- * license allowlist names that GPL-compatible form rather than accepting an
- * LGPL token; this string is the loader declaration, not the source SPDX ID.
+ * The BPF loader declaration below is metadata consumed by the kernel verifier.
+ * It is not a source license identifier and does not alter the project license.
  */
 char LICENSE[] SEC("license") = "GPL and additional rights";

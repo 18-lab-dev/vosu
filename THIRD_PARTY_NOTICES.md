@@ -1,8 +1,8 @@
 # Third-party notices
 
-This file inventories third-party material retained by the vosu Rust daemon, which is derived from upstream tosu 4.25.0. It is an attribution aid, not a replacement for the applicable license texts. The root [`LICENSE`](LICENSE) is the authoritative LGPL-3.0-only license for vosu. Exact Rust package versions and checksums are authoritative in `Cargo.lock`.
+This file inventories third-party material retained by the vosu Rust daemon, which is derived from upstream tosu 4.25.0. It is an attribution aid, not a replacement for applicable license texts. Project-authored repository code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at the contributor's option; the release archive retains the root [`LICENSE`](LICENSE) member. Exact Rust package versions and checksums are authoritative in `Cargo.lock`.
 
-Project copyright notice: Copyright © 2023–2026 Mikhail Babynichev. This notice is separate from, and does not modify, the canonical LGPL-3.0 license text.
+Project copyright notice: Copyright © 2023–2026 Mikhail Babynichev. This notice applies to project-authored material only and does not alter separately licensed retained material.
 
 ## Native live-calculation sources
 
@@ -48,7 +48,7 @@ is not a build or runtime input.
 
 ### Historical calculator oracle boundary
 
-`tools/oracle/reference/lazer-calculator` remains untouched as historical LGPL parity evidence at revision `9a22c4c74f8e584fa64133a79a204dd045646bac`. It is not a production source, crate dependency, build input, or runtime dependency. The current workspace and `vosu-pp` package continue to declare `LGPL-3.0-only`; this clean-room replacement does not alter project or package licensing.
+`tools/oracle/reference/lazer-calculator` remains untouched as historical LGPL parity evidence at revision `9a22c4c74f8e584fa64133a79a204dd045646bac`. It is not a production source, crate dependency, build input, or runtime dependency. The current workspace and `vosu-pp` package are dual-licensed under `MIT OR Apache-2.0`; this does not relicense the retained historical reference or any other separately licensed material.
 
 ## osu!lazer memory-offset generation input
 
@@ -124,7 +124,7 @@ The following license expressions come from the packages' Cargo metadata resolve
 
 - `memchr`: Unlicense OR MIT
 - `notify`: CC0-1.0
-- local `vosu-pp`: LGPL-3.0-only as an aggregate package; its separately identified clean-room `rosu-map`, `rosu-pp`, osu!, and osu-framework inputs remain MIT
+- local project-authored code and `vosu-pp` package: `MIT OR Apache-2.0` where the project has licensing authority; separately identified retained inputs remain under their own terms
 - Linux-only `libbpf-rs` and build-time `libbpf-cargo`: LGPL-2.1-only OR BSD-2-Clause. Their transitive `libbpf-sys` binding is BSD-2-Clause and statically includes libbpf 1.7.0 under LGPL-2.1-only OR BSD-2-Clause. Linux releases dynamically link the system libelf (LGPL-2.1-or-later OR LGPL-3.0-or-later) and zlib (Zlib) libraries.
 
 ### Development-only packages
@@ -136,8 +136,9 @@ These development packages, the private `vosu-test-harness` workspace member, or
 
 ## License text locations and sources
 
-- vosu LGPL-3.0-only: `LICENSE`
-- aggregate `vosu-pp` LGPL-3.0-only package: `crates/vosu-pp/LICENSE`
+- project-authored repository code: `LICENSE-MIT` or `LICENSE-APACHE`
+- release archive license member: `LICENSE` (combined dual-license notice)
+- calculator crate project-authored code: `crates/vosu-pp/LICENSE-MIT` or `crates/vosu-pp/LICENSE-APACHE`
 - pinned lazer-calculator LGPL-3.0 reference: `tools/oracle/reference/lazer-calculator/LICENSE`
 - local `vosu-rosu-pp-api` MIT license text: `crates/vosu-pp/rosu-pp-api/LICENSE`
 - local `vosu-rosu-map` MIT license text: `crates/vosu-pp/rosu-map-api/LICENSE`

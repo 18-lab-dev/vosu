@@ -17,11 +17,11 @@ vosu exposes compatible calculations while stable and lazer scoring do not share
 
 ## Decision
 
-Keep compatibility helpers separate from performance engines. Preserve the legacy `rosu-pp` builder contract in `LegacyRosuEngine`, and expose the live lazer calculator through the dedicated workspace crate `vosu-lazer-pp`; do not route both through one nominal backend.
+Keep compatibility helpers separate from performance engines. Preserve the legacy `rosu-pp` builder contract in `LegacyRosuEngine`, and expose the live lazer calculator through the clean-room `vosu-pp` facade and its provenance-pinned API members; do not route both through one nominal backend.
 
 Adapt engines to typed beatmap/progressive requests, then place asynchronous state integration behind `StateCalculationBackend`. Key each result with instance generation, reset epoch, beatmap checksum, mode, and mods so only a matching state accepts it. Pin calculator provenance in Cargo package metadata rather than implying that any dependency update is compatible.
 
-The separation is visible in [`calculation.rs`](../../src/calculation.rs), [`calculation/engine.rs`](../../src/calculation/engine.rs), [`calculation/state_backend.rs`](../../src/calculation/state_backend.rs), [`state/bundle/calculation.rs`](../../src/state/bundle/calculation.rs), [`crates/vosu-lazer-pp`](../../crates/vosu-lazer-pp), and [`Cargo.toml`](../../Cargo.toml).
+The separation is visible in [`calculation.rs`](../../src/calculation.rs), [`calculation/engine.rs`](../../src/calculation/engine.rs), [`calculation/state_backend.rs`](../../src/calculation/state_backend.rs), [`state/bundle/calculation.rs`](../../src/state/bundle/calculation.rs), [`crates/vosu-pp`](../../crates/vosu-pp), and [`Cargo.toml`](../../Cargo.toml).
 
 ## Consequences
 

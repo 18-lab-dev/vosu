@@ -61,7 +61,7 @@ Important limitations:
 
 **Classification:** P0, **Hypothesis** (unmeasured map-load CPU and peak memory).
 
-**Source and mechanism.** [`LiveBeatmapEngine::calculate`](../../src/calculation/state_backend.rs) computes difficulty, score/performance, strains, and eleven PP-by-accuracy points. In [`vosu-lazer-pp`'s engine](../../crates/vosu-lazer-pp/src/engine.rs), `create_score` and `performance_data_from_attrs` perform further difficulty/current-context work, so a single map load can repeat full-calculation stages. The map-switch path later creates progressive state from source text, while [`ParsedBeatmap`](../../crates/vosu-lazer-pp/src/beatmap.rs) owns original and playable forms; this may repeat parse/convert/mod application and raise transient RSS.
+**Source and mechanism.** [`LiveBeatmapEngine::calculate`](../../src/calculation/state_backend.rs) computes difficulty, score/performance, strains, and eleven PP-by-accuracy points. In [`vosu-pp`'s scoring path](../../crates/vosu-pp/src/scoring.rs), `create_score` and performance calculation perform further difficulty/current-context work, so a single map load can repeat full-calculation stages. The map-switch path later creates progressive state from source text, while [`ParsedBeatmap`](../../crates/vosu-pp/src/beatmap.rs) owns original and playable forms; this may repeat parse/convert/mod application and raise transient RSS.
 
 **Safe direction.** Add internal measured paths that reuse already-computed difficulty attributes, current context, score totals, or a prepared live map across strains, accuracy points, and progressive construction. Keep ownership bounded to the existing current-map cache and prefer `Arc` handoff over a second deep map copy.
 
