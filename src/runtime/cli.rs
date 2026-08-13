@@ -1,9 +1,11 @@
 use std::{
-    env,
     ffi::{OsStr, OsString},
     io,
     path::{Path, PathBuf},
 };
+
+#[cfg(target_os = "linux")]
+use std::env;
 
 #[cfg(target_os = "linux")]
 use std::io::Write;
