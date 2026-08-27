@@ -1,8 +1,8 @@
 #[test]
-fn precise_only_publication_does_not_wake_regular_subscribers() {
+fn precise_publication_wakes_native_subscription_without_waking_regular_stream() {
     use crate::{
         instance::InstanceSettings,
-        model::states::HitErrorArray,
+        model::states::{HitErrorArray, KeypressButton},
         state::{
             BassDensityState, BeatmapPPState, GameplayState, GlobalState,
             LazerMultiSpectatingState, MenuState, PreciseState, RankedPlayState, RegularState,
@@ -29,7 +29,13 @@ fn precise_only_publication_does_not_wake_regular_subscribers() {
             play_time,
             mode: 0,
             key_overlay: Arc::new(Vec::new()),
-            keypresses: Arc::new(Vec::new()),
+            keypresses: Arc::new(vec![KeypressButton {
+                name: "K1".into(),
+                is_pressed: true,
+                count: 7,
+                pressed_at: Some(play_time),
+                released_at: None,
+            }]),
             hit_errors: Arc::new(HitErrorArray::default()),
             total_hit_errors: 0.0,
             committed_hit_error_index: 0,
@@ -66,11 +72,30 @@ fn precise_only_publication_does_not_wake_regular_subscribers() {
         Arc::new(ProductionSnapshotEncoder),
     );
     let regular_rx = WebSocketStateProvider::subscribe(&providers, WebSocketSchema::V2);
-    let precise_rx =
-        WebSocketStateProvider::subscribe(&providers, WebSocketSchema::V2Precise);
+    let precise_rx = WebSocketStateProvider::subscribe(&providers, WebSocketSchema::V2Precise);
     providers.publish(manager(2, precise(2.0)));
     assert!(!regular_rx.has_changed().unwrap());
     assert!(precise_rx.has_changed().unwrap());
+    let native = V2SubscriptionProvider::capture(&providers)
+        .document()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        native["keypresses"],
+        serde_json::json!({
+            "keys": [{
+                "name": "K1",
+                "isPressed": true,
+                "count": 7,
+                "pressedAt": 2,
+                "releasedAt": null
+            }]
+        })
+    );
+    assert_eq!(
+        native["play"]["mode"],
+        serde_json::json!({"number": 0, "name": "osu"})
+    );
 }
 
 #[test]

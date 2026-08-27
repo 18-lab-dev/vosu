@@ -38,6 +38,7 @@ impl StateBundle {
             previous_state_key: String::new(),
             previous_mp3_length: None,
             previous_time: 0.0,
+            play_clock_armed: false,
             is_tourney_manager: false,
             is_tourney_spectator: false,
             calculate_pp: true,
@@ -85,6 +86,39 @@ impl StateBundle {
         if let Some(config) = config {
             self.apply_config(&config);
         }
+    }
+
+    /// Stall heuristic for clients without an authoritative pause flag.
+    ///
+    /// Only reports paused after play_time has advanced forward while staying in
+    /// Play. Entering play, retries (time rewind), and pre-start clock holds stay
+    /// unpaused so overlays keep rendering.
+    fn derive_paused_from_play_time_stall(
+        &mut self,
+        previous_status: i64,
+        status: i64,
+        previous_play_time: f64,
+        play_time: f64,
+    ) -> bool {
+        let play = GameState::Play.value() as i64;
+        if status != play {
+            self.play_clock_armed = false;
+            return false;
+        }
+        if previous_status != play {
+            self.play_clock_armed = false;
+            return false;
+        }
+        if play_time != previous_play_time {
+            if play_time > previous_play_time {
+                self.play_clock_armed = true;
+            } else {
+                // Retry / seek backwards resets the armed window.
+                self.play_clock_armed = false;
+            }
+            return false;
+        }
+        self.play_clock_armed
     }
 
     pub fn snapshot(&self) -> Arc<StateBundleSnapshot> {
@@ -412,7 +446,17 @@ impl StateBundle {
             Ok(ReadStatus::NotReady) => {}
             Ok(ReadStatus::Ready(raw_global)) => {
                 let play_time_changed = self.global.play_time != raw_global.play_time;
-                self.global.paused = raw_global.play_time == self.global.previous_play_time;
+                let previous_status = self.global.status;
+                let previous_play_time = self.global.previous_play_time;
+                self.global.paused = match raw_global.paused {
+                    Some(paused) => paused,
+                    None => self.derive_paused_from_play_time_stall(
+                        previous_status,
+                        raw_global.status,
+                        previous_play_time,
+                        raw_global.play_time,
+                    ),
+                };
                 self.global.previous_play_time = raw_global.play_time;
                 self.global.is_watching_replay = raw_global.is_watching_replay;
                 self.global.is_replay_ui_hidden = raw_global.is_replay_ui_hidden;
@@ -847,6 +891,12 @@ impl StateBundle {
                 self.gameplay.is_key_overlay_default_state = false;
             }
             if let Some(Ok(ReadStatus::Ready(errors))) = snapshot.hit_errors() {
+                if errors.index < self.gameplay.previous_hit_error_index {
+                    self.gameplay.reset_hit_errors();
+                    self.stable_mania_hit_errors.reset();
+                    self.gameplay.unstable_rate = 0.0;
+                    self.precise_dirty = true;
+                }
                 let mut release_corrections: Vec<_> = errors.release_corrections.iter().collect();
                 release_corrections
                     .sort_by_key(|correction| std::cmp::Reverse(correction.press_offset));

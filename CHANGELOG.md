@@ -3,6 +3,10 @@
 All notable user-visible changes to vosu are documented here. Entries below the Unreleased section are retained release history and use the product names and artifact names that were current at the time.
 
 ## Unreleased
+### Gameplay
+
+- Reset published hit-error arrays when osu!lazer or osu!stable rebuilds the live hit-event list, so editor test-mode section restarts drop pre-restart errors and skipped-object zeros instead of waiting for those notes to elapse again.
+
 ### Licensing
 
 - Project-authored code and documentation are now dual-licensed under `MIT OR Apache-2.0`; canonical texts are provided in `LICENSE-MIT` and `LICENSE-APACHE`, while release archives retain the root `LICENSE` member.
@@ -41,15 +45,19 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 - Split every public hit-error field into ordered `all`, `press`, and `release` arrays, with osu!lazer mania hold-note releases classified separately.
 - Corrected osu!lazer mania hold-release classification to read each hold's measured `TailNote` reference instead of its adjacent body reference, then match exact tail objects across interleaved chords and snapshot boundaries; osu! and taiko timing errors remain press-only.
 - Added osu!stable hold-release classification on native osu!mania maps by correlating map judgement phases with exact replay key-state transitions, preserving ordered press/release arrays across misses and snapshot boundaries.
+- Added ordered mode-agnostic key states to the regular v2 document and selected-field subscriptions. Each key reports its logical name, pressed state, count, and nullable edge timestamps; consumers read the active ruleset from the existing beatmap or play fields.
 
 ### Reliability
 
+- Stopped reporting false `game.paused` during lazer/stable map start and retry clock holds by gating the play-time stall heuristic until time has advanced in the current play segment, and by reading osu!lazer's authoritative `DrawableRuleset.IsPaused` / gameplay-clock pause bindable when offsets provide it.
+- Made `vosu -g`/`--generate-offsets` measure managed field offsets from the running client's on-disk assemblies (no live Satori DAC attach), fixing generation failures on official AppImages that ship Satori CLR with a stock-versioned DAC.
+- Read lazer gameplay lead-in time from `FramedBeatmapClock.decoupledTrack` so `beatmap.time.live` advances during decoupled intro instead of waiting on the shared track/menu clock.
+- Read osu!lazer play time from `Player.GameplayClockContainer.GameplayClock` during active gameplay so lead-in/decoupled intro time tracks the ruleset clock instead of the menu `beatmapClock` residual near 0–5 ms.
 - Completed server-initiated WebSocket close handshakes with a bounded wait for peer acknowledgement, preventing Windows connection resets from dropping v2 subscription terminal close codes.
 - Made the Windows updater helper tolerate the brief missing-record window that can occur while the parent atomically replaces the durable handoff record, without retrying malformed or unauthenticated records.
 - Fixed lazer paused/repeated-time samples so they retain gameplay mode and mod identity without leaking gameplay or precise state after returning to the menu, preventing `.play.mods.rate`, realtime BPM, and osu!mania timing windows from flapping to NoMod between polls.
-- Fixed dashboard navigation links so they no longer trigger counter-folder API calls, and made both folder controls open the configured counter root without fake executable names.
+- Added standalone `-h`/`--help`, `-s`/`--setup`, and `-g`/`--generate-offsets` CLI actions. Offset generation measures managed field offsets from the running client's assemblies and atomically writes generator-produced offsets for its discovered version.
 - Added a Linux startup warning when the running daemon lacks effective `CAP_SYS_PTRACE`, and made `process_vm_readv` permission denials emit one terminal error per osu! process generation instead of retrying silently.
-- Added standalone `-h`/`--help`, `-s`/`--setup`, and `-g`/`--generate-offsets` CLI actions. Offset generation attaches to the current Linux osu!lazer client and atomically writes generator-produced offsets for its discovered version.
 - Replaced the root-only `--setcap` systemd installer with `--setup`, which accepts sudo or equivalent setcap authority, probes compiled eBPF and CN_PROC support, reports polling fallback, and narrows file capabilities to `CAP_SYS_PTRACE` plus only the loader capabilities required by a working eBPF backend. Official Linux archives and default local Cargo builds/installations now include `linux-process-events`; with `VOSU_PROCESS_EVENTS` unset, runtime automatically tries eBPF, then CN_PROC, then polling. If the maximum eBPF capability set cannot be applied, setup retries with ptrace-only privileges and still probes CN_PROC instead of aborting before fallback detection.
 - Restored legacy counter compatibility by injecting the logical `window.COUNTER_PATH` into served counter HTML, allowing overlay settings WebSocket requests to identify the correct counter.
 - Kept legacy overlay WebSocket deadlines anchored to their configured cadence across staggered client write-completion and catch-up wakes, preventing slow overlays from postponing 100 ms updates for fast overlays.

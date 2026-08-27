@@ -7,6 +7,7 @@ use crate::calculation::beatmap::{
 };
 use crate::calculation::state_backend::LiveBeatmapEngine;
 use crate::instance::InstanceSettings;
+use crate::model::states::KeypressButton;
 use crate::state::{
     RegularState, StateBundle, StateBundleSnapshot, StateCalculationBackend,
     StateCalculationFuture, StateCalculationRequest, TourneyUserState,
@@ -166,6 +167,58 @@ fn subscription_document_matches_decoded_encoding_for_ready_and_not_ready_snapsh
 }
 
 #[test]
+fn regular_v2_document_exposes_mode_free_precise_keypresses_during_replay() {
+    let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
+    let mut regular = (*base.regular).clone();
+    regular.global.status = 2;
+    regular.global.is_watching_replay = true;
+    let mut precise = (*base.precise).clone();
+    precise.status = 2;
+    precise.keypresses = Arc::new(vec![
+        KeypressButton {
+            name: "K1".into(),
+            is_pressed: true,
+            count: 7,
+            pressed_at: Some(1234.5),
+            released_at: None,
+        },
+        KeypressButton {
+            name: "K2".into(),
+            is_pressed: false,
+            count: 9,
+            pressed_at: None,
+            released_at: Some(2345.5),
+        },
+    ]);
+    let state = Arc::new(StateBundleSnapshot {
+        source: base.source,
+        generation: base.generation,
+        reset_epoch: base.reset_epoch,
+        regular: Arc::new(regular),
+        precise: Arc::new(precise),
+    });
+    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+        2,
+        Some(10),
+        true,
+        ApiRuntimeSettings::default(),
+        [manager_entry(10, state, false, None)],
+    )));
+
+    let document = document(&snapshot).unwrap();
+    assert_eq!(document["state"]["number"], 2);
+    assert_eq!(
+        document["keypresses"],
+        serde_json::json!({
+            "keys": [
+                {"name": "K1", "isPressed": true, "count": 7, "pressedAt": 1234.5, "releasedAt": null},
+                {"name": "K2", "isPressed": false, "count": 9, "pressedAt": null, "releasedAt": 2345.5}
+            ]
+        })
+    );
+}
+
+#[test]
 fn source_enum_names_cover_every_mode() {
     assert_eq!(
         (0..=3).map(ruleset_name).collect::<Vec<_>>(),
@@ -312,13 +365,7 @@ fn fractional_and_nonfinite_ipc_ids_follow_javascript_json() {
             count: 0,
         },
     };
-    let keypresses = Keypresses {
-        mode: NumberName {
-            number: Some(0),
-            name: "osu".to_owned(),
-        },
-        keys: Vec::new(),
-    };
+    let keypresses = Keypresses { keys: Vec::new() };
     let dto = PreciseTourney {
         ipc_id: 7.25,
         keys: keys.clone(),

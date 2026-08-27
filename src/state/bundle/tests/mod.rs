@@ -195,12 +195,19 @@ fn raw_global(status: GameState, time: i64) -> RawGlobal {
         show_interface: true,
         chat_status: 0,
         status: status.value() as i64,
+        paused: None,
         play_time: time as f64,
         game_time: time,
         menu_mods: default_calculated_mods(),
         skin_folder: "skin".into(),
         memory_songs_folder: "songs".into(),
     }
+}
+
+fn raw_global_paused(status: GameState, time: i64, paused: bool) -> RawGlobal {
+    let mut global = raw_global(status, time);
+    global.paused = Some(paused);
+    global
 }
 
 fn menu(checksum: &str) -> MenuFull {

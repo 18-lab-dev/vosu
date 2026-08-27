@@ -26,6 +26,7 @@ fn global() -> Global {
         show_interface: true,
         chat_status: 0,
         status: 0,
+        paused: None,
         play_time: 10.0,
         game_time: 10,
         menu_mods: mods("menu"),
@@ -235,6 +236,50 @@ fn precise_acceptance_requires_exact_base_and_new_sequence() {
     assert_eq!(
         stale.validate_sequence(),
         Err(PreciseSequenceError::ProducedSequenceNotNewer)
+    );
+}
+
+#[test]
+fn empty_hit_error_rewind_is_valid_and_nonempty_rewind_is_not() {
+    let empty = RawPreciseSnapshotBuilder::new(
+        PreciseCaptureContext::new(ClientType::Lazer, 4, 9, 3, mods("mods-a"), 12, 20),
+        21,
+        Ok(ReadStatus::Ready(GlobalPrecise {
+            status: 2,
+            time: 500.0,
+        })),
+    )
+    .hit_errors(Ok(ReadStatus::Ready(HitErrors {
+        index: 2,
+        errors: HitErrorArray::default(),
+        release_corrections: Vec::new(),
+        stable_replay_frames: None,
+    })))
+    .publish();
+    assert_eq!(empty.validate_sequence(), Ok(()));
+
+    let nonempty = RawPreciseSnapshotBuilder::new(
+        PreciseCaptureContext::new(ClientType::Lazer, 4, 9, 3, mods("mods-a"), 12, 20),
+        21,
+        Ok(ReadStatus::Ready(GlobalPrecise {
+            status: 2,
+            time: 500.0,
+        })),
+    )
+    .hit_errors(Ok(ReadStatus::Ready(HitErrors {
+        index: 2,
+        errors: HitErrorArray {
+            all: vec![1.0],
+            press: vec![1.0],
+            release: Vec::new(),
+        },
+        release_corrections: Vec::new(),
+        stable_replay_frames: None,
+    })))
+    .publish();
+    assert_eq!(
+        nonempty.validate_sequence(),
+        Err(PreciseSequenceError::EndingIndexBeforeStart)
     );
 }
 

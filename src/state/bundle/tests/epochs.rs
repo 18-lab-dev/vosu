@@ -329,6 +329,50 @@ fn precise_transition_validates_keys_appends_suffix_once_and_preserves_hits_on_e
 }
 
 #[test]
+fn hit_event_list_rewind_replaces_accumulated_errors() {
+    let mut bundle = StateBundle::new(ClientType::Lazer, 3, Arc::new(EchoCalculation));
+    bundle.global.status = GameState::Play.value() as i64;
+    bundle.global.play_time = 24_301.0;
+    bundle.gameplay.hit_errors = press_hit_errors(vec![0.0, 0.0, -12.0]);
+    bundle.gameplay.total_hit_errors = -12.0;
+    bundle.gameplay.previous_hit_error_index = 10;
+    bundle.gameplay.unstable_rate = 15.0;
+
+    let rewind = RawPreciseSnapshotBuilder::new(
+        PreciseCaptureContext::new(ClientType::Lazer, 3, 0, 0, default_calculated_mods(), 10, 0),
+        1,
+        Ok(ReadStatus::Ready(GlobalPrecise {
+            status: GameState::Play.value() as i64,
+            time: 24_301.0,
+        })),
+    )
+    .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(2, Vec::new()))))
+    .publish();
+    let rewound = bundle.apply_precise_inner(&rewind);
+    assert!(bundle.gameplay.hit_errors.all.is_empty());
+    assert!(bundle.gameplay.hit_errors.press.is_empty());
+    assert_eq!(bundle.gameplay.total_hit_errors, 0.0);
+    assert_eq!(bundle.gameplay.previous_hit_error_index, 2);
+    assert_eq!(bundle.gameplay.unstable_rate, 0.0);
+    assert_eq!(rewound.committed_hit_error_index, 2);
+
+    let next = RawPreciseSnapshotBuilder::new(
+        PreciseCaptureContext::new(ClientType::Lazer, 3, 0, 0, default_calculated_mods(), 2, 1),
+        2,
+        Ok(ReadStatus::Ready(GlobalPrecise {
+            status: GameState::Play.value() as i64,
+            time: 24_400.0,
+        })),
+    )
+    .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(3, vec![-8.0]))))
+    .publish();
+    let appended = bundle.apply_precise_inner(&next);
+    assert_eq!(bundle.gameplay.hit_errors.all, [-8.0]);
+    assert_eq!(bundle.gameplay.previous_hit_error_index, 3);
+    assert_eq!(appended.committed_hit_error_index, 3);
+}
+
+#[test]
 fn boundary_corrections_reclassify_exact_prior_presses_in_timing_order() {
     let mut bundle = StateBundle::new(ClientType::Lazer, 3, Arc::new(EchoCalculation));
     bundle.global.status = GameState::Play.value() as i64;

@@ -179,6 +179,12 @@ impl NativeProcessProvider {
                 .transpose()?,
         })
     }
+
+    /// Enumeration-only provider for short CLI actions that must not open eBPF/CN_PROC.
+    #[must_use]
+    pub fn polling_only() -> Self {
+        Self { events: None }
+    }
 }
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]

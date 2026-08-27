@@ -403,7 +403,6 @@ pub struct Keypress {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Keypresses {
-    pub mode: NumberName,
     pub keys: Vec<Keypress>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -663,6 +662,7 @@ pub struct Response {
     pub profile: Profile,
     pub beatmap: Beatmap,
     pub play: Play,
+    pub keypresses: Keypresses,
     pub leaderboard: Vec<Leaderboard>,
     pub performance: Performance,
     #[serde(rename = "resultsScreen")]

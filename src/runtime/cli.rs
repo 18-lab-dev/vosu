@@ -159,14 +159,12 @@ fn run_backend_probe(_backend: BackendProbe) -> io::Result<()> {
 
 #[cfg(target_os = "linux")]
 const OFFSET_GENERATOR_ENV: &str = "VOSU_LAZER_OFFSET_GENERATOR";
-#[cfg(target_os = "linux")]
-const OFFSET_DAC_ENV: &str = "VOSU_LAZER_OFFSET_DAC";
 
 #[cfg(target_os = "linux")]
 fn generate_offsets_to(directory: &Path) -> io::Result<PathBuf> {
-    let (pid, version, client_root) = current_lazer_client()?;
+    let (_pid, version, client_root) = current_lazer_client()?;
     let generator = resolve_offset_generator()?;
-    let dac = resolve_offset_dac(&client_root)?;
+    let assembly_dir = resolve_lazer_assembly_dir(&client_root)?;
     let template_asset = DaemonAssets::get(OFFSETS_FILE_NAME).ok_or_else(|| {
         io::Error::new(io::ErrorKind::NotFound, "embedded offsets.json is missing")
     })?;
@@ -184,10 +182,9 @@ fn generate_offsets_to(directory: &Path) -> io::Result<PathBuf> {
         .tempfile_in(directory)?
         .into_temp_path();
     let output = Command::new(&generator)
-        .arg("--pid")
-        .arg(pid.to_string())
-        .arg("--dac")
-        .arg(&dac)
+        .arg("--assemblies-only")
+        .arg("--assembly-dir")
+        .arg(&assembly_dir)
         .arg("--template")
         .arg(template.path())
         .arg("--output")
@@ -207,8 +204,10 @@ fn generate_offsets_to(directory: &Path) -> io::Result<PathBuf> {
         )));
     }
 
-    let generated = std::fs::read(&temporary_output)?;
+    let mut generated = std::fs::read(&temporary_output)?;
+    generated = merge_game_base_vtable(&generated, template_asset.data.as_ref())?;
     validate_generated_offsets(&generated, &version)?;
+    std::fs::write(&temporary_output, &generated)?;
     let destination = directory.join(format!("{version}.json"));
     crate::platform::atomic_replace(&temporary_output, &destination)?;
     Ok(destination)
@@ -229,7 +228,8 @@ fn current_lazer_client() -> io::Result<(u32, String, PathBuf)> {
     let provider = {
         #[cfg(feature = "linux-process-events")]
         {
-            NativeProcessProvider::default()
+            // CLI actions must not open eBPF/CN_PROC (noisy libbpf stderr, extra caps).
+            NativeProcessProvider::polling_only()
         }
         #[cfg(not(feature = "linux-process-events"))]
         {
@@ -276,7 +276,8 @@ fn current_lazer_client() -> io::Result<(u32, String, PathBuf)> {
 #[cfg(target_os = "linux")]
 fn resolve_offset_generator() -> io::Result<PathBuf> {
     if let Some(path) = env::var_os(OFFSET_GENERATOR_ENV).filter(|path| !path.is_empty()) {
-        return Ok(PathBuf::from(path));
+        let path = PathBuf::from(path);
+        return validate_offset_generator(&path).map(|()| path);
     }
 
     let current_directory = env::current_dir()?;
@@ -284,48 +285,152 @@ fn resolve_offset_generator() -> io::Result<PathBuf> {
         .parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| io::Error::other("vosu executable has no parent directory"))?;
-    let candidates = [
-        executable_directory.join("lazer-offset-generator"),
+    // Prefer the full framework-dependent build output over a bare apphost copied
+    // next to vosu (that only ships the native host and fails looking for *.dll).
+    let mut candidates = vec![
         current_directory
             .join("tools/lazer-offset-generator/bin/Release/net8.0/lazer-offset-generator"),
         current_directory
             .join("tools/lazer-offset-generator/bin/Debug/net8.0/lazer-offset-generator"),
+        executable_directory.join("lazer-offset-generator"),
+    ];
+    if let Some(path_var) = env::var_os("PATH") {
+        for dir in env::split_paths(&path_var) {
+            candidates.push(dir.join("lazer-offset-generator"));
+        }
+    }
+    let mut last_invalid = None;
+    for path in candidates {
+        match validate_offset_generator(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if path.is_file() => last_invalid = Some((path, error)),
+            Err(_) => {}
+        }
+    }
+    if let Some((path, error)) = last_invalid {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "lazer offset generator at {} is incomplete: {error}. Build tools/lazer-offset-generator (keep the full net8.0 output dir) or set {OFFSET_GENERATOR_ENV}",
+                path.display()
+            ),
+        ));
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!(
+            "lazer offset generator was not found; build tools/lazer-offset-generator or set {OFFSET_GENERATOR_ENV}"
+        ),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn validate_offset_generator(path: &Path) -> io::Result<()> {
+    if !path.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("generator executable not found at {}", path.display()),
+        ));
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("generator path has no file name: {}", path.display()),
+            )
+        })?;
+    let parent = path.parent().ok_or_else(|| {
+        io::Error::other(format!(
+            "generator path has no parent directory: {}",
+            path.display()
+        ))
+    })?;
+    let managed = parent.join(format!("{file_name}.dll"));
+    let runtime_config = parent.join(format!("{file_name}.runtimeconfig.json"));
+    if managed.is_file() && runtime_config.is_file() {
+        return Ok(());
+    }
+    // Thin PATH wrappers (shell scripts) may exec the real framework-dependent build.
+    if generator_looks_like_script(path) {
+        return Ok(());
+    }
+    if !managed.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "missing managed assembly {} (copied only the native apphost?)",
+                managed.display()
+            ),
+        ));
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!(
+            "missing runtime config {} (incomplete generator install)",
+            runtime_config.display()
+        ),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn generator_looks_like_script(path: &Path) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut header = [0_u8; 2];
+    use std::io::Read;
+    matches!(file.read(&mut header), Ok(2) if &header == b"#!")
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_lazer_assembly_dir(client_root: &Path) -> io::Result<PathBuf> {
+    let candidates = [
+        client_root.to_path_buf(),
+        client_root.join("usr/bin"),
+        client_root.join("bin"),
     ];
     candidates
         .into_iter()
-        .find(|path| path.is_file())
+        .find(|path| path.join("osu!.dll").is_file() || path.join("osu.Game.dll").is_file())
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 format!(
-                    "lazer offset generator was not found; build it or set {OFFSET_GENERATOR_ENV}"
+                    "could not locate osu!lazer managed assemblies under {}",
+                    client_root.display()
                 ),
             )
         })
 }
 
 #[cfg(target_os = "linux")]
-fn resolve_offset_dac(client_root: &Path) -> io::Result<PathBuf> {
-    if let Some(path) = env::var_os(OFFSET_DAC_ENV).filter(|path| !path.is_empty()) {
-        return Ok(PathBuf::from(path));
+fn merge_game_base_vtable(generated: &[u8], template: &[u8]) -> io::Result<Vec<u8>> {
+    let mut value: serde_json::Value = serde_json::from_slice(generated)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+    let needs_vtable = match value.get("GameBaseVtable") {
+        None | Some(serde_json::Value::Null) => true,
+        Some(serde_json::Value::Number(number)) => number.as_u64() == Some(0),
+        Some(_) => false,
+    };
+    if needs_vtable {
+        let template_value: serde_json::Value = serde_json::from_slice(template)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        if let Some(vtable) = template_value.get("GameBaseVtable").cloned() {
+            value
+                .as_object_mut()
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "generated offsets root must be an object",
+                    )
+                })?
+                .insert("GameBaseVtable".to_owned(), vtable);
+        }
     }
-
-    let candidates = [
-        client_root.join("libmscordaccore.so"),
-        client_root.join("usr/lib/libmscordaccore.so"),
-        client_root.join("usr/bin/libmscordaccore.so"),
-    ];
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!(
-                    "matching libmscordaccore.so was not found beside the current osu!lazer client; set {OFFSET_DAC_ENV}"
-                ),
-            )
-        })
+    serde_json::to_vec(&value)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
 }
 
 #[cfg(target_os = "linux")]

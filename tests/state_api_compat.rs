@@ -721,7 +721,9 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
                         }
                     }
                 } else {
-                    // `timingWindows` is a vosu extension; pinned upstream fixtures attest the legacy fields.
+                    // `keypresses` and `timingWindows` are intentional vosu extensions; pinned
+                    // upstream fixtures attest the legacy fields.
+                    object.shift_remove("keypresses");
                     if let Some(stats) = object
                         .get_mut("beatmap")
                         .and_then(Value::as_object_mut)

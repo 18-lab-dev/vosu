@@ -55,11 +55,15 @@ internal static partial class Program
             --dac <matching libmscordaccore.so> --template <path> [--output <path>]
         Usage: lazer-offset-generator --pid <lazer-process-id> \
             --dac <matching libmscordaccore.so> --template <path> [--output <path>]
+        Usage: lazer-offset-generator --assemblies-only --assembly-dir <path> \
+            --template <path> [--output <path>]
 
         The first form launches the target host as a direct child. The second form
         attaches to the already-running lazer process. Both forms replace every
         offset in the ordered template. The first form requires the pinned Satori
         DAC markers; the live-process form requires a DAC matching the target CLR.
+        The third form measures managed field offsets from on-disk assemblies without
+        a live DAC attach (preferred on Satori-based official AppImages).
         JSON is written to stdout unless --output is supplied.
         """;
 
@@ -75,50 +79,60 @@ internal static partial class Program
             }
 
             TemplateSchema template = TemplateSchema.Load(options.TemplatePath!);
-            using ValidatedDac dac = options.ProcessId is null
-                ? OpenValidatedDac(options.DacPath!)
-                : OpenLiveDac(options.DacPath!);
-
             byte[] json;
-            if (options.ProcessId is int processId)
+            if (options.AssembliesOnly)
             {
-                json = Serialize(
+                json = AssemblyOffsets.Generate(
+                    options.AssemblyDirectory!,
                     template,
-                    Generate(processId, dac.LoaderPath, template));
+                    osuVersion: null);
             }
             else
             {
-                using PinnedRuntimeFiles runtimeFiles =
-                    PinnedRuntimeFiles.Open(options.TargetHostPath!);
-                OwnedTargetHost targetHost = OwnedTargetHost.Start(
-                    options.TargetHostPath!,
-                    options.TemplatePath!,
-                    options.AssemblyDirectory!,
-                    runtimeFiles.IdentityToken,
-                    template.ClrTypeCount,
-                    template.SourceSha256);
-                try
+                using ValidatedDac dac = options.ProcessId is null
+                    ? OpenValidatedDac(options.DacPath!)
+                    : OpenLiveDac(options.DacPath!);
+
+                if (options.ProcessId is int processId)
                 {
+                    json = Serialize(
+                        template,
+                        Generate(processId, dac.LoaderPath, template));
+                }
+                else
+                {
+                    using PinnedRuntimeFiles runtimeFiles =
+                        PinnedRuntimeFiles.Open(options.TargetHostPath!);
+                    OwnedTargetHost targetHost = OwnedTargetHost.Start(
+                        options.TargetHostPath!,
+                        options.TemplatePath!,
+                        options.AssemblyDirectory!,
+                        runtimeFiles.IdentityToken,
+                        template.ClrTypeCount,
+                        template.SourceSha256);
                     try
                     {
-                        json = Serialize(
-                            template,
-                            Generate(targetHost.ProcessId, dac.LoaderPath, template));
-                    }
-                    catch (GeneratorException error)
-                    {
-                        string? exitDiagnostic = targetHost.TryDescribeExit();
-                        if (exitDiagnostic is null)
-                            throw;
+                        try
+                        {
+                            json = Serialize(
+                                template,
+                                Generate(targetHost.ProcessId, dac.LoaderPath, template));
+                        }
+                        catch (GeneratorException error)
+                        {
+                            string? exitDiagnostic = targetHost.TryDescribeExit();
+                            if (exitDiagnostic is null)
+                                throw;
 
-                        throw new GeneratorException($"{error.Message}; {exitDiagnostic}", error);
+                            throw new GeneratorException($"{error.Message}; {exitDiagnostic}", error);
+                        }
                     }
+                    finally
+                    {
+                        targetHost.TerminateAndReap();
+                    }
+                    runtimeFiles.VerifyUnchanged();
                 }
-                finally
-                {
-                    targetHost.TerminateAndReap();
-                }
-                runtimeFiles.VerifyUnchanged();
             }
 
             if (options.OutputPath is null)
@@ -1706,12 +1720,13 @@ internal sealed record CommandLine(
     string? AssemblyDirectory,
     string? TemplatePath,
     string? OutputPath,
+    bool AssembliesOnly,
     bool ShowHelp)
 {
     public static CommandLine Parse(string[] args)
     {
         if (args.Length == 1 && args[0] is "--help" or "-h")
-            return new CommandLine(null, null, null, null, null, null, ShowHelp: true);
+            return new CommandLine(null, null, null, null, null, null, AssembliesOnly: false, ShowHelp: true);
 
         string? targetHostPath = null;
         int? processId = null;
@@ -1719,6 +1734,7 @@ internal sealed record CommandLine(
         string? assemblyDirectory = null;
         string? templatePath = null;
         string? outputPath = null;
+        bool assembliesOnly = false;
 
         for (int index = 0; index < args.Length; index++)
         {
@@ -1755,6 +1771,11 @@ internal sealed record CommandLine(
                         throw new UsageException("option '--output' may be supplied only once");
                     outputPath = ReadPath(args, ref index, argument);
                     break;
+                case "--assemblies-only":
+                    if (assembliesOnly)
+                        throw new UsageException("option '--assemblies-only' may be supplied only once");
+                    assembliesOnly = true;
+                    break;
                 case "--help":
                 case "-h":
                     throw new UsageException($"option '{argument}' must be used alone");
@@ -1763,24 +1784,39 @@ internal sealed record CommandLine(
             }
         }
 
-        if (dacPath is null)
-            throw new UsageException("missing required option '--dac <matching libmscordaccore.so>'");
         if (templatePath is null)
             throw new UsageException("missing required option '--template <path>'");
-        if (processId is null)
+
+        if (assembliesOnly)
         {
-            if (targetHostPath is null)
+            if (processId is not null || targetHostPath is not null || dacPath is not null)
+            {
                 throw new UsageException(
-                    "missing required option '--target-host <executable>' or '--pid <lazer-process-id>'");
+                    "option '--assemblies-only' cannot be combined with '--pid', '--target-host', or '--dac'");
+            }
+
             if (assemblyDirectory is null)
                 throw new UsageException("missing required option '--assembly-dir <path>'");
         }
         else
         {
-            if (targetHostPath is not null)
-                throw new UsageException("option '--target-host' cannot be combined with '--pid'");
-            if (assemblyDirectory is not null)
-                throw new UsageException("option '--assembly-dir' cannot be combined with '--pid'");
+            if (dacPath is null)
+                throw new UsageException("missing required option '--dac <matching libmscordaccore.so>'");
+            if (processId is null)
+            {
+                if (targetHostPath is null)
+                    throw new UsageException(
+                        "missing required option '--target-host <executable>' or '--pid <lazer-process-id>'");
+                if (assemblyDirectory is null)
+                    throw new UsageException("missing required option '--assembly-dir <path>'");
+            }
+            else
+            {
+                if (targetHostPath is not null)
+                    throw new UsageException("option '--target-host' cannot be combined with '--pid'");
+                if (assemblyDirectory is not null)
+                    throw new UsageException("option '--assembly-dir' cannot be combined with '--pid'");
+            }
         }
 
         return new CommandLine(
@@ -1790,6 +1826,7 @@ internal sealed record CommandLine(
             assemblyDirectory,
             templatePath,
             outputPath,
+            assembliesOnly,
             ShowHelp: false);
     }
 
@@ -1824,7 +1861,7 @@ internal sealed record CommandLine(
 
         string value = args[++index];
         if (value is "--target-host" or "--pid" or "--dac" or "--assembly-dir" or
-            "--template" or "--output" or "--help" or "-h")
+            "--template" or "--output" or "--assemblies-only" or "--help" or "-h")
         {
             throw new UsageException($"option '{option}' requires a value");
         }

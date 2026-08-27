@@ -108,6 +108,8 @@ pub struct LazerOffsets {
     pub osu_game_screens_menu_logo_visualisation: OffsetGroup26,
     #[serde(rename = "osu.Game.Screens.Play.Player")]
     pub osu_game_screens_play_player: OffsetGroup27,
+    #[serde(default, rename = "osu.Game.Screens.Play.GameplayClockContainer")]
+    pub osu_game_screens_play_gameplay_clock_container: Option<OffsetGroupGameplayClockContainer>,
     #[serde(rename = "osu.Framework.Screens.ScreenStack")]
     pub osu_framework_screens_screen_stack: OffsetGroup28,
     #[serde(rename = "osu.Game.Rulesets.RulesetConfigCache")]
@@ -248,6 +250,9 @@ impl LazerOffsets {
         self.osu_game_screens_menu_osu_logo.validate()?;
         self.osu_game_screens_menu_logo_visualisation.validate()?;
         self.osu_game_screens_play_player.validate()?;
+        if let Some(group) = &self.osu_game_screens_play_gameplay_clock_container {
+            group.validate()?;
+        }
         self.osu_framework_screens_screen_stack.validate()?;
         self.osu_game_rulesets_ruleset_config_cache.validate()?;
         self.osu_game_online_chat_external_link_opener.validate()?;

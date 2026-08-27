@@ -108,6 +108,10 @@ pub struct StateBundle {
     previous_state_key: String,
     previous_mp3_length: Option<f64>,
     previous_time: f64,
+    /// True after play_time has advanced forward while continuously in Play.
+    /// Gates the stall-based `paused` heuristic so map start/retry clock holds
+    /// do not look like pause-menu freezes.
+    play_clock_armed: bool,
     is_tourney_manager: bool,
     is_tourney_spectator: bool,
     calculate_pp: bool,

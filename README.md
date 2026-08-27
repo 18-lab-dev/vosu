@@ -84,24 +84,25 @@ The public command flags are standalone actions:
 ```
 
 `--help` prints usage. On Linux, `--generate-offsets` finds exactly one running
-64-bit osu!lazer client, invokes the lazer offset generator in live-process mode,
-and atomically writes validated offsets for that client's version to the vosu
-offset cache: `$XDG_CACHE_HOME/vosu/offsets/<version>.json`, defaulting to
+64-bit osu!lazer client, measures managed field offsets from that client's
+on-disk assemblies (no live DAC attach), and atomically writes validated offsets
+for that client's version to the vosu offset cache:
+`$XDG_CACHE_HOME/vosu/offsets/<version>.json`, defaulting to
 `$HOME/.cache/vosu/offsets/<version>.json`. Set `VOSU_LAZER_OFFSET_GENERATOR` to
 the built generator path when it is not beside the vosu executable or under the
-repository's standard tool output path. Set `VOSU_LAZER_OFFSET_DAC` when the
-client's matching `libmscordaccore.so` is not beside its executable. The
-command requires the Linux generator and does not use the embedded offsets as
-generated output. On Linux, `--setup` probes the process-event backends
-compiled into the current executable and installs the capabilities they
-require. Each action must be the executable's only argument.
+repository's standard tool output path. The command requires the Linux generator
+and does not use the embedded offsets as generated output. On Linux, `--setup`
+probes the process-event backends compiled into the current executable and
+installs the capabilities they require. Each action must be the executable's
+only argument.
 
 Insufficient setup authority is an error. Run `sudo vosu --setup`, or invoke it as a user with equivalent authority to set file capabilities; do not run the ordinary daemon as root.
 
 `--generate-offsets` is a Linux-only maintainer action. A release archive
 contains the vosu daemon and `LICENSE`, not the managed offset generator. The
-action attaches to one already-running native 64-bit osu!lazer client; it does
-not launch osu! and it does not modify the daemon's embedded offsets.
+action requires one already-running native 64-bit osu!lazer client so it can
+discover the client version and assembly directory; it does not launch osu! and
+it does not modify the daemon's embedded offsets.
 
 There is no separate prebuilt generator package in the current release. Build
 the tool from a matching vosu source checkout as shown below.
@@ -111,8 +112,6 @@ the tool from a matching vosu source checkout as shown below.
 Install prerequisites before running the action:
 
 - a native 64-bit osu!lazer client, already running as the same desktop user;
-- a DAC built for the exact CLR loaded by the client; the client's bundled
-  `libmscordaccore.so` is not necessarily the DAC for osu!'s Satori runtime;
 - the .NET 8 SDK and access to NuGet to restore the generator's locked package;
 - Git, unless a vosu source checkout is already available.
 
@@ -135,23 +134,12 @@ dotnet restore tools/lazer-offset-generator/lazer-offset-generator.csproj \
 dotnet build tools/lazer-offset-generator/lazer-offset-generator.csproj \
   --configuration Release --no-restore
 export VOSU_LAZER_OFFSET_GENERATOR="$PWD/tools/lazer-offset-generator/bin/Release/net8.0/lazer-offset-generator"
-sudo setcap cap_sys_ptrace=ep "$VOSU_LAZER_OFFSET_GENERATOR"
-getcap "$VOSU_LAZER_OFFSET_GENERATOR"
 /path/to/vosu --generate-offsets
 ```
 
-`vosu --setup` grants capabilities to the daemon executable, but the
-generator is a separate process and must have `CAP_SYS_PTRACE` itself. Do not
-run the daemon as root. If the daemon's attach still fails, run
-`sudo /path/to/vosu --setup` once and retry as the desktop user.
-
-For osu!lazer builds using ppy/Satori, use the patched DAC produced by the
-reproducible workflow below rather than assuming the AppImage's bundled DAC
-matches. Set it explicitly, for example:
-
-```sh
-export VOSU_LAZER_OFFSET_DAC=/tmp/satori-source/artifacts/bin/coreclr/linux.x64.Release/libmscordaccore.so
-```
+Assembly-only generation does not attach to the live CLR, so the generator does
+not need `CAP_SYS_PTRACE`. The daemon still needs ptrace capabilities to read
+osu! memory at runtime (`sudo vosu --setup`).
 
 #### From a cloned repository
 
@@ -166,7 +154,6 @@ dotnet build tools/lazer-offset-generator/lazer-offset-generator.csproj \
 cargo build --locked --no-default-features
 export VOSU_LAZER_OFFSET_GENERATOR="$PWD/tools/lazer-offset-generator/bin/Release/net8.0/lazer-offset-generator"
 sudo setcap cap_sys_ptrace=ep target/debug/vosu
-sudo setcap cap_sys_ptrace=ep "$VOSU_LAZER_OFFSET_GENERATOR"
 cargo run --locked --no-default-features -- --generate-offsets
 ```
 
@@ -176,24 +163,14 @@ the repository checkout. The output is not copied to `assets/offsets.json`
 automatically; updating the embedded repository asset requires the
 reproducible workflow below and its provenance/checksum review.
 
-If no client, generator, or DAC can be found, or if attach, version, or JSON
-validation fails, the command returns an error and leaves an existing
-`<version>.json` cache entry unchanged. Close extra osu!lazer instances, ensure
-the daemon and client run as the same user, and check that the client exposes
-`osu!.deps.json` before retrying. A `PTRACE_ATTACH` error from ClrMD usually
-means the generator itself lacks `CAP_SYS_PTRACE`; reapply the `setcap`
-command above after rebuilding it. Only after both executables have the
-required capability should you adjust a host ptrace policy, and never by
-running vosu as root.
-Live-process mode can only resolve types that the target runtime has
-constructed. If a client has not visited every required screen, use the
-target-host workflow below with the same client assembly directory and write
-the validated `<version>.json` result to the offset cache.
+If no client or generator can be found, or if version or JSON validation fails,
+the command returns an error and leaves an existing `<version>.json` cache entry
+unchanged. Close extra osu!lazer instances and check that the client exposes
+`osu!.deps.json` before retrying.
 
-If ClrMD reports `Mismatched dac` with `expected: 0.0`, the selected DAC is
-not the patched Satori DAC for the loaded `libcoreclr.so`. Set
-`VOSU_LAZER_OFFSET_DAC` to the DAC produced by the reproducible workflow
-above; do not bypass this mismatch.
+Advanced ClrMD live-attach / target-host generation (with a matching Satori DAC)
+remains available on the generator CLI for maintainers who need a live
+`GameBaseVtable` measurement; ordinary `vosu -g` uses assembly-only mode.
 
 ## Build from source
 
@@ -621,7 +598,7 @@ The v2 snapshot and matching WebSocket streams expose `beatmap.stats.timingWindo
 
 Hit-error fields use the same object shape across v1, streamCompanion, v2, and v2 precise: `{"all":[],"press":[],"release":[]}`. `all` preserves timing-event order, `press` contains note presses, and `release` contains osu!lazer mania hold-note releases. Stable reports every timing error in `all` and `press` and leaves `release` empty.
 
-`/json/v2/precise` publishes low-latency input data at `PRECISE_DATA_POLL_RATE`. Its additive `keypresses` object contains the active ruleset in `mode` and every source-reported logical input in ordered `keys` entries (`name`, `isPressed`, `count`, `pressedAt`, and `releasedAt`) for stable and lazer; the legacy fixed `keys` object remains available. Edge timestamps are nullable gameplay milliseconds. They update only when the sampled state exposes that edge, so a count jump can report missed complete taps without fabricating timestamps.
+`/json/v2` includes a mode-free `keypresses` object containing every source-reported logical input in ordered `keys` entries (`name`, `isPressed`, `count`, `pressedAt`, and `releasedAt`) for stable and lazer. Read the active ruleset from the existing `play.mode` or `beatmap.mode` field. `/json/v2/precise` publishes the same keypress object at `PRECISE_DATA_POLL_RATE`; the legacy fixed `keys` object remains available there. Edge timestamps are nullable gameplay milliseconds. They update only when the sampled state exposes that edge, so a count jump can report missed complete taps without fabricating press or release times.
 Maintainers can run the zero-dependency harness with `cd tools/input-validation && uv run python run.py ...`. `capture` accounts for precise transitions and `scan-maps` selects long-note-heavy mania maps. `autoplay <map.osu>` and `live-autoplay <map.osu>` generate deterministic plans for osu!, taiko, catch, and mania, then inject them through Windows `SendInput` or Linux `/dev/uinput`; live mania plans additionally support bounded seeded timing jitter. Standard-mode and catch pointer injection requires `--playfield x,y,width,height`; Linux also requires the full compositor layout as `--desktop x,y,width,height`, not only the target monitor. Default controls are `Z` for osu!, `F,J,D,K` for taiko plan controls `DON_LEFT,DON_RIGHT,KAT_LEFT,KAT_RIGHT`, pointer-only for catch, and `D,F,J,K` for 4-key mania.
 
 Maintainer workflow, evidence interpretation, troubleshooting, and maintenance triggers are documented in the [precise input validation guide](openwiki/testing/input-validation.md).
@@ -671,7 +648,7 @@ POST bodies are capped at 1 MiB. Generated reports escape machine, configuration
 
 Unknown near-miss paths do not upgrade. Frames and assembled messages are limited to 1 MiB. Slow clients receive the latest state instead of building an unbounded backlog. The [upstream tosu wiki](https://github.com/tosuapp/tosu/wiki) documents the compatibility schemas and filter examples.
 
-The selected-field endpoint expects one text message within five seconds: a JSON array of 1–256 non-overlapping RFC 6901 JSON Pointers into `/json/v2`. It sends compact initial `[0, revision, values]` and update `[1, revision, values, removedIds]` arrays; selector IDs are their zero-based request positions. The selection is immutable, so changing fields requires reconnecting. This endpoint has no command channel.
+The selected-field endpoint expects one text message within five seconds: a JSON array of 1–256 non-overlapping RFC 6901 JSON Pointers into the `/json/v2` document. A subscription such as `["/keypresses","/beatmap/mode","/state/number"]` receives compact initial `[0, revision, [[index, value], ...]]` and update `[1, revision, [[changedIndex, value], ...], [removedIndex, ...]]` frames. Send `["ping", nonce]` for `["pong", nonce, revision]`. Invalid filters receive `[2, code, message]`. Updates are debounced by `V2_SUBSCRIPTION_DEBOUNCE`; due revisions use the latest snapshot.
 
 ## Maintainer documentation
 

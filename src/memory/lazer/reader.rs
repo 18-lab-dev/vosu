@@ -329,6 +329,7 @@ impl MemoryReader for LazerMemory {
             show_interface: self.show_interface,
             chat_status,
             status,
+            paused: self.gameplay_paused_for_player(player)?,
             play_time,
             game_time: 0,
             menu_mods: self.menu_mods.clone(),
@@ -386,7 +387,7 @@ impl MemoryReader for LazerMemory {
         };
         self.status = status as i64;
         self.player_loading = is_loader;
-        let time = js_round_number(self.current_time()?);
+        let time = js_round_number(self.current_time_for_player(player)?);
         self.precise_player = (player != 0).then_some(PrecisePlayerCache {
             screen: self.current_screen,
             player,
@@ -658,6 +659,14 @@ impl LazerMemory {
         last: i64,
     ) -> Result<HitErrors, MemoryError> {
         let start_index = last.max(0) as usize;
+        if start_index > size {
+            return Ok(HitErrors {
+                index: size as i64,
+                errors: HitErrorArray::default(),
+                release_corrections: Vec::new(),
+                stable_replay_frames: None,
+            });
+        }
         let mut index = start_index;
         let mut suffix_events = Vec::new();
         while index < size {

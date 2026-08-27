@@ -127,6 +127,8 @@ pub struct OffsetGroup27 {
     pub hudoverlay_k_backing_field: usize,
     #[serde(rename = "<DrawableRuleset>k__BackingField")]
     pub drawable_ruleset_k_backing_field: usize,
+    #[serde(default, rename = "<GameplayClockContainer>k__BackingField")]
+    pub gameplay_clock_container_k_backing_field: Option<usize>,
     #[serde(rename = "dependencies")]
     pub dependencies: usize,
     #[serde(flatten)]
@@ -172,6 +174,36 @@ impl OffsetGroup27 {
         if self.dependencies == 0 {
             return Err(LazerOffsetsError::Zero(
                 "osu.Game.Screens.Play.Player.dependencies",
+            ));
+        }
+        if self.gameplay_clock_container_k_backing_field == Some(0) {
+            return Err(LazerOffsetsError::Zero(
+                "osu.Game.Screens.Play.Player.<GameplayClockContainer>k__BackingField",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OffsetGroupGameplayClockContainer {
+    #[serde(rename = "GameplayClock")]
+    pub gameplay_clock: usize,
+    #[serde(rename = "isPaused")]
+    pub is_paused: usize,
+    #[serde(flatten)]
+    pub extras: IndexMap<String, Value>,
+}
+impl OffsetGroupGameplayClockContainer {
+    pub(super) fn validate(&self) -> Result<(), LazerOffsetsError> {
+        if self.gameplay_clock == 0 {
+            return Err(LazerOffsetsError::Zero(
+                "osu.Game.Screens.Play.GameplayClockContainer.GameplayClock",
+            ));
+        }
+        if self.is_paused == 0 {
+            return Err(LazerOffsetsError::Zero(
+                "osu.Game.Screens.Play.GameplayClockContainer.isPaused",
             ));
         }
         Ok(())

@@ -60,6 +60,7 @@ fn raw_global() -> Global {
         show_interface: true,
         chat_status: 0,
         status: GameState::Play.value() as i64,
+        paused: None,
         play_time: 200.0,
         game_time: 0,
         menu_mods: mods("nomod"),

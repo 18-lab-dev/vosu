@@ -62,6 +62,7 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
             current_mods,
             &focused.precise.hit_errors,
         ),
+        keypresses: crate::api::precise::build_keypresses(&focused.precise.keypresses),
         leaderboard: state
             .gameplay
             .leaderboard_scores

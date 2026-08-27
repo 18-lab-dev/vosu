@@ -330,6 +330,26 @@ fn suffix_boundary_emits_multiple_identity_corrections_from_one_press_vector() {
 }
 
 #[test]
+fn hit_error_suffix_rewinds_to_current_size_when_list_shrinks() {
+    let items = 0x10_000usize;
+    let mut memory = SparseMemory::default();
+    put_hit_event(&mut memory, items, 0xe8, -2.0, 3);
+    put_hit_event(&mut memory, items + 0x40, 0xe0, 4.0, 5);
+    let mut reader = reader(Arc::new(memory));
+    reader.selected_gamemode = 0;
+
+    let rewound = reader.read_hit_error_suffix(items, 2, 10).unwrap();
+    assert_eq!(rewound.index, 2);
+    assert!(rewound.errors.all.is_empty());
+    assert!(rewound.errors.press.is_empty());
+    assert!(rewound.release_corrections.is_empty());
+
+    let cleared = reader.read_hit_error_suffix(items, 0, 10).unwrap();
+    assert_eq!(cleared.index, 0);
+    assert!(cleared.errors.all.is_empty());
+}
+
+#[test]
 fn mod_mapping_normalizes_settings_and_hashes_json() {
     let mut settings = IndexMap::new();
     settings.insert("speed_change".into(), Value::from(1.3333));

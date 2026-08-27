@@ -394,6 +394,14 @@ impl MemoryReader for StableMemory {
         let items = self.ptr(self.add(b, 4)?)?;
         let size = self.process.read_i32(self.add(b, 0xc)?)?.max(0) as i64;
         let mut index = last.max(0);
+        if index > size {
+            return Ok(ReadStatus::Ready(HitErrors {
+                index: size,
+                errors: HitErrorArray::default(),
+                release_corrections: Vec::new(),
+                stable_replay_frames: self.replay_frame_batch(s, size)?,
+            }));
+        }
         let mut errors = HitErrorArray::default();
         while index < size {
             let e = self.i32(self.add(items, LEADER_START + 4 * index as usize)?)?;
@@ -461,6 +469,7 @@ impl MemoryReader for StableMemory {
             show_interface: show,
             chat_status: chat,
             status,
+            paused: None,
             play_time,
             game_time,
             menu_mods: menu,

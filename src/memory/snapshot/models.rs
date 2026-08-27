@@ -337,18 +337,23 @@ impl RawPreciseSnapshot {
         if self.produced_sequence <= self.capture.base_accepted_precise_sequence {
             return Err(PreciseSequenceError::ProducedSequenceNotNewer);
         }
-        if self.ending_index < self.capture.start_index {
-            return Err(PreciseSequenceError::EndingIndexBeforeStart);
-        }
         if let Some(Ok(ReadStatus::Ready(suffix))) = &self.hit_errors {
             if suffix.index != self.ending_index {
                 return Err(PreciseSequenceError::HitErrorEndingIndexMismatch);
             }
-            let consumed = usize::try_from(self.ending_index - self.capture.start_index)
-                .map_err(|_| PreciseSequenceError::HitErrorSuffixExceedsConsumedRange)?;
-            if suffix.errors.all.len() > consumed {
-                return Err(PreciseSequenceError::HitErrorSuffixExceedsConsumedRange);
+            if self.ending_index < self.capture.start_index {
+                if !suffix.errors.all.is_empty() {
+                    return Err(PreciseSequenceError::EndingIndexBeforeStart);
+                }
+            } else {
+                let consumed = usize::try_from(self.ending_index - self.capture.start_index)
+                    .map_err(|_| PreciseSequenceError::HitErrorSuffixExceedsConsumedRange)?;
+                if suffix.errors.all.len() > consumed {
+                    return Err(PreciseSequenceError::HitErrorSuffixExceedsConsumedRange);
+                }
             }
+        } else if self.ending_index < self.capture.start_index {
+            return Err(PreciseSequenceError::EndingIndexBeforeStart);
         }
         Ok(())
     }

@@ -277,8 +277,81 @@ impl LazerMemory {
             self.offsets.osu_game_osu_game_base.beatmap_clock,
         )?)
     }
-    pub(super) fn current_time(&self) -> Result<f64, MemoryError> {
-        let clock = self.beatmap_clock()?;
+
+    pub(super) fn current_time_for_player(&self, player: usize) -> Result<f64, MemoryError> {
+        match self.gameplay_clock_time_for_player(player) {
+            Ok(Some(time)) => Ok(time),
+            Ok(None) | Err(_) => self.clock_current_time(self.beatmap_clock()?),
+        }
+    }
+
+    pub(super) fn gameplay_clock_time_for_player(
+        &self,
+        player: usize,
+    ) -> Result<Option<f64>, MemoryError> {
+        let Some(clock) = self.gameplay_clock_for_player(player)? else {
+            return Ok(None);
+        };
+        match self.clock_current_time(clock) {
+            Ok(time) => Ok(Some(time)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    pub(super) fn gameplay_clock_for_player(
+        &self,
+        player: usize,
+    ) -> Result<Option<usize>, MemoryError> {
+        if player == 0 {
+            return Ok(None);
+        }
+        let Some(container_offset) = self
+            .offsets
+            .osu_game_screens_play_player
+            .gameplay_clock_container_k_backing_field
+            .filter(|offset| *offset != 0)
+        else {
+            return Ok(None);
+        };
+        let Some(clock_offset) = self
+            .offsets
+            .osu_game_screens_play_gameplay_clock_container
+            .as_ref()
+            .map(|group| group.gameplay_clock)
+            .filter(|offset| *offset != 0)
+        else {
+            return Ok(None);
+        };
+        let Ok(container) = self.ptr(add(player, container_offset)?) else {
+            return Ok(None);
+        };
+        if container == 0 {
+            return Ok(None);
+        }
+        let Ok(clock) = self.ptr(add(container, clock_offset)?) else {
+            return Ok(None);
+        };
+        Ok((clock != 0).then_some(clock))
+    }
+
+    pub(super) fn clock_current_time(&self, clock: usize) -> Result<f64, MemoryError> {
+        // Gameplay FramedBeatmapClocks advance their DecouplingFramedClock during
+        // lead-in even when the shared track/menu beatmapClock is still stopped.
+        if let Ok(decoupled) = self.ptr(add(
+            clock,
+            self.offsets
+                .osu_game_beatmaps_framed_beatmap_clock
+                .decoupled_track,
+        )?) {
+            // osu.Framework.Timing.DecouplingFramedClock.<CurrentTime>k__BackingField
+            // is a stable framework layout offset (not versioned in offsets.json).
+            if decoupled != 0
+                && let Ok(time) = self.process.read_f64(add(decoupled, 0x20)?)
+            {
+                return Ok(time);
+            }
+        }
+
         let source = self.ptr(add(
             clock,
             self.offsets
@@ -292,6 +365,70 @@ impl LazerMemory {
                 .current_time_k_backing_field,
         )?)
     }
+
+    /// Reads lazer's authoritative pause bindable when player gameplay is loaded.
+    pub(super) fn gameplay_paused_for_player(
+        &self,
+        player: usize,
+    ) -> Result<Option<bool>, MemoryError> {
+        if player == 0 || self.player_loading {
+            return Ok(None);
+        }
+
+        if let Some(is_paused_offset) = self
+            .offsets
+            .osu_game_rulesets_ui_drawable_ruleset
+            .is_paused
+            .filter(|offset| *offset != 0)
+            && let Ok(drawable) = self.ptr(add(
+                player,
+                self.offsets
+                    .osu_game_screens_play_player
+                    .drawable_ruleset_k_backing_field,
+            )?)
+            && drawable != 0
+            && let Ok(bind) = self.ptr(add(drawable, is_paused_offset)?)
+            && bind != 0
+            && let Ok(value) = self.process.read_u8(add(bind, 0x40)?)
+        {
+            return Ok(Some(value == 1));
+        }
+
+        let Some(container_offset) = self
+            .offsets
+            .osu_game_screens_play_player
+            .gameplay_clock_container_k_backing_field
+            .filter(|offset| *offset != 0)
+        else {
+            return Ok(None);
+        };
+        let Some(is_paused_offset) = self
+            .offsets
+            .osu_game_screens_play_gameplay_clock_container
+            .as_ref()
+            .map(|group| group.is_paused)
+            .filter(|offset| *offset != 0)
+        else {
+            return Ok(None);
+        };
+        let Ok(container) = self.ptr(add(player, container_offset)?) else {
+            return Ok(None);
+        };
+        if container == 0 {
+            return Ok(None);
+        }
+        let Ok(bind) = self.ptr(add(container, is_paused_offset)?) else {
+            return Ok(None);
+        };
+        if bind == 0 {
+            return Ok(None);
+        }
+        let Ok(value) = self.process.read_u8(add(bind, 0x40)?) else {
+            return Ok(None);
+        };
+        Ok(Some(value == 1))
+    }
+
     pub(super) fn config_store(&self, config: usize) -> Result<IndexMap<i32, usize>, MemoryError> {
         if config == 0 {
             return Err(corrupt("config store", config, "null config"));

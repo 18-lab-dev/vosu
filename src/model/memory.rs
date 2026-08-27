@@ -170,6 +170,10 @@ pub struct Global {
     #[serde(rename = "chatStatus")]
     pub chat_status: i64,
     pub status: i64,
+    /// Authoritative pause flag when the client exposes one (lazer gameplay).
+    /// `None` means the reducer should derive pause from the play-time stall heuristic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused: Option<bool>,
     #[serde(rename = "playTime")]
     pub play_time: f64,
     #[serde(rename = "gameTime")]

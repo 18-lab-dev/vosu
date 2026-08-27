@@ -374,6 +374,8 @@ impl OffsetGroup52 {
 pub struct OffsetGroup53 {
     #[serde(rename = "<ReplayScore>k__BackingField")]
     pub replay_score_k_backing_field: usize,
+    #[serde(default, rename = "IsPaused")]
+    pub is_paused: Option<usize>,
     #[serde(flatten)]
     pub extras: IndexMap<String, Value>,
 }
@@ -382,6 +384,11 @@ impl OffsetGroup53 {
         if self.replay_score_k_backing_field == 0 {
             return Err(LazerOffsetsError::Zero(
                 "osu.Game.Rulesets.UI.DrawableRuleset.<ReplayScore>k__BackingField",
+            ));
+        }
+        if self.is_paused == Some(0) {
+            return Err(LazerOffsetsError::Zero(
+                "osu.Game.Rulesets.UI.DrawableRuleset.IsPaused",
             ));
         }
         Ok(())

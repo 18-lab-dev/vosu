@@ -53,7 +53,7 @@ lazer-offsets-satori-corelib-sha256 = "73c6ae7ff2ed535a249539f78731fc4412cf6c263
 lazer-offsets-satori-clrjit-sha256 = "3d58119a829d10d20f9fc31f2144f9202af19c93b412d5a5eeeeeba4b35ebb3e"
 lazer-offsets-satori-coreclr-build-id = "924f6642f039382780dd0ee782477271d8093084"
 lazer-offsets-satori-coreclr-sha256 = "dcc631eda8fdb34d06956697e9709b8d828306eb73ac3187b5058180e1af615e"
-lazer-offsets-sha256 = "46b62194a297a9d9c1964837cc1f9d40aedfcd6c41673fc3d91a846aba7f20c0"
+lazer-offsets-sha256 = "2c861223c147ce933d2b6d3b8103abc1cc9f79fe3e298866bf67f6f07e704db7"
 asset-manifest = "assets/SHA256SUMS"
 
 [features]

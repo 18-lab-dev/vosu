@@ -7,7 +7,7 @@ use bytes::Bytes;
 
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerSnapshot};
 use crate::model::api::v2::{
-    KeyOverlay, KeyOverlayButton, Keypress, Keypresses, NumberName, PreciseResponse, PreciseTourney,
+    KeyOverlay, KeyOverlayButton, Keypress, Keypresses, PreciseResponse, PreciseTourney,
 };
 use crate::model::states::{
     KeyOverlayButton as StateKeyOverlayButton, KeypressButton as StateKeypressButton,
@@ -19,7 +19,7 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<PreciseResponse, ApiError> {
 
     Ok(PreciseResponse {
         keys: build_keys(&precise.key_overlay),
-        keypresses: build_keypresses(precise.mode, &precise.keypresses),
+        keypresses: build_keypresses(&precise.keypresses),
         hit_errors: precise.hit_errors.as_ref().clone(),
         tourney: build_tourney(snapshot.manager()),
     })
@@ -65,18 +65,14 @@ fn build_tourney(manager: &ManagerSnapshot) -> Vec<PreciseTourney> {
         .map(|(ipc_id, precise)| PreciseTourney {
             ipc_id,
             keys: build_keys(&precise.key_overlay),
-            keypresses: build_keypresses(precise.mode, &precise.keypresses),
+            keypresses: build_keypresses(&precise.keypresses),
             hit_errors: precise.hit_errors.as_ref().clone(),
         })
         .collect()
 }
 
-fn build_keypresses(mode: i64, buttons: &[StateKeypressButton]) -> Keypresses {
+pub(crate) fn build_keypresses(buttons: &[StateKeypressButton]) -> Keypresses {
     Keypresses {
-        mode: NumberName {
-            number: Some(mode),
-            name: crate::api::v2::names::ruleset_name(mode).to_owned(),
-        },
         keys: buttons
             .iter()
             .map(|button| Keypress {
@@ -243,7 +239,7 @@ mod tests {
         let encoded = encode(&snapshot).expect("precise response");
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
-            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":99,"name":""},"keys":[]},"hitErrors":{"all":[],"press":[],"release":[]},"tourney":[]}"#
+            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"keys":[]},"hitErrors":{"all":[],"press":[],"release":[]},"tourney":[]}"#
         );
     }
 
@@ -298,13 +294,6 @@ mod tests {
             KeyOverlayButton {
                 is_pressed: false,
                 count: 0
-            }
-        );
-        assert_eq!(
-            response.keypresses.mode,
-            NumberName {
-                number: Some(3),
-                name: "mania".to_owned(),
             }
         );
         assert_eq!(
@@ -391,7 +380,7 @@ mod tests {
         let encoded = encode(&snapshot).expect("precise response");
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
-            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":0,"name":"osu"},"keys":[]},"hitErrors":{"all":[],"press":[],"release":[]},"tourney":[{"ipcId":2.5,"keys":{"k1":{"isPressed":false,"count":2},"k2":{"isPressed":true,"count":22},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":1,"name":"taiko"},"keys":[{"name":"K1","isPressed":false,"count":2,"pressedAt":null,"releasedAt":null},{"name":"K2","isPressed":true,"count":22,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[-2.5],"press":[-2.5],"release":[]}},{"ipcId":30.25,"keys":{"k1":{"isPressed":true,"count":30},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":2,"name":"fruits"},"keys":[{"name":"K1","isPressed":true,"count":30,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[30.5],"press":[30.5],"release":[]}},{"ipcId":null,"keys":{"k1":{"isPressed":true,"count":99},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"mode":{"number":3,"name":"mania"},"keys":[{"name":"K1","isPressed":true,"count":99,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[99],"press":[99],"release":[]}}]}"#
+            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"keys":[]},"hitErrors":{"all":[],"press":[],"release":[]},"tourney":[{"ipcId":2.5,"keys":{"k1":{"isPressed":false,"count":2},"k2":{"isPressed":true,"count":22},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"keys":[{"name":"K1","isPressed":false,"count":2,"pressedAt":null,"releasedAt":null},{"name":"K2","isPressed":true,"count":22,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[-2.5],"press":[-2.5],"release":[]}},{"ipcId":30.25,"keys":{"k1":{"isPressed":true,"count":30},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"keys":[{"name":"K1","isPressed":true,"count":30,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[30.5],"press":[30.5],"release":[]}},{"ipcId":null,"keys":{"k1":{"isPressed":true,"count":99},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"keys":[{"name":"K1","isPressed":true,"count":99,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[99],"press":[99],"release":[]}}]}"#
         );
     }
 
