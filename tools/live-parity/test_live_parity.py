@@ -47,9 +47,9 @@ def v2(daemon: str, timestamp: int, state: object, time_ms: int, *, paused: bool
     })
 class VersionIdentityTests(unittest.TestCase):
     def test_vosu_and_upstream_source_versions_are_independent(self) -> None:
-        self.assertEqual("0.1.0", PINNED_VOSU_VERSION)
+        self.assertEqual("0.2.0", PINNED_VOSU_VERSION)
         self.assertEqual("4.25.0", PINNED_SOURCE_VERSION)
-        self.assertEqual("vosu-v0.1.0", VOSU_BUILD_LABEL)
+        self.assertEqual("vosu-v0.2.0", VOSU_BUILD_LABEL)
         self.assertEqual(
             f"upstream-tosu-source-v4.25.0@{PINNED_SOURCE_REVISION[:12]}",
             SOURCE_BUILD_LABEL,
