@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use crate::model::{
-    memory::RankedPlay,
-    states::{CalculateMods, HitErrorArray},
-};
+use crate::model::{memory::RankedPlay, states::CalculateMods};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -160,24 +157,21 @@ pub struct Objects {
     pub holds: i64,
     pub total: i64,
 }
-/// Per-result judgement boundaries.
-///
-/// Values are milliseconds except osu!catch's `300`, which is the spatial
-/// half-width from the catcher's centre in playfield units.
+/// Per-result judgement boundaries in milliseconds.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct TimingWindows {
-    #[serde(rename = "0", skip_serializing_if = "Option::is_none")]
-    pub h0: Option<f64>,
-    #[serde(rename = "50", skip_serializing_if = "Option::is_none")]
-    pub h50: Option<f64>,
-    #[serde(rename = "100", skip_serializing_if = "Option::is_none")]
-    pub h100: Option<f64>,
-    #[serde(rename = "300", skip_serializing_if = "Option::is_none")]
-    pub h300: Option<f64>,
+pub struct HitWindow {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub geki: Option<f64>,
+    pub miss: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub katu: Option<f64>,
+    pub meh: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ok: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub good: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub great: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub perfect: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -187,8 +181,8 @@ pub struct Stats {
     pub cs: Cs,
     pub od: Od,
     pub hp: Hp,
-    #[serde(rename = "timingWindows")]
-    pub timing_windows: TimingWindows,
+    #[serde(rename = "hitWindow")]
+    pub hit_window: HitWindow,
     pub bpm: Bpm,
     pub objects: Objects,
     #[serde(rename = "maxCombo")]
@@ -338,7 +332,11 @@ pub struct Play {
     pub health_bar: HealthBar,
     pub hits: PlayHits,
     #[serde(rename = "hitErrorArray")]
-    pub hit_error_array: HitErrorArray,
+    pub hit_error_array: Vec<f64>,
+    #[serde(rename = "pressHitErrors")]
+    pub press_hit_errors: Vec<f64>,
+    #[serde(rename = "releaseHitErrors")]
+    pub release_hit_errors: Vec<f64>,
     pub combo: Combo,
     pub mods: CalculateMods,
     pub rank: Rank,
@@ -383,13 +381,6 @@ pub struct KeyOverlayButton {
     pub is_pressed: bool,
     pub count: i64,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KeyOverlay {
-    pub k1: KeyOverlayButton,
-    pub k2: KeyOverlayButton,
-    pub m1: KeyOverlayButton,
-    pub m2: KeyOverlayButton,
-}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Keypress {
     pub name: std::sync::Arc<str>,
@@ -402,24 +393,34 @@ pub struct Keypress {
     pub released_at: Option<f64>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Keypresses {
-    pub keys: Vec<Keypress>,
+pub struct Keys {
+    pub k1: KeyOverlayButton,
+    pub k2: KeyOverlayButton,
+    pub m1: KeyOverlayButton,
+    pub m2: KeyOverlayButton,
+    pub all: Vec<Keypress>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PreciseTourney {
     #[serde(rename = "ipcId", serialize_with = "serialize_js_number")]
     pub ipc_id: f64,
-    pub keys: KeyOverlay,
-    pub keypresses: Keypresses,
+    pub keys: Keys,
     #[serde(rename = "hitErrors")]
-    pub hit_errors: HitErrorArray,
+    pub hit_errors: Vec<f64>,
+    #[serde(rename = "pressHitErrors")]
+    pub press_hit_errors: Vec<f64>,
+    #[serde(rename = "releaseHitErrors")]
+    pub release_hit_errors: Vec<f64>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PreciseResponse {
-    pub keys: KeyOverlay,
-    pub keypresses: Keypresses,
+    pub keys: Keys,
     #[serde(rename = "hitErrors")]
-    pub hit_errors: HitErrorArray,
+    pub hit_errors: Vec<f64>,
+    #[serde(rename = "pressHitErrors")]
+    pub press_hit_errors: Vec<f64>,
+    #[serde(rename = "releaseHitErrors")]
+    pub release_hit_errors: Vec<f64>,
     pub tourney: Vec<PreciseTourney>,
 }
 
@@ -662,7 +663,7 @@ pub struct Response {
     pub profile: Profile,
     pub beatmap: Beatmap,
     pub play: Play,
-    pub keypresses: Keypresses,
+    pub keys: Keys,
     pub leaderboard: Vec<Leaderboard>,
     pub performance: Performance,
     #[serde(rename = "resultsScreen")]

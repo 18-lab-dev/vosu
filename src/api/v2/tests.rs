@@ -13,7 +13,7 @@ use crate::state::{
     StateCalculationFuture, StateCalculationRequest, TourneyUserState,
 };
 
-fn parsed_timing_map(
+fn parsed_hit_window_map(
     original_mode: Ruleset,
     effective_mode: Ruleset,
     source: ClientType,
@@ -167,7 +167,7 @@ fn subscription_document_matches_decoded_encoding_for_ready_and_not_ready_snapsh
 }
 
 #[test]
-fn regular_v2_document_exposes_mode_free_precise_keypresses_during_replay() {
+fn regular_v2_document_exposes_mode_free_keys_during_replay() {
     let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
     let mut regular = (*base.regular).clone();
     regular.global.status = 2;
@@ -208,9 +208,13 @@ fn regular_v2_document_exposes_mode_free_precise_keypresses_during_replay() {
     let document = document(&snapshot).unwrap();
     assert_eq!(document["state"]["number"], 2);
     assert_eq!(
-        document["keypresses"],
+        document["keys"],
         serde_json::json!({
-            "keys": [
+            "k1": {"isPressed": false, "count": 0},
+            "k2": {"isPressed": false, "count": 0},
+            "m1": {"isPressed": false, "count": 0},
+            "m2": {"isPressed": false, "count": 0},
+            "all": [
                 {"name": "K1", "isPressed": true, "count": 7, "pressedAt": 1234.5, "releasedAt": null},
                 {"name": "K2", "isPressed": false, "count": 9, "pressedAt": null, "releasedAt": 2345.5}
             ]
@@ -347,7 +351,7 @@ fn default_tournament_bytes_match_source_order() {
 
 #[test]
 fn fractional_and_nonfinite_ipc_ids_follow_javascript_json() {
-    let keys = KeyOverlay {
+    let keys = Keys {
         k1: KeyOverlayButton {
             is_pressed: false,
             count: 0,
@@ -364,20 +368,22 @@ fn fractional_and_nonfinite_ipc_ids_follow_javascript_json() {
             is_pressed: false,
             count: 0,
         },
+        all: Vec::new(),
     };
-    let keypresses = Keypresses { keys: Vec::new() };
     let dto = PreciseTourney {
         ipc_id: 7.25,
         keys: keys.clone(),
-        keypresses: keypresses.clone(),
-        hit_errors: Default::default(),
+        hit_errors: Vec::new(),
+        press_hit_errors: Vec::new(),
+        release_hit_errors: Vec::new(),
     };
     assert!(json(&dto).starts_with(r#"{"ipcId":7.25,"keys":"#));
     let dto = PreciseTourney {
         ipc_id: f64::INFINITY,
         keys,
-        keypresses,
-        hit_errors: Default::default(),
+        hit_errors: Vec::new(),
+        press_hit_errors: Vec::new(),
+        release_hit_errors: Vec::new(),
     };
     assert!(json(&dto).starts_with(r#"{"ipcId":null,"keys":"#));
 }
@@ -476,6 +482,7 @@ fn default_builder_has_exact_root_order_and_source_default_tourney() {
         "\"profile\":",
         "\"beatmap\":",
         "\"play\":",
+        "\"keys\":",
         "\"leaderboard\":",
         "\"performance\":",
         "\"resultsScreen\":",
@@ -493,7 +500,7 @@ fn default_builder_has_exact_root_order_and_source_default_tourney() {
     }
     assert!(!text.contains("\"rankedPlay\":"));
     assert!(text.ends_with(r#""clients":[]}}"#));
-    assert!(text.contains(r#""hitErrorArray":{"all":[],"press":[],"release":[]}"#));
+    assert!(text.contains(r#""hitErrorArray":[],"pressHitErrors":[],"releaseHitErrors":[]"#));
 }
 
 #[test]
@@ -520,19 +527,21 @@ fn play_threads_press_and_release_hit_errors_with_exact_wire_shape() {
         [manager_entry(10, state, false, None)],
     )));
 
-    assert!(
-        json(&build(&snapshot).unwrap().play)
-            .contains(r#""hitErrorArray":{"all":[-3.5,6.25],"press":[-3.5],"release":[6.25]}"#)
-    );
+    assert!(json(&build(&snapshot).unwrap().play).contains(
+        r#""hitErrorArray":[-3.5,6.25],"pressHitErrors":[-3.5],"releaseHitErrors":[6.25]"#
+    ));
 }
 
 #[test]
-fn timing_windows_cover_both_clients_and_all_rulesets_with_live_maps() {
+fn hit_windows_cover_both_clients_and_all_rulesets_with_live_maps() {
     let cases: &[(Ruleset, &[&str])] = &[
-        (Ruleset::Osu, &["0", "50", "100", "300"]),
-        (Ruleset::Taiko, &["0", "100", "300"]),
-        (Ruleset::Catch, &["300"]),
-        (Ruleset::Mania, &["0", "50", "100", "katu", "300", "geki"]),
+        (Ruleset::Osu, &["miss", "meh", "ok", "great"]),
+        (Ruleset::Taiko, &["miss", "ok", "great"]),
+        (Ruleset::Catch, &[]),
+        (
+            Ruleset::Mania,
+            &["miss", "meh", "ok", "good", "great", "perfect"],
+        ),
     ];
 
     for source in [ClientType::Stable, ClientType::Lazer] {
@@ -542,8 +551,8 @@ fn timing_windows_cover_both_clients_and_all_rulesets_with_live_maps() {
             } else {
                 Vec::new()
             };
-            let parsed = parsed_timing_map(mode, mode, source, mods, 1.0);
-            let windows = serde_json::to_value(timing_windows(Some(&parsed))).unwrap();
+            let parsed = parsed_hit_window_map(mode, mode, source, mods, 1.0);
+            let windows = serde_json::to_value(hit_window(Some(&parsed))).unwrap();
             let object = windows.as_object().unwrap();
             assert_eq!(object.len(), expected_keys.len(), "{source:?} {mode:?}");
             for key in expected_keys {
@@ -557,75 +566,75 @@ fn timing_windows_cover_both_clients_and_all_rulesets_with_live_maps() {
 }
 
 #[test]
-fn timing_windows_match_difficulty_modifier_matrix_at_od_five() {
+fn hit_windows_match_difficulty_modifier_matrix_at_od_five() {
     let cases = [
         (
             Ruleset::Osu,
             "EZ",
-            serde_json::json!({"0": 400.0, "50": 174.5, "100": 119.5, "300": 64.5}),
+            serde_json::json!({"miss": 400.0, "meh": 174.5, "ok": 119.5, "great": 64.5}),
         ),
         (
             Ruleset::Osu,
             "HR",
-            serde_json::json!({"0": 400.0, "50": 129.5, "100": 83.5, "300": 37.5}),
+            serde_json::json!({"miss": 400.0, "meh": 129.5, "ok": 83.5, "great": 37.5}),
         ),
         (
             Ruleset::Osu,
             "DA",
-            serde_json::json!({"0": 400.0, "50": 119.5, "100": 75.5, "300": 31.5}),
+            serde_json::json!({"miss": 400.0, "meh": 119.5, "ok": 75.5, "great": 31.5}),
         ),
         (
             Ruleset::Taiko,
             "EZ",
-            serde_json::json!({"0": 114.5, "100": 99.5, "300": 41.5}),
+            serde_json::json!({"miss": 114.5, "ok": 99.5, "great": 41.5}),
         ),
         (
             Ruleset::Taiko,
             "HR",
-            serde_json::json!({"0": 84.5, "100": 67.5, "300": 28.5}),
+            serde_json::json!({"miss": 84.5, "ok": 67.5, "great": 28.5}),
         ),
         (
             Ruleset::Taiko,
             "DA",
-            serde_json::json!({"0": 79.5, "100": 61.5, "300": 25.5}),
+            serde_json::json!({"miss": 79.5, "ok": 61.5, "great": 25.5}),
         ),
-        (Ruleset::Catch, "EZ", serde_json::json!({"300": 57.65})),
-        (Ruleset::Catch, "HR", serde_json::json!({"300": 33.73})),
-        (Ruleset::Catch, "DA", serde_json::json!({"300": 30.74})),
+        (Ruleset::Catch, "EZ", serde_json::json!({})),
+        (Ruleset::Catch, "HR", serde_json::json!({})),
+        (Ruleset::Catch, "DA", serde_json::json!({})),
         (
             Ruleset::Mania,
             "EZ",
             serde_json::json!({
-                "0": 242.5,
-                "50": 190.5,
-                "100": 156.5,
-                "katu": 114.5,
-                "300": 68.5,
-                "geki": 27.5,
+                "miss": 242.5,
+                "meh": 190.5,
+                "ok": 156.5,
+                "good": 114.5,
+                "great": 68.5,
+                "perfect": 27.5,
             }),
         ),
         (
             Ruleset::Mania,
             "HR",
             serde_json::json!({
-                "0": 123.5,
-                "50": 97.5,
-                "100": 80.5,
-                "katu": 58.5,
-                "300": 35.5,
-                "geki": 13.5,
+                "miss": 123.5,
+                "meh": 97.5,
+                "ok": 80.5,
+                "good": 58.5,
+                "great": 35.5,
+                "perfect": 13.5,
             }),
         ),
         (
             Ruleset::Mania,
             "DA",
             serde_json::json!({
-                "0": 164.5,
-                "50": 127.5,
-                "100": 103.5,
-                "katu": 73.5,
-                "300": 40.5,
-                "geki": 16.5,
+                "miss": 164.5,
+                "meh": 127.5,
+                "ok": 103.5,
+                "good": 73.5,
+                "great": 40.5,
+                "perfect": 16.5,
             }),
         ),
     ];
@@ -641,10 +650,10 @@ fn timing_windows_match_difficulty_modifier_matrix_at_od_five() {
             if source == ClientType::Stable && (acronym == "DA" || mode == Ruleset::Mania) {
                 continue;
             }
-            let parsed = parsed_timing_map(mode, mode, source, vec![game_mod.clone()], 1.0);
+            let parsed = parsed_hit_window_map(mode, mode, source, vec![game_mod.clone()], 1.0);
 
             assert_eq!(
-                serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
+                serde_json::to_value(hit_window(Some(&parsed))).unwrap(),
                 expected,
                 "{source:?} {mode:?} {acronym}",
             );
@@ -653,32 +662,32 @@ fn timing_windows_match_difficulty_modifier_matrix_at_od_five() {
 }
 
 #[test]
-fn timing_windows_match_stable_classic_mania_difficulty_modifiers() {
+fn hit_windows_match_stable_classic_mania_difficulty_modifiers() {
     for (acronym, expected) in [
         (
             "EZ",
             serde_json::json!({
-                "0": 242.5,
-                "50": 190.5,
-                "100": 156.5,
-                "katu": 114.5,
-                "300": 68.5,
-                "geki": 22.5,
+                "miss": 242.5,
+                "meh": 190.5,
+                "ok": 156.5,
+                "good": 114.5,
+                "great": 68.5,
+                "perfect": 22.5,
             }),
         ),
         (
             "HR",
             serde_json::json!({
-                "0": 123.5,
-                "50": 97.5,
-                "100": 80.5,
-                "katu": 58.5,
-                "300": 35.5,
-                "geki": 11.5,
+                "miss": 123.5,
+                "meh": 97.5,
+                "ok": 80.5,
+                "good": 58.5,
+                "great": 35.5,
+                "perfect": 11.5,
             }),
         ),
     ] {
-        let parsed = parsed_timing_map(
+        let parsed = parsed_hit_window_map(
             Ruleset::Mania,
             Ruleset::Mania,
             ClientType::Stable,
@@ -687,7 +696,7 @@ fn timing_windows_match_stable_classic_mania_difficulty_modifiers() {
         );
 
         assert_eq!(
-            serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
+            serde_json::to_value(hit_window(Some(&parsed))).unwrap(),
             expected,
             "Stable Mania {acronym}",
         );
@@ -695,19 +704,19 @@ fn timing_windows_match_stable_classic_mania_difficulty_modifiers() {
 }
 
 #[test]
-fn timing_windows_apply_gameplay_rate_before_floor_plus_half_quantization_for_mania() {
+fn hit_windows_apply_gameplay_rate_before_floor_plus_half_quantization_for_mania() {
     for (label, game_mod, clock_rate, lazer_expected, stable_perfect) in [
         (
             "DT 1.5x",
             applied_mod("DT"),
             1.5,
             serde_json::json!({
-                "0": 259.5,
-                "50": 204.5,
-                "100": 168.5,
-                "katu": 123.5,
-                "300": 73.5,
-                "geki": 29.5,
+                "miss": 259.5,
+                "meh": 204.5,
+                "ok": 168.5,
+                "good": 123.5,
+                "great": 73.5,
+                "perfect": 29.5,
             }),
             24.5,
         ),
@@ -716,12 +725,12 @@ fn timing_windows_apply_gameplay_rate_before_floor_plus_half_quantization_for_ma
             applied_mod("HT"),
             0.75,
             serde_json::json!({
-                "0": 129.5,
-                "50": 102.5,
-                "100": 84.5,
-                "katu": 61.5,
-                "300": 36.5,
-                "geki": 14.5,
+                "miss": 129.5,
+                "meh": 102.5,
+                "ok": 84.5,
+                "good": 61.5,
+                "great": 36.5,
+                "perfect": 14.5,
             }),
             12.5,
         ),
@@ -730,17 +739,17 @@ fn timing_windows_apply_gameplay_rate_before_floor_plus_half_quantization_for_ma
             applied_mod_with_settings("DT", r#"{"speed_change":1.3}"#),
             1.3,
             serde_json::json!({
-                "0": 224.5,
-                "50": 176.5,
-                "100": 145.5,
-                "katu": 106.5,
-                "300": 63.5,
-                "geki": 25.5,
+                "miss": 224.5,
+                "meh": 176.5,
+                "ok": 145.5,
+                "good": 106.5,
+                "great": 63.5,
+                "perfect": 25.5,
             }),
             20.5,
         ),
     ] {
-        let lazer = parsed_timing_map(
+        let lazer = parsed_hit_window_map(
             Ruleset::Mania,
             Ruleset::Mania,
             ClientType::Lazer,
@@ -748,12 +757,12 @@ fn timing_windows_apply_gameplay_rate_before_floor_plus_half_quantization_for_ma
             clock_rate,
         );
         assert_eq!(
-            serde_json::to_value(timing_windows(Some(&lazer))).unwrap(),
+            serde_json::to_value(hit_window(Some(&lazer))).unwrap(),
             lazer_expected,
             "Lazer Mania {label}",
         );
 
-        let stable = parsed_timing_map(
+        let stable = parsed_hit_window_map(
             Ruleset::Mania,
             Ruleset::Mania,
             ClientType::Stable,
@@ -761,9 +770,9 @@ fn timing_windows_apply_gameplay_rate_before_floor_plus_half_quantization_for_ma
             clock_rate,
         );
         let mut stable_expected = lazer_expected;
-        stable_expected["geki"] = serde_json::json!(stable_perfect);
+        stable_expected["perfect"] = serde_json::json!(stable_perfect);
         assert_eq!(
-            serde_json::to_value(timing_windows(Some(&stable))).unwrap(),
+            serde_json::to_value(hit_window(Some(&stable))).unwrap(),
             stable_expected,
             "Stable Mania {label}",
         );
@@ -771,8 +780,8 @@ fn timing_windows_apply_gameplay_rate_before_floor_plus_half_quantization_for_ma
 }
 
 #[test]
-fn timing_windows_round_osu_dt_once_at_the_api_edge() {
-    let parsed = parsed_timing_map(
+fn hit_windows_round_osu_dt_once_at_the_api_edge() {
+    let parsed = parsed_hit_window_map(
         Ruleset::Osu,
         Ruleset::Osu,
         ClientType::Lazer,
@@ -780,19 +789,19 @@ fn timing_windows_round_osu_dt_once_at_the_api_edge() {
         1.5,
     );
     assert_eq!(
-        serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
-        serde_json::json!({"0": 266.67, "50": 99.67, "100": 66.33, "300": 33.0})
+        serde_json::to_value(hit_window(Some(&parsed))).unwrap(),
+        serde_json::json!({"miss": 266.67, "meh": 99.67, "ok": 66.33, "great": 33.0})
     );
 }
 
 #[test]
-fn timing_windows_apply_lazer_extended_da_before_clock_rate_scaling() {
+fn hit_windows_apply_lazer_extended_da_before_clock_rate_scaling() {
     let da = || AppliedMod {
         acronym: "DA".to_owned(),
         settings_json: Some(r#"{"overall_difficulty":11.0,"extended_limits":true}"#.to_owned()),
     };
 
-    let parsed = parsed_timing_map(
+    let parsed = parsed_hit_window_map(
         Ruleset::Osu,
         Ruleset::Osu,
         ClientType::Lazer,
@@ -800,11 +809,11 @@ fn timing_windows_apply_lazer_extended_da_before_clock_rate_scaling() {
         1.0,
     );
     assert_eq!(
-        serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
-        serde_json::json!({"0": 400.0, "50": 89.5, "100": 51.5, "300": 13.5})
+        serde_json::to_value(hit_window(Some(&parsed))).unwrap(),
+        serde_json::json!({"miss": 400.0, "meh": 89.5, "ok": 51.5, "great": 13.5})
     );
 
-    let parsed = parsed_timing_map(
+    let parsed = parsed_hit_window_map(
         Ruleset::Osu,
         Ruleset::Osu,
         ClientType::Lazer,
@@ -812,18 +821,18 @@ fn timing_windows_apply_lazer_extended_da_before_clock_rate_scaling() {
         1.5,
     );
     assert_eq!(
-        serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
-        serde_json::json!({"0": 266.67, "50": 59.67, "100": 34.33, "300": 9.0})
+        serde_json::to_value(hit_window(Some(&parsed))).unwrap(),
+        serde_json::json!({"miss": 266.67, "meh": 59.67, "ok": 34.33, "great": 9.0})
     );
 }
 
 #[test]
-fn timing_windows_apply_lazer_extended_da_to_classic_mania() {
+fn hit_windows_apply_lazer_extended_da_to_classic_mania() {
     let difficulty_adjust = AppliedMod {
         acronym: "DA".to_owned(),
         settings_json: Some(r#"{"overall_difficulty":11.0,"extended_limits":true}"#.to_owned()),
     };
-    let parsed = parsed_timing_map(
+    let parsed = parsed_hit_window_map(
         Ruleset::Mania,
         Ruleset::Mania,
         ClientType::Lazer,
@@ -832,25 +841,25 @@ fn timing_windows_apply_lazer_extended_da_to_classic_mania() {
     );
 
     assert_eq!(
-        serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
+        serde_json::to_value(hit_window(Some(&parsed))).unwrap(),
         serde_json::json!({
-            "0": 158.5,
-            "50": 121.5,
-            "100": 97.5,
-            "katu": 67.5,
-            "300": 34.5,
-            "geki": 16.5,
+            "miss": 158.5,
+            "meh": 121.5,
+            "ok": 97.5,
+            "good": 67.5,
+            "great": 34.5,
+            "perfect": 16.5,
         })
     );
 }
 
 #[test]
-fn timing_windows_match_lazer_mania_da_od_twelve_point_five() {
+fn hit_windows_match_lazer_mania_da_od_twelve_point_five() {
     let difficulty_adjust = AppliedMod {
         acronym: "DA".to_owned(),
         settings_json: Some(r#"{"overall_difficulty":12.5,"extended_limits":true}"#.to_owned()),
     };
-    let parsed = parsed_timing_map(
+    let parsed = parsed_hit_window_map(
         Ruleset::Mania,
         Ruleset::Mania,
         ClientType::Lazer,
@@ -859,21 +868,21 @@ fn timing_windows_match_lazer_mania_da_od_twelve_point_five() {
     );
 
     assert_eq!(
-        serde_json::to_value(timing_windows(Some(&parsed))).unwrap(),
+        serde_json::to_value(hit_window(Some(&parsed))).unwrap(),
         serde_json::json!({
-            "0": 150.5,
-            "50": 113.5,
-            "100": 89.5,
-            "katu": 59.5,
-            "300": 26.5,
-            "geki": 11.5,
+            "miss": 150.5,
+            "meh": 113.5,
+            "ok": 89.5,
+            "good": 59.5,
+            "great": 26.5,
+            "perfect": 11.5,
         })
     );
 }
 
 #[test]
-fn timing_windows_use_classic_map_values_for_stable_converted_mania() {
-    let parsed = parsed_timing_map(
+fn hit_windows_use_classic_map_values_for_stable_converted_mania() {
+    let parsed = parsed_hit_window_map(
         Ruleset::Osu,
         Ruleset::Mania,
         ClientType::Stable,
@@ -881,27 +890,27 @@ fn timing_windows_use_classic_map_values_for_stable_converted_mania() {
         1.0,
     );
     assert_eq!(
-        serde_json::to_value(timing_windows(Some(&parsed))).unwrap()["300"],
+        serde_json::to_value(hit_window(Some(&parsed))).unwrap()["great"],
         serde_json::json!(34.5)
     );
 }
 
 #[test]
-fn timing_windows_use_score_v2_map_values_for_stable_mania() {
-    let parsed = parsed_timing_map(
+fn hit_windows_use_score_v2_map_values_for_stable_mania() {
+    let parsed = parsed_hit_window_map(
         Ruleset::Mania,
         Ruleset::Mania,
         ClientType::Stable,
         vec![applied_mod("CL"), applied_mod("SV2")],
         1.0,
     );
-    let windows = serde_json::to_value(timing_windows(Some(&parsed))).unwrap();
-    assert_eq!(windows["300"], serde_json::json!(49.5));
-    assert_eq!(windows["geki"], serde_json::json!(19.5));
+    let windows = serde_json::to_value(hit_window(Some(&parsed))).unwrap();
+    assert_eq!(windows["great"], serde_json::json!(49.5));
+    assert_eq!(windows["perfect"], serde_json::json!(19.5));
 }
 
 #[test]
-fn timing_windows_expose_catch_spatial_boundary_for_all_clients_and_speeds() {
+fn hit_windows_omit_catch_spatial_boundary_for_all_clients_and_speeds() {
     for source in [ClientType::Stable, ClientType::Lazer] {
         for (mods, clock_rate) in [
             (Vec::new(), 1.0),
@@ -909,12 +918,12 @@ fn timing_windows_expose_catch_spatial_boundary_for_all_clients_and_speeds() {
             (vec![applied_mod("HT")], 0.75),
         ] {
             let parsed =
-                parsed_timing_map(Ruleset::Catch, Ruleset::Catch, source, mods, clock_rate);
+                parsed_hit_window_map(Ruleset::Catch, Ruleset::Catch, source, mods, clock_rate);
             let state = StateBundle::new(source, 1, Arc::new(NeverCalculate)).snapshot();
             let stats = serde_json::to_value(build_stats(&state.regular, Some(&parsed))).unwrap();
             assert_eq!(
-                stats["timingWindows"],
-                serde_json::json!({"300": 42.7}),
+                stats["hitWindow"],
+                serde_json::json!({}),
                 "{source:?} at {clock_rate}x",
             );
             assert!(
@@ -927,9 +936,9 @@ fn timing_windows_expose_catch_spatial_boundary_for_all_clients_and_speeds() {
 }
 
 #[test]
-fn timing_windows_are_empty_for_missing_maps_and_default_responses() {
+fn hit_windows_are_empty_for_missing_maps_and_default_responses() {
     assert_eq!(
-        serde_json::to_value(timing_windows(None)).unwrap(),
+        serde_json::to_value(hit_window(None)).unwrap(),
         serde_json::json!({})
     );
 
@@ -940,7 +949,7 @@ fn timing_windows_are_empty_for_missing_maps_and_default_responses() {
             response
                 .get("beatmap")
                 .and_then(|beatmap| beatmap.get("stats"))
-                .and_then(|stats| stats.get("timingWindows")),
+                .and_then(|stats| stats.get("hitWindow")),
             Some(&serde_json::json!({})),
             "{source:?}"
         );
@@ -995,7 +1004,7 @@ fn stable_tournament_is_sorted_by_fractional_ipc_id_not_pid() {
     );
     let encoded = json(&tourney);
     assert!(encoded.find(r#""ipcId":2.25"#).unwrap() < encoded.find(r#""ipcId":7.5"#).unwrap());
-    assert!(encoded.contains(r#""hitErrorArray":{"all":[],"press":[],"release":[]}"#));
+    assert!(encoded.contains(r#""hitErrorArray":[],"pressHitErrors":[],"releaseHitErrors":[]"#));
 }
 #[test]
 fn stable_tournament_missing_user_projects_source_zero_defaults() {
@@ -1232,5 +1241,5 @@ fn lazer_lobby_without_spectator_data_omits_tourney() {
     let response = build(&snapshot).unwrap();
     assert!(response.tourney.is_none());
     assert!(!json(&response).contains("\"tourney\":"));
-    assert_eq!(zero_stats(TimingWindows::default()).stars.aim, Some(0.0));
+    assert_eq!(zero_stats(HitWindow::default()).stars.aim, Some(0.0));
 }

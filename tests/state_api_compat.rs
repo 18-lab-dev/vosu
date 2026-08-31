@@ -193,25 +193,18 @@ fn hit_errors(value: &Value) -> HitErrorArray {
     }
 }
 
-fn split_legacy_hit_error_arrays(value: &mut Value) {
+fn strip_vosu_hit_error_extensions(value: &mut Value) {
     match value {
         Value::Object(object) => {
-            for (key, value) in object {
-                if matches!(key.as_str(), "hitErrorArray" | "hitErrors") && value.is_array() {
-                    let all = value.take();
-                    *value = serde_json::json!({
-                        "all": all.clone(),
-                        "press": all,
-                        "release": [],
-                    });
-                } else {
-                    split_legacy_hit_error_arrays(value);
-                }
+            object.shift_remove("pressHitErrors");
+            object.shift_remove("releaseHitErrors");
+            for value in object.values_mut() {
+                strip_vosu_hit_error_extensions(value);
             }
         }
         Value::Array(values) => {
             for value in values {
-                split_legacy_hit_error_arrays(value);
+                strip_vosu_hit_error_extensions(value);
             }
         }
         _ => {}
@@ -697,40 +690,36 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
             } else {
                 expected
             };
-            // Preserve the pinned upstream fixture bytes while asserting vosu's split shape.
-            let expected = {
-                let mut value: Value =
-                    serde_json::from_slice(&expected).expect("expected fixture must be valid JSON");
-                split_legacy_hit_error_arrays(&mut value);
-                serde_json::to_vec(&value).expect("adapted expected fixture must encode")
-            };
-            let actual = encode(schema, &snapshot);
-            let actual = if matches!(schema, "v2" | "v2-precise") {
-                let mut value: Value =
-                    serde_json::from_slice(&actual).expect("actual v2 output must be valid");
-                let object = value.as_object_mut().expect("v2 output must be an object");
+            let mut actual: Value = serde_json::from_slice(&encode(schema, &snapshot))
+                .expect("actual output must be valid");
+            strip_vosu_hit_error_extensions(&mut actual);
+            if matches!(schema, "v2" | "v2-precise") {
+                let object = actual.as_object_mut().expect("v2 output must be an object");
                 if schema == "v2-precise" {
-                    // `keypresses` is a vosu extension; pinned upstream fixtures attest the legacy fields.
-                    object.shift_remove("keypresses");
+                    if let Some(keys) = object.get_mut("keys").and_then(Value::as_object_mut) {
+                        keys.shift_remove("all");
+                    }
                     if let Some(tourney) = object.get_mut("tourney").and_then(Value::as_array_mut) {
                         for entry in tourney {
                             entry
-                                .as_object_mut()
-                                .expect("v2 precise tournament entry must be an object")
-                                .shift_remove("keypresses");
+                                .get_mut("keys")
+                                .and_then(Value::as_object_mut)
+                                .expect("v2 precise tournament keys must be an object")
+                                .shift_remove("all");
                         }
                     }
                 } else {
-                    // `keypresses` and `timingWindows` are intentional vosu extensions; pinned
-                    // upstream fixtures attest the legacy fields.
-                    object.shift_remove("keypresses");
+                    // The pinned oracle predates both Storycraft's merged hitWindow field and
+                    // the planned upstream mode-agnostic keys port. Dedicated API tests assert
+                    // those contracts; the older fixtures continue to attest all shared fields.
+                    object.shift_remove("keys");
                     if let Some(stats) = object
                         .get_mut("beatmap")
                         .and_then(Value::as_object_mut)
                         .and_then(|beatmap| beatmap.get_mut("stats"))
                         .and_then(Value::as_object_mut)
                     {
-                        stats.shift_remove("timingWindows");
+                        stats.shift_remove("hitWindow");
                     }
                     if let Some(clients) = object
                         .get_mut("tourney")
@@ -745,14 +734,12 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
                                 .and_then(|beatmap| beatmap.get_mut("stats"))
                                 .and_then(Value::as_object_mut)
                                 .expect("v2 tournament client beatmap stats must be an object")
-                                .shift_remove("timingWindows");
+                                .shift_remove("hitWindow");
                         }
                     }
                 }
-                serde_json::to_vec(&value).expect("normalized v2 output must encode")
-            } else {
-                actual
-            };
+            }
+            let actual = serde_json::to_vec(&actual).expect("normalized output must encode");
             assert_eq!(
                 String::from_utf8_lossy(&actual),
                 String::from_utf8_lossy(&expected),

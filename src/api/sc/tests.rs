@@ -207,22 +207,17 @@ fn menu_and_play_select_exact_modes_mods_paths_and_precise_values() {
     assert_eq!(menu_result.song_selection_ranking_type, 4);
     assert_eq!(menu_result.bancho_country, "US");
     assert_eq!(menu_result.bancho_is_connected, 1);
-    assert_eq!(
-        menu_result.hit_errors,
-        HitErrorArray {
-            all: vec![-4.0, 5.0],
-            press: vec![-4.0],
-            release: vec![5.0],
-        }
-    );
-    assert_eq!(
-        serde_json::to_value(&menu_result).unwrap()["hitErrors"],
-        serde_json::json!({"all": [-4.0, 5.0], "press": [-4.0], "release": [5.0]})
-    );
+    assert_eq!(menu_result.hit_errors, [-4.0, 5.0]);
+    assert_eq!(menu_result.press_hit_errors, [-4.0]);
+    assert_eq!(menu_result.release_hit_errors, [5.0]);
+    let value = serde_json::to_value(&menu_result).unwrap();
+    assert_eq!(value["hitErrors"], serde_json::json!([-4.0, 5.0]));
+    assert_eq!(value["pressHitErrors"], serde_json::json!([-4.0]));
+    assert_eq!(value["releaseHitErrors"], serde_json::json!([5.0]));
     assert!(
         serde_json::to_string(&menu_result)
             .unwrap()
-            .contains(r#""hitErrors":{"all":[-4.0,5.0],"press":[-4.0],"release":[5.0]}"#)
+            .contains(r#""hitErrors":[-4.0,5.0],"pressHitErrors":[-4.0],"releaseHitErrors":[5.0]"#)
     );
     assert_eq!(menu_result.unstable_rate, 12.35);
     assert_eq!(

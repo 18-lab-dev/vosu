@@ -6,9 +6,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerSnapshot};
-use crate::model::api::v2::{
-    KeyOverlay, KeyOverlayButton, Keypress, Keypresses, PreciseResponse, PreciseTourney,
-};
+use crate::model::api::v2::{KeyOverlayButton, Keypress, Keys, PreciseResponse, PreciseTourney};
 use crate::model::states::{
     KeyOverlayButton as StateKeyOverlayButton, KeypressButton as StateKeypressButton,
 };
@@ -18,9 +16,10 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<PreciseResponse, ApiError> {
     let precise = snapshot.precise().ok_or(ApiError::NotReady)?;
 
     Ok(PreciseResponse {
-        keys: build_keys(&precise.key_overlay),
-        keypresses: build_keypresses(&precise.keypresses),
-        hit_errors: precise.hit_errors.as_ref().clone(),
+        keys: build_keys(&precise.key_overlay, &precise.keypresses),
+        hit_errors: precise.hit_errors.all.clone(),
+        press_hit_errors: precise.hit_errors.press.clone(),
+        release_hit_errors: precise.hit_errors.release.clone(),
         tourney: build_tourney(snapshot.manager()),
     })
 }
@@ -64,16 +63,24 @@ fn build_tourney(manager: &ManagerSnapshot) -> Vec<PreciseTourney> {
         .into_iter()
         .map(|(ipc_id, precise)| PreciseTourney {
             ipc_id,
-            keys: build_keys(&precise.key_overlay),
-            keypresses: build_keypresses(&precise.keypresses),
-            hit_errors: precise.hit_errors.as_ref().clone(),
+            keys: build_keys(&precise.key_overlay, &precise.keypresses),
+            hit_errors: precise.hit_errors.all.clone(),
+            press_hit_errors: precise.hit_errors.press.clone(),
+            release_hit_errors: precise.hit_errors.release.clone(),
         })
         .collect()
 }
 
-pub(crate) fn build_keypresses(buttons: &[StateKeypressButton]) -> Keypresses {
-    Keypresses {
-        keys: buttons
+pub(crate) fn build_keys(
+    legacy: &[StateKeyOverlayButton],
+    buttons: &[StateKeypressButton],
+) -> Keys {
+    Keys {
+        k1: build_key(legacy.first()),
+        k2: build_key(legacy.get(1)),
+        m1: build_key(legacy.get(2)),
+        m2: build_key(legacy.get(3)),
+        all: buttons
             .iter()
             .map(|button| Keypress {
                 name: Arc::clone(&button.name),
@@ -83,15 +90,6 @@ pub(crate) fn build_keypresses(buttons: &[StateKeypressButton]) -> Keypresses {
                 released_at: button.released_at,
             })
             .collect(),
-    }
-}
-
-fn build_keys(buttons: &[StateKeyOverlayButton]) -> KeyOverlay {
-    KeyOverlay {
-        k1: build_key(buttons.first()),
-        k2: build_key(buttons.get(1)),
-        m1: build_key(buttons.get(2)),
-        m2: build_key(buttons.get(3)),
     }
 }
 
@@ -239,7 +237,7 @@ mod tests {
         let encoded = encode(&snapshot).expect("precise response");
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
-            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"keys":[]},"hitErrors":{"all":[],"press":[],"release":[]},"tourney":[]}"#
+            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[]},"hitErrors":[],"pressHitErrors":[],"releaseHitErrors":[],"tourney":[]}"#
         );
     }
 
@@ -298,8 +296,8 @@ mod tests {
         );
         assert_eq!(
             response
-                .keypresses
                 .keys
+                .all
                 .iter()
                 .map(|key| {
                     (
@@ -320,10 +318,9 @@ mod tests {
                 ("K6", false, 16, None, None),
             ]
         );
-        assert_eq!(
-            serde_json::to_value(response.hit_errors).unwrap(),
-            serde_json::json!({"all": [-7.5, 2.25], "press": [-7.5], "release": [2.25]})
-        );
+        assert_eq!(response.hit_errors, [-7.5, 2.25]);
+        assert_eq!(response.press_hit_errors, [-7.5]);
+        assert_eq!(response.release_hit_errors, [2.25]);
     }
 
     #[test]
@@ -380,7 +377,7 @@ mod tests {
         let encoded = encode(&snapshot).expect("precise response");
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
-            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"keys":[]},"hitErrors":{"all":[],"press":[],"release":[]},"tourney":[{"ipcId":2.5,"keys":{"k1":{"isPressed":false,"count":2},"k2":{"isPressed":true,"count":22},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"keys":[{"name":"K1","isPressed":false,"count":2,"pressedAt":null,"releasedAt":null},{"name":"K2","isPressed":true,"count":22,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[-2.5],"press":[-2.5],"release":[]}},{"ipcId":30.25,"keys":{"k1":{"isPressed":true,"count":30},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"keys":[{"name":"K1","isPressed":true,"count":30,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[30.5],"press":[30.5],"release":[]}},{"ipcId":null,"keys":{"k1":{"isPressed":true,"count":99},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0}},"keypresses":{"keys":[{"name":"K1","isPressed":true,"count":99,"pressedAt":1234,"releasedAt":null}]},"hitErrors":{"all":[99],"press":[99],"release":[]}}]}"#
+            r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[]},"hitErrors":[],"pressHitErrors":[],"releaseHitErrors":[],"tourney":[{"ipcId":2.5,"keys":{"k1":{"isPressed":false,"count":2},"k2":{"isPressed":true,"count":22},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":false,"count":2,"pressedAt":null,"releasedAt":null},{"name":"K2","isPressed":true,"count":22,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[-2.5],"pressHitErrors":[-2.5],"releaseHitErrors":[]},{"ipcId":30.25,"keys":{"k1":{"isPressed":true,"count":30},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":true,"count":30,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[30.5],"pressHitErrors":[30.5],"releaseHitErrors":[]},{"ipcId":null,"keys":{"k1":{"isPressed":true,"count":99},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":true,"count":99,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[99],"pressHitErrors":[99],"releaseHitErrors":[]}]}"#
         );
     }
 
@@ -417,10 +414,10 @@ mod tests {
         let response = build(&snapshot).expect("precise response");
         assert_eq!(
             (
-                response.tourney[0].keypresses.keys[0].pressed_at,
-                response.tourney[0].keypresses.keys[0].released_at,
-                response.tourney[1].keypresses.keys[0].pressed_at,
-                response.tourney[1].keypresses.keys[0].released_at,
+                response.tourney[0].keys.all[0].pressed_at,
+                response.tourney[0].keys.all[0].released_at,
+                response.tourney[1].keys.all[0].pressed_at,
+                response.tourney[1].keys.all[0].released_at,
             ),
             (Some(100.0), Some(80.0), Some(120.0), Some(140.0))
         );

@@ -184,8 +184,10 @@ fn play_and_result_select_the_source_mods_and_precise_values() {
     assert_eq!(play["gameplay"]["hits"]["300"], 7);
     assert_eq!(
         play["gameplay"]["hits"]["hitErrorArray"],
-        json!({"all": [1.5, -2.25], "press": [1.5], "release": [-2.25]})
+        json!([1.5, -2.25])
     );
+    assert_eq!(play["gameplay"]["hits"]["pressHitErrors"], json!([1.5]));
+    assert_eq!(play["gameplay"]["hits"]["releaseHitErrors"], json!([-2.25]));
     assert_eq!(
         play["gameplay"]["keyOverlay"]["k1"],
         json!({"isPressed": true, "count": 3})
@@ -198,9 +200,9 @@ fn play_and_result_select_the_source_mods_and_precise_values() {
     assert!(encoded.contains(
             "\"pp\":{\"90\":0,\"91\":0,\"92\":0,\"93\":0,\"94\":0,\"95\":123.46,\"96\":0,\"97\":0,\"98\":0,\"99\":0,\"100\":0"
         ));
-    assert!(
-        encoded.contains(r#""hitErrorArray":{"all":[1.5,-2.25],"press":[1.5],"release":[-2.25]}"#)
-    );
+    assert!(encoded.contains(
+        r#""hitErrorArray":[1.5,-2.25],"pressHitErrors":[1.5],"releaseHitErrors":[-2.25]"#
+    ));
     assert!(encoded.contains(
             "\"hits\":{\"0\":0,\"50\":0,\"100\":0,\"300\":7,\"geki\":0,\"katu\":0,\"sliderEndHits\":0,\"smallTickHits\":0,\"largeTickHits\":0"
         ));
@@ -330,7 +332,15 @@ fn stable_spectators_sort_fractional_ipc_ids_and_chat_maps_teams() {
     );
     assert_eq!(
         value["tourney"]["ipcClients"][0]["gameplay"]["hits"]["hitErrorArray"],
-        json!({"all": [], "press": [], "release": []})
+        json!([])
+    );
+    assert_eq!(
+        value["tourney"]["ipcClients"][0]["gameplay"]["hits"]["pressHitErrors"],
+        json!([])
+    );
+    assert_eq!(
+        value["tourney"]["ipcClients"][0]["gameplay"]["hits"]["releaseHitErrors"],
+        json!([])
     );
     let finite = spectator(50, 3.5, "finite");
     let infinite = spectator(60, f64::INFINITY, "infinite");
@@ -452,7 +462,15 @@ fn lazer_lobby_preserves_client_order_and_source_placeholders() {
     );
     assert_eq!(
         value["tourney"]["ipcClients"][0]["gameplay"]["hits"]["hitErrorArray"],
-        json!({"all": [], "press": [], "release": []})
+        json!([])
+    );
+    assert_eq!(
+        value["tourney"]["ipcClients"][0]["gameplay"]["hits"]["pressHitErrors"],
+        json!([])
+    );
+    assert_eq!(
+        value["tourney"]["ipcClients"][0]["gameplay"]["hits"]["releaseHitErrors"],
+        json!([])
     );
     assert!(
         value["tourney"]["ipcClients"][0]["gameplay"]["hits"]
@@ -464,7 +482,7 @@ fn lazer_lobby_preserves_client_order_and_source_placeholders() {
         ""
     );
     let encoded = String::from_utf8(encode(&snapshot).unwrap().to_vec()).unwrap();
-    assert!(encoded.contains(r#""hitErrorArray":{"all":[],"press":[],"release":[]}"#));
+    assert!(encoded.contains(r#""hitErrorArray":[],"pressHitErrors":[],"releaseHitErrors":[]"#));
     assert!(!encoded.contains("9007199254740993"));
     assert!(!encoded.contains("9007199254740995"));
 }

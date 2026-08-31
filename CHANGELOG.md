@@ -16,6 +16,12 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 
 - Replaced the LGPL-derived native live calculator with a clean-room Rust implementation based on pinned MIT `rosu-pp` 4.0.1 and MIT `ppy/osu` revision `97e94babde9d5ecbe574ecdd33509db27452cd0f`; retained the former calculator tree only as non-production historical parity evidence.
 
+### API
+
+- Restored the tosu-compatible hit-error arrays at `hitErrorArray` and `hitErrors`; ordered press and release classifications now use additive sibling `pressHitErrors` and `releaseHitErrors` fields.
+- Replaced `beatmap.stats.timingWindows` with Storycraft's merged tosu `beatmap.stats.hitWindow` contract and its mode-specific `miss`, `meh`, `ok`, `good`, `great`, and `perfect` keys.
+- Replaced the separate `keypresses` object with a tosu-compatible `keys` object. Regular and precise v2 responses retain `k1`, `k2`, `m1`, and `m2` and add the ordered mode-agnostic controls under `keys.all`, matching the planned upstream port.
+
 ## 0.2.0 — 2026-07-28
 
 ### Product identity and clean cutover

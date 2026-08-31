@@ -81,16 +81,14 @@ fn precise_publication_wakes_native_subscription_without_waking_regular_stream()
         .unwrap()
         .unwrap();
     assert_eq!(
-        native["keypresses"],
-        serde_json::json!({
-            "keys": [{
-                "name": "K1",
-                "isPressed": true,
-                "count": 7,
-                "pressedAt": 2,
-                "releasedAt": null
-            }]
-        })
+        native["keys"]["all"],
+        serde_json::json!([{
+            "name": "K1",
+            "isPressed": true,
+            "count": 7,
+            "pressedAt": 2,
+            "releasedAt": null
+        }])
     );
     assert_eq!(
         native["play"]["mode"],

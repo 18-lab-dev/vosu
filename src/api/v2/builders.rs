@@ -406,7 +406,7 @@ pub(super) fn build_stats(state: &RegularState, parsed: Option<&ParsedBeatmap>) 
             original: fix_decimals(original.map_or(0.0, |v| v.drain_rate)),
             converted: fix_decimals(converted.map_or(0.0, |v| v.drain_rate)),
         },
-        timing_windows: timing_windows(parsed),
+        hit_window: hit_window(parsed),
         bpm: Bpm {
             realtime: fix_decimals_to(state.beatmap.event_status.bpm, 4)
                 .unwrap_or(state.beatmap.event_status.bpm),
@@ -425,24 +425,19 @@ pub(super) fn build_stats(state: &RegularState, parsed: Option<&ParsedBeatmap>) 
     }
 }
 
-pub(super) fn timing_windows(parsed: Option<&ParsedBeatmap>) -> TimingWindows {
+pub(super) fn hit_window(parsed: Option<&ParsedBeatmap>) -> HitWindow {
     let Some(parsed) = parsed else {
-        return TimingWindows::default();
+        return HitWindow::default();
     };
     let windows = &parsed.engine.hit_windows;
-    let h300 = parsed
-        .engine
-        .catch_spatial_window
-        .map(|window| window.half_width)
-        .or(windows.great);
 
-    TimingWindows {
-        h0: windows.miss.map(fix_decimals),
-        h50: windows.meh.map(fix_decimals),
-        h100: windows.ok.map(fix_decimals),
-        h300: h300.map(fix_decimals),
-        geki: windows.perfect.map(fix_decimals),
-        katu: windows.good.map(fix_decimals),
+    HitWindow {
+        miss: windows.miss.map(fix_decimals),
+        meh: windows.meh.map(fix_decimals),
+        ok: windows.ok.map(fix_decimals),
+        good: windows.good.map(fix_decimals),
+        great: windows.great.map(fix_decimals),
+        perfect: windows.perfect.map(fix_decimals),
     }
 }
 
@@ -489,7 +484,9 @@ pub(super) fn build_play(
             small_tick_hits: s.small_tick_hit,
             large_tick_hits: s.large_tick_hit,
         }),
-        hit_error_array: precise_hits.clone(),
+        hit_error_array: precise_hits.all.clone(),
+        press_hit_errors: precise_hits.press.clone(),
+        release_hit_errors: precise_hits.release.clone(),
         combo: Combo {
             current: gameplay.combo,
             max: gameplay.max_combo,

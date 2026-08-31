@@ -257,6 +257,8 @@ pub(super) fn build_lazer_client(
             slider_breaks: 0,
         }),
         hit_error_array: Default::default(),
+        press_hit_errors: Vec::new(),
+        release_hit_errors: Vec::new(),
         combo: Combo {
             current: score.combo,
             max: score.max_combo,
@@ -297,12 +299,12 @@ pub(super) fn build_lazer_client(
             total_pp: client.user.performance_points,
         },
         beatmap: TourneyBeatmap {
-            stats: zero_stats(timing_windows(state.beatmap.parsed.as_deref())),
+            stats: zero_stats(hit_window(state.beatmap.parsed.as_deref())),
         },
         play,
     })
 }
-pub(super) fn zero_stats(timing_windows: TimingWindows) -> Stats {
+pub(super) fn zero_stats(hit_window: HitWindow) -> Stats {
     Stats {
         stars: Stars {
             live: 0.0,
@@ -329,7 +331,7 @@ pub(super) fn zero_stats(timing_windows: TimingWindows) -> Stats {
             original: 0.0,
             converted: 0.0,
         },
-        timing_windows,
+        hit_window,
         hp: Hp {
             original: 0.0,
             converted: 0.0,

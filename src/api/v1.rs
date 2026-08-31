@@ -218,7 +218,9 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
                     max_this_play: gameplay.grade_expected.clone(),
                 },
                 unstable_rate: gameplay.unstable_rate,
-                hit_error_array: precise.hit_errors.as_ref().clone(),
+                hit_error_array: precise.hit_errors.all.clone(),
+                press_hit_errors: precise.hit_errors.press.clone(),
+                release_hit_errors: precise.hit_errors.release.clone(),
             },
             pp: GameplayPerformancePoints {
                 current: fix_decimals(progressive.pp),
@@ -662,7 +664,9 @@ fn tournament_gameplay(
                 max_this_play: gameplay.grade_expected.clone(),
             },
             unstable_rate: gameplay.unstable_rate,
-            hit_error_array: precise.hit_errors.as_ref().clone(),
+            hit_error_array: precise.hit_errors.all.clone(),
+            press_hit_errors: precise.hit_errors.press.clone(),
+            release_hit_errors: precise.hit_errors.release.clone(),
         },
         combo: Combo {
             current: gameplay.combo,
@@ -703,6 +707,8 @@ fn lazer_gameplay(score: &Score, selected: SelectedMods) -> TourneyGameplay {
             },
             unstable_rate: 0.0,
             hit_error_array: Default::default(),
+            press_hit_errors: Vec::new(),
+            release_hit_errors: Vec::new(),
         },
         combo: Combo {
             current: score.combo,
