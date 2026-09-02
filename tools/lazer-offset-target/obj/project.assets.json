@@ -1,0 +1,90 @@
+{
+  "version": 3,
+  "targets": {
+    "net8.0": {},
+    "net8.0/linux-x64": {}
+  },
+  "libraries": {},
+  "projectFileDependencyGroups": {
+    "net8.0": []
+  },
+  "packageFolders": {
+    "/home/user/.nuget/packages/": {}
+  },
+  "project": {
+    "version": "1.0.0",
+    "restore": {
+      "projectUniqueName": "/home/user/gh/vosu-ecosystem/vosu/tools/lazer-offset-target/lazer-offset-target.csproj",
+      "projectName": "lazer-offset-target",
+      "projectPath": "/home/user/gh/vosu-ecosystem/vosu/tools/lazer-offset-target/lazer-offset-target.csproj",
+      "packagesPath": "/home/user/.nuget/packages/",
+      "outputPath": "/home/user/gh/vosu-ecosystem/vosu/tools/lazer-offset-target/obj/",
+      "projectStyle": "PackageReference",
+      "configFilePaths": [
+        "/home/user/.nuget/NuGet/NuGet.Config"
+      ],
+      "originalTargetFrameworks": [
+        "net8.0"
+      ],
+      "sources": {
+        "https://api.nuget.org/v3/index.json": {}
+      },
+      "frameworks": {
+        "net8.0": {
+          "targetAlias": "net8.0",
+          "projectReferences": {}
+        }
+      },
+      "warningProperties": {
+        "warnAsError": [
+          "NU1605"
+        ]
+      }
+    },
+    "frameworks": {
+      "net8.0": {
+        "targetAlias": "net8.0",
+        "imports": [
+          "net461",
+          "net462",
+          "net47",
+          "net471",
+          "net472",
+          "net48",
+          "net481"
+        ],
+        "assetTargetFallback": true,
+        "warn": true,
+        "downloadDependencies": [
+          {
+            "name": "Microsoft.AspNetCore.App.Ref",
+            "version": "[8.0.29, 8.0.29]"
+          },
+          {
+            "name": "Microsoft.AspNetCore.App.Runtime.linux-x64",
+            "version": "[8.0.29, 8.0.29]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Host.linux-x64",
+            "version": "[8.0.29, 8.0.29]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Runtime.linux-x64",
+            "version": "[8.0.29, 8.0.29]"
+          }
+        ],
+        "frameworkReferences": {
+          "Microsoft.NETCore.App": {
+            "privateAssets": "all"
+          }
+        },
+        "runtimeIdentifierGraphPath": "/usr/share/dotnet/sdk/8.0.129/PortableRuntimeIdentifierGraph.json"
+      }
+    },
+    "runtimes": {
+      "linux-x64": {
+        "#import": []
+      }
+    }
+  }
+}
