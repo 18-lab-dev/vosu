@@ -139,6 +139,50 @@ fn screen_predicates_require_matching_singletons() {
 }
 
 #[test]
+fn player_classifier_preserves_replay_fallback_when_submitting_api_differs() {
+    let offsets = LazerOffsets::embedded().unwrap();
+    let base = 0x10000usize;
+    let screen = 0x20000usize;
+    let api = 0x30000usize;
+    let score_manager = 0x31000usize;
+    let mut memory = SparseMemory::default();
+    memory.valid_base(base, &offsets);
+    memory.ptr(
+        base + offsets.osu_game_osu_game_base.api_k_backing_field,
+        api,
+    );
+    memory.ptr(
+        screen
+            + offsets
+                .osu_game_screens_play_submitting_player
+                .api_k_backing_field,
+        api + 1,
+    );
+    memory.ptr(
+        screen
+            + offsets
+                .osu_game_screens_play_player
+                .api_k_backing_field,
+        api,
+    );
+    memory.ptr(
+        screen
+            + offsets
+                .osu_game_screens_play_player
+                .score_manager_k_backing_field,
+        score_manager,
+    );
+    memory.ptr(
+        base + offsets.osu_game_osu_game_base.score_manager_k_backing_field,
+        score_manager,
+    );
+
+    let mut reader = reader(Arc::new(memory));
+    reader.set_resolved_state(base, screen);
+    assert!(reader.check_player(screen).unwrap());
+}
+
+#[test]
 fn managed_collection_layouts_and_statistics_are_exact() {
     let dict = 0x1000usize;
     let entries = 0x2000usize;
