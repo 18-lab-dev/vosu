@@ -180,19 +180,21 @@ impl LazerMemory {
     }
 
     pub(super) fn api(&self) -> Result<usize, MemoryError> {
-        if let Some(api) = self.capture_api.get() {
-            return Ok(api);
+        let cached = self.capture_api.load(Ordering::Relaxed);
+        if cached != UNCACHED_POINTER {
+            return Ok(cached);
         }
         let api = self.ptr(add(
             self.game_base()?,
             self.offsets.osu_game_osu_game_base.api_k_backing_field,
         )?)?;
-        self.capture_api.set(Some(api));
+        self.capture_api.store(api, Ordering::Relaxed);
         Ok(api)
     }
     pub(super) fn spectator_client(&self) -> Result<usize, MemoryError> {
-        if let Some(client) = self.capture_spectator_client.get() {
-            return Ok(client);
+        let cached = self.capture_spectator_client.load(Ordering::Relaxed);
+        if cached != UNCACHED_POINTER {
+            return Ok(cached);
         }
         let client = self.ptr(add(
             self.game_base()?,
@@ -200,7 +202,8 @@ impl LazerMemory {
                 .osu_game_osu_game_base
                 .spectator_client_k_backing_field,
         )?)?;
-        self.capture_spectator_client.set(Some(client));
+        self.capture_spectator_client
+            .store(client, Ordering::Relaxed);
         Ok(client)
     }
 }

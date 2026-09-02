@@ -61,9 +61,10 @@ impl SynchronizedMemoryReader for LazerMemory {
         _show_mp_commands: bool,
         _read_mania_scroll_speed: bool,
     ) {
-        self.validated_game_base.set(0);
-        self.capture_api.set(None);
-        self.capture_spectator_client.set(None);
+        self.validated_game_base.store(0, Ordering::Relaxed);
+        self.capture_api.store(UNCACHED_POINTER, Ordering::Relaxed);
+        self.capture_spectator_client
+            .store(UNCACHED_POINTER, Ordering::Relaxed);
     }
 
     fn synchronize_precise(&mut self, state: ReaderSynchronization, mode: i64) {

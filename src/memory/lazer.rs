@@ -1,6 +1,6 @@
-use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 use chrono::{SecondsFormat, Utc};
@@ -26,6 +26,7 @@ use crate::process::{MemoryError, MemoryRead, Pattern, ProcessHandle, ReadReques
 const MAX_COLLECTION: usize = 1_000_000;
 const MAX_SCORE: f64 = 1_000_000.0;
 const GAME_BASE_DELTAS: [usize; 7] = [0x24, 0x28, 0x2c, 0x20, 0x30, 0x1c, 0x34];
+const UNCACHED_POINTER: usize = usize::MAX;
 
 mod configuration;
 mod data;
