@@ -28,13 +28,30 @@ impl LazerMemory {
             return Ok(false);
         }
         let submitting = &self.offsets.osu_game_screens_play_submitting_player;
-        let submitting_api = self.ptr(add(address, submitting.api_k_backing_field)?)?;
         let game_base = self.game_base()?;
         let base = &self.offsets.osu_game_osu_game_base;
-        let api = self.ptr(add(game_base, base.api_k_backing_field)?)?;
-        if submitting_api == api
-            && self.ptr(add(address, submitting.spectator_client_k_backing_field)?)?
-                == self.ptr(add(game_base, base.spectator_client_k_backing_field)?)?
+        let mut submitting_api = [0u8; size_of::<usize>()];
+        let mut api = [0u8; size_of::<usize>()];
+        let mut submitting_spectator = [0u8; size_of::<usize>()];
+        let mut spectator = [0u8; size_of::<usize>()];
+        self.process.read_many(&mut [
+            ReadRequest::new(
+                add(address, submitting.api_k_backing_field)?,
+                &mut submitting_api,
+            ),
+            ReadRequest::new(add(game_base, base.api_k_backing_field)?, &mut api),
+            ReadRequest::new(
+                add(address, submitting.spectator_client_k_backing_field)?,
+                &mut submitting_spectator,
+            ),
+            ReadRequest::new(
+                add(game_base, base.spectator_client_k_backing_field)?,
+                &mut spectator,
+            ),
+        ])?;
+        let api = usize::from_le_bytes(api);
+        if usize::from_le_bytes(submitting_api) == api
+            && usize::from_le_bytes(submitting_spectator) == usize::from_le_bytes(spectator)
         {
             return Ok(true);
         }
