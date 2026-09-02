@@ -56,6 +56,14 @@ impl SynchronizedMemoryReader for LazerMemory {
             current_screen: self.current_screen_address(),
         }
     }
+    fn synchronize_capture_config(
+        &mut self,
+        _show_mp_commands: bool,
+        _read_mania_scroll_speed: bool,
+    ) {
+        self.validated_game_base.set(0);
+    }
+
 
     fn synchronize_precise(&mut self, state: ReaderSynchronization, mode: i64) {
         self.set_resolved_state(

@@ -7,6 +7,7 @@ impl LazerMemory {
             offsets,
             pattern,
             game_base_address: RwLock::new(0),
+            validated_game_base: Cell::new(0),
             current_screen: 0,
             precise_player: None,
             selected_gamemode: 0,
@@ -42,6 +43,7 @@ impl LazerMemory {
             .game_base_address
             .write()
             .expect("lazer base lock poisoned") = game_base;
+        self.validated_game_base.set(0);
         self.current_screen = current_screen;
         self.precise_player = None;
     }
@@ -70,6 +72,7 @@ impl LazerMemory {
                 .game_base_address
                 .write()
                 .map_err(|_| corrupt("lazer game base", base, "lock poisoned"))? = base;
+            self.validated_game_base.set(base);
             return Ok(true);
         }
         Ok(false)
@@ -117,6 +120,11 @@ impl LazerMemory {
     }
 
     pub(super) fn game_base(&self) -> Result<usize, MemoryError> {
+        let validated = self.validated_game_base.get();
+        if validated != 0 {
+            return Ok(validated);
+        }
+
         let cached = *self
             .game_base_address
             .read()
@@ -131,6 +139,7 @@ impl LazerMemory {
                 .map(|value| value as usize)
                 == Some(self.offsets.effective_game_base_vtable())
         {
+            self.validated_game_base.set(cached);
             return Ok(cached);
         }
         let mut resolved = None;
@@ -156,6 +165,7 @@ impl LazerMemory {
                 .game_base_address
                 .write()
                 .map_err(|_| corrupt("lazer game base", base, "lock poisoned"))? = base;
+            self.validated_game_base.set(base);
             return Ok(base);
         }
         Err(corrupt("lazer game base", cached, "failed to resolve"))
