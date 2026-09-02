@@ -1,5 +1,54 @@
 use super::*;
 
+fn read_many_key_fields<const WIDTH: usize>(
+    process: &ProcessHandle,
+    addresses: &[usize; 18],
+    destinations: &mut [[u8; WIDTH]; 18],
+    len: usize,
+) -> Result<(), MemoryError> {
+    let [
+        destination0,
+        destination1,
+        destination2,
+        destination3,
+        destination4,
+        destination5,
+        destination6,
+        destination7,
+        destination8,
+        destination9,
+        destination10,
+        destination11,
+        destination12,
+        destination13,
+        destination14,
+        destination15,
+        destination16,
+        destination17,
+    ] = destinations;
+    let mut requests = [
+        ReadRequest::new(addresses[0], destination0),
+        ReadRequest::new(addresses[1], destination1),
+        ReadRequest::new(addresses[2], destination2),
+        ReadRequest::new(addresses[3], destination3),
+        ReadRequest::new(addresses[4], destination4),
+        ReadRequest::new(addresses[5], destination5),
+        ReadRequest::new(addresses[6], destination6),
+        ReadRequest::new(addresses[7], destination7),
+        ReadRequest::new(addresses[8], destination8),
+        ReadRequest::new(addresses[9], destination9),
+        ReadRequest::new(addresses[10], destination10),
+        ReadRequest::new(addresses[11], destination11),
+        ReadRequest::new(addresses[12], destination12),
+        ReadRequest::new(addresses[13], destination13),
+        ReadRequest::new(addresses[14], destination14),
+        ReadRequest::new(addresses[15], destination15),
+        ReadRequest::new(addresses[16], destination16),
+        ReadRequest::new(addresses[17], destination17),
+    ];
+    process.read_many(&mut requests[..len])
+}
+
 impl SynchronizedMemoryReader for LazerMemory {
     fn reader_synchronization(&self) -> ReaderSynchronization {
         ReaderSynchronization {
@@ -179,31 +228,63 @@ impl MemoryReader for LazerMemory {
         )?)?;
         let collection = self.ptr(add(bindable, 0x18)?)?;
         let (size, items) = self.list_info(collection)?;
-        if size > KeyOverlayButton::lazer_button_count() {
+        const BUTTON_COUNT: usize = KeyOverlayButton::lazer_button_count();
+        if size > BUTTON_COUNT {
             return Err(corrupt("managed collection", collection, "invalid size"));
         }
-        let mut triggers = [0; KeyOverlayButton::lazer_button_count()];
-        for (i, trigger) in triggers[..size].iter_mut().enumerate() {
-            let slot = add(
-                items,
-                i.checked_mul(8)
-                    .ok_or(MemoryError::AddressOverflow { base: i, offset: 8 })?,
-            )?;
-            *trigger = self.ptr(slot)?;
+
+        let mut trigger_bytes = [0u8; BUTTON_COUNT * size_of::<usize>()];
+        self.process.read_bytes_into(
+            items,
+            &mut trigger_bytes[..size * size_of::<usize>()],
+        )?;
+        let mut triggers = [0; BUTTON_COUNT];
+        for (trigger, bytes) in triggers[..size]
+            .iter_mut()
+            .zip(trigger_bytes.chunks_exact(size_of::<usize>()))
+        {
+            *trigger = usize::from_le_bytes(bytes.try_into().unwrap());
         }
+
+        let mut count_bindable_addresses = [0; BUTTON_COUNT];
+        let mut pressed_addresses = [0; BUTTON_COUNT];
+        for (index, trigger) in triggers[..size].iter().copied().enumerate() {
+            count_bindable_addresses[index] = add(trigger, 0x208)?;
+            pressed_addresses[index] = add(trigger, 0x1f4)?;
+        }
+        let mut count_bindable_bytes = [[0u8; size_of::<usize>()]; BUTTON_COUNT];
+        let mut pressed_bytes = [[0u8; 1]; BUTTON_COUNT];
+        read_many_key_fields(
+            &self.process,
+            &count_bindable_addresses,
+            &mut count_bindable_bytes,
+            size,
+        )?;
+        read_many_key_fields(
+            &self.process,
+            &pressed_addresses,
+            &mut pressed_bytes,
+            size,
+        )?;
+
+        let mut count_addresses = [0; BUTTON_COUNT];
+        for (index, bytes) in count_bindable_bytes[..size].iter().enumerate() {
+            count_addresses[index] = add(usize::from_le_bytes(*bytes), 0x40)?;
+        }
+        let mut count_bytes = [[0u8; 4]; BUTTON_COUNT];
+        read_many_key_fields(
+            &self.process,
+            &count_addresses,
+            &mut count_bytes,
+            size,
+        )?;
+
         let mut out = Vec::with_capacity(size);
-        for (i, trigger) in triggers[..size].iter().copied().enumerate() {
-            let count_bindable = self.ptr(add(trigger, 0x208)?)?;
-            let mut count_bytes = [0u8; 4];
-            let mut pressed_bytes = [0u8; 1];
-            self.process.read_many(&mut [
-                ReadRequest::new(add(count_bindable, 0x40)?, &mut count_bytes),
-                ReadRequest::new(add(trigger, 0x1f4)?, &mut pressed_bytes),
-            ])?;
+        for index in 0..size {
             out.push(KeyOverlayButton {
-                name: KeyOverlayButton::lazer_name(i),
-                is_pressed: pressed_bytes[0] == 1,
-                count: i32::from_le_bytes(count_bytes) as i64,
+                name: KeyOverlayButton::lazer_name(index),
+                is_pressed: pressed_bytes[index][0] == 1,
+                count: i32::from_le_bytes(count_bytes[index]) as i64,
             })
         }
         Ok(ReadStatus::Ready(out))
