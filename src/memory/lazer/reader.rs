@@ -62,6 +62,8 @@ impl SynchronizedMemoryReader for LazerMemory {
         _read_mania_scroll_speed: bool,
     ) {
         self.validated_game_base.set(0);
+        self.capture_api.set(None);
+        self.capture_spectator_client.set(None);
     }
 
 

@@ -31,10 +31,10 @@ impl LazerMemory {
         let submitting_api = self.ptr(add(address, submitting.api_k_backing_field)?)?;
         let game_base = self.game_base()?;
         let base = &self.offsets.osu_game_osu_game_base;
-        let api = self.ptr(add(game_base, base.api_k_backing_field)?)?;
+        let api = self.api()?;
         if submitting_api == api
             && self.ptr(add(address, submitting.spectator_client_k_backing_field)?)?
-                == self.ptr(add(game_base, base.spectator_client_k_backing_field)?)?
+                == self.spectator_client()?
         {
             return Ok(true);
         }

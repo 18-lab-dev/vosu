@@ -8,6 +8,8 @@ impl LazerMemory {
             pattern,
             game_base_address: RwLock::new(0),
             validated_game_base: Cell::new(0),
+            capture_api: Cell::new(None),
+            capture_spectator_client: Cell::new(None),
             current_screen: 0,
             precise_player: None,
             selected_gamemode: 0,
@@ -44,6 +46,8 @@ impl LazerMemory {
             .write()
             .expect("lazer base lock poisoned") = game_base;
         self.validated_game_base.set(0);
+        self.capture_api.set(None);
+        self.capture_spectator_client.set(None);
         self.current_screen = current_screen;
         self.precise_player = None;
     }

@@ -92,6 +92,8 @@ pub struct LazerMemory {
     pub(super) pattern: LazerPattern,
     pub(super) game_base_address: RwLock<usize>,
     pub(super) validated_game_base: Cell<usize>,
+    pub(super) capture_api: Cell<Option<usize>>,
+    pub(super) capture_spectator_client: Cell<Option<usize>>,
     pub(super) current_screen: usize,
     pub(super) precise_player: Option<PrecisePlayerCache>,
     pub(super) selected_gamemode: i64,
