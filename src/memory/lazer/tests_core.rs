@@ -159,10 +159,7 @@ fn player_classifier_preserves_replay_fallback_when_submitting_api_differs() {
         api + 1,
     );
     memory.ptr(
-        screen
-            + offsets
-                .osu_game_screens_play_player
-                .api_k_backing_field,
+        screen + offsets.osu_game_screens_play_player.api_k_backing_field,
         api,
     );
     memory.ptr(

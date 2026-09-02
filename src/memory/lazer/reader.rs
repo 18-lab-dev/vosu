@@ -66,7 +66,6 @@ impl SynchronizedMemoryReader for LazerMemory {
         self.capture_spectator_client.set(None);
     }
 
-
     fn synchronize_precise(&mut self, state: ReaderSynchronization, mode: i64) {
         self.set_resolved_state(
             state.game_base.unwrap_or_default(),
@@ -244,10 +243,8 @@ impl MemoryReader for LazerMemory {
         }
 
         let mut trigger_bytes = [0u8; BUTTON_COUNT * size_of::<usize>()];
-        self.process.read_bytes_into(
-            items,
-            &mut trigger_bytes[..size * size_of::<usize>()],
-        )?;
+        self.process
+            .read_bytes_into(items, &mut trigger_bytes[..size * size_of::<usize>()])?;
         let mut triggers = [0; BUTTON_COUNT];
         for (trigger, bytes) in triggers[..size]
             .iter_mut()
@@ -270,24 +267,14 @@ impl MemoryReader for LazerMemory {
             &mut count_bindable_bytes,
             size,
         )?;
-        read_many_key_fields(
-            &self.process,
-            &pressed_addresses,
-            &mut pressed_bytes,
-            size,
-        )?;
+        read_many_key_fields(&self.process, &pressed_addresses, &mut pressed_bytes, size)?;
 
         let mut count_addresses = [0; BUTTON_COUNT];
         for (index, bytes) in count_bindable_bytes[..size].iter().enumerate() {
             count_addresses[index] = add(usize::from_le_bytes(*bytes), 0x40)?;
         }
         let mut count_bytes = [[0u8; 4]; BUTTON_COUNT];
-        read_many_key_fields(
-            &self.process,
-            &count_addresses,
-            &mut count_bytes,
-            size,
-        )?;
+        read_many_key_fields(&self.process, &count_addresses, &mut count_bytes, size)?;
 
         let mut out = Vec::with_capacity(size);
         for index in 0..size {

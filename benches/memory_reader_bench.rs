@@ -1,6 +1,6 @@
 use std::hint::black_box;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use vosu::memory::lazer_offsets::LazerOffsets;
@@ -9,7 +9,8 @@ use vosu::memory::{
     SynchronizedMemoryReader,
 };
 use vosu::process::{
-    MemoryError, MemoryRegion, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest, ReadStatus,
+    MemoryError, MemoryRegion, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
+    ReadStatus,
 };
 
 const FIXTURE_SIZE: usize = 1024 * 1024;
@@ -155,10 +156,7 @@ impl Fixture {
             processor,
         );
         writer.pointer(
-            processor
-                + offsets
-                    .osu_game_rulesets_scoring_score_processor
-                    .hit_events,
+            processor + offsets.osu_game_rulesets_scoring_score_processor.hit_events,
             hit_list,
         );
         writer.i32(hit_list + 0x10, 0);
@@ -351,7 +349,10 @@ fn stable_patterns() -> StablePatterns {
 fn stable_idle_reader() -> StableMemory {
     let bytes: Arc<[u8]> = vec![0; 64 * 1024].into();
     StableMemory::new(
-        ProcessHandle::new(Arc::new(SliceMemory { base: 0, bytes }), ProcessBitness::X86),
+        ProcessHandle::new(
+            Arc::new(SliceMemory { base: 0, bytes }),
+            ProcessBitness::X86,
+        ),
         stable_patterns(),
     )
 }
@@ -360,7 +361,9 @@ fn stable_idle_cycle(reader: &mut StableMemory) {
     reader.synchronize_capture_config(false, true);
     let global = reader.global().expect("read stable global state");
     let menu = reader.menu("").expect("read stable menu state");
-    let gameplay = reader.gameplay(0.0, None).expect("read stable gameplay state");
+    let gameplay = reader
+        .gameplay(0.0, None)
+        .expect("read stable gameplay state");
     assert!(matches!(global, ReadStatus::Ready(_)));
     assert!(matches!(menu, ReadStatus::NotReady));
     assert!(matches!(gameplay, ReadStatus::NotReady));
