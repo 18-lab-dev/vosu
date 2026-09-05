@@ -102,6 +102,66 @@ fn anchor_rejects_wrong_vtable() {
 }
 
 #[test]
+fn game_base_validation_cache_is_capture_scoped() {
+    let offsets = LazerOffsets::embedded().unwrap();
+    let base = 0x7000usize;
+    let vtable = base + 0x800;
+    let invalid_base = 0x9000usize;
+    let mut memory = SparseMemory::default();
+    memory.valid_base(base, &offsets);
+    let memory = Arc::new(memory);
+    let mut reader = reader(memory.clone());
+    reader.set_resolved_state(base, 0);
+
+    assert_eq!(reader.game_base().unwrap(), base);
+    assert_eq!(reader.game_base().unwrap(), base);
+    assert_eq!(memory.read_count(base), 1);
+    assert_eq!(memory.read_count(vtable), 1);
+
+    *reader
+        .game_base_address
+        .write()
+        .expect("lazer base lock poisoned") = invalid_base;
+    assert_eq!(reader.game_base().unwrap(), base);
+    assert_eq!(memory.read_count(invalid_base), 0);
+
+    reader.synchronize_capture_config(false, true);
+    assert!(reader.game_base().is_err());
+    assert_eq!(memory.read_count(invalid_base), 1);
+}
+
+#[test]
+fn singleton_pointer_caches_are_capture_scoped() {
+    let offsets = LazerOffsets::embedded().unwrap();
+    let base = 0x10000usize;
+    let api_field = base + offsets.osu_game_osu_game_base.api_k_backing_field;
+    let spectator_field = base
+        + offsets
+            .osu_game_osu_game_base
+            .spectator_client_k_backing_field;
+    let mut memory = SparseMemory::default();
+    memory.valid_base(base, &offsets);
+    memory.ptr(api_field, 0x30000);
+    memory.ptr(spectator_field, 0x31000);
+    let memory = Arc::new(memory);
+    let mut reader = reader(memory.clone());
+    reader.set_resolved_state(base, 0);
+
+    assert_eq!(reader.api().unwrap(), 0x30000);
+    assert_eq!(reader.api().unwrap(), 0x30000);
+    assert_eq!(reader.spectator_client().unwrap(), 0x31000);
+    assert_eq!(reader.spectator_client().unwrap(), 0x31000);
+    assert_eq!(memory.read_count(api_field), 1);
+    assert_eq!(memory.read_count(spectator_field), 1);
+
+    reader.synchronize_capture_config(false, true);
+    assert_eq!(reader.api().unwrap(), 0x30000);
+    assert_eq!(reader.spectator_client().unwrap(), 0x31000);
+    assert_eq!(memory.read_count(api_field), 2);
+    assert_eq!(memory.read_count(spectator_field), 2);
+}
+
+#[test]
 fn screen_predicates_require_matching_singletons() {
     let offsets = LazerOffsets::embedded().unwrap();
     let base = 0x10000usize;

@@ -28,13 +28,22 @@ try {
         throw "Benchmark source does not exist: $source"
     }
 
+    # OpenSSH service environments can preserve quotes inside PATH entries.
+    # VsDevCmd parses PATH in batch conditionals and fails on those stray quotes.
+    $env:Path = $env:Path.Replace('"', '')
     New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
-    $commandLine = 'call "' + $vcvars + '" >nul && "' + $rustc + '"' +
-        ' --edition=2024 "' + $source + '"' +
-        ' -C opt-level=3 -C lto=thin -C codegen-units=1 -C panic=abort' +
-        ' -o "' + $executable + '"'
+    $buildScript = Join-Path -Path $outputDirectory -ChildPath 'build-windows-memory-bench.cmd'
+    $buildLines = @(
+        '@echo off',
+        ('call "' + $vcvars + '" >nul'),
+        'if errorlevel 1 exit /b 1',
+        ('"' + $rustc + '" --edition=2024 "' + $source + '"' +
+            ' -C opt-level=3 -C lto=thin -C codegen-units=1 -C panic=abort' +
+            ' -o "' + $executable + '"')
+    )
+    [IO.File]::WriteAllLines($buildScript, $buildLines, [Text.Encoding]::ASCII)
 
-    & cmd.exe /d /s /c $commandLine
+    & cmd.exe /d /c $buildScript
     $compileExitCode = $LASTEXITCODE
     if ($compileExitCode -ne 0) {
         exit $compileExitCode

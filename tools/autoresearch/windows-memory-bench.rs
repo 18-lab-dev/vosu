@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::alloc::{alloc_zeroed, dealloc, handle_alloc_error, Layout};
+use std::alloc::{Layout, alloc_zeroed, dealloc, handle_alloc_error};
 use std::ffi::c_void;
 use std::hint::black_box;
 use std::process;
@@ -9,7 +9,10 @@ use std::time::Instant;
 
 #[derive(Debug)]
 enum MemoryError {
-    AddressOverflow { base: usize, offset: usize },
+    AddressOverflow {
+        base: usize,
+        offset: usize,
+    },
     Read {
         address: usize,
         len: usize,
@@ -32,6 +35,7 @@ const SAMPLE_COUNT: usize = 31;
 const OPS_PER_SAMPLE: usize = 16_384;
 const READ_SIZE: usize = 64;
 const REQUEST_COUNT: usize = 8;
+const KEY_REQUEST_COUNT: usize = 18;
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
@@ -146,7 +150,8 @@ fn bench_read_exact(process: *mut c_void, address: usize, expected: &[u8]) -> Re
     let mut samples = [0u128; SAMPLE_COUNT];
     let mut destination = [0u8; READ_SIZE];
     for _ in 0..32 {
-        checked_read_exact(process, address, &mut destination).map_err(|error| format!("warmup read_exact failed: {error:?}"))?;
+        checked_read_exact(process, address, &mut destination)
+            .map_err(|error| format!("warmup read_exact failed: {error:?}"))?;
     }
     for sample in &mut samples {
         let started = Instant::now();
@@ -193,34 +198,27 @@ fn bench_read_many_singleton(
     Ok(median_ns_per_operation(&mut samples))
 }
 
-fn make_group_reads<'a>(
-    addresses: &[usize; REQUEST_COUNT],
-    destinations: &'a mut [[u8; 8]; REQUEST_COUNT],
-) -> [ReadRequest<'a>; REQUEST_COUNT] {
+fn make_group_reads<'a, const COUNT: usize, const WIDTH: usize>(
+    addresses: &[usize; COUNT],
+    destinations: &'a mut [[u8; WIDTH]; COUNT],
+) -> [ReadRequest<'a>; COUNT] {
     let pointer = destinations.as_mut_ptr();
-    // SAFETY: each pointer is in bounds and points to a distinct array element.
-    unsafe {
-        [
-            ReadRequest { address: addresses[0], dst: &mut *pointer.add(0) },
-            ReadRequest { address: addresses[1], dst: &mut *pointer.add(1) },
-            ReadRequest { address: addresses[2], dst: &mut *pointer.add(2) },
-            ReadRequest { address: addresses[3], dst: &mut *pointer.add(3) },
-            ReadRequest { address: addresses[4], dst: &mut *pointer.add(4) },
-            ReadRequest { address: addresses[5], dst: &mut *pointer.add(5) },
-            ReadRequest { address: addresses[6], dst: &mut *pointer.add(6) },
-            ReadRequest { address: addresses[7], dst: &mut *pointer.add(7) },
-        ]
-    }
+    std::array::from_fn(|index| ReadRequest {
+        address: addresses[index],
+        // SAFETY: every index is in bounds and each array element is used once,
+        // so all returned mutable slices are disjoint for their shared lifetime.
+        dst: unsafe { &mut *pointer.add(index) },
+    })
 }
 
-fn bench_read_many_grouped(
+fn bench_read_many_grouped<const COUNT: usize, const WIDTH: usize>(
     process: *mut c_void,
-    addresses: &[usize; REQUEST_COUNT],
-    expected: &[&[u8]; REQUEST_COUNT],
+    addresses: &[usize; COUNT],
+    expected: &[&[u8]; COUNT],
     label: &str,
 ) -> Result<f64, String> {
     let mut samples = [0u128; SAMPLE_COUNT];
-    let mut destinations = [[0u8; 8]; REQUEST_COUNT];
+    let mut destinations = [[0u8; WIDTH]; COUNT];
     for _ in 0..32 {
         let mut reads = make_group_reads(addresses, &mut destinations);
         checked_read_many(process, &mut reads)
@@ -265,7 +263,7 @@ fn run() -> Result<(), String> {
     let contiguous_addresses = std::array::from_fn(|index| base + 512 + index * 8);
     let contiguous_expected: [&[u8]; REQUEST_COUNT] =
         std::array::from_fn(|index| &page_bytes[512 + index * 8..512 + index * 8 + 8]);
-    let contiguous_ns = bench_read_many_grouped(
+    let contiguous_ns = bench_read_many_grouped::<REQUEST_COUNT, 8>(
         process,
         &contiguous_addresses,
         &contiguous_expected,
@@ -275,7 +273,7 @@ fn run() -> Result<(), String> {
     let gapped_addresses = std::array::from_fn(|index| base + 768 + index * 64);
     let gapped_expected: [&[u8]; REQUEST_COUNT] =
         std::array::from_fn(|index| &page_bytes[768 + index * 64..768 + index * 64 + 8]);
-    let gapped_ns = bench_read_many_grouped(
+    let gapped_ns = bench_read_many_grouped::<REQUEST_COUNT, 8>(
         process,
         &gapped_addresses,
         &gapped_expected,
@@ -285,11 +283,26 @@ fn run() -> Result<(), String> {
     let wide_addresses = std::array::from_fn(|index| base + 256 + index * 480);
     let wide_expected: [&[u8]; REQUEST_COUNT] =
         std::array::from_fn(|index| &page_bytes[256 + index * 480..256 + index * 480 + 8]);
-    let wide_ns = bench_read_many_grouped(
+    let wide_ns = bench_read_many_grouped::<REQUEST_COUNT, 8>(
         process,
         &wide_addresses,
         &wide_expected,
         "read_many wide",
+    )?;
+
+    // Mirrors stable key-overlay state reads: 18 nine-byte button states,
+    // each embedded in a 0x40-byte object. The 1,097-byte merged span crosses
+    // the Windows backend's stack-scratch limit and exercises heap scratch.
+    let stable_key_addresses = std::array::from_fn(|index| base + 1024 + index * 0x40);
+    let stable_key_expected: [&[u8]; KEY_REQUEST_COUNT] = std::array::from_fn(|index| {
+        let start = 1024 + index * 0x40;
+        &page_bytes[start..start + 9]
+    });
+    let stable_key_ns = bench_read_many_grouped::<KEY_REQUEST_COUNT, 9>(
+        process,
+        &stable_key_addresses,
+        &stable_key_expected,
+        "read_many stable 18-key batch",
     )?;
 
     println!("METRIC windows_read_many_gapped_ns={gapped_ns:.2}");
@@ -297,6 +310,7 @@ fn run() -> Result<(), String> {
     println!("METRIC windows_read_many_single_ns={singleton_ns:.2}");
     println!("METRIC windows_read_many_contiguous_ns={contiguous_ns:.2}");
     println!("METRIC windows_read_many_wide_ns={wide_ns:.2}");
+    println!("METRIC windows_read_many_stable_18_keys_ns={stable_key_ns:.2}");
     Ok(())
 }
 

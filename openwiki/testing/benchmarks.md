@@ -166,6 +166,61 @@ In particular:
   outside the timed iterations. There are no allocation-count or byte-count
   observations.
 
+## Memory-reader comparison with upstream tosu: 2026-09-03
+
+These are **machine-local observations, not performance promises, acceptance
+thresholds, or portable baselines**. The comparison used vosu revision
+`76e3d32a242e` and upstream tosu v4.26.1 at revision
+`1b19ddaf04b243efb522b8db704849d01b0a82ce` on an AMD Ryzen 9 9950X3D host.
+
+### Isolated deterministic reader workload
+
+Seven independent invocations exercised an equivalent active-lazer
+precise-capture cycle through each implementation's production process-memory
+backend. Each invocation included warm-up and nine internal timing samples. The
+cycle resolved the game base and current screen, then read precise global state,
+the 18-key overlay, and hit errors.
+
+| Metric | Upstream tosu | vosu | Difference |
+| --- | ---: | ---: | ---: |
+| Median latency per cycle | 31,928.23 ns | 8,112.73 ns | vosu **3.94x faster** |
+| Process-memory operations per cycle | 156 | 29 | vosu **81.4% fewer** |
+| Requested bytes per cycle | 1,020 B | 570 B | vosu **44.1% fewer** |
+
+The reduction comes from batching the fixed 18-key trigger array and related
+key-state fields, validating the game base once per synchronized capture, and
+reusing bounded capture-local pointer state. This workload uses self-process
+fixtures to make native reads deterministic. It excludes process discovery,
+polling orchestration, state projection, serialization, HTTP/WebSocket
+publication, cross-process faults, and a changing live osu! object graph.
+
+### GPU-backed active-gameplay whole-daemon workload
+
+A separate Windows 11 guest comparison had both daemons simultaneously read the
+same osu!lazer 2026.726.0 process while it played Renatus `[Another]`, a 7K
+osu!mania map (`Mode: 3`, `CircleSize: 7`), with Autoplay (`AT`). The guest
+exposed eight logical processors and an NVIDIA GeForce RTX 5090. tosu listened
+on `127.0.0.1:24050`; vosu listened on `127.0.0.1:24051`.
+
+Three 45-second trials issued 900 alternating `/json/v2` requests to each
+daemon per trial. All 2,700 requests per daemon succeeded and remained in active
+play. Values below are medians across the three trial-level measurements.
+
+| Metric | Upstream tosu | vosu | Difference |
+| --- | ---: | ---: | ---: |
+| CPU time per 45-second trial | 2,250 ms | 1,390.625 ms | vosu **38.2% lower** |
+| Median HTTP latency | 3.0157 ms | 2.6578 ms | vosu **11.9% lower** |
+| HTTP latency p95 | 6.9458 ms | 6.6257 ms | vosu **4.6% lower** |
+| Mean private memory | 128.14 MiB | 11.98 MiB | vosu **90.7% lower** |
+
+“GPU-backed” describes the rendered active-gameplay environment, not a GPU
+benchmark: no GPU utilization, power, or frame-time samples were collected.
+This workload measures loaded whole-daemon CPU, memory, projection,
+serialization, and HTTP behavior. It does not isolate memory-reader cost because
+the daemons share and perturb the same guest. Use the deterministic workload
+above—not this simultaneous daemon run—as the basis for isolated reader
+performance claims.
+
 ## End-to-end comparison with upstream tosu: 2026-07-26
 
 This is a **non-portable, machine-specific observation, not a performance

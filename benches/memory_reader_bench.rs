@@ -1,3 +1,15 @@
+//! Deterministic stable/lazer decoder microbenchmark.
+//!
+//! Run with `./tools/autoresearch/memory-reader-bench.sh`. The repository-root
+//! `autoresearch.sh` is reserved for the canonical CN_PROC/eBPF process-event
+//! experiment.
+//!
+//! The primary timing is a successful native self-process lazer precise capture
+//! with 18 key inputs. The stable timings use successful x86 object graphs over
+//! local slice copies and therefore isolate decoder work rather than native
+//! cross-process syscall cost. Emitted metrics include backend call and requested
+//! byte counts so latency changes cannot hide additional reads.
+
 use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -257,24 +269,34 @@ struct CountingMemory {
     inner: SliceMemory,
     exact_reads: AtomicU64,
     batch_reads: AtomicU64,
+    read_bytes: AtomicU64,
 }
 
 impl CountingMemory {
     fn new(fixture: &Fixture) -> Self {
+        Self::from_parts(fixture.origin, fixture.bytes.clone())
+    }
+
+    fn from_parts(base: usize, bytes: Arc<[u8]>) -> Self {
         Self {
-            inner: SliceMemory {
-                base: fixture.origin,
-                bytes: fixture.bytes.clone(),
-            },
+            inner: SliceMemory { base, bytes },
             exact_reads: AtomicU64::new(0),
             batch_reads: AtomicU64::new(0),
+            read_bytes: AtomicU64::new(0),
         }
     }
 
-    fn counts(&self) -> (u64, u64) {
+    fn reset_counts(&self) {
+        self.exact_reads.store(0, Ordering::Relaxed);
+        self.batch_reads.store(0, Ordering::Relaxed);
+        self.read_bytes.store(0, Ordering::Relaxed);
+    }
+
+    fn counts(&self) -> (u64, u64, u64) {
         (
             self.exact_reads.load(Ordering::Relaxed),
             self.batch_reads.load(Ordering::Relaxed),
+            self.read_bytes.load(Ordering::Relaxed),
         )
     }
 }
@@ -282,11 +304,17 @@ impl CountingMemory {
 impl ProcessMemory for CountingMemory {
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
         self.exact_reads.fetch_add(1, Ordering::Relaxed);
+        self.read_bytes
+            .fetch_add(dst.len() as u64, Ordering::Relaxed);
         self.inner.copy(address, dst)
     }
 
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
         self.batch_reads.fetch_add(1, Ordering::Relaxed);
+        self.read_bytes.fetch_add(
+            reads.iter().map(|read| read.dst.len() as u64).sum(),
+            Ordering::Relaxed,
+        );
         for read in reads {
             self.inner.copy(read.address, read.dst)?;
         }
@@ -370,6 +398,54 @@ fn stable_idle_cycle(reader: &mut StableMemory) {
     black_box((global, menu, gameplay));
 }
 
+fn put_u32(bytes: &mut [u8], address: usize, value: u32) {
+    bytes[address..address + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn put_i32(bytes: &mut [u8], address: usize, value: i32) {
+    bytes[address..address + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn stable_key_fixture() -> Arc<[u8]> {
+    let mut bytes = vec![0; 0x4000];
+    let ruleset_anchor = 0x1200usize;
+    let ruleset = 0x1300usize;
+    let overlay = 0x1400usize;
+    let nested = 0x1500usize;
+    let array = 0x1600usize;
+    put_u32(
+        &mut bytes,
+        stable_patterns().rulesets_addr - 0xb,
+        ruleset_anchor as u32,
+    );
+    put_u32(&mut bytes, ruleset_anchor + 4, ruleset as u32);
+    put_u32(&mut bytes, ruleset + 0xac, overlay as u32);
+    put_u32(&mut bytes, overlay + 0x10, nested as u32);
+    put_u32(&mut bytes, nested + 4, array as u32);
+    put_i32(&mut bytes, array + 4, KEY_COUNT as i32);
+    for index in 0..KEY_COUNT {
+        let button = 0x1800 + index * 0x40;
+        put_u32(&mut bytes, array + 8 + index * 4, button as u32);
+        put_i32(&mut bytes, button + 0x14, index as i32 + 10);
+        bytes[button + 0x1c] = u8::from(index % 2 == 0);
+    }
+    bytes.into()
+}
+
+fn stable_key_reader(memory: Arc<dyn ProcessMemory>) -> StableMemory {
+    StableMemory::new(
+        ProcessHandle::new(memory, ProcessBitness::X86),
+        stable_patterns(),
+    )
+}
+
+fn stable_key_cycle(reader: &mut StableMemory) {
+    reader.synchronize_precise(ReaderSynchronization::default(), 3);
+    let keys = reader.key_overlay(3).expect("read stable key overlay");
+    assert!(matches!(&keys, ReadStatus::Ready(keys) if keys.len() == KEY_COUNT));
+    black_box(keys);
+}
+
 fn measure<const WARMUP: usize, const ITERATIONS: usize>(mut workload: impl FnMut()) -> f64 {
     for _ in 0..WARMUP {
         workload();
@@ -395,12 +471,18 @@ fn main() {
         current_screen: Some(fixture.player),
     };
 
-    let native_memory = vosu::process::open_process(std::process::id())
+    #[cfg(target_os = "windows")]
+    let native_process = vosu::process::open_process(std::process::id())
         .expect("open benchmark process for native memory reads");
-    let mut native_reader = lazer_reader(
-        ProcessHandle::new(Arc::new(native_memory), ProcessBitness::X64),
-        offsets.clone(),
+    #[cfg(not(target_os = "windows"))]
+    let native_process = ProcessHandle::new(
+        Arc::new(
+            vosu::process::open_process(std::process::id())
+                .expect("open benchmark process for native memory reads"),
+        ),
+        ProcessBitness::X64,
     );
+    let mut native_reader = lazer_reader(native_process, offsets.clone());
     precise_cycle(&mut native_reader, synchronization);
     let memory_reader_ns = measure::<LAZER_WARMUP_ITERATIONS, LAZER_SAMPLE_ITERATIONS>(|| {
         precise_cycle(&mut native_reader, synchronization)
@@ -412,7 +494,7 @@ fn main() {
         offsets,
     );
     precise_cycle(&mut counting_reader, synchronization);
-    let (exact_reads, batch_reads) = counting_memory.counts();
+    let (exact_reads, batch_reads, read_bytes) = counting_memory.counts();
 
     let mut stable_reader = stable_idle_reader();
     stable_idle_cycle(&mut stable_reader);
@@ -420,13 +502,40 @@ fn main() {
         stable_idle_cycle(&mut stable_reader)
     });
 
+    let stable_key_bytes = stable_key_fixture();
+    let mut stable_timing_reader = stable_key_reader(Arc::new(SliceMemory {
+        base: 0,
+        bytes: stable_key_bytes.clone(),
+    }));
+    stable_key_cycle(&mut stable_timing_reader);
+    let stable_key_ns = measure::<STABLE_WARMUP_ITERATIONS, STABLE_SAMPLE_ITERATIONS>(|| {
+        stable_key_cycle(&mut stable_timing_reader)
+    });
+
+    let stable_counting_memory = Arc::new(CountingMemory::from_parts(0, stable_key_bytes.clone()));
+    let mut stable_counting_reader = stable_key_reader(stable_counting_memory.clone());
+    stable_key_cycle(&mut stable_counting_reader);
+    stable_counting_memory.reset_counts();
+    stable_key_cycle(&mut stable_counting_reader);
+    let (stable_exact_reads, stable_batch_reads, stable_read_bytes) =
+        stable_counting_memory.counts();
+
     black_box(&fixture.bytes);
     println!("METRIC memory_reader_ns={memory_reader_ns:.2}");
     println!("METRIC stable_idle_ns={stable_idle_ns:.2}");
+    println!("METRIC stable_key_overlay_ns={stable_key_ns:.2}");
     println!("METRIC exact_reads_per_cycle={exact_reads}");
     println!("METRIC batch_reads_per_cycle={batch_reads}");
+    println!("METRIC process_bytes_per_cycle={read_bytes}");
     println!(
         "METRIC process_reads_per_cycle={}",
         exact_reads + batch_reads
     );
+    println!("METRIC stable_exact_reads_per_cycle={stable_exact_reads}");
+    println!("METRIC stable_batch_reads_per_cycle={stable_batch_reads}");
+    println!(
+        "METRIC stable_process_reads_per_cycle={}",
+        stable_exact_reads + stable_batch_reads
+    );
+    println!("METRIC stable_process_bytes_per_cycle={stable_read_bytes}");
 }

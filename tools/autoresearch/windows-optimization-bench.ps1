@@ -124,6 +124,9 @@ function Stop-Daemon {
 }
 
 try {
+    # OpenSSH service environments can preserve quotes inside PATH entries.
+    # VsDevCmd parses PATH in batch conditionals and fails on those stray quotes.
+    $env:Path = $env:Path.Replace('"', '')
     Assert-Directory $workspace 'Remote source workspace'
     Assert-Leaf (Join-Path $workspace 'Cargo.toml') 'Workspace manifest'
     Assert-Leaf (Join-Path $workspace 'Cargo.lock') 'Workspace lockfile'
@@ -319,7 +322,12 @@ SERVER_PORT = 24050
         'windows_read_many_single_ns',
         'windows_read_many_contiguous_ns'
     )
-    $memoryNames = $geomeanNames + @('windows_read_many_wide_ns')
+    # Keep the established composite comparable with prior runs. The stable
+    # 18-key reader shape is reported independently as an allocation-path guard.
+    $memoryNames = $geomeanNames + @(
+        'windows_read_many_wide_ns',
+        'windows_read_many_stable_18_keys_ns'
+    )
     $memoryValues = @{}
     foreach ($line in @(Get-Content -LiteralPath $memoryStdout)) {
         if ($line -notmatch '^METRIC\s+([^=]+)=(.+)$') {
