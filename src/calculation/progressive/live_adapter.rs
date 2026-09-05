@@ -1,4 +1,5 @@
 use std::fmt;
+use std::sync::Arc;
 
 use super::{
     DifficultyAttributes, GradualProgression, PerformanceAttributes, ProgressiveBeatmap, Ruleset,
@@ -90,13 +91,26 @@ fn performance_attributes(value: vosu_pp::PerformanceAttrsData) -> PerformanceAt
 /// score DTO including explicit accuracy.
 pub struct LiveProgressiveBeatmap {
     engine: vosu_pp::LiveLazerEngine,
-    map: vosu_pp::ParsedBeatmap,
+    map: Arc<vosu_pp::ParsedBeatmap>,
     config: vosu_pp::DifficultyConfig,
     full_difficulty: vosu_pp::DifficultyAttrsData,
     max_score: ScoreInput,
 }
 
 impl LiveProgressiveBeatmap {
+    pub fn from_prepared(prepared: Arc<vosu_pp::PreparedBeatmap>) -> Self {
+        let max = prepared.max_score();
+        let mut max_score = score_input(*max);
+        max_score.max_combo = i64::from(prepared.difficulty().max_combo);
+        Self {
+            engine: vosu_pp::LiveLazerEngine,
+            map: prepared.map().clone(),
+            config: prepared.config().clone(),
+            full_difficulty: prepared.difficulty().clone(),
+            max_score,
+        }
+    }
+
     pub fn new(
         bytes: &[u8],
         mode: Ruleset,
@@ -114,10 +128,9 @@ impl LiveProgressiveBeatmap {
         let full_difficulty = engine.difficulty_data(&map, &config)?;
         let mut max_score = score_input(engine.create_score(&map, 1.0)?);
         max_score.max_combo = i64::from(full_difficulty.max_combo);
-
         Ok(Self {
             engine,
-            map,
+            map: Arc::new(map),
             config,
             full_difficulty,
             max_score,

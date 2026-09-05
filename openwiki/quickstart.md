@@ -21,20 +21,20 @@ tags: [vosu, rust, code-wiki, onboarding]
 
 The repository’s detailed source documentation remains authoritative: [README.md](../README.md) is the product/operator contract, the [architecture overview](architecture/overview.md) explains structural boundaries, [decision records](decisions/index.md) explain durable choices, and [benchmarks](testing/benchmarks.md) contain machine-specific measurements. See the [documentation index and conventions](index.md) for the complete map.
 
-## Maintain this wiki locally
+## Maintain documentation with the change
 
-OpenWiki updates are run manually from the repository root with the installed OpenWiki CLI and the maintainer’s local OpenAI/Codex subscription; CI recurrence is intentionally not part of the supported maintenance path. Run `openwiki code --update --print` for a one-shot update, optionally adding a focused message such as `openwiki code --update --print "refresh docs for recent runtime changes"`. Use `openwiki --help` to verify the installed CLI’s current options. Review the resulting `openwiki/` diff before committing; do not add or recreate a scheduled or manual GitHub Actions workflow for this task.
+`openwiki/` is ordinary reviewed Markdown. Update affected API/configuration/runtime contracts in the implementation PR, architecture when boundaries change, and benchmark notes only with reproducible measurements. Preserve dated experiments and provenance as historical evidence. No OpenWiki CLI, subscription, recurring inference job, or post-merge regeneration is required. Optional AI assistance should address a bounded task and its diff must be reviewed. The directory name is retained to keep links stable.
 
 ## Build and run
 
 Use the pinned toolchain and lockfile:
 
 ```sh
-cargo build --locked --no-default-features
-cargo run --locked --no-default-features
+cargo build --locked
+cargo run --locked
 ```
 
-The default listener is `127.0.0.1:24050`; the dashboard is `/`. Production builds use `--release --locked --no-default-features` for the native Linux or Windows target. No Node.js, Electron, .NET, or C# runtime is required because dashboard assets and offsets are vendored build inputs (`README.md`, `Cargo.toml`).
+The default listener is `127.0.0.1:24050`; the dashboard is `/`. Linux production builds use `--release --locked --no-default-features --features linux-process-events`; Windows uses `--release --locked --no-default-features`, each with its native target. Process events are intentionally retained for performance with capability-aware fallback and reconciliation. No Node.js, Electron, .NET, or C# runtime is required because dashboard assets and offsets are vendored build inputs (`README.md`, `Cargo.toml`).
 
 ## Recent direction
 

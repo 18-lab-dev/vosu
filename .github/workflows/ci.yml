@@ -2,23 +2,8 @@ name: Rust CI
 
 on:
   push:
-    branches:
-      - main
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "openwiki/**"
-      - ".agents/**"
-      - ".gitignore"
-      - "LICENSE*"
+    branches: [main]
   pull_request:
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "openwiki/**"
-      - ".agents/**"
-      - ".gitignore"
-      - "LICENSE*"
   workflow_dispatch:
 
 permissions:
@@ -29,92 +14,143 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+      native: ${{ steps.changes.outputs.native }}
+      week: ${{ steps.week.outputs.week }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - id: changes
+        run: python scripts/ci-changes.py
+      - name: Check maintained documentation links
+        run: python scripts/check-doc-links.py
+      - id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
   validation:
     name: Ubuntu validation
-    if: github.event_name != 'workflow_dispatch'
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
+    env:
+      XWIN_ARCH: x86_64
+      XWIN_CACHE_DIR: ${{ github.workspace }}/.xwin-cache
+      C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Linux native and MSVC cross-compilation dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes clang libbpf-dev libelf-dev
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: 1.96.1
           components: rustfmt, clippy, llvm-tools
           targets: x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc
-
+      - name: Check formatting before native setup
+        run: cargo fmt --all -- --check
+      - name: Install Linux native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang libbpf-dev libelf-dev
       - name: Install pinned cargo-xwin
-        uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2.85.6
+        uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed
         with:
           tool: cargo-xwin@0.23.0
           fallback: none
-
-      - name: Cache Cargo registry, git database, and validation artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Cargo downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.cache/cargo-xwin
-            target
-          key: cargo-Linux-rust-1.96.1-ci-validation-linux-windows-msvc-xwin-0.23.0-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-Linux-rust-1.96.1-ci-validation-linux-windows-msvc-xwin-0.23.0-
+          key: cargo-downloads-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-downloads-${{ runner.os }}-
+      - name: Restore Rust artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          # Weekly generations bound archive churn while refreshing workspace artifacts.
+          key: rust-${{ runner.os }}-1.96.1-validation-${{ needs.changes.outputs.week }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: rust-${{ runner.os }}-1.96.1-validation-
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
+      - name: Restore independent MSVC SDK
+        id: sdk
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .xwin-cache
+          key: xwin-Linux-0.23.0-vs17-x86_64-desktop-v1
+      - name: Prepare MSVC SDK
+        run: cargo xwin cache xwin
+      - name: Save prepared SDK before validation
+        if: steps.sdk.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .xwin-cache
+          key: ${{ steps.sdk.outputs.cache-primary-key }}
       - name: Lint Linux targets and features
-        env:
-          C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-
       - name: Test workspace libraries, binaries, integration tests, and examples
-        env:
-          C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo test --workspace --lib --bins --tests --examples --all-features --locked
-
       - name: Lint Windows MSVC targets and features
         run: cargo xwin clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
 
   windows-native:
     name: Windows MSVC native verification
-    if: github.event_name == 'workflow_dispatch'
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
-
     steps:
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: 1.96.1
           components: clippy
           targets: x86_64-pc-windows-msvc
-
-      - name: Cache Cargo registry, git database, and native verification artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Cargo downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: cargo-Windows-rust-1.96.1-ci-native-msvc-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-Windows-rust-1.96.1-ci-native-msvc-
+          key: cargo-downloads-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-downloads-${{ runner.os }}-
+      - name: Restore Rust artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          # Weekly generations bound archive churn while refreshing workspace artifacts.
+          key: rust-${{ runner.os }}-1.96.1-native-msvc-${{ needs.changes.outputs.week }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: rust-${{ runner.os }}-1.96.1-native-msvc-
 
-      - name: Lint native Windows MSVC targets and features
+      - name: Lint native Windows targets and features
         run: cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
-
-      - name: Test native Windows MSVC workspace
+      - name: Test native Windows workspace
         run: cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc
+
+  required:
+    name: CI required
+    if: always()
+    needs: [changes, validation, windows-native]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all applicable checks
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          VALIDATION: ${{ needs.validation.result }}
+          NATIVE: ${{ needs.windows-native.result }}
+          CODE: ${{ needs.changes.outputs.code }}
+          NEED_NATIVE: ${{ needs.changes.outputs.native }}
+        run: |
+          test "$CHANGES" = success
+          if [ "$CODE" = true ]; then test "$VALIDATION" = success; fi
+          if [ "$NEED_NATIVE" = true ]; then test "$NATIVE" = success; fi

@@ -105,8 +105,11 @@ impl ConfigStore {
         let worker_snapshots = snapshots.clone();
         let worker_before_publish = Arc::clone(&before_publish);
         let worker_publish_lock = Arc::clone(&publish_lock);
-        let worker = tokio::spawn(async move {
-            run_store(
+        // The single store owner preserves persistence/publication ordering, but
+        // filesystem and synchronous reload hooks must not occupy a Tokio worker.
+        let runtime = tokio::runtime::Handle::current();
+        let worker = tokio::task::spawn_blocking(move || {
+            runtime.block_on(run_store(
                 worker_path,
                 worker_current,
                 worker_changed,
@@ -118,8 +121,7 @@ impl ConfigStore {
                 worker_publish_lock,
                 options,
                 hash_bytes(&initial.bytes),
-            )
-            .await
+            ))
         });
 
         Ok(Self {

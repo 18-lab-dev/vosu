@@ -5,24 +5,31 @@ mod helpers;
 use helpers::join_node_path;
 use helpers::joined_path;
 
-use std::cmp::Ordering;
-use std::io::{self, Write};
-
-use bytes::Bytes;
-use serde::Serialize;
-use serde_json::ser::{Formatter, Serializer};
-
-use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
-use crate::calculation::{
-    calculate_grade, fix_decimals, fix_decimals_to, to_legacy_hits, write_js_json_number,
-};
 use crate::model::api::v1::*;
 use crate::model::enums::{ClientType, CountryCodes, GameState};
+use std::cmp::Ordering;
+
+#[cfg(test)]
+use crate::api::JsFormatter;
+use bytes::Bytes;
+#[cfg(test)]
+use serde::Serialize;
+#[cfg(test)]
+use serde_json::ser::Serializer;
+
+use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
+use crate::calculation::{calculate_grade, fix_decimals, fix_decimals_to, to_legacy_hits};
 use crate::model::memory::{LazerSpectatorEntry, Score};
 use crate::model::states::{CalculateMods, MultiplayerTeamType, Statistics};
 use crate::state::{GameplayState, LeaderboardPlayerState, PreciseState, RegularState};
 
 pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
+    build_with::<Vec<f64>>(snapshot)
+}
+
+fn build_with<'a, V: From<&'a [f64]>>(
+    snapshot: &'a CombinedSnapshot,
+) -> Result<Response<V>, ApiError> {
     let focused = snapshot.focused().ok_or(ApiError::NotReady)?;
     let regular = &focused.regular;
     let precise = &focused.precise;
@@ -175,17 +182,17 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
                 acc_92: pp(92),
                 acc_91: pp(91),
                 acc_90: pp(90),
-                strains: graph.primary.clone(),
+                strains: V::from(graph.primary.as_slice()),
                 strains_all: BeatmapStrains {
                     series: graph
                         .series
                         .iter()
                         .map(|series| BeatmapStrainSeries {
                             name: series.name.clone(),
-                            data: series.data.clone(),
+                            data: V::from(series.data.as_slice()),
                         })
                         .collect(),
-                    xaxis: graph.x_axis.clone(),
+                    xaxis: V::from(graph.x_axis.as_slice()),
                 },
             },
         },
@@ -218,9 +225,9 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
                     max_this_play: gameplay.grade_expected.clone(),
                 },
                 unstable_rate: gameplay.unstable_rate,
-                hit_error_array: precise.hit_errors.all.clone(),
-                press_hit_errors: precise.hit_errors.press.clone(),
-                release_hit_errors: precise.hit_errors.release.clone(),
+                hit_error_array: V::from(precise.hit_errors.all.as_slice()),
+                press_hit_errors: V::from(precise.hit_errors.press.as_slice()),
+                release_hit_errors: V::from(precise.hit_errors.release.as_slice()),
             },
             pp: GameplayPerformancePoints {
                 current: fix_decimals(progressive.pp),
@@ -274,32 +281,9 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
 
 pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
     snapshot.encode_unfiltered(ApiSchema::V1, |snapshot| {
-        let value = build(snapshot)?;
-        let mut bytes = Vec::new();
-        let mut serializer = Serializer::with_formatter(&mut bytes, JsFormatter);
-        value
-            .serialize(&mut serializer)
-            .map_err(|error| ApiError::serialization(error.to_string()))?;
-        Ok(Bytes::from(bytes))
+        let value = build_with::<&[f64]>(snapshot)?;
+        crate::api::json::encode(&value, 0).map(Bytes::from)
     })
-}
-
-struct JsFormatter;
-
-impl Formatter for JsFormatter {
-    fn write_f32<W>(&mut self, writer: &mut W, value: f32) -> io::Result<()>
-    where
-        W: ?Sized + Write,
-    {
-        write_js_json_number(writer, f64::from(value))
-    }
-
-    fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
-    where
-        W: ?Sized + Write,
-    {
-        write_js_json_number(writer, value)
-    }
 }
 
 fn selected_mods(status: i64, state: &RegularState) -> SelectedMods {

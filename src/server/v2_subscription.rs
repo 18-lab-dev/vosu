@@ -698,11 +698,10 @@ impl V2SubscriptionConnection {
         }
     }
 
-    pub async fn send_pong(&self, data: Bytes) -> bool {
+    pub fn send_pong(&self, data: Bytes) -> bool {
         self.client
             .control
-            .send(V2SubscriptionOutbound::Pong(data))
-            .await
+            .try_send(V2SubscriptionOutbound::Pong(data))
             .is_ok()
     }
 

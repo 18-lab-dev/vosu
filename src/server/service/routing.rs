@@ -220,12 +220,21 @@ impl ProductionRouteDelegate {
 
     async fn generate_report(&self) -> Response {
         use axum::response::IntoResponse;
-        let input = match self.services.report_input.capture() {
-            Ok(input) => input,
-            Err(error) => return internal_error(error),
-        };
-        match generate_report_document(input, self.services.report_probe.as_ref()).await {
-            Ok(document) => document.into_response(),
+        static REPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+        let permit = REPORTS.acquire().await.expect("report semaphore is never closed");
+        let provider = Arc::clone(&self.services.report_input);
+        let probe = Arc::clone(&self.services.report_probe);
+        let runtime = tokio::runtime::Handle::current();
+        match tokio::task::spawn_blocking(move || {
+            // Keep admission through all capture/probe/log work, even if the
+            // request future is cancelled while a filesystem worker is running.
+            let _permit = permit;
+            let input = provider.capture()?;
+            runtime.block_on(generate_report_document(input, probe.as_ref()))
+                .map_err(|error| error.to_string())
+        }).await {
+            Ok(Ok(document)) => document.into_response(),
+            Ok(Err(error)) => internal_error(error),
             Err(error) => internal_error(error.to_string()),
         }
     }

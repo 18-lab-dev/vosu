@@ -1,15 +1,15 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BeatmapStrainSeries {
+pub struct BeatmapStrainSeries<V = Vec<f64>> {
     pub name: String,
-    pub data: Vec<f64>,
+    pub data: V,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BeatmapStrains {
-    pub series: Vec<BeatmapStrainSeries>,
-    pub xaxis: Vec<f64>,
+pub struct BeatmapStrains<V = Vec<f64>> {
+    pub series: Vec<BeatmapStrainSeries<V>>,
+    pub xaxis: V,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -135,7 +135,7 @@ pub struct SelectedMods {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PerformancePoints {
+pub struct PerformancePoints<V = Vec<f64>> {
     #[serde(rename = "90")]
     pub acc_90: f64,
     #[serde(rename = "91")]
@@ -158,13 +158,13 @@ pub struct PerformancePoints {
     pub acc_99: f64,
     #[serde(rename = "100")]
     pub acc_100: f64,
-    pub strains: Vec<f64>,
+    pub strains: V,
     #[serde(rename = "strainsAll")]
-    pub strains_all: BeatmapStrains,
+    pub strains_all: BeatmapStrains<V>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Menu {
+pub struct Menu<V = Vec<f64>> {
     #[serde(rename = "mainMenu")]
     pub main_menu: MainMenu,
     pub state: i64,
@@ -174,7 +174,7 @@ pub struct Menu {
     pub is_chat_enabled: i64,
     pub bm: Beatmap,
     pub mods: SelectedMods,
-    pub pp: PerformancePoints,
+    pub pp: PerformancePoints<V>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -197,7 +197,7 @@ pub struct GameplayGrade {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GameplayHits {
+pub struct GameplayHits<V = Vec<f64>> {
     #[serde(rename = "0")]
     pub h0: i64,
     #[serde(rename = "50")]
@@ -220,11 +220,11 @@ pub struct GameplayHits {
     #[serde(rename = "unstableRate")]
     pub unstable_rate: f64,
     #[serde(rename = "hitErrorArray")]
-    pub hit_error_array: Vec<f64>,
+    pub hit_error_array: V,
     #[serde(rename = "pressHitErrors")]
-    pub press_hit_errors: Vec<f64>,
+    pub press_hit_errors: V,
     #[serde(rename = "releaseHitErrors")]
-    pub release_hit_errors: Vec<f64>,
+    pub release_hit_errors: V,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -281,7 +281,7 @@ pub struct Leaderboard {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Gameplay {
+pub struct Gameplay<V = Vec<f64>> {
     #[serde(rename = "gameMode")]
     pub game_mode: i64,
     pub name: String,
@@ -289,7 +289,7 @@ pub struct Gameplay {
     pub accuracy: f64,
     pub combo: Combo,
     pub hp: Health,
-    pub hits: GameplayHits,
+    pub hits: GameplayHits<V>,
     pub pp: GameplayPerformancePoints,
     #[serde(rename = "keyOverlay")]
     pub key_overlay: KeyOverlay,
@@ -476,11 +476,11 @@ pub struct UserProfile {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Response {
+pub struct Response<V = Vec<f64>> {
     pub client: String,
     pub settings: Settings,
-    pub menu: Menu,
-    pub gameplay: Gameplay,
+    pub menu: Menu<V>,
+    pub gameplay: Gameplay<V>,
     #[serde(rename = "resultsScreen")]
     pub results_screen: ResultsScreen,
     #[serde(rename = "userProfile")]

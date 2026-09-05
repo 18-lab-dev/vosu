@@ -127,6 +127,16 @@ pub struct DifficultyValues {
     pub drain_rate: f64,
     pub overall_difficulty: f64,
 }
+impl Default for DifficultyValues {
+    fn default() -> Self {
+        Self {
+            approach_rate: 0.0,
+            circle_size: 0.0,
+            drain_rate: 0.0,
+            overall_difficulty: 0.0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DifficultyAttributes {
@@ -165,7 +175,7 @@ pub struct PeakStrains {
     pub values: Vec<f64>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct EngineOutput {
     pub original_difficulty: DifficultyValues,
     pub converted_difficulty: DifficultyValues,
@@ -175,19 +185,20 @@ pub struct EngineOutput {
     pub performance: PerformanceAttributes,
     pub maximum_score: ScoreData,
     pub pp_by_accuracy: BTreeMap<u8, f64>,
-    /// Source names are `aim`, `aimNoSliders`, `reading`, `flashlight`,
-    /// `speed`, `color`, `rhythm`, `stamina`, `movement`, and `strains`.
     pub strains: BTreeMap<String, PeakStrains>,
+    pub live_prepared: Option<Arc<vosu_pp::PreparedBeatmap>>,
 }
-
-impl Default for DifficultyValues {
-    fn default() -> Self {
-        Self {
-            approach_rate: 0.0,
-            circle_size: 0.0,
-            drain_rate: 0.0,
-            overall_difficulty: 0.0,
-        }
+impl PartialEq for EngineOutput {
+    fn eq(&self, other: &Self) -> bool {
+        self.original_difficulty == other.original_difficulty
+            && self.converted_difficulty == other.converted_difficulty
+            && self.difficulty == other.difficulty
+            && self.hit_windows == other.hit_windows
+            && self.catch_spatial_window == other.catch_spatial_window
+            && self.performance == other.performance
+            && self.maximum_score == other.maximum_score
+            && self.pp_by_accuracy == other.pp_by_accuracy
+            && self.strains == other.strains
     }
 }
 

@@ -2,6 +2,7 @@ const MAX_KEY_OVERLAY_BUTTONS: usize = 18;
 const MAX_REPLAY_FRAMES: i64 = 500_000;
 
 use super::*;
+use std::sync::Arc;
 
 impl SynchronizedMemoryReader for StableMemory {
     fn synchronize_capture_config(
@@ -28,6 +29,7 @@ impl StableMemory {
         self.replay_frame_index = 0;
         self.replay_cache_start = 0;
         self.replay_frames.clear();
+        self.replay_batch = None;
     }
 
     fn replay_frame_batch(
@@ -44,6 +46,7 @@ impl StableMemory {
             self.replay_error_index = acknowledged_error_index;
             self.replay_cache_start = self.replay_frame_index;
             self.replay_frames.clear();
+            self.replay_batch = None;
         }
 
         let list = self.ptr(self.add(score, 0x34)?)?;
@@ -112,12 +115,19 @@ impl StableMemory {
             self.replay_frames.extend(frames);
             self.replay_frame_index = size;
         }
+        if count == 0
+            && let Some(batch) = &self.replay_batch
+        {
+            return Ok(Some(batch.clone()));
+        }
 
-        Ok(Some(StableReplayFrameBatch {
+        let batch = StableReplayFrameBatch {
             start_index: self.replay_cache_start,
             index: self.replay_frame_index,
-            frames: self.replay_frames.clone(),
-        }))
+            frames: Arc::new(self.replay_frames.clone()),
+        };
+        self.replay_batch = Some(batch.clone());
+        Ok(Some(batch))
     }
 }
 

@@ -454,12 +454,12 @@ pub(super) fn detailed(
         total: fix_decimals(total),
     }
 }
-pub(super) fn build_play(
+pub(super) fn build_play<'a, V: From<&'a [f64]>>(
     gameplay: &GameplayState,
     attrs: Option<&crate::calculation::progressive::ProgressiveAttributes>,
     mods: &CalculateMods,
-    precise_hits: &HitErrorArray,
-) -> Play {
+    precise_hits: &'a HitErrorArray,
+) -> Play<V> {
     let a = attrs.copied().unwrap_or_default();
     let s = &gameplay.statistics;
     Play {
@@ -484,9 +484,9 @@ pub(super) fn build_play(
             small_tick_hits: s.small_tick_hit,
             large_tick_hits: s.large_tick_hit,
         }),
-        hit_error_array: precise_hits.all.clone(),
-        press_hit_errors: precise_hits.press.clone(),
-        release_hit_errors: precise_hits.release.clone(),
+        hit_error_array: V::from(precise_hits.all.as_slice()),
+        press_hit_errors: V::from(precise_hits.press.as_slice()),
+        release_hit_errors: V::from(precise_hits.release.as_slice()),
         combo: Combo {
             current: gameplay.combo,
             max: gameplay.max_combo,
@@ -540,12 +540,24 @@ pub(super) fn build_leaderboard(
         rank: String::new(),
     }
 }
+#[derive(Serialize)]
+struct GraphWire<'a> {
+    series: Vec<GraphSeriesWire<'a>>,
+    xaxis: &'a [f64],
+}
+
+#[derive(Serialize)]
+struct GraphSeriesWire<'a> {
+    name: &'a str,
+    data: &'a [f64],
+}
+
 struct EncodedGraphCache {
     source: Weak<StrainGraph>,
     encoded: Arc<RawValue>,
 }
 
-fn encode_graph_once(source: &Arc<StrainGraph>, graph: &Graph) -> Result<Arc<RawValue>, ApiError> {
+fn encode_graph_once(source: &Arc<StrainGraph>) -> Result<Arc<RawValue>, ApiError> {
     static CACHE: OnceLock<Mutex<Option<EncodedGraphCache>>> = OnceLock::new();
     let mut cache = CACHE
         .get_or_init(|| Mutex::new(None))
@@ -558,7 +570,17 @@ fn encode_graph_once(source: &Arc<StrainGraph>, graph: &Graph) -> Result<Arc<Raw
         return Ok(Arc::clone(&cached.encoded));
     }
 
-    let bytes = super::encode_dto(graph)?;
+    let bytes = super::encode_dto(&GraphWire {
+        series: source
+            .series
+            .iter()
+            .map(|series| GraphSeriesWire {
+                name: &series.name,
+                data: &series.data,
+            })
+            .collect(),
+        xaxis: &source.x_axis,
+    })?;
     let json = String::from_utf8(bytes.to_vec())
         .map_err(|error| ApiError::serialization(error.to_string()))?;
     let encoded = Arc::<RawValue>::from(
@@ -571,23 +593,33 @@ fn encode_graph_once(source: &Arc<StrainGraph>, graph: &Graph) -> Result<Arc<Raw
     Ok(encoded)
 }
 
-pub(super) fn build_performance(state: &RegularState) -> Result<Performance, ApiError> {
+pub(super) fn build_performance(
+    state: &RegularState,
+    include_graph_data: bool,
+) -> Result<Performance, ApiError> {
     let value = |n: u8| fix_decimals(state.beatmap.pp_acc.get(&n).copied().unwrap_or(0.0));
+    let source = &state.beatmap.graph;
     let mut graph = Graph {
-        series: state
-            .beatmap
-            .graph
-            .series
-            .iter()
-            .map(|s| Series {
-                name: s.name.clone(),
-                data: s.data.clone(),
-            })
-            .collect(),
-        xaxis: state.beatmap.graph.x_axis.clone(),
+        series: if include_graph_data {
+            source
+                .series
+                .iter()
+                .map(|s| Series {
+                    name: s.name.clone(),
+                    data: s.data.clone(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
+        xaxis: if include_graph_data {
+            source.x_axis.clone()
+        } else {
+            Vec::new()
+        },
         encoded: None,
     };
-    graph.encoded = Some(encode_graph_once(&state.beatmap.graph, &graph)?);
+    graph.encoded = Some(encode_graph_once(source)?);
     Ok(Performance {
         accuracy: Accuracy {
             acc_90: value(90),

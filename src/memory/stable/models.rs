@@ -20,6 +20,7 @@ pub struct StableMemory {
     pub(super) replay_frame_index: i64,
     pub(super) replay_cache_start: i64,
     pub(super) replay_frames: Vec<StableReplayFrame>,
+    pub(super) replay_batch: Option<StableReplayFrameBatch>,
 }
 
 impl StableMemory {
@@ -44,6 +45,7 @@ impl StableMemory {
             replay_frame_index: 0,
             replay_cache_start: 0,
             replay_frames: Vec::new(),
+            replay_batch: None,
         }
     }
     pub fn resolve(process: ProcessHandle) -> MemoryRead<Self> {

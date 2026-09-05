@@ -795,7 +795,7 @@ mod tests {
             &StableReplayFrameBatch {
                 start_index: 0,
                 index: 4,
-                frames: frames[..4].to_vec(),
+                frames: std::sync::Arc::new(frames[..4].to_vec()),
             },
             Some("map"),
             0,
@@ -809,7 +809,7 @@ mod tests {
             &StableReplayFrameBatch {
                 start_index: 0,
                 index: 5,
-                frames,
+                frames: std::sync::Arc::new(frames),
             },
             Some("map"),
             0,
@@ -826,7 +826,7 @@ mod tests {
         let batch = StableReplayFrameBatch {
             start_index: 0,
             index: 0,
-            frames: Vec::new(),
+            frames: std::sync::Arc::new(Vec::new()),
         };
 
         assert_eq!(
@@ -873,7 +873,7 @@ mod tests {
         let batch = StableReplayFrameBatch {
             start_index: 0,
             index: 0,
-            frames: Vec::new(),
+            frames: std::sync::Arc::new(Vec::new()),
         };
 
         assert_eq!(
@@ -959,7 +959,7 @@ mod tests {
                     &StableReplayFrameBatch {
                         start_index: 0,
                         index: 2,
-                        frames: frames.clone(),
+                        frames: std::sync::Arc::new(frames.clone()),
                     },
                     provisional_target,
                     5,
@@ -974,7 +974,7 @@ mod tests {
                     &StableReplayFrameBatch {
                         start_index: 2,
                         index: 2,
-                        frames: Vec::new(),
+                        frames: std::sync::Arc::new(Vec::new()),
                     },
                     Some("current-map"),
                     0,

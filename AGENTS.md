@@ -14,12 +14,12 @@
 
 ## Toolchain and commands
 
-Use the pinned Rust 1.96.1 toolchain from `rust-toolchain.toml`, including `rustfmt`, `clippy`, and both native targets. Windows builds require MSVC and the Windows SDK; Linux builds require a GNU C toolchain and the Vulkan/OpenGL loader development environment used by `wgpu`. Keep `--locked`; production builds use no default features.
+Use the pinned Rust 1.96.1 toolchain from `rust-toolchain.toml`, including `rustfmt`, `clippy`, and both native targets. Windows builds require MSVC and the Windows SDK; Linux builds require a GNU C toolchain, Clang, pkg-config, and libelf/zlib development files for the process-event backends. Keep `--locked`. Linux releases explicitly enable `linux-process-events`; Windows releases use no default features. GPU driver development libraries are not required.
 
 ```sh
 # Local debug build/run
-cargo build --locked --no-default-features
-cargo run --locked --no-default-features
+cargo build --locked
+cargo run --locked
 
 # CI checks
 cargo fmt --all -- --check
@@ -27,7 +27,7 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --lib --bins --tests --examples --all-features --locked
 
 # Native release build (select the host target)
-cargo build --release --locked --no-default-features --target x86_64-unknown-linux-gnu
+cargo build --release --locked --no-default-features --features linux-process-events --target x86_64-unknown-linux-gnu
 cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc
 
 # Criterion hot paths; use the affected group or exact ID for scoped routine measurements.
@@ -56,7 +56,7 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 - `src/updater/`: release selection, verified staging, replacement, rollback, and recovery.
 - `src/calculation.rs` and `crates/vosu-pp/`: stable and lazer performance calculation; the latter is a clean-room facade over provenance-pinned MIT source forks.
 - `src/runtime/`, `src/app.rs`, `src/logging/`, `src/report/`: daemon orchestration and operational services.
-- `crates/vosu-test-harness/`: integration-test support only. `tests/` holds compatibility, native, smoke, and performance contracts. `benches/hot_paths.rs` holds Criterion benchmarks.
+- `crates/vosu-test-harness/`: integration-test support only. `tests/` holds compatibility, native, daemon smoke, and performance contracts. `crates/vosu-release-smoke/` exercises an externally packaged executable without depending on the daemon crate. `benches/hot_paths.rs` holds Criterion benchmarks.
 - `tools/live-parity/`: deterministic live capture, attestation, comparison, and diff tooling. `tools/oracle/` holds calculator provenance/evidence tooling.
 
 ## Verification by change
@@ -66,7 +66,7 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 - API projection or routing: the affected unit tests plus `cargo test --locked --test state_api_compat` and/or `cargo test --locked --test server_compat`; use `daemon_smoke` when startup or end-to-end serving changes.
 - Configuration or counter persistence: affected unit tests plus `cargo test --locked --test config_compat` (and the relevant server compatibility test for counter APIs).
 - Process discovery or memory reading: affected unit tests and, on each affected native OS, `cargo test --locked --test process_memory -- --nocapture`.
-- Updater/release behavior: `cargo test --locked --test updater_compat`, native `cargo test --locked --test updater_native -- --nocapture`, and `cargo test --locked --test release_smoke` when packaging/startup changes.
+- Updater/release behavior: `cargo test --locked --test updater_compat`, native `cargo test --locked --test updater_native -- --nocapture`, and `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture` when packaging/startup changes.
 - Calculator/state semantics: affected `vosu-pp` tests and `cargo test --locked --test performance_invariants`; use live parity when observable live schemas or state timing can change.
 - Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](openwiki/testing/benchmarks.md).
 - Before merging a Rust change, run the applicable native smoke path and the CI checks above; platform-specific code requires evidence from that platform.
@@ -87,12 +87,8 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 - Do not hand-edit `Cargo.lock`; regenerate it with Cargo and review the dependency change. Recompute checksum manifests from the exact retained bytes and review the provenance change.
 - Update README user contracts when commands, requirements, configuration, routes, installation, or runtime behavior change. Update architecture for structural boundaries, add an ADR for a durable decision, and update benchmark notes only with reproducible measurements.
 
-<!-- OPENWIKI:START -->
+## Maintained documentation
 
-## OpenWiki
+`openwiki/` is an ordinary maintained Markdown directory, not generated output. Start with `openwiki/quickstart.md`. Update affected contracts and architecture in the implementation PR; preserve dated experiment and provenance records as historical evidence. Do not schedule inference, regenerate the whole tree on push, or add a documentation bot. Optional AI assistance must be explicitly scoped and reviewed. The retained directory name preserves existing links and has no tool/runtime dependency.
 
-This repository uses OpenWiki for recurring code documentation. Start with `openwiki/quickstart.md`, then follow its links to architecture, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
-
-The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
-
-<!-- OPENWIKI:END -->
+Linux process-event backends are intentionally retained for their measured performance benefit. Preserve their default feature, capability-aware eBPF → CN_PROC → polling selection, bounded loss recovery, and periodic reconciliation; earlier experiment rollout cautions are historical, not instructions to remove the current backends.

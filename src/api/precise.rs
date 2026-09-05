@@ -1,9 +1,9 @@
 //! Source-compatible `/json/v2/precise` wire builder.
 
+use bytes::Bytes;
+use serde::Serialize;
 use std::cmp::Ordering;
 use std::sync::Arc;
-
-use bytes::Bytes;
 
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerSnapshot};
 use crate::model::api::v2::{KeyOverlayButton, Keypress, Keys, PreciseResponse, PreciseTourney};
@@ -27,8 +27,76 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<PreciseResponse, ApiError> {
 /// Encodes the unfiltered V2 precise document once for this combined generation.
 pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
     snapshot.encode_unfiltered(ApiSchema::V2Precise, |snapshot| {
-        super::v2::encode_dto(&build(snapshot)?)
+        let precise = snapshot.precise().ok_or(ApiError::NotReady)?;
+        let value = PreciseEncode {
+            keys: build_keys(&precise.key_overlay, &precise.keypresses),
+            hit_errors: &precise.hit_errors.all,
+            press_hit_errors: &precise.hit_errors.press,
+            release_hit_errors: &precise.hit_errors.release,
+            tourney: build_tourney_encode(snapshot.manager()),
+        };
+        super::v2::encode_dto(&value)
     })
+}
+
+#[derive(Serialize)]
+struct PreciseEncode<'a> {
+    keys: Keys,
+    #[serde(rename = "hitErrors")]
+    hit_errors: &'a [f64],
+    #[serde(rename = "pressHitErrors")]
+    press_hit_errors: &'a [f64],
+    #[serde(rename = "releaseHitErrors")]
+    release_hit_errors: &'a [f64],
+    tourney: Vec<PreciseTourneyEncode<'a>>,
+}
+
+#[derive(Serialize)]
+struct PreciseTourneyEncode<'a> {
+    #[serde(rename = "ipcId")]
+    ipc_id: f64,
+    keys: Keys,
+    #[serde(rename = "hitErrors")]
+    hit_errors: &'a [f64],
+    #[serde(rename = "pressHitErrors")]
+    press_hit_errors: &'a [f64],
+    #[serde(rename = "releaseHitErrors")]
+    release_hit_errors: &'a [f64],
+}
+
+fn build_tourney_encode(manager: &ManagerSnapshot) -> Vec<PreciseTourneyEncode<'_>> {
+    if !manager
+        .instances()
+        .values()
+        .any(|instance| instance.is_tournament_manager())
+    {
+        return Vec::new();
+    }
+
+    let mut spectators: Vec<_> = manager
+        .instances()
+        .values()
+        .filter_map(|instance| {
+            let settings = instance.settings();
+            if !settings.tournament_spectator {
+                return None;
+            }
+            settings
+                .tournament_ipc_id
+                .map(|ipc_id| (ipc_id, instance.state().precise.as_ref()))
+        })
+        .collect();
+    spectators.sort_by(|(left, _), (right, _)| left.partial_cmp(right).unwrap_or(Ordering::Equal));
+    spectators
+        .into_iter()
+        .map(|(ipc_id, precise)| PreciseTourneyEncode {
+            ipc_id,
+            keys: build_keys(&precise.key_overlay, &precise.keypresses),
+            hit_errors: &precise.hit_errors.all,
+            press_hit_errors: &precise.hit_errors.press,
+            release_hit_errors: &precise.hit_errors.release,
+        })
+        .collect()
 }
 
 fn build_tourney(manager: &ManagerSnapshot) -> Vec<PreciseTourney> {

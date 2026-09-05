@@ -799,3 +799,54 @@ collecting that benchmark. Therefore this run produced no reportable current
 measurements for `publication/unfiltered_clients/1`,
 `publication/unfiltered_clients/100`, or `publication/unfiltered_clients/1000`;
 older files for those IDs were deliberately excluded.
+
+## 2026-09-05 audit: build weight and serialization
+
+Baseline: `9fd6251d61d858c1ef851811b5bc41c69e505beb`, exported to an independent temporary directory. Candidate: the audit implementation working tree. Native Linux on the same Ryzen 9 9950X3D host, pinned Rust 1.96.1, offline dependency downloads already available. No Windows VM or native Windows timing was used.
+
+Build and serializer figures below describe the measured candidate snapshot, before final report-cancellation lifetime and obsolete mod-fallback cleanup. The final Linux event-enabled executable is rebuilt and smoke-tested separately; its build time is not presented as another cold-build comparison.
+
+### Cold release build observation
+
+Separate empty target directories; `cargo build --release --locked --offline --no-default-features --timings -j 8` in each tree. These measurements deliberately omit process events in **both** builds to isolate the shared daemon dependency graph; production Linux still explicitly enables `linux-process-events` and its packaged smoke is exercised separately. Wall times include Cargo overhead and are single local observations, not CI-minute forecasts. The final Windows cross-check briefly overlapped the beginning of the candidate build, so this is not a controlled repeated build benchmark.
+
+| Measurement | Baseline | Audit candidate |
+| --- | ---: | ---: |
+| Cold build wall time | 136.54 s | 106.06 s |
+| Stripped binary size | 14,193,112 bytes | 11,703,336 bytes |
+
+The lockfile removes 54 package/version entries from the report-only graphics dependency graph, adding two build-time asset-filter dependencies (`globset`, `bstr`) and the standalone smoke package without upgrading unrelated retained dependencies. Release smoke no longer links the daemon library into its runner.
+
+A separate empty-target baseline build with `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16` took 76.93 s and produced a 15,475,536-byte binary, versus 14,193,112 bytes with the existing single unit. Both executed `--help` successfully. The candidate was 9.0% larger and has no representative runtime validation; production therefore retains one codegen unit and thin LTO rather than trading runtime/size for a build-only result.
+
+### Synthetic cold serializers
+
+Run independently in both trees:
+
+```sh
+cargo bench --locked --offline --no-default-features --package vosu \
+  --bench hot_paths -j 8 -- serializers_cold \
+  --sample-size 20 --measurement-time 1 --warm-up-time 1
+```
+
+| Criterion ID | Baseline estimate [interval], µs | Candidate estimate [interval], µs |
+| --- | ---: | ---: |
+| `serializers_cold/v1` | 7.6863 [6.5743, 8.5364] | 6.9694 [6.1198, 7.5262] |
+| `serializers_cold/v2` | 14.164 [13.413, 14.768] | 10.305 [10.134, 10.473] |
+| `serializers_cold/v2_precise` | 5.6449 [4.9291, 6.2474] | 5.3594 [4.7815, 5.8700] |
+| `serializers_cold/stream_companion` | 8.4245 [7.5452, 9.1648] | 8.1934 [7.4933, 8.7570] |
+
+Only V2 separates clearly in this short run (27.2% lower central estimate). The other intervals overlap; no improvement claim is made for them. These are synthetic fixture results, not whole-daemon/live-gameplay measurements or a measurement of large replay retention. The populated-vector API regression checks byte equivalence between borrowed encoding and owned DTO serialization.
+
+### Calculator microbenchmark check
+
+The same compiled baseline and candidate benchmark executables also ran `map_calculation` with the 20-sample/1-second settings above. The fixture contains five objects and does **not** measure full-to-progressive preparation reuse.
+
+| Criterion ID | Baseline central estimate | Candidate central estimate |
+| --- | ---: | ---: |
+| `map_calculation/parse` | 1.7212 µs | 1.7424 µs |
+| `map_calculation/full_difficulty_performance` | 12.358 µs | 12.942 µs |
+| `map_calculation/gradual_all_objects` | 10.713 µs | 10.424 µs |
+| `map_calculation/unchanged_cache_key` | 10.429 ns | 10.687 ns |
+
+The apparent full-calculation slowdown did not survive a reversed-order rerun of that exact filter with `--sample-size 50 --measurement-time 3 --warm-up-time 2`: candidate 12.787 µs [12.699, 12.871], then baseline 12.991 µs [12.899, 13.093]. This demonstrates ordering/run variation, not a reliable calculator speedup or regression. Do not use Criterion's automatic “change” labels across these direct invocations: both wrote the same local results directory. The explicit baseline/candidate estimates above are the comparison evidence. Existing calculator compatibility and state-transition tests remain the numerical-behavior gate.

@@ -7,6 +7,8 @@ tags: [linux, process-events, ebpf, cn-proc, performance]
 
 # Linux process-event experiment
 
+**Current maintenance decision (2026-09-05):** retain the Linux process-event backends and default feature for their performance benefit. Runtime capability-aware selection and polling reconciliation remain mandatory. The rollout decision and unresolved questions below describe the dated experiment, not the current default; its measurements and provenance are preserved unchanged.
+
 **Dates:** 2026-07-20 host experiment; 2026-07-21 gaming-VM continuation; 2026-07-22 autoresearch continuation  
 **Worktree:** `/home/user/gh/vosu-process-events`  
 **Branches:** `experiment/linux-process-events`; `autoresearch/continue-the-experiment-continually-ingesting-do-20260722`  

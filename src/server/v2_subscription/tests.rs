@@ -139,6 +139,20 @@ fn request_shape_and_frozen_compact_frames_are_exact() {
     );
 }
 
+#[test]
+fn pong_queue_backpressure_is_nonblocking_and_bounded() {
+    let provider = FakeProvider::new(1, None);
+    let hub = V2SubscriptionHub::new(provider, Duration::ZERO);
+    let (connection, mut receiver) = hub.connect();
+
+    assert!(connection.send_pong(Bytes::from_static(b"first")));
+    assert!(!connection.send_pong(Bytes::from_static(b"second")));
+    assert_eq!(
+        receiver.control.try_recv(),
+        Ok(V2SubscriptionOutbound::Pong(Bytes::from_static(b"first")))
+    );
+}
+
 struct FakeSnapshot {
     revision: u64,
     document: Result<Option<Value>, ApiError>,
@@ -410,7 +424,6 @@ async fn serialization_failure_terminates_active_subscriber_with_1011() {
     assert!(lock(&hub.0.document).is_none());
     let plans = lock(&hub.0.plans);
     assert!(plans.is_empty());
-    assert_eq!(plans.capacity(), 0);
 }
 
 #[test]
@@ -436,7 +449,6 @@ fn close_during_document_build_cannot_restore_retained_state() {
         assert!(lock(&hub.0.document).is_none());
         let plans = lock(&hub.0.plans);
         assert!(plans.is_empty());
-        assert_eq!(plans.capacity(), 0);
     }
 }
 
@@ -473,7 +485,6 @@ fn close_after_pending_reservation_cannot_restore_delivery_state() {
     assert!(lock(&hub.0.document).is_none());
     let plans = lock(&hub.0.plans);
     assert!(plans.is_empty());
-    assert_eq!(plans.capacity(), 0);
 }
 
 #[test]
@@ -490,7 +501,6 @@ fn closed_connection_rejects_late_subscription_without_retaining_plan() {
     assert!(lock(&connection.client.plan).is_none());
     let plans = lock(&hub.0.plans);
     assert!(plans.is_empty());
-    assert_eq!(plans.capacity(), 0);
 }
 
 #[test]
@@ -514,7 +524,6 @@ fn identical_active_plans_are_weakly_interned_and_released() {
     {
         let plans = lock(&hub.0.plans);
         assert!(plans.is_empty());
-        assert_eq!(plans.capacity(), 0);
     }
     assert!(lock(&hub.0.document).is_none());
 

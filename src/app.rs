@@ -346,9 +346,17 @@ impl StartupDecision {
 }
 
 fn os_starts_with(value: &OsStr, prefix: &OsStr) -> bool {
-    value
-        .to_string_lossy()
-        .starts_with(prefix.to_string_lossy().as_ref())
+    let value = value.to_string_lossy();
+    let prefix = prefix.to_string_lossy();
+    let components = |path: &str| {
+        path.split(['/', '\\'])
+            .filter(|component| !component.is_empty())
+            .map(str::to_ascii_lowercase)
+            .collect::<Vec<_>>()
+    };
+    let value = components(&value);
+    let prefix = components(&prefix);
+    value.len() >= prefix.len() && value.iter().zip(prefix.iter()).all(|(a, b)| a == b)
 }
 
 pub type HookFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
@@ -619,6 +627,22 @@ mod tests {
             Some(OsStr::new("C:/Users/me/OneDrive"))
         );
         assert_eq!(snapshot.get("UNRELATED"), None);
+    }
+
+    #[test]
+    fn windows_path_prefix_is_component_aware_and_case_insensitive() {
+        assert!(os_starts_with(
+            OsStr::new(r"C:\Users\ME\OneDrive\vosu.exe"),
+            OsStr::new("c:/users/me/onedrive")
+        ));
+        assert!(!os_starts_with(
+            OsStr::new(r"C:\Users\me\OneDriveCopy\vosu.exe"),
+            OsStr::new("C:/Users/me/OneDrive")
+        ));
+        assert!(!os_starts_with(
+            OsStr::new(r"C:\Users\me\OneDrive-old\vosu.exe"),
+            OsStr::new("C:/Users/me/OneDrive")
+        ));
     }
 
     #[tokio::test]

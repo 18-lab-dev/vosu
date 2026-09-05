@@ -178,7 +178,7 @@ remains available on the generator CLI for maintainers who need a live
 
 - Rust **1.96.1**, also pinned in `rust-toolchain.toml`
 - a native toolchain for `x86_64-unknown-linux-gnu` or `x86_64-pc-windows-msvc`
-- Linux: a GNU C toolchain, Clang, pkg-config, libelf/zlib development files, and the Vulkan/OpenGL loader development files needed by `wgpu`
+- Linux: a GNU C toolchain, Clang, pkg-config, and libelf/zlib development files for process-event support; GPU driver development libraries are not required
 - Windows: MSVC build tools and the Windows SDK
 
 The dashboard and embedded offsets are vendored build inputs. No frontend or
@@ -653,7 +653,19 @@ Unknown near-miss paths do not upgrade. Frames and assembled messages are limite
 
 The selected-field endpoint expects one text message within five seconds: a JSON array of 1–256 non-overlapping RFC 6901 JSON Pointers into the `/json/v2` document. A subscription such as `["/keys","/beatmap/mode","/state/number"]` receives compact initial `[0, revision, [[index, value], ...]]` and update `[1, revision, [[changedIndex, value], ...], [removedIndex, ...]]` frames. Send `["ping", nonce]` for `["pong", nonce, revision]`. Invalid filters receive `[2, code, message]`. Updates are debounced by `V2_SUBSCRIPTION_DEBOUNCE`; due revisions use the latest snapshot.
 
+Control-frame backpressure is bounded too: an established selected-field connection whose pong queue is full closes with code `1011` rather than pinning the reader indefinitely.
+
+## Diagnostic reports and logging
+
+`/api/generateReport` uses native hardware probes, not a graphics runtime: Linux reports DRM/sysfs device metadata and Windows uses WMI. Missing names or unclassifiable device types are reported explicitly rather than guessed.
+
+Reports retain the ten newest log files, with up to 1 MiB and 10,000 content lines per file and 8 MiB and 100,000 content lines overall. Visible truncation notices identify omitted content; HTML remains escaped. Report capture and counter-directory discovery run in bounded blocking workers.
+
+Console and file logs share a bounded ordered queue. Saturation drops newest records rather than blocking the producer. `flush` and shutdown wait for accepted output; a blocked console no longer occupies an async runtime worker. Configuration persistence and reload hooks likewise execute outside async runtime workers while retaining their single-owner ordering and atomic replacement.
+
 ## Maintainer documentation
+
+The existing `openwiki/` directory is ordinary maintained Markdown. Update affected documentation in the implementation PR; no OpenWiki installation, scheduled inference, or whole-tree post-merge rewrite is required. CI runs `python scripts/check-doc-links.py` even for documentation-only changes and publishes the stable `CI required` status. The folder name is retained to preserve links, not as a tooling dependency.
 
 | Document | Scope |
 | --- | --- |

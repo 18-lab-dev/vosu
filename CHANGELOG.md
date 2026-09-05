@@ -3,6 +3,16 @@
 All notable user-visible changes to vosu are documented here. Entries below the Unreleased section are retained release history and use the product names and artifact names that were current at the time.
 
 ## Unreleased
+
+### Runtime and maintenance
+
+- Remove the report-only graphics stack; use Linux sysfs and Windows WMI hardware metadata, with explicit unavailable/unknown states.
+- Bound report log retention with visible truncation notices; isolate counter discovery, report capture, configuration persistence/reload, and ordered console output from async workers.
+- Avoid primary API graph/hit-error encoding copies, share live-calculator map preparation and unchanged stable mania replay batches, and bound WebSocket pong backpressure.
+- Use component-aware case-insensitive Windows startup-path checks rather than string-prefix matching.
+- Separate MSVC SDK, Cargo downloads, and build caches; restrict cross SDK downloads to x86_64; classify changes conservatively and always publish `CI required`, including docs-only changes.
+- Move packaged-executable smoke checks into `vosu-release-smoke`, remove duplicate daemon asset embedding, and maintain existing Markdown without scheduled inference. Linux process-event backends and defaults remain unchanged.
+
 ### Gameplay
 
 - Reset published hit-error arrays when osu!lazer or osu!stable rebuilds the live hit-event list, so editor test-mode section restarts drop pre-restart errors and skipped-object zeros instead of waiting for those notes to elapse again.

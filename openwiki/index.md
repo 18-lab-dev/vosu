@@ -1,7 +1,7 @@
 ---
 type: Documentation Index
-title: "OpenWiki"
-description: "Files and subdirectories in OpenWiki."
+title: "vosu maintainer documentation"
+description: "Reviewed Markdown documentation, architecture, operations, and performance evidence."
 ---
 
 # Files

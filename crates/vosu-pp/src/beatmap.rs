@@ -1,6 +1,6 @@
 use crate::{
-    BeatmapDifficultyData, DifficultyConfig, Error, ModValue, ParsedMapView, Ruleset,
-    StructuredMod, game_mods, ruleset,
+    BeatmapDifficultyData, DifficultyAttrsData, DifficultyConfig, Error, ModValue, ParsedMapView,
+    Ruleset, ScoreInfoData, StructuredMod, game_mods, ruleset,
 };
 use rosu_map::section::{general::GameMode, hit_objects::hit_samples::HitSoundType};
 use rosu_pp::{
@@ -91,6 +91,46 @@ impl ParsedBeatmap {
     #[cfg(any(test, feature = "oracle-debug"))]
     pub fn debug_resolved_config_mods(&self, mods: &[StructuredMod]) -> Vec<StructuredMod> {
         resolve_random_seeds(mods)
+    }
+}
+/// Immutable live calculation preparation shared by snapshot and progressive paths.
+#[derive(Debug, Clone)]
+pub struct PreparedBeatmap {
+    map: Arc<ParsedBeatmap>,
+    config: DifficultyConfig,
+    difficulty: DifficultyAttrsData,
+    max_score: ScoreInfoData,
+}
+
+impl PreparedBeatmap {
+    pub fn new(
+        map: ParsedBeatmap,
+        config: DifficultyConfig,
+        difficulty: DifficultyAttrsData,
+        max_score: ScoreInfoData,
+    ) -> Self {
+        Self {
+            map: Arc::new(map),
+            config,
+            difficulty,
+            max_score,
+        }
+    }
+
+    pub fn map(&self) -> &Arc<ParsedBeatmap> {
+        &self.map
+    }
+
+    pub fn config(&self) -> &DifficultyConfig {
+        &self.config
+    }
+
+    pub fn difficulty(&self) -> &DifficultyAttrsData {
+        &self.difficulty
+    }
+
+    pub fn max_score(&self) -> &ScoreInfoData {
+        &self.max_score
     }
 }
 

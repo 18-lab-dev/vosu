@@ -320,7 +320,7 @@ pub struct Pp {
     pub detailed: DetailedPp,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Play {
+pub struct Play<V = Vec<f64>> {
     pub failed: bool,
     #[serde(rename = "playerName")]
     pub player_name: String,
@@ -332,11 +332,11 @@ pub struct Play {
     pub health_bar: HealthBar,
     pub hits: PlayHits,
     #[serde(rename = "hitErrorArray")]
-    pub hit_error_array: Vec<f64>,
+    pub hit_error_array: V,
     #[serde(rename = "pressHitErrors")]
-    pub press_hit_errors: Vec<f64>,
+    pub press_hit_errors: V,
     #[serde(rename = "releaseHitErrors")]
-    pub release_hit_errors: Vec<f64>,
+    pub release_hit_errors: V,
     pub combo: Combo,
     pub mods: CalculateMods,
     pub rank: Rank,
@@ -651,7 +651,7 @@ pub struct Tourney {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Response {
+pub struct Response<V = Vec<f64>> {
     pub game: Game,
     pub client: String,
     pub server: String,
@@ -662,7 +662,7 @@ pub struct Response {
     pub settings: Settings,
     pub profile: Profile,
     pub beatmap: Beatmap,
-    pub play: Play,
+    pub play: Play<V>,
     pub keys: Keys,
     pub leaderboard: Vec<Leaderboard>,
     pub performance: Performance,

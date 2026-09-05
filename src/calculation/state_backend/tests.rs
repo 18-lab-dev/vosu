@@ -501,16 +501,27 @@ fn reset_and_errors_do_not_leave_stale_progression_or_replace_valid_preparation(
     let backend = Arc::new(LiveStateCalculationBackend::new());
     let request = backend_request(&backend, &root, first);
     LiveStateCalculationBackend::calculate_sync(&backend.state, request.clone()).unwrap();
+    let live_before_reset = {
+        let state = backend.state.lock().expect("backend state lock");
+        Arc::clone(state.live.as_ref().expect("prepared live beatmap"))
+    };
 
     let mut reset = request.clone();
     reset.calculation_reset_generation = 1;
     LiveStateCalculationBackend::calculate_sync(&backend.state, reset.clone()).unwrap();
-    assert_eq!(preparation_counts(&backend), (1, 2, 1));
+    {
+        let state = backend.state.lock().expect("backend state lock");
+        assert!(Arc::ptr_eq(
+            &live_before_reset,
+            state.live.as_ref().expect("reset retains live beatmap"),
+        ));
+    }
+    assert_eq!(preparation_counts(&backend), (1, 1, 1));
 
     let mut invalid_rate = reset.clone();
     invalid_rate.input.mods.rate = 0.0;
     assert!(LiveStateCalculationBackend::calculate_sync(&backend.state, invalid_rate).is_err());
-    assert_eq!(preparation_counts(&backend), (1, 2, 1));
+    assert_eq!(preparation_counts(&backend), (1, 1, 1));
 
     let mut missing = reset.clone();
     missing.input.beatmap_path = root.join("missing.osu");
@@ -520,9 +531,9 @@ fn reset_and_errors_do_not_leave_stale_progression_or_replace_valid_preparation(
         settings: None,
     });
     assert!(LiveStateCalculationBackend::calculate_sync(&backend.state, missing).is_err());
-    assert_eq!(preparation_counts(&backend), (1, 2, 1));
+    assert_eq!(preparation_counts(&backend), (1, 1, 1));
 
     LiveStateCalculationBackend::calculate_sync(&backend.state, reset).unwrap();
-    assert_eq!(preparation_counts(&backend), (1, 2, 1));
+    assert_eq!(preparation_counts(&backend), (1, 1, 1));
     std::fs::remove_dir_all(root).expect("remove backend test directory");
 }

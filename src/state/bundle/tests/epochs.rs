@@ -689,7 +689,7 @@ fn stale_parsed_map_waits_for_current_mania_metadata() {
         stable_replay_frames: Some(StableReplayFrameBatch {
             start_index: 0,
             index: 2,
-            frames,
+            frames: std::sync::Arc::new(frames),
         }),
     })))
     .publish();
@@ -726,7 +726,7 @@ fn stale_parsed_map_waits_for_current_mania_metadata() {
         stable_replay_frames: Some(StableReplayFrameBatch {
             start_index: 2,
             index: 2,
-            frames: Vec::new(),
+            frames: std::sync::Arc::new(Vec::new()),
         }),
     })))
     .publish();
@@ -772,7 +772,7 @@ fn resolved_missing_mania_metadata_is_immediately_press_only() {
         stable_replay_frames: Some(StableReplayFrameBatch {
             start_index: 0,
             index: 0,
-            frames: Vec::new(),
+            frames: std::sync::Arc::new(Vec::new()),
         }),
     })))
     .publish();

@@ -11,27 +11,85 @@ pub(super) fn nonempty_or_unknown(value: String) -> String {
     }
 }
 
-pub(super) async fn enumerate_graphics_adapters() -> Vec<GraphicsAdapter> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    instance
-        .enumerate_adapters(wgpu::Backends::all())
-        .await
-        .into_iter()
-        .map(|adapter| {
-            let info = adapter.get_info();
-            let device_type = match info.device_type {
-                wgpu::DeviceType::Cpu => GraphicsDeviceType::Cpu,
-                wgpu::DeviceType::IntegratedGpu => GraphicsDeviceType::IntegratedGpu,
-                wgpu::DeviceType::DiscreteGpu => GraphicsDeviceType::DiscreteGpu,
-                wgpu::DeviceType::VirtualGpu => GraphicsDeviceType::VirtualGpu,
-                _ => GraphicsDeviceType::Other,
+#[cfg(not(windows))]
+pub(super) fn enumerate_graphics_adapters() -> Vec<GraphicsAdapter> {
+    #[cfg(target_os = "linux")]
+    {
+        linux_graphics_adapters()
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        vec![GraphicsAdapter {
+            name: "Unavailable (native display adapter probe unsupported)".into(),
+            device_type: GraphicsDeviceType::Other,
+        }]
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_graphics_adapters() -> Vec<GraphicsAdapter> {
+    let Ok(entries) = fs::read_dir("/sys/class/drm") else {
+        return vec![unavailable_adapter("sysfs unavailable")];
+    };
+    let mut adapters = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.strip_prefix("card").is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
+            })
+        })
+        .map(|entry| {
+            let card = entry.file_name().to_string_lossy().into_owned();
+            let device = entry.path().join("device");
+            let product = fs::read_to_string(device.join("product_name"))
+                .ok()
+                .map(|name| name.trim().to_owned())
+                .filter(|name| !name.is_empty());
+            let vendor = fs::read_to_string(device.join("vendor")).ok();
+            let id = fs::read_to_string(device.join("device")).ok();
+            let driver = fs::read_link(device.join("driver")).ok().and_then(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            });
+            let mut details = Vec::new();
+            if let Some(vendor) = vendor {
+                details.push(format!("vendor {}", vendor.trim()));
+            }
+            if let Some(id) = id {
+                details.push(format!("device {}", id.trim()));
+            }
+            if let Some(driver) = driver {
+                details.push(format!("driver {driver}"));
+            }
+            let name = match product {
+                Some(product) if details.is_empty() => product,
+                Some(product) => format!("{product} ({})", details.join(", ")),
+                None if details.is_empty() => {
+                    format!("Linux display adapter {card} (metadata unavailable)")
+                }
+                None => format!("Linux display adapter {card} ({})", details.join(", ")),
             };
             GraphicsAdapter {
-                name: info.name,
-                device_type,
+                name,
+                device_type: GraphicsDeviceType::Other,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    adapters.sort_by(|left, right| left.name.cmp(&right.name));
+    if adapters.is_empty() {
+        adapters.push(unavailable_adapter("no display adapters detected"));
+    }
+    adapters
+}
+
+#[cfg(target_os = "linux")]
+fn unavailable_adapter(reason: &str) -> GraphicsAdapter {
+    GraphicsAdapter {
+        name: format!("Unavailable ({reason})"),
+        device_type: GraphicsDeviceType::Other,
+    }
 }
 
 pub(super) fn native_machine_base() -> MachineData {
@@ -57,8 +115,24 @@ pub(super) fn native_machine_base() -> MachineData {
     #[cfg(windows)]
     {
         let (system_type, fallback_gpu_names) = windows_wmi_hardware();
+        let adapters = if fallback_gpu_names.is_empty() {
+            vec![GraphicsAdapter {
+                name: "Unavailable (WMI returned no display adapters)".into(),
+                device_type: GraphicsDeviceType::Other,
+            }]
+        } else {
+            fallback_gpu_names
+                .iter()
+                .cloned()
+                .map(|name| GraphicsAdapter {
+                    name,
+                    device_type: GraphicsDeviceType::Other,
+                })
+                .collect()
+        };
         MachineData {
             system_type,
+            adapters,
             fallback_gpu_names,
             ..data
         }

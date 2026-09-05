@@ -7,6 +7,12 @@ tags: [architecture, performance, memory, profiling]
 
 # Performance and memory audit
 
+
+## Audit implementation status — 2026-09-05
+
+This page retains earlier findings and measurement requirements below; it is not a list of entirely outstanding work. The audit implementation removed the report-only graphics dependency, isolated packaged-release smoke compilation, consolidated JSON numeric formatting, borrowed primary V1/V2/precise graph and hit-error arrays during encoding, reused prepared live-map work and retained replay batches, bounded counter discovery and report capture, bounded report log content/candidate retention, and moved console/configuration blocking work off async workers. WebSocket payload conversion now validates shared bytes without copying, and full pong queues close rather than stalling cancellation.
+
+Linux process-event backends, default features, capability selection, recovery, and polling fallback are deliberately unchanged. Documentation is maintained Markdown with cheap local-link CI checks and no recurring inference. See [benchmarks](../testing/benchmarks.md) for measured results and limitations; remaining older recommendations below require separate evidence before implementation.
 ## Executive summary
 
 This audit tracks eight opportunities worth measuring. They are **candidates, not promises**: except where explicitly described as a local observation, their impact is inferred from static control-flow, allocation, ownership, and queue analysis. Linux idle discovery's broad metadata scan has since been addressed with name-first filtering. The highest-priority remaining candidates are repeated live-calculator work during map load, repeated manager reconstruction after coalesced state publication, and filtered WebSocket projection per client.
@@ -51,7 +57,7 @@ Important limitations:
 
 **Source and mechanism.** [`InstanceRuntime`](../../src/instance.rs) still uses an `EMPTY_DISCOVERY_INTERVAL` of 100 ms so detection latency does not depend on privileged kernel event interfaces. On Linux, [`NativeProcessProvider::enumerate`](../../src/instance/discovery.rs) passes the stable/Wine and lazer name superset to [`enumerate_processes_matching`](../../src/process/linux.rs). Enumeration reads `comm` for each numeric `/proc` entry, then reads command line, executable link, ELF bitness, and the osu! root only after the name filter accepts the process. `classify_candidates` retains its named-first/fallback semantics.
 
-**Event-watcher decision.** Do not add eBPF tracepoints or the proc connector as the default wake path. eBPF tracepoints require `CAP_BPF` plus `CAP_PERFMON` on modern kernels, with the much broader `CAP_SYS_ADMIN` accepted as a compatibility fallback. The proc connector does not require `CAP_NET_ADMIN` on current kernels, but subscriptions are restricted to the initial user and PID namespaces. Both paths require optional Linux kernel support and can lose events without replay, so polling and resynchronization remain mandatory. The added packaging, lifecycle, namespace, and loss-recovery complexity would not help the recommended least-privilege installation.
+**Current event-watcher decision (2026-09-05).** Retain the default Linux process-event feature for its measured performance benefit; see the dated [experiment evidence](../linux-process-events-experiment.md). Backend selection is capability-aware eBPF → CN_PROC → polling, not unconditional use of a privileged interface. Preserve bounded loss handling, PID identity checks, namespace/kernel fallback, and periodic reconciliation because neither event transport provides replay. Earlier advice against shipping the feature is superseded; historical measurements and their limitations remain unchanged.
 
 **Invariant/risk.** Preserve Linux stable/Wine and lazer discovery, deterministic PID/generation handling, prompt empty-state polling, and the distinct Windows focus cadence. Do not cache process identity or resolved paths across PID reuse without the current generation checks.
 

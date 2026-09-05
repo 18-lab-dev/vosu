@@ -152,24 +152,7 @@ pub(super) fn encode_json(value: &impl Serialize) -> Result<String, ApiError> {
 }
 
 pub(super) fn encode_json_bytes(value: &impl Serialize) -> Result<Vec<u8>, ApiError> {
-    let mut output = Vec::new();
-    let mut serializer = serde_json::Serializer::with_formatter(&mut output, JsFormatter);
-    value
-        .serialize(&mut serializer)
-        .map_err(|error| ApiError::serialization(error.to_string()))?;
-    Ok(output)
-}
-
-/// JSON.stringify emits integral Numbers without a decimal suffix.
-struct JsFormatter;
-
-impl serde_json::ser::Formatter for JsFormatter {
-    fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        crate::calculation::write_js_json_number(writer, value)
-    }
+    crate::api::json::encode(value, 0)
 }
 
 #[derive(Serialize)]

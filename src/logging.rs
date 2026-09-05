@@ -114,7 +114,7 @@ struct Inner {
     tx: mpsc::Sender<WriterCommand>,
     dropped: AtomicU64,
     console: Arc<dyn ConsoleSink>,
-    progress: Mutex<ProgressData>,
+    progress: Arc<Mutex<ProgressData>>,
     writer: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -152,8 +152,17 @@ impl Default for LoggerOptions {
     }
 }
 
+struct ConsoleCommand {
+    clear_lines: usize,
+    text: String,
+    progress: bool,
+}
+
 enum WriterCommand {
-    Line(String),
+    Line {
+        file_line: String,
+        console: Option<ConsoleCommand>,
+    },
     Flush(oneshot::Sender<io::Result<()>>),
     Shutdown(oneshot::Sender<io::Result<()>>),
 }
@@ -162,9 +171,10 @@ impl Logger {
     /// Rotates and cleans the log directory, then starts its sole file owner.
     ///
     /// Normal logging uses `try_send`: when the bounded queue is full (or the
-    /// writer has closed), the newest file line is dropped and `dropped_lines`
-    /// is incremented. Console output remains independent. This policy makes
-    /// every producer, including memory polling, strictly non-blocking.
+    /// writer has closed), the newest complete command is dropped and
+    /// `dropped_lines` is incremented. File and console output share one
+    /// ordered queue, so a blocked console cannot block producers or reorder
+    /// accepted output.
     pub fn new(
         logs_dir: impl AsRef<Path>,
         options: LoggerOptions,
@@ -179,7 +189,18 @@ impl Logger {
         OpenOptions::new().create(true).append(true).open(&latest)?;
 
         let (tx, rx) = mpsc::channel(options.queue_capacity.max(1));
-        let writer = tokio::spawn(writer_task(latest, rx));
+        let runtime = tokio::runtime::Handle::current();
+        let writer_console = console.clone();
+        let progress = Arc::new(Mutex::new(ProgressData {
+            next_token: 1,
+            bars: BTreeMap::new(),
+            last_line_count: 0,
+            disabled: false,
+        }));
+        let writer_progress = Arc::clone(&progress);
+        let writer = tokio::task::spawn_blocking(move || {
+            runtime.block_on(writer_task(latest, rx, writer_console, writer_progress));
+        });
         Ok(Self {
             inner: Arc::new(Inner {
                 version: Arc::from(options.version),
@@ -188,12 +209,7 @@ impl Logger {
                 tx,
                 dropped: AtomicU64::new(0),
                 console,
-                progress: Mutex::new(ProgressData {
-                    next_token: 1,
-                    bars: BTreeMap::new(),
-                    last_line_count: 0,
-                    disabled: false,
-                }),
+                progress,
                 writer: Mutex::new(Some(writer)),
             }),
         })
@@ -225,23 +241,24 @@ impl Logger {
         let message = message.into();
         let time = self.running_time();
         let file_line = format_file_line(&time, level, &message);
+        let console = if level.debug_only() && !self.debug_enabled() {
+            None
+        } else {
+            let console_line = format_console_line(&self.inner.version, &time, level, &message);
+            self.console_command(Some(console_line), Instant::now())
+        };
+        self.try_send_line(file_line, console);
+    }
+
+    fn try_send_line(&self, file_line: String, console: Option<ConsoleCommand>) {
         if self
             .inner
             .tx
-            .try_send(WriterCommand::Line(file_line))
+            .try_send(WriterCommand::Line { file_line, console })
             .is_err()
         {
             self.inner.dropped.fetch_add(1, Ordering::Relaxed);
         }
-
-        if level.debug_only() && !self.debug_enabled() {
-            return;
-        }
-
-        self.clear_progress();
-        let console_line = format_console_line(&self.inner.version, &time, level, &message);
-        let _ = self.inner.console.write_log(&console_line);
-        self.render_progress_at(Instant::now(), true);
     }
 
     pub fn info(&self, message: impl Into<String>) {
@@ -273,18 +290,16 @@ impl Logger {
         let message = message.into();
         let time = self.running_time();
         let line = format_file_line(&time, LogLevel::Error, &message);
+        let console_line =
+            format_console_line(&self.inner.version, &time, LogLevel::Error, &message);
         self.inner
             .tx
-            .send(WriterCommand::Line(line))
+            .send(WriterCommand::Line {
+                file_line: line,
+                console: self.console_command(Some(console_line), Instant::now()),
+            })
             .await
             .map_err(|_| broken_writer())?;
-        self.clear_progress();
-        let _ = self.inner.console.write_log(&format_console_line(
-            &self.inner.version,
-            &time,
-            LogLevel::Error,
-            &message,
-        ));
         self.flush().await
     }
 
@@ -305,7 +320,6 @@ impl Logger {
         let Some(handle) = handle else {
             return Ok(());
         };
-
         let (ack_tx, ack_rx) = oneshot::channel();
         self.inner
             .tx
@@ -337,7 +351,7 @@ impl Logger {
             }
             ProgressToken(token)
         };
-        self.render_progress_at(Instant::now(), true);
+        self.enqueue_progress_render(Instant::now());
         token
     }
 
@@ -360,7 +374,7 @@ impl Logger {
             due
         };
         if should_render {
-            self.render_progress_at(now, true);
+            self.enqueue_progress_render(now);
         }
     }
 
@@ -378,7 +392,7 @@ impl Logger {
             bar.progress = 1.0;
             bar.title.clone()
         };
-        self.render_progress_at(Instant::now(), true);
+        self.enqueue_progress_render(Instant::now());
         if self.inner.console.is_tty() && !delay.is_zero() {
             tokio::time::sleep(delay).await;
         }
@@ -389,78 +403,90 @@ impl Logger {
         self.info(format!("{title}: {}", message.into()));
     }
 
-    fn clear_progress(&self) {
+    fn console_command(&self, prefix: Option<String>, now: Instant) -> Option<ConsoleCommand> {
         if !self.inner.console.is_tty() {
-            return;
+            return prefix.map(|text| ConsoleCommand {
+                clear_lines: 0,
+                text,
+                progress: false,
+            });
         }
-        let line_count = {
-            let mut data = lock(&self.inner.progress);
-            if data.disabled || data.last_line_count == 0 {
-                return;
-            }
-            let count = data.last_line_count;
-            data.last_line_count = 0;
-            count
-        };
-        if self.inner.console.clear_progress(line_count).is_err() {
-            self.disable_progress();
-        }
-    }
-
-    fn render_progress_at(&self, now: Instant, force: bool) {
-        if !self.inner.console.is_tty() {
-            return;
-        }
-        self.clear_progress();
-        let output = {
-            let mut data = lock(&self.inner.progress);
-            if data.disabled || data.bars.is_empty() {
-                return;
-            }
-            if !force {
-                return;
-            }
-            let time = format_running_time(now.duration_since(self.inner.started));
-            let mut output = String::from("\n");
-            for bar in data.bars.values() {
-                let progress = bar.progress.clamp(0.0, 1.0);
-                let filled = (30.0 * progress).round() as usize;
-                let empty = 30 - filled;
-                let percentage = (progress * 100.0).round() as u32;
-                output.push_str(LogLevel::Info.color());
-                output.push_str(SEPARATOR);
-                output.push(' ');
-                output.push_str(GREY);
-                output.push_str(&time);
-                output.push_str(RESET);
-                output.push_str("  ");
-                output.push_str(&bar.title);
-                output.push_str(" [");
-                output.push_str(GREEN_TEXT);
-                output.push_str(&PROGRESS_FILLED.repeat(filled));
-                output.push_str(GREY);
-                output.push_str(&PROGRESS_EMPTY.repeat(empty));
-                output.push_str(RESET);
-                output.push_str(&format!("] {percentage:>3}% {}\n", bar.message));
-            }
-            output.pop();
-            data.last_line_count = data.bars.len();
-            output
-        };
-        if self.inner.console.write_progress(&output).is_err() {
-            self.disable_progress();
-        }
-    }
-
-    fn disable_progress(&self) {
         let mut data = lock(&self.inner.progress);
-        data.disabled = true;
-        data.bars.clear();
+        if data.disabled {
+            return prefix.map(|text| ConsoleCommand {
+                clear_lines: 0,
+                text,
+                progress: false,
+            });
+        }
+        let clear_lines = data.last_line_count;
         data.last_line_count = 0;
+        if data.bars.is_empty() {
+            return prefix.map(|text| ConsoleCommand {
+                clear_lines,
+                text,
+                progress: false,
+            });
+        }
+        let time = format_running_time(now.duration_since(self.inner.started));
+        let mut text = prefix.unwrap_or_default();
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        for bar in data.bars.values() {
+            let progress = bar.progress.clamp(0.0, 1.0);
+            let filled = (30.0 * progress).round() as usize;
+            let empty = 30 - filled;
+            let percentage = (progress * 100.0).round() as u32;
+            text.push_str(LogLevel::Info.color());
+            text.push_str(SEPARATOR);
+            text.push(' ');
+            text.push_str(GREY);
+            text.push_str(&time);
+            text.push_str(RESET);
+            text.push_str("  ");
+            text.push_str(&bar.title);
+            text.push_str(" [");
+            text.push_str(GREEN_TEXT);
+            text.push_str(&PROGRESS_FILLED.repeat(filled));
+            text.push_str(GREY);
+            text.push_str(&PROGRESS_EMPTY.repeat(empty));
+            text.push_str(RESET);
+            text.push_str(&format!("] {percentage:>3}% {}\n", bar.message));
+        }
+        text.pop();
+        data.last_line_count = data.bars.len();
+        Some(ConsoleCommand {
+            clear_lines,
+            text,
+            progress: true,
+        })
+    }
+
+    fn enqueue_progress_render(&self, now: Instant) {
+        let Some(console) = self.console_command(None, now) else {
+            return;
+        };
+        if self
+            .inner
+            .tx
+            .try_send(WriterCommand::Line {
+                file_line: String::new(),
+                console: Some(console),
+            })
+            .is_err()
+        {
+            self.inner.dropped.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
-async fn writer_task(path: PathBuf, mut rx: mpsc::Receiver<WriterCommand>) {
+async fn writer_task(
+    path: PathBuf,
+    mut rx: mpsc::Receiver<WriterCommand>,
+    console: Arc<dyn ConsoleSink>,
+    progress: Arc<Mutex<ProgressData>>,
+) {
     let opened = tokio::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -471,9 +497,19 @@ async fn writer_task(path: PathBuf, mut rx: mpsc::Receiver<WriterCommand>) {
         Err(error) => {
             while let Some(command) = rx.recv().await {
                 match command {
-                    WriterCommand::Line(_) => {}
-                    WriterCommand::Flush(ack) | WriterCommand::Shutdown(ack) => {
+                    WriterCommand::Line {
+                        console: Some(output),
+                        ..
+                    } => {
+                        let _ = write_console(console.as_ref(), output, &progress);
+                    }
+                    WriterCommand::Line { console: None, .. } => {}
+                    WriterCommand::Flush(ack) => {
                         let _ = ack.send(Err(io::Error::new(error.kind(), error.to_string())));
+                    }
+                    WriterCommand::Shutdown(ack) => {
+                        let _ = ack.send(Err(io::Error::new(error.kind(), error.to_string())));
+                        break;
                     }
                 }
             }
@@ -481,14 +517,25 @@ async fn writer_task(path: PathBuf, mut rx: mpsc::Receiver<WriterCommand>) {
         }
     };
     let mut first_error: Option<(io::ErrorKind, String)> = None;
-
     while let Some(command) = rx.recv().await {
         match command {
-            WriterCommand::Line(line) => {
-                if let Err(error) = file.write_all(line.as_bytes()).await
+            WriterCommand::Line {
+                file_line,
+                console: output,
+            } => {
+                if !file_line.is_empty()
+                    && let Err(error) = file.write_all(file_line.as_bytes()).await
                     && first_error.is_none()
                 {
                     first_error = Some((error.kind(), error.to_string()));
+                }
+                if let Some(output) = output {
+                    let result = write_console(console.as_ref(), output, &progress);
+                    if let Err(error) = result
+                        && first_error.is_none()
+                    {
+                        first_error = Some((error.kind(), error.to_string()));
+                    }
                 }
             }
             WriterCommand::Flush(ack) => {
@@ -502,6 +549,27 @@ async fn writer_task(path: PathBuf, mut rx: mpsc::Receiver<WriterCommand>) {
             }
         }
     }
+}
+
+fn write_console(
+    console: &dyn ConsoleSink,
+    output: ConsoleCommand,
+    progress: &Mutex<ProgressData>,
+) -> io::Result<()> {
+    let result = console.clear_progress(output.clear_lines).and_then(|_| {
+        if output.progress {
+            console.write_progress(&output.text)
+        } else {
+            console.write_log(&output.text)
+        }
+    });
+    if result.is_err() {
+        let mut data = lock(progress);
+        data.disabled = true;
+        data.bars.clear();
+        data.last_line_count = 0;
+    }
+    result
 }
 
 async fn flush_result(

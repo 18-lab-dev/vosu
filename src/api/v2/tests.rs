@@ -271,13 +271,13 @@ fn mode_and_lazer_team_fixture_matches_source_contract() {
 fn performance_uses_disabled_defaults_and_retained_state_projection() {
     let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
     let mut regular = (*base.regular).clone();
-    let disabled = build_performance(&regular).unwrap();
+    let disabled = build_performance(&regular, true).unwrap();
     assert_eq!(disabled.accuracy.acc_90, 0.0);
     assert_eq!(disabled.accuracy.acc_100, 0.0);
 
     regular.beatmap.pp_acc.insert(90, 321.0);
     regular.beatmap.pp_acc.insert(100, 654.0);
-    let retained = build_performance(&regular).unwrap();
+    let retained = build_performance(&regular, true).unwrap();
     assert_eq!(retained.accuracy.acc_90, 321.0);
     assert_eq!(retained.accuracy.acc_100, 654.0);
     assert!(regular.beatmap.parsed.is_none());
@@ -530,6 +530,10 @@ fn play_threads_press_and_release_hit_errors_with_exact_wire_shape() {
     assert!(json(&build(&snapshot).unwrap().play).contains(
         r#""hitErrorArray":[-3.5,6.25],"pressHitErrors":[-3.5],"releaseHitErrors":[6.25]"#
     ));
+    assert_eq!(
+        encode(&snapshot).unwrap(),
+        encode_dto(&build(&snapshot).unwrap()).unwrap()
+    );
 }
 
 #[test]

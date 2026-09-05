@@ -1,7 +1,6 @@
 //! Source-compatible flat streamCompanion `/json/sc` builder.
 
 use std::cmp::Ordering;
-use std::io;
 
 use bytes::Bytes;
 use indexmap::IndexMap;

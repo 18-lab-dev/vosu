@@ -2,8 +2,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use serde_json::Value;
-
 use super::beatmap::{
     AppliedMod, BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, DifficultyAttributes,
     DifficultyValues, EngineOutput, EngineRequest, ModSet, ParsedBeatmap, PeakStrains,
@@ -90,9 +88,16 @@ impl BeatmapEngine for LiveBeatmapEngine {
                 .map_err(engine_error)?;
             pp_by_accuracy.insert(accuracy, attrs.pp);
         }
+        let live_prepared = Arc::new(vosu_pp::PreparedBeatmap::new(
+            map,
+            config,
+            difficulty.clone(),
+            maximum,
+        ));
 
         Ok(EngineOutput {
             original_difficulty: difficulty_values(original),
+            live_prepared: Some(live_prepared),
             converted_difficulty: difficulty_values(converted),
             difficulty: DifficultyAttributes {
                 stars: difficulty.stars,
@@ -189,43 +194,6 @@ fn structured_mods(mods: &[AppliedMod]) -> Result<Vec<vosu_pp::StructuredMod>, B
         .collect()
 }
 
-fn calculate_mods(mods: &[Mod]) -> Result<Vec<vosu_pp::StructuredMod>, String> {
-    mods.iter()
-        .map(|value| {
-            let settings = value
-                .settings
-                .as_ref()
-                .map(|settings| {
-                    settings
-                        .iter()
-                        .map(|(key, value)| {
-                            let value = match value {
-                                Value::Bool(value) => vosu_pp::ModValue::Bool(*value),
-                                Value::Number(value) => value
-                                    .as_f64()
-                                    .map(vosu_pp::ModValue::Number)
-                                    .ok_or_else(|| format!("mod setting `{key}` is not finite"))?,
-                                Value::String(value) => vosu_pp::ModValue::String(value.clone()),
-                                _ => {
-                                    return Err(format!(
-                                        "mod setting `{key}` must be boolean, number, or string"
-                                    ));
-                                }
-                            };
-                            Ok((key.clone(), value))
-                        })
-                        .collect::<Result<BTreeMap<_, _>, String>>()
-                })
-                .transpose()?
-                .unwrap_or_default();
-            Ok(vosu_pp::StructuredMod {
-                acronym: value.acronym.clone(),
-                settings,
-            })
-        })
-        .collect()
-}
-
 fn applied_mods(mods: &[Mod]) -> Vec<AppliedMod> {
     mods.iter()
         .map(|value| AppliedMod {
@@ -242,10 +210,8 @@ struct PreparedMods {
     source: Vec<Mod>,
     rate_bits: u64,
     client: ClientType,
-    sanitized: Vec<Mod>,
     checksum: String,
     mod_set: ModSet,
-    live: Option<Vec<vosu_pp::StructuredMod>>,
     generation: u64,
 }
 
@@ -261,7 +227,6 @@ struct PreparedMap {
     requested_mode: i64,
     scoring: ScoringMode,
     mods_generation: u64,
-    reset_generation: u64,
     parsed: Arc<ParsedBeatmap>,
     mode: Ruleset,
     background_filename: Option<String>,
@@ -279,7 +244,6 @@ impl PreparedMap {
             && self.requested_mode == request.input.mode
             && self.scoring == scoring
             && self.mods_generation == mods_generation
-            && self.reset_generation == request.calculation_reset_generation
     }
 }
 
@@ -497,7 +461,7 @@ impl LiveStateCalculationBackend {
             let mods_hit = state.prepared_mods.as_ref().is_some_and(|prepared| {
                 prepared.matches(&request.input.mods, request.input.client_scoring)
             });
-            let mut candidate_mods = if mods_hit {
+            let candidate_mods = if mods_hit {
                 None
             } else {
                 let sanitized = mods_for_calculation(
@@ -519,10 +483,8 @@ impl LiveStateCalculationBackend {
                     source: request.input.mods.array.clone(),
                     rate_bits: request.input.mods.rate.to_bits(),
                     client: request.input.client_scoring,
-                    sanitized,
                     checksum,
                     mod_set,
-                    live: None,
                     generation,
                 })
             };
@@ -566,35 +528,14 @@ impl LiveStateCalculationBackend {
             let replacement_live = if state.live_key.as_deref() == Some(&live_key) {
                 None
             } else {
-                let mods = if let Some(candidate) = candidate_mods.as_mut() {
-                    if candidate.live.is_none() {
-                        candidate.live = Some(
-                            calculate_mods(&candidate.sanitized)
-                                .map_err(StateWorkerError::Transition)?,
-                        );
-                    }
-                    candidate
-                        .live
-                        .as_deref()
-                        .expect("validated candidate live mods exist")
-                } else {
-                    let prepared = state
-                        .prepared_mods
-                        .as_mut()
-                        .expect("prepared mods exist before creating a live beatmap");
-                    if prepared.live.is_none() {
-                        prepared.live = Some(
-                            calculate_mods(&prepared.sanitized)
-                                .map_err(StateWorkerError::Transition)?,
-                        );
-                    }
-                    prepared
-                        .live
-                        .as_deref()
-                        .expect("validated live mods exist before engine setup")
-                };
-                let live = LiveProgressiveBeatmap::new(parsed.source().as_bytes(), mode, mods)
-                    .map_err(|error| StateWorkerError::Transition(error.to_string()))?;
+                let prepared = Arc::clone(
+                    parsed
+                        .engine
+                        .live_prepared
+                        .as_ref()
+                        .expect("live engine always retains its prepared beatmap"),
+                );
+                let live = LiveProgressiveBeatmap::from_prepared(prepared);
                 Some((Arc::new(live), live_key))
             };
 
@@ -623,7 +564,6 @@ impl LiveStateCalculationBackend {
                 requested_mode: request.input.mode,
                 scoring,
                 mods_generation,
-                reset_generation: request.calculation_reset_generation,
                 mode,
                 background_filename: parsed_background_filename(
                     request.input.client_scoring,

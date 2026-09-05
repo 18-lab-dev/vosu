@@ -134,6 +134,40 @@ fn snapshot_with_precise(
 }
 
 #[test]
+fn borrowed_encoding_preserves_populated_graph_and_hit_arrays() {
+    let mut state = regular();
+    let graph = Arc::make_mut(&mut state.beatmap.graph);
+    graph.primary = vec![1.25, 2.5];
+    graph.x_axis = vec![0.0, 400.0];
+    graph.series = vec![crate::calculation::beatmap::GraphSeries {
+        name: "aim".into(),
+        data: vec![3.5, 4.75],
+    }];
+    let mut precise = precise();
+    precise.hit_errors = Arc::new(HitErrorArray {
+        all: vec![-3.5, 6.25],
+        press: vec![-3.5],
+        release: vec![6.25],
+    });
+    let snapshot = snapshot_with_precise(10, ClientType::Stable, state, precise);
+    let owned = build(&snapshot).unwrap();
+    assert_eq!(
+        encode(&snapshot).unwrap().as_ref(),
+        crate::api::json::encode(&owned, 0).unwrap()
+    );
+    let decoded: Value = serde_json::from_slice(&encode(&snapshot).unwrap()).unwrap();
+    assert_eq!(decoded["menu"]["pp"]["strains"], json!([1.25, 2.5]));
+    assert_eq!(
+        decoded["menu"]["pp"]["strainsAll"]["series"][0]["data"],
+        json!([3.5, 4.75])
+    );
+    assert_eq!(
+        decoded["gameplay"]["hits"]["hitErrorArray"],
+        json!([-3.5, 6.25])
+    );
+}
+
+#[test]
 fn menu_defaults_preserve_order_omissions_and_dot_path() {
     let snapshot = snapshot(10, ClientType::Stable, regular(), Vec::new());
     let value = String::from_utf8(encode(&snapshot).unwrap().to_vec()).unwrap();

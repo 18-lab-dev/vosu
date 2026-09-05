@@ -1,12 +1,8 @@
-use std::{
-    io::{self, Write},
-    path::{Component, PathBuf},
-};
+use std::path::{Component, PathBuf};
 
 use bytes::Bytes;
 use serde::Serialize;
 use serde_json::Value;
-use serde_json::ser::{Formatter, Serializer};
 
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
 use crate::calculation::beatmap::ParsedBeatmap;
@@ -18,6 +14,13 @@ use crate::model::states::{CalculateMods, HitErrorArray, LeaderboardPlayer, Sett
 use crate::state::{GameplayState, RegularState};
 
 pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
+    build_internal(snapshot, true)
+}
+
+fn build_internal<'a, V: From<&'a [f64]>>(
+    snapshot: &'a CombinedSnapshot,
+    include_graph_data: bool,
+) -> Result<Response<V>, ApiError> {
     let focused = snapshot.focused().ok_or(ApiError::NotReady)?;
     let state = focused.regular.as_ref();
     let source = focused.source;
@@ -72,7 +75,7 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
             .iter()
             .map(|player| build_leaderboard(player, source, state.gameplay.mode))
             .collect(),
-        performance: build_performance(state)?,
+        performance: build_performance(state, include_graph_data)?,
         results_screen: build_results(state),
         folders: Folders {
             game: state.global.game_folder.clone(),
@@ -104,7 +107,7 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
 
 pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
     snapshot.encode_unfiltered(ApiSchema::V2, |snapshot| {
-        encode_dto_with_capacity(&build(snapshot)?, 4 * 1024)
+        encode_dto_with_capacity(&build_internal::<&[f64]>(snapshot, false)?, 4 * 1024)
     })
 }
 
@@ -143,30 +146,7 @@ pub(crate) fn encode_dto<T: Serialize>(value: &T) -> Result<Bytes, ApiError> {
 }
 
 fn encode_dto_with_capacity<T: Serialize>(value: &T, capacity: usize) -> Result<Bytes, ApiError> {
-    let mut bytes = Vec::with_capacity(capacity);
-    let mut serializer = Serializer::with_formatter(&mut bytes, JsFormatter);
-    value
-        .serialize(&mut serializer)
-        .map_err(|error| ApiError::serialization(error.to_string()))?;
-    Ok(Bytes::from(bytes))
-}
-
-pub(crate) struct JsFormatter;
-
-impl Formatter for JsFormatter {
-    fn write_f32<W>(&mut self, writer: &mut W, value: f32) -> io::Result<()>
-    where
-        W: ?Sized + Write,
-    {
-        crate::calculation::write_js_json_number(writer, f64::from(value))
-    }
-
-    fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
-    where
-        W: ?Sized + Write,
-    {
-        crate::calculation::write_js_json_number(writer, value)
-    }
+    crate::api::json::encode(value, capacity).map(Bytes::from)
 }
 
 mod builders;

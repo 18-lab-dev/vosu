@@ -1,5 +1,6 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use super::enums::RankedPlayStage;
 use super::states::{
@@ -137,7 +138,7 @@ pub struct StableReplayFrame {
 pub struct StableReplayFrameBatch {
     pub start_index: i64,
     pub index: i64,
-    pub frames: Vec<StableReplayFrame>,
+    pub frames: Arc<Vec<StableReplayFrame>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

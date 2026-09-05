@@ -25,13 +25,13 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Reports and logging | `src/report/`, `src/logging/` | Report rendering, escaping, retention and operational diagnostics |
 | Integration evidence | `tools/live-parity/`, `tools/oracle/` | Pinned parity captures, calculator provenance and diffs |
 | Precise validation | `tools/input-validation/` | Map scanning, navigation, autoplay, edge accounting and capture artifacts |
-| Behavioral contracts | `tests/`, `crates/vosu-test-harness/` | Compatibility, native, smoke, updater, state, performance and release tests |
+| Behavioral contracts | `tests/`, `crates/vosu-test-harness/`, `crates/vosu-release-smoke/` | Compatibility, native, daemon smoke, updater/state/performance, and external packaged-executable tests |
 | Performance evidence | `benches/hot_paths.rs`, [benchmark guide](../testing/benchmarks.md) | Criterion hot paths and machine-specific comparisons |
 | Embedded inputs | `assets/`, `build.rs` | Dashboard, fonts, images, offsets and checksum-covered assets |
 
 ## Workspace boundaries
 
-`Cargo.toml` defines one workspace with the production `vosu` package, the `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, and `crates/vosu-test-harness`. The latter is test support only. Release profiles use thin LTO, one codegen unit, stripped symbols, and abort-on-panic; `test-harness` is rejected by `build.rs` in release builds.
+`Cargo.toml` defines one workspace with the production `vosu` package, the `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, the integration-only `vosu-test-harness`, and the dependency-isolated `vosu-release-smoke` package. The smoke package launches an external packaged executable and does not depend on the daemon crate. Release profiles retain thin LTO, one codegen unit, stripped symbols, and abort-on-panic; `test-harness` is rejected by `build.rs` in release builds.
 
 ## Evidence hierarchy
 

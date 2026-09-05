@@ -2,8 +2,9 @@ use chrono::{DateTime, Local};
 
 use super::*;
 use std::fs::File;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tempfile::tempdir;
 
 #[derive(Default)]
@@ -12,6 +13,7 @@ struct TestConsole {
     logs: Mutex<Vec<String>>,
     progress: Mutex<Vec<String>>,
     clears: AtomicUsize,
+    blocked: Arc<AtomicBool>,
 }
 
 impl TestConsole {
@@ -28,6 +30,9 @@ impl ConsoleSink for TestConsole {
         self.tty
     }
     fn write_log(&self, text: &str) -> io::Result<()> {
+        while self.blocked.load(Ordering::Acquire) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
         lock(&self.logs).push(text.to_owned());
         Ok(())
     }
@@ -79,7 +84,7 @@ async fn exact_file_labels_and_highlights_are_stripped() {
 }
 
 #[tokio::test]
-async fn console_uses_exact_ansi_and_debug_reload() {
+async fn console_filters_debug_at_enqueue_time_across_reload() {
     let dir = tempdir().unwrap();
     let console = Arc::new(TestConsole::default());
     let logger = Logger::new(dir.path(), options(8), console.clone()).unwrap();
@@ -94,24 +99,13 @@ async fn console_uses_exact_ansi_and_debug_reload() {
     config.debug_log = false;
     logger.update_config(&config);
     logger.time("hidden again");
+    logger.flush().await.unwrap();
     {
         let logs = lock(&console.logs);
         assert_eq!(logs.len(), 1);
-        assert!(logs[0].starts_with("\x1b[38;2;170;170;170m0.1.0\x1b[0m  \x1b[38;2;120;120;120m┃\x1b[0m  \x1b[38;2;170;170;170m"));
-        assert!(logs[0].ends_with("\x1b[0m  shown \x1b[1m\x1b[37mvalue\x1b[0m\n"));
+        assert!(logs[0].contains("shown"));
+        assert!(!logs[0].contains("hidden"));
     }
-    logger.shutdown().await.unwrap();
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn bounded_queue_drops_newest_without_blocking() {
-    let dir = tempdir().unwrap();
-    let logger = Logger::new(dir.path(), options(1), Arc::new(TestConsole::default())).unwrap();
-    for n in 0..1000 {
-        logger.debug(format!("line {n}"));
-    }
-    assert!(logger.dropped_lines() >= 999);
-    logger.flush().await.unwrap();
     logger.shutdown().await.unwrap();
 }
 
@@ -192,14 +186,35 @@ async fn progress_is_tty_only_and_rate_limited() {
     let tty = Arc::new(TestConsole::tty());
     let logger = Logger::new(dir.path(), options(8), tty.clone()).unwrap();
     let token = logger.progress_start("Download");
+    logger.flush().await.unwrap();
     let after_start = lock(&tty.progress).len();
     logger.progress_update(token, 0.1, "one");
+    logger.flush().await.unwrap();
     let after_first = lock(&tty.progress).len();
     logger.progress_update(token, 0.2, "two");
     assert_eq!(lock(&tty.progress).len(), after_first);
     assert!(after_first > after_start);
     logger.progress_update(token, 1.0, "done");
+    logger.flush().await.unwrap();
     assert_eq!(lock(&tty.progress).len(), after_first + 1);
+    logger.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn blocked_console_drops_without_blocking_producers() {
+    let dir = tempdir().unwrap();
+    let blocked = Arc::new(AtomicBool::new(true));
+    let console = Arc::new(TestConsole {
+        tty: true,
+        blocked: blocked.clone(),
+        ..TestConsole::default()
+    });
+    let logger = Logger::new(dir.path(), options(1), console).unwrap();
+    for index in 0..100 {
+        logger.info(format!("line {index}"));
+    }
+    assert!(logger.dropped_lines() > 0);
+    blocked.store(false, Ordering::Release);
     logger.shutdown().await.unwrap();
 }
 

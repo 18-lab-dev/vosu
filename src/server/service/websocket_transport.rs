@@ -62,9 +62,19 @@ async fn bridge_socket(
             let state_frame = matches!(frame, Outbound::Text(_));
             let terminal_frame = matches!(frame, Outbound::Close { .. });
             let message = match frame {
-                Outbound::Text(bytes) | Outbound::Reply(bytes) => Message::Text(Utf8Bytes::from(
-                    String::from_utf8_lossy(&bytes).into_owned(),
-                )),
+                Outbound::Text(bytes) | Outbound::Reply(bytes) => {
+                    let Ok(text) = Utf8Bytes::try_from(bytes) else {
+                        let _ = sink
+                            .send(Message::Close(Some(CloseFrame {
+                                code: 1011,
+                                reason: Utf8Bytes::from_static(""),
+                            })))
+                            .await;
+                        let _ = sink.flush().await;
+                        break;
+                    };
+                    Message::Text(text)
+                }
                 Outbound::Binary(bytes) => Message::Binary(bytes),
                 Outbound::Pong(bytes) => Message::Pong(bytes),
                 Outbound::Close { code, reason } => Message::Close(Some(CloseFrame {
@@ -287,7 +297,8 @@ async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub
                         return Err(false);
                     }
                     Ok(Message::Ping(data)) => {
-                        if !reader_connection.send_pong(data).await {
+                        if !reader_connection.send_pong(data) {
+                            reader_connection.close(1011);
                             return Err(false);
                         }
                     }
@@ -313,7 +324,15 @@ async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub
             Ok(Ok(())) => {}
             Ok(Err(true)) => return true,
             Ok(Err(false)) => {
-                let _ = (&mut terminal_sent_rx).await;
+                if tokio::time::timeout(
+                    V2_SUBSCRIPTION_TERMINAL_DRAIN_TIMEOUT,
+                    &mut terminal_sent_rx,
+                )
+                .await
+                .is_err()
+                {
+                    return false;
+                }
                 while let Some(frame) = stream.next().await {
                     match frame {
                         Ok(Message::Close(_)) => return true,
@@ -325,7 +344,15 @@ async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub
             }
             Err(_) => {
                 reader_connection.subscription_timed_out();
-                let _ = (&mut terminal_sent_rx).await;
+                if tokio::time::timeout(
+                    V2_SUBSCRIPTION_TERMINAL_DRAIN_TIMEOUT,
+                    &mut terminal_sent_rx,
+                )
+                .await
+                .is_err()
+                {
+                    return false;
+                }
                 while let Some(frame) = stream.next().await {
                     match frame {
                         Ok(Message::Close(_)) => return true,
@@ -351,7 +378,8 @@ async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub
                     break;
                 }
                 Ok(Message::Ping(data)) => {
-                    if !reader_connection.send_pong(data).await {
+                    if !reader_connection.send_pong(data) {
+                        reader_connection.close(1011);
                         break;
                     }
                 }
@@ -372,12 +400,18 @@ async fn bridge_v2_subscription_socket(socket: WebSocket, hub: V2SubscriptionHub
                 }
             }
         }
-        let _ = (&mut terminal_sent_rx).await;
+        if tokio::time::timeout(
+            V2_SUBSCRIPTION_TERMINAL_DRAIN_TIMEOUT,
+            &mut terminal_sent_rx,
+        )
+        .await
+        .is_err()
+        {
+            return false;
+        }
         while let Some(frame) = stream.next().await {
-            match frame {
-                Ok(Message::Close(_)) => return true,
-                Err(_) => return false,
-                _ => {}
+            if let Ok(Message::Close(_)) = frame {
+                return true;
             }
         }
         false

@@ -271,3 +271,24 @@ async fn configured_log_io_errors_surface() {
         .unwrap_err();
     assert!(matches!(error, ReportError::Logs(_)));
 }
+
+#[tokio::test]
+async fn oversized_logs_are_bounded_with_visible_truncation() {
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("oversized.log");
+    let mut contents = "00:00:00.000 [info] first\n".repeat(LOG_MAX_LINES + 1);
+    contents.push_str(&"x".repeat(LOG_MAX_BYTES));
+    fs::write(path, contents).unwrap();
+
+    let input = ReportInput {
+        logs_dir: Some(directory.path().into()),
+        ..ReportInput::default()
+    };
+    let document =
+        generate_report_document_at(input, &FixedProbe(MachineData::unknown()), UNIX_EPOCH)
+            .await
+            .unwrap();
+    let html = rendered(&document).await;
+    assert!(html.contains("[log truncated: maximum"));
+    assert!(html.len() < LOG_MAX_BYTES * 2);
+}

@@ -13,7 +13,7 @@ tags: [testing, ci, parity, benchmarks, release]
 - API projection/routing: affected tests plus `cargo test --locked --test state_api_compat` and/or `server_compat`; add `daemon_smoke` for startup/serving changes.
 - Configuration/counters: affected unit tests plus `cargo test --locked --test config_compat`; cover flat typed TOML parsing, precedence `vosu.toml > vosu.env > tosu.env > defaults`, canonical replacement before legacy removal, malformed startup/reload preservation of last-good state, watcher handling, and atomic writes.
 - Process/memory: affected tests plus `cargo test --locked --test process_memory -- --nocapture` on every affected native OS.
-- Updater/release: `updater_compat`, native `updater_native`, and `release_smoke` for package/startup changes.
+- Updater/release: `updater_compat`, native `updater_native`, and `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture` for package/startup changes.
 - Calculation/state: `vosu-pp` tests, `performance_invariants`, and live parity when observable schemas or timing can change; for v2 stats, cover parsed/missing maps, modes, mods, clock rate, and catch timing-window semantics. The oracle-backed `live_contracts` and `oracle_parity` tests require the crate’s `oracle-debug` feature.
 - Compatibility payloads: assert `hitErrors`/`hitErrorArray` object fields (`all`, `press`, `release`) across v1, stream companion, v2, precise, play, and tournament fixtures; include the lazer mania hold release-correction case.
 - Hot paths: the affected Criterion group in `benches/hot_paths.rs`, compared on the same machine; record observations in the [benchmark guide](benchmarks.md), not as universal thresholds.
@@ -30,7 +30,9 @@ cargo test --locked --test process_memory -- --nocapture
 cargo test --locked --test updater_native -- --nocapture
 ```
 
-CI covers Linux and Windows validation, production release builds, and rejection of the development-only `test-harness` feature in release mode. The tagged release workflow also packages, extracts, and smoke-tests exactly the Linux and Windows archives.
+CI always publishes `CI required`, including documentation-only PRs. The cheap classification job checks local Markdown links without network or inference. Code changes run Linux Clippy/tests and a Windows MSVC cross-check; shared/platform/build/workflow changes also run native Windows verification. Pure schema/calculator changes retain cross-checks without automatically running native Windows. Manual dispatch runs both lanes. Branch protection should require `CI required` rather than conditionally skipped platform jobs. Cross-compilation is not native execution evidence.
+
+MSVC SDK caching is independent of Cargo.lock and restricted to x86_64. Prepared SDKs are saved before later lint failures. Rust artifact caches use separate target/lane keys and weekly generations to limit archive churn; downloads are cached separately. Tagged releases package, extract, and exercise the exact Linux/Windows archives, using a small smoke-test package that does not depend on the daemon crate.
 
 ## Evidence workflows
 
@@ -48,6 +50,6 @@ Criterion benchmarks cover scanner/snapshot reads, beatmap parsing/calculation/c
 
 ## Test layout
 
-`tests/` contains compatibility (`state_api_compat`, `server_compat`, `config_compat`, `updater_compat`), native (`process_memory`, `updater_native`), smoke (`daemon_smoke`, `release_smoke`), and invariant (`performance_invariants`) contracts. Focused unit/service tests live beside their owning modules. `crates/vosu-test-harness/` supports integration tests only.
+`tests/` contains compatibility (`state_api_compat`, `server_compat`, `config_compat`, `updater_compat`), native (`process_memory`, `updater_native`), daemon smoke (`daemon_smoke`), and invariant (`performance_invariants`) contracts. `crates/vosu-release-smoke/` tests an external packaged executable. Focused unit/service tests live beside their owning modules. `crates/vosu-test-harness/` supports integration tests only.
 
 When a change crosses [runtime boundaries](../architecture/overview.md), run the narrowest affected contract first and then the platform/live gate appropriate to the observable behavior. Do not substitute a compile-only check for behavior verification.

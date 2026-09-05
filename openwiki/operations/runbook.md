@@ -8,20 +8,14 @@ tags: [operations, runbook, security, release, troubleshooting]
 
 # Operations runbook
 
-## Manual OpenWiki maintenance
+## Documentation maintenance
 
-Run documentation updates locally from the repository root with the installed OpenWiki CLI and the maintainer’s local OpenAI/Codex subscription:
-
-```sh
-openwiki code --update --print
-```
-
-Pass a focused prompt when only one area changed, then inspect `git diff -- openwiki` and keep only evidence-backed edits. The supported maintenance path is local; do not recreate the removed `.github/workflows/openwiki-update.yml` or add scheduled/manual GitHub Actions for documentation updates. `openwiki --help` is the live reference for installed CLI options.
+Update ordinary Markdown in `openwiki/` in the PR that changes the documented behavior. Review only affected contracts and architecture; do not run recurring inference or whole-tree generation. The directory name is retained for stable links, not as an OpenWiki tooling requirement. Preserve dated benchmark and experiment evidence rather than rewriting historical results.
 
 ## Launch checklist
 
 - Use Rust 1.96.1 and `--locked` for source builds.
-- Run `cargo run --locked --no-default-features` for local development.
+- Run `cargo run --locked` for local development; Linux process-event backends remain enabled by default.
 - Run the daemon as the same desktop user as osu!.
 - Confirm `127.0.0.1:24050` is reachable before investigating API readiness.
 - Check that the client process is supported and that stable/lazer path and offset resolution can complete.

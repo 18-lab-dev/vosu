@@ -9,7 +9,7 @@ use futures_util::Stream;
 use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -26,6 +26,10 @@ const TEMPLATE: &str = include_str!(concat!(
 ));
 const CONTENT_TYPE: &str = "text/html; charset=utf-8";
 const LOG_LIMIT: usize = 10;
+const LOG_MAX_BYTES: usize = 1_048_576;
+const LOG_MAX_TOTAL_BYTES: usize = 8_388_608;
+const LOG_MAX_LINES: usize = 10_000;
+const LOG_MAX_TOTAL_LINES: usize = 100_000;
 
 #[derive(Debug, Error)]
 pub enum ReportError {
@@ -123,15 +127,20 @@ pub trait ReportProbe: Send + Sync {
 
 #[derive(Debug, Default)]
 pub struct NativeReportProbe;
-
 impl ReportProbe for NativeReportProbe {
     fn probe(&self) -> Pin<Box<dyn Future<Output = MachineData> + Send + '_>> {
         Box::pin(async {
-            let base = tokio::task::spawn_blocking(native_machine_base)
-                .await
-                .unwrap_or_else(|_| MachineData::unknown());
-            let adapters = enumerate_graphics_adapters().await;
-            MachineData { adapters, ..base }
+            tokio::task::spawn_blocking(|| {
+                let base = native_machine_base();
+                #[cfg(not(windows))]
+                let base = MachineData {
+                    adapters: enumerate_graphics_adapters(),
+                    ..base
+                };
+                base
+            })
+            .await
+            .unwrap_or_else(|_| MachineData::unknown())
         })
     }
 }
@@ -459,7 +468,7 @@ pub fn escape_html(value: &str) -> String {
 }
 
 fn read_newest_logs(directory: &Path) -> io::Result<Vec<ReportLog>> {
-    let mut files = Vec::new();
+    let mut files = Vec::with_capacity(LOG_LIMIT + 1);
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
@@ -475,20 +484,76 @@ fn read_newest_logs(directory: &Path) -> io::Result<Vec<ReportLog>> {
             entry.file_name().to_string_lossy().into_owned(),
             path,
         ));
+        files.sort_unstable_by(|left, right| {
+            right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1))
+        });
+        files.truncate(LOG_LIMIT);
     }
-    files.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
-    files.truncate(LOG_LIMIT);
-    files
-        .into_iter()
-        .map(|(modified, filename, path)| {
-            let contents = fs::read_to_string(path)?;
-            Ok(ReportLog {
-                filename,
-                modified: DateTime::<Utc>::from(modified),
-                lines: contents.lines().map(parse_log_line).collect(),
-            })
-        })
-        .collect()
+    let mut total_bytes = 0;
+    let mut total_lines = 0;
+    let mut omitted = false;
+    let mut logs = Vec::with_capacity(files.len());
+    for (modified, filename, path) in files {
+        let remaining_bytes = LOG_MAX_TOTAL_BYTES.saturating_sub(total_bytes);
+        let remaining_lines = LOG_MAX_TOTAL_LINES.saturating_sub(total_lines);
+        if remaining_bytes == 0 || remaining_lines == 0 {
+            omitted = true;
+            break;
+        }
+        let (contents, byte_truncated) = read_bounded_log(&path, remaining_bytes)?;
+        total_bytes = total_bytes.saturating_add(contents.len());
+        let line_limit = LOG_MAX_LINES.min(remaining_lines);
+        let mut lines = contents
+            .lines()
+            .take(line_limit)
+            .map(parse_log_line)
+            .collect::<Vec<_>>();
+        total_lines = total_lines.saturating_add(lines.len());
+        let line_truncated = contents.lines().nth(line_limit).is_some();
+        if byte_truncated || line_truncated {
+            lines.push(LogLine {
+                timestamp: String::new(),
+                level: String::new(),
+                text: format!(
+                    "[log truncated: maximum {} bytes and {} lines per file]",
+                    LOG_MAX_BYTES, LOG_MAX_LINES
+                ),
+            });
+        }
+        logs.push(ReportLog {
+            filename,
+            modified: DateTime::<Utc>::from(modified),
+            lines,
+        });
+    }
+    if omitted && let Some(log) = logs.last_mut() {
+        log.lines.push(LogLine {
+            timestamp: String::new(),
+            level: String::new(),
+            text: format!("[logs truncated: maximum {LOG_MAX_TOTAL_BYTES} bytes and {LOG_MAX_TOTAL_LINES} lines aggregate]"),
+        });
+    }
+    Ok(logs)
+}
+
+fn read_bounded_log(path: &Path, remaining: usize) -> io::Result<(String, bool)> {
+    let limit = LOG_MAX_BYTES.min(remaining);
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take((limit as u64).saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    let truncated = bytes.len() > limit;
+    bytes.truncate(limit);
+    if truncated && let Err(error) = std::str::from_utf8(&bytes) {
+        if error.error_len().is_none() {
+            bytes.truncate(error.valid_up_to());
+        } else {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, error));
+        }
+    }
+    let contents = String::from_utf8(bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok((contents, truncated))
 }
 
 fn parse_log_line(line: &str) -> LogLine {
@@ -569,7 +634,9 @@ fn filtered_gpu_names(adapters: &[GraphicsAdapter], fallback: &[String]) -> Vec<
 
 #[cfg(all(test, target_os = "linux"))]
 use native::classify_linux_device;
-use native::{enumerate_graphics_adapters, native_machine_base, nonempty_or_unknown};
+#[cfg(not(windows))]
+use native::enumerate_graphics_adapters;
+use native::{native_machine_base, nonempty_or_unknown};
 
 #[cfg(test)]
 mod tests;

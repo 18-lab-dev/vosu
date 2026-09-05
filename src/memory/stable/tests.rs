@@ -309,7 +309,7 @@ fn stable_mania_replay_frames_remain_cached_until_hit_errors_are_acknowledged() 
     assert_eq!(batch.start_index, 0);
     assert_eq!(batch.index, 3);
     assert_eq!(
-        batch.frames,
+        batch.frames.as_slice(),
         [
             StableReplayFrame {
                 time: -12_345,
@@ -332,7 +332,9 @@ fn stable_mania_replay_frames_remain_cached_until_hit_errors_are_acknowledged() 
     let ReadStatus::Ready(unacknowledged) = reader.hit_errors(0).unwrap() else {
         panic!("unacknowledged stable mania hit errors ready");
     };
-    assert_eq!(unacknowledged.stable_replay_frames.unwrap(), batch);
+    let unacknowledged_batch = unacknowledged.stable_replay_frames.unwrap();
+    assert!(Arc::ptr_eq(&unacknowledged_batch.frames, &batch.frames));
+    assert_eq!(unacknowledged_batch, batch);
 
     let ReadStatus::Ready(acknowledged) = reader.hit_errors(1).unwrap() else {
         panic!("acknowledged stable mania hit errors ready");
@@ -342,7 +344,7 @@ fn stable_mania_replay_frames_remain_cached_until_hit_errors_are_acknowledged() 
         StableReplayFrameBatch {
             start_index: 3,
             index: 3,
-            frames: Vec::new(),
+            frames: std::sync::Arc::new(Vec::new()),
         }
     );
 }

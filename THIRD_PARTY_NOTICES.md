@@ -138,6 +138,7 @@ These development packages, the private `vosu-test-harness` workspace member, or
 
 - project-authored repository code: `LICENSE-MIT` or `LICENSE-APACHE`
 - release archive license member: `LICENSE` (combined dual-license notice)
+  The `assets/SHA256SUMS` license entry tracks these retained combined-license bytes (`f47dd0b3e8ddd61beb6123446a50ae0ad2a2bc1ad9da3c39f8a1b74525601c7b`); the 2026-09-05 audit corrected the stale checksum left by the earlier dual-license cutover without changing the license text.
 - calculator crate project-authored code: `crates/vosu-pp/LICENSE-MIT` or `crates/vosu-pp/LICENSE-APACHE`
 - pinned lazer-calculator LGPL-3.0 reference: `tools/oracle/reference/lazer-calculator/LICENSE`
 - local `vosu-rosu-pp-api` MIT license text: `crates/vosu-pp/rosu-pp-api/LICENSE`

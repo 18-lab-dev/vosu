@@ -133,6 +133,25 @@ pub(super) struct RuntimePages {
     pub(super) update_version: Option<String>,
 }
 
+impl RuntimePages {
+    async fn local_counters(&self) -> Result<Vec<crate::counters::Counter>, String> {
+        // Acquire before spawning so concurrent requests cannot grow the blocking
+        // pool without bound. A cancelled request leaves its worker holding its slot.
+        static DISCOVERY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+        let permit = DISCOVERY
+            .acquire()
+            .await
+            .expect("discovery semaphore is never closed");
+        let counters = Arc::clone(&self.counters);
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            counters.discover().unwrap_or_default()
+        })
+        .await
+        .map_err(|error| error.to_string())
+    }
+}
+
 impl PageDataProvider for RuntimePages {
     fn render(
         &self,
@@ -142,7 +161,7 @@ impl PageDataProvider for RuntimePages {
         Box::pin(async move {
             let config = self.config.current();
             let authority = authority.unwrap_or_else(|| configured_authority(&config));
-            let local = self.counters.discover().unwrap_or_default();
+            let local = self.local_counters().await?;
             let local_count = Some(local.len());
             let (list, available_count) = match page {
                 DynamicPage::Dashboard => {
@@ -205,7 +224,7 @@ impl PageDataProvider for RuntimePages {
         Box::pin(async move {
             let config = self.config.current();
             let authority = authority.unwrap_or_else(|| configured_authority(&config));
-            let local = self.counters.discover().unwrap_or_default();
+            let local = self.local_counters().await?;
             let html = if external {
                 let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
                 let remote = self
