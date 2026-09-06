@@ -250,7 +250,7 @@ fn build_with<'a, V: From<&'a [f64]>>(
                     .map(leaderboard_player)
                     .collect(),
             },
-            is_replay_ui_hidden: false,
+            is_replay_ui_hidden: regular.global.is_replay_ui_hidden,
         },
         results_screen: ResultsScreen {
             mode: gameplay.mode,
@@ -482,7 +482,7 @@ fn stable_tourney_client(
             accuracy: user.map(|value| value.accuracy).unwrap_or(0.0),
             ranked_score: user.map(|value| value.ranked_score).unwrap_or(0.0),
             play_count: user.map(|value| value.play_count).unwrap_or(0),
-            global_rank: 0,
+            global_rank: user.map(|value| value.global_rank).unwrap_or(0),
             total_pp: user.map(|value| value.pp).unwrap_or(0.0),
         },
         gameplay: tournament_gameplay(gameplay, &selected_mods(precise.status, regular), precise),

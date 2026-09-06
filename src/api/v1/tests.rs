@@ -191,6 +191,7 @@ fn play_and_result_select_the_source_mods_and_precise_values() {
     play.result_screen.raw.mods.name = "HR".to_owned();
     play.gameplay.statistics.great = 7;
     play.beatmap.pp_acc.insert(95, 123.456);
+    play.global.is_replay_ui_hidden = true;
     let mut precise = precise();
     precise.key_overlay = Arc::new(vec![StateKey {
         name: "K1".into(),
@@ -244,7 +245,7 @@ fn play_and_result_select_the_source_mods_and_precise_values() {
     assert_eq!(play["menu"]["bm"]["time"]["current"], 123.0);
     assert!(encoded.contains("\"current\":123"));
     assert_eq!(play["gameplay"]["hits"]["unstableRate"], 0.0);
-    assert_eq!(play["gameplay"]["_isReplayUiHidden"], false);
+    assert_eq!(play["gameplay"]["_isReplayUiHidden"], json!(true));
 
     let mut result = regular();
     result.global.status = i64::from(GameState::ResultScreen.value());
@@ -354,7 +355,7 @@ fn stable_spectators_sort_fractional_ipc_ids_and_chat_maps_teams() {
     assert_eq!(value["tourney"]["manager"]["chat"][0]["team"], "right");
     assert_eq!(
         value["tourney"]["ipcClients"][0]["spectating"]["globalRank"],
-        0
+        4
     );
     assert_eq!(
         value["tourney"]["ipcClients"][0]["gameplay"]["mods"],

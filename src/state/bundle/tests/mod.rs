@@ -3,7 +3,9 @@ use crate::memory::snapshot::{
     PreciseCaptureContext, RawPreciseSnapshotBuilder, RawRegularSnapshotBuilder,
     RegularCaptureContext,
 };
-use crate::model::memory::{Global as RawGlobal, GlobalPrecise, HitErrors, ReleaseCorrection};
+use crate::model::memory::{
+    Global as RawGlobal, GlobalPrecise, HitErrors, ReleaseCorrection, TourneyUser,
+};
 use crate::process::ReadStatus;
 
 fn press_hit_errors(values: Vec<f64>) -> HitErrorArray {

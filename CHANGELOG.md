@@ -29,6 +29,7 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 ### API
 
 - Restored the tosu-compatible hit-error arrays at `hitErrorArray` and `hitErrors`; ordered press and release classifications now use additive sibling `pressHitErrors` and `releaseHitErrors` fields.
+- Matched gosuMemory v1 replay visibility and stable tournament spectator global-rank fields to current tosu behavior instead of emitting fixed defaults.
 - Replaced `beatmap.stats.timingWindows` with Storycraft's merged tosu `beatmap.stats.hitWindow` contract and its mode-specific `miss`, `meh`, `ok`, `good`, `great`, and `perfect` keys.
 - Replaced the separate `keypresses` object with a tosu-compatible `keys` object. Regular and precise v2 responses retain `k1`, `k2`, `m1`, and `m2` and add the ordered mode-agnostic controls under `keys.all`, matching the planned upstream port.
 

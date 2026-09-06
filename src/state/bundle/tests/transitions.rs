@@ -978,6 +978,43 @@ async fn backward_seek_after_first_object_retains_accumulated_hit_errors() {
 }
 
 #[tokio::test]
+async fn stable_tourney_spectator_preserves_global_rank() {
+    let mut bundle = StateBundle::new(ClientType::Stable, 13, Arc::new(EchoCalculation));
+    bundle.set_roles(false, true);
+    let snapshot = RawRegularSnapshotBuilder::new(
+        RegularCaptureContext::new(ClientType::Stable, 13, 0, 1),
+        Ok(ReadStatus::Ready(raw_global(GameState::Menu, 0))),
+    )
+    .tourney_user(Ok(ReadStatus::Ready(TourneyUser {
+        id: 1,
+        name: "player".into(),
+        country: "US".into(),
+        accuracy: 98.5,
+        playcount: 2,
+        ranked_score: 3.0,
+        global_rank: 4,
+        pp: 5.0,
+    })))
+    .publish();
+
+    let committed = bundle
+        .apply_regular(snapshot)
+        .await
+        .expect("stable tournament spectator publication");
+
+    assert_eq!(
+        committed
+            .publication
+            .regular
+            .tourney
+            .user
+            .as_ref()
+            .map(|user| user.global_rank),
+        Some(4)
+    );
+}
+
+#[tokio::test]
 async fn stable_global_not_ready_and_tourney_debounce_do_not_abort_later_updates() {
     let mut bundle =
         StateBundle::new_with_root(ClientType::Stable, 13, "/game", Arc::new(EchoCalculation));

@@ -641,7 +641,7 @@ impl StateBundle {
                         accuracy: user.accuracy,
                         ranked_score: user.ranked_score,
                         play_count: user.playcount,
-                        global_rank: 0,
+                        global_rank: user.global_rank,
                         pp: user.pp,
                         name: user.name.clone(),
                         country: user.country.clone(),
