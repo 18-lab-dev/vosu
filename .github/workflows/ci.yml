@@ -42,7 +42,6 @@ jobs:
     env:
       XWIN_ARCH: x86_64
       XWIN_CACHE_DIR: ${{ github.workspace }}/.xwin-cache
-      C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -94,8 +93,12 @@ jobs:
           path: .xwin-cache
           key: ${{ steps.sdk.outputs.cache-primary-key }}
       - name: Lint Linux targets and features
+        env:
+          C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test workspace libraries, binaries, integration tests, and examples
+        env:
+          C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo test --workspace --lib --bins --tests --examples --all-features --locked
       - name: Lint Windows MSVC targets and features
         run: cargo xwin clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
