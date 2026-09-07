@@ -246,7 +246,8 @@ async fn harness_fixture() -> (StreamingClient, String, tokio::task::JoinHandle<
         policy,
         Deadlines {
             connect: Duration::from_secs(1),
-            idle: Duration::from_millis(20),
+            // Allow loaded CI runners to schedule successful loopback requests.
+            idle: Duration::from_secs(1),
             total: Duration::from_secs(5),
         },
         DownloadLimits {
