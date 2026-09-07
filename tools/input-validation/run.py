@@ -9,15 +9,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
-from input_validation import (
-    ValidationError,
-    capture,
-    create_keyboard_backend,
-    navigate_ui,
-    navigation_key_names,
-    normalize_key_name,
-    scan_maps,
-)
+from validation_error import ValidationError
+from capture import capture
+from input_validation import create_keyboard_backend, navigate_ui, navigation_key_names, normalize_key_name, scan_maps
 from mode_plans import parse_play_plan
 from mode_runner import (
     create_plan_backends,

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from input_validation import ValidationError, navigate_ui, navigation_key_names
+from validation_error import ValidationError
+from input_validation import navigate_ui, navigation_key_names
 from run import build_parser
 
 

@@ -4,7 +4,8 @@ import unittest
 from unittest import mock
 
 import mode_runner
-from input_validation import DryRunBackend, ValidationError
+from input_validation import DryRunBackend
+from validation_error import ValidationError
 from mode_plans import KeyAction, PlayPlan, PointerMove
 from mode_runner import (
     PlanBackends,

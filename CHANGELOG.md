@@ -6,6 +6,8 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 
 ### Runtime and maintenance
 
+- Split maintained code into domain-focused modules capped at 1,000 lines, preserving API and calculator behavior; remove tracked offset-tool build output while retaining source, locks, and provenance.
+
 - Remove the report-only graphics stack; use Linux sysfs and Windows WMI hardware metadata, with explicit unavailable/unknown states.
 - Bound report log retention with visible truncation notices; isolate counter discovery, report capture, configuration persistence/reload, and ordered console output from async workers.
 - Avoid primary API graph/hit-error encoding copies, share live-calculator map preparation and unchanged stable mania replay batches, and bound WebSocket pong backpressure.

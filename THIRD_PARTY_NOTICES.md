@@ -107,6 +107,20 @@ is not a build or runtime input.
 - **Pinned source:** <https://github.com/microsoft/clrmd/tree/f160f6897f33198170895a60444de38bcb76bcf3>
 ClrMD and its restored build dependencies are used only by the maintainer generator. They are not linked into vosu and are not included in the two-file production release archive.
 
+## Maintained source-layout changes
+
+The September 2026 cleanup separates dashboard settings into
+`assets/server/homepage-settings.js` and settings/dialog/responsive styles into
+`assets/server/homepage-controls.css`, loaded by the existing homepage. The
+retained bytes are covered by `assets/SHA256SUMS`; `package.metadata.vosu` retains
+the base stylesheet hash. These are local structural changes, not new upstream
+revisions. Calculator attribution and unchanged retained test provenance are
+recorded in `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`.
+
+The offset tools' formerly tracked `bin/` and `obj/` files are reproducible local
+build output, not distributed runtime inputs. Their source projects and package
+locks remain; restoring/building follows the README's maintainer workflow.
+
 ## Direct Rust packages
 
 The following license expressions come from the packages' Cargo metadata resolved by the committed `Cargo.lock`. Repository/source URLs and exact versions can be reproduced with `cargo metadata --locked --format-version 1`. Transitive crates are likewise fixed in `Cargo.lock`; their own packaged `license`/`license-file` metadata and registry source archives are the authoritative notices.

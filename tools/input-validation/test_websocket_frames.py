@@ -7,7 +7,8 @@ import struct
 import unittest
 from unittest import mock
 
-from input_validation import ValidationError, WebSocket, decode_frame, websocket_connect
+from validation_error import ValidationError
+from capture import WebSocket, decode_frame, websocket_connect
 
 
 class WebSocketFrameTests(unittest.TestCase):
@@ -54,8 +55,8 @@ class WebSocketFrameTests(unittest.TestCase):
         context = mock.Mock()
         context.wrap_socket.side_effect = ssl.SSLError("test TLS boundary")
         with (
-            mock.patch("input_validation.socket.create_connection", return_value=raw),
-            mock.patch("input_validation.ssl.create_default_context", return_value=context),
+            mock.patch("capture.socket.create_connection", return_value=raw),
+            mock.patch("capture.ssl.create_default_context", return_value=context),
             self.assertRaisesRegex(ssl.SSLError, "test TLS boundary"),
         ):
             websocket_connect("wss://example.test", 1.0)

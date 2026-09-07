@@ -255,7 +255,7 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
         authority: SourceAuthority::Mixed,
         upstream: Some("rosu-mods 0.4.0 MIT public serde API; ppy/osu@97e94bab mode-specific Mods"),
         specification: Some(BLACK_BOX_SPEC),
-        implementation: "crates/vosu-pp/src/{mods.rs,beatmap.rs}",
+        implementation: "crates/vosu-pp/src/{mods.rs,beatmap.rs,beatmap/random.rs}",
     },
     SourcePort {
         scope: "wrapper.data-attribute-strain-conversion",
@@ -300,7 +300,7 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
             "MaxOhn/rosu-pp@27a67242 Beatmap conversion and Difficulty APIs; rosu-mods 0.4.0 MIT public API",
         ),
         specification: Some(BLACK_BOX_SPEC),
-        implementation: "crates/vosu-pp/src/{beatmap.rs,mods.rs}",
+        implementation: "crates/vosu-pp/src/{beatmap.rs,beatmap/random.rs,mods.rs}",
     },
     SourcePort {
         scope: "wrapper.score-simulator",

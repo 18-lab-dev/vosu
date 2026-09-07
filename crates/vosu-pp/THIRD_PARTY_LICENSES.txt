@@ -8,14 +8,17 @@ The production calculator is a clean-room Rust implementation in
 `crates/vosu-pp/src`. Its production module ownership is:
 
 - `src/lib.rs` and `src/model.rs`: public facade and wire models.
-- `src/beatmap.rs` and `src/mods.rs`: parsing, conversion, mod decoding, and playable-map lifecycle.
+- `src/beatmap.rs`, `src/beatmap/random.rs`, and `src/mods.rs`: parsing, conversion,
+  deterministic random-map transforms, mod decoding, and playable-map lifecycle.
 - `src/data.rs` and `src/difficulty.rs`: difficulty and strain projections.
 - `src/performance.rs`: full and retained-attribute performance calculation.
 - `src/gradual.rs`: prefix calculation, skipping, rewind, score, and performance.
 - `rosu-pp-api/src`: an in-tree clean-room fork of MIT `rosu-pp` 4.0.1,
   forward-ported to the pinned MIT osu! revision below. Catch conversion
   retains osu!stable legacy slider approximation and timestamp/progress
-  semantics in `catch/object/juice_stream.rs`.
+  semantics in `catch/object/juice_stream.rs`. The retained mania closest-hitresult
+  tests live in `mania/performance/hitresult_generator/closest/tests.rs`; this
+  module extraction preserves the upstream test bodies and algorithm unchanged.
 - `rosu-map-api/src`: an in-tree clean-room fork of MIT `rosu-map` 0.2.1,
   with ppy-aligned circular-arc tolerance, degeneracy epsilon,
   `Math.Acos` float-argument promotion, f64-promoted vector-length

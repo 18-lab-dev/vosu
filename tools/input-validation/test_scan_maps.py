@@ -7,16 +7,8 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from input_validation import (
-    DryRunBackend,
-    ManiaEvent,
-    ValidationError,
-    ManiaReplay,
-    autoplay,
-    parse_key_mapping,
-    parse_mania_replay,
-    scan_maps,
-)
+from input_validation import DryRunBackend, ManiaEvent, ManiaReplay, autoplay, parse_key_mapping, parse_mania_replay, scan_maps
+from validation_error import ValidationError
 
 
 class ScanMapsTests(unittest.TestCase):

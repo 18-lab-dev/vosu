@@ -2,14 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from input_validation import (
-    ManiaEvent,
-    ManiaReplay,
-    ValidationError,
-    jittered_events,
-    live_autoplay,
-    parse_live_state,
-)
+from input_validation import ManiaEvent, ManiaReplay, jittered_events, live_autoplay, parse_live_state
+from validation_error import ValidationError
 from run import build_parser
 
 

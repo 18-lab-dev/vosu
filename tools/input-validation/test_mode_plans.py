@@ -5,7 +5,7 @@ import math
 import unittest
 from pathlib import Path
 
-from input_validation import ValidationError
+from validation_error import ValidationError
 from mode_plans import KeyAction, PlayPlan, PointerMove, parse_play_plan
 
 

@@ -7,15 +7,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from input_validation import (
-    DryRunBackend,
-    KeyboardBackend,
-    ValidationError,
-    create_keyboard_backend,
-    normalize_key_name,
-    parse_key_mapping,
-    run_live_timeline,
-)
+from input_validation import DryRunBackend, KeyboardBackend, create_keyboard_backend, normalize_key_name, parse_key_mapping, run_live_timeline
+from validation_error import ValidationError
 from mode_plans import Action, KeyAction, PlayPlan, PointerMove
 from pointer_backends import (
     DryRunPointerBackend,

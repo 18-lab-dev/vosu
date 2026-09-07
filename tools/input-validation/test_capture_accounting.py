@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from input_validation import CaptureAccounting
+from capture import CaptureAccounting
 
 
 def payload(pressed: bool, count: int, pressed_at=None, released_at=None, mode=3):

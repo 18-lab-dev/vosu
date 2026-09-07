@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
 from pathlib import Path
 from typing import TypeAlias
 
-from input_validation import ValidationError
+from validation_error import ValidationError
 
 
 _MAX_OBJECTS = 100_000

@@ -70,6 +70,8 @@ mod calculation;
 mod gameplay;
 #[path = "bundle/models.rs"]
 mod models;
+#[path = "bundle/publication.rs"]
+mod publication;
 #[path = "bundle/reducer.rs"]
 mod reducer;
 

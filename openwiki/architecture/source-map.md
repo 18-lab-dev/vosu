@@ -29,6 +29,36 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Performance evidence | `benches/hot_paths.rs`, [benchmark guide](../testing/benchmarks.md) | Criterion hot paths and machine-specific comparisons |
 | Embedded inputs | `assets/`, `build.rs` | Dashboard, fonts, images, offsets and checksum-covered assets |
 
+## Cleanup module boundaries
+
+Maintained code files stay at or below 1,000 physical lines, including tests,
+benchmarks, dashboard styles/scripts, and maintainer tools. Lockfiles and pinned
+JSON/beatmap evidence are data, not source-size exceptions or splitting targets.
+
+- `src/instance/runtime.rs` owns the discovery loop and lifecycle publication;
+  `src/instance.rs` retains instance identity, manager state, and the public types.
+- `src/state/bundle/publication.rs` owns immutable snapshot materialization and
+  regular/precise Arc reuse; `reducer.rs` owns state transitions.
+- `crates/vosu-pp/src/beatmap/random.rs` owns deterministic random-map transforms.
+  Calculator tests group gradual, hit-window, mod, stateful-oracle, and scoring
+  contracts under their existing integration-test entrypoints.
+- Counter settings, v2 hit windows, pause transitions, and updater handoff tests
+  live in child modules of their existing suites, sharing the existing fixtures.
+- `examples/support/process_event_metrics.rs` owns resource and latency reporting,
+  separate from the benchmark's process lifecycle orchestration.
+- `tools/oracle/calculator/` separates binding helpers, provenance/coverage
+  validation, replay contracts, and pinned multiplier/conversion evidence.
+- `tools/input-validation/capture.py` owns bounded WebSocket transport and capture
+  accounting; `input_validation.py` owns input playback and live scheduling.
+  Both use `validation_error.py` for the shared error contract.
+- Offset-generator partial classes separate runtime validation, target ownership,
+  and generation; offset-target files separate assembly loading, schema, and CLI
+  parsing. Their `bin/` and `obj/` trees are reproducible ignored build output,
+  not versioned runtime dependencies; package locks remain maintained inputs.
+- The dashboard loads `homepage.js` as an ES module. `homepage-settings.js` owns
+  the settings dialog and schema builder; `homepage-controls.css` follows the
+  base stylesheet and preserves settings/dialog/responsive cascade order.
+
 ## Workspace boundaries
 
 `Cargo.toml` defines one workspace with the production `vosu` package, the `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, the integration-only `vosu-test-harness`, and the dependency-isolated `vosu-release-smoke` package. The smoke package launches an external packaged executable and does not depend on the daemon crate. Release profiles retain thin LTO, one codegen unit, stripped symbols, and abort-on-panic; `test-harness` is rejected by `build.rs` in release builds.
