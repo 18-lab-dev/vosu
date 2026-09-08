@@ -427,27 +427,22 @@ impl LazerMemory {
         &self,
         address: usize,
     ) -> Result<Option<HitErrorEvent>, MemoryError> {
-        let mut object_bytes = [0u8; 8];
-        let mut timing_result_bytes = [0u8; 12];
+        // The bounded prefix trades eight intervening bytes for one contiguous read.
+        let mut event_bytes = [0u8; 28];
         let error_address = add(address, 0x10)?;
         let result_address = add(address, 0x18)?;
-        if self
-            .process
-            .read_many(&mut [
-                ReadRequest::new(address, &mut object_bytes),
-                ReadRequest::new(error_address, &mut timing_result_bytes),
-            ])
-            .is_err()
-        {
+        if self.process.read_exact(address, &mut event_bytes).is_err() {
             // Preserve field-granular reads and their original error precedence.
+            let (object_bytes, rest) = event_bytes.split_at_mut(8);
+            let (_, timing_result_bytes) = rest.split_at_mut(8);
             let (error_bytes, result_bytes) = timing_result_bytes.split_at_mut(8);
             self.process.read_many(&mut [
-                ReadRequest::new(address, &mut object_bytes),
+                ReadRequest::new(address, object_bytes),
                 ReadRequest::new(error_address, error_bytes),
                 ReadRequest::new(result_address, result_bytes),
             ])?;
         }
-        let object = u64::from_le_bytes(object_bytes) as usize;
+        let object = u64::from_le_bytes(event_bytes[..8].try_into().unwrap()) as usize;
         if object == 0 {
             return Ok(None);
         }
@@ -471,7 +466,7 @@ impl LazerMemory {
                 tail: self.ptr(add(object, 0x60)?)?,
             }));
         }
-        let result = i32::from_le_bytes(timing_result_bytes[8..].try_into().unwrap());
+        let result = i32::from_le_bytes(event_bytes[24..].try_into().unwrap());
         let allowed = match mode {
             0 => matches!(result, 3 | 2 | 5 | 10),
             1 => matches!(result, 5 | 3 | 2),
@@ -482,7 +477,7 @@ impl LazerMemory {
             return Ok(None);
         }
         Ok(Some(HitErrorEvent::Timing {
-            value: f64::from_le_bytes(timing_result_bytes[..8].try_into().unwrap()),
+            value: f64::from_le_bytes(event_bytes[16..24].try_into().unwrap()),
             object,
         }))
     }
