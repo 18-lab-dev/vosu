@@ -150,9 +150,11 @@ impl LinuxProcessMemory {
         let mut stack_remote = stack_local;
         let mut count = 0;
         let mut heap: Option<(Vec<libc::iovec>, Vec<libc::iovec>)> = None;
-        let capacity = reads.len();
+        let mut capacity = reads.len();
         for request in reads {
             if request.dst.is_empty() {
+                // Skipped empty entries cannot consume heap slots.
+                capacity -= 1;
                 continue;
             }
             request

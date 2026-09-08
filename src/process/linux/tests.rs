@@ -514,6 +514,43 @@ fn direct_batch_skips_empty_entries() {
 }
 
 #[test]
+fn sparse_heap_batch_preserves_bytes_and_empty_destinations() {
+    let (_fixture, memory, _calls) = memory_fixture(
+        MockMode::ShortFirst(STACK_IOVEC_CAPACITY * 8),
+        1024,
+        "1000-3000 rw-p 0 00:00 0\n",
+    );
+    // Cross the stack limit despite an empty prefix and gaps between reads.
+    let active = |index: usize| index >= 128 && (index - 128).is_multiple_of(97);
+    let mut destinations = vec![[0xa5; 8]; 128 + (STACK_IOVEC_CAPACITY + 2) * 97];
+    let mut requests: Vec<_> = destinations
+        .iter_mut()
+        .enumerate()
+        .map(|(index, dst)| {
+            if active(index) {
+                ReadRequest::new(0x1000 + index, dst)
+            } else {
+                ReadRequest::new(usize::MAX, &mut dst[..0])
+            }
+        })
+        .collect();
+
+    memory
+        .read_many(&mut requests)
+        .expect("sparse read after short prefix");
+    drop(requests);
+
+    for (index, dst) in destinations.iter().enumerate() {
+        let expected = if active(index) {
+            std::array::from_fn(|offset| (index + offset) as u8)
+        } else {
+            [0xa5; 8]
+        };
+        assert_eq!(*dst, expected, "destination {index}");
+    }
+}
+
+#[test]
 fn direct_batch_above_stack_capacity_uses_exact_fallback_path() {
     let (_fixture, memory, calls) =
         memory_fixture(MockMode::Exact, 1024, "1000-3000 rw-p 0 00:00 0\n");
