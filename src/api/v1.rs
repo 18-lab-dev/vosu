@@ -282,7 +282,7 @@ fn build_with<'a, V: From<&'a [f64]>>(
 pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
     snapshot.encode_unfiltered(ApiSchema::V1, |snapshot| {
         let value = build_with::<&[f64]>(snapshot)?;
-        crate::api::json::encode(&value, 0).map(Bytes::from)
+        crate::api::json::encode(&value, 2 * 1024).map(Bytes::from)
     })
 }
 
