@@ -576,7 +576,7 @@ impl V2SubscriptionHub {
         let plan_capacity = lock(&self.0.plans).len().min(eligible.len());
         let mut extracted: FxHashMap<usize, Arc<[Option<Value>]>> =
             FxHashMap::with_capacity_and_hasher(plan_capacity, FxBuildHasher);
-        let mut encoded: FxHashMap<(usize, Option<usize>), Result<Bytes, ApiError>> =
+        let mut encoded: FxHashMap<(usize, Option<usize>), Result<Option<Bytes>, ApiError>> =
             FxHashMap::with_capacity_and_hasher(plan_capacity, FxBuildHasher);
         for (id, client, plan) in eligible {
             let plan_id = Arc::as_ptr(&plan) as usize;
@@ -589,14 +589,13 @@ impl V2SubscriptionHub {
                 }
             };
             let baseline = lock(&client.baseline).clone();
-            if baseline.as_deref() == Some(current.as_ref()) {
-                client.checked_revision.store(revision, Ordering::Release);
-                continue;
-            }
             let baseline_id = baseline
                 .as_ref()
                 .map(|value| Arc::as_ptr(value) as *const () as usize);
             let bytes = encoded.entry((plan_id, baseline_id)).or_insert_with(|| {
+                if baseline.as_deref() == Some(current.as_ref()) {
+                    return Ok(None);
+                }
                 #[cfg(test)]
                 {
                     self.0.encodings.fetch_add(1, Ordering::Relaxed);
@@ -611,9 +610,14 @@ impl V2SubscriptionHub {
                     Some(old) => update_frame(revision, old, &current),
                     None => initial_frame(revision, &current),
                 }
+                .map(Some)
             });
             let bytes = match bytes {
-                Ok(bytes) => bytes.clone(),
+                Ok(Some(bytes)) => bytes.clone(),
+                Ok(None) => {
+                    client.checked_revision.store(revision, Ordering::Release);
+                    continue;
+                }
                 Err(_) => {
                     client.terminate(SERIALIZATION_FAILED, SERIALIZATION_FAILED_MESSAGE, 1011);
                     self.remove(id);
