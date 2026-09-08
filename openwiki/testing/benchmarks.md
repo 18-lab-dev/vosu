@@ -1006,9 +1006,38 @@ The production backend rows exercise `LiveBeatmapEngine::calculate`, including
 attributes, strains, and generated accuracy scores. They use one existing
 native-ruleset `*-diffcalc-test.osu` per mode, not a representative user-map
 distribution. Live-prefix sequences improved 50.60–84.58% against original
-and 24.32–48.83% against previous. Native map parsing was 1.60–4.89% slower
-than previous across all four maps; gradual controls ranged from -0.04% to
-+0.27%. These are retained limitations, not universal calculator wins.
+and 24.32–48.83% against previous. In the archived binaries and measurement
+protocol, native map parsing was 1.60–4.89% slower than previous across all
+four maps; gradual controls ranged from -0.04% to +0.27%. These unfavorable
+observations remain retained, not universal calculator wins or evidence of
+an intrinsic parser slowdown.
+
+The subsequent read-only parser diagnosis found unchanged previous/final
+allocation, reallocation, and requested-byte counts on all four maps.
+Retired-instruction differences in the exact archived binaries were negligible
+(-0.065% to +0.038% per added parse), not enough added instruction work to
+explain the timing gap. Parsing and construction source remained unchanged;
+the preparation and live-prefix optimizations do not run inside the timed
+parse branch.
+
+A bounded disposable-harness diagnostic compared setup present versus absent
+using the same retained previous/final libraries, identical 64-parse warmup
+before optional setup, six balanced orders, and grouped hardware counters.
+Final's median paired time changed sign relative to the archived regression
+in **both** controls: setup absent measured -5.99%, -5.32%, -4.83%, and -2.29%
+for osu!, taiko, catch, and mania; setup present measured -2.63%, -6.16%,
+-3.55%, and -5.01%. Removing setup therefore did not consistently remove a
+final-version penalty, and cannot be credited with fixing the original result.
+The setup-absent path added about two instructions per parse in final;
+generic cache-miss counts were small and noisy, not a causal explanation.
+
+The exact cause remains unresolved. Relinking/code placement, the added
+common warmup, allocator state, and execution conditions differ between this
+diagnostic and the archived harness. Keep the original numbers as
+**archived-binary/protocol-specific observations**; neither the sign reversal
+nor unchanged allocation counts establish a parser speedup or fix.
+[Parser diagnosis and setup-intervention evidence](file:///home/user/.cache/vosu-parser-diagnosis-20260908/result.json)
+is retained locally on the measurement host, not a published artifact.
 
 Across all 24 inputs per API group, ordinary V1 changes against previous
 ranged -2.72% to +0.89%, StreamCompanion -1.45% to +2.16%, and the tournament
