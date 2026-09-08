@@ -13,8 +13,9 @@ use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
 pub(crate) struct BeatmapState {
-    pub original: Beatmap,
-    pub base: Beatmap,
+    // Retained source maps are immutable across cloned handles and transformations.
+    pub original: Arc<Beatmap>,
+    pub base: Arc<Beatmap>,
     pub playable: Beatmap,
     pub mode: Ruleset,
     pub mods: Vec<StructuredMod>,
@@ -156,13 +157,13 @@ impl LiveLazerEngine {
 
         let source_mode = map.state.mode;
         let mut base = if source_mode == Ruleset::Mania && mode == Ruleset::Taiko {
-            let mut base = map.state.original.clone();
+            let mut base = map.state.original.as_ref().clone();
             base.mode = GameMode::Taiko;
             base.is_convert = true;
             base
         } else {
             convert_map(
-                map.state.original.clone(),
+                map.state.original.as_ref().clone(),
                 mode,
                 &GameMods::default().into_core(),
             )
@@ -174,9 +175,10 @@ impl LiveLazerEngine {
         if source_mode == Ruleset::Mania && mode == Ruleset::Taiko {
             group_taiko_simultaneous(&mut base);
         }
+        let base = Arc::new(base);
         Ok(ParsedBeatmap::from_state(BeatmapState {
             original: map.state.original.clone(),
-            playable: base.clone(),
+            playable: base.as_ref().clone(),
             base,
             mode,
             mods: Vec::new(),
@@ -186,7 +188,7 @@ impl LiveLazerEngine {
 
     pub fn apply_mods(&self, map: &mut ParsedBeatmap, mods: &[StructuredMod]) -> Result<(), Error> {
         let resolved = resolve_random_seeds(mods);
-        let mut playable = map.state.base.clone();
+        let mut playable = map.state.base.as_ref().clone();
         apply_mods_to_map(&mut playable, map.state.mode, &resolved);
 
         let typed_input: Vec<_> = resolved
@@ -271,9 +273,10 @@ fn convert_map(
 
 fn parsed(map: Beatmap) -> ParsedBeatmap {
     let mode = ruleset(map.mode);
+    let original = Arc::new(map.clone());
     ParsedBeatmap::from_state(BeatmapState {
-        original: map.clone(),
-        base: map.clone(),
+        original: Arc::clone(&original),
+        base: original,
         playable: map,
         mode,
         mods: Vec::new(),
@@ -625,20 +628,25 @@ pub(crate) fn configured(
     map: &ParsedBeatmap,
     config: &DifficultyConfig,
 ) -> Result<(BeatmapState, rosu_pp::Difficulty, Beatmap), Error> {
-    let mut state = map.state.clone();
     let (difficulty, playable) = configured_difficulty(map, config)?;
 
-    let mut combined = state.mods.clone();
+    let mode = map.state.mode;
+    let mut combined = map.state.mods.clone();
     combined.extend(resolve_random_seeds(&config.mods));
     let typed_input: Vec<_> = combined
         .iter()
-        .filter(|game_mod| !is_consumed_mod(state.mode, &game_mod.acronym))
+        .filter(|game_mod| !is_consumed_mod(mode, &game_mod.acronym))
         .cloned()
         .collect();
 
-    state.mods = combined;
-    state.game_mods = crate::game_mods(state.mode, &typed_input)?;
-    state.playable = playable.clone();
+    let state = BeatmapState {
+        original: Arc::clone(&map.state.original),
+        base: Arc::clone(&map.state.base),
+        playable: playable.clone(),
+        mode,
+        mods: combined,
+        game_mods: crate::game_mods(mode, &typed_input)?,
+    };
 
     Ok((state, difficulty, playable))
 }

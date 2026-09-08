@@ -48,6 +48,37 @@ fn apply_mods_mutates_same_handle_resets_cache_and_retains_api_order() {
 }
 
 #[test]
+fn cloned_map_transformations_preserve_original_and_reset_source() {
+    let engine = LiveLazerEngine;
+    let source = engine.parse(OSU_TARGET_DIFFCALC_MAP).unwrap();
+    let baseline = engine.beatmap_difficulty(&source);
+    let config = DifficultyConfig::default();
+    let difficulty = engine.difficulty(&source, &config).unwrap();
+    let mut clone = source.clone();
+    engine
+        .apply_mods(
+            &mut clone,
+            &[StructuredMod {
+                acronym: "DA".to_owned(),
+                settings: BTreeMap::from([(
+                    "overallDifficulty".to_owned(),
+                    ModValue::Number(7.4),
+                )]),
+            }],
+        )
+        .unwrap();
+
+    assert_eq!(engine.beatmap_difficulty(&clone).overall_difficulty, 7.4);
+    assert_eq!(engine.beatmap_difficulty(&source), baseline);
+    assert_eq!(engine.original_beatmap_difficulty(&clone), baseline);
+    assert_eq!(engine.difficulty(&source, &config).unwrap(), difficulty);
+
+    engine.apply_mods(&mut clone, &[]).unwrap();
+    assert_eq!(engine.beatmap_difficulty(&clone), baseline);
+    assert_eq!(engine.difficulty(&clone, &config).unwrap(), difficulty);
+}
+
+#[test]
 fn ordered_duplicate_difficulty_and_preprocessing_mods_are_not_deduplicated() {
     fn game_mod(acronym: &str, settings: &[(&str, f64)]) -> StructuredMod {
         StructuredMod {
