@@ -390,6 +390,35 @@ fn exact_and_short_prefix_reads_complete_suffixes() {
     assert_eq!(bytes, [0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27]);
     assert_eq!(calls.calls.load(Ordering::SeqCst), 2);
 }
+
+#[test]
+fn singleton_batch_retries_and_respects_fallback_mapping_boundaries() {
+    let maps = "1000-1004 rw-p 0 00:00 0\n1004-1100 rw-p 0 00:00 0\n";
+    for (mode, expected_calls) in [(MockMode::ShortFirst(3), 2), (MockMode::ErrorOnCall(0), 3)] {
+        let (_fixture, memory, calls) = memory_fixture(mode, 1, maps);
+        let mut bytes = [0xa5; 8];
+        memory
+            .read_many(&mut [ReadRequest::new(0x1000, &mut bytes)])
+            .expect("complete singleton read");
+        assert_eq!(bytes, [0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(calls.calls.load(Ordering::SeqCst), expected_calls);
+    }
+
+    let (_fixture, memory, _) = memory_fixture(MockMode::ErrorOnCall(0), 1, maps);
+    let mut bytes = [0xa5; 8];
+    let error = memory
+        .read_many(&mut [ReadRequest::new(0x10fc, &mut bytes)])
+        .expect_err("singleton crosses the readable mapping boundary");
+    assert!(matches!(
+        error,
+        MemoryError::Read {
+            address: 0x1100,
+            len: 4,
+            ..
+        }
+    ));
+    assert_eq!(bytes, [0; 8]);
+}
 #[test]
 fn ordinary_reads_do_not_require_maps_after_opening() {
     let (fixture, memory, calls) =

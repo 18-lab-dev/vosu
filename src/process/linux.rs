@@ -490,6 +490,9 @@ impl ProcessMemory for LinuxProcessMemory {
     }
 
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        if let [request] = reads {
+            return self.read_exact(request.address, request.dst);
+        }
         let result = match self.read_many_direct(reads) {
             Err(MemoryError::Read { .. }) => self.read_many_fallback(reads),
             result => result,
