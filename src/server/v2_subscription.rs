@@ -512,8 +512,6 @@ impl V2SubscriptionHub {
         let mut eligible = Vec::new();
         let mut next_deadline: Option<Instant> = None;
         for (id, client) in clients.iter() {
-            let plan = lock(&client.plan).clone();
-            let Some(plan) = plan else { continue };
             if client.state.load(Ordering::Acquire) != OPEN {
                 continue;
             }
@@ -522,6 +520,8 @@ impl V2SubscriptionHub {
             {
                 continue;
             }
+            let plan = lock(&client.plan).clone();
+            let Some(plan) = plan else { continue };
             if !debounce.is_zero()
                 && let Some(queued) = *lock(&client.last_queue_at)
             {
@@ -533,7 +533,7 @@ impl V2SubscriptionHub {
                     continue;
                 }
             }
-            eligible.push((*id, Arc::clone(client), plan));
+            eligible.push((*id, client, plan));
         }
         if eligible.is_empty() {
             self.cleanup_retained_state(&clients);
