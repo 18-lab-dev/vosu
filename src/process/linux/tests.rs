@@ -446,6 +446,31 @@ fn ordinary_reads_do_not_require_maps_after_opening() {
 }
 
 #[test]
+fn batch_short_prefix_resumes_at_boundaries_and_inside_destinations() {
+    for prefix in [4, 6] {
+        let (_fixture, memory, calls) = memory_fixture(
+            MockMode::ShortFirst(prefix),
+            1024,
+            "1000-3000 rw-p 0 00:00 0\n",
+        );
+        let mut first = [0xa5; 4];
+        let mut second = [0xa5; 4];
+        let mut third = [0xa5; 4];
+        memory
+            .read_many(&mut [
+                ReadRequest::new(0x1010, &mut first),
+                ReadRequest::new(0x2020, &mut second),
+                ReadRequest::new(0x1030, &mut third),
+            ])
+            .expect("complete remaining destinations after short prefix");
+        assert_eq!(first, [0x10, 0x11, 0x12, 0x13]);
+        assert_eq!(second, [0x20, 0x21, 0x22, 0x23]);
+        assert_eq!(third, [0x30, 0x31, 0x32, 0x33]);
+        assert_eq!(calls.calls.load(Ordering::SeqCst), 3);
+    }
+}
+
+#[test]
 fn direct_batch_at_stack_capacity_preserves_request_order() {
     let (_fixture, memory, calls) =
         memory_fixture(MockMode::Exact, 1024, "1000-3000 rw-p 0 00:00 0\n");
