@@ -142,8 +142,11 @@ pub(super) fn map_strains(x_axis: &[f64], data: Option<&[f64]>) -> IndexMap<Stri
 }
 
 pub(super) fn array_index(key: &str) -> Option<u32> {
+    if !matches!(key.as_bytes(), [b'0'] | [b'1'..=b'9', ..]) {
+        return None;
+    }
     let value = key.parse::<u32>().ok()?;
-    (value != u32::MAX && value.to_string() == key).then_some(value)
+    (value != u32::MAX).then_some(value)
 }
 
 pub(super) fn encode_json(value: &impl Serialize) -> Result<String, ApiError> {

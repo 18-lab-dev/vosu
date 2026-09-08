@@ -391,14 +391,26 @@ fn total_scores_follow_javascript_number_rounding_above_two_to_the_53() {
 #[test]
 fn strain_integer_keys_follow_javascript_order_and_nonfinite_encodes_null() {
     let strains = map_strains(
-        &[10.0, 2.0, 1.0, 4_294_967_295.0, 3.5],
-        Some(&[1.0, -2.0, f64::INFINITY, 4.0, 5.0]),
+        &[
+            10.0,
+            2.0,
+            1.0,
+            4_294_967_295.0,
+            3.5,
+            -0.0,
+            4_294_967_294.0,
+            -1.0,
+            0.0,
+        ],
+        Some(&[1.0, -2.0, f64::INFINITY, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]),
     );
     assert_eq!(
         strains.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["1", "2", "10", "4294967295", "3.5"]
+        ["0", "1", "2", "10", "4294967294", "4294967295", "3.5", "-1"]
     );
     assert_eq!(strains["2"], 0.0);
+    assert_eq!(strains["0"], 9.0);
+    assert_eq!(strains["4294967294"], 7.0);
 
     let mut state = regular();
     state.beatmap.graph = Arc::new(StrainGraph {
