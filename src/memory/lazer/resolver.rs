@@ -224,12 +224,32 @@ impl LazerMemory {
         if list == 0 {
             return Err(corrupt("managed collection", list, "null pointer"));
         }
-        let marker = self.process.read_i32(add(list, 0x10)?)?;
-        let (size, items) = if marker > 10_000_000 {
-            (self.process.read_i32(add(list, 8)?)?, add(list, 0x10)?)
+        let marker_address = add(list, 0x10)?;
+        let value_address = add(list, 8)?;
+        let mut header = [0u8; 12];
+        let (marker, value) = if usize::BITS == 64
+            && self.process.pointer_size() == 8
+            && self.process.read_exact(value_address, &mut header).is_ok()
+        {
+            (
+                i32::from_le_bytes(header[8..12].try_into().unwrap()),
+                u64::from_le_bytes(header[..8].try_into().unwrap()),
+            )
         } else {
-            let array = self.ptr(add(list, 8)?)?;
-            (marker, add(array, 0x10)?)
+            // Sparse backends may expose only individual fields. Preserve the
+            // original scalar sequence and its error when the span is unavailable.
+            let marker = self.process.read_i32(marker_address)?;
+            let value = if marker > 10_000_000 {
+                self.process.read_i32(value_address)? as u64
+            } else {
+                self.ptr(value_address)? as u64
+            };
+            (marker, value)
+        };
+        let (size, items) = if marker > 10_000_000 {
+            (value as i32, marker_address)
+        } else {
+            (marker, add(value as usize, 0x10)?)
         };
         if !(0..=MAX_COLLECTION as i32).contains(&size) {
             return Err(corrupt("managed collection", list, "invalid size"));

@@ -261,6 +261,46 @@ fn managed_collection_layouts_and_statistics_are_exact() {
 }
 
 #[test]
+fn collection_header_errors_preserve_scalar_field_precedence() {
+    let list = 0x1000;
+    for marker_present in [false, true] {
+        let mut memory = SparseMemory::default();
+        if marker_present {
+            memory.i32(list + 0x10, 1);
+        }
+        let reader = reader(Arc::new(memory));
+        let error = reader.hybrid_list_info(list).unwrap_err();
+        let expected = if marker_present {
+            (list + 8, 8)
+        } else {
+            (list + 0x10, 4)
+        };
+        assert!(
+            matches!(error, MemoryError::Read { address, len, .. } if (address, len) == expected)
+        );
+    }
+}
+
+#[test]
+fn collection_header_ignores_padding_after_x86_pointer() {
+    let list = 0x1000;
+    let array = 0x2000;
+    let mut memory = SparseMemory::default();
+    memory.i32(list + 8, array);
+    memory.i32(list + 0xc, 0x1234);
+    memory.i32(list + 0x10, 1);
+    let reader = LazerMemory::new(
+        ProcessHandle::new(Arc::new(memory), ProcessBitness::X86),
+        Arc::new(LazerOffsets::embedded().unwrap()),
+        LazerPattern::source_default(),
+    );
+    assert_eq!(
+        reader.hybrid_list_info(list).unwrap(),
+        (1, array as usize + 0x10)
+    );
+}
+
+#[test]
 fn hit_event_size_result_and_identity_rules_match_modes() {
     let event = 0x1000usize;
     let object = 0x2000usize;
