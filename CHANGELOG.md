@@ -17,6 +17,8 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 
 - Consolidate the five retained autoresearch lanes: reduce Linux read/scanner allocation work, combine lazer key-read stages, avoid per-byte stable mod-checksum allocations, reserve v1 serialization capacity and sort StreamCompanion strains in place, share selected-field comparison results, and reuse immutable calculator source maps.
 - Retain the Linux sparse-large iovec capacity change with a measured limitation: 65,536-request/33-active spread/back probes improved 10.64–13.54%, while all-empty and 32-active controls regressed 2.64–3.83%. These are synthetic native self-process measurements, not a general daemon speedup; see the [benchmark guide](openwiki/testing/benchmarks.md#five-lane-autoresearch-consolidation-2026-09-08).
+- Merge all five reopened lane histories and benchmark the combined source against both the original optimization base and previous integration. Production calculator preparation and shared subscriptions improved on the measured fixtures; native lazer precise capture was 16.04% faster than previous while requested bytes rose 570 → 912 per cycle.
+- Preserve the final measured limitations: sparse 33-front/64-spread controls were 16.48%/13.69% slower than the original base, distinct-plan fast-writer subscriptions were 4.03% slower than previous, and mania parsing was 4.89% slower than previous. These are workload-specific results, not a general daemon speedup; see the [final combined measurements](openwiki/testing/benchmarks.md#final-reopened-lane-consolidation-2026-09-08).
 
 ### Gameplay
 

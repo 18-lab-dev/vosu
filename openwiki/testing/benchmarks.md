@@ -913,3 +913,153 @@ hashes, commit manifest and platform gaps are recorded separately in
 `vosu-consolidation-20260908/result.json`. Native Windows and interactive
 live-client parity require separate authorized verification; Linux synthetic
 and daemon smoke results do not replace those gates.
+
+## Final reopened-lane consolidation (2026-09-08)
+
+This is a final combined measurement, not the sum of the earlier lane results.
+The preceding section preserves the first integration's historical evidence.
+All five reopened histories were merged without cherry-pick duplication:
+process `50cbca3`, decoder `d559d11`, API `4afa60d`, publication `3f4ca2f`,
+and calculation `e28e9c4`. No retained lane commit was excluded.
+
+### Source identity and timing protocol
+
+| Label | Actual archived source revision |
+| --- | --- |
+| Original optimization base | `e0bb23e4d39729ec82a9f2bc5e75832a87ff7f86` |
+| Previous integration | `ce286f4fe8ea51a92684f8e7446bc10fab18ad9a` |
+| Final benchmark source | `1ab55ae30fa5c9622a17f71deea816e076c37dec` |
+
+Each revision was exported with `git archive`. All 889 exported tracked blobs
+per archive matched that revision's Git blob IDs; per-file SHA-256 hashes are
+retained. Build metadata distinguishes the coordinator HEAD from the actual
+archive source revision. The final documentation commit does not change the
+benchmarked Rust source.
+
+All three archives used Rust 1.96.1, the same lockfile, host target, release
+profile, and `--no-default-features --features linux-process-events`.
+Build command: `cargo build --release --locked --no-default-features --features
+linux-process-events --lib --bins --benches`. Standalone probes linked the
+corresponding release libraries with `-C opt-level=3 -C lto=thin
+-C codegen-units=1 -C panic=abort -C strip=symbols`; exact commands and binary
+hashes are preserved, rather than inferring artifact identity from filenames.
+
+The fixed matrix ran all six permutations of original/previous/final once
+per workload: six observations per version, 40 workload groups, 720 successful
+process invocations. Successful `taskset` launches pinned single-thread
+workloads to CPU 2 and the four-worker publication probe to CPUs 8–11.
+The shared timing `flock` covered the entire matrix. Builds, Clippy, tests,
+and correctness probes finished before timing; accepted timing began 233.22
+seconds after the last validation. Recorded intervals do not overlap.
+One-minute host load ranged from 1.625 to 4.170. Affinity and the lock do not
+make the shared host unloaded or control unrelated users' work.
+
+Criterion used `--sample-size 20 --warm-up-time 0.2 --measurement-time 0.5
+--nresamples 1000`. Every repetition's `sample.json`, `benchmark.json`, and
+`estimates.json` was copied before the next repetition: 450 sample files,
+9,000 raw observations. Other probes retain raw stdout and all six external
+observations; API stdout also contains its internal encode samples and
+publication stdout its per-round samples. Decoder stdout exposes internal
+median summaries, not individual internal timings. No outlier was deleted.
+An initial six-invocation attempt omitted Criterion raw-sample copies; the
+entire attempt is explicitly excluded and preserved separately. The complete
+matrix above was rerun with corrected capture.
+
+### Combined measurements
+
+Times below are microseconds per operation, except that the live-prefix
+calculator probe elsewhere in the full table measures a complete sequence
+of score updates. Changes are medians of six within-round percentage changes,
+not ratios of the displayed medians. Negative means less time. Final CV is
+the sample standard deviation divided by the mean of six external values.
+The machine-readable table includes every metric, raw external values,
+variance, range, both comparisons, and faster-pair counts.
+
+| Workload | Original µs | Previous µs | Final µs | Δ original | Δ previous | Final CV |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Production backend, osu! | 2245.00 | 2036.01 | 173.74 | -92.26% | -91.46% | 0.35% |
+| Production backend, taiko | 3758.48 | 3567.94 | 292.83 | -92.22% | -91.79% | 0.31% |
+| Production backend, catch | 238.71 | 171.01 | 29.32 | -87.71% | -82.84% | 0.77% |
+| Production backend, mania | 523.93 | 484.29 | 55.75 | -89.36% | -88.49% | 0.81% |
+| Mania parse control | 20.83 | 20.19 | 21.19 | +1.64% | +4.89% | 1.25% |
+| Native lazer precise capture | 8.180 | 7.978 | 6.719 | -18.51% | -16.04% | 1.24% |
+| Stable slice-backed idle | 0.611 | 0.245 | 0.238 | -60.99% | -1.81% | 1.74% |
+| Stable key-overlay control | 0.237 | 0.237 | 0.236 | -0.09% | -0.61% | 1.20% |
+| V1 stable idle, eight orphan spectators | 2.773 | 2.598 | 2.389 | -13.79% | -8.26% | 0.43% |
+| StreamCompanion stable idle, 2,048 strains | 363.43 | 320.70 | 318.90 | -12.55% | -0.48% | 0.33% |
+| V2 stable idle, 2,048 graph points | 237.99 | 245.18 | 242.34 | +2.25% | -1.16% | 1.29% |
+| Sparse 65,536 requests, all empty | 13.755 | 13.784 | 13.806 | +0.37% | +0.16% | 0.31% |
+| Sparse 65,536 requests, 32 spread | 16.410 | 16.443 | 16.397 | +0.04% | -0.17% | 0.27% |
+| Sparse 65,536 requests, 33 spread | 16.440 | 16.479 | 16.490 | +0.24% | -0.11% | 0.33% |
+| Sparse 65,536 requests, 33 back | 15.501 | 15.941 | 15.873 | +2.52% | -0.47% | 0.29% |
+| Sparse 65,536 requests, 33 front | 15.925 | 18.615 | 18.560 | +16.48% | -0.10% | 0.95% |
+| Sparse 65,536 requests, 64 spread | 18.616 | 21.227 | 21.211 | +13.69% | -0.96% | 1.36% |
+| Fresh regions, 128 fragments | 26.918 | 26.175 | 25.891 | -3.85% | -1.10% | 0.23% |
+| Cold regions, 128 fragments | 27.178 | 26.479 | 26.584 | -2.05% | +0.44% | 0.34% |
+| Boundary-error reads, 128 fragments | 34.953 | 33.888 | 32.136 | -8.04% | -5.24% | 0.15% |
+| Four-worker subscriptions, 1,000 shared, fast | 349.68 | 340.02 | 206.39 | -40.97% | -39.70% | 3.24% |
+| Four-worker subscriptions, 1,000 distinct, fast | 430.64 | 404.00 | 418.57 | -2.13% | +4.03% | 2.29% |
+| Four-worker subscriptions, 1,000 distinct, slow | 404.71 | 412.49 | 410.19 | +2.35% | -0.35% | 2.54% |
+| Four-worker subscriptions, 1,000 shared, slow, 1,024 integers | 2165.31 | 318.02 | 197.71 | -90.88% | -37.63% | 4.11% |
+
+The production backend rows exercise `LiveBeatmapEngine::calculate`, including
+attributes, strains, and generated accuracy scores. They use one existing
+native-ruleset `*-diffcalc-test.osu` per mode, not a representative user-map
+distribution. Live-prefix sequences improved 50.60–84.58% against original
+and 24.32–48.83% against previous. Native map parsing was 1.60–4.89% slower
+than previous across all four maps; gradual controls ranged from -0.04% to
++0.27%. These are retained limitations, not universal calculator wins.
+
+Across all 24 inputs per API group, ordinary V1 changes against previous
+ranged -2.72% to +0.89%, StreamCompanion -1.45% to +2.16%, and the tournament
+manager control -1.35% to +2.43%. V1 orphan-spectator inputs improved
+2.67–9.38% against previous. Some ordinary V1 observations had 24.39% CV.
+Small timing differences on unchanged paths are not attributed to source
+improvements. In particular, V2 contains no newly retained serializer change.
+
+The original sparse spread/back lane result is not reproduced as an
+original-base improvement in this combined run. Front and 64-spread cases
+are materially slower than original; the reopened process delta adds little
+change relative to previous on these cases. All histories remain included,
+with this cost explicit. No weighted real-daemon benefit is established.
+
+Publication results are in-memory hub measurements, not network latency.
+Shared plans improve, but the distinct-plan fast-writer regression remains.
+The large original shared-array baseline is workload-specific, not a blanket
+90% publication gain. Single-thread Criterion subscription and calculator
+groups had roughly 22–27% final CV; their small control deltas, including the
+unchanged cache key (+0.34% versus previous), are inconclusive. Their complete
+results and raw samples remain in the evidence.
+
+### Allocation, correctness, and evidence
+
+The native decoder requested 570 / 570 / 912 bytes per cycle for original /
+previous / final, with 29 / 28 / 26 backend calls. Fewer calls trade for 60%
+more requested bytes. Stable idle/key probes use slice-backed memory; their
+timings are not a Windows process-read speed claim.
+
+Cold V1 idle requested 4,435 / 2,395 / 2,395 allocation bytes, with 36 / 28 / 28
+reallocations. Eight orphan spectators requested 7,895 / 5,855 / 2,491 bytes
+and 70 / 70 / 61 allocations; the manager control retained previous counts.
+StreamCompanion's 2,048-strain case requested 994,931 / 852,122 / 852,122
+bytes with 6,303 / 2,206 / 2,206 allocations. Cache hits allocated nothing in
+the measured API cases. These are allocator-requested bytes, not RSS.
+
+Linux workspace tests, Clippy, format, native process tests, and actual
+release-daemon smoke passed at the benchmark source revision. Windows MSVC
+cross-Clippy passed with `C_INCLUDE_PATH` unset. Cross-version probes matched
+288 API documents, 60 calculator proof cases, and four production backend
+outputs exactly. Native Windows execution, live-client parity, and a newly
+packaged archive smoke remain unrun; no VM or game was accessed.
+
+Evidence root: `/home/user/.cache/vosu-consolidation-final-20260908/`.
+`result.json` links the exact commands, heads, checks, source-size audit,
+included-commit manifest, and final documentation commit.
+`archive-provenance.json`, `benchmark-artifacts.json`, and
+`harness-manifest.json` identify sources and binaries.
+`measurement-plan.json`, `measure.py`, and `analyze.py` reproduce the fixed
+protocol; `timing.jsonl` and `timing/` retain accepted outputs and raw samples.
+`benchmark-summary.json`, `benchmark-table.csv`, and `allocation-table.json`
+contain the full results. `measurement-integrity.json` records validation
+separation, source-attribution correction, and the excluded incomplete
+raw-capture attempt. Earlier lane and first-integration evidence is untouched.
