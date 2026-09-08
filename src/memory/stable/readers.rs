@@ -247,14 +247,22 @@ impl MemoryReader for StableMemory {
         } else {
             self.i32(self.add(r, 0xf8)?)?
         } as f64;
-        let mut h_bytes = [0; 8];
-        let mut smooth_bytes = [0; 8];
-        self.process.read_many(&mut [
-            ReadRequest::new(self.add(hp, 0x14)?, &mut smooth_bytes),
-            ReadRequest::new(self.add(hp, 0x1c)?, &mut h_bytes),
-        ])?;
-        let h = f64::from_le_bytes(h_bytes);
-        let smooth = f64::from_le_bytes(smooth_bytes);
+        let mut health_bytes = [0; 16];
+        let smooth_address = self.add(hp, 0x14)?;
+        let health_address = self.add(hp, 0x1c)?;
+        if self
+            .process
+            .read_exact(smooth_address, &mut health_bytes)
+            .is_err()
+        {
+            let (smooth_bytes, h_bytes) = health_bytes.split_at_mut(8);
+            self.process.read_many(&mut [
+                ReadRequest::new(smooth_address, smooth_bytes),
+                ReadRequest::new(health_address, h_bytes),
+            ])?;
+        }
+        let h = f64::from_le_bytes(health_bytes[8..].try_into().unwrap());
+        let smooth = f64::from_le_bytes(health_bytes[..8].try_into().unwrap());
         let smooth = if smooth == 0.0 || smooth.is_nan() {
             0.0
         } else {
@@ -273,12 +281,22 @@ impl MemoryReader for StableMemory {
             )?)?,
             player_name: self.string_ptr(self.add(b, 0x28)?)?,
             mods: {
-                let mut left_bytes = [0; 4];
-                let mut right_bytes = [0; 4];
-                self.process.read_many(&mut [
-                    ReadRequest::new(self.add(x, 8)?, &mut right_bytes),
-                    ReadRequest::new(self.add(x, 0xc)?, &mut left_bytes),
-                ])?;
+                let mut mod_bytes = [0; 8];
+                let right_address = self.add(x, 8)?;
+                let left_address = self.add(x, 0xc)?;
+                if self
+                    .process
+                    .read_exact(right_address, &mut mod_bytes)
+                    .is_err()
+                {
+                    let (right_bytes, left_bytes) = mod_bytes.split_at_mut(4);
+                    self.process.read_many(&mut [
+                        ReadRequest::new(right_address, right_bytes),
+                        ReadRequest::new(left_address, left_bytes),
+                    ])?;
+                }
+                let right_bytes = mod_bytes[..4].try_into().unwrap();
+                let left_bytes = mod_bytes[4..].try_into().unwrap();
                 self.with_random_seed(
                     mods((i32::from_le_bytes(left_bytes) ^ i32::from_le_bytes(right_bytes)) as i64),
                     r,

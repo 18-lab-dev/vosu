@@ -787,6 +787,25 @@ fn random_seed_recalculates_the_full_mod_array() {
     );
 }
 #[test]
+fn gameplay_missing_health_preserves_the_individual_field_error() {
+    let mut bytes = vec![0; 0x141c];
+    put_u32(&mut bytes, 0x8f5, 0x1000);
+    put_u32(&mut bytes, 0x1004, 0x1100);
+    put_u32(&mut bytes, 0x1164, 0x1200);
+    put_u32(&mut bytes, 0x1238, 0x1300);
+    put_u32(&mut bytes, 0x1240, 0x1400);
+    let mut reader = StableMemory::new(handle(0, bytes), fixture_patterns());
+    assert!(matches!(
+        reader.gameplay(0.0, None),
+        Err(MemoryError::Read {
+            address: 0x141c,
+            len: 8,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn gameplay_boundary_receives_timing_and_reads_scores_after_first_object() {
     let mut bytes = vec![0; 0x2000];
     put_u32(&mut bytes, 0x8f5, 0x1000);
