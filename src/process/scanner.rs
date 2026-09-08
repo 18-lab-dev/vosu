@@ -230,9 +230,14 @@ impl ProcessHandle {
         let mut scratch = ScanScratch::new(max_len, max_region_size(&regions))?;
         let mut found = vec![false; patterns.len()];
         let mut results = Vec::with_capacity(patterns.len());
+        let mut region_matches = if regions.is_empty() {
+            Vec::new()
+        } else {
+            vec![None; patterns.len()]
+        };
 
         for region in regions {
-            let mut region_matches = vec![None; patterns.len()];
+            region_matches.fill(None);
             let readable = scan_region(self, region, max_len, &mut scratch, |window, base, _| {
                 for (index, pattern) in patterns.iter().enumerate() {
                     if found[index] || region_matches[index].is_some() || pattern.bytes.is_empty() {
