@@ -415,8 +415,7 @@ impl V2SubscriptionHub {
     }
 
     fn wake(&self) {
-        let next = self.0.wake.borrow().wrapping_add(1);
-        self.0.wake.send_replace(next);
+        self.0.wake.send_modify(|wake| *wake = wake.wrapping_add(1));
     }
 
     fn remove(&self, id: u64) {
