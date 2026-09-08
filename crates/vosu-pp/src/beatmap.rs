@@ -608,17 +608,25 @@ fn mania_column(x: f32, columns: usize) -> usize {
     ((x * columns as f32 / 512.0).floor() as usize).min(columns.saturating_sub(1))
 }
 
+// Difficulty-only callers do not need the owned state used by performance.
+pub(crate) fn configured_difficulty(
+    map: &ParsedBeatmap,
+    config: &DifficultyConfig,
+) -> Result<(rosu_pp::Difficulty, Beatmap), Error> {
+    let view = ParsedMapView {
+        mode: map.state.mode,
+        playable: &map.state.playable,
+        mods: &map.state.mods,
+    };
+    crate::difficulty_builder(&view, config)
+}
+
 pub(crate) fn configured(
     map: &ParsedBeatmap,
     config: &DifficultyConfig,
 ) -> Result<(BeatmapState, rosu_pp::Difficulty, Beatmap), Error> {
     let mut state = map.state.clone();
-    let view = ParsedMapView {
-        mode: state.mode,
-        playable: &state.playable,
-        mods: &state.mods,
-    };
-    let (difficulty, playable) = crate::difficulty_builder(&view, config)?;
+    let (difficulty, playable) = configured_difficulty(map, config)?;
 
     let mut combined = state.mods.clone();
     combined.extend(resolve_random_seeds(&config.mods));
