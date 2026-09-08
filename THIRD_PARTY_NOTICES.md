@@ -117,6 +117,11 @@ the base stylesheet hash. These are local structural changes, not new upstream
 revisions. Calculator attribution and unchanged retained test provenance are
 recorded in `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`.
 
+The counter-management CSRF fix locally changes `homepage.js` management calls
+and the report form in `homepage.html` to POST, with matching navigation styling
+in `homepage.css`. These first-party changes do not change upstream provenance;
+the exact retained bytes and base stylesheet metadata hash are updated together.
+
 The offset tools' formerly tracked `bin/` and `obj/` files are reproducible local
 build output, not distributed runtime inputs. Their source projects and package
 locks remain; restoring/building follows the README's maintainer workflow.

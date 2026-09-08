@@ -205,8 +205,8 @@ impl PageService {
     pub fn delegated_api(&self, method: HttpMethod, path: &str) -> Option<DelegatedApi> {
         match (method, path) {
             (HttpMethod::Post, "/api/settingsSave") => Some(DelegatedApi::SettingsSave),
-            (HttpMethod::Get, "/api/runUpdates") => Some(DelegatedApi::RunUpdates),
-            (HttpMethod::Get, "/api/generateReport") => Some(DelegatedApi::GenerateReport),
+            (HttpMethod::Post, "/api/runUpdates") => Some(DelegatedApi::RunUpdates),
+            (HttpMethod::Post, "/api/generateReport") => Some(DelegatedApi::GenerateReport),
             _ => None,
         }
     }
@@ -418,11 +418,11 @@ mod tests {
             Some(DelegatedApi::SettingsSave)
         );
         assert_eq!(
-            pages.delegated_api(HttpMethod::Get, "/api/runUpdates"),
+            pages.delegated_api(HttpMethod::Post, "/api/runUpdates"),
             Some(DelegatedApi::RunUpdates)
         );
         assert_eq!(
-            pages.delegated_api(HttpMethod::Get, "/api/generateReport"),
+            pages.delegated_api(HttpMethod::Post, "/api/generateReport"),
             Some(DelegatedApi::GenerateReport)
         );
         assert_eq!(

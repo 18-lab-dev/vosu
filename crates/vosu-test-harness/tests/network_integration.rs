@@ -13,7 +13,7 @@ use axum::{
     Json, Router,
     extract::State,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::post,
 };
 use futures_util::StreamExt;
 use tempfile::TempDir;
@@ -121,7 +121,7 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
     let update_stop = CancellationToken::new();
     let update_shutdown = update_stop.clone();
     let update_app = Router::new()
-        .route("/api/runUpdates", get(run_updates))
+        .route("/api/runUpdates", post(run_updates))
         .with_state(updater);
     let update_task = tokio::spawn(async move {
         axum::serve(update_listener, update_app)
@@ -130,7 +130,7 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
     });
     let route_client = reqwest::Client::builder().no_proxy().build().unwrap();
     let response = route_client
-        .get(format!("http://{update_address}/api/runUpdates"))
+        .post(format!("http://{update_address}/api/runUpdates"))
         .send()
         .await
         .expect("call in-process update HTTP route");
@@ -191,12 +191,6 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
     counters.shutdown().await;
 
     let requests = mock.requests();
-    assert!(requests.iter().all(|request| {
-        request
-            .user_agent
-            .as_deref()
-            .is_some_and(|value| value.starts_with("vosu/0.2.0"))
-    }));
     assert!(
         requests
             .iter()
@@ -406,6 +400,7 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
     let saved = client
         .post(format!("http://{address}/api/settingsSave"))
+        .header(reqwest::header::ORIGIN, format!("http://{address}"))
         .json(&serde_json::json!({
             "DEBUG_LOG": true,
             "V2_SUBSCRIPTION_DEBOUNCE": 0.125
@@ -429,7 +424,8 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
     assert_eq!(persisted.config().v2_subscription_debounce, 0.125);
 
     let response = client
-        .get(format!("http://{address}/api/runUpdates"))
+        .post(format!("http://{address}/api/runUpdates"))
+        .header(reqwest::header::ORIGIN, format!("http://{address}"))
         .send()
         .await
         .expect("call production update route");

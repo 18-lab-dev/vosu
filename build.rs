@@ -43,6 +43,19 @@ fn build_linux_process_events() {
 fn embed_windows_resource() {
     use winresource::{VersionInfo, WindowsResource};
 
+    let [major, minor, patch] = [
+        env!("CARGO_PKG_VERSION_MAJOR"),
+        env!("CARGO_PKG_VERSION_MINOR"),
+        env!("CARGO_PKG_VERSION_PATCH"),
+    ]
+    .map(|component| {
+        component
+            .parse::<u16>()
+            .expect("Windows resource version components must fit in 16 bits")
+    });
+    let text_version = format!("{major}.{minor}.{patch}.0");
+    let numeric_version = version_quad(major.into(), minor.into(), patch.into(), 0);
+
     let mut resource = WindowsResource::new();
     resource
         .set_icon("assets/icon.ico")
@@ -51,10 +64,10 @@ fn embed_windows_resource() {
         .set("CompanyName", "KotRik")
         .set("LegalCopyright", "© KotRik. All rights reserved.")
         .set("FileDescription", "vosu Rust daemon")
-        .set("FileVersion", "0.2.0.0")
-        .set("ProductVersion", "0.2.0.0")
-        .set_version_info(VersionInfo::FILEVERSION, version_quad(0, 2, 0, 0))
-        .set_version_info(VersionInfo::PRODUCTVERSION, version_quad(0, 2, 0, 0));
+        .set("FileVersion", &text_version)
+        .set("ProductVersion", &text_version)
+        .set_version_info(VersionInfo::FILEVERSION, numeric_version)
+        .set_version_info(VersionInfo::PRODUCTVERSION, numeric_version);
     resource
         .compile()
         .expect("failed to compile Windows resources");

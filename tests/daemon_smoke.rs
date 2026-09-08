@@ -59,7 +59,14 @@ async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
     }
 }
 
-async fn websocket_connect(port: u16, path: &str) -> (tokio::net::TcpStream, Vec<u8>) {
+async fn websocket_connect(
+    port: u16,
+    path: &str,
+    origin: Option<&str>,
+) -> (tokio::net::TcpStream, Vec<u8>) {
+    let origin = origin
+        .map(|origin| format!("Origin: {origin}\r\n"))
+        .unwrap_or_default();
     let mut stream = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
         .await
         .unwrap();
@@ -67,7 +74,7 @@ async fn websocket_connect(port: u16, path: &str) -> (tokio::net::TcpStream, Vec
         .write_all(
             format!(
                 "GET {path} HTTP/1.1\r\n\
-                 Host: localhost\r\n\
+                 Host: 127.0.0.1:{port}\r\n{origin}\
                  Connection: Upgrade\r\n\
                  Upgrade: websocket\r\n\
                  Sec-WebSocket-Version: 13\r\n\
@@ -389,7 +396,8 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         r#"{"error":"osu is not ready/running"}"#
     );
 
-    let (mut subscription, mut buffered) = websocket_connect(port, "/websocket/v2/subscribe").await;
+    let (mut subscription, mut buffered) =
+        websocket_connect(port, "/websocket/v2/subscribe", None).await;
     subscription
         .write_all(&masked_frame(0x1, br#"["/play/score"]"#))
         .await
@@ -478,6 +486,71 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         expected_settings("persisted seeded")
     );
 
+    // A browser navigation/image with no provenance must never delete a counter.
+    let refused_get = client
+        .get(format!("{base}/api/counters/delete/seeded-counter"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused_get.status(), 404);
+    for origin in [
+        None,
+        Some("null"),
+        Some("http://evil.example"),
+        Some("localhost"),
+        Some("http://127.0.0.1:1"),
+    ] {
+        let mut request = client.post(format!("{base}/api/counters/delete/seeded-counter"));
+        if let Some(origin) = origin {
+            request = request.header(reqwest::header::ORIGIN, origin);
+        }
+        assert_eq!(request.send().await.unwrap().status(), 403);
+        assert!(counter.is_dir(), "rejected request deleted the counter");
+    }
+    for path in [
+        "/json",
+        "/json/sc",
+        "/json/v2",
+        "/json/v2/precise",
+        "/seeded-counter/",
+        "/api/counters/settings/seeded-counter",
+    ] {
+        for origin in [None, Some("null")] {
+            let mut request = client.get(format!("{base}{path}"));
+            if let Some(origin) = origin {
+                request = request.header(reqwest::header::ORIGIN, origin);
+            }
+            assert_eq!(
+                request.send().await.unwrap().status(),
+                if path.starts_with("/json") { 500 } else { 200 }
+            );
+        }
+    }
+    // Headerless stock command sockets retain getSettings, but cannot save.
+    let (mut commands, mut command_buffer) =
+        websocket_connect(port, "/websocket/commands?l=seeded-counter", None).await;
+    commands
+        .write_all(&masked_frame(1, b"getSettings:seeded-counter:"))
+        .await
+        .unwrap();
+    let (opcode, payload) = read_server_frame(&mut commands, &mut command_buffer).await;
+    assert_eq!(opcode, 1);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&payload).unwrap()["message"]["title"],
+        "persisted seeded"
+    );
+    commands
+        .write_all(&masked_frame(
+            1,
+            br#"saveSettings:seeded-counter:[{"uniqueID":"title","value":"csrf"}]"#,
+        ))
+        .await
+        .unwrap();
+    let (opcode, payload) = read_server_frame(&mut commands, &mut command_buffer).await;
+    assert_eq!(opcode, 8);
+    assert_eq!(u16::from_be_bytes([payload[0], payload[1]]), 1008);
+    drop(commands);
+
     let changed_legacy_schema = b"root JSON changed after registration";
     fs::write(&legacy_schema_json_path, changed_legacy_schema).unwrap();
     let rediscovered = client
@@ -516,8 +589,40 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         "authoritative root schema changed after legacy root JSON mutation"
     );
 
+    // The stock hosted settings protocol needs no token or new message shape.
+    let (mut hosted, _) =
+        websocket_connect(port, "/websocket/commands?l=seeded-counter", Some(&base)).await;
+    hosted
+        .write_all(&masked_frame(
+            1,
+            br#"saveSettings:seeded-counter:[{"uniqueID":"title","value":"hosted write"}]"#,
+        ))
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let values = client
+            .get(format!("{base}/api/counters/settings/seeded-counter"))
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+        if values == expected_settings("hosted write") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "same-origin socket did not persist settings: {values}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    drop(hosted);
+
     let saved = client
         .post(format!("{base}/api/counters/settings/seeded-counter"))
+        .header(reqwest::header::ORIGIN, &base)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .body(r#"[{"uniqueID":"title","value":"saved over TOML"}]"#)
         .send()
@@ -574,9 +679,9 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         );
     }
 
-    let rejected = client.get(format!(
+    let rejected = client.post(format!(
         "{base}/api/counters/download/http%3A%2F%2F127.0.0.1%3A9%2Fcounter.zip?name=blocked&update=false"
-    )).send().await.unwrap();
+    )).header(reqwest::header::ORIGIN, &base).send().await.unwrap();
     assert_eq!(rejected.status(), 200);
     let rejected_body = rejected.text().await.unwrap();
     assert!(
@@ -586,7 +691,8 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert!(!static_root.join("blocked").exists());
 
     let report = client
-        .get(format!("{base}/api/generateReport"))
+        .post(format!("{base}/api/generateReport"))
+        .header(reqwest::header::ORIGIN, &base)
         .send()
         .await
         .unwrap();
@@ -647,6 +753,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     );
     let saved = client
         .post(format!("{next_base}/api/settingsSave"))
+        .header(reqwest::header::ORIGIN, &next_base)
         .json(&serde_json::json!({
             "SHOW_MP_COMMANDS": true,
             "V2_SUBSCRIPTION_DEBOUNCE": 0.125
@@ -676,7 +783,8 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     );
 
     let deleted = client
-        .get(format!("{next_base}/api/counters/delete/seeded-counter"))
+        .post(format!("{next_base}/api/counters/delete/seeded-counter"))
+        .header(reqwest::header::ORIGIN, &next_base)
         .send()
         .await
         .unwrap();

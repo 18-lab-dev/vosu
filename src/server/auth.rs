@@ -1,11 +1,72 @@
 //! Request authorization shared by HTTP and WebSocket upgrade handlers.
 //!
-//! Authorization deliberately has two independent gates: the transport peer must be
-//! trusted and, when supplied, the browser origin must also be trusted.
+//! Read access retains the overlay-compatible peer/hostname policy. Mutations
+//! additionally require exact same-origin browser provenance, never just loopback.
 
+use axum::http::{HeaderMap, header};
 use std::net::{IpAddr, Ipv4Addr};
 use url::Url;
 
+/// Captured once at HTTP dispatch and retained for the lifetime of a socket.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MutationAuthorization(pub bool);
+
+impl MutationAuthorization {
+    pub(crate) fn from_headers(headers: &HeaderMap) -> Self {
+        Self(same_origin(headers))
+    }
+}
+
+fn single_header(headers: &HeaderMap, name: header::HeaderName) -> Option<&str> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next()?.to_str().ok()?;
+    values.next().is_none().then_some(value)
+}
+
+fn same_origin(headers: &HeaderMap) -> bool {
+    let Some(host) = single_header(headers, header::HOST) else {
+        return false;
+    };
+    // The native listener is HTTP. Do not trust forwarded headers or URL parser
+    // recovery of malformed authorities (credentials, whitespace, paths).
+    if host.is_empty()
+        || host
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || b"/\\@?#".contains(&b))
+    {
+        return false;
+    }
+    let Ok(target) = Url::parse(&format!("http://{host}")) else {
+        return false;
+    };
+    let is_origin = headers.contains_key(header::ORIGIN);
+    let Some(value) = single_header(
+        headers,
+        if is_origin {
+            header::ORIGIN
+        } else {
+            header::REFERER
+        },
+    ) else {
+        return false;
+    };
+    let Ok(source) = Url::parse(value) else {
+        return false;
+    };
+    if source.scheme() != "http"
+        || !value.starts_with("http://")
+        || !source.username().is_empty()
+        || source.password().is_some()
+        || source.fragment().is_some()
+        || value.bytes().any(|b| b.is_ascii_whitespace() || b == b'\\')
+    {
+        return false;
+    }
+    // Origin is a serialized origin, not an arbitrary URL. Referer may include
+    // a path/query, but must still have the exact same scheme, host and port.
+    (!is_origin || source.origin().ascii_serialization() == value)
+        && source.origin() == target.origin()
+}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuthorizationPolicy {
     allowed: Vec<String>,
@@ -49,7 +110,10 @@ impl AuthorizationPolicy {
         // Origin is authoritative whenever the header exists, including an empty or
         // malformed value. Referer is considered only when Origin is absent.
         let selected = headers.origin.or(headers.referer);
-        let header_ok = selected.is_none_or(|value| self.header_allowed(value));
+        let header_ok = selected.is_none_or(|value| {
+            // Opaque/file browser origins can consume overlay data, never mutate.
+            value == "null" || self.header_allowed(value)
+        });
 
         AuthorizationDecision { peer_ok, header_ok }
     }
@@ -186,6 +250,59 @@ mod tests {
             "127.0.0.1, localhost, absolute, 192.0.2.*, 198.51.100.7, ::1",
             "dashboard.local",
         )
+    }
+
+    #[test]
+    fn mutation_provenance_rejects_ambiguous_headers_and_parser_recovery() {
+        use axum::http::HeaderValue;
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("localhost:24050"));
+        headers.insert(
+            header::REFERER,
+            HeaderValue::from_static("http://localhost:24050/settings?overlay=x"),
+        );
+        assert!(same_origin(&headers));
+        for origin in [
+            "null",
+            "",
+            "localhost",
+            "http://localhost:24050/",
+            "http://user@localhost:24050",
+            "http://localhost:24050#x",
+            "http://localhost:24050 http://evil.example",
+        ] {
+            headers.insert(header::ORIGIN, HeaderValue::from_str(origin).unwrap());
+            assert!(!same_origin(&headers), "{origin}");
+        }
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://localhost:24050"),
+        );
+        assert!(same_origin(&headers));
+        headers.append(
+            header::ORIGIN,
+            HeaderValue::from_static("http://localhost:24050"),
+        );
+        assert!(!same_origin(&headers));
+        headers.remove(header::ORIGIN);
+        headers.append(
+            header::REFERER,
+            HeaderValue::from_static("http://localhost:24050/"),
+        );
+        assert!(!same_origin(&headers));
+        headers.remove(header::REFERER);
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://localhost:24050"),
+        );
+        headers.append(header::HOST, HeaderValue::from_static("localhost:24050"));
+        assert!(!same_origin(&headers));
+        headers.insert(header::HOST, HeaderValue::from_static("[::1]:24050"));
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://[::1]:24050"),
+        );
+        assert!(same_origin(&headers));
     }
 
     #[test]

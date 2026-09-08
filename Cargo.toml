@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 
 [package]
 name = "vosu"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -22,7 +22,7 @@ osu-calculator-revision = "97e94babde9d5ecbe574ecdd33509db27452cd0f"
 rosu-pp-revision = "27a67242cad155a2767f5a25a423ca4ec3e3c274"
 rosu-map-revision = "333dd2bea78e518d39c20932c828011f21d3305e"
 osu-framework-revision = "a0b031e7ff6c83d81da26fcbece7d25edbd222b4"
-homepage-css-sha256 = "689c4ab7315d9a4efe4f202221ee6485abc27d6d6ecc4fc2ca4ba26b2df279e0"
+homepage-css-sha256 = "f54adaedc189256d73ffdc0f9a9a78bfd060c825183dfff7dc5aa1bc60479aa0"
 lazer-offsets-osu-version = "2026.726.0"
 lazer-offsets-release-tag = "2026.726.0-lazer"
 lazer-offsets-release-url = "https://github.com/ppy/osu/releases/tag/2026.726.0-lazer"

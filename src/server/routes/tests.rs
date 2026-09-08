@@ -15,17 +15,72 @@ fn exact_methods_never_add_head_or_options() {
     );
 }
 #[test]
-fn counter_root_open_is_an_exact_get_route() {
+fn counter_root_open_is_an_exact_post_route() {
     assert_eq!(
-        classify(&Method::GET, "/api/counters/open-root"),
+        classify(&Method::POST, "/api/counters/open-root"),
         Some(Endpoint::CounterOpenRoot)
     );
-    assert_eq!(classify(&Method::POST, "/api/counters/open-root"), None);
-    assert_eq!(classify(&Method::GET, "/api/counters/open-root/"), None);
+    assert_eq!(classify(&Method::GET, "/api/counters/open-root"), None);
+    assert_eq!(classify(&Method::POST, "/api/counters/open-root/"), None);
     assert_eq!(
-        classify(&Method::GET, "/api/counters/open/counter"),
+        classify(&Method::POST, "/api/counters/open/counter"),
         Some(Endpoint::CounterOpen)
     );
+}
+
+#[tokio::test]
+async fn management_mutations_require_post_and_exact_browser_origin() {
+    for path in [
+        "/api/counters/delete/expendable",
+        "/api/counters/download/fixture",
+        "/api/counters/open/expendable",
+        "/api/counters/open-root",
+        "/api/runUpdates",
+        "/api/generateReport",
+        "/api/settingsSave",
+        "/api/counters/settings/expendable",
+    ] {
+        for origin in [
+            None,
+            Some("null"),
+            Some("http://evil.example"),
+            Some("localhost"),
+            Some("http://localhost:24862"),
+            Some("https://localhost:24861"),
+            Some("http://localhost:24861/path"),
+            Some("http://localhost:24861"),
+        ] {
+            let mut request = make_request(Method::POST, path, Body::empty());
+            request
+                .headers_mut()
+                .insert(header::HOST, HeaderValue::from_static("localhost:24861"));
+            if let Some(origin) = origin {
+                request
+                    .headers_mut()
+                    .insert(header::ORIGIN, HeaderValue::from_str(origin).unwrap());
+            }
+            let response = dispatch(State(providers(CachedJson::NotReady)), request).await;
+            assert_eq!(
+                response.status(),
+                if origin == Some("http://localhost:24861") {
+                    StatusCode::OK
+                } else {
+                    StatusCode::FORBIDDEN
+                },
+                "{path}: {origin:?}",
+            );
+        }
+        if path != "/api/counters/settings/expendable" {
+            let request = make_request(Method::GET, path, Body::empty());
+            assert_eq!(
+                dispatch(State(providers(CachedJson::NotReady)), request)
+                    .await
+                    .status(),
+                StatusCode::NOT_FOUND,
+                "{path}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -261,10 +316,17 @@ async fn dispatch_has_exact_not_found_and_not_ready_envelopes() {
 
 #[tokio::test]
 async fn post_body_is_rejected_beyond_one_mibibyte() {
-    let request = make_request(
+    let mut request = make_request(
         Method::POST,
         "/api/settingsSave",
         Body::from(vec![0_u8; MAX_POST_BODY + 1]),
+    );
+    request
+        .headers_mut()
+        .insert(header::HOST, HeaderValue::from_static("localhost:24861"));
+    request.headers_mut().insert(
+        header::ORIGIN,
+        HeaderValue::from_static("http://localhost:24861"),
     );
     let response = dispatch(State(providers(CachedJson::NotReady)), request).await;
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);

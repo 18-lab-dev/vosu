@@ -1,12 +1,19 @@
 # Changelog
 
-All notable user-visible changes to vosu are documented here. Entries below the Unreleased section are retained release history and use the product names and artifact names that were current at the time.
+All notable user-visible changes to vosu are documented here. The current 0.3.0 section is unreleased; older sections are retained release history and use the product names and artifact names that were current at the time.
 
-## Unreleased
+## 0.3.0 — Unreleased
+
+### Security
+
+- Prevent counter-delete CSRF and protect the shared management mutation boundary with exact same-origin browser provenance. Counter delete/download/open, updater, and report actions now require POST; no mutating GET aliases remain. The dashboard uses the new methods.
+- Preserve headerless/file-origin read-only overlay access and stock settings commands. Hosted counters can still save settings without new tokens or code; non-hosted sockets may read settings but cannot save them.
+- Management writes require exact HTTP scheme/host/port browser provenance; `Origin` is authoritative, with `Referer` fallback only when absent. Missing, null, malformed, or duplicate provenance cannot authorize writes. Non-hosted settings sockets retain reads but close with 1008 before saving or relaying mutations.
 
 ### Runtime and maintenance
 
 - Split maintained code into domain-focused modules capped at 1,000 lines, preserving API and calculator behavior; remove tracked offset-tool build output while retaining source, locks, and provenance.
+- Derive Windows textual and numeric executable-resource versions from the root Cargo package version, keeping both resource version fields consistent with 0.3.0.
 
 - Remove the report-only graphics stack; use Linux sysfs and Windows WMI hardware metadata, with explicit unavailable/unknown states.
 - Bound report log retention with visible truncation notices; isolate counter discovery, report capture, configuration persistence/reload, and ordered console output from async workers.

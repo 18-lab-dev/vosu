@@ -20,7 +20,7 @@ use axum::{
 use serde_json::Value;
 
 use super::{
-    auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},
+    auth::{AuthorizationDecision, AuthorizationPolicy, MutationAuthorization, RequestHeaders},
     websocket::UpgradeCallbackTracker,
 };
 
@@ -273,7 +273,7 @@ pub fn service_with_upgrades(
         .into_make_service_with_connect_info::<PeerAddress>()
 }
 
-pub async fn dispatch(State(providers): State<RouteProviders>, request: Request) -> Response {
+pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Request) -> Response {
     let allowed = {
         let peer = request
             .extensions()
@@ -355,6 +355,20 @@ pub async fn dispatch(State(providers): State<RouteProviders>, request: Request)
     let Some(endpoint) = classify(&method, &path) else {
         return cors(not_found());
     };
+    let mutation = if method == Method::POST || websocket_upgrade {
+        MutationAuthorization::from_headers(request.headers())
+    } else {
+        MutationAuthorization::default()
+    };
+    if method == Method::POST && !mutation.0 {
+        return cors(
+            Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(Body::from("Not Found"))
+                .unwrap(),
+        );
+    }
+    request.extensions_mut().insert(mutation);
     let response = match endpoint {
         Endpoint::State(route) => match providers.state.cached_json(route).await {
             CachedJson::Ready(body) => json(StatusCode::OK, body),
@@ -404,8 +418,8 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/json/v2/precise" if get => Some(State(StateRoute::V2Precise)),
         "/api/calculate/pp" if get => Some(CalculatePp),
         "/api/settingsSave" if post => Some(SettingsSave),
-        "/api/runUpdates" if get => Some(RunUpdates),
-        "/api/generateReport" if get => Some(GenerateReport),
+        "/api/runUpdates" if post => Some(RunUpdates),
+        "/api/generateReport" if post => Some(GenerateReport),
         "/backgroundImage" if get => Some(BackgroundImage),
         "/files/beatmap/background" if get => Some(BeatmapBackground),
         "/files/beatmap/audio" if get => Some(BeatmapAudio),
@@ -422,10 +436,10 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/websocket/v2/subscribe" if get => Some(WsV2Subscribe),
         "/websocket/commands" if get => Some(WsCommands),
         _ if get && path.starts_with("/api/counters/search/") => Some(CounterSearch),
-        "/api/counters/open-root" if get => Some(CounterOpenRoot),
-        _ if get && path.starts_with("/api/counters/download/") => Some(CounterDownload),
-        _ if get && path.starts_with("/api/counters/open/") => Some(CounterOpen),
-        _ if get && path.starts_with("/api/counters/delete/") => Some(CounterDelete),
+        "/api/counters/open-root" if post => Some(CounterOpenRoot),
+        _ if post && path.starts_with("/api/counters/download/") => Some(CounterDownload),
+        _ if post && path.starts_with("/api/counters/open/") => Some(CounterOpen),
+        _ if post && path.starts_with("/api/counters/delete/") => Some(CounterDelete),
         _ if (get || post) && path.starts_with("/api/counters/settings/") => Some(CounterSettings),
         _ if get && path.starts_with("/Songs/") => Some(SongsFile),
         _ if get && path.starts_with("/files/beatmap/") => Some(BeatmapPath),

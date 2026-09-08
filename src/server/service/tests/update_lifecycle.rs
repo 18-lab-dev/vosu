@@ -235,8 +235,10 @@ Sec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n\r\n",
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
             update_client.write_all(
-                b"GET /api/runUpdates HTTP/1.1\r\n\
+                b"POST /api/runUpdates HTTP/1.1\r\n\
 Host: localhost\r\n\
+Origin: http://localhost\r\n\
+Content-Length: 0\r\n\
 Connection: close\r\n\r\n",
             ),
         )

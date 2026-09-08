@@ -359,6 +359,10 @@ impl ProductionRouteDelegate {
         let processor = Arc::clone(&self.services.websocket.processor);
         let relays = Arc::clone(&self.services.websocket.relays);
         let query = request.uri().query().map(str::to_owned);
+        let mutation = request.extensions()
+            .get::<super::auth::MutationAuthorization>()
+            .copied()
+            .unwrap_or_default();
         websocket::upgrade_response(
             websocket_endpoint(endpoint),
             request,
@@ -371,7 +375,7 @@ impl ProductionRouteDelegate {
                     commands,
                     client_namespace,
                     relays,
-                    query.as_deref(),
+                    (query.as_deref(), mutation),
                 )
                 .await;
             },

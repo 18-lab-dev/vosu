@@ -160,16 +160,22 @@ a:hover {
   justify-content: flex-end;
 }
 
-.header-links a {
+.header-links a,
+.header-links button {
   padding: 0.55rem 0.75rem;
   color: var(--paper-muted);
   font-size: 0.9rem;
   font-weight: 650;
   text-decoration: none;
   border-radius: var(--radius-sm);
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
 }
 
-.header-links a:hover {
+.header-links a:hover,
+.header-links button:hover {
   color: var(--paper);
   background: var(--ink-soft);
 }

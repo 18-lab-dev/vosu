@@ -10,7 +10,7 @@ async fn bridge_socket(
     commands: bool,
     client_namespace: u64,
     relays: Arc<WebSocketRelaySink>,
-    query: Option<&str>,
+    (query, mutation): (Option<&str>, super::auth::MutationAuthorization),
 ) {
     let (connection, mut outbound) = if commands {
         hub.connect_commands()
@@ -139,6 +139,13 @@ async fn bridge_socket(
             let Ok(text) = std::str::from_utf8(&data) else {
                 continue;
             };
+            // All legacy sockets can read settings and adjust their own filters.
+            // Only same-origin sockets may reach state-changing commands.
+            if !mutation.0 && !matches!(text.split_once(':').map(|(command, _)| command),
+                Some("getSettings" | "updateSettings" | "applyFilters"))
+            {
+                return Some(SocketTerminal::SendClose { code: 1008, reason: "Same-origin required" });
+            }
             match processor.process(&client, text) {
                 CommandAction::Reply(bytes) => {
                     if !reader_connection.lock().await.send_text(bytes).await {

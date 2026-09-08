@@ -349,7 +349,7 @@ import { createSettingsEditor } from './homepage-settings.js';
       const endpoint = new URL(`/api/counters/download/${encodeURIComponent(downloadUrl)}`, window.location.origin);
       endpoint.searchParams.set('name', installName);
       if (update) endpoint.searchParams.set('update', 'true');
-      await requestJson(endpoint);
+      await requestJson(endpoint, { method: 'POST' });
       if (!update) setCount('installed', (countFromBadge('installed') ?? 0) + 1);
       notify(update ? `${installName} was updated.` : `${installName} was installed.`, 'success');
       window.setTimeout(() => window.location.reload(), 650);
@@ -367,7 +367,7 @@ import { createSettingsEditor } from './homepage-settings.js';
     if (!folder || !window.confirm(`Delete the local overlay “${folder}”?`)) return;
     setBusy(button, true, 'Deleting…');
     try {
-      await requestJson(`/api/counters/delete/${encodeURIComponent(folder)}`);
+      await requestJson(`/api/counters/delete/${encodeURIComponent(folder)}`, { method: 'POST' });
       removePin(folder);
       removeCanonicalInstalledResult(folder);
       card?.remove();
@@ -387,7 +387,7 @@ import { createSettingsEditor } from './homepage-settings.js';
     if (!folder) return;
     setBusy(button, true, 'Opening…');
     try {
-      await requestJson(`/api/counters/open/${encodeURIComponent(folder)}`);
+      await requestJson(`/api/counters/open/${encodeURIComponent(folder)}`, { method: 'POST' });
       notify(`Opened ${folder}.`, 'success');
     } catch (error) {
       notify(`Could not open ${folder}: ${errorText(error)}`, 'error', 5000);
@@ -399,7 +399,7 @@ import { createSettingsEditor } from './homepage-settings.js';
   async function openRoot(button) {
     setBusy(button, true, 'Opening…');
     try {
-      await requestJson('/api/counters/open-root');
+      await requestJson('/api/counters/open-root', { method: 'POST' });
       notify('Opened the overlays folder.', 'success');
     } catch (error) {
       notify(`Could not open the overlays folder: ${errorText(error)}`, 'error', 5000);
@@ -413,7 +413,7 @@ import { createSettingsEditor } from './homepage-settings.js';
     state.pending.add('app-update');
     setBusy(button, true, 'Updating…');
     try {
-      await requestJson('/api/runUpdates');
+      await requestJson('/api/runUpdates', { method: 'POST' });
       notify('Vosu finished updating.', 'success');
       document.querySelector('#update-notice')?.remove();
     } catch (error) {

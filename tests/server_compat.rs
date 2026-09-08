@@ -115,7 +115,10 @@ fn providers() -> RouteProviders {
 }
 
 async fn dispatch(method: Method, uri: &str, origin: Option<&str>, body: Body) -> Response {
-    let mut request = Request::builder().method(method).uri(uri);
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::HOST, "localhost:24050");
     if let Some(origin) = origin {
         request = request.header(header::ORIGIN, origin);
     }
@@ -181,7 +184,7 @@ async fn exact_method_routing_envelopes_cors_and_body_limit_are_observable() {
     let oversized = dispatch(
         Method::POST,
         "/api/settingsSave",
-        None,
+        Some("http://localhost:24050"),
         Body::from(vec![0; routes::MAX_POST_BODY + 1]),
     )
     .await;

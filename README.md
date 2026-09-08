@@ -33,7 +33,7 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 
 ### Portable archive
 
-Download `vosu-linux-v0.2.0.zip` or `vosu-windows-v0.2.0.zip` from the matching [GitHub release](https://github.com/shiruviaa/vosu/releases), then:
+The current source version is **0.3.0**. When its matching [GitHub release](https://github.com/shiruviaa/vosu/releases) is published, download `vosu-linux-v0.3.0.zip` or `vosu-windows-v0.3.0.zip`, then:
 
 1. Extract the complete archive into a writable directory. Its root contains `vosu` or `vosu.exe`, plus `LICENSE`.
 2. On Linux, restore the executable bit if your archive tool removed it: `chmod +x vosu`.
@@ -71,7 +71,7 @@ For a later manual upgrade, stop vosu, replace the executable and `LICENSE` with
 
 `ENABLE_AUTOUPDATE=true` follows stable `shiruviaa/vosu` releases. The updater verifies the selected platform archive against its published SHA-256 digest, stages exactly one root executable, and uses a crash-recoverable helper and rollback flow.
 
-`GET /api/runUpdates` starts the same update path. Set `ENABLE_AUTOUPDATE=false` or launch with `--update=false` to disable the startup check. `--update=true` enables it for one launch.
+`POST /api/runUpdates` starts the same update path from the same-origin dashboard. Set `ENABLE_AUTOUPDATE=false` or launch with `--update=false` to disable the startup check. `--update=true` enables it for one launch.
 
 ## Command-line options
 
@@ -627,16 +627,20 @@ File routes enforce root containment and support validated single HTTP byte rang
 - `GET /`, `/settings`, `/local-overlays`, `/available`, `/favicon.ico`
 - `GET /assets/{path}` and the fallback counter-static route
 - `POST /api/settingsSave`
-- `GET /api/runUpdates`
-- `GET /api/generateReport`
+- `POST /api/runUpdates`
+- `POST /api/generateReport`
 - `GET /api/counters/search/{query}`
-- `GET /api/counters/download/{url}?name=<counter>&update=<value>`
-- `GET /api/counters/open/{name}`
-- `GET /api/counters/open-root` opens the configured counter/static root.
-- `GET /api/counters/delete/{name}`
+- `POST /api/counters/download/{url}?name=<counter>&update=<value>`
+- `POST /api/counters/open/{name}`
+- `POST /api/counters/open-root` opens the configured counter/static root.
+- `POST /api/counters/delete/{name}`
 - `GET|POST /api/counters/settings/{name}`
 
 POST bodies are capped at 1 MiB. Generated reports escape machine, configuration, counter, and log data before inserting it into HTML.
+
+Management POSTs require the existing trusted-peer policy **and** browser provenance matching the native HTTP listener's exact scheme, host, and port. `Origin` is authoritative; only when absent may a same-origin `Referer` authorize the action. Missing, opaque (`null`), malformed, or duplicate provenance is not mutation intent. Forwarded headers are not trusted; HTTPS reverse-proxy origins are not an implicit exception. Rejected mutations return 403. Former management GETs return 404, with no redirect or legacy mutation alias. Non-browser management clients must explicitly supply the same origin; this is CSRF protection, not authentication against malicious local programs.
+
+Read-only JSON, static/file routes, counter-settings GETs, and state/settings WebSockets need no new headers or tokens. Headerless and opaque/file-origin reads remain available to trusted peers. Hosted stock counters retain `window.COUNTER_PATH` and the existing settings protocol unchanged. On legacy sockets, `getSettings`, `updateSettings` replies, and `applyFilters` remain readable without mutation authorization; `saveSettings` requires same-origin provenance captured at upgrade, otherwise the socket closes with 1008 before saving or relaying. File-loaded and other non-hosted overlays may read settings but must use the hosted settings page to write them.
 
 ## WebSocket API
 

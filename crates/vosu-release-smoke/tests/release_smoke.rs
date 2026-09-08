@@ -257,15 +257,16 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     assert_eq!(counters.status(), 200);
     assert!(counters.text().await.unwrap().contains("Seeded Counter"));
 
-    let rejected = client.get(format!(
+    let rejected = client.post(format!(
         "{base}/api/counters/download/https%3A%2F%2F127.0.0.1%3A9%2Fcounter.zip?name=blocked&update=false"
-    )).send().await.unwrap();
+    )).header(reqwest::header::ORIGIN, &base).send().await.unwrap();
     assert_eq!(rejected.status(), 200);
     assert!(rejected.text().await.unwrap().contains("error"));
     assert!(!static_root.join("blocked").exists());
 
     let report = client
-        .get(format!("{base}/api/generateReport"))
+        .post(format!("{base}/api/generateReport"))
+        .header(reqwest::header::ORIGIN, &base)
         .send()
         .await
         .unwrap();
@@ -305,6 +306,7 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
 
     let saved = client
         .post(format!("{second_base}/api/settingsSave"))
+        .header(reqwest::header::ORIGIN, &second_base)
         .json(&serde_json::json!({"SHOW_MP_COMMANDS": true}))
         .send()
         .await
@@ -325,7 +327,8 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     );
 
     let deleted = client
-        .get(format!("{second_base}/api/counters/delete/seeded-counter"))
+        .post(format!("{second_base}/api/counters/delete/seeded-counter"))
+        .header(reqwest::header::ORIGIN, &second_base)
         .send()
         .await
         .unwrap();
