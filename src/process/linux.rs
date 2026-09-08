@@ -129,9 +129,14 @@ impl LinuxProcessMemory {
     }
 
     fn mapped_regions(&self, writable_only: bool) -> Result<Vec<MemoryRegion>, MemoryError> {
+        // Native proc maps reports a zero file length; start with one small
+        // buffer instead of repeatedly growing from an empty allocation.
         parse_maps(
-            &read_bounded(&self.proc_root.join(self.pid.to_string()).join("maps"))
-                .map_err(|error| backend("read /proc maps", error))?,
+            &read_bounded(
+                &self.proc_root.join(self.pid.to_string()).join("maps"),
+                4096,
+            )
+            .map_err(|error| backend("read /proc maps", error))?,
             writable_only,
         )
     }
@@ -688,7 +693,7 @@ fn command_line_at(dir: &Path) -> Result<Vec<OsString>, MemoryError> {
 }
 
 fn read_command_line_at(dir: &Path) -> io::Result<Vec<u8>> {
-    read_bounded(&dir.join("cmdline"))
+    read_bounded(&dir.join("cmdline"), 0)
 }
 
 fn command_line_from_bytes(bytes: &[u8]) -> Vec<OsString> {
@@ -754,7 +759,7 @@ pub fn is_process_alive(pid: u32) -> bool {
 }
 
 fn is_process_alive_at(proc_root: &Path, pid: u32) -> bool {
-    let Ok(stat) = read_bounded(&proc_root.join(pid.to_string()).join("stat")) else {
+    let Ok(stat) = read_bounded(&proc_root.join(pid.to_string()).join("stat"), 0) else {
         return false;
     };
     let Some(close) = stat.iter().rposition(|byte| *byte == b')') else {
@@ -798,8 +803,8 @@ fn resolve_osu_path_at(
         if let Some(config) = data_home.map(|path| path.join("osuconfig/osupath"))
             && config.is_file()
         {
-            let bytes =
-                read_bounded(&config).map_err(|error| backend("read osuconfig/osupath", error))?;
+            let bytes = read_bounded(&config, 0)
+                .map_err(|error| backend("read osuconfig/osupath", error))?;
             return Ok(PathBuf::from(OsString::from_vec(
                 trim_ascii(&bytes).to_vec(),
             )));
@@ -858,7 +863,7 @@ fn parse_maps(bytes: &[u8], writable_only: bool) -> Result<Vec<MemoryRegion>, Me
     Ok(regions)
 }
 
-fn read_bounded(path: &Path) -> io::Result<Vec<u8>> {
+fn read_bounded(path: &Path, initial_capacity: usize) -> io::Result<Vec<u8>> {
     let file = fs::File::open(path)?;
     let length = file.metadata()?.len();
     if length > MAX_PROC_FILE {
@@ -868,7 +873,7 @@ fn read_bounded(path: &Path) -> io::Result<Vec<u8>> {
         ));
     }
     use std::io::Read;
-    let mut bytes = Vec::with_capacity(length as usize);
+    let mut bytes = Vec::with_capacity((length as usize).max(initial_capacity));
     file.take(MAX_PROC_FILE + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_PROC_FILE {
         return Err(io::Error::new(

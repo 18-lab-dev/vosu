@@ -740,3 +740,23 @@ fn reads_native_self_process_memory() {
         .expect("read current process");
     assert_eq!(u64::from_ne_bytes(bytes), *value);
 }
+
+#[test]
+fn bounded_proc_reads_preserve_limit_with_initial_capacity() {
+    let fixture = fixture();
+    let path = fixture.path().join("maps");
+    let expected = vec![0x5a; MAX_PROC_FILE as usize];
+    fs::write(&path, &expected).unwrap();
+    assert_eq!(read_bounded(&path, 4096).unwrap(), expected);
+
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(MAX_PROC_FILE + 1)
+        .unwrap();
+    assert_eq!(
+        read_bounded(&path, 4096).unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
+}
