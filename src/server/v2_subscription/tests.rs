@@ -862,3 +862,24 @@ fn shared_plan_preserves_unchanged_stale_and_initial_delivery_outcomes() {
         json!([0, 3, [[0, 2]]])
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subscription_during_dispatch_is_delivered_without_another_publication() {
+    let provider = BlockingProvider::new();
+    let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
+    let (first, _first_rx) = hub.connect();
+    first.subscribe(vec!["/a".into()]).unwrap();
+    let runner = tokio::spawn({
+        let hub = hub.clone();
+        async move { hub.run().await }
+    });
+    provider.entered.wait();
+    let (second, mut second_rx) = hub.connect();
+    second.subscribe(vec!["/a".into()]).unwrap();
+    provider.release.wait();
+
+    let delivered = tokio::time::timeout(Duration::from_secs(2), second_rx.recv()).await;
+    hub.shutdown();
+    runner.await.unwrap();
+    assert_eq!(text(delivered.unwrap().unwrap()), json!([0, 1, [[0, 1]]]));
+}
