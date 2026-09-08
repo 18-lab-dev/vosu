@@ -738,14 +738,20 @@ impl LazerMemory {
         }
         let mut index = start_index;
         let mut suffix_events = Vec::new();
+        let mut errors = HitErrorArray::default();
         while index < size {
             let event = self.read_hit_event(add(items, index * 0x40)?)?;
             match event {
                 Some(HitErrorEvent::Timing { value, .. }) if hit_error_out_of_range(value) => {
                     break;
                 }
-                Some(event) => suffix_events.push(event),
-                None => {}
+                // Only mania needs retained identities to classify hold releases.
+                Some(event) if self.selected_gamemode == 3 => suffix_events.push(event),
+                Some(HitErrorEvent::Timing { value, .. }) => {
+                    errors.all.push(value);
+                    errors.press.push(value);
+                }
+                Some(HitErrorEvent::ManiaHoldAggregate { .. }) | None => {}
             }
             index += 1;
         }
@@ -757,7 +763,6 @@ impl LazerMemory {
                 HitErrorEvent::Timing { .. } => None,
             })
             .collect();
-        let mut errors = HitErrorArray::default();
         for event in &suffix_events {
             if let HitErrorEvent::Timing { value, object } = *event {
                 errors.all.push(value);

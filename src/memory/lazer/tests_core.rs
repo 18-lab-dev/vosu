@@ -369,6 +369,22 @@ fn non_mania_duplicate_timings_remain_press_only() {
 }
 
 #[test]
+fn non_mania_suffix_stops_before_an_invalid_timing() {
+    let items = 0x10_000usize;
+    let mut memory = SparseMemory::default();
+    put_hit_event(&mut memory, items, 0xe8, 1.25, 3);
+    put_hit_event(&mut memory, items + 0x40, 0xe8, 10_001.0, 3);
+    let mut reader = reader(Arc::new(memory));
+    reader.selected_gamemode = 0;
+    // The third event is absent: stopping must precede any attempt to read it.
+    let suffix = reader.read_hit_error_suffix(items, 3, 0).unwrap();
+    assert_eq!(suffix.index, 1);
+    assert_eq!(suffix.errors.all, [1.25]);
+    assert_eq!(suffix.errors.press, [1.25]);
+    assert!(suffix.errors.release.is_empty());
+}
+
+#[test]
 fn mania_suffix_classifies_interleaved_duplicate_timings_by_object_identity() {
     let items = 0x10_000usize;
     let mut memory = SparseMemory::default();
