@@ -15,6 +15,9 @@ All notable user-visible changes to vosu are documented here. Entries below the 
 - Separate MSVC SDK, Cargo downloads, and build caches; restrict cross SDK downloads to x86_64; classify changes conservatively and always publish `CI required`, including docs-only changes.
 - Move packaged-executable smoke checks into `vosu-release-smoke`, remove duplicate daemon asset embedding, and maintain existing Markdown without scheduled inference. Linux process-event backends and defaults remain unchanged.
 
+- Consolidate the five retained autoresearch lanes: reduce Linux read/scanner allocation work, combine lazer key-read stages, avoid per-byte stable mod-checksum allocations, reserve v1 serialization capacity and sort StreamCompanion strains in place, share selected-field comparison results, and reuse immutable calculator source maps.
+- Retain the Linux sparse-large iovec capacity change with a measured limitation: 65,536-request/33-active spread/back probes improved 10.64–13.54%, while all-empty and 32-active controls regressed 2.64–3.83%. These are synthetic native self-process measurements, not a general daemon speedup; see the [benchmark guide](openwiki/testing/benchmarks.md#five-lane-autoresearch-consolidation-2026-09-08).
+
 ### Gameplay
 
 - Reset published hit-error arrays when osu!lazer or osu!stable rebuilds the live hit-event list, so editor test-mode section restarts drop pre-restart errors and skipped-object zeros instead of waiting for those notes to elapse again.

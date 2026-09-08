@@ -850,3 +850,66 @@ The same compiled baseline and candidate benchmark executables also ran `map_cal
 | `map_calculation/unchanged_cache_key` | 10.429 ns | 10.687 ns |
 
 The apparent full-calculation slowdown did not survive a reversed-order rerun of that exact filter with `--sample-size 50 --measurement-time 3 --warm-up-time 2`: candidate 12.787 µs [12.699, 12.871], then baseline 12.991 µs [12.899, 13.093]. This demonstrates ordering/run variation, not a reliable calculator speedup or regression. Do not use Criterion's automatic “change” labels across these direct invocations: both wrote the same local results directory. The explicit baseline/candidate estimates above are the comparison evidence. Existing calculator compatibility and state-transition tests remain the numerical-behavior gate.
+
+## Five-lane autoresearch consolidation (2026-09-08)
+
+The integration preserves the original histories from cleanup snapshot
+`e0bb23e4d39729ec82a9f2bc5e75832a87ff7f86`; no rejected experiment is restored.
+The retained lane tips are process `ce5b674`, decoder `8e8c7a7`, API
+`7eb265b`, publication `a05da50`, and calculation `faeead2`.
+These observations come from the preserved lane experiments, not a new
+integrated speed comparison. Percentages across lanes are not additive.
+
+| Lane | Retained observation | Limitation |
+| --- | --- | --- |
+| Process | Direct iovec construction removes intermediate allocations; scanner slot reuse removes 127 allocations/8,128 requested bytes in the 128-region probe; 4 KiB proc-maps capacity removes seven allocations/4,064 requested bytes per read. | Direct-read boundary-error medians were 0.91–1.38% slower; scanner benefits are established only for fragmented 128-region inputs. |
+| Decoder | Lazer precise fixture backend calls 29 → 28, scatter batches 3 → 2, still 570 requested bytes; stable idle slice-backed snapshot median 606.28 → 235.525 ns. | No established lazer latency win; stable numbers measure decoding/slice copies, not native Windows memory reads. |
+| API | v1 reserves 2 KiB, saving eight reallocations/2,040 requested bytes per cold encode; canonical index classification and compact in-place strain sorting retain wire order/capacity. | No v1 latency claim; empty-input latency varies. |
+| Publication | Shared-plan/100-client ownership change improves 3.87–7.22% across three pairs; comparison caching helps large shared selected arrays. | Hub/library work, not network latency; scalar/distinct effects remain unresolved, and an inflated 1,000-client baseline is not a claimed gain. |
+| Calculation | Immutable original/base maps are shared; difficulty-only preparation avoids unused state. Production `performance_from_score` synthetic-prefix probes improve 34.33–77.63% across four native-ruleset maps. | Maps contain only 93–238 top-level objects; no broad user-map or Windows claim. |
+
+### Sparse-large tradeoff
+
+Commit `ce5b674` excludes already-skipped empty requests from heap iovec
+capacity without a second counting pass. Retain it for the reproduced
+sparse heap-spill benefit and reduced reservation, accepting the measured
+control regressions explicitly rather than calling it universally faster:
+
+| 65,536 total requests | CPU 10 paired median | CPU 2 paired median |
+| --- | ---: | ---: |
+| 33 active, spread | 13.54% faster | 11.41% faster |
+| 33 active, back | 12.79% faster | 10.64% faster |
+| 32 active, spread (stack control) | 2.64% slower | 3.83% slower |
+| All empty | 3.04% slower | 3.01% slower |
+
+Both spread/back improvements won all eight pairs per CPU. Front-loaded
+33-active requests were 1.45%/0.55% slower; dense controls were near flat,
+and 4,096-request sparse inputs did not benefit. Unknown trailing empty
+entries can still over-reserve. No production workload frequency was measured,
+so a weighted whole-daemon gain cannot be inferred. Requested allocation
+bytes are not RSS.
+
+### Reproduction and retained evidence
+
+The Linux host used Rust 1.96.1, kernel `7.2.2-1-cachyos-bore`, alternating
+baseline/candidate pairs, CPU affinity, and a shared timing lock. These
+controls do not eliminate shared-host load. Sparse-large used CPUs 10 and 2,
+eight pairs/workload/CPU, 16 warmups, and an iteration multiplier of four.
+Instrumentation was excluded from timed runs; 105 native correctness cases
+per variant covered canaries, exact bytes, short reads, faults and overflow.
+
+Machine-local records remain under `/home/user/.cache/`:
+
+- `vosu-autoresearch-process-memory-20260907/evidence.jsonl` and
+  `sparse-large/{evidence.jsonl,raw-pairs.csv,reproducer-archive.json}` within that directory.
+- `vosu-autoresearch-memory-decoders-20260907/final-summary.json`.
+- `vosu-autoresearch-api-serialization-20260907/continuation-final.json`.
+- `vosu-autoresearch/publication-20260907/lane-summary.json`.
+- `vosu-autoresearch-calculation-20260907/continuation.json`.
+
+The records link exact build/run commands, raw samples, retained/rejected
+decisions, and archived probes. Integration commands, exact HEAD, evidence
+hashes, commit manifest and platform gaps are recorded separately in
+`vosu-consolidation-20260908/result.json`. Native Windows and interactive
+live-client parity require separate authorized verification; Linux synthetic
+and daemon smoke results do not replace those gates.
