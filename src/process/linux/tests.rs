@@ -760,3 +760,28 @@ fn bounded_proc_reads_preserve_limit_with_initial_capacity() {
         io::ErrorKind::InvalidData
     );
 }
+
+#[test]
+fn bounded_proc_reads_limit_streams_with_zero_reported_length() {
+    use std::io::Write;
+
+    let fixture = fixture();
+    let path = fixture.path().join("maps-stream");
+    let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: the CString is live and NUL-terminated; the FIFO is test-owned.
+    assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+    assert_eq!(fs::metadata(&path).unwrap().len(), 0);
+    let writer_path = path.clone();
+    let writer = std::thread::spawn(move || {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(writer_path)
+            .unwrap()
+            .write_all(&vec![0x5a; MAX_PROC_FILE as usize + 1])
+            .unwrap();
+    });
+
+    let error = read_bounded(&path, 4096).unwrap_err();
+    writer.join().unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+}
