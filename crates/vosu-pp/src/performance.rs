@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use rosu_pp::{
     Performance,
     any::{DifficultyAttributes, PerformanceAttributes, ScoreState},
@@ -76,16 +78,15 @@ impl LiveLazerEngine {
         apply_playable_context: bool,
         context_difficulty: Option<rosu_pp::Difficulty>,
     ) -> Result<PerformanceAttrsData, Error> {
-        let (state, difficulty, playable, context_mods) =
-            if let Some(difficulty) = context_difficulty.clone() {
-                let context_mods = difficulty.clone().inspect().mods;
-                let state = map.state.clone();
-                let playable = state.playable.clone();
-                (state, difficulty, playable, Some(context_mods))
-            } else {
-                let (state, difficulty, playable) = configured(map, config)?;
-                (state, difficulty, playable, None)
-            };
+        let (state, difficulty, playable) = if let Some(difficulty) = context_difficulty {
+            (
+                map.state.performance_state(),
+                difficulty,
+                Cow::Borrowed(&map.state.playable),
+            )
+        } else {
+            configured(map, config)?
+        };
 
         let mut attrs = match attrs {
             Some(mut attrs) => {
@@ -96,7 +97,7 @@ impl LiveLazerEngine {
                 attrs
             }
             None => {
-                let mut core = rosu_pp::GradualDifficulty::new(difficulty, &playable);
+                let mut core = rosu_pp::GradualDifficulty::new(difficulty.clone(), &playable);
                 core.skip_batch_to_end();
                 core.attributes().ok_or(Error::DifficultyUnavailable)?
             }
@@ -107,17 +108,16 @@ impl LiveLazerEngine {
         }
 
         if let DifficultyAttributes::Catch(attrs) = &attrs {
-            let mods = context_mods.as_ref().unwrap_or(&state.game_mods);
-            return Ok(catch_performance_data(attrs, mods, score));
+            let mods = difficulty.clone().inspect().mods;
+            return Ok(catch_performance_data(attrs, &mods, score));
         }
 
-        self.performance_inner_with_context(
-            map,
+        Self::performance_prepared(
+            (state, difficulty, playable),
             config,
             Some(attrs),
             score,
             false,
-            context_difficulty,
         )
         .map(Into::into)
     }
@@ -129,45 +129,39 @@ impl LiveLazerEngine {
         attrs: Option<DifficultyAttributes>,
         score: ScoreInfoData,
     ) -> Result<PerformanceAttributes, Error> {
-        self.performance_inner_with_context(map, config, attrs, score, true, None)
+        Self::performance_prepared(configured(map, config)?, config, attrs, score, true)
     }
 
-    pub(crate) fn performance_inner_with_context(
-        &self,
-        map: &ParsedBeatmap,
+    fn performance_prepared(
+        prepared: (
+            crate::PerformanceState<'_>,
+            rosu_pp::Difficulty,
+            Cow<'_, rosu_pp::Beatmap>,
+        ),
         config: &DifficultyConfig,
         attrs: Option<DifficultyAttributes>,
         score: ScoreInfoData,
         apply_playable_context: bool,
-        context_difficulty: Option<rosu_pp::Difficulty>,
     ) -> Result<PerformanceAttributes, Error> {
-        let (state, difficulty, playable) = if let Some(difficulty) = context_difficulty {
-            let state = map.state.clone();
-            let playable = state.playable.clone();
-            (state, difficulty, playable)
-        } else {
-            configured(map, config)?
-        };
+        let (state, difficulty, playable) = prepared;
         let mut performance = match attrs {
-            Some(attrs) if apply_playable_context => {
-                let mut attrs = attrs;
+            Some(mut attrs) if apply_playable_context => {
                 apply_playable_performance_context(&mut attrs, &playable, &difficulty);
                 if state.mode == Ruleset::Taiko {
                     apply_original_taiko_hit_windows(&mut attrs, &state, config);
                 }
-                Performance::new(attrs).difficulty(difficulty.clone())
+                Performance::new(attrs).difficulty(difficulty)
             }
-            Some(attrs) => Performance::new(attrs).difficulty(difficulty.clone()),
-            None if apply_playable_context => {
+            Some(attrs) => Performance::new(attrs).difficulty(difficulty),
+            None => {
                 let mut core = rosu_pp::GradualDifficulty::new(difficulty.clone(), &playable);
                 core.skip_batch_to_end();
                 let mut attrs = core.attributes().ok_or(Error::DifficultyUnavailable)?;
                 if state.mode == Ruleset::Taiko {
                     apply_original_taiko_hit_windows(&mut attrs, &state, config);
                 }
-                Performance::new(attrs).difficulty(difficulty.clone())
+                Performance::new(attrs).difficulty(difficulty)
             }
-            None => Performance::new(&playable).difficulty(difficulty),
         };
         performance = performance.state(score_state(state.mode, score)?);
         if state.mode == Ruleset::Osu {
@@ -290,22 +284,27 @@ fn catch_performance_data(
 
 fn apply_original_taiko_hit_windows(
     attrs: &mut DifficultyAttributes,
-    state: &crate::beatmap::BeatmapState,
+    state: &crate::beatmap::PerformanceState<'_>,
     config: &DifficultyConfig,
 ) {
     let DifficultyAttributes::Taiko(attrs) = attrs else {
         return;
     };
 
-    let mut original = state.original.as_ref().clone();
+    // Only OD is consumed; taiko object/sound transformations cannot change it.
+    // Keep the existing ordered mod arithmetic without cloning discarded arrays.
+    let mut original = rosu_pp::Beatmap {
+        od: state.original.od,
+        ..Default::default()
+    };
     if let Some(od) = config.od {
         original.od = od.clamp(0.0, 10.0);
     }
-    crate::beatmap::apply_mods_to_map(&mut original, state.mode, &state.mods);
+    crate::beatmap::apply_mods_to_map(&mut original, state.mode, &state.taiko_mods);
     let od = f64::from(original.od);
     let rate = config
         .clock_rate
-        .unwrap_or_else(|| crate::beatmap::clock_rate_for_mods(&state.mods));
+        .unwrap_or_else(|| crate::beatmap::clock_rate_for_mods(&state.taiko_mods));
 
     if let Ok(Some(window)) = hit_window(Ruleset::Taiko, od, HitResult::Great) {
         attrs.great_hit_window = window / rate;

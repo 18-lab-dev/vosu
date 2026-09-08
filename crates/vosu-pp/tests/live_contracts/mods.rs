@@ -60,10 +60,7 @@ fn cloned_map_transformations_preserve_original_and_reset_source() {
             &mut clone,
             &[StructuredMod {
                 acronym: "DA".to_owned(),
-                settings: BTreeMap::from([(
-                    "overallDifficulty".to_owned(),
-                    ModValue::Number(7.4),
-                )]),
+                settings: BTreeMap::from([("overallDifficulty".to_owned(), ModValue::Number(7.4))]),
             }],
         )
         .unwrap();

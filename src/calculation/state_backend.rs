@@ -61,10 +61,12 @@ impl BeatmapEngine for LiveBeatmapEngine {
         let config = vosu_pp::DifficultyConfig::default();
         let original = engine.original_beatmap_difficulty(&map);
         let converted = engine.beatmap_difficulty(&map);
-        let difficulty = engine
-            .difficulty_data(&map, &config)
+        let (difficulty, strains) = engine
+            .difficulty_and_strains_data(&map, &config)
             .map_err(engine_error)?;
-        let mut maximum = engine.create_score(&map, 1.0).map_err(engine_error)?;
+        let mut maximum = engine
+            .create_score_from_attrs(&map, &difficulty, 1.0)
+            .map_err(engine_error)?;
         let scoring_max_combo = if request.effective_mode == BeatmapRuleset::Mania {
             maximum.perfects
         } else {
@@ -75,12 +77,11 @@ impl BeatmapEngine for LiveBeatmapEngine {
         let performance = engine
             .performance_data_from_attrs(&map, &config, &difficulty, maximum)
             .map_err(engine_error)?;
-        let strains = engine.strains_data(&map, &config).map_err(engine_error)?;
 
         let mut pp_by_accuracy = BTreeMap::new();
         for accuracy in 90..=100 {
             let mut score = engine
-                .create_score(&map, f64::from(accuracy) / 100.0)
+                .create_score_from_attrs(&map, &difficulty, f64::from(accuracy) / 100.0)
                 .map_err(engine_error)?;
             score.max_combo = difficulty.max_combo;
             let attrs = engine

@@ -4,7 +4,7 @@ use crate::{
     accuracy_with_score_totals, configured_difficulty,
 };
 use rosu_pp::any::{DifficultyAttributes, PerformanceAttributes};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 pub struct GradualDifficulty {
     shared: Arc<RwLock<BeatmapState>>,
     config: DifficultyConfig,
@@ -16,13 +16,17 @@ pub struct GradualDifficulty {
     ends: Vec<f64>,
 }
 impl GradualDifficulty {
+    fn state(&self) -> RwLockReadGuard<'_, BeatmapState> {
+        self.shared.read().unwrap_or_else(|p| p.into_inner())
+    }
+
     fn map(&self) -> ParsedBeatmap {
-        ParsedBeatmap::from_state(
-            self.shared
-                .read()
-                .unwrap_or_else(|p| p.into_inner())
-                .clone(),
-        )
+        ParsedBeatmap::from_state(self.state().clone())
+    }
+
+    fn scoring_context(&self) -> (crate::Ruleset, bool) {
+        let state = self.state();
+        (state.mode, state.classic_scoring())
     }
 
     fn reset_core(&mut self) {
@@ -111,9 +115,9 @@ impl GradualDifficulty {
     }
     pub fn create_difficulty_attrs(&mut self) -> Result<DifficultyAttrsData, Error> {
         if self.processed == 0 {
-            let map = self.map();
+            let mode = self.state().mode;
             return Ok(DifficultyAttrsData {
-                mode: map.mode(),
+                mode,
                 ..Default::default()
             });
         }
@@ -128,8 +132,8 @@ impl GradualDifficulty {
             .ok_or(Error::DifficultyUnavailable)
     }
     pub fn get_current_strains(&self) -> Result<StrainsData, Error> {
-        let map = self.map();
-        if map.mode() == crate::Ruleset::Osu && self.processed < self.ends.len() {
+        let mode = self.state().mode;
+        if mode == crate::Ruleset::Osu && self.processed < self.ends.len() {
             return Err(Error::DifficultyUnavailable);
         }
 
@@ -166,31 +170,21 @@ impl GradualDifficulty {
         )
     }
     pub fn create_progressive_score(&mut self, target: f64) -> Result<ScoreInfoData, Error> {
-        let map = self.map();
+        let (mode, classic) = self.scoring_context();
         let attrs = self.create_difficulty_attrs()?;
-        crate::simulate_score(
-            map.mode(),
-            ScoreTotals::from_data(&attrs),
-            target,
-            map.classic_scoring(),
-        )
+        crate::simulate_score(mode, ScoreTotals::from_data(&attrs), target, classic)
     }
     pub fn calculate_progressive_accuracy(&self, score: ScoreInfoData) -> Result<f64, Error> {
-        let map = self.map();
+        let (mode, classic) = self.scoring_context();
         let attrs = match self.current.clone() {
             Some(inner) => DifficultyAttrsData::from_inner(inner),
             None if self.processed == 0 => DifficultyAttrsData {
-                mode: map.mode(),
+                mode,
                 ..DifficultyAttrsData::default()
             },
             None => return Err(Error::DifficultyUnavailable),
         };
-        accuracy_with_score_totals(
-            map.mode(),
-            score,
-            map.classic_scoring(),
-            ScoreTotals::from_data(&attrs),
-        )
+        accuracy_with_score_totals(mode, score, classic, ScoreTotals::from_data(&attrs))
     }
 }
 impl LiveLazerEngine {
@@ -213,7 +207,7 @@ impl LiveLazerEngine {
             shared: Arc::clone(&map.shared),
             config: config.clone(),
             core,
-            core_map,
+            core_map: core_map.into_owned(),
             core_difficulty,
             processed: 0,
             current: None,
