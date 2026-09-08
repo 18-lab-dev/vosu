@@ -15,7 +15,7 @@ use bytes::Bytes;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use serde::Serialize;
 use serde_json::Value;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{Notify, mpsc, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -297,7 +297,7 @@ struct HubInner {
     writes: Mutex<()>,
     accepting: AtomicBool,
     next_id: AtomicU64,
-    wake: watch::Sender<u64>,
+    wake: Notify,
     shutdown: CancellationToken,
     #[cfg(test)]
     extractions: AtomicU64,
@@ -320,7 +320,6 @@ pub struct V2SubscriptionConnection {
 
 impl V2SubscriptionHub {
     pub fn new(provider: Arc<dyn V2SubscriptionProvider>, debounce: Duration) -> Self {
-        let (wake, _) = watch::channel(0);
         Self(Arc::new(HubInner {
             provider,
             debounce: ArcSwap::from_pointee(debounce),
@@ -330,7 +329,7 @@ impl V2SubscriptionHub {
             writes: Mutex::new(()),
             accepting: AtomicBool::new(true),
             next_id: AtomicU64::new(0),
-            wake,
+            wake: Notify::new(),
             shutdown: CancellationToken::new(),
             #[cfg(test)]
             extractions: AtomicU64::new(0),
@@ -415,7 +414,7 @@ impl V2SubscriptionHub {
     }
 
     fn wake(&self) {
-        self.0.wake.send_modify(|wake| *wake = wake.wrapping_add(1));
+        self.0.wake.notify_waiters();
     }
 
     fn remove(&self, id: u64) {
@@ -486,17 +485,18 @@ impl V2SubscriptionHub {
 
     pub async fn run(&self) {
         let mut publications = self.0.provider.subscribe();
-        let mut wakes = self.0.wake.subscribe();
         loop {
             if self.0.shutdown.is_cancelled() {
                 break;
             }
+            // Register before dispatch so writes completed during it cannot be lost.
+            let wake = self.0.wake.notified();
             let source_revision = *publications.borrow_and_update();
             let deadline = self.dispatch(source_revision);
             tokio::select! {
                 _ = self.0.shutdown.cancelled() => break,
                 changed = publications.changed() => if changed.is_err() { break; },
-                changed = wakes.changed() => if changed.is_err() { break; },
+                _ = tokio::task::coop::cooperative(wake) => {},
                 _ = async {
                     if let Some(deadline) = deadline { tokio::time::sleep_until(deadline).await }
                     else { std::future::pending::<()>().await }

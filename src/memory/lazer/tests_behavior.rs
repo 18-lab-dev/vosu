@@ -2,6 +2,38 @@ use super::test_support::*;
 use super::*;
 
 #[test]
+fn beatmap_pair_preserves_first_field_error_before_second_address_overflow() {
+    let mut offsets = LazerOffsets::embedded().unwrap();
+    offsets
+        .osu_game_beatmaps_working_beatmap_cache_beatmap_manager_working_beatmap
+        .beatmap_set_info = usize::MAX;
+    let base = 0x1000;
+    let bindable = 0x2000;
+    let working = 0x3000;
+    let info_address = working
+        + offsets
+            .osu_game_beatmaps_working_beatmap_cache_beatmap_manager_working_beatmap
+            .beatmap_info;
+    let mut memory = SparseMemory::default();
+    memory.valid_base(base, &offsets);
+    memory.ptr(
+        base + offsets.osu_game_osu_game_base.beatmap_k_backing_field,
+        bindable,
+    );
+    memory.ptr(bindable + 0x20, working);
+    let mut reader = LazerMemory::new(
+        ProcessHandle::new(Arc::new(memory), ProcessBitness::X64),
+        Arc::new(offsets),
+        LazerPattern::source_default(),
+    );
+    reader.set_resolved_state(base, 0);
+    assert!(matches!(
+        reader.current_beatmap(),
+        Err(MemoryError::Read { address, len: 8, .. }) if address == info_address
+    ));
+}
+
+#[test]
 fn mod_rate_precedence_and_case_sensitive_mime_match_source() {
     let mods = calculate_mods(vec![
         Mod {

@@ -8,6 +8,7 @@ use std::os::fd::OwnedFd;
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use super::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
@@ -75,13 +76,26 @@ impl ProcessVmReadv for LibcProcessVmReadv {
     }
 }
 
-#[derive(Clone)]
 pub struct LinuxProcessMemory {
     pid: libc::pid_t,
     proc_root: PathBuf,
     syscall: Arc<dyn ProcessVmReadv>,
     iov_max: OnceLock<usize>,
+    maps_capacity: AtomicUsize,
     pidfd: Option<Arc<OwnedFd>>,
+}
+
+impl Clone for LinuxProcessMemory {
+    fn clone(&self) -> Self {
+        Self {
+            pid: self.pid,
+            proc_root: self.proc_root.clone(),
+            syscall: self.syscall.clone(),
+            iov_max: self.iov_max.clone(),
+            maps_capacity: AtomicUsize::new(self.maps_capacity.load(Ordering::Relaxed)),
+            pidfd: self.pidfd.clone(),
+        }
+    }
 }
 
 impl std::fmt::Debug for LinuxProcessMemory {
@@ -125,20 +139,21 @@ impl LinuxProcessMemory {
             syscall,
             pidfd,
             iov_max: OnceLock::new(),
+            maps_capacity: AtomicUsize::new(4096),
         }
     }
 
     fn mapped_regions(&self, writable_only: bool) -> Result<Vec<MemoryRegion>, MemoryError> {
-        // Native proc maps reports a zero file length; start with one small
-        // buffer instead of repeatedly growing from an empty allocation.
-        parse_maps(
-            &read_bounded(
-                &self.proc_root.join(self.pid.to_string()).join("maps"),
-                4096,
-            )
-            .map_err(|error| backend("read /proc maps", error))?,
-            writable_only,
+        // Cache only an allocation hint; every call reads a fresh bounded snapshot.
+        let bytes = read_bounded(
+            &self.proc_root.join(self.pid.to_string()).join("maps"),
+            self.maps_capacity.load(Ordering::Relaxed),
         )
+        .map_err(|error| backend("read /proc maps", error))?;
+        let regions = parse_maps(&bytes, writable_only)?;
+        self.maps_capacity
+            .store((bytes.len() + 1).max(4096), Ordering::Relaxed);
+        Ok(regions)
     }
 
     fn read_many_direct(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
@@ -209,24 +224,39 @@ impl LinuxProcessMemory {
 
     fn read_many_fallback(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
         let regions = self.mapped_regions(false)?;
+        // Only proven disjoint ordering permits lookup without first-match scanning.
+        let ordered = regions
+            .windows(2)
+            .all(|pair| pair[0].address.saturating_add(pair[0].size) <= pair[1].address);
         let mut chunks = Vec::new();
+        let mut last_region: Option<&MemoryRegion> = None;
         for (request_index, request) in reads.iter().enumerate() {
             let mut address = request.address;
             let mut offset = 0usize;
             while offset < request.dst.len() {
-                let region = regions
-                    .iter()
-                    .find(|region| {
-                        address >= region.address
-                            && address < region.address.saturating_add(region.size)
+                let contains = |region: &&MemoryRegion| {
+                    address >= region.address
+                        && address < region.address.saturating_add(region.size)
+                };
+                let region = if ordered {
+                    last_region.filter(contains).or_else(|| {
+                        regions
+                            .partition_point(|region| region.address <= address)
+                            .checked_sub(1)
+                            .and_then(|index| regions.get(index))
+                            .filter(contains)
                     })
-                    .ok_or_else(|| {
-                        read_error(
-                            address,
-                            request.dst.len() - offset,
-                            "address is outside readable mapping",
-                        )
-                    })?;
+                } else {
+                    regions.iter().find(contains)
+                }
+                .ok_or_else(|| {
+                    read_error(
+                        address,
+                        request.dst.len() - offset,
+                        "address is outside readable mapping",
+                    )
+                })?;
+                last_region = Some(region);
                 let available = region.address.saturating_add(region.size) - address;
                 let len = available.min(request.dst.len() - offset);
                 chunks.push(Chunk {
@@ -953,8 +983,14 @@ mod empty_read_tests {
             .read_scanner_region_exact(usize::MAX, &mut [])
             .expect("scanner read");
         let mut empty = [];
-        let mut reads = [ReadRequest::new(usize::MAX, &mut empty)];
-        memory.read_many(&mut reads).expect("batched read");
+        let mut other_empty = [];
+        let mut reads = [
+            ReadRequest::new(usize::MAX, &mut empty),
+            ReadRequest::new(usize::MAX, &mut other_empty),
+        ];
+        for count in [1, 2] {
+            memory.read_many(&mut reads[..count]).expect("batched read");
+        }
     }
 }
 

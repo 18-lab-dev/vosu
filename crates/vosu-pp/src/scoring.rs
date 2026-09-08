@@ -277,6 +277,22 @@ impl LiveLazerEngine {
         )
     }
 
+    /// Generate a score from retained difficulty counts for this ruleset.
+    pub fn create_score_from_attrs(
+        &self,
+        map: &ParsedBeatmap,
+        attrs: &DifficultyAttrsData,
+        target: f64,
+    ) -> Result<ScoreInfoData, Error> {
+        let inner = attrs.inner_for(map.mode())?;
+        simulate_score(
+            map.mode(),
+            ScoreTotals::from_difficulty(&inner),
+            target,
+            map.classic_scoring(),
+        )
+    }
+
     pub fn generate_score(
         &self,
         mode: Ruleset,

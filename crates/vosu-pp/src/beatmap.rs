@@ -9,6 +9,7 @@ use rosu_pp::{
     Beatmap, GameMods,
     model::hit_object::{HitObject, HitObjectKind, HoldNote},
 };
+use std::borrow::Cow;
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
@@ -20,6 +21,30 @@ pub(crate) struct BeatmapState {
     pub mode: Ruleset,
     pub mods: Vec<StructuredMod>,
     pub game_mods: GameMods,
+}
+
+// Performance consumes metadata, not another copy of the playable object graph.
+pub(crate) struct PerformanceState<'a> {
+    pub mode: Ruleset,
+    pub original: &'a Beatmap,
+    // Consumed only by original taiko hit-window adjustment.
+    pub taiko_mods: Cow<'a, [StructuredMod]>,
+}
+
+impl BeatmapState {
+    pub(crate) fn classic_scoring(&self) -> bool {
+        self.mods
+            .iter()
+            .any(|m| m.acronym.eq_ignore_ascii_case("CL"))
+    }
+
+    pub(crate) fn performance_state(&self) -> PerformanceState<'_> {
+        PerformanceState {
+            mode: self.mode,
+            original: &self.original,
+            taiko_mods: Cow::Borrowed(&self.mods),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -59,10 +84,7 @@ impl ParsedBeatmap {
     }
 
     pub fn classic_scoring(&self) -> bool {
-        self.state
-            .mods
-            .iter()
-            .any(|m| m.acronym.eq_ignore_ascii_case("CL"))
+        self.state.classic_scoring()
     }
 
     pub fn score_v2(&self) -> bool {
@@ -611,41 +633,38 @@ fn mania_column(x: f32, columns: usize) -> usize {
     ((x * columns as f32 / 512.0).floor() as usize).min(columns.saturating_sub(1))
 }
 
-// Difficulty-only callers do not need the owned state used by performance.
-pub(crate) fn configured_difficulty(
-    map: &ParsedBeatmap,
+// Difficulty-only callers do not need the state used by performance.
+pub(crate) fn configured_difficulty<'a>(
+    map: &'a ParsedBeatmap,
     config: &DifficultyConfig,
-) -> Result<(rosu_pp::Difficulty, Beatmap), Error> {
+) -> Result<(rosu_pp::Difficulty, Cow<'a, Beatmap>), Error> {
     let view = ParsedMapView {
         mode: map.state.mode,
         playable: &map.state.playable,
         mods: &map.state.mods,
+        game_mods: &map.state.game_mods,
     };
     crate::difficulty_builder(&view, config)
 }
 
-pub(crate) fn configured(
-    map: &ParsedBeatmap,
+pub(crate) fn configured<'a>(
+    map: &'a ParsedBeatmap,
     config: &DifficultyConfig,
-) -> Result<(BeatmapState, rosu_pp::Difficulty, Beatmap), Error> {
+) -> Result<(PerformanceState<'a>, rosu_pp::Difficulty, Cow<'a, Beatmap>), Error> {
     let (difficulty, playable) = configured_difficulty(map, config)?;
+    if config.mods.is_empty() || map.state.mode != Ruleset::Taiko {
+        // Other rulesets consume only the already-validated difficulty mods.
+        return Ok((map.state.performance_state(), difficulty, playable));
+    }
 
     let mode = map.state.mode;
     let mut combined = map.state.mods.clone();
     combined.extend(resolve_random_seeds(&config.mods));
-    let typed_input: Vec<_> = combined
-        .iter()
-        .filter(|game_mod| !is_consumed_mod(mode, &game_mod.acronym))
-        .cloned()
-        .collect();
 
-    let state = BeatmapState {
-        original: Arc::clone(&map.state.original),
-        base: Arc::clone(&map.state.base),
-        playable: playable.clone(),
+    let state = PerformanceState {
+        original: &map.state.original,
         mode,
-        mods: combined,
-        game_mods: crate::game_mods(mode, &typed_input)?,
+        taiko_mods: Cow::Owned(combined),
     };
 
     Ok((state, difficulty, playable))

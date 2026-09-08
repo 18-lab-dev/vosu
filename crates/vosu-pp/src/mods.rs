@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use rosu_mods::serde::GameModsSeed;
 use rosu_pp::{Beatmap, GameMods};
 use serde::de::DeserializeSeed;
@@ -9,11 +11,11 @@ pub fn game_mods(mode: Ruleset, mods: &[StructuredMod]) -> Result<GameMods, Erro
     Ok(GameMods::from(decode_mods(mode, mods)?))
 }
 
-pub(crate) fn decode_mods(
+pub(crate) fn decode_mods<'a>(
     mode: Ruleset,
-    mods: &[StructuredMod],
+    mods: impl IntoIterator<Item = &'a StructuredMod>,
 ) -> Result<rosu_mods::GameMods, Error> {
-    let values = mods.iter().map(normalized_mod).collect::<Vec<_>>();
+    let values = mods.into_iter().map(normalized_mod).collect::<Vec<_>>();
     let json = serde_json::to_string(&values).map_err(|err| Error::Mods(err.to_string()))?;
     let mut deserializer = serde_json::Deserializer::from_str(&json);
     GameModsSeed::Mode {
@@ -50,28 +52,31 @@ fn normalized_mod(game_mod: &StructuredMod) -> Value {
     serde_json::json!({ "acronym": game_mod.acronym.to_ascii_uppercase(), "settings": settings })
 }
 
-pub(crate) fn difficulty_builder(
-    map: &ParsedMapView<'_>,
+pub(crate) fn difficulty_builder<'a>(
+    map: &ParsedMapView<'a>,
     config: &DifficultyConfig,
-) -> Result<(rosu_pp::Difficulty, Beatmap), Error> {
+) -> Result<(rosu_pp::Difficulty, Cow<'a, Beatmap>), Error> {
     let resolved_config = crate::beatmap::resolve_random_seeds(&config.mods);
-    let mut combined = map.mods.to_vec();
-    combined.extend(resolved_config.iter().cloned());
-    let typed_input: Vec<_> = combined
-        .iter()
-        .filter(|game_mod| !crate::beatmap::is_consumed_mod(map.mode, &game_mod.acronym))
-        .cloned()
-        .collect();
-    let mods = game_mods(map.mode, &typed_input)?;
+    let mods = if config.mods.is_empty() && matches!(map.game_mods, GameMods::Lazer(_)) {
+        // Applied mods are already validated. Keep the canonical lazer variant.
+        map.game_mods.clone()
+    } else {
+        let typed_input = map
+            .mods
+            .iter()
+            .chain(&resolved_config)
+            .filter(|game_mod| !crate::beatmap::is_consumed_mod(map.mode, &game_mod.acronym));
+        GameMods::from(decode_mods(map.mode, typed_input)?)
+    };
     let playable = if config.mods.is_empty() {
-        map.playable.clone()
+        Cow::Borrowed(map.playable)
     } else {
         let mut playable = map.playable.clone();
         crate::beatmap::apply_mods_to_map(&mut playable, map.mode, &resolved_config);
-        playable
+        Cow::Owned(playable)
     };
     let mut difficulty = rosu_pp::Difficulty::new()
-        .mods(mods.clone().into_core())
+        .mods(mods.into_core())
         .lazer(config.lazer.unwrap_or(true))
         .ar(playable.ar, false)
         .cs(playable.cs, false)
@@ -106,4 +111,5 @@ pub(crate) struct ParsedMapView<'a> {
     pub mode: Ruleset,
     pub playable: &'a Beatmap,
     pub mods: &'a [StructuredMod],
+    pub game_mods: &'a GameMods,
 }

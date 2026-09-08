@@ -47,6 +47,20 @@ impl LiveLazerEngine {
         Ok(attrs)
     }
 
+    /// Calculate attributes and strains from one completed difficulty traversal.
+    pub fn difficulty_and_strains_data(
+        &self,
+        map: &ParsedBeatmap,
+        config: &DifficultyConfig,
+    ) -> Result<(DifficultyAttrsData, StrainsData), Error> {
+        let (difficulty, mut core) = self.full_core(map, config)?;
+        Self::finish_core(&mut core, config.passed_objects);
+        let inner = core.attributes().ok_or(Error::DifficultyUnavailable)?;
+        let mut attrs = DifficultyAttrsData::from_inner(inner);
+        attrs.context = Some(difficulty);
+        Ok((attrs, core.current_strains().into()))
+    }
+
     pub fn strains(
         &self,
         map: &ParsedBeatmap,

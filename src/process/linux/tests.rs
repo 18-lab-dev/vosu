@@ -704,6 +704,63 @@ fn fallback_splits_at_iov_max_and_current_mapping_boundaries() {
 }
 
 #[test]
+fn fallback_preserves_first_matching_map_for_unordered_and_overlapping_regions() {
+    for (maps, expected_calls) in [
+        ("1000-1004 rw-p 0 00:00 0\n1004-1100 rw-p 0 00:00 0\n", 5),
+        ("1004-1100 rw-p 0 00:00 0\n1000-1004 rw-p 0 00:00 0\n", 5),
+        ("1000-1004 rw-p 0 00:00 0\n1000-1100 rw-p 0 00:00 0\n", 5),
+        ("1000-1100 rw-p 0 00:00 0\n1000-1004 rw-p 0 00:00 0\n", 3),
+    ] {
+        let (_fixture, memory, calls) = memory_fixture(MockMode::ErrorOnCall(0), 1, maps);
+        let mut first = [0xa5; 8];
+        let mut repeated = [0xa5; 8];
+        memory
+            .read_many(&mut [
+                ReadRequest::new(0x1000, &mut first),
+                ReadRequest::new(0x1000, &mut repeated),
+            ])
+            .expect("first-match mapping boundaries remain readable");
+        assert_eq!(first, [0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(repeated, first);
+        // One forced direct failure, then one syscall per mapping-sized chunk.
+        // Reusing the later overlapping map would incorrectly remove a boundary.
+        assert_eq!(calls.calls.load(Ordering::SeqCst), expected_calls);
+    }
+}
+
+#[test]
+fn fallback_rejects_holes_and_exclusive_ends_before_reading_any_chunks() {
+    for maps in [
+        "1000-1004 rw-p 0 00:00 0\n1008-1010 rw-p 0 00:00 0\n",
+        "1008-1010 rw-p 0 00:00 0\n1000-1004 rw-p 0 00:00 0\n",
+    ] {
+        for (address, len, missing, remaining) in [
+            (0x0fff, 1, 0x0fff, 1),
+            (0x1000, 8, 0x1004, 4),
+            (0x1010, 1, 0x1010, 1),
+        ] {
+            let (_fixture, memory, calls) = memory_fixture(MockMode::ErrorOnCall(0), 1, maps);
+            let mut crossing = [0xa5; 8];
+            let mut later = [0xbb; 1];
+            let error = memory
+                .read_many(&mut [
+                    ReadRequest::new(address, &mut crossing[..len]),
+                    ReadRequest::new(0x1008, &mut later),
+                ])
+                .expect_err("outside a readable mapping");
+            assert!(matches!(
+                error,
+                MemoryError::Read { address, len, .. } if address == missing && len == remaining
+            ));
+            assert!(crossing[..len].iter().all(|&byte| byte == 0));
+            assert!(crossing[len..].iter().all(|&byte| byte == 0xa5));
+            assert_eq!(later, [0]);
+            assert_eq!(calls.calls.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+#[test]
 fn persistent_fallback_failure_zeroes_prior_direct_successes() {
     let (_fixture, memory, calls) =
         memory_fixture(MockMode::ErrorFromCall(1), 1, "1000-3000 rw-p 0 00:00 0\n");
@@ -821,4 +878,60 @@ fn bounded_proc_reads_limit_streams_with_zero_reported_length() {
     let error = read_bounded(&path, 4096).unwrap_err();
     writer.join().unwrap();
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn cloned_readers_observe_growing_and_shrinking_maps_and_reject_oversized_snapshots() {
+    let (_fixture, memory, _) = memory_fixture(MockMode::Exact, 1024, "1000-2000 rw-p 0 00:00 0\n");
+    assert_eq!(
+        memory.readable_regions().unwrap(),
+        [MemoryRegion {
+            address: 0x1000,
+            size: 0x1000
+        }]
+    );
+    let cloned = memory.clone();
+    let path = memory.proc_root.join(memory.pid.to_string()).join("maps");
+    let expected: Vec<_> = (0..256)
+        .map(|index| MemoryRegion {
+            address: 0x1000 + index * 0x2000,
+            size: 0x1000,
+        })
+        .collect();
+    let maps: String = expected
+        .iter()
+        .map(|region| {
+            format!(
+                "{:x}-{:x} rw-p 0 00:00 0\n",
+                region.address,
+                region.address + region.size
+            )
+        })
+        .collect();
+    fs::write(&path, maps).unwrap();
+    assert_eq!(cloned.readable_regions().unwrap(), expected);
+
+    fs::write(&path, "3000-4000 rw-p 0 00:00 0\n").unwrap();
+    for reader in [&memory, &cloned] {
+        assert_eq!(
+            reader.readable_regions().unwrap(),
+            [MemoryRegion {
+                address: 0x3000,
+                size: 0x1000
+            }]
+        );
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(MAX_PROC_FILE + 1)
+        .unwrap();
+    assert!(matches!(
+        cloned.readable_regions(),
+        Err(MemoryError::Backend {
+            operation: "read /proc maps",
+            ..
+        })
+    ));
 }

@@ -456,6 +456,13 @@ fn retained_attrs_reject_every_cross_mode_pair() {
                     actual,
                 }) if expected == modes[map_index] && actual == modes[attrs_index]
             ));
+            assert!(matches!(
+                engine.create_score_from_attrs(map, attrs, 1.0),
+                Err(vosu_pp::Error::DifficultyModeMismatch {
+                    expected,
+                    actual,
+                }) if expected == modes[map_index] && actual == modes[attrs_index]
+            ));
         }
     }
 }

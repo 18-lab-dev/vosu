@@ -240,18 +240,38 @@ impl MemoryReader for LazerMemory {
         }
         let mut count_bindable_bytes = [[0u8; size_of::<usize>()]; BUTTON_COUNT];
         let mut pressed_bytes = [[0u8; 1]; BUTTON_COUNT];
-        // Pressed flags are independent of the count-bindable pointers. Share
-        // their reads across the two dependent stages, keeping each batch at
-        // most 27 requests rather than spilling 36 requests to native heap iovecs.
-        let pressed_split = size.div_ceil(2);
-        read_many_key_fields(
+        // Reading the nineteen intervening bytes trades bounded extra bandwidth
+        // for one fewer scatter descriptor per key, without extending past either field.
+        const COUNT_OFFSET_IN_SPAN: usize = 0x208 - 0x1f4;
+        let mut spans = [[0u8; COUNT_OFFSET_IN_SPAN + size_of::<usize>()]; BUTTON_COUNT];
+        let spans_ready = read_many_key_fields(
             &self.process,
-            &count_bindable_addresses,
-            &mut count_bindable_bytes,
+            &pressed_addresses,
+            &mut spans,
             size,
-            &pressed_addresses[..pressed_split],
-            &mut pressed_bytes[..pressed_split],
-        )?;
+            &[],
+            &mut [],
+        )
+        .is_ok();
+        let pressed_split = if spans_ready {
+            for index in 0..size {
+                pressed_bytes[index][0] = spans[index][0];
+                count_bindable_bytes[index].copy_from_slice(&spans[index][COUNT_OFFSET_IN_SPAN..]);
+            }
+            size
+        } else {
+            // Preserve the original field sequence when a span is unavailable.
+            let split = size.div_ceil(2);
+            read_many_key_fields(
+                &self.process,
+                &count_bindable_addresses,
+                &mut count_bindable_bytes,
+                size,
+                &pressed_addresses[..split],
+                &mut pressed_bytes[..split],
+            )?;
+            split
+        };
 
         let mut count_addresses = [0; BUTTON_COUNT];
         for (index, bytes) in count_bindable_bytes[..size].iter().enumerate() {
@@ -738,14 +758,20 @@ impl LazerMemory {
         }
         let mut index = start_index;
         let mut suffix_events = Vec::new();
+        let mut errors = HitErrorArray::default();
         while index < size {
             let event = self.read_hit_event(add(items, index * 0x40)?)?;
             match event {
                 Some(HitErrorEvent::Timing { value, .. }) if hit_error_out_of_range(value) => {
                     break;
                 }
-                Some(event) => suffix_events.push(event),
-                None => {}
+                // Only mania needs retained identities to classify hold releases.
+                Some(event) if self.selected_gamemode == 3 => suffix_events.push(event),
+                Some(HitErrorEvent::Timing { value, .. }) => {
+                    errors.all.push(value);
+                    errors.press.push(value);
+                }
+                Some(HitErrorEvent::ManiaHoldAggregate { .. }) | None => {}
             }
             index += 1;
         }
@@ -757,7 +783,6 @@ impl LazerMemory {
                 HitErrorEvent::Timing { .. } => None,
             })
             .collect();
-        let mut errors = HitErrorArray::default();
         for event in &suffix_events {
             if let HitErrorEvent::Timing { value, object } = *event {
                 errors.all.push(value);

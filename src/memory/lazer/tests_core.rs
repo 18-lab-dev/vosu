@@ -261,6 +261,59 @@ fn managed_collection_layouts_and_statistics_are_exact() {
 }
 
 #[test]
+fn collection_header_errors_preserve_scalar_field_precedence() {
+    let list = 0x1000;
+    for marker_present in [false, true] {
+        let mut memory = SparseMemory::default();
+        if marker_present {
+            memory.i32(list + 0x10, 1);
+        }
+        let reader = reader(Arc::new(memory));
+        let error = reader.hybrid_list_info(list).unwrap_err();
+        let expected = if marker_present {
+            (list + 8, 8)
+        } else {
+            (list + 0x10, 4)
+        };
+        assert!(
+            matches!(error, MemoryError::Read { address, len, .. } if (address, len) == expected)
+        );
+    }
+}
+
+#[test]
+fn collection_header_ignores_padding_after_x86_pointer() {
+    let list = 0x1000;
+    let array = 0x2000;
+    let mut memory = SparseMemory::default();
+    memory.i32(list + 8, array);
+    memory.i32(list + 0xc, 0x1234);
+    memory.i32(list + 0x10, 1);
+    let reader = LazerMemory::new(
+        ProcessHandle::new(Arc::new(memory), ProcessBitness::X86),
+        Arc::new(LazerOffsets::embedded().unwrap()),
+        LazerPattern::source_default(),
+    );
+    assert_eq!(
+        reader.hybrid_list_info(list).unwrap(),
+        (1, array as usize + 0x10)
+    );
+}
+
+#[test]
+fn hit_event_missing_result_preserves_field_error_before_null_object() {
+    let event = 0x1000;
+    let mut memory = SparseMemory::default();
+    memory.ptr(event, 0);
+    memory.f64(event + 0x10, 1.25);
+    let reader = reader(Arc::new(memory));
+    assert!(matches!(
+        reader.read_hit_event(event),
+        Err(MemoryError::Read { address, len: 4, .. }) if address == event + 0x18
+    ));
+}
+
+#[test]
 fn hit_event_size_result_and_identity_rules_match_modes() {
     let event = 0x1000usize;
     let object = 0x2000usize;
@@ -326,6 +379,22 @@ fn non_mania_duplicate_timings_remain_press_only() {
     let catch = reader.read_hit_error_suffix(items, 4, 0).unwrap();
     assert!(catch.errors.all.is_empty());
     assert!(catch.release_corrections.is_empty());
+}
+
+#[test]
+fn non_mania_suffix_stops_before_an_invalid_timing() {
+    let items = 0x10_000usize;
+    let mut memory = SparseMemory::default();
+    put_hit_event(&mut memory, items, 0xe8, 1.25, 3);
+    put_hit_event(&mut memory, items + 0x40, 0xe8, 10_001.0, 3);
+    let mut reader = reader(Arc::new(memory));
+    reader.selected_gamemode = 0;
+    // The third event is absent: stopping must precede any attempt to read it.
+    let suffix = reader.read_hit_error_suffix(items, 3, 0).unwrap();
+    assert_eq!(suffix.index, 1);
+    assert_eq!(suffix.errors.all, [1.25]);
+    assert_eq!(suffix.errors.press, [1.25]);
+    assert!(suffix.errors.release.is_empty());
 }
 
 #[test]
