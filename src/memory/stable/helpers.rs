@@ -107,6 +107,17 @@ pub(super) fn accuracy(mode: i64, s: &Statistics, mods: &CalculateMods) -> f64 {
         ((n as f64 / d as f64) * 10_000.0).round() / 100.0
     }
 }
+fn mod_checksum(array: &[Mod]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Md5::digest(serde_json::to_vec(array).unwrap_or_default());
+    let mut checksum = String::with_capacity(32);
+    for byte in digest {
+        checksum.push(HEX[(byte >> 4) as usize] as char);
+        checksum.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    checksum
+}
+
 pub(super) fn mods(bits: i64) -> CalculateMods {
     const VALUES: [(i64, &str); 31] = [
         (1, "NF"),
@@ -171,10 +182,7 @@ pub(super) fn mods(bits: i64) -> CalculateMods {
             settings: None,
         })
         .collect::<Vec<_>>();
-    let checksum = Md5::digest(serde_json::to_vec(&array).unwrap_or_default())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let checksum = mod_checksum(&array);
     let rate = if array
         .iter()
         .any(|item| item.acronym == "DT" || item.acronym == "NC")
@@ -259,10 +267,7 @@ pub(super) fn mods_from_array(array: Vec<Mod>) -> CalculateMods {
         .find_map(|item| item.settings.as_ref()?.get("speed_change")?.as_f64())
         .filter(|value| *value != 0.0)
         .unwrap_or(mapped_rate);
-    let checksum = Md5::digest(serde_json::to_vec(&array).unwrap_or_default())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let checksum = mod_checksum(&array);
     CalculateMods {
         checksum,
         number,
