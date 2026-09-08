@@ -2,7 +2,7 @@ use rosu_pp::any::{DifficultyAttributes, Strains};
 
 use crate::{
     DifficultyAttrsData, DifficultyConfig, Error, LiveLazerEngine, ParsedBeatmap, StrainsData,
-    configured,
+    configured_difficulty,
 };
 
 impl LiveLazerEngine {
@@ -11,7 +11,7 @@ impl LiveLazerEngine {
         map: &ParsedBeatmap,
         config: &DifficultyConfig,
     ) -> Result<(rosu_pp::Difficulty, rosu_pp::GradualDifficulty), Error> {
-        let (_, difficulty, playable) = configured(map, config)?;
+        let (difficulty, playable) = configured_difficulty(map, config)?;
         let core = rosu_pp::GradualDifficulty::new(difficulty.clone(), &playable);
         Ok((difficulty, core))
     }

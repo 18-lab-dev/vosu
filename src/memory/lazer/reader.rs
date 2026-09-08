@@ -5,48 +5,26 @@ fn read_many_key_fields<const WIDTH: usize>(
     addresses: &[usize; 18],
     destinations: &mut [[u8; WIDTH]; 18],
     len: usize,
+    pressed_addresses: &[usize],
+    pressed_destinations: &mut [[u8; 1]],
 ) -> Result<(), MemoryError> {
-    let [
-        destination0,
-        destination1,
-        destination2,
-        destination3,
-        destination4,
-        destination5,
-        destination6,
-        destination7,
-        destination8,
-        destination9,
-        destination10,
-        destination11,
-        destination12,
-        destination13,
-        destination14,
-        destination15,
-        destination16,
-        destination17,
-    ] = destinations;
-    let mut requests = [
-        ReadRequest::new(addresses[0], destination0),
-        ReadRequest::new(addresses[1], destination1),
-        ReadRequest::new(addresses[2], destination2),
-        ReadRequest::new(addresses[3], destination3),
-        ReadRequest::new(addresses[4], destination4),
-        ReadRequest::new(addresses[5], destination5),
-        ReadRequest::new(addresses[6], destination6),
-        ReadRequest::new(addresses[7], destination7),
-        ReadRequest::new(addresses[8], destination8),
-        ReadRequest::new(addresses[9], destination9),
-        ReadRequest::new(addresses[10], destination10),
-        ReadRequest::new(addresses[11], destination11),
-        ReadRequest::new(addresses[12], destination12),
-        ReadRequest::new(addresses[13], destination13),
-        ReadRequest::new(addresses[14], destination14),
-        ReadRequest::new(addresses[15], destination15),
-        ReadRequest::new(addresses[16], destination16),
-        ReadRequest::new(addresses[17], destination17),
-    ];
-    process.read_many(&mut requests[..len])
+    let request_count = len + pressed_destinations.len();
+    let mut fields = addresses[..len]
+        .iter()
+        .zip(&mut destinations[..len])
+        .map(|(&address, dst)| ReadRequest::new(address, dst))
+        .chain(
+            pressed_addresses
+                .iter()
+                .zip(pressed_destinations)
+                .map(|(&address, dst)| ReadRequest::new(address, dst)),
+        );
+    let mut requests: [_; 27] = std::array::from_fn(|_| {
+        fields
+            .next()
+            .unwrap_or_else(|| ReadRequest::new(0, &mut []))
+    });
+    process.read_many(&mut requests[..request_count])
 }
 
 impl SynchronizedMemoryReader for LazerMemory {
@@ -262,20 +240,32 @@ impl MemoryReader for LazerMemory {
         }
         let mut count_bindable_bytes = [[0u8; size_of::<usize>()]; BUTTON_COUNT];
         let mut pressed_bytes = [[0u8; 1]; BUTTON_COUNT];
+        // Pressed flags are independent of the count-bindable pointers. Share
+        // their reads across the two dependent stages, keeping each batch at
+        // most 27 requests rather than spilling 36 requests to native heap iovecs.
+        let pressed_split = size.div_ceil(2);
         read_many_key_fields(
             &self.process,
             &count_bindable_addresses,
             &mut count_bindable_bytes,
             size,
+            &pressed_addresses[..pressed_split],
+            &mut pressed_bytes[..pressed_split],
         )?;
-        read_many_key_fields(&self.process, &pressed_addresses, &mut pressed_bytes, size)?;
 
         let mut count_addresses = [0; BUTTON_COUNT];
         for (index, bytes) in count_bindable_bytes[..size].iter().enumerate() {
             count_addresses[index] = add(usize::from_le_bytes(*bytes), 0x40)?;
         }
         let mut count_bytes = [[0u8; 4]; BUTTON_COUNT];
-        read_many_key_fields(&self.process, &count_addresses, &mut count_bytes, size)?;
+        read_many_key_fields(
+            &self.process,
+            &count_addresses,
+            &mut count_bytes,
+            size,
+            &pressed_addresses[pressed_split..size],
+            &mut pressed_bytes[pressed_split..size],
+        )?;
 
         let mut out = Vec::with_capacity(size);
         for index in 0..size {

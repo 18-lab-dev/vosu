@@ -129,57 +129,82 @@ impl LinuxProcessMemory {
     }
 
     fn mapped_regions(&self, writable_only: bool) -> Result<Vec<MemoryRegion>, MemoryError> {
+        // Native proc maps reports a zero file length; start with one small
+        // buffer instead of repeatedly growing from an empty allocation.
         parse_maps(
-            &read_bounded(&self.proc_root.join(self.pid.to_string()).join("maps"))
-                .map_err(|error| backend("read /proc maps", error))?,
+            &read_bounded(
+                &self.proc_root.join(self.pid.to_string()).join("maps"),
+                4096,
+            )
+            .map_err(|error| backend("read /proc maps", error))?,
             writable_only,
         )
     }
 
     fn read_many_direct(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
-        let mut stack_chunks = [Chunk {
-            request_index: 0,
-            offset: 0,
-            address: 0,
-            len: 0,
-        }; STACK_IOVEC_CAPACITY];
-        let mut chunk_count = 0;
-        let mut heap_chunks: Option<Vec<Chunk>> = None;
-        for (request_index, request) in reads.iter().enumerate() {
+        let mut stack_local: [libc::iovec; STACK_IOVEC_CAPACITY] =
+            std::array::from_fn(|_| libc::iovec {
+                iov_base: std::ptr::null_mut(),
+                iov_len: 0,
+            });
+        let mut stack_remote = stack_local;
+        let mut count = 0;
+        let mut heap: Option<(Vec<libc::iovec>, Vec<libc::iovec>)> = None;
+        let mut capacity = reads.len();
+        for request in reads {
             if request.dst.is_empty() {
+                // Skipped empty entries cannot consume heap slots.
+                capacity -= 1;
                 continue;
             }
-            request.address.checked_add(request.dst.len()).ok_or(
-                super::MemoryError::AddressOverflow {
+            request
+                .address
+                .checked_add(request.dst.len())
+                .ok_or(MemoryError::AddressOverflow {
                     base: request.address,
                     offset: request.dst.len(),
-                },
-            )?;
-            let chunk = Chunk {
-                request_index,
-                offset: 0,
-                address: request.address,
-                len: request.dst.len(),
+                })?;
+            let local = libc::iovec {
+                iov_base: request.dst.as_mut_ptr().cast(),
+                iov_len: request.dst.len(),
             };
-            if let Some(chunks) = &mut heap_chunks {
-                chunks.push(chunk);
-            } else if chunk_count < STACK_IOVEC_CAPACITY {
-                stack_chunks[chunk_count] = chunk;
-                chunk_count += 1;
+            let remote = libc::iovec {
+                iov_base: request.address as *mut libc::c_void,
+                iov_len: request.dst.len(),
+            };
+            if let Some((locals, remotes)) = &mut heap {
+                locals.push(local);
+                remotes.push(remote);
+            } else if count < STACK_IOVEC_CAPACITY {
+                stack_local[count] = local;
+                stack_remote[count] = remote;
+                count += 1;
             } else {
-                let mut chunks = Vec::with_capacity(reads.len());
-                chunks.extend_from_slice(&stack_chunks);
-                chunks.push(chunk);
-                heap_chunks = Some(chunks);
+                let mut locals = Vec::with_capacity(capacity);
+                let mut remotes = Vec::with_capacity(capacity);
+                locals.extend_from_slice(&stack_local);
+                remotes.extend_from_slice(&stack_remote);
+                locals.push(local);
+                remotes.push(remote);
+                heap = Some((locals, remotes));
             }
         }
-        if let Some(chunks) = heap_chunks {
-            self.read_chunks(reads, &chunks)
-        } else if chunk_count == 0 {
-            Ok(())
-        } else {
-            self.read_chunks(reads, &stack_chunks[..chunk_count])
+        let (local, remote) = match &mut heap {
+            Some((locals, remotes)) => (locals.as_mut_slice(), remotes.as_slice()),
+            None => (&mut stack_local[..count], &stack_remote[..count]),
+        };
+        if local.is_empty() {
+            return Ok(());
         }
+        let iov_max = if local.len() == 1 {
+            1
+        } else {
+            *self.iov_max.get_or_init(|| self.syscall.iov_max().max(1))
+        };
+        for (local, remote) in local.chunks_mut(iov_max).zip(remote.chunks(iov_max)) {
+            self.read_batch_iov(local, remote)?;
+        }
+        Ok(())
     }
 
     fn read_many_fallback(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
@@ -318,12 +343,7 @@ impl LinuxProcessMemory {
                     iov_len: chunk.len,
                 };
             }
-            return self.read_batch_iov(
-                reads,
-                chunks,
-                &mut local[..chunks.len()],
-                &remote[..chunks.len()],
-            );
+            return self.read_batch_iov(&mut local[..chunks.len()], &remote[..chunks.len()]);
         }
 
         let mut local = Vec::with_capacity(chunks.len());
@@ -339,41 +359,40 @@ impl LinuxProcessMemory {
                 iov_len: chunk.len,
             });
         }
-        self.read_batch_iov(reads, chunks, &mut local, &remote)
+        self.read_batch_iov(&mut local, &remote)
     }
 
     fn read_batch_iov(
         &self,
-        reads: &mut [ReadRequest<'_>],
-        chunks: &[Chunk],
         local: &mut [libc::iovec],
         remote: &[libc::iovec],
     ) -> Result<(), MemoryError> {
-        let expected: usize = chunks.iter().map(|chunk| chunk.len).sum();
-        let completed = self.call(local, remote, chunks[0].address, expected)?;
+        let address = remote[0].iov_base as usize;
+        let expected: usize = remote.iter().map(|iov| iov.iov_len).sum();
+        let completed = self.call(local, remote, address, expected)?;
         if completed == expected {
             return Ok(());
         }
         if completed > expected {
             return Err(read_error(
-                chunks[0].address,
+                address,
                 expected,
                 "process_vm_readv returned more bytes than requested",
             ));
         }
 
         let mut prefix = completed;
-        for chunk in chunks {
-            if prefix >= chunk.len {
-                prefix -= chunk.len;
+        for (local, remote) in local.iter().zip(remote) {
+            if prefix >= remote.iov_len {
+                prefix -= remote.iov_len;
                 continue;
             }
-            let suffix_offset = chunk.offset + prefix;
-            let suffix_address = chunk.address + prefix;
-            let suffix_len = chunk.len - prefix;
-            let ptr = reads[chunk.request_index].dst[suffix_offset..].as_mut_ptr();
+            let suffix_address = remote.iov_base as usize + prefix;
+            let suffix_len = remote.iov_len - prefix;
+            // The completed prefix is within this borrowed destination. Pointer
+            // arithmetic alone does not dereference the remote or local address.
             let mut one_local = [libc::iovec {
-                iov_base: ptr.cast(),
+                iov_base: local.iov_base.wrapping_byte_add(prefix),
                 iov_len: suffix_len,
             }];
             let one_remote = [libc::iovec {
@@ -490,6 +509,9 @@ impl ProcessMemory for LinuxProcessMemory {
     }
 
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        if let [request] = reads {
+            return self.read_exact(request.address, request.dst);
+        }
         let result = match self.read_many_direct(reads) {
             Err(MemoryError::Read { .. }) => self.read_many_fallback(reads),
             result => result,
@@ -673,7 +695,7 @@ fn command_line_at(dir: &Path) -> Result<Vec<OsString>, MemoryError> {
 }
 
 fn read_command_line_at(dir: &Path) -> io::Result<Vec<u8>> {
-    read_bounded(&dir.join("cmdline"))
+    read_bounded(&dir.join("cmdline"), 0)
 }
 
 fn command_line_from_bytes(bytes: &[u8]) -> Vec<OsString> {
@@ -739,7 +761,7 @@ pub fn is_process_alive(pid: u32) -> bool {
 }
 
 fn is_process_alive_at(proc_root: &Path, pid: u32) -> bool {
-    let Ok(stat) = read_bounded(&proc_root.join(pid.to_string()).join("stat")) else {
+    let Ok(stat) = read_bounded(&proc_root.join(pid.to_string()).join("stat"), 0) else {
         return false;
     };
     let Some(close) = stat.iter().rposition(|byte| *byte == b')') else {
@@ -783,8 +805,8 @@ fn resolve_osu_path_at(
         if let Some(config) = data_home.map(|path| path.join("osuconfig/osupath"))
             && config.is_file()
         {
-            let bytes =
-                read_bounded(&config).map_err(|error| backend("read osuconfig/osupath", error))?;
+            let bytes = read_bounded(&config, 0)
+                .map_err(|error| backend("read osuconfig/osupath", error))?;
             return Ok(PathBuf::from(OsString::from_vec(
                 trim_ascii(&bytes).to_vec(),
             )));
@@ -843,7 +865,7 @@ fn parse_maps(bytes: &[u8], writable_only: bool) -> Result<Vec<MemoryRegion>, Me
     Ok(regions)
 }
 
-fn read_bounded(path: &Path) -> io::Result<Vec<u8>> {
+fn read_bounded(path: &Path, initial_capacity: usize) -> io::Result<Vec<u8>> {
     let file = fs::File::open(path)?;
     let length = file.metadata()?.len();
     if length > MAX_PROC_FILE {
@@ -853,7 +875,7 @@ fn read_bounded(path: &Path) -> io::Result<Vec<u8>> {
         ));
     }
     use std::io::Read;
-    let mut bytes = Vec::with_capacity(length as usize);
+    let mut bytes = Vec::with_capacity((length as usize).max(initial_capacity));
     file.take(MAX_PROC_FILE + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_PROC_FILE {
         return Err(io::Error::new(

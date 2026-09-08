@@ -297,7 +297,7 @@ fn apply_original_taiko_hit_windows(
         return;
     };
 
-    let mut original = state.original.clone();
+    let mut original = state.original.as_ref().clone();
     if let Some(od) = config.od {
         original.od = od.clamp(0.0, 10.0);
     }

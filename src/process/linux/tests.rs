@@ -390,6 +390,35 @@ fn exact_and_short_prefix_reads_complete_suffixes() {
     assert_eq!(bytes, [0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27]);
     assert_eq!(calls.calls.load(Ordering::SeqCst), 2);
 }
+
+#[test]
+fn singleton_batch_retries_and_respects_fallback_mapping_boundaries() {
+    let maps = "1000-1004 rw-p 0 00:00 0\n1004-1100 rw-p 0 00:00 0\n";
+    for (mode, expected_calls) in [(MockMode::ShortFirst(3), 2), (MockMode::ErrorOnCall(0), 3)] {
+        let (_fixture, memory, calls) = memory_fixture(mode, 1, maps);
+        let mut bytes = [0xa5; 8];
+        memory
+            .read_many(&mut [ReadRequest::new(0x1000, &mut bytes)])
+            .expect("complete singleton read");
+        assert_eq!(bytes, [0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(calls.calls.load(Ordering::SeqCst), expected_calls);
+    }
+
+    let (_fixture, memory, _) = memory_fixture(MockMode::ErrorOnCall(0), 1, maps);
+    let mut bytes = [0xa5; 8];
+    let error = memory
+        .read_many(&mut [ReadRequest::new(0x10fc, &mut bytes)])
+        .expect_err("singleton crosses the readable mapping boundary");
+    assert!(matches!(
+        error,
+        MemoryError::Read {
+            address: 0x1100,
+            len: 4,
+            ..
+        }
+    ));
+    assert_eq!(bytes, [0; 8]);
+}
 #[test]
 fn ordinary_reads_do_not_require_maps_after_opening() {
     let (fixture, memory, calls) =
@@ -414,6 +443,31 @@ fn ordinary_reads_do_not_require_maps_after_opening() {
     assert_eq!(first, [0x20, 0x21]);
     assert_eq!(second, [0x30, 0x31]);
     assert_eq!(calls.calls.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn batch_short_prefix_resumes_at_boundaries_and_inside_destinations() {
+    for prefix in [4, 6] {
+        let (_fixture, memory, calls) = memory_fixture(
+            MockMode::ShortFirst(prefix),
+            1024,
+            "1000-3000 rw-p 0 00:00 0\n",
+        );
+        let mut first = [0xa5; 4];
+        let mut second = [0xa5; 4];
+        let mut third = [0xa5; 4];
+        memory
+            .read_many(&mut [
+                ReadRequest::new(0x1010, &mut first),
+                ReadRequest::new(0x2020, &mut second),
+                ReadRequest::new(0x1030, &mut third),
+            ])
+            .expect("complete remaining destinations after short prefix");
+        assert_eq!(first, [0x10, 0x11, 0x12, 0x13]);
+        assert_eq!(second, [0x20, 0x21, 0x22, 0x23]);
+        assert_eq!(third, [0x30, 0x31, 0x32, 0x33]);
+        assert_eq!(calls.calls.load(Ordering::SeqCst), 3);
+    }
 }
 
 #[test]
@@ -457,6 +511,43 @@ fn direct_batch_skips_empty_entries() {
     assert_eq!(first, [0x10]);
     assert_eq!(second, [0x20]);
     assert_eq!(calls.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn sparse_heap_batch_preserves_bytes_and_empty_destinations() {
+    let (_fixture, memory, _calls) = memory_fixture(
+        MockMode::ShortFirst(STACK_IOVEC_CAPACITY * 8),
+        1024,
+        "1000-3000 rw-p 0 00:00 0\n",
+    );
+    // Cross the stack limit despite an empty prefix and gaps between reads.
+    let active = |index: usize| index >= 128 && (index - 128).is_multiple_of(97);
+    let mut destinations = vec![[0xa5; 8]; 128 + (STACK_IOVEC_CAPACITY + 2) * 97];
+    let mut requests: Vec<_> = destinations
+        .iter_mut()
+        .enumerate()
+        .map(|(index, dst)| {
+            if active(index) {
+                ReadRequest::new(0x1000 + index, dst)
+            } else {
+                ReadRequest::new(usize::MAX, &mut dst[..0])
+            }
+        })
+        .collect();
+
+    memory
+        .read_many(&mut requests)
+        .expect("sparse read after short prefix");
+    drop(requests);
+
+    for (index, dst) in destinations.iter().enumerate() {
+        let expected = if active(index) {
+            std::array::from_fn(|offset| (index + offset) as u8)
+        } else {
+            [0xa5; 8]
+        };
+        assert_eq!(*dst, expected, "destination {index}");
+    }
 }
 
 #[test]
@@ -685,4 +776,49 @@ fn reads_native_self_process_memory() {
         .read_exact((&*value as *const u64) as usize, &mut bytes)
         .expect("read current process");
     assert_eq!(u64::from_ne_bytes(bytes), *value);
+}
+
+#[test]
+fn bounded_proc_reads_preserve_limit_with_initial_capacity() {
+    let fixture = fixture();
+    let path = fixture.path().join("maps");
+    let expected = vec![0x5a; MAX_PROC_FILE as usize];
+    fs::write(&path, &expected).unwrap();
+    assert_eq!(read_bounded(&path, 4096).unwrap(), expected);
+
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(MAX_PROC_FILE + 1)
+        .unwrap();
+    assert_eq!(
+        read_bounded(&path, 4096).unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
+}
+
+#[test]
+fn bounded_proc_reads_limit_streams_with_zero_reported_length() {
+    use std::io::Write;
+
+    let fixture = fixture();
+    let path = fixture.path().join("maps-stream");
+    let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: the CString is live and NUL-terminated; the FIFO is test-owned.
+    assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+    assert_eq!(fs::metadata(&path).unwrap().len(), 0);
+    let writer_path = path.clone();
+    let writer = std::thread::spawn(move || {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(writer_path)
+            .unwrap()
+            .write_all(&vec![0x5a; MAX_PROC_FILE as usize + 1])
+            .unwrap();
+    });
+
+    let error = read_bounded(&path, 4096).unwrap_err();
+    writer.join().unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
 }

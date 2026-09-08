@@ -129,21 +129,26 @@ pub(super) fn map_strains(x_axis: &[f64], data: Option<&[f64]>) -> IndexMap<Stri
             if value <= 0.0 { 0.0 } else { value },
         );
     }
-    let mut entries: Vec<_> = insertion.into_iter().enumerate().collect();
-    entries.sort_by(|(left_pos, (left, _)), (right_pos, (right, _))| {
-        match (array_index(left), array_index(right)) {
+    // Stable sorting preserves insertion order for non-index keys.
+    insertion.sort_by(
+        |left, _, right, _| match (array_index(left), array_index(right)) {
             (Some(left), Some(right)) => left.cmp(&right),
             (Some(_), None) => Ordering::Less,
             (None, Some(_)) => Ordering::Greater,
-            (None, None) => left_pos.cmp(right_pos),
-        }
-    });
-    entries.into_iter().map(|(_, entry)| entry).collect()
+            (None, None) => Ordering::Equal,
+        },
+    );
+    // Keep retained builder results compact without rebuilding the map.
+    insertion.shrink_to_fit();
+    insertion
 }
 
 pub(super) fn array_index(key: &str) -> Option<u32> {
+    if !matches!(key.as_bytes(), [b'0'] | [b'1'..=b'9', ..]) {
+        return None;
+    }
     let value = key.parse::<u32>().ok()?;
-    (value != u32::MAX && value.to_string() == key).then_some(value)
+    (value != u32::MAX).then_some(value)
 }
 
 pub(super) fn encode_json(value: &impl Serialize) -> Result<String, ApiError> {

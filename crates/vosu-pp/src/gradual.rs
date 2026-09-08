@@ -1,7 +1,7 @@
 use crate::{
     BeatmapState, DifficultyAttrsData, DifficultyConfig, Error, LiveLazerEngine, LiveScoreState,
     ParsedBeatmap, PerformanceAttrsData, ScoreInfoData, ScoreTotals, StrainsData,
-    accuracy_with_score_totals, configured,
+    accuracy_with_score_totals, configured_difficulty,
 };
 use rosu_pp::any::{DifficultyAttributes, PerformanceAttributes};
 use std::sync::{Arc, RwLock};
@@ -199,7 +199,7 @@ impl LiveLazerEngine {
         map: &ParsedBeatmap,
         config: &DifficultyConfig,
     ) -> Result<GradualDifficulty, Error> {
-        let (_, core_difficulty, core_map) = configured(
+        let (core_difficulty, core_map) = configured_difficulty(
             map,
             &DifficultyConfig {
                 passed_objects: None,

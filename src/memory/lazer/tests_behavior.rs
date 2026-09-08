@@ -222,11 +222,14 @@ fn key_overlay_uses_bindable_collection_and_all_button_names() {
     );
     memory.ptr(bindable + 0x18, collection);
     memory.ptr(collection + 8, items);
-    memory.i32(collection + 0x10, 1);
-    memory.ptr(items + 0x10, trigger);
-    memory.ptr(trigger + 0x208, trigger + 0x300);
-    memory.i32(trigger + 0x340, 42);
-    memory.put(trigger + 0x1f4, [1]);
+    memory.i32(collection + 0x10, 18);
+    for index in 0..18 {
+        let button = trigger + index * 0x400;
+        memory.ptr(items + 0x10 + index * 8, button);
+        memory.ptr(button + 0x208, button + 0x300);
+        memory.i32(button + 0x340, index as i32 - 9);
+        memory.put(button + 0x1f4, [(index % 4) as u8]);
+    }
     let mut decoder = reader(Arc::new(memory));
     decoder.set_resolved_state(base, player);
     let ReadStatus::Ready(buttons) = decoder.key_overlay(3).unwrap() else {
@@ -234,16 +237,18 @@ fn key_overlay_uses_bindable_collection_and_all_button_names() {
     };
     assert_eq!(
         buttons,
-        vec![KeyOverlayButton {
-            name: "B1".into(),
-            is_pressed: true,
-            count: 42
-        }]
+        (0..18)
+            .map(|index| KeyOverlayButton {
+                name: format!("B{}", index + 1).into(),
+                is_pressed: index % 4 == 1,
+                count: index - 9,
+            })
+            .collect::<Vec<_>>()
     );
     let ReadStatus::Ready(buttons_again) = decoder.key_overlay(3).unwrap() else {
         panic!("not ready")
     };
-    assert!(Arc::ptr_eq(&buttons[0].name, &buttons_again[0].name));
+    assert_eq!(buttons, buttons_again);
 }
 
 #[test]

@@ -821,3 +821,44 @@ async fn zero_debounce_stays_event_driven_without_rebuilding_or_spinning() {
     hub.shutdown();
     runner.await.unwrap();
 }
+
+#[test]
+fn shared_plan_preserves_unchanged_stale_and_initial_delivery_outcomes() {
+    let provider = FakeProvider::new(1, Some(json!({"a": 1})));
+    let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
+    let (current, mut current_rx) = hub.connect();
+    let (stale, mut stale_rx) = hub.connect();
+    current.subscribe(vec!["/a".into()]).unwrap();
+    stale.subscribe(vec!["/a".into()]).unwrap();
+    hub.dispatch(1);
+    assert_eq!(
+        text(current_rx.try_recv().unwrap()),
+        json!([0, 1, [[0, 1]]])
+    );
+    assert_eq!(text(stale_rx.try_recv().unwrap()), json!([0, 1, [[0, 1]]]));
+
+    current.write_completed();
+    provider.publish(2, Some(json!({"a": 2})));
+    hub.dispatch(2);
+    assert_eq!(
+        text(current_rx.try_recv().unwrap()),
+        json!([1, 2, [[0, 2]], []])
+    );
+    assert!(stale_rx.try_recv().is_none());
+    current.write_completed();
+    stale.write_completed();
+
+    let (initial, mut initial_rx) = hub.connect();
+    initial.subscribe(vec!["/a".into()]).unwrap();
+    provider.publish(3, Some(json!({"a": 2})));
+    hub.dispatch(3);
+    assert!(current_rx.try_recv().is_none());
+    assert_eq!(
+        text(stale_rx.try_recv().unwrap()),
+        json!([1, 3, [[0, 2]], []])
+    );
+    assert_eq!(
+        text(initial_rx.try_recv().unwrap()),
+        json!([0, 3, [[0, 2]]])
+    );
+}

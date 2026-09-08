@@ -396,6 +396,26 @@ fn unreadable_regions_are_skipped_without_leaking_partial_matches() {
 }
 
 #[test]
+fn batch_discards_failed_region_matches_before_reusing_slots() {
+    let mut bytes = vec![0; SCAN_CHUNK_SIZE];
+    bytes[16] = 0xaa;
+    let mut memory = TestMemory::new(vec![(0x1000, bytes), (0x400000, vec![0xbb])]);
+    Arc::get_mut(&mut memory).unwrap().regions[0].region.size = 2 * SCAN_CHUNK_SIZE;
+    let process = handle(memory.clone());
+
+    assert_eq!(
+        process
+            .scan_batch(&[pattern("AA", false), pattern("BB", false)])
+            .unwrap(),
+        vec![BatchScanResult {
+            index: 1,
+            address: 0x400000,
+        }]
+    );
+    assert_eq!(memory.read_calls.load(Ordering::Relaxed), 3);
+}
+
+#[test]
 fn permission_denials_stop_scanning_instead_of_appearing_unreadable() {
     let process = ProcessHandle::new(Arc::new(PermissionDeniedMemory), ProcessBitness::X64);
     let target = pattern("AA", false);

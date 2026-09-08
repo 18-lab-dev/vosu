@@ -491,6 +491,7 @@ fn accuracy_statistics_mod_order_and_defaults_match_source() {
             .collect::<Vec<_>>(),
         vec!["HD", "NF"]
     );
+    assert_eq!(mods(128).checksum, "024809c484bde52b1b998b4bc529d8be");
     assert_eq!(default_stats().legacy_combo_increase, Some(0));
     assert_eq!(empty_stats().legacy_combo_increase, None);
     assert_eq!(shifted(0x100, -0xb).unwrap(), 0xf5);
@@ -771,6 +772,7 @@ fn random_seed_recalculates_the_full_mod_array() {
     let recalculated = reader.with_random_seed(original, 0x100, 3).unwrap();
     assert_eq!(recalculated.number, 1 << 21);
     assert_eq!(recalculated.name, "RD10K");
+    assert_eq!(recalculated.checksum, "b28253a762eabb35ac8a6082e24f744e");
     assert_eq!(
         recalculated
             .array
