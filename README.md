@@ -207,6 +207,20 @@ cargo build --release --locked --no-default-features --target x86_64-pc-windows-
 
 The `test-harness` feature is development-only. `build.rs` rejects it in release profiles; it is not a production switch.
 
+### Unsigned version builds
+
+The [Unsigned version builds workflow](.github/workflows/version-build.yml) builds
+native Linux GNU and Windows MSVC development ZIPs when a push to `main` changes
+the root `Cargo.toml` package version. Dependency-only edits and unchanged versions
+skip compilation; manual dispatch builds the selected ref's current version.
+These are **unsigned, nonrelease artifacts**, not updater assets or a replacement
+for required CI. Downloads identify the version and full commit, expire after
+14 days, and include repository attribution/license texts and build provenance.
+Run extracted development binaries with `--update=false`. See the
+[operations runbook](openwiki/operations/runbook.md#unsigned-development-artifacts)
+for gating, cache, packaging, and smoke-test details. Tagged publication and its
+SignPath integration are unchanged; this workflow does not sign or publish releases.
+
 ### Reproducibly update the vendored osu!lazer offsets asset
 
 The live workflow above is for a currently running client and local output.

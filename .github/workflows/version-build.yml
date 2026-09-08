@@ -1,0 +1,113 @@
+name: Unsigned version builds
+
+on:
+  push:
+    branches: [main]
+    paths: [Cargo.toml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: version-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Detect root package version change
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.version.outputs.build }}
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+      week: ${{ steps.version.outputs.week }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - id: version
+        run: python scripts/version-build.py detect
+
+  build:
+    name: Unsigned development build (${{ matrix.platform }})
+    needs: version
+    if: needs.version.outputs.build == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            features: linux-process-events
+            executable: vosu
+          - platform: windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            features: none
+            executable: vosu.exe
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_SHA: ${{ needs.version.outputs.sha }}
+      BUILD_PLATFORM: ${{ matrix.platform }}
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.96.1
+          targets: ${{ matrix.target }}
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang libbpf-dev libelf-dev
+          echo 'C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu' >> "$GITHUB_ENV"
+      - name: Cache Cargo downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-downloads-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-downloads-${{ runner.os }}-
+      - name: Cache release and isolated smoke compilation
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          # Weekly snapshots avoid a cache per commit. Lock/manifest changes refresh
+          # it immediately; fallback crosses versions, never native build modes.
+          key: version-build-${{ runner.os }}-${{ runner.arch }}-rust-1.96.1-${{ matrix.target }}-no-default-${{ matrix.features }}-release-smoke-v1-${{ needs.version.outputs.week }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: version-build-${{ runner.os }}-${{ runner.arch }}-rust-1.96.1-${{ matrix.target }}-no-default-${{ matrix.features }}-release-smoke-v1-
+      # Always invoke Cargo: a restored cache is an input, not the current binary.
+      - name: Build Linux production binary
+        if: runner.os == 'Linux'
+        run: cargo build --release --locked --no-default-features --features linux-process-events --target x86_64-unknown-linux-gnu
+      - name: Build Windows production binary
+        if: runner.os == 'Windows'
+        run: cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc
+      - name: Package attribution and extract exact development ZIP
+        run: >-
+          python scripts/version-build.py package
+          --platform "$BUILD_PLATFORM" --sha "$BUILD_SHA"
+          --destination "version-smoke/$BUILD_PLATFORM"
+      - name: Smoke-test extracted production binary without updates
+        env:
+          VOSU_RELEASE_SMOKE_BINARY: ${{ github.workspace }}/version-smoke/${{ matrix.platform }}/${{ matrix.executable }}
+        run: cargo test --locked --package vosu-release-smoke --test release_smoke -- --ignored --nocapture
+      - name: Upload unsigned development ZIP
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: vosu-unsigned-dev-v${{ needs.version.outputs.version }}-${{ needs.version.outputs.sha }}-${{ matrix.target }}
+          path: dist/vosu-unsigned-dev-v${{ needs.version.outputs.version }}-${{ needs.version.outputs.sha }}-${{ matrix.target }}.zip
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

@@ -55,6 +55,134 @@ Startup updates follow stable releases, verify the selected platform archive’s
 
 Release packaging requires exact platform archives containing only the executable and `LICENSE`; release smoke tests exercise an extracted binary. Windows additionally signs and verifies the executable through the release workflow. The updater currently reads latest-release metadata from `shiruviaa/vosu`; confirm this source when diagnosing update failures. See `scripts/package-release.py` and `scripts/verify-windows-release.ps1` for enforcement.
 
+### Unsigned development artifacts
+
+`.github/workflows/version-build.yml` is independent of required `ci.yml` validation
+and tagged `release.yml` publication. It uses only `contents: read`, no secrets,
+signing, tags, releases, or updater publication. SignPath remains deferred for
+this development path. A successful development build does not imply required CI
+has passed.
+
+- **Gate:** pushes to `main` are path-filtered to root `Cargo.toml`. Python 3.11+
+  `tomllib` compares actual `[package].version` at the checked-out push tip against
+  `github.event.before`, not `HEAD^`, so multi-commit pushes compare net changes.
+  Dependency/comment-only changes and version changes reverted within the push
+  skip both native jobs. A missing/zero base, failed depth-one base fetch, missing
+  manifest, or invalid TOML fails the gate closed; manual `workflow_dispatch`
+  explicitly builds the selected ref's current version without a base.
+  GitHub's push path-filter limits still apply (including its 300-file diff limit);
+  manual dispatch is the recovery path for a missed automatic run.
+- **Scheduling:** one parallel Linux/Windows matrix, independent platform failures,
+  45-minute build timeouts, and cancellation of obsolete runs on the same ref.
+  Gate timeout is five minutes. A newer qualifying push with an unchanged version
+  can cancel an older build and then skip; manually dispatch if that artifact is needed.
+- **Build/cache:** pinned Rust 1.96.1 and action SHAs; native x86_64 GNU with exactly
+  `--no-default-features --features linux-process-events`, native x86_64 MSVC with
+  `--no-default-features`, both `--release --locked`. Cargo always runs, including
+  on exact cache hits. Download caches share the existing OS/lockfile namespace.
+  Compilation caches are separate from CI/tag builds and partitioned by OS,
+  architecture, toolchain, target, and feature/profile mode. Weekly plus
+  lockfile/manifest generations bound snapshots; same-mode fallback reuses older
+  versions without crossing platforms or features. Incremental compilation is off.
+  Only the isolated release smoke crate is tested here; required CI owns full suites.
+- **Payload:** each Actions artifact contains
+  `vosu-unsigned-dev-v<VERSION>-<FULL_SHA>-<TARGET>.zip`, retained for 14 days with
+  upload compression disabled (the inner ZIP is already compressed).
+  The ZIP carries the root binary, `BUILD-INFO.json` (unsigned status, version,
+  commit, target, toolchain, features), root `LICENSE`, `LICENSE-MIT`,
+  `LICENSE-APACHE`, `THIRD_PARTY_NOTICES.md`, calculator license texts including
+  `crates/vosu-pp/THIRD_PARTY_LICENSES.txt` and both local fork licenses, and the
+  historical oracle license referenced by the notices. License paths retain their
+  repository layout. `Cargo.lock` and `assets/SHA256SUMS` accompany the provenance;
+  the latter describes repository inputs, not archive-member checksums.
+  The historical oracle executable is not shipped. This is the retained repository
+  attribution bundle, not a newly generated license audit of every registry dependency.
+- **Smoke:** `scripts/version-build.py package` checks the exact ZIP member set
+  and CRCs and extracts it into a fresh `version-smoke/<platform>` directory,
+  restoring Linux executable permissions. Nonempty destinations are rejected.
+  The existing smoke harness launches that extracted binary with `--update=false`
+  and isolated state; on Windows its configuration is beside the extracted binary.
+  Upload happens only after the platform's smoke succeeds. Keep development
+  binaries outside existing installations and use `--update=false` manually too.
+
+The tagged/updater ZIP remains exactly executable plus root `LICENSE`.
+Its known attribution gap is **not fixed** by the separate development bundle;
+`scripts/package-release.py` and the tag workflow retain their existing contract.
+Windows development binaries have no Authenticode guarantee. Hosted Linux GNU
+builds are not portable-musl artifacts: system glibc/libelf/zlib compatibility
+still applies. Artifact smoke is not live osu! parity or privileged process-backend
+verification on either platform.
+
+Small local gate probes from the repository root (no compilation):
+
+```sh
+python scripts/version-build.py detect --event workflow_dispatch
+python scripts/version-build.py detect --event push --before "$(git rev-parse HEAD)"
+python scripts/version-build.py detect --event push --before 0000000000000000000000000000000000000000
+# Supply the actual pre-push SHA to exercise a multi-commit version change:
+python scripts/version-build.py detect --event push --before <PRE_PUSH_SHA>
+```
+
+Expected results: dispatch `build=true`; same commit `build=false`; zero base
+nonzero exit/no builds; pre-push comparison true only for different parsed
+versions. A local base object avoids any network fetch.
+
+For dependency-only, multi-commit, and reverted-version push cases without touching
+the working checkout, this disposable fixture needs only Python 3.11+ and Git:
+
+```sh
+python - <<'PY'
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+script = Path("scripts/version-build.py").resolve()
+env = dict(os.environ)
+env.pop("GITHUB_OUTPUT", None)
+with tempfile.TemporaryDirectory() as directory:
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-c", "user.name=Version fixture",
+             "-c", "user.email=fixture@example.invalid", *args],
+            cwd=directory, text=True)
+    def commit(version, dependency):
+        Path(directory, "Cargo.toml").write_text(
+            f'[package]\nname="fixture"\nversion="{version}"\n'
+            f'[dependencies]\nexample="{dependency}"\n')
+        git("add", "Cargo.toml")
+        git("commit", "-qm", "fixture")
+        return git("rev-parse", "HEAD").strip()
+    def detect(base, expected):
+        output = subprocess.check_output(
+            [sys.executable, str(script), "detect", "--event", "push",
+             "--before", base], cwd=directory, env=env, text=True)
+        assert f"build={expected}\n" in output, output
+        print(output, end="")
+    git("init", "-q")
+    base = commit("0.3.0", "1")
+    commit("0.3.0", "2")
+    detect(base, "false")  # Dependency-only root manifest edit.
+    commit("0.4.0", "2")
+    commit("0.4.0", "3")
+    detect(base, "true")   # Version changed before the tip commit.
+    commit("0.3.0", "3")
+    detect(base, "false")  # Net version change was reverted.
+PY
+```
+
+After building the native release binary, reproduce packaging and artifact smoke
+on Linux (use a fresh destination; Windows uses `--platform windows` and the
+extracted `vosu.exe` path in `VOSU_RELEASE_SMOKE_BINARY`):
+
+```sh
+python scripts/version-build.py package --platform linux --sha "$(git rev-parse HEAD)" \
+  --destination version-smoke/linux
+VOSU_RELEASE_SMOKE_BINARY="$PWD/version-smoke/linux/vosu" \
+  cargo test --locked --package vosu-release-smoke --test release_smoke -- --ignored --nocapture
+```
+
 ## Diagnostics
 
 1. Check logs and the effective platform config root's `vosu.toml` path.
