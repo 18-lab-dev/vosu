@@ -300,6 +300,23 @@ impl LazerMemory {
         let o = &self
             .offsets
             .osu_game_beatmaps_working_beatmap_cache_beatmap_manager_working_beatmap;
+        if usize::BITS == 64
+            && self.process.pointer_size() == 8
+            && let (Some(info), Some(set)) = (
+                working.checked_add(o.beatmap_info),
+                working.checked_add(o.beatmap_set_info),
+            )
+            && info.checked_add(8) == Some(set)
+        {
+            let mut pointers = [0; 16];
+            if self.process.read_exact(info, &mut pointers).is_ok() {
+                return Ok((
+                    u64::from_le_bytes(pointers[..8].try_into().unwrap()) as usize,
+                    u64::from_le_bytes(pointers[8..].try_into().unwrap()) as usize,
+                ));
+            }
+        }
+        // Preserve scalar sequencing for other layouts and field/address errors.
         Ok((
             self.ptr(add(working, o.beatmap_info)?)?,
             self.ptr(add(working, o.beatmap_set_info)?)?,
