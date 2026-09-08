@@ -301,6 +301,19 @@ fn collection_header_ignores_padding_after_x86_pointer() {
 }
 
 #[test]
+fn hit_event_missing_result_preserves_field_error_before_null_object() {
+    let event = 0x1000;
+    let mut memory = SparseMemory::default();
+    memory.ptr(event, 0);
+    memory.f64(event + 0x10, 1.25);
+    let reader = reader(Arc::new(memory));
+    assert!(matches!(
+        reader.read_hit_event(event),
+        Err(MemoryError::Read { address, len: 4, .. }) if address == event + 0x18
+    ));
+}
+
+#[test]
 fn hit_event_size_result_and_identity_rules_match_modes() {
     let event = 0x1000usize;
     let object = 0x2000usize;
