@@ -397,6 +397,12 @@ fn build_stable_tourney(snapshot: &CombinedSnapshot) -> Tourney {
             spectators.push(instance);
         }
     }
+    let Some(manager_instance) = manager else {
+        return Tourney {
+            manager: default_tourney_manager(),
+            ipc_clients: Vec::new(),
+        };
+    };
     for index in 1..spectators.len() {
         let mut cursor = index;
         while cursor > 0
@@ -413,12 +419,6 @@ fn build_stable_tourney(snapshot: &CombinedSnapshot) -> Tourney {
         .map(|(index, instance)| stable_tourney_client(instance, index, total))
         .collect();
 
-    let Some(manager_instance) = manager else {
-        return Tourney {
-            manager: default_tourney_manager(),
-            ipc_clients: Vec::new(),
-        };
-    };
     let state = &manager_instance.state().regular.tourney;
     let board = &state.scoreboard;
     Tourney {
