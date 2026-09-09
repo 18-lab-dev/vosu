@@ -1,0 +1,75 @@
+name: Windows benchmarks
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    name: Native Windows microbenchmarks
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: never
+      CRITERION_HOME: ${{ github.workspace }}/benchmark-results/criterion
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.96.1
+          targets: x86_64-pc-windows-msvc
+      - name: Restore Cargo downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-downloads-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-downloads-${{ runner.os }}-
+      - name: Record benchmark provenance
+        run: |
+          New-Item -ItemType Directory -Force benchmark-results | Out-Null
+          @{
+            revision = (git rev-parse HEAD)
+            startedUtc = [DateTime]::UtcNow.ToString('o')
+            runnerImage = $env:ImageOS
+            runnerImageVersion = $env:ImageVersion
+            os = (Get-CimInstance Win32_OperatingSystem).Caption
+            cpu = @(Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors)
+            memoryBytes = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+            criterionHome = $env:CRITERION_HOME
+          } | ConvertTo-Json -Depth 4 | Set-Content benchmark-results/environment.json
+          rustc -Vv | Set-Content benchmark-results/rustc.txt
+          cargo -V | Set-Content benchmark-results/cargo.txt
+      - name: Run all Windows hot paths
+        run: |
+          'cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench hot_paths' | Set-Content benchmark-results/hot-paths-command.txt
+          cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench hot_paths 2>&1 | Tee-Object benchmark-results/hot-paths.log
+          $code = $LASTEXITCODE
+          $code | Set-Content benchmark-results/hot-paths-exit-code.txt
+          exit $code
+      - name: Run deterministic memory reader
+        if: ${{ !cancelled() }}
+        run: |
+          New-Item -ItemType Directory -Force benchmark-results | Out-Null
+          'cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench memory_reader_bench' | Set-Content benchmark-results/memory-reader-command.txt
+          cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench memory_reader_bench 2>&1 | Tee-Object benchmark-results/memory-reader.log
+          $code = $LASTEXITCODE
+          $code | Set-Content benchmark-results/memory-reader-exit-code.txt
+          exit $code
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-benchmarks-${{ github.sha }}
+          path: benchmark-results
+          if-no-files-found: error
+          retention-days: 14
