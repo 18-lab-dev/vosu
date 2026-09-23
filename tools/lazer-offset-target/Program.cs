@@ -13,9 +13,10 @@ internal static class Program
 {
     private const string Usage = """
         Usage: lazer-offset-target --template <offsets.json> --assembly-dir <managed assembly directory>
+        Usage: lazer-offset-target --game-base-signature --assembly-dir <managed assembly directory>
 
-        Load a verified managed assembly set, construct every CLR type named by the
-        ordered offsets template, and remain alive for ClrMD inspection.
+        Historical template mode loads every named CLR type and remains alive for ClrMD.
+        Signature mode loads the exact osu.Desktop.OsuGameDesktop type and emits one JSON result.
         """;
 
     private const string ExpectedFrameworkDescription = ".NET 8.0.16";
@@ -47,6 +48,9 @@ internal static class Program
                 Console.Out.WriteLine(Usage);
                 return 0;
             }
+
+            if (options.GameBaseSignature)
+                return EmitGameBaseSignature(options.AssemblyDirectory!);
 
             RuntimeIdentityProof runtimeIdentity = RuntimeIdentityProof.LoadRequired();
             VerifyRuntimeIdentity(runtimeIdentity);
@@ -82,6 +86,110 @@ internal static class Program
             Console.Error.WriteLine($"error: unexpected {error.GetType().Name}: {error.Message}");
             return 1;
         }
+    }
+
+    private static int EmitGameBaseSignature(string assemblyDirectory)
+    {
+        if (RuntimeInformation.ProcessArchitecture != Architecture.X64)
+        {
+            throw new TargetHostException(
+                "game-base signature mode requires an X64 process architecture");
+        }
+
+        DirectoryAssemblyLoader loader = DirectoryAssemblyLoader.Create(assemblyDirectory);
+        // Load only the game entry assembly. The loader resolves its dependencies;
+        // bundled framework assemblies such as CoreLib must stay owned by the CLR.
+        LoadedAssembly[] assemblies = [loader.Load("osu!")];
+        ResolvedType resolved = ResolveTypes(
+            ["osu.Desktop.OsuGameDesktop"],
+            assemblies)[0];
+
+        RuntimeTypeHandle handle;
+        try
+        {
+            handle = resolved.Type.TypeHandle;
+        }
+        catch (Exception error) when (error is TypeLoadException or
+                                             FileNotFoundException or
+                                             FileLoadException or
+                                             BadImageFormatException or
+                                             NotSupportedException or
+                                             InvalidOperationException)
+        {
+            throw new TargetHostException(
+                $"game-base signature failed to obtain type handle for '{resolved.Name}' " +
+                $"from '{resolved.AssemblyPath}': {error.Message}",
+                error);
+        }
+
+        if (handle.Value == IntPtr.Zero)
+            throw new TargetHostException(
+                $"game-base signature failed for '{resolved.Name}': RuntimeTypeHandle.Value is zero");
+
+        long methodTableWord = Marshal.ReadInt64(handle.Value);
+        if (methodTableWord <= 0)
+        {
+            throw new TargetHostException(
+                $"game-base signature failed for '{resolved.Name}': first type-handle word " +
+                $"was {methodTableWord.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        string version = ReadVersionFromDeps(assemblyDirectory);
+        Console.Out.WriteLine(JsonSerializer.Serialize(new
+        {
+            OsuVersion = version,
+            GameBaseVtable = unchecked((ulong)methodTableWord),
+        }));
+        return 0;
+    }
+
+    private static string ReadVersionFromDeps(string assemblyDirectory)
+    {
+        string depsPath = Path.Combine(Path.GetFullPath(assemblyDirectory), "osu!.deps.json");
+        using FileStream file = File.OpenRead(depsPath);
+        if (file.Length > 4 * 1024 * 1024)
+            throw new TargetHostException($"dependencies file '{depsPath}' exceeds 4 MiB");
+        byte[] bytes = new byte[checked((int)file.Length)];
+        file.ReadExactly(bytes);
+        using JsonDocument document = JsonDocument.Parse(bytes);
+        if (!document.RootElement.TryGetProperty("libraries", out JsonElement libraries) ||
+            libraries.ValueKind != JsonValueKind.Object)
+            throw new TargetHostException($"dependencies file '{depsPath}' has no object 'libraries'");
+
+        foreach (JsonProperty library in libraries.EnumerateObject())
+        {
+            const string prefix = "osu!/";
+            if (!library.Name.StartsWith(prefix, StringComparison.Ordinal))
+                continue;
+            string rest = library.Name[prefix.Length..];
+            int separator = rest.IndexOf('-');
+            if (separator <= 0 || separator == rest.Length - 1)
+                continue;
+            string version = rest[..separator];
+            if (IsCanonicalVersion(version))
+                return version;
+            throw new TargetHostException($"invalid osu! version '{version}' in '{depsPath}'");
+        }
+        throw new TargetHostException($"dependencies file '{depsPath}' contains no canonical osu! version");
+    }
+
+    private static bool IsCanonicalVersion(string version)
+    {
+        string[] parts = version.Split('.');
+        if (parts.Length != 3)
+            return false;
+        foreach (string part in parts)
+        {
+            if (part.Length == 0 ||
+                (part.Length > 1 && part[0] == '0') ||
+                !part.All(char.IsAsciiDigit) ||
+                !ulong.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static ResolvedType[] ResolveTypes(

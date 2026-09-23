@@ -93,6 +93,7 @@ use crate::{
 mod cli;
 mod config;
 mod lifecycle;
+mod offset_generator;
 mod projection;
 mod render;
 mod service;

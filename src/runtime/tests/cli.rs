@@ -170,17 +170,19 @@ fn generated_offsets_must_match_the_running_client_version() {
 }
 
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
-#[test]
-fn backend_probe_is_unsupported_without_process_event_feature() {
+#[tokio::test]
+async fn backend_probe_is_unsupported_without_process_event_feature() {
     let error = super::cli::run_command(CliCommand::ProbeBackend(BackendProbe::Ebpf))
+        .await
         .expect_err("featureless probe unexpectedly succeeded");
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
 }
 
 #[cfg(not(target_os = "linux"))]
-#[test]
-fn setup_is_unsupported_off_linux() {
+#[tokio::test]
+async fn setup_is_unsupported_off_linux() {
     let error = super::cli::run_command(CliCommand::Setup)
+        .await
         .expect_err("non-Linux setup unexpectedly succeeded");
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
 }

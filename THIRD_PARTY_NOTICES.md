@@ -52,7 +52,7 @@ is not a build or runtime input.
 
 ## osu!lazer memory-offset generation input
 
-- **Material:** `assets/offsets.json`, generated locally with `tools/lazer-offset-target` and `tools/lazer-offset-generator` from the official osu! AppImage's managed assemblies and exact Satori runtime overlay plus a locally built matching DAC; the AppImage inputs, DAC, and published helper are not distributed by vosu
+- **Material:** `assets/offsets.json`, generated locally with `tools/lazer-offset-target` and `tools/lazer-offset-generator` from the official osu! AppImage's managed assemblies and exact Satori runtime overlay plus a locally built matching DAC. These historical asset-generation inputs are not distributed by vosu. The separate user-facing `-g` bundles ship the existing generator and owned target with their self-contained .NET runtime, not the game assemblies or DAC.
 - **Copyright:** Copyright (c) ppy Pty Ltd <contact@ppy.sh>
 - **License:** MIT for the osu! source code; osu! bundled resources remain subject to their upstream terms
 - **osu! version:** `2026.726.0`
@@ -66,7 +66,7 @@ is not a build or runtime input.
 
 ### Microsoft .NET runtime, host, and reference packs 8.0.29
 
-- **Material:** development-only self-contained base runtime, app-host, and reference packs for `tools/lazer-offset-target`; generation overlays the exact Satori runtime files shipped by osu! and does not distribute the published helper or runtime files
+- **Material:** self-contained .NET runtime and app-host shipped in the versioned offset-generator bundles; generation uses the pinned runtime without distributing the official osu! AppImage inputs
 - **Copyright:** .NET Foundation and Contributors
 - **License:** MIT
 - **Runtime NuGet package:** <https://www.nuget.org/packages/Microsoft.NETCore.App.Runtime.linux-x64/8.0.29>
@@ -79,9 +79,9 @@ is not a build or runtime input.
 - **AppImage runtime-pack declaration:** `Microsoft.NETCore.App.Runtime.linux-x64/8.0.29`
 - **AppImage declared `System.Private.CoreLib.dll` file version:** `8.0.2926.32403`
 
-### ppy/Satori 2025.807.0
+### ppy/Satori 2025.807.0 (historical asset evidence)
 
-- **Material:** development-only `System.Private.CoreLib.dll`, `libclrjit.so`, and `libcoreclr.so` runtime overlay shipped by the official osu! AppImage, plus a locally built matching DAC with the committed GC-query compatibility patch used by `tools/lazer-offset-generator`; neither the overlay, DAC, nor published helper is distributed by vosu
+- **Material:** historical official osu! AppImage runtime-overlay and locally built DAC evidence retained for provenance; these files and the compatibility patch are not inputs to current `-g`, and are not distributed by vosu
 - **Copyright:** .NET Foundation and Contributors
 - **License:** MIT
 - **Release:** <https://github.com/ppy/Satori/releases/tag/2025.807.0>
@@ -100,12 +100,12 @@ is not a build or runtime input.
 
 ### Microsoft.Diagnostics.Runtime (ClrMD) 4.0.732401
 
-- **Material:** development-only live-process inspection dependency of `tools/lazer-offset-generator`
+- **Material:** self-contained live-process inspection dependency shipped in the versioned offset-generator bundle
 - **Copyright:** .NET Foundation and Contributors
 - **License:** MIT
 - **NuGet package:** <https://www.nuget.org/packages/Microsoft.Diagnostics.Runtime/4.0.732401>
 - **Pinned source:** <https://github.com/microsoft/clrmd/tree/f160f6897f33198170895a60444de38bcb76bcf3>
-ClrMD and its restored build dependencies are used only by the maintainer generator. They are not linked into vosu and are not included in the two-file production release archive.
+ClrMD and its restored build dependencies are not linked into vosu's daemon or included in the two-file production release archive; they are present only in the separately versioned generator bundle.
 
 ## Maintained source-layout changes
 

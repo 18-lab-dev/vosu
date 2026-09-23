@@ -83,94 +83,88 @@ The public command flags are standalone actions:
 -g, --generate-offsets
 ```
 
-`--help` prints usage. On Linux, `--generate-offsets` finds exactly one running
-64-bit osu!lazer client, measures managed field offsets from that client's
-on-disk assemblies (no live DAC attach), and atomically writes validated offsets
-for that client's version to the vosu offset cache:
-`$XDG_CACHE_HOME/vosu/offsets/<version>.json`, defaulting to
-`$HOME/.cache/vosu/offsets/<version>.json`. Set `VOSU_LAZER_OFFSET_GENERATOR` to
-the built generator path when it is not beside the vosu executable or under the
-repository's standard tool output path. The command requires the Linux generator
-and does not use the embedded offsets as generated output. On Linux, `--setup`
-probes the process-event backends compiled into the current executable and
-installs the capabilities they require. Each action must be the executable's
-only argument.
+`--help` prints usage. Each public action must be the executable's only argument.
+On Linux, `--setup` probes the compiled process-event backends and installs their
+capabilities. Insufficient authority is an error: use `sudo vosu --setup`; do not
+run the ordinary daemon as root. Its behavior is unchanged by offset generation.
 
-Insufficient setup authority is an error. Run `sudo vosu --setup`, or invoke it as a user with equivalent authority to set file capabilities; do not run the ordinary daemon as root.
+### Generate offsets from a running lazer process
 
-`--generate-offsets` is a Linux-only maintainer action. A release archive
-contains the vosu daemon and `LICENSE`, not the managed offset generator. The
-action requires one already-running native 64-bit osu!lazer client so it can
-discover the client version and assembly directory; it does not launch osu! and
-it does not modify the daemon's embedded offsets.
+Start one native x64 osu!lazer client as your normal user, then run `vosu -g`
+(`.\vosu.exe -g` on Windows). Discovery supplies that running client's exact
+installation root and version. The existing generator measures fields from its
+assemblies using `--assemblies-only`; it does not attach to or modify the game.
 
-There is no separate prebuilt generator package in the current release. Build
-the tool from a matching vosu source checkout as shown below.
+Only explicit `-g` provisions or runs the helper. It downloads a self-contained
+platform bundle and its published SHA-256 checksum from the
+`offset-generator-v1` release in `shiruviaa/vosu`, verifies the archive and
+per-file manifest, then atomically installs it in the user cache. Subsequent runs
+verify and reuse that cache without downloading. A missing published bundle,
+unsupported assembly/runtime layout, corrupt cache, or unavailable client is a
+clear error; no numeric-offset fallback is presented as successful generation.
 
-#### After installing the release binary
+There is no user SDK/runtime installation, source checkout, environment override,
+DAC, ptrace attachment, sudo prompt, capability change, or root-owned installation
+prerequisite. The current helper bundles carry their own .NET 8.0.29 runtime.
+Ordinary Cargo builds remain Rust-only.
 
-Install prerequisites before running the action:
+Payload cache roots:
 
-- a native 64-bit osu!lazer client, already running as the same desktop user;
-- the .NET 8 SDK and access to NuGet to restore the generator's locked package;
-- Git, unless a vosu source checkout is already available.
+- Linux: `$XDG_CACHE_HOME/vosu/offset-generator`, default
+  `$HOME/.cache/vosu/offset-generator`.
+- Windows: `%LOCALAPPDATA%\vosu\cache\offset-generator`.
 
-The SDK is required; installing only a .NET runtime is insufficient. On Arch
-Linux, install it with:
+Entries are keyed by platform, helper runtime version, and bundle release.
+Corrupt entries identify the directory to remove. Normal daemon startup does not
+download/probe the generator; ordinary updater/offset-resolution behavior remains
+separate.
 
-```sh
-sudo pacman -S dotnet-sdk-8.0
-dotnet --list-sdks
-```
+The bundled `lazer-offset-target` runs as an owned child and loads the same
+client's entry assembly. Its `--game-base-signature` mode reads the first x64
+MethodTable word for `osu.Desktop.OsuGameDesktop` in its own process; it neither
+starts another game nor reads the live client's memory. `GameBaseVtable` is
+accepted only when the child and generated fields report the same `OsuVersion`.
+No signature is copied from the embedded template or a prior build. Failure to
+derive a nonzero signature fails generation without replacing existing output.
+The signature depends on the runtime's type layout; native live-reader
+verification is required for a supported client/runtime combination.
+Generated JSON is version/schema-validated and atomically stored at
+`$XDG_CACHE_HOME/vosu/offsets/<version>.json` on Linux (same default cache root),
+or beside the portable Windows daemon at `.cache\offsets\<version>.json`.
+Failure leaves previous output intact; committed `assets/offsets.json` is untouched.
+The reader prefers valid version-matched cached offsets, then embedded offsets,
+then remote sources. Corrupt/mismatched cache entries cannot override embedded data.
 
-Build the generator from a checkout, then point the installed daemon at its
-absolute path:
+#### Build a runtime bundle for supervised development
 
-```sh
-git clone https://github.com/shiruviaa/vosu.git
-cd vosu
-dotnet restore tools/lazer-offset-generator/lazer-offset-generator.csproj \
-  --source https://api.nuget.org/v3/index.json --locked-mode
-dotnet build tools/lazer-offset-generator/lazer-offset-generator.csproj \
-  --configuration Release --no-restore
-export VOSU_LAZER_OFFSET_GENERATOR="$PWD/tools/lazer-offset-generator/bin/Release/net8.0/lazer-offset-generator"
-/path/to/vosu --generate-offsets
-```
-
-Assembly-only generation does not attach to the live CLR, so the generator does
-not need `CAP_SYS_PTRACE`. The daemon still needs ptrace capabilities to read
-osu! memory at runtime (`sudo vosu --setup`).
-
-#### From a cloned repository
-
-The repository workflow needs the Rust, native-library, and .NET prerequisites
-listed in [Requirements](#requirements). From the repository root:
+This is a maintainer packaging step, not user setup:
 
 ```sh
-dotnet restore tools/lazer-offset-generator/lazer-offset-generator.csproj \
-  --source https://api.nuget.org/v3/index.json --locked-mode
-dotnet build tools/lazer-offset-generator/lazer-offset-generator.csproj \
-  --configuration Release --no-restore
-cargo build --locked --no-default-features
-export VOSU_LAZER_OFFSET_GENERATOR="$PWD/tools/lazer-offset-generator/bin/Release/net8.0/lazer-offset-generator"
-sudo setcap cap_sys_ptrace=ep target/debug/vosu
-cargo run --locked --no-default-features -- --generate-offsets
+python scripts/prepare-offset-generator.py --rid linux-x64
+python scripts/prepare-offset-generator.py --rid win-x64
 ```
 
-`cargo run` builds the daemon with the pinned Rust toolchain before invoking
-the action. The generated file is stored in the vosu offset cache, not in
-the repository checkout. The output is not copied to `assets/offsets.json`
-automatically; updating the embedded repository asset requires the
-reproducible workflow below and its provenance/checksum review.
+The builder requires Python and the .NET 8 SDK. It restores locked dependencies
+and publishes the existing generator and owned target self-contained for each
+platform. Their payload directories are isolated because the generator's
+diagnostic packages include framework DLL versions different from the target's.
+No native Satori/DAC build is involved. Generated archives remain under
+`target/offset-generator/<rid>/`; generated binaries are never committed.
 
-If no client or generator can be found, or if version or JSON validation fails,
-the command returns an error and leaves an existing `<version>.json` cache entry
-unchanged. Close extra osu!lazer instances and check that the client exposes
-`osu!.deps.json` before retrying.
+The manual **Offset generator bundles** workflow builds native Linux/Windows
+artifacts. Pushing its exact versioned bundle tag also publishes them; manual
+dispatch only builds artifacts. Do not publish until both native live checks pass.
 
-Advanced ClrMD live-attach / target-host generation (with a matching Satori DAC)
-remains available on the generator CLI for maintainers who need a live
-`GameBaseVtable` measurement; ordinary `vosu -g` uses assembly-only mode.
+Before publication, supervised development may set `VOSU_OFFSET_BUNDLE_SOURCE`
+to a directory containing the named ZIP and `.zip.sha256` sidecar. The same
+runtime/manifest/integrity checks apply; it is not an executable/PATH override:
+
+```sh
+VOSU_OFFSET_BUNDLE_SOURCE="$PWD/target/offset-generator/linux-x64" vosu -g
+```
+
+The separate historical asset-reproduction workflow below remains available for
+maintainers; its SDK/DAC build steps are not user prerequisites for `-g`.
 
 ## Build from source
 
@@ -182,10 +176,9 @@ remains available on the generator CLI for maintainers who need a live
 - Windows: MSVC build tools and the Windows SDK
 
 The dashboard and embedded offsets are vendored build inputs. No frontend or
-managed-runtime toolchain is needed for the daemon build. The live
-offset-generation action additionally requires the .NET 8 SDK and a locked
-NuGet restore; the reproducible asset workflow below has further maintainer
-tool prerequisites.
+managed-runtime toolchain is needed for the daemon build. Separately producing
+the versioned offset-generator bundles requires the maintainer packaging tools
+listed above; they are not used by ordinary Cargo builds.
 
 ```sh
 cargo build --locked
@@ -260,9 +253,8 @@ export VOSU_LAZER_OFFSET_DAC="$SATORI_ROOT/artifacts/bin/coreclr/linux.x64.Relea
 test -f "$VOSU_LAZER_OFFSET_DAC"
 ```
 
-Then rebuild the generator, reapply its capability, and run `vosu -g` as
-described above. Do not point `VOSU_LAZER_OFFSET_DAC` at the AppImage's
-`libmscordaccore.so` when the loaded `libcoreclr.so` is the pinned Satori build.
+This DAC procedure belongs only to historical embedded-asset reproduction.
+The user-facing `vosu -g` path does not build, download, or use a DAC.
 
 
 When a lazer release is not yet available from either offset endpoint, the Linux x64 maintainer tools can derive the embedded asset from an exact release source checkout under the release's exact runtime. They require the .NET 8 SDK, `curl`, `bsdtar`, binutils, zlib development headers, an executable `/dev/shm` tmpfs, and the [Satori Linux build prerequisites](https://github.com/ppy/Satori/blob/098d0ed17cf8f965d79be6e3d870a895a6dbbe04/.github/workflows/build.yml) only while generating offsets; vosu builds and releases remain Rust-only.
@@ -493,7 +485,7 @@ Run vosu as the same desktop user as osu!. Tournament and debug-client processes
 | Platform | osu!stable | osu!lazer |
 | --- | --- | --- |
 | **Linux** | Wine process discovery and native memory reads. Set `VOSU_OSU_PATH=/absolute/path/to/osu!` if Wine does not expose the install directory. | The official executable or AppImage layout must expose `osu!.deps.json`. Sandbox policy must allow process discovery and memory reads. |
-| **Windows** | Supported 32-bit processes are read through native Windows process-memory APIs. | A supported 64-bit process is required. Offsets are resolved from embedded data, the versioned cache, then the first-party `https://vosu.app/offsets` service and configured fallback services. |
+| **Windows** | Supported 32-bit processes are read through native Windows process-memory APIs. | A supported 64-bit process is required. Offsets are resolved from the valid versioned cache, embedded data, then the first-party `https://vosu.app/offsets` service and configured fallback services. |
 
 On Linux, vosu can also read the osu! path from `${XDG_DATA_HOME:-$HOME/.local/share}/osuconfig/osupath`.
 

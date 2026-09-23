@@ -1,0 +1,66 @@
+name: Offset generator bundles
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - offset-generator-v1
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            runner: ubuntu-24.04
+          - rid: win-x64
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+
+      - name: Build verified bundle
+        run: python scripts/prepare-offset-generator.py --rid ${{ matrix.rid }}
+
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: offset-generator-v1-${{ matrix.rid }}
+          path: |
+            target/offset-generator/${{ matrix.rid }}/offset-generator-v1-${{ matrix.rid }}.zip
+            target/offset-generator/${{ matrix.rid }}/offset-generator-v1-${{ matrix.rid }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: github.ref == 'refs/tags/offset-generator-v1'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: offset-generator-v1-*
+          path: bundles
+      - uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3.0.2
+        with:
+          make_latest: false
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: |
+            bundles/**/*.zip
+            bundles/**/*.zip.sha256

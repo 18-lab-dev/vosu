@@ -1,4 +1,4 @@
-//! Source-faithful embedded/cache/network lazer offset resolution.
+//! Versioned cache, embedded, and network lazer offset resolution.
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -166,16 +166,17 @@ impl<F: OffsetFetcher> LazerOffsetLoader<F> {
         if cancel.is_cancelled() {
             return Err(LazerLoadError::Cancelled);
         }
-
-        if let Ok(offsets) = LazerOffsets::from_json(&self.embedded)
-            && offsets.osu_version == version
-        {
-            return Ok(Arc::new(offsets));
-        }
+        // Explicitly generated per-version offsets override the bundled template.
+        // Invalid/mismatched caches still fall back to the known embedded offsets.
 
         let cache_path = self.cache_path(version)?;
         if let Ok(bytes) = std::fs::read(&cache_path)
             && let Ok(offsets) = LazerOffsets::from_json(&bytes)
+            && offsets.osu_version == version
+        {
+            return Ok(Arc::new(offsets));
+        }
+        if let Ok(offsets) = LazerOffsets::from_json(&self.embedded)
             && offsets.osu_version == version
         {
             return Ok(Arc::new(offsets));
@@ -446,38 +447,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn embedded_then_cache_precedence_bypasses_network() {
+    async fn cache_precedes_embedded_and_invalid_cache_falls_back_without_network() {
         let fetcher = FakeFetcher::default();
         let cache = tempfile::tempdir().unwrap();
         let embedded = embedded_bytes();
-        let version: serde_json::Value = serde_json::from_slice(&embedded).unwrap();
-        let version = version["OsuVersion"].as_str().unwrap();
-        let loader = LazerOffsetLoader::new(fetcher.clone(), cache.path().to_owned(), embedded);
+        let baseline = LazerOffsets::from_json(&embedded).unwrap();
+        let version = &baseline.osu_version;
+        let signature = baseline.effective_game_base_vtable();
+        let loader =
+            LazerOffsetLoader::new(fetcher.clone(), cache.path().to_owned(), embedded.clone());
         assert_eq!(
             loader
                 .resolve(version, &CancellationToken::new())
                 .await
                 .unwrap()
-                .osu_version,
-            version
+                .effective_game_base_vtable(),
+            signature
         );
-        assert!(fetcher.calls.lock().await.is_empty());
 
-        let cache_version = "2026.518.0";
-        std::fs::write(
-            cache.path().join(format!("{cache_version}.json")),
-            with_version(&embedded_bytes(), cache_version),
-        )
-        .unwrap();
-        let loader =
-            LazerOffsetLoader::new(fetcher.clone(), cache.path().to_owned(), embedded_bytes());
+        let path = cache.path().join(format!("{version}.json"));
+        let mut generated: serde_json::Value = serde_json::from_slice(&embedded).unwrap();
+        generated["GameBaseVtable"] = serde_json::json!(signature + 1);
+        std::fs::write(&path, serde_json::to_vec(&generated).unwrap()).unwrap();
         assert_eq!(
             loader
-                .resolve(cache_version, &CancellationToken::new())
+                .resolve(version, &CancellationToken::new())
                 .await
                 .unwrap()
-                .osu_version,
-            cache_version
+                .effective_game_base_vtable(),
+            signature + 1
+        );
+
+        std::fs::write(&path, b"corrupt").unwrap();
+        assert_eq!(
+            loader
+                .resolve(version, &CancellationToken::new())
+                .await
+                .unwrap()
+                .effective_game_base_vtable(),
+            signature
+        );
+        generated["OsuVersion"] = serde_json::json!("1900.101.0");
+        std::fs::write(&path, serde_json::to_vec(&generated).unwrap()).unwrap();
+        assert_eq!(
+            loader
+                .resolve(version, &CancellationToken::new())
+                .await
+                .unwrap()
+                .effective_game_base_vtable(),
+            signature
         );
         assert!(fetcher.calls.lock().await.is_empty());
     }

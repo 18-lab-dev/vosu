@@ -140,6 +140,18 @@ internal sealed class DirectoryAssemblyLoader
         return new DirectoryAssemblyLoader(fullDirectoryPath, managedCandidates.ToArray());
     }
 
+    public LoadedAssembly Load(string simpleName)
+    {
+        if (!_candidatesBySimpleName.TryGetValue(simpleName, out List<ManagedCandidate>? matches) ||
+            matches.Count != 1)
+        {
+            throw new TargetHostException(
+                $"assembly loading failed: expected exactly one '{simpleName}' assembly in '{DirectoryPath}'");
+        }
+        ManagedCandidate candidate = matches[0];
+        return new LoadedAssembly(candidate.Path, LoadCandidate(candidate));
+    }
+
     public LoadedAssembly[] LoadAll()
     {
         List<LoadedAssembly> loadedAssemblies = new(_candidates.Length);

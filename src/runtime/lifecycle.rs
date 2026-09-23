@@ -507,7 +507,7 @@ pub async fn run_cli() -> io::Result<()> {
     match super::cli::classify_command_invocation(&raw_args) {
         super::cli::CommandInvocation::RunDaemon => {}
         super::cli::CommandInvocation::Command(command) => {
-            return super::cli::run_command(command);
+            return super::cli::run_command(command).await;
         }
         super::cli::CommandInvocation::InvalidInput => {
             return Err(io::Error::new(

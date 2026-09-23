@@ -61,6 +61,22 @@ flowchart TB
 
 `src/main.rs` only constructs Tokio, calls `runtime::run_cli`, maps the startup-owner conflict to exit status 75, and bounds runtime shutdown. `src/runtime/lifecycle.rs::ProductionRuntime` is the composition root and owns every long-lived service: configuration, logging, authorization, listener, WebSocket hubs, command processor and relays, counters, instance runtime, state supervisor, update handoff, and shutdown token. Its shutdown order first stops new HTTP accepts, closes WebSockets, then joins downstream services before configuration and logging.
 
+The explicit `-g` action is separate from daemon composition.
+`src/runtime/offset_generator.rs` discovers a live x64 lazer process only to locate
+its installation and version. A versioned self-contained generator bundle is
+provisioned in the per-user cache with bounded HTTPS downloads, SHA-256 and
+per-file verification, and atomic extraction. The existing managed generator runs
+`--assemblies-only` against that client's assemblies. The bundled owned
+`lazer-offset-target --game-base-signature` child measures the first x64
+MethodTable word of that build's `osu.Desktop.OsuGameDesktop` in its own process.
+The signature must be nonzero and version-matched; no template signature is
+transplanted, and child failure leaves the prior cache intact. The two managed
+tools have isolated self-contained payloads to avoid conflicting framework DLLs.
+No live attachment, DAC, privilege change, runtime compilation, or custom CLR
+host is involved. Ordinary daemon
+startup never provisions the helper; Linux/Windows bundle publication is a
+separate workflow, and generated binaries are not source inputs.
+
 ### Ownership map
 
 | Concern | Primary ownership | Main entry points |
