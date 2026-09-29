@@ -11,9 +11,9 @@
 
 </div>
 
-> A vibe-coded, ground-up Rust rewrite of upstream [tosu](https://github.com/tosuapp/tosu), with first-class Linux support, measured hot paths, and a repository designed to work well with coding agents.
+> A vibe-coded Rust implementation targeting API and behavioral compatibility with upstream [tosu](https://github.com/tosuapp/tosu), with first-class Linux support, measured hot paths, and a repository designed to work well with coding agents.
 
-The daemon was written from scratch in Rust, and its embedded dashboard is a first-party vanilla HTML, CSS, and JavaScript interface. The upstream project defines the compatibility target and calculator provenance; it is not a runtime dependency or a translated codebase.
+The daemon is implemented in Rust, with an embedded vanilla HTML, CSS, and JavaScript dashboard. Upstream tosu defines the compatibility target. Retained upstream material, the dashboard and calculator replacement history, and unresolved source-provenance questions are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the [provenance audit](openwiki/provenance-audit.md). Compatibility does not establish source independence or copyright ownership.
 
 `vosu` reads live state from osu!stable and osu!lazer, then serves the dashboard, counters, reports, and compatible HTTP/WebSocket APIs. It is one native daemon: no Node.js, Electron, .NET, or C# runtime is required.
 
@@ -687,4 +687,4 @@ The existing `openwiki/` directory is ordinary maintained Markdown. Update affec
 
 ## License
 
-Project-authored code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. The release archive retains the root [`LICENSE`](LICENSE) member. Bundled assets, dependencies, and provenance-pinned material may remain separately licensed; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt).
+Project-authored code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, where the respective contributors have licensing authority. The release archive retains the root [`LICENSE`](LICENSE) member. Bundled assets, dependencies, and provenance-pinned material remain under their applicable terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). The first-party notice is `Copyright (c) 2026 sxlvia`. The root release license also includes the retained calculator MIT texts. Remaining source-provenance and dependency-notice coverage questions are tracked in [issue #6](https://github.com/shiruviaa/vosu/issues/6).

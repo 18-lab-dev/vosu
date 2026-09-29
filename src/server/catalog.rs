@@ -15,7 +15,7 @@ pub const CATALOG_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 pub const CATALOG_MAX_REDIRECTS: usize = 5;
 
 pub fn catalog_user_agent(version: &str) -> String {
-    format!("vosu/{version} (https://vosu.app; i@kotrik.ru)")
+    format!("vosu/{version} (https://vosu.app)")
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -281,10 +281,7 @@ mod tests {
     #[test]
     fn user_agent_and_production_endpoint_are_exact() {
         assert_eq!(CATALOG_ENDPOINT, "https://vosu.app/api.json");
-        assert_eq!(
-            catalog_user_agent("0.1.0"),
-            "vosu/0.1.0 (https://vosu.app; i@kotrik.ru)"
-        );
+        assert_eq!(catalog_user_agent("0.1.0"), "vosu/0.1.0 (https://vosu.app)");
     }
 
     #[test]
@@ -476,7 +473,7 @@ mod tests {
             let result = service.fetch(&[], &CancellationToken::new()).await.unwrap();
             assert_eq!(result.len(), 1);
             let request = request.await.unwrap();
-            assert!(request.contains("user-agent: vosu/0.1.0 (https://vosu.app; i@kotrik.ru)"));
+            assert!(request.contains("user-agent: vosu/0.1.0 (https://vosu.app)"));
 
             let (service, request) = constrained_service(503, b"[]".to_vec(), None).await;
             assert!(matches!(

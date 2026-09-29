@@ -1,4 +1,5 @@
-//! Clean-room native live-calculation facade used by the vosu state engine.
+//! Native Rust live-calculation facade used by the vosu state engine.
+//! Source-provenance review is recorded in `openwiki/provenance-audit.md`.
 //!
 //! Public behavior is implemented against `rosu-pp` 4.0.1 and the pinned
 //! MIT-licensed osu! source documented in `THIRD_PARTY_LICENSES.txt`.

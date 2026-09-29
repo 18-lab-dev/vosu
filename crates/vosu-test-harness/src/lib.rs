@@ -34,7 +34,7 @@ use zip::write::SimpleFileOptions;
 
 pub const RESERVED_HOST: &str = "vosu-harness.invalid";
 // Fixed synthetic client identity, independent of the daemon package version.
-pub const USER_AGENT: &str = "vosu/0.2.0 (https://vosu.app; i@kotrik.ru)";
+pub const USER_AGENT: &str = "vosu/0.2.0 (https://vosu.app)";
 
 /// Fixed endpoint set injected into an in-process application.
 #[derive(Clone, Debug, Eq, PartialEq)]

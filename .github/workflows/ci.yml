@@ -30,6 +30,10 @@ jobs:
         run: python scripts/ci-changes.py
       - name: Check maintained documentation links
         run: python scripts/check-doc-links.py
+      - name: Check attribution, retained notices, and integrity manifests
+        run: python scripts/check-provenance.py --package-fixtures
+      - name: Check release license integrity
+        run: python -m unittest discover -s scripts -p test_package_release.py
       - id: week
         run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
 

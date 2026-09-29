@@ -54,7 +54,7 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 - `src/state/`, `src/instance/`, `src/process/`, `src/memory.rs`, `src/platform.rs`: process discovery, native memory reads, snapshots, and polling lifecycle.
 - `src/config/`, `src/counters/`: watched configuration, migration, settings, counter discovery/download/storage.
 - `src/updater/`: release selection, verified staging, replacement, rollback, and recovery.
-- `src/calculation.rs` and `crates/vosu-pp/`: stable and lazer performance calculation; the latter is a clean-room facade over provenance-pinned MIT source forks.
+- `src/calculation.rs` and `crates/vosu-pp/`: stable and lazer performance calculation; the latter is a Rust facade over provenance-pinned MIT source forks. The remaining source-provenance questions are recorded in `openwiki/provenance-audit.md`.
 - `src/runtime/`, `src/app.rs`, `src/logging/`, `src/report/`: daemon orchestration and operational services.
 - `crates/vosu-test-harness/`: integration-test support only. `tests/` holds compatibility, native, daemon smoke, and performance contracts. `crates/vosu-release-smoke/` exercises an externally packaged executable without depending on the daemon crate. `benches/hot_paths.rs` holds Criterion benchmarks.
 - `tools/live-parity/`: deterministic live capture, attestation, comparison, and diff tooling. `tools/oracle/` holds calculator provenance/evidence tooling.

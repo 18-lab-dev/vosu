@@ -11,7 +11,7 @@ tags: [architecture, decision, adr, identity, migration]
 
 ## Context
 
-The native daemon is a ground-up Rust rewrite whose compatibility baseline and pinned evidence come from the upstream [tosu](https://github.com/tosuapp/tosu) project. Keeping the upstream name as the current product identity would blur ownership of the Rust implementation, its releases, first-party services, and its state on disk.
+The native daemon is a Rust implementation targeting compatibility with upstream [tosu](https://github.com/tosuapp/tosu). Keeping the upstream name as the current product identity would blur responsibility for vosu's releases, first-party services, and state on disk. The rename does not establish copyright ownership or source independence; see the [provenance audit](../provenance-audit.md).
 
 A durable rename affects more than display text. Package and crate names, the executable, canonical TOML configuration and uppercase bindings, legacy migration inputs, data roots, API terminology, release archives, updater metadata, first-party endpoints, operational commands, and documentation form one public identity. Supporting both identities indefinitely would create ambiguous precedence, duplicate test surfaces, and updater and state-management paths that could diverge.
 
@@ -36,7 +36,7 @@ Retain the string `tosu` only when its role is explicit and cannot truthfully be
 - Users and operators have one executable, configuration namespace, state location, update channel, and documentation vocabulary.
 - The rebrand is intentionally breaking for scripts or clients that depend on branded names; they must move to vosu rather than rely on aliases.
 - Existing user state is preserved once, while steady-state code and documentation remain free of fallback paths.
-- Upstream compatibility remains reviewable without implying that vosu is an upstream tosu distribution or translated codebase.
+- Upstream compatibility remains reviewable under a distinct product identity. Source provenance and licensing require separate evidence.
 - Audits can treat unexplained former-brand occurrences as defects; allowed occurrences must identify themselves as upstream, migration, parity, provenance, or history.
 - The migration may be removed after the supported migration window without affecting the current storage contract.
 
@@ -44,7 +44,7 @@ Retain the string `tosu` only when its role is explicit and cannot truthfully be
 
 ### Keep tosu as the Rust daemon's public name
 
-Rejected because it obscures the independent ground-up implementation and couples first-party release and service ownership to the upstream identity.
+Rejected because it couples vosu's releases and services to the upstream identity.
 
 ### Support tosu and vosu aliases indefinitely
 

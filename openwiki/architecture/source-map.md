@@ -19,7 +19,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | State reduction | `src/state/` | Capture scheduling, stale-sample rejection, retention, gameplay state |
 | Public APIs | `src/api/`, `src/model/api/` | v1, stream companion, v2, precise schemas and serialization |
 | Server and transport | `src/server/`, `src/net/` | Exact routes, auth, files, pages, WebSockets, commands and streaming |
-| Calculation | `src/calculation/`, `crates/vosu-pp/`, `crates/vosu-pp/rosu-map-api/`, `crates/vosu-pp/rosu-pp-api/` | Beatmaps, progressive state, live pp, legacy endpoint calculation, and provenance-pinned clean-room calculator APIs |
+| Calculation | `src/calculation/`, `crates/vosu-pp/`, `crates/vosu-pp/rosu-map-api/`, `crates/vosu-pp/rosu-pp-api/` | Beatmaps, progressive state, live pp, legacy endpoint calculation, and provenance-pinned calculator APIs |
 | Configuration and counters | `src/config/`, `src/counters/` | Canonical `vosu.toml`, one-time legacy dotenv migration, settings, discovery and downloads |
 | Updating | `src/updater/` | Release selection, digest verification, staging, replacement, rollback |
 | Reports and logging | `src/report/`, `src/logging/` | Report rendering, escaping, retention and operational diagnostics |

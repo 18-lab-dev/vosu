@@ -182,7 +182,7 @@ impl<F: OffsetFetcher> LazerOffsetLoader<F> {
             return Ok(Arc::new(offsets));
         }
 
-        let user_agent = format!("vosu/{version} (https://vosu.app; i@kotrik.ru)");
+        let user_agent = format!("vosu/{version} (https://vosu.app)");
         let mut failures = Vec::with_capacity(self.endpoints.len());
         for endpoint in &self.endpoints {
             if cancel.is_cancelled() {
@@ -529,10 +529,7 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert!(calls[0].0.starts_with("https://vosu.app/offsets/"));
         assert!(calls[1].0.starts_with("https://osuck.net/offsets/"));
-        assert_eq!(
-            calls[0].1,
-            "vosu/2026.518.0 (https://vosu.app; i@kotrik.ru)"
-        );
+        assert_eq!(calls[0].1, "vosu/2026.518.0 (https://vosu.app)");
         assert_eq!(calls[0].2, REQUEST_TIMEOUT);
         drop(calls);
         assert_eq!(

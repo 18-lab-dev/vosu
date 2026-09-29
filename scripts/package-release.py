@@ -33,7 +33,7 @@ def expected_names(platform: str) -> set[str]:
     return {PLATFORM_EXECUTABLE[platform], "LICENSE"}
 
 
-def verify_archive(archive: Path, platform: str) -> None:
+def verify_archive(archive: Path, platform: str, license_path: Path = Path("LICENSE")) -> None:
     expected = expected_names(platform)
     with zipfile.ZipFile(archive) as file:
         infos = file.infolist()
@@ -46,6 +46,10 @@ def verify_archive(archive: Path, platform: str) -> None:
             raise ValueError(f"{archive} contains a non-root entry: {names}")
         if any(entry.is_dir() for entry in infos):
             raise ValueError(f"{archive} must not contain directory entries")
+        if file.testzip() is not None:
+            raise ValueError(f"{archive} failed its CRC check")
+        if file.read("LICENSE") != license_path.read_bytes():
+            raise ValueError(f"{archive} LICENSE does not match {license_path}")
 
 
 def validate_tag(args: argparse.Namespace) -> None:
@@ -59,7 +63,7 @@ def extract_archive(args: argparse.Namespace) -> None:
         raise ValueError(
             f"archive must be named {expected_name!r}, got {args.archive.name!r}"
         )
-    verify_archive(args.archive, args.platform)
+    verify_archive(args.archive, args.platform, args.license)
     if args.destination.exists() and any(args.destination.iterdir()):
         raise ValueError(f"extraction destination is not empty: {args.destination}")
     args.destination.mkdir(parents=True, exist_ok=True)
@@ -88,7 +92,7 @@ def package(args: argparse.Namespace) -> Path:
         file.write(args.binary, executable_name)
         file.write(args.license, "LICENSE")
 
-    verify_archive(archive, args.platform)
+    verify_archive(archive, args.platform, args.license)
     print(archive)
     return archive
 
@@ -105,7 +109,7 @@ def verify_release_set(args: argparse.Namespace) -> None:
             f"release directory must contain exactly {sorted(expected)}; found {sorted(actual)}"
         )
     for name, platform in expected.items():
-        verify_archive(args.directory / name, platform)
+        verify_archive(args.directory / name, platform, args.license)
     print("\n".join(sorted(expected)))
 
 
@@ -129,6 +133,7 @@ def parser() -> argparse.ArgumentParser:
     extract.add_argument("--tag", required=True)
     extract.add_argument("--archive", type=Path, required=True)
     extract.add_argument("--destination", type=Path, required=True)
+    extract.add_argument("--license", type=Path, default=Path("LICENSE"))
     extract.set_defaults(run=extract_archive)
 
     create = subparsers.add_parser("package", help="create and inspect one release archive")
@@ -142,6 +147,7 @@ def parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify-set", help="inspect the complete release asset set")
     verify.add_argument("--tag", required=True)
     verify.add_argument("--directory", type=Path, required=True)
+    verify.add_argument("--license", type=Path, default=Path("LICENSE"))
     verify.set_defaults(run=verify_release_set)
     return result
 
