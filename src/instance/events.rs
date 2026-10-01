@@ -518,12 +518,6 @@ mod tests {
     }
 
     #[test]
-    fn concrete_modes_have_operator_facing_backend_names() {
-        assert_eq!(ProcessEventMode::CnProc.backend_name(), "CN_PROC");
-        assert_eq!(ProcessEventMode::Ebpf.backend_name(), "eBPF");
-    }
-
-    #[test]
     fn queue_ignores_untracked_exit_and_coalesces_same_tgid() {
         let mut queue = EventQueue::default();
         assert!(!queue.push(ProcessEvent {

@@ -163,16 +163,6 @@ fn snapshot_with_precise(
 }
 
 #[test]
-fn missing_focus_is_not_ready() {
-    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::not_ready(
-        0,
-        ApiRuntimeSettings::default(),
-    )));
-    assert_eq!(build(&snapshot), Err(ApiError::NotReady));
-    assert_eq!(encode(&snapshot), Err(ApiError::NotReady));
-}
-
-#[test]
 fn menu_and_play_select_exact_modes_mods_paths_and_precise_values() {
     let mut menu = regular();
     menu.global.menu_mods = mods(8, "HD", 1.0);

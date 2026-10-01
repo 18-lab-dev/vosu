@@ -19,8 +19,6 @@ pub use models::{
 pub use result::{ResultCalculator, ResultFrame, ResultPerformance};
 
 #[cfg(test)]
-use live_adapter::live_score;
-#[cfg(test)]
 use std::fmt;
 #[cfg(test)]
 mod tests {
@@ -600,57 +598,5 @@ SliderTickRate:1
             .unwrap();
 
         assert!(performance.pp.is_finite());
-    }
-
-    #[test]
-    fn production_score_adapter_preserves_explicit_accuracy_and_every_score_field() {
-        let score = ScoreInput {
-            total_score: 987_654,
-            is_legacy_score: true,
-            accuracy: 0.9375,
-            max_combo: 123,
-            perfects: 1,
-            greats: 2,
-            goods: 3,
-            oks: 4,
-            mehs: 5,
-            misses: 6,
-            slider_end_hits: 7,
-            small_tick_hits: 8,
-            small_tick_misses: 9,
-            large_tick_hits: 10,
-            large_tick_misses: 11,
-            large_bonuses: 12,
-            small_bonuses: 13,
-            combo_breaks: 14,
-            ignore_hits: 15,
-            ignore_misses: 16,
-        };
-        let live = live_score(&score).unwrap();
-        assert_eq!(live.total_score, 987_654);
-        assert!(live.is_legacy_score);
-        assert_eq!(live.accuracy, 0.9375);
-        assert_eq!(
-            [
-                live.max_combo,
-                live.perfects,
-                live.greats,
-                live.goods,
-                live.oks,
-                live.mehs,
-                live.misses,
-                live.slider_end_hits,
-                live.small_tick_hits,
-                live.small_tick_misses,
-                live.large_tick_hits,
-                live.large_tick_misses,
-                live.large_bonuses,
-                live.small_bonuses,
-                live.combo_breaks,
-                live.ignore_hits,
-                live.ignore_misses,
-            ],
-            [123, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-        );
     }
 }

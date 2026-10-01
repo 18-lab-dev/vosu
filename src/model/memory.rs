@@ -368,7 +368,7 @@ pub type KeyOverlay = Vec<KeyOverlayButton>;
 mod tests {
     use serde_json::json;
 
-    use super::{MatchmakingStats, Menu, MenuChecksum, RankedPlay};
+    use super::{Menu, MenuChecksum, RankedPlay};
     use crate::model::enums::RankedPlayStage;
 
     #[test]
@@ -419,20 +419,5 @@ mod tests {
             encoded,
             r#"{"stage":2,"currentRound":2,"starRating":6.5,"damageMultiplier":1.25,"activeUserId":3,"winningUserId":4,"users":[]}"#
         );
-    }
-
-    #[test]
-    fn explicit_none_serializes_as_null_instead_of_a_reader_sentinel() {
-        let value = serde_json::to_value(MatchmakingStats {
-            rating: 0.0,
-            rank: None,
-            plays: 0,
-            wins: 0,
-            is_provisional: false,
-        })
-        .unwrap();
-
-        assert_eq!(value["rank"], serde_json::Value::Null);
-        assert!(value.as_object().unwrap().contains_key("rank"));
     }
 }

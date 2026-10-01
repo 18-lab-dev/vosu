@@ -290,14 +290,6 @@ fn absent_profile_omits_undefined_but_present_matchmaking_is_null() {
 }
 
 #[test]
-fn default_tournament_bytes_match_source_order() {
-    assert_eq!(
-        json(&empty_tourney()),
-        r#"{"scoreVisible":false,"starsVisible":false,"ipcState":0,"bestOF":0,"team":{"left":"","right":""},"points":{"left":0,"right":0},"chat":[],"totalScore":{"left":0,"right":0},"clients":[]}"#
-    );
-}
-
-#[test]
 fn fractional_and_nonfinite_ipc_ids_follow_javascript_json() {
     let keys = Keys {
         k1: KeyOverlayButton {

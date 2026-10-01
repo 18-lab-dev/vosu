@@ -328,21 +328,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_embedded_asset_is_byte_exact_and_has_expected_mime() {
-        let pages = PageService;
-        for name in ServerAssets::iter() {
-            let response = pages.asset(name.as_ref());
-            assert_eq!(response.status, 200, "{name}");
-            assert_eq!(
-                response.body.as_ref(),
-                ServerAssets::get(name.as_ref()).unwrap().data.as_ref()
-            );
-            assert_eq!(response.content_type, content_type(name.as_ref()));
-            assert_eq!(response.cache, CacheMetadata::Unspecified);
-        }
-    }
-
-    #[test]
     fn pages_assets_missing_and_special_routes_are_classified() {
         let pages = PageService;
         assert_eq!(

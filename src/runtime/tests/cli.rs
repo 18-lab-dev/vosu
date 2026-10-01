@@ -145,7 +145,6 @@ fn backend_probe_arguments_are_not_commands_off_linux() {
     );
 }
 
-
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 #[tokio::test]
 async fn backend_probe_is_unsupported_without_process_event_feature() {

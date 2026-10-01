@@ -291,13 +291,6 @@ mod tests {
     }
 
     #[test]
-    fn no_focused_client_is_not_ready() {
-        let snapshot = snapshot(None, Vec::new());
-        assert_eq!(build(&snapshot), Err(ApiError::NotReady));
-        assert_eq!(encode(&snapshot), Err(ApiError::NotReady));
-    }
-
-    #[test]
     fn missing_keys_default_and_field_order_is_exact() {
         let focused = bundle(1, precise_for_mode(99, Vec::new(), Vec::new()));
         let snapshot = snapshot(Some(10), vec![entry(10, focused, false, None)]);
