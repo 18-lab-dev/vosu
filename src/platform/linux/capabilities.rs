@@ -13,12 +13,19 @@ const MAXIMUM_CAPABILITY_SET: &str = if cfg!(feature = "linux-process-events") {
 } else {
     PTRACE_CAPABILITY_SET
 };
+const PKEXEC_CANDIDATES: &[&str] = &[
+    "/usr/bin/pkexec",
+    "/bin/pkexec",
+    "/usr/sbin/pkexec",
+    "/sbin/pkexec",
+];
 const SETCAP_CANDIDATES: &[&str] = &[
     "/usr/sbin/setcap",
     "/usr/bin/setcap",
     "/sbin/setcap",
     "/bin/setcap",
 ];
+const SETUP_ARGUMENT: &str = "--setup";
 #[cfg(feature = "linux-process-events")]
 const EBPF_PROBE_ARGUMENT: &str = "--vosu-internal-probe-backend=ebpf";
 #[cfg(feature = "linux-process-events")]
@@ -26,10 +33,81 @@ const CN_PROC_PROBE_ARGUMENT: &str = "--vosu-internal-probe-backend=cn-proc";
 
 pub(super) fn install(executable: &Path) -> io::Result<()> {
     ensure_executable(executable)?;
-    let setcap = trusted_tool(SETCAP_CANDIDATES, "setcap")?;
+    let mut tools = NativeToolProvider;
     let mut runner = NativeCommandRunner;
-    let report = configure_capabilities(&setcap, executable, &mut runner)?;
-    report.write_to(&mut io::stdout().lock(), executable)
+    if let Some(report) =
+        install_with_privilege(executable, effective_user_id(), &mut tools, &mut runner)?
+    {
+        report.write_to(&mut io::stdout().lock(), executable)?;
+    }
+    Ok(())
+}
+
+fn effective_user_id() -> libc::uid_t {
+    // SAFETY: geteuid has no memory-safety preconditions.
+    unsafe { libc::geteuid() }
+}
+
+fn install_with_privilege(
+    executable: &Path,
+    effective_user_id: libc::uid_t,
+    tools: &mut impl ToolProvider,
+    runner: &mut impl CommandRunner,
+) -> io::Result<Option<InstallReport>> {
+    if effective_user_id == 0 {
+        let setcap = tools.setcap()?;
+        return configure_capabilities(&setcap, executable, runner).map(Some);
+    }
+
+    let pkexec = tools.pkexec().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "cannot request operating-system authentication for setup: {error}; \
+                 no setup changes were made"
+            ),
+        )
+    })?;
+    elevate_setup(&pkexec, executable, runner)?;
+    Ok(None)
+}
+
+fn elevate_setup(
+    pkexec: &Path,
+    executable: &Path,
+    runner: &mut impl CommandRunner,
+) -> io::Result<()> {
+    let arguments = [executable.as_os_str(), OsStr::new(SETUP_ARGUMENT)];
+    let status = runner.status(pkexec, &arguments).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "cannot start the operating-system polkit authentication prompt with \
+                 {pkexec:?}: {error}; no setup changes were made"
+            ),
+        )
+    })?;
+    if status.success() {
+        return Ok(());
+    }
+
+    let (kind, message) = match status.code() {
+        Some(126) => (
+            io::ErrorKind::PermissionDenied,
+            "setup authentication was cancelled; no setup changes were made".to_owned(),
+        ),
+        Some(127) => (
+            io::ErrorKind::PermissionDenied,
+            "setup authentication failed, was unavailable, or could not start the elevated \
+             setup; no setup changes were made"
+                .to_owned(),
+        ),
+        _ => (
+            io::ErrorKind::Other,
+            format!("elevated setup failed ({status}); see the preceding error for details"),
+        ),
+    };
+    Err(io::Error::new(kind, message))
 }
 
 fn ensure_executable(executable: &Path) -> io::Result<()> {
@@ -54,6 +132,23 @@ fn ensure_executable(executable: &Path) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+trait ToolProvider {
+    fn pkexec(&mut self) -> io::Result<PathBuf>;
+    fn setcap(&mut self) -> io::Result<PathBuf>;
+}
+
+struct NativeToolProvider;
+
+impl ToolProvider for NativeToolProvider {
+    fn pkexec(&mut self) -> io::Result<PathBuf> {
+        trusted_tool(PKEXEC_CANDIDATES, "pkexec")
+    }
+
+    fn setcap(&mut self) -> io::Result<PathBuf> {
+        trusted_tool(SETCAP_CANDIDATES, "setcap")
+    }
 }
 
 fn trusted_tool(candidates: &[&str], name: &str) -> io::Result<PathBuf> {
@@ -81,6 +176,7 @@ fn trusted_tool(candidates: &[&str], name: &str) -> io::Result<PathBuf> {
 
 trait CommandRunner {
     fn output(&mut self, program: &Path, arguments: &[&OsStr]) -> io::Result<Output>;
+    fn status(&mut self, program: &Path, arguments: &[&OsStr]) -> io::Result<ExitStatus>;
 }
 
 struct NativeCommandRunner;
@@ -88,6 +184,10 @@ struct NativeCommandRunner;
 impl CommandRunner for NativeCommandRunner {
     fn output(&mut self, program: &Path, arguments: &[&OsStr]) -> io::Result<Output> {
         Command::new(program).args(arguments).output()
+    }
+
+    fn status(&mut self, program: &Path, arguments: &[&OsStr]) -> io::Result<ExitStatus> {
+        Command::new(program).args(arguments).status()
     }
 }
 
@@ -186,8 +286,7 @@ fn apply_capability_set(
             error.kind(),
             format!(
                 "cannot run trusted setcap to apply the {operation} to {executable:?}: {error}. \
-                 This setup needs authority to set file capabilities; rerun `sudo vosu --setup` \
-                 or grant equivalent setcap authority"
+                 The privileged setup process needs authority to set file capabilities"
             ),
         )
     })?;
@@ -199,8 +298,8 @@ fn apply_capability_set(
         io::ErrorKind::PermissionDenied,
         format!(
             "setcap could not apply the {operation} ({capabilities}) to {executable:?} ({}). \
-             This setup needs authority to set file capabilities; rerun `sudo vosu --setup` \
-             or grant equivalent setcap authority. Do not run the vosu daemon itself as root",
+             The privileged setup process needs authority to set file capabilities. \
+             Do not run the vosu daemon itself as root",
             output_failure(&output.status, &output.stderr)
         ),
     ))
@@ -351,16 +450,50 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
+    struct RecordingToolProvider {
+        pkexec: Option<PathBuf>,
+        setcap: Option<PathBuf>,
+        lookups: Vec<&'static str>,
+    }
+
+    impl ToolProvider for RecordingToolProvider {
+        fn pkexec(&mut self) -> io::Result<PathBuf> {
+            self.lookups.push("pkexec");
+            self.pkexec
+                .clone()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "pkexec unavailable"))
+        }
+
+        fn setcap(&mut self) -> io::Result<PathBuf> {
+            self.lookups.push("setcap");
+            self.setcap
+                .clone()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "setcap unavailable"))
+        }
+    }
+
+    #[derive(Default)]
     struct RecordingRunner {
         responses: VecDeque<io::Result<Output>>,
+        status_responses: VecDeque<io::Result<ExitStatus>>,
         calls: Vec<(PathBuf, Vec<OsString>)>,
+        status_calls: Vec<(PathBuf, Vec<OsString>)>,
     }
 
     impl RecordingRunner {
         fn with_responses(responses: impl IntoIterator<Item = io::Result<Output>>) -> Self {
             Self {
                 responses: responses.into_iter().collect(),
-                calls: Vec::new(),
+                ..Self::default()
+            }
+        }
+
+        fn with_status_responses(
+            responses: impl IntoIterator<Item = io::Result<ExitStatus>>,
+        ) -> Self {
+            Self {
+                status_responses: responses.into_iter().collect(),
+                ..Self::default()
             }
         }
     }
@@ -378,6 +511,19 @@ mod tests {
                 .pop_front()
                 .expect("a response for every recorded command")
         }
+
+        fn status(&mut self, program: &Path, arguments: &[&OsStr]) -> io::Result<ExitStatus> {
+            self.status_calls.push((
+                program.to_path_buf(),
+                arguments
+                    .iter()
+                    .map(|argument| argument.to_os_string())
+                    .collect(),
+            ));
+            self.status_responses
+                .pop_front()
+                .expect("a response for every recorded status command")
+        }
     }
 
     fn successful_output() -> io::Result<Output> {
@@ -394,6 +540,10 @@ mod tests {
             stdout: Vec::new(),
             stderr: stderr.as_bytes().to_vec(),
         })
+    }
+
+    fn status_with_code(code: i32) -> io::Result<ExitStatus> {
+        Ok(ExitStatus::from_raw(code << 8))
     }
 
     #[cfg(not(feature = "linux-process-events"))]
@@ -615,7 +765,11 @@ mod tests {
 
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
         assert!(error.to_string().contains("Operation not permitted"));
-        assert!(error.to_string().contains("sudo vosu --setup"));
+        assert!(
+            error
+                .to_string()
+                .contains("privileged setup process needs authority")
+        );
         assert_eq!(
             runner.calls,
             vec![
@@ -658,5 +812,139 @@ mod tests {
                 vec![OsString::from("-r"), executable.as_os_str().to_os_string(),],
             ))
         );
+    }
+    #[test]
+    fn unprivileged_setup_uses_only_polkit_pkexec_and_propagates_success() {
+        let executable = Path::new("/opt/vosu/vosu");
+        let pkexec = PathBuf::from("/usr/bin/pkexec");
+        let mut tools = RecordingToolProvider {
+            pkexec: Some(pkexec.clone()),
+            setcap: Some(PathBuf::from("/usr/sbin/setcap")),
+            ..RecordingToolProvider::default()
+        };
+        let mut runner = RecordingRunner::with_status_responses([status_with_code(0)]);
+
+        let report = install_with_privilege(executable, 1000, &mut tools, &mut runner)
+            .expect("successful polkit elevation");
+
+        assert!(report.is_none());
+        assert_eq!(tools.lookups, vec!["pkexec"]);
+        assert!(runner.calls.is_empty(), "setcap ran before elevation");
+        assert_eq!(
+            runner.status_calls,
+            vec![(
+                pkexec,
+                vec![
+                    executable.as_os_str().to_os_string(),
+                    OsString::from("--setup"),
+                ],
+            )]
+        );
+        assert!(
+            runner
+                .status_calls
+                .iter()
+                .all(|(program, _)| program.file_name() != Some(OsStr::new("sudo"))),
+            "sudo must never be selected as the elevation program"
+        );
+    }
+
+    #[test]
+    fn authentication_cancellation_fails_before_any_setup_change() {
+        let mut tools = RecordingToolProvider {
+            pkexec: Some(PathBuf::from("/usr/bin/pkexec")),
+            ..RecordingToolProvider::default()
+        };
+        let mut runner = RecordingRunner::with_status_responses([status_with_code(126)]);
+
+        let error =
+            install_with_privilege(Path::new("/opt/vosu/vosu"), 1000, &mut tools, &mut runner)
+                .expect_err("cancelled authentication must fail");
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("authentication was cancelled"));
+        assert!(error.to_string().contains("no setup changes were made"));
+        assert_eq!(tools.lookups, vec!["pkexec"]);
+        assert!(runner.calls.is_empty(), "setcap ran after cancellation");
+    }
+
+    #[test]
+    fn unavailable_or_failed_authentication_fails_before_any_setup_change() {
+        let executable = Path::new("/opt/vosu/vosu");
+
+        let mut missing_tools = RecordingToolProvider::default();
+        let mut missing_runner = RecordingRunner::default();
+        let missing_error =
+            install_with_privilege(executable, 1000, &mut missing_tools, &mut missing_runner)
+                .expect_err("missing pkexec must fail");
+        assert_eq!(missing_error.kind(), io::ErrorKind::NotFound);
+        assert!(
+            missing_error
+                .to_string()
+                .contains("cannot request operating-system authentication")
+        );
+        assert!(
+            missing_error
+                .to_string()
+                .contains("no setup changes were made")
+        );
+        assert!(missing_runner.calls.is_empty());
+        assert!(missing_runner.status_calls.is_empty());
+
+        let mut denied_tools = RecordingToolProvider {
+            pkexec: Some(PathBuf::from("/usr/bin/pkexec")),
+            ..RecordingToolProvider::default()
+        };
+        let mut denied_runner = RecordingRunner::with_status_responses([status_with_code(127)]);
+        let denied_error =
+            install_with_privilege(executable, 1000, &mut denied_tools, &mut denied_runner)
+                .expect_err("failed authentication must fail");
+        assert_eq!(denied_error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            denied_error
+                .to_string()
+                .contains("authentication failed, was unavailable")
+        );
+        assert!(
+            denied_error
+                .to_string()
+                .contains("no setup changes were made")
+        );
+        assert!(
+            denied_runner.calls.is_empty(),
+            "setcap ran without authentication"
+        );
+    }
+
+    #[test]
+    fn already_root_setup_skips_authentication_and_runs_capability_transaction() {
+        let setcap = PathBuf::from("/usr/sbin/setcap");
+        let mut tools = RecordingToolProvider {
+            pkexec: Some(PathBuf::from("/usr/bin/pkexec")),
+            setcap: Some(setcap),
+            ..RecordingToolProvider::default()
+        };
+        #[cfg(feature = "linux-process-events")]
+        let responses = [
+            successful_output(),
+            failed_output("eBPF unavailable"),
+            failed_output("CN_PROC unavailable"),
+            successful_output(),
+        ];
+        #[cfg(not(feature = "linux-process-events"))]
+        let responses = [successful_output()];
+        let mut runner = RecordingRunner::with_responses(responses);
+
+        let report =
+            install_with_privilege(Path::new("/opt/vosu/vosu"), 0, &mut tools, &mut runner)
+                .expect("root setup")
+                .expect("root setup report");
+
+        assert_eq!(tools.lookups, vec!["setcap"]);
+        assert!(
+            runner.status_calls.is_empty(),
+            "root setup requested authentication"
+        );
+        assert_eq!(report.final_capabilities, PTRACE_CAPABILITY_SET);
     }
 }

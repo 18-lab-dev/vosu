@@ -85,9 +85,10 @@ The public command flags are standalone actions:
 ```
 
 `--help` prints usage. Each public action must be the executable's only argument.
-On Linux, `--setup` probes the compiled process-event backends and installs their
-capabilities. Insufficient authority is an error: use `sudo vosu --setup`; do not
-run the ordinary daemon as root.
+On Linux, run `vosu --setup` as the normal desktop user to probe the compiled
+process-event backends and install their capabilities. Setup requests
+operating-system authentication when needed; do not run the ordinary daemon as
+root.
 
 Offset resolution is automatic. For each discovered osu!lazer process, vosu first
 checks a valid cache entry for that exact process version, then the matching
@@ -164,7 +165,7 @@ cargo run --locked
 cargo install --path . --locked
 ```
 
-Default Linux builds include `linux-process-events`, so a binary installed by the command above can probe eBPF and CN_PROC during `sudo vosu --setup`. Pass `--no-default-features` explicitly only when building a polling-only binary.
+Default Linux builds include `linux-process-events`, so a binary installed by the command above can probe eBPF and CN_PROC during `vosu --setup`. Pass `--no-default-features` explicitly only when building a polling-only binary.
 
 Production builds require the matching prepared generator bundle before Cargo
 build embeds it:
@@ -488,12 +489,14 @@ Official Linux archives statically include libbpf and dynamically use the system
 On Linux, `process_vm_readv` must be permitted. During ordinary startup vosu checks the running process's effective capability set and warns if `CAP_SYS_PTRACE` is not effective, or if that check cannot be completed. The warning does not stop startup, but memory reads may fail. Configure the exact executable with:
 
 ```sh
-sudo vosu --setup
+vosu --setup
 ```
 
-`--setup` directly invokes a trusted, root-owned `setcap` executable and exits without starting the daemon. A normal build receives only `CAP_SYS_PTRACE` and reports polling as its available discovery backend. A build compiled with `linux-process-events` first attempts its maximum compiled capability set. When that succeeds, it re-executes itself to probe eBPF and CN_PROC independently, then retains `CAP_SYS_RESOURCE`, `CAP_PERFMON`, and `CAP_BPF` only when eBPF actually works. If the maximum set is unavailable, setup retries with `CAP_SYS_PTRACE`, marks eBPF unavailable, and still probes CN_PROC before reporting polling as the final fallback. CN_PROC requires no additional file capability. Probe failures and the final capability set are printed.
+An unprivileged `--setup` validates the current executable, then launches that exact executable and `--setup` through a trusted, root-owned, non-writable `pkexec`. Polkit owns the graphical or terminal credential prompt; vosu never reads, logs, or retains the password. An already-root setup skips `pkexec` and does not prompt. Authentication cancellation or failure, an unavailable/noninteractive authentication agent, and a missing trusted `pkexec` all exit unsuccessfully before `setcap` runs, so they leave the executable unchanged. There is no sudo fallback.
 
-If `setcap` lacks authority, setup exits unsuccessfully without starting the daemon. Executable replacement, including an automatic update, removes file capabilities, so rerun `sudo vosu --setup` after replacing vosu.
+After authentication, the elevated setup directly invokes a trusted, root-owned `setcap` executable and exits without starting the daemon. A normal build receives only `CAP_SYS_PTRACE` and reports polling as its available discovery backend. A build compiled with `linux-process-events` first attempts its maximum compiled capability set. When that succeeds, it re-executes itself to probe eBPF and CN_PROC independently, then retains `CAP_SYS_RESOURCE`, `CAP_PERFMON`, and `CAP_BPF` only when eBPF actually works. If the maximum set is unavailable, setup retries with `CAP_SYS_PTRACE`, marks eBPF unavailable, and still probes CN_PROC before reporting polling as the final fallback. CN_PROC requires no additional file capability. Probe failures and the final capability set are printed. A failed capability transaction removes transient capabilities; if rollback itself fails, setup reports that the executable must be verified before use.
+
+If `setcap` lacks authority, setup exits unsuccessfully without starting the daemon. Executable replacement, including an automatic update, removes file capabilities, so rerun `vosu --setup` after replacing vosu.
 
 With `linux-process-events` compiled, an unset `VOSU_PROCESS_EVENTS` selects `auto`: runtime tries eBPF, falls back to CN_PROC, then polling. Set `VOSU_PROCESS_EVENTS=off` or `poll` to force polling, or select `ebpf` or `cn-proc` explicitly.
 
