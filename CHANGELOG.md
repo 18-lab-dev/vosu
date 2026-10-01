@@ -9,6 +9,7 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 - Prevent counter-delete CSRF and protect the shared management mutation boundary with exact same-origin browser provenance. Counter delete/download/open, updater, and report actions now require POST; no mutating GET aliases remain. The dashboard uses the new methods.
 - Preserve headerless/file-origin read-only overlay access and stock settings commands. Hosted counters can still save settings without new tokens or code; non-hosted sockets may read settings but cannot save them.
 - Management writes require exact HTTP scheme/host/port browser provenance; `Origin` is authoritative, with `Referer` fallback only when absent. Missing, null, malformed, or duplicate provenance cannot authorize writes. Non-hosted settings sockets retain reads but close with 1008 before saving or relaying mutations.
+- Made an unprivileged `vosu --setup` request OS-owned authentication through a trusted polkit `pkexec` boundary before any capability change. Root execution skips authentication; cancellation, denial, unavailable/noninteractive elevation, and missing `pkexec` fail without invoking `setcap`. Vosu never reads credentials and has no sudo fallback.
 
 ### Runtime and maintenance
 

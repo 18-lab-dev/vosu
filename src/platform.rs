@@ -165,7 +165,7 @@ fn cap_sys_ptrace_warning_for(capability: io::Result<bool>, executable: &Path) -
     match capability {
         Ok(true) => None,
         Ok(false) => Some(format!(
-            "CAP_SYS_PTRACE is not effective; memory reads may fail. Install this build's required capabilities with `sudo vosu --setup`; current executable: {executable:?}."
+            "CAP_SYS_PTRACE is not effective; memory reads may fail. Install this build's required capabilities with `vosu --setup`; setup requests operating-system authentication when needed; current executable: {executable:?}."
         )),
         Err(error) => Some(format!(
             "Could not inspect this process's effective Linux capabilities; memory reads may fail: {error}"
@@ -279,14 +279,14 @@ mod tests {
     }
 
     #[test]
-    fn capability_warning_recommends_privileged_installer_when_cap_sys_ptrace_is_missing() {
+    fn capability_warning_recommends_authenticated_installer_when_cap_sys_ptrace_is_missing() {
         let warning =
             cap_sys_ptrace_warning_for(Ok(false), PathBuf::from("/opt/vosu/vosu").as_path());
 
         assert_eq!(
             warning.as_deref(),
             Some(
-                "CAP_SYS_PTRACE is not effective; memory reads may fail. Install this build's required capabilities with `sudo vosu --setup`; current executable: \"/opt/vosu/vosu\"."
+                "CAP_SYS_PTRACE is not effective; memory reads may fail. Install this build's required capabilities with `vosu --setup`; setup requests operating-system authentication when needed; current executable: \"/opt/vosu/vosu\"."
             )
         );
     }
