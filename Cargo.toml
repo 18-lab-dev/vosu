@@ -86,7 +86,7 @@ sha2 = "=0.11.0"
 sysinfo = { version = "=0.39.5", default-features = false, features = ["system"] }
 tempfile = "3.26.0"
 thiserror = "2.0.18"
-tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util", "signal", "test-util"] }
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util", "signal", "test-util", "process"] }
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 toml = "=1.1.2"
 vosu-pp = { path = "crates/vosu-pp" }
@@ -126,6 +126,7 @@ required-features = ["linux-process-events"]
 
 [build-dependencies]
 winresource = "=0.1.31"
+sha2 = "=0.11.0"
 
 [target.'cfg(target_os = "linux")'.build-dependencies]
 libbpf-cargo = { version = "=0.26.2", optional = true }

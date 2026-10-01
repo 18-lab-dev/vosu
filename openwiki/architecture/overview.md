@@ -31,7 +31,7 @@ flowchart LR
     Config[vosu.toml and local files] -->|watch and reload| Vosu
     Vosu -->|HTTP JSON, files, pages| Client[overlay or API client]
     Vosu -->|WebSocket state and commands| Client
-    Vosu -->|release and offset HTTPS| Remote[shiruviaa/vosu releases and vosu offset sources]
+    Vosu -->|release HTTPS only| Remote[shiruviaa/vosu releases]
     Vosu -->|logs, cache, settings, downloads| Disk[vosu platform application roots]
     Parity[tools/live-parity] -. captures and compares .-> Vosu
     Parity -. compares against pinned upstream daemon .-> Reference[upstream tosu parity reference]
@@ -61,21 +61,23 @@ flowchart TB
 
 `src/main.rs` only constructs Tokio, calls `runtime::run_cli`, maps the startup-owner conflict to exit status 75, and bounds runtime shutdown. `src/runtime/lifecycle.rs::ProductionRuntime` is the composition root and owns every long-lived service: configuration, logging, authorization, listener, WebSocket hubs, command processor and relays, counters, instance runtime, state supervisor, update handoff, and shutdown token. Its shutdown order first stops new HTTP accepts, closes WebSockets, then joins downstream services before configuration and logging.
 
-The explicit `-g` action is separate from daemon composition.
-`src/runtime/offset_generator.rs` discovers a live x64 lazer process only to locate
-its installation and version. A versioned self-contained generator bundle is
-provisioned in the per-user cache with bounded HTTPS downloads, SHA-256 and
-per-file verification, and atomic extraction. The existing managed generator runs
-`--assemblies-only` against that client's assemblies. The bundled owned
-`lazer-offset-target --game-base-signature` child measures the first x64
-MethodTable word of that build's `osu.Desktop.OsuGameDesktop` in its own process.
-The signature must be nonzero and version-matched; no template signature is
-transplanted, and child failure leaves the prior cache intact. The two managed
-tools have isolated self-contained payloads to avoid conflicting framework DLLs.
-No live attachment, DAC, privilege change, runtime compilation, or custom CLR
-host is involved. Ordinary daemon
-startup never provisions the helper; Linux/Windows bundle publication is a
-separate workflow, and generated binaries are not source inputs.
+Offset resolution is part of each discovered lazer instance lifecycle.
+`src/runtime/offset_generator.rs` receives the exact PID and version. The loader
+first accepts a valid exact-instance cache entry, then matching embedded offsets,
+then invokes the embedded self-contained generator against that same PID. The
+generator returns bytes; the loader validates them and atomically installs the
+versioned offsets cache entry.
+
+The platform-matching generator ZIP and checksum are embedded in release
+binaries. On first use, the daemon extracts the payload into the normal
+`offset-generator` cache and reuses it only when its embedded checksum matches.
+The offsets cache remains the validated versioned `<version>.json` contract;
+bundle identity does not become offset-file metadata. No remote offset source,
+local-source environment override, or global process scan is involved.
+The generator uses no user-installed .NET runtime. Release builds require the
+payload; a debug/development build without one reports an explicit
+missing-bundle error. Maintainer preparation uses the .NET SDK and
+`scripts/prepare-offset-generator.py`; generated binaries are not source inputs.
 
 ### Ownership map
 

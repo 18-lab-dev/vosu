@@ -405,19 +405,15 @@ fn foreground_exact_match_and_unavailable_focus_fallback() {
 }
 
 #[derive(Clone)]
-struct OfflineFetcher;
-impl crate::memory::lazer_loader::OffsetFetcher for OfflineFetcher {
-    fn fetch<'a>(
+struct OfflineGenerator;
+impl crate::memory::lazer_loader::OffsetGenerator for OfflineGenerator {
+    fn generate<'a>(
         &'a self,
+        _: u32,
         _: &'a str,
-        _: &'a str,
-        _: Duration,
-    ) -> crate::memory::lazer_loader::FetchFuture<'a> {
-        Box::pin(async {
-            Err(crate::memory::lazer_loader::FetchError {
-                message: "offline".into(),
-            })
-        })
+        _: &'a tokio_util::sync::CancellationToken,
+    ) -> crate::memory::lazer_loader::GenerationFuture<'a> {
+        Box::pin(async { Err(std::io::Error::new(std::io::ErrorKind::NotFound, "offline")) })
     }
 }
 
@@ -527,7 +523,7 @@ async fn lazer_discovery_starts_one_resolver_and_shutdown_joins_it() {
     let cache = tempfile::tempdir().unwrap();
     let embedded = crate::assets::DaemonAssets::get("offsets.json").unwrap();
     let loader = Arc::new(LazerOffsetLoader::new(
-        OfflineFetcher,
+        OfflineGenerator,
         cache.path().to_owned(),
         bytes::Bytes::copy_from_slice(&embedded.data),
     ));
@@ -565,7 +561,7 @@ async fn discovery_runtime_publishes_current_then_closes_after_joined_shutdown()
     let runtime = InstanceRuntime::start(
         provider,
         LazerOffsetLoader::new(
-            OfflineFetcher,
+            OfflineGenerator,
             cache.path().to_owned(),
             bytes::Bytes::copy_from_slice(&embedded.data),
         ),
@@ -630,7 +626,7 @@ async fn failed_full_scan_retries_early_and_counts_only_success() {
     let runtime = InstanceRuntime::start(
         provider,
         LazerOffsetLoader::new(
-            OfflineFetcher,
+            OfflineGenerator,
             cache.path().to_owned(),
             bytes::Bytes::copy_from_slice(&embedded.data),
         ),
@@ -668,7 +664,7 @@ async fn failed_targeted_inspection_is_not_counted() {
     let runtime = InstanceRuntime::start(
         provider,
         LazerOffsetLoader::new(
-            OfflineFetcher,
+            OfflineGenerator,
             cache.path().to_owned(),
             bytes::Bytes::copy_from_slice(&embedded.data),
         ),
@@ -725,7 +721,7 @@ async fn full_reconcile_replaces_a_dead_same_pid_in_one_pass() {
     let runtime = InstanceRuntime::start(
         provider,
         LazerOffsetLoader::new(
-            OfflineFetcher,
+            OfflineGenerator,
             cache.path().to_owned(),
             bytes::Bytes::copy_from_slice(&embedded.data),
         ),
@@ -780,7 +776,7 @@ async fn live_exit_is_retried_until_the_process_dies_without_another_event() {
     let runtime = InstanceRuntime::start(
         provider,
         LazerOffsetLoader::new(
-            OfflineFetcher,
+            OfflineGenerator,
             cache.path().to_owned(),
             bytes::Bytes::copy_from_slice(&embedded.data),
         ),
@@ -843,7 +839,7 @@ async fn process_event_wakes_are_targeted_and_loss_reconciles_once() {
     let runtime = InstanceRuntime::start(
         provider,
         LazerOffsetLoader::new(
-            OfflineFetcher,
+            OfflineGenerator,
             cache.path().to_owned(),
             bytes::Bytes::copy_from_slice(&embedded.data),
         ),

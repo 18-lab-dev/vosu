@@ -1,19 +1,17 @@
-//! Provisioning and assembly-only generation are confined to explicit `-g`.
-use crate::net::{Deadlines, DownloadLimits, StreamingClient, ZipLimits, extract_zip_atomic};
+use crate::net::{ZipLimits, extract_zip_atomic};
+use bytes::Bytes;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io::{self, Read, Seek, SeekFrom},
+    io::{self, Cursor, Read, Seek},
     path::{Component, Path, PathBuf},
-    process::{Command, Output},
 };
+use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-const BUNDLE_TAG: &str = "offset-generator-v1";
 const GENERATOR_RUNTIME: &str = "net8.0-8.0.29";
-const RELEASE_ROOT: &str = "https://github.com/shiruviaa/vosu/releases/download";
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
 const MAX_EXPANDED: u64 = 512 * 1024 * 1024;
 #[cfg(target_os = "linux")]
@@ -28,96 +26,6 @@ const GENERATOR: &str = "generator/lazer-offset-generator.exe";
 const TARGET_HOST: &str = "target/lazer-offset-target";
 #[cfg(windows)]
 const TARGET_HOST: &str = "target/lazer-offset-target.exe";
-
-struct Client {
-    pid: u32,
-    version: String,
-    root: PathBuf,
-}
-
-fn current_client() -> io::Result<Client> {
-    use crate::instance::{NativeProcessProvider, ProcessProvider};
-    #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
-    let provider = NativeProcessProvider::polling_only();
-    #[cfg(not(all(target_os = "linux", feature = "linux-process-events")))]
-    let provider = NativeProcessProvider;
-    let mut clients = Vec::new();
-    for process in provider.enumerate().map_err(io::Error::other)? {
-        if process.bitness != crate::process::ProcessBitness::X64 {
-            continue;
-        }
-        let Ok(root) = crate::memory::lazer_version::process_executable_root(process.pid) else {
-            continue;
-        };
-        if !root.join("osu!.deps.json").is_file() {
-            continue;
-        }
-        let version =
-            crate::memory::lazer_version::discover_from_root(&root).map_err(io::Error::other)?;
-        clients.push(Client {
-            pid: process.pid,
-            version,
-            root,
-        });
-    }
-    select_client(clients)
-}
-
-fn select_client(mut clients: Vec<Client>) -> io::Result<Client> {
-    match clients.len() {
-        0 => Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "no running native 64-bit osu!lazer client was found; start one unmodified client as the same user and retry vosu -g",
-        )),
-        1 => Ok(clients.remove(0)),
-        _ => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "multiple running osu!lazer clients found (PIDs: {}); close all but one",
-                clients
-                    .iter()
-                    .map(|client| client.pid.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        )),
-    }
-}
-
-fn assembly_directory(client_root: &Path) -> io::Result<PathBuf> {
-    [client_root.to_path_buf(), client_root.join("usr/bin"), client_root.join("bin")]
-        .into_iter()
-        .find(|path| path.join("osu!.dll").is_file() || path.join("osu.Game.dll").is_file())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!(
-            "could not locate osu!lazer managed assemblies under {}; wait for the client to finish starting and retry vosu -g",
-            client_root.display()
-        )))
-}
-
-fn cache_root() -> io::Result<PathBuf> {
-    #[cfg(target_os = "linux")]
-    {
-        Ok(crate::platform::Paths::system()?
-            .cache()
-            .join("offset-generator"))
-    }
-    #[cfg(windows)]
-    {
-        std::env::var_os("LOCALAPPDATA")
-            .filter(|value| !value.is_empty())
-            .map(|root| PathBuf::from(root).join("vosu/cache/offset-generator"))
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "LOCALAPPDATA is unavailable; use a normal Windows user session",
-                )
-            })
-    }
-}
-
-fn file_hash(path: &Path, limit: u64) -> io::Result<String> {
-    hash_reader(File::open(path)?, limit)
-}
 
 fn hash_reader(mut reader: impl Read, limit: u64) -> io::Result<String> {
     let mut hasher = Sha256::new();
@@ -137,17 +45,18 @@ fn hash_reader(mut reader: impl Read, limit: u64) -> io::Result<String> {
         }
         hasher.update(&buffer[..size]);
     }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    use std::fmt::Write;
+    let mut digest = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        write!(digest, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    Ok(digest)
 }
 
 fn checksum(bytes: &[u8]) -> io::Result<String> {
     let text = std::str::from_utf8(bytes).map_err(io::Error::other)?;
     let digest = text.split_whitespace().next().unwrap_or_default();
-    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "generator bundle checksum is not SHA-256",
@@ -160,38 +69,6 @@ fn checksum(bytes: &[u8]) -> io::Result<String> {
 struct Manifest {
     rid: String,
     files: BTreeMap<String, String>,
-}
-
-fn bundle_manifest(file: &mut File, expected_hash: &str) -> io::Result<Manifest> {
-    file.seek(SeekFrom::Start(0))?;
-    if hash_reader(&mut *file, MAX_ARCHIVE)? != expected_hash {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "generator archive SHA-256 mismatch",
-        ));
-    }
-    file.seek(SeekFrom::Start(0))?;
-    let mut archive = zip::ZipArchive::new(file)?;
-    let mut bytes = Vec::new();
-    archive
-        .by_name("bundle.json")?
-        .take(1024 * 1024 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > 1024 * 1024 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "generator manifest exceeds size limit",
-        ));
-    }
-    let manifest: Manifest = serde_json::from_slice(&bytes)?;
-    validate_manifest(&manifest)?;
-    if archive.len() != manifest.files.len() + 1 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "generator archive contains unmanifested files",
-        ));
-    }
-    Ok(manifest)
 }
 
 fn validate_manifest(manifest: &Manifest) -> io::Result<()> {
@@ -208,7 +85,7 @@ fn validate_manifest(manifest: &Manifest) -> io::Result<()> {
             || Path::new(name)
                 .components()
                 .any(|part| !matches!(part, Component::Normal(_)))
-            || !checksum(digest.as_bytes()).is_ok_and(|hash| hash == *digest)
+            || checksum(digest.as_bytes()).is_err()
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -225,7 +102,37 @@ fn validate_manifest(manifest: &Manifest) -> io::Result<()> {
     Ok(())
 }
 
+fn bundle_manifest(reader: impl Read + Seek) -> io::Result<Manifest> {
+    let mut archive = zip::ZipArchive::new(reader)?;
+    let mut bytes = Vec::new();
+    archive
+        .by_name("bundle.json")?
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > 1024 * 1024 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "generator manifest exceeds size limit",
+        ));
+    }
+    let manifest: Manifest = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+    validate_manifest(&manifest)?;
+    if archive.len() != manifest.files.len() + 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "generator archive contains unmanifested files",
+        ));
+    }
+    Ok(manifest)
+}
+
 fn verify_extracted(root: &Path, manifest: &Manifest) -> io::Result<()> {
+    if !fs::symlink_metadata(root)?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "generator cache is not a directory",
+        ));
+    }
     let mut directories = vec![root.to_path_buf()];
     let mut count = 0;
     while let Some(directory) = directories.pop() {
@@ -242,13 +149,13 @@ fn verify_extracted(root: &Path, manifest: &Manifest) -> io::Result<()> {
             if kind.is_dir() {
                 directories.push(entry.path());
             } else if kind.is_file() {
-                let path = entry.path();
-                let relative = path
+                let rel = entry
+                    .path()
                     .strip_prefix(root)
                     .map_err(io::Error::other)?
                     .to_string_lossy()
                     .replace('\\', "/");
-                if relative != "bundle.json" && !manifest.files.contains_key(&relative) {
+                if rel != "bundle.json" && !manifest.files.contains_key(&rel) {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         "generator cache contains an unmanifested file",
@@ -265,7 +172,7 @@ fn verify_extracted(root: &Path, manifest: &Manifest) -> io::Result<()> {
     for (name, expected) in &manifest.files {
         let path = root.join(name);
         let metadata = fs::symlink_metadata(&path)?;
-        if !metadata.is_file() || file_hash(&path, MAX_EXPANDED)? != *expected {
+        if !metadata.is_file() || hash_reader(File::open(&path)?, MAX_EXPANDED)? != *expected {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("corrupt generator payload {}", path.display()),
@@ -275,134 +182,84 @@ fn verify_extracted(root: &Path, manifest: &Manifest) -> io::Result<()> {
     Ok(())
 }
 
-async fn obtain_bundle(
-    cache: &Path,
-    source: Option<&Path>,
-    network: &StreamingClient,
-) -> io::Result<PathBuf> {
-    fs::create_dir_all(cache)?;
-    let archive_name = format!("{BUNDLE_TAG}-{RID}.zip");
-    let installed = cache.join("payload");
-    let archive_path = cache.join(&archive_name);
-    let checksum_path = cache.join(format!("{archive_name}.sha256"));
-    if !archive_path.exists() {
-        let temporary = tempfile::NamedTempFile::new_in(cache)?.into_temp_path();
-        let expected = if let Some(directory) = source {
-            println!(
-                "Using configured local generator bundle {}",
-                directory.display()
-            );
-            let expected = checksum(&fs::read(directory.join(format!("{archive_name}.sha256")))?)?;
-            fs::copy(directory.join(&archive_name), &temporary)?;
-            expected
-        } else {
-            let url = format!("{RELEASE_ROOT}/{BUNDLE_TAG}/{archive_name}");
-            println!("Downloading generator bundle {url}");
-            let response = network
-                .clone()
-                .with_deadlines_and_limits(
-                    Deadlines::default(),
-                    DownloadLimits {
-                        max_bytes: 4096,
-                        max_redirects: 5,
-                    },
-                )
-                .request_bytes(
-                    &format!("{url}.sha256"),
-                    "vosu-offset-generator",
-                    &CancellationToken::new(),
-                )
-                .await
-                .map_err(download_error)?;
-            if response.status == 404 {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!(
-                        "matching generator bundle has not been published: {url}; install a release with published offset-generator assets"
-                    ),
-                ));
-            }
-            if response.status != 200 {
-                return Err(io::Error::other(format!(
-                    "generator checksum download failed: HTTP {} from {url}.sha256",
-                    response.status
-                )));
-            }
-            let expected = checksum(&response.body)?;
-            network
-                .download_atomic(
-                    &url,
-                    "vosu-offset-generator",
-                    &temporary,
-                    &CancellationToken::new(),
-                )
-                .await
-                .map_err(download_error)?;
-            expected
-        };
-        bundle_manifest(&mut File::open(&temporary)?, &expected)?;
-        // Publish checksum before archive: an interruption cannot expose an archive
-        // with no checksum. Downloads and extraction are never executable in-place.
-        crate::memory::lazer_loader::install_cache(
-            &checksum_path,
-            expected.as_bytes(),
-            &CancellationToken::new(),
-        )?;
-        crate::platform::atomic_replace(&temporary, &archive_path)?;
-    } else {
-        println!("Reusing verified generator cache {}", cache.display());
-    }
-    let result = (|| {
-        let expected = checksum(&fs::read(&checksum_path)?)?;
-        let manifest = bundle_manifest(&mut File::open(&archive_path)?, &expected)?;
-        if !installed.exists() {
-            let staging = tempfile::Builder::new()
-                .prefix(".verify-")
-                .tempdir_in(cache)?;
-            let payload = staging.path().join("payload");
-            extract_zip_atomic(
-                &archive_path,
-                &payload,
-                ZipLimits {
-                    max_entries: 2048,
-                    max_expanded_bytes: MAX_EXPANDED,
-                },
-                &CancellationToken::new(),
+fn extract_bundle(cache_root: &Path, cancel: &CancellationToken) -> io::Result<PathBuf> {
+    let (archive, checksum_text) =
+        crate::assets::DaemonAssets::generator_bundle().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "embedded offset generator bundle is missing from this build",
             )
-            .map_err(io::Error::other)?;
-            verify_extracted(&payload, &manifest)?;
-            #[cfg(target_os = "linux")]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(payload.join(GENERATOR), fs::Permissions::from_mode(0o700))?;
-                fs::set_permissions(payload.join(TARGET_HOST), fs::Permissions::from_mode(0o700))?;
-            }
-            // Competing writers may install the same verified immutable bundle.
-            match fs::rename(&payload, &installed) {
-                Ok(()) => {}
-                Err(_) if installed.is_dir() => {}
-                Err(error) => return Err(error),
-            }
-        }
+        })?;
+    install_bundle(cache_root, archive, checksum_text, cancel)
+}
+
+fn install_bundle(
+    cache_root: &Path,
+    archive: &[u8],
+    checksum_text: &str,
+    cancel: &CancellationToken,
+) -> io::Result<PathBuf> {
+    if cancel.is_cancelled() {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+    }
+    let expected = checksum(checksum_text.as_bytes())?;
+    if hash_reader(archive, MAX_ARCHIVE)? != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "embedded generator bundle checksum mismatch",
+        ));
+    }
+    let manifest = bundle_manifest(Cursor::new(archive))?;
+    let cache = cache_root.join(RID).join(GENERATOR_RUNTIME).join(&expected);
+    let installed = cache.join("payload");
+    fs::create_dir_all(&cache)?;
+    if installed.is_dir() {
         verify_extracted(&installed, &manifest)?;
-        Ok(installed)
-    })();
-    result.map_err(|error: io::Error| io::Error::new(error.kind(), format!("generator cache validation failed at {}: {error}; remove this cache directory and retry vosu -g", cache.display())))
+        return Ok(installed);
+    }
+    let mut archive_file = tempfile::NamedTempFile::new_in(&cache)?;
+    std::io::Write::write_all(&mut archive_file, archive)?;
+    let staging = tempfile::Builder::new()
+        .prefix(".extract-")
+        .tempdir_in(&cache)?;
+    let payload = staging.path().join("payload");
+    extract_zip_atomic(
+        archive_file.path(),
+        &payload,
+        ZipLimits {
+            max_entries: 2048,
+            max_expanded_bytes: MAX_EXPANDED,
+        },
+        cancel,
+    )
+    .map_err(io::Error::other)?;
+    verify_extracted(&payload, &manifest)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(payload.join(GENERATOR), fs::Permissions::from_mode(0o700))?;
+        fs::set_permissions(payload.join(TARGET_HOST), fs::Permissions::from_mode(0o700))?;
+    }
+    if cancel.is_cancelled() {
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+    }
+    match fs::rename(&payload, &installed) {
+        Ok(()) => {}
+        Err(_) if installed.is_dir() => {}
+        Err(e) => return Err(e),
+    }
+    verify_extracted(&installed, &manifest)?;
+    Ok(installed)
 }
 
-fn download_error(error: crate::net::NetworkError) -> io::Error {
-    io::Error::other(format!(
-        "generator bundle download failed: {error}; check HTTPS connectivity and retry vosu -g"
-    ))
-}
-
-fn generator_command(executable: &Path) -> Command {
-    let mut command = Command::new(executable);
+fn generator_command(path: &Path) -> Command {
+    let mut command = Command::new(path);
+    command.kill_on_drop(true);
     for (name, _) in std::env::vars_os() {
-        let name_upper = name.to_string_lossy().to_ascii_uppercase();
-        if name_upper.starts_with("DOTNET_")
-            || name_upper.starts_with("COMPLUS_")
-            || name_upper.starts_with("CORECLR_")
+        let upper = name.to_string_lossy().to_ascii_uppercase();
+        if upper.starts_with("DOTNET_")
+            || upper.starts_with("COMPLUS_")
+            || upper.starts_with("CORECLR_")
         {
             command.env_remove(name);
         }
@@ -410,21 +267,105 @@ fn generator_command(executable: &Path) -> Command {
     command
 }
 
-fn invoke(
-    generator: &Path,
-    assembly_dir: &Path,
-    template: &Path,
-    output: &Path,
-) -> io::Result<Output> {
-    generator_command(generator)
-        .arg("--assemblies-only")
-        .arg("--assembly-dir")
-        .arg(assembly_dir)
-        .arg("--template")
-        .arg(template)
-        .arg("--output")
-        .arg(output)
-        .output()
+async fn output(
+    command: &mut Command,
+    cancel: &CancellationToken,
+) -> io::Result<std::process::Output> {
+    tokio::select! {
+        _ = cancel.cancelled() => Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
+        result = command.output() => result,
+    }
+}
+
+pub(crate) struct EmbeddedOffsetGenerator {
+    cache_root: PathBuf,
+}
+impl EmbeddedOffsetGenerator {
+    pub(crate) fn new(cache_root: PathBuf) -> Self {
+        Self { cache_root }
+    }
+}
+impl crate::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGenerator {
+    fn generate<'a>(
+        &'a self,
+        pid: u32,
+        version: &'a str,
+        cancel: &'a CancellationToken,
+    ) -> crate::memory::lazer_loader::GenerationFuture<'a> {
+        Box::pin(async move {
+            if cancel.is_cancelled() {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+            }
+            let root = crate::memory::lazer_version::process_executable_root(pid)
+                .map_err(io::Error::other)?;
+            let discovered = crate::memory::lazer_version::discover_from_root(&root)
+                .map_err(io::Error::other)?;
+            if discovered != version {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "client version changed before generation",
+                ));
+            }
+            let assembly = [root.clone(), root.join("usr/bin"), root.join("bin")]
+                .into_iter()
+                .find(|p| p.join("osu!.dll").is_file() || p.join("osu.Game.dll").is_file())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "could not locate osu!lazer managed assemblies",
+                    )
+                })?;
+            let payload = tokio::task::spawn_blocking({
+                let cache = self.cache_root.clone();
+                let extraction_cancel = cancel.clone();
+                move || extract_bundle(&cache, &extraction_cancel)
+            })
+            .await
+            .map_err(io::Error::other)??;
+            let work = tempfile::Builder::new()
+                .prefix(".generation-")
+                .tempdir_in(payload.parent().expect("payload has cache parent"))?;
+            let template = work.path().join("template.json");
+            let generated = work.path().join("offsets.json");
+            let asset = crate::assets::DaemonAssets::get("offsets.json")
+                .ok_or_else(|| io::Error::other("embedded offsets template is missing"))?;
+            fs::write(&template, asset.data.as_ref())?;
+            let mut cmd = generator_command(&payload.join(GENERATOR));
+            cmd.args(["--assemblies-only", "--assembly-dir"])
+                .arg(&assembly)
+                .args(["--template"])
+                .arg(&template)
+                .args(["--output"])
+                .arg(&generated);
+            let result = output(&mut cmd, cancel).await?;
+            if !result.status.success() {
+                return Err(io::Error::other(format!(
+                    "assembly-only offset generator failed: {}",
+                    String::from_utf8_lossy(&result.stderr).trim()
+                )));
+            }
+            let mut sig = generator_command(&payload.join(TARGET_HOST));
+            sig.args(["--game-base-signature", "--assembly-dir"])
+                .arg(&assembly);
+            let signature = output(&mut sig, cancel).await?;
+            if !signature.status.success() {
+                return Err(io::Error::other(format!(
+                    "owned target could not derive GameBaseVtable: {}",
+                    String::from_utf8_lossy(&signature.stderr).trim()
+                )));
+            }
+            let bytes = merge_game_base_vtable(&fs::read(generated)?, &signature.stdout)?;
+            let after = crate::memory::lazer_version::discover_from_root(&root)
+                .map_err(io::Error::other)?;
+            if after != version {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "client version changed during generation",
+                ));
+            }
+            Ok(Bytes::from(bytes))
+        })
+    }
 }
 
 fn merge_game_base_vtable(generated: &[u8], signature: &[u8]) -> io::Result<Vec<u8>> {
@@ -434,10 +375,9 @@ fn merge_game_base_vtable(generated: &[u8], signature: &[u8]) -> io::Result<Vec<
         osu_version: String,
         game_base_vtable: u64,
     }
-    let signature: Signature = serde_json::from_slice(signature)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let mut value: serde_json::Value = serde_json::from_slice(generated)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let signature: Signature = serde_json::from_slice(signature).map_err(io::Error::other)?;
+    let mut value: serde_json::Value =
+        serde_json::from_slice(generated).map_err(io::Error::other)?;
     if value.get("OsuVersion").and_then(serde_json::Value::as_str)
         != Some(signature.osu_version.as_str())
         || signature.game_base_vtable == 0
@@ -447,7 +387,6 @@ fn merge_game_base_vtable(generated: &[u8], signature: &[u8]) -> io::Result<Vec<
             "owned target must supply a nonzero GameBaseVtable for the generated OsuVersion",
         ));
     }
-    // This value comes only from this build's owned child, never the template.
     value
         .as_object_mut()
         .ok_or_else(|| {
@@ -460,72 +399,7 @@ fn merge_game_base_vtable(generated: &[u8], signature: &[u8]) -> io::Result<Vec<
             "GameBaseVtable".to_owned(),
             signature.game_base_vtable.into(),
         );
-    serde_json::to_vec(&value).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
-}
-
-pub(super) async fn generate() -> io::Result<PathBuf> {
-    let client = current_client()?;
-    let assembly_dir = assembly_directory(&client.root)?;
-    let cache = cache_root()?
-        .join(RID)
-        .join(GENERATOR_RUNTIME)
-        .join(BUNDLE_TAG);
-    let local_source = std::env::var_os("VOSU_OFFSET_BUNDLE_SOURCE")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
-    let network = StreamingClient::production().with_deadlines_and_limits(
-        Deadlines::default(),
-        DownloadLimits {
-            max_bytes: MAX_ARCHIVE,
-            max_redirects: 5,
-        },
-    );
-    let payload = obtain_bundle(&cache, local_source.as_deref(), &network).await?;
-    let generator = payload.join(GENERATOR);
-    let work = tempfile::Builder::new()
-        .prefix(".generation-")
-        .tempdir_in(&cache)?;
-    let template = work.path().join("template.json");
-    let output = work.path().join("offsets.json");
-    let asset = crate::assets::DaemonAssets::get("offsets.json")
-        .ok_or_else(|| io::Error::other("embedded offsets template is missing"))?;
-    fs::write(&template, asset.data.as_ref())?;
-    println!(
-        "Generating from osu!lazer {} PID {} assemblies ({RID})",
-        client.version, client.pid
-    );
-    let result = invoke(&generator, &assembly_dir, &template, &output)?;
-    if !result.status.success() {
-        return Err(io::Error::other(format!(
-            "assembly-only offset generator failed ({}); the client runtime or assembly layout may be unsupported: {}",
-            result.status,
-            String::from_utf8_lossy(&result.stderr).trim()
-        )));
-    }
-    let signature = generator_command(&payload.join(TARGET_HOST))
-        .arg("--game-base-signature")
-        .arg("--assembly-dir")
-        .arg(&assembly_dir)
-        .output()?;
-    if !signature.status.success() {
-        return Err(io::Error::other(format!(
-            "owned target could not derive GameBaseVtable ({}); the client runtime or assembly layout may be unsupported: {}",
-            signature.status,
-            String::from_utf8_lossy(&signature.stderr).trim()
-        )));
-    }
-    let generated = merge_game_base_vtable(&fs::read(output)?, &signature.stdout)?;
-    super::cli::validate_generated_offsets(&generated, &client.version)?;
-    let destination = crate::platform::Paths::system()?
-        .cache()
-        .join("offsets")
-        .join(format!("{}.json", client.version));
-    crate::memory::lazer_loader::install_cache(
-        &destination,
-        &generated,
-        &CancellationToken::new(),
-    )?;
-    Ok(destination)
+    serde_json::to_vec(&value).map_err(io::Error::other)
 }
 
 #[cfg(test)]

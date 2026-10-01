@@ -18,7 +18,7 @@ Update ordinary Markdown in `openwiki/` in the PR that changes the documented be
 - Run `cargo run --locked` for local development; Linux process-event backends remain enabled by default.
 - Run the daemon as the same desktop user as osu!.
 - Confirm `127.0.0.1:24050` is reachable before investigating API readiness.
-- Check that the client process is supported and that stable/lazer path and offset resolution can complete.
+- Check that the client process is supported and that stable/lazer path and exact-instance offset resolution can complete.
 - Keep `OPEN_DASHBOARD_ON_STARTUP` and `ENABLE_AUTOUPDATE` aligned with the intended environment in `vosu.toml`.
 
 A state endpoint returning `500 {"error":"osu is not ready/running"}` means no focused ready instance is currently published; it is not by itself evidence that the server failed.
@@ -42,6 +42,17 @@ The dashboard’s installed cards persist pin state in browser local storage, ke
 ## Platform access
 
 Linux stable uses Wine process discovery and native reads; lazer requires an exposed `osu!.deps.json` layout. `VOSU_OSU_PATH` can override path discovery. If ptrace policy blocks same-user reads, use the distribution-appropriate configuration or narrowly grant `cap_sys_ptrace`; do not run the dashboard as root. Windows requires supported native process combinations and MSVC-built releases.
+
+Offset resolution is automatic per discovered process: a valid versioned
+`<version>.json` cache entry wins, then matching embedded offsets, then local
+generation from that exact PID and version. Generation never downloads offsets,
+scans another process, or uses a local-source override. The extracted helper
+cache is separately keyed by platform/runtime and embedded bundle checksum.
+The offsets cache is under `$XDG_CACHE_HOME/vosu/offsets` (default
+`$HOME/.cache/vosu/offsets`) on Linux and `.cache\offsets` under the portable
+Windows executable directory. Release binaries carry the platform-matching
+self-contained generator; debug builds without a prepared payload fail
+explicitly. End users do not install .NET.
 
 Offset/signature resolution may remain pending and retry while a process is alive. A pending resolver alone does not confirm that a game build is supported.
 
@@ -78,8 +89,10 @@ has passed.
   can cancel an older build and then skip; manually dispatch if that artifact is needed.
 - **Build/cache:** pinned Rust 1.96.1 and action SHAs; native x86_64 GNU with exactly
   `--no-default-features --features linux-process-events`, native x86_64 MSVC with
-  `--no-default-features`, both `--release --locked`. Cargo always runs, including
-  on exact cache hits. Download caches share the existing OS/lockfile namespace.
+  `--no-default-features`, both `--release --locked`. Before Cargo, the workflow
+  uses the .NET 8 SDK to prepare the matching embedded helper bundle, including
+  after cache restoration. Cargo always runs, including on exact cache hits.
+  Download caches share the existing OS/lockfile namespace.
   Compilation caches are separate from CI/tag builds and partitioned by OS,
   architecture, toolchain, target, and feature/profile mode. Weekly plus
   lockfile/manifest generations bound snapshots; same-mode fallback reuses older
@@ -105,9 +118,11 @@ has passed.
   Upload happens only after the platform's smoke succeeds. Keep development
   binaries outside existing installations and use `--update=false` manually too.
 
-The tagged/updater ZIP remains exactly executable plus root `LICENSE`.
-Its known attribution gap is **not fixed** by the separate development bundle;
-`scripts/package-release.py` and the tag workflow retain their existing contract.
+The tagged/updater ZIP remains exactly executable plus root `LICENSE`; the
+generator bundle is embedded inside the executable rather than added as an
+archive member. The bundle carries its own `LICENSE`, `LICENSE-MIT`,
+`LICENSE-APACHE`, `THIRD_PARTY_NOTICES.md`, and manifest. `scripts/package-release.py`
+and the tag workflow retain the exact two-entry archive contract.
 Windows development binaries have no Authenticode guarantee. Hosted Linux GNU
 builds are not portable-musl artifacts: system glibc/libelf/zlib compatibility
 still applies. Artifact smoke is not live osu! parity or privileged process-backend

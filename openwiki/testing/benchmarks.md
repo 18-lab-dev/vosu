@@ -9,9 +9,12 @@ tags: [testing, benchmarks, criterion, performance]
 
 ## Reproduce
 
-Run from the repository root with the pinned Rust toolchain:
+Run from the repository root with the pinned Rust toolchain. Bench profiles
+use release-mode embedding: prepare the matching helper bundle first with
+Python and the .NET 8 SDK (maintainer build dependencies, not end-user requirements):
 
 ```sh
+python scripts/prepare-offset-generator.py --rid linux-x64
 export CRITERION_HOME="$(mktemp -d)"
 cargo bench --locked --package vosu --bench hot_paths
 cargo bench --locked --no-default-features --bench memory_reader_bench
@@ -89,6 +92,7 @@ Hosted timings are not directly comparable with the local Linux results.
 Reproduce in PowerShell:
 
 ```powershell
+python scripts/prepare-offset-generator.py --rid win-x64
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench hot_paths
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench memory_reader_bench
 ```

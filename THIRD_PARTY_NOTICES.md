@@ -52,7 +52,7 @@ is not a build or runtime input.
 
 ## osu!lazer memory-offset generation input
 
-- **Material:** `assets/offsets.json`, generated locally with `tools/lazer-offset-target` and `tools/lazer-offset-generator` from the official osu! AppImage's managed assemblies and exact Satori runtime overlay plus a locally built matching DAC. These historical asset-generation inputs are not distributed by vosu. The separate user-facing `-g` bundles ship the existing generator and owned target with their self-contained .NET runtime, not the game assemblies or DAC.
+- **Material:** `assets/offsets.json`, generated locally with `tools/lazer-offset-target` and `tools/lazer-offset-generator` from the official osu! AppImage's managed assemblies and exact Satori runtime overlay plus a locally built matching DAC. These historical asset-generation inputs are not distributed by vosu. The embedded generator bundle contains the owned generator/target payload, self-contained .NET runtime, and applicable attribution files; it does not contain game assemblies or the custom Satori DAC. Stock diagnostic libraries accompany the .NET runtime, but automatic assembly-only generation does not attach a DAC to the game.
 - **Copyright:** Copyright (c) ppy Pty Ltd <contact@ppy.sh>
 - **License:** MIT for the osu! source code; osu! bundled resources remain subject to their upstream terms
 - **osu! version:** `2026.726.0`
@@ -66,7 +66,7 @@ is not a build or runtime input.
 
 ### Microsoft .NET runtime, host, and reference packs 8.0.29
 
-- **Material:** self-contained .NET runtime and app-host shipped in the versioned offset-generator bundles; generation uses the pinned runtime without distributing the official osu! AppImage inputs
+- **Material:** self-contained .NET runtime and app-host embedded in the platform-matching generator bundle; end users do not install this runtime separately
 - **Copyright:** .NET Foundation and Contributors
 - **License:** MIT
 - **Runtime NuGet package:** <https://www.nuget.org/packages/Microsoft.NETCore.App.Runtime.linux-x64/8.0.29>
@@ -78,10 +78,14 @@ is not a build or runtime input.
 - **Runtime source revision:** [`18fd75c847399745c43b5970fec840ba71064e80`](https://github.com/dotnet/runtime/tree/18fd75c847399745c43b5970fec840ba71064e80)
 - **AppImage runtime-pack declaration:** `Microsoft.NETCore.App.Runtime.linux-x64/8.0.29`
 - **AppImage declared `System.Private.CoreLib.dll` file version:** `8.0.2926.32403`
+The embedded bundle carries the runtime and host license files from the restored
+NuGet sources at `licenses/microsoft.netcore.app.runtime.<rid>/8.0.29/` and
+`licenses/microsoft.netcore.app.host.<rid>/8.0.29/` (`LICENSE.TXT` and
+`THIRD-PARTY-NOTICES.TXT`).
 
 ### ppy/Satori 2025.807.0 (historical asset evidence)
 
-- **Material:** historical official osu! AppImage runtime-overlay and locally built DAC evidence retained for provenance; these files and the compatibility patch are not inputs to current `-g`, and are not distributed by vosu
+- **Material:** historical official osu! AppImage runtime-overlay and locally built DAC evidence retained for provenance; these files and the compatibility patch are not inputs to the embedded generator bundle and are not distributed by vosu
 - **Copyright:** .NET Foundation and Contributors
 - **License:** MIT
 - **Release:** <https://github.com/ppy/Satori/releases/tag/2025.807.0>
@@ -100,12 +104,18 @@ is not a build or runtime input.
 
 ### Microsoft.Diagnostics.Runtime (ClrMD) 4.0.732401
 
-- **Material:** self-contained live-process inspection dependency shipped in the versioned offset-generator bundle
+- **Material:** self-contained live-process inspection dependency embedded in the platform-matching generator bundle
 - **Copyright:** .NET Foundation and Contributors
 - **License:** MIT
 - **NuGet package:** <https://www.nuget.org/packages/Microsoft.Diagnostics.Runtime/4.0.732401>
 - **Pinned source:** <https://github.com/microsoft/clrmd/tree/f160f6897f33198170895a60444de38bcb76bcf3>
-ClrMD and its restored build dependencies are not linked into vosu's daemon or included in the two-file production release archive; they are present only in the separately versioned generator bundle.
+
+ClrMD and its restored build dependencies are not linked into vosu's Rust
+daemon, but are embedded in the executable's generator payload. They are not
+separate archive members: the two-entry production release archive still
+contains only the executable and root `LICENSE`. The bundle carries
+`LICENSE`, `LICENSE-MIT`, `LICENSE-APACHE`, `THIRD_PARTY_NOTICES.md`, and its
+manifest for redistributed components.
 
 ## Maintained source-layout changes
 

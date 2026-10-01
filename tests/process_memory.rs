@@ -1,16 +1,12 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
 
 use bytes::Bytes;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use vosu::assets::DaemonAssets;
-use vosu::memory::lazer_loader::{
-    DEFAULT_ENDPOINTS, FetchError, FetchFuture, FetchResponse, LazerOffsetLoader, OffsetFetcher,
-    REQUEST_TIMEOUT,
-};
+use vosu::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
 use vosu::memory::lazer_offsets::LazerOffsets;
 use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns};
 use vosu::process::{
@@ -499,28 +495,26 @@ fn lazer_public_screens_spectating_ranked_bounds_and_unsupported_tourney_are_obs
 }
 
 #[derive(Clone, Default)]
-struct FakeFetcher {
-    responses: Arc<Mutex<VecDeque<Result<FetchResponse, FetchError>>>>,
-    calls: Arc<Mutex<Vec<(String, String, Duration)>>>,
+struct FakeGenerator {
+    responses: Arc<Mutex<VecDeque<Result<Bytes, String>>>>,
+    calls: Arc<Mutex<Vec<(u32, String)>>>,
 }
 
-impl OffsetFetcher for FakeFetcher {
-    fn fetch<'a>(
+impl OffsetGenerator for FakeGenerator {
+    fn generate<'a>(
         &'a self,
-        url: &'a str,
-        user_agent: &'a str,
-        timeout: Duration,
-    ) -> FetchFuture<'a> {
+        pid: u32,
+        version: &'a str,
+        _: &'a CancellationToken,
+    ) -> GenerationFuture<'a> {
         Box::pin(async move {
-            self.calls
+            self.calls.lock().await.push((pid, version.to_owned()));
+            self.responses
                 .lock()
                 .await
-                .push((url.into(), user_agent.into(), timeout));
-            self.responses.lock().await.pop_front().unwrap_or_else(|| {
-                Err(FetchError {
-                    message: "offline fixture".into(),
-                })
-            })
+                .pop_front()
+                .unwrap_or_else(|| Err("offline fixture".into()))
+                .map_err(std::io::Error::other)
         })
     }
 }
@@ -536,27 +530,23 @@ fn offsets_for(version: &str) -> Bytes {
 }
 
 #[tokio::test]
-async fn lazer_offsets_cover_embedded_current_cache_and_remote_fallback_without_network() {
-    let source_fixture: Value = serde_json::from_str(include_str!(
-        "fixtures/raw_memory/lazer_offset_sources.json"
-    ))
-    .unwrap();
+async fn lazer_offsets_cover_embedded_current_cache_and_exact_instance_generation() {
     let embedded = embedded_offsets();
     let embedded_version = LazerOffsets::from_json(&embedded).unwrap().osu_version;
     let cache = tempfile::tempdir().unwrap();
-    let fetcher = FakeFetcher::default();
-    let loader = LazerOffsetLoader::new(fetcher.clone(), cache.path().into(), embedded.clone());
+    let generator = FakeGenerator::default();
+    let loader = LazerOffsetLoader::new(generator.clone(), cache.path().into(), embedded.clone());
     assert_eq!(
         loader
-            .resolve(&embedded_version, &CancellationToken::new())
+            .resolve(11, &embedded_version, &CancellationToken::new())
             .await
             .unwrap()
             .osu_version,
         embedded_version
     );
-    assert!(fetcher.calls.lock().await.is_empty());
+    assert!(generator.calls.lock().await.is_empty());
 
-    let cached_version = source_fixture["cache_version"].as_str().unwrap();
+    let cached_version = "2026.518.0";
     std::fs::write(
         cache.path().join(format!("{cached_version}.json")),
         offsets_for(cached_version),
@@ -564,44 +554,35 @@ async fn lazer_offsets_cover_embedded_current_cache_and_remote_fallback_without_
     .unwrap();
     assert_eq!(
         loader
-            .resolve(cached_version, &CancellationToken::new())
+            .resolve(12, cached_version, &CancellationToken::new())
             .await
             .unwrap()
             .osu_version,
         cached_version
     );
-    assert!(fetcher.calls.lock().await.is_empty());
+    assert!(generator.calls.lock().await.is_empty());
 
-    let remote_version = source_fixture["remote_version"].as_str().unwrap();
-    let responses = source_fixture["remote_responses"].as_array().unwrap();
-    fetcher.responses.lock().await.extend([
-        Ok(FetchResponse {
-            status: responses[0]["status"].as_u64().unwrap() as u16,
-            body: Bytes::new(),
-        }),
-        Ok(FetchResponse {
-            status: responses[1]["status"].as_u64().unwrap() as u16,
-            body: offsets_for(remote_version),
-        }),
-    ]);
-    let remote = loader
-        .resolve(remote_version, &CancellationToken::new())
+    let generated_version = "2027.1.0";
+    let generated = offsets_for(generated_version);
+    generator
+        .responses
+        .lock()
+        .await
+        .push_back(Ok(generated.clone()));
+    let result = loader
+        .resolve(99, generated_version, &CancellationToken::new())
         .await
         .unwrap();
-    assert_eq!(remote.osu_version, remote_version);
-    let calls = fetcher.calls.lock().await;
-    assert_eq!(calls.len(), 2);
-    // The fixture retains the upstream endpoints as parity evidence; live requests use vosu.
-    assert!(calls[0].0.starts_with(DEFAULT_ENDPOINTS[0]));
-    assert!(calls[1].0.starts_with(DEFAULT_ENDPOINTS[1]));
-    assert_eq!(calls[0].2, REQUEST_TIMEOUT);
-    drop(calls);
+    assert_eq!(result.osu_version, generated_version);
     assert_eq!(
-        std::fs::read(loader.cache_path(remote_version).unwrap()).unwrap(),
-        offsets_for(remote_version)
+        *generator.calls.lock().await,
+        vec![(99, generated_version.to_owned())]
+    );
+    assert_eq!(
+        std::fs::read(loader.cache_path(generated_version).unwrap()).unwrap(),
+        generated
     );
 }
-
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_native_backend_opens_and_reads_this_process() {

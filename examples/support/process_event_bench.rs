@@ -16,7 +16,7 @@ use bytes::Bytes;
 use serde_json::{Value, json};
 use tokio::time::{Instant as TokioInstant, sleep, sleep_until, timeout_at};
 use vosu::instance::{InstanceRuntime, NativeProcessProvider, Pid, ProcessEventMode};
-use vosu::memory::lazer_loader::{FetchError, FetchFuture, LazerOffsetLoader, OffsetFetcher};
+use vosu::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(2);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(7);
@@ -27,7 +27,7 @@ const MAX_DURATION: Duration = Duration::from_secs(3_600);
 const MAX_ITERATIONS: usize = 1_000_000;
 const MAX_CHURN_RATE_HZ: u64 = 1_000;
 
-type Runtime = InstanceRuntime<NativeProcessProvider, DisabledFetcher>;
+type Runtime = InstanceRuntime<NativeProcessProvider, DisabledGenerator>;
 
 #[derive(Clone, Copy)]
 enum Mode {
@@ -115,19 +115,17 @@ struct Results {
 }
 
 #[derive(Clone, Copy)]
-struct DisabledFetcher;
+struct DisabledGenerator;
 
-impl OffsetFetcher for DisabledFetcher {
-    fn fetch<'a>(
+impl OffsetGenerator for DisabledGenerator {
+    fn generate<'a>(
         &'a self,
-        _url: &'a str,
-        _user_agent: &'a str,
-        _timeout: Duration,
-    ) -> FetchFuture<'a> {
+        _pid: u32,
+        _version: &'a str,
+        _cancel: &'a tokio_util::sync::CancellationToken,
+    ) -> GenerationFuture<'a> {
         Box::pin(async {
-            Err(FetchError {
-                message: "network disabled by process-event benchmark".to_owned(),
-            })
+            Err(io::Error::other("offset generation disabled by process-event benchmark"))
         })
     }
 }
@@ -245,11 +243,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
     let provider = NativeProcessProvider::open_process_events(args.mode.event_mode())?;
     let loader = LazerOffsetLoader::new(
-        DisabledFetcher,
+        DisabledGenerator,
         PathBuf::from("/dev/null/vosu-process-event-bench"),
         Bytes::new(),
-    )
-    .with_endpoints(Vec::<String>::new());
+    );
     let runtime = InstanceRuntime::start(provider, loader);
 
     wait_for_scan(&runtime, 0).await?;

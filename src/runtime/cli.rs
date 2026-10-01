@@ -6,13 +6,12 @@ use std::{
 #[cfg(target_os = "linux")]
 use std::env;
 
-pub(super) const HELP_TEXT: &str = "Usage: vosu [OPTION]\n\nOptions:\n  -h, --help              Print this help\n  -s, --setup             Install supported Linux capabilities\n  -g, --generate-offsets  Generate offsets for the running osu!lazer client to the vosu offset cache\n";
+pub(super) const HELP_TEXT: &str = "Usage: vosu [OPTION]\n\nOptions:\n  -h, --help   Print this help\n  -s, --setup  Install supported Linux capabilities\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CliCommand {
     Help,
     Setup,
-    GenerateOffsets,
     #[cfg(target_os = "linux")]
     ProbeBackend(BackendProbe),
 }
@@ -63,7 +62,7 @@ fn classify_argument(argument: &OsStr) -> ArgumentKind {
     match argument.to_str() {
         Some("-h" | "--help") => ArgumentKind::Command(CliCommand::Help),
         Some("-s" | "--setup") => ArgumentKind::Command(CliCommand::Setup),
-        Some("-g" | "--generate-offsets") => ArgumentKind::Command(CliCommand::GenerateOffsets),
+        Some("-g" | "--generate-offsets") => ArgumentKind::InvalidCommand,
         #[cfg(target_os = "linux")]
         Some("--vosu-internal-probe-backend=ebpf") => {
             ArgumentKind::Command(CliCommand::ProbeBackend(BackendProbe::Ebpf))
@@ -103,11 +102,6 @@ pub(super) async fn run_command(command: CliCommand) -> io::Result<()> {
             Ok(())
         }
         CliCommand::Setup => run_setup(),
-        CliCommand::GenerateOffsets => {
-            let destination = super::offset_generator::generate().await?;
-            println!("Generated lazer offsets to {}", destination.display());
-            Ok(())
-        }
         #[cfg(target_os = "linux")]
         CliCommand::ProbeBackend(backend) => run_backend_probe(backend),
     }
@@ -144,19 +138,4 @@ fn run_backend_probe(_backend: BackendProbe) -> io::Result<()> {
         io::ErrorKind::Unsupported,
         "this vosu build does not include Linux process-event backends",
     ))
-}
-
-pub(super) fn validate_generated_offsets(bytes: &[u8], expected_version: &str) -> io::Result<()> {
-    let offsets = crate::memory::lazer_offsets::LazerOffsets::from_json(bytes)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
-    if offsets.osu_version != expected_version {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "lazer offset generator returned osu! version {}, expected {}",
-                offsets.osu_version, expected_version
-            ),
-        ));
-    }
-    Ok(())
 }

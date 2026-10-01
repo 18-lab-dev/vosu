@@ -37,24 +37,24 @@ pub(super) async fn publish_lifecycle(
     });
 }
 
-impl<P, F> InstanceRuntime<P, F>
+impl<P, G> InstanceRuntime<P, G>
 where
     P: ProcessProvider + 'static,
-    F: OffsetFetcher + 'static,
+    G: OffsetGenerator + 'static,
 {
-    pub fn start(provider: P, loader: LazerOffsetLoader<F>) -> Self {
+    pub fn start(provider: P, loader: LazerOffsetLoader<G>) -> Self {
         Self::start_inner(provider, loader, None)
     }
 
     pub(crate) fn start_with_logger(
         provider: P,
-        loader: LazerOffsetLoader<F>,
+        loader: LazerOffsetLoader<G>,
         logger: Logger,
     ) -> Self {
         Self::start_inner(provider, loader, Some(logger))
     }
 
-    fn start_inner(provider: P, loader: LazerOffsetLoader<F>, logger: Option<Logger>) -> Self {
+    fn start_inner(provider: P, loader: LazerOffsetLoader<G>, logger: Option<Logger>) -> Self {
         let manager_value = InstanceManager::default();
         let lifecycle_changed = manager_value.lifecycle_changed.clone();
         let manager = Arc::new(tokio::sync::RwLock::new(manager_value));

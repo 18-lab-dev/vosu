@@ -50,7 +50,7 @@ use crate::{
     memory::{
         ReaderSynchronization, SynchronizedMemoryReader,
         lazer::{LazerMemory, LazerPattern},
-        lazer_loader::{LazerOffsetLoader, ReqwestOffsetFetcher},
+        lazer_loader::LazerOffsetLoader,
         stable::{StableMemory, StablePatterns},
     },
     model::enums::{ClientType, GameState},
@@ -116,6 +116,7 @@ pub use worker::{ListenerOwner, ProductionStateSupervisor, WebSocketHubs};
 use config::*;
 #[cfg(test)]
 use lifecycle::*;
+use offset_generator::EmbeddedOffsetGenerator;
 use projection::*;
 use render::*;
 use service::*;
