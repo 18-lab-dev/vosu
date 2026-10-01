@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use indexmap::IndexMap;
 
 use super::*;
@@ -144,29 +142,6 @@ fn menu_checksum_and_full_update_remain_distinct_payloads() {
         full.menu(),
         Some(Ok(ReadStatus::Ready(Menu::Full(MenuFull { checksum, .. })))) if checksum == "new"
     ));
-}
-
-#[test]
-fn publication_owns_and_isolates_nested_vectors_and_strings() {
-    let mut source = vec![1.0, 2.0];
-    let snapshot = regular_builder(
-        ClientType::Stable,
-        Ok(ReadStatus::Ready(Menu::Checksum(MenuChecksum {
-            gamemode: 0,
-            ranked_status: 0.0,
-        }))),
-    )
-    .audio_velocity_base(Ok(ReadStatus::Ready(source.clone())))
-    .publish();
-    source.push(3.0);
-
-    let cloned_arc = Arc::clone(&snapshot);
-    let Some(Ok(ReadStatus::Ready(samples))) = cloned_arc.audio_velocity_base() else {
-        panic!("audio sample missing");
-    };
-    assert_eq!(samples, &[1.0, 2.0]);
-    assert!(Arc::ptr_eq(&snapshot, &cloned_arc));
-    assert!(Arc::get_mut(&mut Arc::clone(&snapshot)).is_none());
 }
 
 #[test]

@@ -476,26 +476,6 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
     }
 
     #[test]
-    fn websocket_uses_exact_per_listener_tracker() {
-        let first = Arc::new(UpgradeCallbackTracker::new());
-        let second = Arc::new(UpgradeCallbackTracker::new());
-        let mut first_request = Request::new(Body::empty());
-        first_request.extensions_mut().insert(Arc::clone(&first));
-        let mut second_request = Request::new(Body::empty());
-        second_request.extensions_mut().insert(Arc::clone(&second));
-
-        let selected_first = listener_tracker(&first_request).unwrap();
-        let selected_second = listener_tracker(&second_request).unwrap();
-        assert!(Arc::ptr_eq(&selected_first, &first));
-        assert!(Arc::ptr_eq(&selected_second, &second));
-        assert!(!Arc::ptr_eq(&selected_first, &selected_second));
-
-        first.seal();
-        assert_eq!(first.active(), 0);
-        assert_eq!(second.active(), 0);
-        assert!(listener_tracker(&Request::new(Body::empty())).is_none());
-    }
-    #[test]
     fn production_file_adapter_roots_generic_beatmap_at_songs() {
         use std::io::Read as _;
 

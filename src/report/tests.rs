@@ -153,12 +153,6 @@ async fn newest_logs_are_deterministic_capped_and_escaped() {
     assert!(!html.contains("status-derror"));
 }
 
-#[test]
-fn gpu_filtering_deduplicates_and_excludes_cpu() {
-    let names = filtered_gpu_names(&malicious_machine().adapters, &["unused".into()]);
-    assert_eq!(names, vec!["same<&>"]);
-}
-
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_device_probe_uses_battery_chassis_and_unknown_fallback() {

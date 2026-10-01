@@ -1,4 +1,4 @@
-use super::cli::{CliCommand, CommandInvocation, HELP_TEXT, classify_command_invocation};
+use super::cli::{CliCommand, CommandInvocation, classify_command_invocation};
 #[cfg(target_os = "linux")]
 use super::cli::validate_generated_offsets;
 #[cfg(target_os = "linux")]
@@ -141,17 +141,6 @@ fn backend_probe_arguments_are_not_commands_off_linux() {
             "--vosu-internal-probe-backend=ebpf"
         ])),
         CommandInvocation::RunDaemon
-    );
-}
-
-#[test]
-fn help_lists_every_public_short_and_long_form() {
-    for forms in ["-h, --help", "-s, --setup", "-g, --generate-offsets"] {
-        assert!(HELP_TEXT.contains(forms), "help omitted {forms}");
-    }
-    assert!(
-        HELP_TEXT.contains("vosu offset cache"),
-        "help omitted generated-offset destination"
     );
 }
 

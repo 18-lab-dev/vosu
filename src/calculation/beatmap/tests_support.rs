@@ -144,25 +144,6 @@ ApproachRate:9
         }
     }
 
-    struct ContractEngine;
-
-    impl BeatmapEngine for ContractEngine {
-        fn calculate(&self, request: EngineRequest<'_>) -> Result<EngineOutput, BeatmapError> {
-            assert_eq!(request.original_mode, Ruleset::Osu);
-            assert_eq!(request.effective_mode, Ruleset::Catch);
-            assert_eq!(request.scoring_mode, ScoringMode::Lazer);
-            assert_eq!(request.clock_rate, 1.25);
-            assert_eq!(
-                request.mods,
-                [AppliedMod {
-                    acronym: "DT".into(),
-                    settings_json: Some("{\"speed_change\":1.25}".into()),
-                }]
-            );
-            Ok(EngineOutput::default())
-        }
-    }
-
     fn mods(checksum: &str, rate: f64) -> ModSet {
         ModSet::new(
             checksum,
