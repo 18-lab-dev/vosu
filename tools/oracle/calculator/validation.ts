@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { SOURCE_REVISION, OSU_REVISION, CALCULATOR_REVISION, CALCULATOR_PACKAGE, ROSU_BASELINE, UnknownRecord, fail, record, stringField, arrayField } from "./binding.ts";
+import { CURRENT_ORACLE, SOURCE_REVISION, OSU_REVISION, CALCULATOR_REVISION, CALCULATOR_PACKAGE, ROSU_BASELINE, UnknownRecord, fail, record, stringField, arrayField } from "./binding.ts";
 
 export function gitRevision(path: string): string {
   return execFileSync("git", ["-C", path, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
@@ -11,19 +11,13 @@ export function gitRevision(path: string): string {
 
 export function validateReference(root: string): void {
   const packageJson = record(JSON.parse(readFileSync(join(root, "lib/package.json"), "utf8")) as unknown, "calculator package");
-  if (stringField(packageJson, "version", "calculator package") !== CALCULATOR_PACKAGE) fail("wrong installed C# package version");
+  if (stringField(packageJson, "version", "calculator package") !== CURRENT_ORACLE.calculatorPackage) fail("wrong installed C# package version");
   const osu = record(packageJson.osu, "calculator package.osu");
-  if (stringField(osu, "revision", "calculator package.osu") !== OSU_REVISION) fail("wrong osu! source revision");
-
-  const sums = readFileSync(join(root, "SHA256SUMS"), "utf8").trim().split(/\r?\n/);
-  if (sums.length < 20) fail("calculator SHA256SUMS is incomplete");
-  for (const line of sums) {
-    const match = /^([0-9a-f]{64})  (.+)$/.exec(line);
-    if (match === null) fail(`malformed SHA256SUMS line: ${line}`);
-    const file = join(root, match[2]);
-    const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
-    if (actual !== match[1]) fail(`calculator reference checksum mismatch: ${match[2]}`);
-  }
+  if (stringField(osu, "revision", "calculator package.osu") !== CURRENT_ORACLE.osu) fail("wrong osu! source revision");
+  if (gitRevision(root) !== CURRENT_ORACLE.lazerCalculator) fail("wrong calculator checkout revision");
+  const tree = execFileSync("git", ["-C", root, "rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).trim();
+  if (tree !== CURRENT_ORACLE.calculatorTree) fail("wrong calculator source tree");
+  execFileSync("git", ["-C", root, "diff", "--exit-code", "HEAD", "--"]);
 }
 
 export function validateOracleInputs(manifestPath: string): void {
@@ -377,11 +371,7 @@ export function derivedCapabilities(scenario: UnknownRecord): Set<string> {
     capabilities.add("gradual.prefix-zero.attrs.accepted");
     return capabilities;
   }
-  if ("throws" in expected && "isNull" in expected && id === "unsupported-conversion-null") {
-    capabilities.add("convert.unsupported.mode-99.throws");
-    return capabilities;
-  }
-  if (["osuGreatOd5", "taikoGreatOd10", "catchGreatOd5", "maniaGreatOd0"].every((key) => key in expected)) {
+  if (["osuOd5", "taikoOd10", "catchOd5", "maniaOd0"].every((key) => key in expected)) {
     capabilities.add("hit-window.ruleset-od-boundaries");
     return capabilities;
   }

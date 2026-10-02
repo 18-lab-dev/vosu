@@ -702,6 +702,60 @@ impl MemoryReader for LazerMemory {
             users,
         }))
     }
+    fn room(&mut self) -> MemoryRead<crate::model::memory::LazerRoom> {
+        let room = self.multiplayer_room()?;
+        if room == 0 {
+            return self.not_ready();
+        }
+        let room_offsets = &self.offsets.osu_game_online_multiplayer_multiplayer_room;
+        let room_id = self.process.read_i64(add(room, room_offsets.room_id)?)?;
+        let Some(users_offset) = room_offsets.users_k_backing_field else {
+            return self.not_ready();
+        };
+        let users = self.ptr(add(room, users_offset)?)?;
+        if users == 0 {
+            return self.not_ready();
+        }
+        let mut result = Vec::new();
+        for current in self.list_items(users, false, 8)? {
+            if current == 0 {
+                continue;
+            }
+            let user_offsets = &self
+                .offsets
+                .osu_game_online_multiplayer_multiplayer_room_user;
+            let id = self.i32(add(current, user_offsets.user_id)?)?;
+            let api_user = self.ptr(add(current, user_offsets.user_k_backing_field)?)?;
+            if api_user == 0 {
+                continue;
+            }
+            let user = self.read_user_at(api_user)?;
+            let avatar_url = match self
+                .offsets
+                .osu_game_online_api_requests_responses_apiuser
+                .avatar_url
+            {
+                Some(offset) => match self
+                    .process
+                    .read_managed_string_pointer(add(api_user, offset)?)?
+                {
+                    ReadStatus::Ready(url) => Some(url),
+                    _ => None,
+                },
+                None => None,
+            };
+            result.push(crate::model::memory::LazerRoomUser {
+                id,
+                username: user.name,
+                country_code: user.country_code,
+                avatar_url,
+            });
+        }
+        Ok(ReadStatus::Ready(crate::model::memory::LazerRoom {
+            room_id,
+            users: result,
+        }))
+    }
     fn spectating_data(
         &mut self,
         show_mp_commands: bool,

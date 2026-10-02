@@ -32,5 +32,5 @@ pub use scoring::*;
 pub const ROSU_BASELINE: &str = "v4.0.1 / osu! 28c846b4";
 /// Exact MIT `rosu-pp` source revision used for the local fork.
 pub const ROSU_SOURCE_REVISION: &str = "27a67242cad155a2767f5a25a423ca4ec3e3c274";
-/// Exact osu! revision consulted for forward-ported ruleset semantics.
+/// Baseline osu! revision for the original forward port and retained NUnit evidence.
 pub const OSU_FORWARD_REVISION: &str = "97e94babde9d5ecbe574ecdd33509db27452cd0f";

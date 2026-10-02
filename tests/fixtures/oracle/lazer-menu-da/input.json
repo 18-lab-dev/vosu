@@ -290,7 +290,8 @@
         "holds": 0,
         "maxCombo": 0,
         "fullStars": 0,
-        "stars": 0
+        "stars": 0,
+        "hitWindow": {}
       },
       "currAttributes": {
         "stars": 0,
@@ -432,6 +433,7 @@
       "matchmaking": null
     },
     "rankedPlay": {},
+    "room": {},
     "tourneyManager": {
       "ipcState": 0,
       "leftStars": 0,

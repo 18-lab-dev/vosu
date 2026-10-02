@@ -38,7 +38,7 @@ The default listener is `127.0.0.1:24050`; the dashboard is `/`. Linux productio
 
 ## Recent direction
 
-Recent changes explain current hotspots: the dashboard now persists pinned counter order; compatibility payloads classify hit errors into `all`, `press`, and `release`; and v2 parsed beatmap stats expose mode-aware `timingWindows`. Earlier changes added v2 selected-field subscriptions, WebSocket close handshakes, precise keypress state/timestamps, external consumers, and the precise input-validation harness. Treat these as compatibility-sensitive areas and use the targeted verification in [Testing and verification](testing/verification.md).
+Recent changes explain current hotspots: the dashboard now persists pinned counter order; compatibility payloads classify hit errors into `all`, `press`, and `release`; and v2 parsed beatmap stats expose `hitWindow` with optional numeric judgement fields `miss`, `meh`, `ok`, `good`, `great`, and `perfect`. Catch publishes all six fields as zero, while `stars.hitWindow` is absent. Earlier changes added v2 selected-field subscriptions, WebSocket close handshakes, precise keypress state/timestamps, external consumers, and the precise input-validation harness. Treat these as compatibility-sensitive areas and use the targeted verification in [Testing and verification](testing/verification.md).
 
 ## Documentation conventions
 

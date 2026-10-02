@@ -115,6 +115,36 @@ fn handle(memory: SparseMemory, bitness: ProcessBitness) -> ProcessHandle {
     ProcessHandle::new(Arc::new(memory), bitness)
 }
 
+#[test]
+fn lazer_scan_rejects_unmarked_size_pair_and_resolves_marked_container() {
+    let offsets = Arc::new(LazerOffsets::embedded().unwrap());
+    let mut memory = SparseMemory::dense(0x1000, 0x9000);
+    // An unrelated size pair precedes the actual scaling container.
+    memory.put(0x1800, [0, 0, 0x80, 0x44, 0, 0, 0x40, 0x44]);
+    memory.put(0x4000, [1, 1, 0, 0, 0, 0, 0x80, 0x44, 0, 0, 0x40, 0x44]);
+    memory.ptr64(0x4000 - 0x2c, 0x5000);
+    memory.ptr64(
+        0x5000
+            + offsets
+                .osu_game_online_chat_external_link_opener
+                .api_k_backing_field,
+        0x6000,
+    );
+    memory.ptr64(0x6000 + offsets.osu_game_online_api_apiaccess.game, 0x7000);
+    memory.ptr64(0x7000, 0x8000);
+    memory.i64(0x8000, offsets.effective_game_base_vtable() as i64);
+    let process = handle(memory, ProcessBitness::X64);
+    assert_eq!(
+        process
+            .scan_first(&LazerPattern::source_default().scaling_container_target_draw_size)
+            .unwrap(),
+        Some(0x4000),
+    );
+    let mut reader = LazerMemory::new(process, offsets, LazerPattern::source_default());
+    assert!(reader.resolve_game_base().unwrap());
+    assert_eq!(reader.game_base_address(), Some(0x7000));
+}
+
 fn stable_fixture_patterns() -> StablePatterns {
     StablePatterns {
         base_addr: 0x200,

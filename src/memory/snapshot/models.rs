@@ -198,6 +198,7 @@ pub struct RawRegularSnapshot {
     pub(super) tourney_chat: ConditionalRead<TourneyChat>,
     pub(super) tourney_user: ConditionalRead<TourneyUser>,
     pub(super) lazer_spectating: ConditionalRead<LazerSpectator>,
+    pub(super) room: ConditionalRead<crate::model::memory::LazerRoom>,
 }
 
 impl RawRegularSnapshot {
@@ -274,6 +275,11 @@ impl RawRegularSnapshot {
     #[must_use]
     pub fn lazer_spectating(&self) -> Option<&MemoryRead<LazerSpectator>> {
         self.lazer_spectating.as_ref()
+    }
+
+    #[must_use]
+    pub fn room(&self) -> Option<&MemoryRead<crate::model::memory::LazerRoom>> {
+        self.room.as_ref()
     }
 }
 

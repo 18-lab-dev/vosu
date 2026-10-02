@@ -46,23 +46,32 @@ fresh external checkouts. Production code depends only on the in-tree
 clean-room Rust implementation and its MIT forks; the historical LGPL oracle
 is not a build or runtime input.
 
-### Historical calculator oracle boundary
+### Calculator oracle provenance
 
-`tools/oracle/reference/lazer-calculator` remains untouched as historical LGPL parity evidence at revision `9a22c4c74f8e584fa64133a79a204dd045646bac`. It is not a production source, crate dependency, build input, or runtime dependency. The current workspace and `vosu-pp` package are dual-licensed under `MIT OR Apache-2.0`; this does not relicense the retained historical reference or any other separately licensed material.
+The current generated calculator fixture and oracle lock target `osu-pp-calculator` 0.6.1 (`323bc04198b256b5a00f4e63c5c4cbb506f43cc5`), as well as tosu `2359305a63f2aaebb201bc8d2eee58177f52590e`. Historical baseline evidence remains distinct: `tools/oracle/calculator-diff-manifest.json`, `tools/oracle/reference/lazer-calculator` at `9a22c4c74f8e584fa64133a79a204dd045646bac`, inputs under `tools/oracle/inputs/osu-97e94bab`, and `csharp-test-evidence` retain their historical provenance and are not the current fixture's generator or external test evidence. None of these oracle artifacts is a production source, crate dependency, build input, or runtime dependency. The current workspace and `vosu-pp` package are dual-licensed under `MIT OR Apache-2.0`; this does not relicense the retained historical reference or any other separately licensed material.
 
 ## osu!lazer memory-offset generation input
 
-- **Material:** `assets/offsets.json`, generated locally with `tools/lazer-offset-target` and `tools/lazer-offset-generator` from the official osu! AppImage's managed assemblies and exact Satori runtime overlay plus a locally built matching DAC. These historical asset-generation inputs are not distributed by vosu. The separate user-facing `-g` bundles ship the existing generator and owned target with their self-contained .NET runtime, not the game assemblies or DAC.
+- **Material:** `assets/offsets.json`, measured locally from the official osu! AppImage's managed assemblies using its bundled `Microsoft.NETCore.App 10.0.12` runtime. The current asset includes the `GameBaseVtable` signature derived by the owned target. This asset was not generated with the historical Satori overlay/DAC recipe below. Asset-generation inputs are not distributed by vosu. The separate user-facing `-g` bundles ship the existing generator and owned target with their self-contained .NET runtime, not game assemblies or a DAC.
 - **Copyright:** Copyright (c) ppy Pty Ltd <contact@ppy.sh>
 - **License:** MIT for the osu! source code; osu! bundled resources remain subject to their upstream terms
-- **osu! version:** `2026.726.0`
-- **Release tag:** `2026.726.0-lazer`
-- **Source revision:** [`5da71008b082d1a77e4bb301dc98886f1f24b895`](https://github.com/ppy/osu/tree/5da71008b082d1a77e4bb301dc98886f1f24b895)
-- **Release:** <https://github.com/ppy/osu/releases/tag/2026.726.0-lazer>
-- **Verification AppImage:** <https://github.com/ppy/osu/releases/download/2026.726.0-lazer/osu.AppImage>
-- **Verification AppImage SHA-256:** `3d3028609543dffd037b00652603f75928515100b6245bc929a9dc46fd3b29a0`
-- **Generated `assets/offsets.json` SHA-256:** `46b62194a297a9d9c1964837cc1f9d40aedfcd6c41673fc3d91a846aba7f20c0`
+- **osu! version:** `2026.921.0`
+- **Release tag:** `2026.921.0-lazer`
+- **Source revision:** [`aaa75b7c0a9f21d558ce84cd0ffac6c739bad8e7`](https://github.com/ppy/osu/tree/aaa75b7c0a9f21d558ce84cd0ffac6c739bad8e7)
+- **Release:** <https://github.com/ppy/osu/releases/tag/2026.921.0-lazer>
+- **Verification AppImage:** <https://github.com/ppy/osu/releases/download/2026.921.0-lazer/osu.AppImage>
+- **Verification AppImage SHA-256:** `dced9463b501009c95dbed891abd2f0acc2efb84ee4336f5b1cc3b7c04a5fc7d`
+- **Generated `assets/offsets.json` SHA-256:** `e4ee6be2e8880663eff36d2369af4b30411d87fe6a4711c9fbfe2cdef4f7de5a`
+- **Generation runtime:** AppImage-bundled `Microsoft.NETCore.App 10.0.12`
 - **Integrity manifest:** `assets/SHA256SUMS`
+
+### Historical 2026.726.0 asset reproduction and .NET 8 bundle pins
+
+The README's reproducible Satori/DAC recipe and the .NET 8.0.29 bundle package
+hashes below document the prior `2026.726.0` asset-generation evidence only;
+they are not provenance for the retained `2026.921.0` offsets. Cargo metadata
+labels these values as historical. They remain useful to reproduce that earlier
+asset, and do not imply that current offsets were generated with .NET 8 or Satori.
 
 ### Microsoft .NET runtime, host, and reference packs 8.0.29
 

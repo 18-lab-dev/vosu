@@ -277,7 +277,7 @@ pub struct Response {
     #[serde(rename = "mania_m1_000_000PP")]
     pub mania_m1_000_000_pp: i64,
     #[serde(rename = "simulatedPp")]
-    pub simulated_pp: i64,
+    pub simulated_pp: f64,
     pub plays: i64,
     pub tags: String,
     pub source: String,

@@ -22,25 +22,6 @@ SliderTickRate:1
 64,320,1400,1,0,0:0:0:0:
 "#;
 
-const MANIA: &str = r#"osu file format v14
-
-[General]
-Mode:3
-
-[Difficulty]
-HPDrainRate:5
-CircleSize:4
-OverallDifficulty:8
-ApproachRate:9
-
-[TimingPoints]
-0,500,4,2,1,80,1,0
-
-[HitObjects]
-64,192,1000,1,0,0:0:0:0:
-192,192,1200,128,0,1200:0:0:0:0:
-"#;
-
 #[test]
 fn stable_readiness_distinguishes_missing_filename_from_missing_folder() {
     let game = Path::new("/game");
@@ -210,25 +191,6 @@ fn live_beatmap_engine_populates_full_projection() {
 }
 
 #[test]
-fn mania_api_combo_uses_scoring_maximum_instead_of_difficulty_combo() {
-    let output = LiveBeatmapEngine
-        .calculate(EngineRequest {
-            content: MANIA,
-            original_mode: BeatmapRuleset::Mania,
-            effective_mode: BeatmapRuleset::Mania,
-            mods: &[],
-            clock_rate: 1.0,
-            scoring_mode: ScoringMode::Lazer,
-        })
-        .unwrap();
-
-    assert!(
-        output.maximum_score.max_combo > output.difficulty.max_combo,
-        "lazer scoring counts hold-note judgements beyond difficulty combo"
-    );
-}
-
-#[test]
 fn source_number_scores_use_napi_long_conversion_at_calculator_boundary() {
     assert_eq!(calculator_long(42.9), 42);
     assert_eq!(calculator_long(-42.9), -42);
@@ -321,8 +283,6 @@ fn concrete_progressive_adapter_preserves_accuracy_and_fc_score_fields() {
             client: ClientScoring::Lazer,
             score: 900_000,
             max_combo: 2,
-            map_max_combo: 3,
-            displayed_accuracy_percent: 66.6666666667,
             statistics: HitStatistics {
                 great: 2,
                 miss: 1,

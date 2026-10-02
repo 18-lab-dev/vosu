@@ -385,9 +385,7 @@ pub(super) fn build_stats(state: &RegularState, parsed: Option<&ParsedBeatmap>) 
             rhythm: truthy(attrs.and_then(|v| v.rhythm)),
             color: truthy(attrs.and_then(|v| v.color)),
             reading: truthy(attrs.and_then(|v| v.reading)),
-            hit_window: parsed
-                .and_then(|p| p.engine.hit_windows.great)
-                .map(fix_decimals),
+            hit_window: truthy(parsed.and_then(|p| p.engine.hit_windows.great)).map(fix_decimals),
             total: fix_decimals(attrs.map_or(0.0, |v| v.stars)),
         },
         ar: Ar {
@@ -421,7 +419,7 @@ pub(super) fn build_stats(state: &RegularState, parsed: Option<&ParsedBeatmap>) 
             holds,
             total: circles + sliders + spinners + holds,
         },
-        max_combo: parsed.map_or(0, |v| i64::from(v.engine.maximum_score.max_combo)),
+        max_combo: parsed.map_or(0, |v| i64::from(v.engine.difficulty.max_combo)),
     }
 }
 
@@ -432,12 +430,12 @@ pub(super) fn hit_window(parsed: Option<&ParsedBeatmap>) -> HitWindow {
     let windows = &parsed.engine.hit_windows;
 
     HitWindow {
-        miss: windows.miss.map(fix_decimals),
-        meh: windows.meh.map(fix_decimals),
-        ok: windows.ok.map(fix_decimals),
-        good: windows.good.map(fix_decimals),
-        great: windows.great.map(fix_decimals),
-        perfect: windows.perfect.map(fix_decimals),
+        miss: windows.miss,
+        meh: windows.meh,
+        ok: windows.ok,
+        good: windows.good,
+        great: windows.great,
+        perfect: windows.perfect,
     }
 }
 
@@ -469,8 +467,9 @@ pub(super) fn build_play<'a, V: From<&'a [f64]>>(
         score: gameplay.score,
         accuracy: gameplay.accuracy,
         health_bar: HealthBar {
-            normal: gameplay.player_hp / 2.0,
-            smooth: gameplay.player_hp_smooth / 2.0,
+            // Preserve upstream operation order: `/ 2` can differ by one ULP.
+            normal: (gameplay.player_hp / 200.0) * 100.0,
+            smooth: (gameplay.player_hp_smooth / 200.0) * 100.0,
         },
         hits: PlayHits::Normal(Hits {
             h300: s.great,

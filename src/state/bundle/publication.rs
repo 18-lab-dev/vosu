@@ -29,6 +29,7 @@ impl StateBundle {
             && state.user == self.user
             && state.lazer_multi_spectating == self.lazer_multi_spectating
             && state.ranked_play == self.ranked_play
+            && state.room == self.room
     }
 
     fn precise_matches_current(&self, state: &PreciseState) -> bool {
@@ -98,6 +99,7 @@ impl StateBundle {
             user: self.user.clone(),
             lazer_multi_spectating: self.lazer_multi_spectating.clone(),
             ranked_play: self.ranked_play.clone(),
+            room: self.room.clone(),
         }
     }
 

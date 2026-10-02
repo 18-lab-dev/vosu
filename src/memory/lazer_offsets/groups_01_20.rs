@@ -491,6 +491,8 @@ pub struct OffsetGroup19 {
     pub channel_id_k_backing_field: usize,
     #[serde(rename = "<MatchState>k__BackingField")]
     pub match_state_k_backing_field: usize,
+    #[serde(rename = "<Users>k__BackingField", default)]
+    pub users_k_backing_field: Option<usize>,
     #[serde(flatten)]
     pub extras: IndexMap<String, Value>,
 }

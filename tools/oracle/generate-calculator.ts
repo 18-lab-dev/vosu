@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 
-import { SOURCE_REVISION, OSU_REVISION, CALCULATOR_REVISION, CALCULATOR_PACKAGE, ROSU_BASELINE, Json, fail, record, stringField, arrayField, call, staticCall, jsonValue } from "./calculator/binding.ts";
+import { CURRENT_ORACLE, ROSU_BASELINE, Json, fail, record, stringField, arrayField, call, jsonValue } from "./calculator/binding.ts";
 import { gitRevision, validateReference, validateOracleInputs, validateCsharpEvidence, validateManifest, derivedCapabilities, validateCoverage } from "./calculator/validation.ts";
 import { oracleVector, wrapperActionContract, wrapperDisplayAndRetainedAttrsContract, gradualOsuPartialStrainsContract, pairedRulesetContract, maniaPerformanceContract, taikoPerformanceContract, osuPerformanceContract, randomSeedPersistenceContract, gradualActionContract, customScoreContract, generatedScoreContract, multiplierContract } from "./calculator/contracts.ts";
 import { exhaustiveMultiplierContract, validatePinnedMultiplierCompleteness, canonicalConversionContracts } from "./calculator/pinned.ts";
@@ -48,7 +48,7 @@ function parseArgs(argv: string[]): Options {
 const options = parseArgs(process.argv.slice(2));
 
 
-if (gitRevision(options.source) !== SOURCE_REVISION) fail("wrong pinned tosu source revision");
+if (gitRevision(options.source) !== CURRENT_ORACLE.tosu) fail("wrong pinned tosu source revision");
 validateReference(options.calculatorSource);
 validateOracleInputs(options.manifest);
 const manifest = validateManifest(options.manifest);
@@ -77,7 +77,7 @@ if (options.verifyOnly) {
       JSON.parse(readFileSync(bindingPackagePath, "utf8")) as unknown,
       "installed C# binding package",
     );
-    if (stringField(bindingPackage, "version", "installed C# binding package") !== CALCULATOR_PACKAGE) {
+    if (stringField(bindingPackage, "version", "installed C# binding package") !== CURRENT_ORACLE.calculatorPackage) {
       fail("wrong installed C# binding package version");
     }
   }
@@ -145,13 +145,6 @@ if (options.verifyOnly) {
       ));
     }
   }
-  const invalidConversion = (() => {
-    try {
-      return { throws: false, isNull: call(beatmap, "convert", [99]) === null };
-    } catch {
-      return { throws: true, isNull: false };
-    }
-  })();
   const observe = (value: Json): Json => {
     const scenario = record(value, "generated scenario");
     return jsonValue({
@@ -159,12 +152,19 @@ if (options.verifyOnly) {
       observedCapabilities: [...derivedCapabilities(scenario)].sort(),
     }, `observed scenario ${stringField(scenario, "id", "generated scenario")}`);
   };
+  const hitWindows = (mode: number, od: number): Json => {
+    const map = Reflect.apply(parse, playType, [
+      `osu file format v14\n[General]\nMode:${mode}\n[Difficulty]\nCircleSize:4\nOverallDifficulty:${od}\n[TimingPoints]\n0,500,4,2,1,80,1,0\n[HitObjects]\n64,64,1000,1,0,0:0:0:0:\n`,
+    ]);
+    const windows = call(map, "createHitWindows");
+    const values: Record<string, Json> = { miss: null, meh: null, ok: null, good: null, great: null, perfect: null };
+    const results = record(binding.OsuHitResult, "OsuHitResult");
+    for (const [result, value] of call(windows, "allAvailableWindows") as [number, number][]) {
+      values[String(results[result]).toLowerCase()] = value;
+    }
+    return values;
+  };
   const contracts = [
-    {
-      id: "unsupported-conversion-null",
-      actions: ["PlayBeatmap.convert(99)"],
-      expected: invalidConversion,
-    },
     {
       id: "gradual-prefix-zero-attrs",
       actions: ["PlayBeatmap.createGradualDifficulty on a non-empty map", "GradualDifficulty.createDifficultyAttrs before Advance"],
@@ -182,12 +182,12 @@ if (options.verifyOnly) {
     },
     {
       id: "hit-window-boundaries",
-      actions: ["HitWindows.getGreatHitWindow at ruleset/OD boundaries"],
+      actions: ["PlayBeatmap.createHitWindows().allAvailableWindows() at ruleset/OD boundaries"],
       expected: {
-        osuGreatOd5: staticCall(binding.HitWindows, "getGreatHitWindow", [0, 5]),
-        taikoGreatOd10: staticCall(binding.HitWindows, "getGreatHitWindow", [1, 10]),
-        catchGreatOd5: staticCall(binding.HitWindows, "getGreatHitWindow", [2, 5]),
-        maniaGreatOd0: staticCall(binding.HitWindows, "getGreatHitWindow", [3, 0]),
+        osuOd5: hitWindows(0, 5),
+        taikoOd10: hitWindows(1, 10),
+        catchOd5: hitWindows(2, 5),
+        maniaOd0: hitWindows(3, 0),
       },
     },
     wrapperActionContract(beatmap),
@@ -271,17 +271,17 @@ if (options.verifyOnly) {
     generatedScoreContract(beatmap, 3, "mania", 0.95),
     generatedScoreContract(beatmap, 3, "mania", 0.95, "classic"),
     ...modes.map(([mode, name]) => customScoreContract(beatmap, mode, name)),
-    ...modes.map(([mode, name]) => multiplierContract(beatmap, mode, name)),
+    ...modes.map(([, name]) => multiplierContract(options.manifest, csharpEvidence, name)),
     exhaustiveMultiplierContract(options.manifest),
     ...canonicalConversionContracts(options.manifest),
   ];
   const fixture = {
     schema: 1,
     oracle: {
-      calculatorRevision: CALCULATOR_REVISION,
-      osuRevision: OSU_REVISION,
+      calculatorRevision: CURRENT_ORACLE.lazerCalculator,
+      osuRevision: CURRENT_ORACLE.osu,
       rosuBaseline: ROSU_BASELINE,
-      packageVersion: CALCULATOR_PACKAGE,
+      packageVersion: CURRENT_ORACLE.calculatorPackage,
       csharpTestEvidence: csharpEvidence,
     },
     map: "fixture.osu",

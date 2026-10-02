@@ -52,6 +52,7 @@ fn regular() -> RegularState {
         user: UserState::default(),
         lazer_multi_spectating: LazerMultiSpectatingState::default(),
         ranked_play: RankedPlayState::default(),
+        room: Default::default(),
     }
 }
 

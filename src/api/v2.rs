@@ -102,6 +102,19 @@ fn build_internal<'a, V: From<&'a [f64]>>(
             skin_folder: state.global.skin_folder.clone(),
         },
         tourney: build_tourney(snapshot, source, state, status)?,
+        room: state.room.info.as_ref().map(|room| Room {
+            room_id: room.room_id,
+            users: room
+                .users
+                .iter()
+                .map(|user| RoomUser {
+                    id: user.id,
+                    username: user.username.clone(),
+                    country_code: user.country_code,
+                    avatar_url: user.avatar_url.clone(),
+                })
+                .collect(),
+        }),
     })
 }
 

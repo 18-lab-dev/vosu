@@ -61,6 +61,22 @@ pub struct User {
     pub raw_login_status: i64,
     pub matchmaking: Option<MatchmakingStats>,
 }
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LazerRoomUser {
+    pub id: i64,
+    pub username: String,
+    #[serde(rename = "countryCode")]
+    pub country_code: i64,
+    #[serde(rename = "avatarUrl", skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LazerRoom {
+    #[serde(rename = "roomID")]
+    pub room_id: i64,
+    pub users: Vec<LazerRoomUser>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SettingsPointers {

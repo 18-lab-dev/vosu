@@ -641,7 +641,7 @@ export function generatedScoreContract(
   }, `${name} generated score ${target} ${variant}`);
 }
 
-export function multiplierContract(_playBeatmap: UnknownRecord, _mode: number, name: string): Json {
+export function multiplierContract(manifestPath: string, csharpEvidence: UnknownRecord, name: string): Json {
   const cases: Record<string, { source: string; mods: UnknownRecord[]; expected: number }> = {
     osu: {
       source: "score-multiplier/OsuScoreMultiplierTest.cs:206",
@@ -671,7 +671,7 @@ export function multiplierContract(_playBeatmap: UnknownRecord, _mode: number, n
     .find((test) => stringField(test, "project", "C# test evidence test").includes(`.${name[0].toUpperCase()}${name.slice(1)}.Tests`));
   if (evidence === undefined) fail(`missing executed C# multiplier suite for ${name}`);
   const sourceFile = oracle.source.replace(/:\d+$/, "");
-  const sourcePath = join(dirname(options.manifest), "inputs/osu-97e94bab", sourceFile);
+  const sourcePath = join(dirname(manifestPath), "inputs/osu-97e94bab", sourceFile);
   const sourceSha256 = createHash("sha256").update(readFileSync(sourcePath)).digest("hex");
   return jsonValue({
     id: `score-multiplier-${name}`, kind: "multiplier-source-case",

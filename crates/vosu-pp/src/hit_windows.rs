@@ -126,7 +126,15 @@ pub fn hit_window_for_map(
 fn map_windows(map: &ParsedBeatmap, speed: bool) -> Result<HitWindows, Error> {
     let mode = map.state.mode;
     if mode == Ruleset::Catch {
-        return Ok(HitWindows::default());
+        // DrawableCatchRuleset's EmptyHitWindows reports every judgement at zero.
+        return Ok(HitWindows {
+            miss: Some(0.0),
+            meh: Some(0.0),
+            ok: Some(0.0),
+            good: Some(0.0),
+            great: Some(0.0),
+            perfect: Some(0.0),
+        });
     }
 
     let mut builder = map.state.playable.attributes();

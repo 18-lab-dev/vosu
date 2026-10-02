@@ -4,6 +4,9 @@
 mod bundle;
 mod context;
 mod readers;
+#[cfg(windows)]
+#[path = "state/windows_timer.rs"]
+mod windows_timer;
 mod worker;
 
 pub use bundle::*;

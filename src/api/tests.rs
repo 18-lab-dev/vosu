@@ -35,6 +35,7 @@ fn regular(play_time: f64) -> Arc<RegularState> {
         user: UserState::default(),
         lazer_multi_spectating: LazerMultiSpectatingState::default(),
         ranked_play: RankedPlayState::default(),
+        room: Default::default(),
     })
 }
 
@@ -434,6 +435,67 @@ fn encode_schema(schema: ApiSchema, snapshot: &CombinedSnapshot) -> Result<Bytes
         ApiSchema::V2 => v2::encode(snapshot),
         ApiSchema::StreamCompanion => sc::encode(snapshot),
         ApiSchema::V2Precise => precise::encode(snapshot),
+    }
+}
+
+#[test]
+fn mania_beatmap_combo_preserves_hold_ticks_in_every_regular_api() {
+    use crate::calculation::beatmap::{BeatmapCache, BeatmapInput, ModSet, Ruleset, ScoringMode};
+    use crate::calculation::state_backend::LiveBeatmapEngine;
+
+    let content = concat!(
+        "osu file format v14\n[General]\nMode:3\n",
+        "[Difficulty]\nHPDrainRate:5\nCircleSize:4\nOverallDifficulty:5\n",
+        "ApproachRate:5\nSliderMultiplier:1.4\nSliderTickRate:1\n",
+        "[TimingPoints]\n0,500,4,2,1,80,1,0\n",
+        "[HitObjects]\n",
+        "64,192,1000,1,0,0:0:0:0:\n",
+        "192,192,1500,128,0,2000:0:0:0:0:\n",
+        "320,192,2500,1,0,0:0:0:0:\n",
+    );
+    let mods = ModSet::new("combo-test", Vec::new(), 1.0).unwrap();
+    for (source, scoring_mode) in [
+        (ClientType::Stable, ScoringMode::Stable),
+        (ClientType::Lazer, ScoringMode::Lazer),
+    ] {
+        let parsed = BeatmapCache::new(LiveBeatmapEngine)
+            .load(
+                BeatmapInput::Content {
+                    content,
+                    identity_path: None,
+                },
+                Ruleset::Mania,
+                &mods,
+                scoring_mode,
+            )
+            .unwrap();
+        let mut regular = regular(0.0);
+        let mutable = Arc::get_mut(&mut regular).unwrap();
+        mutable.menu.gamemode = Some(3);
+        mutable.beatmap.parsed = Some(parsed);
+        let state = Arc::new(StateBundleSnapshot {
+            source,
+            generation: 1,
+            reset_epoch: 0,
+            regular,
+            precise: precise(0.0),
+        });
+        let snapshot = CombinedSnapshot::from_manager(manager(42, state));
+        for (schema, pointer) in [
+            (ApiSchema::V1, "/menu/bm/stats/maxCombo"),
+            (ApiSchema::V2, "/beatmap/stats/maxCombo"),
+            (ApiSchema::StreamCompanion, "/maxCombo"),
+        ] {
+            let json: serde_json::Value =
+                serde_json::from_slice(&encode_schema(schema, &snapshot).unwrap()).unwrap();
+            // Upstream ManiaDifficultyCalculator uses 1 + floor(duration / 100)
+            // for a hold: two normal notes + one head + five 100 ms increments.
+            assert_eq!(
+                json.pointer(pointer),
+                Some(&serde_json::json!(8)),
+                "{source:?} {schema:?}: preserve difficulty combo, not hit-result count"
+            );
+        }
     }
 }
 

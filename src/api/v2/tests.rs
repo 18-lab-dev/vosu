@@ -8,6 +8,7 @@ use crate::calculation::beatmap::{
 };
 use crate::calculation::state_backend::LiveBeatmapEngine;
 use crate::instance::InstanceSettings;
+use crate::model::memory::{LazerRoom, LazerRoomUser};
 use crate::model::states::KeypressButton;
 use crate::state::{
     RegularState, StateBundle, StateBundleSnapshot, StateCalculationBackend,
@@ -112,6 +113,29 @@ fn subscription_document_matches_decoded_encoding_for_ready_and_not_ready_snapsh
     )));
     assert!(matches!(encode(&not_ready), Err(ApiError::NotReady)));
     assert!(matches!(document(&not_ready), Err(ApiError::NotReady)));
+}
+
+#[test]
+fn health_percentage_preserves_upstream_rounding() {
+    let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
+    let mut regular = (*base.regular).clone();
+    regular.gameplay.player_hp = 200.0;
+    // Frozen stable pause value: upstream divides by 200 before multiplying by
+    // 100. Dividing by two instead rounds this health value one ULP higher.
+    regular.gameplay.player_hp_smooth = 1.638_020_352_122_925_3e-37;
+    let state = with_regular(&base, regular);
+    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+        2,
+        Some(10),
+        true,
+        ApiRuntimeSettings::default(),
+        [manager_entry(10, state, false, None)],
+    )));
+    let response = build(&snapshot).unwrap();
+    assert_eq!(
+        json(&response.play.health_bar),
+        r#"{"normal":100,"smooth":8.190101760614626e-38}"#
+    );
 }
 
 #[test]
@@ -770,4 +794,45 @@ fn lazer_lobby_without_spectator_data_omits_tourney() {
     assert!(response.tourney.is_none());
     assert!(!json(&response).contains("\"tourney\":"));
     assert_eq!(zero_stats(HitWindow::default()).stars.aim, Some(0.0));
+}
+
+#[test]
+fn lazer_room_serializes_users_and_omits_when_absent() {
+    let base = StateBundle::new(ClientType::Lazer, 1, Arc::new(NeverCalculate)).snapshot();
+    let mut regular = (*base.regular).clone();
+    regular.room.info = Some(LazerRoom {
+        room_id: 42,
+        users: vec![LazerRoomUser {
+            id: 7,
+            username: "Player".into(),
+            country_code: 225,
+            avatar_url: Some("https://osu.ppy.sh/avatar/7".into()),
+        }],
+    });
+    let state = Arc::new(StateBundleSnapshot {
+        source: base.source,
+        generation: base.generation,
+        reset_epoch: base.reset_epoch,
+        regular: Arc::new(regular),
+        precise: Arc::clone(&base.precise),
+    });
+    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+        1,
+        Some(10),
+        true,
+        ApiRuntimeSettings::default(),
+        [manager_entry(10, state, false, None)],
+    )));
+    let value: Value = serde_json::from_slice(&encode(&snapshot).unwrap()).unwrap();
+    assert_eq!(value["room"]["roomID"], 42);
+    assert_eq!(value["room"]["users"][0]["username"], "Player");
+    assert_eq!(value["room"]["users"][0]["countryCode"], 225);
+    assert_eq!(
+        value["room"]["users"][0]["avatarUrl"],
+        "https://osu.ppy.sh/avatar/7"
+    );
+
+    let empty = default_snapshot(ClientType::Lazer);
+    let empty: Value = serde_json::from_slice(&encode(&empty).unwrap()).unwrap();
+    assert!(empty.get("room").is_none());
 }

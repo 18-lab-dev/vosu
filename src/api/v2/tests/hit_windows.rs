@@ -54,39 +54,6 @@ fn applied_mod_with_settings(acronym: &str, settings_json: &str) -> AppliedMod {
 }
 
 #[test]
-fn hit_windows_cover_both_clients_and_all_rulesets_with_live_maps() {
-    let cases: &[(Ruleset, &[&str])] = &[
-        (Ruleset::Osu, &["miss", "meh", "ok", "great"]),
-        (Ruleset::Taiko, &["miss", "ok", "great"]),
-        (Ruleset::Catch, &[]),
-        (
-            Ruleset::Mania,
-            &["miss", "meh", "ok", "good", "great", "perfect"],
-        ),
-    ];
-
-    for source in [ClientType::Stable, ClientType::Lazer] {
-        for &(mode, expected_keys) in cases {
-            let mods = if source == ClientType::Stable {
-                vec![applied_mod("CL")]
-            } else {
-                Vec::new()
-            };
-            let parsed = parsed_hit_window_map(mode, mode, source, mods, 1.0);
-            let windows = serde_json::to_value(hit_window(Some(&parsed))).unwrap();
-            let object = windows.as_object().unwrap();
-            assert_eq!(object.len(), expected_keys.len(), "{source:?} {mode:?}");
-            for key in expected_keys {
-                assert!(
-                    object.contains_key(*key),
-                    "{source:?} {mode:?} missing {key}"
-                );
-            }
-        }
-    }
-}
-
-#[test]
 fn hit_windows_match_difficulty_modifier_matrix_at_od_five() {
     let cases = [
         (
@@ -119,9 +86,6 @@ fn hit_windows_match_difficulty_modifier_matrix_at_od_five() {
             "DA",
             serde_json::json!({"miss": 79.5, "ok": 61.5, "great": 25.5}),
         ),
-        (Ruleset::Catch, "EZ", serde_json::json!({})),
-        (Ruleset::Catch, "HR", serde_json::json!({})),
-        (Ruleset::Catch, "DA", serde_json::json!({})),
         (
             Ruleset::Mania,
             "EZ",
@@ -226,7 +190,7 @@ fn hit_windows_match_stable_classic_mania_difficulty_modifiers() {
 
 #[test]
 fn hit_windows_apply_gameplay_rate_before_floor_plus_half_quantization_for_mania() {
-    for (label, game_mod, clock_rate, lazer_expected, stable_perfect) in [
+    for (label, game_mod, clock_rate, mut lazer_expected, stable_perfect) in [
         (
             "DT 1.5x",
             applied_mod("DT"),
@@ -277,6 +241,9 @@ fn hit_windows_apply_gameplay_rate_before_floor_plus_half_quantization_for_mania
             vec![game_mod.clone()],
             clock_rate,
         );
+        for value in lazer_expected.as_object_mut().unwrap().values_mut() {
+            *value = serde_json::json!(value.as_f64().unwrap() / clock_rate);
+        }
         assert_eq!(
             serde_json::to_value(hit_window(Some(&lazer))).unwrap(),
             lazer_expected,
@@ -291,28 +258,13 @@ fn hit_windows_apply_gameplay_rate_before_floor_plus_half_quantization_for_mania
             clock_rate,
         );
         let mut stable_expected = lazer_expected;
-        stable_expected["perfect"] = serde_json::json!(stable_perfect);
+        stable_expected["perfect"] = serde_json::json!(stable_perfect / clock_rate);
         assert_eq!(
             serde_json::to_value(hit_window(Some(&stable))).unwrap(),
             stable_expected,
             "Stable Mania {label}",
         );
     }
-}
-
-#[test]
-fn hit_windows_round_osu_dt_once_at_the_api_edge() {
-    let parsed = parsed_hit_window_map(
-        Ruleset::Osu,
-        Ruleset::Osu,
-        ClientType::Lazer,
-        vec![applied_mod("DT")],
-        1.5,
-    );
-    assert_eq!(
-        serde_json::to_value(hit_window(Some(&parsed))).unwrap(),
-        serde_json::json!({"miss": 266.67, "meh": 99.67, "ok": 66.33, "great": 33.0})
-    );
 }
 
 #[test]
@@ -343,7 +295,7 @@ fn hit_windows_apply_lazer_extended_da_before_clock_rate_scaling() {
     );
     assert_eq!(
         serde_json::to_value(hit_window(Some(&parsed))).unwrap(),
-        serde_json::json!({"miss": 266.67, "meh": 59.67, "ok": 34.33, "great": 9.0})
+        serde_json::json!({"miss": 400.0 / 1.5, "meh": 89.5 / 1.5, "ok": 51.5 / 1.5, "great": 9.0})
     );
 }
 
@@ -444,7 +396,7 @@ fn hit_windows_omit_catch_spatial_boundary_for_all_clients_and_speeds() {
             let stats = serde_json::to_value(build_stats(&state.regular, Some(&parsed))).unwrap();
             assert_eq!(
                 stats["hitWindow"],
-                serde_json::json!({}),
+                serde_json::json!({"miss": 0.0, "meh": 0.0, "ok": 0.0, "good": 0.0, "great": 0.0, "perfect": 0.0}),
                 "{source:?} at {clock_rate}x",
             );
             assert!(

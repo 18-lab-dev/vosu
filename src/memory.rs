@@ -15,9 +15,9 @@ pub mod stable;
 pub use stable::{StableMemory, StablePatterns};
 
 use crate::model::memory::{
-    AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerSpectator,
-    Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney, TourneyChat,
-    TourneyUser, User,
+    AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerRoom,
+    LazerSpectator, Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney,
+    TourneyChat, TourneyUser, User,
 };
 use crate::process::{MemoryError, MemoryRead, ReadStatus};
 
@@ -44,6 +44,7 @@ pub trait MemoryReader: Send {
     fn tourney_user(&mut self) -> MemoryRead<TourneyUser>;
     fn leaderboard(&mut self, mode: i64) -> MemoryRead<Leaderboard>;
     fn ranked_play(&mut self) -> MemoryRead<RankedPlay>;
+    fn room(&mut self) -> MemoryRead<LazerRoom>;
     fn spectating_data(&mut self, show_mp_commands: bool) -> MemoryRead<LazerSpectator>;
     fn settings(&mut self) -> MemoryRead<Settings>;
 }

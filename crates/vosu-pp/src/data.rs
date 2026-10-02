@@ -29,6 +29,10 @@ pub struct DifficultyAttrsData {
     pub speed_top_weighted_slider_factor: f64,
     pub aim_difficult_strain_count: f64,
     pub speed_difficult_strain_count: f64,
+    #[serde(default)]
+    pub nested_score_per_object: f64,
+    #[serde(default)]
+    pub maximum_legacy_combo_score: f64,
     pub n_circles: i32,
     pub n_sliders: i32,
     pub n_spinners: i32,
@@ -78,6 +82,8 @@ impl DifficultyAttrsData {
                 value.aim_difficult_strain_count = a.aim_difficult_strain_count;
                 value.speed_difficult_strain_count = a.speed_difficult_strain_count;
                 value.n_circles = a.n_circles as i32;
+                value.nested_score_per_object = a.nested_score_per_object;
+                value.maximum_legacy_combo_score = a.maximum_legacy_combo_score;
                 value.n_sliders = a.n_sliders as i32;
                 value.n_spinners = a.n_spinners as i32;
                 value.n_large_ticks = a.n_large_ticks as i32;

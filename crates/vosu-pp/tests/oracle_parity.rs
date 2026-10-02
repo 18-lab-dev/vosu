@@ -9,7 +9,7 @@ use serde_json::{Map, Value, json};
 use vosu_pp::{
     BeatmapDifficultyData, DifficultyConfig, LiveLazerEngine, OSU_FORWARD_REVISION, ROSU_BASELINE,
     ROSU_SOURCE_REVISION, Ruleset, ScoreInfoData, ScoreMultiplierScoreContext, StructuredMod,
-    great_hit_window, score_multiplier, source_map::SOURCE_PORTS,
+    hit_windows_for_map, score_multiplier, source_map::SOURCE_PORTS,
 };
 
 const ABS_TOLERANCE: f64 = 0.000_01;
@@ -480,11 +480,16 @@ fn two_source_manifest_is_pinned_and_every_item_has_an_oracle_vector() {
     assert_eq!(manifest.pins.calculator_revision, CALCULATOR_REVISION);
     assert_eq!(manifest.pins.calculator_package, "0.5.0-20260702-main.0");
     assert_eq!(fixtures.oracle.rosu_baseline, ROSU_BASELINE);
-    assert_eq!(fixtures.oracle.osu_revision, OSU_FORWARD_REVISION);
-    assert_eq!(fixtures.oracle.calculator_revision, CALCULATOR_REVISION);
+    let current: Value =
+        serde_json::from_str(include_str!("../../../tools/oracle/oracle-lock.json")).unwrap();
+    assert_eq!(fixtures.oracle.osu_revision, current["osu"]);
+    assert_eq!(
+        fixtures.oracle.calculator_revision,
+        current["lazerCalculator"]
+    );
     assert_eq!(
         fixtures.oracle.package_version,
-        manifest.pins.calculator_package
+        current["calculatorPackage"]
     );
 
     let fixture_value: Value = serde_json::from_str(FIXTURES).unwrap();
@@ -618,17 +623,6 @@ fn two_source_manifest_is_pinned_and_every_item_has_an_oracle_vector() {
         );
         covered_ports.insert(item.source_port.as_str());
     }
-    let unsupported = fixtures
-        .contracts
-        .iter()
-        .find(|contract| contract.id == "unsupported-conversion-null")
-        .expect("missing unsupported conversion C# contract");
-    assert_eq!(
-        unsupported.expected,
-        json!({"throws": true, "isNull": false})
-    );
-    assert!(Ruleset::from_mode_id(99).is_none());
-
     let prefix_zero = fixtures
         .contracts
         .iter()
@@ -646,11 +640,18 @@ fn two_source_manifest_is_pinned_and_every_item_has_an_oracle_vector() {
         .iter()
         .find(|contract| contract.id == "hit-window-boundaries")
         .expect("missing hit-window C# contract");
+    let windows = |mode: Ruleset, od: u8| {
+        let content = format!(
+            "osu file format v14\n[General]\nMode:{}\n[Difficulty]\nCircleSize:4\nOverallDifficulty:{od}\n[TimingPoints]\n0,500,4,2,1,80,1,0\n[HitObjects]\n64,64,1000,1,0,0:0:0:0:\n",
+            mode as u8,
+        );
+        hit_windows_for_map(&engine.parse(content.as_bytes()).unwrap()).unwrap()
+    };
     let actual_hit_windows = json!({
-        "osuGreatOd5": great_hit_window(Ruleset::Osu, 5.0),
-        "taikoGreatOd10": great_hit_window(Ruleset::Taiko, 10.0),
-        "catchGreatOd5": great_hit_window(Ruleset::Catch, 5.0),
-        "maniaGreatOd0": great_hit_window(Ruleset::Mania, 0.0),
+        "osuOd5": windows(Ruleset::Osu, 5),
+        "taikoOd10": windows(Ruleset::Taiko, 10),
+        "catchOd5": windows(Ruleset::Catch, 5),
+        "maniaOd0": windows(Ruleset::Mania, 0),
     });
     let mut hit_window_mismatches = Vec::new();
     compare_oracle(

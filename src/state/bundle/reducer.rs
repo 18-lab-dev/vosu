@@ -35,6 +35,7 @@ impl StateBundle {
             accepted_precise_sequence: 0,
             latest_precise_global_sequence: 0,
             ranked_play: RankedPlayState::default(),
+            room: RoomState::default(),
             previous_state_key: String::new(),
             previous_mp3_length: None,
             previous_time: 0.0,
@@ -302,6 +303,7 @@ impl StateBundle {
                     ),
                 };
                 self.global.previous_play_time = raw_global.play_time;
+                self.global.game_time = raw_global.game_time;
                 self.global.is_watching_replay = raw_global.is_watching_replay;
                 self.global.is_replay_ui_hidden = raw_global.is_replay_ui_hidden;
                 self.global.is_multi_spectating = raw_global.is_multi_spectating;
@@ -362,6 +364,7 @@ impl StateBundle {
         }
         if self.source == ClientType::Lazer {
             self.ranked_play.info = snapshot.ranked_play().and_then(ready).cloned();
+            self.room.info = snapshot.room().and_then(ready).cloned();
         }
         if let Some(settings) = snapshot.settings().and_then(ready) {
             self.settings.apply(settings);
@@ -413,41 +416,38 @@ impl StateBundle {
                     self.gameplay.reset_quick();
                 }
                 self.previous_time = self.global.play_time;
+                if let Some(score) = snapshot.gameplay().and_then(ready) {
+                    if !self.gameplay.is_default_state && score.mode != self.gameplay.mode {
+                        self.mark_calculation_reset();
+                        self.reset_precise_epoch();
+                        self.gameplay.reset(false, self.source);
+                    }
+                    let previous_mode = self.gameplay.mode;
+                    let previous_combo = self.gameplay.combo;
+                    let previous_unstable_rate = self.gameplay.unstable_rate;
+                    self.gameplay.apply_score(
+                        score,
+                        self.source,
+                        self.menu.object_count.unwrap_or(0),
+                    );
+                    self.precise_dirty |= previous_mode != self.gameplay.mode
+                        || previous_unstable_rate.to_bits()
+                            != self.gameplay.unstable_rate.to_bits();
+                    if self.source == ClientType::Lazer && previous_combo > self.gameplay.combo {
+                        self.gameplay.reset_quick();
+                    }
+                }
+                if let Some((visible, player, scores)) = snapshot.leaderboard().and_then(ready) {
+                    self.gameplay.leaderboard_visible = *visible;
+                    self.gameplay.leaderboard_player = player
+                        .as_ref()
+                        .map(LeaderboardPlayerState::from)
+                        .unwrap_or_default();
+                    self.gameplay.leaderboard_scores = scores.clone();
+                }
                 if self.source == ClientType::Lazer && self.global.paused {
-                    self.gameplay
-                        .reset_paused_regular(snapshot.gameplay().and_then(ready));
-                } else {
-                    if let Some(score) = snapshot.gameplay().and_then(ready) {
-                        if !self.gameplay.is_default_state && score.mode != self.gameplay.mode {
-                            self.mark_calculation_reset();
-                            self.reset_precise_epoch();
-                            self.gameplay.reset(false, self.source);
-                        }
-                        let previous_mode = self.gameplay.mode;
-                        let previous_combo = self.gameplay.combo;
-                        let previous_unstable_rate = self.gameplay.unstable_rate;
-                        self.gameplay.apply_score(
-                            score,
-                            self.source,
-                            self.menu.object_count.unwrap_or(0),
-                        );
-                        self.precise_dirty |= previous_mode != self.gameplay.mode
-                            || previous_unstable_rate.to_bits()
-                                != self.gameplay.unstable_rate.to_bits();
-                        if self.source == ClientType::Lazer && previous_combo > self.gameplay.combo
-                        {
-                            self.gameplay.reset_quick();
-                        }
-                    }
-                    if let Some((visible, player, scores)) = snapshot.leaderboard().and_then(ready)
-                    {
-                        self.gameplay.leaderboard_visible = *visible;
-                        self.gameplay.leaderboard_player = player
-                            .as_ref()
-                            .map(LeaderboardPlayerState::from)
-                            .unwrap_or_default();
-                        self.gameplay.leaderboard_scores = scores.clone();
-                    }
+                    // Precise samples may precede the first readable score; keep menu reset armed.
+                    self.gameplay.is_default_state = false;
                 }
             }
             Some(GameState::Tourney) if self.source == ClientType::Stable => {
@@ -760,6 +760,8 @@ impl StateBundle {
                     }
                 }
                 self.gameplay.total_hit_errors += errors.errors.all.iter().sum::<f64>();
+                self.gameplay.total_hit_error_squares +=
+                    errors.errors.all.iter().map(|hit| hit * hit).sum::<f64>();
                 self.gameplay
                     .hit_errors
                     .all

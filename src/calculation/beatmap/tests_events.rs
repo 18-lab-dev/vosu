@@ -227,6 +227,8 @@ ApproachRate:9
             BeatmapTimes {
                 preview: -1,
                 first_object: 0,
+                first_visible_object: 0.0,
+                last_visible_object: 0.0,
                 full: 0.0
             }
         );

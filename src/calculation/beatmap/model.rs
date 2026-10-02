@@ -284,6 +284,8 @@ pub struct BpmSummary {
 pub struct BeatmapTimes {
     pub preview: i32,
     pub first_object: i32,
+    pub first_visible_object: f64,
+    pub last_visible_object: f64,
     pub full: f64,
 }
 
@@ -417,28 +419,47 @@ impl ParsedBeatmap {
         {
             return empty();
         }
-        let first = f64::from(self.times.first_object) / clock_rate;
-        let last = first + primary.values.len() as f64 * primary.section_length;
-        let left_offset = (first / primary.section_length).floor() as i64;
-        let left = left_offset.max(0) as usize;
-        let right = mp3_length
-            .filter(|length| length.is_finite())
-            .map_or(0, |length| {
-                let audio = length / clock_rate;
-                if audio >= last {
-                    ((audio - last) / primary.section_length).ceil() as usize
-                } else {
-                    0
-                }
-            });
+        let start = f64::from(self.times.first_object) / clock_rate;
+        let end = self.times.full / clock_rate;
+        let first = (self.times.first_visible_object + 0.5).floor() / clock_rate;
+        let last = (self.times.last_visible_object + 0.5).floor() / clock_rate;
+        let section = primary.section_length;
+        let empty_left = (start / section).floor();
+        let object_left = ((first - start) / section).floor();
+        let audio = mp3_length.unwrap_or(0.0) / clock_rate;
+        let (object_right, empty_right) = if audio >= end {
+            (
+                ((end - last) / section).ceil(),
+                ((audio - end) / section).ceil(),
+            )
+        } else {
+            (0.0, 0.0)
+        };
+        // Negative array lengths are rejected by the source graph calculation.
+        if [empty_left, object_left, object_right, empty_right]
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0)
+        {
+            return empty();
+        }
+        let (empty_left, object_left, object_right, empty_right) = (
+            empty_left as usize,
+            object_left as usize,
+            object_right as usize,
+            empty_right as usize,
+        );
+        let left = empty_left + object_left;
+        let right = object_right + empty_right;
         let mut series = Vec::with_capacity(strain_names(self.effective_mode).len());
         for name in strain_names(self.effective_mode) {
             let mut data = Vec::new();
             if let Some(strain) = self.engine.strains.get(*name) {
                 data.reserve(left + strain.values.len() + right);
-                data.resize(left, -100.0);
+                data.resize(empty_left, -100.0);
+                data.resize(left, -50.0);
                 data.extend_from_slice(&strain.values);
-                data.resize(data.len() + right, -100.0);
+                data.resize(data.len() + object_right, -50.0);
+                data.resize(data.len() + empty_right, -100.0);
             }
             series.push(GraphSeries {
                 name: (*name).to_owned(),
@@ -449,10 +470,7 @@ impl ParsedBeatmap {
         primary_data.resize(left, 0.0);
         primary_data.extend_from_slice(&primary.values);
         primary_data.resize(primary_data.len() + right, 0.0);
-        let total = (series.first().map_or(0, |series| series.data.len()) as i64
-            - left_offset
-            - right as i64)
-            .max(0) as usize;
+        let total = primary.values.len();
         let mut x_axis = Vec::with_capacity(left + total + right);
         x_axis.extend((0..left).map(|i| i as f64 * primary.section_length));
         x_axis.extend((0..total).map(|i| first + i as f64 * primary.section_length));
@@ -629,6 +647,9 @@ pub(super) fn parse_map<E: BeatmapEngine>(
         times: BeatmapTimes {
             preview,
             first_object: first,
+            first_visible_object: source_times
+                .map_or(f64::from(first), |times| times.first_visible),
+            last_visible_object: source_times.map_or(full_raw, |times| times.last_visible),
             full,
         },
         bpm,
