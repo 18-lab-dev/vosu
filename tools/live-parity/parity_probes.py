@@ -113,60 +113,98 @@ def _assert_connection_owner(
 
 
 
-def fetch(base: str, daemon: str, schema: str,
-          owner: dict[str, Any] | None = None) -> Sample:
-    started = time.monotonic_ns()
-    if owner is not None:
-        _assert_one_owner(owner, f"http/{schema}/before", started)
-    parsed = urlsplit(base)
-    if parsed.hostname != "127.0.0.1" or parsed.port is None:
-        raise ValueError("HTTP capture endpoint is not an exact loopback origin")
-    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=2)
-    try:
-        connection.connect()
-        transport = connection.sock
-        if transport is None:
-            raise OSError("HTTP connection has no transport socket")
-        request = (
+HTTP_CONNECTION_LIMIT = 256
+
+
+class HttpProbe:
+    """One serial HTTP stream; never replay a failed request."""
+
+    def __init__(self, base: str, daemon: str, schema: str,
+                 owner: dict[str, Any] | None = None) -> None:
+        parsed = urlsplit(base)
+        if parsed.hostname != "127.0.0.1" or parsed.port is None:
+            raise ValueError("HTTP capture endpoint is not an exact loopback origin")
+        self.daemon = daemon
+        self.schema = schema
+        self.owner = owner
+        self.connection_attempts = 0
+        self.request_attempts = 0
+        self.connection = http.client.HTTPConnection(
+            parsed.hostname, parsed.port, timeout=2)
+        self.request = (
             f"GET {SCHEMAS[schema]} HTTP/1.1\r\n"
             f"Host: {parsed.hostname}:{parsed.port}\r\n"
             "User-Agent: vosu-live-parity/1\r\n"
             "Connection: keep-alive\r\n"
             "\r\n"
         ).encode("ascii")
-        transport.sendall(request)
-        if owner is not None:
-            _assert_connection_owner(
-                owner, transport, f"http/{schema}/connection", started)
-        response = http.client.HTTPResponse(transport, method="GET")
-        response.begin()
-        body = response.read()
-        timestamp = time.monotonic_ns()
+
+    def __enter__(self) -> HttpProbe:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self.connection.close()
+
+    def fetch(self) -> Sample:
+        started = time.monotonic_ns()
+        owner, schema = self.owner, self.schema
+        response: http.client.HTTPResponse | None = None
         try:
-            payload = json.loads(body)
-        except (ValueError, UnicodeDecodeError):
-            payload = None
-        exact_not_ready = (
-            response.status == 500
-            and payload == {"error": "osu is not ready/running"})
-        sample = Sample(
-            daemon, schema, timestamp, payload, response.status,
-            "not_ready" if exact_not_ready else (
-                None if response.status == 200 and isinstance(payload, dict)
-                else "invalid_json" if response.status == 200
-                else f"http_{response.status}"))
-    except ValueError:
-        raise
-    except (OSError, http.client.HTTPException, json.JSONDecodeError,
-            UnicodeDecodeError) as exc:
-        timestamp = time.monotonic_ns()
-        sample = Sample(
-            daemon, schema, timestamp, None, 0, f"{type(exc).__name__}: {exc}")
-    finally:
-        connection.close()
-    if owner is not None:
-        _assert_one_owner(owner, f"http/{schema}/after", started)
-    return sample
+            if owner is not None:
+                _assert_one_owner(owner, f"http/{schema}/before", started)
+            if self.connection.sock is None:
+                # Eight streams can attempt at most 2,048 connections per capture,
+                # even if a broken peer refuses persistence. Never hide that failure.
+                if self.connection_attempts >= HTTP_CONNECTION_LIMIT:
+                    raise ValueError(
+                        f"HTTP connection limit exceeded for {self.daemon}/{schema}")
+                self.connection_attempts += 1
+                self.connection.connect()
+            transport = self.connection.sock
+            if transport is None:
+                raise OSError("HTTP connection has no transport socket")
+            self.request_attempts += 1
+            transport.sendall(self.request)
+            if owner is not None:
+                _assert_connection_owner(
+                    owner, transport, f"http/{schema}/connection", started)
+            response = http.client.HTTPResponse(transport, method="GET")
+            response.begin()
+            body = response.read()
+            timestamp = time.monotonic_ns()
+            try:
+                payload = json.loads(body)
+            except (ValueError, UnicodeDecodeError):
+                payload = None
+            exact_not_ready = (
+                response.status == 500
+                and payload == {"error": "osu is not ready/running"})
+            sample = Sample(
+                self.daemon, schema, timestamp, payload, response.status,
+                "not_ready" if exact_not_ready else (
+                    None if response.status == 200 and isinstance(payload, dict)
+                    else "invalid_json" if response.status == 200
+                    else f"http_{response.status}"))
+        except ValueError:
+            self.close()
+            raise
+        except (OSError, http.client.HTTPException, json.JSONDecodeError,
+                UnicodeDecodeError) as exc:
+            self.close()
+            timestamp = time.monotonic_ns()
+            sample = Sample(
+                self.daemon, schema, timestamp, None, 0, f"{type(exc).__name__}: {exc}")
+        finally:
+            if response is not None:
+                response.close()
+                if response.will_close:
+                    self.close()
+        if owner is not None:
+            _assert_one_owner(owner, f"http/{schema}/after", started)
+        return sample
 
 def _validate_ws_frame_header(first_byte: int, opcode: int,
                               final: bool, length: int) -> None:

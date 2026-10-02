@@ -148,20 +148,19 @@ def compare(capture_path: str, report_path: str) -> int:
         for daemon in ("source", "vosu")
     ]
     comparison_context_ready = all(play_contexts) and all(pause_contexts)
-    shared_play_ns = max(
-        (context.monotonic_ns for context in play_contexts if context),
-        default=0,
-    )
-    shared_pause_ns = min(
-        (context.monotonic_ns for context in pause_contexts if context),
-        default=0,
-    )
 
     def context_is_active(sample: Sample) -> bool:
-        inside_shared_window = bool(
-            comparison_context_ready
-            and shared_play_ns <= sample.monotonic_ns < shared_pause_ns)
-        if not inside_shared_window:
+        if not comparison_context_ready:
+            return False
+        # Response completion order can straddle the other daemon's boundary.
+        # Classify every stream against its own bounded V2 phase context.
+        context = nearest_v2_context(sample.daemon, sample.monotonic_ns)
+        if (context is None
+                or abs(context.monotonic_ns - sample.monotonic_ns) > window_ns
+                or not (
+                    barrier_contexts[sample.daemon]["play"].monotonic_ns
+                    <= context.monotonic_ns
+                    < barrier_contexts[sample.daemon]["paused"].monotonic_ns)):
             return False
         if (
                 sample.status != 200
@@ -170,8 +169,7 @@ def compare(capture_path: str, report_path: str) -> int:
             return True
         barrier = barrier_of(sample)
         if barrier is None:
-            context = nearest_v2_context(sample.daemon, sample.monotonic_ns)
-            barrier = barrier_of(context) if context is not None else None
+            barrier = barrier_of(context)
         return barrier == "play"
     v2_retry_boundaries = confirmed_retry_boundaries(
         [sample for sample in v2_by_daemon["source"] if context_is_active(sample)],

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import math
+import gc
 import queue
 from pathlib import Path
 import shutil
@@ -79,18 +80,37 @@ def _shared_map_identity(samples: list[Sample], allow_no_map: bool = False) -> b
     ) or (allow_no_map and identities == [None, None])
 
 
-def _shared_menu_ready(current_samples: dict[str, Sample | None]) -> bool:
+def _shared_menu_ready(
+        current_samples: dict[str, Sample | None], poll_rate_ms: int) -> bool:
     samples = [current_samples.get(daemon) for daemon in ("source", "vosu")]
     if any(not _valid_v2_sample(sample, "menu") for sample in samples):
         return False
     valid = [sample for sample in samples if sample is not None]
+    if abs(valid[0].monotonic_ns - valid[1].monotonic_ns) > max(2 * poll_rate_ms, 300) * 1_000_000:
+        return False
     if not _shared_map_identity(valid, allow_no_map=True):
         return False
-    return all(
-        isinstance(sample.payload.get("client"), str)
-        and bool(sample.payload["client"].strip())
-        for sample in valid
-    )
+    for sample in valid:
+        client = sample.payload.get("client")
+        settings = sample.payload.get("settings")
+        identity = settings.get("client") if isinstance(settings, dict) else None
+        version = identity.get("version") if isinstance(identity, dict) else None
+        # Upstream reports HTTP 200/menu while its initial memory read is pending.
+        if (
+                not isinstance(client, str) or not client.strip()
+                or not isinstance(version, str) or not version.strip()):
+            return False
+        beatmap = sample.payload.get("beatmap")
+        timing = beatmap.get("time") if isinstance(beatmap, dict) else None
+        audio_length = timing.get("mp3Length") if isinstance(timing, dict) else None
+        # A selected map can precede the source's first audio-length read.
+        if _map_identity(sample) is not None and (
+                not isinstance(audio_length, (int, float))
+                or isinstance(audio_length, bool)
+                or not math.isfinite(audio_length)
+                or audio_length < 0):
+            return False
+    return True
 
 
 def _shared_play_ready(
@@ -104,6 +124,11 @@ def _shared_play_ready(
     times: list[float] = []
     first_objects: list[float] = []
     for sample in valid:
+        play = sample.payload.get("play")
+        player_name = play.get("playerName") if isinstance(play, dict) else None
+        # Lazer can report play with the preview clock before its score is ready.
+        if not isinstance(player_name, str) or not player_name.strip():
+            return False
         beatmap = sample.payload.get("beatmap")
         timing = beatmap.get("time") if isinstance(beatmap, dict) else None
         live = timing.get("live") if isinstance(timing, dict) else None
@@ -208,7 +233,8 @@ def _ordered_barrier_contexts(
                             for daemon in ("source", "vosu"))
                     and (
                         promoted_times is not None
-                        or (barrier == "menu" and _shared_menu_ready(current_samples))
+                        or (barrier == "menu"
+                            and _shared_menu_ready(current_samples, poll_rate_ms))
                         or (barrier == "result" and _shared_result_ready(current_samples))
                         or barrier == "process-exit"
                     )):
@@ -274,10 +300,12 @@ def _http_samples_attested(
         return not connection_checks
     if len(connection_checks) < len(http_timestamps):
         return False
-    paired = zip(connection_checks, http_timestamps)
-    if any(check["after_monotonic_ns"] > timestamp
-           for check, timestamp in paired):
-        return False
+    previous_timestamp = -1
+    for check, timestamp in zip(connection_checks, http_timestamps):
+        if (check["before_monotonic_ns"] <= previous_timestamp
+                or check["after_monotonic_ns"] > timestamp):
+            return False
+        previous_timestamp = timestamp
     return all(
         check["after_monotonic_ns"] > http_timestamps[-1]
         for check in connection_checks[len(http_timestamps):])
@@ -296,6 +324,7 @@ def capture(cfg: dict[str, Any], out: str, timeout: float, interval_ms: int) -> 
     processes, ownership = launch(cfg)
     client = cfg["_artifact_identity"]["client"]
     client_process: subprocess.Popen[bytes] | None = None
+    gc_was_enabled = gc.isenabled()
     samples: list[Sample] = []
     seen: dict[str, list[str]] = {"source": [], "vosu": []}
     barrier_times: dict[str, dict[str, int]] = {"source": {}, "vosu": {}}
@@ -317,6 +346,8 @@ def capture(cfg: dict[str, Any], out: str, timeout: float, interval_ms: int) -> 
     lock = threading.Lock()
     stop = threading.Event()
     try:
+        # Retained JSON/sample trees are acyclic; cyclic GC pauses grow during capture.
+        gc.disable()
         client_process, client_evidence = _launch_client(cfg)
         ws_threads = [
             threading.Thread(
@@ -326,28 +357,42 @@ def capture(cfg: dict[str, Any], out: str, timeout: float, interval_ms: int) -> 
                 daemon=True, name=f"vosu-live-parity-{daemon}-{schema}")
             for daemon in ("source", "vosu") for schema in SCHEMAS
         ]
-        for thread in ws_threads:
-            thread.start()
 
         http_results: queue.SimpleQueue[Sample] = queue.SimpleQueue()
+        next_http_start = time.monotonic()
+
+        def schedule_http_round() -> None:
+            nonlocal next_http_start
+            next_http_start = max(
+                next_http_start + interval_ms / 1000, time.monotonic())
+
+        # Independent probe loops drift when ownership checks have different costs.
+        # Keep every real response, but start all eight probes in the same round.
+        http_round = threading.Barrier(2 * len(SCHEMAS), action=schedule_http_round)
+        http_probes = {
+            (daemon, schema): HttpProbe(
+                cfg["daemons"][daemon]["base_url"].rstrip("/"),
+                daemon, schema, ownership[daemon])
+            for daemon in ("source", "vosu") for schema in SCHEMAS
+        }
 
         def capture_http(daemon: str, schema: str) -> None:
-            next_start = time.monotonic()
-            while not stop.is_set():
-                if stop.wait(max(0.0, next_start - time.monotonic())):
-                    return
-                try:
-                    http_results.put(fetch(
-                        cfg["daemons"][daemon]["base_url"].rstrip("/"),
-                        daemon, schema, ownership[daemon]))
-                except Exception as exc:
-                    http_failures.append(
-                        f"{daemon}/{schema}: {type(exc).__name__}: {exc}")
-                    stop.set()
-                    return
-                next_start += interval_ms / 1000
-                if next_start < time.monotonic():
-                    next_start = time.monotonic()
+            with http_probes[daemon, schema] as probe:
+                while not stop.is_set():
+                    try:
+                        http_round.wait()
+                    except threading.BrokenBarrierError:
+                        return
+                    if stop.wait(max(0.0, next_http_start - time.monotonic())):
+                        return
+                    try:
+                        http_results.put(probe.fetch())
+                    except Exception as exc:
+                        http_failures.append(
+                            f"{daemon}/{schema}: {type(exc).__name__}: {exc}")
+                        stop.set()
+                        http_round.abort()
+                        return
 
         http_threads = [
             threading.Thread(
@@ -356,10 +401,10 @@ def capture(cfg: dict[str, Any], out: str, timeout: float, interval_ms: int) -> 
             for daemon in ("source", "vosu") for schema in SCHEMAS
         ]
         _assert_runtime_ownership(ownership, "capture-start")
-        for thread in http_threads:
-            thread.start()
         deadline = time.monotonic() + timeout
         try:
+            for thread in [*ws_threads, *http_threads]:
+                thread.start()
             while time.monotonic() < deadline:
                 if ws_failures:
                     raise ValueError(
@@ -405,7 +450,7 @@ def capture(cfg: dict[str, Any], out: str, timeout: float, interval_ms: int) -> 
                                     for daemon in ("source", "vosu"))
                                 and (
                                     (barrier == "menu"
-                                     and _shared_menu_ready(current_samples))
+                                     and _shared_menu_ready(current_samples, cfg["poll_rate_ms"]))
                                     or (barrier == "result"
                                         and _shared_result_ready(current_samples))
                                 )
@@ -466,8 +511,10 @@ def capture(cfg: dict[str, Any], out: str, timeout: float, interval_ms: int) -> 
                 stop.wait(interval_ms / 1000)
         finally:
             stop.set()
+            http_round.abort()
             for thread in [*http_threads, *ws_threads]:
-                thread.join(timeout=3)
+                if thread.ident is not None:
+                    thread.join(timeout=3)
             remaining_http: list[Sample] = []
             while True:
                 try:
@@ -518,6 +565,16 @@ def capture(cfg: dict[str, Any], out: str, timeout: float, interval_ms: int) -> 
             },
             "build_attestation": build_attestation,
             "http_paths": SCHEMAS, "websocket_paths": WS_PATHS,
+            "http_transport": {
+                daemon: {
+                    schema: {
+                        "connection_attempts": http_probes[daemon, schema].connection_attempts,
+                        "request_attempts": http_probes[daemon, schema].request_attempts,
+                    }
+                    for schema in SCHEMAS
+                }
+                for daemon in ("source", "vosu")
+            },
             "reference_capabilities": reference_capabilities,
             "barrier_times": barrier_times,
         }
@@ -525,6 +582,8 @@ def capture(cfg: dict[str, Any], out: str, timeout: float, interval_ms: int) -> 
             metadata["scenario"] = cfg["scenario"]
         dump_capture(out, samples, metadata)
     finally:
+        if gc_was_enabled:
+            gc.enable()
         _close_windows_client_job(client)
         _terminate_client_descendants(client)
         if client_process is not None:

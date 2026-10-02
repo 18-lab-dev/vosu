@@ -438,12 +438,12 @@ def _windows_socket_owners(port: int) -> set[int]:
     buffer = ctypes.create_string_buffer(size.value)
     if api(buffer, ctypes.byref(size), False, socket.AF_INET, 3, 0):
         raise OSError("GetExtendedTcpTable failed")
-    count = struct.unpack_from("I", buffer.raw, 0)[0]
+    count = struct.unpack_from("I", buffer, 0)[0]
     expected_addr = struct.unpack("<I", socket.inet_aton("127.0.0.1"))[0]
     owners: set[int] = set()
     for index in range(count):
         _state, local_addr, local_port, _remote_addr, _remote_port, pid = (
-            struct.unpack_from("IIIIII", buffer.raw, 4 + index * 24))
+            struct.unpack_from("IIIIII", buffer, 4 + index * 24))
         if local_addr == expected_addr and socket.ntohs(local_port & 0xffff) == port:
             owners.add(pid)
     return owners
@@ -496,12 +496,12 @@ def _windows_connection_owners(
     buffer = ctypes.create_string_buffer(size.value)
     if api(buffer, ctypes.byref(size), False, socket.AF_INET, 5, 0):
         raise OSError("GetExtendedTcpTable failed")
-    count = struct.unpack_from("I", buffer.raw, 0)[0]
+    count = struct.unpack_from("I", buffer, 0)[0]
     loopback = struct.unpack("<I", socket.inet_aton("127.0.0.1"))[0]
     owners: set[int] = set()
     for index in range(count):
         state, local_addr, local_port, remote_addr, remote_port, pid = (
-            struct.unpack_from("IIIIII", buffer.raw, 4 + index * 24))
+            struct.unpack_from("IIIIII", buffer, 4 + index * 24))
         if (
             state == 5
             and local_addr == loopback
