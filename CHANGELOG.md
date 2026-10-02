@@ -13,6 +13,8 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 
 ### Runtime and maintenance
 
+- Fix mania gradual-performance completion so `last()` and oversized skips return the final attributes before exhaustion; correct the osu! gradual example to finish without consuming the calculator before checking exhaustion.
+- Make the daemon reload smoke verify rejected malformed TOML through unchanged served settings, untouched source bytes, and an unbound requested port, independently of whether osu! is running. Production last-good configuration and state-readiness behavior is unchanged.
 - Split maintained code into domain-focused modules capped at 1,000 lines, preserving API and calculator behavior; remove tracked offset-tool build output while retaining source, locks, and provenance.
 - Derive Windows textual and numeric executable-resource versions from the root Cargo package version, keeping both resource version fields consistent with 0.3.0.
 

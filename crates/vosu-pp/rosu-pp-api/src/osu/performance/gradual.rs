@@ -58,7 +58,7 @@ use super::{OsuPerformanceAttributes, OsuScoreState};
 /// let attrs = gradual.next(state.clone()).unwrap();
 /// println!("PP: {}", attrs.pp);
 ///
-/// // Skip to the end
+/// // Skip to the end without consuming the calculator (`last` takes ownership).
 /// # /*
 /// state.max_combo = ...
 /// state.hitresults.n300 = ...
@@ -66,7 +66,7 @@ use super::{OsuPerformanceAttributes, OsuScoreState};
 /// state.hitresults.n50 = ...
 /// state.hitresults.misses = ...
 /// # */
-/// let attrs = gradual.last(state.clone()).unwrap();
+/// let attrs = gradual.nth(state.clone(), usize::MAX).unwrap();
 /// println!("PP: {}", attrs.pp);
 ///
 /// // Once the final performance has been calculated, attempting to process

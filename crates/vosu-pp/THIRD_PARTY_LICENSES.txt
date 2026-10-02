@@ -19,6 +19,11 @@ The production calculator is a clean-room Rust implementation in
   semantics in `catch/object/juice_stream.rs`. The retained mania closest-hitresult
   tests live in `mania/performance/hitresult_generator/closest/tests.rs`; this
   module extraction preserves the upstream test bodies and algorithm unchanged.
+  Local API maintenance in `mania/performance/gradual.rs` clamps performance
+  skips to the final object while preserving strict difficulty-iterator bounds;
+  `osu/performance/gradual.rs` uses a non-consuming skip in its exhaustion
+  example. These are local corrections, not changes to the pinned upstream
+  revision or calculator evidence.
 - `rosu-map-api/src`: an in-tree clean-room fork of MIT `rosu-map` 0.2.1,
   with ppy-aligned circular-arc tolerance, degeneracy epsilon,
   `Math.Acos` float-argument promotion, f64-promoted vector-length
