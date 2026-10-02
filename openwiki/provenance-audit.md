@@ -239,6 +239,33 @@ and checks the signed Windows resources. Run that workflow's package/extract,
 `verify-set`, and smoke commands against real release builds before publishing.
 The PR does not create a release or upload regenerated helper artifacts.
 
+## Native validation record (2026-10-02)
+
+The integrated implementation at `40cf2ada77438a4197597fc1b47891f1553d6943`
+passed Rust 1.96.1 formatting, Linux workspace/all-target/all-feature Clippy,
+the complete Linux CI test command, native Windows Clippy and the complete
+native Windows CI test command, and both native release builds. The full
+Windows cross-Clippy command also passed with `C_INCLUDE_PATH` unset.
+
+Actual Linux and Windows tag and unsigned development archives passed
+`vosu-release-smoke` against their extracted native executables. Windows
+version fields, numeric version parts, language/codepage and native icon
+checks passed using the resource-check portion of the production verifier.
+The executable was `NotSigned`: Authenticode validation and the signed-release
+publication gate were not exercised or bypassed.
+
+Both offset-helper bundles were regenerated: each contained 402 members, with
+valid ZIP CRCs, the exact manifest member set, matching member hashes and all
+four attribution inputs. The declared-license inventory covered 362 locked
+third-party packages. The 18 retained asset checksums, 24 historical calculator
+checksums, canonical license copies, retained MIT appendix, maintained Markdown
+links, packaging fixtures and four archive regression tests passed.
+
+This record reports build/package behavior, not source independence, legal
+clearance, live osu! parity or a published release. The production-origin
+questions above remain explicitly recorded.
+
+
 ## Original validation record (2026-09-29)
 
 Local validation passed the 18 asset hashes, canonical MIT/Apache checks,
