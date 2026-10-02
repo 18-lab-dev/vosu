@@ -191,6 +191,14 @@ def _validate_source_repository(repository: Path) -> str:
 
 def _verify_pinned_worktree(repository: Path, revision: str) -> None:
     environment = _git_environment()
+    symlink_files = False
+    if sys.platform == "win32":
+        policy = subprocess.run(
+            _git_command(repository, "config", "--bool", "--get", "core.symlinks"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
+        if policy.returncode not in (0, 1):
+            policy.check_returncode()
+        symlink_files = policy.returncode == 0 and policy.stdout.strip() == b"false"
     records = subprocess.run(
         _git_command(repository, "ls-tree", "-rz", "--full-tree", revision),
         check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -214,8 +222,15 @@ def _verify_pinned_worktree(repository: Path, revision: str) -> None:
             check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=environment).stdout
         if mode == "120000":
-            if not path.is_symlink() \
-                    or os.fsencode(os.readlink(path)) != blob:
+            if path.is_symlink():
+                target = os.fsencode(os.readlink(path))
+            elif symlink_files and path.is_file():
+                # Git for Windows materializes the target blob without requiring
+                # symlink privileges when the checkout sets core.symlinks=false.
+                target = path.read_bytes()
+            else:
+                target = None
+            if target != blob:
                 raise ValueError(
                     f"pinned source symlink differs from Git blob: {relative}")
         elif path.is_symlink() or not path.is_file() or path.read_bytes() != blob:

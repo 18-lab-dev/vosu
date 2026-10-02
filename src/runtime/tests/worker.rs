@@ -27,6 +27,7 @@ fn state_publication(pid: u32, generation: u64, reset_epoch: u64) -> StatePublic
                 user: UserState::default(),
                 lazer_multi_spectating: LazerMultiSpectatingState::default(),
                 ranked_play: RankedPlayState::default(),
+                room: Default::default(),
             }),
             precise: Arc::new(PreciseState {
                 status: 0,

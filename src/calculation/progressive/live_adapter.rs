@@ -99,8 +99,7 @@ pub struct LiveProgressiveBeatmap {
 
 impl LiveProgressiveBeatmap {
     pub fn from_prepared(prepared: Arc<vosu_pp::PreparedBeatmap>) -> Self {
-        let max = prepared.max_score();
-        let mut max_score = score_input(*max);
+        let mut max_score = score_input(*prepared.max_score());
         max_score.max_combo = i64::from(prepared.difficulty().max_combo);
         Self {
             engine: vosu_pp::LiveLazerEngine,
@@ -126,7 +125,8 @@ impl LiveProgressiveBeatmap {
         engine.apply_mods(&mut map, mods)?;
         let config = vosu_pp::DifficultyConfig::default();
         let full_difficulty = engine.difficulty_data(&map, &config)?;
-        let mut max_score = score_input(engine.create_score(&map, 1.0)?);
+        let mut max_score =
+            score_input(engine.create_score_from_attrs(&map, &full_difficulty, 1.0)?);
         max_score.max_combo = i64::from(full_difficulty.max_combo);
         Ok(Self {
             engine,
@@ -217,6 +217,9 @@ impl ProgressiveBeatmap for LiveProgressiveBeatmap {
             stars: difficulty.stars,
             max_combo: i64::from(difficulty.max_combo),
             n_sliders: i64::from(difficulty.n_sliders),
+            n_objects: i64::from(difficulty.n_objects),
+            nested_score_per_object: difficulty.nested_score_per_object,
+            maximum_legacy_combo_score: difficulty.maximum_legacy_combo_score,
         }
     }
 

@@ -150,6 +150,9 @@ impl MemoryReader for LoggingMemoryReader {
     fn ranked_play(&mut self) -> MemoryRead<RankedPlay> {
         self.pending("ranked")
     }
+    fn room(&mut self) -> MemoryRead<crate::model::memory::LazerRoom> {
+        Ok(ReadStatus::NotReady)
+    }
     fn spectating_data(&mut self, _: bool) -> MemoryRead<LazerSpectator> {
         self.pending("spectating")
     }

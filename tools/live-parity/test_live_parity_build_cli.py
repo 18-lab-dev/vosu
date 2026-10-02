@@ -25,6 +25,7 @@ from live_parity import (
     validate_barriers,
 )
 from parity_domains import gamebase_path_family, infer_reference_capabilities
+import parity_verify as PARITY_VERIFY
 RUN_SPEC = importlib.util.spec_from_file_location("live_parity_run", HERE / "run.py")
 assert RUN_SPEC and RUN_SPEC.loader
 LIVE_RUN = importlib.util.module_from_spec(RUN_SPEC)
@@ -36,16 +37,72 @@ def v2(daemon: str, timestamp: int, state: object, time_ms: int, *, paused: bool
     return Sample(daemon, "v2", timestamp, {
         "state": state,
         "client": "lazer",
+        "settings": {"client": {"version": "2026.921.0"}},
         "session": {"playTime": time_ms},
         "beatmap": {
             "checksum": "shared-map",
-            "time": {"live": time_ms},
+            "time": {"live": time_ms, "mp3Length": 100_000},
             "title": static,
         },
         "play": {"paused": paused, "score": score},
         "game": {"paused": paused},
     })
 class BuildCliTests(unittest.TestCase):
+    def test_source_build_commands_match_generated_contract_and_reject_mutations(self) -> None:
+        pnpm = r"C:\Program Files\nodejs\pnpm.CMD"
+        generated = [
+            [pnpm, "install", "--frozen-lockfile"],
+            [pnpm, "--filter", "tosu", "run", "genver"],
+            [pnpm, "--filter", "tosu", "run", "ts:compile"],
+        ]
+        self.assertTrue(PARITY_VERIFY._valid_source_build_commands(generated, pnpm))
+        for mutation in (
+                [[pnpm, "--dir", r"C:\source", *generated[0][1:]], *generated[1:]],
+                [*generated, [pnpm, "exec", "malicious"]],
+                [[pnpm, "install", "--no-frozen-lockfile"], *generated[1:]],
+                [[r"C:\untrusted\pnpm.CMD", *generated[0][1:]], *generated[1:]],
+        ):
+            self.assertFalse(
+                PARITY_VERIFY._valid_source_build_commands(mutation, pnpm))
+
+    def test_msvc_path_extensions_preserve_controlled_tools_and_protected_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            installation = root / "Visual Studio"
+            compiler = installation / "compiler"
+            cmake = installation / "CMake"
+            writable = installation / "writable"
+            outside = root / "Visual Studio-other"
+            sdk = root / "Program Files" / "Windows Kits"
+            windows = root / "Windows"
+            for path in (compiler, cmake, writable, outside, sdk, windows):
+                path.mkdir(parents=True, exist_ok=True)
+            base_parts = [str(root / "rust"), str(root / "python")]
+            base = os.pathsep.join(base_parts)
+            msvc = {"installation": str(installation)}
+            with mock.patch.object(PARITY_VERIFY, "_controlled_tool_path", return_value=base), \
+                    mock.patch.object(PARITY_VERIFY, "_windows_command_is_writable",
+                                      side_effect=lambda path, _: path == writable), \
+                    mock.patch.dict(os.environ, {
+                        "ProgramFiles(x86)": str(sdk.parent), "WINDIR": str(windows),
+                    }):
+                for entries in (
+                    [str(compiler), *base_parts],
+                    [str(compiler), *base_parts, str(cmake)],
+                    [str(sdk), *base_parts, str(windows)],
+                ):
+                    self.assertTrue(PARITY_VERIFY._valid_windows_build_path(
+                        os.pathsep.join(entries), msvc, ("cargo", "python")))
+                for entries in (
+                    [str(compiler), *reversed(base_parts)],
+                    [str(compiler), *base_parts, str(outside)],
+                    [str(compiler), *base_parts, str(writable)],
+                    [str(compiler), *base_parts, *base_parts],
+                    [str(compiler), base_parts[0], str(cmake), base_parts[1]],
+                ):
+                    self.assertFalse(PARITY_VERIFY._valid_windows_build_path(
+                        os.pathsep.join(entries), msvc, ("cargo", "python")))
+
     def config(self) -> dict:
         root = HERE.parents[1]
         # Pinned upstream tosu checkout and package layout.
@@ -102,16 +159,15 @@ class BuildCliTests(unittest.TestCase):
             except ValueError as exc:
                 return subprocess.CompletedProcess([], 2, "", f"vosu-live-parity: {exc}")
     def test_fresh_build_roots_remove_stale_source_and_vosu_outputs(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(os.environ, {"LOCALAPPDATA": tmp}):
             capture = Path(tmp) / "capture.json"
-            source = Path(str(capture.resolve()) + ".source-worktree")
-            vosu = Path(str(capture.resolve()) + ".vosu-target")
-            source.mkdir()
+            source, vosu = LIVE_RUN._fresh_build_roots(str(capture))
+            source.mkdir(parents=True)
             vosu.mkdir()
             (source / "stale.js").write_bytes(b"stale")
             (vosu / "stale-binary").write_bytes(b"stale")
-            actual_source, actual_vosu = LIVE_RUN._fresh_build_roots(str(capture))
-            self.assertEqual((source, vosu), (actual_source, actual_vosu))
+            LIVE_RUN._fresh_build_roots(str(capture))
             self.assertFalse(source.exists())
             self.assertFalse(vosu.exists())
 
@@ -139,22 +195,20 @@ class BuildCliTests(unittest.TestCase):
                     os.environ,
                     {"NODE_OPTIONS": "--require=evil.js",
                      "RUSTFLAGS": "--cfg evil",
-                     "PATH": os.environ.get("PATH", "")}):
-                rustc = str(LIVE_RUN._resolved_trusted_command("rustc"))
+                     "RUSTUP_HOME": str(Path(tmp) / "untrusted-rustup"),
+                     "PYTHONPATH": str(Path(tmp) / "untrusted-python")}):
                 environment = LIVE_RUN._controlled_build_environment(
-                    home, {"CARGO_TARGET_DIR": target, "RUSTC": rustc})
-            self.assertEqual(str(home), environment["HOME"])
-            self.assertEqual(str(target), environment["CARGO_TARGET_DIR"])
-            self.assertNotIn("NODE_OPTIONS", environment)
-            self.assertNotIn("RUSTFLAGS", environment)
-            self.assertNotIn("RUSTUP_HOME", environment)
-            self.assertEqual(rustc, environment["RUSTC"])
-            cargo_version = LIVE_RUN._command_version(
-                [str(LIVE_RUN._resolved_command("cargo")), "--version"], environment)
-            rustc_version = LIVE_RUN._command_version(
-                [str(LIVE_RUN._resolved_command("rustc")), "--version"], environment)
-            self.assertIn("cargo ", cargo_version)
-            self.assertIn("rustc ", rustc_version)
+                    home, {"CARGO_TARGET_DIR": target}, required_tools=())
+            # Exercise isolation in a real child without requiring the unrelated
+            # reference builder's Node/pnpm or a protected Rust installation.
+            observed = json.loads(LIVE_RUN._command_version(
+                [sys.executable, "-c",
+                 "import json, os; print(json.dumps(dict(os.environ)))"],
+                environment))
+            self.assertEqual(str(home), observed["HOME"])
+            self.assertEqual(str(target), observed["CARGO_TARGET_DIR"])
+            for key in ("NODE_OPTIONS", "RUSTFLAGS", "RUSTUP_HOME", "PYTHONPATH"):
+                self.assertNotIn(key, observed)
 
     def test_controlled_path_rejects_cross_tool_directory_shadowing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -162,21 +216,28 @@ class BuildCliTests(unittest.TestCase):
             second = Path(tmp) / "second"
             first.mkdir()
             second.mkdir()
+            suffix = ".exe" if sys.platform == "win32" else ""
             paths = {
-                "git": first / "git",
-                "node": second / "node",
-                "pnpm": second / "pnpm",
-                "cargo": second / "cargo",
-                "rustc": second / "rustc",
+                name: directory / f"{name}{suffix}"
+                for name, directory in (
+                    ("git", first), ("node", second), ("pnpm", second),
+                    ("cargo", second), ("rustc", second))
             }
-            for path in [*paths.values(), first / "node"]:
+            for path in paths.values():
                 path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
                 path.chmod(0o755)
             with (mock.patch.object(
                     LIVE_RUN, "_resolved_trusted_command",
                     side_effect=lambda name: paths[name]),
                   mock.patch.object(os, "defpath", "")):
-                with self.assertRaisesRegex(ValueError, "shadows attested node"):
+                controlled = LIVE_RUN._controlled_tool_path()
+                self.assertEqual(
+                    paths["node"],
+                    Path(shutil.which("node", path=controlled)).resolve())
+                shadow = first / paths["node"].name
+                shadow.write_bytes(paths["node"].read_bytes())
+                shadow.chmod(0o755)
+                with self.assertRaises(ValueError):
                     LIVE_RUN._controlled_tool_path()
 
     def test_source_manifest_rejects_directory_symlink(self) -> None:
@@ -266,8 +327,8 @@ class BuildCliTests(unittest.TestCase):
             subprocess.run(
                 ["git", "init", str(repository)], check=True,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            (repository / "pnpm-lock.yaml").write_text(
-                "lockfileVersion: '9.0'\n", encoding="utf-8")
+            (repository / "pnpm-lock.yaml").write_bytes(
+                b"lockfileVersion: '9.0'\n")
             subprocess.run(
                 ["git", "-C", str(repository), "add", "pnpm-lock.yaml"],
                 check=True)
@@ -308,6 +369,48 @@ class BuildCliTests(unittest.TestCase):
             tracked.write_bytes(b"filtered\n")
             with self.assertRaisesRegex(ValueError, "differs from Git blob"):
                 LIVE_RUN._verify_pinned_worktree(repository, "HEAD")
+
+    def test_windows_symlink_files_require_git_policy_and_exact_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            git_path = LIVE_RUN._resolved_trusted_command("git")
+            repository = Path(tmp)
+            git = ["git", "-C", str(repository)]
+            subprocess.run(
+                [*git, "init"], check=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            target = b"target.txt"
+            blob = subprocess.run(
+                [*git, "hash-object", "-w", "--stdin"], input=target,
+                check=True, stdout=subprocess.PIPE).stdout.decode().strip()
+            subprocess.run(
+                [*git, "update-index", "--add", "--cacheinfo",
+                 f"120000,{blob},link.txt"], check=True)
+            tree = subprocess.run(
+                [*git, "write-tree"], check=True,
+                stdout=subprocess.PIPE).stdout.decode().strip()
+            link = repository / "link.txt"
+            link.write_bytes(target)
+            subprocess.run(
+                [*git, "config", "core.symlinks", "false"], check=True)
+            with mock.patch.object(LIVE_RUN.sys, "platform", "win32"), \
+                    mock.patch.object(
+                        LIVE_RUN, "_resolved_trusted_command", return_value=git_path):
+                LIVE_RUN._verify_pinned_worktree(repository, tree)
+                link.write_bytes(b"untrusted.txt")
+                with self.assertRaisesRegex(ValueError, "differs from Git blob"):
+                    LIVE_RUN._verify_pinned_worktree(repository, tree)
+                link.write_bytes(target)
+                subprocess.run(
+                    [*git, "config", "core.symlinks", "true"], check=True)
+                with self.assertRaisesRegex(ValueError, "differs from Git blob"):
+                    LIVE_RUN._verify_pinned_worktree(repository, tree)
+            subprocess.run(
+                [*git, "config", "core.symlinks", "false"], check=True)
+            with mock.patch.object(LIVE_RUN.sys, "platform", "linux"), \
+                    mock.patch.object(
+                        LIVE_RUN, "_resolved_trusted_command", return_value=git_path):
+                with self.assertRaisesRegex(ValueError, "differs from Git blob"):
+                    LIVE_RUN._verify_pinned_worktree(repository, tree)
 
     def test_user_writable_path_tool_is_not_trusted(self) -> None:
         if os.name == "nt":
@@ -390,8 +493,10 @@ class BuildCliTests(unittest.TestCase):
         thread.start()
         try:
             base = f"http://127.0.0.1:{server.server_port}"
-            redirected = LIVE_RUN.fetch(base, "source", "v1")
-            generic = LIVE_RUN.fetch(base, "source", "v2")
+            with LIVE_RUN.HttpProbe(base, "source", "v1") as probe:
+                redirected = probe.fetch()
+            with LIVE_RUN.HttpProbe(base, "source", "v2") as probe:
+                generic = probe.fetch()
             self.assertEqual("http_302", redirected.error)
             self.assertEqual("http_500", generic.error)
         finally:

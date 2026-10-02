@@ -35,7 +35,7 @@ impl<'a> OsuPerformanceCalculator<'a> {
         Self {
             attrs,
             mods,
-            acc,
+            acc: acc.clamp(0.0, 1.0),
             state,
             using_classic_slider_acc,
         }
@@ -626,7 +626,7 @@ impl OsuPerformanceCalculator<'_> {
     // * so we use the amount of relatively difficult sections to adjust miss penalty
     // * to make it more punishing on maps with lower amount of hard sections.
     fn calculate_miss_penalty(miss_count: f64, diff_strain_count: f64) -> f64 {
-        0.93 / (miss_count / (4.0 * diff_strain_count.ln()) + 1.0)
+        0.93 / (miss_count / (4.0 * diff_strain_count.max(1.0).ln()) + 1.0)
     }
 
     fn get_combo_scaling_factor(&self) -> f64 {

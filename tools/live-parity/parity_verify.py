@@ -42,6 +42,82 @@ import parity_artifacts as _parity_artifacts
 globals().update({name: value for name, value in vars(_parity_artifacts).items() if not name.startswith("__")})
 import parity_capture as _parity_capture
 globals().update({name: value for name, value in vars(_parity_capture).items() if not name.startswith("__")})
+def _valid_source_build_commands(commands: Any, pnpm_path: str) -> bool:
+    return commands == [
+        [pnpm_path, "install", "--frozen-lockfile"],
+        [pnpm_path, "--filter", "tosu", "run", "genver"],
+        [pnpm_path, "--filter", "tosu", "run", "ts:compile"],
+    ]
+
+
+def _verify_msvc_attestation(value: Any) -> None:
+    if sys.platform != "win32":
+        raise ValueError("unexpected MSVC attestation on non-Windows")
+    if not isinstance(value, dict) or set(value) != {
+            "vswhere", "vswhere_sha256", "installation", "vcvars",
+            "vcvars_sha256"}:
+        raise ValueError("capture lacks exact MSVC attestation")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+    if not program_files_x86:
+        raise ValueError("ProgramFiles(x86) is unavailable for MSVC verification")
+    expected_vswhere = (
+        Path(program_files_x86)
+        / "Microsoft Visual Studio/Installer/vswhere.exe"
+    ).resolve(strict=True)
+    installation = Path(value["installation"]).resolve(strict=True)
+    vswhere = Path(value["vswhere"]).resolve(strict=True)
+    vcvars = Path(value["vcvars"]).resolve(strict=True)
+    if (vswhere != expected_vswhere
+            or vcvars != (installation / "VC/Auxiliary/Build/vcvars64.bat")
+            or sha256_file(vswhere) != value["vswhere_sha256"]
+            or sha256_file(vcvars) != value["vcvars_sha256"]
+            or _windows_command_is_writable(vswhere, vswhere)
+            or _windows_command_is_writable(vcvars, vcvars)):
+        raise ValueError("capture has untrusted MSVC paths or hashes")
+    discovery_environment = dict(os.environ)
+    discovered = subprocess.run(
+        [str(vswhere), "-latest", "-products", "*", "-requires",
+         "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+         "-property", "installationPath"],
+        check=True, text=True, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, env=discovery_environment,
+    ).stdout.strip()
+    if not discovered or Path(discovered).resolve(strict=True) != installation:
+        raise ValueError("capture MSVC installation is not current vswhere result")
+
+
+def _valid_windows_build_path(value: Any, msvc: Any,
+                              required_tools: tuple[str, ...]) -> bool:
+    if not isinstance(value, str) or not isinstance(msvc, dict):
+        return False
+    base = _controlled_tool_path(required_tools)
+    parts = value.split(os.pathsep)
+    base_parts = base.split(os.pathsep)
+    # vcvars prepends compiler paths and may append CMake/Ninja after the input PATH.
+    starts = [
+        index for index in range(len(parts) - len(base_parts) + 1)
+        if parts[index:index + len(base_parts)] == base_parts
+    ]
+    if len(parts) <= len(base_parts) or len(starts) != 1:
+        return False
+    start = starts[0]
+    installation = Path(msvc["installation"]).resolve(strict=True)
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+    windir = os.environ.get("WINDIR")
+    roots = [installation]
+    if program_files_x86:
+        roots.append((Path(program_files_x86) / "Windows Kits").resolve(strict=True))
+    if windir:
+        roots.append(Path(windir).resolve(strict=True))
+    for entry in parts[:start] + parts[start + len(base_parts):]:
+        path = Path(entry).resolve(strict=True)
+        if not path.is_dir() or not any(root == path or root in path.parents for root in roots):
+            return False
+        if _windows_command_is_writable(path, path):
+            return False
+    return True
+
+
 def _valid_client_process_group(
         value: Any, client: dict[str, Any]) -> bool:
     if not isinstance(value, list) or not value:
@@ -281,7 +357,11 @@ def verify_capture_artifacts(
     if not isinstance(attestation, dict):
         raise ValueError("capture lacks valid immediate-build attestation")
     expected_tool_names = (
-        ("git", "node", "pnpm", "cargo", "rustc")
+        ("git", "node", "pnpm", "python", "powershell", "cargo", "rustc", "cmd")
+        if sys.platform == "win32" and source_mode == "node-build"
+        else ("cargo", "rustc", "cmd")
+        if sys.platform == "win32"
+        else ("git", "node", "pnpm", "python", "cargo", "rustc")
         if source_mode == "node-build"
         else ("cargo", "rustc")
     )
@@ -305,19 +385,30 @@ def verify_capture_artifacts(
     vosu_build_home = Path(
         attestation.get("vosu_build_home", "")).resolve(strict=True)
     cargo_home = Path(attestation.get("cargo_home", "")).resolve(strict=True)
-    vosu_environment_keys = attestation.get("vosu_environment_keys")
     trusted_build_environment = {"CARGO_TARGET_DIR", "CARGO_HOME", "RUSTC"}
+    source_build_environment = trusted_build_environment | {"PYTHON"}
     started = attestation.get("started_monotonic_ns")
     completed = attestation.get("completed_monotonic_ns")
+    if sys.platform == "win32":
+        _verify_msvc_attestation(attestation.get("vosu_msvc"))
+        if source_mode == "node-build":
+            _verify_msvc_attestation(attestation.get("source_msvc"))
+    elif attestation.get("vosu_msvc") is not None:
+        raise ValueError("capture has unexpected MSVC attestation")
     if (not toolchain_valid
             or attestation.get("source_mode") != source_mode
             or not isinstance(started, int)
             or not isinstance(completed, int)
             or completed < started
             or not _valid_environment_keys(
-                vosu_environment_keys, trusted_build_environment)
-            or attestation.get("vosu_path")
-            != _controlled_tool_path(expected_tool_names)
+                attestation.get("vosu_environment_keys"), trusted_build_environment)
+            or (
+                not _valid_windows_build_path(
+                    attestation.get("vosu_path"), attestation.get("vosu_msvc"),
+                    expected_tool_names)
+                if sys.platform == "win32"
+                else attestation.get("vosu_path")
+                != _controlled_tool_path(expected_tool_names))
             or attestation.get("rustc_path") != str(
                 _resolved_trusted_command("rustc"))
             or _resolved_trusted_command("cargo").resolve()
@@ -352,15 +443,17 @@ def verify_capture_artifacts(
             commands[0][0]
             if isinstance(commands, list) and commands and commands[0]
             else None)
-        expected_commands = [
-        # These package identifiers belong to the pinned upstream tosu checkout.
-            [pnpm, "--dir", str(checkout), "install", "--frozen-lockfile"],
-            [pnpm, "--dir", str(checkout), "--filter", "tosu", "run", "genver"],
-            [pnpm, "--dir", str(checkout), "--filter", "tosu", "run", "ts:compile"],
-        ]
         if (not _valid_environment_keys(
-                    source_environment_keys, trusted_build_environment)
-                or attestation.get("source_path") != attestation.get("vosu_path")
+                    source_environment_keys, source_build_environment)
+                or (
+                    sys.platform == "win32"
+                    and not _valid_windows_build_path(
+                        attestation.get("source_path"),
+                        attestation.get("source_msvc"), expected_tool_names))
+                or (
+                    sys.platform != "win32"
+                    and attestation.get("source_path")
+                    != attestation.get("vosu_path"))
                 or attestation.get("source_revision") != PINNED_SOURCE_REVISION
                 or attestation.get("source_dist_manifest") != manifest
                 or attestation.get("source_lock_sha256")
@@ -370,9 +463,10 @@ def verify_capture_artifacts(
                 or not all(
                     isinstance(attestation.get(key), str) and attestation[key]
                     for key in ("node_version", "pnpm_version"))
-                or commands != expected_commands
                 or not isinstance(pnpm, str)
                 or pnpm != toolchain_records["pnpm"]["path"]
+                or not _valid_source_build_commands(
+                    commands, toolchain_records["pnpm"]["path"])
                 or "source_reference" in attestation):
             raise ValueError("capture lacks exact pinned source-build attestation")
     else:
@@ -386,7 +480,7 @@ def verify_capture_artifacts(
             "source_revision", "source_build_home", "source_environment_keys",
             "source_path", "source_commands", "source_dist_manifest",
             "source_lock_sha256", "node_version", "pnpm_version",
-            "node_executable_sha256",
+            "node_executable_sha256", "source_msvc",
         }
         if (attestation.get("source_reference") != expected_reference
                 or node_only_fields.intersection(attestation)):

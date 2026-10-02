@@ -101,10 +101,11 @@ pub struct OffsetGroup44 {
     pub username_k_backing_field: usize,
     #[serde(rename = "countryCodeString")]
     pub country_code_string: usize,
-    #[serde(rename = "statistics")]
     pub statistics: usize,
     #[serde(rename = "MatchmakingStatistics")]
     pub matchmaking_statistics: usize,
+    #[serde(rename = "AvatarUrl", default)]
+    pub avatar_url: Option<usize>,
     #[serde(flatten)]
     pub extras: IndexMap<String, Value>,
 }

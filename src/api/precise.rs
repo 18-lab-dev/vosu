@@ -203,6 +203,7 @@ mod tests {
             user: UserState::default(),
             lazer_multi_spectating: LazerMultiSpectatingState::default(),
             ranked_play: RankedPlayState::default(),
+            room: Default::default(),
         })
     }
     fn button(name: &str, is_pressed: bool, count: i64) -> StateKeyOverlayButton {

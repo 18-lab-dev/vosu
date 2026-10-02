@@ -17,19 +17,23 @@ publish = false
 build = "build.rs"
 
 [package.metadata.vosu]
-source-commit = "1a67fd64cc38fe60306328dde0a429e3211ca4ed"
-osu-calculator-revision = "97e94babde9d5ecbe574ecdd33509db27452cd0f"
+source-commit = "2359305a63f2aaebb201bc8d2eee58177f52590e"
+osu-calculator-revision = "fe30ae7eea2beeb1f0d3a5ce8dde12bb78ca3f48"
+osu-calculator-baseline-revision = "97e94babde9d5ecbe574ecdd33509db27452cd0f"
 rosu-pp-revision = "27a67242cad155a2767f5a25a423ca4ec3e3c274"
 rosu-map-revision = "333dd2bea78e518d39c20932c828011f21d3305e"
 osu-framework-revision = "a0b031e7ff6c83d81da26fcbece7d25edbd222b4"
 homepage-css-sha256 = "f54adaedc189256d73ffdc0f9a9a78bfd060c825183dfff7dc5aa1bc60479aa0"
-lazer-offsets-osu-version = "2026.726.0"
-lazer-offsets-release-tag = "2026.726.0-lazer"
-lazer-offsets-release-url = "https://github.com/ppy/osu/releases/tag/2026.726.0-lazer"
-lazer-offsets-source-revision = "5da71008b082d1a77e4bb301dc98886f1f24b895"
-lazer-offsets-source-url = "https://github.com/ppy/osu/tree/5da71008b082d1a77e4bb301dc98886f1f24b895"
-lazer-offsets-appimage-url = "https://github.com/ppy/osu/releases/download/2026.726.0-lazer/osu.AppImage"
-lazer-offsets-appimage-sha256 = "3d3028609543dffd037b00652603f75928515100b6245bc929a9dc46fd3b29a0"
+lazer-offsets-osu-version = "2026.921.0"
+lazer-offsets-release-tag = "2026.921.0-lazer"
+lazer-offsets-release-url = "https://github.com/ppy/osu/releases/tag/2026.921.0-lazer"
+lazer-offsets-source-revision = "aaa75b7c0a9f21d558ce84cd0ffac6c739bad8e7"
+lazer-offsets-source-url = "https://github.com/ppy/osu/tree/aaa75b7c0a9f21d558ce84cd0ffac6c739bad8e7"
+lazer-offsets-appimage-url = "https://github.com/ppy/osu/releases/download/2026.921.0-lazer/osu.AppImage"
+lazer-offsets-appimage-sha256 = "dced9463b501009c95dbed891abd2f0acc2efb84ee4336f5b1cc3b7c04a5fc7d"
+lazer-offsets-generation-runtime = "AppImage bundled Microsoft.NETCore.App 10.0.12"
+lazer-offsets-template-source = "tosuapp/tosu@2359305a63f2aaebb201bc8d2eee58177f52590e plus vosu pause/clock fields"
+# Historical 2026.726.0 reproduction inputs; not used for the current asset.
 lazer-offsets-runtime-pack = "Microsoft.NETCore.App.Runtime.linux-x64/8.0.29"
 lazer-offsets-runtime-source-revision = "18fd75c847399745c43b5970fec840ba71064e80"
 lazer-offsets-runtime-pack-sha256 = "780e71f4d31f0a0e8985198e28aa9f04bf3e4f0b505bfd4e36f25e00d3c93850"
@@ -53,7 +57,7 @@ lazer-offsets-satori-corelib-sha256 = "73c6ae7ff2ed535a249539f78731fc4412cf6c263
 lazer-offsets-satori-clrjit-sha256 = "3d58119a829d10d20f9fc31f2144f9202af19c93b412d5a5eeeeeba4b35ebb3e"
 lazer-offsets-satori-coreclr-build-id = "924f6642f039382780dd0ee782477271d8093084"
 lazer-offsets-satori-coreclr-sha256 = "dcc631eda8fdb34d06956697e9709b8d828306eb73ac3187b5058180e1af615e"
-lazer-offsets-sha256 = "2c861223c147ce933d2b6d3b8103abc1cc9f79fe3e298866bf67f6f07e704db7"
+lazer-offsets-sha256 = "e4ee6be2e8880663eff36d2369af4b30411d87fe6a4711c9fbfe2cdef4f7de5a"
 asset-manifest = "assets/SHA256SUMS"
 
 [features]
@@ -97,7 +101,7 @@ zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate
 zmij = "=1.0.23"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Wdk_System_SystemInformation", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_System_WindowsProgramming", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "=0.61.2", features = ["Wdk_System_SystemInformation", "Win32_Foundation", "Win32_Media", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_System_WindowsProgramming", "Win32_UI_WindowsAndMessaging"] }
 wmi = "=0.18.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -26,7 +26,7 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 | | |
 | --- | --- |
 | **Native runtime** | A single Rust daemon with embedded dashboard assets and offsets. |
-| **Verified compatibility** | gosuMemory v1, streamCompanion, and vosu v2 HTTP/WebSocket behavior are checked against the pinned upstream tosu reference with live parity captures. |
+| **Compatibility work** | gosuMemory v1, streamCompanion, and vosu v2 HTTP/WebSocket contracts have targeted checks and historical fixture evidence; no live parity result is asserted here. |
 | **Linux support** | Native osu!lazer and osu!stable through Wine are supported alongside Windows stable and lazer. |
 | **Measured performance** | Criterion covers memory scanning, snapshot reads, calculations, serialization, caching, and publication. Results and limits are recorded in the [benchmark guide](openwiki/testing/benchmarks.md). |
 | **Agent-ready repository** | A pinned toolchain, explicit source ownership, runnable checks, architecture notes, and decision records keep automated changes reviewable. Start with [AGENTS.md](AGENTS.md). |
@@ -201,11 +201,12 @@ SignPath integration are unchanged; this workflow does not sign or publish relea
 
 ### Reproducibly update the vendored osu!lazer offsets asset
 
-The live workflow above is for a currently running client and local output.
-To replace `assets/offsets.json` in the repository, use the exact source and
-runtime workflow below. It records the release, runtime, DAC, and generator
-inputs needed for a reviewable update; after generation, review the asset
-diff and update its checksum and provenance metadata as described below.
+The commands below reproduce the explicitly historical `2026.726.0` asset.
+They document prior source, runtime, DAC, and generator inputs; they are not a
+recipe for the currently retained `2026.921.0` asset. Provenance for the current
+asset is listed in `THIRD_PARTY_NOTICES.md` and Cargo metadata. Do not replace
+it from this historical recipe without independently measuring the exact
+release/runtime and verifying the native reader.
 
 #### Build only the patched Satori DAC
 
@@ -242,14 +243,23 @@ This DAC procedure belongs only to historical vendored-asset reproduction. It
 does not participate in runtime offset generation: current generation uses the
 embedded self-contained generator and the exact live PID.
 
-When a lazer release is not yet available from the maintained source inputs,
-these Linux x64 maintainer tools can derive the vendored `assets/offsets.json`
+**Historical recipe:** this checked-in procedure reproduces the prior
+`2026.726.0` offsets asset using the .NET 8.0.29/Satori inputs listed in
+`THIRD_PARTY_NOTICES.md`; it is not a recipe or provenance for the currently
+retained `2026.921.0` asset. The current asset was measured from the
+`2026.921.0-lazer` AppImage under its bundled .NET 10.0.12 runtime; its release,
+source revision, AppImage hash, and asset hash are recorded in Cargo metadata
+and the notices. Do not substitute this historical recipe when reproducing
+current offsets; native live-reader verification remains required.
+
+These Linux x64 maintainer tools can derive the vendored `assets/offsets.json`
 asset from an exact release source checkout under that release's exact runtime.
-They require the .NET 8 SDK, `curl`, `bsdtar`, binutils, zlib development
-headers, an executable `/dev/shm` tmpfs, and the [Satori Linux build
-prerequisites](https://github.com/ppy/Satori/blob/098d0ed17cf8f965d79be6e3d870a895a6dbbe04/.github/workflows/build.yml)
-only while updating the historical asset; vosu builds and releases remain
-Rust-only apart from preparing the embedded generator bundle.
+The remaining commands below are the historical `2026.726.0` reproduction
+procedure only. They require the .NET 8 SDK, `curl`, `bsdtar`, binutils, zlib
+development headers, an executable `/dev/shm` tmpfs, and the [Satori Linux build
+prerequisites](https://github.com/ppy/Satori/blob/098d0ed17cf8f965d79be6e3d870a895a6dbbe04/.github/workflows/build.yml);
+these do not describe current `2026.921.0` provenance. vosu builds and releases
+remain Rust-only apart from preparing the embedded generator bundle.
 
 ```sh
 set -eu
@@ -597,7 +607,7 @@ Methods and paths are exact. Unsupported combinations return `404 Not Found`. St
 | `GET /json/v2/precise` | vosu precise snapshot |
 | `GET /api/calculate/pp` | Legacy `rosu-pp` calculation; uses the current beatmap unless `path` names a canonical regular `.osu` file |
 
-The v2 snapshot and matching WebSocket streams follow tosu's `beatmap.stats.hitWindow` contract introduced by Storycraft's [tosu PR #678](https://github.com/tosuapp/tosu/pull/678). The object uses mode-specific judgement names: `miss`, `meh`, `ok`, `good`, `great`, and `perfect`. Values are maximum absolute timing errors in milliseconds after the active clock rate is applied; unsupported judgements are omitted, and catch currently publishes an empty object.
+The v2 snapshot and matching WebSocket streams expose `beatmap.stats.hitWindow`. The object has optional numeric judgement fields `miss`, `meh`, `ok`, `good`, `great`, and `perfect`; unsupported judgements are omitted. Values are maximum absolute timing errors in milliseconds after the active clock rate is applied. An unparsed/missing map serializes an empty object. Catch publishes all six fields as zero, matching upstream's empty-window implementation, while `stars.hitWindow` remains absent. Catch's spatial catcher width is not a timing window.
 
 The tosu hit-error arrays keep their original names and shapes: `hitErrorArray` in v1 and regular v2, and `hitErrors` in streamCompanion and precise v2. Vosu adds sibling `pressHitErrors` and `releaseHitErrors` arrays. The original array preserves every timing event in order, `pressHitErrors` contains note presses, and `releaseHitErrors` contains osu!mania hold-note releases. Stable reports every timing error in the original and press arrays and leaves the release array empty.
 

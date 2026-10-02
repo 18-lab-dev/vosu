@@ -350,6 +350,20 @@ fn stable_mania_replay_frames_remain_cached_until_hit_errors_are_acknowledged() 
 }
 
 #[test]
+fn stable_session_clock_follows_instruction_operand() {
+    let mut bytes = vec![0; 0x8000];
+    // The A1 operand contains the clock address, not the clock value.
+    put_u32(&mut bytes, fixture_patterns().game_time_ptr, 0x7000);
+    put_u32(&mut bytes, 0x7000, 523_409);
+    let mut reader = StableMemory::new(handle(0, bytes), fixture_patterns());
+
+    let ReadStatus::Ready(global) = reader.global().unwrap() else {
+        panic!("stable global ready");
+    };
+    assert_eq!(global.game_time, 523_409);
+}
+
+#[test]
 fn every_public_method_has_a_deterministic_zero_memory_sentinel() {
     let mut reader = StableMemory::new(handle(0, vec![0; 0x8000]), fixture_patterns());
     assert!(matches!(
@@ -681,15 +695,10 @@ fn ruleset_cache_tracks_replacement_invalidates_on_failure_and_recovers() {
     assert_eq!(reader.ruleset_container, 0);
 }
 #[test]
-fn unknown_first_object_and_falsy_settings_preserve_source_sentinels() {
+fn unknown_first_object_preserves_source_sentinel() {
     assert!(!score_has_started(10_000.0, None));
     assert!(!score_has_started(899.0, Some(1_000)));
     assert!(score_has_started(900.0, Some(1_000)));
-    assert!(!setting_truthy(&json!(false)));
-    assert!(!setting_truthy(&json!(0)));
-    assert!(!setting_truthy(&json!("")));
-    assert!(setting_truthy(&json!(1)));
-    assert!(setting_truthy(&json!("value")));
 }
 #[test]
 fn read_long_values_cross_javascript_number_boundary() {

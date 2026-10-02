@@ -29,9 +29,10 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
     let parsed = beatmap.parsed.as_deref();
     let attributes = beatmap.attributes.unwrap_or_default();
 
-    let status = precise.status;
-    let current_mods = current_mods(regular, status);
-    let current_mode = current_mode(regular, status);
+    let raw_status = precise.status;
+    let status = stream_companion_status(raw_status, global.is_watching_replay);
+    let current_mods = current_mods(regular, raw_status);
+    let current_mode = current_mode(regular, raw_status);
     let hits = to_legacy_hits(gameplay.mode as i32, &gameplay.statistics);
 
     let user = regular.user.profile.as_ref();
@@ -155,7 +156,7 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
         sliders: i64::from(objects.sliders),
         circles: i64::from(objects.circles),
         spinners: i64::from(objects.spinners),
-        max_combo: parsed.map_or(0, |map| i64::from(map.engine.maximum_score.max_combo)),
+        max_combo: parsed.map_or(0, |map| i64::from(map.engine.difficulty.max_combo)),
         mp3_name: menu.audio_filename.clone(),
         osu_file_name: menu.filename.clone(),
         background_image_file_name: menu.background_filename.clone(),
@@ -200,7 +201,7 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
             .get("leaderboardType")
             .and_then(serde_json::Value::as_i64)
             .unwrap_or_default(),
-        raw_status: status,
+        raw_status,
         dir: menu.folder.clone(),
         dl: format!(
             "https://osu.ppy.sh/b/{}",
@@ -236,7 +237,7 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
         osu_m99_9_pp: -1,
         mania_1_000_000_pp: -1,
         mania_m1_000_000_pp: -1,
-        simulated_pp: -1,
+        simulated_pp: fix_decimals(pp(100)),
         plays: 0,
         tags: String::new(),
         source: String::new(),

@@ -24,7 +24,7 @@ The production calculator is a clean-room Rust implementation in
   `Math.Acos` float-argument promotion, f64-promoted vector-length
   calculation, and the legacy offset curve API used by catch conversion.
 - `src/scoring.rs`: accuracy, score simulation, and total score.
-- `src/hit_windows.rs`: temporal and catch spatial windows.
+- `src/hit_windows.rs`: temporal hit windows; Catch's map windows report every judgement as zero, separately from spatial catcher width.
 - `src/score_multiplier.rs`: ruleset score-multiplier calculations.
 - `src/source_map.rs`: machine-readable clean-room behavior attribution.
 
@@ -93,9 +93,11 @@ Historical parity evidence (not a production source)
 
 `tools/oracle/reference/lazer-calculator` is retained as historical parity
 evidence only. It records former tosuapp/lazer-calculator behavior for
-comparison and audit history; it is **not** a production source, build input,
-crate dependency, or runtime dependency. Production code does not derive
-from, include, vendor, or compile that directory.
+comparison and audit history; it is **not** the current calculator fixture's
+oracle, a production source, build input, crate dependency, or runtime
+dependency. The current generated oracle fixture targets `osu-pp-calculator`
+0.6.1 as pinned in `tools/oracle/oracle-lock.json`. Production code does not
+derive from, include, vendor, or compile that directory.
 
 Project-authored code in the `vosu-pp` package is dual-licensed under
 `MIT OR Apache-2.0`; the authoritative texts are at the root `LICENSE-MIT`

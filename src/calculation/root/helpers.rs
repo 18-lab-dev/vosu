@@ -166,15 +166,21 @@ where
         if cleaned.is_empty() {
             continue;
         }
-        let cleaned = cleaned.replace(['/', '\\'], &separator.to_string());
+        let is_separator =
+            |character: char| character == separator || (separator == '\\' && character == '/');
         if !saw_path {
-            absolute = cleaned.starts_with(separator);
+            absolute = cleaned.starts_with(is_separator);
             saw_path = true;
         }
         if !joined.is_empty() && !joined.ends_with(separator) {
             joined.push(separator);
         }
-        joined.push_str(cleaned.trim_start_matches(separator));
+        let cleaned = cleaned.trim_start_matches(is_separator);
+        if separator == '\\' {
+            joined.extend(cleaned.chars().map(|c| if c == '/' { '\\' } else { c }));
+        } else {
+            joined.push_str(cleaned);
+        }
     }
     if absolute {
         joined.insert(0, separator);

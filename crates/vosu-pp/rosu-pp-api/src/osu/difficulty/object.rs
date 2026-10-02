@@ -110,8 +110,13 @@ impl<'a> OsuDifficultyObject<'a> {
             400.0 * (time_preempt / crate::osu::object::OsuObject::PREEMPT_MIN).min(1.0);
 
         if hidden {
-            let fade_out_start_time =
-                self.base.start_time - time_preempt + time_preempt * HD_FADE_IN_DURATION_MULTIPLIER;
+            // ppy/osu@fe30ae7e: Hidden preserves the default slider fade-in.
+            let hidden_fade_in = if self.base.is_slider() {
+                fade_in_duration
+            } else {
+                time_preempt * HD_FADE_IN_DURATION_MULTIPLIER
+            };
+            let fade_out_start_time = fade_in_start_time + hidden_fade_in;
             let fade_out_duration = time_preempt * HD_FADE_OUT_DURATION_MULTIPLIER;
 
             ((time - fade_in_start_time) / fade_in_duration)

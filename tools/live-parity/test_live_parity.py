@@ -36,10 +36,11 @@ def v2(daemon: str, timestamp: int, state: object, time_ms: int, *, paused: bool
     return Sample(daemon, "v2", timestamp, {
         "state": state,
         "client": "lazer",
+        "settings": {"client": {"version": "2026.921.0"}},
         "session": {"playTime": time_ms},
         "beatmap": {
             "checksum": "shared-map",
-            "time": {"live": time_ms},
+            "time": {"live": time_ms, "mp3Length": 100_000},
             "title": static,
         },
         "play": {"paused": paused, "score": score},
@@ -67,7 +68,7 @@ class VersionIdentityTests(unittest.TestCase):
 
 
 class AlignmentTests(unittest.TestCase):
-    def test_nearest_same_state_and_unique_vosu_sample(self) -> None:
+    def test_same_state_ordered_unique_vosu_samples(self) -> None:
         source = [v2("source", 1, 2, 1000), v2("source", 2, 2, 1190)]
         vosu = [v2("vosu", 20, 2, 1200), v2("vosu", 10, 2, 990), v2("vosu", 5, 0, 1000)]
         pairs, missing = align_active(source, vosu, 150)
@@ -102,6 +103,37 @@ class AlignmentTests(unittest.TestCase):
             (left.monotonic_ns, right.monotonic_ns)
             for left, right in pairs
         ])
+        self.assertFalse(missing)
+
+    def test_clock_alignment_preserves_matches_at_pause_plateau(self) -> None:
+        source = [v2("source", i, 2, clock)
+                  for i, clock in enumerate((9798, 9803, 9803))]
+        vosu = [v2("vosu", i, 2, clock)
+                for i, clock in enumerate((9719, 9803, 9803))]
+
+        pairs, missing = align_active(source, vosu, 150)
+
+        self.assertEqual(list(zip(source, vosu)), pairs)
+        self.assertFalse(missing)
+
+    def test_clock_alignment_minimizes_skew_without_losing_coverage(self) -> None:
+        source = [v2("source", i, 2, clock)
+                  for i, clock in enumerate((1000, 1150))]
+        vosu = [v2("vosu", i, 2, clock)
+                for i, clock in enumerate((750, 900, 1005, 1155))]
+
+        pairs, missing = align_active(source, vosu, 150)
+
+        self.assertEqual(list(zip(source, vosu[2:])), pairs)
+        self.assertFalse(missing)
+
+    def test_clock_plateau_uses_nearest_receipts_after_maximizing_coverage(self) -> None:
+        source = [v2("source", t, 2, 1000) for t in (100, 200)]
+        vosu = [v2("vosu", t, 2, 1000) for t in (0, 90, 190)]
+
+        pairs, missing = align_active(source, vosu, 150)
+
+        self.assertEqual(list(zip(source, vosu[1:])), pairs)
         self.assertFalse(missing)
 
 
@@ -141,6 +173,7 @@ class BarrierTests(unittest.TestCase):
         vosu = v2("vosu", 2, 2, 2_100)
         for sample in (source, vosu):
             sample.payload["beatmap"]["time"]["firstObject"] = 2_000
+            sample.payload["play"]["playerName"] = "player"
             sample.payload["session"]["playTime"] = 0
         current = {"source": source, "vosu": vosu}
         self.assertFalse(LIVE_RUN._shared_play_ready(current, 150))
@@ -155,6 +188,7 @@ class BarrierTests(unittest.TestCase):
         current = {"source": source, "vosu": vosu}
         for sample in current.values():
             sample.payload["beatmap"]["time"]["firstObject"] = 0
+            sample.payload["play"]["playerName"] = "player"
         stable, ready_since = LIVE_RUN._shared_play_stable(
             current, 150, None)
         self.assertFalse(stable)
@@ -164,9 +198,24 @@ class BarrierTests(unittest.TestCase):
         }
         for sample in current.values():
             sample.payload["beatmap"]["time"]["firstObject"] = 0
+            sample.payload["play"]["playerName"] = "player"
         stable, _ = LIVE_RUN._shared_play_stable(
             current, 150, ready_since)
         self.assertTrue(stable)
+
+    def test_play_rejects_loading_with_an_aligned_preview_clock(self) -> None:
+        source = v2("source", 1, 2, 44_741)
+        vosu = v2("vosu", 2, 2, 44_750)
+        current = {"source": source, "vosu": vosu}
+        for sample in current.values():
+            sample.payload["beatmap"]["time"]["firstObject"] = 3_000
+            sample.payload["play"]["playerName"] = ""
+        self.assertEqual(
+            (False, None), LIVE_RUN._shared_play_stable(current, 150, 0))
+        source.payload["play"]["playerName"] = "Guest"
+        self.assertFalse(LIVE_RUN._shared_play_ready(current, 150))
+        vosu.payload["play"]["playerName"] = "Guest"
+        self.assertTrue(LIVE_RUN._shared_play_ready(current, 150))
 
     def test_comparison_context_starts_at_synchronized_play(self) -> None:
         source_stale = v2("source", 3, 2, 180_000)
@@ -186,7 +235,7 @@ class BarrierTests(unittest.TestCase):
             "vosu": [v2("vosu", 2, 0, 0), vosu_first, vosu_ready],
         }, 150)
         self.assertIs(source_ready, contexts["source"]["play"])
-        self.assertIs(vosu_first, contexts["vosu"]["play"])
+        self.assertIs(vosu_ready, contexts["vosu"]["play"])
 
     def test_menu_and_result_contexts_wait_for_both_daemons(self) -> None:
         source_menu_first = v2("source", 1, 0, 0)
@@ -305,14 +354,14 @@ class BarrierTests(unittest.TestCase):
         source = v2("source", 1, 0, 0)
         vosu = v2("vosu", 2, 0, 0)
         self.assertTrue(LIVE_RUN._shared_menu_ready(
-            {"source": source, "vosu": vosu}))
+            {"source": source, "vosu": vosu}, 150))
         vosu.payload["client"] = ""
         self.assertFalse(LIVE_RUN._shared_menu_ready(
-            {"source": source, "vosu": vosu}))
+            {"source": source, "vosu": vosu}, 150))
         vosu.payload["client"] = "lazer"
         vosu.payload["beatmap"]["checksum"] = "other-map"
         self.assertFalse(LIVE_RUN._shared_menu_ready(
-            {"source": source, "vosu": vosu}))
+            {"source": source, "vosu": vosu}, 150))
 
         source.payload["state"] = 7
         vosu.payload["state"] = 7
@@ -320,6 +369,41 @@ class BarrierTests(unittest.TestCase):
         vosu.payload["resultsScreen"] = {"name": "player"}
         self.assertFalse(LIVE_RUN._shared_result_ready(
             {"source": source, "vosu": vosu}))
+
+    def test_menu_waits_for_selected_map_audio_timing_on_both_sides(self) -> None:
+        current = {"source": v2("source", 1, 0, 0), "vosu": v2("vosu", 2, 0, 0)}
+        for sample in current.values():
+            timing = sample.payload["beatmap"]["time"]
+            del timing["mp3Length"]
+            self.assertFalse(LIVE_RUN._shared_menu_ready(current, 150))
+            for pending in (None, True, -1, float("nan"), float("inf")):
+                timing["mp3Length"] = pending
+                self.assertFalse(LIVE_RUN._shared_menu_ready(current, 150))
+            timing["mp3Length"] = 100_000
+            self.assertTrue(LIVE_RUN._shared_menu_ready(current, 150))
+
+    def test_menu_waits_for_initialized_client_settings_on_both_sides(self) -> None:
+        source = v2("source", 1, 0, 0)
+        vosu = v2("vosu", 2, 0, 0)
+        # A client can report menu before either daemon has read its settings.
+        for sample in (source, vosu):
+            sample.payload["beatmap"] = {}
+        current = {"source": source, "vosu": vosu}
+        self.assertTrue(LIVE_RUN._shared_menu_ready(current, 150))
+        for sample in (source, vosu):
+            for version in ("", " ", None):
+                sample.payload["settings"]["client"]["version"] = version
+                self.assertFalse(LIVE_RUN._shared_menu_ready(current, 150))
+            sample.payload["settings"]["client"]["version"] = "2026.921.0"
+
+    def test_menu_rejects_stale_cross_daemon_observation(self) -> None:
+        current = {
+            "source": v2("source", 1_000_000_000, 0, 0),
+            "vosu": v2("vosu", 1_300_000_001, 0, 0),
+        }
+        self.assertFalse(LIVE_RUN._shared_menu_ready(current, 150))
+        current["source"] = v2("source", 1_000_000_001, 0, 0)
+        self.assertTrue(LIVE_RUN._shared_menu_ready(current, 150))
 
 
     def test_out_of_order_does_not_satisfy_gate(self) -> None:
@@ -336,6 +420,70 @@ class ComparatorTests(unittest.TestCase):
         mismatches = compare_pair(left, right, 300)
         self.assertEqual("keys", mismatches[0].comparator)
         self.assertEqual("/play", mismatches[0].pointer)
+
+    def test_documented_vosu_extensions_preserve_shared_field_comparison(self) -> None:
+        cases = (
+            ("v1", {"gameplay": {"hits": {"hitErrorArray": [2]}}},
+             {"gameplay": {"hits": {"hitErrorArray": [2],
+                                   "pressHitErrors": [2], "releaseHitErrors": []}}}),
+            ("v1", {"tourney": {"ipcClients": [{"gameplay": {"hits": {
+                "hitErrorArray": [2]}}}]}},
+             {"tourney": {"ipcClients": [{"gameplay": {"hits": {
+                 "hitErrorArray": [2], "pressHitErrors": [2],
+                 "releaseHitErrors": []}}}]}}),
+            ("sc", {"hitErrors": [2]},
+             {"hitErrors": [2], "pressHitErrors": [2], "releaseHitErrors": []}),
+            ("v2", {"play": {"score": 0}},
+             {"play": {"score": 0}, "keys": {"k1": 1, "all": []}}),
+            ("v2", {"keys": {"k1": 1}, "play": {"score": 0}},
+             {"keys": {"k1": 1, "all": []},
+              "play": {"score": 0, "pressHitErrors": [], "releaseHitErrors": []}}),
+            ("v2", {"tourney": {"clients": [{"play": {"score": 0}}]}},
+             {"tourney": {"clients": [{"play": {
+                 "score": 0, "pressHitErrors": [], "releaseHitErrors": []}}]}}),
+            ("precise", {"keys": {"k1": 1}, "hitErrors": [2]},
+             {"keys": {"k1": 1, "all": []}, "hitErrors": [2],
+              "pressHitErrors": [2], "releaseHitErrors": []}),
+            ("precise", {"tourney": [{"keys": {"k1": 1}, "hitErrors": [2]}]},
+             {"tourney": [{"keys": {"k1": 1, "all": []}, "hitErrors": [2],
+                          "pressHitErrors": [2], "releaseHitErrors": []}]}),
+        )
+        for schema, source_payload, vosu_payload in cases:
+            with self.subTest(schema=schema, payload=source_payload):
+                source = Sample("source", schema, 1, source_payload)
+                vosu = Sample("vosu", schema, 2, vosu_payload)
+                for active in (False, True):
+                    self.assertEqual([], compare_pair(
+                        source, vosu, 300, active_override=active))
+                # Missing legacy fields must not be hidden by the extension policy.
+                source_payload["required"] = 1
+                self.assertEqual(["keys"], [
+                    item.comparator for item in compare_pair(source, vosu, 300)])
+
+        source = Sample("source", "precise", 1, {"pressHitErrors": [1]})
+        vosu = Sample("vosu", "precise", 2, {"pressHitErrors": [2]})
+        self.assertEqual([("/pressHitErrors/0", "exact")], [
+            (item.pointer, item.comparator)
+            for item in compare_pair(source, vosu, 300, active_override=False)])
+
+    def test_extension_allowance_is_exact_and_one_sided(self) -> None:
+        cases = (
+            ("precise", {"unexpected": []}),
+            ("precise", {"play": {"pressHitErrors": []}}),
+            ("precise", {"keys": {"allExtra": []}}),
+            ("v2", {"pressHitErrors": []}),
+            ("v2", {"resultsScreen": {"releaseHitErrors": []}}),
+            ("v1", {"keys": {"all": []}}),
+            ("sc", {"play": {"pressHitErrors": []}}),
+        )
+        for schema, payload in cases:
+            with self.subTest(schema=schema, payload=payload):
+                self.assertTrue(compare_pair(
+                    Sample("source", schema, 1, {}),
+                    Sample("vosu", schema, 2, payload), 300))
+        self.assertTrue(compare_pair(
+            Sample("source", "precise", 1, {"pressHitErrors": []}),
+            Sample("vosu", "precise", 2, {}), 300))
 
     def test_static_active_value_mismatch_is_detected(self) -> None:
         left = v2("source", 1, 2, 1000, static="A")

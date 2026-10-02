@@ -2,6 +2,7 @@
 """Deterministic live vosu parity capture and comparison primitives."""
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, asdict
 import json
 import math
@@ -14,8 +15,8 @@ SCHEMAS = {
     "precise": "/json/v2/precise",
     "sc": "/json/sc",
 }
-PINNED_SOURCE_REVISION = "1a67fd64cc38fe60306328dde0a429e3211ca4ed"
-PINNED_SOURCE_VERSION = "4.25.0"
+PINNED_SOURCE_REVISION = "2359305a63f2aaebb201bc8d2eee58177f52590e"
+PINNED_SOURCE_VERSION = "4.26.2"
 PINNED_VOSU_VERSION = "0.3.0"
 SOURCE_BUILD_LABEL = (
     f"upstream-tosu-source-v{PINNED_SOURCE_VERSION}@{PINNED_SOURCE_REVISION[:12]}"
@@ -132,36 +133,91 @@ def align_active(
         source_segment: Callable[[Sample], object] | None = None,
         vosu_segment: Callable[[Sample], object] | None = None,
 ) -> tuple[list[tuple[Sample, Sample]], list[Sample]]:
-    """Monotonically align every source observation; surplus vosu frames are allowed."""
+    """Maximize unique ordered matches, then minimize clock and receipt skew."""
     window = max(2 * poll_rate_ms, 300)
-    unused = set(range(len(vosu)))
+    source_groups: dict[object, list[Sample]] = {}
+    vosu_groups: dict[object, list[Sample]] = {}
+    for values, partition, groups in (
+            (source, source_segment, source_groups),
+            (vosu, vosu_segment, vosu_groups)):
+        for sample in sorted(values, key=lambda s: s.monotonic_ns):
+            segment = partition(sample) if partition is not None else 0
+            groups.setdefault(segment, []).append(sample)
     pairs: list[tuple[Sample, Sample]] = []
     unaligned: list[Sample] = []
-    last_vosu_ns: dict[object, int] = {}
-    for left in sorted(source, key=lambda s: s.monotonic_ns):
-        left_time = beatmap_time(left.payload)
-        left_state = state_of(left.payload)
-        segment = source_segment(left) if source_segment is not None else 0
-        candidates: list[tuple[float, int, int]] = []
-        if left_time is not None:
-            for idx in unused:
-                right = vosu[idx]
-                right_time = beatmap_time(right.payload)
-                right_part = vosu_segment(right) if vosu_segment is not None else 0
-                if (right_part == segment and state_of(right.payload) == left_state
-                        and right_time is not None
-                        and right.monotonic_ns >= last_vosu_ns.get(segment, -1)):
-                    delta = abs(right_time - left_time)
-                    if delta <= window:
-                        candidates.append((delta, right.monotonic_ns, idx))
-        if not candidates:
-            unaligned.append(left)
-            continue
-        _, _, chosen = min(candidates)
-        unused.remove(chosen)
-        pairs.append((left, vosu[chosen]))
-        last_vosu_ns[segment] = vosu[chosen].monotonic_ns
+    for segment, left in source_groups.items():
+        matched, missing = _align_clock_segment(
+            left, vosu_groups.get(segment, []), window)
+        pairs.extend(matched)
+        unaligned.extend(missing)
+    pairs.sort(key=lambda pair: pair[0].monotonic_ns)
+    unaligned.sort(key=lambda sample: sample.monotonic_ns)
     return pairs, unaligned
+
+
+def _align_clock_segment(
+        source: list[Sample], vosu: list[Sample], window: int,
+) -> tuple[list[tuple[Sample, Sample]], list[Sample]]:
+    by_state: dict[object, list[tuple[float, int]]] = {}
+    for index, sample in enumerate(vosu):
+        clock = beatmap_time(sample.payload)
+        if clock is not None:
+            by_state.setdefault(state_of(sample.payload), []).append((clock, index))
+    for candidates in by_state.values():
+        candidates.sort()
+
+    # Sparse ordered matching: a Fenwick prefix tree stores the best chain
+    # ending before each right-hand observation, not a quadratic DP matrix.
+    scores: list[tuple[int, float, int]] = [(0, 0.0, 0)]
+    links: list[tuple[int, int, int]] = [(-1, -1, -1)]
+    tree = [0] * (len(vosu) + 1)
+    best = 0
+    for left_index, left in enumerate(source):
+        clock = beatmap_time(left.payload)
+        if clock is None:
+            continue
+        candidates = by_state.get(state_of(left.payload), [])
+        start = bisect_left(candidates, (clock - window, -1))
+        end = bisect_right(candidates, (clock + window, len(vosu)))
+        pending: list[int] = []
+        for candidate in range(start, end):
+            right_clock, right_index = candidates[candidate]
+            previous = 0
+            position = right_index
+            while position:
+                if scores[tree[position]] > scores[previous]:
+                    previous = tree[position]
+                position -= position & -position
+            count, clock_skew, receipt_skew = scores[previous]
+            score = (
+                count + 1,
+                clock_skew - abs(clock - right_clock),
+                receipt_skew - abs(left.monotonic_ns - vosu[right_index].monotonic_ns),
+            )
+            node = len(scores)
+            scores.append(score)
+            links.append((previous, left_index, right_index))
+            pending.append(node)
+            if score > scores[best]:
+                best = node
+        # Deferred updates prevent one source observation from being reused.
+        for node in pending:
+            position = links[node][2] + 1
+            while position < len(tree):
+                if scores[node] > scores[tree[position]]:
+                    tree[position] = node
+                position += position & -position
+    pairs: list[tuple[Sample, Sample]] = []
+    matched_source: set[int] = set()
+    while best:
+        best, left_index, right_index = links[best]
+        pairs.append((source[left_index], vosu[right_index]))
+        matched_source.add(left_index)
+    pairs.reverse()
+    return pairs, [
+        sample for index, sample in enumerate(source)
+        if index not in matched_source
+    ]
 
 
 def _kind(value: Any) -> str:
@@ -262,6 +318,34 @@ def _within_one_ulp(left: float, right: float) -> bool:
     )
 
 
+def _is_vosu_extension(schema: str, parts: tuple[str, ...]) -> bool:
+    """Exact additive API paths documented in CHANGELOG 0.3.0, not wildcards."""
+    if schema == "precise":
+        if len(parts) >= 3 and parts[0] == "tourney" and parts[1].isdigit():
+            parts = parts[2:]
+        return parts in {
+            ("pressHitErrors",), ("releaseHitErrors",), ("keys", "all")}
+    if schema == "v2":
+        if (
+                len(parts) == 5 and parts[:2] == ("tourney", "clients")
+                and parts[2].isdigit() and parts[3] == "play"):
+            parts = parts[3:]
+        return parts in {
+            ("play", "pressHitErrors"), ("play", "releaseHitErrors"),
+            ("keys",), ("keys", "all")}
+    if schema == "v1":
+        if (
+                len(parts) == 6 and parts[:2] == ("tourney", "ipcClients")
+                and parts[2].isdigit()):
+            parts = parts[3:]
+        return parts in {
+            ("gameplay", "hits", "pressHitErrors"),
+            ("gameplay", "hits", "releaseHitErrors")}
+    if schema == "sc":
+        return parts in {("pressHitErrors",), ("releaseHitErrors",)}
+    return False
+
+
 
 def compare_pair(
         left: Sample, right: Sample, alignment_window_ms: int,
@@ -328,7 +412,8 @@ def compare_pair(
                 if has_observable(value, parts + (key,))}
             observable_b = {
                 key for key, value in b.items()
-                if has_observable(value, parts + (key,))}
+                if (key in a or not _is_vosu_extension(left.schema, parts + (key,)))
+                and has_observable(value, parts + (key,))}
             if observable_a != observable_b:
                 add(parts, "keys", sorted(observable_a), sorted(observable_b),
                     "object key set differs")

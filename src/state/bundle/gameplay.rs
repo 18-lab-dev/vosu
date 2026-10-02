@@ -333,6 +333,7 @@ pub struct GameplayState {
     pub keypress_identity_mode: Option<i64>,
     pub hit_errors: HitErrorArray,
     pub total_hit_errors: f64,
+    pub total_hit_error_squares: f64,
     pub previous_hit_error_index: i64,
     pub previous_play_time: f64,
     pub leaderboard_visible: bool,
@@ -372,6 +373,7 @@ impl Default for GameplayState {
             keypress_identity_mode: None,
             hit_errors: HitErrorArray::default(),
             total_hit_errors: 0.0,
+            total_hit_error_squares: 0.0,
             previous_hit_error_index: 0,
             previous_play_time: 0.0,
             leaderboard_visible: false,
@@ -437,41 +439,12 @@ impl GameplayState {
         self.calculated = ProgressiveAttributes::default();
     }
 
-    pub(super) fn reset_paused_regular(&mut self, score: Option<&Score>) {
-        self.is_default_state = false;
-        if let Some(score) = score {
-            self.mode = score.mode;
-            if !score.mods.array.is_empty() {
-                self.mods.clone_from(&score.mods);
-            }
-        }
-        self.failed = false;
-        self.retries = 0;
-        self.player_name.clear();
-        self.score = 0.0;
-        self.player_hp_smooth = 0.0;
-        self.player_hp = 0.0;
-        self.accuracy = 100.0;
-        self.statistics = default_statistics();
-        self.maximum_statistics = default_statistics();
-        self.combo = 0;
-        self.max_combo = 0;
-        self.combo_previous = 0;
-        self.hit_miss_previous = 0;
-        self.slider_breaks = 0;
-        self.grade_current.clear();
-        self.grade_expected.clear();
-        self.leaderboard_visible = false;
-        self.leaderboard_player = LeaderboardPlayerState::default();
-        self.leaderboard_scores.clear();
-        self.calculated = ProgressiveAttributes::default();
-    }
-
     pub(super) fn reset_hit_errors(&mut self) {
         self.hit_errors.all.clear();
         self.hit_errors.press.clear();
         self.hit_errors.release.clear();
         self.total_hit_errors = 0.0;
+        self.total_hit_error_squares = 0.0;
         self.previous_hit_error_index = 0;
     }
 
@@ -545,28 +518,21 @@ impl GameplayState {
     }
 
     fn update_unstable_rate(&mut self) {
-        let base = self.calculate_ur();
-        self.unstable_rate = if self.mods.number & 64 == 64 {
-            base / 1.5
-        } else if self.mods.number & 256 == 256 {
-            base * 1.33
-        } else {
-            base
-        };
+        self.unstable_rate = self.calculate_ur() / self.mods.rate;
     }
 
     pub(super) fn calculate_ur(&self) -> f64 {
-        if self.hit_errors.all.is_empty() {
+        let count = self.hit_errors.all.len();
+        if count == 0 {
             return 0.0;
         }
-        let mean = self.total_hit_errors / self.hit_errors.all.len() as f64;
-        let variance = self
-            .hit_errors
-            .all
-            .iter()
-            .map(|hit| (hit - mean).powi(2))
-            .sum::<f64>()
-            / self.hit_errors.all.len() as f64;
+        let average = self.total_hit_errors / count as f64;
+        let variance = self.total_hit_error_squares / count as f64 - average * average;
+        let variance = if variance.is_nan() {
+            variance
+        } else {
+            variance.max(0.0)
+        };
         variance.sqrt() * 10.0
     }
 }
@@ -673,6 +639,11 @@ pub struct RankedPlayState {
     pub info: Option<RawRankedPlay>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RoomState {
+    pub info: Option<RawLazerRoom>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RegularState {
     pub global: GlobalState,
@@ -686,6 +657,7 @@ pub struct RegularState {
     pub user: UserState,
     pub lazer_multi_spectating: LazerMultiSpectatingState,
     pub ranked_play: RankedPlayState,
+    pub room: RoomState,
 }
 
 #[derive(Debug, Clone, PartialEq)]

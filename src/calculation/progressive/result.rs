@@ -15,8 +15,6 @@ pub struct ResultFrame<'a> {
     pub client: ClientScoring,
     pub score: i64,
     pub max_combo: i64,
-    pub map_max_combo: i64,
-    pub displayed_accuracy_percent: f64,
     pub statistics: HitStatistics,
 }
 
@@ -77,24 +75,16 @@ impl ResultCalculator {
             Err(error) => return CalculationOutcome::RetainedError(error.to_string()),
         };
 
-        let mut fc = score;
-        fc.greats = frame.statistics.great + frame.statistics.miss;
-        fc.misses = 0;
-        fc.max_combo = frame.map_max_combo;
-        if frame.mode == Ruleset::Mania {
-            fc.perfects = frame.statistics.perfect
-                + frame.statistics.ok
-                + frame.statistics.meh
-                + frame.statistics.miss;
-            fc.greats = frame.statistics.great;
-            fc.goods = frame.statistics.good;
-            fc.oks = 0;
-            fc.mehs = 0;
-            fc.misses = 0;
-            fc.accuracy = frame.displayed_accuracy_percent / 100.0;
-        }
-        // Non-mania intentionally retains current-score accuracy after changing
-        // misses/greats, matching resultScreen.ts rather than recomputing FC acc.
+        let mut fc = super::score::full_combo(
+            frame.mode,
+            score,
+            beatmap.difficulty_summary(beatmap.full_difficulty()),
+            *beatmap.max_score(),
+        );
+        fc.accuracy = match beatmap.calculate_accuracy(&fc) {
+            Ok(accuracy) => accuracy,
+            Err(error) => return CalculationOutcome::RetainedError(error.to_string()),
+        };
         let fc_performance = match beatmap.calculate_performance(beatmap.full_difficulty(), &fc) {
             Ok(performance) => performance,
             Err(error) => return CalculationOutcome::RetainedError(error.to_string()),

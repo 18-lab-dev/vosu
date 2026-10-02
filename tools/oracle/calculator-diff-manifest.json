@@ -7,6 +7,7 @@
     "calculatorRevision": "9a22c4c74f8e584fa64133a79a204dd045646bac",
     "calculatorPackage": "0.5.0-20260702-main.0"
   },
+  "scopeNote": "Pins identify the original source-port baseline. Current oracle generation uses oracle-lock.json. Coverage excludes the obsolete JavaScript convert(99) assertion: the Rust conversion API accepts a typed Ruleset.",
   "tolerance": {
     "absolute": 1e-05,
     "discrete": "exact",
@@ -2773,25 +2774,6 @@
       ],
       "requires": [
         "convert.fixture-osu.to-osu.success"
-      ],
-      "location": "lib/native/{PlayBeatmap,LazerMod}.cs; lib/native/Internal/{Rulesets,DiffWorkingBeatmap}.cs",
-      "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",
-      "rustLocation": "src/lib.rs ParsedBeatmap/StructuredMod",
-      "delta": "Pinned wrapper PlayBeatmap.cs:44-177 applies mods with cache invalidation; Convert drops mods; playable map retains original/current difficulty; WorkingBeatmap.cs:261-353 runs converter, post-conversion, difficulty, processor preprocess/defaults/nested/postprocess, then beatmap mod pipeline."
-    },
-    {
-      "id": "wrapper.play-beatmap-parse-convert-mods.unsupported-conversion-null",
-      "sourcePort": "wrapper.play-beatmap-parse-convert-mods",
-      "authority": "calculator-wrapper",
-      "category": "branch-or-constant",
-      "symbols": [
-        "unsupported-conversion-null"
-      ],
-      "vectors": [
-        "unsupported-conversion-null"
-      ],
-      "requires": [
-        "convert.unsupported.mode-99.throws"
       ],
       "location": "lib/native/{PlayBeatmap,LazerMod}.cs; lib/native/Internal/{Rulesets,DiffWorkingBeatmap}.cs",
       "baselineLocation": "tosuapp/lazer-calculator parent/base implementation",

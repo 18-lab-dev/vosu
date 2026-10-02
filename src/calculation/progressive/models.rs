@@ -97,8 +97,10 @@ pub struct DifficultyAttributes {
     pub stars: f64,
     pub max_combo: i64,
     pub n_sliders: i64,
+    pub n_objects: i64,
+    pub nested_score_per_object: f64,
+    pub maximum_legacy_combo_score: f64,
 }
-
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PerformanceAttributes {
     pub pp: f64,

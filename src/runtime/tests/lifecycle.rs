@@ -22,6 +22,7 @@ fn precise_publication_wakes_native_subscription_without_waking_regular_stream()
         user: UserState::default(),
         lazer_multi_spectating: LazerMultiSpectatingState::default(),
         ranked_play: RankedPlayState::default(),
+        room: Default::default(),
     });
     let precise = |play_time| {
         Arc::new(PreciseState {

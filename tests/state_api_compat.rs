@@ -37,11 +37,11 @@ use vosu::{
 };
 
 const EXPECTED_REVISIONS: Revisions = Revisions {
-    upstream_source: "1a67fd64cc38fe60306328dde0a429e3211ca4ed",
-    lazer_calculator: "9a22c4c74f8e584fa64133a79a204dd045646bac",
-    osu: "97e94babde9d5ecbe574ecdd33509db27452cd0f",
-    calculator_package: "0.5.0-20260702-main.0",
-    calculator_manifest_sha256: "2cc4c2390a89968b952ff0a6d2dcff4309bb530c4fd6f46920c13b1b86a21852",
+    upstream_source: "2359305a63f2aaebb201bc8d2eee58177f52590e",
+    lazer_calculator: "323bc04198b256b5a00f4e63c5c4cbb506f43cc5",
+    osu: "fe30ae7eea2beeb1f0d3a5ce8dde12bb78ca3f48",
+    calculator_package: "0.6.1-20260729-main.0",
+    calculator_tree: "b12ac98627ab365e373fcfb7505465253f25fcfa",
 };
 const REQUIRED_COVERAGE: &[&str] = &[
     "no-client",
@@ -81,7 +81,7 @@ struct Revisions {
     lazer_calculator: &'static str,
     osu: &'static str,
     calculator_package: &'static str,
-    calculator_manifest_sha256: &'static str,
+    calculator_tree: &'static str,
 }
 
 #[derive(Deserialize)]
@@ -93,7 +93,7 @@ struct RevisionDocument {
     lazer_calculator: String,
     osu: String,
     calculator_package: String,
-    calculator_manifest_sha256: String,
+    calculator_tree: String,
 }
 
 #[derive(Deserialize)]
@@ -417,6 +417,7 @@ fn regular(input: &Input) -> RegularState {
             keypress_identity_mode: Some(input.mode),
             hit_errors: hit_errors(gameplay),
             total_hit_errors: 0.0,
+            total_hit_error_squares: 0.0,
             previous_hit_error_index: 0,
             previous_play_time: 0.0,
             leaderboard_visible: boolean(gameplay, "isLeaderboardVisible"),
@@ -460,6 +461,7 @@ fn regular(input: &Input) -> RegularState {
                 }),
         },
         ranked_play: RankedPlayState::default(),
+        room: Default::default(),
     }
 }
 
@@ -624,8 +626,8 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
         EXPECTED_REVISIONS.calculator_package
     );
     assert_eq!(
-        inventory.revisions.calculator_manifest_sha256,
-        EXPECTED_REVISIONS.calculator_manifest_sha256
+        inventory.revisions.calculator_tree,
+        EXPECTED_REVISIONS.calculator_tree
     );
 
     let declared: BTreeSet<_> = inventory
@@ -709,34 +711,8 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
                         }
                     }
                 } else {
-                    // The pinned oracle predates both Storycraft's merged hitWindow field and
-                    // the planned upstream mode-agnostic keys port. Dedicated API tests assert
-                    // those contracts; the older fixtures continue to attest all shared fields.
+                    // Mode-agnostic keys are a vosu extension to the source schema.
                     object.shift_remove("keys");
-                    if let Some(stats) = object
-                        .get_mut("beatmap")
-                        .and_then(Value::as_object_mut)
-                        .and_then(|beatmap| beatmap.get_mut("stats"))
-                        .and_then(Value::as_object_mut)
-                    {
-                        stats.shift_remove("hitWindow");
-                    }
-                    if let Some(clients) = object
-                        .get_mut("tourney")
-                        .and_then(Value::as_object_mut)
-                        .and_then(|tourney| tourney.get_mut("clients"))
-                        .and_then(Value::as_array_mut)
-                    {
-                        for client in clients {
-                            client
-                                .get_mut("beatmap")
-                                .and_then(Value::as_object_mut)
-                                .and_then(|beatmap| beatmap.get_mut("stats"))
-                                .and_then(Value::as_object_mut)
-                                .expect("v2 tournament client beatmap stats must be an object")
-                                .shift_remove("hitWindow");
-                        }
-                    }
                 }
             }
             let actual = serde_json::to_vec(&actual).expect("normalized output must encode");

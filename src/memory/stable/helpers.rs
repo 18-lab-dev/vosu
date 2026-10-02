@@ -29,17 +29,6 @@ pub(super) fn default_stats() -> Statistics {
 pub(super) fn score_has_started(play_time: f64, first_object_time: Option<i64>) -> bool {
     first_object_time.is_some_and(|first| play_time >= first.saturating_sub(100) as f64)
 }
-pub(super) fn setting_truthy(value: &Value) -> bool {
-    match value {
-        Value::Bool(value) => *value,
-        Value::Number(value) => value
-            .as_f64()
-            .is_some_and(|number| number != 0.0 && !number.is_nan()),
-        Value::String(value) => !value.is_empty(),
-        Value::Null => false,
-        _ => true,
-    }
-}
 pub(super) fn js_long(value: i64) -> f64 {
     value as f64
 }

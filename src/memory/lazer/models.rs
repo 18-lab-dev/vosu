@@ -12,8 +12,11 @@ impl LazerPattern {
     #[must_use]
     pub fn source_default() -> Self {
         Self {
-            scaling_container_target_draw_size: Pattern::parse("00 00 80 44 00 00 40 44", false)
-                .expect("pinned lazer signature is valid"),
+            scaling_container_target_draw_size: Pattern::parse(
+                "01 01 00 00 00 00 80 44 00 00 40 44",
+                false,
+            )
+            .expect("pinned lazer signature is valid"),
             offset: 0,
         }
     }

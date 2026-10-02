@@ -19,10 +19,22 @@ pub trait WorkerClock: Send + Sync + 'static {
     fn is_cancelled(&self) -> bool;
 }
 
-#[derive(Default)]
 pub struct SystemWorkerClock {
     stopped: Mutex<bool>,
     changed: Condvar,
+    #[cfg(windows)]
+    _timer_resolution: super::windows_timer::TimerResolution,
+}
+
+impl Default for SystemWorkerClock {
+    fn default() -> Self {
+        Self {
+            stopped: Mutex::new(false),
+            changed: Condvar::new(),
+            #[cfg(windows)]
+            _timer_resolution: super::windows_timer::TimerResolution::request(),
+        }
+    }
 }
 
 impl WorkerClock for SystemWorkerClock {

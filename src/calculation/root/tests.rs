@@ -559,7 +559,11 @@ fn safe_join_matches_node_normalization_edges() {
     assert_eq!(safe_join_with_separator(["", ""], '/'), ".");
     assert_eq!(
         safe_join_with_separator([" /foo\\bar ", " ../baz "], '/'),
-        "/foo/baz"
+        "/baz"
+    );
+    assert_eq!(
+        safe_join_with_separator([" /foo ", " bar\\baz "], '/'),
+        "/foo/bar\\baz"
     );
     assert_eq!(safe_join_with_separator(["/foo", "/bar"], '/'), "/foo/bar");
     assert_eq!(safe_join_with_separator(["/", ".."], '/'), "/");

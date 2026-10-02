@@ -16,6 +16,21 @@ pub(super) fn current_mode(regular: &RegularState, status: i64) -> Option<i64> {
     }
 }
 
+pub(super) fn stream_companion_status(raw: i64, watching_replay: bool) -> i64 {
+    match raw {
+        2 => {
+            if watching_replay {
+                8
+            } else {
+                2
+            }
+        }
+        1 | 4 => 16,
+        7 | 14 | 17 | 18 => 32,
+        _ => 1,
+    }
+}
+
 pub(super) fn round4(value: f64) -> f64 {
     fix_decimals_to(value, 4).expect("four decimals are valid")
 }

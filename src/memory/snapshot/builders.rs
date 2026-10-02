@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use crate::model::memory::{
-    AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerSpectator,
-    Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney, TourneyChat,
-    TourneyUser, User,
+    AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerRoom,
+    LazerSpectator, Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney,
+    TourneyChat, TourneyUser, User,
 };
 use crate::process::{MemoryRead, ReadStatus};
 
@@ -34,6 +34,7 @@ impl RawRegularSnapshotBuilder {
                 audio_velocity_base: None,
                 leaderboard: None,
                 ranked_play: None,
+                room: None,
                 tourney: None,
                 tourney_chat: None,
                 tourney_user: None,
@@ -117,6 +118,11 @@ impl RawRegularSnapshotBuilder {
     #[must_use]
     pub fn lazer_spectating(mut self, read: MemoryRead<LazerSpectator>) -> Self {
         self.snapshot.lazer_spectating = Some(read);
+        self
+    }
+    #[must_use]
+    pub fn room(mut self, read: MemoryRead<LazerRoom>) -> Self {
+        self.snapshot.room = Some(read);
         self
     }
 

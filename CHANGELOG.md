@@ -30,10 +30,13 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 - Merge all five reopened lane histories and benchmark the combined source against both the original optimization base and previous integration. Production calculator preparation and shared subscriptions improved on the measured fixtures; native lazer precise capture was 16.04% faster than previous while requested bytes rose 570 → 912 per cycle.
 - Preserve the final measured limitations: sparse 33-front/64-spread controls were 16.48%/13.69% slower than the original base, distinct-plan fast-writer subscriptions were 4.03% slower than previous, and mania parsing was 4.89% slower than previous. These are workload-specific results, not a general daemon speedup; see the [final combined measurements](openwiki/testing/benchmarks.md#final-reopened-lane-consolidation-2026-09-08).
 - Qualify the retained parsing regression as archived-binary/protocol-specific: follow-up diagnosis found unchanged allocations and negligible instruction-work changes, while a disposable diagnostic reversed the timing sign with setup both present and absent. The exact cause remains unresolved; no parser speedup or fix is claimed. Preserve the original unfavorable numbers and see the [parsing interpretation and local evidence](openwiki/testing/benchmarks.md#combined-measurements).
+- Keep live-parity attestation compatible with protected Git for Windows/MSVC build layouts; require initialized client settings before promoting the menu barrier. Compare shared fields strictly while recognizing only vosu's documented additive hit-error arrays and `keys.all` paths. Distinguish stale Windows exit snapshots from new clients without relaxing PID/creation-time ownership checks.
 
 ### Gameplay
 
 - Reset published hit-error arrays when osu!lazer or osu!stable rebuilds the live hit-event list, so editor test-mode section restarts drop pre-restart errors and skipped-object zeros instead of waiting for those notes to elapse again.
+- Track upstream tosu changes through `2359305a63f2aaebb201bc8d2eee58177f52590e`: expose lazer multiplayer rooms and optional avatars, preserve falsey stable settings, recognize multiplayer ScoreV2, and calculate unstable rate incrementally using the active clock rate.
+- Retain lazer gameplay score, hit counts, accuracy, rank, and modifiers while paused; entering song selection still clears the previous play epoch.
 
 ### Licensing
 
@@ -43,8 +46,12 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 ### Calculation
 
 - Replaced the LGPL-derived native live calculator with a clean-room Rust implementation based on pinned MIT `rosu-pp` 4.0.1 and MIT `ppy/osu` revision `97e94babde9d5ecbe574ecdd33509db27452cd0f`; retained the former calculator tree only as non-production historical parity evidence.
+- Update max-achievable/full-combo score and accuracy projections, nested tick-score metadata, long-slider/spinner strain graph bounds, Hidden slider opacity, and source-calculator performance clamps. Regenerate current API/calculator fixtures while retaining historical source and NUnit provenance.
+- Refresh the embedded lazer offsets for osu! `2026.921.0`, including room-user fields, with version-matched runtime-derived `GameBaseVtable` evidence.
 
 ### API
+
+- Add mode-aware `beatmap.stats.hitWindow` judgement windows, including upstream's zero-valued Catch windows; normalize StreamCompanion token-array commands without broadening other WebSocket command paths.
 
 - Restored the tosu-compatible hit-error arrays at `hitErrorArray` and `hitErrors`; ordered press and release classifications now use additive sibling `pressHitErrors` and `releaseHitErrors` fields.
 - Matched gosuMemory v1 replay visibility and stable tournament spectator global-rank fields to current tosu behavior instead of emitting fixed defaults.

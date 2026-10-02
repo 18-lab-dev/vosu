@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import base64
 import hashlib
@@ -50,6 +51,28 @@ class ProcessOwnershipTests(unittest.TestCase):
         probe.close()
         return port
 
+    def test_capture_launch_failure_restores_callers_gc_state(self) -> None:
+        original = gc.isenabled()
+
+        def fail_launch(_cfg):
+            self.assertFalse(gc.isenabled())
+            raise ValueError("client launch failed")
+
+        try:
+            for enabled in (True, False):
+                with self.subTest(enabled=enabled):
+                    gc.enable() if enabled else gc.disable()
+                    with mock.patch.object(LIVE_RUN, "build_release_artifacts"), \
+                            mock.patch.object(LIVE_RUN, "launch", return_value=({}, {})), \
+                            mock.patch.object(LIVE_RUN, "_launch_client", side_effect=fail_launch):
+                        with self.assertRaisesRegex(ValueError, "client launch failed"):
+                            LIVE_RUN.capture(
+                                {"_artifact_identity": {"client": {}}},
+                                "unused.json", 1, 25)
+                    self.assertEqual(gc.isenabled(), enabled)
+        finally:
+            gc.enable() if original else gc.disable()
+
     def test_windows_runtime_directory_avoids_temp_archive_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(LIVE_RUN.sys, "platform", "win32"), \
@@ -64,14 +87,16 @@ class ProcessOwnershipTests(unittest.TestCase):
 
     def test_http_attestation_allows_completed_shutdown_request(self) -> None:
         checks = [
-            {"after_monotonic_ns": 10},
-            {"after_monotonic_ns": 20},
-            {"after_monotonic_ns": 30},
+            {"before_monotonic_ns": 0, "after_monotonic_ns": 10},
+            {"before_monotonic_ns": 16, "after_monotonic_ns": 20},
+            {"before_monotonic_ns": 26, "after_monotonic_ns": 30},
         ]
         self.assertTrue(LIVE_RUN._http_samples_attested(checks, [15, 25]))
         self.assertFalse(LIVE_RUN._http_samples_attested(checks[:1], [15, 25]))
         self.assertFalse(LIVE_RUN._http_samples_attested(checks, [5, 25]))
         self.assertFalse(LIVE_RUN._http_samples_attested(checks, [15, 35]))
+        self.assertFalse(LIVE_RUN._http_samples_attested(
+            [checks[0], checks[0]], [15, 25]))
 
     @unittest.skipUnless(os.name == "posix", "POSIX process groups required")
     def test_signal_process_tree_terminates_descendants(self) -> None:
@@ -123,7 +148,7 @@ class ProcessOwnershipTests(unittest.TestCase):
         kernel32.CloseHandle.assert_called_once_with(99)
 
 
-    def test_connection_owner_waits_for_delayed_accept(self) -> None:
+    def test_connection_owner_attests_despite_delayed_accept(self) -> None:
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen(1)
@@ -143,12 +168,12 @@ class ProcessOwnershipTests(unittest.TestCase):
             "port": listener.getsockname()[1],
             "ownership_checks": [],
         }
-        started = time.monotonic()
         try:
             LIVE_RUN._assert_connection_owner(
                 record, connection, "http/v1/connection", time.monotonic_ns())
-            self.assertGreaterEqual(time.monotonic() - started, 1.0)
-            self.assertEqual(1, len(accepted))
+            self.assertEqual(
+                os.getpid(),
+                record["ownership_checks"][-1]["connection_owner_pid"])
         finally:
             connection.close()
             thread.join()
@@ -192,11 +217,11 @@ class ProcessOwnershipTests(unittest.TestCase):
 
         try:
             started = time.monotonic_ns()
-            with mock.patch.object(
-                    LIVE_RUN, "_assert_connection_owner", assert_after_request):
-                sample = LIVE_RUN.fetch(
+            with LIVE_RUN.HttpProbe(
                     f"http://127.0.0.1:{server.server_port}",
-                    "source", "v1", owner)
+                    "source", "v1", owner) as probe, mock.patch(
+                        "parity_probes._assert_connection_owner", assert_after_request):
+                sample = probe.fetch()
             self.assertEqual(200, sample.status)
             connection_checks = [
                 check for check in owner["ownership_checks"]
@@ -343,9 +368,59 @@ class ProcessOwnershipTests(unittest.TestCase):
 
     def test_exact_client_exit_before_results_is_rejected(self) -> None:
         client = {"pid": 1234, "start_identity": "original"}
-        with mock.patch.object(LIVE_RUN, "_process_alive", return_value=False):
+        with (
+            mock.patch.object(LIVE_RUN, "_process_alive", return_value=False),
+            mock.patch.object(LIVE_RUN, "_running_osu_processes", return_value={}),
+        ):
             with self.assertRaisesRegex(ValueError, "before both result barriers"):
                 LIVE_RUN._assert_client_population(client, False)
+
+    def test_exited_approved_windows_process_is_not_a_new_client(self) -> None:
+        for pid in (100, 200):
+            for results_ready in (False, True):
+                with self.subTest(pid=pid, results_ready=results_ready):
+                    client = {
+                        "pid": 100, "start_identity": "1000",
+                        "approved_processes": [
+                            {"pid": 100, "start_identity": "1000"},
+                            {"pid": 200, "start_identity": "2000"},
+                        ],
+                    }
+                    snapshot = {
+                        pid: {
+                            "pid": pid, "parent_pid": 999,
+                            "start_identity": str(pid * 10),
+                            "identity_source": "kernel-process-snapshot",
+                        },
+                    }
+                    with mock.patch.object(LIVE_RUN.sys, "platform", "win32"), \
+                            mock.patch.object(
+                                LIVE_RUN, "_running_osu_processes",
+                                return_value=snapshot), \
+                            mock.patch.object(
+                                LIVE_RUN, "_process_alive", return_value=False):
+                        if results_ready:
+                            self.assertFalse(
+                                LIVE_RUN._assert_client_population(client, True))
+                        else:
+                            with self.assertRaisesRegex(
+                                    ValueError, "before both result barriers"):
+                                LIVE_RUN._assert_client_population(client, False)
+
+    def test_reused_approved_windows_pid_is_rejected(self) -> None:
+        client = {"pid": 100, "start_identity": "1000"}
+        snapshot = {
+            100: {
+                "pid": 100, "parent_pid": 999, "start_identity": "2000",
+                "identity_source": "kernel-process-snapshot",
+            },
+        }
+        with mock.patch.object(LIVE_RUN.sys, "platform", "win32"), \
+                mock.patch.object(
+                    LIVE_RUN, "_running_osu_processes", return_value=snapshot), \
+                mock.patch.object(LIVE_RUN, "_process_alive", return_value=False):
+            with self.assertRaisesRegex(ValueError, "unapproved osu client"):
+                LIVE_RUN._assert_client_population(client, True)
 
     def test_exact_windows_client_descendant_is_adopted(self) -> None:
         executable = Path(sys.executable).resolve()

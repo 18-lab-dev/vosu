@@ -33,10 +33,11 @@ def v2(daemon: str, timestamp: int, state: object, time_ms: int, *, paused: bool
     return Sample(daemon, "v2", timestamp, {
         "state": state,
         "client": "lazer",
+        "settings": {"client": {"version": "2026.921.0"}},
         "session": {"playTime": time_ms},
         "beatmap": {
             "checksum": "shared-map",
-            "time": {"live": time_ms},
+            "time": {"live": time_ms, "mp3Length": 100_000},
             "title": static,
         },
         "play": {"paused": paused, "score": score},
@@ -125,12 +126,13 @@ class CompareCliTests(unittest.TestCase):
                         },
                         "v2": {
                             "state": state, "client": "lazer",
+                            "settings": {"client": {"version": "2026.921.0"}},
                             "session": {"playTime": value},
                             "beatmap": {
                                 "checksum": "shared-map",
                                 "time": {
                                     "live": value, "firstObject": 0,
-                                    "lastObject": 1,
+                                    "lastObject": 1, "mp3Length": 100_000,
                                 },
                             },
                             "play": {
@@ -459,6 +461,32 @@ class CompareCliTests(unittest.TestCase):
         report = self.run_compare_samples(samples)
         self.assertTrue(any(
             item["comparator"] in {"transport-error", "http-status"}
+            for item in report["mismatches"]))
+
+    def test_response_order_jitter_preserves_complete_active_phase(self) -> None:
+        samples = [
+            Sample(
+                sample.daemon, sample.schema,
+                sample.monotonic_ns
+                + (500_000 if sample.daemon == "source" else -500_000)
+                + {"v1": 300_000, "v2": 0, "sc": 100_000,
+                   "precise": -200_000}[sample.schema],
+                sample.payload, sample.status, sample.error, sample.transport)
+            for sample in self.complete_samples()
+        ]
+
+        report = self.run_compare_samples(samples)
+
+        self.assertTrue(report["passed"], report["missing_streams"])
+        for sample in samples:
+            if (sample.daemon == "vosu" and sample.schema == "v2"
+                    and sample.transport == "http"
+                    and sample.monotonic_ns == 999_500_000):
+                sample.payload["static"] = "first-active-difference"
+        report = self.run_compare_samples(samples)
+        self.assertTrue(any(
+            item["pointer"] == "/static"
+            and item["vosu"] == "first-active-difference"
             for item in report["mismatches"]))
 
     def test_stateless_streams_use_nearest_v2_context(self) -> None:
