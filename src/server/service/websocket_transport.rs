@@ -139,6 +139,18 @@ async fn bridge_socket(
             let Ok(text) = std::str::from_utf8(&data) else {
                 continue;
             };
+            // streamCompanion sends filter arrays without the legacy command
+            // envelope; normalize only that endpoint's command shape.
+            let normalized;
+            let text = if client_namespace == 2
+                && !text.contains(':')
+                && text.trim_start().starts_with('[')
+            {
+                normalized = format!("applyFilters:{text}");
+                normalized.as_str()
+            } else {
+                text
+            };
             // All legacy sockets can read settings and adjust their own filters.
             // Only same-origin sockets may reach state-changing commands.
             if !mutation.0 && !matches!(text.split_once(':').map(|(command, _)| command),

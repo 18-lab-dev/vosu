@@ -8,6 +8,7 @@ mod gameplay;
 mod live_adapter;
 mod models;
 mod result;
+mod score;
 
 pub use gameplay::GameplayCalculator;
 pub use live_adapter::{LiveAdapterError, LiveGradualProgression, LiveProgressiveBeatmap};
@@ -18,8 +19,6 @@ pub use models::{
 };
 pub use result::{ResultCalculator, ResultFrame, ResultPerformance};
 
-#[cfg(test)]
-use live_adapter::live_score;
 #[cfg(test)]
 use std::fmt;
 #[cfg(test)]
@@ -162,11 +161,17 @@ mod tests {
                 stars: 6.0,
                 max_combo: 1000,
                 n_sliders: 300,
+                n_objects: 1000,
+                nested_score_per_object: 0.0,
+                maximum_legacy_combo_score: 300_000.0,
             },
             current: DifficultyAttributes {
                 stars: 4.0,
                 max_combo: 400,
                 n_sliders: 120,
+                n_objects: 400,
+                nested_score_per_object: 0.0,
+                maximum_legacy_combo_score: 120_000.0,
             },
             maximum: ScoreInput {
                 max_combo: 1000,
@@ -391,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn result_golden_vector_preserves_non_mania_accuracy_and_cache_omissions() {
+    fn result_cache_omits_score_and_tournament_rank() {
         let (map, _, stats) = fixture();
         let mut calc = ResultCalculator::default();
         let frame = ResultFrame {
@@ -403,18 +408,10 @@ mod tests {
             client: ClientScoring::Stable,
             score: 900_000,
             max_combo: 800,
-            map_max_combo: 1000,
-            displayed_accuracy_percent: 98.5,
             statistics: stats,
         };
         assert_eq!(frame.source_cache_key(), "abc012bob");
         assert_eq!(calc.update(Some(&map), &frame), CalculationOutcome::Updated);
-        let calls = map.calls.borrow();
-        let current = calls.performance[0].1;
-        let fc = calls.performance[1].1;
-        assert_eq!(fc.accuracy, current.accuracy);
-        assert_eq!((fc.greats, fc.misses, fc.max_combo), (353, 0, 1000));
-        drop(calls);
         let mut changed_but_omitted = frame.clone();
         changed_but_omitted.score += 1;
         changed_but_omitted.tournament_rank = Some(1);
@@ -425,36 +422,6 @@ mod tests {
         assert_eq!(map.calls.borrow().performance.len(), 2);
     }
 
-    #[test]
-    fn result_mania_fc_uses_displayed_accuracy_and_source_hit_conversion() {
-        let (map, _, mut stats) = fixture();
-        stats.perfect = 100;
-        stats.good = 12;
-        let frame = ResultFrame {
-            beatmap_checksum: "map",
-            mods_checksum: "mods",
-            mode: Ruleset::Mania,
-            player_name: "player",
-            tournament_rank: None,
-            client: ClientScoring::Lazer,
-            score: 1_000_000,
-            max_combo: 500,
-            map_max_combo: 999,
-            displayed_accuracy_percent: 97.25,
-            statistics: stats,
-        };
-        let mut calc = ResultCalculator::default();
-        calc.update(Some(&map), &frame);
-        let calls = map.calls.borrow();
-        let fc = calls.performance[1].1;
-        assert!(!fc.is_legacy_score);
-        assert_eq!(fc.perfects, 128);
-        assert_eq!(
-            (fc.greats, fc.goods, fc.oks, fc.mehs, fc.misses),
-            (350, 12, 0, 0, 0)
-        );
-        assert_eq!(fc.accuracy, 0.9725);
-    }
     #[test]
     fn engine_errors_retain_gameplay_and_result_outputs_and_do_not_cache_result_failure() {
         let (map, mut key, stats) = fixture();
@@ -483,8 +450,6 @@ mod tests {
             client: ClientScoring::Lazer,
             score: 10,
             max_combo: 2,
-            map_max_combo: 3,
-            displayed_accuracy_percent: 50.0,
             statistics: stats,
         };
         let mut result = ResultCalculator::default();
@@ -573,8 +538,6 @@ SliderTickRate:1
                     client: ClientScoring::Lazer,
                     score: 900_000,
                     max_combo: 2,
-                    map_max_combo: 3,
-                    displayed_accuracy_percent: 66.6666666667,
                     statistics,
                 },
             ),
@@ -600,57 +563,5 @@ SliderTickRate:1
             .unwrap();
 
         assert!(performance.pp.is_finite());
-    }
-
-    #[test]
-    fn production_score_adapter_preserves_explicit_accuracy_and_every_score_field() {
-        let score = ScoreInput {
-            total_score: 987_654,
-            is_legacy_score: true,
-            accuracy: 0.9375,
-            max_combo: 123,
-            perfects: 1,
-            greats: 2,
-            goods: 3,
-            oks: 4,
-            mehs: 5,
-            misses: 6,
-            slider_end_hits: 7,
-            small_tick_hits: 8,
-            small_tick_misses: 9,
-            large_tick_hits: 10,
-            large_tick_misses: 11,
-            large_bonuses: 12,
-            small_bonuses: 13,
-            combo_breaks: 14,
-            ignore_hits: 15,
-            ignore_misses: 16,
-        };
-        let live = live_score(&score).unwrap();
-        assert_eq!(live.total_score, 987_654);
-        assert!(live.is_legacy_score);
-        assert_eq!(live.accuracy, 0.9375);
-        assert_eq!(
-            [
-                live.max_combo,
-                live.perfects,
-                live.greats,
-                live.goods,
-                live.oks,
-                live.mehs,
-                live.misses,
-                live.slider_end_hits,
-                live.small_tick_hits,
-                live.small_tick_misses,
-                live.large_tick_hits,
-                live.large_tick_misses,
-                live.large_bonuses,
-                live.small_bonuses,
-                live.combo_breaks,
-                live.ignore_hits,
-                live.ignore_misses,
-            ],
-            [123, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-        );
     }
 }

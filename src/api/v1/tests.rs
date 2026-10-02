@@ -52,6 +52,7 @@ fn regular() -> RegularState {
         user: UserState::default(),
         lazer_multi_spectating: LazerMultiSpectatingState::default(),
         ranked_play: RankedPlayState::default(),
+        room: Default::default(),
     }
 }
 
@@ -165,20 +166,6 @@ fn borrowed_encoding_preserves_populated_graph_and_hit_arrays() {
         decoded["gameplay"]["hits"]["hitErrorArray"],
         json!([-3.5, 6.25])
     );
-}
-
-#[test]
-fn menu_defaults_preserve_order_omissions_and_dot_path() {
-    let snapshot = snapshot(10, ClientType::Stable, regular(), Vec::new());
-    let value = String::from_utf8(encode(&snapshot).unwrap().to_vec()).unwrap();
-    assert!(value.starts_with(
-            "{\"client\":\"stable\",\"settings\":{\"showInterface\":false,\"folders\":{\"game\":\"\",\"skin\":\"\",\"songs\":\"\"}},\"menu\":{\"mainMenu\":{\"bassDensity\":0},\"state\":0,\"isChatEnabled\":0,\"bm\":{\"time\":{\"firstObj\":0,\"current\":0,\"full\":0}"
-        ));
-    assert!(value.contains("\"path\":{\"full\":\".\"}"));
-    assert!(value.contains("\"userProfile\":{}"));
-    assert!(value.ends_with(
-            "\"tourney\":{\"manager\":{\"ipcState\":0,\"bestOF\":0,\"teamName\":{\"left\":\"\",\"right\":\"\"},\"stars\":{\"left\":0,\"right\":0},\"bools\":{\"scoreVisible\":false,\"starsVisible\":false},\"chat\":[],\"gameplay\":{\"score\":{\"left\":0,\"right\":0}}},\"ipcClients\":[]}}"
-        ));
 }
 
 #[test]

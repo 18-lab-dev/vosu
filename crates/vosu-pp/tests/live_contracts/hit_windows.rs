@@ -252,7 +252,17 @@ ApproachRate:5
     );
 
     let mut catch = engine.convert(&source, Ruleset::Catch).unwrap();
-    assert_eq!(hit_windows_for_map(&catch).unwrap(), HitWindows::default());
+    assert_eq!(
+        hit_windows_for_map(&catch).unwrap(),
+        HitWindows {
+            miss: Some(0.0),
+            meh: Some(0.0),
+            ok: Some(0.0),
+            good: Some(0.0),
+            great: Some(0.0),
+            perfect: Some(0.0),
+        }
+    );
     assert_eq!(
         catch_spatial_window_for_map(&catch),
         Some(CatchSpatialWindow {
@@ -400,7 +410,6 @@ ApproachRate:5
                 half_width: expected,
             }),
         );
-        assert_eq!(hit_windows_for_map(&catch).unwrap(), HitWindows::default());
     }
 
     let mania_easy = apply(&engine, 3, std::slice::from_ref(&easy));

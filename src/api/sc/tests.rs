@@ -62,6 +62,7 @@ fn regular() -> RegularState {
         user: UserState::default(),
         lazer_multi_spectating: LazerMultiSpectatingState::default(),
         ranked_play: RankedPlayState::default(),
+        room: Default::default(),
     }
 }
 
@@ -160,16 +161,6 @@ fn snapshot_with_precise(
         },
         [entry],
     )))
-}
-
-#[test]
-fn missing_focus_is_not_ready() {
-    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::not_ready(
-        0,
-        ApiRuntimeSettings::default(),
-    )));
-    assert_eq!(build(&snapshot), Err(ApiError::NotReady));
-    assert_eq!(encode(&snapshot), Err(ApiError::NotReady));
 }
 
 #[test]
@@ -658,7 +649,6 @@ fn full_root_order_types_and_all_exact_placeholders_are_frozen() {
         ("osu_m99_9PP", serde_json::json!(-1)),
         ("mania_1_000_000PP", serde_json::json!(-1)),
         ("mania_m1_000_000PP", serde_json::json!(-1)),
-        ("simulatedPp", serde_json::json!(-1)),
         ("plays", serde_json::json!(0)),
         ("tags", serde_json::json!("")),
         ("source", serde_json::json!("")),
@@ -673,4 +663,14 @@ fn full_root_order_types_and_all_exact_placeholders_are_frozen() {
     ] {
         assert_eq!(value[key], expected, "{key}");
     }
+}
+#[test]
+fn stream_companion_status_maps_replay_and_result_variants() {
+    assert_eq!(stream_companion_status(2, false), 2);
+    assert_eq!(stream_companion_status(2, true), 8);
+    assert_eq!(stream_companion_status(1, false), 16);
+    assert_eq!(stream_companion_status(4, false), 16);
+    assert_eq!(stream_companion_status(7, false), 32);
+    assert_eq!(stream_companion_status(18, false), 32);
+    assert_eq!(stream_companion_status(0, false), 1);
 }

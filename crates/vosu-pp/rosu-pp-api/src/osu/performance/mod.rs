@@ -464,8 +464,8 @@ impl<'map> OsuPerformance<'map> {
     }
     /// Specify the already-calculated score accuracy as a ratio.
     ///
-    /// Unlike [`OsuPerformance::accuracy`], this value is passed directly to
-    /// performance calculation and does not influence hitresult generation.
+    /// Unlike [`OsuPerformance::accuracy`], this uses the supplied hitresults
+    /// without filling unjudged objects. Intended for an observed score.
     pub const fn score_accuracy(mut self, acc: f64) -> Self {
         self.score_acc = Some(acc);
 
@@ -582,6 +582,23 @@ impl<'map, T: IntoModePerformance<'map, Osu>> From<T> for OsuPerformance<'map> {
 unsafe fn generate_state(perf: &mut OsuPerformance<'_>) -> OsuScoreState {
     // SAFETY: Ensured by caller
     let attrs = unsafe { perf.map_or_attrs.get_attrs() };
+
+    if perf.score_acc.is_some() {
+        return OsuScoreState {
+            max_combo: perf.combo.unwrap_or(0).min(attrs.max_combo),
+            hitresults: OsuHitResults {
+                large_tick_hits: perf.large_tick_hits.unwrap_or(0),
+                large_tick_misses: perf.large_tick_misses.unwrap_or(0),
+                small_tick_hits: perf.small_tick_hits.unwrap_or(0),
+                slider_end_hits: perf.slider_end_hits.unwrap_or(0),
+                n300: perf.n300.unwrap_or(0),
+                n100: perf.n100.unwrap_or(0),
+                n50: perf.n50.unwrap_or(0),
+                misses: perf.misses.unwrap_or(0),
+            },
+            legacy_total_score: perf.legacy_total_score,
+        };
+    }
 
     let inspect = Osu::inspect_performance(perf, attrs);
 

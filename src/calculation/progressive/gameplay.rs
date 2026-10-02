@@ -1,6 +1,6 @@
 use super::{
     CalculationOutcome, GameplayFrame, GameplayGate, GradualProgression, ProgressiveAttributes,
-    ProgressiveBeatmap, Ruleset, ScoreInput, SkipReason,
+    ProgressiveBeatmap, ScoreInput, SkipReason,
 };
 
 pub struct GameplayCalculator<G> {
@@ -124,46 +124,27 @@ impl<G> GameplayCalculator<G> {
         };
 
         let maximum = *beatmap.max_score();
-        let mut achievable = score;
-        achievable.max_combo = frame
-            .max_combo
-            .max(maximum.max_combo - (current_summary.max_combo - frame.combo));
-        achievable.greats =
-            maximum.greats - frame.statistics.ok - frame.statistics.meh - frame.statistics.miss;
-        achievable.large_tick_hits = maximum.large_tick_hits - frame.statistics.large_tick_miss;
-        achievable.slider_end_hits = maximum.slider_end_hits
-            - (current_summary.n_sliders - frame.statistics.slider_tail_hit);
-        achievable.small_tick_hits = maximum.small_tick_hits - frame.statistics.small_tick_miss;
-        if frame.mode == Ruleset::Mania {
-            achievable.perfects = maximum.perfects
-                - frame.statistics.good
-                - frame.statistics.ok
-                - frame.statistics.meh
-                - frame.statistics.miss;
-            achievable.greats = frame.statistics.great;
-        }
-        achievable.accuracy = match beatmap.calculate_accuracy(&achievable) {
+        let achievable = super::score::max_achievable(
+            frame.mode,
+            frame.combo,
+            score,
+            current_summary,
+            maximum,
+            beatmap.difficulty_summary(beatmap.full_difficulty()),
+        );
+        let achievable_accuracy = match beatmap.calculate_accuracy(&achievable) {
             Ok(accuracy) => accuracy,
             Err(error) => return CalculationOutcome::RetainedError(error.to_string()),
         };
+        let mut achievable = achievable;
+        achievable.accuracy = achievable_accuracy;
         let max_achievable =
             match beatmap.calculate_performance(beatmap.full_difficulty(), &achievable) {
                 Ok(performance) => performance,
                 Err(error) => return CalculationOutcome::RetainedError(error.to_string()),
             };
 
-        let mut fc = achievable;
-        fc.max_combo = maximum.max_combo;
-        if frame.mode == Ruleset::Mania {
-            fc.perfects += fc.misses + fc.combo_breaks;
-        } else {
-            fc.greats += fc.misses + fc.combo_breaks;
-        }
-        fc.large_tick_hits += fc.large_tick_misses;
-        fc.large_tick_misses = 0;
-        fc.slider_end_hits = maximum.slider_end_hits;
-        fc.combo_breaks = 0;
-        fc.misses = 0;
+        let mut fc = super::score::full_combo(frame.mode, score, current_summary, maximum);
         fc.accuracy = match beatmap.calculate_accuracy(&fc) {
             Ok(accuracy) => accuracy,
             Err(error) => return CalculationOutcome::RetainedError(error.to_string()),

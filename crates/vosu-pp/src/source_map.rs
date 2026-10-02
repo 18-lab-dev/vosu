@@ -29,6 +29,10 @@ const BLACK_BOX_SPEC: &str =
 /// Historical oracle files are evidence only. They are deliberately absent from every
 /// `upstream` field and are not build inputs or dependencies. This boundary does not
 /// establish independence from the former wrapper implementation.
+/// The 2359305 feature cutover additionally uses ppy/osu@fe30ae7e Hidden slider
+/// fade-in and performance clamps. Current black-box vectors are pinned in
+/// `tools/oracle/oracle-lock.json`; the original source-port inventory and NUnit
+/// inputs remain tied to the baseline revision.
 pub const SOURCE_PORTS: &[SourcePort] = &[
     SourcePort {
         scope: "catch.conversion-linear-spacing",
@@ -115,7 +119,7 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
         scope: "osu.performance-reading-legacy-misses",
         authority: SourceAuthority::MitUpstream,
         upstream: Some(
-            "MaxOhn/rosu-pp@27a67242 src/osu/performance; ppy/osu@97e94bab osu.Game.Rulesets.Osu/Difficulty/{OsuPerformanceCalculator.cs,OsuLegacyScoreMissCalculator.cs}",
+            "MaxOhn/rosu-pp@27a67242 src/osu/performance; ppy/osu@97e94bab osu.Game.Rulesets.Osu/Difficulty/{OsuPerformanceCalculator.cs,OsuLegacyScoreMissCalculator.cs}; ppy/osu@fe30ae7e OsuPerformanceCalculator.cs accuracy/miss-penalty clamps",
         ),
         specification: None,
         implementation: "crates/vosu-pp/rosu-pp-api/src/osu/performance",
@@ -124,7 +128,7 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
         scope: "osu.playable-hitobject-preprocessing-stacking",
         authority: SourceAuthority::MitUpstream,
         upstream: Some(
-            "MaxOhn/rosu-pp@27a67242 src/osu/difficulty/object.rs; ppy/osu@97e94bab osu.Game.Rulesets.Osu/Difficulty/Preprocessing/OsuDifficultyHitObject.cs",
+            "MaxOhn/rosu-pp@27a67242 src/osu/difficulty/object.rs; ppy/osu@97e94bab osu.Game.Rulesets.Osu/Difficulty/Preprocessing/OsuDifficultyHitObject.cs; ppy/osu@fe30ae7e osu.Game.Rulesets.Osu/Mods/OsuModHidden.cs slider fade-in",
         ),
         specification: None,
         implementation: "crates/vosu-pp/rosu-pp-api/src/osu/{difficulty/object.rs,object.rs}",
@@ -148,7 +152,9 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
     SourcePort {
         scope: "shared.forward-port-revision",
         authority: SourceAuthority::MitUpstream,
-        upstream: Some("MaxOhn/rosu-pp@27a67242; ppy/osu@97e94babde9d5ecbe574ecdd33509db27452cd0f"),
+        upstream: Some(
+            "MaxOhn/rosu-pp@27a67242; ppy/osu@97e94babde9d5ecbe574ecdd33509db27452cd0f; ppy/osu@fe30ae7eea2beeb1f0d3a5ce8dde12bb78ca3f48",
+        ),
         specification: None,
         implementation: "crates/vosu-pp/rosu-pp-api/src",
     },

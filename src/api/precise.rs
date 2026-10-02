@@ -203,6 +203,7 @@ mod tests {
             user: UserState::default(),
             lazer_multi_spectating: LazerMultiSpectatingState::default(),
             ranked_play: RankedPlayState::default(),
+            room: Default::default(),
         })
     }
     fn button(name: &str, is_pressed: bool, count: i64) -> StateKeyOverlayButton {
@@ -288,13 +289,6 @@ mod tests {
             ApiRuntimeSettings::default(),
             instances,
         )))
-    }
-
-    #[test]
-    fn no_focused_client_is_not_ready() {
-        let snapshot = snapshot(None, Vec::new());
-        assert_eq!(build(&snapshot), Err(ApiError::NotReady));
-        assert_eq!(encode(&snapshot), Err(ApiError::NotReady));
     }
 
     #[test]

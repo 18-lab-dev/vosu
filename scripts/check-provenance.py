@@ -20,8 +20,70 @@ import zipfile
 
 
 BASE = "9c2187e683775485b8551fd6e7cb09b6e6786332"
+# Historical first-party misattribution, retained only as a rejection sentinel.
 OLD = "Copyright (c) 2023-2026 Mikhail Babynichev"
 APACHE_SHA256 = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+INVENTORY = "openwiki/dependency-license-inventory.json"
+NOTICE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE", "UNLICENSE")
+
+
+def text_digest(path):
+    """Hash text inputs with checkout CRLF normalized to LF."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def refresh_inventory(root):
+    metadata = json.loads(subprocess.check_output(
+        ["cargo", "metadata", "--locked", "--all-features", "--format-version", "1"],
+        cwd=root, text=True, encoding="utf-8",
+    ))
+    lock = tomllib.loads((root / "Cargo.lock").read_text(encoding="utf-8"))
+    checksums = {(p["name"], p["version"], p.get("source")): p.get("checksum")
+                 for p in lock["package"]}
+    packages = []
+    manifests = {"Cargo.lock": text_digest(root / "Cargo.lock")}
+    for package in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"])):
+        manifest = Path(package["manifest_path"])
+        if package["source"] is None:
+            name = manifest.relative_to(root).as_posix()
+            manifests[name] = text_digest(manifest)
+            continue
+        source = manifest.parent
+        notices = sorted(p for p in source.iterdir()
+                         if p.is_file() and p.name.upper().startswith(NOTICE_PREFIXES))
+        packages.append({
+            "name": package["name"], "version": package["version"],
+            "source": package["source"],
+            "archive_checksum": checksums[(package["name"], package["version"], package["source"])],
+            "license": package["license"], "license_file": package["license_file"],
+            "repository": package["repository"],
+            "root_notice_files": {p.name: digest(p) for p in notices},
+        })
+    inventory = {
+        "scope": "All resolved workspace Cargo packages with --locked --all-features, including build, development, and non-release-platform dependencies.",
+        "limitations": "Declared license expressions and top-level packaged-notice availability only; not a determination of source authorship, selected license alternatives, nested/vendored notices, native-library obligations, or distribution compliance.",
+        "input_sha256_lf": dict(sorted(manifests.items())),
+        "packages": packages,
+    }
+    (root / INVENTORY).write_text(json.dumps(inventory, indent=2, ensure_ascii=False) + "\n",
+                                  encoding="utf-8", newline="\n")
+
+
+def check_inventory(root):
+    inventory = json.loads((root / INVENTORY).read_text(encoding="utf-8"))
+    for name, expected in inventory["input_sha256_lf"].items():
+        if text_digest(root / name) != expected:
+            raise ValueError(f"dependency inventory is stale for {name}; run --refresh-dependency-inventory")
+    packages = inventory["packages"]
+    lock = tomllib.loads((root / "Cargo.lock").read_text(encoding="utf-8"))
+    expected = {(p["name"], p["version"], p["source"], p.get("checksum"))
+                for p in lock["package"] if p.get("source")}
+    actual = {(p["name"], p["version"], p["source"], p["archive_checksum"]) for p in packages}
+    if actual != expected or len(actual) != len(packages):
+        raise ValueError("dependency inventory does not cover each locked third-party package exactly once")
+    print(f"Dependency inventory: {len(packages)} locked packages; "
+          f"{sum(not p['root_notice_files'] for p in packages)} without top-level notice files; "
+          "license declarations, not distribution clearance")
 
 
 def digest(path):
@@ -98,6 +160,7 @@ def check(root, refresh):
     assembler = module(root / "scripts/assemble-release-license.py", "release_license")
     if (root / "LICENSE").read_bytes() != assembler.expected_license(root):
         raise ValueError("release calculator appendix differs from its source")
+    check_inventory(root)
 
     metadata = tomllib.loads((root / "Cargo.toml").read_text())["package"]["metadata"]["vosu"]
     for key, name in (("homepage-css-sha256", "assets/server/homepage.css"),
@@ -181,9 +244,13 @@ def main():
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--refresh-license-hash", action="store_true")
     parser.add_argument("--package-fixtures", action="store_true")
+    parser.add_argument("--refresh-dependency-inventory", action="store_true",
+                        help="regenerate the declared-license inventory using pinned Cargo")
     args = parser.parse_args()
     try:
         root = args.root.resolve()
+        if args.refresh_dependency_inventory:
+            refresh_inventory(root)
         check(root, args.refresh_license_hash)
         if args.package_fixtures:
             packages(root)

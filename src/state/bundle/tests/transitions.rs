@@ -35,6 +35,7 @@ fn state_defaults_and_retry_retention_match_source_contract() {
     gameplay.mods.checksum = "mods".into();
     gameplay.leaderboard_scores.push(raw_leaderboard_player());
     gameplay.hit_errors.all.push(10.0);
+    gameplay.total_hit_error_squares = 100.0;
     gameplay.reset(true, ClientType::Stable);
     assert_eq!(
         (
@@ -70,6 +71,7 @@ fn state_defaults_and_retry_retention_match_source_contract() {
     assert_eq!(non_retry.grade_expected, expected_non_retry_grade);
 
     assert_eq!(gameplay.hit_errors, HitErrorArray::default());
+    assert_eq!(gameplay.total_hit_error_squares, 0.0);
 }
 
 #[test]
@@ -81,10 +83,29 @@ fn unstable_rate_uses_all_errors_including_releases() {
             release: vec![10.0],
         },
         total_hit_errors: 10.0,
+        total_hit_error_squares: 100.0,
         ..GameplayState::default()
     };
 
     assert_eq!(gameplay.calculate_ur(), 50.0);
+}
+
+#[test]
+fn unstable_rate_scales_by_current_clock_rate() {
+    let mut gameplay = GameplayState {
+        hit_errors: HitErrorArray {
+            all: vec![0.0, 10.0],
+            press: vec![0.0, 10.0],
+            release: Vec::new(),
+        },
+        total_hit_errors: 10.0,
+        total_hit_error_squares: 100.0,
+        ..GameplayState::default()
+    };
+    let mut result = score(0, 1);
+    result.mods.rate = 1.5;
+    gameplay.apply_score(&result, ClientType::Stable, 0);
+    assert_eq!(gameplay.unstable_rate, 50.0 / 1.5);
 }
 
 #[tokio::test]
@@ -847,4 +868,49 @@ fn precise_publication_reuses_only_unchanged_nested_arcs() {
     ));
     assert_eq!(hit_updated.precise.hit_errors.all, [-4.0, 6.0]);
     assert_eq!(hit_updated.precise.hit_errors.release, [6.0]);
+}
+
+#[tokio::test]
+async fn room_state_enters_updates_and_clears_on_unavailable_reads() {
+    for source in [ClientType::Lazer, ClientType::Stable] {
+        let mut bundle = StateBundle::new(source, 10, Arc::new(EchoCalculation));
+        for (index, id) in [Some(42), Some(43), None, Some(44), None]
+            .into_iter()
+            .enumerate()
+        {
+            let room = match id {
+                Some(room_id) => Ok(ReadStatus::Ready(RawLazerRoom {
+                    room_id,
+                    users: Vec::new(),
+                })),
+                None if index == 2 => Ok(ReadStatus::NotReady),
+                None => Err(crate::process::MemoryError::Corrupt {
+                    context: "room fixture",
+                    address: 0,
+                    message: "disconnected",
+                }),
+            };
+            let sample = RawRegularSnapshotBuilder::new(
+                RegularCaptureContext::new(source, 10, 0, index as u64 + 1),
+                Ok(ReadStatus::Ready(raw_global(GameState::Menu, 0))),
+            )
+            .room(room)
+            .publish();
+            let transition = bundle.apply_regular(sample).await.unwrap();
+            assert_eq!(
+                transition
+                    .publication
+                    .regular
+                    .room
+                    .info
+                    .as_ref()
+                    .map(|room| room.room_id),
+                if source == ClientType::Lazer {
+                    id
+                } else {
+                    None
+                },
+            );
+        }
+    }
 }

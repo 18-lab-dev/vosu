@@ -706,12 +706,14 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert!(disposition.contains("vosu-report-") && disposition.ends_with(".html\""));
     assert!(report.text().await.unwrap().contains("vosu"));
 
+    // Reload rejection retains the configuration and listener; it does not make
+    // a focused game unready. /json therefore depends on the host's osu! state.
+    let settings_before = client.get(format!("{base}/settings")).send().await.unwrap();
+    assert_eq!(settings_before.status(), 200);
+    let settings_before = settings_before.text().await.unwrap();
     let malformed_port = available_port();
-    fs::write(
-        &current_config,
-        format!("SERVER_PORT = {malformed_port}\nBROKEN = [\n"),
-    )
-    .unwrap();
+    let malformed_config = format!("SERVER_PORT = {malformed_port}\nBROKEN = [\n");
+    fs::write(&current_config, &malformed_config).unwrap();
     tokio::time::sleep(Duration::from_secs(1)).await;
     let last_good_client = reqwest::Client::builder()
         .no_proxy()
@@ -719,25 +721,25 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .build()
         .unwrap();
     let last_good = last_good_client
-        .get(format!("{base}/json"))
+        .get(format!("{base}/settings"))
         .send()
         .await
         .expect("malformed TOML must leave the last-good listener accepting");
-    assert_eq!(last_good.status(), 500);
+    assert_eq!(last_good.status(), 200);
+    assert_eq!(last_good.text().await.unwrap(), settings_before);
     assert_eq!(
-        last_good.text().await.unwrap(),
-        r#"{"error":"osu is not ready/running"}"#
+        fs::read_to_string(&current_config).unwrap(),
+        malformed_config
     );
+    let rejected_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, malformed_port))
+        .expect("malformed TOML must not bind its requested port");
+    drop(rejected_listener);
 
     let next_port = available_port();
     fs::write(&current_config, toml_config(next_port, &static_root)).unwrap();
     let next_base = format!("http://127.0.0.1:{next_port}");
-    let rebound = wait_get(&client, &format!("{next_base}/json")).await;
-    assert_eq!(rebound.status(), 500);
-    assert_eq!(
-        rebound.text().await.unwrap(),
-        r#"{"error":"osu is not ready/running"}"#
-    );
+    let rebound = wait_get(&client, &format!("{next_base}/settings")).await;
+    assert_eq!(rebound.status(), 200);
     let reloaded_settings = client
         .get(format!("{next_base}/api/counters/settings/seeded-counter"))
         .send()

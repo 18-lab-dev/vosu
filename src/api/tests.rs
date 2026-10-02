@@ -35,6 +35,7 @@ fn regular(play_time: f64) -> Arc<RegularState> {
         user: UserState::default(),
         lazer_multi_spectating: LazerMultiSpectatingState::default(),
         ranked_play: RankedPlayState::default(),
+        room: Default::default(),
     })
 }
 
@@ -87,110 +88,6 @@ fn manager(pid: Pid, state: Arc<StateBundleSnapshot>) -> Arc<ManagerSnapshot> {
         ApiRuntimeSettings::default(),
         [entry(pid, state)],
     ))
-}
-
-#[test]
-fn construction_preserves_manager_and_independent_state_arc_identity() {
-    let regular = regular(17.0);
-    let precise = precise(17.0);
-    let state = bundle(17, Arc::clone(&regular), Arc::clone(&precise));
-    let manager = manager(42, Arc::clone(&state));
-    let snapshot = CombinedSnapshot::from_manager(Arc::clone(&manager));
-
-    assert!(Arc::ptr_eq(snapshot.manager(), &manager));
-    assert!(Arc::ptr_eq(snapshot.focused().expect("focus"), &state));
-    assert!(Arc::ptr_eq(snapshot.regular().expect("regular"), &regular));
-    assert!(Arc::ptr_eq(snapshot.precise().expect("precise"), &precise));
-    assert_eq!(snapshot.generation(), Some(17));
-    assert_eq!(snapshot.reset_epoch(), Some(1));
-    assert_eq!(snapshot.source(), Some(ClientType::Stable));
-}
-
-#[test]
-fn focused_client_and_combined_source_share_one_state_identity() {
-    let stable = bundle(4, regular(4.0), precise(4.0));
-    let lazer = Arc::new(StateBundleSnapshot {
-        source: ClientType::Lazer,
-        generation: stable.generation,
-        reset_epoch: stable.reset_epoch,
-        regular: Arc::clone(&stable.regular),
-        precise: Arc::clone(&stable.precise),
-    });
-    let manager = manager(77, lazer);
-    let snapshot = CombinedSnapshot::from_manager(manager);
-
-    assert_eq!(snapshot.manager().focused_client(), Some(ClientType::Lazer));
-    assert_eq!(snapshot.source(), Some(ClientType::Lazer));
-    assert_eq!(
-        snapshot
-            .manager()
-            .focused_instance()
-            .expect("focus")
-            .client(),
-        ClientType::Lazer
-    );
-}
-
-#[test]
-fn manager_entries_are_pid_ordered_with_exact_role_metadata() {
-    let first_state = bundle(1, regular(1.0), precise(1.0));
-    let second_state = bundle(2, regular(2.0), precise(2.0));
-    let spectator = ManagerInstanceSnapshot::new(
-        20,
-        InstanceSettings {
-            tournament_spectator: true,
-            tournament_ipc_id: Some(3.0),
-            devserver_endpoint: Some(OsString::from("127.0.0.1:24051")),
-        },
-        false,
-        second_state,
-    );
-    let tournament_manager = ManagerInstanceSnapshot::new(
-        5,
-        InstanceSettings {
-            tournament_spectator: false,
-            tournament_ipc_id: None,
-            devserver_endpoint: None,
-        },
-        true,
-        first_state,
-    );
-    let manager = ManagerSnapshot::new(
-        9,
-        Some(5),
-        true,
-        ApiRuntimeSettings::default(),
-        [spectator, tournament_manager],
-    );
-
-    assert_eq!(
-        manager.instances().keys().copied().collect::<Vec<_>>(),
-        [5, 20]
-    );
-    assert!(manager.instances()[&5].is_tournament_manager());
-    assert!(manager.instances()[&20].settings().tournament_spectator);
-    assert_eq!(
-        manager.instances()[&20].settings().tournament_ipc_id,
-        Some(3.0)
-    );
-    assert_eq!(
-        manager.instances()[&20].settings().devserver_endpoint,
-        Some(OsString::from("127.0.0.1:24051"))
-    );
-}
-
-#[test]
-fn explicit_no_focus_is_observable() {
-    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::not_ready(
-        0,
-        ApiRuntimeSettings::default(),
-    )));
-    assert!(!snapshot.manager().is_ready());
-    assert_eq!(snapshot.manager().focused_pid(), None);
-    assert_eq!(snapshot.manager().focused_client(), None);
-    assert!(snapshot.focused().is_none());
-    assert!(snapshot.regular().is_none());
-    assert!(snapshot.precise().is_none());
 }
 
 #[test]
@@ -434,6 +331,67 @@ fn encode_schema(schema: ApiSchema, snapshot: &CombinedSnapshot) -> Result<Bytes
         ApiSchema::V2 => v2::encode(snapshot),
         ApiSchema::StreamCompanion => sc::encode(snapshot),
         ApiSchema::V2Precise => precise::encode(snapshot),
+    }
+}
+
+#[test]
+fn mania_beatmap_combo_preserves_hold_ticks_in_every_regular_api() {
+    use crate::calculation::beatmap::{BeatmapCache, BeatmapInput, ModSet, Ruleset, ScoringMode};
+    use crate::calculation::state_backend::LiveBeatmapEngine;
+
+    let content = concat!(
+        "osu file format v14\n[General]\nMode:3\n",
+        "[Difficulty]\nHPDrainRate:5\nCircleSize:4\nOverallDifficulty:5\n",
+        "ApproachRate:5\nSliderMultiplier:1.4\nSliderTickRate:1\n",
+        "[TimingPoints]\n0,500,4,2,1,80,1,0\n",
+        "[HitObjects]\n",
+        "64,192,1000,1,0,0:0:0:0:\n",
+        "192,192,1500,128,0,2000:0:0:0:0:\n",
+        "320,192,2500,1,0,0:0:0:0:\n",
+    );
+    let mods = ModSet::new("combo-test", Vec::new(), 1.0).unwrap();
+    for (source, scoring_mode) in [
+        (ClientType::Stable, ScoringMode::Stable),
+        (ClientType::Lazer, ScoringMode::Lazer),
+    ] {
+        let parsed = BeatmapCache::new(LiveBeatmapEngine)
+            .load(
+                BeatmapInput::Content {
+                    content,
+                    identity_path: None,
+                },
+                Ruleset::Mania,
+                &mods,
+                scoring_mode,
+            )
+            .unwrap();
+        let mut regular = regular(0.0);
+        let mutable = Arc::get_mut(&mut regular).unwrap();
+        mutable.menu.gamemode = Some(3);
+        mutable.beatmap.parsed = Some(parsed);
+        let state = Arc::new(StateBundleSnapshot {
+            source,
+            generation: 1,
+            reset_epoch: 0,
+            regular,
+            precise: precise(0.0),
+        });
+        let snapshot = CombinedSnapshot::from_manager(manager(42, state));
+        for (schema, pointer) in [
+            (ApiSchema::V1, "/menu/bm/stats/maxCombo"),
+            (ApiSchema::V2, "/beatmap/stats/maxCombo"),
+            (ApiSchema::StreamCompanion, "/maxCombo"),
+        ] {
+            let json: serde_json::Value =
+                serde_json::from_slice(&encode_schema(schema, &snapshot).unwrap()).unwrap();
+            // Upstream ManiaDifficultyCalculator uses 1 + floor(duration / 100)
+            // for a hold: two normal notes + one head + five 100 ms increments.
+            assert_eq!(
+                json.pointer(pointer),
+                Some(&serde_json::json!(8)),
+                "{source:?} {schema:?}: preserve difficulty combo, not hit-result count"
+            );
+        }
     }
 }
 

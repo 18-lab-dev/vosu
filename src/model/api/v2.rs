@@ -181,10 +181,10 @@ pub struct Stats {
     pub cs: Cs,
     pub od: Od,
     pub hp: Hp,
-    #[serde(rename = "hitWindow")]
-    pub hit_window: HitWindow,
     pub bpm: Bpm,
     pub objects: Objects,
+    #[serde(rename = "hitWindow")]
+    pub hit_window: HitWindow,
     #[serde(rename = "maxCombo")]
     pub max_combo: i64,
 }
@@ -649,6 +649,22 @@ pub struct Tourney {
     pub total_score: Sides<f64>,
     pub clients: Vec<TourneyClient>,
 }
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoomUser {
+    pub id: i64,
+    pub username: String,
+    #[serde(rename = "countryCode")]
+    pub country_code: i64,
+    #[serde(rename = "avatarUrl", skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Room {
+    #[serde(rename = "roomID")]
+    pub room_id: i64,
+    pub users: Vec<RoomUser>,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Response<V = Vec<f64>> {
@@ -674,6 +690,8 @@ pub struct Response<V = Vec<f64>> {
     pub direct_path: DirectPath,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tourney: Option<Tourney>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub room: Option<Room>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

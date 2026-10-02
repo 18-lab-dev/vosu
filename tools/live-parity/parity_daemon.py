@@ -497,7 +497,14 @@ def _assert_client_population(client: dict[str, Any], results_ready: bool) -> bo
     }
     client_job = _client_job(client)
     snapshot = _running_osu_processes(client_job)
-    pending = set(snapshot) - alive
+    # A terminated process can remain in the kernel snapshot while its handle
+    # is held. Its exact creation identity is still approved, but not alive.
+    known = alive | {
+        record["pid"] for record in records
+        if snapshot.get(record["pid"], {}).get("start_identity")
+        == record["start_identity"]
+    }
+    pending = set(snapshot) - known
     while pending:
         adopted: set[int] = set()
         for pid in sorted(pending):

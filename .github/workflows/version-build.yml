@@ -43,11 +43,13 @@ jobs:
             target: x86_64-unknown-linux-gnu
             features: linux-process-events
             executable: vosu
+            rid: linux-x64
           - platform: windows
             os: windows-latest
             target: x86_64-pc-windows-msvc
             features: none
             executable: vosu.exe
+            rid: win-x64
     defaults:
       run:
         shell: bash
@@ -87,6 +89,12 @@ jobs:
           # it immediately; fallback crosses versions, never native build modes.
           key: version-build-${{ runner.os }}-${{ runner.arch }}-rust-1.96.1-${{ matrix.target }}-no-default-${{ matrix.features }}-release-smoke-v1-${{ needs.version.outputs.week }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
           restore-keys: version-build-${{ runner.os }}-${{ runner.arch }}-rust-1.96.1-${{ matrix.target }}-no-default-${{ matrix.features }}-release-smoke-v1-
+      - name: Install offset helper build SDK
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Prepare embedded offset generator
+        run: python scripts/prepare-offset-generator.py --rid ${{ matrix.rid }}
       # Always invoke Cargo: a restored cache is an input, not the current binary.
       - name: Build Linux production binary
         if: runner.os == 'Linux'

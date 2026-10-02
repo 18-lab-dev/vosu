@@ -4,12 +4,16 @@ const TARGET_OS: &str = "CARGO_CFG_TARGET_OS";
 fn main() {
     println!("cargo:rerun-if-env-changed={LINUX_PROCESS_EVENTS_FEATURE}");
     println!("cargo:rerun-if-env-changed={TARGET_OS}");
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ARCH");
+    println!("cargo:rerun-if-env-changed=PROFILE");
 
     if std::env::var_os("CARGO_FEATURE_TEST_HARNESS").is_some()
         && std::env::var("PROFILE").as_deref() == Ok("release")
     {
         panic!("the test-harness feature is forbidden in release builds");
     }
+
+    embed_generator_bundle();
 
     #[cfg(windows)]
     embed_windows_resource();
@@ -22,6 +26,84 @@ fn main() {
             build_linux_process_events();
         }
     }
+}
+
+fn embed_generator_bundle() {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+
+    let out_dir = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    let output = out_dir.join("daemon_generator_bundle.rs");
+    let target = match (
+        std::env::var("CARGO_CFG_TARGET_OS").as_deref(),
+        std::env::var("CARGO_CFG_TARGET_ARCH").as_deref(),
+    ) {
+        (Ok("linux"), Ok("x86_64")) => Some("linux-x64"),
+        (Ok("windows"), Ok("x86_64")) => Some("win-x64"),
+        _ => None,
+    };
+    let (zip, checksum) = target.as_ref().map_or((None, None), |rid| {
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap())
+            .join("target/offset-generator")
+            .join(rid);
+        let zip = root.join(format!("offset-generator-v1-{rid}.zip"));
+        let checksum = root.join(format!("offset-generator-v1-{rid}.zip.sha256"));
+        println!("cargo:rerun-if-changed={}", zip.display());
+        println!("cargo:rerun-if-changed={}", checksum.display());
+        (Some(zip), Some(checksum))
+    });
+
+    let valid = match (zip.as_ref(), checksum.as_ref()) {
+        (Some(zip), Some(checksum)) if zip.is_file() && checksum.is_file() => {
+            let expected = std::fs::read_to_string(checksum)
+                .unwrap_or_default()
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let bytes = std::fs::read(zip).expect("failed to read offset generator bundle");
+            let mut actual = String::with_capacity(64);
+            for byte in Sha256::digest(&bytes) {
+                write!(actual, "{byte:02x}").unwrap();
+            }
+            if expected.len() != 64 || expected != actual {
+                if std::env::var("PROFILE").as_deref() == Ok("release") {
+                    panic!(
+                        "offset generator bundle checksum mismatch: {}",
+                        zip.display()
+                    );
+                }
+                false
+            } else {
+                true
+            }
+        }
+        _ => {
+            if std::env::var("PROFILE").as_deref() == Ok("release") && target.is_some() {
+                panic!("missing offset generator bundle for release target");
+            }
+            false
+        }
+    };
+
+    let mut source = String::from("impl DaemonAssets {\n");
+    if valid {
+        let zip = zip.unwrap();
+        let checksum = checksum.unwrap();
+        writeln!(
+            source,
+            "    pub fn generator_bundle() -> Option<(&'static [u8], &'static str)> {{ Some((include_bytes!({:?}), include_str!({:?}))) }}",
+            zip.to_string_lossy().as_ref(),
+            checksum.to_string_lossy().as_ref(),
+        )
+        .unwrap();
+    } else {
+        source.push_str(
+            "    pub fn generator_bundle() -> Option<(&'static [u8], &'static str)> { None }\n",
+        );
+    }
+    source.push_str("}\n");
+    std::fs::write(output, source).expect("failed to write generated daemon asset bindings");
 }
 
 #[cfg(all(feature = "linux-process-events", target_os = "linux"))]

@@ -1,105 +1,65 @@
 use super::*;
 
 #[tokio::test]
-async fn lazer_pause_clears_only_regular_gameplay_state() {
+async fn lazer_pause_preserves_score_and_applies_final_judgements() {
     let mut bundle = StateBundle::new(ClientType::Lazer, 11, Arc::new(EchoCalculation));
-    let mut dt = default_calculated_mods();
-    dt.number = 64;
-    dt.name = "DT".into();
-    dt.checksum = "dt-1.1".into();
-    dt.rate = 1.1;
-    dt.array = vec![crate::model::states::Mod {
-        acronym: "DT".into(),
-        settings: Some(
-            [("speed_change".into(), serde_json::json!(1.1))]
-                .into_iter()
-                .collect(),
-        ),
-    }];
-    let mut active_score = score(3, 50);
-    active_score.mods = dt.clone();
-    let paused_score = score(3, 50);
+    let mut active_score = score(0, 50);
+    active_score.statistics.great = 50;
     let active = RawRegularSnapshotBuilder::new(
         RegularCaptureContext::new(ClientType::Lazer, 11, 0, 1),
         Ok(ReadStatus::Ready(raw_global(GameState::Play, 500))),
     )
-    .gameplay(Ok(ReadStatus::Ready(active_score)))
-    .leaderboard(Ok(ReadStatus::Ready((
-        true,
-        None,
-        vec![raw_leaderboard_player()],
-    ))))
+    .gameplay(Ok(ReadStatus::Ready(active_score.clone())))
     .publish();
-    let active = bundle
-        .apply_regular(active)
-        .await
-        .expect("active lazer gameplay");
-    assert_eq!(active.publication.precise.mode, 3);
-    bundle.gameplay.hit_errors = press_hit_errors(vec![1.0, -1.0]);
-    bundle.gameplay.previous_hit_error_index = 2;
-    bundle.precise_dirty = true;
+    bundle.apply_regular(active).await.expect("active gameplay");
 
-    let paused = RawRegularSnapshotBuilder::new(
-        RegularCaptureContext::new(ClientType::Lazer, 11, 0, 2),
-        Ok(ReadStatus::Ready(raw_global_paused(
-            GameState::Play,
-            500,
-            true,
-        ))),
-    )
-    .gameplay(Ok(ReadStatus::Ready(paused_score)))
-    .leaderboard(Ok(ReadStatus::Ready((
-        true,
-        None,
-        vec![raw_leaderboard_player()],
-    ))))
-    .publish();
-    let paused = bundle
-        .apply_regular(paused)
-        .await
-        .expect("paused lazer gameplay");
-
-    assert!(paused.publication.regular.global.paused);
-    assert_eq!(paused.publication.regular.gameplay.score, 0.0);
-    assert_eq!(paused.publication.regular.gameplay.mode, 3);
-    assert_eq!(paused.publication.regular.gameplay.mods, dt);
-    assert_eq!(paused.publication.regular.gameplay.mods.rate, 1.1);
-    assert_eq!(paused.publication.regular.gameplay.combo, 0);
-    assert!(paused.publication.regular.gameplay.player_name.is_empty());
-    assert!(
-        paused
-            .publication
-            .regular
-            .gameplay
-            .leaderboard_scores
-            .is_empty()
-    );
-    assert_eq!(
-        paused.publication.precise.hit_errors.all.as_slice(),
-        &[1.0, -1.0]
-    );
-    assert_eq!(paused.publication.precise.committed_hit_error_index, 2);
-    assert_eq!(paused.publication.precise.mode, 3);
+    let mut paused_score = active_score;
+    paused_score.statistics.miss = 1;
+    paused_score.combo = 0;
+    paused_score.accuracy = 98.0;
+    for (sequence, sample) in [
+        (2, ReadStatus::Ready(paused_score)),
+        (3, ReadStatus::NotReady),
+    ] {
+        let paused = RawRegularSnapshotBuilder::new(
+            RegularCaptureContext::new(ClientType::Lazer, 11, 0, sequence),
+            Ok(ReadStatus::Ready(raw_global_paused(
+                GameState::Play,
+                500,
+                true,
+            ))),
+        )
+        .gameplay(Ok(sample))
+        .publish();
+        let paused = bundle.apply_regular(paused).await.expect("paused gameplay");
+        let gameplay = &paused.publication.regular.gameplay;
+        assert!(paused.publication.regular.global.paused);
+        assert_eq!(gameplay.player_name, "player");
+        assert_eq!(gameplay.score, 123.0);
+        assert_eq!(gameplay.accuracy, 98.0);
+        assert_eq!(gameplay.statistics.great, 50);
+        assert_eq!(gameplay.statistics.miss, 1);
+        assert_eq!(gameplay.combo, 0);
+        assert_eq!(gameplay.max_combo, 50);
+        assert_eq!(gameplay.grade_current, "A");
+    }
 
     let resumed = RawRegularSnapshotBuilder::new(
-        RegularCaptureContext::new(ClientType::Lazer, 11, 0, 3),
+        RegularCaptureContext::new(ClientType::Lazer, 11, 0, 4),
         Ok(ReadStatus::Ready(raw_global_paused(
             GameState::Play,
             600,
             false,
         ))),
     )
-    .gameplay(Ok(ReadStatus::Ready(score(3, 51))))
+    .gameplay(Ok(ReadStatus::Ready(score(0, 1))))
     .publish();
     let resumed = bundle
         .apply_regular(resumed)
         .await
-        .expect("resumed lazer gameplay");
+        .expect("resumed gameplay");
     assert!(!resumed.publication.regular.global.paused);
-    assert_eq!(resumed.publication.regular.gameplay.score, 123.0);
-    assert_eq!(resumed.publication.regular.gameplay.mode, 3);
-    assert_eq!(resumed.publication.precise.mode, 3);
-    assert_eq!(resumed.publication.regular.gameplay.combo, 51);
+    assert_eq!(resumed.publication.regular.gameplay.combo, 1);
 }
 
 #[tokio::test]
@@ -223,6 +183,8 @@ async fn lazer_pause_then_select_play_resets_retained_gameplay_epoch() {
     bundle.gameplay.keypress_identity_mode = Some(3);
     bundle.gameplay.is_key_overlay_default_state = false;
     bundle.precise_dirty = true;
+    let mut paused_score = score(3, 50);
+    paused_score.mods = dt.clone();
 
     let paused = RawRegularSnapshotBuilder::new(
         RegularCaptureContext::new(ClientType::Lazer, 12, 0, 2),
@@ -232,7 +194,7 @@ async fn lazer_pause_then_select_play_resets_retained_gameplay_epoch() {
             true,
         ))),
     )
-    .gameplay(Ok(ReadStatus::Ready(score(3, 50))))
+    .gameplay(Ok(ReadStatus::Ready(paused_score)))
     .publish();
     let paused = bundle
         .apply_regular(paused)

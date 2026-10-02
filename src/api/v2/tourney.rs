@@ -241,8 +241,9 @@ pub(super) fn build_lazer_client(
         score: score.score,
         accuracy: score.accuracy,
         health_bar: HealthBar {
-            normal: score.player_hp / 2.0,
-            smooth: score.player_hp_smooth / 2.0,
+            // Preserve upstream operation order: `/ 2` can differ by one ULP.
+            normal: (score.player_hp / 200.0) * 100.0,
+            smooth: (score.player_hp_smooth / 200.0) * 100.0,
         },
         hits: PlayHits::Lazer(LazerHits {
             h0: hits.n0,

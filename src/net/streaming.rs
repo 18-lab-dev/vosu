@@ -308,11 +308,6 @@ impl StreamingClient {
         self
     }
 
-    #[cfg(all(test, feature = "test-harness"))]
-    pub(crate) fn destination_policy(&self) -> &DestinationPolicy {
-        &self.policy
-    }
-
     pub async fn request_bytes(
         &self,
         url: &str,

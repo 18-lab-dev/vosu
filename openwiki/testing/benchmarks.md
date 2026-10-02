@@ -9,9 +9,12 @@ tags: [testing, benchmarks, criterion, performance]
 
 ## Reproduce
 
-Run from the repository root with the pinned Rust toolchain:
+Run from the repository root with the pinned Rust toolchain. Bench profiles
+use release-mode embedding: prepare the matching helper bundle first with
+Python and the .NET 8 SDK (maintainer build dependencies, not end-user requirements):
 
 ```sh
+python scripts/prepare-offset-generator.py --rid linux-x64
 export CRITERION_HOME="$(mktemp -d)"
 cargo bench --locked --package vosu --bench hot_paths
 cargo bench --locked --no-default-features --bench memory_reader_bench
@@ -20,7 +23,57 @@ cargo bench --locked --no-default-features --bench memory_reader_bench
 Implementations: `benches/`; targets: `Cargo.toml`. Append `-- <group-or-ID>`
 to filter Criterion cases.
 
-## Current local results
+## Upstream 2359305 update comparison
+
+Measured on **2026-09-29**: the working tree targeting upstream
+`2359305a63f2aaebb201bc8d2eee58177f52590e` versus vosu's pre-update
+`9c2187e683775485b8551fd6e7cb09b6e6786332`. Ryzen 9 9950X3D,
+Linux `7.2.6-1-cachyos-bore`, Rust 1.96.1, performance governor, no CPU
+pinning/isolation. Sampled one-minute host load was 2.78 during the updated
+run and 2.48 after the baseline run.
+
+Both used locked dependencies, release defaults, 100 samples, 3 s warm-up and
+5 s measurement. The lockfiles were identical. The benchmark source differed
+only by the required `room: Default::default()` snapshot initializer; new wire
+fields are part of the updated serializer workload. The recorded baseline
+was rebuilt in an independent target directory from a `git archive` of the
+pre-update revision; an earlier shared-target trial is excluded.
+
+Run from each checkout with its own `CARGO_TARGET_DIR` and `CRITERION_HOME`:
+
+```sh
+cargo bench --locked --package vosu --bench hot_paths -- '^(raw_snapshot_reads|map_calculation|serializers_cold)/'
+```
+
+All ten cases completed. The updated run's initial invocation hit the runner
+timeout after compilation and three completed cases; the remaining seven
+were measured separately with the same settings. Values below are arithmetic
+means from `new/estimates.json`, not Criterion's console slope estimates.
+Positive change means slower; percentage changes are descriptive, not
+independent statistical significance claims.
+
+| Benchmark ID | Pre-update mean | Updated mean | Updated 95% confidence interval | Mean change |
+| --- | ---: | ---: | ---: | ---: |
+| `raw_snapshot_reads/stable_regular_fields` | 201.400 ns | 232.155 ns | 231.561–232.845 ns | +15.3% |
+| `raw_snapshot_reads/lazer_regular_fields` | 84.221 µs | 5.414 µs | 5.313–5.513 µs | -93.6% |
+| `map_calculation/parse` | 1.587 µs | 1.568 µs | 1.562–1.575 µs | -1.2% |
+| `map_calculation/full_difficulty_performance` | 12.003 µs | 11.788 µs | 11.732–11.873 µs | -1.8% |
+| `map_calculation/gradual_all_objects` | 10.158 µs | 10.102 µs | 10.078–10.132 µs | -0.6% |
+| `map_calculation/unchanged_cache_key` | 10.145 ns | 10.060 ns | 10.045–10.079 ns | -0.8% |
+| `serializers_cold/v1` | 4.543 µs | 4.337 µs | 4.269–4.412 µs | -4.5% |
+| `serializers_cold/v2` | 10.092 µs | 9.747 µs | 9.386–10.409 µs | -3.4% |
+| `serializers_cold/v2_precise` | 3.479 µs | 3.429 µs | 3.364–3.498 µs | -1.5% |
+| `serializers_cold/stream_companion` | 6.001 µs | 6.168 µs | 5.646–7.156 µs | +2.8% |
+
+The stable zero-filled-fixture path is about 31 ns slower. The large lazer
+difference must not be presented as a live-reader speedup: this fixture
+discards results from zero-filled memory, while the offset layout and reader
+behavior changed. Cold serializer estimates contain outliers, especially
+StreamCompanion. These observations do not measure populated multiplayer
+rooms, incremental UR, a real client, or whole-daemon CPU use.
+
+
+## Prior full-suite local results
 
 - **2026-09-09**, revision `9b0648c4b90d5b9eeddd480e1c7029c7f8be71d2`
   with existing uncommitted changes; source hashes stayed unchanged during the run.
@@ -79,7 +132,7 @@ not syscall or allocation measurements.
 
 ## Native Windows coverage
 
-**Pending first hosted run; no Windows measurements claimed.** The manual
+**Hosted Criterion measurements remain pending.** The manual
 [`Windows benchmarks`](../../.github/workflows/benchmarks-windows.yml) workflow
 runs both targets on `windows-latest` with Rust 1.96.1 and native MSVC, including
 all five `windows_process_memory` cases. It uploads logs, exit codes, revision,
@@ -89,6 +142,7 @@ Hosted timings are not directly comparable with the local Linux results.
 Reproduce in PowerShell:
 
 ```powershell
+python scripts/prepare-offset-generator.py --rid win-x64
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench hot_paths
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench memory_reader_bench
 ```
@@ -103,3 +157,22 @@ cargo bench --locked --no-default-features --package vosu --target x86_64-pc-win
   publication nor subscriptions measures network transport.
 - Live-game, upstream, browser and privileged-event comparisons were not
   measured. No VM access or security changes were performed.
+
+## Windows live precise cadence (2026-09-29)
+
+Separate from the synthetic/hosted benchmarks above, an attested native Windows
+stable capture on the local VM measured precise WebSocket delivery at **87.0 Hz
+upstream and 90.0 Hz in vosu**, with zero gaps exceeding the fixed 450 ms stall
+threshold. The active windows contained 2,089 and 2,166 observations,
+respectively. The earlier retained stable capture measured 87.6 Hz upstream
+and 60.0 Hz in vosu; these are separate runs, not a controlled throughput ratio.
+
+The corrected daemon holds a balanced 1 ms Windows multimedia timer-resolution
+request while each instance worker clock exists. Reproduce using the pinned
+artifacts, 150 ms regular polling, 25 ms HTTP capture interval, and the complete
+menu → play → pause → result → close procedure in the
+[verification guide](verification.md#session-clock-and-cadence-remediation).
+The evidence is `remediation-7c0j_0ys/clock/stable-minimum-skew-report.json`
+under the retained verification directory named there. This capture still
+fails one-to-one HTTP reference coverage; cadence measurements do not establish
+full parity, timer deadline guarantees, or reduced CPU usage.

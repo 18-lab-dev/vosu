@@ -34,11 +34,11 @@ cargo build --locked
 cargo run --locked
 ```
 
-The default listener is `127.0.0.1:24050`; the dashboard is `/`. Linux production builds use `--release --locked --no-default-features --features linux-process-events`; Windows uses `--release --locked --no-default-features`, each with its native target. Process events are intentionally retained for performance with capability-aware fallback and reconciliation. No Node.js, Electron, .NET, or C# runtime is required because dashboard assets and offsets are vendored build inputs (`README.md`, `Cargo.toml`).
+The default listener is `127.0.0.1:24050`; the dashboard is `/`. Linux production builds use `--release --locked --no-default-features --features linux-process-events`; Windows uses `--release --locked --no-default-features`, each with its native target. Ordinary daemon builds require no Node.js, Electron, .NET, or C# installation: dashboard and baseline offsets are vendored, while release binaries carry the self-contained generator payload for exact-instance local generation when needed.
 
 ## Recent direction
 
-Recent changes explain current hotspots: the dashboard now persists pinned counter order; compatibility payloads classify hit errors into `all`, `press`, and `release`; and v2 parsed beatmap stats expose mode-aware `timingWindows`. Earlier changes added v2 selected-field subscriptions, WebSocket close handshakes, precise keypress state/timestamps, external consumers, and the precise input-validation harness. Treat these as compatibility-sensitive areas and use the targeted verification in [Testing and verification](testing/verification.md).
+Recent changes explain current hotspots: the dashboard now persists pinned counter order; compatibility payloads classify hit errors into `all`, `press`, and `release`; and v2 parsed beatmap stats expose `hitWindow` with optional numeric judgement fields `miss`, `meh`, `ok`, `good`, `great`, and `perfect`. Catch publishes all six fields as zero, while `stars.hitWindow` is absent. Earlier changes added v2 selected-field subscriptions, WebSocket close handshakes, precise keypress state/timestamps, external consumers, and the precise input-validation harness. Treat these as compatibility-sensitive areas and use the targeted verification in [Testing and verification](testing/verification.md).
 
 ## Documentation conventions
 

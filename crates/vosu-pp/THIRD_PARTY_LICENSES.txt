@@ -21,12 +21,17 @@ in `openwiki/provenance-audit.md` at the repository root. Its module layout is:
   semantics in `catch/object/juice_stream.rs`. The retained mania closest-hitresult
   tests live in `mania/performance/hitresult_generator/closest/tests.rs`; this
   module extraction preserves the upstream test bodies and algorithm unchanged.
+  Local API maintenance in `mania/performance/gradual.rs` clamps performance
+  skips to the final object while preserving strict difficulty-iterator bounds;
+  `osu/performance/gradual.rs` uses a non-consuming skip in its exhaustion
+  example. These are local corrections, not changes to the pinned upstream
+  revision or calculator evidence.
 - `rosu-map-api/src`: an in-tree source fork of MIT `rosu-map` 0.2.1,
   with ppy-aligned circular-arc tolerance, degeneracy epsilon,
   `Math.Acos` float-argument promotion, f64-promoted vector-length
   calculation, and the legacy offset curve API used by catch conversion.
 - `src/scoring.rs`: accuracy, score simulation, and total score.
-- `src/hit_windows.rs`: temporal and catch spatial windows.
+- `src/hit_windows.rs`: temporal hit windows; Catch's map windows report every judgement as zero, separately from spatial catcher width.
 - `src/score_multiplier.rs`: ruleset score-multiplier calculations.
 - `src/source_map.rs`: machine-readable declared behavior attribution.
 
@@ -55,6 +60,9 @@ Verified MIT upstream inputs
 - **License file:** <https://github.com/ppy/osu/blob/97e94babde9d5ecbe574ecdd33509db27452cd0f/LICENCE>
 - **Verified license SHA-256:** `2e73c7c4295cc3da18697ac982f64a4ec449e0781e8f4c59318216e13998864a`
 - **Copyright:** Copyright (c) 2025 ppy Pty Ltd <contact@ppy.sh>.
+- **Current semantic revision:** `fe30ae7eea2beeb1f0d3a5ce8dde12bb78ca3f48`
+- **Current source:** <https://github.com/ppy/osu/tree/fe30ae7eea2beeb1f0d3a5ce8dde12bb78ca3f48>
+- The current `LICENCE` has the same exact bytes and SHA-256 as this baseline.
 
 ### ppy/osu-framework
 
@@ -96,10 +104,12 @@ Historical parity evidence (not a production source)
 
 `tools/oracle/reference/lazer-calculator` is retained as historical parity
 evidence only. It records former tosuapp/lazer-calculator behavior for
-comparison and audit history; it is **not** a production source, build input,
-crate dependency, or runtime dependency. The production workspace does not
-include or compile that directory. This build boundary does not by itself
-prove source independence from the former wrapper.
+comparison and audit history; it is **not** the current calculator fixture's
+oracle, a production build input, crate dependency, or runtime dependency.
+The current generated oracle fixture targets `osu-pp-calculator` 0.6.1 as
+pinned in `tools/oracle/oracle-lock.json`. The production workspace does not
+include or compile the historical directory. This build boundary does not
+by itself prove source independence from the former wrapper.
 
 Project-authored code in the `vosu-pp` package is dual-licensed under
 `MIT OR Apache-2.0`; the authoritative texts are at the root `LICENSE-MIT`

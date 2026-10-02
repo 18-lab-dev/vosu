@@ -53,8 +53,9 @@ JSON/beatmap evidence are data, not source-size exceptions or splitting targets.
   Both use `validation_error.py` for the shared error contract.
 - Offset-generator partial classes separate runtime validation, target ownership,
   and generation; offset-target files separate assembly loading, schema, and CLI
-  parsing. Their `bin/` and `obj/` trees are reproducible ignored build output,
-  not versioned runtime dependencies; package locks remain maintained inputs.
+  parsing. Their `bin/` and `obj/` trees are reproducible ignored build output.
+  The prepared platform ZIP and checksum are release build inputs, while package
+  locks remain maintained inputs.
 - The dashboard loads `homepage.js` as an ES module. `homepage-settings.js` owns
   the settings dialog and schema builder; `homepage-controls.css` follows the
   base stylesheet and preserves settings/dialog/responsive cascade order.

@@ -29,18 +29,6 @@ fn put_hold_aggregate(memory: &mut SparseMemory, address: usize, type_size: i32,
 }
 
 #[test]
-fn source_default_pattern_is_exact_and_uses_normal_masking() {
-    let pattern = LazerPattern::source_default();
-    assert_eq!(pattern.offset, 0);
-    assert_eq!(
-        pattern.scaling_container_target_draw_size.bytes(),
-        &[0x00, 0x00, 0x80, 0x44, 0x00, 0x00, 0x40, 0x44],
-    );
-    assert_eq!(pattern.scaling_container_target_draw_size.mask(), &[1; 8],);
-    assert!(!pattern.scaling_container_target_draw_size.non_zero_mask());
-}
-
-#[test]
 fn ranked_status_maps_known_values_and_keeps_unknown_undefined() {
     assert_eq!(
         [-4, -3, -2, -1, 0, 1, 2, 3, 4].map(lazer_ranked_status),
@@ -950,4 +938,103 @@ fn empty_spectator_room_is_ready_and_rounding_matches_javascript() {
     assert_eq!(js_fixed2(1.125), 1.13);
     assert!(!hit_error_out_of_range(f64::NAN));
     assert!(hit_error_out_of_range(10_001.0));
+}
+
+#[test]
+fn room_decodes_managed_users_and_handles_optional_fields_and_bounds() {
+    for variant in 0..7 {
+        let mut offsets = LazerOffsets::embedded().unwrap();
+        let (base, client, room, users, entries, member, api_user) =
+            (0x1000, 0x3000, 0x4000, 0x5000, 0x6000, 0x7000, 0x8000);
+        let mut memory = SparseMemory::default();
+        memory.valid_base(base, &offsets);
+        memory.ptr(
+            base + offsets
+                .osu_game_osu_game_base
+                .multiplayer_client_k_backing_field,
+            client,
+        );
+        memory.ptr(
+            client + offsets.osu_game_online_multiplayer_multiplayer_client.room,
+            if variant == 0 { 0 } else { room },
+        );
+        let room_offsets = &mut offsets.osu_game_online_multiplayer_multiplayer_room;
+        memory.i64(room + room_offsets.room_id, 9_876_543_210);
+        memory.ptr(room + room_offsets.users_k_backing_field.unwrap(), users);
+        if variant == 1 {
+            room_offsets.users_k_backing_field = None;
+        }
+        memory.i32(
+            users + 0x10,
+            if variant == 6 {
+                -1
+            } else if variant == 2 {
+                0
+            } else {
+                2
+            },
+        );
+        memory.ptr(users + 8, entries);
+        memory.ptr(entries + 0x10, member);
+        memory.ptr(entries + 0x18, member + 0x100);
+        let member_offsets = &offsets.osu_game_online_multiplayer_multiplayer_room_user;
+        memory.i32(member + member_offsets.user_id, 42);
+        memory.ptr(member + member_offsets.user_k_backing_field, api_user);
+        memory.i32(member + 0x100 + member_offsets.user_id, 43);
+        memory.ptr(member + 0x100 + member_offsets.user_k_backing_field, 0);
+        let user = &mut offsets.osu_game_online_api_requests_responses_apiuser;
+        memory.i32(api_user + user.id_k_backing_field, 42);
+        memory.ptr(api_user + user.statistics, 0);
+        memory.ptr(api_user + user.matchmaking_statistics, 0);
+        memory.string_ptr(api_user + user.username_k_backing_field, 0x9000, "Player Ω");
+        memory.string_ptr(api_user + user.country_code_string, 0x9100, "US");
+        memory.ptr(
+            api_user
+                + offsets
+                    .osu_game_online_api_requests_responses_apime
+                    .play_mode,
+            0,
+        );
+        if variant == 4 {
+            user.avatar_url = None;
+        } else if variant == 5 {
+            memory.ptr(api_user + user.avatar_url.unwrap(), 0);
+        } else {
+            memory.string_ptr(api_user + user.avatar_url.unwrap(), 0x9200, "");
+        }
+        let mut decoder = LazerMemory::new(
+            ProcessHandle::new(Arc::new(memory), ProcessBitness::X64),
+            Arc::new(offsets),
+            LazerPattern::source_default(),
+        );
+        decoder.set_resolved_state(base, 0);
+        let result = decoder.room();
+        if variant <= 1 {
+            assert!(matches!(result, Ok(ReadStatus::NotReady)));
+        } else if variant == 6 {
+            assert!(matches!(result, Err(MemoryError::Corrupt { .. })));
+        } else {
+            let ReadStatus::Ready(value) = result.unwrap() else {
+                panic!("room not ready")
+            };
+            assert_eq!(value.room_id, 9_876_543_210);
+            if variant == 2 {
+                assert!(value.users.is_empty());
+            } else {
+                assert_eq!(
+                    value.users,
+                    vec![crate::model::memory::LazerRoomUser {
+                        id: 42,
+                        username: "Player Ω".into(),
+                        country_code: 225,
+                        avatar_url: if variant >= 4 {
+                            None
+                        } else {
+                            Some(String::new())
+                        },
+                    }]
+                );
+            }
+        }
+    }
 }

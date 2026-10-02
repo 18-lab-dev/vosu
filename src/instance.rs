@@ -20,7 +20,7 @@ use std::time::Duration;
 use crate::app::StartupArgs;
 use crate::logging::Logger;
 use crate::memory::lazer_loader::{
-    LazerLoadError, LazerOffsetLoader, OffsetFetcher, resolve_for_instance,
+    LazerLoadError, LazerOffsetLoader, OffsetGenerator, resolve_for_instance,
     resolve_for_instance_with_logger,
 };
 use crate::memory::lazer_offsets::LazerOffsets;
@@ -167,35 +167,35 @@ impl Instance {
     }
 
     /// Starts at most one pending offset resolver for this process generation.
-    pub async fn start_lazer_resolver<F>(
+    pub async fn start_lazer_resolver<G>(
         self: &Arc<Self>,
-        loader: Arc<LazerOffsetLoader<F>>,
+        loader: Arc<LazerOffsetLoader<G>>,
     ) -> bool
     where
-        F: OffsetFetcher + 'static,
+        G: OffsetGenerator + 'static,
     {
         self.start_lazer_resolver_inner(loader, None).await
     }
 
     /// Starts a resolver that reports every failed offset attempt to the daemon log.
-    pub(crate) async fn start_lazer_resolver_with_logger<F>(
+    pub(crate) async fn start_lazer_resolver_with_logger<G>(
         self: &Arc<Self>,
-        loader: Arc<LazerOffsetLoader<F>>,
+        loader: Arc<LazerOffsetLoader<G>>,
         logger: Logger,
     ) -> bool
     where
-        F: OffsetFetcher + 'static,
+        G: OffsetGenerator + 'static,
     {
         self.start_lazer_resolver_inner(loader, Some(logger)).await
     }
 
-    async fn start_lazer_resolver_inner<F>(
+    async fn start_lazer_resolver_inner<G>(
         self: &Arc<Self>,
-        loader: Arc<LazerOffsetLoader<F>>,
+        loader: Arc<LazerOffsetLoader<G>>,
         logger: Option<Logger>,
     ) -> bool
     where
-        F: OffsetFetcher + 'static,
+        G: OffsetGenerator + 'static,
     {
         if self.client != ClientType::Lazer || self.lifecycle_cancel.is_cancelled() {
             return false;
@@ -527,13 +527,13 @@ impl InstanceManager {
 
     /// Production discovery path: every newly observed lazer generation gets
     /// exactly one lifecycle-owned resolver task.
-    pub async fn discover_with_lazer_loader<F>(
+    pub async fn discover_with_lazer_loader<G>(
         &mut self,
         provider: &impl ProcessProvider,
-        loader: Arc<LazerOffsetLoader<F>>,
+        loader: Arc<LazerOffsetLoader<G>>,
     ) -> Result<usize, MemoryError>
     where
-        F: OffsetFetcher + 'static,
+        G: OffsetGenerator + 'static,
     {
         let inserted = self.discover(provider)?;
         for instance in self.instances.values() {
@@ -646,7 +646,7 @@ impl InstanceManager {
 }
 
 /// Owns native discovery and every per-instance resolver for the daemon runtime.
-pub struct InstanceRuntime<P, F> {
+pub struct InstanceRuntime<P, G> {
     manager: Arc<tokio::sync::RwLock<InstanceManager>>,
     lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
     cancel: CancellationToken,
@@ -660,7 +660,7 @@ pub struct InstanceRuntime<P, F> {
     #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
     provider: Arc<P>,
     _provider: PhantomData<fn() -> P>,
-    _loader: Arc<LazerOffsetLoader<F>>,
+    _loader: Arc<LazerOffsetLoader<G>>,
 }
 
 #[must_use]

@@ -15,7 +15,9 @@
 
 The daemon is implemented in Rust, with an embedded vanilla HTML, CSS, and JavaScript dashboard. Upstream tosu defines the compatibility target. Retained upstream material, the dashboard and calculator replacement history, and unresolved source-provenance questions are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the [provenance audit](openwiki/provenance-audit.md). Compatibility does not establish source independence or copyright ownership.
 
-`vosu` reads live state from osu!stable and osu!lazer, then serves the dashboard, counters, reports, and compatible HTTP/WebSocket APIs. It is one native daemon: no Node.js, Electron, .NET, or C# runtime is required.
+`vosu` reads live state from osu!stable and osu!lazer, then serves the dashboard,
+counters, reports, and compatible HTTP/WebSocket APIs. It is one native daemon:
+no Node.js, Electron, or separately installed .NET/C# runtime is required.
 
 This build does not provide the former Electron/asdf-overlay in-game overlay or an embedded replacement. External overlay software can consume the documented HTTP and WebSocket APIs; [ADR 0008](openwiki/decisions/0008-external-in-game-overlays.md) records this product boundary.
 
@@ -24,7 +26,7 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 | | |
 | --- | --- |
 | **Native runtime** | A single Rust daemon with embedded dashboard assets and offsets. |
-| **Verified compatibility** | gosuMemory v1, streamCompanion, and vosu v2 HTTP/WebSocket behavior are checked against the pinned upstream tosu reference with live parity captures. |
+| **Compatibility work** | gosuMemory v1, streamCompanion, and vosu v2 HTTP/WebSocket contracts have targeted checks and historical fixture evidence; no live parity result is asserted here. |
 | **Linux support** | Native osu!lazer and osu!stable through Wine are supported alongside Windows stable and lazer. |
 | **Measured performance** | Criterion covers memory scanning, snapshot reads, calculations, serialization, caching, and publication. Results and limits are recorded in the [benchmark guide](openwiki/testing/benchmarks.md). |
 | **Agent-ready repository** | A pinned toolchain, explicit source ownership, runnable checks, architecture notes, and decision records keep automated changes reviewable. Start with [AGENTS.md](AGENTS.md). |
@@ -80,64 +82,43 @@ The public command flags are standalone actions:
 ```text
 -h, --help
 -s, --setup
--g, --generate-offsets
 ```
 
 `--help` prints usage. Each public action must be the executable's only argument.
-On Linux, `--setup` probes the compiled process-event backends and installs their
-capabilities. Insufficient authority is an error: use `sudo vosu --setup`; do not
-run the ordinary daemon as root. Its behavior is unchanged by offset generation.
+On Linux, run `vosu --setup` as the normal desktop user to probe the compiled
+process-event backends and install their capabilities. Setup requests
+operating-system authentication when needed; do not run the ordinary daemon as
+root.
 
-### Generate offsets from a running lazer process
+Offset resolution is automatic. For each discovered osu!lazer process, vosu first
+checks a valid cache entry for that exact process version, then the matching
+embedded offsets asset, and finally runs the embedded self-contained generator
+against that exact PID and version. Generation is local and produces an offsets
+blob; the daemon validates and atomically installs it in the normal offsets cache.
+It never downloads offsets or scans a different process, and a failed generation
+does not replace an existing cache entry.
 
-Start one native x64 osu!lazer client as your normal user, then run `vosu -g`
-(`.\vosu.exe -g` on Windows). Discovery supplies that running client's exact
-installation root and version. The existing generator measures fields from its
-assemblies using `--assemblies-only`; it does not attach to or modify the game.
+End users do not install .NET, an SDK, a source checkout, or a runtime override.
+The generator payload is embedded in release binaries and is extracted into the
+normal per-user cache only when an exact process needs generation. A release
+binary must contain its matching generator payload; a debug/development binary
+without a prepared payload reports an explicit missing-bundle error rather than
+falling back to a remote source.
 
-Only explicit `-g` provisions or runs the helper. It downloads a self-contained
-platform bundle and its published SHA-256 checksum from the
-`offset-generator-v1` release in `shiruviaa/vosu`, verifies the archive and
-per-file manifest, then atomically installs it in the user cache. Subsequent runs
-verify and reuse that cache without downloading. A missing published bundle,
-unsupported assembly/runtime layout, corrupt cache, or unavailable client is a
-clear error; no numeric-offset fallback is presented as successful generation.
+Offset caches live under the platform cache root:
 
-There is no user SDK/runtime installation, source checkout, environment override,
-DAC, ptrace attachment, sudo prompt, capability change, or root-owned installation
-prerequisite. The current helper bundles carry their own .NET 8.0.29 runtime.
-Ordinary Cargo builds remain Rust-only.
+- Linux: `$XDG_CACHE_HOME/vosu/offsets`, defaulting to `$HOME/.cache/vosu/offsets`.
+- Windows: `.cache\offsets` under the portable executable directory (the
+  canonical Windows cache root).
 
-Payload cache roots:
+Offset entries are keyed by client version and remain the validated
+`<version>.json` contract. The separately extracted generator payload cache is
+keyed by platform/runtime and embedded bundle checksum, so a helper from another
+release build cannot be reused accidentally.
 
-- Linux: `$XDG_CACHE_HOME/vosu/offset-generator`, default
-  `$HOME/.cache/vosu/offset-generator`.
-- Windows: `%LOCALAPPDATA%\vosu\cache\offset-generator`.
+### Prepare an embedded generator bundle (maintainers)
 
-Entries are keyed by platform, helper runtime version, and bundle release.
-Corrupt entries identify the directory to remove. Normal daemon startup does not
-download/probe the generator; ordinary updater/offset-resolution behavior remains
-separate.
-
-The bundled `lazer-offset-target` runs as an owned child and loads the same
-client's entry assembly. Its `--game-base-signature` mode reads the first x64
-MethodTable word for `osu.Desktop.OsuGameDesktop` in its own process; it neither
-starts another game nor reads the live client's memory. `GameBaseVtable` is
-accepted only when the child and generated fields report the same `OsuVersion`.
-No signature is copied from the embedded template or a prior build. Failure to
-derive a nonzero signature fails generation without replacing existing output.
-The signature depends on the runtime's type layout; native live-reader
-verification is required for a supported client/runtime combination.
-Generated JSON is version/schema-validated and atomically stored at
-`$XDG_CACHE_HOME/vosu/offsets/<version>.json` on Linux (same default cache root),
-or beside the portable Windows daemon at `.cache\offsets\<version>.json`.
-Failure leaves previous output intact; committed `assets/offsets.json` is untouched.
-The reader prefers valid version-matched cached offsets, then embedded offsets,
-then remote sources. Corrupt/mismatched cache entries cannot override embedded data.
-
-#### Build a runtime bundle for supervised development
-
-This is a maintainer packaging step, not user setup:
+This is a maintainer packaging step for local source builds, not user setup:
 
 ```sh
 python scripts/prepare-offset-generator.py --rid linux-x64
@@ -145,27 +126,18 @@ python scripts/prepare-offset-generator.py --rid win-x64
 ```
 
 The builder requires Python and the .NET 8 SDK. It restores locked dependencies
-and publishes the existing generator and owned target self-contained for each
-platform. Their payload directories are isolated because the generator's
-diagnostic packages include framework DLL versions different from the target's.
-No native Satori/DAC build is involved. Generated archives remain under
-`target/offset-generator/<rid>/`; generated binaries are never committed.
+and publishes the generator and owned target self-contained for each platform.
+Prepared files remain under
+`target/offset-generator/<rid>/offset-generator-v1-<rid>.zip` and its
+`.zip.sha256` sidecar; generated binaries are never committed. The ZIP is a
+self-contained generator/target payload with `LICENSE`, `LICENSE-MIT`,
+`LICENSE-APACHE`, `THIRD_PARTY_NOTICES.md`, and its bundle manifest. Release
+builds embed only the matching prepared ZIP and checksum, while the release
+archive itself remains exactly the executable plus root `LICENSE`.
 
-The manual **Offset generator bundles** workflow builds native Linux/Windows
-artifacts. Pushing its exact versioned bundle tag also publishes them; manual
-dispatch only builds artifacts. Do not publish until both native live checks pass.
-
-Before publication, supervised development may set `VOSU_OFFSET_BUNDLE_SOURCE`
-to a directory containing the named ZIP and `.zip.sha256` sidecar. The same
-runtime/manifest/integrity checks apply; it is not an executable/PATH override:
-
-```sh
-VOSU_OFFSET_BUNDLE_SOURCE="$PWD/target/offset-generator/linux-x64" vosu -g
-```
-
-The separate historical asset-reproduction workflow below remains available for
-maintainers; its SDK/DAC build steps are not user prerequisites for `-g`.
-
+The separate historical asset-reproduction workflow below remains available to
+maintainers updating the vendored `assets/offsets.json`; its SDK and DAC steps
+are never user prerequisites and are not part of daemon startup.
 ## Build from source
 
 ### Requirements
@@ -175,20 +147,33 @@ maintainers; its SDK/DAC build steps are not user prerequisites for `-g`.
 - Linux: a GNU C toolchain, Clang, pkg-config, and libelf/zlib development files for process-event support; GPU driver development libraries are not required
 - Windows: MSVC build tools and the Windows SDK
 
-The dashboard and embedded offsets are vendored build inputs. No frontend or
-managed-runtime toolchain is needed for the daemon build. Separately producing
-the versioned offset-generator bundles requires the maintainer packaging tools
-listed above; they are not used by ordinary Cargo builds.
+The dashboard and embedded baseline offsets are vendored build inputs. No
+frontend or managed-runtime toolchain is needed for debug daemon builds.
+Separately producing the versioned offset-generator bundles requires the
+maintainer packaging tools listed above; release builds and release-mode
+`cargo install` embed the matching prepared bundle.
+
+Debug `cargo build`/`cargo run` may omit a bundle, but generation then reports
+the explicit missing-bundle error. `cargo install --path .` builds a release
+binary and therefore requires the matching prepared bundle first:
 
 ```sh
+python scripts/prepare-offset-generator.py --rid linux-x64  # Linux
+python scripts/prepare-offset-generator.py --rid win-x64    # Windows
 cargo build --locked
 cargo run --locked
 cargo install --path . --locked
 ```
 
-Default Linux builds include `linux-process-events`, so a binary installed by the command above can probe eBPF and CN_PROC during `sudo vosu --setup`. Pass `--no-default-features` explicitly only when building a polling-only binary.
+Default Linux builds include `linux-process-events`, so a binary installed by the command above can probe eBPF and CN_PROC during `vosu --setup`. Pass `--no-default-features` explicitly only when building a polling-only binary.
 
-Production builds:
+Production builds require the matching prepared generator bundle before Cargo
+build embeds it:
+
+```sh
+python scripts/prepare-offset-generator.py --rid linux-x64
+python scripts/prepare-offset-generator.py --rid win-x64
+```
 
 ```sh
 # Linux
@@ -216,11 +201,12 @@ SignPath integration are unchanged; this workflow does not sign or publish relea
 
 ### Reproducibly update the vendored osu!lazer offsets asset
 
-The live workflow above is for a currently running client and local output.
-To replace `assets/offsets.json` in the repository, use the exact source and
-runtime workflow below. It records the release, runtime, DAC, and generator
-inputs needed for a reviewable update; after generation, review the asset
-diff and update its checksum and provenance metadata as described below.
+The commands below reproduce the explicitly historical `2026.726.0` asset.
+They document prior source, runtime, DAC, and generator inputs; they are not a
+recipe for the currently retained `2026.921.0` asset. Provenance for the current
+asset is listed in `THIRD_PARTY_NOTICES.md` and Cargo metadata. Do not replace
+it from this historical recipe without independently measuring the exact
+release/runtime and verifying the native reader.
 
 #### Build only the patched Satori DAC
 
@@ -253,11 +239,27 @@ export VOSU_LAZER_OFFSET_DAC="$SATORI_ROOT/artifacts/bin/coreclr/linux.x64.Relea
 test -f "$VOSU_LAZER_OFFSET_DAC"
 ```
 
-This DAC procedure belongs only to historical embedded-asset reproduction.
-The user-facing `vosu -g` path does not build, download, or use a DAC.
+This DAC procedure belongs only to historical vendored-asset reproduction. It
+does not participate in runtime offset generation: current generation uses the
+embedded self-contained generator and the exact live PID.
 
+**Historical recipe:** this checked-in procedure reproduces the prior
+`2026.726.0` offsets asset using the .NET 8.0.29/Satori inputs listed in
+`THIRD_PARTY_NOTICES.md`; it is not a recipe or provenance for the currently
+retained `2026.921.0` asset. The current asset was measured from the
+`2026.921.0-lazer` AppImage under its bundled .NET 10.0.12 runtime; its release,
+source revision, AppImage hash, and asset hash are recorded in Cargo metadata
+and the notices. Do not substitute this historical recipe when reproducing
+current offsets; native live-reader verification remains required.
 
-When a lazer release is not yet available from either offset endpoint, the Linux x64 maintainer tools can derive the embedded asset from an exact release source checkout under the release's exact runtime. They require the .NET 8 SDK, `curl`, `bsdtar`, binutils, zlib development headers, an executable `/dev/shm` tmpfs, and the [Satori Linux build prerequisites](https://github.com/ppy/Satori/blob/098d0ed17cf8f965d79be6e3d870a895a6dbbe04/.github/workflows/build.yml) only while generating offsets; vosu builds and releases remain Rust-only.
+These Linux x64 maintainer tools can derive the vendored `assets/offsets.json`
+asset from an exact release source checkout under that release's exact runtime.
+The remaining commands below are the historical `2026.726.0` reproduction
+procedure only. They require the .NET 8 SDK, `curl`, `bsdtar`, binutils, zlib
+development headers, an executable `/dev/shm` tmpfs, and the [Satori Linux build
+prerequisites](https://github.com/ppy/Satori/blob/098d0ed17cf8f965d79be6e3d870a895a6dbbe04/.github/workflows/build.yml);
+these do not describe current `2026.921.0` provenance. vosu builds and releases
+remain Rust-only apart from preparing the embedded generator bundle.
 
 ```sh
 set -eu
@@ -476,7 +478,10 @@ The commands stage the complete target publish on a fresh executable tmpfs and r
 
 On Linux, the generator keeps the target as its direct child for the entire ClrMD attach, preserving the relationship expected by Yama restricted-ptrace mode; ordinary ptrace eligibility still applies. Neither tool installs a target-side ptrace exception or changes system ptrace policy. A runtime-identity mismatch, DAC mismatch, missing or ambiguous type, or missing or ambiguous field fails without replacing the output. After reviewing the diff, update the `assets/offsets.json` entry in `assets/SHA256SUMS`, then record the exact osu! and Satori source revisions, release tags and URLs, input archive hashes, runtime identities, and generated JSON SHA-256 in `package.metadata.vosu` and `THIRD_PARTY_NOTICES.md`.
 
-The JSON schema is also the embedded, cache, and remote offset interchange contract (`<version>.json`). Replacing this 7,892-byte asset with a packed format requires a separately versioned parser and endpoint migration; generation must not silently change the deployed format.
+The JSON schema is the embedded and cache offset interchange contract
+(`<version>.json`). Replacing this 7,892-byte asset with a packed format would
+require a separately versioned parser and cache migration; generation must not
+silently change the deployed format.
 
 ## Platform support
 
@@ -485,7 +490,7 @@ Run vosu as the same desktop user as osu!. Tournament and debug-client processes
 | Platform | osu!stable | osu!lazer |
 | --- | --- | --- |
 | **Linux** | Wine process discovery and native memory reads. Set `VOSU_OSU_PATH=/absolute/path/to/osu!` if Wine does not expose the install directory. | The official executable or AppImage layout must expose `osu!.deps.json`. Sandbox policy must allow process discovery and memory reads. |
-| **Windows** | Supported 32-bit processes are read through native Windows process-memory APIs. | A supported 64-bit process is required. Offsets are resolved from the valid versioned cache, embedded data, then the first-party `https://vosu.app/offsets` service and configured fallback services. |
+| **Windows** | Supported 32-bit processes are read through native Windows process-memory APIs. | A supported 64-bit process is required. Offsets are resolved from the valid versioned cache, embedded data, then the embedded generator against that exact process. |
 
 On Linux, vosu can also read the osu! path from `${XDG_DATA_HOME:-$HOME/.local/share}/osuconfig/osupath`.
 
@@ -494,12 +499,14 @@ Official Linux archives statically include libbpf and dynamically use the system
 On Linux, `process_vm_readv` must be permitted. During ordinary startup vosu checks the running process's effective capability set and warns if `CAP_SYS_PTRACE` is not effective, or if that check cannot be completed. The warning does not stop startup, but memory reads may fail. Configure the exact executable with:
 
 ```sh
-sudo vosu --setup
+vosu --setup
 ```
 
-`--setup` directly invokes a trusted, root-owned `setcap` executable and exits without starting the daemon. A normal build receives only `CAP_SYS_PTRACE` and reports polling as its available discovery backend. A build compiled with `linux-process-events` first attempts its maximum compiled capability set. When that succeeds, it re-executes itself to probe eBPF and CN_PROC independently, then retains `CAP_SYS_RESOURCE`, `CAP_PERFMON`, and `CAP_BPF` only when eBPF actually works. If the maximum set is unavailable, setup retries with `CAP_SYS_PTRACE`, marks eBPF unavailable, and still probes CN_PROC before reporting polling as the final fallback. CN_PROC requires no additional file capability. Probe failures and the final capability set are printed.
+An unprivileged `--setup` validates the current executable, then launches that exact executable and `--setup` through a trusted, root-owned, non-writable `pkexec`. Polkit owns the graphical or terminal credential prompt; vosu never reads, logs, or retains the password. An already-root setup skips `pkexec` and does not prompt. Authentication cancellation or failure, an unavailable/noninteractive authentication agent, and a missing trusted `pkexec` all exit unsuccessfully before `setcap` runs, so they leave the executable unchanged. There is no sudo fallback.
 
-If `setcap` lacks authority, setup exits unsuccessfully without starting the daemon. Executable replacement, including an automatic update, removes file capabilities, so rerun `sudo vosu --setup` after replacing vosu.
+After authentication, the elevated setup directly invokes a trusted, root-owned `setcap` executable and exits without starting the daemon. A normal build receives only `CAP_SYS_PTRACE` and reports polling as its available discovery backend. A build compiled with `linux-process-events` first attempts its maximum compiled capability set. When that succeeds, it re-executes itself to probe eBPF and CN_PROC independently, then retains `CAP_SYS_RESOURCE`, `CAP_PERFMON`, and `CAP_BPF` only when eBPF actually works. If the maximum set is unavailable, setup retries with `CAP_SYS_PTRACE`, marks eBPF unavailable, and still probes CN_PROC before reporting polling as the final fallback. CN_PROC requires no additional file capability. Probe failures and the final capability set are printed. A failed capability transaction removes transient capabilities; if rollback itself fails, setup reports that the executable must be verified before use.
+
+If `setcap` lacks authority, setup exits unsuccessfully without starting the daemon. Executable replacement, including an automatic update, removes file capabilities, so rerun `vosu --setup` after replacing vosu.
 
 With `linux-process-events` compiled, an unset `VOSU_PROCESS_EVENTS` selects `auto`: runtime tries eBPF, falls back to CN_PROC, then polling. Set `VOSU_PROCESS_EVENTS=off` or `poll` to force polling, or select `ebpf` or `cn-proc` explicitly.
 
@@ -600,7 +607,7 @@ Methods and paths are exact. Unsupported combinations return `404 Not Found`. St
 | `GET /json/v2/precise` | vosu precise snapshot |
 | `GET /api/calculate/pp` | Legacy `rosu-pp` calculation; uses the current beatmap unless `path` names a canonical regular `.osu` file |
 
-The v2 snapshot and matching WebSocket streams follow tosu's `beatmap.stats.hitWindow` contract introduced by Storycraft's [tosu PR #678](https://github.com/tosuapp/tosu/pull/678). The object uses mode-specific judgement names: `miss`, `meh`, `ok`, `good`, `great`, and `perfect`. Values are maximum absolute timing errors in milliseconds after the active clock rate is applied; unsupported judgements are omitted, and catch currently publishes an empty object.
+The v2 snapshot and matching WebSocket streams expose `beatmap.stats.hitWindow`. The object has optional numeric judgement fields `miss`, `meh`, `ok`, `good`, `great`, and `perfect`; unsupported judgements are omitted. Values are maximum absolute timing errors in milliseconds after the active clock rate is applied. An unparsed/missing map serializes an empty object. Catch publishes all six fields as zero, matching upstream's empty-window implementation, while `stars.hitWindow` remains absent. Catch's spatial catcher width is not a timing window.
 
 The tosu hit-error arrays keep their original names and shapes: `hitErrorArray` in v1 and regular v2, and `hitErrors` in streamCompanion and precise v2. Vosu adds sibling `pressHitErrors` and `releaseHitErrors` arrays. The original array preserves every timing event in order, `pressHitErrors` contains note presses, and `releaseHitErrors` contains osu!mania hold-note releases. Stable reports every timing error in the original and press arrays and leaves the release array empty.
 
@@ -687,4 +694,4 @@ The existing `openwiki/` directory is ordinary maintained Markdown. Update affec
 
 ## License
 
-Project-authored code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, where the respective contributors have licensing authority. The release archive retains the root [`LICENSE`](LICENSE) member. Bundled assets, dependencies, and provenance-pinned material remain under their applicable terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). The first-party notice is `Copyright (c) 2026 sxlvia`. The root release license also includes the retained calculator MIT texts. Remaining source-provenance and dependency-notice coverage questions are tracked in [issue #6](https://github.com/shiruviaa/vosu/issues/6).
+Project-authored code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, where the respective contributors have licensing authority. The release archive retains the root [`LICENSE`](LICENSE) member. Bundled assets, dependencies, and provenance-pinned material remain under their applicable terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). The first-party notice is `Copyright (c) 2026 sxlvia`. The root release license includes the four retained calculator MIT texts. The [provenance audit](openwiki/provenance-audit.md) records source matches and files whose origins remain uncertain; the [dependency inventory](openwiki/dependency-license-inventory.json) records all locked Cargo license declarations. Neither compatibility nor these inventories certifies source independence or complete distribution compliance.

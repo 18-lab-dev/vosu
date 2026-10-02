@@ -9,9 +9,12 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 - Prevent counter-delete CSRF and protect the shared management mutation boundary with exact same-origin browser provenance. Counter delete/download/open, updater, and report actions now require POST; no mutating GET aliases remain. The dashboard uses the new methods.
 - Preserve headerless/file-origin read-only overlay access and stock settings commands. Hosted counters can still save settings without new tokens or code; non-hosted sockets may read settings but cannot save them.
 - Management writes require exact HTTP scheme/host/port browser provenance; `Origin` is authoritative, with `Referer` fallback only when absent. Missing, null, malformed, or duplicate provenance cannot authorize writes. Non-hosted settings sockets retain reads but close with 1008 before saving or relaying mutations.
+- Made an unprivileged `vosu --setup` request OS-owned authentication through a trusted polkit `pkexec` boundary before any capability change. Root execution skips authentication; cancellation, denial, unavailable/noninteractive elevation, and missing `pkexec` fail without invoking `setcap`. Vosu never reads credentials and has no sudo fallback.
 
 ### Runtime and maintenance
 
+- Fix mania gradual-performance completion so `last()` and oversized skips return the final attributes before exhaustion; correct the osu! gradual example to finish without consuming the calculator before checking exhaustion.
+- Make the daemon reload smoke verify rejected malformed TOML through unchanged served settings, untouched source bytes, and an unbound requested port, independently of whether osu! is running. Production last-good configuration and state-readiness behavior is unchanged.
 - Split maintained code into domain-focused modules capped at 1,000 lines, preserving API and calculator behavior; remove tracked offset-tool build output while retaining source, locks, and provenance.
 - Derive Windows textual and numeric executable-resource versions from the root Cargo package version, keeping both resource version fields consistent with 0.3.0.
 
@@ -21,27 +24,37 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 - Use component-aware case-insensitive Windows startup-path checks rather than string-prefix matching.
 - Separate MSVC SDK, Cargo downloads, and build caches; restrict cross SDK downloads to x86_64; classify changes conservatively and always publish `CI required`, including docs-only changes.
 - Move packaged-executable smoke checks into `vosu-release-smoke`, remove duplicate daemon asset embedding, and maintain existing Markdown without scheduled inference. Linux process-event backends and defaults remain unchanged.
+- Replace remote/manual offset acquisition with automatic exact-instance resolution: valid versioned `<version>.json` cache entries are preferred, then matching embedded offsets, then local generation from the exact PID and version. The extracted helper cache is keyed by the embedded bundle checksum; no bundle identity is added to offset-file metadata. Release binaries embed the platform-matching self-contained generator; end users do not install .NET, and debug builds without a prepared payload report an explicit missing-bundle error.
+- Maintainer source builds prepare `target/offset-generator/<rid>/offset-generator-v1-<rid>.zip` plus its `.zip.sha256` sidecar with the .NET 8 SDK. Release archives remain exactly the executable and root `LICENSE`; updater behavior is unchanged.
 
 - Consolidate the five retained autoresearch lanes: reduce Linux read/scanner allocation work, combine lazer key-read stages, avoid per-byte stable mod-checksum allocations, reserve v1 serialization capacity and sort StreamCompanion strains in place, share selected-field comparison results, and reuse immutable calculator source maps.
 - Retain the Linux sparse-large iovec capacity change with a measured limitation: 65,536-request/33-active spread/back probes improved 10.64–13.54%, while all-empty and 32-active controls regressed 2.64–3.83%. These are synthetic native self-process measurements, not a general daemon speedup; see the [benchmark guide](openwiki/testing/benchmarks.md#five-lane-autoresearch-consolidation-2026-09-08).
 - Merge all five reopened lane histories and benchmark the combined source against both the original optimization base and previous integration. Production calculator preparation and shared subscriptions improved on the measured fixtures; native lazer precise capture was 16.04% faster than previous while requested bytes rose 570 → 912 per cycle.
 - Preserve the final measured limitations: sparse 33-front/64-spread controls were 16.48%/13.69% slower than the original base, distinct-plan fast-writer subscriptions were 4.03% slower than previous, and mania parsing was 4.89% slower than previous. These are workload-specific results, not a general daemon speedup; see the [final combined measurements](openwiki/testing/benchmarks.md#final-reopened-lane-consolidation-2026-09-08).
 - Qualify the retained parsing regression as archived-binary/protocol-specific: follow-up diagnosis found unchanged allocations and negligible instruction-work changes, while a disposable diagnostic reversed the timing sign with setup both present and absent. The exact cause remains unresolved; no parser speedup or fix is claimed. Preserve the original unfavorable numbers and see the [parsing interpretation and local evidence](openwiki/testing/benchmarks.md#combined-measurements).
+- Keep live-parity attestation compatible with protected Git for Windows/MSVC build layouts; require initialized client settings before promoting the menu barrier. Compare shared fields strictly while recognizing only vosu's documented additive hit-error arrays and `keys.all` paths. Distinguish stale Windows exit snapshots from new clients without relaxing PID/creation-time ownership checks.
 
 ### Gameplay
 
 - Reset published hit-error arrays when osu!lazer or osu!stable rebuilds the live hit-event list, so editor test-mode section restarts drop pre-restart errors and skipped-object zeros instead of waiting for those notes to elapse again.
+- Track upstream tosu changes through `2359305a63f2aaebb201bc8d2eee58177f52590e`: expose lazer multiplayer rooms and optional avatars, preserve falsey stable settings, recognize multiplayer ScoreV2, and calculate unstable rate incrementally using the active clock rate.
+- Retain lazer gameplay score, hit counts, accuracy, rank, and modifiers while paused; entering song selection still clears the previous play epoch.
 
 ### Licensing
 
-- Project-authored code and documentation are now dual-licensed under `MIT OR Apache-2.0`; canonical texts are provided in `LICENSE-MIT` and `LICENSE-APACHE`, while release archives retain the root `LICENSE` member.
-- Retained third-party and provenance-pinned material remains under its own terms; see `THIRD_PARTY_NOTICES.md` and the calculator attribution file.
+- Correct first-party attribution to `Copyright (c) 2026 sxlvia` in the root/calculator license copies and Windows resources, preserving genuine upstream copyright and canonical MIT/Apache terms.
+- Include the four retained calculator MIT texts in the root release `LICENSE` without changing the updater's two-entry ZIP contract; reject stale license members and bad ZIP CRCs.
+- Qualify unsupported source-independence claims, inventory locked dependency license declarations, and record concrete source matches and unresolved production-file origins in [the provenance audit](openwiki/provenance-audit.md).
 
 ### Calculation
 
-- Replaced the LGPL-derived native live calculator with a clean-room Rust implementation based on pinned MIT `rosu-pp` 4.0.1 and MIT `ppy/osu` revision `97e94babde9d5ecbe574ecdd33509db27452cd0f`; retained the former calculator tree only as non-production historical parity evidence.
+- Replaced the former LGPL-declared native live calculator with a Rust facade and pinned MIT `rosu-pp` 4.0.1 / `ppy/osu` sources; retained the former calculator tree only as non-production historical parity evidence. The replacement commit's clean-room characterization is not a certification of source independence; see the provenance audit.
+- Update max-achievable/full-combo score and accuracy projections, nested tick-score metadata, long-slider/spinner strain graph bounds, Hidden slider opacity, and source-calculator performance clamps. Regenerate current API/calculator fixtures while retaining historical source and NUnit provenance.
+- Refresh the embedded lazer offsets for osu! `2026.921.0`, including room-user fields, with version-matched runtime-derived `GameBaseVtable` evidence.
 
 ### API
+
+- Add mode-aware `beatmap.stats.hitWindow` judgement windows, including upstream's zero-valued Catch windows; normalize StreamCompanion token-array commands without broadening other WebSocket command paths.
 
 - Restored the tosu-compatible hit-error arrays at `hitErrorArray` and `hitErrors`; ordered press and release classifications now use additive sibling `pressHitErrors` and `releaseHitErrors` fields.
 - Matched gosuMemory v1 replay visibility and stable tournament spectator global-rank fields to current tosu behavior instead of emitting fixed defaults.

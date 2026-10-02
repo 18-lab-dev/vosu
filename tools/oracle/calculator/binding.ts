@@ -1,4 +1,10 @@
+import { readFileSync } from "node:fs";
 
+// Current runtime oracle; the constants below continue to identify the retained
+// baseline source maps, conversion inputs, and externally executed NUnit evidence.
+export const CURRENT_ORACLE = JSON.parse(
+  readFileSync(new URL("../oracle-lock.json", import.meta.url), "utf8"),
+) as { tosu: string; lazerCalculator: string; osu: string; calculatorPackage: string; calculatorTree: string };
 export const SOURCE_REVISION = "1a67fd64cc38fe60306328dde0a429e3211ca4ed";
 export const OSU_REVISION = "97e94babde9d5ecbe574ecdd33509db27452cd0f";
 export const CALCULATOR_REVISION = "9a22c4c74f8e584fa64133a79a204dd045646bac";

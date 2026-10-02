@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Publish the pinned offset helper and create a deterministic versioned bundle."""
+"""Build the pinned offset helper and create a deterministic versioned bundle."""
 from __future__ import annotations
 
 import argparse
@@ -66,6 +65,20 @@ def publish_helper(project_name: str, rid: str, destination: Path) -> None:
     ])
 
 
+def copy_runtime_licenses(rid: str, staging: Path) -> None:
+    assets = json.loads((ROOT / "tools/lazer-offset-target/obj/project.assets.json").read_text())
+    for component in ("runtime", "host"):
+        package = Path(f"microsoft.netcore.app.{component}.{rid}") / "8.0.29"
+        source = next(
+            (Path(root) / package for root in assets["packageFolders"] if (Path(root) / package).is_dir()),
+            None,
+        )
+        if source is None:
+            raise RuntimeError(f"restored runtime attribution package is missing: {package}")
+        destination = staging / "licenses" / package
+        destination.mkdir(parents=True)
+        for name in ("LICENSE.TXT", "THIRD-PARTY-NOTICES.TXT"):
+            shutil.copy2(source / name, destination / name)
 
 
 def make_bundle(rid: str, output: Path) -> None:
@@ -78,6 +91,7 @@ def make_bundle(rid: str, output: Path) -> None:
         publish_helper("lazer-offset-target", rid, staging / "target")
         for name in ("LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "THIRD_PARTY_NOTICES.md"):
             shutil.copy2(ROOT / name, staging / name)
+        copy_runtime_licenses(rid, staging)
         files = {
             path.relative_to(staging).as_posix(): sha256(path)
             for path in sorted(staging.rglob("*")) if path.is_file()
@@ -104,10 +118,36 @@ def verified_reuse(output: Path, rid: str, marker: Path, current_fingerprint: st
     try:
         with zipfile.ZipFile(output) as archive:
             manifest = json.loads(archive.read("bundle.json"))
-            return manifest["rid"] == rid and all(
-                sha256_bytes(archive.read(name)) == digest for name, digest in manifest["files"].items()
+            files = manifest["files"]
+            if not isinstance(files, dict):
+                return False
+            suffix = ".exe" if rid == "win-x64" else ""
+            required = {
+                f"generator/lazer-offset-generator{suffix}",
+                f"target/lazer-offset-target{suffix}",
+            }
+            names = archive.namelist()
+            expected = set(files) | {"bundle.json"}
+            return (
+                manifest["rid"] == rid
+                and required <= set(files)
+                and len(names) == len(expected)
+                and set(names) == expected
+                and all(
+                    isinstance(name, str)
+                    and name
+                    and "\\" not in name
+                    and ":" not in name
+                    and not name.startswith("/")
+                    and all(part not in ("", ".", "..") for part in name.split("/"))
+                    and isinstance(digest, str)
+                    and len(digest) == 64
+                    and all(character in "0123456789abcdef" for character in digest)
+                    and sha256_bytes(archive.read(name)) == digest
+                    for name, digest in files.items()
+                )
             )
-    except (KeyError, OSError, ValueError, zipfile.BadZipFile):
+    except (KeyError, OSError, TypeError, ValueError, zipfile.BadZipFile):
         return False
 
 

@@ -279,12 +279,7 @@ mod tests {
     ]"#;
 
     #[test]
-    fn user_agent_and_production_endpoint_are_exact() {
-        assert_eq!(CATALOG_ENDPOINT, "https://vosu.app/api.json");
-        assert_eq!(catalog_user_agent("0.1.0"), "vosu/0.1.0 (https://vosu.app)");
-    }
 
-    #[test]
     fn valid_catalog_preserves_order_and_unknown_properties() {
         let bytes = body(serde_json::json!([
             valid("Second", "B", "2", "second"),

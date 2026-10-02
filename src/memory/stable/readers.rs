@@ -297,11 +297,15 @@ impl MemoryReader for StableMemory {
                 }
                 let right_bytes = mod_bytes[..4].try_into().unwrap();
                 let left_bytes = mod_bytes[4..].try_into().unwrap();
-                self.with_random_seed(
-                    mods((i32::from_le_bytes(left_bytes) ^ i32::from_le_bytes(right_bytes)) as i64),
-                    r,
-                    mode,
-                )?
+                let score_processor = self.i32(self.add(b, 0x54)?)?;
+                let mut bits =
+                    (i32::from_le_bytes(left_bytes) ^ i32::from_le_bytes(right_bytes)) as i64;
+                // ScoreV2 is a win condition and is not represented in the
+                // score's regular mod bitfields.
+                if score_processor != 0 {
+                    bits |= crate::calculation::osu_mods::SCORE_V2;
+                }
+                self.with_random_seed(mods(bits), r, mode)?
             },
             mode,
             score,
@@ -725,6 +729,9 @@ impl MemoryReader for StableMemory {
             "Stable: ranked play not implemented",
         ))
     }
+    fn room(&mut self) -> MemoryRead<crate::model::memory::LazerRoom> {
+        Ok(ReadStatus::Unsupported("lazer multiplayer room"))
+    }
     fn spectating_data(
         &mut self,
         _show_mp_commands: bool,
@@ -749,15 +756,15 @@ impl MemoryReader for StableMemory {
         }
         let mut out = IndexMap::new();
         for (path, value) in self.config_values(cp, &self.config_positions)? {
-            if setting_truthy(&value) {
-                out.insert(path, value);
-            }
+            // False, zero, and empty-string settings are valid source values;
+            // only unreadable/null entries are omitted by config_values.
+            out.insert(path, value);
         }
         for record in self.setting_records(bp, &self.binding_positions)? {
             let Some(record) = record else { continue };
             let key = i32::from_le_bytes(record[0..4].try_into().unwrap());
             let value = i32::from_le_bytes(record[12..16].try_into().unwrap());
-            if key == 0 || value == 0 {
+            if key == 0 {
                 continue;
             }
             if let Some((_, path)) = BINDINGS.iter().find(|(id, _)| *id == key)

@@ -1,6 +1,4 @@
-use super::cli::{CliCommand, CommandInvocation, HELP_TEXT, classify_command_invocation};
-#[cfg(target_os = "linux")]
-use super::cli::validate_generated_offsets;
+use super::cli::{CliCommand, CommandInvocation, classify_command_invocation};
 #[cfg(target_os = "linux")]
 use super::cli::BackendProbe;
 
@@ -24,24 +22,11 @@ fn public_short_and_long_commands_are_equivalent() {
             CommandInvocation::Command(CliCommand::Setup)
         );
     }
-    for flag in ["-g", "--generate-offsets"] {
-        assert_eq!(
-            classify_command_invocation(&command_line(&[flag])),
-            CommandInvocation::Command(CliCommand::GenerateOffsets)
-        );
-    }
 }
 
 #[test]
 fn public_commands_reject_extra_arguments() {
-    for flag in [
-        "-h",
-        "--help",
-        "-s",
-        "--setup",
-        "-g",
-        "--generate-offsets",
-    ] {
+    for flag in ["-h", "--help", "-s", "--setup"] {
         assert_eq!(
             classify_command_invocation(&command_line(&[flag, "--update=false"])),
             CommandInvocation::InvalidInput,
@@ -51,6 +36,22 @@ fn public_commands_reject_extra_arguments() {
             classify_command_invocation(&command_line(&["--update=false", flag])),
             CommandInvocation::InvalidInput,
             "{flag} accepted a preceding argument"
+        );
+    }
+}
+
+#[test]
+fn removed_generation_commands_are_invalid_not_daemon_arguments() {
+    for arguments in [
+        vec!["-g"],
+        vec!["--generate-offsets"],
+        vec!["-g", "--update=false"],
+        vec!["--update=false", "--generate-offsets"],
+    ] {
+        assert_eq!(
+            classify_command_invocation(&command_line(&arguments)),
+            CommandInvocation::InvalidInput,
+            "removed command was accepted: {arguments:?}"
         );
     }
 }
@@ -142,31 +143,6 @@ fn backend_probe_arguments_are_not_commands_off_linux() {
         ])),
         CommandInvocation::RunDaemon
     );
-}
-
-#[test]
-fn help_lists_every_public_short_and_long_form() {
-    for forms in ["-h, --help", "-s, --setup", "-g, --generate-offsets"] {
-        assert!(HELP_TEXT.contains(forms), "help omitted {forms}");
-    }
-    assert!(
-        HELP_TEXT.contains("vosu offset cache"),
-        "help omitted generated-offset destination"
-    );
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn generated_offsets_must_match_the_running_client_version() {
-    let embedded = DaemonAssets::get("offsets.json").expect("embedded offsets");
-    let offsets =
-        crate::memory::lazer_offsets::LazerOffsets::from_json(&embedded.data).expect("offsets");
-
-    validate_generated_offsets(&embedded.data, &offsets.osu_version)
-        .expect("embedded offsets should satisfy generated-output validation");
-    let error = validate_generated_offsets(&embedded.data, "0.0.0")
-        .expect_err("a different client version was accepted");
-    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
 }
 
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]

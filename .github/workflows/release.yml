@@ -36,6 +36,10 @@ jobs:
       - name: Validate release tag and package version
         run: python scripts/package-release.py validate-tag --tag "$RELEASE_TAG"
 
+      - name: Prepare embedded offset generator
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 8.0.x
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -61,6 +65,8 @@ jobs:
             cargo-Linux-rust-1.96.1-release-events-x86_64-
 
 
+      - name: Build verified offset generator bundle
+        run: python scripts/prepare-offset-generator.py --rid linux-x64
       - name: Build daemon
         run: cargo build --release --locked --no-default-features --features linux-process-events --target x86_64-unknown-linux-gnu
 
@@ -109,6 +115,10 @@ jobs:
       - name: Validate release tag and package version
         run: python scripts/package-release.py validate-tag --tag "$env:RELEASE_TAG"
 
+      - name: Prepare embedded offset generator
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 8.0.x
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -135,6 +145,8 @@ jobs:
             cargo-Windows-rust-1.96.1-release-msvc-x86_64-
 
 
+      - name: Build verified offset generator bundle
+        run: python scripts/prepare-offset-generator.py --rid win-x64
       - name: Build daemon
         run: cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc
 

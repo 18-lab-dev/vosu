@@ -20,7 +20,7 @@ pub struct ProductionRuntime {
     processor: AsyncMutex<Option<Arc<CommandProcessor>>>,
     relays: AsyncMutex<Option<Arc<WebSocketRelaySink>>>,
     supervisor: AsyncMutex<Option<ProductionStateSupervisor>>,
-    instances: AsyncMutex<Option<InstanceRuntime<NativeProcessProvider, ReqwestOffsetFetcher>>>,
+    instances: AsyncMutex<Option<InstanceRuntime<NativeProcessProvider, EmbeddedOffsetGenerator>>>,
 }
 
 impl ProductionRuntime {
@@ -74,10 +74,9 @@ impl ProductionRuntime {
         let asset = DaemonAssets::get("offsets.json").ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "embedded offsets.json is missing")
         })?;
-        let fetcher =
-            ReqwestOffsetFetcher::new().map_err(|error| io::Error::other(error.to_string()))?;
+        let generator = EmbeddedOffsetGenerator::new(self.paths.cache().join("offset-generator"));
         let loader = LazerOffsetLoader::new(
-            fetcher,
+            generator,
             self.paths.cache().join("offsets"),
             Bytes::copy_from_slice(&asset.data),
         );

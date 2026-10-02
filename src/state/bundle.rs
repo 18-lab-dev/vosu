@@ -21,9 +21,9 @@ use crate::calculation::{calculate_grade, default_calculated_mods, safe_join};
 use crate::memory::snapshot::{RawPreciseSnapshot, RawRegularSnapshot};
 use crate::model::enums::{ClientType, GameState};
 use crate::model::memory::{
-    LazerSpectator, Menu as RawMenu, MenuFull, RankedPlay as RawRankedPlay,
-    ResultScreen as RawResultScreen, Score, StableReplayFrameBatch, Tourney as RawTourney,
-    User as RawUser,
+    LazerRoom as RawLazerRoom, LazerSpectator, Menu as RawMenu, MenuFull,
+    RankedPlay as RawRankedPlay, ResultScreen as RawResultScreen, Score, StableReplayFrameBatch,
+    Tourney as RawTourney, User as RawUser,
 };
 use crate::model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton, KeypressButton, LeaderboardPlayer,
@@ -107,6 +107,7 @@ pub struct StateBundle {
     accepted_precise_sequence: u64,
     latest_precise_global_sequence: u64,
     ranked_play: RankedPlayState,
+    room: RoomState,
     previous_state_key: String,
     previous_mp3_length: Option<f64>,
     previous_time: f64,

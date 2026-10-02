@@ -92,6 +92,7 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
         }
         if self.source == ClientType::Lazer {
             snapshot = snapshot.ranked_play(self.reader.ranked_play());
+            snapshot = snapshot.room(self.reader.room());
         }
         snapshot = snapshot.settings(self.reader.settings());
 

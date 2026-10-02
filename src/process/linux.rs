@@ -15,8 +15,7 @@ use super::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadReques
 
 const MAX_PROC_FILE: u64 = 1024 * 1024;
 const MAX_COMM_FILE: u64 = 4096;
-const PERMISSION_GUIDANCE: &str =
-    "Grant vosu CAP_SYS_PTRACE before starting it:\n  sudo setcap cap_sys_ptrace=eip /path/to/vosu";
+const PERMISSION_GUIDANCE: &str = "Run vosu --setup before starting it to install the required capabilities; setup requests operating-system authentication when needed.";
 const STACK_IOVEC_CAPACITY: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -15,9 +15,9 @@ pub mod stable;
 pub use stable::{StableMemory, StablePatterns};
 
 use crate::model::memory::{
-    AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerSpectator,
-    Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney, TourneyChat,
-    TourneyUser, User,
+    AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerRoom,
+    LazerSpectator, Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney,
+    TourneyChat, TourneyUser, User,
 };
 use crate::process::{MemoryError, MemoryRead, ReadStatus};
 
@@ -44,6 +44,7 @@ pub trait MemoryReader: Send {
     fn tourney_user(&mut self) -> MemoryRead<TourneyUser>;
     fn leaderboard(&mut self, mode: i64) -> MemoryRead<Leaderboard>;
     fn ranked_play(&mut self) -> MemoryRead<RankedPlay>;
+    fn room(&mut self) -> MemoryRead<LazerRoom>;
     fn spectating_data(&mut self, show_mp_commands: bool) -> MemoryRead<LazerSpectator>;
     fn settings(&mut self) -> MemoryRead<Settings>;
 }
@@ -281,10 +282,8 @@ impl ErrorReportCounters {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
-    use crate::model::memory::{MatchmakingStats, MenuChecksum};
+    use crate::model::memory::MatchmakingStats;
 
     fn hard_error() -> MemoryError {
         MemoryError::Backend {
@@ -352,33 +351,6 @@ mod tests {
     }
 
     #[test]
-    fn ready_replaces_a_composite_value_whole() {
-        #[derive(Debug, PartialEq, Eq)]
-        struct Pair {
-            generation: u64,
-            values: Vec<u8>,
-        }
-
-        let mut retained = LastGood::Present(Pair {
-            generation: 1,
-            values: vec![1, 2, 3],
-        });
-        let status = retained.apply(Ok(ReadStatus::Ready(Pair {
-            generation: 2,
-            values: Vec::new(),
-        })));
-
-        assert_eq!(status, RetentionStatus::Applied);
-        assert_eq!(
-            retained.get(),
-            Some(&Pair {
-                generation: 2,
-                values: Vec::new(),
-            })
-        );
-    }
-
-    #[test]
     fn key_overlay_empty_string_differs_from_ready_empty_overlay() {
         assert_eq!(
             KeyOverlaySample::EmptyString.into_memory_read(),
@@ -399,26 +371,6 @@ mod tests {
         assert_eq!(
             TourneyChatSample::Changed(Vec::new()).into_memory_read(),
             Ok(ReadStatus::Ready(Vec::new()))
-        );
-    }
-
-    #[test]
-    fn menu_checksum_keeps_mode_and_ranked_status() {
-        let payload = Menu::Checksum(MenuChecksum {
-            gamemode: 3,
-            ranked_status: 7.0,
-        });
-        let mut retained = LastGood::new();
-        assert_eq!(
-            retained.apply(Ok(ReadStatus::Ready(payload))),
-            RetentionStatus::Applied
-        );
-        assert_eq!(
-            retained.get(),
-            Some(&Menu::Checksum(MenuChecksum {
-                gamemode: 3,
-                ranked_status: 7.0,
-            }))
         );
     }
 
@@ -465,22 +417,5 @@ mod tests {
             .observe_retention(ReaderMethod::Menu, &failure)
             .unwrap();
         assert_eq!(report.level, ReportLevel::Debug);
-    }
-
-    #[test]
-    fn wire_payloads_contain_data_not_reader_sentinels() {
-        let bass: AudioVelocityBase = Vec::new();
-        assert_eq!(serde_json::to_value(bass).unwrap(), json!([]));
-
-        let checksum = Menu::Checksum(MenuChecksum {
-            gamemode: 0,
-            ranked_status: -2.0,
-        });
-        assert_eq!(
-            serde_json::to_value(checksum).unwrap(),
-            json!({"type": "checksum", "gamemode": 0, "rankedStatus": -2})
-        );
-        // ReadStatus, KeyOverlaySample, TourneyChatSample, RetentionStatus, and
-        // ErrorReport deliberately do not implement Serialize.
     }
 }

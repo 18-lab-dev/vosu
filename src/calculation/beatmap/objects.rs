@@ -41,6 +41,8 @@ pub(super) struct SourceObjectTimes {
     pub(super) total: f64,
     pub(super) duration_end: f64,
     pub(super) first_start: f64,
+    pub(super) first_visible: f64,
+    pub(super) last_visible: f64,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ManiaJudgementKind {
@@ -281,6 +283,8 @@ pub(super) fn source_visible_lengths(
     actual_slider_distance: Option<f64>,
 ) -> Option<SourceObjectTimes> {
     let mut first_start: Option<f64> = None;
+    let mut first_visible: Option<f64> = None;
+    let mut last_visible: Option<f64> = None;
     let mut last = None;
     for (section, line) in SourceLineScanner::new(source) {
         if line.is_empty() {
@@ -289,12 +293,20 @@ pub(super) fn source_visible_lengths(
         if section != "HitObjects" {
             continue;
         }
-        let Some((object, _kind)) = parse_raw_hit_object(line) else {
+        let Some((object, kind)) = parse_raw_hit_object(line) else {
             continue;
         };
         let start = object.start();
         if first_start.is_none_or(|first| start < first) {
             first_start = Some(start);
+        }
+        if kind & 8 == 0 {
+            if first_visible.is_none_or(|first| start < first) {
+                first_visible = Some(start);
+            }
+            if last_visible.is_none_or(|last| start >= last) {
+                last_visible = Some(start);
+            }
         }
         if last.is_none_or(|current: RawLastObject| object.start() >= current.start()) {
             last = Some(object);
@@ -328,6 +340,8 @@ pub(super) fn source_visible_lengths(
         total,
         duration_end,
         first_start: first_start?,
+        first_visible: first_visible.unwrap_or(0.0),
+        last_visible: last_visible.unwrap_or(0.0),
     })
 }
 

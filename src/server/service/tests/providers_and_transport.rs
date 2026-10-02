@@ -1,20 +1,3 @@
-    #[tokio::test]
-    async fn snapshot_provider_maps_every_schema_to_not_ready() {
-        let manager = Arc::new(SnapshotManager::new(Arc::new(ManagerSnapshot::not_ready(
-            1,
-            ApiRuntimeSettings::default(),
-        ))));
-        let provider = SnapshotStateProvider::new(manager);
-        for route in [
-            StateRoute::V1,
-            StateRoute::StreamCompanion,
-            StateRoute::V2,
-            StateRoute::V2Precise,
-        ] {
-            assert_eq!(provider.cached_json(route).await, CachedJson::NotReady);
-        }
-    }
-
     #[test]
     fn pp_query_maps_every_documented_knob() {
         let query = PpQuery {

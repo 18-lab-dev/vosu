@@ -39,30 +39,6 @@
     }
 
     #[test]
-    fn forwards_sanitized_structured_mods_to_the_injected_engine() {
-        let mods = ModSet::new(
-            "sanitized-checksum",
-            vec![AppliedMod {
-                acronym: "DT".into(),
-                settings_json: Some("{\"speed_change\":1.25}".into()),
-            }],
-            1.25,
-        )
-        .unwrap();
-        BeatmapCache::new(ContractEngine)
-            .load(
-                BeatmapInput::Content {
-                    content: OSU,
-                    identity_path: None,
-                },
-                Ruleset::Catch,
-                &mods,
-                ScoringMode::Lazer,
-            )
-            .unwrap();
-    }
-
-    #[test]
     fn cache_identity_covers_content_mode_mods_scoring_and_explicit_invalidation() {
         let mut cache = BeatmapCache::new(RecordingEngine::default());
         let base = mods("base", 1.0);

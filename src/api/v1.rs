@@ -51,7 +51,7 @@ fn build_with<'a, V: From<&'a [f64]>>(
             &map.engine.converted_difficulty,
             map.object_counts,
             map.engine.difficulty.stars,
-            i64::from(map.engine.maximum_score.max_combo),
+            i64::from(map.engine.difficulty.max_combo),
             map.times,
             map.bpm,
         )

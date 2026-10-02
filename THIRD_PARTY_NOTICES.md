@@ -6,10 +6,10 @@ First-party notice: `Copyright (c) 2026 sxlvia`, as confirmed by the maintainer 
 
 ## tosu compatibility and retained provenance
 
-- **Upstream credit:** tosu and its contributors, including Mikhail Babynichev (Kotrik). The upstream [v4.25.0 package metadata](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/package.json) and [license](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/LICENSE) name that upstream author. This is upstream attribution, not a first-party vosu copyright notice.
+- **Upstream credit:** tosu and its contributors, including Mikhail Babynichev (Kotrik). The upstream [v4.25.0 package metadata](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/package.json) names that author; its [license document](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/LICENSE) retains `Copyright (C) 2023-2026 Mikhail Babynichev <https://kotrik.ru/>`. This is upstream attribution, not a first-party vosu copyright notice. Upstream declares `GPL-3.0` in `package.json` but supplies LGPL v3 text in `LICENSE`; the audit records this discrepancy rather than selecting or broadening its grant.
 - **Historical imports:** the initial vosu snapshot retained tosu dashboard material and an LGPL-covered calculator wrapper. The dashboard replacement is recorded in [`af20c120`](https://github.com/shiruviaa/vosu/commit/af20c1201a21beecc7db88119a700b2964c1ab78); the calculator replacement is recorded in [`4971b568`](https://github.com/shiruviaa/vosu/commit/4971b568a8dd0e82c011214c74b4e3857fd182ae). Earlier snapshots retain their applicable licenses and notices.
 - **Production review:** stable memory signature data matches upstream tosu, and some calculator structures and formulas overlap the former wrapper. A compatibility match alone does not determine copyright status or establish independent implementation. The [provenance audit](openwiki/provenance-audit.md) identifies the files requiring evidence before any licensing conclusion.
-- **Unresolved pin:** `package.metadata.vosu.source-commit` and oracle records retain `1a67fd64cc38fe60306328dde0a429e3211ca4ed`. This audit could not resolve it in either repository. Upstream tag `v4.25.0` resolves to `9f42c88714da69ac2ba248126a189416c55d733c`; that comparison revision is not a replacement for the recorded pin.
+- **Current and historical pins:** `package.metadata.vosu.source-commit` and the current oracle lock use verified upstream revision `2359305a63f2aaebb201bc8d2eee58177f52590e`. Historical calculator records retain unresolved `1a67fd64cc38fe60306328dde0a429e3211ca4ed`; no authenticated mapping was recovered. Upstream `v4.25.0` at `9f42c88714da69ac2ba248126a189416c55d733c` is a separately identified comparison source, not a substitute for that historical pin.
 - **Retained reference:** `tools/oracle/reference/lazer-calculator` preserves its own LGPL license, revision, and checksum manifest. The first-party dual-license grant does not relicense this reference or any copied or translated upstream material.
 
 ## Native live-calculation sources
@@ -39,6 +39,7 @@ The production `vosu-pp` calculator uses a Rust facade and MIT source forks. Its
 - **License:** MIT
 - **Pinned source:** <https://github.com/ppy/osu/tree/97e94babde9d5ecbe574ecdd33509db27452cd0f>
 - **License source:** <https://github.com/ppy/osu/blob/97e94babde9d5ecbe574ecdd33509db27452cd0f/LICENCE>
+- **Current semantic revision:** <https://github.com/ppy/osu/tree/fe30ae7eea2beeb1f0d3a5ce8dde12bb78ca3f48>; its `LICENCE` bytes are identical to the baseline above, so the retained ppy text covers both revisions.
 
 ### ppy/osu-framework 2026.629.0
 
@@ -56,27 +57,36 @@ the historical LGPL oracle directory is not a production build or runtime
 input. That dependency boundary alone does not establish the origin of every
 production source fragment.
 
-### Historical calculator oracle boundary
+### Calculator oracle provenance
 
-`tools/oracle/reference/lazer-calculator` remains untouched as historical LGPL parity evidence at revision `9a22c4c74f8e584fa64133a79a204dd045646bac`. It is not a production source, crate dependency, build input, or runtime dependency. The current workspace and `vosu-pp` package are dual-licensed under `MIT OR Apache-2.0`; this does not relicense the retained historical reference or any other separately licensed material.
+The current generated calculator fixture and oracle lock target `osu-pp-calculator` 0.6.1 (`323bc04198b256b5a00f4e63c5c4cbb506f43cc5`), as well as tosu `2359305a63f2aaebb201bc8d2eee58177f52590e`. Historical baseline evidence remains distinct: `tools/oracle/calculator-diff-manifest.json`, `tools/oracle/reference/lazer-calculator` at `9a22c4c74f8e584fa64133a79a204dd045646bac`, inputs under `tools/oracle/inputs/osu-97e94bab`, and `csharp-test-evidence` retain their historical provenance and are not the current fixture's generator or external test evidence. None of these oracle artifacts is a production source, crate dependency, build input, or runtime dependency. The current workspace and `vosu-pp` package are dual-licensed under `MIT OR Apache-2.0`; this does not relicense the retained historical reference or any other separately licensed material.
 
 ## osu!lazer memory-offset generation input
 
-- **Material:** `assets/offsets.json`, generated locally with `tools/lazer-offset-target` and `tools/lazer-offset-generator` from the official osu! AppImage's managed assemblies and exact Satori runtime overlay plus a locally built matching DAC. These historical asset-generation inputs are not distributed by vosu. The separate user-facing `-g` bundles ship the existing generator and owned target with their self-contained .NET runtime, not the game assemblies or DAC.
+- **Material:** `assets/offsets.json`, measured locally from the official osu! AppImage's managed assemblies using its bundled `Microsoft.NETCore.App 10.0.12` runtime. Its layout/template is identified in Cargo metadata as `tosuapp/tosu@2359305a63f2aaebb201bc8d2eee58177f52590e` plus local pause/clock fields; retain the upstream credit and license discrepancy above for that input. The current asset includes the `GameBaseVtable` signature derived by the owned target and was not generated with the historical Satori overlay/DAC recipe below. Asset-generation inputs are not distributed by vosu. The embedded generator bundle contains the owned generator/target payload, self-contained .NET runtime, and applicable attribution files; it does not contain game assemblies or the custom Satori DAC. Stock diagnostic libraries accompany the .NET runtime, but automatic assembly-only generation does not attach a DAC to the game.
 - **Copyright:** Copyright (c) ppy Pty Ltd <contact@ppy.sh>
 - **License:** MIT for the osu! source code; osu! bundled resources remain subject to their upstream terms
-- **osu! version:** `2026.726.0`
-- **Release tag:** `2026.726.0-lazer`
-- **Source revision:** [`5da71008b082d1a77e4bb301dc98886f1f24b895`](https://github.com/ppy/osu/tree/5da71008b082d1a77e4bb301dc98886f1f24b895)
-- **Release:** <https://github.com/ppy/osu/releases/tag/2026.726.0-lazer>
-- **Verification AppImage:** <https://github.com/ppy/osu/releases/download/2026.726.0-lazer/osu.AppImage>
-- **Verification AppImage SHA-256:** `3d3028609543dffd037b00652603f75928515100b6245bc929a9dc46fd3b29a0`
-- **Retained `assets/offsets.json` SHA-256:** `2c861223c147ce933d2b6d3b8103abc1cc9f79fe3e298866bf67f6f07e704db7` (current bytes, matching the asset manifest and Cargo metadata; the historical generation inputs above are unchanged)
+- **osu! version:** `2026.921.0`
+- **Release tag:** `2026.921.0-lazer`
+- **Source revision:** [`aaa75b7c0a9f21d558ce84cd0ffac6c739bad8e7`](https://github.com/ppy/osu/tree/aaa75b7c0a9f21d558ce84cd0ffac6c739bad8e7)
+- **Release:** <https://github.com/ppy/osu/releases/tag/2026.921.0-lazer>
+- **Verification AppImage:** <https://github.com/ppy/osu/releases/download/2026.921.0-lazer/osu.AppImage>
+- **Verification AppImage SHA-256:** `dced9463b501009c95dbed891abd2f0acc2efb84ee4336f5b1cc3b7c04a5fc7d`
+- **Generated `assets/offsets.json` SHA-256:** `e4ee6be2e8880663eff36d2369af4b30411d87fe6a4711c9fbfe2cdef4f7de5a`
+- **Generation runtime:** AppImage-bundled `Microsoft.NETCore.App 10.0.12`
 - **Integrity manifest:** `assets/SHA256SUMS`
+
+### Historical 2026.726.0 asset reproduction and .NET 8 bundle pins
+
+The README's reproducible Satori/DAC recipe and the .NET 8.0.29 bundle package
+hashes below document the prior `2026.726.0` asset-generation evidence only;
+they are not provenance for the retained `2026.921.0` offsets. Cargo metadata
+labels these values as historical. They remain useful to reproduce that earlier
+asset, and do not imply that current offsets were generated with .NET 8 or Satori.
 
 ### Microsoft .NET runtime, host, and reference packs 8.0.29
 
-- **Material:** self-contained .NET runtime and app-host shipped in the versioned offset-generator bundles; generation uses the pinned runtime without distributing the official osu! AppImage inputs
+- **Material:** self-contained .NET runtime and app-host embedded in the platform-matching generator bundle; end users do not install this runtime separately
 - **Copyright:** .NET Foundation and Contributors
 - **License:** MIT
 - **Runtime NuGet package:** <https://www.nuget.org/packages/Microsoft.NETCore.App.Runtime.linux-x64/8.0.29>
@@ -88,10 +98,14 @@ production source fragment.
 - **Runtime source revision:** [`18fd75c847399745c43b5970fec840ba71064e80`](https://github.com/dotnet/runtime/tree/18fd75c847399745c43b5970fec840ba71064e80)
 - **AppImage runtime-pack declaration:** `Microsoft.NETCore.App.Runtime.linux-x64/8.0.29`
 - **AppImage declared `System.Private.CoreLib.dll` file version:** `8.0.2926.32403`
+The embedded bundle carries the runtime and host license files from the restored
+NuGet sources at `licenses/microsoft.netcore.app.runtime.<rid>/8.0.29/` and
+`licenses/microsoft.netcore.app.host.<rid>/8.0.29/` (`LICENSE.TXT` and
+`THIRD-PARTY-NOTICES.TXT`).
 
 ### ppy/Satori 2025.807.0 (historical asset evidence)
 
-- **Material:** historical official osu! AppImage runtime-overlay and locally built DAC evidence retained for provenance; these files and the compatibility patch are not inputs to current `-g`, and are not distributed by vosu
+- **Material:** historical official osu! AppImage runtime-overlay and locally built DAC evidence retained for provenance; these files and the compatibility patch are not inputs to the embedded generator bundle and are not distributed by vosu
 - **Copyright:** .NET Foundation and Contributors
 - **License:** MIT
 - **Release:** <https://github.com/ppy/Satori/releases/tag/2025.807.0>
@@ -110,12 +124,18 @@ production source fragment.
 
 ### Microsoft.Diagnostics.Runtime (ClrMD) 4.0.732401
 
-- **Material:** self-contained live-process inspection dependency shipped in the versioned offset-generator bundle
+- **Material:** self-contained live-process inspection dependency embedded in the platform-matching generator bundle
 - **Copyright:** .NET Foundation and Contributors
 - **License:** MIT
 - **NuGet package:** <https://www.nuget.org/packages/Microsoft.Diagnostics.Runtime/4.0.732401>
 - **Pinned source:** <https://github.com/microsoft/clrmd/tree/f160f6897f33198170895a60444de38bcb76bcf3>
-ClrMD and its restored build dependencies are not linked into vosu's daemon or included in the two-file production release archive; they are present only in the separately versioned generator bundle.
+
+ClrMD and its restored build dependencies are not linked into vosu's Rust
+daemon, but are embedded in the executable's generator payload. They are not
+separate archive members: the two-entry production release archive still
+contains only the executable and root `LICENSE`. The bundle carries
+`LICENSE`, `LICENSE-MIT`, `LICENSE-APACHE`, `THIRD_PARTY_NOTICES.md`, and its
+manifest for redistributed components.
 
 ## Maintained source-layout changes
 
@@ -138,7 +158,7 @@ locks remain; restoring/building follows the README's maintainer workflow.
 
 ## Direct Rust packages
 
-The following license expressions come from the packages' Cargo metadata resolved by the committed `Cargo.lock`. Repository/source URLs and exact versions can be reproduced with `cargo metadata --locked --format-version 1`. Transitive crates are likewise fixed in `Cargo.lock`; their own packaged `license`/`license-file` metadata and registry source archives are the authoritative notices.
+The [dependency inventory](openwiki/dependency-license-inventory.json) records every locked third-party Cargo package resolved with `--all-features`, including build/development dependencies and platforms not shipped by Linux/Windows releases. It retains each version, archive checksum, declared license expression, source repository, and top-level packaged-notice hashes. Regenerate it with `python scripts/check-provenance.py --refresh-dependency-inventory` after manifest/lock changes. Input hashes normalize checkout CRLF to LF; upstream notice hashes preserve exact archive bytes. This inventory does not select license alternatives or certify complete redistribution notices: nested/vendored material, native/system libraries, and the embedded .NET payload require their own evidence. The direct-package summary below is not the exhaustive list.
 
 ### MIT
 
@@ -167,7 +187,7 @@ These development packages, the private `vosu-test-harness` workspace member, or
 
 - project-authored repository code: `LICENSE-MIT` or `LICENSE-APACHE`
 - release archive license member: `LICENSE` (combined first-party terms and retained calculator MIT texts)
-  The `assets/SHA256SUMS` license entry tracks the current combined-license bytes (`2eee2a7dae3265ab3243d5850c00ae8932a536d1de1b326fc9d5ae6cdcee7d14`). Refresh both values whenever `LICENSE` changes; other retained asset hashes remain tied to their exact bytes.
+  The `assets/SHA256SUMS` license entry tracks the current combined-license bytes (`e5329eb3372e841d72ee90a4aef2fbd2db16d62a83fa519d11611c840a86969e`). Refresh both values whenever `LICENSE` changes; other retained asset hashes remain tied to their exact bytes.
 - calculator crate project-authored code: `crates/vosu-pp/LICENSE-MIT` or `crates/vosu-pp/LICENSE-APACHE`
 - pinned lazer-calculator LGPL-3.0 reference: `tools/oracle/reference/lazer-calculator/LICENSE`
 - local `vosu-rosu-pp-api` MIT license text: `crates/vosu-pp/rosu-pp-api/LICENSE`

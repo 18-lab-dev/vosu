@@ -13,9 +13,10 @@
             )
             .unwrap();
         let graph = map.build_graph(Some(2200.0), 1.0);
-        assert_eq!(graph.primary, vec![0.0, 0.0, 1.0, 2.0, 0.0]);
-        assert_eq!(graph.series[0].data, vec![-100.0, -100.0, 1.0, 2.0, -100.0]);
-        assert_eq!(graph.x_axis, vec![0.0, 400.0, 1000.0, 1400.0, 1800.0]);
+        assert_eq!(map.times.last_visible_object, 1400.0);
+        assert_eq!(graph.primary, vec![0.0, 0.0, 1.0, 2.0]);
+        assert_eq!(graph.series[0].data, vec![-100.0, -100.0, 1.0, 2.0]);
+        assert_eq!(graph.x_axis, vec![0.0, 400.0, 1000.0, 1400.0]);
         let no_audio_length = map.build_graph(None, 1.0);
         assert_eq!(no_audio_length.primary, vec![0.0, 0.0, 1.0, 2.0]);
         assert_eq!(
@@ -23,6 +24,23 @@
             vec![-100.0, -100.0, 1.0, 2.0]
         );
         assert_eq!(no_audio_length.x_axis, vec![0.0, 400.0, 1000.0, 1400.0]);
+        // The trailing spinner spans 1900..2300, while the last visible
+        // object starts at 1400. Its graph gap is distinct from audio padding.
+        let extended = map.build_graph(Some(2700.0), 1.0);
+        assert_eq!(extended.series[0].data,
+            vec![-100.0, -100.0, 1.0, 2.0, -50.0, -50.0, -50.0, -100.0]);
+        assert_eq!(extended.x_axis,
+            vec![0.0, 400.0, 1000.0, 1400.0, 1400.0, 1800.0, 2200.0, 2600.0]);
+        let leading_spinner = OSU.replace(
+            "64,192,1000,1,0,0:0:0:0:", "64,192,1000,8,0,1300");
+        let leading = cache.load(
+            BeatmapInput::Content { content: &leading_spinner, identity_path: None },
+            Ruleset::Osu, &mods("leading-spinner", 1.0), ScoringMode::Stable,
+        ).unwrap().build_graph(Some(2700.0), 1.0);
+        assert_eq!(leading.series[0].data,
+            vec![-100.0, -100.0, -50.0, 1.0, 2.0, -50.0, -50.0, -50.0, -100.0]);
+        assert_eq!(leading.x_axis,
+            vec![0.0, 400.0, 800.0, 1400.0, 1800.0, 1400.0, 1800.0, 2200.0, 2600.0]);
         let empty = map.build_graph(Some(2200.0), 0.0);
         assert_eq!(
             empty
@@ -47,8 +65,8 @@
             )
             .unwrap();
         let negative_graph = negative_map.build_graph(None, 1.0);
-        assert_eq!(negative_graph.series[0].data, vec![1.0]);
-        assert_eq!(negative_graph.x_axis, vec![-100.0, 300.0]);
+        assert!(negative_graph.series[0].data.is_empty());
+        assert!(negative_graph.x_axis.is_empty());
     }
 
     #[test]

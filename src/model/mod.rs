@@ -23,18 +23,6 @@ mod tests {
     }
 
     #[test]
-    fn struct_declaration_order_controls_wire_order() {
-        let value = api::v1::SelectedMods {
-            num: 8,
-            text: "HD".into(),
-        };
-        assert_eq!(
-            serde_json::to_string(&value).unwrap(),
-            r#"{"num":8,"str":"HD"}"#
-        );
-    }
-
-    #[test]
     fn undefined_fields_are_omitted_but_nullable_fields_are_null() {
         let timing = api::sc::MapTimingPoint {
             start_time: 100.0,

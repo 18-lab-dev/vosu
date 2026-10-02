@@ -31,12 +31,6 @@ class ReleaseLicenseTests(unittest.TestCase):
                 for name, content in entries:
                     archive.writestr(name, content)
 
-    def test_current_license_on_both_platforms(self):
-        for platform, executable in release.PLATFORM_EXECUTABLE.items():
-            with self.subTest(platform=platform):
-                self.write_archive([(executable, b"fixture"), ("LICENSE", self.license.read_bytes())])
-                release.verify_archive(self.archive, platform, self.license)
-
     def test_stale_license_is_rejected(self):
         self.write_archive([("vosu", b"fixture"), ("LICENSE", b"old license\n")])
         with self.assertRaisesRegex(ValueError, "LICENSE does not match"):

@@ -99,13 +99,17 @@ impl ManiaGradualPerformance {
         self.nth(state, usize::MAX)
     }
 
-    /// Process everything up the the next `n`th hit object and calculate the
+    /// Process everything up to the next `n`th hit object and calculate the
     /// performance attributes for the resulting score state.
     ///
     /// Note that the count is zero-indexed, so `n=0` will process 1 object,
     /// `n=1` will process 2, and so on.
+    /// If `n` exceeds the remaining objects, process through the final object.
     #[expect(clippy::missing_panics_doc, reason = "unreachable")]
     pub fn nth(&mut self, state: ManiaScoreState, n: usize) -> Option<ManiaPerformanceAttributes> {
+        // Difficulty follows Iterator::nth's strict bounds, while performance
+        // clamps to the final object (including last's usize::MAX request).
+        let n = n.min(self.len().saturating_sub(1));
         let performance = self
             .difficulty
             .nth(n)?
@@ -131,6 +135,59 @@ mod tests {
     use crate::{Beatmap, mania::ManiaPerformance};
 
     use super::*;
+
+    #[test]
+    fn finish_remaining_objects_matches_regular_performance() {
+        let map = Beatmap::from_path("./resources/1638954.osu").unwrap();
+
+        for (limit, processed) in [(0, 0), (1, 0), (1, 1), (32, 0), (32, 13), (32, 32)] {
+            let difficulty = Difficulty::new().lazer(false).passed_objects(limit);
+            let state = ManiaScoreState {
+                n320: limit,
+                ..ManiaScoreState::new()
+            };
+            let expected = (processed < limit).then(|| {
+                ManiaPerformance::new(&map)
+                    .difficulty(difficulty.clone())
+                    .state(state.clone())
+                    .calculate()
+                    .unwrap()
+            });
+            let remaining = (limit - processed) as usize;
+
+            // last, exact final index, one past the end, and saturating skip.
+            for n in [
+                None,
+                Some(remaining.saturating_sub(1)),
+                Some(remaining),
+                Some(usize::MAX),
+            ] {
+                let mut gradual = ManiaGradualPerformance::new(difficulty.clone(), &map).unwrap();
+                if processed > 0 {
+                    gradual
+                        .nth(
+                            ManiaScoreState {
+                                n320: processed,
+                                ..ManiaScoreState::new()
+                            },
+                            processed as usize - 1,
+                        )
+                        .unwrap();
+                }
+                let actual = match n {
+                    None => gradual.last(state.clone()),
+                    Some(n) => gradual.nth(state.clone(), n),
+                };
+                assert_eq!(
+                    actual, expected,
+                    "limit={limit}, processed={processed}, n={n:?}"
+                );
+                assert_eq!(gradual.len(), 0);
+                assert!(gradual.next(state.clone()).is_none());
+                assert!(gradual.last(state.clone()).is_none());
+            }
+        }
+    }
 
     #[test]
     fn next_and_nth() {

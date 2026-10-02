@@ -217,12 +217,20 @@ async fn old_map_timing_is_ignored_until_new_map_metadata_is_accepted() {
 }
 
 #[tokio::test]
-async fn stale_regular_global_does_not_overwrite_newer_precise_time() {
-    let mut bundle = StateBundle::new(ClientType::Lazer, 27, Arc::new(EchoCalculation));
+async fn stale_regular_global_preserves_precise_time_but_updates_session_clock() {
+    let mut bundle = StateBundle::new(ClientType::Stable, 27, Arc::new(EchoCalculation));
     bundle.global.status = GameState::Play.value() as i64;
     bundle.global.play_time = 200.0;
     let precise = RawPreciseSnapshotBuilder::new(
-        PreciseCaptureContext::new(ClientType::Lazer, 27, 0, 0, default_calculated_mods(), 0, 0),
+        PreciseCaptureContext::new(
+            ClientType::Stable,
+            27,
+            0,
+            0,
+            default_calculated_mods(),
+            0,
+            0,
+        ),
         1,
         Ok(ReadStatus::Ready(GlobalPrecise {
             status: GameState::Play.value() as i64,
@@ -233,10 +241,12 @@ async fn stale_regular_global_does_not_overwrite_newer_precise_time() {
     let precise_context = bundle.apply_precise_inner(&precise);
     assert_eq!(precise_context.latest_precise_global_sequence, 1);
 
+    let mut global = raw_global(GameState::Play, 100);
+    global.game_time = 523_409;
     let stale = RawRegularSnapshotBuilder::new(
-        RegularCaptureContext::new(ClientType::Lazer, 27, 0, 1)
+        RegularCaptureContext::new(ClientType::Stable, 27, 0, 1)
             .with_base_precise_global_sequence(0),
-        Ok(ReadStatus::Ready(raw_global(GameState::Play, 100))),
+        Ok(ReadStatus::Ready(global)),
     )
     .publish();
     let committed = bundle
@@ -245,6 +255,7 @@ async fn stale_regular_global_does_not_overwrite_newer_precise_time() {
         .expect("stale regular snapshot");
 
     assert_eq!(committed.context.play_time, 250.0);
+    assert_eq!(committed.publication.regular.global.game_time, 523_409);
     assert_eq!(committed.context.latest_precise_global_sequence, 1);
     assert_eq!(committed.context.reset_epoch, 0);
 }

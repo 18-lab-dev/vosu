@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -16,7 +15,7 @@ interface Lock {
     lazerCalculator: string;
     osu: string;
     calculatorPackage: string;
-    calculatorManifestSha256: string;
+    calculatorTree: string;
 }
 
 interface ScenarioSpec {
@@ -63,13 +62,11 @@ function parseJson<T>(path: string): T {
     return JSON.parse(readFileSync(path, 'utf8')) as T;
 }
 
-function sha256(path: string): string {
-    return createHash('sha256').update(readFileSync(path)).digest('hex');
-}
 
 function verifyPins(options: Options, lock: Lock): void {
     const sourceRevision = execFileSync('git', ['-C', options.source, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
     if (sourceRevision !== lock.tosu) throw new Error(`tosu source revision mismatch: expected ${lock.tosu}, got ${sourceRevision}`);
+    execFileSync('git', ['-C', options.source, 'diff', '--exit-code', 'HEAD', '--']);
     const resolveFromSource = createRequire(join(options.source, 'packages/tosu/package.json'));
     const installedPackagePath = resolveFromSource.resolve('@tosuapp/lazer-calculator-prebuilt/package.json');
     const installedPackage = parseJson<{ version: string }>(installedPackagePath);
@@ -81,21 +78,12 @@ function verifyPins(options: Options, lock: Lock): void {
     if (calculatorPackage.version !== lock.calculatorPackage) throw new Error(`calculator package mismatch: expected ${lock.calculatorPackage}, got ${calculatorPackage.version}`);
     if (calculatorPackage.osu.revision !== lock.osu) throw new Error(`osu revision mismatch: expected ${lock.osu}, got ${calculatorPackage.osu.revision}`);
 
-    const manifestPath = join(options.calculatorSource, 'SHA256SUMS');
-    if (sha256(manifestPath) !== lock.calculatorManifestSha256) {
-        throw new Error(`calculator source manifest mismatch: expected ${lock.calculatorManifestSha256}`);
+    const calculatorRevision = execFileSync('git', ['-C', options.calculatorSource, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const calculatorTree = execFileSync('git', ['-C', options.calculatorSource, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+    if (calculatorRevision !== lock.lazerCalculator || calculatorTree !== lock.calculatorTree) {
+        throw new Error('calculator checkout revision/tree mismatch');
     }
-    const entries = readFileSync(manifestPath, 'utf8').trim().split('\n');
-    if (entries.length < 20) throw new Error('calculator source manifest is unexpectedly incomplete');
-    for (const entry of entries) {
-        const match = /^([0-9a-f]{64})  (.+)$/.exec(entry);
-        if (!match) throw new Error(`invalid SHA256SUMS entry: ${entry}`);
-        const [, expected, relative] = match;
-        const actual = sha256(join(options.calculatorSource, relative));
-        if (actual !== expected) throw new Error(`calculator source hash mismatch for ${relative}`);
-    }
-    const revisionFile = parseJson<{ revision: string }>(join(options.calculatorSource, 'SOURCE_REVISION.json'));
-    if (revisionFile.revision !== lock.lazerCalculator) throw new Error(`calculator source revision mismatch: expected ${lock.lazerCalculator}, got ${revisionFile.revision}`);
+    execFileSync('git', ['-C', options.calculatorSource, 'diff', '--exit-code', 'HEAD', '--']);
 }
 
 const zeroStats = (): Statistics => ({ perfect: 0, great: 0, good: 0, ok: 0, meh: 0, miss: 0, smallTickMiss: 0, smallTickHit: 0, largeTickMiss: 0, largeTickHit: 0, smallBonus: 0, largeBonus: 0, ignoreMiss: 0, ignoreHit: 0, comboBreak: 0, sliderTailHit: 0, legacyComboIncrease: 0 });
@@ -111,10 +99,11 @@ function canonicalServices(): Services {
         menu: { gamemode: 0, artist: '', artistOriginal: '', title: '', titleOriginal: '', audioFilename: '', backgroundFilename: '', folder: '', creator: '', filename: '', difficulty: '', mapID: 0, setID: 0, checksum: '', rankedStatus: 0, mp3Length: 0 },
         gameplay: { failed: false, retries: 0, playerName: '', mode: 0, mods, score: 0, playerHP: 0, playerHPSmooth: 0, accuracy: 100, statistics: stats, maximumStatistics: stats, combo: 0, maxCombo: 0, hitSB: 0, unstableRate: 0, gradeCurrent: '', gradeExpected: '', keyOverlay: [], hitErrors: [], isLeaderboardVisible: false, leaderboardPlayer, leaderboardScores: [], isReplayUiHidden: false },
         resultScreen: { onlineId: 0, playerName: '', mods, mode: 0, maxCombo: 0, score: 0, statistics: stats, maximumStatistics: stats, grade: '', date: '', accuracy: 0, pp: 0, fcPP: 0 },
-        beatmapPP: { mode: 0, isKiai: false, isBreak: false, timings: { firstObj: 0, full: 0 }, previewtime: 0, ppAcc: Object.fromEntries(Array.from({ length: 11 }, (_, index) => [90 + index, 0])), strains: [], strainsAll: { series: [], xaxis: [] }, calculatedMapAttributes: { ar: 0, arConverted: 0, cs: 0, csConverted: 0, hp: 0, hpConverted: 0, od: 0, odConverted: 0, circles: 0, sliders: 0, spinners: 0, holds: 0, maxCombo: 0, fullStars: 0, stars: 0 }, currAttributes: { stars: 0, pp: 0, fcPP: 0, maxAchievable: 0 }, currPPAttributes: { ppAim: 0, ppSpeed: 0, ppAccuracy: 0, ppDifficulty: 0, ppFlashlight: 0, pp: 0 }, fcPPAttributes: { ppAim: 0, ppSpeed: 0, ppAccuracy: 0, ppDifficulty: 0, ppFlashlight: 0, pp: 0 }, realtimeBPM: 0, commonBPM: 0, minBPM: 0, maxBPM: 0, breaks: [], timingPoints: [] },
+        beatmapPP: { mode: 0, isKiai: false, isBreak: false, timings: { firstObj: 0, full: 0 }, previewtime: 0, ppAcc: Object.fromEntries(Array.from({ length: 11 }, (_, index) => [90 + index, 0])), strains: [], strainsAll: { series: [], xaxis: [] }, calculatedMapAttributes: { ar: 0, arConverted: 0, cs: 0, csConverted: 0, hp: 0, hpConverted: 0, od: 0, odConverted: 0, circles: 0, sliders: 0, spinners: 0, holds: 0, maxCombo: 0, fullStars: 0, stars: 0, hitWindow: {} }, currAttributes: { stars: 0, pp: 0, fcPP: 0, maxAchievable: 0 }, currPPAttributes: { ppAim: 0, ppSpeed: 0, ppAccuracy: 0, ppDifficulty: 0, ppFlashlight: 0, pp: 0 }, fcPPAttributes: { ppAim: 0, ppSpeed: 0, ppAccuracy: 0, ppDifficulty: 0, ppFlashlight: 0, pp: 0 }, realtimeBPM: 0, commonBPM: 0, minBPM: 0, maxBPM: 0, breaks: [], timingPoints: [] },
         settings: { leaderboardType: 0, progressBarType: 0, sortType: 0, groupType: 0, resolution: { fullscreen: false, width: 0, height: 0, widthFullscreen: 0, heightFullscreen: 0 }, client: { updateAvailable: false, branch: 0, version: '' }, scoreMeter: { type: 0, size: 0 }, cursor: { useSkinCursor: false, autoSize: false, size: 0, menuSize: 0 }, mouse: { rawInput: false, disableButtons: false, disableWheel: false, sensitivity: 0 }, tablet: { enabled: false, x: 0, y: 0, width: 0, height: 0, rotation: 0, pressureThreshold: 0 }, mania: { speedBPMScale: false, usePerBeatmapSpeedScale: false, scrollSpeed: 0, scrollDirection: 0 }, skin: { useDefaultSkinInEditor: false, ignoreBeatmapSkins: false, tintSliderBall: false, useTaikoSkin: false, name: '' }, audio: { ignoreBeatmapSounds: false, useSkinSamples: false, volume: { masterInactive: 0, master: 0, music: 0, effect: 0 }, offset: { universal: 0 } }, background: { storyboard: false, video: false, blur: 0, dim: 0 }, keybinds: { osu: { k1: '', k2: '', smokeKey: '' }, fruits: { k1: '', k2: '', Dash: '' }, taiko: { innerLeft: '', innerRight: '', outerLeft: '', outerRight: '' }, quickRetry: '' } },
         user: { rawLoginStatus: 0, rawBanchoStatus: 0, id: 0, name: '', playMode: 0, rankedScore: 0, level: 0, accuracy: 0, performancePoints: 0, playCount: 0, rank: 0, countryCode: 0, backgroundColour: 0, matchmaking: null },
         rankedPlay: { info: undefined },
+        room: { info: undefined },
         tourneyManager: { ipcState: 0, leftStars: 0, rightStars: 0, bestOf: 0, starsVisible: false, scoreVisible: false, firstTeamName: '', secondTeamName: '', firstTeamScore: 0, secondTeamScore: 0, messages: [], userAccuracy: 0, userRankedScore: 0, userPlayCount: 0, userGlobalRank: 0, userPP: 0, userName: '', userCountry: '', userID: 0 },
         lazerMultiSpectating: { lazerSpectatingData: undefined }
     };

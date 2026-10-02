@@ -38,18 +38,9 @@ impl BeatmapEngine for LiveBeatmapEngine {
         };
         let mods = structured_mods(request.mods)?;
         engine.apply_mods(&mut map, &mods).map_err(engine_error)?;
-        let mania = request.effective_mode == BeatmapRuleset::Mania;
         let map_hit_windows = vosu_pp::hit_windows_for_map(&map).map_err(engine_error)?;
         let catch_spatial_window = vosu_pp::catch_spatial_window_for_map(&map);
-        let project_window = |window: Option<f64>| {
-            window.map(|window| {
-                if mania {
-                    window
-                } else {
-                    window / request.clock_rate
-                }
-            })
-        };
+        let project_window = |window: Option<f64>| window.map(|window| window / request.clock_rate);
         let hit_windows = vosu_pp::HitWindows {
             miss: project_window(map_hit_windows.miss),
             meh: project_window(map_hit_windows.meh),
@@ -111,7 +102,7 @@ impl BeatmapEngine for LiveBeatmapEngine {
                 rhythm: nonzero(difficulty.rhythm),
                 color: nonzero(difficulty.color),
                 reading: nonzero(difficulty.reading),
-                hit_window: hit_windows.great,
+                hit_window: hit_windows.great.and_then(nonzero),
             },
             hit_windows,
             catch_spatial_window,
@@ -693,8 +684,6 @@ impl LiveStateCalculationBackend {
                         client: client_scoring(request.input.client_scoring),
                         score: calculator_long(result.score),
                         max_combo: result.max_combo,
-                        map_max_combo: i64::from(parsed.engine.difficulty.max_combo),
-                        displayed_accuracy_percent: result.accuracy,
                         statistics: statistics(&result.statistics),
                     };
                     match state.result.update(Some(live), &frame) {

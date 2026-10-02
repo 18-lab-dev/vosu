@@ -13,13 +13,13 @@ use bytes::Bytes;
 use serde_json::json;
 use tokio::time::{sleep, timeout_at};
 use vosu::instance::{InstanceRuntime, NativeProcessProvider, Pid, ProcessEventMode};
-use vosu::memory::lazer_loader::{FetchError, FetchFuture, LazerOffsetLoader, OffsetFetcher};
+use vosu::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(15);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(7);
 const DEFAULT_DWELL: Duration = Duration::from_secs(10);
 
-type Runtime = InstanceRuntime<NativeProcessProvider, DisabledFetcher>;
+type Runtime = InstanceRuntime<NativeProcessProvider, DisabledGenerator>;
 
 #[derive(Clone, Copy)]
 struct ResourceUsage {
@@ -30,19 +30,17 @@ struct ResourceUsage {
 }
 
 #[derive(Clone, Copy)]
-struct DisabledFetcher;
+struct DisabledGenerator;
 
-impl OffsetFetcher for DisabledFetcher {
-    fn fetch<'a>(
+impl OffsetGenerator for DisabledGenerator {
+    fn generate<'a>(
         &'a self,
-        _url: &'a str,
-        _user_agent: &'a str,
-        _timeout: Duration,
-    ) -> FetchFuture<'a> {
+        _pid: u32,
+        _version: &'a str,
+        _cancel: &'a tokio_util::sync::CancellationToken,
+    ) -> GenerationFuture<'a> {
         Box::pin(async {
-            Err(FetchError {
-                message: "network disabled by live lazer benchmark".to_owned(),
-            })
+            Err(io::Error::other("offset generation disabled by live lazer benchmark"))
         })
     }
 }
@@ -132,11 +130,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
         _ => unreachable!("validated benchmark mode"),
     })?;
     let loader = LazerOffsetLoader::new(
-        DisabledFetcher,
+        DisabledGenerator,
         PathBuf::from("/dev/null/vosu-process-event-lazer-bench"),
         Bytes::new(),
-    )
-    .with_endpoints(Vec::<String>::new());
+    );
     let runtime = InstanceRuntime::start(provider, loader);
     wait_for_scan(&runtime).await?;
 
