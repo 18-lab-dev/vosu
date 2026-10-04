@@ -93,6 +93,18 @@ class AlignmentTests(unittest.TestCase):
         self.assertEqual(1, len(pairs))
         self.assertFalse(missing)
 
+
+    def test_paused_alignment_requires_receipt_window(self) -> None:
+        source = v2("source", 100_000_000, 2, 1_000)
+        within = v2("vosu", 400_000_000, 2, 1_000, paused=True)
+        pairs, missing = align_active([source], [within], 150)
+        self.assertEqual([(source, within)], pairs)
+        self.assertFalse(missing)
+
+        outside = v2("vosu", 400_000_001, 2, 1_000, paused=True)
+        pairs, missing = align_active([source], [outside], 150)
+        self.assertFalse(pairs)
+        self.assertEqual([source], missing)
     def test_timestamp_alignment_preserves_later_matches(self) -> None:
         source = [v2("source", 100, 2, 0), v2("source", 110, 2, 0)]
         vosu = [v2("vosu", 0, 2, 0), v2("vosu", 105, 2, 0)]
@@ -136,6 +148,13 @@ class AlignmentTests(unittest.TestCase):
         self.assertEqual(list(zip(source, vosu[1:])), pairs)
         self.assertFalse(missing)
 
+
+    def test_dense_alignment_stops_at_candidate_budget(self) -> None:
+        source = [v2("source", i, 2, 1000) for i in range(4)]
+        vosu = [v2("vosu", i, 2, 1000) for i in range(4)]
+        with mock.patch("live_parity._MAX_ALIGNMENT_CANDIDATES", 8):
+            with self.assertRaisesRegex(ValueError, "bounded candidate budget"):
+                align_active(source, vosu, 150)
 
 class BarrierTests(unittest.TestCase):
     def test_ordered_barriers_and_process_exit(self) -> None:

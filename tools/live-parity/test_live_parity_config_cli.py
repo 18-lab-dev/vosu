@@ -220,6 +220,50 @@ class ConfigCliTests(unittest.TestCase):
         self.assertEqual(PINNED_SOURCE_VERSION, identity["source"]["version"])
         self.assertEqual([str(source.resolve())], identity["source"]["command"])
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux release identity")
+    def test_compressed_native_reference_requires_exact_published_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            # Model a compressed upstream pkg release without a literal version.
+            source = Path(tmp) / "upstream-tosu-source"
+            source.write_bytes(b"\x7fELFcompressed upstream payload")
+            source.chmod(0o755)
+            published_hash = LIVE_RUN.sha256_file(source)
+            client = Path(tmp) / "osu!"
+            client.write_bytes(b"client fixture")
+            cfg = self.native_config(source, published_hash)
+            cfg["client_executable"] = str(client)
+            cfg["client_expected_sha256"] = LIVE_RUN.sha256_file(client)
+            with (mock.patch.object(
+                    LIVE_RUN, "_PINNED_LINUX_REFERENCE",
+                    (PINNED_SOURCE_VERSION, published_hash)),
+                  mock.patch.object(
+                    LIVE_RUN, "_derive_client_version",
+                    return_value=(cfg["client_expected_version"], None)),
+                  mock.patch.object(
+                    LIVE_RUN, "_resolved_trusted_command",
+                    side_effect=lambda value: (
+                        source if value == str(source)
+                        else LIVE_RUN._resolved_command(value)))):
+                identity = LIVE_RUN.validate_artifacts(cfg)
+                self.assertEqual(
+                    published_hash, identity["source"]["sha256"])
+
+                # A caller-provided digest does not attest a different release.
+                source.write_bytes(b"\x7fELFdifferent compressed upstream payload")
+                cfg["source_reference"]["sha256"] = LIVE_RUN.sha256_file(source)
+                with self.assertRaisesRegex(ValueError, "native release binary"):
+                    LIVE_RUN.validate_artifacts(cfg)
+
+                # Even an allowlisted digest cannot override the ELF requirement.
+                source.write_bytes(b"not an ELF compressed payload")
+                invalid_hash = LIVE_RUN.sha256_file(source)
+                cfg["source_reference"]["sha256"] = invalid_hash
+                with mock.patch.object(
+                        LIVE_RUN, "_PINNED_LINUX_REFERENCE",
+                        (PINNED_SOURCE_VERSION, invalid_hash)):
+                    with self.assertRaisesRegex(ValueError, "native release binary"):
+                        LIVE_RUN.validate_artifacts(cfg)
+
     def test_validate_artifacts_rejects_native_reference_identity_mismatch(
             self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

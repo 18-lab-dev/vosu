@@ -195,18 +195,9 @@ def verify_capture_artifacts(
     manifest: list[dict[str, Any]] | None = None
     if source_mode == "node-build":
         checkout = Path(source["checkout"]).resolve(strict=True)
-        git_environment = _git_environment()
-        revision = subprocess.run(
-            _git_command(checkout, "rev-parse", "HEAD"), check=True,
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=git_environment).stdout.strip()
-        status = subprocess.run(
-            _git_command(checkout, "status", "--porcelain=v1",
-                         "--untracked-files=all"),
-            check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=git_environment).stdout
-        if (revision != PINNED_SOURCE_REVISION
-                or source.get("revision") != revision or status):
+        # Reject repository-local filters and attributes before worktree reads.
+        revision = _validate_source_repository(checkout)
+        if revision != PINNED_SOURCE_REVISION or source.get("revision") != revision:
             raise ValueError(
                 "captured source worktree is not the clean pinned revision")
         _verify_pinned_worktree(checkout, PINNED_SOURCE_REVISION)
@@ -395,6 +386,12 @@ def verify_capture_artifacts(
             _verify_msvc_attestation(attestation.get("source_msvc"))
     elif attestation.get("vosu_msvc") is not None:
         raise ValueError("capture has unexpected MSVC attestation")
+    expected_vosu_build_arguments = [
+        "build", "--release", "--locked", "--no-default-features",
+        "--target", vosu.get("target_triple"),
+    ]
+    if sys.platform.startswith("linux"):
+        expected_vosu_build_arguments.extend(["--features", "linux-process-events"])
     if (not toolchain_valid
             or attestation.get("source_mode") != source_mode
             or not isinstance(started, int)
@@ -420,9 +417,7 @@ def verify_capture_artifacts(
             or not isinstance(vosu_command, list)
             or not vosu_command
             or vosu_command[0] != toolchain_records["cargo"]["path"]
-            or vosu_command[1:] != [
-                "build", "--release", "--locked", "--no-default-features",
-                "--target", vosu.get("target_triple")]
+            or vosu_command[1:] != expected_vosu_build_arguments
             or target_dir not in vosu_path.parents
             or cargo_home.parent != vosu_build_home
             or (cargo_home / "config").exists()

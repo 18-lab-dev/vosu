@@ -28,7 +28,7 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from live_parity import (SCHEMAS, PINNED_VOSU_VERSION, PINNED_SOURCE_REVISION, VOSU_BUILD_LABEL,
-    SOURCE_BUILD_LABEL, SUPPORTED_MATRIX, Sample, align_active, barrier_of,
+    SOURCE_BUILD_LABEL, SUPPORTED_MATRIX, PLAY_STATES, Sample, align_active, barrier_of,
     beatmap_time, compare_pair, dump_capture, load_capture, monotonic_violations,
     paused_of, state_of)
 from parity_domains import (
@@ -41,26 +41,35 @@ import parity_verify as _parity_verify
 globals().update({name: value for name, value in vars(_parity_verify).items() if not name.startswith("__")})
 def _align_timestamp(
         source: list[Sample], vosu: list[Sample], window_ns: int,
+        source_segment: Any = None, vosu_segment: Any = None,
 ) -> tuple[list[tuple[Sample, Sample]], list[Sample]]:
-    """Maximize ordered timestamp matches within the comparison window."""
-    ordered_vosu = sorted(vosu, key=lambda sample: sample.monotonic_ns)
+    """Match timestamps one-to-one within retry segments and the time window."""
+    source_segment = source_segment or (lambda sample: 0)
+    vosu_segment = vosu_segment or (lambda sample: 0)
+    vosu_groups: dict[object, list[Sample]] = {}
+    for sample in sorted(vosu, key=lambda value: value.monotonic_ns):
+        vosu_groups.setdefault(vosu_segment(sample), []).append(sample)
+    cursors: dict[object, int] = {}
     pairs: list[tuple[Sample, Sample]] = []
     unaligned: list[Sample] = []
-    vosu_index = 0
     for left in sorted(source, key=lambda sample: sample.monotonic_ns):
+        segment = source_segment(left)
+        candidates = vosu_groups.get(segment, [])
+        index = cursors.get(segment, 0)
         while (
-                vosu_index < len(ordered_vosu)
-                and ordered_vosu[vosu_index].monotonic_ns
+                index < len(candidates)
+                and candidates[index].monotonic_ns
                     < left.monotonic_ns - window_ns):
-            vosu_index += 1
+            index += 1
+        cursors[segment] = index
         if (
-                vosu_index >= len(ordered_vosu)
-                or ordered_vosu[vosu_index].monotonic_ns
+                index >= len(candidates)
+                or candidates[index].monotonic_ns
                     > left.monotonic_ns + window_ns):
             unaligned.append(left)
             continue
-        pairs.append((left, ordered_vosu[vosu_index]))
-        vosu_index += 1
+        pairs.append((left, candidates[index]))
+        cursors[segment] = index + 1
     return pairs, unaligned
 
 
@@ -171,6 +180,32 @@ def compare(capture_path: str, report_path: str) -> int:
         if barrier is None:
             barrier = barrier_of(context)
         return barrier == "play"
+    def active_partner_pool(
+            daemon: str, schema: str, transport: str,
+            active_samples: list[Sample]) -> list[Sample]:
+        """Add play-state paused samples only around the attested pause edge."""
+        if daemon != "vosu" or not comparison_context_ready:
+            return active_samples
+        pause = barrier_contexts[daemon]["paused"].monotonic_ns
+        candidates = list(active_samples)
+        known = {id(sample) for sample in candidates}
+        for sample in streams[(daemon, schema, transport)]:
+            if id(sample) in known or sample.status != 200 or sample.error is not None:
+                continue
+            if not isinstance(sample.payload, dict):
+                continue
+            sample_state = state_of(sample.payload)
+            if sample_state is not None and sample_state not in PLAY_STATES:
+                continue
+            context = nearest_v2_context(daemon, sample.monotonic_ns)
+            if (context is None or state_of(context.payload) not in PLAY_STATES
+                    or barrier_of(context) != "paused"
+                    or abs(sample.monotonic_ns - pause) > window_ns
+                    or abs(context.monotonic_ns - sample.monotonic_ns) > window_ns):
+                continue
+            candidates.append(sample)
+        return sorted(candidates, key=lambda sample: sample.monotonic_ns)
+
     v2_retry_boundaries = confirmed_retry_boundaries(
         [sample for sample in v2_by_daemon["source"] if context_is_active(sample)],
         [sample for sample in v2_by_daemon["vosu"] if context_is_active(sample)],
@@ -258,9 +293,11 @@ def compare(capture_path: str, report_path: str) -> int:
                 for daemon in ("source", "vosu"):
                     stream_retry_boundaries[
                         (daemon, schema, transport)] = local_boundaries[daemon]
+            partner_vosu = active_partner_pool(
+                "vosu", schema, transport, active["vosu"])
             if schema in {"v1", "v2"}:
                 pairs, unaligned_source = align_active(
-                    active["source"], active["vosu"], poll,
+                    active["source"], partner_vosu, poll,
                     comparison_segment, comparison_segment)
                 for left, right in pairs:
                     mismatches.extend(compare_observation(left, right, window_ms, active_override=True))
@@ -268,12 +305,13 @@ def compare(capture_path: str, report_path: str) -> int:
                     missing_streams.append(
                         f"{transport}/{schema}/active-source-"
                         f"{active['source'].index(left)}")
-                surplus = len(active["vosu"]) - len(pairs)
+                surplus = len(partner_vosu) - len(pairs)
                 if surplus > 0:
                     metrics["dense_vosu_frames"][f"{transport}/{schema}"] = surplus
             else:
                 pairs, unaligned_source = _align_timestamp(
-                    active["source"], active["vosu"], window_ns)
+                    active["source"], partner_vosu, window_ns,
+                    comparison_segment, comparison_segment)
                 for left, right in pairs:
                     mismatches.extend(compare_observation(
                         left, right, window_ms, active_override=True))
@@ -281,7 +319,7 @@ def compare(capture_path: str, report_path: str) -> int:
                     missing_streams.append(
                         f"{transport}/{schema}/active-source-"
                         f"{active['source'].index(left)}")
-                surplus = len(active["vosu"]) - len(pairs)
+                surplus = len(partner_vosu) - len(pairs)
                 if surplus > 0:
                     metrics["dense_vosu_frames"][
                         f"{transport}/{schema}"] = surplus

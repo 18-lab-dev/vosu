@@ -80,8 +80,8 @@ class BuildCliTests(unittest.TestCase):
             base_parts = [str(root / "rust"), str(root / "python")]
             base = os.pathsep.join(base_parts)
             msvc = {"installation": str(installation)}
-            with mock.patch.object(PARITY_VERIFY, "_controlled_tool_path", return_value=base), \
-                    mock.patch.object(PARITY_VERIFY, "_windows_command_is_writable",
+            with mock.patch.object(LIVE_RUN, "_controlled_tool_path", return_value=base), \
+                    mock.patch.object(LIVE_RUN, "_windows_command_is_writable",
                                       side_effect=lambda path, _: path == writable), \
                     mock.patch.dict(os.environ, {
                         "ProgramFiles(x86)": str(sdk.parent), "WINDIR": str(windows),
@@ -91,7 +91,7 @@ class BuildCliTests(unittest.TestCase):
                     [str(compiler), *base_parts, str(cmake)],
                     [str(sdk), *base_parts, str(windows)],
                 ):
-                    self.assertTrue(PARITY_VERIFY._valid_windows_build_path(
+                    self.assertTrue(LIVE_RUN._valid_windows_build_path(
                         os.pathsep.join(entries), msvc, ("cargo", "python")))
                 for entries in (
                     [str(compiler), *reversed(base_parts)],
@@ -100,7 +100,7 @@ class BuildCliTests(unittest.TestCase):
                     [str(compiler), *base_parts, *base_parts],
                     [str(compiler), base_parts[0], str(cmake), base_parts[1]],
                 ):
-                    self.assertFalse(PARITY_VERIFY._valid_windows_build_path(
+                    self.assertFalse(LIVE_RUN._valid_windows_build_path(
                         os.pathsep.join(entries), msvc, ("cargo", "python")))
 
     def config(self) -> dict:
@@ -239,6 +239,24 @@ class BuildCliTests(unittest.TestCase):
                 shadow.chmod(0o755)
                 with self.assertRaises(ValueError):
                     LIVE_RUN._controlled_tool_path()
+                if os.name == "posix":
+                    untrusted = Path(tmp) / "untrusted"
+                    untrusted.mkdir()
+                    injected = untrusted / paths["node"].name
+                    injected.write_bytes(paths["node"].read_bytes())
+                    injected.chmod(0o755)
+                    with mock.patch.dict(os.environ, {
+                            "PATH": os.pathsep.join(map(str, (
+                                untrusted, second, first))),
+                    }):
+                        controlled = LIVE_RUN._controlled_tool_path()
+                    self.assertEqual(
+                        paths["node"],
+                        Path(shutil.which("node", path=controlled)).resolve())
+                    self.assertEqual(
+                        paths["cargo"],
+                        Path(shutil.which("cargo", path=controlled)).resolve())
+                    self.assertNotIn(str(untrusted), controlled.split(os.pathsep))
 
     def test_source_manifest_rejects_directory_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -318,6 +336,40 @@ class BuildCliTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "info attributes"):
                 LIVE_RUN._validate_source_repository(repository)
 
+
+    def test_compare_rejects_repository_filter_before_status_can_execute_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repository = root / "repository"
+            sentinel = root / "filter-ran"
+            subprocess.run(
+                ["git", "init", str(repository)], check=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (repository / ".gitattributes").write_text(
+                "*.txt filter=parity\n", encoding="utf-8")
+            (repository / "tracked.txt").write_text(
+                "tracked content\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(repository), "add", "."], check=True)
+            subprocess.run(
+                ["git", "-C", str(repository), "-c", "user.name=Parity Test",
+                 "-c", "user.email=parity@example.invalid", "commit", "-m", "fixture"],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            command = f"sh -c 'echo ran >> {sentinel}'"
+            subprocess.run(
+                ["git", "-C", str(repository), "config",
+                 "filter.parity.clean", command], check=True)
+            subprocess.run(
+                ["git", "-C", str(repository), "config",
+                 "filter.parity.process", command], check=True)
+
+            with self.assertRaisesRegex(ValueError, "filters/attributes"):
+                LIVE_RUN.verify_capture_artifacts({
+                    "artifacts": {"source": {
+                        "mode": "node-build", "checkout": str(repository),
+                    }},
+                }, [])
+            self.assertFalse(sentinel.exists())
     def test_source_repository_ignores_inherited_global_git_filters(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -349,6 +401,43 @@ class BuildCliTests(unittest.TestCase):
                         {"HOME": str(home), "USERPROFILE": str(home)}):
                 revision = LIVE_RUN._validate_source_repository(repository)
             self.assertEqual(head, revision)
+
+    def test_compare_rejects_hidden_source_tampering_and_unpinned_head(self) -> None:
+        for tamper in ("assume-unchanged", "unpinned-head"):
+            with self.subTest(tamper=tamper), tempfile.TemporaryDirectory() as tmp:
+                repository = Path(tmp)
+                git = ["git", "-C", str(repository)]
+                subprocess.run(["git", "init", str(repository)], check=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                (repository / "pnpm-lock.yaml").write_bytes(b"lockfileVersion: '9.0'\n")
+                tracked = repository / "tracked.txt"
+                tracked.write_bytes(b"trusted\n")
+                subprocess.run([*git, "add", "."], check=True)
+                commit = [*git, "-c", "user.name=Parity Test",
+                          "-c", "user.email=parity@example.invalid", "commit"]
+                subprocess.run([*commit, "-m", "fixture"], check=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                pinned = subprocess.check_output([*git, "rev-parse", "HEAD"],
+                                                 text=True).strip()
+                if tamper == "assume-unchanged":
+                    subprocess.run([*git, "update-index", "--assume-unchanged",
+                                    "tracked.txt"], check=True)
+                    tracked.write_bytes(b"untrusted\n")
+                    expected_error = "differs from Git blob"
+                else:
+                    subprocess.run([*commit, "--allow-empty", "-m", "unpinned"],
+                                   check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    expected_error = "not the clean pinned revision"
+                revision = subprocess.check_output([*git, "rev-parse", "HEAD"],
+                                                   text=True).strip()
+                with mock.patch.object(LIVE_RUN, "PINNED_SOURCE_REVISION", pinned):
+                    with self.assertRaisesRegex(ValueError, expected_error):
+                        LIVE_RUN.verify_capture_artifacts({
+                            "artifacts": {"source": {
+                                "mode": "node-build", "checkout": str(repository),
+                                "revision": revision,
+                            }},
+                        }, [])
 
 
     def test_worktree_bytes_must_equal_pinned_git_blobs(self) -> None:

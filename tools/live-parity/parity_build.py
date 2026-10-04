@@ -187,7 +187,7 @@ def build_release_artifacts(
             source_build_home, {"PYTHON": str(toolchain["python"])}, tool_names)
         source_environment["HUSKY"] = "0"
         source_environment, source_msvc = _windows_msvc_environment(
-            source_environment, source_build_home, toolchain["cmd"])
+            source_environment, source_build_home, toolchain.get("cmd"))
         entrypoint = source_dir / "packages/tosu/dist/index.js"
         dist = entrypoint.parent
         shutil.rmtree(dist, ignore_errors=True)
@@ -274,6 +274,8 @@ def build_release_artifacts(
         cargo, "build", "--release", "--locked", "--no-default-features",
         "--target", target_triple,
     ]
+    if sys.platform.startswith("linux"):
+        vosu_command.extend(["--features", "linux-process-events"])
     vosu_build_home = (
         vosu_target.parent / "vosu-build-home"
         if sys.platform == "win32"

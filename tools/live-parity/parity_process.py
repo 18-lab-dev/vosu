@@ -8,6 +8,7 @@ import json
 import os
 import math
 import queue
+from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
 import secrets
@@ -38,9 +39,17 @@ from parity_domains import (
 CONNECTION_OWNERSHIP_TIMEOUT_SECONDS = 2.0
 LINUX_INODE_OWNER_CACHE_NS = 5_000_000
 MIN_ACTIVE_BEFORE_PAUSE_NS = 1_000_000_000
+
+
+@dataclass
+class _LinuxInodeOwnerCache:
+    refreshed_ns: int = 0
+    owners: dict[str, set[int]] = field(default_factory=dict)
+
+
 _linux_inode_owner_cache_lock = threading.Lock()
-_linux_inode_owner_cache_ns = 0
-_linux_inode_owner_cache: dict[str, set[int]] = {}
+# CLI facade namespaces share this object; updates must not rebind module globals.
+_linux_inode_owner_cache = _LinuxInodeOwnerCache()
 INJECTION_ENV_PREFIXES = (
     "NODE_", "LD_", "DYLD_", "PYTHON", "RUST", "CARGO", "BUN_", "DENO_",
     "NPM_", "PNPM_", "CCACHE_", "SCCACHE_", "DISTCC_", "ICECC_", "GIT_",
@@ -358,10 +367,9 @@ def _linux_inode_owners(inodes: set[str]) -> set[int]:
     if not inodes:
         return set()
 
-    global _linux_inode_owner_cache_ns, _linux_inode_owner_cache
     now = time.monotonic_ns()
     with _linux_inode_owner_cache_lock:
-        if now - _linux_inode_owner_cache_ns > LINUX_INODE_OWNER_CACHE_NS:
+        if now - _linux_inode_owner_cache.refreshed_ns > LINUX_INODE_OWNER_CACHE_NS:
             snapshot: dict[str, set[int]] = {}
             for proc in Path("/proc").iterdir():
                 if not proc.name.isdigit():
@@ -376,12 +384,12 @@ def _linux_inode_owners(inodes: set[str]) -> set[int]:
                             snapshot.setdefault(target[8:-1], set()).add(int(proc.name))
                 except OSError:
                     continue
-            _linux_inode_owner_cache = snapshot
-            _linux_inode_owner_cache_ns = time.monotonic_ns()
+            _linux_inode_owner_cache.owners = snapshot
+            _linux_inode_owner_cache.refreshed_ns = time.monotonic_ns()
 
         owners: set[int] = set()
         for inode in inodes:
-            owners.update(_linux_inode_owner_cache.get(inode, ()))
+            owners.update(_linux_inode_owner_cache.owners.get(inode, ()))
         return owners
 
 def _linux_pid_socket_inodes(pid: int) -> set[str]:

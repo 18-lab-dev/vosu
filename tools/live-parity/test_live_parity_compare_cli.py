@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+from dataclasses import replace
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -489,6 +490,32 @@ class CompareCliTests(unittest.TestCase):
             and item["vosu"] == "first-active-difference"
             for item in report["mismatches"]))
 
+
+    def test_pause_edge_halo_pairs_play_state_and_keeps_value_mismatches(self) -> None:
+        samples = self.complete_samples()
+        extra_source = [
+            replace(sample, monotonic_ns=2_050_000_000,
+                    payload=json.loads(json.dumps(sample.payload)))
+            for sample in samples
+            if sample.daemon == "source"
+            and sample.monotonic_ns == 1_900_000_000
+        ]
+        for index, sample in enumerate(samples):
+            if sample.monotonic_ns != 2_000_000_000:
+                continue
+            if sample.daemon == "source":
+                samples[index] = replace(sample, monotonic_ns=2_150_000_000)
+            else:
+                sample.payload["static"] = "paused-edge-difference"
+        report = self.run_compare_samples([*samples, *extra_source])
+
+        self.assertFalse(any("active-source-" in item
+                             for item in report["missing_streams"]))
+        self.assertTrue(any(
+            item["pointer"] == "/static"
+            and item["vosu"] == "paused-edge-difference"
+            for item in report["mismatches"]))
+
     def test_stateless_streams_use_nearest_v2_context(self) -> None:
         samples = self.complete_samples()
         for sample in samples:
@@ -611,7 +638,7 @@ class CompareCliTests(unittest.TestCase):
             sample for sample in samples
             if not (sample.daemon == "vosu" and sample.schema == "v2"
                     and sample.transport == "websocket"
-                    and sample.monotonic_ns == 1_450_000_000)
+                    and sample.monotonic_ns in {1_300_000_000, 1_450_000_000})
         ]
         unpaired_report = self.run_compare_samples(sparse_vosu)
         self.assertTrue(any(

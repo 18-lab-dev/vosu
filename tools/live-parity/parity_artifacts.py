@@ -38,6 +38,17 @@ from parity_domains import (
 )
 import parity_process as _parity_process
 globals().update({name: value for name, value in vars(_parity_process).items() if not name.startswith("__")})
+
+# Upstream parity evidence, not a first-party executable. The Linux pkg release
+# compresses its JS version string. This exact ELF was extracted from
+# https://github.com/tosuapp/tosu/releases/download/v4.26.2/tosu-linux-v4.26.2.zip
+# after verifying the GitHub-published archive SHA-256:
+# 6ee56962171dda360e62abed6fa52859cc64500cf3bdbb451a71b125cc452867.
+_PINNED_LINUX_REFERENCE = (
+    "4.26.2",
+    "fa22300bcdc88c3b18a11fd5ff70d7057530b4c4b9413a525eb92044951b034f",
+)
+
 def _stable_file_version(path: Path) -> str:
     if sys.platform != "win32":
         raise ValueError("stable client identity requires native Windows PE version APIs")
@@ -304,10 +315,14 @@ def validate_artifacts(cfg: dict[str, Any]) -> dict[str, Any]:
                 f"native source reference version is not {PINNED_SOURCE_VERSION}")
         with executable.open("rb") as source:
             magic = source.read(4)
+        published_linux_reference = (
+            sys.platform.startswith("linux")
+            and (reference["version"], executable_hash) == _PINNED_LINUX_REFERENCE
+        )
         if ((sys.platform == "win32" and magic[:2] != b"MZ")
                 or (sys.platform.startswith("linux") and magic != b"\x7fELF")
-                or not file_contains(
-                    executable, reference["version"].encode("ascii"))):
+                or not (published_linux_reference or file_contains(
+                    executable, reference["version"].encode("ascii")))):
             raise ValueError(
                 "native source reference is not the declared native release binary")
         expected_command = [str(executable)]
@@ -358,6 +373,17 @@ def _controlled_tool_path(
     }
     tool_dirs = list(dict.fromkeys(
         str(path.parent) for path in toolchain.values()))
+    if os.name == "posix":
+        # Preserve the attested selection when a broad system directory also
+        # contains another tool (for example, Cargo's rustup proxy).
+        inherited_dirs = [
+            str(Path(directory).absolute())
+            for directory in os.environ.get("PATH", "").split(os.pathsep)
+            if directory
+        ]
+        tool_dirs.sort(key=lambda directory: (
+            inherited_dirs.index(directory)
+            if directory in inherited_dirs else len(inherited_dirs)))
     tool_dirs.extend(
         directory for directory in os.defpath.split(os.pathsep)
         if directory and directory not in tool_dirs)

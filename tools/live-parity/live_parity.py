@@ -155,6 +155,9 @@ def align_active(
     return pairs, unaligned
 
 
+_MAX_ALIGNMENT_CANDIDATES = 1_000_000
+
+
 def _align_clock_segment(
         source: list[Sample], vosu: list[Sample], window: int,
 ) -> tuple[list[tuple[Sample, Sample]], list[Sample]]:
@@ -166,8 +169,7 @@ def _align_clock_segment(
     for candidates in by_state.values():
         candidates.sort()
 
-    # Sparse ordered matching: a Fenwick prefix tree stores the best chain
-    # ending before each right-hand observation, not a quadratic DP matrix.
+    # Sparse ordered matching: a Fenwick prefix tree stores best chains.
     scores: list[tuple[int, float, int]] = [(0, 0.0, 0)]
     links: list[tuple[int, int, int]] = [(-1, -1, -1)]
     tree = [0] * (len(vosu) + 1)
@@ -179,9 +181,19 @@ def _align_clock_segment(
         candidates = by_state.get(state_of(left.payload), [])
         start = bisect_left(candidates, (clock - window, -1))
         end = bisect_right(candidates, (clock + window, len(vosu)))
+        candidate_count = end - start
+
+        if (candidate_count
+                and len(scores) - 1 + candidate_count
+                > _MAX_ALIGNMENT_CANDIDATES):
+            raise ValueError("active alignment exceeds the bounded candidate budget")
         pending: list[int] = []
         for candidate in range(start, end):
             right_clock, right_index = candidates[candidate]
+            if (paused_of(vosu[right_index].payload)
+                    and abs(left.monotonic_ns - vosu[right_index].monotonic_ns)
+                    > window * 1_000_000):
+                continue
             previous = 0
             position = right_index
             while position:
@@ -200,7 +212,6 @@ def _align_clock_segment(
             pending.append(node)
             if score > scores[best]:
                 best = node
-        # Deferred updates prevent one source observation from being reused.
         for node in pending:
             position = links[node][2] + 1
             while position < len(tree):
