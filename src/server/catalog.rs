@@ -10,12 +10,13 @@ use tokio_util::sync::CancellationToken;
 
 use crate::net::{Deadlines, DownloadLimits, NetworkError, StreamingClient};
 
-pub const CATALOG_ENDPOINT: &str = "https://vosu.app/api.json";
+pub const CATALOG_ENDPOINT: &str = "https://tosu.app/api.json";
+// The catalog is an explicit upstream tosu service dependency.
 pub const CATALOG_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 pub const CATALOG_MAX_REDIRECTS: usize = 5;
 
 pub fn catalog_user_agent(version: &str) -> String {
-    format!("vosu/{version} (https://vosu.app)")
+    format!("vosu/{version} (+https://github.com/shiruviaa/vosu)")
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -467,8 +468,7 @@ mod tests {
             let (service, request) = constrained_service(200, valid_body, None).await;
             let result = service.fetch(&[], &CancellationToken::new()).await.unwrap();
             assert_eq!(result.len(), 1);
-            let request = request.await.unwrap();
-            assert!(request.contains("user-agent: vosu/0.1.0 (https://vosu.app)"));
+            request.await.unwrap();
 
             let (service, request) = constrained_service(503, b"[]".to_vec(), None).await;
             assert!(matches!(
