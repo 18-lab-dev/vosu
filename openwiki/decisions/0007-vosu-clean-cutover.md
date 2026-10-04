@@ -24,7 +24,7 @@ Adopt **vosu** as the sole current product identity and make a clean cutover acr
 - use `vosu` for the package, crates, executable, API terminology, logs and metadata;
 - use flat typed TOML in `vosu.toml` with the current uppercase binding names, and `vosu` platform data roots for configuration and state;
 - publish `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip` from `shiruviaa/vosu`;
-- use <https://vosu.app> for first-party services and identity;
+- use the upstream tosu catalog service at <https://tosu.app/api.json>; vosu does not operate a website;
 - reject former executable, archive, environment-variable, updater, and package names rather than accepting aliases.
 
 Preserve user state through a one-time, idempotent migration. On Linux, move non-conflicting files from the former `tosu` XDG config, data, and cache roots into the corresponding `vosu` roots and remove empty former roots. On every platform, initialization layers defaults, `tosu.env`, `vosu.env`, and `vosu.toml` with precedence `vosu.toml > vosu.env > tosu.env > defaults`. It writes the canonical `vosu.toml` successfully before removing either readable legacy env file; malformed canonical TOML leaves all sources untouched. After migration, read, write, and watch only `vosu.toml`.

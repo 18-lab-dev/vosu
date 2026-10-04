@@ -73,6 +73,18 @@ StreamCompanion. These observations do not measure populated multiplayer
 rooms, incremental UR, a real client, or whole-daemon CPU use.
 
 
+## Security generation checks — 2026-10-02
+
+Measured the patched, uncommitted tree based on `d9bdfb4e90fa165c809bced20e699e5a71a82d0f` on the local Linux `7.2.6-1-cachyos-bore` host with pinned Rust 1.96.1:
+
+```sh
+cargo bench --locked --package vosu --bench hot_paths -- linux_process_memory/current_process_64_bytes --warm-up-time 1 --measurement-time 3 --sample-size 20
+```
+
+Criterion reported **300.45 ns** per 64-byte self-process read, with interval **300.10–300.92 ns**, and **203.14 MiB/s**. The run completed all 20 samples. Generation checks surround the native read; the default-feature path uses the retained pidfd where available rather than reading `/proc/<pid>/stat` for each syscall.
+
+Criterion also reported a **79.7% time increase** against its retained local baseline. That baseline's exact source/machine-state provenance was not re-attested for this run; this is not a controlled before/after comparison or a whole-daemon CPU claim. The benchmark does not measure a live game, multiplayer decoding, or the no-pidfd stat fallback. Retain the earlier results below as dated evidence rather than rewriting them.
+
 ## Prior full-suite local results
 
 - **2026-09-09**, revision `9b0648c4b90d5b9eeddd480e1c7029c7f8be71d2`

@@ -10,12 +10,16 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 - Preserve headerless/file-origin read-only overlay access and stock settings commands. Hosted counters can still save settings without new tokens or code; non-hosted sockets may read settings but cannot save them.
 - Management writes require exact HTTP scheme/host/port browser provenance; `Origin` is authoritative, with `Referer` fallback only when absent. Missing, null, malformed, or duplicate provenance cannot authorize writes. Non-hosted settings sockets retain reads but close with 1008 before saving or relaying mutations.
 - Made an unprivileged `vosu --setup` request OS-owned authentication through a trusted polkit `pkexec` boundary before any capability change. Root execution skips authentication; cancellation, denial, unavailable/noninteractive elevation, and missing `pkexec` fail without invoking `setcap`. Vosu never reads credentials and has no sudo fallback.
+- Bound native telemetry, calculator inputs, counter installation and transport work without losing stable hit-error catch-up, ordered filter precedence or settings refreshes during receive-side connection contention. Preserve per-recipient control-queue backpressure.
 
 ### Runtime and maintenance
+
+- Route maintained Windows autoresearch benchmarks through the shared `windows-vm` command: transfer filtered source/vendor archives with SFTP, extract through native PowerShell, and clean temporary archives on success or failure. Sources, Cargo vendor caches, builds, and run output stay on `V:\agent-workspaces` instead of an account-specific C: profile.
 
 - Fix mania gradual-performance completion so `last()` and oversized skips return the final attributes before exhaustion; correct the osu! gradual example to finish without consuming the calculator before checking exhaustion.
 - Make the daemon reload smoke verify rejected malformed TOML through unchanged served settings, untouched source bytes, and an unbound requested port, independently of whether osu! is running. Production last-good configuration and state-readiness behavior is unchanged.
 - Split maintained code into domain-focused modules capped at 1,000 lines, preserving API and calculator behavior; remove tracked offset-tool build output while retaining source, locks, and provenance.
+- Use the upstream tosu catalog service at `https://tosu.app/api.json`; vosu does not operate a website. Use `vosu/<version> (+https://github.com/shiruviaa/vosu)` as the first-party request identity.
 - Derive Windows textual and numeric executable-resource versions from the root Cargo package version, keeping both resource version fields consistent with 0.3.0.
 
 - Remove the report-only graphics stack; use Linux sysfs and Windows WMI hardware metadata, with explicit unavailable/unknown states.
@@ -33,6 +37,13 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 - Preserve the final measured limitations: sparse 33-front/64-spread controls were 16.48%/13.69% slower than the original base, distinct-plan fast-writer subscriptions were 4.03% slower than previous, and mania parsing was 4.89% slower than previous. These are workload-specific results, not a general daemon speedup; see the [final combined measurements](openwiki/testing/benchmarks.md#final-reopened-lane-consolidation-2026-09-08).
 - Qualify the retained parsing regression as archived-binary/protocol-specific: follow-up diagnosis found unchanged allocations and negligible instruction-work changes, while a disposable diagnostic reversed the timing sign with setup both present and absent. The exact cause remains unresolved; no parser speedup or fix is claimed. Preserve the original unfavorable numbers and see the [parsing interpretation and local evidence](openwiki/testing/benchmarks.md#combined-measurements).
 - Keep live-parity attestation compatible with protected Git for Windows/MSVC build layouts; require initialized client settings before promoting the menu barrier. Compare shared fields strictly while recognizing only vosu's documented additive hit-error arrays and `keys.all` paths. Distinguish stale Windows exit snapshots from new clients without relaxing PID/creation-time ownership checks.
+- Attest the exact published compressed Linux parity reference by its pinned executable SHA-256 rather than requiring an uncompressed version string; retain ELF, configured-digest, ownership, and strict comparison checks.
+- Preserve the Linux live-parity socket-ownership cache across CLI module composition; keep its 5 ms lifetime and exact process/connection ownership checks unchanged.
+- Require the exact Linux production build command, including `linux-process-events`, when verifying live-parity build attestation; keep the Windows command and all capture/comparison gates unchanged.
+- Preserve the attested executable search order on POSIX when constructing the reference-build PATH, so system Rustup proxies cannot shadow a protected Rust toolchain; continue rejecting untrusted paths and cross-tool shadowing.
+- Build the pinned upstream Node reference on Linux without requiring `cmd.exe`; retain protected `cmd.exe` and MSVC discovery requirements on Windows.
+- Mark Linux osu!stable through Wine as experimental and not release-verified; retain its existing discovery/read implementation without claiming a live-parity pass.
+- Record clean strict Windows stable, Windows lazer, and native Linux lazer release-gate captures with exact source/artifact identities; preserve failed sampling-boundary captures without claiming those boundaries are fixed.
 
 ### Gameplay
 
@@ -50,6 +61,8 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 
 - Replaced the former LGPL-declared native live calculator with a Rust facade and pinned MIT `rosu-pp` 4.0.1 / `ppy/osu` sources; retained the former calculator tree only as non-production historical parity evidence. The replacement commit's clean-room characterization is not a certification of source independence; see the provenance audit.
 - Update max-achievable/full-combo score and accuracy projections, nested tick-score metadata, long-slider/spinner strain graph bounds, Hidden slider opacity, and source-calculator performance clamps. Regenerate current API/calculator fixtures while retaining historical source and NUnit provenance.
+
+- Report converted osu!→mania display circle size using the source-OD fallback with ties-to-even rounding and 4–7 bounds, then apply key-count overrides and Dual Stages doubling. Native mania display and playable-map difficulty/PP remain unchanged.
 - Refresh the embedded lazer offsets for osu! `2026.921.0`, including room-user fields, with version-matched runtime-derived `GameBaseVtable` evidence.
 
 ### API
@@ -69,7 +82,7 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 - Renamed the current product, Rust package, executable, API terminology, logs, and updater metadata to `vosu`. Workspace crates are now `vosu-pp` and `vosu-test-harness`.
 - Canonical server configuration is the flat, typed `vosu.toml` document with uppercase binding names. Former environment-variable interfaces are migration inputs only; current operation does not accept them as configuration aliases.
 - Release archives are now `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip`, each containing the matching `vosu` or `vosu.exe` root executable. Automatic updates follow `shiruviaa/vosu`.
-- First-party catalog, offset, and identity URLs now use <https://vosu.app>.
+- At the time of the 0.2.0 release, first-party catalog, offset, and identity URLs used <https://vosu.app>.
 - Added an idempotent, one-time migration for existing state. Linux moves non-conflicting files from former `tosu` XDG config, data, and cache roots into the corresponding `vosu` roots. Server configuration layers defaults, readable `tosu.env`, readable `vosu.env`, and canonical `vosu.toml` with precedence `vosu.toml > vosu.env > tosu.env > defaults`; it atomically replaces the canonical target before removing readable legacy files. Malformed canonical TOML leaves every source untouched at startup and preserves the last-good configuration during live reload.
 - Made each overlay/counter package's root `settings.schema.toml` authoritative while retaining compact mutable values at `<config>/settings/<counter>.settings.values.toml`. A missing schema is created from root `settings.json`, or otherwise inferred from scalar root `settings.toml` (`string`→`text`, integer/float→`number`, boolean→`checkbox`); ambiguous arrays, tables, and datetimes are rejected without creating a schema or mutating package inputs. Old config TOML/JSON schemas remain lower-priority fallbacks and every legacy counter schema/value input remains untouched after durable root schema and values creation. Root JSON and TOML inputs remain untouched, and when both exist JSON defines the schema while TOML may seed values.
 - Kept the upstream tosu name only where it identifies the compatibility source, provenance, parity fixtures, migration inputs, or the historical release record below. No permanent product aliases were added.

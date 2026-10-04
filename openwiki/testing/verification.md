@@ -38,6 +38,19 @@ MSVC SDK caching is independent of Cargo.lock and restricted to x86_64. Prepared
 
 `tools/live-parity/` is an interactive attested compatibility gate, not a normal unit test. Validate configuration, capture a controlled client lifecycle, compare, and generate diffs. It requires pinned artifacts, distinct loopback ports, and supported platform/client combinations.
 
+Native-reference mode also accepts the exact compressed upstream Linux 4.26.2
+ELF (SHA-256 `fa22300bcdc88c3b18a11fd5ff70d7057530b4c4b9413a525eb92044951b034f`).
+Its version string is not stored as plain ASCII. The digest is pinned in the
+harness from the [published release archive](https://github.com/tosuapp/tosu/releases/download/v4.26.2/tosu-linux-v4.26.2.zip),
+whose GitHub-published SHA-256 is
+`6ee56962171dda360e62abed6fa52859cc64500cf3bdbb451a71b125cc452867`.
+A configured digest alone cannot admit another compressed executable, and
+ELF magic is still mandatory. This reference attests the published native
+release, not a build of source revision `2359305`; report that distinction
+with Linux capture evidence. Client identity, ownership, transport, lifecycle,
+cadence, coverage, and comparison requirements are unchanged.
+
+
 HTTP acquisition keeps one serial reusable connection for each daemon/schema
 stream (eight streams total), drains every response, and rechecks the attested
 process, listening socket, and exact established connection for every request.
@@ -196,8 +209,9 @@ exited on SIGINT with code 0 (`linux-headless-ready/`). The installed AppImage
 first handed off to an existing pending Velopack update and exited, so the smoke
 used a task-owned extracted copy with the documented gamescope headless settings.
 Its SHA-256 matches the repository's retained `2026.726.0` AppImage provenance.
-The isolated daemon initially could not resolve that older client's offsets:
-`vosu.app` DNS resolution failed and `osuck.net` returned HTTP 500. The successful
+During the 2026-10-03 Linux verification, the isolated daemon initially could not
+resolve that older client's offsets: `vosu.app` DNS resolution failed and
+`osuck.net` returned HTTP 500. The successful
 run used the exact version-matched, hash-verified offsets from commit
 `9c2187e683775485b8551fd6e7cb09b6e6786332` in its private versioned cache; current
 embedded `2026.921.0` offsets were not altered. The daemon inherited the client
@@ -520,3 +534,371 @@ host policy nor those tests were weakened for integration.
 This is local source integration, not a live-parity pass. The four paused PP
 mismatches above remain unresolved, their semantic cause is not established,
 and no comparison, transport, ownership, artifact, or cadence gate changed.
+
+### 1.0 release gate: strict Windows stable (2026-10-04)
+
+The fresh `windows-stable-r10` capture passed the unchanged strict comparator:
+305,857 observations, zero payload mismatches, zero reference-coverage failures,
+zero vosu-contract failures, no missing streams or lifecycle barriers, and no
+unobservable reference path families. All eight active HTTP streams and all
+eight active WebSocket streams recorded zero stalls. Capture and comparison
+both exited 0 under the limited interactive `agent-desktop` token.
+
+This evidence applies to the frozen 905-path working-tree source archive
+`dfb9b4ddf52304a78e1019ee533927f7fbcc45dbe93c4a7512c4fc4bd0cc661d`,
+whose base HEAD was `44e463078036da046c73fed039a23a3c76553f95`; the archive
+includes uncommitted changes and is not evidence for that bare commit alone.
+The freshly built vosu executable has SHA-256
+`6ec7c9248317b107aec84e88f3b50db217af7c6ada2dda3607b8e259dfbd841e`.
+Reference tosu 4.26.2 was built from pinned revision
+`2359305a63f2aaebb201bc8d2eee58177f52590e`; the exact stable client reports
+version 1.3.3.7 and has SHA-256
+`3adc2d001aacced5f92ba8ae24121980d5e23f5653f37d14cf4765bca1abd9f9`.
+
+The isolated offline profile retained `Guest` without a password or automatic
+login. The original Reaction [Advanced] mania chart was played with No Fail
+only. Both daemons attested menu, initialized active play, pause, natural
+result, and exact client termination; fresh UI observations retain the pause,
+550-miss result, and cooperative exit. Readiness, comparison tolerances,
+transport, ownership, coverage, and cadence gates were not relaxed.
+
+Retained artifacts are under
+`~/.cache/vosu-release-gates-fuobodv5/`:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `windows-stable-r10-capture.json` | `e907be1e81cf0687a6fef06292e4527dae677e2e096a46b6f3be98a43139e30b` |
+| `windows-stable-r10-report.json` | `002633be794b882dcbc9855c7b9406a6c072deabcd52f6ce724640357ee9b625` |
+| `windows-stable-r10-result.json` | `d2a7c2b885f73f13f075ae787c769b69f6fd3dee575b8e870fe53ad65fe16725` |
+
+Earlier failing captures above remain historical evidence. This is one clean
+strict stable pass, not a claim that every possible sampling boundary has been
+exhaustively exercised, and it does not establish Windows lazer or Linux parity.
+
+### 1.0 native Windows build verification (r6 retry1)
+
+The successful native Windows build retry used the frozen 905-path source
+archive at HEAD `44e463078036da046c73fed039a23a3c76553f95`, archive SHA-256
+`803b3d0c3e357fb5b2bed4bcf0b0c63640293967235b4951dbcc05cb4c04d792`.
+The archive includes local working-tree changes; HEAD alone does not identify
+the verified source bytes.
+The verifier receipt records non-elevated execution as
+`win-kpupic6d4n8\agent-desktop` and pinned Rust
+`1.96.1 (31fca3adb 2026-06-26)`, host `x86_64-pc-windows-msvc`.
+
+All six receipt commands exited zero:
+
+- Python live-parity tool suite:
+  `python -m unittest discover -s tools/live-parity -p 'test_*.py'` —
+  154 tests ran, 8 skipped, all remaining tests passed.
+- `cargo fmt --all -- --check`.
+- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`.
+- `cargo test --workspace --all-features --locked --no-fail-fast -- --test-threads=1`.
+  Doctests ran; per-binary totals are recorded in the raw workspace log rather
+  than consolidated here.
+- `cargo build --release --no-default-features --locked --target x86_64-pc-windows-msvc`.
+- External release smoke:
+  `cargo test -p vosu-release-smoke --test release_smoke --locked -- --ignored --nocapture`,
+  with `VOSU_RELEASE_SMOKE_BINARY` set to the retained executable below.
+
+The retained release executable SHA-256 is
+`70ec257bf0a84674df72ad29863de0dd7fcc09e82064b69eab7dd729e30ebdbd`.
+Receipt and logs are in
+`~/.cache/vosu-release-gates-fuobodv5/windows-native-r6/logs-retry1/`;
+archive and manifest are in the parent `windows-native-r6/` directory. The
+first r6 attempt's Python/Git-PATH receipt failed and remains failed historical
+evidence. On retry, only the cache checkout's Git PATH was restored after MSVC
+environment loading so the parity suite could find Git; source contents and
+strict checks were unchanged.
+
+This is native formatting, lint, test, production-build, and external-smoke
+evidence only. It is not live-parity or signed-release evidence. The separate
+historical menu-only and r7/r8 Windows lazer captures remain failed evidence;
+the fresh r9 result below supersedes them. Native Linux live-parity evidence is recorded below.
+
+### 1.0 release gate: strict Windows lazer (2026-10-04)
+
+The fresh `windows-lazer-r9` capture passed the unchanged strict comparator:
+397,650 observations, zero payload mismatches, zero reference-coverage failures,
+zero vosu-contract failures, no missing streams or lifecycle barriers, and no
+unobservable reference path families. All active HTTP and WebSocket streams
+recorded zero stalls. Capture and comparison both exited 0 under the limited
+interactive `agent-desktop` token.
+
+The capture used the frozen r6 905-path source archive identified above, not
+bare HEAD alone. Its freshly built vosu executable SHA-256 is
+`19401aee4a82ff61fafb1dfdd406db2abe83fbf03a4ca4ed60cbd187cad9610b`.
+Reference tosu 4.26.2 was built from pinned revision
+`2359305a63f2aaebb201bc8d2eee58177f52590e`; the Windows lazer 2026.921.0
+client SHA-256 is
+`2ea71f129348e93ef04f065f3eacaef8941ab64b8b82fcbce3703e8ee7adc957`.
+A 905-path hash comparison against the current working tree after this capture
+found only the maintained verification document changed from the r6 manifest.
+
+Both daemons attested initialized menu and active play before pause. Fresh
+observations confirm Reaction [Advanced] mania with No Fail, actual pause and
+resume, the natural 594-miss result, and cooperative client exit. The capture
+also attested exact process termination and all four not-ready schemas from
+both daemons. No readiness, tolerance, ownership, coverage, transport, or
+cadence gate was relaxed. The isolated offline profile did not log in.
+
+Retained artifacts are under `~/.cache/vosu-release-gates-fuobodv5/`:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `windows-lazer-r9-capture.json` | `f74fb4cadd24e6fd34b5d1e655789e557ffd63be97b6db8cc994379a8a29603a` |
+| `windows-lazer-r9-report.json` | `fdd2a936364086e5898c7fd6f4ed245f7eb556b57c533c98be90e48229d2e7ae` |
+| `windows-lazer-r9-result.json` | `71baa3e90ad1a9069ae60612909ab2678ee72f82eb1e2fe4200e330527da20a0` |
+
+Earlier failed captures remain preserved. This is one strict Windows lazer
+pass, not evidence for Linux or every possible sampling boundary.
+
+### Linux native lazer preparation (2026-10-04)
+
+The compressed-reference fix passed the complete host parity-tool suite:
+`PATH=/usr/bin:/bin /usr/bin/python3 -m unittest discover -s tools/live-parity -p 'test_*.py' -v`
+— 155 tests in 960.896 seconds, successful result. An earlier invocation was
+stopped by its 300-second command deadline and is not a successful suite run.
+The local maintained-document link check passed with zero missing paths.
+
+The frozen Linux source generation is retained at
+`~/.cache/vosu-release-gates-fuobodv5/linux-preparation-r7/package-r7/`.
+Its archive SHA-256 is
+`f9faec9140baa9dd139f6b3a5203de3f04ee5b6365bb30e5a622f498f457bb88`.
+All 905 source paths were verified; only `parity_artifacts.py` and its
+`test_live_parity_config_cli.py` regression differ from the Windows native r6
+archive. Daemon/calculator bytes, the reference ELF, client, chart, and
+generator bundle are unchanged. Guest staging verified the manifest and
+generator inputs, and the actual `check-config` command accepted the published
+reference and the isolated Linux lazer 2026.921.0 client.
+
+The first r7 capture stopped before build because the guest's system Rust
+commands were rustup proxies. The next r8 attempt used a task-owned protected
+copy of the installed Rust 1.96.1 toolchain under `/opt/vosu-release-r8/rust`;
+compiler/Cargo hashes match the originals. Its native release build, including
+`linux-process-events`, passed. Both daemons and the client ran unprivileged;
+Yama remained at `ptrace_scope=1`. Capture then failed the unchanged client
+ownership gate when an additional osu-named PID appeared during startup.
+Receipts/logs remain preserved. This is preflight/build evidence, **not a
+Linux live-parity pass**; client process-transition diagnosis is still pending.
+
+
+### Linux native capture readiness diagnosis (2026-10-04)
+
+The later r12/r13 captures accepted client ownership and initialized menu, but
+still exited 2 without the required play, pause, result, and exit barriers.
+They remain failed evidence, not Linux parity passes.
+
+A retained real r13 active HTTP pair reported `Guest` in both daemons, the same
+map checksum, and live clocks of 55,032/55,028 ms. Replaying the unchanged
+readiness predicate over the capture's 4,934 HTTP v2 samples found 418 ready
+observations but no two-second stable interval; the longest interval was
+1,365.379603 ms. Each HTTP stream recorded 2,467 observations over the capture.
+Recorded ownership-bracket medians were 292.979998 ms for the reference and
+283.9979815 ms for vosu; these are whole assertion/request brackets, not isolated
+CPU profiles.
+
+A native socket probe reproduced a CLI-composition defect: after an ownership
+lookup populated 244 inode entries, an unrelated listener query reset the
+cache timestamp to zero and discarded every entry. Cache state now resides
+in one shared object rather than rebound module globals. The same real native
+CLI probe retained all 244 entries and the original timestamp after the
+listener query, while still resolving its socket to the exact owning PID.
+The five-millisecond lifetime, process-start checks, exact accepted-socket
+tuple checks, and all strict readiness/comparison thresholds are unchanged.
+This proves the cache-state fix, not a successful replacement live capture.
+
+Failure receipts, bounded readiness/attestation analyses, actual active
+snapshots, and screenshots are retained under
+`~/.cache/vosu-release-gates-fuobodv5/linux-runner-r7/`; the full r13 capture
+remains under `/home/vosu/vosu-linux-preparation-r7/` in the guest.
+
+The post-fix complete host tool suite,
+`/usr/bin/python3 -m unittest discover -s tools/live-parity -p 'test_*.py' -v`,
+passed all 155 tests in 303.278 seconds.
+
+The r14 replacement attested initialized menu, active play, pause, and natural
+result from both daemons, but exited 2 because the attempted GUI close did not
+terminate the client before the deadline. It remains failed evidence. A separate
+r15 menu-only diagnostic verified cooperative `xdotool windowquit` followed by
+the application's exit confirmation; fresh window discovery then returned no
+windows. That deliberate early exit is also not a live-parity pass. Both
+receipts/logs remain retained in `linux-runner-r7/`.
+
+### Linux r16 capture and strict comparison (2026-10-04)
+
+The unprivileged r16 run attested menu, initialized active play, shared pause,
+natural result, and exact client termination from both daemons. Capture exited
+0. Its original comparison exited 2 because the verifier omitted the required
+`--features linux-process-events` from its expected Linux build command.
+The verifier now requires that exact production command; Windows requirements
+and all capture/comparison gates remain unchanged. The complete host parity
+tool suite passed 155 tests in 258.747 seconds.
+
+Recomparison of the untouched capture with the corrected verifier exited 1:
+145,580 observations, 41,436 payload mismatches, zero reference-coverage failures,
+zero vosu-contract failures, no missing streams/barriers, and zero stalls in all
+eight active HTTP and eight active WebSocket streams. Every mismatch is in
+strain graph data, axes, lengths, or StreamCompanion graph keys. This is **failed
+Linux parity evidence**, not a pass.
+
+The published reference is not the same source generation used for Windows:
+the [v4.26.2 annotated tag](https://api.github.com/repos/tosuapp/tosu/git/tags/03202868c73c38938b65cce3f39b3c50e49b0fe4)
+targets `b21b4526d8db9ce124f5a8bf475ef5421837f5b7`, whereas the workspace targets
+`2359305a63f2aaebb201bc8d2eee58177f52590e`. The
+[upstream comparison](https://github.com/tosuapp/tosu/compare/b21b4526d8db9ce124f5a8bf475ef5421837f5b7...2359305a63f2aaebb201bc8d2eee58177f52590e)
+changes `BeatmapPP.updateGraph` from strain-section-count-based trailing axes
+and `-100` padding to last-visible-object axes and separate `-50` object-gap
+padding. The retained mismatch `116164` versus `116451`, and `-100` versus
+`-50`, follows those two algorithms. No production graph code was changed to
+match the older reference. An exact pinned-source reference is being prepared
+for a replacement native Linux client capture.
+
+Retained r16 evidence:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Guest `linux-lazer-r16-capture.json` | `e965d4d23f1578102beef241ad8130bc728054e3b71fcbecdfc9dd4e252da9b7` |
+| `linux-lazer-r16-r17-comparator-report.json` | `c4d991bf77697e77ad41deed31b6e2202871699b37ea83060c41a2cec3b8d4ab` |
+| Corrected `parity_verify.py` | `e770c90a572227c8e082828d30bbecd23adf559363d61be46539d77ec3c60a5a` |
+
+The full capture remains in `/home/vosu/vosu-linux-preparation-r7/` in the
+guest. The report, original supervisor receipt/log, and separate corrected
+comparison receipt are retained under
+`~/.cache/vosu-release-gates-fuobodv5/linux-runner-r7/`. Original failures were
+not overwritten or relabelled.
+
+### Linux pinned-reference build readiness (2026-10-04)
+
+The r17 attempt accepted the clean upstream `2359305` checkout, protected
+Node 24.14.0, and the unchanged native Linux lazer identity. It exited 2 before
+launching any client or daemon: constructing PATH in tool-name order put the
+system Git directory before the protected Rust directory and selected the
+system Cargo proxy instead of the attested Cargo executable.
+
+On POSIX, the builder now retains the caller's relative order for only the
+attested tool directories, then checks every selected executable as before.
+It does not admit other inherited PATH entries. Windows ordering is unchanged.
+The real guest CLI-composition probe selected Git and Python from `/usr/bin`,
+Node/pnpm from the task-owned protected r17 installation, and Cargo/rustc from
+`/opt/vosu-release-r8/rust/bin`. The affected build-contract suite passed all
+18 tests, including the extended shadowing/injected-directory regression.
+
+Reference-only prerequisites are the official Node 24.14.0 archive
+(SHA-256 `41cd79bb7877c81605a9e68ec4c91547774f46a40c67a17e34d7179ef11729df`)
+and pnpm 10.10.0 with the npm registry's SHA-512 integrity verification.
+Their protected files are root-owned; the builds and runtime remain
+unprivileged. These are upstream reference build tools, not vosu daemon runtime
+requirements. The failed r17 receipt/log and the native selection probe remain
+retained with the other Linux evidence.
+
+### Linux pinned-reference native build and menu-only retry (2026-10-04)
+
+The r18 attempt passed configuration validation but failed before building the
+reference because the Node-build branch unconditionally indexed the Windows-only
+`cmd` toolchain entry. It now passes the optional entry to the existing platform
+helper, exactly as the vosu build branch does. Linux returns the unchanged
+environment; Windows still rejects a missing protected `cmd.exe`.
+
+The r19 run then built the pinned upstream `2359305` Node reference and the
+native production vosu executable, launched the exact Linux lazer client, and
+attested initialized menu from both daemons. It did not reach active play before
+the unchanged capture deadline and exited 2. No comparison ran. This is native
+reference-build smoke evidence, **not a Linux parity pass**. The complete host
+parity-tool suite passed all 155 tests in 168.694 seconds after the platform fix.
+
+The frozen r19 source contains 905 verified paths at base HEAD
+`44e463078036da046c73fed039a23a3c76553f95`; archive SHA-256 is
+`cb0cb4f9742547224dce6942fd532cbc6674d95a3b5d0ca04338ad4987dd9016`.
+Its declared changes from the Windows generation are parity tooling and
+documentation only; daemon/calculator source is unchanged. Original r18/r19
+receipts and logs remain under
+`~/.cache/vosu-release-gates-fuobodv5/linux-runner-r7/`; the r19 capture remains
+in `/home/vosu/vosu-linux-preparation-r7/` in the guest.
+
+Native client logging showed the menu returning to idle without entering Solo.
+The [upstream menu implementation](https://github.com/ppy/osu/blob/master/osu.Game/Screens/Menu/ButtonSystem.cs)
+binds Solo to `P`, not `S`. A separate r20 capture uses the same frozen r19 source
+and pinned artifacts with the corrected keyboard navigation. Readiness,
+ownership, coverage, cadence, comparison, and timeout requirements are unchanged.
+
+### Linux pinned-reference r20 capture (2026-10-04)
+
+The unprivileged r20 run used the same frozen r19 source and built the reference
+from upstream `2359305`. Both daemons attested initialized menu, active play,
+shared pause, natural result, and exact client termination. Fresh native client
+frames show Reaction [Advanced] mania with No Fail only, pause/resume, the
+594-miss result, and cooperative close. Capture exited 0; comparison exited 1.
+
+The unchanged strict comparator reported 204,511 observations and four payload
+mismatches, all in v1 `gameplay.pp.maxThisPlay` or v2 `play.pp.maxAchievable`:
+`3.97` upstream versus `4.19` vosu at the pause boundary. There were zero
+reference-coverage failures, vosu-contract failures, missing streams/barriers,
+unobservable reference path families, or active HTTP/WebSocket stalls.
+The strain-graph mismatches seen against the older published reference are
+absent from this pinned-source comparison.
+
+The retained HTTP context shows both daemons reporting 100 misses and `4.19`
+before the transition to 101 misses. Upstream then recalculated `3.97`, while
+vosu retained `4.19` when play paused. This is a sampling/progression-boundary
+diagnostic, not evidence that the boundary is fixed or a Linux parity pass.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Guest `linux-lazer-r20-capture.json` | `da93ca983a6a32bc943764c7e3cd2b3ebcf0eb392d5a10893e693d74f685729a` |
+| `linux-lazer-r20-report.json` | `9156eb642cf25965bf1feed5b686301eb61ed82ab87d11c714061fa9d2e273d9` |
+| `linux-lazer-r20-result.json` | `025068cb5f55e8cb2b672ce681802b432cf5e42a24986b4d68a59b70816a6100` |
+
+The full capture remains in `/home/vosu/vosu-linux-preparation-r7/` in the
+guest. Report, supervisor receipt/log, paused sample context, and UI evidence
+are retained under `~/.cache/vosu-release-gates-fuobodv5/linux-runner-r7/`.
+A separate r21 capture retains the same frozen source, pinned artifacts, and
+all strict gates. The failed r20 evidence is not overwritten or relabelled.
+
+### 1.0 release gate: strict native Linux lazer (2026-10-04)
+
+The fresh `linux-lazer-r21` capture passed the unchanged strict comparator:
+167,829 observations, zero payload mismatches, zero reference-coverage failures,
+zero vosu-contract failures, no missing streams or lifecycle barriers, and no
+unobservable reference path families. All eight active HTTP streams and all
+eight active WebSocket streams recorded zero stalls. Configuration validation,
+capture, and comparison each exited 0 under the unprivileged guest UID 1000.
+
+The run used the frozen r19 905-path source archive
+`cb0cb4f9742547224dce6942fd532cbc6674d95a3b5d0ca04338ad4987dd9016`,
+based on local integration HEAD `44e463078036da046c73fed039a23a3c76553f95`.
+The archive includes uncommitted changes; bare HEAD does not identify the
+verified source. Its declared changes from the Windows generation are parity
+tooling and documentation only; daemon/calculator source is unchanged.
+The freshly built native vosu executable SHA-256 is
+`26532d589f853dd2545f4fc631c8e3fe182ee1402fa259f82eba5e168bc15905`.
+The attested release command includes `--features linux-process-events`.
+
+Reference tosu 4.26.2 was built natively in Node-build mode from pinned revision
+`2359305a63f2aaebb201bc8d2eee58177f52590e`. Its built `index.js` SHA-256 is
+`8010decd679af49deb49cfb0ffc86329bd1faac0761d01e42e375d7187fb9c89`;
+the capture also attests its complete distribution manifest and protected Node
+toolchain. The Linux lazer 2026.921.0 client SHA-256 is
+`093bc36983efeef17531b45046195f2a3cb37a6b69865763a799fbdd93239679`.
+
+Both daemons attested initialized menu, active play, shared pause, natural
+result, and exact client termination. Fresh native frames retain Reaction
+[Advanced] mania with No Fail only, actual pause/resume, and the natural
+594-miss result. Cooperative close returned an empty window list and both
+exact process-exit attestations. The isolated Guest profile did not log in.
+No readiness, tolerance, ownership, coverage, transport, or cadence gate changed.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Guest `linux-lazer-r21-capture.json` | `b598451de1127ed9038db2dde1d1fbbcef87add2427c1f4fb774f5d397d49ef3` |
+| `linux-lazer-r21-report.json` | `9134c33b452966010ab817d93adb2f174a21ec3c2a14b4b05fa04cd74dd9b1cf` |
+| `linux-lazer-r21-result.json` | `698621741f535081f008116be6df736958979cb76d83329b2aa00f91c4459ca3` |
+
+The full capture remains in `/home/vosu/vosu-linux-preparation-r7/` in the
+guest. Report, supervisor receipt/log, configuration, and UI evidence are
+retained under `~/.cache/vosu-release-gates-fuobodv5/linux-runner-r7/`.
+The earlier r20 four-row paused PP failure remains failed historical evidence.
+This is one clean strict native Linux lazer pass, not a fix or exhaustive
+verification of every sampling boundary. Linux stable through Wine remains
+experimental and not release-verified. No release or tag was created.
+

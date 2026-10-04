@@ -150,7 +150,11 @@ Regular and precise notifications remain independent. `src/runtime/projection.rs
 
 `auth::MutationAuthorization` separates exact same-origin mutation intent from the overlay-compatible read policy. Dispatch enforces it before every management POST and captures it in request extensions for WebSocket upgrades. The production socket transport permits read/settings/filter commands on untrusted-origin sockets, but closes them before any state-changing command reaches `CommandProcessor`. This preserves stock hosted counter writes and non-hosted reads without adding a handshake token.
 
+Same-origin provenance is mutation intent, not tenant isolation: installed counter scripts share the dashboard origin and management authority. That residual trust boundary is explicit in the [operations runbook](../operations/runbook.md#security-hardening-and-remaining-trust).
+
 Compatibility WebSocket connection ownership lives in `src/server/websocket.rs::WebSocketHub`; selected-field v2 subscriptions use the separate `src/server/v2_subscription.rs::V2SubscriptionHub`. Publication tasks live in `WebSocketHubs`. Both hub types bound each client to one pending state frame and shutdown seals registration and sends protocol close 1001 before cancelling publication loops. Commands are parsed and dispatched by `src/server/commands.rs::CommandProcessor`; relay lifecycle remains separate in `src/server/service/relay.rs`, and the selected-field endpoint does not register a command or relay client.
+
+State delivery retains its one-frame latest-state bound. Compatibility control queues and the shared relay mailbox each have capacity 16; relay producers use nonblocking admission, and shared delivery never waits for a recipient mutex/control queue. Saturated recipients are cleaned up without stalling healthy recipients. Legacy filter parsing caps input nodes/depth and deduplicates the resulting projection.
 
 ### Calculation path
 
@@ -167,7 +171,11 @@ Beatmap parsing, timing/events, object graphs, and cache ownership are under `sr
 
 `src/platform.rs::Paths` resolves program, launch, config, data, and cache roots and creates the latter three. On Linux, startup performs an idempotent one-time move from former `tosu` XDG roots to `vosu` roots without replacing already-current state. Default static content is under the data root; custom relative static paths are relative to the launch directory. `src/server/files.rs` owns percent decoding, containment checks, platform-secure opens, directory indexes, media ranges, and content types. Invalid, malformed, and escaping public paths collapse to not-found rather than exposing host filesystem details.
 
+`ReloadableCounterService` replaces only root-specific filesystem selection on reload. Install admission (four jobs), the install gate, cancellation and active-job join accounting remain shared across all generations; detached jobs remain shutdown-owned after HTTP cancellation. No retired-generation registry is needed.
+
 `src/updater.rs` and its `release`, `prepare`, `transaction`, `startup`, `helper`, and `platform` modules form a crash-recoverable transactional, single-flight update boundary. Release validation precedes preparation; a durable `.vosu-update.json` install record drives candidate/rollback recovery on the next start. Update handoff is owned by the application lifecycle so the listener and other services shut down before replacement. Release archive entry and expanded-byte limits are enforced in this boundary.
+
+Candidate/rollback readiness uses a one-use secret delivered only through the exact child's piped stdin, not process-visible arguments or the durable record. The public transaction token still selects the transaction but cannot substitute for that readiness secret.
 
 ## Deployment variants
 
