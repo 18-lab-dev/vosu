@@ -7,14 +7,14 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $ConfirmPreference = 'None'
 
-$workspace = 'C:\Users\vosu-agent\vosu-autoresearch'
-$cargo = 'C:\Rust\toolchain\bin\cargo.exe'
-$rustc = 'C:\Rust\toolchain\bin\rustc.exe'
+$workspace = 'V:\agent-workspaces\vosu-autoresearch'
+$cargo = 'C:\Program Files\Rust\1.96.1\bin\cargo.exe'
+$rustc = 'C:\Program Files\Rust\1.96.1\bin\rustc.exe'
 $vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
-$targetDirectory = 'C:\vosu-autoresearch-target'
-$vendorDirectory = 'C:\vosu-autoresearch-vendor'
-$runDirectory = 'C:\vosu-autoresearch-run'
-$memoryOutputDirectory = 'C:\vosu-autoresearch-bin'
+$targetDirectory = 'V:\agent-workspaces\vosu-autoresearch-target'
+$vendorDirectory = 'V:\agent-workspaces\vosu-autoresearch-vendor'
+$runDirectory = 'V:\agent-workspaces\vosu-autoresearch-run'
+$memoryOutputDirectory = 'V:\agent-workspaces\vosu-autoresearch-bin'
 $target = 'x86_64-pc-windows-msvc'
 $sampleCount = 31
 $warmupSeconds = 5
@@ -186,13 +186,14 @@ try {
 
     $cargoConfigDirectory = Join-Path $workspace '.cargo'
     New-Item -ItemType Directory -Path $cargoConfigDirectory -Force | Out-Null
-    $cargoConfig = @'
+    $vendorTomlPath = $vendorDirectory.Replace('\', '/')
+    $cargoConfig = @"
 [source.crates-io]
 replace-with = "vendored-sources"
 
 [source.vendored-sources]
-directory = "C:/vosu-autoresearch-vendor"
-'@
+directory = "$vendorTomlPath"
+"@
     [IO.File]::WriteAllText(
         (Join-Path $cargoConfigDirectory 'config.toml'),
         $cargoConfig,

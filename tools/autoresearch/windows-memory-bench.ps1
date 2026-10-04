@@ -7,10 +7,10 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $ConfirmPreference = 'None'
 
-$workspace = 'C:\Users\vosu-agent\vosu-autoresearch'
-$rustc = 'C:\Rust\toolchain\bin\rustc.exe'
+$workspace = 'V:\agent-workspaces\vosu-autoresearch'
+$rustc = 'C:\Program Files\Rust\1.96.1\bin\rustc.exe'
 $vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
-$outputDirectory = 'C:\vosu-autoresearch-bin'
+$outputDirectory = 'V:\agent-workspaces\vosu-autoresearch-bin'
 $source = Join-Path -Path $workspace -ChildPath 'tools\autoresearch\windows-memory-bench.rs'
 $executable = Join-Path -Path $outputDirectory -ChildPath 'windows-memory-bench.exe'
 

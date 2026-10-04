@@ -1,37 +1,51 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly SSH_DEST='vosu-agent@127.0.0.1'
-readonly SSH_PORT='2223'
-readonly REMOTE_SOURCE='C:\Users\vosu-agent\vosu-autoresearch'
-readonly REMOTE_HELPER='C:\Users\vosu-agent\vosu-autoresearch\tools\autoresearch\windows-optimization-bench.ps1'
-readonly REMOTE_VENDOR='C:\vosu-autoresearch-vendor'
-readonly REMOTE_VENDOR_MARKER='C:\vosu-autoresearch-vendor\.cargo-lock.sha256'
+readonly REMOTE_SOURCE='V:\agent-workspaces\vosu-autoresearch'
+readonly REMOTE_HELPER='V:\agent-workspaces\vosu-autoresearch\tools\autoresearch\windows-optimization-bench.ps1'
+readonly REMOTE_VENDOR='V:\agent-workspaces\vosu-autoresearch-vendor'
+readonly REMOTE_VENDOR_MARKER='V:\agent-workspaces\vosu-autoresearch-vendor\.cargo-lock.sha256'
+readonly REMOTE_SOURCE_ARCHIVE="V:\\agent-workspaces\\vosu-source-$$.tar"
+readonly REMOTE_VENDOR_ARCHIVE="V:\\agent-workspaces\\vosu-vendor-$$.tar"
 readonly REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
-readonly SSH_CMD=(
-  ssh
-  -T
-  -p "$SSH_PORT"
-  -o BatchMode=yes
-  -o StrictHostKeyChecking=yes
-  -o ConnectTimeout=10
-  -o ConnectionAttempts=1
-  "$SSH_DEST"
-)
 
+source_archive=
+vendor_archive=
+source_archive_remote_owned=0
+vendor_archive_remote_owned=0
 vendor_temp=
+
+remove_guest_archive() {
+  local archive=$1
+  windows-vm exec "\$archive = '$archive'; if (Test-Path -LiteralPath \$archive) { Remove-Item -LiteralPath \$archive -Force -ErrorAction Stop }" >/dev/null
+}
 
 cleanup() {
   local status=$?
-  trap - EXIT
+  trap - EXIT ERR
+  if ((source_archive_remote_owned)) && ! remove_guest_archive "$REMOTE_SOURCE_ARCHIVE"; then
+    printf 'windows-optimization-bench: failed to remove guest source archive\n' >&2
+    if ((status == 0)); then status=1; fi
+  fi
+  if ((vendor_archive_remote_owned)) && ! remove_guest_archive "$REMOTE_VENDOR_ARCHIVE"; then
+    printf 'windows-optimization-bench: failed to remove guest vendor archive\n' >&2
+    if ((status == 0)); then status=1; fi
+  fi
+  for archive in "$source_archive" "$vendor_archive"; do
+    if [[ -n "$archive" ]] && ! rm -f -- "$archive"; then
+      printf 'windows-optimization-bench: failed to remove local archive: %s\n' "$archive" >&2
+      if ((status == 0)); then status=1; fi
+    fi
+  done
   if [[ -n "$vendor_temp" ]] && ! rm -rf -- "$vendor_temp"; then
-    printf 'windows-optimization-bench: failed to remove vendor temp directory: %s\n' \
-      "$vendor_temp" >&2
-    ((status == 0)) && status=1
+    printf 'windows-optimization-bench: failed to remove vendor temp directory: %s\n' "$vendor_temp" >&2
+    if ((status == 0)); then status=1; fi
   fi
   exit "$status"
 }
 trap cleanup EXIT
+
+
 
 fail() {
   printf 'windows-optimization-bench: %s\n' "$*" >&2
@@ -39,13 +53,7 @@ fail() {
 }
 
 remote_powershell() {
-  local encoded
-  encoded=$(
-    printf '%s' "$1" |
-      python3 -c 'import base64, sys; print(base64.b64encode(sys.stdin.read().encode("utf-16le")).decode("ascii"))'
-  )
-  "${SSH_CMD[@]}" \
-    "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"
+  windows-vm exec "$1"
 }
 
 report_error() {
@@ -57,11 +65,10 @@ report_error() {
 }
 trap 'report_error "$LINENO"' ERR
 
-for required_command in cargo python3 sha256sum ssh tar; do
+for required_command in cargo windows-vm sha256sum tar; do
   command -v "$required_command" >/dev/null 2>&1 ||
     fail "required host command not found: $required_command"
 done
-
 [[ -d "$REPO_ROOT" ]] || fail "component checkout not found: $REPO_ROOT"
 [[ -f "$REPO_ROOT/tools/autoresearch/windows-optimization-bench.ps1" ]] ||
   fail 'missing tools/autoresearch/windows-optimization-bench.ps1'
@@ -69,7 +76,7 @@ done
 
 
 # Refuse to mutate the dedicated workspace unless this is the pinned VM endpoint.
-"${SSH_CMD[@]}" cmd.exe /D /C exit 0 </dev/null >/dev/null
+windows-vm doctor </dev/null >/dev/null
 
 cargo_lock_sha256=$(sha256sum "$REPO_ROOT/Cargo.lock")
 cargo_lock_sha256=${cargo_lock_sha256%%[[:space:]]*}
@@ -113,8 +120,11 @@ if (-not (Test-Path -LiteralPath \$vendor -PathType Container)) {
 }"
   remote_powershell "$vendor_prepare_script" </dev/null >/dev/null
 
-  tar --create --file=- -C "$vendor_temp" . |
-    "${SSH_CMD[@]}" tar.exe -xf - -C "$REMOTE_VENDOR"
+  vendor_archive=$(mktemp "${TMPDIR:-/tmp}/vosu-autoresearch-vendor.XXXXXXXX.tar")
+  tar --create --file="$vendor_archive" -C "$vendor_temp" .
+  vendor_archive_remote_owned=1
+  windows-vm put "$vendor_archive" "$REMOTE_VENDOR_ARCHIVE"
+  remote_powershell "\$ErrorActionPreference = 'Stop'; tar.exe -xf '$REMOTE_VENDOR_ARCHIVE' -C '$REMOTE_VENDOR'; if (\$LASTEXITCODE -ne 0) { throw 'Cargo vendor archive extraction failed' }" </dev/null >/dev/null
 
   # Publish the marker only after the complete archive arrived. Write without a
   # BOM or newline, replace it atomically, and verify its exact bytes.
@@ -137,19 +147,17 @@ fi
 
 # Replace only the contracted source workspace. Persistent build and isolated run
 # directories are owned by the guest helper and must survive this transfer step.
-"${SSH_CMD[@]}" powershell.exe -NoLogo -NoProfile -NonInteractive \
-  -ExecutionPolicy Bypass -Command - <<'POWERSHELL' >/dev/null
-$ErrorActionPreference = 'Stop'
-$source = 'C:\Users\vosu-agent\vosu-autoresearch'
-if (Test-Path -LiteralPath $source) {
-    Remove-Item -LiteralPath $source -Recurse -Force -ErrorAction Stop
+remote_powershell "
+\$source = '$REMOTE_SOURCE'
+if (Test-Path -LiteralPath \$source) {
+    Remove-Item -LiteralPath \$source -Recurse -Force -ErrorAction Stop
 }
-New-Item -ItemType Directory -Path $source -Force -ErrorAction Stop | Out-Null
-POWERSHELL
+New-Item -ItemType Directory -Path \$source -Force -ErrorAction Stop | Out-Null" </dev/null >/dev/null
 
-# Stream the live checkout, including uncommitted source changes, without VCS
-# metadata, worktrees, build/session state, or generated compiler artifacts.
-tar --create --file=- \
+# Archive the live checkout locally, excluding VCS metadata, worktrees,
+# build/session state, and generated compiler artifacts.
+source_archive=$(mktemp "${TMPDIR:-/tmp}/vosu-autoresearch-source.XXXXXXXX.tar")
+tar --create --file="$source_archive" \
   --exclude='.git' \
   --exclude='.worktrees' \
   --exclude='worktrees' \
@@ -170,17 +178,11 @@ tar --create --file=- \
   --exclude='*.obj' \
   --exclude='*.pdb' \
   --exclude='*.ilk' \
-  -C "$REPO_ROOT" . |
-  "${SSH_CMD[@]}" tar.exe -xf - -C "$REMOTE_SOURCE"
-
-# An EXIT trap cannot run after a successful exec, so release the temporary
-# vendor tree now while retaining the trap for every earlier failure path.
-if [[ -n "$vendor_temp" ]]; then
-  rm -rf -- "$vendor_temp"
-  vendor_temp=
-fi
+  -C "$REPO_ROOT" .
+source_archive_remote_owned=1
+windows-vm put "$source_archive" "$REMOTE_SOURCE_ARCHIVE"
+remote_powershell "\$ErrorActionPreference = 'Stop'; tar.exe -xf '$REMOTE_SOURCE_ARCHIVE' -C '$REMOTE_SOURCE'; if (\$LASTEXITCODE -ne 0) { throw 'source archive extraction failed' }" </dev/null >/dev/null
 
 # Preserve the helper's stdout byte-for-byte so its METRIC lines reach the root
-# entrypoint unchanged. SSH and PowerShell failures propagate through exec.
-exec "${SSH_CMD[@]}" powershell.exe -NoLogo -NoProfile -NonInteractive \
-  -ExecutionPolicy Bypass -File "$REMOTE_HELPER"
+# entrypoint unchanged. Archive cleanup runs after the helper completes.
+windows-vm exec "& powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File '$REMOTE_HELPER'"
