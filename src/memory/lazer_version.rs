@@ -1,7 +1,9 @@
 //! Strict osu!lazer version discovery from the target installation.
 
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::{self, Read};
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use indexmap::IndexMap;
@@ -57,8 +59,20 @@ pub fn deps_path(executable_root: &Path) -> PathBuf {
 
 pub fn discover_from_root(executable_root: &Path) -> Result<String, LazerVersionError> {
     let path = deps_path(executable_root);
-    let mut file = File::open(path)?;
-    let length = file.metadata()?.len();
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    options.custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC);
+    let mut file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "osu!.deps.json is not a regular file",
+        )
+        .into());
+    }
+    let length = metadata.len();
     if length > MAX_DEPS_BYTES {
         return Err(
             io::Error::new(io::ErrorKind::InvalidData, "osu!.deps.json exceeds 4 MiB").into(),
@@ -140,5 +154,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(discover_from_root(root.path()).unwrap(), "2026.518.0");
+    }
+
+    #[test]
+    fn rejects_non_regular_dependency_file() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("osu!.deps.json")).unwrap();
+        assert!(discover_from_root(root.path()).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rejects_dependency_fifo_without_waiting_for_a_writer() {
+        use std::os::unix::ffi::OsStrExt;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("osu!.deps.json");
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: name is a valid NUL-terminated pathname.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        assert!(discover_from_root(root.path()).is_err());
     }
 }

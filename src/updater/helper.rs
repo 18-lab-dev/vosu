@@ -186,13 +186,28 @@ pub(super) fn launch_and_wait_ready<P: UpdatePlatform>(
         .map(EncodedOsString::restore)
         .collect::<io::Result<Vec<_>>>()?;
     args.extend([
-        OsString::from(format!("--update-{role}={readiness}")),
+        OsString::from(format!("--update-{role}")),
         OsString::from(format!("--update-ready={address}")),
         option_path("--update-record=", record_path),
         OsString::from(format!("--update-token={}", record.token)),
     ]);
     let cwd = PathBuf::from(record.working_directory.restore()?);
     let mut child = platform.spawn(&record.target, &args, &cwd)?;
+    // Only the exact spawned child receives this one-use bearer secret. Never
+    // place it in argv, environment, or a generally readable transaction file.
+    let delivered = child
+        .stdin
+        .take()
+        .ok_or(UpdateError::ReadinessAuthorization)
+        .and_then(|mut input| {
+            input
+                .write_all(readiness.as_bytes())
+                .map_err(UpdateError::from)
+        });
+    if let Err(error) = delivered {
+        kill_and_reap(&mut child);
+        return Err(error);
+    }
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         match child.try_wait() {
@@ -264,12 +279,26 @@ pub(super) fn cleanup_recovery_temps(program_dir: &Path) -> Result<(), UpdateErr
     Ok(())
 }
 
-/// Candidate-side readiness signal. It requires both the transaction token and
-/// role-specific one-use token passed through the private loopback pipe.
+/// Candidate-side readiness signal. The one-use secret arrives only through
+/// the inherited stdin pipe, not through cross-account-visible command arguments.
 pub fn signal_ready(
     record_path: &Path,
     transaction_token: &str,
-    readiness_token: &str,
+    address: SocketAddr,
+) -> Result<(), UpdateError> {
+    let record = load_record(record_path)?;
+    if !constant_time_eq(record.token.as_bytes(), transaction_token.as_bytes()) {
+        return Err(UpdateError::ReadinessAuthorization);
+    }
+    let mut token = [0u8; 32];
+    std::io::stdin().lock().read_exact(&mut token)?;
+    signal_ready_with_token(record_path, transaction_token, &token, address)
+}
+
+pub(super) fn signal_ready_with_token(
+    record_path: &Path,
+    transaction_token: &str,
+    readiness_token: &[u8],
     address: SocketAddr,
 ) -> Result<(), UpdateError> {
     let record = load_record(record_path)?;
@@ -281,7 +310,7 @@ pub fn signal_ready(
     }
     let mut stream = std::net::TcpStream::connect_timeout(&address, Duration::from_secs(2))?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
-    stream.write_all(readiness_token.as_bytes())?;
+    stream.write_all(readiness_token)?;
     stream.flush()?;
     let mut acknowledgement = [0u8; 1];
     stream.read_exact(&mut acknowledgement)?;

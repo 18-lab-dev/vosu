@@ -100,15 +100,17 @@ impl ProductionRouteDelegate {
         );
         match parsed {
             Ok(download) => match self.services.counters.download(&download).await {
-                Ok(()) => {
-                    json_response(StatusCode::OK, json!({ "status": "Finished" }))
-                }
+                Ok(()) => json_response(StatusCode::OK, json!({ "status": "Finished" })),
+                Err(CounterError::InstallBusy) => json_response(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    json!({ "error": "counter install capacity is full" }),
+                ),
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
             },
             Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
         }
-    }
 
+    }
     fn counter_open_root(&self) -> Response {
         match self.services.counters.open_root() {
             Ok(()) => json_response(StatusCode::OK, json!({ "status": "opened" })),

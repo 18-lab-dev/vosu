@@ -3,23 +3,51 @@ use serde_json::{Map, Value};
 
 use super::{CommandAction, Filter};
 
+const MAX_FILTER_NODES: usize = 256;
+const MAX_FILTER_DEPTH: usize = 8;
+
 pub(super) fn parse_filters(source: &str) -> Option<Vec<Filter>> {
     let value = serde_json::from_str::<Value>(source).ok()?;
     let values = value.as_array()?;
-    Some(values.iter().filter_map(parse_filter).collect())
+    let mut nodes = 0;
+    let mut filters = Vec::new();
+    for value in values {
+        if let Some(filter) = parse_filter(value, 0, &mut nodes)? {
+            filters.push(filter);
+        }
+    }
+    Some(filters)
 }
 
-fn parse_filter(value: &Value) -> Option<Filter> {
-    if let Some(field) = value.as_str() {
-        return Some(Filter::Field(field.to_owned()));
+fn parse_filter(value: &Value, depth: usize, nodes: &mut usize) -> Option<Option<Filter>> {
+    *nodes += 1;
+    if *nodes > MAX_FILTER_NODES || depth > MAX_FILTER_DEPTH {
+        return None;
     }
-    let object = value.as_object()?;
-    let field = filter_field_key(object.get("field")?)?;
-    let keys = object.get("keys")?.as_array()?;
-    Some(Filter::Nested {
-        field,
-        keys: keys.iter().filter_map(parse_filter).collect(),
-    })
+    let filter = if let Some(field) = value.as_str() {
+        Some(Filter::Field(field.to_owned()))
+    } else {
+        let Some(object) = value.as_object() else {
+            return Some(None);
+        };
+        let (Some(field), Some(keys)) = (
+            object.get("field").and_then(filter_field_key),
+            object.get("keys").and_then(Value::as_array),
+        ) else {
+            return Some(None);
+        };
+        let mut parsed = Vec::new();
+        for key in keys {
+            if let Some(key) = parse_filter(key, depth + 1, nodes)? {
+                parsed.push(key);
+            }
+        }
+        Some(Filter::Nested {
+            field,
+            keys: parsed,
+        })
+    };
+    Some(filter)
 }
 
 fn filter_field_key(value: &Value) -> Option<String> {

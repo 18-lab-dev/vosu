@@ -175,7 +175,6 @@
         fn spawn(&self, _: &Path, args: &[OsString], _: &Path) -> io::Result<Child> {
             let mut address = None;
             let mut transaction_token = None;
-            let mut readiness_token = None;
             let mut record_path = None;
             for argument in args {
                 let text = argument.to_string_lossy();
@@ -185,31 +184,32 @@
                     transaction_token = Some(value.to_owned());
                 } else if let Some(value) = text.strip_prefix("--update-record=") {
                     record_path = Some(PathBuf::from(value));
-                } else if let Some(value) = text
-                    .strip_prefix("--update-candidate=")
-                    .or_else(|| text.strip_prefix("--update-rollback="))
-                {
-                    readiness_token = Some(value.to_owned());
-                    if text.starts_with("--update-rollback=") {
-                        self.rollback_launches.fetch_add(1, Ordering::SeqCst);
-                    }
+                } else if text == "--update-rollback" {
+                    self.rollback_launches.fetch_add(1, Ordering::SeqCst);
+                } else {
+                    assert_eq!(text, "--update-candidate");
                 }
             }
             let address = address.unwrap();
             let transaction_token = transaction_token.unwrap();
-            let readiness_token = readiness_token.unwrap();
             let record_path = record_path.unwrap();
+            let mut child = Command::new("/bin/sh")
+                .args(["-c", "cat; exec sleep 30"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()?;
+            let mut input = child.stdout.take().unwrap();
             std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(10));
+                let mut readiness_token = [0u8; 32];
+                input.read_exact(&mut readiness_token).unwrap();
                 let mut partial = std::net::TcpStream::connect(address).unwrap();
-                partial.write_all(&readiness_token.as_bytes()[..5]).unwrap();
+                partial.write_all(&readiness_token[..5]).unwrap();
                 drop(partial);
                 let mut invalid = std::net::TcpStream::connect(address).unwrap();
-                invalid.write_all(&[b'x'; 32]).unwrap();
+                invalid.write_all(transaction_token.as_bytes()).unwrap();
                 drop(invalid);
-                signal_ready(&record_path, &transaction_token, &readiness_token, address).unwrap();
+                signal_ready_with_token(&record_path, &transaction_token, &readiness_token, address).unwrap();
             });
-            let child = Command::new("/bin/sleep").arg("30").spawn()?;
             self.spawned_pid
                 .store(u64::from(child.id()), Ordering::SeqCst);
             Ok(child)

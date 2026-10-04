@@ -90,6 +90,18 @@ fn all_settings() -> Vec<CounterSetting> {
 }
 
 #[test]
+fn oversized_metadata_is_rejected_before_parsing() {
+    let (root, service, _, _) = fixture();
+    let counter = root.path().join("static/counter");
+    std::fs::create_dir(&counter).unwrap();
+    std::fs::write(counter.join("metadata.txt"), vec![b'x'; 64 * 1024 + 1]).unwrap();
+    assert!(matches!(
+        service.discover(),
+        Err(CounterError::Io(error)) if error.kind() == io::ErrorKind::InvalidData
+    ));
+}
+
+#[test]
 fn discovers_metadata_html_order_and_immediate_ignore_scope() {
     let (root, service, _, _) = fixture();
     let static_root = root.path().join("static");
@@ -611,6 +623,55 @@ impl CounterDownloader for CancellingDownloader {
             finished.store(true, Ordering::Release);
             Ok(())
         })
+    }
+}
+
+#[tokio::test]
+async fn install_admission_rejects_when_four_jobs_are_active() {
+    let root = tempfile::tempdir().unwrap();
+    let static_root = root.path().join("static");
+    std::fs::create_dir(&static_root).unwrap();
+    let downloader = Arc::new(CancellingDownloader {
+        started: Arc::new(tokio::sync::Semaphore::new(0)),
+        finished: Arc::new(AtomicBool::new(false)),
+    });
+    let service = Arc::new(ReloadableCounterService::from_service(CounterService::new(
+        static_root,
+        root.path().join("settings"),
+        Arc::new(RecordingOpener::default()),
+        downloader.clone(),
+    )));
+    let mut jobs = Vec::new();
+    for index in 0..4 {
+        let service = service.clone();
+        jobs.push(tokio::spawn(async move {
+            service
+                .download(&DownloadRequest {
+                    url: "https://example.com/a.zip".into(),
+                    name: format!("counter{index}"),
+                    update: false,
+                })
+                .await
+        }));
+    }
+    let permit = downloader.started.acquire_many(4).await.unwrap();
+    permit.forget();
+    let reloaded_root = root.path().join("replacement");
+    std::fs::create_dir(&reloaded_root).unwrap();
+    service.reload_static_root(reloaded_root);
+    assert!(matches!(
+        service
+            .download(&DownloadRequest {
+                url: "https://example.com/fifth.zip".into(),
+                name: "counter4".into(),
+                update: false,
+            })
+            .await,
+        Err(CounterError::InstallBusy)
+    ));
+    service.shutdown().await;
+    for job in jobs {
+        job.await.unwrap().unwrap();
     }
 }
 

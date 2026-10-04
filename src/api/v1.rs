@@ -8,6 +8,7 @@ use helpers::joined_path;
 use crate::model::api::v1::*;
 use crate::model::enums::{ClientType, CountryCodes, GameState};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 #[cfg(test)]
 use crate::api::JsFormatter;
@@ -516,13 +517,20 @@ fn map_chat(
     messages: &[crate::model::states::TourneyManagerChatItem],
     clients: &[TourneyIpcClient],
 ) -> Vec<TourneyMessage> {
+    // Preserve the first matching client when names repeat, without rescanning
+    // every client for every retained tournament message.
+    let mut teams = HashMap::with_capacity(clients.len());
+    for client in clients {
+        teams
+            .entry(client.spectating.name.as_str())
+            .or_insert(client.team.as_str());
+    }
     messages
         .iter()
         .map(|message| TourneyMessage {
-            team: clients
-                .iter()
-                .find(|client| client.spectating.name == message.name)
-                .map(|client| client.team.clone())
+            team: teams
+                .get(message.name.as_str())
+                .map(|team| (*team).to_owned())
                 .unwrap_or_else(|| {
                     if message.name == "BanchoBot" {
                         "bot".to_owned()

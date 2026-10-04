@@ -29,12 +29,16 @@ fn zip_candidate_entries(
     }
 
     if position >= 20 {
-        file.seek(SeekFrom::Start(position - 20))?;
+        let locator_position = position - 20;
+        file.seek(SeekFrom::Start(locator_position))?;
         let mut locator = [0u8; 20];
         file.read_exact(&mut locator)?;
         if &locator[..4] == b"PK\x06\x07" {
             let offset = u64::from_le_bytes(locator[8..16].try_into().unwrap());
-            if offset.checked_add(56).is_none_or(|end| end > file_length) {
+            if offset
+                .checked_add(56)
+                .is_none_or(|end| end > locator_position)
+            {
                 return Err(NetworkError::UnsafeZip("invalid ZIP64 end record".into()));
             }
             file.seek(SeekFrom::Start(offset))?;
@@ -42,6 +46,17 @@ fn zip_candidate_entries(
             file.read_exact(&mut record)?;
             if &record[..4] != b"PK\x06\x06" {
                 return Err(NetworkError::UnsafeZip("invalid ZIP64 end record".into()));
+            }
+            let record_length = u64::from_le_bytes(record[4..12].try_into().unwrap());
+            if record_length < 44
+                || offset
+                    .checked_add(12)
+                    .and_then(|start| start.checked_add(record_length))
+                    != Some(locator_position)
+            {
+                return Err(NetworkError::UnsafeZip(
+                    "ambiguous ZIP64 end record offset".into(),
+                ));
             }
             return Ok(Some(u64::from_le_bytes(record[32..40].try_into().unwrap())));
         }

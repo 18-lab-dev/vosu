@@ -46,3 +46,42 @@ fn structured_speed_mods_reach_live_engine() {
 
     assert!(attrs.stars().is_finite());
 }
+
+#[test]
+fn tiny_structured_rate_and_explicit_rate_are_rejected_before_difficulty() {
+    let engine = LiveLazerEngine;
+    let map = engine.parse(MAP).unwrap();
+    let tiny_mod = StructuredMod {
+        acronym: "DT".to_owned(),
+        settings: BTreeMap::from([("speedChange".to_owned(), ModValue::Number(1.0e-12))]),
+    };
+    let mut modded = map.clone();
+    engine.apply_mods(&mut modded, &[tiny_mod]).unwrap();
+    assert!(
+        engine
+            .difficulty(&modded, &DifficultyConfig::default())
+            .is_err()
+    );
+    assert!(
+        engine
+            .difficulty(
+                &map,
+                &DifficultyConfig {
+                    clock_rate: Some(1.0e-12),
+                    ..DifficultyConfig::default()
+                },
+            )
+            .is_err()
+    );
+    assert!(
+        engine
+            .difficulty(
+                &map,
+                &DifficultyConfig {
+                    clock_rate: Some(1.0),
+                    ..DifficultyConfig::default()
+                },
+            )
+            .is_ok()
+    );
+}

@@ -41,7 +41,7 @@ use crate::{
     },
     assets::DaemonAssets,
     calculation::default_calculated_mods,
-    config::{Config, ConfigChanged, ConfigStore},
+    config::{Config, ConfigChanged, ConfigDocument, ConfigStore},
     counters::ReloadableCounterService,
     instance::{
         InstanceGeneration, InstanceLifecycleSnapshot, InstanceRuntime, NativeProcessProvider,

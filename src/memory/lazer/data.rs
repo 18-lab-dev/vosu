@@ -30,8 +30,12 @@ impl LazerMemory {
         Ok(result)
     }
     pub(super) fn read_mod_types(&self, list: usize) -> Result<Vec<usize>, MemoryError> {
-        let mut types = Vec::new();
-        for current in self.list_items(list, false, 8)? {
+        const MAX_MOD_TYPES: usize = 256;
+        let mut types = Vec::with_capacity(32);
+        for current in self.list_items_bounded(list, false, 8, MAX_MOD_TYPES)? {
+            if types.len() >= MAX_MOD_TYPES {
+                return Err(corrupt("mod array", list, "aggregate type budget exceeded"));
+            }
             let ty = self.ptr(current)?;
             let multi = ty != 0
                 && self.process.read_i32(ty)? == 0x1000000
@@ -44,6 +48,13 @@ impl LazerMemory {
                 let count = self.process.read_i32(add(array, 8)?)?;
                 if !(0..=MAX_COLLECTION as i32).contains(&count) {
                     return Err(corrupt("mod array", array, "invalid count"));
+                }
+                if types.len().saturating_add(count as usize) > MAX_MOD_TYPES {
+                    return Err(corrupt(
+                        "mod array",
+                        array,
+                        "aggregate type budget exceeded",
+                    ));
                 }
                 for i in 0..count as usize {
                     let item = self.ptr(add(array, 0x10 + i * 8)?)?;

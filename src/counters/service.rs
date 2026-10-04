@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::fs;
-use std::io;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -15,7 +15,11 @@ use tokio_util::sync::CancellationToken;
 use super::model::{Counter, CounterSetting, DownloadRequest, SettingInput};
 use super::settings::{SettingsError, SettingsStore, validate_component};
 
-const USER_AGENT: &str = concat!("vosu/", env!("CARGO_PKG_VERSION"), " (https://vosu.app)");
+const USER_AGENT: &str = concat!(
+    "vosu/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/shiruviaa/vosu)"
+);
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
 pub trait CounterOpener: Send + Sync {
@@ -118,6 +122,8 @@ pub enum CounterError {
     Download(String),
     #[error(transparent)]
     Network(#[from] crate::net::streaming::NetworkError),
+    #[error("counter install capacity is full")]
+    InstallBusy,
     #[error("counter service is shutting down")]
     ShuttingDown,
 }
@@ -141,7 +147,6 @@ impl Drop for ActiveInstall {
 /// retain their old `Arc` until completion.
 pub struct ReloadableCounterService {
     current: ArcSwap<CounterService>,
-    retired: std::sync::Mutex<Vec<Arc<CounterService>>>,
     pending: tokio::sync::Mutex<HashMap<String, u64>>,
 }
 
@@ -157,7 +162,6 @@ impl ReloadableCounterService {
     pub fn from_service(service: CounterService) -> Self {
         Self {
             current: ArcSwap::from_pointee(service),
-            retired: std::sync::Mutex::new(Vec::new()),
             pending: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -167,17 +171,18 @@ impl ReloadableCounterService {
         if current.static_root == static_root {
             return;
         }
-        let replacement = Arc::new(CounterService::new(
+        // Root generations change only filesystem selection. Admission,
+        // cancellation and join accounting remain daemon-wide, including
+        // detached installs whose initiating HTTP request was dropped.
+        let replacement = Arc::new(CounterService {
+            settings: SettingsStore::new(
+                static_root.clone(),
+                current.settings.settings_root().to_owned(),
+            ),
             static_root,
-            current.settings.settings_root().to_owned(),
-            Arc::clone(&current.opener),
-            Arc::clone(&current.downloader),
-        ));
-        let retired = self.current.swap(replacement);
-        self.retired
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(retired);
+            ..(*current).clone()
+        });
+        self.current.store(replacement);
     }
 
     pub fn current_root(&self) -> PathBuf {
@@ -271,18 +276,7 @@ impl ReloadableCounterService {
     }
 
     pub async fn shutdown(&self) {
-        let current = self.current.load_full();
-        let retired = {
-            let mut retired = self
-                .retired
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            std::mem::take(&mut *retired)
-        };
-        current.shutdown().await;
-        for service in retired {
-            service.shutdown().await;
-        }
+        self.current.load_full().shutdown().await;
     }
 }
 
@@ -298,6 +292,7 @@ pub struct CounterService {
     install_gate: Arc<tokio::sync::Mutex<()>>,
     active_installs: Arc<AtomicUsize>,
     install_done: Arc<tokio::sync::Notify>,
+    install_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl CounterService {
@@ -327,6 +322,7 @@ impl CounterService {
             install_gate: Arc::new(tokio::sync::Mutex::new(())),
             active_installs: Arc::new(AtomicUsize::new(0)),
             install_done: Arc::new(tokio::sync::Notify::new()),
+            install_slots: Arc::new(tokio::sync::Semaphore::new(4)),
         }
     }
 
@@ -406,6 +402,11 @@ impl CounterService {
         if !self.accepting_downloads.load(Ordering::Acquire) {
             return Err(CounterError::ShuttingDown);
         }
+        let permit = self
+            .install_slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| CounterError::InstallBusy)?;
         let downloader = self.downloader.clone();
         let request = request.clone();
         let cancel = self.cancel.child_token();
@@ -416,6 +417,7 @@ impl CounterService {
             done: self.install_done.clone(),
         };
         tokio::spawn(async move {
+            let _permit = permit;
             let _active = active;
             let result = downloader
                 .download_and_install(request, destination, cancel)
@@ -583,12 +585,39 @@ fn remove_counter_symlink(path: &Path, file_type: &fs::FileType) -> io::Result<(
     }
 }
 
+const MAX_DISCOVERY_FILES: usize = 4096;
+const MAX_METADATA_BYTES: usize = 64 * 1024;
 pub fn parse_metadata(
     static_root: &Path,
     metadata_path: &Path,
     settings_store: &SettingsStore,
 ) -> Result<Counter, CounterError> {
-    let text = fs::read_to_string(metadata_path)?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(metadata_path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > MAX_METADATA_BYTES as u64 {
+        return Err(CounterError::Io(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "metadata file exceeds limit",
+        )));
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take((MAX_METADATA_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_METADATA_BYTES {
+        return Err(CounterError::Io(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "metadata file exceeds limit",
+        )));
+    }
+    let text = String::from_utf8(bytes)
+        .map_err(|error| CounterError::Io(io::Error::new(io::ErrorKind::InvalidData, error)))?;
     let mut fields = HashMap::new();
     for line in text.lines() {
         let Some((key, rest)) = line.split_once(':') else {
@@ -713,6 +742,12 @@ fn recursive_named_files(
                 }
             } else if !is_symlink && name == filename {
                 out.push((metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH), path));
+                if out.len() > MAX_DISCOVERY_FILES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "counter discovery limit exceeded",
+                    ));
+                }
             }
         }
         Ok(())

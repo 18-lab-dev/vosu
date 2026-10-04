@@ -24,6 +24,10 @@ use crate::model::states::{
 use crate::process::{MemoryError, MemoryRead, Pattern, ProcessHandle, ReadRequest, ReadStatus};
 
 const MAX_COLLECTION: usize = 1_000_000;
+// Room/client counts and retained chat are far smaller than gameplay histories.
+const MAX_ROOM_USERS: usize = 256;
+const MAX_CHAT_MESSAGES: usize = 2_048;
+const MAX_RETAINED_CHAT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SCORE: f64 = 1_000_000.0;
 const GAME_BASE_DELTAS: [usize; 7] = [0x24, 0x28, 0x2c, 0x20, 0x30, 0x1c, 0x34];
 const UNCACHED_POINTER: usize = usize::MAX;

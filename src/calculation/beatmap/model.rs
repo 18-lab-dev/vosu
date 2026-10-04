@@ -77,7 +77,7 @@ impl ModSet {
         mods: Vec<AppliedMod>,
         clock_rate: f64,
     ) -> Result<Self, BeatmapError> {
-        if !clock_rate.is_finite() || clock_rate <= 0.0 {
+        if !clock_rate.is_finite() || !(0.01..=100.0).contains(&clock_rate) {
             return Err(BeatmapError::InvalidClockRate);
         }
         Ok(Self {
@@ -415,7 +415,7 @@ impl ParsedBeatmap {
         if !primary.section_length.is_finite()
             || primary.section_length <= 0.0
             || !clock_rate.is_finite()
-            || clock_rate <= 0.0
+            || !(0.01..=100.0).contains(&clock_rate)
         {
             return empty();
         }
@@ -435,21 +435,55 @@ impl ParsedBeatmap {
         } else {
             (0.0, 0.0)
         };
-        // Negative array lengths are rejected by the source graph calculation.
-        if [empty_left, object_left, object_right, empty_right]
+        // A graph owns x-axis, primary, and every named strain sample. One
+        // million total bins is ample for ordinary maps while bounding all
+        // padding-derived allocations (including tiny rates and huge audio).
+        const MAX_GRAPH_BINS: usize = 1_000_000;
+        let counts = [empty_left, object_left, object_right, empty_right];
+        if counts
             .iter()
-            .any(|value| !value.is_finite() || *value < 0.0)
+            .any(|value| !value.is_finite() || *value < 0.0 || *value > MAX_GRAPH_BINS as f64)
         {
             return empty();
         }
-        let (empty_left, object_left, object_right, empty_right) = (
-            empty_left as usize,
-            object_left as usize,
-            object_right as usize,
-            empty_right as usize,
-        );
-        let left = empty_left + object_left;
-        let right = object_right + empty_right;
+        let Some(empty_left) = usize::try_from(empty_left as u64).ok() else {
+            return empty();
+        };
+        let Some(object_left) = usize::try_from(object_left as u64).ok() else {
+            return empty();
+        };
+        let Some(object_right) = usize::try_from(object_right as u64).ok() else {
+            return empty();
+        };
+        let Some(empty_right) = usize::try_from(empty_right as u64).ok() else {
+            return empty();
+        };
+        let Some(left) = empty_left.checked_add(object_left) else {
+            return empty();
+        };
+        let Some(right) = object_right.checked_add(empty_right) else {
+            return empty();
+        };
+        let base_len = self
+            .engine
+            .strains
+            .values()
+            .map(|strain| strain.values.len())
+            .fold(primary.values.len(), usize::max);
+        let Some(total) = left
+            .checked_add(base_len)
+            .and_then(|count| count.checked_add(right))
+        else {
+            return empty();
+        };
+        let graph_series = strain_names(self.effective_mode).len();
+        let Some(aggregate) = total
+            .checked_mul(graph_series + 2)
+            .filter(|count| *count <= MAX_GRAPH_BINS)
+        else {
+            return empty();
+        };
+        let _ = aggregate;
         let mut series = Vec::with_capacity(strain_names(self.effective_mode).len());
         for name in strain_names(self.effective_mode) {
             let mut data = Vec::new();

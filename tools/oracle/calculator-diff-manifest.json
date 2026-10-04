@@ -3298,21 +3298,6 @@
       "vectors": [
         "wrapper-display-retained-attrs-contract"
       ]
-    },
-    {
-      "id": "wrapper.retained-attrs.cross-mode-error",
-      "sourcePort": "shared.structured-mods",
-      "authority": "calculator-wrapper",
-      "location": "lib/native/PlayBeatmap.cs:93-105,123-139 and osu! 97e94bab ruleset GetAdjustedDisplayDifficulty implementations",
-      "baselineLocation": "rosu-pp v4.0.1 mode difficulty/performance builders and raw BeatmapAttributesBuilder display projection",
-      "rustLocation": "crates/vosu-pp/src/lib.rs::LiveLazerEngine::beatmap_difficulty and DifficultyAttrsData::calculate_performance",
-      "delta": "all twelve ordered cross-mode difficulty-attribute and performance-calculator pairings reject the mismatched ruleset instead of interpreting foreign attribute data.",
-      "requires": [
-        "wrapper.retained-attrs.cross-mode-throws"
-      ],
-      "vectors": [
-        "wrapper-display-retained-attrs-contract"
-      ]
     }
   ]
 }

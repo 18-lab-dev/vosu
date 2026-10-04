@@ -227,9 +227,9 @@ fn malformed_refresh_rolls_back_without_partial_changes() {
 }
 
 #[test]
-fn schema_minima_are_clamped_and_warned() {
+fn schema_minima_are_clamped() {
     let mut document = ConfigDocument::default();
-    let warnings = document
+    document
         .refresh(
             "\
 POLL_RATE = -5.0
@@ -244,13 +244,22 @@ SERVER_PORT = -1.5
     assert_eq!(document.config().precise_data_poll_rate, 1.0);
     assert_eq!(document.config().v2_subscription_debounce, 0.0);
     assert_eq!(document.config().server_port, -1.5);
+}
+
+#[test]
+fn oversized_disk_intervals_are_bounded_before_publication() {
+    let document = ConfigDocument::parse(
+        "POLL_RATE = 1e100\nPRECISE_DATA_POLL_RATE = 1e300\nV2_SUBSCRIPTION_DEBOUNCE = 1e200\n",
+    )
+    .unwrap();
+    assert_eq!(document.config().poll_rate, ConfigDocument::MAX_INTERVAL_MS);
     assert_eq!(
-        warnings,
-        [
-            "Config %POLL_RATE% value %-5% is below the minimum %100%, clamping.",
-            "Config %PRECISE_DATA_POLL_RATE% value %0% is below the minimum %1%, clamping.",
-            "Config %V2_SUBSCRIPTION_DEBOUNCE% value %-0.25% below minimum %0%, clamping.",
-        ]
+        document.config().precise_data_poll_rate,
+        ConfigDocument::MAX_INTERVAL_MS
+    );
+    assert_eq!(
+        document.config().v2_subscription_debounce,
+        ConfigDocument::MAX_INTERVAL_MS
     );
 }
 

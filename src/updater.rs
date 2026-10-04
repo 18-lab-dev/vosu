@@ -213,7 +213,6 @@ pub enum UpdateCut {
 pub struct StartupReadiness {
     pub record_path: PathBuf,
     pub transaction_token: String,
-    pub readiness_token: String,
     pub address: SocketAddr,
 }
 
@@ -221,12 +220,7 @@ impl StartupReadiness {
     /// Call only after config/log initialization, application construction,
     /// and the runtime listener have all completed successfully.
     pub fn signal_ready(&self) -> Result<(), UpdateError> {
-        signal_ready(
-            &self.record_path,
-            &self.transaction_token,
-            &self.readiness_token,
-            self.address,
-        )
+        signal_ready(&self.record_path, &self.transaction_token, self.address)
     }
 
     /// Call after signalling readiness. This waits for the exact helper owner

@@ -220,7 +220,11 @@ pub fn static_fallback(path: &str) -> StaticFallback {
         .map_or(0, |dot| last.len() - dot);
     if extension_len < 3 && !path.ends_with('/') {
         return StaticFallback::RedirectTrailingSlash {
-            location: format!("{path}/"),
+            // Prevent untrusted paths from creating network-path Location values.
+            location: format!(
+                "/{}/",
+                path.trim_start_matches(['/', '\\']).trim_end_matches('/')
+            ),
         };
     }
     let index_path = if path.ends_with('/') {
@@ -371,6 +375,14 @@ mod tests {
                 location: "/.hidden/".into()
             }
         );
+        for hostile in ["//evil.example/counter", "/\\\\evil.example/counter"] {
+            let StaticFallback::RedirectTrailingSlash { location } = static_fallback(hostile)
+            else {
+                panic!("expected trailing-slash redirect");
+            };
+            assert!(location.starts_with('/') && !location.starts_with("//"));
+            assert!(!location.contains("\\"));
+        }
         assert_eq!(content_type(".html"), "");
         assert_eq!(
             static_fallback("/counter/"),

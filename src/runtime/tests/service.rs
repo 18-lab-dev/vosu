@@ -180,6 +180,30 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     reloaded.shutdown().await.unwrap();
 }
 
+#[tokio::test]
+async fn oversized_interval_save_preserves_runtime_and_disk_configuration() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("vosu.toml");
+    let store = Arc::new(ConfigStore::initialize(path.clone()).await.unwrap());
+    store.flush().await.unwrap();
+    let original = store.current();
+    let bytes = std::fs::read(&path).unwrap();
+    let service = RuntimeConfig { config: Arc::clone(&store) };
+    for key in ["POLL_RATE", "PRECISE_DATA_POLL_RATE", "V2_SUBSCRIPTION_DEBOUNCE"] {
+        for value in [serde_json::json!(1e100), serde_json::json!("1e300")] {
+            let mut object = serde_json::Map::new();
+            object.insert(key.to_owned(), value);
+            object.insert("STATIC_FOLDER_PATH".to_owned(), serde_json::json!("/"));
+            assert!(service.save(object.into()).await.is_err());
+            assert_eq!(*store.current(), *original);
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        }
+    }
+    assert_eq!(poll_duration(f64::MAX), Duration::from_secs(60));
+    assert!(std::time::Instant::now().checked_add(poll_duration(f64::MAX)).is_some());
+    store.shutdown().await.unwrap();
+}
+
 #[test]
 fn settings_save_accepts_finite_json_numbers_and_ignores_invalid_or_nonfinite_values() {
     let mut config = Config::default();

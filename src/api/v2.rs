@@ -52,13 +52,7 @@ fn build_internal<'a, V: From<&'a [f64]>>(
         ranked_play: state.ranked_play.info.clone(),
         settings: build_settings(state, source),
         profile: build_profile(state.user.profile.as_ref()),
-        beatmap: build_beatmap(
-            state,
-            parsed,
-            source,
-            current_mode,
-            focused.precise.play_time,
-        ),
+        beatmap: build_beatmap(state, parsed, current_mode, focused.precise.play_time),
         play: build_play(
             &state.gameplay,
             state.beatmap.attributes.as_ref(),

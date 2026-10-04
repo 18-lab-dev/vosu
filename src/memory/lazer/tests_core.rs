@@ -803,15 +803,30 @@ fn unsupported_and_pure_boundary_semantics_are_stable() {
     assert_eq!(country_code("US"), 225);
     assert_eq!(country_code("invalid"), 0);
     assert_eq!(
-        lazer_path("abcdef"),
-        Path::new("a").join("ab").join("abcdef").to_string_lossy()
+        lazer_path("0123456789abcdef0123456789abcdef").unwrap(),
+        Path::new("0")
+            .join("01")
+            .join("0123456789abcdef0123456789abcdef")
+            .to_string_lossy()
     );
+    assert_eq!(lazer_path("").unwrap(), "");
+    let sha256 = "0123456789abcdef".repeat(4);
     assert_eq!(
-        lazer_path("a"),
-        Path::new("a").join("a").join("a").to_string_lossy()
+        lazer_path(&sha256).unwrap(),
+        Path::new("0").join("01").join(&sha256).to_string_lossy()
     );
-    #[cfg(windows)]
-    assert!(lazer_path("abcdef").contains('\\'));
+    for malformed in [
+        "a",
+        "abcdef",
+        "g123456789abcdef0123456789abcdef",
+        "é123456789abcdef0123456789abcdef",
+        "aé23456789abcdef0123456789abcdef",
+    ] {
+        assert!(
+            matches!(lazer_path(malformed), Err(MemoryError::Corrupt { .. })),
+            "{malformed:?}"
+        );
+    }
     assert!(matches!(
         add(usize::MAX, 1),
         Err(MemoryError::AddressOverflow { .. })

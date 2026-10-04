@@ -276,6 +276,15 @@ pub struct Connection {
     fragments: Fragments,
 }
 
+/// Cloneable control-plane access that does not require the receive-side
+/// `Connection` mutex.
+#[derive(Clone)]
+pub struct ConnectionControl {
+    id: ClientId,
+    client: Arc<Client>,
+    hub: WebSocketHub,
+}
+
 fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -310,7 +319,9 @@ impl WebSocketHub {
     fn connect_inner(&self, publishes_state: bool) -> (Connection, OutboundReceiver) {
         let id = self.0.next_id.fetch_add(1, Ordering::Relaxed);
         let (data, data_receiver) = mpsc::channel(1);
-        let (control, control_receiver) = mpsc::channel(1);
+        // Allow ordinary command bursts without disconnecting an otherwise
+        // healthy recipient before its writer gets scheduled.
+        let (control, control_receiver) = mpsc::channel(16);
         let cancellation = CancellationToken::new();
         let terminal = Arc::new(Mutex::new(None));
         let client = Arc::new(Client {
@@ -502,6 +513,14 @@ impl Connection {
         self.id
     }
 
+    pub fn control_handle(&self) -> ConnectionControl {
+        ConnectionControl {
+            id: self.id,
+            client: Arc::clone(&self.client),
+            hub: self.hub.clone(),
+        }
+    }
+
     pub fn set_filters(&self, filters: Vec<Filter>) {
         self.client.filters.store(Arc::new(filters));
         self.client
@@ -533,6 +552,13 @@ impl Connection {
             self.cleanup();
         }
         sent
+    }
+
+    /// Enqueues a control reply without waiting; callers on shared workers
+    /// must not let one full client queue stall unrelated clients.
+    pub fn try_send_text(&self, bytes: Bytes) -> bool {
+        self.client.state.load(Ordering::Acquire) != CLIENT_CLOSED
+            && self.client.control.try_send(Outbound::Reply(bytes)).is_ok()
     }
 
     /// Consumes a transport frame. Complete text/binary messages are returned
@@ -622,6 +648,35 @@ impl Connection {
     fn close_with(&mut self, code: u16, reason: &'static str) {
         self.fragments = Fragments::default();
         self.finish(Some(Outbound::Close { code, reason }));
+    }
+}
+
+impl ConnectionControl {
+    pub fn set_filters(&self, filters: Vec<Filter>) {
+        self.client.filters.store(Arc::new(filters));
+        self.client
+            .last_generation
+            .store(u64::MAX, Ordering::Release);
+        self.hub.wake();
+    }
+
+    /// Enqueues a control reply without waiting; a full recipient queue is
+    /// reported to the caller so that recipient can be cleaned up.
+    pub fn try_send_text(&self, bytes: Bytes) -> bool {
+        self.client.state.load(Ordering::Acquire) != CLIENT_CLOSED
+            && self.client.control.try_send(Outbound::Reply(bytes)).is_ok()
+    }
+
+    pub fn cleanup(&self) {
+        if !self.client.cleaned.swap(true, Ordering::AcqRel) {
+            self.client.state.store(CLIENT_CLOSED, Ordering::Release);
+            self.client.cancellation.cancel();
+        }
+        let _write = lock_unpoisoned(&self.hub.0.client_writes);
+        let mut clients = HashMap::clone(&self.hub.0.clients.load());
+        clients.remove(&self.id);
+        self.hub.0.clients.store(Arc::new(clients));
+        self.hub.wake();
     }
 }
 

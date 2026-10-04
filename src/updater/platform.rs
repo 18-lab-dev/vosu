@@ -63,7 +63,7 @@ impl UpdatePlatform for NativePlatform {
         Command::new(executable)
             .args(args)
             .current_dir(cwd)
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

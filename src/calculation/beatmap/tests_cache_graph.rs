@@ -67,6 +67,13 @@
         let negative_graph = negative_map.build_graph(None, 1.0);
         assert!(negative_graph.series[0].data.is_empty());
         assert!(negative_graph.x_axis.is_empty());
+        let oversized = map.build_graph(Some(1.0e21), 1.0);
+        assert!(oversized.primary.is_empty());
+        assert!(oversized.x_axis.is_empty());
+        assert!(oversized.series.iter().all(|series| series.data.is_empty()));
+        let tiny_rate = map.build_graph(Some(2_200.0), 1.0e-12);
+        assert!(tiny_rate.primary.is_empty());
+        assert!(tiny_rate.x_axis.is_empty());
     }
 
     #[test]

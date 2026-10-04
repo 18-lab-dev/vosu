@@ -216,6 +216,7 @@ async fn resource_response_with_counter_path(
     }
 }
 
+
 fn counter_path_script(encoded_html_path: &str) -> Option<Bytes> {
     let decoded_html_path = percent_decode_once(encoded_html_path).ok()?;
     let logical_path = decoded_html_path.trim_start_matches('/');

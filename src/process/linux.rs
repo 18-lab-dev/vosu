@@ -26,6 +26,26 @@ pub struct LinuxProcessMetadata {
     pub executable: PathBuf,
     pub bitness: ProcessBitness,
 }
+fn owned_by_real_uid(dir: &Path) -> io::Result<bool> {
+    let status = read_bounded(&dir.join("status"), 0)?;
+    let uid = status
+        .split(|byte| *byte == b'\n')
+        .find_map(|line| line.strip_prefix(b"Uid:"))
+        .and_then(|line| {
+            line.split(|byte| byte.is_ascii_whitespace())
+                .find(|part| !part.is_empty())
+        })
+        .and_then(|value| std::str::from_utf8(value).ok())
+        .and_then(|value| value.parse::<libc::uid_t>().ok())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "missing real UID in /proc status",
+            )
+        })?;
+    // SAFETY: getuid has no preconditions.
+    Ok(uid == unsafe { libc::getuid() })
+}
 
 trait ProcessVmReadv: Send + Sync {
     fn readv(
@@ -82,6 +102,7 @@ pub struct LinuxProcessMemory {
     iov_max: OnceLock<usize>,
     maps_capacity: AtomicUsize,
     pidfd: Option<Arc<OwnedFd>>,
+    start_time: Option<u64>,
 }
 
 impl Clone for LinuxProcessMemory {
@@ -93,6 +114,7 @@ impl Clone for LinuxProcessMemory {
             iov_max: self.iov_max.clone(),
             maps_capacity: AtomicUsize::new(self.maps_capacity.load(Ordering::Relaxed)),
             pidfd: self.pidfd.clone(),
+            start_time: self.start_time,
         }
     }
 }
@@ -132,11 +154,13 @@ impl LinuxProcessMemory {
         syscall: Arc<dyn ProcessVmReadv>,
         pidfd: Option<Arc<OwnedFd>>,
     ) -> Self {
+        let start_time = process_start_time_at(&proc_root, pid);
         Self {
             pid: pid as libc::pid_t,
             proc_root,
             syscall,
             pidfd,
+            start_time,
             iov_max: OnceLock::new(),
             maps_capacity: AtomicUsize::new(4096),
         }
@@ -448,7 +472,23 @@ impl LinuxProcessMemory {
         address: usize,
         len: usize,
     ) -> Result<usize, MemoryError> {
-        self.syscall
+        let generation_matches = || {
+            #[cfg(feature = "linux-process-events")]
+            if let Some(pidfd) = self.pidfd.as_deref() {
+                return pidfd_is_alive(pidfd);
+            }
+            self.start_time.is_none_or(|start| {
+                u32::try_from(self.pid)
+                    .ok()
+                    .and_then(|pid| process_start_time_at(&self.proc_root, pid))
+                    == Some(start)
+            })
+        };
+        if !generation_matches() {
+            return Err(read_error(address, len, "process generation changed"));
+        }
+        let bytes = self
+            .syscall
             .readv(self.pid, local, remote)
             .map_err(|errno| {
                 let message = io::Error::from_raw_os_error(errno).to_string();
@@ -461,7 +501,15 @@ impl LinuxProcessMemory {
                 } else {
                     read_error(address, len, message)
                 }
-            })
+            })?;
+        if !generation_matches() {
+            return Err(read_error(
+                address,
+                len,
+                "process generation changed during read",
+            ));
+        }
+        Ok(bytes)
     }
 }
 
@@ -562,22 +610,43 @@ impl ProcessMemory for LinuxProcessMemory {
     }
 
     fn is_alive(&self) -> bool {
+        let Some(pid) = u32::try_from(self.pid).ok() else {
+            return false;
+        };
         #[cfg(feature = "linux-process-events")]
         if let Some(pidfd) = self.pidfd.as_deref() {
             return pidfd_is_alive(pidfd);
         }
-        u32::try_from(self.pid).is_ok_and(|pid| is_process_alive_at(&self.proc_root, pid))
+        self.start_time.is_some_and(|start| {
+            is_process_alive_at(&self.proc_root, pid)
+                && process_start_time_at(&self.proc_root, pid) == Some(start)
+        })
     }
 }
 
 pub fn open_process(pid: u32) -> Result<LinuxProcessMemory, MemoryError> {
+    let dir = Path::new("/proc").join(pid.to_string());
+    let owned = owned_by_real_uid(&dir).map_err(|error| backend("check process owner", error))?;
+    if !owned {
+        return Err(read_error(0, 0, "process is owned by another real UID"));
+    }
     let memory = LinuxProcessMemory::new(pid);
+    if memory.start_time.is_none() {
+        return Err(read_error(0, 0, "could not capture process generation"));
+    }
     if !memory.is_alive() {
         return Err(read_error(0, 0, "process is not alive"));
     }
     memory.mapped_regions(false)?;
     if !memory.is_alive() {
-        return Err(read_error(0, 0, "process exited while opening"));
+        return Err(read_error(
+            0,
+            0,
+            "process exited or PID was reused while opening",
+        ));
+    }
+    if !owned_by_real_uid(&dir).unwrap_or(false) {
+        return Err(read_error(0, 0, "process owner changed while opening"));
     }
     Ok(memory)
 }
@@ -613,6 +682,9 @@ fn process_metadata_matching_at(
         Err(error) => return Err(backend("read /proc comm", error)),
     };
     if !include(&name) {
+        return Ok(None);
+    }
+    if !owned_by_real_uid(&dir).unwrap_or(false) {
         return Ok(None);
     }
     let command_line = match read_command_line_at(&dir) {
@@ -661,6 +733,9 @@ fn enumerate_processes_matching_at(
             continue;
         };
         if !include(&name) {
+            continue;
+        }
+        if !owned_by_real_uid(&dir).unwrap_or(false) {
             continue;
         }
         let Ok(command_line) = command_line_at(&dir) else {
@@ -712,6 +787,22 @@ fn process_name_from_bytes(mut bytes: Vec<u8>) -> Result<OsString, MemoryError> 
 
 fn process_disappeared(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
+}
+
+fn process_start_time_at(proc_root: &Path, pid: u32) -> Option<u64> {
+    let bytes = read_bounded(&proc_root.join(pid.to_string()).join("stat"), 0).ok()?;
+    let close = bytes.iter().rposition(|byte| *byte == b')')?;
+    let mut fields = bytes
+        .get(close + 1..)?
+        .split(|byte| byte.is_ascii_whitespace())
+        .filter(|field| !field.is_empty());
+    fields.nth(19)?.iter().try_fold(0u64, |value, byte| {
+        if byte.is_ascii_digit() {
+            value.checked_mul(10)?.checked_add(u64::from(byte - b'0'))
+        } else {
+            None
+        }
+    })
 }
 
 pub fn process_command_line(pid: u32) -> Result<Vec<OsString>, MemoryError> {

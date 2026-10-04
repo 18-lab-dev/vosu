@@ -205,15 +205,46 @@ fn source_enum_names_cover_every_mode() {
 }
 
 #[test]
-fn lazer_omits_parsed_beatmap_source_metadata() {
-    assert_eq!(
-        beatmap_source(ClientType::Lazer, Some("THE iDOLM@STER")),
-        ""
-    );
-    assert_eq!(
-        beatmap_source(ClientType::Stable, Some("THE iDOLM@STER")),
-        "THE iDOLM@STER"
-    );
+fn selected_map_source_metadata_survives_client_and_cache_transitions() {
+    let content = "osu file format v14\n\
+        [General]\nMode:3\n\
+        [Metadata]\nTitle:Metadata\nArtist:Fixture\nCreator:Fixture\nVersion:7K\nSource:osu!\n\
+        [Difficulty]\nHPDrainRate:5\nCircleSize:7\nOverallDifficulty:5\nApproachRate:5\n\
+        [TimingPoints]\n0,500,4,2,1,80,1,0\n\
+        [HitObjects]\n64,192,1000,1,0,0:0:0:0:\n";
+    for source in [ClientType::Stable, ClientType::Lazer] {
+        let parsed = BeatmapCache::new(LiveBeatmapEngine)
+            .load(
+                BeatmapInput::Content {
+                    content,
+                    identity_path: None,
+                },
+                Ruleset::Mania,
+                &ModSet::new("", Vec::new(), 1.0).unwrap(),
+                match source {
+                    ClientType::Stable => ScoringMode::Stable,
+                    ClientType::Lazer => ScoringMode::Lazer,
+                },
+            )
+            .unwrap();
+        let base = StateBundle::new(source, 1, Arc::new(NeverCalculate)).snapshot();
+        for (parsed, expected) in [(None, ""), (Some(parsed), "osu!"), (None, "")] {
+            let mut regular = (*base.regular).clone();
+            regular.beatmap.parsed = parsed;
+            let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+                2,
+                Some(10),
+                true,
+                ApiRuntimeSettings::default(),
+                [manager_entry(10, with_regular(&base, regular), false, None)],
+            )));
+            assert_eq!(
+                document(&snapshot).unwrap()["beatmap"]["source"],
+                expected,
+                "{source:?}"
+            );
+        }
+    }
 }
 
 #[test]

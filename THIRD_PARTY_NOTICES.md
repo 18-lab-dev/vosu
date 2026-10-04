@@ -187,7 +187,7 @@ These development packages, the private `vosu-test-harness` workspace member, or
 
 - project-authored repository code: `LICENSE-MIT` or `LICENSE-APACHE`
 - release archive license member: `LICENSE` (combined first-party terms and retained calculator MIT texts)
-  The `assets/SHA256SUMS` license entry tracks the current combined-license bytes (`e5329eb3372e841d72ee90a4aef2fbd2db16d62a83fa519d11611c840a86969e`). Refresh both values whenever `LICENSE` changes; other retained asset hashes remain tied to their exact bytes.
+  The `assets/SHA256SUMS` license entry tracks the current combined-license bytes (`b5e34b32f6f6a5f8f81ed4b1b59722bd36a8bbd2a92dad7a87eae9f8d7c3cfad`). Refresh both values whenever `LICENSE` changes; other retained asset hashes remain tied to their exact bytes.
 - calculator crate project-authored code: `crates/vosu-pp/LICENSE-MIT` or `crates/vosu-pp/LICENSE-APACHE`
 - pinned lazer-calculator LGPL-3.0 reference: `tools/oracle/reference/lazer-calculator/LICENSE`
 - local `vosu-rosu-pp-api` MIT license text: `crates/vosu-pp/rosu-pp-api/LICENSE`

@@ -278,16 +278,22 @@ pub(super) fn display_score(mode: i64, score: f64, objects: i64) -> f64 {
         _ => score,
     }
 }
-pub(super) fn lazer_path(hash: &str) -> String {
+pub(super) fn lazer_path(hash: &str) -> Result<String, MemoryError> {
     if hash.is_empty() {
-        String::new()
-    } else {
-        Path::new(&hash[..1])
-            .join(&hash[..hash.len().min(2)])
-            .join(hash)
-            .to_string_lossy()
-            .into_owned()
+        return Ok(String::new());
     }
+    if !matches!(hash.len(), 32 | 64) || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(MemoryError::Corrupt {
+            context: "resource hash",
+            address: 0,
+            message: "expected an ASCII hexadecimal MD5 or SHA-256 digest",
+        });
+    }
+    Ok(Path::new(&hash[..1])
+        .join(&hash[..2])
+        .join(hash)
+        .to_string_lossy()
+        .into_owned())
 }
 pub(super) fn mime(name: &str) -> String {
     let basename = name.rsplit(['/', '\\']).next().unwrap_or_default();

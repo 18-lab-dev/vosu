@@ -90,8 +90,47 @@ fn add_process(root: &Path, pid: u32, class: u8, cmdline: &[u8], maps: &str) -> 
     fs::write(dir.join("cmdline"), cmdline).expect("cmdline");
     fs::write(dir.join("comm"), b"osu!\n").expect("comm");
     fs::write(dir.join("maps"), maps).expect("maps");
-    fs::write(dir.join("stat"), format!("{pid} (osu! tricky) S 1 2 3")).expect("stat");
+    fs::write(
+        dir.join("stat"),
+        format!("{pid} (osu! tricky) S {} 41\n", "0 ".repeat(18)),
+    )
+    .expect("stat");
+    // SAFETY: getuid has no preconditions.
+    let uid = unsafe { libc::getuid() };
+    fs::write(
+        dir.join("status"),
+        format!("Uid:\t{uid}\t{uid}\t{uid}\t{uid}\n"),
+    )
+    .expect("status");
     executable
+}
+
+#[test]
+fn discovery_rejects_a_different_real_uid_even_when_effective_uid_matches() {
+    let fixture = fixture();
+    add_process(fixture.path(), 42, 2, b"osu!\0", "");
+    // SAFETY: getuid has no preconditions.
+    let uid = unsafe { libc::getuid() };
+    let status = fixture.path().join("42/status");
+    fs::write(
+        &status,
+        format!("Uid:\t{}\t{uid}\t{uid}\t{uid}\n", uid.wrapping_add(1)),
+    )
+    .unwrap();
+    assert!(
+        process_metadata_matching_at(fixture.path(), 42, |_| true)
+            .unwrap()
+            .is_none()
+    );
+    assert!(enumerate_processes_at(fixture.path()).unwrap().is_empty());
+    fs::write(&status, format!("Uid:\t{uid}\t{uid}\t{uid}\t{uid}\n")).unwrap();
+    assert_eq!(
+        process_metadata_matching_at(fixture.path(), 42, |_| true)
+            .unwrap()
+            .unwrap()
+            .pid,
+        42
+    );
 }
 
 #[test]
@@ -833,6 +872,25 @@ fn reads_native_self_process_memory() {
         .read_exact((&*value as *const u64) as usize, &mut bytes)
         .expect("read current process");
     assert_eq!(u64::from_ne_bytes(bytes), *value);
+}
+
+#[test]
+fn process_start_time_binds_identity_after_pid_reuse() {
+    let fixture = fixture();
+    let proc_root = fixture.path();
+    let process_dir = proc_root.join("123");
+    fs::create_dir(&process_dir).unwrap();
+    let stat = |start: u64| format!("123 (odd ) comm) S {} {start}\n", vec!["1"; 18].join(" "));
+    fs::write(process_dir.join("stat"), stat(41)).unwrap();
+    assert_eq!(process_start_time_at(proc_root, 123), Some(41));
+    let syscall = MockSyscall::new(MockMode::Exact, 1024);
+    let memory = LinuxProcessMemory::with_parts(123, proc_root.to_owned(), syscall);
+    fs::write(process_dir.join("stat"), stat(42)).unwrap();
+    assert_ne!(process_start_time_at(proc_root, 123), Some(41));
+    let mut output = [9u8; 8];
+    assert!(memory.read_exact(0x1000, &mut output).is_err());
+    assert_eq!(output, [0; 8]);
+    assert!(!memory.is_alive());
 }
 
 #[test]

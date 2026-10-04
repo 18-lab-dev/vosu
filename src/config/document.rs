@@ -76,7 +76,10 @@ impl ConfigDocument {
         }
     }
 
-    /// Clamps schema-defined polling and subscription minima.
+    /// Practical timer ceiling, also safe for `Instant` arithmetic.
+    pub const MAX_INTERVAL_MS: f64 = 60_000.0;
+
+    /// Clamps polling and subscription intervals to supported timer bounds.
     pub fn validate(&mut self) -> Vec<String> {
         let mut warnings = Vec::new();
 
@@ -102,6 +105,26 @@ impl ConfigDocument {
                 format_number(self.config.v2_subscription_debounce)
             ));
             self.config.v2_subscription_debounce = 0.0;
+        }
+
+        for (name, interval) in [
+            ("POLL_RATE", &mut self.config.poll_rate),
+            (
+                "PRECISE_DATA_POLL_RATE",
+                &mut self.config.precise_data_poll_rate,
+            ),
+            (
+                "V2_SUBSCRIPTION_DEBOUNCE",
+                &mut self.config.v2_subscription_debounce,
+            ),
+        ] {
+            if !interval.is_finite() || *interval > Self::MAX_INTERVAL_MS {
+                warnings.push(format!(
+                    "Config %{name}% interval is outside the supported range, clamping to %{}% ms.",
+                    Self::MAX_INTERVAL_MS
+                ));
+                *interval = Self::MAX_INTERVAL_MS;
+            }
         }
 
         warnings

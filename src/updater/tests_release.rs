@@ -81,7 +81,6 @@
     }
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
-    const READY_TOKEN: &str = "fedcba9876543210fedcba9876543210";
 
     fn os_arguments(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
@@ -106,7 +105,7 @@
             }
         );
         let candidate = parse_startup_update_args(os_arguments(&[
-            &format!("--update-candidate={READY_TOKEN}"),
+            "--update-candidate",
             "--update-ready=127.0.0.1:24050",
             &format!("--update-token={TOKEN}"),
             "--update-record=/tmp/record",
@@ -116,16 +115,14 @@
             candidate,
             StartupIntent::Candidate(StartupReadiness {
                 transaction_token,
-                readiness_token,
                 address,
                 ..
             }) if transaction_token == TOKEN
-                && readiness_token == READY_TOKEN
                 && address == "127.0.0.1:24050".parse::<SocketAddr>().unwrap()
         ));
         assert!(matches!(
             parse_startup_update_args(os_arguments(&[
-                &format!("--update-rollback={READY_TOKEN}"),
+                "--update-rollback",
                 "--update-ready=[::1]:24050",
                 &format!("--update-token={TOKEN}"),
                 "--update-record=/tmp/record",
@@ -141,14 +138,14 @@
             vec!["--update-helper".to_owned()],
             vec![
                 "--update-helper".to_owned(),
-                format!("--update-candidate={READY_TOKEN}"),
+                "--update-candidate".to_owned(),
                 "--update-ready=127.0.0.1:1".to_owned(),
                 format!("--update-token={TOKEN}"),
                 "--update-record=/tmp/r".to_owned(),
             ],
             vec![
-                format!("--update-candidate={READY_TOKEN}"),
-                format!("--update-rollback={READY_TOKEN}"),
+                "--update-candidate".to_owned(),
+                "--update-rollback".to_owned(),
                 "--update-ready=127.0.0.1:1".to_owned(),
                 format!("--update-token={TOKEN}"),
                 "--update-record=/tmp/r".to_owned(),
@@ -205,9 +202,9 @@
 
         let user_value = OsString::from_vec(vec![b'u', b's', b'e', b'r', 0xff]);
         let first = canonical_original_args([
+            OsString::from("--update-candidate"),
             OsString::from("--user-option"),
             user_value.clone(),
-            OsString::from(format!("--update-candidate={READY_TOKEN}")),
             OsString::from("--update-ready=127.0.0.1:1"),
             OsString::from(format!("--update-token={TOKEN}")),
             OsString::from("--update-record=/tmp/first"),
@@ -219,7 +216,6 @@
             .unwrap();
         replay.extend([
             OsString::from("--update-rollback"),
-            OsString::from(READY_TOKEN),
             OsString::from("--update-ready"),
             OsString::from("127.0.0.1:2"),
             OsString::from("--update-token"),

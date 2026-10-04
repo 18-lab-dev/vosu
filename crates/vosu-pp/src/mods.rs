@@ -75,8 +75,17 @@ pub(crate) fn difficulty_builder<'a>(
         crate::beatmap::apply_mods_to_map(&mut playable, map.mode, &resolved_config);
         Cow::Owned(playable)
     };
+    const MIN_CLOCK_RATE: f64 = 0.01;
+    const MAX_CLOCK_RATE: f64 = 100.0;
+    let mods = mods.into_core();
+    let effective_rate = config.clock_rate.unwrap_or_else(|| mods.clock_rate());
+    if !effective_rate.is_finite() || !(MIN_CLOCK_RATE..=MAX_CLOCK_RATE).contains(&effective_rate) {
+        return Err(Error::Calculation(
+            "clock rate must be between 0.01 and 100".into(),
+        ));
+    }
     let mut difficulty = rosu_pp::Difficulty::new()
-        .mods(mods.into_core())
+        .mods(mods)
         .lazer(config.lazer.unwrap_or(true))
         .ar(playable.ar, false)
         .cs(playable.cs, false)

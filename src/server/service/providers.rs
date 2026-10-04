@@ -95,6 +95,7 @@ impl LegacyCalculateProvider {
     }
 
     async fn select_beatmap(&self, query: &PpQuery) -> Result<Option<Bytes>, String> {
+        const MAX_BEATMAP_BYTES: u64 = 64 * 1024 * 1024;
         if let Some(requested) = query.path.as_deref() {
             let path = Path::new(requested);
             if path
@@ -120,15 +121,37 @@ impl LegacyCalculateProvider {
             if !metadata.is_file() {
                 return Err("beatmap path must select a regular file".into());
             }
-            return tokio::fs::read(canonical)
+            let mut file = tokio::fs::File::open(&canonical)
                 .await
-                .map(Bytes::from)
-                .map(Some)
-                .map_err(|error| error.to_string());
+                .map_err(|error| error.to_string())?;
+            let metadata = file.metadata().await.map_err(|error| error.to_string())?;
+            if !metadata.is_file() {
+                return Err("beatmap path must select a regular file".into());
+            }
+            if metadata.len() > MAX_BEATMAP_BYTES {
+                return Err("beatmap exceeds the 64 MiB input limit".into());
+            }
+            let mut reader = tokio::io::AsyncReadExt::take(&mut file, MAX_BEATMAP_BYTES + 1);
+            let mut bytes = Vec::with_capacity(metadata.len() as usize);
+            tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut bytes)
+                .await
+                .map_err(|error| error.to_string())?;
+            if bytes.len() as u64 > MAX_BEATMAP_BYTES {
+                return Err("beatmap exceeds the 64 MiB input limit".into());
+            }
+            return Ok(Some(Bytes::from(bytes)));
         }
-        self.current
+        let bytes = self
+            .current
             .current_beatmap_bytes()
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        if bytes
+            .as_ref()
+            .is_some_and(|bytes| bytes.len() > MAX_BEATMAP_BYTES as usize)
+        {
+            return Err("beatmap exceeds the 64 MiB input limit".into());
+        }
+        Ok(bytes)
     }
 }
 
@@ -139,6 +162,14 @@ impl CalculatePpProvider for LegacyCalculateProvider {
 }
 
 fn performance_request(query: &PpQuery) -> Result<LegacyPerformanceRequest, String> {
+    const MIN_CLOCK_RATE: f64 = 0.01;
+    const MAX_CLOCK_RATE: f64 = 100.0;
+    if query
+        .clock_rate
+        .is_some_and(|rate| !rate.is_finite() || !(MIN_CLOCK_RATE..=MAX_CLOCK_RATE).contains(&rate))
+    {
+        return Err("clockRate must be between 0.01 and 100".into());
+    }
     let mode = match query.mode {
         None => None,
         Some(0) => Some(crate::calculation::engine::Ruleset::Osu),

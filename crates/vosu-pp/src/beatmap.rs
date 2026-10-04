@@ -163,8 +163,25 @@ impl PreparedBeatmap {
 pub struct LiveLazerEngine;
 
 impl LiveLazerEngine {
+    /// Parse a beatmap from bytes, rejecting inputs above the facade's 64 MiB
+    /// budget before the parser allocates object and metadata structures.
     pub fn parse(&self, bytes: &[u8]) -> Result<ParsedBeatmap, Error> {
+        const MAX_BEATMAP_BYTES: usize = 64 * 1024 * 1024;
+        if bytes.len() > MAX_BEATMAP_BYTES {
+            return Err(Error::Calculation(
+                "beatmap exceeds the 64 MiB input limit".into(),
+            ));
+        }
         let map = Beatmap::from_bytes(bytes).map_err(|e| Error::Parse(e.to_string()))?;
+        if map.hit_objects.len() > 250_000
+            || map.hit_objects.iter().any(|object| {
+                !object.start_time.is_finite() || object.start_time.abs() > 10_000_000.0
+            })
+        {
+            return Err(Error::Calculation(
+                "beatmap exceeds the supported object or timestamp budget".into(),
+            ));
+        }
         Ok(parsed(map))
     }
 

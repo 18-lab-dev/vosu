@@ -13,7 +13,7 @@ impl LazerMemory {
         }
         let gameplay_entries = self.ptr(add(gameplay, 0x10)?)?;
         let gameplay_count = self.process.read_i32(add(gameplay, 0x38)?)?;
-        if !(0..=MAX_COLLECTION as i32).contains(&gameplay_count) {
+        if !(0..=MAX_ROOM_USERS as i32).contains(&gameplay_count) {
             return Err(corrupt(
                 "spectator gameplay states",
                 gameplay,
@@ -40,7 +40,7 @@ impl LazerMemory {
             return self.not_ready();
         }
         let users = self.ptr(add(room, 0x10)?)?;
-        let user_items = self.list_items(users, false, 8)?;
+        let user_items = self.list_items_bounded(users, false, 8, MAX_ROOM_USERS)?;
         let mut states = BTreeMap::new();
         let uo = &self
             .offsets
@@ -122,7 +122,7 @@ impl LazerMemory {
             "spectator channel collection",
             joined,
         )?;
-        let channels = self.list_items(collection, false, 8)?;
+        let channels = self.list_items_bounded(collection, false, 8, MAX_ROOM_USERS)?;
         let mut channel = 0;
         for candidate in channels {
             if self.process.read_i64(add(
@@ -135,6 +135,7 @@ impl LazerMemory {
             }
         }
         let mut chat = Vec::new();
+        let mut retained_chat_bytes = 0usize;
         if channel != 0 {
             let sorted = required_non_null(
                 self.ptr(add(
@@ -146,7 +147,7 @@ impl LazerMemory {
             )?;
             let list =
                 required_non_null(self.ptr(add(sorted, 8)?)?, "spectator message list", sorted)?;
-            for message in self.list_items(list, false, 8)? {
+            for message in self.list_items_bounded(list, false, 8, MAX_CHAT_MESSAGES)? {
                 let content = self.string_at(add(
                     message,
                     self.offsets.osu_game_online_chat_message.content,
@@ -166,6 +167,17 @@ impl LazerMemory {
                         self.offsets.osu_game_online_chat_message.timestamp + 8,
                     )?,
                 )?;
+                retained_chat_bytes = retained_chat_bytes
+                    .saturating_add(time.len())
+                    .saturating_add(user.name.len())
+                    .saturating_add(content.len());
+                if retained_chat_bytes > MAX_RETAINED_CHAT_BYTES {
+                    return Err(corrupt(
+                        "spectator messages",
+                        list,
+                        "retained text budget exceeded",
+                    ));
+                }
                 chat.push(TourneyManagerChatItem {
                     time,
                     name: user.name,

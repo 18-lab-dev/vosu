@@ -275,6 +275,38 @@ fn user_background_is_the_only_optional_profile_member_after_a_read() {
 }
 
 #[test]
+fn chat_team_index_preserves_first_client_and_bot_fallback() {
+    let instance = ManagerInstanceSnapshot::new(
+        20,
+        settings(None),
+        false,
+        bundle(ClientType::Stable, regular()),
+    );
+    let mut first = stable_tourney_client(&instance, 0, 2);
+    first.spectating.name = "duplicate".to_owned();
+    let mut second = first.clone();
+    second.team = "right".to_owned();
+    let messages: Vec<_> = ["duplicate", "BanchoBot", "absent"]
+        .into_iter()
+        .map(|name| TourneyManagerChatItem {
+            time: "12:00".to_owned(),
+            name: name.to_owned(),
+            content: "hello".to_owned(),
+        })
+        .collect();
+    let mapped = map_chat(&messages, &[first, second]);
+    assert_eq!(
+        mapped
+            .iter()
+            .map(|message| message.team.as_str())
+            .collect::<Vec<_>>(),
+        ["left", "bot", "unknown"]
+    );
+    assert_eq!(mapped[0].message_body, "hello");
+    assert_eq!(mapped[0].name, "duplicate");
+}
+
+#[test]
 fn stable_spectators_sort_fractional_ipc_ids_and_chat_maps_teams() {
     let mut manager_state = regular();
     manager_state.tourney.scoreboard.ipc_state = 11;

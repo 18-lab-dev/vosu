@@ -1,4 +1,50 @@
 #[test]
+fn command_filters_preserve_last_write_precedence_at_each_depth() {
+    use crate::server::commands::{CommandAction, CommandClient, Relay, RelaySink};
+
+    struct UnusedProviders;
+    impl SettingsProvider for UnusedProviders {
+        fn get(&self, _: &str) -> Result<serde_json::Value, String> {
+            panic!("filter commands must not read settings")
+        }
+        fn save(&self, _: &str, _: serde_json::Value) -> Result<(), String> {
+            panic!("filter commands must not write settings")
+        }
+    }
+    impl RelaySink for UnusedProviders {
+        fn relay(&self, _: Relay) {
+            panic!("filter commands must not relay settings")
+        }
+    }
+
+    let providers = Arc::new(UnusedProviders);
+    let processor = CommandProcessor::new(providers.clone(), providers);
+    let client = CommandClient { id: 1, overlay: String::new() };
+    let source = serialize_projection_value(&serde_json::json!({
+        "play": {"accuracy": 0.9, "score": 10},
+        "menu": {"beatmap": {"title": "x", "artist": "y"}}
+    })).unwrap();
+    for (filters, expected) in [
+        (
+            r#"["play",{"field":"play","keys":["accuracy"]},"play"]"#,
+            serde_json::json!({"play": {"accuracy": 0.9, "score": 10}}),
+        ),
+        (
+            r#"[{"field":"menu","keys":["beatmap",{"field":"beatmap","keys":["title"]},"beatmap"]}]"#,
+            serde_json::json!({"menu": {"beatmap": {"title": "x", "artist": "y"}}}),
+        ),
+    ] {
+        let CommandAction::ApplyFilters(filters) =
+            processor.process(&client, &format!("applyFilters:any:{filters}"))
+        else {
+            panic!("valid filter command was rejected");
+        };
+        let bytes = encode_javascript_json(&project_filters(&source, &filters)).unwrap();
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(), expected);
+    }
+}
+
+#[test]
 fn nested_filters_project_only_declared_fields() {
     let source = serialize_projection_value(&serde_json::json!({
         "menu": {"state": 2, "bm": {"id": 7, "title": "x"}},

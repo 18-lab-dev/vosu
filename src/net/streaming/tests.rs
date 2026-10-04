@@ -483,6 +483,57 @@ fn zip64_entry_cap_is_checked_before_archive_construction() {
 }
 
 #[test]
+fn zip64_rejects_stale_locator_decoy_before_decoder_fallback() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let mut bytes = vec![0u8; 56];
+    bytes[..4].copy_from_slice(b"PK\x06\x06");
+    bytes[4..12].copy_from_slice(&44u64.to_le_bytes());
+    bytes[32..40].copy_from_slice(&1u64.to_le_bytes());
+    bytes.extend_from_slice(&[0u8; 56]);
+    let shifted = 56usize;
+    bytes[shifted..shifted + 4].copy_from_slice(b"PK\x06\x06");
+    bytes[shifted + 4..shifted + 12].copy_from_slice(&44u64.to_le_bytes());
+    bytes[shifted + 32..shifted + 40].copy_from_slice(&100_001u64.to_le_bytes());
+    let mut locator = [0u8; 20];
+    locator[..4].copy_from_slice(b"PK\x06\x07");
+    locator[8..16].copy_from_slice(&0u64.to_le_bytes());
+    bytes.extend_from_slice(&locator);
+    let mut eocd = [0u8; 22];
+    eocd[..4].copy_from_slice(b"PK\x05\x06");
+    eocd[8..12].copy_from_slice(&[0xff; 4]);
+    bytes.extend_from_slice(&eocd);
+    std::fs::write(file.path(), bytes).unwrap();
+    assert!(matches!(
+        preflight_zip_entries(&mut file.reopen().unwrap(), 100_000, &CancellationToken::new()),
+        Err(NetworkError::UnsafeZip(message)) if message == "ambiguous ZIP64 end record offset"
+    ));
+}
+
+#[test]
+fn zip64_with_correct_locator_offset_passes_preflight() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let mut record = vec![0u8; 56];
+    record[..4].copy_from_slice(b"PK\x06\x06");
+    record[4..12].copy_from_slice(&44u64.to_le_bytes());
+    record[32..40].copy_from_slice(&1u64.to_le_bytes());
+    let mut locator = [0u8; 20];
+    locator[..4].copy_from_slice(b"PK\x06\x07");
+    locator[8..16].copy_from_slice(&0u64.to_le_bytes());
+    record.extend_from_slice(&locator);
+    let mut eocd = [0u8; 22];
+    eocd[..4].copy_from_slice(b"PK\x05\x06");
+    eocd[8..12].copy_from_slice(&[0xff; 4]);
+    record.extend_from_slice(&eocd);
+    std::fs::write(file.path(), record).unwrap();
+    preflight_zip_entries(
+        &mut file.reopen().unwrap(),
+        100_000,
+        &CancellationToken::new(),
+    )
+    .unwrap();
+}
+
+#[test]
 fn preflight_checks_fallback_eocd_candidates_and_accepts_classic_65535() {
     let zip = make_zip(&[("a", b"x", None)]);
     let mut bytes = std::fs::read(zip.path()).unwrap();

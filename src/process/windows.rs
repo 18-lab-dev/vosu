@@ -14,6 +14,7 @@ use windows_sys::{
             CloseHandle, ERROR_NO_MORE_FILES, FILETIME, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
             STILL_ACTIVE,
         },
+        Security::{EqualSid, GetTokenInformation, TOKEN_QUERY, TOKEN_USER, TokenUser},
         System::{
             Diagnostics::{Debug::ReadProcessMemory, ToolHelp::*},
             LibraryLoader::{GetModuleHandleW, GetProcAddress},
@@ -23,8 +24,8 @@ use windows_sys::{
             },
             SystemInformation::{IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_I386},
             Threading::{
-                GetExitCodeProcess, GetProcessTimes, IsWow64Process2, OpenProcess,
-                PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+                GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, IsWow64Process2,
+                OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
             },
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
@@ -338,6 +339,53 @@ pub fn foreground_process_id() -> Option<u32> {
     }
 }
 
+fn same_process_user(process: HANDLE) -> Result<bool, MemoryError> {
+    fn user_token(process: HANDLE) -> Result<OwnedHandle, MemoryError> {
+        let mut token = std::ptr::null_mut();
+        // SAFETY: process is an open handle (or current-process pseudohandle);
+        // token is a valid output pointer and ownership transfers on success.
+        if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
+            return Err(last_error("OpenProcessToken"));
+        }
+        OwnedHandle::new(token, "OpenProcessToken")
+    }
+    fn read_user(token: &OwnedHandle, buffer: &mut [usize; 32]) -> Result<(), MemoryError> {
+        let mut length = 0;
+        // TOKEN_USER plus the largest Windows SID fits this aligned fixed buffer.
+        // SAFETY: the owned token and the entire writable buffer remain live.
+        if unsafe {
+            GetTokenInformation(
+                token.raw(),
+                TokenUser,
+                buffer.as_mut_ptr().cast(),
+                size_of::<[usize; 32]>() as u32,
+                &mut length,
+            )
+        } == 0
+        {
+            return Err(last_error("GetTokenInformation(TokenUser)"));
+        }
+        if length < size_of::<TOKEN_USER>() as u32 {
+            return Err(backend("TokenUser", "truncated token user"));
+        }
+        Ok(())
+    }
+    let target = user_token(process)?;
+    // SAFETY: GetCurrentProcess returns a non-owning pseudohandle.
+    let current = user_token(unsafe { GetCurrentProcess() })?;
+    let mut target_user = [0usize; 32];
+    let mut current_user = [0usize; 32];
+    read_user(&target, &mut target_user)?;
+    read_user(&current, &mut current_user)?;
+    // SAFETY: GetTokenInformation initialized both aligned TOKEN_USER records
+    // and their SIDs; buffers stay in place and live through EqualSid.
+    Ok(unsafe {
+        let target = &*target_user.as_ptr().cast::<TOKEN_USER>();
+        let current = &*current_user.as_ptr().cast::<TOKEN_USER>();
+        EqualSid(target.User.Sid, current.User.Sid) != 0
+    })
+}
+
 #[derive(Debug)]
 pub struct WindowsProcessMemory {
     pid: u32,
@@ -348,10 +396,14 @@ impl WindowsProcessMemory {
     pub fn open(pid: u32) -> Result<Self, MemoryError> {
         // SAFETY: OpenProcess returns an owned handle and inherit is disabled.
         let handle = unsafe { OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, 0, pid) };
-        Ok(Self {
-            pid,
-            handle: OwnedHandle::new(handle, "OpenProcess")?,
-        })
+        let handle = OwnedHandle::new(handle, "OpenProcess")?;
+        if !same_process_user(handle.raw())? {
+            return Err(backend(
+                "OpenProcess",
+                "process is owned by another Windows account",
+            ));
+        }
+        Ok(Self { pid, handle })
     }
 
     pub fn bitness(&self) -> Result<ProcessBitness, MemoryError> {

@@ -15,6 +15,20 @@ impl ConfigUpdateService for RuntimeConfig {
                 .as_object()
                 .ok_or_else(|| "settings payload must be an object".to_owned())?
                 .clone();
+            for key in [
+                "POLL_RATE",
+                "PRECISE_DATA_POLL_RATE",
+                "V2_SUBSCRIPTION_DEBOUNCE",
+            ] {
+                if object.get(key).and_then(json_number).is_some_and(|value| {
+                    !value.is_finite() || value > ConfigDocument::MAX_INTERVAL_MS
+                }) {
+                    return Err(format!(
+                        "{key} must not exceed {} ms",
+                        ConfigDocument::MAX_INTERVAL_MS
+                    ));
+                }
+            }
             self.config
                 .update(|config| apply_config_values(config, &object));
             self.config.flush().await.map_err(|error| error.to_string())

@@ -70,6 +70,7 @@ impl CurrentBeatmapProvider for RuntimeBeatmap {
     fn current_beatmap_bytes(&self) -> Result<Option<Bytes>, String> {
         use std::io::Read as _;
 
+        const MAX_BEATMAP_BYTES: u64 = 64 * 1024 * 1024;
         let files = self.files();
         let (Some(root), Some(relative)) =
             (files.songs_root.as_deref(), files.beatmap_file.as_deref())
@@ -88,11 +89,19 @@ impl CurrentBeatmapProvider for RuntimeBeatmap {
         .map_err(|error| error.to_string())?
         {
             crate::server::files::ResourceOutcome::File(mut target) => {
+                if target.length > MAX_BEATMAP_BYTES {
+                    return Err("beatmap exceeds the 64 MiB input limit".into());
+                }
                 let mut bytes = Vec::with_capacity(target.length as usize);
                 target
                     .file
+                    .by_ref()
+                    .take(MAX_BEATMAP_BYTES + 1)
                     .read_to_end(&mut bytes)
                     .map_err(|error| error.to_string())?;
+                if bytes.len() as u64 > MAX_BEATMAP_BYTES {
+                    return Err("beatmap exceeds the 64 MiB input limit".into());
+                }
                 Ok(Some(Bytes::from(bytes)))
             }
             _ => Ok(None),

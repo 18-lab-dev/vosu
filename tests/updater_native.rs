@@ -652,7 +652,6 @@ fn transaction_and_readiness_tokens_are_authoritative() {
     let readiness = StartupReadiness {
         record_path: fixture.record_path.clone(),
         transaction_token: "00".repeat(16),
-        readiness_token: "22".repeat(16),
         address: "127.0.0.1:9".parse().unwrap(),
     };
     assert!(matches!(
@@ -662,7 +661,7 @@ fn transaction_and_readiness_tokens_are_authoritative() {
 
     for role in ["candidate", "rollback"] {
         let args = [
-            OsString::from(format!("--update-{role}={}", "22".repeat(16))),
+            OsString::from(format!("--update-{role}")),
             OsString::from(format!("--update-record={}", fixture.record_path.display())),
             OsString::from(format!("--update-token={}", fixture.record.token)),
             OsString::from("--update-ready=127.0.0.1:9"),
@@ -674,13 +673,13 @@ fn transaction_and_readiness_tokens_are_authoritative() {
                 ("candidate", StartupIntent::Candidate(_))
                     | ("rollback", StartupIntent::Rollback(_))
             ),
-            "role-specific token was not isolated for {role}",
+            "internal role was not isolated for {role}",
         );
     }
     assert!(
         parse_startup_update_args([
-            OsString::from(format!("--update-candidate={}", "22".repeat(16))),
-            OsString::from(format!("--update-rollback={}", "33".repeat(16))),
+            OsString::from("--update-candidate"),
+            OsString::from("--update-rollback"),
             OsString::from(format!("--update-record={}", fixture.record_path.display())),
             OsString::from(format!("--update-token={}", fixture.record.token)),
             OsString::from("--update-ready=127.0.0.1:9"),

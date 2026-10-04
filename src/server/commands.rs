@@ -464,6 +464,19 @@ mod tests {
             CommandAction::NoAck
         );
     }
+
+    #[test]
+    fn excessive_filters_are_bounded() {
+        let excessive = format!("[{}]", vec!["\"field\""; 257].join(","));
+        assert_eq!(parse_filters(&excessive), None);
+        let too_deep = format!(
+            "{}{}{}",
+            "[{\"field\":\"a\",\"keys\":".repeat(9),
+            "[\"leaf\"]",
+            "}]".repeat(9)
+        );
+        assert_eq!(parse_filters(&too_deep), None);
+    }
     #[test]
     fn nested_filter_fields_use_javascript_truthiness_and_property_keys() {
         let keys = |field: &str| Filter::Nested {

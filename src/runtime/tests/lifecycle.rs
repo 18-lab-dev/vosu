@@ -133,7 +133,6 @@ fn candidate_and_rollback_roles_skip_release_update_transactions() {
     let readiness = StartupReadiness {
         record_path: PathBuf::from(".vosu-update.json"),
         transaction_token: "transaction".to_owned(),
-        readiness_token: "readiness".to_owned(),
         address: "127.0.0.1:1".parse().expect("readiness address"),
     };
 

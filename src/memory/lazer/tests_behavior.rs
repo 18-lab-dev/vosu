@@ -2,6 +2,59 @@ use super::test_support::*;
 use super::*;
 
 #[test]
+fn nested_mod_expansion_rejects_aggregate_overflow_before_reading_elements() {
+    let list = 0x5000usize;
+    let outer = 0x6000usize;
+    let object = 0x7000usize;
+    let ty = 0x8000usize;
+    let nested = 0x9000usize;
+    let mut memory = SparseMemory::default();
+    memory.ptr(list + 8, outer);
+    memory.i32(list + 0x10, 1);
+    memory.ptr(outer + 0x10, object);
+    memory.ptr(object, ty);
+    memory.i32(ty, 0x1000000);
+    memory.i32(ty + 3, 8193);
+    memory.ptr(object + 0x10, nested);
+    memory.i32(nested + 8, 257);
+    let decoder = reader(Arc::new(memory));
+    assert!(matches!(
+        decoder.read_mod_types(list),
+        Err(MemoryError::Corrupt {
+            context: "mod array",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn spectator_capture_rejects_excessive_client_count_before_decoding_clients() {
+    let offsets = LazerOffsets::embedded().unwrap();
+    let base = 0x1000usize;
+    let screen = 0x2000usize;
+    let gameplay = 0x3000usize;
+    let mut memory = SparseMemory::default();
+    memory.valid_base(base, &offsets);
+    memory.ptr(
+        screen
+            + offsets
+                .osu_game_screens_spectate_spectator_screen
+                .gameplay_states,
+        gameplay,
+    );
+    memory.ptr(gameplay + 0x10, 0x4000);
+    memory.i32(gameplay + 0x38, MAX_ROOM_USERS as i32 + 1);
+    let mut decoder = reader(Arc::new(memory));
+    decoder.set_resolved_state(base, screen);
+    assert!(matches!(
+        decoder.spectating_data(false),
+        Err(MemoryError::Corrupt {
+            context: "spectator gameplay states",
+            ..
+        })
+    ));
+}
+#[test]
 fn beatmap_pair_preserves_first_field_error_before_second_address_overflow() {
     let mut offsets = LazerOffsets::embedded().unwrap();
     offsets

@@ -480,9 +480,9 @@ pub(super) fn update_state_publication(
 }
 
 pub(super) fn poll_duration(milliseconds: f64) -> Duration {
-    let seconds = milliseconds / 1_000.0;
-    if seconds.is_finite() && seconds > 0.0 {
-        Duration::from_secs_f64(seconds)
+    if milliseconds.is_finite() && milliseconds > 0.0 {
+        Duration::try_from_secs_f64(milliseconds.min(ConfigDocument::MAX_INTERVAL_MS) / 1_000.0)
+            .unwrap_or(Duration::from_millis(1))
     } else {
         Duration::from_millis(1)
     }

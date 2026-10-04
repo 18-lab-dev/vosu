@@ -51,7 +51,13 @@ impl BeatmapEngine for LiveBeatmapEngine {
         };
         let config = vosu_pp::DifficultyConfig::default();
         let original = engine.original_beatmap_difficulty(&map);
-        let converted = engine.beatmap_difficulty(&map);
+        let converted = display_converted_difficulty(
+            request.original_mode,
+            request.effective_mode,
+            request.mods,
+            original,
+            engine.beatmap_difficulty(&map),
+        );
         let (difficulty, strains) = engine
             .difficulty_and_strains_data(&map, &config)
             .map_err(engine_error)?;
@@ -126,6 +132,38 @@ impl BeatmapEngine for LiveBeatmapEngine {
 
 fn engine_error(error: vosu_pp::Error) -> BeatmapError {
     BeatmapError::Engine(error.to_string())
+}
+
+fn display_converted_difficulty(
+    original_mode: BeatmapRuleset,
+    effective_mode: BeatmapRuleset,
+    mods: &[AppliedMod],
+    original: vosu_pp::BeatmapDifficultyData,
+    mut converted: vosu_pp::BeatmapDifficultyData,
+) -> vosu_pp::BeatmapDifficultyData {
+    if original_mode != BeatmapRuleset::Osu || effective_mode != BeatmapRuleset::Mania {
+        return converted;
+    }
+    let mut circle_size =
+        (f64::from(original.overall_difficulty).round_ties_even() + 1.0).clamp(4.0, 7.0);
+    let mut dual_stages = false;
+    for mod_ in mods {
+        if mod_.acronym.eq_ignore_ascii_case("DS") {
+            dual_stages = true;
+        } else if let Some(key_count) = mania_key_count(&mod_.acronym) {
+            circle_size = f64::from(key_count);
+        }
+    }
+    converted.circle_size = (circle_size * if dual_stages { 2.0 } else { 1.0 }) as f32;
+    converted
+}
+
+fn mania_key_count(acronym: &str) -> Option<u8> {
+    let digits = acronym
+        .strip_suffix('K')
+        .or_else(|| acronym.strip_suffix('k'))?;
+    let count = digits.parse::<u8>().ok()?;
+    (1..=10).contains(&count).then_some(count)
 }
 
 fn difficulty_values(value: vosu_pp::BeatmapDifficultyData) -> DifficultyValues {

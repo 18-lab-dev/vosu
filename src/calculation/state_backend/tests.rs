@@ -190,6 +190,102 @@ fn live_beatmap_engine_populates_full_projection() {
     }
 }
 
+fn osu_mania_content(od: f64) -> String {
+    OSU.replace("CircleSize:4", "CircleSize:5")
+        .replace("OverallDifficulty:8", &format!("OverallDifficulty:{od}"))
+}
+
+fn calculate_osu_to_mania(od: f64, mods: &[AppliedMod]) -> EngineOutput {
+    let content = osu_mania_content(od);
+    LiveBeatmapEngine
+        .calculate(EngineRequest {
+            content: &content,
+            original_mode: BeatmapRuleset::Osu,
+            effective_mode: BeatmapRuleset::Mania,
+            mods,
+            clock_rate: 1.0,
+            scoring_mode: ScoringMode::Lazer,
+        })
+        .unwrap()
+}
+
+fn test_mod(acronym: &str, settings_json: Option<&str>) -> AppliedMod {
+    AppliedMod {
+        acronym: acronym.to_owned(),
+        settings_json: settings_json.map(str::to_owned),
+    }
+}
+
+#[test]
+fn mania_display_circle_size_does_not_change_playable_conversion() {
+    let content = osu_mania_content(5.0);
+    let output = calculate_osu_to_mania(5.0, &[]);
+
+    assert_eq!(output.original_difficulty.circle_size, 5.0);
+    assert_eq!(output.converted_difficulty.circle_size, 6.0);
+    assert_eq!(
+        output.live_prepared.as_ref().unwrap().map().mode(),
+        vosu_pp::Ruleset::Mania
+    );
+
+    let engine = vosu_pp::LiveLazerEngine;
+    let parsed = engine.parse(content.as_bytes()).unwrap();
+    let playable = engine.convert(&parsed, vosu_pp::Ruleset::Mania).unwrap();
+    assert_eq!(engine.beatmap_difficulty(&playable).circle_size, 7.0);
+}
+
+#[test]
+fn mania_display_circle_size_matches_od_boundaries() {
+    for (od, expected) in [
+        (0.0, 4.0),
+        (4.0, 5.0),
+        (4.5, 5.0),
+        (5.0, 6.0),
+        (5.5, 7.0),
+        (8.0, 7.0),
+        (10.0, 7.0),
+    ] {
+        let output = calculate_osu_to_mania(od, &[]);
+        assert_eq!(output.converted_difficulty.circle_size, expected);
+    }
+}
+
+#[test]
+fn mania_display_circle_size_applies_conversion_mods_but_not_to_native_mania() {
+    for (mods, expected) in [
+        (vec![test_mod("6K", None)], 6.0),
+        (vec![test_mod("7K", None)], 7.0),
+        (vec![test_mod("DS", None)], 12.0),
+        (vec![test_mod("6K", None), test_mod("DS", None)], 12.0),
+    ] {
+        let output = calculate_osu_to_mania(5.0, &mods);
+        assert_eq!(output.converted_difficulty.circle_size, expected);
+    }
+
+    let content = OSU
+        .replace("Mode:0", "Mode:3")
+        .replace("CircleSize:4", "CircleSize:7");
+    let output = LiveBeatmapEngine
+        .calculate(EngineRequest {
+            content: &content,
+            original_mode: BeatmapRuleset::Mania,
+            effective_mode: BeatmapRuleset::Mania,
+            mods: &[test_mod("DS", None)],
+            clock_rate: 1.0,
+            scoring_mode: ScoringMode::Lazer,
+        })
+        .unwrap();
+    assert_eq!(output.converted_difficulty.circle_size, 7.0);
+}
+
+#[test]
+fn mania_display_circle_size_uses_source_od_when_difficulty_adjusted() {
+    let output = calculate_osu_to_mania(5.0, &[test_mod("DA", Some(r#"{"overallDifficulty":8}"#))]);
+    assert_eq!(output.original_difficulty.overall_difficulty, 5.0);
+    assert_eq!(output.converted_difficulty.overall_difficulty, 8.0);
+    assert_eq!(output.converted_difficulty.circle_size, 6.0);
+}
+
 #[test]
 fn source_number_scores_use_napi_long_conversion_at_calculator_boundary() {
     assert_eq!(calculator_long(42.9), 42);

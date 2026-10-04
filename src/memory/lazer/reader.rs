@@ -529,7 +529,7 @@ impl MemoryReader for LazerMemory {
         Ok(ReadStatus::Ready(Menu::Full(MenuFull {
             gamemode,
             checksum: hash,
-            filename: lazer_path(&self.string_at(add(info, b.hash_k_backing_field)?)?),
+            filename: lazer_path(&self.string_at(add(info, b.hash_k_backing_field)?)?)?,
             plays: 0,
             artist: self.string_at(add(meta, m.artist_k_backing_field)?)?,
             artist_original: self.string_at(add(meta, m.artist_unicode_k_backing_field)?)?,
@@ -547,9 +547,9 @@ impl MemoryReader for LazerMemory {
             od: self
                 .process
                 .read_f32(add(diff, d.overall_difficulty_k_backing_field)?)? as f64,
-            audio_filename: lazer_path(audio_hash),
+            audio_filename: lazer_path(audio_hash)?,
             audio_file_mimetype: mime(&audio_name),
-            background_filename: lazer_path(background_hash),
+            background_filename: lazer_path(background_hash)?,
             background_file_mimetype: mime(&background_name),
             folder: String::new(),
             creator,
@@ -717,7 +717,7 @@ impl MemoryReader for LazerMemory {
             return self.not_ready();
         }
         let mut result = Vec::new();
-        for current in self.list_items(users, false, 8)? {
+        for current in self.list_items_bounded(users, false, 8, MAX_ROOM_USERS)? {
             if current == 0 {
                 continue;
             }

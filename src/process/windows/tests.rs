@@ -1,6 +1,16 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[test]
+fn same_account_process_open_retains_native_memory_read_access() {
+    let expected = 0x7135_a9bd_2468_cdef_u64;
+    let memory = WindowsProcessMemory::open(std::process::id()).unwrap();
+    let mut output = [0u8; 8];
+    memory
+        .read_exact((&expected as *const u64) as usize, &mut output)
+        .unwrap();
+    assert_eq!(u64::from_ne_bytes(output), expected);
+}
 static CLOSE_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 unsafe extern "system" fn record_close(_handle: HANDLE) -> i32 {

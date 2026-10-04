@@ -1,3 +1,4 @@
+use super::readers::{MAX_TOURNEY_CHAT_CHANNELS, MAX_TOURNEY_CHAT_MESSAGES};
 use super::*;
 
 use crate::process::{MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
@@ -258,6 +259,52 @@ fn stable_hit_errors_are_appended_to_all_and_press() {
     assert_eq!(suffix.errors.press, [-4.0, 7.0]);
     assert!(suffix.errors.release.is_empty());
     assert!(suffix.release_corrections.is_empty());
+}
+
+#[test]
+fn stable_hit_errors_catches_up_in_bounded_captures_and_rewinds() {
+    const COUNT: i32 = 5_000;
+    let mut bytes = vec![0; 0x8000];
+    let ruleset_anchor = 0x1200usize;
+    let ruleset = 0x1300usize;
+    let gameplay = 0x1400usize;
+    let score = 0x1500usize;
+    let list = 0x1600usize;
+    let items = 0x2000usize;
+    put_u32(&mut bytes, 0x900 - 0xb, ruleset_anchor as u32);
+    put_u32(&mut bytes, ruleset_anchor + 4, ruleset as u32);
+    put_u32(&mut bytes, ruleset + 0x64, gameplay as u32);
+    put_u32(&mut bytes, gameplay + 0x38, score as u32);
+    put_u32(&mut bytes, score + 0x38, list as u32);
+    put_u32(&mut bytes, list + 4, items as u32);
+    put_i32(&mut bytes, list + 0xc, COUNT);
+    for index in 0..COUNT as usize {
+        put_i32(&mut bytes, items + LEADER_START + index * 4, index as i32);
+    }
+    let mut reader = StableMemory::new(handle(0, bytes), fixture_patterns());
+
+    let ReadStatus::Ready(first) = reader.hit_errors(0).unwrap() else {
+        panic!("stable hit errors ready");
+    };
+    assert_eq!(first.index, 4_096);
+    assert_eq!(first.errors.all.len(), 4_096);
+    assert_eq!(first.errors.all[0], 0.0);
+    assert_eq!(first.errors.all[4_095], 4_095.0);
+
+    let ReadStatus::Ready(second) = reader.hit_errors(first.index).unwrap() else {
+        panic!("stable hit errors ready");
+    };
+    assert_eq!(second.index, COUNT as i64);
+    assert_eq!(
+        second.errors.all,
+        (4_096..COUNT).map(f64::from).collect::<Vec<_>>()
+    );
+
+    let ReadStatus::Ready(rewound) = reader.hit_errors(0).unwrap() else {
+        panic!("stable hit errors ready");
+    };
+    assert_eq!(rewound.index, 4_096);
+    assert_eq!(rewound.errors.all[0], 0.0);
 }
 
 #[test]
@@ -743,6 +790,34 @@ fn tourney_chat_skips_corrupt_channels_and_messages() {
     put_u32(&mut bytes, 0x908, 0xb00);
     put_string(&mut bytes, 0xa00, "hello");
     put_string(&mut bytes, 0xb00, "12:34 User:");
+    let mut oversized = bytes.clone();
+    put_i32(
+        &mut oversized,
+        0x404,
+        (MAX_TOURNEY_CHAT_CHANNELS + 1) as i32,
+    );
+    let mut bounded = StableMemory::new(handle(0, oversized), fixture_patterns());
+    assert!(matches!(
+        bounded.tourney_chat(&[]),
+        Err(MemoryError::Corrupt {
+            context: "tournament chat channels",
+            ..
+        })
+    ));
+    let mut oversized_messages = bytes.clone();
+    put_i32(
+        &mut oversized_messages,
+        0x70c,
+        (MAX_TOURNEY_CHAT_MESSAGES + 1) as i32,
+    );
+    let mut bounded_messages = StableMemory::new(handle(0, oversized_messages), fixture_patterns());
+    assert!(matches!(
+        bounded_messages.tourney_chat(&[]),
+        Err(MemoryError::Corrupt {
+            context: "tournament chat messages",
+            ..
+        })
+    ));
     let mut reader = StableMemory::new(handle(0, bytes), fixture_patterns());
     let result = reader.tourney_chat(&[]).unwrap();
     let ReadStatus::Ready(messages) = result else {

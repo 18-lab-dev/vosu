@@ -35,21 +35,13 @@ where
             saw_internal = true;
             continue;
         }
-        if let Some(value) = strip_os_prefix(argument, "--update-candidate=") {
-            set_once(
-                &mut candidate_token,
-                parse_hex_token(value, "--update-candidate")?,
-                "--update-candidate",
-            )?;
+        if argument == OsStr::new("--update-candidate") {
+            set_once(&mut candidate_token, (), "--update-candidate")?;
             saw_internal = true;
             continue;
         }
-        if let Some(value) = strip_os_prefix(argument, "--update-rollback=") {
-            set_once(
-                &mut rollback_token,
-                parse_hex_token(value, "--update-rollback")?,
-                "--update-rollback",
-            )?;
+        if argument == OsStr::new("--update-rollback") {
+            set_once(&mut rollback_token, (), "--update-rollback")?;
             saw_internal = true;
             continue;
         }
@@ -99,22 +91,16 @@ where
             record_path,
             transaction_token,
         }),
-        (false, Some(readiness_token), None, Some(address)) => {
-            Ok(StartupIntent::Candidate(StartupReadiness {
-                record_path,
-                transaction_token,
-                readiness_token,
-                address,
-            }))
-        }
-        (false, None, Some(readiness_token), Some(address)) => {
-            Ok(StartupIntent::Rollback(StartupReadiness {
-                record_path,
-                transaction_token,
-                readiness_token,
-                address,
-            }))
-        }
+        (false, Some(()), None, Some(address)) => Ok(StartupIntent::Candidate(StartupReadiness {
+            record_path,
+            transaction_token,
+            address,
+        })),
+        (false, None, Some(()), Some(address)) => Ok(StartupIntent::Rollback(StartupReadiness {
+            record_path,
+            transaction_token,
+            address,
+        })),
         _ => internal_argument_error("partial or conflicting internal updater role"),
     }
 }
@@ -227,18 +213,15 @@ pub(super) fn canonical_original_args<I>(arguments: I) -> Vec<EncodedOsString>
 where
     I: IntoIterator<Item = OsString>,
 {
-    const VALUE_OPTIONS: [&str; 5] = [
-        "--update-token",
-        "--update-candidate",
-        "--update-rollback",
-        "--update-ready",
-        "--update-record",
-    ];
+    const VALUE_OPTIONS: [&str; 3] = ["--update-token", "--update-ready", "--update-record"];
     let mut output = Vec::new();
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
         let argument_ref = argument.as_os_str();
-        if argument_ref == OsStr::new("--update-helper") {
+        if matches!(
+            argument_ref.to_str(),
+            Some("--update-helper" | "--update-candidate" | "--update-rollback")
+        ) {
             continue;
         }
         if VALUE_OPTIONS

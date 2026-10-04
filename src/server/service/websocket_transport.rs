@@ -29,8 +29,9 @@ async fn bridge_socket(
             return;
         }
     };
+    let control = connection.control_handle();
     let connection = Arc::new(tokio::sync::Mutex::new(connection));
-    let _relay_registration = relays.register(client_namespace, client.clone(), &connection);
+    let _relay_registration = relays.register(client_namespace, client.clone(), control);
     let (mut sink, mut stream) = socket.split();
     let (terminal_tx, mut terminal_rx) = tokio::sync::mpsc::channel::<SocketTerminal>(1);
 

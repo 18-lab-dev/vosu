@@ -195,7 +195,8 @@
 
         let client_id = namespaced_client_id(COMMANDS_CHANNEL, local_id).unwrap();
         let client = CommandClient::from_query(client_id, Some("counter")).unwrap();
-        let _registration = sink.register(COMMANDS_CHANNEL, client, &connection);
+        let _registration =
+            sink.register(COMMANDS_CHANNEL, client, connection.lock().await.control_handle());
         for value in [1, 2] {
             sink.relay(Relay {
                 except: None,
@@ -220,6 +221,132 @@
         }
 
         connection.lock().await.cleanup();
+        sink.shutdown().await;
+    }
+    #[tokio::test]
+    async fn relay_reply_survives_connection_mutex_contention() {
+        let (_, events) = tokio::sync::watch::channel(0);
+        let hub = WebSocketHub::new(websocket::Schema::V1, Arc::new(NoState { events }));
+        let (connection, mut outbound) = hub.connect_commands();
+        let (healthy, mut healthy_outbound) = hub.connect_commands();
+        let local_id = connection.id();
+        let healthy_id = namespaced_client_id(COMMANDS_CHANNEL, healthy.id()).unwrap();
+        let healthy = Arc::new(tokio::sync::Mutex::new(healthy));
+        let connection = Arc::new(tokio::sync::Mutex::new(connection));
+
+        let sink = Arc::new(WebSocketRelaySink::new());
+        let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), sink.clone()));
+        sink.bind_processor(&processor);
+        let client_id = namespaced_client_id(COMMANDS_CHANNEL, local_id).unwrap();
+        let client = CommandClient::from_query(client_id, Some("counter")).unwrap();
+        let _registration =
+            sink.register(COMMANDS_CHANNEL, client, connection.lock().await.control_handle());
+        let healthy_client = CommandClient::from_query(healthy_id, Some("counter")).unwrap();
+        let _healthy_registration = sink.register(
+            COMMANDS_CHANNEL,
+            healthy_client,
+            healthy.lock().await.control_handle(),
+        );
+
+
+        let guard = connection.lock().await;
+        sink.relay(Relay {
+            except: None,
+            command: "updateSettings".into(),
+            overlay: "counter".into(),
+            payload: Some(r#"{"value":1}"#.into()),
+        });
+        tokio::task::yield_now().await;
+
+        let Some(Outbound::Reply(healthy_reply)) = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            healthy_outbound.recv(),
+        )
+        .await
+        .unwrap()
+        else {
+            panic!("healthy recipient must progress while another connection mutex is held");
+        };
+        assert_eq!(
+            serde_json::from_slice::<Value>(&healthy_reply).unwrap(),
+            json!({ "command": "updateSettings", "message": { "value": 1 } })
+        );
+
+        let Some(Outbound::Reply(reply)) = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            outbound.recv(),
+        )
+        .await
+        .unwrap()
+        else {
+            panic!("relay reply must arrive while the connection mutex remains held");
+        };
+        assert_eq!(
+            serde_json::from_slice::<Value>(&reply).unwrap(),
+            json!({ "command": "updateSettings", "message": { "value": 1 } })
+        );
+        drop(guard);
+
+        connection.lock().await.cleanup();
+        healthy.lock().await.cleanup();
+        sink.shutdown().await;
+    }
+
+
+    #[tokio::test]
+    async fn full_relay_recipient_does_not_block_healthy_recipients() {
+        let (_, events) = tokio::sync::watch::channel(0);
+        let provider = Arc::new(NoState { events });
+        let hub = WebSocketHub::new(websocket::Schema::V1, provider);
+        let (stalled, _stalled_outbound) = hub.connect_commands();
+        let (healthy, mut healthy_outbound) = hub.connect_commands();
+        let stalled_id = namespaced_client_id(COMMANDS_CHANNEL, stalled.id()).unwrap();
+        let healthy_id = namespaced_client_id(COMMANDS_CHANNEL, healthy.id()).unwrap();
+        let stalled = Arc::new(tokio::sync::Mutex::new(stalled));
+        let healthy = Arc::new(tokio::sync::Mutex::new(healthy));
+
+        let sink = Arc::new(WebSocketRelaySink::new());
+        let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), sink.clone()));
+        sink.bind_processor(&processor);
+        let stalled_client = CommandClient::from_query(stalled_id, Some("counter")).unwrap();
+        let healthy_client = CommandClient::from_query(healthy_id, Some("counter")).unwrap();
+        let _stalled_registration = sink.register(
+            COMMANDS_CHANNEL,
+            stalled_client.clone(),
+            stalled.lock().await.control_handle(),
+        );
+        let _healthy_registration = sink.register(
+            COMMANDS_CHANNEL,
+            healthy_client,
+            healthy.lock().await.control_handle(),
+        );
+
+        // Saturate control traffic without draining this recipient.
+        for _ in 0..16 {
+            assert!(stalled.lock().await.try_send_text(Bytes::from_static(b"occupied")));
+        }
+        sink.relay(Relay {
+            except: None,
+            command: "updateSettings".into(),
+            overlay: "counter".into(),
+            payload: Some(r#"{"value":1}"#.into()),
+        });
+        let received = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            healthy_outbound.recv(),
+        )
+        .await
+        .unwrap();
+        let Some(Outbound::Reply(received)) = received else {
+            panic!("healthy recipient must receive the settings update");
+        };
+        assert_eq!(
+            serde_json::from_slice::<Value>(&received).unwrap(),
+            json!({ "command": "updateSettings", "message": { "value": 1 } })
+        );
+        assert!(!stalled.lock().await.try_send_text(Bytes::from_static(b"still-open")));
+        stalled.lock().await.cleanup();
+        healthy.lock().await.cleanup();
         sink.shutdown().await;
     }
 

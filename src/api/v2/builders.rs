@@ -314,7 +314,6 @@ pub(super) fn build_profile(user: Option<&User>) -> Profile {
 pub(super) fn build_beatmap(
     state: &RegularState,
     parsed: Option<&ParsedBeatmap>,
-    source: ClientType,
     current_mode: Option<i64>,
     live_time: f64,
 ) -> Beatmap {
@@ -348,17 +347,9 @@ pub(super) fn build_beatmap(
         title_unicode: state.menu.title_original.clone(),
         mapper: state.menu.creator.clone(),
         version: state.menu.difficulty.clone(),
-        source: beatmap_source(source, parsed.map(|parsed| parsed.metadata.source.as_str())),
+        source: parsed.map_or("", |p| p.metadata.source.as_str()).to_owned(),
         tags: parsed.map_or("", |p| p.metadata.tags.as_str()).to_owned(),
         stats: build_stats(state, parsed),
-    }
-}
-
-pub(super) fn beatmap_source(source: ClientType, parsed_source: Option<&str>) -> String {
-    if source == ClientType::Lazer {
-        String::new()
-    } else {
-        parsed_source.unwrap_or_default().to_owned()
     }
 }
 

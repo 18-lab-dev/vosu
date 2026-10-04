@@ -1,4 +1,10 @@
 const MAX_KEY_OVERLAY_BUTTONS: usize = 18;
+const MAX_STABLE_HIT_ERRORS: i64 = 100_000;
+const MAX_STABLE_HIT_ERROR_SUFFIX: i64 = 4_096;
+pub(super) const MAX_TOURNEY_CHAT_CHANNELS: usize = 256;
+pub(super) const MAX_TOURNEY_CHAT_MESSAGES: usize = 2_048;
+const MAX_LEADERBOARD_PLAYERS: usize = 256;
+const MAX_LEADERBOARD_NAME_BYTES: usize = 256 * 1024;
 const MAX_REPLAY_FRAMES: i64 = 500_000;
 
 use super::*;
@@ -424,7 +430,14 @@ impl MemoryReader for StableMemory {
         }
         let b = self.ptr(self.add(s, 0x38)?)?;
         let items = self.ptr(self.add(b, 4)?)?;
-        let size = self.process.read_i32(self.add(b, 0xc)?)?.max(0) as i64;
+        let size = self.process.read_i32(self.add(b, 0xc)?)? as i64;
+        if !(0..=MAX_STABLE_HIT_ERRORS).contains(&size) {
+            return Err(MemoryError::Corrupt {
+                context: "hit errors",
+                address: b,
+                message: "invalid count",
+            });
+        }
         let mut index = last.max(0);
         if index > size {
             return Ok(ReadStatus::Ready(HitErrors {
@@ -434,8 +447,9 @@ impl MemoryReader for StableMemory {
                 stable_replay_frames: self.replay_frame_batch(s, size)?,
             }));
         }
+        let end = index.saturating_add(MAX_STABLE_HIT_ERROR_SUFFIX).min(size);
         let mut errors = HitErrorArray::default();
-        while index < size {
+        while index < end {
             let e = self.i32(self.add(items, LEADER_START + 4 * index as usize)?)?;
             if !(-10_000..=10_000).contains(&e) {
                 break;
@@ -615,7 +629,15 @@ impl MemoryReader for StableMemory {
         }
         let list = self.ptr2(self.add(self.chat_address, 1)?)?;
         let items = self.ptr(self.add(list, 4)?)?;
-        let len = self.process.read_i32(self.add(items, 4)?)?.max(0) as usize;
+        let len = self.process.read_i32(self.add(items, 4)?)?;
+        if !(0..=MAX_TOURNEY_CHAT_CHANNELS as i32).contains(&len) {
+            return Err(MemoryError::Corrupt {
+                context: "tournament chat channels",
+                address: items,
+                message: "invalid count",
+            });
+        }
+        let len = len as usize;
         for i in (0..len).rev() {
             let channel = match self.ptr(self.add(items, LEADER_START + 4 * i)?) {
                 Ok(v) => v,
@@ -636,10 +658,15 @@ impl MemoryReader for StableMemory {
             let Ok(mi) = self.ptr(self.add(msgs, 4)?) else {
                 continue;
             };
-            let Ok(size) = self.process.read_i32(self.add(msgs, 0xc)?) else {
-                continue;
-            };
-            let n = size.max(0) as usize;
+            let size = self.process.read_i32(self.add(msgs, 0xc)?)?;
+            if !(0..=MAX_TOURNEY_CHAT_MESSAGES as i32).contains(&size) {
+                return Err(MemoryError::Corrupt {
+                    context: "tournament chat messages",
+                    address: msgs,
+                    message: "invalid count",
+                });
+            }
+            let n = size as usize;
             if messages.len() == n {
                 continue;
             }
@@ -697,7 +724,7 @@ impl MemoryReader for StableMemory {
         if base == 0 {
             return Ok(ReadStatus::Ready((false, None, vec![])));
         }
-        let addr = self.process.read_i32(self.add(base, 0x24)?)?.max(0) as usize;
+        let addr = self.ptr(self.add(base, 0x24)?)?;
         if addr == 0 {
             return Ok(ReadStatus::Ready((false, None, vec![])));
         }
@@ -708,17 +735,36 @@ impl MemoryReader for StableMemory {
             != 0;
         let current = self.leaderboard_player(player, mode)?;
         let list = self.ptr(self.add(addr, 4)?)?;
-        let n = self.process.read_i32(self.add(list, 0xc)?)?.max(0) as usize;
+        let raw_n = self.process.read_i32(self.add(list, 0xc)?)?;
+        if !(0..=MAX_LEADERBOARD_PLAYERS as i32).contains(&raw_n) {
+            return Err(MemoryError::Corrupt {
+                context: "leaderboard",
+                address: list,
+                message: "invalid count",
+            });
+        }
+        let n = raw_n as usize;
         if n < 1 {
             return Ok(ReadStatus::Ready((visible, current, vec![])));
         }
         let items = self.ptr(self.add(list, 4)?)?;
-        let mut out = vec![];
+        let mut out = Vec::with_capacity(n);
+        let mut name_bytes = 0usize;
         for i in 0..n {
-            match self
-                .leaderboard_player(self.ptr(self.add(items, LEADER_START + 4 * i)?)?, mode)?
-            {
-                Some(v) => out.push(v),
+            let player =
+                self.leaderboard_player(self.ptr(self.add(items, LEADER_START + 4 * i)?)?, mode)?;
+            match player {
+                Some(player) => {
+                    name_bytes = name_bytes.saturating_add(player.name.len());
+                    if name_bytes > MAX_LEADERBOARD_NAME_BYTES {
+                        return Err(MemoryError::Corrupt {
+                            context: "leaderboard",
+                            address: items,
+                            message: "aggregate name budget exceeded",
+                        });
+                    }
+                    out.push(player);
+                }
                 None => break,
             }
         }

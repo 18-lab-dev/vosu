@@ -102,7 +102,7 @@
         );
         let dispatch = dispatch_startup_update(
             os_arguments(&[
-                &format!("--update-candidate={READY_TOKEN}"),
+                "--update-candidate",
                 "--update-ready=127.0.0.1:24050",
                 &format!("--update-token={TOKEN}"),
                 "--update-record=/tmp/record",
@@ -115,9 +115,8 @@
             dispatch,
             StartupDispatch::Candidate(StartupReadiness {
                 transaction_token,
-                readiness_token,
                 ..
-            }) if transaction_token == TOKEN && readiness_token == READY_TOKEN
+            }) if transaction_token == TOKEN
         ));
     }
 

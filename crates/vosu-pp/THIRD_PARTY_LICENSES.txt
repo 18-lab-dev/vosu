@@ -24,9 +24,12 @@ in `openwiki/provenance-audit.md` at the repository root. Its module layout is:
   Local API maintenance in `mania/performance/gradual.rs` clamps performance
   skips to the final object while preserving strict difficulty-iterator bounds;
   `osu/performance/gradual.rs` uses a non-consuming skip in its exhaustion
-  example. These are local corrections, not changes to the pinned upstream
-  revision or calculator evidence.
-- `rosu-map-api/src`: an in-tree source fork of MIT `rosu-map` 0.2.1,
+  example. `catch/object/banana_shower.rs` also has local security guards:
+  stop generation when f32 timestamp addition cannot advance, and cap each
+  object's generated bananas at 100,000. These local corrections preserve
+  ordinary spacing/count semantics and do not change pinned upstream revisions
+  or calculator evidence.
+- `rosu-map-api/src`: an in-tree clean-room fork of MIT `rosu-map` 0.2.1,
   with ppy-aligned circular-arc tolerance, degeneracy epsilon,
   `Math.Acos` float-argument promotion, f64-promoted vector-length
   calculation, and the legacy offset curve API used by catch conversion.

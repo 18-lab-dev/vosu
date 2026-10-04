@@ -29,7 +29,9 @@ use crate::{
     calculation::engine::{
         HitResultPriority, LegacyMods, LegacyPerformanceRequest, LegacyRosuEngine,
     },
-    counters::{CounterService, CounterSetting, ReloadableCounterService, SettingInput},
+    counters::{
+        CounterError, CounterService, CounterSetting, ReloadableCounterService, SettingInput,
+    },
     report::{NativeReportProbe, ReportInput, ReportProbe, generate_report_document},
 };
 
@@ -46,7 +48,7 @@ use super::{
         SubscriptionRequestError, V2SubscriptionHub, V2SubscriptionOutbound,
         parse_subscription_request,
     },
-    websocket::{self, Connection, Inbound, Outbound, UpgradeCallbackTracker, WebSocketHub},
+    websocket::{self, ConnectionControl, Inbound, Outbound, UpgradeCallbackTracker, WebSocketHub},
 };
 
 const JSON: &str = "application/json; charset=utf-8";

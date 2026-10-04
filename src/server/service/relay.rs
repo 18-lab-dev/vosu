@@ -1,7 +1,7 @@
 struct RelayClient {
     channel: u64,
     client: CommandClient,
-    connection: Weak<tokio::sync::Mutex<Connection>>,
+    control: ConnectionControl,
 }
 
 /// Production relay transport. WebSocket-originated events return to the
@@ -9,7 +9,7 @@ struct RelayClient {
 #[derive(Clone)]
 pub struct WebSocketRelaySink {
     clients: Arc<Mutex<HashMap<u64, RelayClient>>>,
-    events: tokio::sync::mpsc::UnboundedSender<Relay>,
+    events: tokio::sync::mpsc::Sender<Relay>,
     processor: Arc<Mutex<Weak<CommandProcessor>>>,
     lifecycle: Arc<RelayLifecycle>,
 }
@@ -54,7 +54,9 @@ impl WebSocketRelaySink {
     pub fn new() -> Self {
         let clients = Arc::new(Mutex::new(HashMap::new()));
         let processor = Arc::new(Mutex::new(Weak::new()));
-        let (events, receiver) = tokio::sync::mpsc::unbounded_channel();
+        // Capacity bounds retained payloads; incoming WebSocket messages are
+        // independently limited to 1 MiB by the transport.
+        let (events, receiver) = tokio::sync::mpsc::channel(16);
         let cancellation = CancellationToken::new();
         let worker = tokio::spawn(run_relay_worker(
             Arc::clone(&clients),
@@ -109,7 +111,7 @@ impl WebSocketRelaySink {
         &self,
         channel: u64,
         client: CommandClient,
-        connection: &Arc<tokio::sync::Mutex<Connection>>,
+        control: ConnectionControl,
     ) -> RelayRegistration {
         let client_id = client.id;
         self.clients
@@ -120,7 +122,7 @@ impl WebSocketRelaySink {
                 RelayClient {
                     channel,
                     client,
-                    connection: Arc::downgrade(connection),
+                    control,
                 },
             );
         RelayRegistration {
@@ -139,14 +141,16 @@ impl WebSocketRelaySink {
 
 impl RelaySink for WebSocketRelaySink {
     fn relay(&self, event: Relay) {
-        let _ = self.events.send(event);
+        // Relay producers are synchronous. Reject on saturation rather than
+        // retaining payloads in an unbounded global backlog.
+        let _ = self.events.try_send(event);
     }
 }
 
 async fn run_relay_worker(
     clients: Arc<Mutex<HashMap<u64, RelayClient>>>,
     processor: Arc<Mutex<Weak<CommandProcessor>>>,
-    mut events: tokio::sync::mpsc::UnboundedReceiver<Relay>,
+    mut events: tokio::sync::mpsc::Receiver<Relay>,
     cancellation: CancellationToken,
 ) {
     loop {
@@ -168,7 +172,7 @@ async fn run_relay_worker(
                 .filter(|entry| entry.channel == target_channel)
                 .filter_map(|entry| {
                     let frame = CommandProcessor::relay_frame(&entry.client, &event)?;
-                    Some((entry.client.clone(), entry.connection.upgrade()?, frame))
+                    Some((entry.client.clone(), entry.control.clone(), frame))
                 })
                 .collect::<Vec<_>>()
         };
@@ -179,18 +183,18 @@ async fn run_relay_worker(
         let Some(processor) = processor else {
             continue;
         };
-        for (client, connection, frame) in recipients {
+        for (client, control, frame) in recipients {
             match processor.process(&client, &frame) {
                 CommandAction::Reply(frame) => {
-                    tokio::select! {
-                        _ = cancellation.cancelled() => return,
-                        _ = async {
-                            let _ = connection.lock().await.send_text(frame).await;
-                        } => {}
+                    if !control.try_send_text(frame) {
+                        // A closed connection and a full control queue are both
+                        // terminal for this recipient; registration teardown
+                        // will remove it without blocking unrelated clients.
+                        control.cleanup();
                     }
                 }
                 CommandAction::ApplyFilters(filters) => {
-                    connection.lock().await.set_filters(filters);
+                    control.set_filters(filters);
                 }
                 CommandAction::NoAck => {}
             }

@@ -33,6 +33,9 @@ const BLACK_BOX_SPEC: &str =
 /// fade-in and performance clamps. Current black-box vectors are pinned in
 /// `tools/oracle/oracle-lock.json`; the original source-port inventory and NUnit
 /// inputs remain tied to the baseline revision.
+// The local banana-shower progress/count guard is defensive rejection/truncation,
+// not a new upstream semantics port or an external oracle result. Its ownership
+// and ordinary-behavior regressions are recorded in THIRD_PARTY_LICENSES.txt.
 pub const SOURCE_PORTS: &[SourcePort] = &[
     SourcePort {
         scope: "catch.conversion-linear-spacing",
