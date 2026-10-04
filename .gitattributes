@@ -1,0 +1,7 @@
+# Preserve exact license, notice, and asset bytes on Windows as well as Linux.
+# These inputs are compared byte-for-byte and/or covered by integrity hashes.
+/LICENSE* -text
+/**/LICENSE* -text
+/THIRD_PARTY_NOTICES.md -text
+/**/THIRD_PARTY_LICENSES.txt -text
+/assets/** -text

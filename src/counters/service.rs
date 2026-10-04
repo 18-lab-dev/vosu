@@ -15,11 +15,7 @@ use tokio_util::sync::CancellationToken;
 use super::model::{Counter, CounterSetting, DownloadRequest, SettingInput};
 use super::settings::{SettingsError, SettingsStore, validate_component};
 
-const USER_AGENT: &str = concat!(
-    "vosu/",
-    env!("CARGO_PKG_VERSION"),
-    " (https://vosu.app; i@kotrik.ru)"
-);
+const USER_AGENT: &str = concat!("vosu/", env!("CARGO_PKG_VERSION"), " (https://vosu.app)");
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
 pub trait CounterOpener: Send + Sync {

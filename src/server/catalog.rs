@@ -15,7 +15,7 @@ pub const CATALOG_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 pub const CATALOG_MAX_REDIRECTS: usize = 5;
 
 pub fn catalog_user_agent(version: &str) -> String {
-    format!("vosu/{version} (https://vosu.app; i@kotrik.ru)")
+    format!("vosu/{version} (https://vosu.app)")
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -279,6 +279,7 @@ mod tests {
     ]"#;
 
     #[test]
+
     fn valid_catalog_preserves_order_and_unknown_properties() {
         let bytes = body(serde_json::json!([
             valid("Second", "B", "2", "second"),
@@ -467,7 +468,7 @@ mod tests {
             let result = service.fetch(&[], &CancellationToken::new()).await.unwrap();
             assert_eq!(result.len(), 1);
             let request = request.await.unwrap();
-            assert!(request.contains("user-agent: vosu/0.1.0 (https://vosu.app; i@kotrik.ru)"));
+            assert!(request.contains("user-agent: vosu/0.1.0 (https://vosu.app)"));
 
             let (service, request) = constrained_service(503, b"[]".to_vec(), None).await;
             assert!(matches!(

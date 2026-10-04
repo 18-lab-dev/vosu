@@ -1,16 +1,24 @@
 # Third-party notices
 
-This file inventories third-party material retained by the vosu Rust daemon, which is derived from upstream tosu 4.25.0. It is an attribution aid, not a replacement for applicable license texts. Project-authored repository code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at the contributor's option; the release archive retains the root [`LICENSE`](LICENSE) member. Exact Rust package versions and checksums are authoritative in `Cargo.lock`.
+This file inventories third-party material retained in the vosu repository. vosu is a Rust implementation targeting API and behavioral compatibility with upstream tosu. It is an attribution aid, not a replacement for applicable license texts. Project-authored repository code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, where the respective contributors have licensing authority; the release archive retains the root [`LICENSE`](LICENSE) member. Exact Rust package versions and checksums are authoritative in `Cargo.lock`.
 
-Project copyright notice: Copyright © 2023–2026 Mikhail Babynichev. This notice applies to project-authored material only and does not alter separately licensed retained material.
+First-party notice: `Copyright (c) 2026 sxlvia`, as confirmed by the maintainer for vosu work begun in 2026. The notice is repeated in `LICENSE-MIT`, the combined root `LICENSE`, and the matching calculator copies. It applies to project-authored material over which the respective contributors have licensing authority; it does not claim ownership of upstream work or resolve the source-provenance questions below.
+
+## tosu compatibility and retained provenance
+
+- **Upstream credit:** tosu and its contributors, including Mikhail Babynichev (Kotrik). The upstream [v4.25.0 package metadata](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/package.json) names that author; its [license document](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/LICENSE) retains `Copyright (C) 2023-2026 Mikhail Babynichev <https://kotrik.ru/>`. This is upstream attribution, not a first-party vosu copyright notice. Upstream declares `GPL-3.0` in `package.json` but supplies LGPL v3 text in `LICENSE`; the audit records this discrepancy rather than selecting or broadening its grant.
+- **Historical imports:** the initial vosu snapshot retained tosu dashboard material and an LGPL-covered calculator wrapper. The dashboard replacement is recorded in [`af20c120`](https://github.com/shiruviaa/vosu/commit/af20c1201a21beecc7db88119a700b2964c1ab78); the calculator replacement is recorded in [`4971b568`](https://github.com/shiruviaa/vosu/commit/4971b568a8dd0e82c011214c74b4e3857fd182ae). Earlier snapshots retain their applicable licenses and notices.
+- **Production review:** stable memory signature data matches upstream tosu, and some calculator structures and formulas overlap the former wrapper. A compatibility match alone does not determine copyright status or establish independent implementation. The [provenance audit](openwiki/provenance-audit.md) identifies the files requiring evidence before any licensing conclusion.
+- **Current and historical pins:** `package.metadata.vosu.source-commit` and the current oracle lock use verified upstream revision `2359305a63f2aaebb201bc8d2eee58177f52590e`. Historical calculator records retain unresolved `1a67fd64cc38fe60306328dde0a429e3211ca4ed`; no authenticated mapping was recovered. Upstream `v4.25.0` at `9f42c88714da69ac2ba248126a189416c55d733c` is a separately identified comparison source, not a substitute for that historical pin.
+- **Retained reference:** `tools/oracle/reference/lazer-calculator` preserves its own LGPL license, revision, and checksum manifest. The first-party dual-license grant does not relicense this reference or any copied or translated upstream material.
 
 ## Native live-calculation sources
 
-The production `vosu-pp` calculator is a clean-room Rust implementation. Its detailed source map and complete retained license texts are in [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt).
+The production `vosu-pp` calculator uses a Rust facade and MIT source forks. Its detailed source map and complete retained license texts are in [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). The repository records the replacement as clean-room work; the remaining provenance questions are listed above.
 
 ### rosu-pp 4.0.1 baseline
 
-- **Material:** public calculation APIs and ruleset semantics in the local clean-room source fork, plus the separate crates.io dependency used by the legacy API
+- **Material:** public calculation APIs and ruleset semantics in the local source fork, plus the separate crates.io dependency used by the legacy API
 - **Copyright:** Copyright (c) 2021 Max
 - **License:** MIT
 - **Pinned source:** <https://github.com/MaxOhn/rosu-pp/tree/27a67242cad155a2767f5a25a423ca4ec3e3c274>
@@ -18,7 +26,7 @@ The production `vosu-pp` calculator is a clean-room Rust implementation. Its det
 
 ### rosu-map 0.2.1
 
-- **Material:** map parsing and slider-path geometry used by the local clean-room map fork
+- **Material:** map parsing and slider-path geometry used by the local map fork
 - **Copyright:** Copyright (c) 2024 MaxOhn
 - **License:** MIT
 - **Pinned source:** <https://github.com/MaxOhn/rosu-map/tree/333dd2bea78e518d39c20932c828011f21d3305e>
@@ -31,6 +39,7 @@ The production `vosu-pp` calculator is a clean-room Rust implementation. Its det
 - **License:** MIT
 - **Pinned source:** <https://github.com/ppy/osu/tree/97e94babde9d5ecbe574ecdd33509db27452cd0f>
 - **License source:** <https://github.com/ppy/osu/blob/97e94babde9d5ecbe574ecdd33509db27452cd0f/LICENCE>
+- **Current semantic revision:** <https://github.com/ppy/osu/tree/fe30ae7eea2beeb1f0d3a5ce8dde12bb78ca3f48>; its `LICENCE` bytes are identical to the baseline above, so the retained ppy text covers both revisions.
 
 ### ppy/osu-framework 2026.629.0
 
@@ -41,10 +50,12 @@ The production `vosu-pp` calculator is a clean-room Rust implementation. Its det
 - **License source:** <https://github.com/ppy/osu-framework/blob/a0b031e7ff6c83d81da26fcbece7d25edbd222b4/LICENCE>
 - **Verified license SHA-256:** `d07e3ce383a24bdc4665208e0ca3730e433ea1e8235b67a301a2b26335692c8e`
 
-All four exact revisions and their MIT license files were verified from
-fresh external checkouts. Production code depends only on the in-tree
-clean-room Rust implementation and its MIT forks; the historical LGPL oracle
-is not a build or runtime input.
+The existing calculator provenance record reports verification of all four
+exact revisions and their MIT license files from external checkouts. The
+production workspace uses the in-tree Rust implementation and its MIT forks;
+the historical LGPL oracle directory is not a production build or runtime
+input. That dependency boundary alone does not establish the origin of every
+production source fragment.
 
 ### Calculator oracle provenance
 
@@ -52,7 +63,7 @@ The current generated calculator fixture and oracle lock target `osu-pp-calculat
 
 ## osu!lazer memory-offset generation input
 
-- **Material:** `assets/offsets.json`, measured locally from the official osu! AppImage's managed assemblies using its bundled `Microsoft.NETCore.App 10.0.12` runtime. The current asset includes the `GameBaseVtable` signature derived by the owned target. This asset was not generated with the historical Satori overlay/DAC recipe below. Asset-generation inputs are not distributed by vosu. The embedded generator bundle contains the owned generator/target payload, self-contained .NET runtime, and applicable attribution files; it does not contain game assemblies or the custom Satori DAC. Stock diagnostic libraries accompany the .NET runtime, but automatic assembly-only generation does not attach a DAC to the game.
+- **Material:** `assets/offsets.json`, measured locally from the official osu! AppImage's managed assemblies using its bundled `Microsoft.NETCore.App 10.0.12` runtime. Its layout/template is identified in Cargo metadata as `tosuapp/tosu@2359305a63f2aaebb201bc8d2eee58177f52590e` plus local pause/clock fields; retain the upstream credit and license discrepancy above for that input. The current asset includes the `GameBaseVtable` signature derived by the owned target and was not generated with the historical Satori overlay/DAC recipe below. Asset-generation inputs are not distributed by vosu. The embedded generator bundle contains the owned generator/target payload, self-contained .NET runtime, and applicable attribution files; it does not contain game assemblies or the custom Satori DAC. Stock diagnostic libraries accompany the .NET runtime, but automatic assembly-only generation does not attach a DAC to the game.
 - **Copyright:** Copyright (c) ppy Pty Ltd <contact@ppy.sh>
 - **License:** MIT for the osu! source code; osu! bundled resources remain subject to their upstream terms
 - **osu! version:** `2026.921.0`
@@ -147,12 +158,12 @@ locks remain; restoring/building follows the README's maintainer workflow.
 
 ## Direct Rust packages
 
-The following license expressions come from the packages' Cargo metadata resolved by the committed `Cargo.lock`. Repository/source URLs and exact versions can be reproduced with `cargo metadata --locked --format-version 1`. Transitive crates are likewise fixed in `Cargo.lock`; their own packaged `license`/`license-file` metadata and registry source archives are the authoritative notices.
+The [dependency inventory](openwiki/dependency-license-inventory.json) records every locked third-party Cargo package resolved with `--all-features`, including build/development dependencies and platforms not shipped by Linux/Windows releases. It retains each version, archive checksum, declared license expression, source repository, and top-level packaged-notice hashes. Regenerate it with `python scripts/check-provenance.py --refresh-dependency-inventory` after manifest/lock changes. Input hashes normalize checkout CRLF to LF; upstream notice hashes preserve exact archive bytes. This inventory does not select license alternatives or certify complete redistribution notices: nested/vendored material, native/system libraries, and the embedded .NET payload require their own evidence. The direct-package summary below is not the exhaustive list.
 
 ### MIT
 
 - `axum`, `bytes`, `dotenvy`, `open`, `rosu-map`, `rosu-mods`, `rosu-pp`, `rust-embed`, `serde-value`, `sysinfo`, `tokio`, `tokio-util`, `tracing`, `tracing-subscriber`, `winresource`, `zip`, and `zmij`
-- local clean-room `vosu-rosu-map` and `vosu-rosu-pp-api` (MIT; complete texts and pinned source links are in `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`)
+- local MIT forks `vosu-rosu-map` and `vosu-rosu-pp-api` (MIT; complete texts and pinned source links are in `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`)
 
 ### MIT OR Apache-2.0 (or the equivalent reversed expression)
 
@@ -175,13 +186,13 @@ These development packages, the private `vosu-test-harness` workspace member, or
 ## License text locations and sources
 
 - project-authored repository code: `LICENSE-MIT` or `LICENSE-APACHE`
-- release archive license member: `LICENSE` (combined dual-license notice)
-  The `assets/SHA256SUMS` license entry tracks these retained combined-license bytes (`f47dd0b3e8ddd61beb6123446a50ae0ad2a2bc1ad9da3c39f8a1b74525601c7b`); the 2026-09-05 audit corrected the stale checksum left by the earlier dual-license cutover without changing the license text.
+- release archive license member: `LICENSE` (combined first-party terms and retained calculator MIT texts)
+  The `assets/SHA256SUMS` license entry tracks the current combined-license bytes (`e5329eb3372e841d72ee90a4aef2fbd2db16d62a83fa519d11611c840a86969e`). Refresh both values whenever `LICENSE` changes; other retained asset hashes remain tied to their exact bytes.
 - calculator crate project-authored code: `crates/vosu-pp/LICENSE-MIT` or `crates/vosu-pp/LICENSE-APACHE`
 - pinned lazer-calculator LGPL-3.0 reference: `tools/oracle/reference/lazer-calculator/LICENSE`
 - local `vosu-rosu-pp-api` MIT license text: `crates/vosu-pp/rosu-pp-api/LICENSE`
 - local `vosu-rosu-map` MIT license text: `crates/vosu-pp/rosu-map-api/LICENSE`
-- clean-room calculator MIT texts and exact-source links: `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`
+- calculator MIT texts and exact-source links: `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`
 - embedded asset integrity manifest: `assets/SHA256SUMS`
 - Rust package source/checksum lock: `Cargo.lock`
 - Rust package license metadata/source: the package manifests in the Cargo registry source selected by `Cargo.lock` and the repository links returned by `cargo metadata --locked --format-version 1`

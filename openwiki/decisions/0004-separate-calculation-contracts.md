@@ -17,7 +17,7 @@ vosu exposes compatible calculations while stable and lazer scoring do not share
 
 ## Decision
 
-Keep compatibility helpers separate from performance engines. Preserve the legacy `rosu-pp` builder contract in `LegacyRosuEngine`, and expose the live lazer calculator through the clean-room `vosu-pp` facade and its provenance-pinned API members; do not route both through one nominal backend.
+Keep compatibility helpers separate from performance engines. Preserve the legacy `rosu-pp` builder contract in `LegacyRosuEngine`, and expose the live lazer calculator through the `vosu-pp` Rust facade and its provenance-pinned API members; do not route both through one nominal backend.
 
 Adapt engines to typed beatmap/progressive requests, then place asynchronous state integration behind `StateCalculationBackend`. Key each result with instance generation, reset epoch, beatmap checksum, mode, and mods so only a matching state accepts it. Pin calculator provenance in Cargo package metadata rather than implying that any dependency update is compatible.
 

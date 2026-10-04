@@ -138,13 +138,15 @@ fn embed_windows_resource() {
     let text_version = format!("{major}.{minor}.{patch}.0");
     let numeric_version = version_quad(major.into(), minor.into(), patch.into(), 0);
 
+    // Issue #6: use the approved first-party copyright notice.
+    // CompanyName remains empty; a copyright notice does not establish a company.
     let mut resource = WindowsResource::new();
     resource
         .set_icon("assets/icon.ico")
         .set_language(0x0409)
         .set("ProductName", "vosu")
-        .set("CompanyName", "KotRik")
-        .set("LegalCopyright", "© KotRik. All rights reserved.")
+        .set("CompanyName", "")
+        .set("LegalCopyright", "Copyright (c) 2026 sxlvia")
         .set("FileDescription", "vosu Rust daemon")
         .set("FileVersion", &text_version)
         .set("ProductVersion", &text_version)

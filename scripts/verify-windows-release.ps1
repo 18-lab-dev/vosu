@@ -47,12 +47,13 @@ public static class VosuWindowsResources
 '@
 
 $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($binaryPath)
+# Issue #6: match the approved copyright and empty company field in build.rs.
 $expectedFields = @{
     FileVersion = $expectedVersion
     ProductVersion = $expectedVersion
     ProductName = "vosu"
-    CompanyName = "KotRik"
-    LegalCopyright = "© KotRik. All rights reserved."
+    CompanyName = ""
+    LegalCopyright = 'Copyright (c) 2026 sxlvia'
     FileDescription = "vosu Rust daemon"
 }
 foreach ($field in $expectedFields.Keys) {

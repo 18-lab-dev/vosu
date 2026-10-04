@@ -32,7 +32,7 @@ playback time. Updating the session clock must not roll back precise state.
 
 ## Calculation contracts
 
-Live calculation is state-driven: beatmap readiness, parsing/cache state, gameplay progression, and result updates flow through `src/calculation/` and the clean-room `crates/vosu-pp` facade (with `rosu-map-api` and `rosu-pp-api` workspace members). Results are accepted only when state keys and calculation generations still match. The HTTP calculation endpoint is a distinct legacy rosu-pp-compatible builder that accepts query parameters and must preserve its setter/order semantics. Sharing the live contract with the endpoint would change compatibility behavior.
+Live calculation is state-driven: beatmap readiness, parsing/cache state, gameplay progression, and result updates flow through `src/calculation/` and the `crates/vosu-pp` Rust facade (with `rosu-map-api` and `rosu-pp-api` workspace members). Results are accepted only when state keys and calculation generations still match. The HTTP calculation endpoint is a distinct legacy rosu-pp-compatible builder that accepts query parameters and must preserve its setter/order semantics. Sharing the live contract with the endpoint would change compatibility behavior.
 
 V2 beatmap stats expose `hitWindow` when a map is parsed. It contains the optional numeric judgement fields `miss`, `meh`, `ok`, `good`, `great`, and `perfect`; unsupported judgements are omitted. Values are maximum absolute timing errors in milliseconds after the active clock rate is applied. An unparsed/missing map serializes an empty object. Catch publishes all six judgements as zero, matching upstream's `EmptyHitWindows`, while `stars.hitWindow` is absent. Do not describe catch's spatial catcher width as a timing window (`src/api/v2/builders.rs`, `crates/vosu-pp/src/hit_windows.rs`, `src/model/api/v2.rs`).
 
@@ -42,7 +42,7 @@ replaced by the maximum score's hit-result count.
 
 JSON number formatting is shared across v1, stream companion, v2, and runtime projection writers through `src/calculation/root/helpers.rs::write_js_json_number`. The formatter writes finite ECMAScript-compatible numbers directly to the output, emits `null` for non-finite values, normalizes signed zero to `0`, and avoids the former temporary `String` allocation; boundary tests in `src/calculation/root/tests.rs` cover the representation thresholds and special values. Preserve this helper when changing serializers rather than reintroducing per-value allocation.
 
-Pinned calculator, map-parser, and osu! framework revisions are declared in `Cargo.toml` metadata and evidenced under `tools/oracle/`, `crates/vosu-pp/rosu-map-api/`, and `crates/vosu-pp/rosu-pp-api/`. Treat these clean-room API forks and their licenses/source mappings as provenance rather than ordinary application code.
+Pinned calculator, map-parser, and osu! framework revisions are declared in `Cargo.toml` metadata and evidenced under `tools/oracle/`, `crates/vosu-pp/rosu-map-api/`, and `crates/vosu-pp/rosu-pp-api/`. Treat these pinned API forks and their licenses/source mappings as provenance rather than ordinary application code.
 
 ## Upstream tosu 4.25.0 → 2359305 coverage
 

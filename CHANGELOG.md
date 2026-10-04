@@ -42,12 +42,13 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 
 ### Licensing
 
-- Project-authored code and documentation are now dual-licensed under `MIT OR Apache-2.0`; canonical texts are provided in `LICENSE-MIT` and `LICENSE-APACHE`, while release archives retain the root `LICENSE` member.
-- Retained third-party and provenance-pinned material remains under its own terms; see `THIRD_PARTY_NOTICES.md` and the calculator attribution file.
+- Correct first-party attribution to `Copyright (c) 2026 sxlvia` in the root/calculator license copies and Windows resources, preserving genuine upstream copyright and canonical MIT/Apache terms.
+- Include the four retained calculator MIT texts in the root release `LICENSE` without changing the updater's two-entry ZIP contract; reject stale license members and bad ZIP CRCs.
+- Qualify unsupported source-independence claims, inventory locked dependency license declarations, and record concrete source matches and unresolved production-file origins in [the provenance audit](openwiki/provenance-audit.md).
 
 ### Calculation
 
-- Replaced the LGPL-derived native live calculator with a clean-room Rust implementation based on pinned MIT `rosu-pp` 4.0.1 and MIT `ppy/osu` revision `97e94babde9d5ecbe574ecdd33509db27452cd0f`; retained the former calculator tree only as non-production historical parity evidence.
+- Replaced the former LGPL-declared native live calculator with a Rust facade and pinned MIT `rosu-pp` 4.0.1 / `ppy/osu` sources; retained the former calculator tree only as non-production historical parity evidence. The replacement commit's clean-room characterization is not a certification of source independence; see the provenance audit.
 - Update max-achievable/full-combo score and accuracy projections, nested tick-score metadata, long-slider/spinner strain graph bounds, Hidden slider opacity, and source-calculator performance clamps. Regenerate current API/calculator fixtures while retaining historical source and NUnit provenance.
 - Refresh the embedded lazer offsets for osu! `2026.921.0`, including room-user fields, with version-matched runtime-derived `GameBaseVtable` evidence.
 

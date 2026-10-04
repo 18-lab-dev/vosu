@@ -1,4 +1,4 @@
-/// Kind of evidence used to implement a calculator behavior.
+/// Declared authority for a calculator behavior; not proof of source independence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceAuthority {
     /// A direct Rust implementation of behavior documented by a pinned MIT source.
@@ -9,7 +9,7 @@ pub enum SourceAuthority {
     Mixed,
 }
 
-/// Machine-readable clean-room attribution for one externally observed behavior scope.
+/// Machine-readable attribution claim for one externally observed behavior scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourcePort {
     pub scope: &'static str,
@@ -24,10 +24,11 @@ pub struct SourcePort {
 const BLACK_BOX_SPEC: &str =
     "public Rust/downstream contracts and committed black-box compatibility vectors";
 
-/// Canonical clean-room behavior attribution.
+/// Declared behavior attribution; see `openwiki/provenance-audit.md` for open questions.
 ///
 /// Historical oracle files are evidence only. They are deliberately absent from every
-/// `upstream` field and are not production sources, build inputs, or dependencies.
+/// `upstream` field and are not build inputs or dependencies. This boundary does not
+/// establish independence from the former wrapper implementation.
 /// The 2359305 feature cutover additionally uses ppy/osu@fe30ae7e Hidden slider
 /// fade-in and performance clamps. Current black-box vectors are pinned in
 /// `tools/oracle/oracle-lock.json`; the original source-port inventory and NUnit
