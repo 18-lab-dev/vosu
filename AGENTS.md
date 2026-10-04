@@ -71,6 +71,14 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 - Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](openwiki/testing/benchmarks.md).
 - Before merging a Rust change, run the applicable native smoke path and the CI checks above; platform-specific code requires evidence from that platform.
 
+## Local CI and push gate
+
+- Before pushing, read `.github/workflows/ci.yml` and run every applicable CI command locally against the final source being pushed. Use the pinned Rust toolchain and `--locked`; do not rely on hosted CI to discover failures after a push.
+- Include change classification, maintained-document links, provenance/package fixtures, release-license tests, formatting, Linux workspace Clippy/tests, Windows MSVC cross-Clippy, and native Windows Clippy/tests whenever the workflow classifies the changes as native. Keep Linux-only header environment settings out of Windows cross-builds.
+- Also run the full workspace test suite, including doctests (`cargo test --workspace --all-features --locked`), and affected tool suites and native smoke paths. A compile-only check or a narrowed test selection does not replace a required gate.
+- Record the exact verified source/commit and each command's result. Existing evidence can cover unchanged bytes only when their identity is established; a historical pass from a different source generation is not a current pass.
+- Push only after every required local check passes. A failed, interrupted, unavailable, or unexecuted check blocks the push. Fix the cause and rerun the affected gate; do not bypass hooks, weaken tests, silently skip platform checks, or push a partially verified tree.
+
 ## Compatibility and security invariants
 
 - Preserve exact public routes, methods, status/error behavior, payload shapes, field semantics, and WebSocket upgrade paths unless an intentional compatibility decision updates tests and documentation. Unknown/near-miss routes must not become permissive.
