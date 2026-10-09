@@ -5,7 +5,7 @@ pub enum SourceAuthority {
     MitUpstream,
     /// Behavior independently specified by the public API and black-box compatibility vectors.
     IndependentSpecification,
-    /// Pinned MIT ruleset semantics combined with independently specified wrapper behavior.
+    /// Pinned MIT ruleset semantics combined with black-box-specified compatibility behavior.
     Mixed,
 }
 
@@ -14,21 +14,32 @@ pub enum SourceAuthority {
 pub struct SourcePort {
     pub scope: &'static str,
     pub authority: SourceAuthority,
-    /// Pinned MIT source paths, or `None` when the behavior was specified independently.
+    /// Pinned MIT source paths, or `None` when no MIT authority is declared.
+    /// Non-MIT port sources are deliberately excluded.
     pub upstream: Option<&'static str>,
-    /// Independent specification evidence, when it contributes to the behavior.
+    /// Black-box compatibility evidence, when it contributes to the behavior.
     pub specification: Option<&'static str>,
     pub implementation: &'static str,
 }
 
 const BLACK_BOX_SPEC: &str =
     "public Rust/downstream contracts and committed black-box compatibility vectors";
+const ACCURACY_SPEC: &str = "black-box vectors: Classic omits osu! slider-tail and large-tick accuracy terms; mania perfect weight 300 with Classic, otherwise 305";
+const DATA_SPEC: &str = "black-box vectors: camelCase wire fields, zero-filled cross-ruleset fields, Taiko effectiveMissCount = estimated unstable rate or -1, empty strain peaks report section length 0, and osu! aim, speed and reading graphs as fixed 400 ms section peaks of per-object difficulties with 0.15 per-second decay into each new section";
+const GRADUAL_SPEC: &str = "black-box vectors: one step per source hit object processes difficulty objects whose base object ends by that object's end time; skip-to-time counts objects ending at or before the time; rewind and negative skips rebuild from the start";
 
 /// Declared behavior attribution; see `docs/provenance-audit.md` for open questions.
 ///
-/// Historical oracle files are evidence only. They are deliberately absent from every
-/// `upstream` field and are not build inputs or dependencies. This boundary does not
-/// establish independence from the former wrapper implementation.
+/// This catalog omits non-MIT authorities because it describes permissive
+/// calculation sources and observable contracts, not complete authoring history.
+/// Recovered rewrite records also show consultation of the former Rust and LGPL
+/// reference; corresponding MIT formulas and passing vectors do not establish
+/// implementation independence. See `docs/provenance-audit.md` for those limits.
+/// The retained tosuapp/lazer-calculator reference is not a production build
+/// input or dependency. Its absence from `upstream` fields must not be read as
+/// proof that it was absent from the implementation process.
+/// `tools/oracle/calculator-diff-manifest.json` records historical comparison
+/// baselines, not a complete determination of current implementation origin.
 /// The 2359305 feature cutover additionally uses ppy/osu@fe30ae7e Hidden slider
 /// fade-in and performance clamps. Current black-box vectors are pinned in
 /// `tools/oracle/oracle-lock.json`; the original source-port inventory and NUnit
@@ -59,7 +70,7 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
         scope: "catch.performance-signed-wrapper-mapping",
         authority: SourceAuthority::Mixed,
         upstream: Some(
-            "MaxOhn/rosu-pp@27a67242 src/catch/performance; ppy/osu@97e94bab osu.Game.Rulesets.Catch/Difficulty/CatchPerformanceCalculator.cs",
+            "MaxOhn/rosu-pp@27a67242 src/catch/performance; ppy/osu@97e94bab osu.Game.Rulesets.Catch/Difficulty/CatchPerformanceCalculator.cs and osu.Game/Scoring/Legacy/ScoreInfoExtensions.cs count accessors",
         ),
         specification: Some(BLACK_BOX_SPEC),
         implementation: "crates/vosu-pp/rosu-pp-api/src/catch/performance; crates/vosu-pp/src/performance.rs",
@@ -138,8 +149,10 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
     },
     SourcePort {
         scope: "osu.signed-wrapper-results",
-        authority: SourceAuthority::IndependentSpecification,
-        upstream: None,
+        authority: SourceAuthority::Mixed,
+        upstream: Some(
+            "ppy/osu-tools@d82cf2a9 PerformanceCalculator/Simulate/OsuSimulateCommand.cs generateHitResults/GetAccuracy",
+        ),
         specification: Some(BLACK_BOX_SPEC),
         implementation: "crates/vosu-pp/src/{scoring.rs,performance.rs}",
     },
@@ -255,9 +268,9 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
         scope: "wrapper.accuracy-calculator",
         authority: SourceAuthority::Mixed,
         upstream: Some(
-            "ppy/osu@97e94bab osu.Game/Rulesets/Scoring/ScoreProcessor.cs and mode-specific score processors",
+            "ppy/osu-tools@d82cf2a9 PerformanceCalculator/Simulate/*SimulateCommand.cs GetAccuracy and PerformanceCalculatorGUI/RulesetHelper.cs; MaxOhn/rosu-pp@27a67242 src/osu/score_state.rs OsuScoreOrigin::Stable; ppy/osu@97e94bab osu.Game/Rulesets/Scoring/ScoreProcessor.cs and mode-specific score processors",
         ),
-        specification: Some(BLACK_BOX_SPEC),
+        specification: Some(ACCURACY_SPEC),
         implementation: "crates/vosu-pp/src/scoring.rs",
     },
     SourcePort {
@@ -271,10 +284,10 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
         scope: "wrapper.data-attribute-strain-conversion",
         authority: SourceAuthority::Mixed,
         upstream: Some(
-            "MaxOhn/rosu-pp@27a67242 mode attributes and strains; ppy/osu@97e94bab mode difficulty attributes",
+            "MaxOhn/rosu-pp@27a67242 mode attributes and strains; ppy/osu@97e94bab mode difficulty attributes, osu.Game/Rulesets/Difficulty/Skills/StrainSkill.cs section peaks and osu.Game.Rulesets.Osu/Difficulty/Skills/Flashlight.cs initial-strain decay",
         ),
-        specification: Some(BLACK_BOX_SPEC),
-        implementation: "crates/vosu-pp/src/data.rs",
+        specification: Some(DATA_SPEC),
+        implementation: "crates/vosu-pp/src/data.rs; crates/vosu-pp/rosu-pp-api/src/osu/difficulty/skills/{aim,speed,reading}.rs",
     },
     SourcePort {
         scope: "wrapper.full-difficulty-performance",
@@ -289,25 +302,27 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
         scope: "wrapper.gradual-prefix-rewind",
         authority: SourceAuthority::Mixed,
         upstream: Some(
-            "MaxOhn/rosu-pp@27a67242 src/any/{difficulty,performance}/gradual.rs and mode gradual calculators; ppy/osu@97e94bab DifficultyCalculator prefix processing",
+            "MaxOhn/rosu-pp@27a67242 src/any/{difficulty,performance}/gradual.rs and mode gradual calculators; ppy/osu@97e94bab DifficultyCalculator prefix processing and StrainSkill.cs section peaks",
         ),
-        specification: Some(BLACK_BOX_SPEC),
-        implementation: "crates/vosu-pp/src/gradual.rs",
+        specification: Some(GRADUAL_SPEC),
+        implementation: "crates/vosu-pp/src/gradual.rs; crates/vosu-pp/rosu-pp-api/src/{any,osu,taiko,catch,mania}/difficulty/gradual.rs",
     },
     SourcePort {
         scope: "wrapper.hit-windows",
-        authority: SourceAuthority::MitUpstream,
+        authority: SourceAuthority::Mixed,
         upstream: Some(
-            "ppy/osu@97e94bab osu.Game/Rulesets/Scoring/HitWindows.cs; osu.Game.Rulesets.{Osu,Taiko,Mania}/Scoring/{Osu,Taiko,Mania}HitWindows.cs",
+            "ppy/osu@97e94bab osu.Game/Rulesets/Scoring/HitWindows.cs including EmptyHitWindows; osu.Game.Rulesets.{Osu,Taiko,Mania}/Scoring/{Osu,Taiko,Mania}HitWindows.cs including Mania Classic/convert windows; osu.Game.Rulesets.Catch/Objects/CatchHitObject.cs HitWindows.Empty",
         ),
-        specification: None,
+        specification: Some(
+            "black-box vectors: the per-judgement lookup reports no Catch window, while map windows report zero for every Catch judgement",
+        ),
         implementation: "crates/vosu-pp/src/hit_windows.rs",
     },
     SourcePort {
         scope: "wrapper.play-beatmap-parse-convert-mods",
         authority: SourceAuthority::Mixed,
         upstream: Some(
-            "MaxOhn/rosu-pp@27a67242 Beatmap conversion and Difficulty APIs; rosu-mods 0.4.0 MIT public API",
+            "MaxOhn/rosu-pp@27a67242 Beatmap conversion and Difficulty APIs and src/util/random/csharp.rs; rosu-mods 0.4.0 MIT public API; ppy/osu@97e94bab osu.Game.Rulesets.{Osu,Taiko,Mania}/Mods/*Random.cs, OsuHitObjectGenerationUtils.cs, ManiaMod{Mirror,HoldOff,Invert}.cs, TaikoModSimplifiedRhythm.cs and ModDifficultyAdjust.cs; dotnet/runtime@15872212 Random.CompatImpl.cs",
         ),
         specification: Some(BLACK_BOX_SPEC),
         implementation: "crates/vosu-pp/src/{beatmap.rs,beatmap/random.rs,mods.rs}",
@@ -316,7 +331,7 @@ pub const SOURCE_PORTS: &[SourcePort] = &[
         scope: "wrapper.score-simulator",
         authority: SourceAuthority::Mixed,
         upstream: Some(
-            "MaxOhn/rosu-pp@27a67242 mode hit-result generators; ppy/osu@97e94bab ScoreProcessor.cs and mode legacy score simulators",
+            "ppy/osu-tools@d82cf2a9 PerformanceCalculator/Simulate/{Osu,Taiko,Catch,Mania}SimulateCommand.cs generateHitResults; MaxOhn/rosu-pp@27a67242 mode hit-result generators; ppy/osu@97e94bab ScoreProcessor.cs and mode legacy score simulators",
         ),
         specification: Some(BLACK_BOX_SPEC),
         implementation: "crates/vosu-pp/src/scoring.rs",

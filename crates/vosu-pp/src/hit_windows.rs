@@ -126,7 +126,7 @@ pub fn hit_window_for_map(
 fn map_windows(map: &ParsedBeatmap, speed: bool) -> Result<HitWindows, Error> {
     let mode = map.state.mode;
     if mode == Ruleset::Catch {
-        // DrawableCatchRuleset's EmptyHitWindows reports every judgement at zero.
+        // CatchHitObject uses HitWindows.Empty, which reports every judgement at zero.
         return Ok(HitWindows {
             miss: Some(0.0),
             meh: Some(0.0),

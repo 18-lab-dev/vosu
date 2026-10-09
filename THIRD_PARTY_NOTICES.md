@@ -8,13 +8,13 @@ First-party notice: `Copyright (c) 2026 sxlvia`, as confirmed by the maintainer 
 
 - **Upstream credit:** tosu and its contributors, including Mikhail Babynichev (Kotrik). The upstream [v4.25.0 package metadata](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/package.json) names that author; its [license document](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/LICENSE) retains `Copyright (C) 2023-2026 Mikhail Babynichev <https://kotrik.ru/>`. This is upstream attribution, not a first-party vosu copyright notice. Upstream declares `GPL-3.0` in `package.json` but supplies LGPL v3 text in `LICENSE`; the audit records this discrepancy rather than selecting or broadening its grant.
 - **Historical imports:** the initial vosu snapshot retained tosu dashboard material and an LGPL-covered calculator wrapper. The dashboard replacement is recorded in [`af20c120`](https://github.com/shiruviaa/vosu/commit/af20c1201a21beecc7db88119a700b2964c1ab78); the calculator replacement is recorded in [`4971b568`](https://github.com/shiruviaa/vosu/commit/4971b568a8dd0e82c011214c74b4e3857fd182ae). Earlier snapshots retain their applicable licenses and notices.
-- **Production review:** stable memory signature data matches upstream tosu, and some calculator structures and formulas overlap the former wrapper. A compatibility match alone does not determine copyright status or establish independent implementation. The [provenance audit](docs/provenance-audit.md) identifies the files requiring evidence before any licensing conclusion.
-- **Current and historical pins:** `package.metadata.vosu.source-commit` and the current oracle lock use verified upstream revision `2359305a63f2aaebb201bc8d2eee58177f52590e`. Historical calculator records retain unresolved `1a67fd64cc38fe60306328dde0a429e3211ca4ed`; no authenticated mapping was recovered. Upstream `v4.25.0` at `9f42c88714da69ac2ba248126a189416c55d733c` is a separately identified comparison source, not a substitute for that historical pin.
+- **Production review:** the memory/API origin questions in the [provenance audit](docs/provenance-audit.md) remain open. The calculator core uses pinned MIT rosu-pp/osu! sources, and original authoring records substantiate the catch equation's MIT origin. Recovered rewrite records also show reads of the former Rust and LGPL wrapper, including data, signed-score, gradual and strain details. Those exposed adapters and compatibility arrangements are not certified independent. A matching formula or interface alone does not determine copyright status; neither blanket GPL attribution nor blanket permissive clearance follows from this review.
+- **Current and historical pins:** current Cargo metadata and oracle locks use upstream `2359305a63f2aaebb201bc8d2eee58177f52590e`. Historical calculator pin `1a67fd64cc38fe60306328dde0a429e3211ca4ed` was recovered in the local tosu fork: it follows upstream `v4.25.0` at `9f42c88714da69ac2ba248126a189416c55d733c` with two `qt715` commits touching stable Random-mod seed reporting and data-loop exits. It is a fork revision, not that upstream release.
 - **Retained reference:** `tools/oracle/reference/lazer-calculator` preserves its own LGPL license, revision, and checksum manifest. The first-party dual-license grant does not relicense this reference or any copied or translated upstream material.
 
 ## Native live-calculation sources
 
-The production `vosu-pp` calculator uses a Rust facade and MIT source forks. Its detailed source map and complete retained license texts are in [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). The repository records the replacement as clean-room work; the remaining provenance questions are listed above.
+The production `vosu-pp` calculator uses a Rust facade and MIT source forks. Its source-authority map and retained license texts are in [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). Recovered authoring records contradict the replacement's clean-room characterization; this notice does not certify implementation independence.
 
 ### rosu-pp 4.0.1 baseline
 
@@ -50,12 +50,30 @@ The production `vosu-pp` calculator uses a Rust facade and MIT source forks. Its
 - **License source:** <https://github.com/ppy/osu-framework/blob/a0b031e7ff6c83d81da26fcbece7d25edbd222b4/LICENCE>
 - **Verified license SHA-256:** `d07e3ce383a24bdc4665208e0ca3730e433ea1e8235b67a301a2b26335692c8e`
 
-The existing calculator provenance record reports verification of all four
-exact revisions and their MIT license files from external checkouts. The
-production workspace uses the in-tree Rust implementation and its MIT forks;
-the historical LGPL oracle directory is not a production build or runtime
-input. That dependency boundary alone does not establish the origin of every
-production source fragment.
+### ppy/osu-tools
+
+- **Material:** per-ruleset score hit-result generation and accuracy formulas (`PerformanceCalculator/Simulate/*SimulateCommand.cs` and `PerformanceCalculatorGUI/RulesetHelper.cs`) used by `src/scoring.rs`; the former wrapper states that it copied these generators from osu-tools
+- **Copyright:** Copyright (c) 2019 ppy Pty Ltd <contact@ppy.sh>
+- **License:** MIT
+- **Pinned source:** <https://github.com/ppy/osu-tools/tree/d82cf2a986218f80c18dea5cc1399133d4a8586d>
+- **License source:** <https://github.com/ppy/osu-tools/blob/d82cf2a986218f80c18dea5cc1399133d4a8586d/LICENCE>
+- **Verified license SHA-256:** `6e32fdd796385f89d57f0fbdee69178bc62deec64af0ce92011a21afb7a12191`
+
+### dotnet/runtime `System.Random` compatibility generator
+
+- **Material:** the seeded `Random.CompatImpl.cs` generator reproduced in `crates/vosu-pp/src/beatmap/random.rs` for osu!'s seeded Random mods
+- **Copyright:** Copyright (c) .NET Foundation and Contributors
+- **License:** MIT
+- **Pinned source:** <https://github.com/dotnet/runtime/blob/15872212c29cecc8d82da4548c3060f2614665f7/src/libraries/System.Private.CoreLib/src/System/Random.CompatImpl.cs>
+- **License source:** <https://github.com/dotnet/runtime/blob/15872212c29cecc8d82da4548c3060f2614665f7/LICENSE.TXT>
+- **Verified license SHA-256:** `cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310`
+
+The existing calculator provenance record reports verification of the first
+four exact revisions and their MIT license files from external checkouts; the
+osu-tools and dotnet/runtime licenses were retrieved from their exact-revision
+sources. The production workspace uses the in-tree Rust implementation and its
+MIT forks; the historical LGPL oracle directory is not a production build or
+runtime input.
 
 ### Calculator oracle provenance
 
@@ -197,7 +215,7 @@ These development packages, the private `vosu-test-harness` workspace member, or
 
 - project-authored repository code: `LICENSE-MIT` or `LICENSE-APACHE`
 - release archive license member: `LICENSE` (combined first-party terms and retained calculator MIT texts)
-  The `assets/SHA256SUMS` license entry tracks the current combined-license bytes (`8289c7cc59ca7272c0e0dd314288adacb7c2397dd2f5241e36457166c16f4719`). Refresh both values whenever `LICENSE` changes; other retained asset hashes remain tied to their exact bytes.
+  The `assets/SHA256SUMS` license entry tracks the current combined-license bytes (`baa319fe56dbf6efd6a09eba4ceca2b3d1b1105bdf996b77281623853bb91002`). Refresh both values whenever `LICENSE` changes; other retained asset hashes remain tied to their exact bytes.
 - calculator crate project-authored code: `crates/vosu-pp/LICENSE-MIT` or `crates/vosu-pp/LICENSE-APACHE`
 - pinned lazer-calculator LGPL-3.0 reference: `tools/oracle/reference/lazer-calculator/LICENSE`
 - local `vosu-rosu-pp-api` MIT license text: `crates/vosu-pp/rosu-pp-api/LICENSE`

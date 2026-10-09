@@ -58,14 +58,17 @@ Current Cargo metadata and `tools/oracle/oracle-lock.json` use tosu
 The GitHub commit API and exact-revision source archive resolved this pin.
 Historical `tools/oracle/calculator-diff-manifest.json` and
 `tools/oracle/calculator/binding.ts` still record
-`1a67fd64cc38fe60306328dde0a429e3211ca4ed`. It is not a local Git object;
-GitHub commit search returned zero results, and the original audit could not
-resolve it in `tosuapp/tosu` or `shiruviaa/vosu`. No authenticated source mapping
-was recovered. Those historical records are not rewritten or declared verified.
+`1a67fd64cc38fe60306328dde0a429e3211ca4ed`. The original audit did not locate
+it. The 2026-10-09 history investigation recovered that exact object in the
+local tosu fork: commits `fc36097a` and `1a67fd64`, both authored as `qt715`,
+follow upstream `v4.25.0`. They add stable Random-mod seed reporting and remove
+premature data-loop exits (21 inserted and two deleted lines). This identifies
+the historical fork revision without substituting an upstream release or
+rewriting the historical records.
 
 Two separately identified upstream comparison archives were inspected:
 [`v4.25.0 / 9f42c887`](https://github.com/tosuapp/tosu/tree/9f42c88714da69ac2ba248126a189416c55d733c)
-and the current `2359305a` pin. Neither replaces the unresolved historical pin.
+and the current `2359305a` pin. Neither is identical to the historical fork revision.
 
 ## Production files requiring provenance review
 
@@ -74,8 +77,8 @@ and the current `2359305a` pin. Neither replaces the unresolved historical pin.
 | `src/memory/stable/signatures.rs`, `settings.rs`, `readers.rs` | The audio/user/result readers have matching ordered pointer graphs and field offsets in tosu's `packages/tosu/src/memory/stable.ts`; the Rust bodies already exist in initial commit `7a49fda2` | The origin of the decoder implementation is unresolved, not merely the signature constants; require author/source evidence before assigning upstream-derived or independent status |
 | `src/memory/lazer/*`, `src/api/v1.rs`, `src/api/v2/*`, `src/api/precise.rs`, `src/api/sc.rs`, `src/state/*` | The sampled StreamCompanion builder has the same status-dependent mode/mod selection and rate-scaled UR projection; lazer/state samples implement corresponding object/state contracts | This is a lightweight sample, not an exhaustive cross-language comparison. In particular, API-required mapping and common state concepts do not establish mechanical translation or independent implementation |
 | `crates/vosu-pp/src/model.rs`, `data.rs` | Exact whitespace-normalized matches include `model.rs:169–194` versus former `model.rs:110–135` (26 lines), and `data.rs:5–22` versus former `data.rs:3–20` (18 lines) at `92b2f5e` | These include score-model fields and projection structures; matching API/data layout alone cannot establish origin or legal derivation |
-| `crates/vosu-pp/src/performance.rs` | Current `217–224` matches former `engine.rs:544–551` (8 lines); `245–262` matches `569–586` (18 lines). MIT osu!'s `CatchPerformanceCalculator.cs:32–104` independently supplies the base equation and length/miss/combo/AR/HD/FL/accuracy/NF factors | Trace formula authority separately from the signed score adaptation, wrapping arithmetic and dispatch. MIT authority for the equation does not establish the origin of the whole Rust function |
-| `crates/vosu-pp/src/scoring.rs`, `gradual.rs`, `beatmap.rs`, `source_map.rs` | Source-scoring/progressive contracts overlap former wrapper responsibilities. The textual screen found small `scoring.rs` matches but no qualifying exact five-line `gradual.rs` match; rebuild-based rewind still has structural similarity | Simulation, signed results, prefix bookkeeping and rewind origins remain unresolved. `SOURCE_PORTS` is a declared behavior-authority catalog, not implementation-history proof |
+| `crates/vosu-pp/src/performance.rs` | Current catch blocks match the former Rust; MIT osu!/rosu-pp supply the equation, and original authoring records confirm those source reads | The equation's MIT origin is substantiated. Signed-score adaptation and rewrite-source exposure are separate questions; see the remediation review below |
+| `crates/vosu-pp/src/scoring.rs`, `gradual.rs`, `beatmap.rs`, `source_map.rs` | Permissive sources supply calculation behavior, while recovered rewrite records also show reads and relays from the former wrapper | Retain origin review for exposed adapters and projections. `SOURCE_PORTS` records behavior authorities, not implementation independence |
 | `assets/server/homepage.js`, `homepage-settings.js`, `homepage.html`, `report.html`, `homepage.css`, `homepage-controls.css` | Against each tosu snapshot's nine HTML/JS/CSS/SCSS files, excluding Vue, none of the six current assets shared a whitespace-normalized five-line block containing over 100 characters | A reproducible textual screen and the documented dashboard replacement are not proof of independent authorship; cross-language, non-contiguous and shorter transformations are outside this method |
 
 ### Concrete source comparisons
@@ -131,6 +134,206 @@ and source revision, and resolve the combined-work distribution terms before
 release. The existing historical LGPL reference and MIT forks retain their
 own exact license files and licensing boundaries.
 
+## Remediation review (2026-10-09)
+
+Reviewed tree: coordinator snapshot `9106c65e627479971d33fbcbeaf735ffb308407f`
+(original HEAD `f075408209ee98cdd780f3a4d386d2a9850f40b0` plus existing
+uncommitted work). The review re-checked the flags above against primary
+sources. For `crates/vosu-pp` it asked what the current implementation is
+actually supported by, rather than what historical labels say. Maintainer
+decision recorded for this review: `vosu-pp` was intended as a rewrite that
+references MIT osu!lazer and MIT rosu-pp, and relicensing vosu under GPL or LGPL
+terms is not the chosen remedy. Nothing below is a legal clearance or a
+clean-room certification.
+
+### Method
+
+The current Rust was compared with these pinned permissive authorities:
+
+- ppy/osu `97e94babde9d5ecbe574ecdd33509db27452cd0f`
+- ppy/osu-tools `d82cf2a986218f80c18dea5cc1399133d4a8586d`
+- MaxOhn/rosu-pp `27a67242cad155a2767f5a25a423ca4ec3e3c274`
+- MaxOhn/rosu-map `333dd2bea78e518d39c20932c828011f21d3305e`
+- dotnet/runtime `15872212c29cecc8d82da4548c3060f2614665f7`
+
+It was also compared with the retained LGPL reference,
+`tools/oracle/reference/lazer-calculator` at `9a22c4c`, which is used here only
+as historical evidence and a black-box oracle. Each match was classified as one
+of four kinds:
+
+- implementation expression;
+- a formula or constant prescribed by osu!;
+- a public compatibility field or observable behavior;
+- boilerplate such as enums, signatures and error variants.
+
+A match against vosu's own former Rust at `92b2f5e8` was not treated as proof of
+an LGPL source. That Rust's provenance depends on where its expression came
+from, which this section traces.
+
+### Findings
+
+- **What the historical records say.** Every `calculator-wrapper` item in
+  `tools/oracle/calculator-diff-manifest.json` names a lazer-calculator file
+  as its baseline location. The former crate notice at `92b2f5e8` declared
+  `LGPL-3.0-only` because it "ports" the wrapper's PlayBeatmap, gradual patch,
+  ScoreSimulator, AccuracyCalculator, hit-window, mod-conversion and
+  data-conversion branches. These are prior claims about intent and
+  comparison baselines, written while the former crate existed. They are not
+  a source determination for the current Rust. The reference's
+  `lib/package.json` (`LGPL-3.0-only`) and `LICENSE` (SHA-256
+  `a5681bf9b05db14d86776930017c647ad9e6e56ff6bbcfdf21e5848288dfaf1b`) agree.
+- **The wrapper's C# is thin.** Its 785 lines bind to osu!'s MIT calculators.
+  - `ScoreSimulator.cs` and `AccuracyCalculator.cs` repeat MIT osu-tools
+    `d82cf2a9` line for line. The only additions are namespaces, comments,
+    signatures, dispatch, call arguments and the Classic accuracy gate at
+    `AccuracyCalculator.cs:27,36,44`; `--osu-tools` reproduces this.
+  - `HitWindows.cs` and `LazerMod.cs` forward to osu!'s hit-window and `APIMod`
+    classes.
+  - `Data/*.cs` define wire structs whose fields are named after osu!'s
+    `HitResult` and attribute properties.
+  - The gradual patch's new `GradualDifficultyEnumerator.cs` carries ppy's MIT
+    header and reuses osu!'s `ProgressiveCalculationBeatmap`. Its authorship is
+    storycraft's (all ten patches), and it ships inside the LGPL repository.
+- **The catch formula traces to osu!.** The C# reference contains none of the
+  catch constants (`0.0049`, `2500`, `0.475`, `0.97`, `1.35`, `5.5`).
+  `performance.rs:206–283` follows MIT `CatchPerformanceCalculator.cs:34–103`
+  and `ScoreInfoExtensions.cs:101–215` term by term, with C# unchecked `int`
+  wrapping. `DiffUtils.Pow(0.97, int)` and `f64::powf` agree for exponents 0–5.
+  Former Rust `engine.rs:544–586` at `92b2f5e8` is the same osu! translation.
+  Its exact match with current `performance.rs:217–262` shows continuity of
+  vosu's own Rust, not an LGPL source for the formula. Session history supplied
+  by the coordinator's independent history review (not re-read by this
+  reviewer) agrees. The original authoring session `019f5e79-3d6d` read the
+  vendored MIT rosu-pp catch calculator and MIT osu!
+  `CatchPerformanceCalculator.cs` between 2026-07-14 10:12 and 10:33, before
+  writing the signed catch formula. This block is therefore recorded as a
+  substantiated MIT-source translation, not an unresolved GPL/LGPL block, and
+  is not rewritten.
+- **`ScoreInfoData` is an interface-shape case, separate from calculation.**
+  The same history review reports that the struct was authored at 09:26, after
+  a 09:24:46 read of the wrapper's LGPL `Data/ScoreInfoData.cs`. Its field
+  names are osu! `HitResult` names, and its order is the reverse of osu!'s
+  `HitResult` enum, the same order the wrapper's struct uses. The struct carries
+  no calculation; its serialized names and order are a consumer contract, so it
+  is not changed. Whether adopting that interface arrangement from the wrapper
+  needs permission is recorded below as an open compatibility-shape question.
+- **The stable and API flags remain current** and are outside this
+  assignment. All 16 `PATTERNS` and both chat/mania patterns in
+  `src/memory/stable/signatures.rs` equal tosu `stable.ts:125–185` at
+  `2359305a`. The reader correspondences now sit at `readers.rs:146–152`,
+  `156` and `179`. `src/api/sc.rs:32–35,184–185` still mirrors
+  `buildResultSC.ts`.
+
+### Current-source determination for `crates/vosu-pp`
+
+| Path | Classification | Pinned permissive source | Change made |
+| --- | --- | --- | --- |
+| `src/model.rs` | Public compatibility fields and boilerplate. `HitResult` values, `ScoreInfoData` counters (reverse `HitResult` order) and `LiveScoreState` legacy-count mapping | osu! `osu.Game/Rulesets/Scoring/HitResult.cs`, `osu.Game/Scoring/Legacy/ScoreInfoExtensions.cs` | None; field names and order are serialized contracts |
+| `src/data.rs` | Projection of rosu-pp attribute and strain types into compatibility wire fields. The Taiko `effectiveMissCount` value and zero-filled fields are observable compatibility behavior | rosu-pp `src/any/{attributes,strains}.rs` and mode attribute types | `SOURCE_PORTS` records the observable behaviors as a black-box specification |
+| `src/performance.rs` | rosu-pp dispatch plus the signed catch formula (prescribed by osu!) | rosu-pp `src/any/performance`; osu! `CatchPerformanceCalculator.cs:34–103`, `ScoreInfoExtensions.cs:101–215` | Attribution only |
+| `src/scoring.rs` | Score generation and accuracy formulas; the Classic accuracy gate; total score | osu-tools `PerformanceCalculator/Simulate/*SimulateCommand.cs`, `PerformanceCalculatorGUI/RulesetHelper.cs`; rosu-pp `src/osu/score_state.rs:60–85,133–180` (`OsuScoreOrigin::Stable` omits slider tails and ticks); osu! `ScoreProcessor.cs:400–431` | osu-tools notice added; rosu-pp Classic authority recorded |
+| `src/gradual.rs` | vosu facade over the rosu-pp gradual core: processed count, end-time skip, negative skip and rewind by rebuilding | rosu-pp `src/any/difficulty/gradual.rs` | Per-source stepping recorded as a compatibility specification |
+| `src/beatmap.rs`, `src/beatmap/random.rs`, `src/mods.rs` | Translations of osu! mod transforms, rosu-mods decoding and a .NET seeded generator | osu! `ModDifficultyAdjust.cs`, `ManiaMod{Mirror,HoldOff,Invert,Random}.cs`, `TaikoMod{SimplifiedRhythm,Random}.cs`, `OsuModRandom.cs`, `OsuHitObjectGenerationUtils.cs`; rosu-mods 0.4.0; dotnet/runtime `Random.CompatImpl.cs:256–365` (also ported by rosu-pp `src/util/random/csharp.rs`) | **The missing dotnet/runtime MIT notice was added** |
+| `src/hit_windows.rs` | Prescribed osu! window constants plus API shape | osu! `OsuHitWindows.cs:12–43`, `TaikoHitWindows.cs:12–37`, `ManiaHitWindows.cs:12–17,129–159`, `HitWindows.cs:21,111–117`, `CatchHitObject.cs:184` | Catch comment corrected (the empty windows come from `CatchHitObject`, not `DrawableCatchRuleset`); scope recorded as `Mixed` with the per-judgement Catch `None` contract |
+| `src/difficulty.rs` | Glue over the rosu-pp gradual core | rosu-pp `src/any/difficulty` | None |
+| `rosu-pp-api/src` | MIT fork forward-ported to osu!, plus two vosu compatibility additions: per-source gradual stepping in each mode's `difficulty/gradual.rs`, and a fixed 400 ms / 0.15 strain-graph projection in `osu/difficulty/skills/{aim,speed,reading}.rs` | rosu-pp `27a67242`; osu! `osu.Game/Rulesets/Difficulty/Skills/StrainSkill.cs:26–60,86–109` and `osu.Game.Rulesets.Osu/Difficulty/Skills/Flashlight.cs:31–33` | Additions disclosed in the notice; their observable values recorded as compatibility specifications |
+| `rosu-map-api/src` | MIT fork with osu-framework-aligned geometry | rosu-map `333dd2be`; osu-framework `a0b031e7` | Notice wording only (no clean-room claim) |
+
+**No calculation implementation was changed in this review.** The table
+identifies permissive authorities for examined calculations; it is not a
+blanket determination of implementation origin. The fork diff was inspected
+for gradual and skill additions, not for every line of the 75-file forward
+port.
+
+Recovered authoring records contradict the August rewrite's clean-room claim.
+The parent session `019ffb5e-c6e0` read old `data.rs`, `model.rs` and `engine.rs`
+at 2026-08-13 13:51 before delegating the rewrite. It re-read old catch code
+before writing the current signed block, and read the LGPL gradual patch.
+`CleanScores` read the LGPL simulator/accuracy files; `CleanRoomOracle` read
+the LGPL gradual and strain wrappers; the advisor relayed wrapper projections.
+This establishes exposure, not a legal conclusion that every resulting
+expression is protected or derived. Signed-score adapters, data/strain
+projections, gradual boundaries, the Classic gate and compatibility-shape
+arrangements remain under origin review. Their corresponding MIT formulas and
+public contracts do not by themselves clear the implementation.
+
+The original catch equation is a narrower finding: `LiveCalcOracle` read MIT
+rosu-pp's catch calculator at 2026-07-14 10:12:13 and MIT osu!'s calculator at
+10:12:17, before writing the formula at 10:36:21. That source tracing must not
+be generalized into clearance of all surrounding wrapper code.
+
+### Changes made by this review
+
+- **Clean-room wording removed.** `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`,
+  `THIRD_PARTY_NOTICES.md`, both rosu-map fork notices and the embedded
+  `LICENSE` appendix no longer state that the repository records clean-room
+  work.
+- **Missing MIT notices added.** The notices now include the ppy/osu-tools and
+  dotnet/runtime MIT notices. `scripts/assemble-release-license.py` pins both
+  retained texts, so the release `LICENSE` carries six MIT texts.
+- **Historical labels described honestly.** The notices describe the wrapper
+  labels as historical, keep the wrapper only as a parity reference and
+  black-box oracle, and list the fork's compatibility additions.
+- **`SOURCE_PORTS` corrected.** Entries now cite the supporting permissive
+  paths: osu-tools, rosu-pp `OsuScoreOrigin::Stable`, osu! `StrainSkill` and
+  `Flashlight`, mod and random sources, `EmptyHitWindows`, and dotnet/runtime.
+  The four lazer-calculator-originated behavior sets are now explicit
+  specification strings. `osu.signed-wrapper-results` and `wrapper.hit-windows`
+  are `Mixed`. The public `SourceAuthority` enum is unchanged, and LSP found no
+  use outside `source_map.rs`.
+- **No calculation code, public API, serialized field, signed-count behavior
+  or gradual semantics changed.**
+
+### Disposition of each flag
+
+| Flag | Disposition | Remaining question |
+| --- | --- | --- |
+| Stable `signatures.rs`, `settings.rs`, `readers.rs` | **Historical tosu port documented; current rights unresolved.** Recovered `StableReader.jsonl` records a source-equivalent assignment and reads of `packages/tosu/src/memory/stable.ts` at 2026-07-14 04:02–04:03. Current correspondences were reproduced; no permissively licensed authority for this implementation was established | A permissive-source reconstruction or permission. Relicensing is not the chosen remedy; code-origin evidence and the legal significance of reuse are separate questions |
+| `src/memory/lazer/*`, `src/api/*`, `src/state/*` | **Historical translations reported by the authoring-session investigation; current rights unresolved.** The investigation records tosu traversal and builder source use. First-party generated offsets against MIT osu! assemblies do not establish independence of surrounding readers and projections | A permissive-source reconstruction or permission for protectable reused implementation. API-required names, field shapes and offsets do not alone establish protected derivation |
+| `vosu-pp` `model.rs`, `data.rs` | Permissive types support the field meanings and numerical attributes. The original struct followed a read of the LGPL `Data/ScoreInfoData.cs`; the rewrite consulted old projection code and wrapper-derived details | Data/strain projection origins and the compatibility-shape arrangement remain under review. Matching public fields do not alone establish protected derivation; cosmetic reordering is not a remedy |
+| `vosu-pp` `performance.rs` | **Catch equation supported by MIT sources and original authoring records.** The current signed block was also written after reads of former Rust | Signed-score adaptation and surrounding implementation origins remain under review; the equation alone is not an external LGPL finding |
+| `vosu-pp` `scoring.rs` | MIT osu-tools, rosu-pp and osu! support calculation behavior; rewrite records also show LGPL simulator/accuracy reads | Classic gating, signed-result adapters and implementation independence are not cleared by corresponding formulas |
+| `vosu-pp` `gradual.rs`, `beatmap.rs`, `beatmap/random.rs`, `mods.rs`, `hit_windows.rs`, `difficulty.rs` and fork additions | Permissive sources support the examined algorithms; the rewrite also consulted prior fork code and the LGPL gradual/strain reference | Gradual boundaries and strain projections remain under origin review; the full fork delta was not independently re-audited |
+| `vosu-pp` `source_map.rs` | **Corrected catalog**; a declaration, not implementation-history proof | None |
+| Dashboard assets | **Not re-examined**; the 2026-10-02 screen stands with its stated limits | Maintainer evidence if a stronger conclusion is needed |
+
+### Remaining uncertainty
+
+**Current implementation origin.** The catch equation has substantiated MIT
+source authority. The review does not establish independence of every exposed
+adapter or fork addition, nor classify all matching contracts as protected
+expression. The memory/API correspondences were outside this assignment.
+
+**Historical and legal questions, not current-code findings:**
+
+- Recovered transcripts identify agents that authored the original wrapper
+  and expose the rewrite's source reads; edits outside those sessions remain
+  unobserved.
+- The license status of the gradual patch's MIT-headed files inside an LGPL
+  repository.
+- Whether observable compatibility parameters and the `ScoreInfoData`
+  interface arrangement taken from the wrapper need permission.
+- The historical pin is now identified as a local tosu fork revision; its
+  upstream license discrepancy remains separate.
+- The upstream tosu license conflict.
+
+No legal clearance is claimed.
+
+### Source map and manifest consistency risks
+
+- `tools/oracle/calculator-diff-manifest.json` is historical and unchanged. Its
+  `authority` field (`osu-forward` or `calculator-wrapper`) records the
+  original comparison baseline, not current sources, and is not mapped to
+  `SourceAuthority`. The parity test checks only that scope names match in both
+  directions and that both manifest authority values occur. It does not
+  compare authorities, `upstream` or `specification` text.
+- The osu-tools, dotnet/runtime and added osu! paths in `upstream` strings are
+  not manifest pins; the manifest pins only osu!, the rosu-pp baseline and the
+  wrapper.
+- Manifest `rustLocation` values still name `src/lib.rs` targets from before
+  the module split. They are historical and are not used to locate current
+  code.
+
 ## Integrity and packaging
 
 - `assets/SHA256SUMS` has 18 entries. Only its `LICENSE` row changes for the
@@ -151,7 +354,8 @@ own exact license files and licensing boundaries.
   extraction, and release-set validation. This catches an old license inside
   an otherwise correctly shaped ZIP.
 - The root `LICENSE` now embeds the retained calculator notices, including the
-  four complete MIT texts for rosu-pp, rosu-map, osu!, and osu-framework.
+  six complete MIT texts for rosu-pp, rosu-map, osu!, osu-framework,
+  osu-tools and dotnet/runtime (the last two added on 2026-10-09).
   `scripts/assemble-release-license.py` checks or refreshes that appendix from
   the maintained calculator notice. The two-entry archive shape is unchanged.
   This fixes the identified calculator-text omission, not every distribution
@@ -229,8 +433,33 @@ For the source screen, acquire the exact comparison revisions above and extract
 ```sh
 python scripts/audit-source-similarity.py \
   --tosu <tosu-9f42c887-checkout> --tosu <tosu-2359305a-checkout> \
-  --former-wrapper <vosu-92b2f5e-tree>
+  --former-wrapper <vosu-92b2f5e-tree> \
+  --osu-tools <osu-tools-d82cf2a9-checkout>
 ```
+
+The `--osu-tools` comparison reads the retained reference
+`tools/oracle/reference/lazer-calculator` at lazer-calculator revision
+`9a22c4c74f8e584fa64133a79a204dd045646bac` (`ScoreSimulator.cs` SHA-256
+`c2d5b548a2c1d8ffd4bb36dfcb51e0fa3887a45875065d8bb8542e9e406ddeec`,
+`AccuracyCalculator.cs` SHA-256
+`cb50273c57ff9d703ec4617fe4c4da6dff692957ad99d97bceec31929d08f60e`; both match
+the reference's `SHA256SUMS`). Check out ppy/osu-tools at
+`d82cf2a986218f80c18dea5cc1399133d4a8586d`
+(`git clone https://github.com/ppy/osu-tools && git -C osu-tools checkout d82cf2a986218f80c18dea5cc1399133d4a8586d`).
+The 2026-10-09 run used these upstream file digests:
+
+| osu-tools file | SHA-256 |
+| --- | --- |
+| `PerformanceCalculator/Simulate/OsuSimulateCommand.cs` | `29d2b77c64b1a83bae00b3c5143923173d7d0e289d7cb2f5d6463fa9d6c3a054` |
+| `PerformanceCalculator/Simulate/TaikoSimulateCommand.cs` | `06b5e199f04c9c944545cadc0d6aa715869aebd100a26ff14caad7d6e9b7c4c7` |
+| `PerformanceCalculator/Simulate/CatchSimulateCommand.cs` | `2a6f4b75f3057e58a9f43a2500928d62ef5ba938022f98107ac92d8e37261307` |
+| `PerformanceCalculator/Simulate/ManiaSimulateCommand.cs` | `f9d341e535bb207c1f2445b602d8ff9ca2b76cd5f3a75374fe0c8ffe5e0f00c2` |
+| `PerformanceCalculatorGUI/RulesetHelper.cs` | `aeb1c797b3adf029cd533f42e622d4db42b37f15d21259d8819d554188444b3c` |
+| `LICENCE` | `6e32fdd796385f89d57f0fbdee69178bc62deec64af0ce92011a21afb7a12191` |
+
+It reported 36 residual `ScoreSimulator.cs` lines and 18 residual
+`AccuracyCalculator.cs` lines, as characterized above. The script prints the
+digests of the files it actually read; compare them with this table.
 
 
 The tagged release workflow builds each native target, packages and extracts
@@ -238,6 +467,38 @@ its actual binary, runs `vosu-release-smoke` against the extracted executable,
 and checks the signed Windows resources. Run that workflow's package/extract,
 `verify-set`, and smoke commands against real release builds before publishing.
 The PR does not create a release or upload regenerated helper artifacts.
+
+## Local remediation validation (2026-10-09)
+
+The coordinator exercised the uncommitted notice/catalog patch against the
+isolated snapshot `9106c65e627479971d33fbcbeaf735ffb308407f`; this is not a
+published revision or attribution for inherited checkout changes.
+
+- The new `--osu-tools` comparison ran against the pinned files above and the
+  former Rust tree at `92b2f5e8`. Their hashes matched the recorded inputs.
+  The reference residual counts were 36 and 18; the former-wrapper screen
+  still reported matches in `model.rs`, `data.rs`, `performance.rs`, and
+  `scoring.rs`. These observations do not clear any flagged origin.
+- `assemble-release-license.py`, `check-provenance.py --package-fixtures`,
+  all four `test_package_release.py` cases, maintained Markdown path checks,
+  and all 18 asset checksums passed. Packaging fixtures are not executable
+  release smoke tests.
+- Rust 1.96.1 passed `vosu-pp` all-target/all-feature Clippy with warnings
+  denied, the all-feature crate tests (72 tests), the focused `oracle_parity`
+  gate (14 tests), and the changed `source_map.rs` formatting check.
+- A throwaway consumer exercised the actual `LiveLazerEngine` API against one
+  native map per ruleset: parse/convert, difficulty, score generation, accuracy,
+  direct and retained-attribute performance, and gradual-prefix performance.
+  All 20 structured outputs matched the pre-review capture exactly. This is
+  compatibility smoke evidence, not an independent numerical or licensing oracle.
+- Both helper bundles were rebuilt on Linux for `linux-x64` and `win-x64`.
+  Each had 403 members, valid ZIP CRCs, the exact manifest/member hash set,
+  and byte-identical current `LICENSE`, `LICENSE-MIT`, `LICENSE-APACHE`, and
+  `THIRD_PARTY_NOTICES.md`. Building the Windows bundle here is not native
+  Windows execution.
+
+No new live osu! parity, native Windows runtime, signed-resource check, hosted
+CI run, publication, or licensing clearance is claimed.
 
 ## Native validation record (2026-10-02)
 

@@ -7,7 +7,7 @@ Evidence revision: `f075408209ee98cdd780f3a4d386d2a9850f40b0` (real HEAD, 2026-1
 ## Short account (verified facts only)
 
 - vosu is a native Rust daemon targeting API and behavioral compatibility with upstream [tosu](https://github.com/tosuapp/tosu). The README describes it as "vibe-coded" and as "designed to work well with coding agents" (`README.md:14`, `README.md:32`). That disclosure has been present since the first commit, `7a49fda2b1da0169ee59862a11310df69c3ab3ff`, and must stay in any account.
-- The first commit, titled `Initial commit`, is a large imported snapshot: 811 files, 269,615 inserted lines, 125,276 Rust lines. It already contains `CLAUDE.md`, `.claude/skills/*`, `.agents/skills/*`, a completed product rename, and a historical "4.25.0 — Rust daemon cutover" changelog entry. Development before that commit is not recorded in this repository.
+- The first commit, titled `Initial commit`, records a large initial tree: 811 files, 269,615 inserted lines, 125,276 Rust lines. It already contains agent guidance, the product rename and a historical cutover changelog entry. Recovered authoring sessions show an agent initializing Git and committing preceding work on 2026-07-16; this was not an imported repository history. Pre-commit development is absent from Git but partially recoverable from those sessions.
 - That snapshot originally called the project a "ground-up Rust rewrite of upstream tosu". `608ca287f0e639cee49082a6e1f4a1a5a4638ef6` changed this to "targeting API and behavioral compatibility". Do not reuse "ground-up rewrite" wording; `THIRD_PARTY_NOTICES.md:10` and `docs/provenance-audit.md` record imported tosu dashboard material, an LGPL calculator wrapper, and unresolved provenance questions.
 - Every commit uses the same GitHub noreply address, `212748636+qt715@users.noreply.github.com`, under two display names: `qt715` and `Sxlvia`.
 
@@ -18,14 +18,14 @@ All counts use `R=f075408209ee98cdd780f3a4d386d2a9850f40b0` and author dates. Co
 | Measure | Value at `R` | Command |
 |---|---:|---|
 | Commits reachable from `R` | 227 (213 non-merge, 14 merges) | `git rev-list --count $R`; add `--merges` / `--no-merges` |
-| Commits after the imported snapshot | 226 (212 non-merge) | `git rev-list --count 7a49fda..$R` |
+| Commits after the initial snapshot | 226 (212 non-merge) | `git rev-list --count 7a49fda..$R` |
 | Author names | `qt715` 224, `Sxlvia` 3 — **one email** | `git shortlog -sne $R` |
 | Committer names | `qt715` 224, `GitHub` 2 (web merges), `Sxlvia` 1 | `git shortlog -sne -c $R` |
 | `Co-authored-by` trailers | 0 | `git log $R --format=%b \| grep -ci co-authored-by` |
 | Span from first to last commit | 84.1 days (12.0 weeks): 2026-07-16 → 2026-10-08 | `git log --reverse --format=%aI $R \| sed -n '1p;$p'` |
 | Commits in first 30 days (from the snapshot's timestamp, snapshot included) | 149 total, 142 non-merge | count `%aI` in [2026-07-16T19:32:17-04:00, +30 days) |
 | Rust lines (physical, all tracked `*.rs`) | 144,851 in 482 files | `git grep -c '' $R -- '*.rs' \| awk -F: '{s+=$NF} END {print s}'` |
-| Rust lines in the imported snapshot | 125,276 | the same command with `7a49fda` |
+| Rust lines in the initial snapshot | 125,276 | the same command with `7a49fda` |
 | Rust lines at `R` last touched by the snapshot (`git blame`) | 103,325 (71.3%) | `git blame --porcelain $R -- <file>`, summed over every `*.rs` file |
 | Rust churn after the snapshot | +50,237 / −30,634 | `git log --no-merges --numstat --format= 7a49fda..$R -- '*.rs'` |
 
@@ -47,14 +47,14 @@ Claude's earlier numbers were correct for a stale revision. They should not be c
 | 224 commits; authors 221/3 | Exactly matches `85d053b` (2026-10-04, `R~3`). At `R`, the counts are 227 and 224/3. |
 | About 11 weeks | 79.9 days (11.4 weeks) to `85d053b`; 12.0 weeks to `R`. |
 | 142 commits in the first month | Matches non-merge commits in the first 30 days, snapshot included. The total including merges is 149. |
-| History begins in an imported snapshot | Yes: `7a49fda` (above). |
+| History begins in an imported snapshot | Git begins with a large initial tree, but recovered sessions show an agent committing preceding work rather than importing a repository history. |
 
 ### What these counts do and do not establish
 
 - **Git identity is not authorship.** Author/committer fields record the configured name and email, not whether a human typed the code, an agent generated it, or a person reviewed it. No trailers record AI assistance. The 224/3 split is two display names on one GitHub account, not two people.
 - **Commit counts measure granularity, not effort.** Fourteen commits are merges, and several are bulk integrations, such as `e0bb23e` "Snapshot verified repository cleanup…", which changed +11,502/−16,289 lines.
-- **Line counts are not authored-code counts.** 29% of current Rust lines are vendored forks. A similar share is tests, benchmarks, and harness code, and 71% of current lines are attributed by `git blame` to the imported snapshot. Blame records the last commit to touch a line: moves and reformatting reassign lines, while pre-snapshot origin is invisible.
-- **The imported snapshot is not wrongdoing.** It is recorded as "the initial vosu snapshot" in `THIRD_PARTY_NOTICES.md:10` and `docs/provenance-audit.md`. The problem is narrower: its pre-history is absent from Git. Snapshot content therefore cannot be attributed to any commit-level activity in this repository, and post-snapshot activity must not be presented as "built from scratch in 12 weeks".
+- **Line counts are not authored-code counts.** 29% of current Rust lines are vendored forks. A similar share is tests, benchmarks, and harness code, and 71% of current lines are attributed by `git blame` to the initial snapshot. Blame records the last commit to touch a line; it does not establish who authored it or which source was used.
+- **Git omits pre-commit development.** Recovered sessions document preceding agent work, including translations and later rewrite attempts. Neither that evidence nor post-snapshot commit activity establishes personal authorship or "built from scratch in 12 weeks".
 
 ## Documented AI assistance
 
@@ -130,11 +130,11 @@ Either would need the missing symptom, hypotheses, and live-verification evidenc
 
 | Category | What can be said |
 |---|---|
-| Verified | Commits, issues, and PRs come from one GitHub account (`qt715`/`Sxlvia`). The project is disclosed as vibe-coded. History starts from an imported 125k-Rust-line snapshot; 29% of current Rust is vendored forks. |
+| Verified | Commits, issues, and PRs come from one GitHub account (`qt715`/`Sxlvia`). The project is disclosed as vibe-coded. Git starts with a large initial tree; recovered sessions document preceding agent work. 29% of current Rust is vendored forks. |
 | Documented AI assistance | Agent configuration in the snapshot, a `codex/` branch merge, autoresearch commits, and a retired Claude guidance file. Per-change attribution is absent. |
 | Requires maintainer confirmation | Any statement that code, diagnosis, design, or measurement was personally hand-written, personally reviewed, or delegated, including in the case study above. |
 
-Evidence-only framing until confirmed: "vosu is an AI-assisted ('vibe-coded') Rust compatibility daemon whose commits come from one GitHub account. Its Git history starts from an imported snapshot. Issue #1 documents a bug and how its diagnosis evolved." This describes the project, not personal contribution. A first-person role, such as directing, maintaining, reviewing, or writing code, requires answers to the questions below. Avoid commit or line counts as productivity claims.
+Evidence-only framing until confirmed: "vosu is an AI-assisted Rust compatibility daemon. Its first commit records a large initial tree; authoring sessions document preceding agent work and subsequent rewrite attempts. Issue #1 documents a bug and how its diagnosis evolved." This describes project records, not personal contribution. First-person claims require the confirmation questions below. Avoid commit or line counts as productivity claims.
 
 ## Maintainer confirmation required
 

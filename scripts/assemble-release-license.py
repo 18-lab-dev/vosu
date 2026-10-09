@@ -20,6 +20,8 @@ RETAINED_TEXT_SHA256 = {
     "ppy/osu": "5ee23b58e0e3a34c0d62113cde6eb709b7f72efe6df1fff02679d10d62647dc1",
     "ppy/osu-framework": "54244abaef14491253a187a8b5d147168a356297c49e8cf8156138aa39c17031",
     "MaxOhn/rosu-map": "0354bcd52e08e0464a41cf202b6bb7dc8a779bec206ae7b218544ec2ed360079",
+    "ppy/osu-tools": "5608e432587c9cd040c109c7e56c7bfe84891f925bdb1f967fc3a9d626c0e784",
+    "dotnet/runtime": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b",
 }
 
 
