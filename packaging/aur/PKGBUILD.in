@@ -1,4 +1,4 @@
-# Maintainer: shiruviaa <https://github.com/shiruviaa/vosu>
+# Maintainer: sxlvia <qt715 at proton dot me>
 pkgname=vosu-bin
 pkgver=@VERSION@
 pkgrel=1

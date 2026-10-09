@@ -3,7 +3,7 @@ arch: amd64
 platform: linux
 version: ${VERSION}
 release: '1'
-maintainer: shiruviaa <https://github.com/shiruviaa/vosu>
+maintainer: sxlvia <qt715@proton.me>
 homepage: https://github.com/shiruviaa/vosu
 license: MIT OR Apache-2.0
 description: Native osu! telemetry daemon with a local dashboard
@@ -53,6 +53,6 @@ overrides:
       - libcap
     archlinux:
       pkgbase: vosu
-      packager: shiruviaa <https://github.com/shiruviaa/vosu>
+      packager: sxlvia <qt715@proton.me>
       scripts:
         postupgrade: packaging/linux/postinstall.sh
