@@ -5,9 +5,12 @@ Scope and provenance
 --------------------
 
 The production calculator is implemented in Rust in `crates/vosu-pp/src`.
-The replacement commit records clean-room work; the source map below records
-the claimed authorities. Remaining source-provenance questions are documented
-in `docs/provenance-audit.md` at the repository root. Its module layout is:
+The replacement was requested and reported as clean-room, but recovered
+authoring records show reads of the former Rust and LGPL reference during
+that rewrite. This notice does not certify separation or implementation
+independence. The source map records permissive calculation authorities and
+observable compatibility requirements, not a complete implementation-origin
+determination. See `docs/provenance-audit.md`. The module layout is:
 
 - `src/lib.rs` and `src/model.rs`: public facade and wire models.
 - `src/beatmap.rs`, `src/beatmap/random.rs`, and `src/mods.rs`: parsing, conversion,
@@ -28,8 +31,16 @@ in `docs/provenance-audit.md` at the repository root. Its module layout is:
   stop generation when f32 timestamp addition cannot advance, and cap each
   object's generated bananas at 100,000. These local corrections preserve
   ordinary spacing/count semantics and do not change pinned upstream revisions
-  or calculator evidence.
-- `rosu-map-api/src`: an in-tree clean-room fork of MIT `rosu-map` 0.2.1,
+  or calculator evidence. Two local compatibility additions are not upstream
+  rosu-pp behavior: the mode `difficulty/gradual.rs` files step once per source
+  hit object, processing the difficulty objects whose base object has ended;
+  and `osu/difficulty/skills/{aim,speed,reading}.rs` keep a strain-graph
+  projection of per-object difficulties in fixed 400 ms sections with 0.15
+  per-second decay. Both are written in rosu-pp's gradual and skill structure;
+  the projection follows ppy/osu `StrainSkill.cs` section handling and the
+  `Flashlight.cs` initial-strain form. The observable step and graph values
+  are compatibility behavior checked by black-box vectors.
+- `rosu-map-api/src`: an in-tree source fork of MIT `rosu-map` 0.2.1,
   with ppy-aligned circular-arc tolerance, degeneracy epsilon,
   `Math.Acos` float-argument promotion, f64-promoted vector-length
   calculation, and the legacy offset curve API used by catch conversion.
@@ -38,10 +49,21 @@ in `docs/provenance-audit.md` at the repository root. Its module layout is:
 - `src/score_multiplier.rs`: ruleset score-multiplier calculations.
 - `src/source_map.rs`: machine-readable declared behavior attribution.
 
-The source map declares the MIT upstream snapshots below as implementation
-inputs and records the corresponding Rust paths. Those declarations remain
-subject to the source-provenance review; they do not settle the origin of every
-wrapper fragment.
+The source map catalogs the permissive upstream snapshots below and their
+corresponding Rust paths. Source correspondence does not establish that every
+adapter was independently implemented.
+
+The historical manifest (`tools/oracle/calculator-diff-manifest.json`) and
+former `vosu-lazer-pp` notice identify tosuapp/lazer-calculator
+`9a22c4c74f8e584fa64133a79a204dd045646bac` (LGPL-3.0-only). Its simulator and
+accuracy routines include MIT osu-tools material, and the retained catch
+equation traces to MIT rosu-pp and osu! sources. However, the rewrite agents
+also read the former Rust and LGPL C# and received wrapper-derived details.
+The implementation origins of signed-score adapters, data/strain projections,
+gradual boundaries and compatibility arrangements remain under review.
+The reference is outside the production build graph and is retained for
+historical comparison and black-box tests; that boundary does not establish
+source independence. No legal clearance or clean-room certification is made.
 
 Verified MIT upstream inputs
 ----------------------------
@@ -85,9 +107,43 @@ Verified MIT upstream inputs
 - **License file:** <https://github.com/MaxOhn/rosu-map/blob/333dd2bea78e518d39c20932c828011f21d3305e/LICENSE>
 - **Verified license SHA-256:** `0354bcd52e08e0464a41cf202b6bb7dc8a779bec206ae7b218544ec2ed360079`
 
-The four license files were read from fresh external checkouts at the exact
-revisions above. Their complete MIT texts are reproduced below; the digests
-and links let an auditor verify the retained text against the pinned sources.
+### ppy/osu-tools
+
+- **Revision:** `d82cf2a986218f80c18dea5cc1399133d4a8586d`
+- **Source:** <https://github.com/ppy/osu-tools/tree/d82cf2a986218f80c18dea5cc1399133d4a8586d>
+- **License:** MIT
+- **License file:** <https://github.com/ppy/osu-tools/blob/d82cf2a986218f80c18dea5cc1399133d4a8586d/LICENCE>
+- **Verified license SHA-256:** `6e32fdd796385f89d57f0fbdee69178bc62deec64af0ce92011a21afb7a12191`
+- **Copyright:** Copyright (c) 2019 ppy Pty Ltd <contact@ppy.sh>.
+- **Material:** per-ruleset hit-result generation in
+  `PerformanceCalculator/Simulate/{Osu,Taiko,Catch,Mania}SimulateCommand.cs`
+  and accuracy in those files' `GetAccuracy` methods and
+  `PerformanceCalculatorGUI/RulesetHelper.cs`, used by `src/scoring.rs`.
+  The former wrapper's `ScoreSimulator.cs` states that its generators were
+  copied from osu-tools, and every algorithm line of its `ScoreSimulator.cs`
+  and `AccuracyCalculator.cs` also occurs at this revision. This is the last
+  osu-tools revision before the wrapper package date (`0.5.0-20260702`).
+  Later revisions change catch and taiko generation and are not the authority
+  for current vosu behavior.
+
+### dotnet/runtime
+
+- **Revision:** `15872212c29cecc8d82da4548c3060f2614665f7`
+- **Source:** <https://github.com/dotnet/runtime/blob/15872212c29cecc8d82da4548c3060f2614665f7/src/libraries/System.Private.CoreLib/src/System/Random.CompatImpl.cs>
+- **License:** MIT
+- **License file:** <https://github.com/dotnet/runtime/blob/15872212c29cecc8d82da4548c3060f2614665f7/LICENSE.TXT>
+- **Verified license SHA-256:** `cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310`
+- **Copyright:** Copyright (c) .NET Foundation and Contributors
+- **Material:** the seeded `System.Random` compatibility generator
+  (`CompatPrng`) reproduced in `src/beatmap/random.rs` so osu!'s seeded Random
+  mods give the same object order. rosu-pp's `src/util/random/csharp.rs` cites
+  the same revision for its port.
+
+The first four license files were read from fresh external checkouts at the
+exact revisions above; the osu-tools and dotnet/runtime files were retrieved
+from their exact-revision GitHub sources on 2026-10-09. Their complete MIT
+texts are reproduced below; the digests and links let an auditor verify the
+retained text against the pinned sources.
 
 The following paths are the relevant upstream files and types consulted for
 the corresponding production modules.
@@ -95,11 +151,12 @@ the corresponding production modules.
 | `rosu-map-api/src` | `src/section/hit_objects/slider/{curve.rs,path.rs}` and `src/util/pos.rs` | `osu.Framework/Utils/{PathApproximator,CircularArcProperties,Precision}.cs`; `osuTK.Vector2.Length` |
 | `rosu-pp-api/src/catch/object/juice_stream.rs` | `src/catch/object/juice_stream.rs`; `src/model/hit_object.rs` legacy curve wrapper | `osu.Game.Rulesets.Catch/Objects/JuiceStream.cs`; `osu.Game.Rulesets.Catch/Objects/SliderEventGenerator.cs` |
 | `src/lib.rs`, `src/model.rs` | `src/lib.rs`; `src/any/{attributes.rs,score_state.rs}` | `osu.Game/Rulesets/Ruleset.cs`; `osu.Game/Scoring/ScoreInfo.cs` |
-| `src/data.rs`, `src/difficulty.rs` | `src/any/{attributes.rs,strains.rs}` and mode-specific `attributes.rs`, `strains.rs` | mode-specific difficulty attributes and calculators |
-| `src/performance.rs` | `src/any/performance/mod.rs`; mode-specific performance attributes | mode-specific performance calculators |
+| `src/data.rs`, `src/difficulty.rs` | `src/any/{attributes.rs,strains.rs}` and mode-specific `attributes.rs`, `strains.rs` | mode-specific difficulty attributes and calculators; `osu.Game/Rulesets/Difficulty/Skills/StrainSkill.cs` and `osu.Game.Rulesets.Osu/Difficulty/Skills/Flashlight.cs` for the osu! strain-graph projection |
+| `src/performance.rs` | `src/any/performance/mod.rs`; mode-specific performance attributes | mode-specific performance calculators; signed catch mapping: `osu.Game.Rulesets.Catch/Difficulty/CatchPerformanceCalculator.cs` and `osu.Game/Scoring/Legacy/ScoreInfoExtensions.cs` count accessors |
 | `src/gradual.rs` | `src/any/difficulty/gradual.rs`; `Difficulty::passed_objects` | ruleset difficulty hit-object prefix semantics |
-| `src/scoring.rs` | `src/any/score_state.rs`; mode score-state types | mode-specific score processors and hit-result weights |
-| `src/hit_windows.rs` | public beatmap attribute builder | `OsuHitWindows.cs`, `TaikoHitWindows.cs`, `ManiaHitWindows.cs`, catch catcher sizing |
+| `src/scoring.rs` | `src/any/score_state.rs` and `src/osu/score_state.rs` `OsuScoreOrigin::Stable`; mode score-state types | `osu.Game/Rulesets/Scoring/ScoreProcessor.cs` total score; osu-tools `PerformanceCalculator/Simulate/{Osu,Taiko,Catch,Mania}SimulateCommand.cs` and `PerformanceCalculatorGUI/RulesetHelper.cs` |
+| `src/hit_windows.rs` | public beatmap attribute builder | `HitWindows.cs` (`EmptyHitWindows`), `OsuHitWindows.cs`, `TaikoHitWindows.cs`, `ManiaHitWindows.cs`, `CatchHitObject.cs`, catch catcher sizing |
+| `src/beatmap.rs`, `src/beatmap/random.rs`, `src/mods.rs` | beatmap conversion and `Difficulty` builders; `src/util/random/csharp.rs` | `ModDifficultyAdjust.cs`; `ManiaMod{Mirror,HoldOff,Invert,Random}.cs`; `TaikoMod{SimplifiedRhythm,Random}.cs`; `OsuModRandom.cs` and `OsuHitObjectGenerationUtils.cs`; dotnet/runtime `Random.CompatImpl.cs` |
 | `src/score_multiplier.rs` | structured mod settings supplied through `rosu-mods` | `OsuScoreMultiplierCalculatorV2.cs`, `TaikoScoreMultiplierCalculator.cs`, `CatchScoreMultiplierCalculator.cs`, `ManiaScoreMultiplierCalculator.cs` |
 
 Historical parity evidence (not a production source)
@@ -118,9 +175,7 @@ Project-authored code in the `vosu-pp` package is dual-licensed under
 `MIT OR Apache-2.0`; the authoritative texts are at the root `LICENSE-MIT`
 and `LICENSE-APACHE`, with matching crate-local copies. These terms do not
 change the MIT terms of the upstream inputs above, or relicense any retained
-LGPL-derived material. Shared data structures and formula fragments identified
-by the provenance audit require source-level review before the former wrapper
-can be ruled out as their source.
+LGPL material such as the historical reference directory.
 
 MIT license text (MaxOhn/rosu-pp)
 ---------------------------------
@@ -200,6 +255,56 @@ MIT license text (MaxOhn/rosu-map)
 MIT License
 
 Copyright (c) 2024 MaxOhn
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+MIT license text (ppy/osu-tools)
+--------------------------------
+
+Copyright (c) 2019 ppy Pty Ltd <contact@ppy.sh>.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+MIT license text (dotnet/runtime)
+---------------------------------
+
+The MIT License (MIT)
+
+Copyright (c) .NET Foundation and Contributors
+
+All rights reserved.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

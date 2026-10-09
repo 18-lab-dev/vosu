@@ -6,8 +6,8 @@ This crate is an in-tree fork of MIT-licensed MaxOhn/rosu-map 0.2.1.
 - Upstream: https://github.com/MaxOhn/rosu-map
 - Version: 0.2.1
 - License: MIT (see LICENSE, Copyright (c) 2024 MaxOhn)
-- Clean-room input: the fresh crates.io rosu-map 0.2.1 source used by the
-  vosu workspace.
+- Fork input: the fresh crates.io rosu-map 0.2.1 source used by the vosu
+  workspace.
 
 Local behavioral deltas
 -----------------------

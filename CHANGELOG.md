@@ -62,8 +62,8 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 ### Licensing
 
 - Correct first-party attribution to `Copyright (c) 2026 sxlvia` in the root/calculator license copies and Windows resources, preserving genuine upstream copyright and canonical MIT/Apache terms.
-- Include the four retained calculator MIT texts in the root release `LICENSE` without changing the updater's two-entry ZIP contract; reject stale license members and bad ZIP CRCs.
-- Qualify unsupported source-independence claims, inventory locked dependency license declarations, and record concrete source matches and unresolved production-file origins in [the provenance audit](docs/provenance-audit.md).
+- Include the six retained calculator MIT texts (rosu-pp, rosu-map, osu!, osu-framework, osu-tools and dotnet/runtime) in the root release `LICENSE` without changing the updater's two-entry ZIP contract; reject stale license members and bad ZIP CRCs.
+- Qualify unsupported source-independence claims, inventory locked dependency license declarations, and record concrete source matches and unresolved production-file origins in [the provenance audit](docs/provenance-audit.md). Map the current calculator to its pinned permissive sources and keep the former wrapper only as a historical parity reference and black-box oracle.
 
 ### Calculation
 
