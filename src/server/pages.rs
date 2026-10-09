@@ -53,7 +53,6 @@ pub enum DynamicPage {
     Dashboard,
     Settings,
     EmptySettings,
-    LocalOverlays,
     Available,
 }
 
@@ -195,7 +194,6 @@ impl PageService {
                 PageLookup::Dynamic(DynamicPage::EmptySettings)
             }
             "/settings" => PageLookup::Dynamic(DynamicPage::Settings),
-            "/local-overlays" => PageLookup::Dynamic(DynamicPage::LocalOverlays),
             "/available" => PageLookup::Dynamic(DynamicPage::Available),
             path if path.starts_with("/.well-know") => PageLookup::NotFound,
             path => PageLookup::Static(static_fallback(path)),
@@ -352,6 +350,11 @@ mod tests {
         assert_eq!(
             pages.lookup_get("/settings", true),
             PageLookup::Dynamic(DynamicPage::EmptySettings)
+        );
+        assert_eq!(
+            pages.lookup_get("/local-overlays", false),
+            PageLookup::Static(static_fallback("/local-overlays")),
+            "the removed local-overlays guide must fall through to counter paths"
         );
     }
 

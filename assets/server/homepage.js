@@ -7,17 +7,14 @@ import { createSettingsEditor } from './homepage-settings.js';
   const searchInput = document.querySelector('.search-bar');
   const searchForm = document.querySelector('.search-form');
   const toast = document.querySelector('#toast');
-  const developerMode = document.querySelector('#developer-mode');
+  const toastMessage = toast?.querySelector('.toast__message');
+  const toastAction = toast?.querySelector('.toast__action');
 
   const PINNED_KEY = 'vosu.pinned-overlays.v1';
   const INSTALLED_COUNT_KEY = 'total-installed-overlays';
   const AVAILABLE_COUNT_KEY = 'total-available-overlays';
-  const DEVELOPER_MODE_KEY = 'vosu.dashboard.schema-builder';
-  const PREVIEW_IFRAME_SELECTOR = '.counter-card__preview iframe';
-  const PREVIEW_CANVAS = window.getComputedStyle(document.documentElement)
-    .getPropertyValue('--ink')
-    .trim();
-  const SRGB_COMPONENT = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)%?$/;
+  const LISTENER_POLL_INTERVAL = 500;
+  const LISTENER_POLL_TIMEOUT = 15000;
 
   const state = {
     originalResults: results?.innerHTML ?? '',
@@ -25,58 +22,9 @@ import { createSettingsEditor } from './homepage-settings.js';
     searchController: null,
     searchRequest: 0,
     pinnedIds: [],
-    installedIds: new Set(),
-    draggedId: null,
     pending: new Set(),
     toastTimer: 0,
   };
-
-  function isFullyTransparentSrgb(color) {
-    if (typeof color !== 'string') return false;
-
-    const normalized = color.trim().toLowerCase();
-    if (normalized === 'transparent') return true;
-
-    const functionMatch = /^(rgb|rgba)\((.*)\)$/.exec(normalized);
-    if (!functionMatch) return false;
-
-    const contents = functionMatch[2].trim();
-    let channels;
-    let alpha;
-
-    if (contents.includes(',')) {
-      if (functionMatch[1] !== 'rgba') return false;
-      const components = contents.split(',').map((component) => component.trim());
-      if (components.length !== 4) return false;
-      channels = components.slice(0, 3);
-      alpha = components[3];
-    } else {
-      const components = contents.split('/');
-      if (components.length !== 2) return false;
-      channels = components[0].trim().split(/\s+/);
-      alpha = components[1].trim();
-    }
-
-    if (channels.length !== 3 || !channels.every((channel) => SRGB_COMPONENT.test(channel))) return false;
-    return SRGB_COMPONENT.test(alpha) && Number.parseFloat(alpha) === 0;
-  }
-
-  function applyPreviewCanvas(element) {
-    if (!(element instanceof HTMLIFrameElement) || !element.matches(PREVIEW_IFRAME_SELECTOR)) return;
-    try {
-      const root = element.contentDocument?.documentElement;
-      const previewWindow = root?.ownerDocument.defaultView;
-      if (!root || !previewWindow || !PREVIEW_CANVAS) return;
-
-      const backgroundColor = previewWindow.getComputedStyle(root).backgroundColor;
-      if (isFullyTransparentSrgb(backgroundColor)) root.style.backgroundColor = PREVIEW_CANVAS;
-    } catch (_error) {
-      // Cross-origin preview documents are intentionally inaccessible.
-    }
-  }
-
-  document.addEventListener('load', (event) => applyPreviewCanvas(event.target), true);
-  document.querySelectorAll(PREVIEW_IFRAME_SELECTOR).forEach(applyPreviewCanvas);
 
   function storageGet(key) {
     try {
@@ -93,7 +41,6 @@ import { createSettingsEditor } from './homepage-settings.js';
       // A blocked storage backend must not disable dashboard controls.
     }
   }
-
 
   function errorText(value) {
     if (value instanceof Error) return value.message;
@@ -139,15 +86,27 @@ import { createSettingsEditor } from './homepage-settings.js';
     return payload;
   }
 
-  function notify(message, tone = 'info', delay = 3200) {
-    if (!toast) return;
+  // A zero delay keeps the toast until the user acts on or replaces it.
+  function notify(message, tone = 'info', delay = 3200, action = null) {
+    if (!toast || !toastMessage || !toastAction) return;
     window.clearTimeout(state.toastTimer);
-    toast.textContent = message;
+    state.toastTimer = 0;
+    toastMessage.textContent = message;
     toast.dataset.tone = tone;
+    toastAction.hidden = !action;
+    toastAction.textContent = action?.label ?? '';
+    toastAction.onclick = action
+      ? () => {
+        toast.hidden = true;
+        action.run();
+      }
+      : null;
     toast.hidden = false;
-    state.toastTimer = window.setTimeout(() => {
-      toast.hidden = true;
-    }, delay);
+    if (delay > 0) {
+      state.toastTimer = window.setTimeout(() => {
+        toast.hidden = true;
+      }, delay);
+    }
   }
 
   function setBusy(control, busy, busyLabel = 'Working…') {
@@ -170,16 +129,14 @@ import { createSettingsEditor } from './homepage-settings.js';
   function pageKey() {
     if (window.location.pathname === '/available') return 'available';
     if (window.location.pathname === '/settings') return 'settings';
-    if (window.location.pathname === '/local-overlays') return 'local';
     return 'installed';
   }
 
   function configurePageChrome() {
     const pages = {
-      installed: ['Installed overlays', 'Open, configure, pin, or remove overlays served by this Vosu instance.'],
-      available: ['Available overlays', 'Search the Vosu catalog, install new overlays, and apply catalog updates.'],
-      settings: ['Vosu settings', 'Change daemon, polling, and listener settings for this Vosu instance.'],
-      local: ['Add a local overlay', 'Place an overlay directly in the configured overlays directory.'],
+      installed: ['Installed overlays', 'Search installed overlays'],
+      available: ['Available overlays', 'Search the overlay catalog'],
+      settings: ['Vosu settings', 'Search settings'],
     };
     const current = pageKey();
     document.querySelectorAll('.nav-link[data-page]').forEach((link) => {
@@ -187,9 +144,11 @@ import { createSettingsEditor } from './homepage-settings.js';
       else link.removeAttribute('aria-current');
     });
     const title = document.querySelector('#page-title');
-    const summary = document.querySelector('#page-summary');
     if (title) title.textContent = pages[current][0];
-    if (summary) summary.textContent = pages[current][1];
+    if (searchInput) {
+      searchInput.placeholder = pages[current][1];
+      searchInput.setAttribute('aria-label', pages[current][1]);
+    }
   }
 
   function countFromBadge(kind) {
@@ -201,7 +160,7 @@ import { createSettingsEditor } from './homepage-settings.js';
   function setCount(kind, value) {
     if (!Number.isInteger(value) || value < 0) return;
     const badge = document.querySelector(`[data-count="${kind}"]`);
-    if (badge) badge.textContent = `(${value})`;
+    if (badge) badge.textContent = String(value);
     storageSet(kind === 'installed' ? INSTALLED_COUNT_KEY : AVAILABLE_COUNT_KEY, value);
   }
 
@@ -212,9 +171,49 @@ import { createSettingsEditor } from './homepage-settings.js';
         setCount(kind, serverCount);
         continue;
       }
-      const cached = Number(storageGet(kind === 'installed' ? INSTALLED_COUNT_KEY : AVAILABLE_COUNT_KEY));
-      if (Number.isInteger(cached) && cached >= 0) setCount(kind, cached);
+      const cached = storageGet(kind === 'installed' ? INSTALLED_COUNT_KEY : AVAILABLE_COUNT_KEY);
+      // Number(null) is 0, which would invent a count for a page never visited.
+      if (cached !== null && Number.isInteger(Number(cached)) && Number(cached) >= 0) setCount(kind, Number(cached));
     }
+  }
+
+  function fitPreview(stage) {
+    const width = Number(stage.dataset.previewWidth);
+    const height = Number(stage.dataset.previewHeight);
+    const iframe = stage.querySelector('iframe');
+    const container = stage.parentElement;
+    if (!iframe || !container || !(width > 0) || !(height > 0)) return;
+    const style = window.getComputedStyle(container);
+    const availableWidth = container.clientWidth
+      - Number.parseFloat(style.paddingLeft)
+      - Number.parseFloat(style.paddingRight);
+    const availableHeight = container.clientHeight
+      - Number.parseFloat(style.paddingTop)
+      - Number.parseFloat(style.paddingBottom);
+    if (!(availableWidth > 0) || !(availableHeight > 0)) return;
+    // Contain the overlay in its frame. Small overlays may grow up to the
+    // stage's limit so their content stays legible.
+    const maxScale = Number(stage.dataset.maxScale) || 2;
+    const scale = Math.min(maxScale, availableWidth / width, availableHeight / height);
+    stage.style.width = `${width * scale}px`;
+    stage.style.height = `${height * scale}px`;
+    iframe.style.transform = `scale(${scale})`;
+  }
+
+  const previewObserver = typeof ResizeObserver === 'function'
+    ? new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const stage = entry.target.querySelector('.preview-stage[data-preview-width]');
+        if (stage) fitPreview(stage);
+      }
+    })
+    : null;
+
+  function observePreviews() {
+    document.querySelectorAll('.preview-stage[data-preview-width]').forEach((stage) => {
+      fitPreview(stage);
+      if (stage.parentElement) previewObserver?.observe(stage.parentElement);
+    });
   }
 
   function readPinnedIds() {
@@ -238,7 +237,7 @@ import { createSettingsEditor } from './homepage-settings.js';
   }
 
   function installedCards() {
-    return Array.from(results?.querySelectorAll('.counter-card[data-overlay-id]') ?? []);
+    return Array.from(results?.querySelectorAll(':scope > .counter-card[data-overlay-id]') ?? []);
   }
 
   function createInstalledEmptyState() {
@@ -254,25 +253,31 @@ import { createSettingsEditor } from './homepage-settings.js';
     return empty;
   }
 
-  function removeCanonicalInstalledResult(id) {
-    const template = document.createElement('template');
-    template.innerHTML = state.originalResults;
-    const card = Array.from(template.content.querySelectorAll('.counter-card[data-overlay-id]'))
-      .find((candidate) => candidate.dataset.overlayId === id);
-    card?.remove();
-    if (!template.content.querySelector('.counter-card[data-overlay-id]')) {
-      template.content.replaceChildren(createInstalledEmptyState());
-    }
-    state.originalResults = template.innerHTML;
+  // Moving a card re-parents its iframe, which restarts the live overlay.
+  // Only out-of-place cards move, and moveBefore() keeps the iframe running
+  // where the browser supports it.
+  function arrangeCards(ordered) {
+    ordered.forEach((card, index) => {
+      const current = installedCards()[index];
+      if (current === card) return;
+      try {
+        if (typeof results.moveBefore === 'function') {
+          results.moveBefore(card, current);
+          return;
+        }
+      } catch (_error) {
+        // Fall through to the reloading insertion.
+      }
+      results.insertBefore(card, current);
+    });
   }
 
   function initializePins({ sanitize = false } = {}) {
     if (pageKey() !== 'installed' || !results) return;
-    const cards = installedCards();
-    state.installedIds = new Set(cards.map((card) => card.dataset.overlayId).filter(Boolean));
     readPinnedIds();
     if (sanitize) {
-      state.pinnedIds = state.pinnedIds.filter((id) => state.installedIds.has(id));
+      const installed = new Set(installedCards().map((card) => card.dataset.overlayId));
+      state.pinnedIds = state.pinnedIds.filter((id) => installed.has(id));
       storePinnedIds();
     }
     renderPins();
@@ -283,21 +288,21 @@ import { createSettingsEditor } from './homepage-settings.js';
     const cards = installedCards();
     const byId = new Map(cards.map((card) => [card.dataset.overlayId, card]));
     const pinnedSet = new Set(state.pinnedIds);
-    const ordered = [
+    arrangeCards([
       ...state.pinnedIds.map((id) => byId.get(id)).filter(Boolean),
       ...cards.filter((card) => !pinnedSet.has(card.dataset.overlayId)),
-    ];
-    ordered.forEach((card) => results.appendChild(card));
+    ]);
 
     cards.forEach((card) => {
       const id = card.dataset.overlayId;
       const isPinned = pinnedSet.has(id);
+      const name = card.dataset.counterName ?? id;
       card.classList.toggle('is-pinned', isPinned);
-      card.draggable = isPinned;
       const pin = card.querySelector('[data-action="toggle-pin"]');
       if (pin) {
         pin.setAttribute('aria-pressed', String(isPinned));
-        pin.textContent = isPinned ? 'Unpin' : 'Pin';
+        pin.setAttribute('aria-label', `${isPinned ? 'Unpin' : 'Pin'} ${name}`);
+        pin.title = isPinned ? 'Unpin' : 'Pin';
       }
       const index = state.pinnedIds.indexOf(id);
       const earlier = card.querySelector('[data-action="pin-earlier"]');
@@ -328,13 +333,67 @@ import { createSettingsEditor } from './homepage-settings.js';
     ];
     storePinnedIds();
     renderPins();
-    card.focus({ preventScroll: true });
   }
 
   function removePin(id) {
     state.pinnedIds = state.pinnedIds.filter((candidate) => candidate !== id);
-    state.installedIds.delete(id);
     storePinnedIds();
+  }
+
+  function normalizeSearchText(value) {
+    return String(value ?? '').replace(/[^\p{Alphabetic}\p{N}\s]/gu, '').toLowerCase();
+  }
+
+  // Mirrors the server's catalog query rules in src/runtime/render.rs.
+  function queryTokens(query) {
+    const tokens = [];
+    for (const word of normalizeSearchText(query).split(/\s+/)) {
+      if (!word) continue;
+      const token = word === 'sc' ? 'streamcompanion' : word;
+      if (!tokens.includes(token)) tokens.push(token);
+    }
+    return tokens;
+  }
+
+  function cardMatches(card, tokens) {
+    if (tokens.length === 0) return true;
+    const name = normalizeSearchText(card.dataset.counterName);
+    const author = normalizeSearchText(card.dataset.counterAuthor);
+    const compatible = (card.dataset.counterCompatible ?? '')
+      .split(',')
+      .filter(Boolean)
+      .map(normalizeSearchText);
+    return tokens.some((token) => name.includes(token)
+      || author.includes(token)
+      || (token !== 'vosu' && compatible.some((value) => value.includes(token))));
+  }
+
+  // Installed cards are filtered in place: replacing them would restart every
+  // live preview iframe on each keystroke.
+  function filterInstalled() {
+    if (!results) return;
+    const tokens = queryTokens(searchInput?.value ?? '');
+    const cards = installedCards();
+    let visible = 0;
+    cards.forEach((card) => {
+      const match = cardMatches(card, tokens);
+      card.hidden = !match;
+      if (match) visible += 1;
+    });
+    const showEmpty = cards.length > 0 && visible === 0;
+    let empty = results.querySelector(':scope > .no-results');
+    if (showEmpty && !empty) {
+      empty = document.createElement('div');
+      empty.className = 'no-results';
+      const heading = document.createElement('h2');
+      heading.textContent = 'No matching overlays';
+      const hint = document.createElement('p');
+      hint.textContent = 'Try a shorter name, a different author, or another compatible client.';
+      empty.append(heading, hint);
+      results.append(empty);
+    } else if (!showEmpty) {
+      empty?.remove();
+    }
   }
 
   async function downloadCounter(button, update) {
@@ -369,11 +428,12 @@ import { createSettingsEditor } from './homepage-settings.js';
     try {
       await requestJson(`/api/counters/delete/${encodeURIComponent(folder)}`, { method: 'POST' });
       removePin(folder);
-      removeCanonicalInstalledResult(folder);
       card?.remove();
       setCount('installed', Math.max(0, (countFromBadge('installed') ?? 1) - 1));
-      if (results && !results.querySelector('.counter-card')) {
-        results.appendChild(createInstalledEmptyState());
+      if (results && installedCards().length === 0) {
+        results.replaceChildren(createInstalledEmptyState());
+      } else {
+        filterInstalled();
       }
       notify(`${folder} was deleted.`, 'success');
     } catch (error) {
@@ -391,18 +451,6 @@ import { createSettingsEditor } from './homepage-settings.js';
       notify(`Opened ${folder}.`, 'success');
     } catch (error) {
       notify(`Could not open ${folder}: ${errorText(error)}`, 'error', 5000);
-    } finally {
-      setBusy(button, false);
-    }
-  }
-
-  async function openRoot(button) {
-    setBusy(button, true, 'Opening…');
-    try {
-      await requestJson('/api/counters/open-root', { method: 'POST' });
-      notify('Opened the overlays folder.', 'success');
-    } catch (error) {
-      notify(`Could not open the overlays folder: ${errorText(error)}`, 'error', 5000);
     } finally {
       setBusy(button, false);
     }
@@ -468,7 +516,6 @@ import { createSettingsEditor } from './homepage-settings.js';
     results.innerHTML = state.originalResults;
     results.setAttribute('aria-busy', 'false');
     searchInput?.removeAttribute('aria-busy');
-    initializePins();
   }
 
   async function runSearch(query, requestId) {
@@ -479,19 +526,21 @@ import { createSettingsEditor } from './homepage-settings.js';
     results.setAttribute('aria-busy', 'true');
     searchInput.setAttribute('aria-busy', 'true');
     try {
-      const response = await fetch(`/api/counters/search/${encodeURIComponent(query)}`, {
+      const response = await fetch(`/api/counters/search/${encodeURIComponent(query)}?source=available`, {
         signal: controller.signal,
         headers: { Accept: 'text/html' },
       });
-      if (!response.ok) throw new Error(`search returned ${response.status}`);
       const html = await response.text();
+      if (!response.ok) {
+        const message = new DOMParser().parseFromString(html, 'text/html').body.textContent?.trim();
+        throw new Error(message || `search returned ${response.status}`);
+      }
       if (
         state.searchRequest !== requestId
         || state.searchController !== controller
         || searchInput.value.trim() !== query
       ) return;
       results.innerHTML = html;
-      initializePins();
     } catch (error) {
       if (
         state.searchRequest === requestId
@@ -508,6 +557,14 @@ import { createSettingsEditor } from './homepage-settings.js';
   }
 
   function scheduleSearch() {
+    if (pageKey() === 'installed') {
+      filterInstalled();
+      return;
+    }
+    if (pageKey() === 'settings') {
+      filterSettings();
+      return;
+    }
     window.clearTimeout(state.searchTimer);
     state.searchTimer = 0;
     const query = searchInput?.value.trim() ?? '';
@@ -527,54 +584,239 @@ import { createSettingsEditor } from './homepage-settings.js';
     }, 240);
   }
 
+  async function waitForListener(origin) {
+    const deadline = Date.now() + LISTENER_POLL_TIMEOUT;
+    while (Date.now() < deadline) {
+      try {
+        // An opaque response proves only that something answers HTTP there,
+        // which is all the redirect needs; it cannot read cross-origin bodies.
+        await fetch(new URL('/favicon.ico', origin), {
+          mode: 'no-cors',
+          cache: 'no-store',
+          signal: AbortSignal.timeout(2000),
+        });
+        return true;
+      } catch (_error) {
+        // Not listening yet.
+      }
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, LISTENER_POLL_INTERVAL);
+      });
+    }
+    return false;
+  }
+
+  // Settings narrow with every word (AND), unlike overlay search, because the
+  // list is short and users type a specific option name.
+  function filterSettings() {
+    const form = document.querySelector('#runtime-settings');
+    if (!form) return;
+    const words = normalizeSearchText(searchInput?.value ?? '').split(/\s+/).filter(Boolean);
+    let anyVisible = false;
+    form.querySelectorAll('.settings-group').forEach((group) => {
+      const legend = normalizeSearchText(group.querySelector('legend')?.textContent);
+      let visible = 0;
+      group.querySelectorAll('.settings-item').forEach((item) => {
+        const text = `${legend} ${normalizeSearchText(item.textContent)}`;
+        const match = words.every((word) => text.includes(word));
+        item.hidden = !match;
+        if (match) visible += 1;
+      });
+      group.hidden = visible === 0;
+      if (visible > 0) anyVisible = true;
+    });
+    const empty = form.querySelector('.settings-empty');
+    if (empty) empty.hidden = anyVisible;
+  }
+
+  function controlValue(control) {
+    return control.type === 'checkbox' ? control.checked : control.value;
+  }
+
   function initializeRuntimeSettings() {
     const form = document.querySelector('#runtime-settings');
     if (!form) return;
     const status = form.querySelector('.settings-status');
-    const save = form.querySelector('[type="submit"]');
     const serverIp = form.querySelector('[data-id="SERVER_IP"]');
     const serverPort = form.querySelector('[data-id="SERVER_PORT"]');
-    const originalHost = serverIp?.value;
-    const originalPort = serverPort?.value;
+    let queue = Promise.resolve();
 
-    form.addEventListener('input', () => {
-      form.dataset.dirty = 'true';
-      if (status) status.textContent = 'Unsaved changes';
-    });
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const settings = {};
-      form.querySelectorAll('[data-id]').forEach((control) => {
-        settings[control.dataset.id] = control.type === 'checkbox' ? control.checked : control.value;
-      });
-      setBusy(save, true, 'Saving…');
-      try {
-        await requestJson('/api/settingsSave', {
-          method: 'POST',
-          body: JSON.stringify(settings),
-        });
-        form.dataset.dirty = 'false';
-        if (status) status.textContent = 'Settings saved';
-        notify('Vosu settings were saved.', 'success');
-        const listenerChanged = originalHost !== settings.SERVER_IP || originalPort !== settings.SERVER_PORT;
-        if (listenerChanged) {
-          const host = settings.SERVER_IP === '0.0.0.0' || settings.SERVER_IP === '::' ? 'localhost' : settings.SERVER_IP;
-          const displayHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
-          window.setTimeout(() => {
-            window.location.href = `http://${displayHost}:${settings.SERVER_PORT}${window.location.pathname}${window.location.search}`;
-          }, 450);
-        } else {
-          setBusy(save, false);
-        }
-      } catch (error) {
-        notify(`Could not save Vosu settings: ${errorText(error)}`, 'error', 5000);
-        if (status) status.textContent = 'Save failed';
-        setBusy(save, false);
+    function setStatus(text, tone = '') {
+      if (!status) return;
+      status.textContent = text;
+      status.dataset.tone = tone;
+    }
+
+    function setSavedStatus() {
+      if (form.querySelector('.settings-item.has-error')) {
+        setStatus('Some changes were not saved', 'error');
+      } else {
+        setStatus('All changes saved', 'success');
       }
+    }
+
+    async function saveSetting(control) {
+      const item = control.closest('.settings-item');
+      const name = item?.querySelector('.settings-item__name')?.textContent ?? control.dataset.id;
+      const listener = control === serverIp || control === serverPort;
+      // The listener moves as a unit, so both halves are always sent together.
+      const controls = listener ? [serverIp, serverPort].filter(Boolean) : [control];
+      const settings = Object.fromEntries(controls.map((field) => [field.dataset.id, controlValue(field)]));
+      // Validate locally first: the server rejects these too, but a blank or
+      // out-of-range field must never look saved.
+      const invalid = controls.find((field) => field.type === 'number'
+        && (field.value.trim() === '' || !field.checkValidity()));
+      if (invalid) {
+        const invalidItem = invalid.closest('.settings-item');
+        const invalidName = invalidItem?.querySelector('.settings-item__name')?.textContent ?? invalid.dataset.id;
+        const reason = invalid.value.trim() === '' ? 'enter a number' : invalid.validationMessage;
+        invalidItem?.classList.add('has-error');
+        setStatus(`${invalidName} was not saved: ${reason}`, 'error');
+        return;
+      }
+      controls.forEach((field) => field.closest('.settings-item')?.classList.remove('has-error'));
+      setStatus('Saving…');
+      try {
+        await requestJson('/api/settingsSave', { method: 'POST', body: JSON.stringify(settings) });
+      } catch (error) {
+        item?.classList.add('has-error');
+        setStatus(`${name} was not saved`, 'error');
+        notify(`Could not save ${name}: ${errorText(error)}`, 'error', 5000);
+        return;
+      }
+      if (!listener) {
+        setSavedStatus();
+        return;
+      }
+      const ip = String(settings.SERVER_IP ?? '');
+      const host = ip === '0.0.0.0' || ip === '::' ? 'localhost' : ip;
+      const displayHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+      const origin = `http://${displayHost}:${settings.SERVER_PORT}`;
+      if (origin === window.location.origin) {
+        setSavedStatus();
+        return;
+      }
+      setStatus(`Waiting for Vosu at ${origin}…`);
+      if (await waitForListener(origin)) {
+        window.location.href = `${origin}${window.location.pathname}${window.location.search}`;
+        return;
+      }
+      setStatus(`Vosu did not respond at ${origin}`, 'error');
+      notify(`Vosu did not respond at ${origin}. Check the listener settings, then open that address manually.`, 'error', 0);
+    }
+
+    // `change` fires when a text field loses focus (or Enter commits it) and
+    // immediately for checkboxes; saves are serialized so they apply in order.
+    form.addEventListener('change', (event) => {
+      const control = event.target.closest('[data-id]');
+      if (!control) return;
+      queue = queue.then(() => saveSetting(control));
+    });
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     });
   }
 
-  const { closeDialog, loadCounterSettings, openSettingsBuilder } = createSettingsEditor({
+  function cardMenuToggle(menu) {
+    return menu.parentElement?.querySelector('.card-menu-toggle') ?? null;
+  }
+
+  // Popovers render in the top layer, outside the card's clipping, so they
+  // are anchored to their toggle here rather than with CSS positioning.
+  function positionCardMenu(menu) {
+    const toggle = cardMenuToggle(menu);
+    if (!toggle) return;
+    const anchor = toggle.getBoundingClientRect();
+    const gap = 6;
+    const margin = 8;
+    const below = anchor.bottom + gap;
+    const top = below + menu.offsetHeight > window.innerHeight - margin
+      ? Math.max(margin, anchor.top - gap - menu.offsetHeight)
+      : below;
+    const left = Math.min(
+      Math.max(margin, anchor.right - menu.offsetWidth),
+      window.innerWidth - margin - menu.offsetWidth,
+    );
+    menu.style.top = `${top}px`;
+    menu.style.left = `${left}px`;
+  }
+
+  function closeCardMenus() {
+    document.querySelectorAll('.card-menu').forEach((menu) => {
+      if (menu.matches(':popover-open')) menu.hidePopover();
+    });
+  }
+
+  const previewDialog = document.querySelector('#preview-dialog');
+  const previewFrame = previewDialog?.querySelector('.preview-dialog__frame');
+
+  function openPreviewDialog(title, description, content) {
+    if (!previewDialog || !previewFrame) return;
+    previewDialog.querySelector('#preview-dialog-title').textContent = title;
+    previewDialog.querySelector('#preview-dialog-description').textContent = description;
+    previewFrame.replaceChildren(content);
+    if (!previewDialog.open) previewDialog.showModal();
+  }
+
+  // The enlarged view is a second live instance of the overlay, scaled to fill
+  // most of the window so its content is readable without leaving the page.
+  function expandPreview(button) {
+    const card = button.closest('.counter-card');
+    const source = card?.querySelector('.preview-stage');
+    const sourceFrame = source?.querySelector('iframe');
+    if (!card || !source || !sourceFrame) return;
+    const stage = source.cloneNode(false);
+    stage.removeAttribute('style');
+    stage.dataset.maxScale = '4';
+    const frame = document.createElement('iframe');
+    frame.src = sourceFrame.getAttribute('src');
+    frame.width = sourceFrame.getAttribute('width');
+    frame.height = sourceFrame.getAttribute('height');
+    frame.title = sourceFrame.title;
+    frame.setAttribute('scrolling', 'no');
+    stage.append(frame);
+    const resolution = card.querySelector('.meta-copy')?.textContent ?? '';
+    openPreviewDialog(card.dataset.counterName ?? '', resolution, stage);
+    fitPreview(stage);
+    previewObserver?.observe(previewFrame);
+  }
+
+  function expandImage(button) {
+    const gallery = button.closest('.gallery');
+    const shown = gallery?.querySelector('.gallery__slide:not([hidden])');
+    if (!shown) return;
+    const image = document.createElement('img');
+    image.src = shown.currentSrc || shown.src;
+    image.alt = shown.alt;
+    image.referrerPolicy = 'no-referrer';
+    const card = button.closest('.counter-card');
+    openPreviewDialog(card?.dataset.counterName ?? '', shown.alt, image);
+  }
+
+  function stepGallery(button, direction) {
+    const gallery = button.closest('.gallery');
+    const slides = Array.from(gallery?.querySelectorAll('.gallery__slide') ?? []);
+    if (slides.length < 2) return;
+    const index = (Number(gallery.dataset.galleryIndex) + direction + slides.length) % slides.length;
+    slides.forEach((slide, position) => {
+      slide.hidden = position !== index;
+    });
+    gallery.dataset.galleryIndex = String(index);
+    const count = gallery.querySelector('.gallery__count');
+    if (count) count.textContent = `${index + 1} / ${slides.length}`;
+  }
+
+  previewDialog?.addEventListener('close', () => {
+    if (previewFrame) previewObserver?.unobserve(previewFrame);
+    // Dropping the frame stops the enlarged overlay's sockets and timers.
+    previewFrame?.replaceChildren();
+  });
+  previewDialog?.addEventListener('click', (event) => {
+    if (event.target === previewDialog) previewDialog.close();
+  });
+
+  const { closeDialog, loadCounterSettings } = createSettingsEditor({
     results, requestJson, notify, setBusy, errorText, absoluteHttpUrl,
   });
 
@@ -582,6 +824,11 @@ import { createSettingsEditor } from './homepage-settings.js';
     const control = event.target.closest('[data-action]');
     if (!control) return;
     const action = control.dataset.action;
+    const menu = control.closest('.card-menu');
+    if (menu) {
+      menu.hidePopover();
+      cardMenuToggle(menu)?.focus({ preventScroll: true });
+    }
     if (action === 'close-dialog') {
       closeDialog();
     } else if (action === 'toggle-pin') {
@@ -598,18 +845,32 @@ import { createSettingsEditor } from './homepage-settings.js';
       deleteCounter(control);
     } else if (action === 'open-counter') {
       openFolder(control);
-    } else if (action === 'open-root') {
-      openRoot(control);
     } else if (action === 'counter-settings') {
       loadCounterSettings(control.dataset.folder);
-    } else if (action === 'settings-builder') {
-      openSettingsBuilder(control.dataset.folder);
     } else if (action === 'app-update') {
       runAppUpdate(control);
     } else if (action === 'copy-metadata') {
       activateMetadata(control, event);
+    } else if (action === 'expand-preview') {
+      expandPreview(control);
+    } else if (action === 'expand-image') {
+      expandImage(control);
+    } else if (action === 'gallery-prev') {
+      stepGallery(control, -1);
+    } else if (action === 'gallery-next') {
+      stepGallery(control, 1);
+    } else if (action === 'close-preview') {
+      previewDialog?.close();
     }
   });
+
+  document.addEventListener('toggle', (event) => {
+    if (event.target instanceof HTMLElement
+      && event.target.classList.contains('card-menu')
+      && event.newState === 'open') positionCardMenu(event.target);
+  }, true);
+  window.addEventListener('resize', closeCardMenus);
+  window.addEventListener('scroll', closeCardMenus, { passive: true });
 
   searchForm?.addEventListener('submit', (event) => event.preventDefault());
   searchInput?.addEventListener('input', scheduleSearch);
@@ -620,75 +881,36 @@ import { createSettingsEditor } from './homepage-settings.js';
     searchInput.focus();
   });
 
-  results?.addEventListener('dragstart', (event) => {
-    const card = event.target.closest('.counter-card.is-pinned[data-overlay-id]');
-    if (!card) return;
-    state.draggedId = card.dataset.overlayId;
-    card.classList.add('dragging');
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', state.draggedId);
-  });
-  results?.addEventListener('dragover', (event) => {
-    if (!state.draggedId) return;
-    const card = event.target.closest('.counter-card.is-pinned[data-overlay-id]');
-    if (!card || card.dataset.overlayId === state.draggedId) return;
-    event.preventDefault();
-    installedCards().forEach((candidate) => candidate.classList.toggle('drag-over', candidate === card));
-  });
-  results?.addEventListener('drop', (event) => {
-    const target = event.target.closest('.counter-card.is-pinned[data-overlay-id]');
-    if (!state.draggedId || !target || target.dataset.overlayId === state.draggedId) return;
-    event.preventDefault();
-    const reordered = state.pinnedIds.filter((id) => id !== state.draggedId);
-    let index = reordered.indexOf(target.dataset.overlayId);
-    if (event.clientY > target.getBoundingClientRect().top + target.offsetHeight / 2) index += 1;
-    reordered.splice(Math.max(0, index), 0, state.draggedId);
-    state.pinnedIds = reordered;
-    storePinnedIds();
-    renderPins();
-  });
-  results?.addEventListener('dragend', () => {
-    state.draggedId = null;
-    installedCards().forEach((card) => card.classList.remove('dragging', 'drag-over'));
-  });
-
-  developerMode?.addEventListener('change', () => {
-    document.body.classList.toggle('developer-mode', developerMode.checked);
-    storageSet(DEVELOPER_MODE_KEY, developerMode.checked ? 'true' : 'false');
-  });
-
   window.addEventListener('storage', (event) => {
     if (event.key === PINNED_KEY) initializePins();
     if (event.key === INSTALLED_COUNT_KEY) {
       const installedCount = Number(event.newValue);
       if (event.newValue !== null && Number.isInteger(installedCount) && installedCount >= 0) {
         setCount('installed', installedCount);
-        if (pageKey() === 'installed') window.location.reload();
+        // Never reload unprompted: that would discard an open settings dialog
+        // in this tab.
+        if (pageKey() === 'installed') {
+          notify('Installed overlays changed in another tab.', 'info', 0, {
+            label: 'Reload',
+            run: () => window.location.reload(),
+          });
+        }
       }
     }
     if (event.key === AVAILABLE_COUNT_KEY) setCount('available', Number(event.newValue));
-    if (event.key === DEVELOPER_MODE_KEY && developerMode) {
-      developerMode.checked = event.newValue === 'true';
-      document.body.classList.toggle('developer-mode', developerMode.checked);
-    }
   });
 
   configurePageChrome();
   initializeCounts();
   initializePins({ sanitize: pageKey() === 'installed' && !window.location.search });
+  if (pageKey() === 'installed' && searchInput?.value) filterInstalled();
+  observePreviews();
   initializeRuntimeSettings();
-
-  if (developerMode) {
-    developerMode.checked = storageGet(DEVELOPER_MODE_KEY) === 'true';
-    document.body.classList.toggle('developer-mode', developerMode.checked);
-  }
 
   const requestedOverlay = new URLSearchParams(window.location.search).get('overlay');
   if (window.location.pathname === '/settings' && requestedOverlay) {
     const title = document.querySelector('#page-title');
-    const summary = document.querySelector('#page-summary');
     if (title) title.textContent = 'Overlay settings';
-    if (summary) summary.textContent = 'Edit settings for an overlay embedded in another local view.';
     loadCounterSettings(requestedOverlay, { inline: true });
   }
 })();

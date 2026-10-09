@@ -1,9 +1,5 @@
 use super::*;
 
-pub(super) fn format_number_px(value: f64) -> String {
-    format!("{}px", format_number(value))
-}
-
 pub(super) fn local_overlay(counter: &crate::counters::Counter) -> LocalOverlay {
     LocalOverlay {
         name: counter.name.clone(),
@@ -11,6 +7,8 @@ pub(super) fn local_overlay(counter: &crate::counters::Counter) -> LocalOverlay 
         version: counter.version.clone(),
     }
 }
+
+const SEARCH_FORM: &str = r#"<form class="search-form" role="search"><label class="visually-hidden" for="counter-search">Search overlays</label><div class="search-control"><input id="counter-search" class="search-bar" type="search" autocomplete="off" placeholder="Search name, author, or client" aria-controls="counter-results"><kbd aria-hidden="true">/</kbd></div></form>"#;
 
 pub(super) fn render_homepage(
     template: EmbeddedResponse,
@@ -20,52 +18,80 @@ pub(super) fn render_homepage(
     list: &str,
     update_version: Option<&str>,
 ) -> EmbeddedResponse {
-    let search = if search {
-        r#"<form class="search-form" role="search"><label for="counter-search">Search overlays</label><div class="search-control"><input id="counter-search" class="search-bar" type="search" autocomplete="off" placeholder="Name, author, or compatible client" aria-controls="counter-results"><kbd aria-hidden="true">/</kbd></div></form>"#
-    } else {
-        ""
-    };
-    let body = String::from_utf8_lossy(&template.body)
-        .replace(
-            "{{LOCAL_AMOUNT}}",
-            &local_count.map_or_else(String::new, |count| format!("({count})")),
-        )
-        .replace(
-            "{{AVAILABLE_AMOUNT}}",
-            &available_count.map_or_else(String::new, |count| format!("({count})")),
-        )
-        .replace("{{SEARCH}}", search)
-        .replace("{{LIST}}", list)
-        .replace(
-            "{{UPDATE_HIDDEN}}",
-            if update_version.is_some() {
-                ""
-            } else {
-                "hidden"
-            },
-        )
-        .replace("{{CURRENT_VERSION}}", &current_version().to_string())
-        .replace("{{NEW_VERSION}}", update_version.unwrap_or_default());
+    let local_count = local_count
+        .map(|count| count.to_string())
+        .unwrap_or_default();
+    let available_count = available_count
+        .map(|count| count.to_string())
+        .unwrap_or_default();
+    let current_version = current_version().to_string();
+    let body = substitute_placeholders(&String::from_utf8_lossy(&template.body), |key| {
+        Some(match key {
+            "LOCAL_AMOUNT" => &local_count,
+            "AVAILABLE_AMOUNT" => &available_count,
+            "SEARCH" if search => SEARCH_FORM,
+            "SEARCH" => "",
+            "LIST" => list,
+            "UPDATE_HIDDEN" if update_version.is_some() => "",
+            "UPDATE_HIDDEN" => "hidden",
+            "CURRENT_VERSION" => &current_version,
+            "NEW_VERSION" => update_version.unwrap_or_default(),
+            _ => return None,
+        })
+    });
     EmbeddedResponse {
         body: Bytes::from(body),
         ..template
     }
 }
 
-pub(super) fn normalize_catalog_query(query: &str) -> String {
-    let mut value = query.to_owned();
-    if let Some((index, character)) = value
-        .char_indices()
-        .find(|(_, character)| !character.is_ascii_alphanumeric())
-    {
-        value.replace_range(index..index + character.len_utf8(), "");
+/// Replaces `{{KEY}}` placeholders in a single pass. Substituted values are
+/// never rescanned, so placeholder-shaped text in overlay metadata or catalog
+/// content is emitted verbatim instead of being rewritten by a later key.
+fn substitute_placeholders<'a>(template: &str, value: impl Fn(&str) -> Option<&'a str>) -> String {
+    let mut output = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        output.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        match after
+            .find("}}")
+            .and_then(|end| Some((end, value(&after[..end])?)))
+        {
+            Some((end, replacement)) => {
+                output.push_str(replacement);
+                rest = &after[end + 2..];
+            }
+            None => {
+                output.push_str("{{");
+                rest = after;
+            }
+        }
     }
-    value.to_ascii_lowercase()
+    output.push_str(rest);
+    output
+}
+
+/// Lowercases and removes every character that is neither alphanumeric nor
+/// whitespace, so `"HD SC"` keeps its word boundary.
+fn normalize_catalog_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric() || character.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+pub(super) fn normalize_catalog_query(query: &str) -> String {
+    normalize_catalog_text(query)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub(super) fn query_tokens(query: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
-    for token in query.split(' ') {
+    for token in query.split_whitespace() {
         let token = if token == "sc" {
             "streamcompanion"
         } else {
@@ -84,15 +110,20 @@ pub(super) fn matches_catalog_query(
     compatible: &[String],
     query: &str,
 ) -> bool {
-    let name = name.to_ascii_lowercase();
-    let author = author.to_ascii_lowercase();
-    query_tokens(query).into_iter().any(|token| {
+    let tokens = query_tokens(query);
+    if tokens.is_empty() {
+        return true;
+    }
+    let name = normalize_catalog_text(name);
+    let author = normalize_catalog_text(author);
+    let compatible = compatible
+        .iter()
+        .map(|value| normalize_catalog_text(value))
+        .collect::<Vec<_>>();
+    tokens.into_iter().any(|token| {
         name.contains(token)
             || author.contains(token)
-            || (token != "vosu"
-                && compatible
-                    .iter()
-                    .any(|value| value.to_ascii_lowercase().contains(token)))
+            || (token != "vosu" && compatible.iter().any(|value| value.contains(token)))
     })
 }
 
@@ -114,27 +145,27 @@ pub(super) fn render_local_counters(
             })
         })
         .map(|counter| {
-            let assets = counter
-                .assets
-                .as_deref()
-                .unwrap_or_default()
+            let duplicate_name = counters
                 .iter()
-                .filter_map(|asset| asset.get("url").and_then(serde_json::Value::as_str))
-                .collect::<Vec<_>>();
+                .filter(|other| other.name.eq_ignore_ascii_case(&counter.name))
+                .nth(1)
+                .is_some();
             render_counter_card(
-                &counter.name,
-                &counter.author,
-                &counter.version,
-                &counter.folder_name,
-                false,
-                counter.downloaded,
-                counter.updatable,
-                counter.download_link.as_deref(),
-                &counter.authorlinks,
-                !counter.settings.is_empty(),
-                false,
-                &assets,
-                &counter.resolution,
+                &CounterCard {
+                    name: &counter.name,
+                    author: &counter.author,
+                    version: &counter.version,
+                    folder: &counter.folder_name,
+                    downloaded: counter.downloaded,
+                    updatable: counter.updatable,
+                    download_link: counter.download_link.as_deref(),
+                    author_links: &counter.authorlinks,
+                    settings: !counter.settings.is_empty(),
+                    resolution: &counter.resolution,
+                    compatible: counter.compatiblewith.as_deref().unwrap_or_default(),
+                    show_folder: duplicate_name,
+                    ..CounterCard::default()
+                },
                 authority,
             )
         })
@@ -164,6 +195,9 @@ pub(super) fn render_catalog_counters(
                 .as_deref()
                 .unwrap_or_default()
                 .iter()
+                // Catalog previews render as <img>; other media kinds have no
+                // inline representation here.
+                .filter(|asset| asset.kind == "image")
                 .map(|asset| asset.url.as_str())
                 .collect::<Vec<_>>();
             let version = counter
@@ -172,22 +206,27 @@ pub(super) fn render_catalog_counters(
                 .map(str::to_owned)
                 .unwrap_or_else(|| counter.version.to_string());
             render_counter_card(
-                &counter.name,
-                &counter.author,
-                &version,
-                counter.folder_name.as_deref().unwrap_or(&counter.name),
-                true,
-                counter.downloaded,
-                counter.updatable,
-                counter.download_link.as_deref(),
-                &counter.authorlinks,
-                counter
-                    .settings
-                    .as_ref()
-                    .is_some_and(|value| !value.is_empty()),
-                counter.has_settings,
-                &assets,
-                &counter.resolution,
+                &CounterCard {
+                    name: &counter.name,
+                    author: &counter.author,
+                    version: &version,
+                    folder: counter.folder_name.as_deref().unwrap_or(&counter.name),
+                    external: true,
+                    downloaded: counter.downloaded,
+                    updatable: counter.updatable,
+                    download_link: counter.download_link.as_deref(),
+                    author_links: &counter.authorlinks,
+                    settings: counter
+                        .settings
+                        .as_ref()
+                        .is_some_and(|value| !value.is_empty()),
+                    external_settings: counter.has_settings,
+                    assets: &assets,
+                    resolution: &counter.resolution,
+                    compatible: counter.compatiblewith.as_deref().unwrap_or_default(),
+                    show_folder: false,
+                    usecase: counter.usecase.as_ref(),
+                },
                 authority,
             )
         })
@@ -199,38 +238,69 @@ fn parse_absolute_http_url(value: &str) -> Option<url::Url> {
     matches!(url.scheme(), "http" | "https").then_some(url)
 }
 
-// The renderer intentionally accepts the catalog fields directly to avoid an
-// allocation-only intermediate model at this internal rendering boundary.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn render_counter_card(
-    name: &str,
-    author: &str,
-    version: &str,
-    folder: &str,
-    external: bool,
-    downloaded: bool,
-    updatable: bool,
-    download_link: Option<&str>,
-    author_links: &[String],
-    settings: bool,
-    external_settings: bool,
-    assets: &[&str],
-    resolution: &[serde_json::Value],
-    authority: &str,
-) -> String {
-    let status = if updatable {
+/// Server path of a local overlay with every folder segment percent-encoded.
+pub(super) fn overlay_path(folder: &str) -> String {
+    let mut url = url::Url::parse("http://localhost/").expect("static base URL is valid");
+    url.path_segments_mut()
+        .expect("HTTP URLs have path segments")
+        .pop_if_empty()
+        .extend(folder.split('/'))
+        .push("");
+    url.path().to_owned()
+}
+
+/// Borrowed catalog or local fields for one card; borrowing avoids an
+/// allocation-only intermediate model at this internal rendering boundary.
+#[derive(Default)]
+pub(super) struct CounterCard<'a> {
+    pub(super) name: &'a str,
+    pub(super) author: &'a str,
+    pub(super) version: &'a str,
+    pub(super) folder: &'a str,
+    /// Catalog cards have no local identity, live preview, or management menu.
+    pub(super) external: bool,
+    pub(super) downloaded: bool,
+    pub(super) updatable: bool,
+    pub(super) download_link: Option<&'a str>,
+    pub(super) author_links: &'a [String],
+    pub(super) settings: bool,
+    pub(super) external_settings: bool,
+    pub(super) assets: &'a [&'a str],
+    pub(super) resolution: &'a [serde_json::Value],
+    pub(super) compatible: &'a [String],
+    /// Shows the folder under the title when another installed card shares its name.
+    pub(super) show_folder: bool,
+    /// Catalog use cases such as `ingame` or `obs-overlay`.
+    pub(super) usecase: Option<&'a serde_json::Value>,
+}
+
+const PIN_ICON: &str = r#"<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 3h6l-1 6 3 3v2h-4v6l-1 1-1-1v-6H7v-2l3-3z"/></svg>"#;
+const SETTINGS_ICON: &str = r#"<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>"#;
+
+pub(super) fn render_counter_card(card: &CounterCard<'_>, authority: &str) -> String {
+    let status = if card.updatable {
         " is-updatable"
-    } else if downloaded {
+    } else if card.downloaded {
         " is-installed"
     } else {
         ""
     };
-    let settings_badge = if external && external_settings {
-        r#"<span class="badge badge-cyan">Settings available</span>"#
+    let identity = format!(
+        r#" data-counter-name="{}" data-counter-author="{}" data-counter-version="{}" data-counter-compatible="{}""#,
+        escape_html(card.name),
+        escape_html(card.author),
+        escape_html(card.version),
+        escape_html(&card.compatible.join(",")),
+    );
+    if card.external {
+        render_catalog_card(card, status, &identity)
     } else {
-        ""
-    };
-    let author_links = author_links
+        render_installed_card(card, status, &identity, authority)
+    }
+}
+
+fn render_author_links(name: &str, author_links: &[String]) -> String {
+    author_links
         .iter()
         .filter_map(|link| parse_absolute_http_url(link))
         .enumerate()
@@ -252,143 +322,273 @@ pub(super) fn render_counter_card(
                 index + 1,
             )
         })
-        .collect::<String>();
-    let author_links = if author_links.is_empty() {
-        String::new()
-    } else {
-        format!(r#"<span class="author-links">{author_links}</span>"#)
-    };
-    let overlay_identity = if external {
-        String::new()
-    } else {
-        format!(r#" data-overlay-id="{}""#, escape_html(folder))
-    };
-    let install_name = format!("{name} by {author}");
-    let actions = if external {
-        let update = if updatable && download_link.is_some() {
-            format!(
-                r#"<button class="button button-cyan" type="button" data-action="update-counter" data-download-url="{}" data-install-name="{}">Update</button>"#,
-                escape_html(download_link.unwrap_or_default()),
-                escape_html(&install_name),
-            )
-        } else {
-            String::new()
-        };
-        let primary = if !downloaded && download_link.is_some() {
-            format!(
-                r#"<button class="button button-primary" type="button" data-action="download-counter" data-download-url="{}" data-install-name="{}">Install</button>"#,
-                escape_html(download_link.unwrap_or_default()),
-                escape_html(&install_name),
-            )
-        } else if downloaded {
-            format!(
-                r#"<button class="button" type="button" data-action="open-counter" data-folder="{}">Open folder</button>"#,
-                escape_html(&install_name),
-            )
-        } else {
-            r#"<button class="button" type="button" disabled>Unavailable</button>"#.to_owned()
-        };
-        format!(r#"<div class="counter-actions">{update}{primary}</div>"#)
-    } else {
-        let settings_action = if settings {
-            format!(
-                r#"<button class="button" type="button" data-action="counter-settings" data-folder="{}">Settings</button>"#,
-                escape_html(folder),
-            )
-        } else {
-            String::new()
-        };
-        format!(
-            r#"<div class="counter-actions"><button class="button" type="button" data-action="toggle-pin" aria-pressed="false">Pin</button><button class="pin-order" type="button" data-action="pin-earlier" aria-label="Move pinned overlay earlier" title="Move earlier">↑</button><button class="pin-order" type="button" data-action="pin-later" aria-label="Move pinned overlay later" title="Move later">↓</button><button class="button builder-action" type="button" data-action="settings-builder" data-folder="{}">Edit schema</button>{settings_action}<button class="button" type="button" data-action="open-counter" data-folder="{}">Open folder</button><button class="button button-danger" type="button" data-action="delete-counter" data-folder="{}">Delete</button></div>"#,
-            escape_html(folder),
-            escape_html(folder),
-            escape_html(folder),
-        )
-    };
+        .collect()
+}
 
-    let x = resolution.first().and_then(json_number).unwrap_or(-1.0);
-    let y = resolution.get(1).and_then(json_number).unwrap_or(-1.0);
-    let width = if x == -1.0 {
-        "500px".to_owned()
-    } else if x == -2.0 || x <= 10.0 {
-        "100%".to_owned()
-    } else {
-        format_number_px(x)
-    };
-    let height = if y == -1.0 {
-        "500px".to_owned()
-    } else if x <= 10.0 {
-        "300px".to_owned()
-    } else {
-        format_number_px(y)
-    };
-    let x_text = if x == -1.0 || x == -2.0 {
-        "ANY".to_owned()
-    } else {
-        format_number(x)
-    };
-    let y_text = if y == -1.0 || y == -2.0 {
-        "ANY".to_owned()
-    } else {
-        format_number(y)
-    };
-    let absolute_url = format!("http://{authority}/{folder}/");
-    let preview = if external {
-        let links = assets
-            .iter()
-            .filter_map(|url| parse_absolute_http_url(url))
-            .enumerate()
-            .map(|(index, url)| {
-                format!(
-                    r#"<li><a href="{}" target="_blank" rel="noopener noreferrer">Preview {}</a></li>"#,
-                    escape_html(url.as_str()),
-                    index + 1,
-                )
-            })
-            .collect::<String>();
-        if links.is_empty() {
-            r#"<div class="preview-placeholder"><strong>Catalog overlay</strong><span>Install this overlay to preview it from your local Vosu server.</span></div>"#.to_owned()
-        } else {
-            format!(
-                r#"<div class="preview-links"><strong>Catalog preview links</strong><span>Media opens only when selected.</span><ul>{links}</ul></div>"#
-            )
-        }
-    } else {
-        format!(
-            r#"<iframe src="{}" loading="lazy" width="{width}" height="{height}" title="{} overlay preview"></iframe>"#,
-            escape_html(&absolute_url),
-            escape_html(name),
-        )
-    };
-    let metadata = if external {
-        String::new()
-    } else {
-        let resolution_text = format!("{x_text} × {y_text}");
-        format!(
-            r#"<footer class="counter-card__metadata"><button class="metadata-copy" type="button" data-action="copy-metadata" data-copy-label="URL" data-copy-value="{}"><span>URL</span><code>/{}/</code></button><button class="metadata-copy" type="button" data-action="copy-metadata" data-copy-label="Resolution" data-copy-value="{}"><span>Resolution</span><code>{}</code></button></footer>"#,
-            escape_html(&absolute_url),
-            escape_html(folder),
-            escape_html(&resolution_text),
-            escape_html(&resolution_text),
-        )
+/// Formats a `[width, height]` resolution, where `-1`/`-2` mean any size.
+fn resolution_text(resolution: &[serde_json::Value]) -> String {
+    let size = |value: Option<f64>| match value {
+        Some(value) if value != -1.0 && value != -2.0 => format_number(value),
+        _ => "ANY".to_owned(),
     };
     format!(
-        r#"<article class="counter-card{status}"{overlay_identity} data-counter-name="{}" data-counter-author="{}" data-counter-version="{}"><header class="counter-card__header"><div class="counter-card__identity"><div class="counter-card__title-row"><h2>{}</h2><span class="counter-card__version">v{}</span>{settings_badge}</div><p class="counter-card__author"><span>by {}</span>{author_links}</p></div>{actions}</header><div class="counter-card__preview">{preview}</div>{metadata}</article>"#,
-        escape_html(name),
-        escape_html(author),
-        escape_html(version),
-        escape_html(name),
-        escape_html(version),
-        escape_html(author),
+        "{} × {}",
+        size(resolution.first().and_then(json_number)),
+        size(resolution.get(1).and_then(json_number)),
+    )
+}
+
+fn usecase_labels(usecase: Option<&serde_json::Value>) -> Vec<String> {
+    let values = match usecase {
+        Some(serde_json::Value::Array(values)) => {
+            values.iter().filter_map(|v| v.as_str()).collect()
+        }
+        Some(serde_json::Value::String(value)) => vec![value.as_str()],
+        _ => Vec::new(),
+    };
+    values
+        .into_iter()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| match value {
+            "ingame" => "In-game".to_owned(),
+            "obs-overlay" => "OBS".to_owned(),
+            other => other.to_owned(),
+        })
+        .collect()
+}
+
+/// Catalog entries are listing rows led by one preview image at a time; the
+/// gallery arrows browse the remaining images. Hidden images stay lazy, so
+/// only the shown preview of each visible row is fetched.
+fn render_catalog_card(card: &CounterCard<'_>, status: &str, identity: &str) -> String {
+    let name = escape_html(card.name);
+    let install_name = escape_html(&format!("{} by {}", card.name, card.author));
+    let download = escape_html(card.download_link.unwrap_or_default());
+    let update = if card.updatable && card.download_link.is_some() {
+        format!(
+            r#"<button class="button button-cyan" type="button" data-action="update-counter" data-download-url="{download}" data-install-name="{install_name}">Update</button>"#
+        )
+    } else {
+        String::new()
+    };
+    let primary = if !card.downloaded && card.download_link.is_some() {
+        format!(
+            r#"<button class="button button-primary" type="button" data-action="download-counter" data-download-url="{download}" data-install-name="{install_name}">Install</button>"#
+        )
+    } else if card.downloaded {
+        format!(
+            r#"<button class="button" type="button" data-action="open-counter" data-folder="{install_name}">Open folder</button>"#
+        )
+    } else {
+        r#"<button class="button" type="button" disabled>Unavailable</button>"#.to_owned()
+    };
+
+    let images = card
+        .assets
+        .iter()
+        .filter_map(|url| parse_absolute_http_url(url))
+        .collect::<Vec<_>>();
+    let count = images.len();
+    let slides = images
+        .iter()
+        .enumerate()
+        .map(|(index, url)| {
+            format!(
+                r#"<img class="gallery__slide" src="{}" alt="{name} preview {} of {count}" loading="lazy" decoding="async" referrerpolicy="no-referrer"{}>"#,
+                escape_html(url.as_str()),
+                index + 1,
+                if index == 0 { "" } else { " hidden" },
+            )
+        })
+        .collect::<String>();
+    let enlarge = format!(
+        r#"<button class="preview-expand" type="button" data-action="expand-image" aria-label="Enlarge {name} preview" title="Enlarge preview"><span>Enlarge</span></button>"#
+    );
+    let gallery = match count {
+        0 => r#"<div class="gallery gallery--empty"><span>No preview provided</span></div>"#
+            .to_owned(),
+        1 => format!(r#"<div class="gallery">{slides}{enlarge}</div>"#),
+        _ => format!(
+            concat!(
+                r#"<div class="gallery" data-gallery-index="0">{slides}{enlarge}"#,
+                r#"<button class="gallery__nav gallery__nav--prev" type="button" data-action="gallery-prev" aria-label="Previous {name} preview">‹</button>"#,
+                r#"<button class="gallery__nav gallery__nav--next" type="button" data-action="gallery-next" aria-label="Next {name} preview">›</button>"#,
+                r#"<span class="gallery__count" aria-live="polite">1 / {count}</span></div>"#,
+            ),
+            slides = slides,
+            enlarge = enlarge,
+            name = name,
+            count = count,
+        ),
+    };
+
+    let mut facts = format!(
+        r#"<span><span class="fact-label">Size</span> {}</span>"#,
+        escape_html(&resolution_text(card.resolution)),
+    );
+    let usecases = usecase_labels(card.usecase);
+    if !usecases.is_empty() {
+        facts.push_str(&format!(
+            r#"<span><span class="fact-label">For</span> {}</span>"#,
+            escape_html(&usecases.join(", ")),
+        ));
+    }
+    if !card.compatible.is_empty() {
+        facts.push_str(&format!(
+            r#"<span><span class="fact-label">Works with</span> {}</span>"#,
+            escape_html(&card.compatible.join(", ")),
+        ));
+    }
+    let mut tags = String::new();
+    if card.downloaded {
+        tags.push_str(r#"<span class="badge">Installed</span>"#);
+    }
+    if card.updatable {
+        tags.push_str(r#"<span class="badge badge-cyan">Update available</span>"#);
+    }
+    if card.external_settings {
+        tags.push_str(r#"<span class="badge badge-cyan">Has settings</span>"#);
+    }
+    format!(
+        concat!(
+            r#"<article class="counter-card catalog-card{status}"{identity}>{gallery}"#,
+            r#"<div class="catalog-card__main"><div class="counter-card__title-row"><h2 title="{name}">{name}</h2><span class="counter-card__version">v{version}</span></div>"#,
+            r#"<p class="counter-card__meta"><span>by {author}</span>{links}</p>"#,
+            r#"<p class="catalog-card__facts">{facts}</p>"#,
+            r#"<div class="catalog-card__footer"><p class="catalog-card__tags">{tags}</p><div class="counter-actions">{update}{primary}</div></div>"#,
+            "</div></article>",
+        ),
+        status = status,
+        identity = identity,
+        gallery = gallery,
+        name = name,
+        version = escape_html(card.version),
+        author = escape_html(card.author),
+        links = render_author_links(card.name, card.author_links),
+        facts = facts,
+        tags = tags,
+        update = update,
+        primary = primary,
+    )
+}
+
+/// Installed cards share one fixed-size preview frame regardless of overlay
+/// resolution, so a long list scans as an even grid; the URL bar is the
+/// card's primary target.
+fn render_installed_card(
+    card: &CounterCard<'_>,
+    status: &str,
+    identity: &str,
+    authority: &str,
+) -> String {
+    let name = escape_html(card.name);
+    let folder = escape_html(card.folder);
+    let path = overlay_path(card.folder);
+    let absolute_url = escape_html(&format!("http://{authority}{path}"));
+    let settings = if card.settings {
+        format!(
+            r#"<button class="icon-button" type="button" data-action="counter-settings" data-folder="{folder}" aria-label="Settings for {name}" title="Settings">{SETTINGS_ICON}</button>"#
+        )
+    } else {
+        String::new()
+    };
+    // Encoded folder paths are unique, whitespace-free element IDs.
+    let menu = escape_html(&format!("card-menu-{}", path.trim_matches('/')));
+    let actions = format!(
+        concat!(
+            r#"<div class="counter-actions">"#,
+            r#"<button class="pin-toggle" type="button" data-action="toggle-pin" aria-pressed="false" aria-label="Pin {name}" title="Pin">{icon}</button>"#,
+            "{settings}",
+            r#"<button class="icon-button card-menu-toggle" type="button" popovertarget="{menu}" aria-label="More actions for {name}" title="More actions">⋯</button>"#,
+            r#"<div class="card-menu" id="{menu}" popover>"#,
+            r#"<button type="button" data-action="open-counter" data-folder="{folder}">Open folder</button>"#,
+            r#"<button class="card-menu__pin" type="button" data-action="pin-earlier">Move pin earlier</button>"#,
+            r#"<button class="card-menu__pin" type="button" data-action="pin-later">Move pin later</button>"#,
+            r#"<hr>"#,
+            r#"<button class="card-menu__danger" type="button" data-action="delete-counter" data-folder="{folder}">Delete</button>"#,
+            "</div></div>",
+        ),
+        name = name,
+        icon = PIN_ICON,
+        settings = settings,
+        menu = menu,
+        folder = folder,
+    );
+
+    let x = card
+        .resolution
+        .first()
+        .and_then(json_number)
+        .unwrap_or(-1.0);
+    let y = card.resolution.get(1).and_then(json_number).unwrap_or(-1.0);
+    // `None` is a fluid width that fills the frame instead of being scaled.
+    let width = if x == -1.0 {
+        Some(500.0)
+    } else if x == -2.0 || x <= 10.0 {
+        None
+    } else {
+        Some(x)
+    };
+    let height = if y == -1.0 {
+        500.0
+    } else if x <= 10.0 || y <= 10.0 {
+        300.0
+    } else {
+        y
+    };
+    let resolution = escape_html(&resolution_text(card.resolution));
+    let height = format_number(height);
+    let (stage, width) = match width {
+        Some(width) => {
+            let width = format_number(width);
+            (
+                format!(
+                    r#"class="preview-stage" data-preview-width="{width}" data-preview-height="{height}""#
+                ),
+                width,
+            )
+        }
+        None => (
+            r#"class="preview-stage is-fluid""#.to_owned(),
+            "100%".to_owned(),
+        ),
+    };
+    let folder_line = if card.show_folder {
+        format!(
+            r#"<p class="counter-card__folder"><span class="visually-hidden">Folder: </span>{folder}</p>"#
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        concat!(
+            r#"<article class="counter-card{status}" data-overlay-id="{folder}"{identity}>"#,
+            r#"<div class="counter-card__preview"><div {stage}><iframe src="{src}" loading="lazy" width="{width}" height="{height}" scrolling="no" tabindex="-1" title="{name} overlay preview"></iframe></div><button class="preview-expand" type="button" data-action="expand-preview" aria-label="Enlarge {name} preview" title="Enlarge preview"><span>Enlarge</span></button></div>"#,
+            r#"<div class="counter-card__body"><div class="counter-card__identity"><h2 title="{name}">{name}</h2>"#,
+            r#"<p class="counter-card__meta"><span>v{version}</span><span>{author}</span><button class="meta-copy" type="button" data-action="copy-metadata" data-copy-label="Resolution" data-copy-value="{resolution}" title="Copy resolution">{resolution}</button></p>"#,
+            "{folder_line}</div>{actions}</div>",
+            r#"<button class="counter-card__url" type="button" data-action="copy-metadata" data-copy-label="URL" data-copy-value="{url}" title="{url} (click to copy, Shift-click to open)"><code>/{folder}/</code><span class="counter-card__url-action">Copy URL</span></button>"#,
+            "</article>",
+        ),
+        status = status,
+        folder = folder,
+        identity = identity,
+        stage = stage,
+        src = escape_html(&path),
+        width = width,
+        height = height,
+        name = name,
+        version = escape_html(card.version),
+        author = escape_html(card.author),
+        resolution = resolution,
+        folder_line = folder_line,
+        actions = actions,
+        url = absolute_url,
     )
 }
 
 pub(super) fn empty_counter_search() -> String {
     r#"<div class="empty-state"><h2>No matching overlays</h2><p>Try a shorter name, a different author, or another compatible client.</p></div>"#.to_owned()
-}
-
-pub(super) fn local_overlay_instructions() -> String {
-    r#"<section class="local-guide" aria-labelledby="local-guide-title"><header><h2 id="local-guide-title">Serve an overlay from this computer</h2><p>Vosu discovers local overlays beneath its configured overlays directory.</p></header><ol><li><h3>Open the overlays directory</h3><p>Create one folder for the overlay you want to serve.</p><button class="button button-primary" type="button" data-action="open-root">Open overlays folder</button></li><li><h3>Add the overlay files</h3><p>Place the overlay entry point and its supporting files in that folder. The usual entry point is <code>index.html</code>.</p></li><li><h3>Describe the overlay</h3><p>Add <code>metadata.txt</code> to provide its display name, author, version, links, and preferred resolution. The first-party quickstart repository includes an example.</p><a class="button" href="https://github.com/shiruviaa/vosu-overlay-quickstart" target="_blank" rel="noopener noreferrer">Open overlay quickstart</a></li><li><h3>Return to Installed</h3><p>Reload the Installed page. Vosu will discover the folder and expose its local URL, settings, and management actions.</p><a class="button" href="/">View installed overlays</a></li></ol></section>"#.to_owned()
 }
 
 pub(super) fn settings_switch(id: &str, checked: bool) -> String {
@@ -409,11 +609,16 @@ pub(super) fn settings_text(id: &str, value: &str, _class: &str) -> String {
     )
 }
 
-pub(super) fn settings_number(id: &str, value: f64, min: u32) -> String {
+/// Numeric control whose bounds mirror the server-side save validation, so the
+/// browser rejects out-of-range values before they are sent.
+pub(super) fn settings_number(id: &str, value: f64, min: f64, max: f64, step: &str) -> String {
     format!(
-        r#"<input class="settings-control" id="setting-{}" data-id="{}" type="number" value="{value}" min="{min}" step="any">"#,
+        r#"<input class="settings-control" id="setting-{}" data-id="{}" type="number" value="{}" min="{}" max="{}" step="{step}" required>"#,
         escape_html(id),
         escape_html(id),
+        format_number(value),
+        format_number(min),
+        format_number(max),
     )
 }
 
@@ -473,12 +678,24 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
             settings_item(
                 "Common poll interval",
                 "Milliseconds between reads of general game data.",
-                &settings_number("POLL_RATE", config.poll_rate, 100),
+                &settings_number(
+                    "POLL_RATE",
+                    config.poll_rate,
+                    100.0,
+                    ConfigDocument::MAX_INTERVAL_MS,
+                    "any",
+                ),
             ),
             settings_item(
                 "Precise poll interval",
                 "Milliseconds between reads of precise key and hit-error data.",
-                &settings_number("PRECISE_DATA_POLL_RATE", config.precise_data_poll_rate, 0),
+                &settings_number(
+                    "PRECISE_DATA_POLL_RATE",
+                    config.precise_data_poll_rate,
+                    1.0,
+                    ConfigDocument::MAX_INTERVAL_MS,
+                    "any",
+                ),
             ),
             settings_item(
                 "V2 subscription debounce",
@@ -486,7 +703,9 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
                 &settings_number(
                     "V2_SUBSCRIPTION_DEBOUNCE",
                     config.v2_subscription_debounce,
-                    0,
+                    0.0,
+                    ConfigDocument::MAX_INTERVAL_MS,
+                    "any",
                 ),
             ),
         ],
@@ -501,8 +720,8 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
             ),
             settings_item(
                 "Listener port",
-                "Port for the Vosu HTTP server. Use a value from 1024 through 65535.",
-                &settings_text("SERVER_PORT", &config.server_port.to_string(), ""),
+                "Port for the Vosu HTTP server, from 1 through 65535. Ports below 1024 usually require administrator rights.",
+                &settings_number("SERVER_PORT", config.server_port, 1.0, 65_535.0, "1"),
             ),
             settings_item(
                 "Allowed IP addresses",
@@ -535,7 +754,7 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         ],
     );
     format!(
-        r#"<form class="settings" id="runtime-settings"><header class="settings-header"><h2>Runtime configuration</h2><p>Review your changes, then save them together. Changing the listener address or port reconnects this page.</p></header><div class="settings-grid">{general}{data}{server}{advanced}</div><div class="settings-actions"><span class="settings-status" role="status">No unsaved changes</span><button class="button button-primary" type="submit">Save settings</button></div></form>"#
+        r#"<form class="settings" id="runtime-settings"><header class="settings-header"><div><h2>Runtime configuration</h2><p>Changes save when a field loses focus or a checkbox changes. Changing the listener address or port reconnects this page.</p></div><span class="settings-status" role="status" aria-live="polite">All changes saved</span></header>{general}{data}{server}{advanced}<p class="settings-empty" hidden>No settings match your search.</p></form>"#
     )
 }
 

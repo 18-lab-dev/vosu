@@ -15,18 +15,36 @@ impl ConfigUpdateService for RuntimeConfig {
                 .as_object()
                 .ok_or_else(|| "settings payload must be an object".to_owned())?
                 .clone();
-            for key in [
-                "POLL_RATE",
-                "PRECISE_DATA_POLL_RATE",
-                "V2_SUBSCRIPTION_DEBOUNCE",
+            // Reject instead of silently ignoring or clamping, so the dashboard
+            // never reports a save that did not persist the submitted value.
+            for (key, minimum, maximum) in [
+                ("POLL_RATE", 100.0, ConfigDocument::MAX_INTERVAL_MS),
+                (
+                    "PRECISE_DATA_POLL_RATE",
+                    1.0,
+                    ConfigDocument::MAX_INTERVAL_MS,
+                ),
+                (
+                    "V2_SUBSCRIPTION_DEBOUNCE",
+                    0.0,
+                    ConfigDocument::MAX_INTERVAL_MS,
+                ),
+                ("SERVER_PORT", 1.0, 65_535.0),
             ] {
-                if object.get(key).and_then(json_number).is_some_and(|value| {
-                    !value.is_finite() || value > ConfigDocument::MAX_INTERVAL_MS
-                }) {
-                    return Err(format!(
-                        "{key} must not exceed {} ms",
-                        ConfigDocument::MAX_INTERVAL_MS
-                    ));
+                let Some(raw) = object.get(key) else {
+                    continue;
+                };
+                let Some(value) = json_number(raw).filter(|value| value.is_finite()) else {
+                    return Err(format!("{key} must be a number"));
+                };
+                if value > maximum {
+                    return Err(format!("{key} must not exceed {}", format_number(maximum)));
+                }
+                if value < minimum {
+                    return Err(format!("{key} must be at least {}", format_number(minimum)));
+                }
+                if key == "SERVER_PORT" && value.fract() != 0.0 {
+                    return Err(format!("{key} must be a whole number"));
                 }
             }
             self.config

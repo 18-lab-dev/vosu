@@ -8,7 +8,7 @@ tags: [vosu, rust, documentation, onboarding]
 
 # vosu maintainer quickstart
 
-`vosu` is a single native Rust daemon for osu! telemetry, counters, reports, live calculations, and compatible APIs. It discovers osu! stable/lazer processes, reads memory without modifying the client, reduces samples into coherent immutable state, and serves dashboard, HTTP, and WebSocket consumers. The dashboard supports persistent installed-counter pinning and drag ordering, Shift-click URL opening, and `/` search focus (`assets/server/homepage.js`). The workspace targets Rust 1.96.1 and contains the production binary, the `vosu-pp` Rust calculation facade with its `rosu-map-api` and `rosu-pp-api` workspace members, a test-only harness, and the isolated `vosu-release-smoke` packaged-executable checks (`Cargo.toml`).
+`vosu` is a single native Rust daemon for osu! telemetry, counters, reports, live calculations, and compatible APIs. It discovers osu! stable/lazer processes, reads memory without modifying the client, reduces samples into coherent immutable state, and serves dashboard, HTTP, and WebSocket consumers. The dashboard shows installed counters as equal-size cards with contained previews and a copy-URL bar, supports persistent pinning with menu reordering, in-place Installed search that keeps live previews running, autosaving searchable runtime settings, Shift-click URL opening, and `/` search focus (`assets/server/homepage.js`). The workspace targets Rust 1.96.1 and contains the production binary, the `vosu-pp` Rust calculation facade with its `rosu-map-api` and `rosu-pp-api` workspace members, a test-only harness, and the isolated `vosu-release-smoke` packaged-executable checks (`Cargo.toml`).
 
 ## Start here
 

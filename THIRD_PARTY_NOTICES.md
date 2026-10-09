@@ -152,6 +152,16 @@ and the report form in `homepage.html` to POST, with matching navigation styling
 in `homepage.css`. These first-party changes do not change upstream provenance;
 the exact retained bytes and base stylesheet metadata hash are updated together.
 
+The October 2026 dashboard rework locally moves the page tabs and search into
+the top bar, removes the overlay-tools links, `/local-overlays` guide, and
+schema builder, renders installed overlays as equal-size cards (at most four
+per row) with contained, enlargeable previews and a copy-URL bar, lists the
+catalog one overlay per row with a browsable preview image, and makes
+runtime settings a searchable, autosaving single column across `homepage.html`,
+`homepage.js`, `homepage-settings.js`, `homepage.css`, and
+`homepage-controls.css`. These first-party changes do not change upstream
+provenance; the exact retained bytes and metadata hashes are updated together.
+
 The offset tools' formerly tracked `bin/` and `obj/` files are reproducible local
 build output, not distributed runtime inputs. Their source projects and package
 locks remain; restoring/building follows the README's maintainer workflow.

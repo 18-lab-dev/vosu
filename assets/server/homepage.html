@@ -27,8 +27,21 @@
         </g>
       </svg>
       <span class="brand-name">Vosu</span>
-      <span class="brand-context">Dashboard</span>
     </a>
+
+    <nav class="page-tabs" aria-label="Dashboard pages">
+      <a class="nav-link" data-page="installed" href="/">
+        <span>Installed</span>
+        <span class="nav-count" data-count="installed">{{LOCAL_AMOUNT}}</span>
+      </a>
+      <a class="nav-link" data-page="available" href="/available">
+        <span>Available</span>
+        <span class="nav-count" data-count="available">{{AVAILABLE_AMOUNT}}</span>
+      </a>
+      <a class="nav-link" data-page="settings" href="/settings">Settings</a>
+    </nav>
+
+    {{SEARCH}}
 
     <nav class="header-links" aria-label="Vosu resources">
       <a href="https://github.com/shiruviaa/vosu" target="_blank" rel="noopener noreferrer">Source</a>
@@ -45,51 +58,13 @@
     <button class="button button-primary" type="button" data-action="app-update">Update Vosu</button>
   </section>
 
-  <div class="dashboard-layout">
-    <aside class="sidebar" aria-label="Dashboard navigation">
-      <nav class="primary-nav">
-        <a class="nav-link" data-page="installed" href="/">
-          <span>Installed</span>
-          <span class="nav-count" data-count="installed">{{LOCAL_AMOUNT}}</span>
-        </a>
-        <a class="nav-link" data-page="available" href="/available">
-          <span>Available</span>
-          <span class="nav-count" data-count="available">{{AVAILABLE_AMOUNT}}</span>
-        </a>
-        <a class="nav-link" data-page="settings" href="/settings">Settings</a>
-      </nav>
+  <main id="main-content" class="dashboard-main" tabindex="-1">
+    <h1 id="page-title" class="visually-hidden">Overlays</h1>
 
-      <div class="sidebar-section">
-        <p class="sidebar-label">Overlay tools</p>
-        <button class="sidebar-action" type="button" data-action="open-root">Open overlays folder</button>
-        <a class="sidebar-action" href="/local-overlays">Add a local overlay</a>
-        <a class="sidebar-action" href="https://osuck.link/vosu-counter-submit" target="_blank" rel="noopener noreferrer">Submit an overlay</a>
-      </div>
-
-      <div class="sidebar-section developer-toggle">
-        <label for="developer-mode">
-          <span>Schema builder</span>
-          <input id="developer-mode" type="checkbox">
-        </label>
-        <p>Show developer controls for editing an overlay’s settings schema.</p>
-      </div>
-    </aside>
-
-    <main id="main-content" class="dashboard-main" tabindex="-1">
-      <header class="content-header">
-        <div>
-          <p class="eyebrow">Local Vosu service</p>
-          <h1 id="page-title">Overlays</h1>
-          <p id="page-summary" class="page-summary">Manage the overlays served by this Vosu instance.</p>
-        </div>
-        {{SEARCH}}
-      </header>
-
-      <section id="counter-results" class="results" aria-live="polite" aria-busy="false">
-        {{LIST}}
-      </section>
-    </main>
-  </div>
+    <section id="counter-results" class="results" aria-live="polite" aria-busy="false">
+      {{LIST}}
+    </section>
+  </main>
 
   <dialog id="dashboard-dialog" class="dashboard-dialog" aria-labelledby="dialog-title">
     <div class="dialog-frame">
@@ -104,6 +79,22 @@
     </div>
   </dialog>
 
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="preview-dialog" class="dashboard-dialog preview-dialog" aria-labelledby="preview-dialog-title">
+    <div class="dialog-frame">
+      <header class="dialog-header">
+        <div>
+          <h2 id="preview-dialog-title"></h2>
+          <p id="preview-dialog-description"></p>
+        </div>
+        <button class="button" type="button" data-action="close-preview" aria-label="Close preview">Close</button>
+      </header>
+      <div class="preview-dialog__frame"></div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+    <span class="toast__message"></span>
+    <button class="button toast__action" type="button" hidden></button>
+  </div>
 </body>
 </html>

@@ -186,7 +186,6 @@ impl PageDataProvider for RuntimePages {
                 }
                 DynamicPage::Settings => (render_runtime_settings(&self.config.current()), None),
                 DynamicPage::EmptySettings => (String::new(), None),
-                DynamicPage::LocalOverlays => (local_overlay_instructions(), None),
                 DynamicPage::Available => {
                     let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
                     match self.catalog.fetch(&installed, &self.shutdown).await {
@@ -213,10 +212,7 @@ impl PageDataProvider for RuntimePages {
                 self.pages.dashboard_template(),
                 local_count,
                 available_count,
-                !matches!(
-                    page,
-                    DynamicPage::Settings | DynamicPage::EmptySettings | DynamicPage::LocalOverlays
-                ),
+                !matches!(page, DynamicPage::EmptySettings),
                 &list,
                 self.update_version.as_deref(),
             ))

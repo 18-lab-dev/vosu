@@ -600,7 +600,7 @@ Discovery accepts at most 4096 named metadata/index files; each `metadata.txt` m
 
 A top-level directory symlink directly below the static root is an explicit local mount declaration and may target a directory outside that root; no `index.html` marker is required for authorization. Discovery follows that top-level alias but skips nested directory symlinks, which neither create nor traverse additional mount roots. Every requested file below the alias is still confined to the current alias target and streamed through a retained handle. Counter settings remain available through aliases, while final symlinked settings files are rejected and settings writes use atomic same-directory replacement. **Open Folder** follows a directory alias. **Delete** unlinks the alias itself without traversing or deleting its target.
 
-Installed counter cards can be pinned; pinned cards stay above unpinned cards in their saved order and can be reordered by dragging. Shift-click a counter URL to open it in a new window instead of copying it. Press `/` outside an editable control to focus the dashboard search.
+Installed overlays appear as equal-size cards, at most four per row: a preview frame that contains each counter at its declared `WxH` resolution (small counters are enlarged up to 2×), the name, version, author, and size (click the size to copy it), and a URL bar that copies the counter's OBS URL on click (Shift-click opens it). Click a preview to open an enlarged live view in a dialog. Pin a card with its pin toggle; pinned cards stay above unpinned cards in their saved order, and **Move pin earlier/later** in the card's **⋯** menu reorders them. That menu also holds **Open folder** and **Delete**. Pins are stored per browser origin, so `localhost` and `127.0.0.1`, or a different port, keep separate pins. Available overlays are a one-per-row listing: one catalog preview image at a time, with arrows to browse the rest and a click to enlarge, beside the name, author links, size, intended use, compatible clients, and the install or update action. Preview images load lazily from the catalog's image URLs (currently `raw.githubusercontent.com`) without a referrer. The page tabs and search live in the top bar; press `/` outside an editable control to focus search. Installed search filters the loaded cards in place, Available search queries the catalog, and Settings search filters the options. Runtime settings save individually when a field loses focus or a checkbox changes; blank or out-of-range numbers are rejected in place rather than saved. Changing the listener address or port waits for the new listener and then reconnects the page.
 
 Counter settings support text, color, number, checkbox, button, options, commands, textarea, password, header entries. Each counter package owns its authoritative schema at `<static-root>/<counter>/settings.schema.toml`; only mutable values are stored centrally at `<config>/settings/<counter>.settings.values.toml`. `/settings` page handles daemon counter settings.
 
@@ -654,12 +654,12 @@ File routes enforce root containment and support validated single HTTP byte rang
 
 ### Pages, counters, reports, and updates
 
-- `GET /`, `/settings`, `/local-overlays`, `/available`, `/favicon.ico`
+- `GET /`, `/settings`, `/available`, `/favicon.ico`
 - `GET /assets/{path}` and the fallback counter-static route
-- `POST /api/settingsSave`
+- `POST /api/settingsSave` rejects the whole save when a submitted interval or port is not a finite number or is out of range: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` 1–60000, `V2_SUBSCRIPTION_DEBOUNCE` 0–60000 (milliseconds), and `SERVER_PORT` a whole number 1–65535.
 - `POST /api/runUpdates`
 - `POST /api/generateReport`
-- `GET /api/counters/search/{query}`
+- `GET /api/counters/search/{query}[?source=installed|available]` returns card HTML for installed counters by default or for the catalog with `source=available`; any other `source` returns 400. The query keeps letters, digits, and whitespace, and a card matches when any word matches its name, author, or compatible clients. Lookup failures return 502 with an escaped `Error:` body.
 - `POST /api/counters/download/{url}?name=<counter>&update=<value>`
 - `POST /api/counters/open/{name}`
 - `POST /api/counters/open-root` opens the configured counter/static root.

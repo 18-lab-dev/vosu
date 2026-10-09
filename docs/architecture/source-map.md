@@ -57,7 +57,7 @@ JSON/beatmap evidence are data, not source-size exceptions or splitting targets.
   The prepared platform ZIP and checksum are release build inputs, while package
   locks remain maintained inputs.
 - The dashboard loads `homepage.js` as an ES module. `homepage-settings.js` owns
-  the settings dialog and schema builder; `homepage-controls.css` follows the
+  the overlay settings dialog; `homepage-controls.css` follows the
   base stylesheet and preserves settings/dialog/responsive cascade order.
 
 ## Workspace boundaries
