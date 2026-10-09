@@ -237,7 +237,7 @@ SOFTWARE.
 Source: crates/vosu-pp/THIRD_PARTY_LICENSES.txt
 The following material retains its own license terms.
 Declared Cargo licenses and packaged-notice availability are inventoried in
-the repository's openwiki/dependency-license-inventory.json. Neither that
+the repository's docs/dependency-license-inventory.json. Neither that
 inventory nor this appendix certifies complete distribution compliance.
 
 vosu-pp native live calculator
@@ -249,7 +249,7 @@ Scope and provenance
 The production calculator is implemented in Rust in `crates/vosu-pp/src`.
 The replacement commit records clean-room work; the source map below records
 the claimed authorities. Remaining source-provenance questions are documented
-in `openwiki/provenance-audit.md` at the repository root. Its module layout is:
+in `docs/provenance-audit.md` at the repository root. Its module layout is:
 
 - `src/lib.rs` and `src/model.rs`: public facade and wire models.
 - `src/beatmap.rs`, `src/beatmap/random.rs`, and `src/mods.rs`: parsing, conversion,

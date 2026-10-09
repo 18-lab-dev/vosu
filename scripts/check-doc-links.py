@@ -24,8 +24,8 @@ def broken_links(files):
 
 
 def main():
-    files = [ROOT / "README.md", ROOT / "AGENTS.md"]
-    files.extend(sorted((ROOT / "openwiki").rglob("*.md")))
+    files = [ROOT / name for name in ("README.md", "AGENTS.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md")]
+    files.extend(sorted((ROOT / "docs").rglob("*.md")))
     errors = list(broken_links(files))
     for error in errors:
         print(error, file=sys.stderr)

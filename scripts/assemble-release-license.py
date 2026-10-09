@@ -42,7 +42,7 @@ def expected_license(root):
         f"Source: {SOURCE}\n"
         "The following material retains its own license terms.\n"
         "Declared Cargo licenses and packaged-notice availability are inventoried in\n"
-        "the repository's openwiki/dependency-license-inventory.json. Neither that\n"
+        "the repository's docs/dependency-license-inventory.json. Neither that\n"
         "inventory nor this appendix certifies complete distribution compliance.\n\n"
     ).encode()
     return first_party + MARKER + introduction + source

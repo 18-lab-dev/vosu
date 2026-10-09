@@ -10,7 +10,9 @@ tags: [operations, runbook, security, release, troubleshooting]
 
 ## Documentation maintenance
 
-Update ordinary Markdown in `openwiki/` in the PR that changes the documented behavior. Review only affected contracts and architecture; do not run recurring inference or whole-tree generation. The directory name is retained for stable links, not as an OpenWiki tooling requirement. Preserve dated benchmark and experiment evidence rather than rewriting historical results.
+Update ordinary Markdown in `docs/` in the PR that changes the documented behavior. Review affected contracts and architecture; preserve dated benchmark and experiment evidence rather than rewriting historical results. Documentation maintenance requires no recurring inference or whole-tree generation.
+
+Documentation and checked-in agent configuration changes still run the documentation-link, provenance, and release-license checks and publish `CI required`; they do not alone require Rust compilation or native Windows verification. Code, package metadata, and workflow changes retain the applicable native gates.
 
 ## Launch checklist
 

@@ -1,14 +1,14 @@
 ---
 type: Reference
-title: vosu code wiki quickstart
+title: vosu maintainer quickstart
 description: Entry point for engineers and agents working on vosu, a native Rust daemon that reads osu! stable and lazer state and serves compatible HTTP and WebSocket APIs.
 resource: README.md
-tags: [vosu, rust, code-wiki, onboarding]
+tags: [vosu, rust, documentation, onboarding]
 ---
 
-# vosu code wiki
+# vosu maintainer quickstart
 
-`vosu` is a single native Rust daemon for osu! telemetry, counters, reports, live calculations, and compatible APIs. It discovers osu! stable/lazer processes, reads memory without modifying the client, reduces samples into coherent immutable state, and serves dashboard, HTTP, and WebSocket consumers. The dashboard supports persistent installed-counter pinning and drag ordering, Shift-click URL opening, and `/` search focus (`assets/server/homepage.js`). The workspace targets Rust 1.96.1 and contains the production binary, the `vosu-pp` Rust calculation facade with its `rosu-map-api` and `rosu-pp-api` workspace members, and a test-only harness (`Cargo.toml`).
+`vosu` is a single native Rust daemon for osu! telemetry, counters, reports, live calculations, and compatible APIs. It discovers osu! stable/lazer processes, reads memory without modifying the client, reduces samples into coherent immutable state, and serves dashboard, HTTP, and WebSocket consumers. The dashboard supports persistent installed-counter pinning and drag ordering, Shift-click URL opening, and `/` search focus (`assets/server/homepage.js`). The workspace targets Rust 1.96.1 and contains the production binary, the `vosu-pp` Rust calculation facade with its `rosu-map-api` and `rosu-pp-api` workspace members, a test-only harness, and the isolated `vosu-release-smoke` packaged-executable checks (`Cargo.toml`).
 
 ## Start here
 
@@ -23,7 +23,7 @@ The repository’s detailed source documentation remains authoritative: [README.
 
 ## Maintain documentation with the change
 
-`openwiki/` is ordinary reviewed Markdown. Update affected API/configuration/runtime contracts in the implementation PR, architecture when boundaries change, and benchmark notes only with reproducible measurements. Preserve dated experiments and provenance as historical evidence. No OpenWiki CLI, subscription, recurring inference job, or post-merge regeneration is required. Optional AI assistance should address a bounded task and its diff must be reviewed. The directory name is retained to keep links stable.
+`docs/` is the maintained, ordinary reviewed Markdown tree. Update affected API/configuration/runtime contracts in the implementation PR, architecture when boundaries change, and benchmark notes only with reproducible measurements. Preserve dated experiments and provenance as historical evidence. No generator, scheduled inference, or post-merge rewrite is required. Optional AI assistance should address a bounded task and its diff must be reviewed.
 
 ## Build and run
 
@@ -38,7 +38,7 @@ The default listener is `127.0.0.1:24050`; the dashboard is `/`. Linux productio
 
 ## Recent direction
 
-Recent changes explain current hotspots: the dashboard now persists pinned counter order; compatibility payloads classify hit errors into `all`, `press`, and `release`; and v2 parsed beatmap stats expose `hitWindow` with optional numeric judgement fields `miss`, `meh`, `ok`, `good`, `great`, and `perfect`. Catch publishes all six fields as zero, while `stars.hitWindow` is absent. Earlier changes added v2 selected-field subscriptions, WebSocket close handshakes, precise keypress state/timestamps, external consumers, and the precise input-validation harness. Treat these as compatibility-sensitive areas and use the targeted verification in [Testing and verification](testing/verification.md).
+Recent changes explain current hotspots: the dashboard persists pinned counter order; compatibility payloads preserve upstream `hitErrorArray`/`hitErrors` arrays and add sibling `pressHitErrors` and `releaseHitErrors`; and v2 parsed beatmap stats expose `hitWindow` with optional numeric judgement fields `miss`, `meh`, `ok`, `good`, `great`, and `perfect`. Catch publishes all six fields as zero, while `stars.hitWindow` is absent. Earlier changes added v2 selected-field subscriptions, WebSocket close handshakes, precise keypress state/timestamps, external consumers, and the precise input-validation harness. Treat these as compatibility-sensitive areas and use the targeted verification in [Testing and verification](testing/verification.md).
 
 ## Documentation conventions
 

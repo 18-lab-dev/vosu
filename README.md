@@ -13,22 +13,22 @@
 
 > A vibe-coded Rust implementation targeting API and behavioral compatibility with upstream [tosu](https://github.com/tosuapp/tosu), with native Linux implementation, measured hot paths, and a repository designed to work well with coding agents.
 
-The daemon is implemented in Rust, with an embedded vanilla HTML, CSS, and JavaScript dashboard. Upstream tosu defines the compatibility target. Retained upstream material, the dashboard and calculator replacement history, and unresolved source-provenance questions are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the [provenance audit](openwiki/provenance-audit.md). Compatibility does not establish source independence or copyright ownership.
+The daemon is implemented in Rust, with an embedded vanilla HTML, CSS, and JavaScript dashboard. Upstream tosu defines the compatibility target. Retained upstream material, the dashboard and calculator replacement history, and unresolved source-provenance questions are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the [provenance audit](docs/provenance-audit.md). Compatibility does not establish source independence or copyright ownership.
 
 `vosu` reads live state from osu!stable and osu!lazer, then serves the dashboard,
 counters, reports, and compatible HTTP/WebSocket APIs. It is one native daemon:
 no Node.js, Electron, or separately installed .NET/C# runtime is required.
 
-This build does not provide the former Electron/asdf-overlay in-game overlay or an embedded replacement. External overlay software can consume the documented HTTP and WebSocket APIs; [ADR 0008](openwiki/decisions/0008-external-in-game-overlays.md) records this product boundary.
+This build does not provide the former Electron/asdf-overlay in-game overlay or an embedded replacement. External overlay software can consume the documented HTTP and WebSocket APIs; [ADR 0008](docs/decisions/0008-external-in-game-overlays.md) records this product boundary.
 
 ## Why this build
 
 | | |
 | --- | --- |
 | **Native runtime** | A single Rust daemon with embedded dashboard assets and offsets. |
-| **Compatibility work** | gosuMemory v1, streamCompanion, and vosu v2 HTTP/WebSocket contracts have targeted checks and fixture evidence. Clean strict Windows stable/lazer captures and their exact source generations are recorded in [verification](openwiki/testing/verification.md#10-release-gate-strict-windows-stable-2026-10-04). |
-| **Linux support** | Native osu!lazer has a [clean strict live-parity capture](openwiki/testing/verification.md#10-release-gate-strict-native-linux-lazer-2026-10-04) at the recorded source/client pins. osu!stable through Wine is experimental and unverified, not verified release support. |
-| **Measured performance** | Criterion covers memory scanning, snapshot reads, calculations, serialization, caching, and publication. Results and limits are recorded in the [benchmark guide](openwiki/testing/benchmarks.md). |
+| **Compatibility work** | gosuMemory v1, streamCompanion, and vosu v2 HTTP/WebSocket contracts have targeted checks and fixture evidence. Clean strict Windows stable/lazer captures and their exact source generations are recorded in [verification](docs/testing/verification.md#10-release-gate-strict-windows-stable-2026-10-04). |
+| **Linux support** | Native osu!lazer has a [clean strict live-parity capture](docs/testing/verification.md#10-release-gate-strict-native-linux-lazer-2026-10-04) at the recorded source/client pins. osu!stable through Wine is experimental and unverified, not verified release support. |
+| **Measured performance** | Criterion covers memory scanning, snapshot reads, calculations, serialization, caching, and publication. Results and limits are recorded in the [benchmark guide](docs/testing/benchmarks.md). |
 | **Agent-ready repository** | A pinned toolchain, explicit source ownership, runnable checks, architecture notes, and decision records keep automated changes reviewable. Start with [AGENTS.md](AGENTS.md). |
 
 ## Install
@@ -104,6 +104,13 @@ normal per-user cache only when an exact process needs generation. A release
 binary must contain its matching generator payload; a debug/development binary
 without a prepared payload reports an explicit missing-bundle error rather than
 falling back to a remote source.
+
+Generation runs both managed helpers with the discovered client's bundled CLR
+and framework files in a disposable working directory. This keeps measurement
+on the same runtime as the game, including newer .NET versions and osu!'s CLR
+fork. The verified embedded payload supplies the helper code; neither the game
+installation nor the extracted payload is modified. Linux links the client
+runtime files; Windows hard-links them when possible and copies them otherwise.
 
 Offset caches live under the platform cache root:
 
@@ -195,7 +202,7 @@ These are **unsigned, nonrelease artifacts**, not updater assets or a replacemen
 for required CI. Downloads identify the version and full commit, expire after
 14 days, and include repository attribution/license texts and build provenance.
 Run extracted development binaries with `--update=false`. See the
-[operations runbook](openwiki/operations/runbook.md#unsigned-development-artifacts)
+[operations runbook](docs/operations/runbook.md#unsigned-development-artifacts)
 for gating, cache, packaging, and smoke-test details. Tagged publication and its
 SignPath integration are unchanged; this workflow does not sign or publish releases.
 
@@ -617,7 +624,9 @@ Calculator file inputs are limited to 64 MiB, including opened-handle checks and
 
 The v2 snapshot and matching WebSocket streams expose `beatmap.stats.hitWindow`. The object has optional numeric judgement fields `miss`, `meh`, `ok`, `good`, `great`, and `perfect`; unsupported judgements are omitted. Values are maximum absolute timing errors in milliseconds after the active clock rate is applied. An unparsed/missing map serializes an empty object. Catch publishes all six fields as zero, matching upstream's empty-window implementation, while `stars.hitWindow` remains absent. Catch's spatial catcher width is not a timing window.
 
-The tosu hit-error arrays keep their original names and shapes: `hitErrorArray` in v1 and regular v2, and `hitErrors` in streamCompanion and precise v2. Vosu adds sibling `pressHitErrors` and `releaseHitErrors` arrays. The original array preserves every timing event in order, `pressHitErrors` contains note presses, and `releaseHitErrors` contains osu!mania hold-note releases. Stable reports every timing error in the original and press arrays and leaves the release array empty.
+The tosu hit-error arrays keep their original names and shapes: `hitErrorArray` in v1 and regular v2, and `hitErrors` in streamCompanion and precise v2. Vosu adds sibling `pressHitErrors` and `releaseHitErrors` arrays. The original array preserves every timing event in order, `pressHitErrors` contains note presses, and `releaseHitErrors` contains osu!mania hold-note releases. Stable is press-only outside native mania maps; native mania uses beatmap metadata and replay input transitions to classify hold-note releases. Classification can lag the original array while evidence is pending; converted or unavailable map metadata remains press-only.
+
+Hit-error capture and appends require a fresh `play` state, including the opening 150 ms. Polling before the first object, a temporarily shrinking native event list, and unavailable precise status do not clear accumulated arrays. Pause and results retain the current attempt's history. Returning to song selection or otherwise exiting the attempt clears it; a genuine quick retry starts a fresh attempt.
 
 Regular and precise v2 responses include a mode-free `keys` object. Its tosu-compatible `k1`, `k2`, `m1`, and `m2` members remain unchanged; the additive `all` array contains every source-reported logical input in order, with `name`, `isPressed`, `count`, `pressedAt`, and `releasedAt`. Edge timestamps are nullable gameplay milliseconds. They update only when the sampled state exposes that edge, so a count jump can report missed complete taps without fabricating timestamps.
 
@@ -625,7 +634,7 @@ These additive hit-error and `keys.all` fields are planned for a tosu port soon(
 
 Maintainers can run the zero-dependency harness with `cd tools/input-validation && uv run python run.py ...`. `capture` accounts for precise transitions and `scan-maps` selects long-note-heavy mania maps. `autoplay <map.osu>` and `live-autoplay <map.osu>` generate deterministic plans for osu!, taiko, catch, and mania, then inject them through Windows `SendInput` or Linux `/dev/uinput`; live mania plans additionally support bounded seeded timing jitter. Standard-mode and catch pointer injection requires `--playfield x,y,width,height`; Linux also requires the full compositor layout as `--desktop x,y,width,height`, not only the target monitor. Default controls are `Z` for osu!, `F,J,D,K` for taiko plan controls `DON_LEFT,DON_RIGHT,KAT_LEFT,KAT_RIGHT`, pointer-only for catch, and `D,F,J,K` for 4-key mania.
 
-Maintainer workflow, evidence interpretation, troubleshooting, and maintenance triggers are documented in the [precise input validation guide](openwiki/testing/input-validation.md).
+Maintainer workflow, evidence interpretation, troubleshooting, and maintenance triggers are documented in the [precise input validation guide](docs/testing/input-validation.md).
 
 `navigate` follows keyboard paths from an unobstructed idle logo: lazer uses `P,P,P` for song select and `P,P,M,M` for multiplayer, while stable uses `P,P,P` and `P,P,M`. Navigation key-down onsets default to 100 ms apart. Optional song-select search text uses 1 ms key-down onset spacing. Use each command's `--help` for backend, timing, geometry, and key-map options.
 
@@ -694,16 +703,16 @@ Console and file logs share a bounded ordered queue. Saturation drops newest rec
 
 ## Maintainer documentation
 
-The existing `openwiki/` directory is ordinary maintained Markdown. Update affected documentation in the implementation PR; no OpenWiki installation, scheduled inference, or whole-tree post-merge rewrite is required. CI runs `python scripts/check-doc-links.py` even for documentation-only changes and publishes the stable `CI required` status. The folder name is retained to preserve links, not as a tooling dependency.
+The maintained `docs/` directory is ordinary reviewed Markdown. Update affected documentation in the implementation PR; no generator, scheduled inference, or whole-tree post-merge rewrite is required. CI runs `python scripts/check-doc-links.py` even for documentation-only changes and publishes the stable `CI required` status.
 
 | Document | Scope |
 | --- | --- |
-| [Maintainer documentation](openwiki/index.md) | Navigation, information boundaries, and review conventions |
-| [Architecture](openwiki/architecture/index.md) | Runtime boundaries, flows, deployment, and risks |
-| [Decision records](openwiki/decisions/index.md) | Durable design choices and their consequences |
-| [Benchmarks](openwiki/testing/benchmarks.md) | Criterion coverage, method, results, and limitations |
-| [Testing and verification](openwiki/testing/verification.md) | Change-specific evidence and release checks |
+| [Maintainer documentation](docs/index.md) | Navigation, information boundaries, and review conventions |
+| [Architecture](docs/architecture/index.md) | Runtime boundaries, flows, deployment, and risks |
+| [Decision records](docs/decisions/index.md) | Durable design choices and their consequences |
+| [Benchmarks](docs/testing/benchmarks.md) | Criterion coverage, method, results, and limitations |
+| [Testing and verification](docs/testing/verification.md) | Change-specific evidence and release checks |
 
 ## License
 
-Project-authored code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, where the respective contributors have licensing authority. The release archive retains the root [`LICENSE`](LICENSE) member. Bundled assets, dependencies, and provenance-pinned material remain under their applicable terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). The first-party notice is `Copyright (c) 2026 sxlvia`. The root release license includes the four retained calculator MIT texts. The [provenance audit](openwiki/provenance-audit.md) records source matches and files whose origins remain uncertain; the [dependency inventory](openwiki/dependency-license-inventory.json) records all locked Cargo license declarations. Neither compatibility nor these inventories certifies source independence or complete distribution compliance.
+Project-authored code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, where the respective contributors have licensing authority. The release archive retains the root [`LICENSE`](LICENSE) member. Bundled assets, dependencies, and provenance-pinned material remain under their applicable terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). The first-party notice is `Copyright (c) 2026 sxlvia`. The root release license includes the four retained calculator MIT texts. The [provenance audit](docs/provenance-audit.md) records source matches and files whose origins remain uncertain; see the dependency license inventory in `docs/dependency-license-inventory.json`.

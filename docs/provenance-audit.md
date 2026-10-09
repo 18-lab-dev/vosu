@@ -158,7 +158,7 @@ own exact license files and licensing boundaries.
   obligation. The assembler checks each retained MIT text against its pinned
   content digest, normalizing only line endings and surrounding LF section
   separators; the original upstream-byte digests remain unchanged in notices.
-- `openwiki/dependency-license-inventory.json` inventories all 362 locked
+- `docs/dependency-license-inventory.json` inventories all 362 locked
   third-party Cargo packages, including build/dev/non-release-platform packages,
   with versions, archive checksums, SPDX declarations and top-level notice
   hashes. Twelve archives lack a top-level license/notice file under the

@@ -10,7 +10,7 @@
 - A branding change is complete only when case-sensitive and case-insensitive scans find no unexplained old-brand occurrences in live source, package metadata, lockfile package names, commands, configuration, CI, packaging, release paths, tests, or current documentation.
 - This operational map describes the post-cutover tree. Any old spelling not explicitly identified as migration, upstream, parity, provenance, or history is a defect.
 - This repository ships the native Rust daemon, not the former Electron/asdf-overlay application. Do not add Node, Electron, .NET, or C# runtime requirements to the daemon.
-- Read [README.md](README.md) for the user-facing contract. Use the [architecture overview](openwiki/architecture/overview.md), [decision records](openwiki/decisions/index.md), and [benchmarks](openwiki/testing/benchmarks.md) for detail; keep this file operational.
+- Read [README.md](README.md) for the user-facing contract. Use the [architecture overview](docs/architecture/overview.md), [decision records](docs/decisions/index.md), and [benchmarks](docs/testing/benchmarks.md) for detail; keep this file operational.
 
 ## Toolchain and commands
 
@@ -31,7 +31,7 @@ cargo build --release --locked --no-default-features --features linux-process-ev
 cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc
 
 # Criterion hot paths; use the affected group or exact ID for scoped routine measurements.
-# The unfiltered suite is available when measuring all hot paths; see openwiki/testing/benchmarks.md.
+# The unfiltered suite is available when measuring all hot paths; see docs/testing/benchmarks.md.
 cargo bench --locked --package vosu --bench hot_paths -- <benchmark-filter>
 ```
 
@@ -54,7 +54,7 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 - `src/state/`, `src/instance/`, `src/process/`, `src/memory.rs`, `src/platform.rs`: process discovery, native memory reads, snapshots, and polling lifecycle.
 - `src/config/`, `src/counters/`: watched configuration, migration, settings, counter discovery/download/storage.
 - `src/updater/`: release selection, verified staging, replacement, rollback, and recovery.
-- `src/calculation.rs` and `crates/vosu-pp/`: stable and lazer performance calculation; the latter is a Rust facade over provenance-pinned MIT source forks. The remaining source-provenance questions are recorded in `openwiki/provenance-audit.md`.
+- `src/calculation.rs` and `crates/vosu-pp/`: stable and lazer performance calculation; the latter is a Rust facade over provenance-pinned MIT source forks. The remaining source-provenance questions are recorded in `docs/provenance-audit.md`.
 - `src/runtime/`, `src/app.rs`, `src/logging/`, `src/report/`: daemon orchestration and operational services.
 - `crates/vosu-test-harness/`: integration-test support only. `tests/` holds compatibility, native, daemon smoke, and performance contracts. `crates/vosu-release-smoke/` exercises an externally packaged executable without depending on the daemon crate. `benches/hot_paths.rs` holds Criterion benchmarks.
 - `tools/live-parity/`: deterministic live capture, attestation, comparison, and diff tooling. `tools/oracle/` holds calculator provenance/evidence tooling.
@@ -68,7 +68,7 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 - Process discovery or memory reading: affected unit tests and, on each affected native OS, `cargo test --locked --test process_memory -- --nocapture`.
 - Updater/release behavior: `cargo test --locked --test updater_compat`, native `cargo test --locked --test updater_native -- --nocapture`, and `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture` when packaging/startup changes.
 - Calculator/state semantics: affected `vosu-pp` tests and `cargo test --locked --test performance_invariants`; use live parity when observable live schemas or state timing can change.
-- Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](openwiki/testing/benchmarks.md).
+- Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](docs/testing/benchmarks.md).
 - Before merging a Rust change, run the applicable native smoke path and the CI checks above; platform-specific code requires evidence from that platform.
 
 ## Local CI and push gate
@@ -97,6 +97,6 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 
 ## Maintained documentation
 
-`openwiki/` is an ordinary maintained Markdown directory, not generated output. Start with `openwiki/quickstart.md`. Update affected contracts and architecture in the implementation PR; preserve dated experiment and provenance records as historical evidence. Do not schedule inference, regenerate the whole tree on push, or add a documentation bot. Optional AI assistance must be explicitly scoped and reviewed. The retained directory name preserves existing links and has no tool/runtime dependency.
+`docs/` is the maintained Markdown documentation root. Start with `docs/quickstart.md`. Update affected contracts and architecture in the implementation PR; preserve dated experiment and provenance records as historical evidence. Do not schedule inference, regenerate the whole tree on push, or add a documentation bot. Optional AI assistance must be explicitly scoped and reviewed.
 
 Linux process-event backends are intentionally retained for their measured performance benefit. Preserve their default feature, capability-aware eBPF → CN_PROC → polling selection, bounded loss recovery, and periodic reconciliation; earlier experiment rollout cautions are historical, not instructions to remove the current backends.

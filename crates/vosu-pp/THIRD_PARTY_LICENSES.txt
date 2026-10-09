@@ -7,7 +7,7 @@ Scope and provenance
 The production calculator is implemented in Rust in `crates/vosu-pp/src`.
 The replacement commit records clean-room work; the source map below records
 the claimed authorities. Remaining source-provenance questions are documented
-in `openwiki/provenance-audit.md` at the repository root. Its module layout is:
+in `docs/provenance-audit.md` at the repository root. Its module layout is:
 
 - `src/lib.rs` and `src/model.rs`: public facade and wire models.
 - `src/beatmap.rs`, `src/beatmap/random.rs`, and `src/mods.rs`: parsing, conversion,

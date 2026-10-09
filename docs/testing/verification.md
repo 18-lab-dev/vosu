@@ -23,9 +23,13 @@ tags: [testing, ci, parity, benchmarks, release]
 The required checks in `AGENTS.md` and `.github/workflows/ci.yml` are:
 
 ```sh
+python scripts/check-doc-links.py
+python scripts/check-provenance.py --package-fixtures
+python -m unittest discover -s scripts -p test_package_release.py
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --lib --bins --tests --examples --all-features --locked
+cargo xwin clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
 cargo test --locked --test process_memory -- --nocapture
 cargo test --locked --test updater_native -- --nocapture
 ```
@@ -89,6 +93,29 @@ Criterion benchmarks cover scanner/snapshot reads, beatmap parsing/calculation/c
 Keep unit tests for distinct consumer-visible behavior: boundaries, precedence, errors, state transitions, security, numerical results, and concurrency or resource bounds. Do not add tests that only repeat constants/help text, construct and read back fields, prove standard-library clone/ownership behavior, or echo arguments through mocks. When committed source-oracle fixtures already cover a wire contract, add a focused unit test only for an uncovered case; do not duplicate the same default or not-ready payload. Preserve provenance-pinned upstream tests through their owning workflow rather than culling them as first-party tests.
 
 When a change crosses [runtime boundaries](../architecture/overview.md), run the narrowest affected contract first and then the platform/live gate appropriate to the observable behavior. Do not substitute a compile-only check for behavior verification.
+
+## Release preparation checks — 2026-10-08
+
+The initial checks below exercised a temporary, uncommitted 1.0.0 working tree, including the existing client-runtime offset-generation and hit-error epoch fixes. The version bump was subsequently deferred for dashboard rework; the maintained source version remains **0.3.0**. These checks are not evidence of publication, signing, or a new live osu! parity capture.
+
+- `python scripts/check-doc-links.py` passed for 31 maintained Markdown files after the `docs/` cutover. A disposable CLI probe rejected a missing link inside the maintained documentation tree and passed once its target existed.
+- `python scripts/check-provenance.py --refresh-license-hash --refresh-dependency-inventory --package-fixtures` passed. Cargo regenerated the root package lock entry as 1.0.0; all 362 third-party dependency identities and license-inventory package records remained unchanged. The four release-license tests passed, and `v1.0.0` tag validation matched the manifest.
+- `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/version-build.yml .github/workflows/benchmarks-windows.yml` passed. Release toolchain actions are commit-pinned; only publication has repository-write permission. Documentation/agent-only classification probes skipped Rust jobs, while code, manifest, and workflow probes retained their applicable gates.
+- Rust 1.96.1 passed `cargo fmt --all -- --check`, Linux workspace/all-target/all-feature Clippy with warnings denied, both the full workspace test command including doctests and the explicit CI test-target command, and Windows MSVC cross-Clippy with `C_INCLUDE_PATH` unset.
+- Both platform generator bundles were rebuilt through `scripts/prepare-offset-generator.py`. The Linux production command with `linux-process-events` built successfully. `scripts/package-release.py` packaged and extracted the actual `vosu-linux-v1.0.0.zip`, containing exactly `vosu` and the refreshed root `LICENSE`.
+- The extracted executable's SHA-256 was `954c350183a75c08ad9e76fca7b3f269a1357785c19e93210c33ba4c7b7ba166`. Its packaged-production smoke passed. A separate isolated launch logged version `1.0.0`, served `/` with 200, rejected headerless report POST with 403, accepted same-origin report POST with 200, and exited successfully after native SIGINT.
+- `python -m unittest discover -s tools/live-parity -p 'test_*.py'` passed all 156 tooling tests. CLI help advertised vosu 1.0.0; this does not certify a live client capture.
+- All four `.claude/skills` symlinks resolved to retained `.agents/skills` directories. `CLAUDE.md` delegates to `AGENTS.md`; the local read-only `tokei` permission and third-party skill sources were preserved.
+
+Native Windows execution remains unverified for this generation: `windows-vm status` reported Windows disabled/inactive and SSH unavailable; Windows MCP health reported missing QMP and no framebuffer. No VM was started. Historical Windows/native parity results below retain their original source and artifact identities and do not establish a pass for this working tree.
+
+### Final deferred-version generation
+
+- Cargo regenerated the root package back to `0.3.0`. The resulting `Cargo.lock` is semantically identical to the pre-preparation commit, including every third-party package version and checksum. The live-parity target and README archive names also remain `0.3.0`.
+- The `docs/` link check passed for all 31 maintained Markdown files. Refreshed licensing/inventory/package fixtures passed; all four release-license tests passed; tag validation accepted `v0.3.0`. Only the changelog's historical migration statement retains the old documentation-directory name.
+- Rust 1.96.1 formatting, Linux workspace/all-target/all-feature Clippy, full workspace tests including doctests, Windows MSVC cross-Clippy with `C_INCLUDE_PATH` unset, both generator bundle preparations, and the Linux production build completed successfully.
+- The actual `vosu-linux-v0.3.0.zip` contained exactly `vosu` and `LICENSE`. Its extracted executable SHA-256 was `54b3f0bac42393e9201b233d4e47f661985376f589db07d1f8e78c4826ab1a8a`; packaged-production smoke passed. An isolated launch logged `0.3.0`, served `/` with 200, rejected a report POST without `Origin` with 403, accepted its exact same-origin report POST with 200, and exited with 0 after native SIGINT.
+- Local package/runtime evidence is retained in `/home/user/.cache/vosu-final-20261008-4r3azwf2/`. Native Windows execution remains unavailable and unverified; the VM was not started. No dashboard changes, version bump, publication, or push were performed.
 
 ## Upstream 2359305 update evidence
 

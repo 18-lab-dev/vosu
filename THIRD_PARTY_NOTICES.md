@@ -8,7 +8,7 @@ First-party notice: `Copyright (c) 2026 sxlvia`, as confirmed by the maintainer 
 
 - **Upstream credit:** tosu and its contributors, including Mikhail Babynichev (Kotrik). The upstream [v4.25.0 package metadata](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/package.json) names that author; its [license document](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/LICENSE) retains `Copyright (C) 2023-2026 Mikhail Babynichev <https://kotrik.ru/>`. This is upstream attribution, not a first-party vosu copyright notice. Upstream declares `GPL-3.0` in `package.json` but supplies LGPL v3 text in `LICENSE`; the audit records this discrepancy rather than selecting or broadening its grant.
 - **Historical imports:** the initial vosu snapshot retained tosu dashboard material and an LGPL-covered calculator wrapper. The dashboard replacement is recorded in [`af20c120`](https://github.com/shiruviaa/vosu/commit/af20c1201a21beecc7db88119a700b2964c1ab78); the calculator replacement is recorded in [`4971b568`](https://github.com/shiruviaa/vosu/commit/4971b568a8dd0e82c011214c74b4e3857fd182ae). Earlier snapshots retain their applicable licenses and notices.
-- **Production review:** stable memory signature data matches upstream tosu, and some calculator structures and formulas overlap the former wrapper. A compatibility match alone does not determine copyright status or establish independent implementation. The [provenance audit](openwiki/provenance-audit.md) identifies the files requiring evidence before any licensing conclusion.
+- **Production review:** stable memory signature data matches upstream tosu, and some calculator structures and formulas overlap the former wrapper. A compatibility match alone does not determine copyright status or establish independent implementation. The [provenance audit](docs/provenance-audit.md) identifies the files requiring evidence before any licensing conclusion.
 - **Current and historical pins:** `package.metadata.vosu.source-commit` and the current oracle lock use verified upstream revision `2359305a63f2aaebb201bc8d2eee58177f52590e`. Historical calculator records retain unresolved `1a67fd64cc38fe60306328dde0a429e3211ca4ed`; no authenticated mapping was recovered. Upstream `v4.25.0` at `9f42c88714da69ac2ba248126a189416c55d733c` is a separately identified comparison source, not a substitute for that historical pin.
 - **Retained reference:** `tools/oracle/reference/lazer-calculator` preserves its own LGPL license, revision, and checksum manifest. The first-party dual-license grant does not relicense this reference or any copied or translated upstream material.
 
@@ -158,7 +158,7 @@ locks remain; restoring/building follows the README's maintainer workflow.
 
 ## Direct Rust packages
 
-The [dependency inventory](openwiki/dependency-license-inventory.json) records every locked third-party Cargo package resolved with `--all-features`, including build/development dependencies and platforms not shipped by Linux/Windows releases. It retains each version, archive checksum, declared license expression, source repository, and top-level packaged-notice hashes. Regenerate it with `python scripts/check-provenance.py --refresh-dependency-inventory` after manifest/lock changes. Input hashes normalize checkout CRLF to LF; upstream notice hashes preserve exact archive bytes. This inventory does not select license alternatives or certify complete redistribution notices: nested/vendored material, native/system libraries, and the embedded .NET payload require their own evidence. The direct-package summary below is not the exhaustive list.
+The [dependency inventory](docs/dependency-license-inventory.json) records every locked third-party Cargo package resolved with `--all-features`, including build/development dependencies and platforms not shipped by Linux/Windows releases. It retains each version, archive checksum, declared license expression, source repository, and top-level packaged-notice hashes. Regenerate it with `python scripts/check-provenance.py --refresh-dependency-inventory` after manifest/lock changes. Input hashes normalize checkout CRLF to LF; upstream notice hashes preserve exact archive bytes. This inventory does not select license alternatives or certify complete redistribution notices: nested/vendored material, native/system libraries, and the embedded .NET payload require their own evidence. The direct-package summary below is not the exhaustive list.
 
 ### MIT
 
@@ -167,7 +167,7 @@ The [dependency inventory](openwiki/dependency-license-inventory.json) records e
 
 ### MIT OR Apache-2.0 (or the equivalent reversed expression)
 
-- `arc-swap`, `chrono`, `futures-util`, `indexmap`, `libc`, `md-5`, `reqwest`, `semver`, `serde`, `serde_json`, `sha2`, `tempfile`, `thiserror`, `url`, `wgpu`, `windows-sys`, and Windows-only `wmi`
+- `arc-swap`, `chrono`, `futures-util`, `indexmap`, `libc`, `md-5`, `reqwest`, `semver`, `serde`, `serde_json`, `sha2`, `tempfile`, `thiserror`, `url`, `windows-sys`, and Windows-only `wmi`
 
 ### Other declared expressions
 
@@ -187,7 +187,7 @@ These development packages, the private `vosu-test-harness` workspace member, or
 
 - project-authored repository code: `LICENSE-MIT` or `LICENSE-APACHE`
 - release archive license member: `LICENSE` (combined first-party terms and retained calculator MIT texts)
-  The `assets/SHA256SUMS` license entry tracks the current combined-license bytes (`b5e34b32f6f6a5f8f81ed4b1b59722bd36a8bbd2a92dad7a87eae9f8d7c3cfad`). Refresh both values whenever `LICENSE` changes; other retained asset hashes remain tied to their exact bytes.
+  The `assets/SHA256SUMS` license entry tracks the current combined-license bytes (`8289c7cc59ca7272c0e0dd314288adacb7c2397dd2f5241e36457166c16f4719`). Refresh both values whenever `LICENSE` changes; other retained asset hashes remain tied to their exact bytes.
 - calculator crate project-authored code: `crates/vosu-pp/LICENSE-MIT` or `crates/vosu-pp/LICENSE-APACHE`
 - pinned lazer-calculator LGPL-3.0 reference: `tools/oracle/reference/lazer-calculator/LICENSE`
 - local `vosu-rosu-pp-api` MIT license text: `crates/vosu-pp/rosu-pp-api/LICENSE`

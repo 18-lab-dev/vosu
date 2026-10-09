@@ -1,1 +1,0 @@
-This directory contains ordinary maintained Markdown. Update affected contracts and architecture in the implementation PR; retain dated benchmarks, experiments, ADRs, and provenance. Keep navigation concise and source-backed. No generator, scheduled inference, automatic post-merge rewrite, or OpenWiki subscription is required. Optional AI assistance must be scoped and reviewed.

@@ -79,6 +79,17 @@ payload; a debug/development build without one reports an explicit
 missing-bundle error. Maintainer preparation uses the .NET SDK and
 `scripts/prepare-offset-generator.py`; generated binaries are not source inputs.
 
+`src/runtime/offset_generator/client_runtime.rs` stages the helper entry points
+with the exact client's self-contained runtime pack and runtime configuration.
+It replaces the helper's build-runtime dependency entry with the client's
+managed/native runtime manifest, so framework-version upgrades do not require
+an end-user SDK or produce offsets measured under a different CLR. Entry points
+and host libraries use hard links or copies rather than symlinks: the .NET host
+canonicalizes the entry assembly path, and a symlink would select the original
+bundle's runtime. Linux links the remaining runtime files; Windows hard-links
+or copies them. Staging is generation-local and removed afterward; the
+checksum-verified payload and game installation remain untouched.
+
 ### Ownership map
 
 | Concern | Primary ownership | Main entry points |
@@ -139,6 +150,8 @@ sequenceDiagram
 `src/state/worker.rs` owns two named blocking reader threads plus one async reducer task per ready process generation. The regular path is backpressured by a one-slot permit channel, so only the requested capture plan is produced. The precise path overwrites a latest-only slot; it does not queue every high-frequency observation. The reducer gives regular input priority, rejects samples whose source, generation, sequence, mode/mod context, or hit-error suffix is stale, then calls `StateBundle::apply_regular` or `StateBundle::apply_precise` serially.
 
 The reducer in `src/state/bundle/reducer.rs` applies raw values, retention rules, status transitions, beatmap/gameplay calculation updates, and derives the next read context/capture plan. It emits an immutable `StateBundleSnapshot`. `ProductionStateSupervisor` accepts worker publications through a per-PID latest-only slot, rejects any PID generation that is no longer desired, combines all current instance snapshots with lifecycle focus and runtime settings, and publishes one `ManagerSnapshot` through the atomic `SnapshotManager`.
+
+Hit-error reads and appends require an authoritative precise `Play` status rather than a stale regular-context fallback. The first-object/150-ms timing guards do not suppress hit errors or reset their history. A native list rewind updates the acknowledged cursor without erasing accumulated `all`, `press`, or `release` events or their totals. Pause/results retain history; map exit and a genuine retry reset the attempt through the regular lifecycle/epoch boundary.
 
 Regular and precise notifications remain independent. `src/runtime/projection.rs::SnapshotProviders::publish` wakes precise consumers for every atomic replacement but does not wake regular consumers for a precise-only replacement. Four compatibility hubs—v1, stream companion, v2, and v2 precise—use their configured poll cadence, while the dedicated selected-field v2 hub consumes precise notifications and applies its per-client debounce (`src/runtime/worker.rs::WebSocketHubs`). HTTP always loads the latest snapshot on request.
 

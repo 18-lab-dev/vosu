@@ -2,7 +2,7 @@
 
 All notable user-visible changes to vosu are documented here. The current 0.3.0 section is unreleased; older sections are retained release history and use the product names and artifact names that were current at the time.
 
-## 0.3.0 — Unreleased
+## 0.3.0 - Unreleased
 
 ### Security
 
@@ -14,13 +14,14 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 
 ### Runtime and maintenance
 
+- Fix automatic offset generation for lazer framework upgrades, including `2026.1005.0` on .NET 10: run both embedded helpers with the exact client's bundled CLR/framework in disposable staging instead of measuring under the helper's .NET 8 build runtime. No user-installed SDK, runtime download, or game-file modification is needed.
 - Route maintained Windows autoresearch benchmarks through the shared `windows-vm` command: transfer filtered source/vendor archives with SFTP, extract through native PowerShell, and clean temporary archives on success or failure. Sources, Cargo vendor caches, builds, and run output stay on `V:\agent-workspaces` instead of an account-specific C: profile.
 
 - Fix mania gradual-performance completion so `last()` and oversized skips return the final attributes before exhaustion; correct the osu! gradual example to finish without consuming the calculator before checking exhaustion.
 - Make the daemon reload smoke verify rejected malformed TOML through unchanged served settings, untouched source bytes, and an unbound requested port, independently of whether osu! is running. Production last-good configuration and state-readiness behavior is unchanged.
 - Split maintained code into domain-focused modules capped at 1,000 lines, preserving API and calculator behavior; remove tracked offset-tool build output while retaining source, locks, and provenance.
 - Use the upstream tosu catalog service at `https://tosu.app/api.json`; vosu does not operate a website. Use `vosu/<version> (+https://github.com/shiruviaa/vosu)` as the first-party request identity.
-- Derive Windows textual and numeric executable-resource versions from the root Cargo package version, keeping both resource version fields consistent with 0.3.0.
+- Derive Windows textual and numeric executable-resource versions from the root Cargo package version, keeping both resource version fields consistent with 1.0.0.
 
 - Remove the report-only graphics stack; use Linux sysfs and Windows WMI hardware metadata, with explicit unavailable/unknown states.
 - Bound report log retention with visible truncation notices; isolate counter discovery, report capture, configuration persistence/reload, and ordered console output from async workers.
@@ -28,14 +29,15 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 - Use component-aware case-insensitive Windows startup-path checks rather than string-prefix matching.
 - Separate MSVC SDK, Cargo downloads, and build caches; restrict cross SDK downloads to x86_64; classify changes conservatively and always publish `CI required`, including docs-only changes.
 - Move packaged-executable smoke checks into `vosu-release-smoke`, remove duplicate daemon asset embedding, and maintain existing Markdown without scheduled inference. Linux process-event backends and defaults remain unchanged.
+- Pin release toolchain actions to reviewed commits and limit repository-write permissions to the release-publishing job. Documentation and agent-configuration-only changes retain required CI checks without triggering native compilation.
 - Replace remote/manual offset acquisition with automatic exact-instance resolution: valid versioned `<version>.json` cache entries are preferred, then matching embedded offsets, then local generation from the exact PID and version. The extracted helper cache is keyed by the embedded bundle checksum; no bundle identity is added to offset-file metadata. Release binaries embed the platform-matching self-contained generator; end users do not install .NET, and debug builds without a prepared payload report an explicit missing-bundle error.
 - Maintainer source builds prepare `target/offset-generator/<rid>/offset-generator-v1-<rid>.zip` plus its `.zip.sha256` sidecar with the .NET 8 SDK. Release archives remain exactly the executable and root `LICENSE`; updater behavior is unchanged.
 
 - Consolidate the five retained autoresearch lanes: reduce Linux read/scanner allocation work, combine lazer key-read stages, avoid per-byte stable mod-checksum allocations, reserve v1 serialization capacity and sort StreamCompanion strains in place, share selected-field comparison results, and reuse immutable calculator source maps.
-- Retain the Linux sparse-large iovec capacity change with a measured limitation: 65,536-request/33-active spread/back probes improved 10.64–13.54%, while all-empty and 32-active controls regressed 2.64–3.83%. These are synthetic native self-process measurements, not a general daemon speedup; see the [benchmark guide](openwiki/testing/benchmarks.md#five-lane-autoresearch-consolidation-2026-09-08).
+- Retain the Linux sparse-large iovec capacity change with a measured limitation: 65,536-request/33-active spread/back probes improved 10.64–13.54%, while all-empty and 32-active controls regressed 2.64–3.83%. These are synthetic native self-process measurements, not a general daemon speedup; see the [benchmark guide](docs/testing/benchmarks.md#five-lane-autoresearch-consolidation-2026-09-08).
 - Merge all five reopened lane histories and benchmark the combined source against both the original optimization base and previous integration. Production calculator preparation and shared subscriptions improved on the measured fixtures; native lazer precise capture was 16.04% faster than previous while requested bytes rose 570 → 912 per cycle.
-- Preserve the final measured limitations: sparse 33-front/64-spread controls were 16.48%/13.69% slower than the original base, distinct-plan fast-writer subscriptions were 4.03% slower than previous, and mania parsing was 4.89% slower than previous. These are workload-specific results, not a general daemon speedup; see the [final combined measurements](openwiki/testing/benchmarks.md#final-reopened-lane-consolidation-2026-09-08).
-- Qualify the retained parsing regression as archived-binary/protocol-specific: follow-up diagnosis found unchanged allocations and negligible instruction-work changes, while a disposable diagnostic reversed the timing sign with setup both present and absent. The exact cause remains unresolved; no parser speedup or fix is claimed. Preserve the original unfavorable numbers and see the [parsing interpretation and local evidence](openwiki/testing/benchmarks.md#combined-measurements).
+- Preserve the final measured limitations: sparse 33-front/64-spread controls were 16.48%/13.69% slower than the original base, distinct-plan fast-writer subscriptions were 4.03% slower than previous, and mania parsing was 4.89% slower than previous. These are workload-specific results, not a general daemon speedup; see the [final combined measurements](docs/testing/benchmarks.md#final-reopened-lane-consolidation-2026-09-08).
+- Qualify the retained parsing regression as archived-binary/protocol-specific: follow-up diagnosis found unchanged allocations and negligible instruction-work changes, while a disposable diagnostic reversed the timing sign with setup both present and absent. The exact cause remains unresolved; no parser speedup or fix is claimed. Preserve the original unfavorable numbers and see the [parsing interpretation and local evidence](docs/testing/benchmarks.md#combined-measurements).
 - Keep live-parity attestation compatible with protected Git for Windows/MSVC build layouts; require initialized client settings before promoting the menu barrier. Compare shared fields strictly while recognizing only vosu's documented additive hit-error arrays and `keys.all` paths. Distinguish stale Windows exit snapshots from new clients without relaxing PID/creation-time ownership checks.
 - Attest the exact published compressed Linux parity reference by its pinned executable SHA-256 rather than requiring an uncompressed version string; retain ELF, configured-digest, ownership, and strict comparison checks.
 - Preserve the Linux live-parity socket-ownership cache across CLI module composition; keep its 5 ms lifetime and exact process/connection ownership checks unchanged.
@@ -44,6 +46,10 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 - Build the pinned upstream Node reference on Linux without requiring `cmd.exe`; retain protected `cmd.exe` and MSVC discovery requirements on Windows.
 - Mark Linux osu!stable through Wine as experimental and not release-verified; retain its existing discovery/read implementation without claiming a live-parity pass.
 - Record clean strict Windows stable, Windows lazer, and native Linux lazer release-gate captures with exact source/artifact identities; preserve failed sampling-boundary captures without claiming those boundaries are fixed.
+### Documentation
+
+- Move maintained Markdown from `openwiki/` to `docs/`, update live navigation and relative references, and document the reviewed-maintenance workflow without generator dependencies.
+
 
 ### Gameplay
 
@@ -55,7 +61,7 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 
 - Correct first-party attribution to `Copyright (c) 2026 sxlvia` in the root/calculator license copies and Windows resources, preserving genuine upstream copyright and canonical MIT/Apache terms.
 - Include the four retained calculator MIT texts in the root release `LICENSE` without changing the updater's two-entry ZIP contract; reject stale license members and bad ZIP CRCs.
-- Qualify unsupported source-independence claims, inventory locked dependency license declarations, and record concrete source matches and unresolved production-file origins in [the provenance audit](openwiki/provenance-audit.md).
+- Qualify unsupported source-independence claims, inventory locked dependency license declarations, and record concrete source matches and unresolved production-file origins in [the provenance audit](docs/provenance-audit.md).
 
 ### Calculation
 
@@ -127,7 +133,7 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 ### Documentation
 
 - Updated installation, configuration, API, architecture, benchmark workflow, ownership, and release documentation for the vosu cutover.
-- Recorded the durable clean-cutover and state-migration decision in [ADR 0007](openwiki/decisions/0007-vosu-clean-cutover.md).
+- Recorded the durable clean-cutover and state-migration decision in [ADR 0007](docs/decisions/0007-vosu-clean-cutover.md).
 
 ## Historical releases
 

@@ -23,7 +23,7 @@ BASE = "9c2187e683775485b8551fd6e7cb09b6e6786332"
 # Historical first-party misattribution, retained only as a rejection sentinel.
 OLD = "Copyright (c) 2023-2026 Mikhail Babynichev"
 APACHE_SHA256 = "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
-INVENTORY = "openwiki/dependency-license-inventory.json"
+INVENTORY = "docs/dependency-license-inventory.json"
 NOTICE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE", "UNLICENSE")
 
 
@@ -171,8 +171,8 @@ def check(root, refresh):
         raise ValueError("current offset digest missing from notices")
     docs = module(root / "scripts/check-doc-links.py", "audit_doc_links")
     changed_docs = [root / "README.md", notices_path,
-                    root / "openwiki/provenance-audit.md",
-                    root / "openwiki/decisions/0007-vosu-clean-cutover.md"]
+                    root / "docs/provenance-audit.md",
+                    root / "docs/decisions/0007-vosu-clean-cutover.md"]
     errors = list(docs.broken_links(changed_docs))
     if errors:
         raise ValueError("\n".join(errors))

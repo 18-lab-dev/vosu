@@ -24,7 +24,7 @@ pub struct SourcePort {
 const BLACK_BOX_SPEC: &str =
     "public Rust/downstream contracts and committed black-box compatibility vectors";
 
-/// Declared behavior attribution; see `openwiki/provenance-audit.md` for open questions.
+/// Declared behavior attribution; see `docs/provenance-audit.md` for open questions.
 ///
 /// Historical oracle files are evidence only. They are deliberately absent from every
 /// `upstream` field and are not build inputs or dependencies. This boundary does not
