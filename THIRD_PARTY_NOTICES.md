@@ -173,8 +173,9 @@ the exact retained bytes and base stylesheet metadata hash are updated together.
 The October 2026 dashboard rework locally moves the page tabs and search into
 the top bar, removes the overlay-tools links, `/local-overlays` guide, and
 schema builder, renders installed overlays as equal-size cards (at most four
-per row) with contained, enlargeable previews and a copy-URL bar, lists the
-catalog one overlay per row with a browsable preview image, and makes
+per row, five on very wide screens) with contained, enlargeable previews and a
+copy-URL bar, lists the catalog as preview-and-details rows that sit side by
+side when there is room, adapts preview and text sizes to the viewport, and makes
 runtime settings a searchable, autosaving single column across `homepage.html`,
 `homepage.js`, `homepage-settings.js`, `homepage.css`, and
 `homepage-controls.css`. These first-party changes do not change upstream

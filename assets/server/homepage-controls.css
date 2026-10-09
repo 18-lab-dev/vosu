@@ -434,10 +434,34 @@ input[type="checkbox"].settings-control {
   }
 }
 
-@media (max-width: 42rem) {
-  /* The wrapped header is too tall to keep pinned on a phone. */
+/* The wrapped header is too tall to keep pinned on a phone or on a short
+   landscape screen. */
+@media (max-width: 42rem), (max-height: 30rem) {
   .site-header {
     position: static;
+  }
+}
+
+@media (max-width: 42rem) {
+  /* Brand and resource links share the first row; the page tabs then span
+     their own row as even touch targets above the search. */
+  .header-links {
+    order: 1;
+    margin-left: auto;
+  }
+
+  .page-tabs {
+    flex-basis: 100%;
+    order: 2;
+  }
+
+  .page-tabs .nav-link {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .search-form {
+    order: 3;
   }
 
   .update-notice {
@@ -457,8 +481,10 @@ input[type="checkbox"].settings-control {
     grid-template-columns: 1fr;
   }
 
-  input[type="checkbox"].settings-control {
-    margin-left: 0;
+  /* A checkbox is narrow enough to stay beside its label; stacking it would
+     only leave it stranded under the description. */
+  .settings-item:has(input[type="checkbox"]) {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 }
 

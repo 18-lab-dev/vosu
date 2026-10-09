@@ -3,7 +3,7 @@
   "limitations": "Declared license expressions and top-level packaged-notice availability only; not a determination of source authorship, selected license alternatives, nested/vendored notices, native-library obligations, or distribution compliance.",
   "input_sha256_lf": {
     "Cargo.lock": "f622f5978198a7f1453cceb6f806d1bd1ccc70edcb363d60acac1ca60dfc4c5c",
-    "Cargo.toml": "697fc1154ae3f8b00c1ad2440c11f54c15a4ccab90718d181c277e5bb9b4b49b",
+    "Cargo.toml": "19237aae02ccfbab29b8847dfda01797053b30593ac949ba8d37e60a10b727a6",
     "crates/vosu-pp/Cargo.toml": "00ffce02f9a5a4e69fdf59de5d9f4d5f9afe80b24af477adde3cecc264c14947",
     "crates/vosu-pp/rosu-map-api/Cargo.toml": "77462813c088f693bcec6afcbe467dc7205dae9a5beed827842fc8f5163c99dd",
     "crates/vosu-pp/rosu-pp-api/Cargo.toml": "82bd1347150c46e3759e76dab8b08e32506e7cea884b8a78a78c6f932efe16c2",

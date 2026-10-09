@@ -7,7 +7,8 @@ All notable user-visible changes to vosu are documented here. Version 1.0.0 is p
 ### Dashboard
 
 - Move navigation and search into the top bar; remove the retired local-overlay guide and schema builder.
-- Show larger installed cards with enlargeable live previews, and list catalog overlays one per row with lazy-loaded preview images and their metadata.
+- Show larger installed cards with enlargeable live previews, and list catalog overlays with lazy-loaded preview images and their metadata.
+- Adapt the dashboard to the screen: catalog rows sit side by side when there is room, previews follow the window height so short laptop screens show more cards, catalog text scales with its card, and the whole layout grows slightly on large monitors. Phones get a compact header with full-width page tabs and settings checkboxes beside their labels; short landscape screens no longer pin the header.
 - Autosave runtime settings with interval/port validation; preserve the unsaved/error status until every rejected field is corrected.
 
 ### Security

@@ -16,7 +16,11 @@
   --radius-sm: 0.55rem;
   --radius: 0.9rem;
   --radius-lg: 1.1rem;
-  --preview-height: 13rem;
+  /* Tracks the viewport height so a short laptop screen still shows more
+     than one row of cards; tall screens keep the full frame. */
+  --preview-height: clamp(9rem, 24svh, 13rem);
+  --grid-gap: 0.85rem;
+  --max-columns: 4;
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
 }
@@ -25,9 +29,13 @@
   box-sizing: border-box;
 }
 
+/* Large monitors are read from further away, so the whole rem-based layout
+   grows slightly with the viewport; the floor keeps the reader's own default
+   size on laptops and phones. */
 html {
   min-width: 20rem;
   min-height: 100%;
+  font-size: clamp(100%, 75% + 0.3vw, 112.5%);
   background: var(--ink);
 }
 
@@ -313,19 +321,20 @@ a:hover {
 
 .results {
   display: grid;
-  /* At least 21.5rem per card and never more than four columns (the second
-     term is a quarter of the row after three gaps). */
-  grid-template-columns: repeat(auto-fill, minmax(max(min(100%, 21.5rem), calc((100% - 2.55rem) / 4)), 1fr));
-  gap: 0.85rem;
+  /* At least 21.5rem per card and never more than --max-columns columns (the
+     second term is one column's share of the row after the gaps). */
+  grid-template-columns: repeat(auto-fill, minmax(max(min(100%, 21.5rem), calc((100% - (var(--max-columns) - 1) * var(--grid-gap)) / var(--max-columns))), 1fr));
+  gap: var(--grid-gap);
   align-items: stretch;
 }
 
-/* The catalog reads as a listing: one overlay per row, preview first. */
+/* The catalog reads as a listing: one overlay per row, preview first. Wide
+   screens place listing rows side by side instead of stretching one row
+   until its details float in empty space. */
 .results:has(> .catalog-card) {
-  display: flex;
-  flex-direction: column;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 36rem), 1fr));
   gap: 0.9rem;
-  width: min(100%, 74rem);
+  width: min(100%, 150rem);
   margin-inline: auto;
 }
 
@@ -576,16 +585,23 @@ a:hover {
   outline-offset: -0.2rem;
 }
 
-/* Catalog listing row: one preview image beside the overlay's details. */
+/* Catalog listing row: one preview image beside the overlay's details. The
+   preview column follows the viewport height like installed previews, and
+   never takes more than 40% of a narrow row from the details. */
 .catalog-card {
   display: grid;
-  grid-template-columns: minmax(0, 26rem) minmax(0, 1fr);
+  grid-template-columns: clamp(12rem, min(46svh, 40%), 24rem) minmax(0, 1fr);
   border-radius: var(--radius-lg);
 }
 
+/* The ratio is only the preview's minimum height: grid items with a ratio
+   default to start alignment on both axes, which would leave a bare strip
+   under the preview whenever the details column is the taller one, or widen
+   the preview past its column if only the height were stretched. */
 .gallery {
   position: relative;
   display: grid;
+  place-self: stretch;
   aspect-ratio: 16 / 9;
   place-items: center;
   overflow: hidden;
@@ -649,30 +665,43 @@ a:hover {
   pointer-events: none;
 }
 
+/* Text scales with the details column rather than the viewport: the column
+   narrows beside the preview and widens again once the preview stacks above
+   it below 52rem, so viewport units would oversize the side-by-side layout. */
 .catalog-card__main {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.6rem;
   min-width: 0;
-  padding: 1rem 1.1rem;
+  padding: 1.1rem 1.4rem;
 }
 
 .catalog-card h2 {
-  font-size: 1.2rem;
+  font-size: clamp(1.2rem, 0.8rem + 2.2cqi, 1.85rem);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.catalog-card .counter-card__version {
+  font-size: clamp(0.75rem, 0.55rem + 0.9cqi, 0.95rem);
 }
 
 .catalog-card .counter-card__meta {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: clamp(0.85rem, 0.65rem + 1cqi, 1.05rem);
+  line-height: 1.4;
 }
 
 .catalog-card__facts {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.3rem 1.25rem;
+  gap: 0.3rem 1.5em;
   margin: 0.25rem 0 0;
   color: var(--paper);
-  font-size: 0.85rem;
+  font-size: clamp(0.85rem, 0.6rem + 1.3cqi, 1.15rem);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
 }
 
 .fact-label {
@@ -690,9 +719,9 @@ a:hover {
 }
 
 .catalog-card .button {
-  min-height: 2.4rem;
-  padding-inline: 1.25rem;
-  font-size: 0.9rem;
+  min-height: 2.65em;
+  padding-inline: 1.4em;
+  font-size: clamp(0.9rem, 0.75rem + 0.7cqi, 1.05rem);
 }
 
 .counter-card__title-row {
@@ -726,6 +755,10 @@ a:hover {
   flex-wrap: wrap;
   gap: 0.3rem;
   margin: 0;
+}
+
+.catalog-card__tags .badge {
+  font-size: clamp(0.7rem, 0.55rem + 0.6cqi, 0.85rem);
 }
 
 .badge {
@@ -773,7 +806,8 @@ a:hover {
   object-fit: contain;
 }
 
-@media (max-width: 52rem) {
+/* Below this the details column would be too narrow for the facts row. */
+@media (max-width: 40rem) {
   .catalog-card {
     grid-template-columns: 1fr;
   }
@@ -781,6 +815,12 @@ a:hover {
   .gallery {
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+}
+
+@media (min-width: 140rem) {
+  :root {
+    --max-columns: 5;
   }
 }
 
