@@ -79,7 +79,7 @@ and the current `2359305a` pin. Neither is identical to the historical fork revi
 | `crates/vosu-pp/src/model.rs`, `data.rs` | Exact whitespace-normalized matches include `model.rs:169–194` versus former `model.rs:110–135` (26 lines), and `data.rs:5–22` versus former `data.rs:3–20` (18 lines) at `92b2f5e` | These include score-model fields and projection structures; matching API/data layout alone cannot establish origin or legal derivation |
 | `crates/vosu-pp/src/performance.rs` | Current catch blocks match the former Rust; MIT osu!/rosu-pp supply the equation, and original authoring records confirm those source reads | The equation's MIT origin is substantiated. Signed-score adaptation and rewrite-source exposure are separate questions; see the remediation review below |
 | `crates/vosu-pp/src/scoring.rs`, `gradual.rs`, `beatmap.rs`, `source_map.rs` | Permissive sources supply calculation behavior, while recovered rewrite records also show reads and relays from the former wrapper | Retain origin review for exposed adapters and projections. `SOURCE_PORTS` records behavior authorities, not implementation independence |
-| `assets/server/homepage.js`, `homepage-settings.js`, `homepage.html`, `report.html`, `homepage.css`, `homepage-controls.css` | Against each tosu snapshot's nine HTML/JS/CSS/SCSS files, excluding Vue, none of the six current assets shared a whitespace-normalized five-line block containing over 100 characters | A reproducible textual screen and the documented dashboard replacement are not proof of independent authorship; cross-language, non-contiguous and shorter transformations are outside this method |
+| `assets/server/homepage.js`, `homepage-settings.js`, `homepage.html`, `report.html`, `homepage.css`, `homepage-controls.css` | Against each tosu snapshot's nine HTML/JS/CSS/SCSS files, excluding Vue, none of the six assets as of 2026-10-09 shared a whitespace-normalized five-line block containing over 100 characters | The retired textual screen and the documented dashboard replacement are not proof of independent authorship; cross-language, non-contiguous and shorter transformations are outside this method |
 
 ### Concrete source comparisons
 
@@ -105,14 +105,15 @@ and the current `2359305a` pin. Neither is identical to the historical fork revi
   separately implements ordinary catch performance. Formula attribution does
   not certify the signed wrapper's source independence.
 
-`scripts/audit-source-similarity.py` reproduces the dashboard screen and former
-Rust wrapper block matches, reports exact input-file hashes and line ranges,
-and explicitly makes no authorship/licensing decision. Its method strips
-whitespace per line but retains line boundaries and all other tokens. Dashboard
-comparison indexes five-line windows; wrapper comparison uses
-`difflib.SequenceMatcher(..., autojunk=False)` and keeps blocks of at least five
-lines and over 100 characters. Manual TypeScript/Rust comparisons above are
-separate from this same-language textual screen.
+The dashboard screen and former Rust wrapper block matches above came from
+`scripts/audit-source-similarity.py`, retired after commit `d2c4380` and
+recoverable from git history. It stripped whitespace per line but retained line
+boundaries and all other tokens, indexed five-line windows for the dashboard,
+and used `difflib.SequenceMatcher(..., autojunk=False)` for the wrapper,
+keeping blocks of at least five lines and over 100 characters. It made no
+authorship or licensing decision. The manual TypeScript/Rust comparisons above
+were separate from this same-language textual screen. The findings remain
+dated evidence; the screen is no longer maintained.
 
 ### Upstream license discrepancy and unresolved origin
 
@@ -186,7 +187,7 @@ from, which this section traces.
   - `ScoreSimulator.cs` and `AccuracyCalculator.cs` repeat MIT osu-tools
     `d82cf2a9` line for line. The only additions are namespaces, comments,
     signatures, dispatch, call arguments and the Classic accuracy gate at
-    `AccuracyCalculator.cs:27,36,44`; `--osu-tools` reproduces this.
+    `AccuracyCalculator.cs:27,36,44`; the retired screen's osu-tools comparison reproduced this.
   - `HitWindows.cs` and `LazerMod.cs` forward to osu!'s hit-window and `APIMod`
     classes.
   - `Data/*.cs` define wire structs whose fields are named after osu!'s
@@ -427,26 +428,17 @@ cargo test --locked --test updater_compat
 cargo test --locked --test updater_native -- --nocapture
 ```
 
-For the source screen, acquire the exact comparison revisions above and extract
-`git archive 92b2f5e806fdc01e2edec1d6092f6812cb787521` into a separate directory:
-
-```sh
-python scripts/audit-source-similarity.py \
-  --tosu <tosu-9f42c887-checkout> --tosu <tosu-2359305a-checkout> \
-  --former-wrapper <vosu-92b2f5e-tree> \
-  --osu-tools <osu-tools-d82cf2a9-checkout>
-```
-
-The `--osu-tools` comparison reads the retained reference
+The retired source screen read the exact comparison revisions above, an extracted
+`git archive 92b2f5e806fdc01e2edec1d6092f6812cb787521` tree, and an osu-tools
+checkout. Its osu-tools comparison read the retained reference
 `tools/oracle/reference/lazer-calculator` at lazer-calculator revision
 `9a22c4c74f8e584fa64133a79a204dd045646bac` (`ScoreSimulator.cs` SHA-256
 `c2d5b548a2c1d8ffd4bb36dfcb51e0fa3887a45875065d8bb8542e9e406ddeec`,
 `AccuracyCalculator.cs` SHA-256
 `cb50273c57ff9d703ec4617fe4c4da6dff692957ad99d97bceec31929d08f60e`; both match
-the reference's `SHA256SUMS`). Check out ppy/osu-tools at
-`d82cf2a986218f80c18dea5cc1399133d4a8586d`
-(`git clone https://github.com/ppy/osu-tools && git -C osu-tools checkout d82cf2a986218f80c18dea5cc1399133d4a8586d`).
-The 2026-10-09 run used these upstream file digests:
+the reference's `SHA256SUMS`), against ppy/osu-tools
+`d82cf2a986218f80c18dea5cc1399133d4a8586d`. The 2026-10-09 run used these
+upstream file digests:
 
 | osu-tools file | SHA-256 |
 | --- | --- |
@@ -458,9 +450,7 @@ The 2026-10-09 run used these upstream file digests:
 | `LICENCE` | `6e32fdd796385f89d57f0fbdee69178bc62deec64af0ce92011a21afb7a12191` |
 
 It reported 36 residual `ScoreSimulator.cs` lines and 18 residual
-`AccuracyCalculator.cs` lines, as characterized above. The script prints the
-digests of the files it actually read; compare them with this table.
-
+`AccuracyCalculator.cs` lines, as characterized above.
 
 The tagged release workflow builds each native target, packages and extracts
 its actual binary, runs `vosu-release-smoke` against the extracted executable,

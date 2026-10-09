@@ -19,7 +19,21 @@ needs only Rust and a native C toolchain; no Node.js, Electron, or .NET.
    Clang, libelf, zlib, and libbpf compile the default `linux-process-events`
    eBPF backend. Building with `--no-default-features` skips them and produces a
    polling-only Linux binary.
-3. Install Python 3 for the repository checks in `scripts/`.
+
+   On Debian and Ubuntu, the eBPF compile also needs the multiarch kernel
+   headers on its include path (`asm/types.h` lives under
+   `/usr/include/x86_64-linux-gnu`), as CI sets for its Linux Clippy and test
+   steps:
+
+   ```sh
+   export C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu
+   ```
+
+   Set it only for Linux-target builds and checks. Leave it unset for the
+   Windows MSVC cross-check (`cargo xwin`); CI keeps it out of that step too.
+
+3. Install Python 3.11 or newer for the repository checks in `scripts/`
+   (they read TOML with the standard-library `tomllib`).
 4. Clone, build, and run:
 
    ```sh
