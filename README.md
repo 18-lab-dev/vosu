@@ -58,9 +58,9 @@ sudo dnf install ./vosu-1.0.0-1.x86_64.rpm
 sudo pacman -U vosu-1.0.0-1-x86_64.pkg.tar.zst
 ```
 
-Arch users can alternatively build the AUR `vosu-bin` package. Each release
-includes `vosu-bin-aur-v1.0.0.tar.gz` with its rendered PKGBUILD, `.SRCINFO`,
-and install hook for the AUR maintainer.
+Arch users can alternatively build the `vosu-bin` package once it is published
+on the AUR. Each release includes `vosu-bin-aur-v1.0.0.tar.gz` with its
+rendered PKGBUILD, `.SRCINFO`, and install hook for the AUR maintainer.
 
 Linux binaries require glibc **2.35 or newer** (Debian 12+, Ubuntu 22.04+,
 current Fedora and Arch). Packages install the desktop launcher and icons,
@@ -68,8 +68,12 @@ and automatically grant process-reading capabilities on install and upgrade.
 If the host refuses capabilities, installation still succeeds and prints a
 hint to run `sudo vosu --setup`. Never run the daemon itself as root.
 Launch **vosu** from the application menu or run `vosu` as your desktop user.
-Packaged installs use package-manager updates, not the
-[self-updater](#automatic-updates). Start at login remains an opt-in dashboard
+Packaged installs do not use the [self-updater](#automatic-updates), and no
+apt, dnf, or pacman repository is configured, so a system upgrade does not
+pick up new versions. To upgrade, download the newer release package and
+install it with the same command; the package manager replaces the old
+version. AUR users rebuild `vosu-bin` (manually or with an AUR helper) after
+its AUR entry is updated. Start at login remains an opt-in dashboard
 setting; packages do not ship or enable a systemd service.
 
 ### Manual per-user installation
