@@ -3,6 +3,18 @@ use super::*;
 #[derive(Clone)]
 pub(super) struct RuntimeConfig {
     pub(super) config: Arc<ConfigStore>,
+    pub(super) login_state: Arc<AsyncMutex<bool>>,
+}
+
+#[cfg(any(test, feature = "test-harness"))]
+impl RuntimeConfig {
+    pub(super) fn new(config: Arc<ConfigStore>) -> Self {
+        let enabled = config.current().start_at_login;
+        Self {
+            config,
+            login_state: Arc::new(AsyncMutex::new(enabled)),
+        }
+    }
 }
 
 impl ConfigUpdateService for RuntimeConfig {
@@ -47,6 +59,24 @@ impl ConfigUpdateService for RuntimeConfig {
                     return Err(format!("{key} must be a whole number"));
                 }
             }
+            // Serialize service reconciliation with watcher delivery, so an older
+            // notification cannot re-enable a service after a newer settings save.
+            #[cfg(target_os = "linux")]
+            let mut login_state = self.login_state.lock().await;
+            #[cfg(not(target_os = "linux"))]
+            let _login_state = self.login_state.lock().await;
+            #[cfg(target_os = "linux")]
+            if let Some(enabled) = object
+                .get("START_AT_LOGIN")
+                .and_then(|value| value.as_bool())
+                && enabled != self.config.current().start_at_login
+            {
+                tokio::task::spawn_blocking(move || crate::desktop::login::reconcile(enabled))
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .map_err(|error| format!("Start at login: {error}"))?;
+                *login_state = enabled;
+            }
             self.config
                 .update(|config| apply_config_values(config, &object));
             self.config.flush().await.map_err(|error| error.to_string())
@@ -85,6 +115,7 @@ pub(super) fn apply_config_values(
     }
     boolean!("ENABLE_AUTOUPDATE", enable_auto_update);
     boolean!("OPEN_DASHBOARD_ON_STARTUP", open_dashboard_on_startup);
+    boolean!("START_AT_LOGIN", start_at_login);
     boolean!("DEBUG_LOG", debug_log);
     boolean!("CALCULATE_PP", calculate_pp);
     boolean!("ENABLE_KEY_OVERLAY", enable_key_overlay);
@@ -220,6 +251,9 @@ impl UpdaterHandoff for RuntimeUpdater {
         &self,
     ) -> crate::server::routes::ProviderFuture<'_, Result<UpdateRouteResult, String>> {
         Box::pin(async move {
+            if !crate::desktop::directory_writable(&self.program_dir) {
+                return Err(crate::desktop::MANAGED_UPDATE_ERROR.to_owned());
+            }
             let client = self.client.clone();
             let cancel = self.shutdown.child_token();
             let platform_name = if cfg!(windows) { "windows" } else { "linux" };

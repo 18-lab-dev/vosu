@@ -44,6 +44,34 @@ The current source version is **1.0.0**. When its matching [GitHub release](http
 
 Do not run the Windows executable directly from an archive or a OneDrive-controlled directory. The updater cannot provide safe replacement and rollback in those locations.
 
+### Linux packages
+
+Download the package for your distribution from the matching
+[GitHub release](https://github.com/shiruviaa/vosu/releases):
+
+```sh
+# Debian 12+ / Ubuntu 22.04+
+sudo apt install ./vosu_1.0.0_amd64.deb
+# Fedora
+sudo dnf install ./vosu-1.0.0-1.x86_64.rpm
+# Arch Linux
+sudo pacman -U vosu-1.0.0-1-x86_64.pkg.tar.zst
+```
+
+Arch users can alternatively build the AUR `vosu-bin` package. Each release
+includes `vosu-bin-aur-v1.0.0.tar.gz` with its rendered PKGBUILD, `.SRCINFO`,
+and install hook for the AUR maintainer.
+
+Linux binaries require glibc **2.35 or newer** (Debian 12+, Ubuntu 22.04+,
+current Fedora and Arch). Packages install the desktop launcher and icons,
+and automatically grant process-reading capabilities on install and upgrade.
+If the host refuses capabilities, installation still succeeds and prints a
+hint to run `sudo vosu --setup`. Never run the daemon itself as root.
+Launch **vosu** from the application menu or run `vosu` as your desktop user.
+Packaged installs use package-manager updates, not the
+[self-updater](#automatic-updates). Start at login remains an opt-in dashboard
+setting; packages do not ship or enable a systemd service.
+
 ### Manual per-user installation
 
 Install into a user-writable location so vosu can update itself without running as root or Administrator. After extracting the release archive, run:
@@ -74,6 +102,8 @@ For a later manual upgrade, stop vosu, replace the executable and `LICENSE` with
 `ENABLE_AUTOUPDATE=true` follows stable `shiruviaa/vosu` releases. The updater verifies the selected platform archive against its published SHA-256 digest, stages exactly one root executable, and uses a crash-recoverable helper and rollback flow.
 
 `POST /api/runUpdates` starts the same update path from the same-origin dashboard. Set `ENABLE_AUTOUPDATE=false` or launch with `--update=false` to disable the startup check. `--update=true` enables it for one launch.
+
+If the current user cannot write the executable's directory, vosu treats the install as externally managed on both Linux and Windows. Startup skips update checking and recovery, **Automatic updates** is disabled with an explanation, and `POST /api/runUpdates` returns the usual updater-error HTTP 200 JSON response: `{"error":"vosu is managed by your package manager; update it there"}`. Update these installs through their package manager instead.
 
 ## Command-line options
 
@@ -242,6 +272,7 @@ Edit `vosu.toml` in the platform configuration root. It is a flat, typed TOML do
 ```toml
 ENABLE_AUTOUPDATE = true
 OPEN_DASHBOARD_ON_STARTUP = true
+START_AT_LOGIN = false
 POLL_RATE = 150.0
 PRECISE_DATA_POLL_RATE = 10.0
 SERVER_IP = "127.0.0.1"
@@ -256,6 +287,7 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 | --- | ---: | --- |
 | `ENABLE_AUTOUPDATE` | `true` | Check for and install stable vosu releases. |
 | `OPEN_DASHBOARD_ON_STARTUP` | `true` | Open the effective dashboard listener after startup. |
+| `START_AT_LOGIN` | `false` | Linux only: run vosu as a systemd user service at graphical login. |
 | `DEBUG_LOG` | `false` | Include debug-level file and console logging. |
 | `CALCULATE_PP` | `true` | Enable live performance calculations. |
 | `ENABLE_KEY_OVERLAY` | `true` | Publish key-overlay data in compatible schemas. |
@@ -276,7 +308,13 @@ Authorization requires an allowed network peer and, when supplied, an allowed `O
 
 ## Dashboard and counters
 
+vosu keeps a tray icon whenever the Linux desktop's StatusNotifier host or Windows notification area is available. **Open dashboard** opens the current effective listener (wildcard listeners map to loopback); **Quit** performs normal graceful shutdown. Headless sessions continue without a tray.
+
+Launching vosu again checks the configured listener for vosu's identity, opens that instance's dashboard, and exits successfully. A different service on the same port is not treated as vosu and retains the normal bind-error behavior. Updater helper/candidate/rollback processes never perform this handoff or start a tray.
+
 The dashboard at `/` discovers counters recursively below the static root. A counter normally contains `index.html`. `metadata.txt` can add a name, author links, description, version, and `WxH` size. An immediate `ignore.txt` excludes its directory from discovery, and directories named `node_modules` are never traversed. Mutation APIs accept counter names containing one normal path component.
+
+On Linux, **Settings → General → Start at login** manages a marked user unit at `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/vosu.service`. Enabling records the current executable path and enables the unit for the next graphical session; it does not start another daemon now. Disabling removes only a unit written by vosu and does not stop the current daemon. An existing unrelated unit is never overwritten. Failed service changes leave the saved setting unchanged and report an error in the dashboard. The unit follows `graphical-session.target` so the tray has the desktop session's bus and display. This setting is hidden on Windows.
 
 Discovery accepts at most 4096 named metadata/index files; each `metadata.txt` must be a regular file no larger than 64 KiB. Counter installation admits four concurrent jobs across static-root reloads; additional requests receive HTTP 429. Shutdown cancels and joins admitted jobs even when their initiating HTTP client disconnects.
 
@@ -336,10 +374,10 @@ File routes enforce root containment and support validated single HTTP byte rang
 
 ### Pages, counters, reports, and updates
 
-- `GET /`, `/settings`, `/available`, `/favicon.ico`
+- `GET /`, `/settings`, `/available`, `/favicon.ico` (favicon responses add `X-Vosu-Identity: vosu` for bounded second-launch discovery without changing page bodies)
 - `GET /assets/{path}` and the fallback counter-static route
 - `POST /api/settingsSave` rejects the whole save when a submitted interval or port is not a finite number or is out of range: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` 1–60000, `V2_SUBSCRIPTION_DEBOUNCE` 0–60000 (milliseconds), and `SERVER_PORT` a whole number 1–65535.
-- `POST /api/runUpdates`
+- `POST /api/runUpdates` returns an HTTP 200 JSON `error` for externally managed installs instead of attempting replacement.
 - `POST /api/generateReport`
 - `GET /api/counters/search/{query}[?source=installed|available]` returns card HTML for installed counters by default or for the catalog with `source=available`; any other `source` returns 400. The query keeps letters, digits, and whitespace, and a card matches when any word matches its name, author, or compatible clients. Lookup failures return 502 with an escaped `Error:` body.
 - `POST /api/counters/download/{url}?name=<counter>&update=<value>`

@@ -103,14 +103,20 @@ def verify_release_set(args: argparse.Namespace) -> None:
         f"vosu-windows-v{version}.zip": "windows",
         f"vosu-linux-v{version}.zip": "linux",
     }
+    packages = {
+        f"vosu_{version}_amd64.deb",
+        f"vosu-{version}-1.x86_64.rpm",
+        f"vosu-{version}-1-x86_64.pkg.tar.zst",
+        f"vosu-bin-aur-v{version}.tar.gz",
+    }
     actual = {path.name for path in args.directory.iterdir() if path.is_file()}
-    if actual != set(expected):
+    if actual != set(expected) | packages:
         raise ValueError(
-            f"release directory must contain exactly {sorted(expected)}; found {sorted(actual)}"
+            f"release directory must contain exactly {sorted(set(expected) | packages)}; found {sorted(actual)}"
         )
     for name, platform in expected.items():
         verify_archive(args.directory / name, platform, args.license)
-    print("\n".join(sorted(expected)))
+    print("\n".join(sorted(set(expected) | packages)))
 
 
 def parser() -> argparse.ArgumentParser:

@@ -76,6 +76,8 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     for binding in [
         "ENABLE_AUTOUPDATE",
         "OPEN_DASHBOARD_ON_STARTUP",
+        #[cfg(target_os = "linux")]
+        "START_AT_LOGIN",
         "CALCULATE_PP",
         "READ_MANIA_SCROLL_SPEED",
         "ENABLE_KEY_OVERLAY",
@@ -93,6 +95,22 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
             settings.contains(&format!(r#"data-id="{binding}""#)),
             "{binding}"
         );
+    }
+    #[cfg(target_os = "linux")]
+    {
+        assert!(settings.contains("Run vosu as a systemd user service when you log in."));
+        assert!(settings.contains(r#"data-id="START_AT_LOGIN" type="checkbox" >"#));
+        let enabled = render_runtime_settings(&Config {
+            start_at_login: true,
+            ..Config::default()
+        });
+        assert!(enabled.contains(r#"data-id="START_AT_LOGIN" type="checkbox" checked>"#));
+    }
+    #[cfg(windows)]
+    assert!(!settings.contains("START_AT_LOGIN"));
+    if crate::desktop::externally_managed() {
+        assert!(settings.contains(r#"data-id="ENABLE_AUTOUPDATE" type="checkbox" checked disabled>"#));
+        assert!(settings.contains("Updates are managed by your Linux package manager"));
     }
     assert!(settings.contains("V2 subscription debounce"));
     assert!(settings.contains(
@@ -161,9 +179,7 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     let root = tempfile::tempdir().unwrap();
     let config_path = root.path().join("vosu.toml");
     let store = Arc::new(ConfigStore::initialize(config_path.clone()).await.unwrap());
-    let service = RuntimeConfig {
-        config: Arc::clone(&store),
-    };
+    let service = RuntimeConfig::new(Arc::clone(&store));
 
     service
         .save(serde_json::json!({
@@ -205,7 +221,7 @@ async fn out_of_range_or_unparseable_save_preserves_runtime_and_disk_configurati
     store.flush().await.unwrap();
     let original = store.current();
     let bytes = std::fs::read(&path).unwrap();
-    let service = RuntimeConfig { config: Arc::clone(&store) };
+    let service = RuntimeConfig::new(Arc::clone(&store));
     let cases = [
         ("POLL_RATE", serde_json::json!(99)),
         ("PRECISE_DATA_POLL_RATE", serde_json::json!(0.5)),
@@ -273,6 +289,43 @@ fn settings_save_accepts_finite_json_numbers_and_ignores_invalid_or_nonfinite_va
     assert_eq!(config, unchanged);
 }
 
+#[test]
+fn settings_save_parses_start_at_login_without_running_user_manager() {
+    let mut config = Config::default();
+    for value in [serde_json::json!(true), serde_json::json!(false)] {
+        apply_config_values(
+            &mut config,
+            serde_json::json!({ "START_AT_LOGIN": value }).as_object().unwrap(),
+        );
+        assert_eq!(config.start_at_login, value.as_bool().unwrap());
+    }
+}
+
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn updater_rejects_readonly_package_directory_before_network_access() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Root bypasses directory mode permissions, so this contract needs a user.
+    // SAFETY: geteuid reads process credentials and has no pointer preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let updater = RuntimeUpdater::production(
+        root.path().join("vosu"),
+        root.path().to_path_buf(),
+        CancellationToken::new(),
+    );
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    let result = updater.run_update().await;
+    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(matches!(
+        result,
+        Err(error) if error == crate::desktop::MANAGED_UPDATE_ERROR
+    ));
+}
 #[test]
 fn counter_cards_preview_at_native_resolution_from_encoded_relative_paths() {
     let fixed = render_counter_card(

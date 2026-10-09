@@ -71,6 +71,7 @@ const DEFAULT_TOML: &str = "\
 DEBUG_LOG = false
 ENABLE_AUTOUPDATE = true
 OPEN_DASHBOARD_ON_STARTUP = true
+START_AT_LOGIN = false
 
 SHOW_MP_COMMANDS = false
 CALCULATE_PP = true
@@ -103,6 +104,7 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
         [
             "ENABLE_AUTOUPDATE",
             "OPEN_DASHBOARD_ON_STARTUP",
+            "START_AT_LOGIN",
             "DEBUG_LOG",
             "CALCULATE_PP",
             "ENABLE_KEY_OVERLAY",
@@ -117,6 +119,27 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
             "ALLOWED_IPS",
         ]
     );
+}
+
+#[test]
+fn start_at_login_defaults_parses_refreshes_and_round_trips() {
+    assert!(!ConfigDocument::parse("").unwrap().config().start_at_login);
+    let mut document = ConfigDocument::parse("START_AT_LOGIN = true\n").unwrap();
+    assert!(document.config().start_at_login);
+    assert!(document.serialize().contains("START_AT_LOGIN = true\n"));
+    assert!(
+        ConfigDocument::parse(&document.serialize())
+            .unwrap()
+            .config()
+            .start_at_login
+    );
+    document.refresh("DEBUG_LOG = true\n").unwrap();
+    assert!(document.config().start_at_login);
+    document.refresh("START_AT_LOGIN = \"true\"\n").unwrap();
+    assert!(!document.config().start_at_login);
+    document.refresh("START_AT_LOGIN = true\n").unwrap();
+    document.refresh("START_AT_LOGIN = false\n").unwrap();
+    assert!(!document.config().start_at_login);
 }
 
 #[test]

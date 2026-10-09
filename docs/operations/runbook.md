@@ -84,6 +84,52 @@ Startup updates follow stable releases, verify the selected platform archive’s
 
 Release packaging requires exact platform archives containing only the executable and `LICENSE`; release smoke tests exercise an extracted binary. Windows additionally signs and verifies the executable through the release workflow. The updater currently reads latest-release metadata from `shiruviaa/vosu`; confirm this source when diagnosing update failures. See `scripts/package-release.py` and `scripts/verify-windows-release.ps1` for enforcement.
 
+### Linux distribution releases
+
+The Linux release and unsigned-development build jobs use Ubuntu 22.04.
+`python scripts/package-linux.py check-glibc --binary <vosu>` inspects
+`objdump -T` and rejects requirements newer than glibc 2.35. Build caches
+include the runner baseline so newer-host objects cannot leak into releases.
+Python 3.12 is installed explicitly because the runner defaults to Python 3.10.
+
+After the exact two-entry ZIP passes smoke testing, release CI installs nfpm
+2.47.0 from its SHA-256-pinned upstream archive and runs:
+
+```sh
+python scripts/package-linux.py build --tag v1.0.0 \
+  --binary target/x86_64-unknown-linux-gnu/release/vosu --output dist
+```
+
+This stages the 256px PNG outside checksum-covered assets, builds and inspects
+Debian, RPM and Arch package file lists/metadata, and renders the AUR bundle
+from the Linux ZIP and tagged desktop/icon bytes. The published set is exactly
+the two ZIPs, `vosu_<version>_amd64.deb`,
+`vosu-<version>-1.x86_64.rpm`, `vosu-<version>-1-x86_64.pkg.tar.zst`,
+and `vosu-bin-aur-v<version>.tar.gz`. `package-release.py verify-set` rejects
+missing or extra assets. The AUR tarball contains `PKGBUILD`, `.SRCINFO` and
+`vosu-bin.install`; extract it, compare `makepkg --printsrcinfo` with `.SRCINFO`,
+and publish those files to the separate AUR `vosu-bin` repository.
+
+Before publication, clean Debian 12, Ubuntu 22.04/24.04, Fedora and Arch
+containers install the corresponding local package with dependency resolution,
+check launcher/icons, and run `vosu --help`. Debian also starts an isolated,
+unprivileged daemon and checks HTTP 200. Capability setup is deliberately
+nonfatal: post-install and post-upgrade run `/usr/bin/vosu --setup` as root,
+printing `sudo vosu --setup` recovery guidance on failure. `getcap` records
+whether the container could grant capabilities. The daemon never runs as root.
+The smoke records file capabilities before clearing them only inside the
+disposable container: rootless containers can set a capability outside their
+bounding set, then refuse to execute that file. A second restricted Debian
+install drops `CAP_SETFCAP` and requires the recovery hint without transaction
+failure.
+
+Packages do not ship or enable systemd units. Start at login is a per-user
+dashboard option. Packaged executables in non-user-writable directories skip
+self-updates and must be upgraded with the package manager. The unsigned
+development workflow continues to produce ZIPs only, not distro packages.
+See [ADR 0010](../decisions/0010-linux-distribution-packages.md).
+
+
 ### Unsigned development artifacts
 
 `.github/workflows/version-build.yml` is independent of required `ci.yml` validation

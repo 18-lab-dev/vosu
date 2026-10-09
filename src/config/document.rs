@@ -155,6 +155,7 @@ impl ConfigDocument {
         match key {
             ConfigKey::EnableAutoUpdate => self.config.enable_auto_update = value,
             ConfigKey::OpenDashboardOnStartup => self.config.open_dashboard_on_startup = value,
+            ConfigKey::StartAtLogin => self.config.start_at_login = value,
             ConfigKey::DebugLog => self.config.debug_log = value,
             ConfigKey::CalculatePp => self.config.calculate_pp = value,
             ConfigKey::EnableKeyOverlay => self.config.enable_key_overlay = value,
@@ -189,6 +190,7 @@ impl ConfigDocument {
             "OPEN_DASHBOARD_ON_STARTUP" => {
                 toml::Value::Boolean(self.config.open_dashboard_on_startup)
             }
+            "START_AT_LOGIN" => toml::Value::Boolean(self.config.start_at_login),
             "DEBUG_LOG" => toml::Value::Boolean(self.config.debug_log),
             "CALCULATE_PP" => toml::Value::Boolean(self.config.calculate_pp),
             "ENABLE_KEY_OVERLAY" => toml::Value::Boolean(self.config.enable_key_overlay),

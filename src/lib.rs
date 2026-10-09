@@ -6,6 +6,7 @@ pub mod assets;
 pub mod calculation;
 pub mod config;
 pub mod counters;
+pub mod desktop;
 pub mod instance;
 pub mod logging;
 pub mod memory;

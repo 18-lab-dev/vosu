@@ -181,6 +181,11 @@ runtime settings a searchable, autosaving single column across `homepage.html`,
 `homepage-controls.css`. These first-party changes do not change upstream
 provenance; the exact retained bytes and metadata hashes are updated together.
 
+The daemon desktop integration adds first-party best-effort tray actions and a
+native start-on-login setting. The dashboard login control restores its prior
+value when a save is rejected and ignores disabled controls. These local changes
+do not alter the dashboard's upstream provenance.
+
 The offset tools' formerly tracked `bin/` and `obj/` files are reproducible local
 build output, not distributed runtime inputs. Their source projects and package
 locks remain; restoring/building follows the README's maintainer workflow.
@@ -196,12 +201,13 @@ The [dependency inventory](docs/dependency-license-inventory.json) records every
 
 ### MIT OR Apache-2.0 (or the equivalent reversed expression)
 
-- `arc-swap`, `chrono`, `futures-util`, `indexmap`, `libc`, `md-5`, `reqwest`, `semver`, `serde`, `serde_json`, `sha2`, `tempfile`, `thiserror`, `url`, `windows-sys`, and Windows-only `wmi`
+- `arc-swap`, `chrono`, `futures-util`, `indexmap`, `libc`, `md-5`, Linux-only `png`, `reqwest`, `semver`, `serde`, `serde_json`, `sha2`, `tempfile`, `thiserror`, `url`, `windows-sys`, and Windows-only `wmi`
 
 ### Other declared expressions
 
 - `memchr`: Unlicense OR MIT
 - `notify`: CC0-1.0
+- Linux-only `ksni` 0.3.6: Unlicense; pure-Rust StatusNotifierItem/D-Bus tray support (<https://github.com/iovxw/ksni>). The fallback pixmap is decoded with `png` 0.18.1 (MIT OR Apache-2.0, <https://github.com/image-rs/image-png>) from the existing first-party branding PNG. Windows tray support uses the existing `windows-sys` 0.61.2 dependency (MIT OR Apache-2.0) and native Windows APIs, without a GTK/AppIndicator runtime dependency.
 - local project-authored code and `vosu-pp` package: `MIT OR Apache-2.0` where the project has licensing authority; separately identified retained inputs remain under their own terms
 - Linux-only `libbpf-rs` and build-time `libbpf-cargo`: LGPL-2.1-only OR BSD-2-Clause. Their transitive `libbpf-sys` binding is BSD-2-Clause and statically includes libbpf 1.7.0 under LGPL-2.1-only OR BSD-2-Clause. Linux releases dynamically link the system libelf (LGPL-2.1-or-later OR LGPL-3.0-or-later) and zlib (Zlib) libraries.
 

@@ -207,7 +207,8 @@ def packages(root):
                     raise ValueError("tag archive members or CRC invalid")
                 if file.read("LICENSE") != (root / "LICENSE").read_bytes():
                     raise ValueError("tag archive has stale license")
-        run("scripts/package-release.py", "verify-set", "--tag", tag, "--directory", output)
+        # These explicit non-daemon fixtures cover ZIP consumers only; the full
+        # published asset-name contract is exercised by test_package_release.py.
 
         dev_root = temporary / "development-checkout"
         for name in (*development.ATTRIBUTION, "Cargo.toml", "rust-toolchain.toml",

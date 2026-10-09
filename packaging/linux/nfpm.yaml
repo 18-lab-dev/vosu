@@ -1,0 +1,58 @@
+name: vosu
+arch: amd64
+platform: linux
+version: ${VERSION}
+release: '1'
+maintainer: shiruviaa <https://github.com/shiruviaa/vosu>
+homepage: https://github.com/shiruviaa/vosu
+license: MIT OR Apache-2.0
+description: Native osu! telemetry daemon with a local dashboard
+section: games
+priority: optional
+contents:
+  - src: ${STAGE}/vosu
+    dst: /usr/bin/vosu
+    expand: true
+    file_info:
+      mode: 0755
+  - src: packaging/linux/vosu.desktop
+    dst: /usr/share/applications/vosu.desktop
+  - src: assets/branding/vosu-app-icon.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/vosu.svg
+  - src: ${STAGE}/vosu.png
+    dst: /usr/share/icons/hicolor/256x256/apps/vosu.png
+    expand: true
+  - src: LICENSE
+    dst: /usr/share/licenses/vosu/LICENSE
+  - src: LICENSE
+    dst: /usr/share/doc/vosu/copyright
+    packager: deb
+scripts:
+  postinstall: packaging/linux/postinstall.sh
+  # Debian postinst and RPM %post run for both install and upgrade.
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.35)
+      - libelf1 | libelf1t64
+      - zlib1g
+      - libcap2-bin
+      - libgcc-s1
+  rpm:
+    depends:
+      - libc.so.6(GLIBC_2.35)(64bit)
+      - libelf.so.1()(64bit)
+      - libz.so.1()(64bit)
+      - /usr/sbin/setcap
+      - libgcc_s.so.1()(64bit)
+  archlinux:
+    depends:
+      - glibc
+      - libelf
+      - zlib
+      - libcap
+    archlinux:
+      pkgbase: vosu
+      packager: shiruviaa <https://github.com/shiruviaa/vosu>
+      scripts:
+        postupgrade: packaging/linux/postinstall.sh

@@ -14,6 +14,12 @@ SPEC = importlib.util.spec_from_file_location(
 release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 
+LINUX_SPEC = importlib.util.spec_from_file_location(
+    "package_linux", Path(__file__).with_name("package-linux.py")
+)
+linux = importlib.util.module_from_spec(LINUX_SPEC)
+LINUX_SPEC.loader.exec_module(linux)
+
 
 class ReleaseLicenseTests(unittest.TestCase):
     def setUp(self):
@@ -64,6 +70,68 @@ class ReleaseLicenseTests(unittest.TestCase):
         self.archive.write_bytes(data)
         with self.assertRaisesRegex(ValueError, "CRC"):
             release.verify_archive(self.archive, "linux", self.license)
+
+
+class DistributionReleaseTests(unittest.TestCase):
+    def test_package_asset_names(self):
+        self.assertEqual(linux.package_names("1.2.3"), [
+            "vosu_1.2.3_amd64.deb", "vosu-1.2.3-1.x86_64.rpm",
+            "vosu-1.2.3-1-x86_64.pkg.tar.zst",
+        ])
+
+    def test_tag_must_match_manifest_and_be_stable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / "Cargo.toml"
+            manifest.write_text('[package]\nversion = "1.2.3"\n')
+            self.assertEqual(release.version_from_tag("v1.2.3", manifest), "1.2.3")
+            for tag in ("v1.2.4", "v1.2.3-rc1", "1.2.3", "v01.2.3"):
+                with self.subTest(tag=tag), self.assertRaises(ValueError):
+                    release.version_from_tag(tag, manifest)
+
+    def test_release_set_requires_packages_and_aur(self):
+        import argparse
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "Cargo.toml"
+            manifest.write_text('[package]\nversion = "1.2.3"\n')
+            dist = root / "dist"
+            dist.mkdir()
+            license_path = root / "LICENSE"
+            license_path.write_bytes(b"explicit test fixture license")
+            args = argparse.Namespace(tag="v1.2.3", manifest=manifest,
+                                      directory=dist, license=license_path)
+            for platform, executable in release.PLATFORM_EXECUTABLE.items():
+                with zipfile.ZipFile(dist / f"vosu-{platform}-v1.2.3.zip", "w") as archive:
+                    archive.writestr(executable, b"explicit non-daemon fixture")
+                    archive.writestr("LICENSE", license_path.read_bytes())
+            names = [*linux.package_names("1.2.3"), "vosu-bin-aur-v1.2.3.tar.gz"]
+            # Only the release-set filename consumer is under test here; native
+            # package contents are exercised with real binaries, not fixtures.
+            for name in names:
+                (dist / name).write_bytes(b"explicit asset-name fixture")
+            release.verify_release_set(args)
+            for name in names:
+                (dist / name).unlink()
+                with self.subTest(missing=name), self.assertRaises(ValueError):
+                    release.verify_release_set(args)
+                (dist / name).write_bytes(b"explicit asset-name fixture")
+            (dist / "unexpected").touch()
+            with self.assertRaises(ValueError):
+                release.verify_release_set(args)
+
+    def test_aur_version_and_archive_checksum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "vosu-linux-v1.2.3.zip"
+            archive.write_bytes(b"release archive")
+            linux.render_aur("1.2.3", archive, root / "aur")
+            pkgbuild = (root / "aur/PKGBUILD").read_text()
+            srcinfo = (root / "aur/.SRCINFO").read_text()
+            self.assertIn("pkgver=1.2.3\n", pkgbuild)
+            self.assertIn(linux.sha256(archive), pkgbuild)
+            self.assertIn("\tpkgver = 1.2.3\n", srcinfo)
+            self.assertIn("\tsha256sums = " + linux.sha256(archive), srcinfo)
+            self.assertNotIn("@VERSION@", pkgbuild)
 
 
 if __name__ == "__main__":

@@ -243,7 +243,14 @@ impl ProductionRouteDelegate {
                         .pages
                         .asset(path.strip_prefix("/assets/").unwrap_or_default()),
                 ),
-                Endpoint::Favicon => PageLookup::Embedded(self.services.pages.favicon()),
+                Endpoint::Favicon => {
+                    let mut response = embedded_response(self.services.pages.favicon());
+                    response.headers_mut().insert(
+                        "x-vosu-identity",
+                        axum::http::HeaderValue::from_static("vosu"),
+                    );
+                    return response;
+                }
                 Endpoint::Root
                 | Endpoint::Settings
                 | Endpoint::Available => self.services.pages.lookup_get(

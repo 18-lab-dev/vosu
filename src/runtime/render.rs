@@ -639,24 +639,37 @@ pub(super) fn settings_group(header: &str, items: &[String]) -> String {
 }
 
 pub(super) fn render_runtime_settings(config: &Config) -> String {
-    let general = settings_group(
-        "General",
-        &[
-            settings_item(
-                "Automatic updates",
-                "Check for a new Vosu release during startup and install it automatically.",
-                &settings_switch("ENABLE_AUTOUPDATE", config.enable_auto_update),
+    let externally_managed = crate::desktop::externally_managed();
+    let mut update_switch = settings_switch("ENABLE_AUTOUPDATE", config.enable_auto_update);
+    if externally_managed {
+        update_switch.insert_str(update_switch.len() - 1, " disabled");
+    }
+    let general_items = [
+        settings_item(
+            "Automatic updates",
+            if externally_managed {
+                "Updates are managed by your Linux package manager; automatic updates are disabled."
+            } else {
+                "Check for a new Vosu release during startup and install it automatically."
+            },
+            &update_switch,
+        ),
+        settings_item(
+            "Open dashboard at startup",
+            "Open this local dashboard in the default browser after Vosu starts.",
+            &settings_switch(
+                "OPEN_DASHBOARD_ON_STARTUP",
+                config.open_dashboard_on_startup,
             ),
-            settings_item(
-                "Open dashboard at startup",
-                "Open this local dashboard in the default browser after Vosu starts.",
-                &settings_switch(
-                    "OPEN_DASHBOARD_ON_STARTUP",
-                    config.open_dashboard_on_startup,
-                ),
-            ),
-        ],
-    );
+        ),
+        #[cfg(target_os = "linux")]
+        settings_item(
+            "Start at login",
+            "Run vosu as a systemd user service when you log in.",
+            &settings_switch("START_AT_LOGIN", config.start_at_login),
+        ),
+    ];
+    let general = settings_group("General", &general_items);
     let data = settings_group(
         "Game data",
         &[

@@ -639,6 +639,8 @@ import { createSettingsEditor } from './homepage-settings.js';
     const status = form.querySelector('.settings-status');
     const serverIp = form.querySelector('[data-id="SERVER_IP"]');
     const serverPort = form.querySelector('[data-id="SERVER_PORT"]');
+    const startAtLogin = form.querySelector('[data-id="START_AT_LOGIN"]');
+    let savedStartAtLogin = startAtLogin?.checked;
     let queue = Promise.resolve();
 
     function setStatus(text, tone = '') {
@@ -679,11 +681,13 @@ import { createSettingsEditor } from './homepage-settings.js';
       try {
         await requestJson('/api/settingsSave', { method: 'POST', body: JSON.stringify(settings) });
       } catch (error) {
+        if (control === startAtLogin) control.checked = savedStartAtLogin;
         item?.classList.add('has-error');
         setStatus(`${name} was not saved`, 'error');
         notify(`Could not save ${name}: ${errorText(error)}`, 'error', 5000);
         return;
       }
+      if (control === startAtLogin) savedStartAtLogin = control.checked;
       if (!listener) {
         setSavedStatus();
         return;
@@ -709,7 +713,7 @@ import { createSettingsEditor } from './homepage-settings.js';
     // immediately for checkboxes; saves are serialized so they apply in order.
     form.addEventListener('change', (event) => {
       const control = event.target.closest('[data-id]');
-      if (!control) return;
+      if (!control || control.disabled) return;
       queue = queue.then(() => saveSetting(control));
     });
     form.addEventListener('submit', (event) => {

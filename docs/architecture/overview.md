@@ -57,9 +57,12 @@ flowchart TB
     Reducer --> Calc[src/calculation/* and<br/>crates/vosu-pp]
     Config --> Runtime
     Runtime --> Update[src/updater/*]
+    Runtime --> Desktop[src/desktop/*<br/>tray and login service]
 ```
 
 `src/main.rs` only constructs Tokio, calls `runtime::run_cli`, maps the startup-owner conflict to exit status 75, and bounds runtime shutdown. `src/runtime/lifecycle.rs::ProductionRuntime` is the composition root and owns every long-lived service: configuration, logging, authorization, listener, WebSocket hubs, command processor and relays, counters, instance runtime, state supervisor, update handoff, and shutdown token. Its shutdown order first stops new HTTP accepts, closes WebSockets, then joins downstream services before configuration and logging.
+
+`src/desktop/login.rs` owns the opt-in Linux graphical-session user unit, independently of daemon startup and settings persistence. It injects the existing `PathResolver` and a `CommandRunner`, writes only a vosu-marked unit, and invokes `systemctl --user` without a shell or `--now`. Runtime composition treats startup reconciliation errors as warnings; settings save must reconcile before publishing or persisting `START_AT_LOGIN`.
 
 Offset resolution is part of each discovered lazer instance lifecycle.
 `src/runtime/offset_generator.rs` receives the exact PID and version. The loader
@@ -110,6 +113,7 @@ checksum-verified payload and game installation remain untouched.
 | Live and endpoint calculation | `src/calculation/*`, `crates/vosu-pp/src/lib.rs` | `LiveStateCalculationBackend`, `LiveBeatmapEngine`, `LegacyRosuEngine` |
 | Filesystem and platform paths | `src/platform.rs`, `src/server/files.rs` | `Paths`, `safe_child`, `resolve_resource` |
 | Configuration | `src/config/*` | `ConfigStore`, `ConfigDocument`, `ConfigSchema` |
+| Desktop integration | `src/desktop/*` | session tray, executable ownership policy, Linux `login::reconcile` |
 | Self-update | `src/updater/*` | startup recovery, release validation, prepare/transaction/platform stages |
 | Live compatibility validation | `tools/live-parity/*` | `run.py`, `parity_capture.py`, `parity_compare.py`, `parity_diff.py` |
 

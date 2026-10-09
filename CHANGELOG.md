@@ -11,6 +11,15 @@ All notable user-visible changes to vosu are documented here. Version 1.0.0 is p
 - Adapt the dashboard to the screen: catalog rows sit side by side when there is room, previews follow the window height so short laptop screens show more cards, catalog text scales with its card, and the whole layout grows slightly on large monitors. Phones get a compact header with full-width page tabs and settings checkboxes beside their labels; short landscape screens no longer pin the header.
 - Autosave runtime settings with interval/port validation; preserve the unsaved/error status until every rejected field is corrected.
 
+### Packaging and desktop
+
+- Publish Debian/Ubuntu (`.deb`), Fedora (`.rpm`), and Arch (`.pkg.tar.zst`) packages next to the portable ZIPs, plus a rendered AUR `vosu-bin` PKGBUILD bundle. Packages install `/usr/bin/vosu`, an application launcher, and icons, and run `vosu --setup` on install and upgrade without failing the transaction when capabilities cannot be set.
+- Build Linux releases against glibc 2.35, so the binary runs on Debian 12+, Ubuntu 22.04+, Fedora, and Arch; release CI asserts the baseline and install-tests every package in clean containers.
+- Show a tray icon on Linux (StatusNotifierItem) and Windows with **Open dashboard** and **Quit**; headless sessions without a tray host run unchanged.
+- Launching vosu while another instance already serves the configured address opens that instance's dashboard and exits instead of failing to bind.
+- Add the Linux-only **Start at login** setting (`START_AT_LOGIN`), which manages a marked systemd user unit for the graphical session.
+- Treat an executable whose directory the user cannot write (for example a package-managed `/usr/bin/vosu`) as externally managed: skip self-update checks, reject `POST /api/runUpdates` with an explanation, and disable the dashboard's automatic-update setting.
+
 ### Security
 
 - Prevent counter-delete CSRF and protect the shared management mutation boundary with exact same-origin browser provenance. Counter delete/download/open, updater, and report actions now require POST; no mutating GET aliases remain. The dashboard uses the new methods.

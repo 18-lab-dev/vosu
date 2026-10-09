@@ -13,6 +13,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Area | Owner | Use it for |
 |---|---|---|
 | Startup and lifecycle | `src/app.rs`, `src/runtime/` | CLI decisions, composition, workers, shutdown, runtime reload |
+| Desktop integration | `src/desktop/` | Session tray, executable ownership policy, opt-in Linux systemd user login service |
 | Process instances | `src/instance/` | Candidate classification, focus, PID generations, tournament selection |
 | Native access | `src/process/`, `src/platform/` | Linux/Windows process handles, memory reads, paths and OS behavior |
 | Client decoding | `src/memory/`, `src/memory/stable/`, `src/memory/lazer/` | Offsets, signatures, pointers, snapshots, stable/lazer sentinels |

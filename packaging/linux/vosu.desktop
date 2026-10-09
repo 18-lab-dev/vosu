@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=vosu
+Comment=osu! telemetry dashboard
+Exec=vosu
+Icon=vosu
+Terminal=false
+Categories=Game;Utility;
+StartupNotify=false

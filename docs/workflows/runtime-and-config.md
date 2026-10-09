@@ -18,6 +18,7 @@ A minimal valid configuration is:
 ```toml
 DEBUG_LOG = false
 ENABLE_AUTOUPDATE = true
+START_AT_LOGIN = false
 POLL_RATE = 150.0
 PRECISE_DATA_POLL_RATE = 10.0
 SERVER_IP = "127.0.0.1"
@@ -25,6 +26,17 @@ SERVER_PORT = 24050.0
 STATIC_FOLDER_PATH = "./static"
 ALLOWED_IPS = "127.0.0.1,localhost,absolute"
 ```
+
+## Linux Start at login
+
+`START_AT_LOGIN` is a boolean defaulting to `false`. The Linux dashboard's General group describes it as “Run vosu as a systemd user service when you log in.” Windows retains the config binding but hides this control and performs no systemd operations.
+
+`src/desktop/login.rs::reconcile` resolves `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/vosu.service` using the same injected environment resolver contract as platform paths. Enabling atomically writes or reconciles a vosu-marked unit with the current executable as an escaped, quoted `ExecStart`, then runs `systemctl --user daemon-reload` and `systemctl --user enable vosu.service` (never `--now`). `After`, `PartOf`, and `WantedBy` use `graphical-session.target`: the tray belongs to the graphical session rather than a lingering headless user manager.
+
+Disabling an owned unit runs `systemctl --user disable vosu.service`, removes the marked unit, and reloads the manager. An absent local unit is a no-op; an unrelated unit or symlink is rejected without changing it or the user manager. Disabling does not stop the running daemon. Dashboard saves must reconcile before publishing or persisting the changed flag; command or filesystem failures return an error and retain the prior saved value. A partial command failure may leave a marked unit behind; retry reconciles that unit. Startup reconciliation failures are logged as warnings and do not prevent normal daemon startup.
+
+Tests inject temporary paths and a recording command runner, checking exact unit bytes, argv ordering, executable path reconciliation, ownership protection, and failure propagation without contacting a real user manager.
+
 
 ## Paths and migration
 

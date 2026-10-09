@@ -7,6 +7,7 @@ const EXPECTED_DEFAULT: &str = concat!(
     "DEBUG_LOG = false\n",
     "ENABLE_AUTOUPDATE = true\n",
     "OPEN_DASHBOARD_ON_STARTUP = true\n",
+    "START_AT_LOGIN = false\n",
     "\n",
     "SHOW_MP_COMMANDS = false\n",
     "CALCULATE_PP = true\n",

@@ -136,6 +136,11 @@ pub fn recover_startup_update<P: UpdatePlatform>(
     program_dir: &Path,
     platform: &P,
 ) -> Result<Option<RecoveryAction>, UpdateError> {
+    // Package-owned directories cannot be repaired by this user. Ordinary
+    // telemetry startup must not depend on mutating the updater's records.
+    if !crate::desktop::directory_writable(program_dir) {
+        return Ok(None);
+    }
     let record = program_dir.join(INSTALL_RECORD_NAME);
     if record.exists() {
         recover_dead_transaction(&record, platform).map(Some)

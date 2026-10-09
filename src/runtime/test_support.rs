@@ -120,9 +120,7 @@ pub async fn start_test_production_composition(
         }),
         Arc::clone(&counters),
         beatmap.clone(),
-        Arc::new(RuntimeConfig {
-            config: Arc::clone(&options.config),
-        }),
+        Arc::new(RuntimeConfig::new(Arc::clone(&options.config))),
         Arc::new(RuntimeReportInput {
             config: Arc::clone(&options.config),
             snapshots: snapshots.snapshot_manager(),

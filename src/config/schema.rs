@@ -7,6 +7,7 @@
 pub struct Config {
     pub enable_auto_update: bool,
     pub open_dashboard_on_startup: bool,
+    pub start_at_login: bool,
     pub debug_log: bool,
     pub calculate_pp: bool,
     pub enable_key_overlay: bool,
@@ -26,6 +27,7 @@ impl Default for Config {
         Self {
             enable_auto_update: true,
             open_dashboard_on_startup: true,
+            start_at_login: false,
             debug_log: false,
             calculate_pp: true,
             enable_key_overlay: true,
@@ -46,6 +48,7 @@ impl Default for Config {
 pub enum ConfigKey {
     EnableAutoUpdate,
     OpenDashboardOnStartup,
+    StartAtLogin,
     DebugLog,
     CalculatePp,
     EnableKeyOverlay,
@@ -94,7 +97,7 @@ impl Default for ConfigSchema {
     }
 }
 
-const SCHEMA_ITEMS: [ConfigItem; 14] = [
+const SCHEMA_ITEMS: [ConfigItem; 15] = [
     item(
         ConfigKey::EnableAutoUpdate,
         "ENABLE_AUTOUPDATE",
@@ -105,6 +108,12 @@ const SCHEMA_ITEMS: [ConfigItem; 14] = [
         ConfigKey::OpenDashboardOnStartup,
         "OPEN_DASHBOARD_ON_STARTUP",
         ConfigDefault::Boolean(true),
+        None,
+    ),
+    item(
+        ConfigKey::StartAtLogin,
+        "START_AT_LOGIN",
+        ConfigDefault::Boolean(false),
         None,
     ),
     item(
@@ -201,10 +210,11 @@ pub const DEFAULT_SCHEMA: ConfigSchema = ConfigSchema {
 
 /// The source's serialization order, which intentionally differs from schema
 /// declaration order.
-pub const BINDING_ORDER: [&str; 14] = [
+pub const BINDING_ORDER: [&str; 15] = [
     "DEBUG_LOG",
     "ENABLE_AUTOUPDATE",
     "OPEN_DASHBOARD_ON_STARTUP",
+    "START_AT_LOGIN",
     "SHOW_MP_COMMANDS",
     "CALCULATE_PP",
     "READ_MANIA_SCROLL_SPEED",
@@ -220,7 +230,7 @@ pub const BINDING_ORDER: [&str; 14] = [
 
 /// A blank line is inserted after each of these bindings.
 pub const NEWLINE_INSERTIONS: [&str; 5] = [
-    "OPEN_DASHBOARD_ON_STARTUP",
+    "START_AT_LOGIN",
     "READ_MANIA_SCROLL_SPEED",
     "ENABLE_KEY_OVERLAY",
     "V2_SUBSCRIPTION_DEBOUNCE",

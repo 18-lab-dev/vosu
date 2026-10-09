@@ -57,6 +57,17 @@ a lazer version needs local offset generation, which then reports a
 missing-bundle error. Release builds and the bundle (Python and the .NET 8 SDK)
 are covered in the [README](README.md#build-from-source).
 
+For Linux release packaging, install ImageMagick, `rpm`, `dpkg-deb`, and
+`bsdtar` (Debian/Ubuntu: `imagemagick rpm libarchive-tools`; `dpkg-deb` is in
+`dpkg`), plus nfpm **2.47.0** using the verified archive/hash in
+[release.yml](.github/workflows/release.yml). First create the portable Linux
+ZIP with `scripts/package-release.py package`, then use
+`scripts/package-linux.py build` against the same binary and output directory.
+Build release binaries on Ubuntu 22.04, not the developer's newer glibc host.
+The [release runbook](docs/operations/runbook.md#linux-distribution-releases)
+describes package inspection, container smoke checks, and AUR publication.
+
+
 ## Repository map
 
 | Path | Contents |

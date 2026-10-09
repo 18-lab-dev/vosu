@@ -21,11 +21,19 @@ pub struct ProductionRuntime {
     relays: AsyncMutex<Option<Arc<WebSocketRelaySink>>>,
     supervisor: AsyncMutex<Option<ProductionStateSupervisor>>,
     instances: AsyncMutex<Option<InstanceRuntime<NativeProcessProvider, EmbeddedOffsetGenerator>>>,
+    ordinary_role: bool,
+    tray: AsyncMutex<Option<crate::desktop::tray::TrayHandle>>,
+    dashboard_url: Arc<std::sync::RwLock<String>>,
+    #[cfg(target_os = "linux")]
+    login_state: Arc<AsyncMutex<bool>>,
 }
 
 impl ProductionRuntime {
     async fn shutdown(&self) -> io::Result<()> {
         self.shutdown_token.cancel();
+        if let Some(mut tray) = self.tray.lock().await.take() {
+            tray.shutdown().await;
+        }
         let listener = self.listener.lock().await.take();
         if let Some(listener) = listener.as_ref() {
             listener.stop_accepting();
@@ -126,6 +134,10 @@ impl ProductionRuntime {
             beatmap.clone(),
             Arc::new(RuntimeConfig {
                 config: Arc::clone(&self.config),
+                #[cfg(target_os = "linux")]
+                login_state: Arc::clone(&self.login_state),
+                #[cfg(not(target_os = "linux"))]
+                login_state: Arc::new(AsyncMutex::new(config.start_at_login)),
             }),
             Arc::new(RuntimeReportInput {
                 config: Arc::clone(&self.config),
@@ -206,6 +218,24 @@ impl ProductionRuntime {
         *self.relays.get_mut() = Some(relays);
         *self.supervisor.get_mut() = Some(supervisor);
         *self.instances.get_mut() = Some(instances);
+        *self
+            .dashboard_url
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = crate::desktop::dashboard_url(
+            &effective_listener.address.ip().to_string(),
+            effective_listener.address.port(),
+        );
+        if self.ordinary_role {
+            let url = Arc::clone(&self.dashboard_url);
+            *self.tray.get_mut() = Some(crate::desktop::tray::start(
+                Arc::new(move || {
+                    url.read()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .clone()
+                }),
+                self.shutdown_token.clone(),
+            ));
+        }
         // Publish readiness only after every owned task is reachable through
         // `self`, so any signal/cleanup failure is followed by the normal
         // guaranteed shutdown path rather than stranding local resources.
@@ -236,6 +266,11 @@ impl RuntimeHooks for ProductionRuntime {
             // while it owns the live install record. They may bind and report
             // readiness, but must never start a second update transaction.
             if !startup_role_allows_update_check(self.startup_readiness.as_ref()) {
+                return Ok(());
+            }
+            if !crate::desktop::directory_writable(self.paths.program()) {
+                self.logger
+                    .info("Updates are managed externally; update vosu with your package manager");
                 return Ok(());
             }
             let client = crate::net::streaming::StreamingClient::production();
@@ -322,6 +357,18 @@ impl RuntimeHooks for ProductionRuntime {
                             // Static-root cutover already happened synchronously in
                             // ConfigStore's before-publication barrier.
                             let effective = self.config.current();
+                            #[cfg(target_os = "linux")]
+                            if self.ordinary_role && change.old.start_at_login != change.new.start_at_login {
+                                let mut login_state = self.login_state.lock().await;
+                                let enabled = self.config.current().start_at_login;
+                                if enabled != *login_state {
+                                    match tokio::task::spawn_blocking(move || crate::desktop::login::reconcile(enabled)).await {
+                                        Ok(Ok(())) => *login_state = enabled,
+                                        Ok(Err(error)) => self.logger.warn(format!("Start at login could not be reconciled: {error}")),
+                                        Err(error) => self.logger.warn(format!("Start at login task failed: {error}")),
+                                    }
+                                }
+                            }
                             self.logger.update_debug(effective.debug_log);
                             self.authorizer.reload(&effective.allowed_ips, &effective.server_ip);
                             self.snapshots.set_poll_rates(
@@ -352,6 +399,8 @@ impl RuntimeHooks for ProductionRuntime {
                                                 if effective_address != previous_address
                                                     && let Some(address) = effective_address
                                                 {
+                                                    *self.dashboard_url.write().unwrap_or_else(|error| error.into_inner()) =
+                                                        crate::desktop::dashboard_url(&address.ip().to_string(), address.port());
                                                     self.logger.info(format!(
                                                         "Server IP and port: {address}"
                                                     ));
@@ -534,8 +583,20 @@ pub async fn run_cli() -> io::Result<()> {
         }
     };
     let config = ConfigStore::initialize(paths.config().join("vosu.toml")).await?;
+    if ordinary_role
+        && let Ok(target) = listen_target(&config.current())
+        && let Some(url) = crate::desktop::existing_dashboard(&target.host, target.port).await
+    {
+        println!("vosu is already running; opening {url}");
+        if let Err(error) = open::that_detached(&url) {
+            eprintln!("Could not open dashboard: {error}");
+        }
+        config.shutdown().await?;
+        return Ok(());
+    }
     let mut recovery_warning = None;
     if ordinary_role
+        && crate::desktop::directory_writable(paths.program())
         && matches!(
             StartupDecision::evaluate(
                 &args,
@@ -596,6 +657,17 @@ pub async fn run_cli() -> io::Result<()> {
         logger.warn(warning.clone());
     }
 
+    #[cfg(target_os = "linux")]
+    if ordinary_role {
+        let enabled = config.current().start_at_login;
+        match tokio::task::spawn_blocking(move || crate::desktop::login::reconcile(enabled)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                logger.warn(format!("Start at login could not be reconciled: {error}"))
+            }
+            Err(error) => logger.warn(format!("Start at login task failed: {error}")),
+        }
+    }
     let current = config.current();
     let snapshots = Arc::new(SnapshotProviders::new(
         Arc::new(ManagerSnapshot::not_ready(
@@ -631,6 +703,11 @@ pub async fn run_cli() -> io::Result<()> {
         supervisor: AsyncMutex::new(None),
         relays: AsyncMutex::new(None),
         instances: AsyncMutex::new(None),
+        ordinary_role,
+        tray: AsyncMutex::new(None),
+        dashboard_url: Arc::new(std::sync::RwLock::new(String::new())),
+        #[cfg(target_os = "linux")]
+        login_state: Arc::new(AsyncMutex::new(current.start_at_login)),
     };
     let mut app = App::new(
         args,
