@@ -159,7 +159,7 @@ cargo bench --locked --no-default-features --package vosu --target x86_64-pc-win
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench memory_reader_bench
 ```
 
-## Scope
+## Scope of the earlier synthetic results
 
 - Synthetic fixtures, not live-game or whole-daemon performance. Raw snapshots
   discard reads from zero-filled fixtures; the deterministic reader validates
@@ -188,3 +188,101 @@ The evidence is `remediation-7c0j_0ys/clock/stable-minimum-skew-report.json`
 under the retained verification directory named there. This capture still
 fails one-to-one HTTP reference coverage; cadence measurements do not establish
 full parity, timer deadline guarantees, or reduced CPU usage.
+
+## Released tosu comparison (2026-10-09)
+
+This campaign compares vosu **0.3.0** with the released tosu **4.26.2**
+package/source at `b21b4526d8db9ce124f5a8bf475ef5421837f5b7`.
+It does not compare against the former optimization base. Windows ran before
+Linux; neither platform's measurements stand in for the other.
+
+The vosu source is `f075408209ee98cdd780f3a4d386d2a9850f40b0` plus the
+client-runtime dependency-closure fix. The measured production executables
+have SHA-256:
+
+- Windows: `e8664104de180d98bfea29e437b37de61f78fc32b86a65c75c160ca4be2d304e`.
+- Linux: `a8b20a661d1fb0281d8ddd0fd397c2367d3845f1d08b9747392ffb56b81ce07a`.
+
+Retained local evidence is under
+`~/.cache/vosu-final-20261008-4r3azwf2/`. Result files, configurations,
+per-invocation logs, source/runtime manifests, and executable hashes distinguish
+the accepted runs from rejected startup, workload, and stale-connection trials.
+These are local observations, not hosted CI results or live-parity certification.
+
+### Native Windows whole-daemon resources
+
+Both production daemons read the same offline lazer **2026.726.0** client,
+playing the six-minute original deterministic beatmap
+`fa80da4663f37aaba8077be9ad459718` with Autoplay, osu! mode, and rate 1.
+Regular/precise polling are 150/10 ms; PP calculation and key overlay are on.
+Each mode has three simultaneous 45-second pairs, each after 30 seconds of
+warm-up; API-worker submission order alternates vosu → tosu → vosu.
+Background mode probes the API only at the window boundaries. Consumer mode
+requests `/json/v2` at 10 Hz per daemon.
+
+CPU is accumulated process-tree user/system time divided by elapsed wall
+time, as a percentage of one logical core. Memory is sampled at 1 Hz.
+The table reduces the three per-window medians; ranges span those medians.
+MiB is bytes / 1,048,576; reductions use unrounded values.
+
+| Mode / metric | Released tosu median (range) | vosu median (range) | vosu reduction |
+| --- | ---: | ---: | ---: |
+| Background CPU, one core | 2.708% (2.604–2.917) | 1.597% (1.493–1.701) | 41.02% |
+| Background working set | 124.867 MiB (124.664–125.547) | 91.219 MiB (90.920–91.273) | 26.95% |
+| Background private committed | 116.840 MiB (116.256–117.215) | 7.836 MiB (6.904–7.914) | 93.29% |
+| 10 Hz consumer CPU, one core | 3.265% (3.229–3.368) | 1.667% (1.389–1.771) | 48.95% |
+| 10 Hz consumer working set | 131.027 MiB (130.789–131.092) | 90.932 MiB (90.855–91.223) | 30.60% |
+| 10 Hz consumer private committed | 123.535 MiB (122.484–123.539) | 7.090 MiB (7.062–7.926) | 94.26% |
+
+All six pairs passed executable/PID/start-time, listener ownership,
+client/build/map/modifier, play-clock progression, paired-clock skew, and API
+admission checks. There were no API errors in the accepted files
+`windows-play-background-fresh-sockets.json` and
+`windows-play-consumer-final.json`; their matching `*-config.json` files
+retain the workload identities. One-second tree sampling can miss transient
+children. Windows private committed bytes are **not** Linux private resident
+memory, and these resource observations do not establish schema parity.
+
+### Precise-reader microbenchmarks
+
+The autoresearch-style protocol uses seven alternating-order invocation pairs,
+2,000 warm-up cycles, then nine samples of 1,000 cycles per invocation.
+Each invocation reports the median sample mean; the table reports the median
+and range across the seven invocations. All 28 invocations exited successfully.
+
+The timed fixture is a resolved lazer precise state/clock, 18 keys, and an
+empty hit-error list in 1 MiB of synthetic memory. Setup is excluded. The
+released reader requires direct initialization of its private resolved screen
+and game-base pointers; it has no `synchronize_precise` method. Its key-overlay
+method has no mode argument. Neither adaptation replaces its production
+decoding or native process-read methods.
+
+| Platform | Released tosu ns/cycle, median (range) | vosu ns/cycle, median (range) | tosu / vosu latency |
+| --- | ---: | ---: | ---: |
+| Native Windows | 74,553.70 (73,425.90–77,495.40) | 19,571.50 (19,375.40–21,263.80) | 3.810 |
+| Native Linux | 31,254.24 (30,724.70–31,882.56) | 98,719.91 (98,488.13–100,047.16) | 0.317 |
+
+**The Linux precise-reader result is unfavorable:** vosu took 3.16 times as
+long in this fixture. Do not infer a cross-platform reader speedup from the
+Windows result or generalize either fixture timing to whole-daemon CPU.
+
+Tosu reports 156 typed native reads and 1,020 requested bytes per cycle;
+vosu reports 24 exact plus two batched calls and 912 requested bytes.
+Tosu counts wrapped production typed methods during timing; vosu's accounting
+uses a separate counting reader, while its timed path reads native self-process
+memory. Counts are instrumented API calls, not syscall/allocation measurements.
+Tosu asserts each key's values and the empty error array; the retained vosu
+benchmark asserts readiness, time, key count, and error index, not all of
+those same values. Fixture intent is aligned, but assertion and instrumentation
+coverage differ.
+
+Stable idle/key-overlay timings also appear in the vosu output. They use
+slice-memory decoder fixtures and are excluded from this native precise-reader
+comparison.
+
+Windows evidence: `readers-windows-closure/results.json` and seven numbered
+log pairs. Linux evidence: `readers-linux-final/manifest.json` and its 14
+stdout/stderr logs. The Linux manifest retains Node **24.14.0**, Rust **1.96.1**,
+kernel **7.2.9-1-cachyos-bore**, all 32 CPU governors set to `performance`,
+and campaign-start load averages **2.923 / 2.876 / 2.664**. No CPU isolation,
+privilege elevation, or system-policy changes were used.

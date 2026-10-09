@@ -67,6 +67,64 @@ fn runtime_files(pack: &Value) -> io::Result<BTreeSet<&str>> {
     Ok(files)
 }
 
+fn include_framework_overrides(
+    deps: &Value,
+    target: &str,
+    helper_pack: &Value,
+    client_pack: &mut Value,
+) -> io::Result<()> {
+    let helper_runtime = helper_pack["runtime"]
+        .as_object()
+        .ok_or_else(|| invalid("helper runtime pack has no managed files"))?;
+    let runtime = client_pack["runtime"]
+        .as_object_mut()
+        .ok_or_else(|| invalid("client runtime pack has no managed files"))?;
+    let entries = deps["targets"][target]
+        .as_object()
+        .expect("runtime_pack validated target");
+    // Import framework replacements and their dependency closure, not the game's
+    // application assemblies: those belong to the target's isolated load context.
+    let mut pending = Vec::new();
+    for (name, library) in entries {
+        if library["runtime"].as_object().is_some_and(|files| {
+            files.keys().any(|path| {
+                let filename = path.rsplit('/').next().expect("split yields a filename");
+                helper_runtime.contains_key(filename) && !runtime.contains_key(filename)
+            })
+        }) {
+            pending.push((name, library));
+        }
+    }
+    let mut visited = BTreeSet::new();
+    while let Some((name, library)) = pending.pop() {
+        if !visited.insert(name) {
+            continue;
+        }
+        if let Some(files) = library["runtime"].as_object() {
+            for (path, metadata) in files {
+                let filename = path.rsplit('/').next().expect("split yields a filename");
+                runtime
+                    .entry(filename.to_owned())
+                    .or_insert_with(|| metadata.clone());
+            }
+        }
+        if let Some(dependencies) = library["dependencies"].as_object() {
+            for (name, version) in dependencies {
+                let version = version
+                    .as_str()
+                    .ok_or_else(|| invalid("framework dependency version is not a string"))?;
+                let entry = entries
+                    .get_key_value(&format!("{name}/{version}"))
+                    .ok_or_else(|| {
+                        invalid("framework dependency is absent from client manifest")
+                    })?;
+                pending.push(entry);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn link_or_copy(source: &Path, destination: &Path) -> io::Result<()> {
     if fs::hard_link(source, destination).is_err() {
         fs::copy(source, destination)?;
@@ -108,6 +166,9 @@ pub(super) fn stage(payload: &Path, assembly: &Path, work: &Path) -> io::Result<
         let mut deps = read_manifest(&source.join(&deps_name))?;
         let (old_target, old_name, old_pack) = runtime_pack(&deps)?;
         let old_files = runtime_files(old_pack)?;
+        let mut client_pack = client_pack.clone();
+        include_framework_overrides(&client_deps, client_target, old_pack, &mut client_pack)?;
+        let client_files = runtime_files(&client_pack)?;
         for entry in fs::read_dir(&source)? {
             let entry = entry?;
             let filename = entry.file_name();
@@ -125,25 +186,6 @@ pub(super) fn stage(payload: &Path, assembly: &Path, work: &Path) -> io::Result<
                 link_or_copy(&entry.path(), &destination.join(filename))?;
             }
         }
-        let mut entries = deps["targets"][old_target]
-            .as_object()
-            .expect("runtime_pack validated target")
-            .clone();
-        entries.remove(old_name);
-        entries.insert(client_name.to_owned(), client_pack.clone());
-        let old_name = old_name.to_owned();
-        deps["targets"] = serde_json::json!({client_target: entries});
-        deps["runtimeTarget"] = client_deps["runtimeTarget"].clone();
-        let libraries = deps["libraries"]
-            .as_object_mut()
-            .ok_or_else(|| invalid("helper dependencies have no library entries"))?;
-        libraries.remove(&old_name);
-        libraries.insert(
-            client_name.to_owned(),
-            client_deps["libraries"][client_name].clone(),
-        );
-        fs::write(destination.join(deps_name), serde_json::to_vec(&deps)?)?;
-        fs::write(destination.join(config_name), serde_json::to_vec(&config)?)?;
         for filename in &client_files {
             let source = assembly.join(filename);
             // Official clients omit the optional crash-dump executable.
@@ -163,6 +205,25 @@ pub(super) fn stage(payload: &Path, assembly: &Path, work: &Path) -> io::Result<
                 link_or_copy(&source, &destination)?;
             }
         }
+        let mut entries = deps["targets"][old_target]
+            .as_object()
+            .expect("runtime_pack validated target")
+            .clone();
+        entries.remove(old_name);
+        entries.insert(client_name.to_owned(), client_pack);
+        let old_name = old_name.to_owned();
+        deps["targets"] = serde_json::json!({client_target: entries});
+        deps["runtimeTarget"] = client_deps["runtimeTarget"].clone();
+        let libraries = deps["libraries"]
+            .as_object_mut()
+            .ok_or_else(|| invalid("helper dependencies have no library entries"))?;
+        libraries.remove(&old_name);
+        libraries.insert(
+            client_name.to_owned(),
+            client_deps["libraries"][client_name].clone(),
+        );
+        fs::write(destination.join(deps_name), serde_json::to_vec(&deps)?)?;
+        fs::write(destination.join(config_name), serde_json::to_vec(&config)?)?;
     }
     Ok(staged)
 }

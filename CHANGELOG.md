@@ -15,13 +15,14 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 ### Runtime and maintenance
 
 - Fix automatic offset generation for lazer framework upgrades, including `2026.1005.0` on .NET 10: run both embedded helpers with the exact client's bundled CLR/framework in disposable staging instead of measuring under the helper's .NET 8 build runtime. No user-installed SDK, runtime download, or game-file modification is needed.
+- Include client-published NuGet framework replacements and their transitive dependencies in the staged helper runtime. Native Windows startup with the client's .NET 8 runtime and `System.Text.Json`/`System.IO.Pipelines` 10 now resolves the game and serves its live API without changing the game or verified helper payload.
 - Route maintained Windows autoresearch benchmarks through the shared `windows-vm` command: transfer filtered source/vendor archives with SFTP, extract through native PowerShell, and clean temporary archives on success or failure. Sources, Cargo vendor caches, builds, and run output stay on `V:\agent-workspaces` instead of an account-specific C: profile.
 
 - Fix mania gradual-performance completion so `last()` and oversized skips return the final attributes before exhaustion; correct the osu! gradual example to finish without consuming the calculator before checking exhaustion.
 - Make the daemon reload smoke verify rejected malformed TOML through unchanged served settings, untouched source bytes, and an unbound requested port, independently of whether osu! is running. Production last-good configuration and state-readiness behavior is unchanged.
 - Split maintained code into domain-focused modules capped at 1,000 lines, preserving API and calculator behavior; remove tracked offset-tool build output while retaining source, locks, and provenance.
 - Use the upstream tosu catalog service at `https://tosu.app/api.json`; vosu does not operate a website. Use `vosu/<version> (+https://github.com/shiruviaa/vosu)` as the first-party request identity.
-- Derive Windows textual and numeric executable-resource versions from the root Cargo package version, keeping both resource version fields consistent with 1.0.0.
+- Derive Windows textual and numeric executable-resource versions from the root Cargo package version, keeping both resource version fields consistent with the package.
 
 - Remove the report-only graphics stack; use Linux sysfs and Windows WMI hardware metadata, with explicit unavailable/unknown states.
 - Bound report log retention with visible truncation notices; isolate counter discovery, report capture, configuration persistence/reload, and ordered console output from async workers.
@@ -49,6 +50,7 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 ### Documentation
 
 - Move maintained Markdown from `openwiki/` to `docs/`, update live navigation and relative references, and document the reviewed-maintenance workflow without generator dependencies.
+- Record the final released-tosu comparison on native Windows and Linux, keeping whole-daemon resources separate from synthetic reader latency and preserving the unfavorable Linux precise-reader result. See the [measured protocol and limitations](docs/testing/benchmarks.md#released-tosu-comparison-2026-10-09); retain version 0.3.0 while dashboard rework is pending.
 
 
 ### Gameplay
