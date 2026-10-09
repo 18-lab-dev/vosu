@@ -126,7 +126,7 @@ fn immutable_projection_arc_identity_controls_regular_dirtiness() {
 }
 
 #[tokio::test]
-async fn pre_object_reset_advances_epoch_and_clears_hits_but_preserves_keys() {
+async fn pre_object_poll_preserves_hit_history_cursor_and_keys() {
     let mut bundle = StateBundle::new(ClientType::Stable, 16, Arc::new(EchoCalculation));
     bundle.global.status = GameState::Play.value() as i64;
     bundle.global.play_time = 50.0;
@@ -158,12 +158,12 @@ async fn pre_object_reset_advances_epoch_and_clears_hits_but_preserves_keys() {
     let committed = bundle
         .apply_regular(regular)
         .await
-        .expect("pre-object reset");
-    assert_eq!(committed.context.reset_epoch, 1);
+        .expect("pre-object poll");
+    assert_eq!(committed.context.reset_epoch, 0);
     assert_eq!(committed.publication.precise.key_overlay[0].count, 3);
     assert!(committed.publication.precise.key_overlay[0].is_pressed);
-    assert!(committed.publication.precise.hit_errors.all.is_empty());
-    assert_eq!(committed.publication.precise.committed_hit_error_index, 0);
+    assert_eq!(committed.publication.precise.hit_errors.all, [4.0]);
+    assert_eq!(committed.publication.precise.committed_hit_error_index, 1);
     assert_eq!(bundle.calculation_reset_generation, 0);
 }
 #[tokio::test]
@@ -211,9 +211,9 @@ async fn old_map_timing_is_ignored_until_new_map_metadata_is_accepted() {
     let accepted = bundle
         .apply_regular(accepted_metadata)
         .await
-        .expect("accepted new metadata timing applies");
-    assert_eq!(accepted.context.reset_epoch, 1);
-    assert!(bundle.gameplay.hit_errors.all.is_empty());
+        .expect("accepted metadata does not end the play attempt");
+    assert_eq!(accepted.context.reset_epoch, 0);
+    assert_eq!(bundle.gameplay.hit_errors.all, [7.0]);
 }
 
 #[tokio::test]
@@ -340,47 +340,133 @@ fn precise_transition_validates_keys_appends_suffix_once_and_preserves_hits_on_e
 }
 
 #[test]
-fn hit_event_list_rewind_replaces_accumulated_errors() {
-    let mut bundle = StateBundle::new(ClientType::Lazer, 3, Arc::new(EchoCalculation));
-    bundle.global.status = GameState::Play.value() as i64;
-    bundle.global.play_time = 24_301.0;
-    bundle.gameplay.hit_errors = press_hit_errors(vec![0.0, 0.0, -12.0]);
-    bundle.gameplay.total_hit_errors = -12.0;
-    bundle.gameplay.previous_hit_error_index = 10;
-    bundle.gameplay.unstable_rate = 15.0;
+fn hit_event_list_rewind_preserves_history_and_resumes_appending() {
+    for source in [ClientType::Stable, ClientType::Lazer] {
+        let mut bundle = StateBundle::new(source, 3, Arc::new(EchoCalculation));
+        bundle.global.status = GameState::Play.value() as i64;
+        bundle.global.play_time = 24_301.0;
+        bundle.gameplay.hit_errors = HitErrorArray {
+            all: vec![-12.0, 5.0],
+            press: vec![-12.0],
+            release: vec![5.0],
+        };
+        bundle.gameplay.total_hit_errors = -7.0;
+        bundle.gameplay.total_hit_error_squares = 169.0;
+        bundle.gameplay.previous_hit_error_index = 10;
+        bundle.gameplay.unstable_rate = 15.0;
 
-    let rewind = RawPreciseSnapshotBuilder::new(
-        PreciseCaptureContext::new(ClientType::Lazer, 3, 0, 0, default_calculated_mods(), 10, 0),
-        1,
-        Ok(ReadStatus::Ready(GlobalPrecise {
-            status: GameState::Play.value() as i64,
-            time: 24_301.0,
-        })),
-    )
-    .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(2, Vec::new()))))
-    .publish();
-    let rewound = bundle.apply_precise_inner(&rewind);
-    assert!(bundle.gameplay.hit_errors.all.is_empty());
-    assert!(bundle.gameplay.hit_errors.press.is_empty());
-    assert_eq!(bundle.gameplay.total_hit_errors, 0.0);
-    assert_eq!(bundle.gameplay.previous_hit_error_index, 2);
-    assert_eq!(bundle.gameplay.unstable_rate, 0.0);
-    assert_eq!(rewound.committed_hit_error_index, 2);
+        let rewind = RawPreciseSnapshotBuilder::new(
+            PreciseCaptureContext::new(source, 3, 0, 0, default_calculated_mods(), 10, 0),
+            1,
+            Ok(ReadStatus::Ready(GlobalPrecise {
+                status: GameState::Play.value() as i64,
+                time: 24_301.0,
+            })),
+        )
+        .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(2, Vec::new()))))
+        .publish();
+        let rewound = bundle.apply_precise_inner(&rewind);
+        assert_eq!(bundle.gameplay.hit_errors.all, [-12.0, 5.0]);
+        assert_eq!(bundle.gameplay.hit_errors.press, [-12.0]);
+        assert_eq!(bundle.gameplay.hit_errors.release, [5.0]);
+        assert_eq!(bundle.gameplay.total_hit_errors, -7.0);
+        assert_eq!(bundle.gameplay.total_hit_error_squares, 169.0);
+        assert_eq!(bundle.gameplay.unstable_rate, 15.0);
+        assert_eq!(rewound.committed_hit_error_index, 2);
 
-    let next = RawPreciseSnapshotBuilder::new(
-        PreciseCaptureContext::new(ClientType::Lazer, 3, 0, 0, default_calculated_mods(), 2, 1),
-        2,
-        Ok(ReadStatus::Ready(GlobalPrecise {
-            status: GameState::Play.value() as i64,
-            time: 24_400.0,
-        })),
-    )
-    .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(3, vec![-8.0]))))
-    .publish();
-    let appended = bundle.apply_precise_inner(&next);
-    assert_eq!(bundle.gameplay.hit_errors.all, [-8.0]);
-    assert_eq!(bundle.gameplay.previous_hit_error_index, 3);
-    assert_eq!(appended.committed_hit_error_index, 3);
+        let next = RawPreciseSnapshotBuilder::new(
+            PreciseCaptureContext::new(source, 3, 0, 0, default_calculated_mods(), 2, 1),
+            2,
+            Ok(ReadStatus::Ready(GlobalPrecise {
+                status: GameState::Play.value() as i64,
+                time: 24_400.0,
+            })),
+        )
+        .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(3, vec![-8.0]))))
+        .publish();
+        let appended = bundle.apply_precise_inner(&next);
+        assert_eq!(bundle.gameplay.hit_errors.all, [-12.0, 5.0, -8.0]);
+        assert_eq!(bundle.gameplay.hit_errors.press, [-12.0, -8.0]);
+        assert_eq!(bundle.gameplay.hit_errors.release, [5.0]);
+        assert_eq!(bundle.gameplay.total_hit_errors, -15.0);
+        assert_eq!(bundle.gameplay.total_hit_error_squares, 233.0);
+        assert_eq!(appended.committed_hit_error_index, 3);
+    }
+}
+
+#[tokio::test]
+async fn hit_history_appends_during_play_and_survives_pause_and_results_until_map_exit() {
+    for source in [ClientType::Stable, ClientType::Lazer] {
+        let mut bundle = StateBundle::new(source, 31, Arc::new(EchoCalculation));
+        bundle.global.status = GameState::Play.value() as i64;
+        bundle.global.play_time = 200.0;
+        bundle.gameplay.is_default_state = false;
+        bundle.menu.checksum = Some("early-hit".into());
+        bundle.beatmap.checksum = Some("early-hit".into());
+        bundle.beatmap.first_object_time = Some(400);
+        let unreadable = RawPreciseSnapshotBuilder::new(
+            PreciseCaptureContext::new(source, 31, 0, 0, default_calculated_mods(), 0, 0),
+            1,
+            Ok(ReadStatus::NotReady),
+        )
+        .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(1, vec![88.0]))))
+        .publish();
+        let unreadable = bundle.apply_precise(unreadable).await.unwrap();
+        assert!(unreadable.publication.precise.hit_errors.all.is_empty());
+        assert_eq!(unreadable.publication.precise.committed_hit_error_index, 0);
+
+        let early = RawPreciseSnapshotBuilder::new(
+            PreciseCaptureContext::new(source, 31, 0, 0, default_calculated_mods(), 0, 1),
+            2,
+            Ok(ReadStatus::Ready(GlobalPrecise {
+                status: GameState::Play.value() as i64,
+                time: 50.0,
+            })),
+        )
+        .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(1, vec![-4.0]))))
+        .publish();
+        let played = bundle.apply_precise(early).await.unwrap();
+        assert_eq!(played.publication.precise.hit_errors.all, [-4.0]);
+        assert_eq!(played.publication.precise.hit_errors.press, [-4.0]);
+
+        let mut paused_global = raw_global(GameState::Play, 50);
+        paused_global.paused = Some(true);
+        let paused = RawRegularSnapshotBuilder::new(
+            RegularCaptureContext::new(source, 31, 0, 1).with_base_precise_global_sequence(2),
+            Ok(ReadStatus::Ready(paused_global)),
+        )
+        .publish();
+        let paused = bundle.apply_regular(paused).await.unwrap();
+        assert_eq!(paused.publication.precise.hit_errors.all, [-4.0]);
+        assert_eq!(paused.publication.precise.committed_hit_error_index, 1);
+
+        let result = RawPreciseSnapshotBuilder::new(
+            PreciseCaptureContext::new(source, 31, 0, 0, default_calculated_mods(), 1, 2),
+            3,
+            Ok(ReadStatus::Ready(GlobalPrecise {
+                status: GameState::ResultScreen.value() as i64,
+                time: 1_000.0,
+            })),
+        )
+        .hit_errors(Ok(ReadStatus::Ready(hit_error_suffix(2, vec![99.0]))))
+        .publish();
+        let result = bundle.apply_precise(result).await.unwrap();
+        assert_eq!(result.publication.precise.hit_errors.all, [-4.0]);
+        assert_eq!(result.publication.precise.hit_errors.press, [-4.0]);
+        assert_eq!(result.publication.precise.committed_hit_error_index, 1);
+
+        let exit = RawRegularSnapshotBuilder::new(
+            RegularCaptureContext::new(source, 31, 0, 2).with_base_precise_global_sequence(3),
+            Ok(ReadStatus::Ready(raw_global(GameState::SelectPlay, 1_000))),
+        )
+        .publish();
+        let exit = bundle.apply_regular(exit).await.unwrap();
+        assert!(exit.publication.precise.hit_errors.all.is_empty());
+        assert!(exit.publication.precise.hit_errors.press.is_empty());
+        assert!(exit.publication.precise.hit_errors.release.is_empty());
+        assert_eq!(exit.publication.precise.committed_hit_error_index, 0);
+        assert_eq!(exit.publication.precise.total_hit_errors, 0.0);
+    }
 }
 
 #[test]

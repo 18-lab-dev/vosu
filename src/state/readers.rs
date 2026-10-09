@@ -222,15 +222,19 @@ impl<R: SynchronizedMemoryReader + 'static> PreciseSnapshotReader for SourcePrec
         self.reader
             .synchronize_precise(synchronization, context.mode);
         let global = self.reader.global_precise();
-        let (status, play_time) = match &global {
-            Ok(crate::process::ReadStatus::Ready(value)) => (value.status, value.time),
-            _ => (context.status, context.play_time),
+        let playing_time = match &global {
+            Ok(crate::process::ReadStatus::Ready(value))
+                if value.status == GameState::Play.value() as i64 =>
+            {
+                Some(value.time)
+            }
+            _ => None,
         };
         let capture = self.capture_context(context);
         let mut snapshot =
             RawPreciseSnapshotBuilder::new_shared(capture, produced_sequence, global);
-        if status == GameState::Play.value() as i64 && play_time >= 150.0 {
-            if self.enable_key_overlay.current() {
+        if let Some(play_time) = playing_time {
+            if play_time >= 150.0 && self.enable_key_overlay.current() {
                 snapshot = snapshot.key_overlay(self.reader.key_overlay(context.mode));
             }
             snapshot =

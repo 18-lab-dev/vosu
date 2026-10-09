@@ -136,14 +136,6 @@ impl StateBundle {
         self.precise_dirty = true;
     }
 
-    pub(super) fn reset_hit_epoch(&mut self) {
-        self.increment_epoch();
-        self.gameplay.reset_hit_errors();
-        self.stable_mania_hit_errors.reset();
-        self.gameplay.unstable_rate = 0.0;
-        self.precise_dirty = true;
-    }
-
     pub(super) fn mark_calculation_reset(&mut self) {
         self.calculation_reset_generation = self.calculation_reset_generation.saturating_add(1);
     }
@@ -412,7 +404,6 @@ impl StateBundle {
                     && self.beatmap.checksum == self.menu.checksum
                     && at_play_start
                 {
-                    self.reset_hit_epoch();
                     self.gameplay.reset_quick();
                 }
                 self.previous_time = self.global.play_time;
@@ -660,8 +651,10 @@ impl StateBundle {
             self.global.play_time = global.time;
             self.latest_precise_global_sequence = snapshot.produced_sequence();
         }
-        if self.global.status == GameState::Play.value() as i64 && self.global.play_time >= 150.0 {
-            if let Some(Ok(ReadStatus::Ready(keys))) = snapshot.key_overlay() {
+        if self.global.status == GameState::Play.value() as i64 {
+            if self.global.play_time >= 150.0
+                && let Some(Ok(ReadStatus::Ready(keys))) = snapshot.key_overlay()
+            {
                 let identities_match = self.gameplay.keypress_identity_mode
                     == Some(self.gameplay.keypress_mode)
                     && keys.len() == self.gameplay.keypresses.len()
@@ -734,13 +727,13 @@ impl StateBundle {
                 }
                 self.gameplay.is_key_overlay_default_state = false;
             }
-            if let Some(Ok(ReadStatus::Ready(errors))) = snapshot.hit_errors() {
-                if errors.index < self.gameplay.previous_hit_error_index {
-                    self.gameplay.reset_hit_errors();
-                    self.stable_mania_hit_errors.reset();
-                    self.gameplay.unstable_rate = 0.0;
-                    self.precise_dirty = true;
-                }
+            if let Some(Ok(ReadStatus::Ready(errors))) = snapshot.hit_errors()
+                && matches!(
+                    snapshot.global(),
+                    Ok(ReadStatus::Ready(global))
+                        if global.status == GameState::Play.value() as i64
+                )
+            {
                 let mut release_corrections: Vec<_> = errors.release_corrections.iter().collect();
                 release_corrections
                     .sort_by_key(|correction| std::cmp::Reverse(correction.press_offset));
