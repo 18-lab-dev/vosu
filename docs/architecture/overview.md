@@ -82,8 +82,10 @@ missing-bundle error. Maintainer preparation uses the .NET SDK and
 `src/runtime/offset_generator/client_runtime.rs` stages the helper entry points
 with the exact client's self-contained runtime pack and runtime configuration.
 It replaces the helper's build-runtime dependency entry with the client's
-managed/native runtime manifest, so framework-version upgrades do not require
-an end-user SDK or produce offsets measured under a different CLR. Entry points
+managed/native runtime manifest, including NuGet framework replacements and
+their transitive dependencies. Game application assemblies stay in the target's
+isolated load context. Framework-version upgrades therefore require neither
+an end-user SDK nor offsets measured under a different CLR. Entry points
 and host libraries use hard links or copies rather than symlinks: the .NET host
 canonicalizes the entry assembly path, and a symlink would select the original
 bundle's runtime. Linux links the remaining runtime files; Windows hard-links

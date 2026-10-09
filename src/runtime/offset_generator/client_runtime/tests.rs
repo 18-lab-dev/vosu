@@ -52,3 +52,51 @@ fn oversized_runtime_manifest_fails_before_parsing() {
     let error = read_manifest(&path).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
 }
+
+#[test]
+fn framework_replacements_include_transitive_dependencies_but_not_game_assemblies() {
+    let target = ".NETCoreApp,Version=v8.0";
+    let helper_pack = serde_json::json!({
+        "runtime": {"System.Text.Json.dll": {"assemblyVersion": "8.0.0.0"}}
+    });
+    let mut client_pack = serde_json::json!({
+        "runtime": {"System.Private.CoreLib.dll": {"assemblyVersion": "8.0.0.0"}}
+    });
+    let deps = serde_json::json!({
+        "targets": {target: {
+            "System.Text.Json/10.0.9": {
+                "runtime": {"lib/net8.0/System.Text.Json.dll": {"assemblyVersion": "10.0.0.0"}},
+                "dependencies": {"System.Text.Encodings.Web": "10.0.9"}
+            },
+            "System.Text.Encodings.Web/10.0.9": {
+                "runtime": {"lib/net8.0/System.Text.Encodings.Web.dll": {"assemblyVersion": "10.0.0.0"}},
+                "dependencies": {"System.IO.Pipelines": "10.0.9"}
+            },
+            "System.IO.Pipelines/10.0.9": {
+                "runtime": {"lib/net8.0/System.IO.Pipelines.dll": {"assemblyVersion": "10.0.0.0"}},
+                "dependencies": {"System.Text.Json": "10.0.9"}
+            },
+            "osu.Game/1.0.0": {
+                "runtime": {"osu.Game.dll": {"assemblyVersion": "1.0.0.0"}}
+            }
+        }}
+    });
+
+    include_framework_overrides(&deps, target, &helper_pack, &mut client_pack).unwrap();
+
+    for filename in [
+        "System.Text.Json.dll",
+        "System.Text.Encodings.Web.dll",
+        "System.IO.Pipelines.dll",
+    ] {
+        assert_eq!(
+            client_pack["runtime"][filename]["assemblyVersion"],
+            "10.0.0.0"
+        );
+    }
+    assert_eq!(
+        client_pack["runtime"]["System.Private.CoreLib.dll"]["assemblyVersion"],
+        "8.0.0.0"
+    );
+    assert!(client_pack["runtime"].get("osu.Game.dll").is_none());
+}
