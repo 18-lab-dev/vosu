@@ -305,7 +305,6 @@ probe was stopped; accepted campaigns used task-owned profiles and configuration
 directories. The migrated settings were retained rather than reconstructing
 unrecorded legacy-file bytes.
 
-
 ### Precise-reader microbenchmarks
 
 The autoresearch-style protocol uses seven alternating-order invocation pairs,
