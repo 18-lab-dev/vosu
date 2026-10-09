@@ -33,7 +33,6 @@ impl ProductionRouteDelegate {
             | Endpoint::Favicon
             | Endpoint::Root
             | Endpoint::Settings
-            | Endpoint::LocalOverlays
             | Endpoint::Available => self.page(endpoint, request).await,
             Endpoint::BackgroundImage
             | Endpoint::BeatmapBackground
@@ -59,30 +58,24 @@ impl ProductionRouteDelegate {
             .strip_prefix("/api/counters/search/")
             .unwrap_or_default();
         let query = percent_decode_once(raw).unwrap_or_default();
+        let Some(external) = counter_search_source(request.uri().query()) else {
+            return response(
+                StatusCode::BAD_REQUEST,
+                "text/html; charset=utf-8",
+                Bytes::from_static(b"Error: unknown search source"),
+            );
+        };
         let authority = request
             .headers()
             .get(header::HOST)
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        let external = request
-            .headers()
-            .get(header::REFERER)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| url::Url::parse(value).ok())
-            .is_some_and(|url| url.path() == "/available");
-        match self
-            .services
-            .page_data
-            .search_counters(&query, external, authority)
-            .await
-        {
-            Ok(body) => response(StatusCode::OK, "text/html; charset=utf-8", body),
-            Err(error) => response(
-                StatusCode::OK,
-                "text/html; charset=utf-8",
-                Bytes::from(error),
-            ),
-        }
+        counter_search_response(
+            self.services
+                .page_data
+                .search_counters(&query, external, authority)
+                .await,
+        )
     }
 
     async fn counter_download(&self, request: Request<Body>) -> Response {
@@ -253,7 +246,6 @@ impl ProductionRouteDelegate {
                 Endpoint::Favicon => PageLookup::Embedded(self.services.pages.favicon()),
                 Endpoint::Root
                 | Endpoint::Settings
-                | Endpoint::LocalOverlays
                 | Endpoint::Available => self.services.pages.lookup_get(
                     path,
                     request

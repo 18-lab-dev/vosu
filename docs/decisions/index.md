@@ -14,3 +14,4 @@ description: "Files and subdirectories in Decisions."
 - [Perform self-updates as durable transactions](0006-transactional-self-update.md) - Accepted decision to validate, record, recover, and commit self-updates through durable single-owner transactions.
 - [Adopt vosu as the sole product identity](0007-vosu-clean-cutover.md) - Accepted decision for a clean vosu identity cutover with one-time migration of supported legacy state.
 - [Keep in-game overlays outside vosu](0008-external-in-game-overlays.md) - Accepted decision to keep overlay rendering and UI ownership outside the native vosu telemetry daemon.
+- [Explicit counter search source and no local-overlay guide](0009-dashboard-search-and-local-overlay-guide.md) - Accepted decision to remove the /local-overlays page and select counter search results with an explicit source parameter instead of the Referer header.

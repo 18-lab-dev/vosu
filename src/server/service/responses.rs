@@ -363,6 +363,33 @@ fn decoded_query_value(query: &str, key: &str) -> Option<String> {
         .find_map(|(candidate, value)| (candidate == key).then(|| value.into_owned()))
 }
 
+/// Search mode is explicit: `source=available` searches the catalog and an
+/// absent source (or `installed`) searches local overlays. Any other value is
+/// rejected rather than silently falling back to one of the lists.
+fn counter_search_source(query: Option<&str>) -> Option<bool> {
+    match query
+        .and_then(|query| decoded_query_value(query, "source"))
+        .as_deref()
+    {
+        None | Some("installed") => Some(false),
+        Some("available") => Some(true),
+        Some(_) => None,
+    }
+}
+
+/// Search failures are dominated by catalog fetches, so they surface as 502
+/// with the same escaped `Error:` text the dynamic pages render.
+fn counter_search_response(result: Result<Bytes, String>) -> Response {
+    match result {
+        Ok(body) => response(StatusCode::OK, "text/html; charset=utf-8", body),
+        Err(error) => response(
+            StatusCode::BAD_GATEWAY,
+            "text/html; charset=utf-8",
+            Bytes::from(format!("Error: {}", crate::report::escape_html(&error))),
+        ),
+    }
+}
+
 fn namespaced_client_id(namespace: u64, local_id: u64) -> Option<u64> {
     local_id.checked_mul(8)?.checked_add(namespace)
 }

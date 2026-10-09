@@ -151,6 +151,29 @@
         );
     }
 
+    #[tokio::test]
+    async fn counter_search_source_is_explicit_and_errors_are_escaped_non_200() {
+        assert_eq!(counter_search_source(None), Some(false));
+        assert_eq!(counter_search_source(Some("source=installed")), Some(false));
+        assert_eq!(counter_search_source(Some("x=1&source=available")), Some(true));
+        assert_eq!(counter_search_source(Some("source=Available")), None);
+        assert_eq!(counter_search_source(Some("source=")), None);
+
+        let failed = counter_search_response(Err(r#"<img src=x onerror="alert(1)">"#.into()));
+        assert_eq!(failed.status(), StatusCode::BAD_GATEWAY);
+        let body = axum::body::to_bytes(failed.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            &body[..],
+            b"Error: &lt;img src=x onerror=&quot;alert(1)&quot;&gt;"
+        );
+        assert_eq!(
+            counter_search_response(Ok(Bytes::from_static(b"<article></article>"))).status(),
+            StatusCode::OK
+        );
+    }
+
     #[test]
     fn websocket_query_matches_url_search_params_and_client_ids_do_not_collide() {
         let plus = decoded_query_value("x=ignored&l=counter+name", "l").unwrap();
