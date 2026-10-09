@@ -164,6 +164,43 @@ Evidence is retained under `~/.cache/vosu-final-20261008-4r3azwf2/`.
 At this benchmark generation, the version remained **0.3.0**; no dashboard
 changes, publication, or push were performed.
 
+## Local 1.0.0 release validation — 2026-10-09
+
+The integrated code generation is
+`80ad900112e6498b0365ec4992f087a735f8222c`; the subsequent verification-record
+commit changes only this document.
+
+- Linux passed `cargo fmt --all -- --check`, workspace/all-target/all-feature
+  Clippy with warnings denied, and `cargo test --workspace --all-features
+  --locked`: 1,153 tests passed and three were ignored in the workspace run.
+- Windows MSVC cross-Clippy passed with `C_INCLUDE_PATH` unset, all workspace
+  targets/features enabled, `--locked`, and warnings denied.
+- All 156 live-parity tooling tests passed. The initial 300-second invocation
+  timed out; the complete verbose run finished in 374 seconds. This is tooling
+  evidence, not a new live-game parity capture.
+- The Linux production build used `--release --locked --no-default-features
+  --features linux-process-events --target x86_64-unknown-linux-gnu`.
+  Packaging and extraction passed for `vosu-linux-v1.0.0.zip`; the external
+  `vosu-release-smoke` test passed against its extracted executable.
+- A private headless browser exercised that packaged executable: installed
+  overlay search, an actual local-overlay iframe and enlarged preview, live
+  catalog search and a loaded remote-image preview, and settings persistence
+  across reload. The exact pre-fix JavaScript reproduced an incorrect success
+  status while another field remained rejected. The packaged fix retained the
+  error status after a valid save and cleared it only after correcting the
+  rejected field.
+- Provenance/package fixtures, all four release-packaging tests, and
+  `validate-tag --tag v1.0.0` passed. Maintained-document links were checked
+  separately after this record was added.
+
+Evidence artifacts are under `~/.cache/vosu-1.0.0-7drbi0ua/`. The Linux archive
+SHA-256 is `d7f31183fb4baec122f959ad3fb2aa095202c08553767d828fb9395dcf26a41b`;
+the extracted executable SHA-256 is
+`809b713d9cbd060d009eba2cd290bbc9451786dd6acbddabc2010788c38c3815`.
+The temporary dashboard daemon and browser tab were stopped after verification.
+No native Windows 1.0.0 execution, signed-resource validation, publication, push,
+or licensing clearance is claimed.
+
 
 ## Upstream 2359305 update evidence
 
