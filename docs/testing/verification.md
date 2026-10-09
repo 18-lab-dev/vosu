@@ -117,6 +117,54 @@ Native Windows execution remains unverified for this generation: `windows-vm sta
 - The actual `vosu-linux-v0.3.0.zip` contained exactly `vosu` and `LICENSE`. Its extracted executable SHA-256 was `54b3f0bac42393e9201b233d4e47f661985376f589db07d1f8e78c4826ab1a8a`; packaged-production smoke passed. An isolated launch logged `0.3.0`, served `/` with 200, rejected a report POST without `Origin` with 403, accepted its exact same-origin report POST with 200, and exited with 0 after native SIGINT.
 - Local package/runtime evidence is retained in `/home/user/.cache/vosu-final-20261008-4r3azwf2/`. Native Windows execution remains unavailable and unverified; the VM was not started. No dashboard changes, version bump, publication, or push were performed.
 
+### Final native benchmark generation — 2026-10-09
+
+The verified production implementation is committed as
+`230bde863b707c1ecac9b20bf9992290c20909e1`. The native builds used
+`f075408209ee98cdd780f3a4d386d2a9850f40b0` plus the client-runtime
+framework-dependency closure fix. Its changed Rust files have SHA-256:
+
+- `src/runtime/offset_generator/client_runtime.rs`:
+  `d164458a459ce43ad99c2cdf5491cf293af4254e2ef52aae12e47ba819f6d4b6`.
+- `src/runtime/offset_generator/client_runtime/tests.rs`:
+  `c185a8453a94972a4f12dffa536a769a904eacbc55e1efa5bda6b77459966d84`.
+
+The native Windows staging archive is
+`09978c173a44ab4c93f2767a4cffbfb391cd2155530fa9d7655dd9d9c0652551`;
+the staged Rust-file hashes matched the host after the final regression-test
+update. These source identities distinguish this generation from the earlier
+temporary-version and deferred-version builds above.
+
+- Release tooling passed maintained-document link validation (31 files),
+  provenance/package fixtures, all four release-license tests, all 156
+  live-parity tooling tests, and `validate-tag --tag v0.3.0`.
+  Tool-suite success is not a live-parity capture.
+- Linux passed `cargo fmt --all -- --check`, the four
+  `runtime::offset_generator::client_runtime` regression tests, workspace
+  Clippy across all targets/features with warnings denied, and
+  `cargo test --workspace --all-features --locked`, including doctests.
+  Windows MSVC cross-Clippy passed with `C_INCLUDE_PATH` unset.
+- Native Windows passed workspace/all-target/all-feature Clippy, the explicit
+  workspace lib/bin/test/example command, and workspace doctests, all with
+  `--locked --target x86_64-pc-windows-msvc`. The no-default-feature production
+  release build and native reader-benchmark compilation also passed.
+  `native-verification-closure.json` and `native-windows-final-logs/` retain
+  the commands, exit codes, and logs; compilation is not benchmark evidence.
+- The final Linux packaged executable has SHA-256
+  `a8b20a661d1fb0281d8ddd0fd397c2367d3845f1d08b9747392ffb56b81ce07a`.
+  `VOSU_RELEASE_SMOKE_BINARY=<packaged-executable> cargo test --locked
+  -p vosu-release-smoke --test release_smoke -- --ignored --nocapture`
+  passed its actual packaged-production policy and shutdown scenario.
+- The [released-tosu comparison](benchmarks.md#released-tosu-comparison-2026-10-09)
+  records native Windows and Linux VM resource/API runs and reader fixtures
+  separately. It excludes host-Linux attempts, preserves the unfavorable
+  guest reader timing, and does not certify live schema parity.
+
+Evidence is retained under `~/.cache/vosu-final-20261008-4r3azwf2/`.
+Version remains **0.3.0**; no dashboard changes, publication, or push were
+performed.
+
+
 ## Upstream 2359305 update evidence
 
 Local verification on 2026-09-29, against the working tree targeting upstream

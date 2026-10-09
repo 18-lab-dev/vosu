@@ -22,7 +22,7 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 - Make the daemon reload smoke verify rejected malformed TOML through unchanged served settings, untouched source bytes, and an unbound requested port, independently of whether osu! is running. Production last-good configuration and state-readiness behavior is unchanged.
 - Split maintained code into domain-focused modules capped at 1,000 lines, preserving API and calculator behavior; remove tracked offset-tool build output while retaining source, locks, and provenance.
 - Use the upstream tosu catalog service at `https://tosu.app/api.json`; vosu does not operate a website. Use `vosu/<version> (+https://github.com/shiruviaa/vosu)` as the first-party request identity.
-- Derive Windows textual and numeric executable-resource versions from the root Cargo package version, keeping both resource version fields consistent with 1.0.0.
+- Derive Windows textual and numeric executable-resource versions from the root Cargo package version, keeping both resource version fields consistent with the package.
 
 - Remove the report-only graphics stack; use Linux sysfs and Windows WMI hardware metadata, with explicit unavailable/unknown states.
 - Bound report log retention with visible truncation notices; isolate counter discovery, report capture, configuration persistence/reload, and ordered console output from async workers.
@@ -50,6 +50,7 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 ### Documentation
 
 - Move maintained Markdown from `openwiki/` to `docs/`, update live navigation and relative references, and document the reviewed-maintenance workflow without generator dependencies.
+- Record the final released-tosu comparison on native Windows and the Linux VM, keeping whole-daemon resources separate from synthetic reader latency and preserving the unfavorable Linux VM precise-reader result. See the [measured protocol and limitations](docs/testing/benchmarks.md#released-tosu-comparison-2026-10-09); retain version 0.3.0 while dashboard rework is pending.
 
 
 ### Gameplay

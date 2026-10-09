@@ -159,7 +159,7 @@ cargo bench --locked --no-default-features --package vosu --target x86_64-pc-win
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench memory_reader_bench
 ```
 
-## Scope
+## Scope of the earlier synthetic results
 
 - Synthetic fixtures, not live-game or whole-daemon performance. Raw snapshots
   discard reads from zero-filled fixtures; the deterministic reader validates
@@ -188,3 +188,166 @@ The evidence is `remediation-7c0j_0ys/clock/stable-minimum-skew-report.json`
 under the retained verification directory named there. This capture still
 fails one-to-one HTTP reference coverage; cadence measurements do not establish
 full parity, timer deadline guarantees, or reduced CPU usage.
+
+## Released tosu comparison (2026-10-09)
+
+This campaign compares vosu **0.3.0** with the released tosu **4.26.2**
+package/source at `b21b4526d8db9ce124f5a8bf475ef5421837f5b7`.
+It does not compare against the former optimization base. Windows ran before
+Linux; neither platform's measurements stand in for the other.
+
+The measured vosu implementation is committed as
+`230bde863b707c1ecac9b20bf9992290c20909e1`. The builds used
+`f075408209ee98cdd780f3a4d386d2a9850f40b0` plus the client-runtime
+dependency-closure fix. The measured production executables have SHA-256:
+
+- Windows: `e8664104de180d98bfea29e437b37de61f78fc32b86a65c75c160ca4be2d304e`.
+- Linux: `a8b20a661d1fb0281d8ddd0fd397c2367d3845f1d08b9747392ffb56b81ce07a`.
+
+Retained local evidence is under
+`~/.cache/vosu-final-20261008-4r3azwf2/`. Result files, configurations,
+per-invocation logs, source/runtime manifests, and executable hashes distinguish
+the accepted runs from rejected startup, workload, and stale-connection trials.
+These are local observations, not hosted CI results or live-parity certification.
+
+### Native Windows whole-daemon resources
+
+Both production daemons read the same offline lazer **2026.726.0** client,
+playing the six-minute original deterministic beatmap
+`fa80da4663f37aaba8077be9ad459718` with Autoplay, osu! mode, and rate 1.
+Regular/precise polling are 150/10 ms; PP calculation and key overlay are on.
+Each mode has three simultaneous 45-second pairs, each after 30 seconds of
+warm-up; API-worker submission order alternates vosu → tosu → vosu.
+Background mode probes the API only at the window boundaries. Consumer mode
+requests `/json/v2` at 10 Hz per daemon.
+
+CPU is accumulated process-tree user/system time divided by elapsed wall
+time, as a percentage of one logical core. Memory is sampled at 1 Hz.
+The table reduces the three per-window medians; ranges span those medians.
+MiB is bytes / 1,048,576; reductions use unrounded values.
+
+| Mode / metric | Released tosu median (range) | vosu median (range) | vosu reduction |
+| --- | ---: | ---: | ---: |
+| Background CPU, one core | 2.708% (2.604–2.917) | 1.597% (1.493–1.701) | 41.02% |
+| Background working set | 124.867 MiB (124.664–125.547) | 91.219 MiB (90.920–91.273) | 26.95% |
+| Background private committed | 116.840 MiB (116.256–117.215) | 7.836 MiB (6.904–7.914) | 93.29% |
+| 10 Hz consumer CPU, one core | 3.265% (3.229–3.368) | 1.667% (1.389–1.771) | 48.95% |
+| 10 Hz consumer working set | 131.027 MiB (130.789–131.092) | 90.932 MiB (90.855–91.223) | 30.60% |
+| 10 Hz consumer private committed | 123.535 MiB (122.484–123.539) | 7.090 MiB (7.062–7.926) | 94.26% |
+
+All six pairs passed executable/PID/start-time, listener ownership,
+client/build/map/modifier, play-clock progression, paired-clock skew, and API
+admission checks. There were no API errors in the accepted files
+`windows-play-background-fresh-sockets.json` and
+`windows-play-consumer-final.json`; their matching `*-config.json` files
+retain the workload identities. One-second tree sampling can miss transient
+children. Windows private committed bytes are **not** Linux private resident
+memory, and these resource observations do not establish schema parity.
+
+### Linux VM whole-daemon resources
+
+Both production daemons read the same offline lazer **2026.804.2** client
+with the same six-minute beatmap checksum, osu! mode, Autoplay, and rate 1.
+Polling and calculation settings match the Windows campaign; the client build
+does not, so compare products within a platform, not timings between platforms.
+Background and 10 Hz `/json/v2` consumer modes each have three simultaneous
+45-second pairs after 30-second warm-ups, with the same alternating API-worker
+submission order.
+
+CPU is process-tree user/system time divided by wall time, as a percentage of
+one logical core. Each window contains 46 one-second resource observations.
+Memory is the arithmetic mean within each window; the table reports the median
+and range across the three window means. CPU follows the same three-window
+reduction. MiB is bytes / 1,048,576; percentage reductions use unrounded values.
+
+| Mode / metric | Released tosu median (range) | vosu median (range) | vosu reduction |
+| --- | ---: | ---: | ---: |
+| Background CPU, one core | 1.535% (1.490–1.580) | 1.068% (1.067–1.090) | 30.41% |
+| Background RSS | 244.091 MiB (243.129–249.316) | 85.820 MiB (85.820–85.879) | 64.84% |
+| Background private resident | 234.353 MiB (233.390–239.578) | 82.137 MiB (82.137–82.195) | 64.95% |
+| 10 Hz consumer CPU, one core | 2.091% (2.024–2.091) | 1.179% (1.135–1.246) | 43.63% |
+| 10 Hz consumer RSS | 257.006 MiB (253.348–257.357) | 86.032 MiB (86.023–86.063) | 66.53% |
+| 10 Hz consumer private resident | 247.268 MiB (243.609–247.618) | 82.348 MiB (82.340–82.380) | 66.70% |
+
+All six pairs passed the executable/PID/start-time, listener ownership,
+client/build/map/modifier, play-clock progression, paired-clock skew, and API
+checks. Background windows contain two API probes per product; consumer
+windows contain 451 requests per product. All accepted requests succeeded.
+CPU deltas, memory means, identity stability, workload fields, and paired
+clock skew were independently recomputed from the retained observations.
+
+The task-owned process ancestry is vosu → tosu → lazer, enabling ordinary
+same-UID reads under Yama `ptrace_scope=1` without capabilities or policy
+changes. Resource accounting excludes tosu's identity-verified subtree from
+vosu and the game's identity-verified subtree from tosu. The launcher/client
+are not charged to either daemon. vosu selected **CN_PROC** after its
+unprivileged eBPF probe failed.
+
+RSS sums each charged process's `smaps_rollup` RSS; shared pages can be
+double-counted. Private resident memory sums `Private_Clean`, `Private_Dirty`,
+and `Private_Hugetlb`, not Windows private committed bytes. One-second tree
+sampling can miss transient children, and kernel tick quantization can
+dominate short CPU windows. API admission is not live schema parity.
+
+Evidence is in `linux-vm-resources/`: `linux-vm-play-background.json`,
+`linux-vm-play-consumer.json`, shared `resources-config.json`, platform/input
+`resources-metadata.json`, the launcher, settings, and daemon logs. The guest
+has eight vCPUs, kernel **7.1.4-zen1-1-zen**, glibc **2.43**, Python **3.14.6**,
+and psutil **7.2.2**. The game uses software OpenGL on a task-owned
+labwc/Xwayland desktop/profile; no guest governor files were exposed.
+Campaign-start load averages were **3.662 / 3.388 / 2.107**. No CPU isolation,
+privilege elevation, or system-policy changes were used. Host-Linux gameplay
+attempts are excluded.
+
+An excluded guest `--version` probe started the daemon and ran its ordinary
+legacy-settings migration in the default guest configuration directory. That
+probe was stopped; accepted campaigns used task-owned profiles and configuration
+directories. The migrated settings were retained rather than reconstructing
+unrecorded legacy-file bytes.
+
+
+### Precise-reader microbenchmarks
+
+The autoresearch-style protocol uses seven alternating-order invocation pairs,
+2,000 warm-up cycles, then nine samples of 1,000 cycles per invocation.
+Each invocation reports the median sample mean; the table reports the median
+and range across the seven invocations. All 28 invocations exited successfully.
+
+The timed fixture is a resolved lazer precise state/clock, 18 keys, and an
+empty hit-error list in 1 MiB of synthetic memory. Setup is excluded. The
+released reader requires direct initialization of its private resolved screen
+and game-base pointers; it has no `synchronize_precise` method. Its key-overlay
+method has no mode argument. Neither adaptation replaces its production
+decoding or native process-read methods.
+
+| Platform | Released tosu ns/cycle, median (range) | vosu ns/cycle, median (range) | tosu / vosu latency |
+| --- | ---: | ---: | ---: |
+| Native Windows | 74,553.70 (73,425.90–77,495.40) | 19,571.50 (19,375.40–21,263.80) | 3.810 |
+| Linux VM | 31,442.79 (30,537.31–32,128.88) | 109,665.60 (105,448.30–111,623.12) | 0.287 |
+
+**The Linux VM precise-reader result is unfavorable:** vosu took 3.49 times as
+long in this fixture. Do not infer a cross-platform reader speedup from the
+Windows result or generalize either fixture timing to whole-daemon CPU.
+
+Tosu reports 156 typed native reads and 1,020 requested bytes per cycle;
+vosu reports 24 exact plus two batched calls and 912 requested bytes.
+Tosu counts wrapped production typed methods during timing; vosu's accounting
+uses a separate counting reader, while its timed path reads native self-process
+memory. Counts are instrumented API calls, not syscall/allocation measurements.
+Tosu asserts each key's values and the empty error array; the retained vosu
+benchmark asserts readiness, time, key count, and error index, not all of
+those same values. Fixture intent is aligned, but assertion and instrumentation
+coverage differ.
+
+Stable idle/key-overlay timings also appear in the vosu output. They use
+slice-memory decoder fixtures and are excluded from this native precise-reader
+comparison.
+
+Windows evidence: `readers-windows-closure/results.json` and seven numbered
+log pairs. Linux VM evidence: `readers-linux-vm/manifest.json` and its 14
+stdout/stderr logs. The VM manifest retains Node **24.14.0**, Rust **1.96.1**,
+kernel **7.1.4-zen1-1-zen**, QEMU Q35 identification, eight vCPUs, glibc
+**2.43**, and campaign-start load averages **0.062 / 0.015 / 0.004**.
+No guest CPU-governor files were exposed. No CPU isolation, privilege
+elevation, or system-policy changes were used. Host-Linux measurements in
+`readers-linux-final/` and rejected host gameplay attempts are excluded.
