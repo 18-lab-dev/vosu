@@ -11,6 +11,8 @@ use std::{
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
+mod client_runtime;
+
 const GENERATOR_RUNTIME: &str = "net8.0-8.0.29";
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
 const MAX_EXPANDED: u64 = 512 * 1024 * 1024;
@@ -325,12 +327,20 @@ impl crate::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGenerator {
             let work = tempfile::Builder::new()
                 .prefix(".generation-")
                 .tempdir_in(payload.parent().expect("payload has cache parent"))?;
+            let staged = tokio::task::spawn_blocking({
+                let payload = payload.clone();
+                let assembly = assembly.clone();
+                let work = work.path().to_path_buf();
+                move || client_runtime::stage(&payload, &assembly, &work)
+            })
+            .await
+            .map_err(io::Error::other)??;
             let template = work.path().join("template.json");
             let generated = work.path().join("offsets.json");
             let asset = crate::assets::DaemonAssets::get("offsets.json")
                 .ok_or_else(|| io::Error::other("embedded offsets template is missing"))?;
             fs::write(&template, asset.data.as_ref())?;
-            let mut cmd = generator_command(&payload.join(GENERATOR));
+            let mut cmd = generator_command(&staged.join(GENERATOR));
             cmd.args(["--assemblies-only", "--assembly-dir"])
                 .arg(&assembly)
                 .args(["--template"])
@@ -344,7 +354,7 @@ impl crate::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGenerator {
                     String::from_utf8_lossy(&result.stderr).trim()
                 )));
             }
-            let mut sig = generator_command(&payload.join(TARGET_HOST));
+            let mut sig = generator_command(&staged.join(TARGET_HOST));
             sig.args(["--game-base-signature", "--assembly-dir"])
                 .arg(&assembly);
             let signature = output(&mut sig, cancel).await?;
