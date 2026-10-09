@@ -96,7 +96,7 @@ When a change crosses [runtime boundaries](../architecture/overview.md), run the
 
 ## Release preparation checks — 2026-10-08
 
-The initial checks below exercised a temporary, uncommitted 1.0.0 working tree, including the existing client-runtime offset-generation and hit-error epoch fixes. The version bump was subsequently deferred for dashboard rework; the maintained source version remains **0.3.0**. These checks are not evidence of publication, signing, or a new live osu! parity capture.
+The initial checks below exercised a temporary, uncommitted 1.0.0 working tree, including the existing client-runtime offset-generation and hit-error epoch fixes. The version bump was subsequently deferred for dashboard rework; the source version at that time remained **0.3.0**. These checks are not evidence of publication, signing, or a new live osu! parity capture.
 
 - `python scripts/check-doc-links.py` passed for 31 maintained Markdown files after the `docs/` cutover. A disposable CLI probe rejected a missing link inside the maintained documentation tree and passed once its target existed.
 - `python scripts/check-provenance.py --refresh-license-hash --refresh-dependency-inventory --package-fixtures` passed. Cargo regenerated the root package lock entry as 1.0.0; all 362 third-party dependency identities and license-inventory package records remained unchanged. The four release-license tests passed, and `v1.0.0` tag validation matched the manifest.
@@ -161,8 +161,8 @@ temporary-version and deferred-version builds above.
   guest reader timing, and does not certify live schema parity.
 
 Evidence is retained under `~/.cache/vosu-final-20261008-4r3azwf2/`.
-Version remains **0.3.0**; no dashboard changes, publication, or push were
-performed.
+At this benchmark generation, the version remained **0.3.0**; no dashboard
+changes, publication, or push were performed.
 
 
 ## Upstream 2359305 update evidence

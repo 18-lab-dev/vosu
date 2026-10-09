@@ -1,8 +1,14 @@
 # Changelog
 
-All notable user-visible changes to vosu are documented here. The current 0.3.0 section is unreleased; older sections are retained release history and use the product names and artifact names that were current at the time.
+All notable user-visible changes to vosu are documented here. Version 1.0.0 is prepared locally but not yet published; older sections are retained release history and use the product names and artifact names that were current at the time.
 
-## 0.3.0 - Unreleased
+## 1.0.0 — 2026-10-09
+
+### Dashboard
+
+- Move navigation and search into the top bar; remove the retired local-overlay guide and schema builder.
+- Show larger installed cards with enlargeable live previews, and list catalog overlays one per row with lazy-loaded preview images and their metadata.
+- Autosave runtime settings with interval/port validation; preserve the unsaved/error status until every rejected field is corrected.
 
 ### Security
 
@@ -50,7 +56,7 @@ All notable user-visible changes to vosu are documented here. The current 0.3.0 
 ### Documentation
 
 - Move maintained Markdown from `openwiki/` to `docs/`, update live navigation and relative references, and document the reviewed-maintenance workflow without generator dependencies.
-- Record the final released-tosu comparison on native Windows and the Linux VM, keeping whole-daemon resources separate from synthetic reader latency and preserving the unfavorable Linux VM precise-reader result. See the [measured protocol and limitations](docs/testing/benchmarks.md#released-tosu-comparison-2026-10-09); retain version 0.3.0 while dashboard rework is pending.
+- Record the final released-tosu comparison on native Windows and the Linux VM, keeping whole-daemon resources separate from synthetic reader latency and preserving the unfavorable Linux VM precise-reader result. See the [measured protocol and limitations](docs/testing/benchmarks.md#released-tosu-comparison-2026-10-09); those measurements describe the recorded 0.3.0 generation, not the final 1.0.0 dashboard build.
 
 
 ### Gameplay

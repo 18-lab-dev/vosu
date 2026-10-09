@@ -17,7 +17,7 @@ SCHEMAS = {
 }
 PINNED_SOURCE_REVISION = "2359305a63f2aaebb201bc8d2eee58177f52590e"
 PINNED_SOURCE_VERSION = "4.26.2"
-PINNED_VOSU_VERSION = "0.3.0"
+PINNED_VOSU_VERSION = "1.0.0"
 SOURCE_BUILD_LABEL = (
     f"upstream-tosu-source-v{PINNED_SOURCE_VERSION}@{PINNED_SOURCE_REVISION[:12]}"
 )
@@ -330,7 +330,7 @@ def _within_one_ulp(left: float, right: float) -> bool:
 
 
 def _is_vosu_extension(schema: str, parts: tuple[str, ...]) -> bool:
-    """Exact additive API paths documented in CHANGELOG 0.3.0, not wildcards."""
+    """Exact additive API paths documented in CHANGELOG 1.0.0, not wildcards."""
     if schema == "precise":
         if len(parts) >= 3 and parts[0] == "tourney" and parts[1].isdigit():
             parts = parts[2:]

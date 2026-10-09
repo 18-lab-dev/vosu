@@ -35,7 +35,7 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 
 ### Portable archive
 
-The current source version is **0.3.0**. When its matching [GitHub release](https://github.com/shiruviaa/vosu/releases) is published, download `vosu-linux-v0.3.0.zip` or `vosu-windows-v0.3.0.zip`, then:
+The current source version is **1.0.0**. When its matching [GitHub release](https://github.com/shiruviaa/vosu/releases) is published, download `vosu-linux-v1.0.0.zip` or `vosu-windows-v1.0.0.zip`, then:
 
 1. Extract the complete archive into a writable directory. Its root contains `vosu` or `vosu.exe`, plus `LICENSE`.
 2. On Linux, restore the executable bit if your archive tool removed it: `chmod +x vosu`.

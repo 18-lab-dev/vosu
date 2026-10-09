@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 
 [package]
 name = "vosu"
-version = "0.3.0"
+version = "1.0.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
