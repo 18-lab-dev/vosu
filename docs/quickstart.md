@@ -8,7 +8,9 @@ tags: [vosu, rust, documentation, onboarding]
 
 # vosu maintainer quickstart
 
-`vosu` is a single native Rust daemon for osu! telemetry, counters, reports, live calculations, and compatible APIs. It discovers osu! stable/lazer processes, reads memory without modifying the client, reduces samples into coherent immutable state, and serves dashboard, HTTP, and WebSocket consumers. The dashboard shows installed counters as equal-size cards with contained previews and a copy-URL bar, supports persistent pinning with menu reordering, in-place Installed search that keeps live previews running, autosaving searchable runtime settings, Shift-click URL opening, and `/` search focus (`assets/server/homepage.js`). The workspace targets Rust 1.96.1 and contains the production binary, the `vosu-pp` Rust calculation facade with its `rosu-map-api` and `rosu-pp-api` workspace members, a test-only harness, and the isolated `vosu-release-smoke` packaged-executable checks (`Cargo.toml`).
+`vosu` is a single native Rust daemon for osu! telemetry, counters, reports, live calculations, and compatible APIs. It discovers osu! stable/lazer processes, reads memory without modifying the client, reduces samples into coherent immutable state, and serves dashboard, HTTP, and WebSocket consumers.
+
+To set up a checkout, build, run, and run the checks, follow [CONTRIBUTING.md](../CONTRIBUTING.md). This page maps the maintainer documentation.
 
 ## Start here
 
@@ -25,20 +27,9 @@ The repository’s detailed source documentation remains authoritative: [README.
 
 `docs/` is the maintained, ordinary reviewed Markdown tree. Update affected API/configuration/runtime contracts in the implementation PR, architecture when boundaries change, and benchmark notes only with reproducible measurements. Preserve dated experiments and provenance as historical evidence. No generator, scheduled inference, or post-merge rewrite is required. Optional AI assistance should address a bounded task and its diff must be reviewed.
 
-## Build and run
+## Compatibility hotspots
 
-Use the pinned toolchain and lockfile:
-
-```sh
-cargo build --locked
-cargo run --locked
-```
-
-The default listener is `127.0.0.1:24050`; the dashboard is `/`. Linux production builds use `--release --locked --no-default-features --features linux-process-events`; Windows uses `--release --locked --no-default-features`, each with its native target. Ordinary daemon builds require no Node.js, Electron, .NET, or C# installation: dashboard and baseline offsets are vendored, while release binaries carry the self-contained generator payload for exact-instance local generation when needed.
-
-## Recent direction
-
-Recent changes explain current hotspots: the dashboard persists pinned counter order; compatibility payloads preserve upstream `hitErrorArray`/`hitErrors` arrays and add sibling `pressHitErrors` and `releaseHitErrors`; and v2 parsed beatmap stats expose `hitWindow` with optional numeric judgement fields `miss`, `meh`, `ok`, `good`, `great`, and `perfect`. Catch publishes all six fields as zero, while `stars.hitWindow` is absent. Earlier changes added v2 selected-field subscriptions, WebSocket close handshakes, precise keypress state/timestamps, external consumers, and the precise input-validation harness. Treat these as compatibility-sensitive areas and use the targeted verification in [Testing and verification](testing/verification.md).
+API payloads are the most compatibility-sensitive area: upstream `hitErrorArray`/`hitErrors` arrays sit beside the additive `pressHitErrors` and `releaseHitErrors` siblings, v2 parsed beatmap stats expose `hitWindow` judgement fields, and v2 selected-field subscriptions, WebSocket close handshakes, and precise keypress state are covered by fixtures. Use the targeted verification in [Testing and verification](testing/verification.md) when touching them.
 
 ## Documentation conventions
 

@@ -1,8 +1,8 @@
 //! Deterministic stable/lazer decoder microbenchmark.
 //!
-//! Run with `./tools/autoresearch/memory-reader-bench.sh`. The repository-root
-//! `autoresearch.sh` is reserved for the canonical CN_PROC/eBPF process-event
-//! experiment.
+//! Run with `./tools/autoresearch/memory-reader-bench.sh`. The CN_PROC/eBPF
+//! process-event experiment lives in
+//! `tools/autoresearch/process-events-bench.sh`.
 //!
 //! The primary timing is a successful native self-process lazer precise capture
 //! with 18 key inputs. The stable timings use successful x86 object graphs over

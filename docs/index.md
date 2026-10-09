@@ -6,7 +6,7 @@ description: "Reviewed Markdown documentation, architecture, operations, and per
 
 # Maintainer documentation
 
-Start with the [quickstart](quickstart.md); the [README](../README.md) is the user-facing contract. Update affected documentation in the implementation PR and retain dated evidence rather than rewriting it as current verification.
+Set up a checkout with [CONTRIBUTING.md](../CONTRIBUTING.md), then start with the [quickstart](quickstart.md); the [README](../README.md) is the user-facing contract. Update affected documentation in the implementation PR and retain dated evidence rather than rewriting it as current verification.
 
 ## Current contracts
 

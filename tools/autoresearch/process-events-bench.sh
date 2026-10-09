@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# rsync below publishes the working tree relative to the repository root.
+cd "$(dirname -- "${BASH_SOURCE[0]}")/../.."
+
 readonly REMOTE_HOST='vosu@127.0.0.1'
 readonly REMOTE_PORT='2222'
 readonly REMOTE_DIR='/home/vosu/vosu-process-events'

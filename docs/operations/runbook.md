@@ -12,11 +12,11 @@ tags: [operations, runbook, security, release, troubleshooting]
 
 Update ordinary Markdown in `docs/` in the PR that changes the documented behavior. Review affected contracts and architecture; preserve dated benchmark and experiment evidence rather than rewriting historical results. Documentation maintenance requires no recurring inference or whole-tree generation.
 
-Documentation and checked-in agent configuration changes still run the documentation-link, provenance, and release-license checks and publish `CI required`; they do not alone require Rust compilation or native Windows verification. Code, package metadata, and workflow changes retain the applicable native gates.
+Documentation-only changes still run the documentation-link, provenance, and release-license checks and publish `CI required`; they do not alone require Rust compilation or native Windows verification. Code, package metadata, and workflow changes retain the applicable native gates.
 
 ## Launch checklist
 
-- Use Rust 1.96.1 and `--locked` for source builds.
+- Set up a development checkout with [CONTRIBUTING.md](../../CONTRIBUTING.md); source builds use Rust 1.96.1 and `--locked`.
 - Run `cargo run --locked` for local development; Linux process-event backends remain enabled by default.
 - Run the daemon as the same desktop user as osu!.
 - Confirm `127.0.0.1:24050` is reachable before investigating API readiness.
@@ -39,7 +39,7 @@ POLL_RATE = 150.0
 
 Startup precedence is `vosu.toml > vosu.env > tosu.env > defaults`. The two `.env` files are migration inputs only: vosu writes canonical TOML atomically first and removes readable legacy files only after successful replacement. A malformed TOML file leaves the prior runtime configuration active during watch reload; at startup, malformed input leaves all sources untouched.
 
-The dashboard’s installed cards persist pin state in browser local storage, keep pinned cards first, and support drag reordering. Shift-click a counter URL to open it in a new window, or press `/` outside an editable control to focus search. If catalog retrieval fails, the Available page can show an error while retaining the locally discovered installed count.
+The dashboard’s installed cards persist pin state in browser local storage, keep pinned cards first, and reorder pins with **Move pin earlier/later** in each card's **⋯** menu. Shift-click a counter URL to open it in a new window, or press `/` outside an editable control to focus search. If catalog retrieval fails, the Available page can show an error while retaining the locally discovered installed count.
 
 ## Platform access
 

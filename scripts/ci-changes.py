@@ -10,7 +10,7 @@ def classify(paths):
     code = False
     native = False
     for path in paths:
-        if path.endswith(".md") or path.startswith(("docs/", ".agents/", ".claude/")) or path in {".gitignore", "skills-lock.json", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE"}:
+        if path.endswith(".md") or path.startswith("docs/") or path in {".gitignore", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE"}:
             continue
         code = True
         # Pure schema/calculator changes retain the Windows cross-check. Everything

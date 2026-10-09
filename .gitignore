@@ -31,14 +31,11 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Personal agent settings
+.claude/settings.local.json
+
 # Generated development-tool output
 .cargo-ok
 /tools/oracle/reference/lazer-calculator/lib/native/dist/
 /tools/lazer-offset-*/bin/
 /tools/lazer-offset-*/obj/
-
-# Local Windows verification output
-/windows-ci-current*.log
-/windows-ci-current*-result.txt
-/windows-negative-release-guard.log
-/updater_visibility_probe

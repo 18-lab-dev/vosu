@@ -246,7 +246,7 @@ Including idle, the JSON totals are 285 scans for polling and 12 scans each for 
 
 ### Workload and interpretation
 
-`./autoresearch.sh` is the canonical entrypoint. It synchronizes the current source into the existing guest, builds the release `process_event_bench` binary with `linux-process-events`, grants only `CAP_BPF`, `CAP_PERFMON`, and `CAP_SYS_RESOURCE` to that benchmark binary, and executes three CN_PROC samples followed by three eBPF samples. Each sample uses a one-second idle phase and a fixed ten-second lifecycle phase with:
+`tools/autoresearch/process-events-bench.sh` (run then as the repository-root `./autoresearch.sh`) is the canonical entrypoint. It synchronizes the current source into the existing guest, builds the release `process_event_bench` binary with `linux-process-events`, grants only `CAP_BPF`, `CAP_PERFMON`, and `CAP_SYS_RESOURCE` to that benchmark binary, and executes three CN_PROC samples followed by three eBPF samples. Each sample uses a one-second idle phase and a fixed ten-second lifecycle phase with:
 
 - 16 direct exec add/remove iterations;
 - 16 generic-to-candidate `PR_SET_NAME` rename iterations;

@@ -10,11 +10,11 @@
 - A branding change is complete only when case-sensitive and case-insensitive scans find no unexplained old-brand occurrences in live source, package metadata, lockfile package names, commands, configuration, CI, packaging, release paths, tests, or current documentation.
 - This operational map describes the post-cutover tree. Any old spelling not explicitly identified as migration, upstream, parity, provenance, or history is a defect.
 - This repository ships the native Rust daemon, not the former Electron/asdf-overlay application. Do not add Node, Electron, .NET, or C# runtime requirements to the daemon.
-- Read [README.md](README.md) for the user-facing contract. Use the [architecture overview](docs/architecture/overview.md), [decision records](docs/decisions/index.md), and [benchmarks](docs/testing/benchmarks.md) for detail; keep this file operational.
+- Read [README.md](README.md) for the user-facing contract and [CONTRIBUTING.md](CONTRIBUTING.md) for the human setup path. Use the [architecture overview](docs/architecture/overview.md), [decision records](docs/decisions/index.md), and [benchmarks](docs/testing/benchmarks.md) for detail; keep this file operational.
 
 ## Toolchain and commands
 
-Use the pinned Rust 1.96.1 toolchain from `rust-toolchain.toml`, including `rustfmt`, `clippy`, and both native targets. Windows builds require MSVC and the Windows SDK; Linux builds require a GNU C toolchain, Clang, pkg-config, and libelf/zlib development files for the process-event backends. Keep `--locked`. Linux releases explicitly enable `linux-process-events`; Windows releases use no default features. GPU driver development libraries are not required.
+Use the pinned Rust 1.96.1 toolchain from `rust-toolchain.toml`, including `rustfmt`, `clippy`, and both native targets. Windows builds require MSVC and the Windows SDK; Linux builds require a GNU C toolchain, Clang, pkg-config, and libelf, zlib, and libbpf development files for the process-event backends (per-distribution packages are in CONTRIBUTING.md). Keep `--locked`. Linux releases explicitly enable `linux-process-events`; Windows releases use no default features. GPU driver development libraries are not required.
 
 ```sh
 # Local debug build/run
