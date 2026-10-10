@@ -46,6 +46,10 @@ jobs:
     env:
       XWIN_ARCH: x86_64
       XWIN_CACHE_DIR: ${{ github.workspace }}/.xwin-cache
+      # With full debuginfo, the all-target test build (~6.6 GB fresh) plus the
+      # restored artifact cache ran ld out of space for its mmapped output
+      # (SIGBUS). Line tables keep panic backtraces readable at ~3.8 GB.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -79,8 +83,9 @@ jobs:
         with:
           path: target
           # Weekly generations bound archive churn while refreshing workspace artifacts.
-          key: rust-${{ runner.os }}-1.96.1-validation-${{ needs.changes.outputs.week }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
-          restore-keys: rust-${{ runner.os }}-1.96.1-validation-
+          # The "lt" generation excludes full-debuginfo artifacts from earlier keys.
+          key: rust-${{ runner.os }}-1.96.1-validation-lt-${{ needs.changes.outputs.week }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: rust-${{ runner.os }}-1.96.1-validation-lt-
 
       - name: Restore independent MSVC SDK
         id: sdk
@@ -104,6 +109,9 @@ jobs:
         env:
           C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo test --workspace --lib --bins --tests --examples --all-features --locked
+      - name: Report runner disk headroom
+        if: always()
+        run: df -h / "${{ github.workspace }}"
       - name: Lint Windows MSVC targets and features
         run: cargo xwin clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
 

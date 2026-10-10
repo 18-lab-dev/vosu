@@ -36,7 +36,7 @@ cargo test --locked --test updater_native -- --nocapture
 
 CI always publishes `CI required`, including documentation-only PRs. The cheap classification job checks local Markdown links without network or inference. Code changes run Linux Clippy/tests and a Windows MSVC cross-check; shared/platform/build/workflow changes also run native Windows verification. Pure schema/calculator changes retain cross-checks without automatically running native Windows. Manual dispatch runs both lanes. Branch protection should require `CI required` rather than conditionally skipped platform jobs. Cross-compilation is not native execution evidence.
 
-MSVC SDK caching is independent of Cargo.lock and restricted to x86_64. Prepared SDKs are saved before later lint failures. Rust artifact caches use separate target/lane keys and weekly generations to limit archive churn; downloads are cached separately. Tagged releases package, extract, and exercise the exact Linux/Windows archives, using a small smoke-test package that does not depend on the daemon crate.
+MSVC SDK caching is independent of Cargo.lock and restricted to x86_64. Prepared SDKs are saved before later lint failures. Rust artifact caches use separate target/lane keys and weekly generations to limit archive churn; downloads are cached separately. The Ubuntu validation lane builds with `CARGO_PROFILE_DEV_DEBUG=line-tables-only`: full debuginfo made the all-target test build large enough to exhaust the hosted runner's disk. Tagged releases package, extract, and exercise the exact Linux/Windows archives, using a small smoke-test package that does not depend on the daemon crate.
 
 ## Evidence workflows
 
