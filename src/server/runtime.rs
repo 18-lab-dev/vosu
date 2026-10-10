@@ -284,6 +284,11 @@ impl axum::serve::Listener for TrackedListener {
                 && let Ok(control) = stream.try_clone()
                 && let Ok(stream) = TcpStream::from_std(stream)
             {
+                // State frames are small and written one at a time; with Nagle
+                // enabled, a frame written while the previous one is unacked
+                // waits for the peer's delayed ACK and arrives in a burst.
+                // A failure only costs latency, so the connection is still served.
+                let _ = stream.set_nodelay(true);
                 let id = self.registry.insert(control);
                 let flush = Arc::new(ResponseFlushBarrier::default());
                 self.flushes.register(address, &flush);

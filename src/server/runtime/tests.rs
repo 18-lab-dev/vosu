@@ -232,6 +232,23 @@ async fn connection_registry_observes_the_last_connection_removal() {
 }
 
 #[tokio::test]
+async fn accepted_connections_disable_nagle_for_small_state_frames() {
+    use axum::serve::Listener as _;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut tracked = TrackedListener {
+        listener,
+        registry: Arc::new(ConnectionRegistry::default()),
+        flushes: Arc::new(ResponseFlushRegistry::default()),
+    };
+    let connect = tokio::spawn(async move { TcpStream::connect(address).await.unwrap() });
+    let (io, _) = tracked.accept().await;
+    let _client = connect.await.unwrap();
+    assert!(io.stream.nodelay().unwrap());
+}
+
+#[tokio::test]
 async fn production_factory_binds_effective_address_and_serves_requests() {
     let binder = TokioBinder(AxumListenerFactory::new(production_providers(Arc::new(
         ProductionState,
