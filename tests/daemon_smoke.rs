@@ -758,7 +758,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .header(reqwest::header::ORIGIN, &next_base)
         .json(&serde_json::json!({
             "SHOW_MP_COMMANDS": true,
-            "V2_SUBSCRIPTION_DEBOUNCE": 0.125
+            "V2_SUBSCRIPTION_DEBOUNCE": 1.125
         }))
         .send()
         .await
@@ -781,7 +781,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         persisted
             .get("V2_SUBSCRIPTION_DEBOUNCE")
             .and_then(toml::Value::as_float),
-        Some(0.125)
+        Some(1.125)
     );
 
     let deleted = client

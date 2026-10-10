@@ -40,6 +40,9 @@ pub struct RegularCaptureContext {
     pub epoch: InstanceEpoch,
     pub produced_sequence: u64,
     pub base_precise_global_sequence: u64,
+    /// Whether this capture lands on the API `POLL_RATE` cadence. Captures in
+    /// between exist only for live selected-field subscribers.
+    pub api_cadence: bool,
 }
 
 impl RegularCaptureContext {
@@ -55,6 +58,7 @@ impl RegularCaptureContext {
             epoch: InstanceEpoch::new(instance_generation, reset_epoch),
             produced_sequence,
             base_precise_global_sequence: 0,
+            api_cadence: true,
         }
     }
 

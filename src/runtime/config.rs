@@ -38,7 +38,7 @@ impl ConfigUpdateService for RuntimeConfig {
                 ),
                 (
                     "V2_SUBSCRIPTION_DEBOUNCE",
-                    0.0,
+                    1.0,
                     ConfigDocument::MAX_INTERVAL_MS,
                 ),
                 ("SERVER_PORT", 1.0, 65_535.0),

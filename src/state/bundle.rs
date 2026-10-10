@@ -115,6 +115,9 @@ pub struct StateBundle {
     /// Gates the stall-based `paused` heuristic so map start/retry clock holds
     /// do not look like pause-menu freezes.
     play_clock_armed: bool,
+    /// play_time at the last API cadence capture; the stall heuristic compares
+    /// against it so pause detection does not depend on sampling frequency.
+    stall_reference_play_time: f64,
     is_tourney_manager: bool,
     is_tourney_spectator: bool,
     calculate_pp: bool,

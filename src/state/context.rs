@@ -189,31 +189,59 @@ pub trait SnapshotTransition: Send + 'static {
     ) -> TransitionFuture<'a, PreciseTransition<Self::Publication>>;
 }
 
+/// Consumers a publication is due for.
+///
+/// API consumers observe regular state on the `POLL_RATE` cadence and precise
+/// state on the `PRECISE_DATA_POLL_RATE` cadence. The live selected-field
+/// stream observes every publication, including the faster samples taken while
+/// a subscriber is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// Due for every consumer.
+    All,
+    /// Due for API consumers through its precise component only.
+    Precise,
+    /// Only the live selected-field stream observes it.
+    Live,
+}
+
 pub trait SnapshotPublisher<P>: Send + Sync + 'static {
-    fn publish(&self, publication: P) -> Result<(), StateWorkerError>;
+    fn publish(&self, publication: P, delivery: Delivery) -> Result<(), StateWorkerError>;
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct PollIntervals {
     pub regular: Duration,
     pub precise: Duration,
+    /// Selected-field sampling interval while a live subscriber exists.
+    pub subscription: Option<Duration>,
+}
+
+impl PollIntervals {
+    pub(super) fn regular_delay(&self) -> Duration {
+        self.subscription
+            .map_or(self.regular, |subscription| subscription.min(self.regular))
+    }
+
+    pub(super) fn precise_delay(&self) -> Duration {
+        self.subscription
+            .map_or(self.precise, |subscription| subscription.min(self.precise))
+    }
 }
 
 #[derive(Clone)]
 pub enum PollIntervalUpdates {
     Direct(watch::Receiver<PollIntervals>),
-    Config(watch::Receiver<Arc<crate::config::Config>>),
+    Config {
+        config: watch::Receiver<Arc<crate::config::Config>>,
+        /// Whether any selected-field subscriber is active.
+        demand: watch::Receiver<bool>,
+    },
 }
 
 impl From<watch::Receiver<PollIntervals>> for PollIntervalUpdates {
     fn from(value: watch::Receiver<PollIntervals>) -> Self {
         Self::Direct(value)
-    }
-}
-
-impl From<watch::Receiver<Arc<crate::config::Config>>> for PollIntervalUpdates {
-    fn from(value: watch::Receiver<Arc<crate::config::Config>>) -> Self {
-        Self::Config(value)
     }
 }
 
@@ -232,11 +260,14 @@ impl PollIntervalUpdates {
     pub(super) fn current(&self) -> PollIntervals {
         match self {
             Self::Direct(value) => *value.borrow(),
-            Self::Config(value) => {
-                let value = value.borrow();
+            Self::Config { config, demand } => {
+                let subscribed = *demand.borrow();
+                let value = config.borrow();
                 PollIntervals {
                     regular: duration_from_millis_saturating(value.poll_rate),
                     precise: duration_from_millis_saturating(value.precise_data_poll_rate),
+                    subscription: subscribed
+                        .then(|| duration_from_millis_saturating(value.v2_subscription_debounce)),
                 }
             }
         }

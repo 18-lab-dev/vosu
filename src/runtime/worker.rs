@@ -216,10 +216,13 @@ impl PidWorkerRegistry {
     }
 }
 
+/// One worker's API-visible and live state. Both are carried on every
+/// publication so the latest-only queue never drops an API update.
 pub(super) struct StatePublication {
     pub(super) pid: u32,
     pub(super) generation: u64,
-    pub(super) snapshot: Arc<StateBundleSnapshot>,
+    pub(super) api: Arc<StateBundleSnapshot>,
+    pub(super) live: Arc<StateBundleSnapshot>,
 }
 
 #[derive(Default)]
@@ -281,11 +284,17 @@ impl StatePublicationQueue {
     }
 }
 
+#[derive(Default)]
+struct PublishedStates {
+    api: Option<Arc<StateBundleSnapshot>>,
+    live: Option<Arc<StateBundleSnapshot>>,
+}
+
 pub(super) struct StatePublicationSink {
     pid: u32,
     generation: u64,
     publications: Arc<StatePublicationQueue>,
-    last_snapshot: Mutex<Option<Arc<StateBundleSnapshot>>>,
+    last: Mutex<PublishedStates>,
 }
 
 impl StatePublicationSink {
@@ -294,30 +303,67 @@ impl StatePublicationSink {
             pid,
             generation,
             publications,
-            last_snapshot: Mutex::new(None),
+            last: Mutex::new(PublishedStates::default()),
         }
     }
 }
 
 impl SnapshotPublisher<Arc<StateBundleSnapshot>> for StatePublicationSink {
-    fn publish(&self, snapshot: Arc<StateBundleSnapshot>) -> Result<(), StateWorkerError> {
-        let mut last_snapshot = self
-            .last_snapshot
+    fn publish(
+        &self,
+        snapshot: Arc<StateBundleSnapshot>,
+        delivery: Delivery,
+    ) -> Result<(), StateWorkerError> {
+        let mut last = self
+            .last
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if last_snapshot
-            .as_ref()
-            .is_some_and(|previous| equivalent_state_snapshots(previous, &snapshot))
-        {
+        let api = api_state(last.api.as_ref(), &snapshot, delivery);
+        let unchanged = |previous: &Option<Arc<StateBundleSnapshot>>, next| {
+            previous
+                .as_ref()
+                .is_some_and(|previous| equivalent_state_snapshots(previous, next))
+        };
+        if unchanged(&last.live, &snapshot) && unchanged(&last.api, &api) {
             return Ok(());
         }
         self.publications.publish(StatePublication {
             pid: self.pid,
             generation: self.generation,
-            snapshot: Arc::clone(&snapshot),
+            api: Arc::clone(&api),
+            live: Arc::clone(&snapshot),
         })?;
-        *last_snapshot = Some(snapshot);
+        last.api = Some(api);
+        last.live = Some(snapshot);
         Ok(())
+    }
+}
+
+/// Selects the API-visible state for a publication.
+///
+/// API consumers keep the regular component of the last API-cadence capture.
+/// A generation or reset-epoch change is promoted immediately so a regular
+/// transition and the precise reset it causes stay atomic for API readers.
+pub(super) fn api_state(
+    previous: Option<&Arc<StateBundleSnapshot>>,
+    live: &Arc<StateBundleSnapshot>,
+    delivery: Delivery,
+) -> Arc<StateBundleSnapshot> {
+    let Some(previous) = previous.filter(|previous| {
+        previous.source == live.source
+            && previous.generation == live.generation
+            && previous.reset_epoch == live.reset_epoch
+    }) else {
+        return Arc::clone(live);
+    };
+    match delivery {
+        Delivery::All => Arc::clone(live),
+        Delivery::Precise if Arc::ptr_eq(&previous.regular, &live.regular) => Arc::clone(live),
+        Delivery::Precise => Arc::new(StateBundleSnapshot {
+            regular: Arc::clone(&previous.regular),
+            ..StateBundleSnapshot::clone(live)
+        }),
+        Delivery::Live => Arc::clone(previous),
     }
 }
 
@@ -332,6 +378,7 @@ impl ProductionStateSupervisor {
     pub fn start(
         lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
         config: watch::Receiver<Arc<crate::config::Config>>,
+        subscription_demand: watch::Receiver<bool>,
         snapshots: Arc<SnapshotProviders>,
         logger: Logger,
     ) -> Self {
@@ -340,6 +387,7 @@ impl ProductionStateSupervisor {
         let task = tokio::spawn(run_state_supervisor(
             lifecycle,
             config,
+            subscription_demand,
             snapshots,
             logger,
             task_cancel,
@@ -361,20 +409,56 @@ impl ProductionStateSupervisor {
     }
 }
 
+/// One manager publication target: API consumers or the live selected-field
+/// stream. Each keeps its own per-instance states and semantic revisions.
+#[derive(Default)]
+struct ManagerView {
+    states: BTreeMap<u32, Arc<StateBundleSnapshot>>,
+    state_revisions: BTreeMap<u32, u64>,
+    revisions: SemanticRevision,
+}
+
+impl ManagerView {
+    fn retain(&mut self, desired: &BTreeMap<u32, u64>) {
+        self.states
+            .retain(|pid, state| desired.get(pid).copied() == Some(state.generation));
+        self.state_revisions
+            .retain(|pid, _| desired.contains_key(pid));
+    }
+
+    fn update(&mut self, pid: u32, snapshot: Arc<StateBundleSnapshot>) {
+        update_state_publication(&mut self.states, &mut self.state_revisions, pid, snapshot);
+    }
+
+    fn manager(
+        &mut self,
+        lifecycle: &InstanceLifecycleSnapshot,
+        config: &crate::config::Config,
+    ) -> Option<Arc<ManagerSnapshot>> {
+        build_manager_snapshot(
+            &mut self.revisions,
+            lifecycle,
+            config,
+            &self.states,
+            &self.state_revisions,
+        )
+    }
+}
+
 pub(super) async fn run_state_supervisor(
     mut lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
     mut config: watch::Receiver<Arc<crate::config::Config>>,
+    subscription_demand: watch::Receiver<bool>,
     snapshots: Arc<SnapshotProviders>,
     logger: Logger,
     cancel: CancellationToken,
 ) {
     let publications = Arc::new(StatePublicationQueue::default());
     let mut workers = PidWorkerRegistry::default();
-    let mut states = BTreeMap::<u32, Arc<StateBundleSnapshot>>::new();
-    let mut state_revisions = BTreeMap::<u32, u64>::new();
+    let mut api = ManagerView::default();
+    let mut live = ManagerView::default();
     let mut lifecycle_value = lifecycle.borrow_and_update().clone();
     let mut config_value = config.borrow_and_update().clone();
-    let mut revisions = SemanticRevision::default();
 
     loop {
         let ready = lifecycle_value
@@ -388,22 +472,25 @@ pub(super) async fn run_state_supervisor(
             .iter()
             .map(|(&pid, entry)| (pid, entry.generation))
             .collect::<BTreeMap<_, _>>();
-        states.retain(|pid, state| desired.get(pid).copied() == Some(state.generation));
-        state_revisions.retain(|pid, _| desired.contains_key(pid));
+        api.retain(&desired);
+        live.retain(&desired);
 
         let worker_config = config.clone();
+        let worker_demand = subscription_demand.clone();
         let worker_publications = Arc::clone(&publications);
         let worker_logger = logger.clone();
         workers
             .reconcile(&desired, |pid, _generation, worker_cancel| {
                 let entry = ready.get(&pid).expect("desired entry").clone();
                 let publications = Arc::clone(&worker_publications);
-                let worker_config = worker_config.clone();
+                let config = worker_config.clone();
+                let demand = worker_demand.clone();
                 let logger = worker_logger.clone();
                 tokio::spawn(async move {
                     run_instance_state_worker(
                         entry,
-                        worker_config,
+                        config,
+                        demand,
                         publications,
                         logger,
                         worker_cancel,
@@ -413,14 +500,12 @@ pub(super) async fn run_state_supervisor(
             })
             .await;
 
-        publish_manager_snapshot(
-            &snapshots,
-            &mut revisions,
-            &lifecycle_value,
-            &config_value,
-            &states,
-            &state_revisions,
-        );
+        if let Some(manager) = api.manager(&lifecycle_value, &config_value) {
+            snapshots.publish_api(manager);
+        }
+        if let Some(manager) = live.manager(&lifecycle_value, &config_value) {
+            snapshots.publish_live(manager);
+        }
 
         tokio::select! {
             _ = cancel.cancelled() => break,
@@ -439,12 +524,8 @@ pub(super) async fn run_state_supervisor(
             _ = publications.notified() => {
                 for (pid, publication) in publications.drain() {
                     if desired.get(&pid).copied() == Some(publication.generation) {
-                        update_state_publication(
-                            &mut states,
-                            &mut state_revisions,
-                            pid,
-                            publication.snapshot,
-                        );
+                        api.update(pid, publication.api);
+                        live.update(pid, publication.live);
                     }
                 }
             }
@@ -522,6 +603,7 @@ where
 pub(super) async fn run_instance_state_worker(
     entry: InstanceGeneration,
     config: watch::Receiver<Arc<crate::config::Config>>,
+    subscription_demand: watch::Receiver<bool>,
     publications: Arc<StatePublicationQueue>,
     logger: Logger,
     cancel: CancellationToken,
@@ -532,24 +614,28 @@ pub(super) async fn run_instance_state_worker(
         publications,
     ));
     let synchronization = Arc::new(Mutex::new(ReaderSynchronization::default()));
-    let worker = initialize_state_worker(
-        &cancel,
-        Duration::from_secs(1),
-        || {
-            let entry = entry.clone();
-            let config = config.clone();
-            let publisher = Arc::clone(&publisher);
-            let synchronization = Arc::clone(&synchronization);
-            async move { create_state_worker(&entry, config, publisher, synchronization).await }
-        },
-        |error| {
-            logger.error(format!(
-                "State initialization stopped for PID {} ({:?}, generation {}): {error}",
-                entry.pid, entry.client, entry.generation
-            ));
-        },
-    )
-    .await;
+    let worker =
+        initialize_state_worker(
+            &cancel,
+            Duration::from_secs(1),
+            || {
+                let entry = entry.clone();
+                let config = config.clone();
+                let demand = subscription_demand.clone();
+                let publisher = Arc::clone(&publisher);
+                let synchronization = Arc::clone(&synchronization);
+                async move {
+                    create_state_worker(&entry, config, demand, publisher, synchronization).await
+                }
+            },
+            |error| {
+                logger.error(format!(
+                    "State initialization stopped for PID {} ({:?}, generation {}): {error}",
+                    entry.pid, entry.client, entry.generation
+                ));
+            },
+        )
+        .await;
     let Some(worker) = worker else {
         return;
     };
@@ -565,6 +651,7 @@ pub(super) enum PreparedReaders {
 pub(super) async fn create_state_worker(
     entry: &InstanceGeneration,
     config: watch::Receiver<Arc<crate::config::Config>>,
+    subscription_demand: watch::Receiver<bool>,
     publisher: Arc<StatePublicationSink>,
     synchronization: Arc<Mutex<ReaderSynchronization>>,
 ) -> Result<Option<StateWorkerHandle>, StateWorkerError> {
@@ -615,13 +702,29 @@ pub(super) async fn create_state_worker(
     let Some(readers) = readers else {
         return Ok(None);
     };
+    let intervals = PollIntervalUpdates::Config {
+        config: config.clone(),
+        demand: subscription_demand,
+    };
     let worker = match readers {
-        PreparedReaders::Stable(regular, precise) => {
-            finish_state_worker(entry, config, publisher, synchronization, regular, precise)?
-        }
-        PreparedReaders::Lazer(regular, precise) => {
-            finish_state_worker(entry, config, publisher, synchronization, regular, precise)?
-        }
+        PreparedReaders::Stable(regular, precise) => finish_state_worker(
+            entry,
+            config,
+            intervals,
+            publisher,
+            synchronization,
+            regular,
+            precise,
+        )?,
+        PreparedReaders::Lazer(regular, precise) => finish_state_worker(
+            entry,
+            config,
+            intervals,
+            publisher,
+            synchronization,
+            regular,
+            precise,
+        )?,
     };
     Ok(Some(worker))
 }
@@ -629,6 +732,7 @@ pub(super) async fn create_state_worker(
 pub(super) fn finish_state_worker<R, Q>(
     entry: &InstanceGeneration,
     config: watch::Receiver<Arc<crate::config::Config>>,
+    intervals: PollIntervalUpdates,
     publisher: Arc<StatePublicationSink>,
     synchronization: Arc<Mutex<ReaderSynchronization>>,
     regular_memory: R,
@@ -654,7 +758,7 @@ where
     bundle.set_calculate_pp(current.calculate_pp);
     bundle.set_capture_config(current.read_mania_scroll_speed, current.show_mp_commands);
     bundle.set_config_updates(config.clone());
-    publisher.publish(bundle.snapshot())?;
+    publisher.publish(bundle.snapshot(), Delivery::All)?;
 
     let initial_context = ReadContext {
         source: entry.client,
@@ -683,19 +787,18 @@ where
         publisher,
         initial_context,
         capture,
-        PollIntervalUpdates::Config(config),
+        intervals,
         synchronization,
     ))
 }
 
-pub(super) fn publish_manager_snapshot(
-    snapshots: &SnapshotProviders,
+pub(super) fn build_manager_snapshot(
     revisions: &mut SemanticRevision,
     lifecycle: &InstanceLifecycleSnapshot,
     config: &crate::config::Config,
     states: &BTreeMap<u32, Arc<StateBundleSnapshot>>,
     state_revisions: &BTreeMap<u32, u64>,
-) {
+) -> Option<Arc<ManagerSnapshot>> {
     let ready = lifecycle
         .instances
         .iter()
@@ -726,7 +829,7 @@ pub(super) fn publish_manager_snapshot(
     };
     let (revision, changed) = revisions.observe_with_change(semantics);
     if !changed {
-        return;
+        return None;
     }
     let entries = ready.into_iter().map(|(entry, state)| {
         ManagerInstanceSnapshot::new(
@@ -736,7 +839,7 @@ pub(super) fn publish_manager_snapshot(
             Arc::clone(state),
         )
     });
-    snapshots.publish(Arc::new(ManagerSnapshot::new(
+    Some(Arc::new(ManagerSnapshot::new(
         revision,
         focused_pid,
         lifecycle.focus.game_focused,
@@ -744,7 +847,7 @@ pub(super) fn publish_manager_snapshot(
             enable_key_overlay: config.enable_key_overlay,
         },
         entries,
-    )));
+    )))
 }
 /// Advances only when API-observable manager semantics change. In particular,
 /// every instance generation participates, not only the focused PID.

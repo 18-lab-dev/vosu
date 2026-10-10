@@ -435,7 +435,7 @@ struct GatedPublisher {
 }
 
 impl SnapshotPublisher<String> for GatedPublisher {
-    fn publish(&self, publication: String) -> Result<(), StateWorkerError> {
+    fn publish(&self, publication: String, _delivery: Delivery) -> Result<(), StateWorkerError> {
         lock(&self.publications).push(publication.clone());
         if publication == "regular" && self.gate_first_regular.swap(false, Ordering::AcqRel) {
             let (open, changed) = &*self.gate;

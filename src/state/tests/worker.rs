@@ -12,6 +12,7 @@ async fn regular_ack_is_after_publish_then_sleep_and_never_catches_up() {
     let (interval_tx, interval_rx) = watch::channel(PollIntervals {
         regular: Duration::from_millis(100),
         precise: Duration::from_millis(10),
+        subscription: None,
     });
     let worker = spawn_state_worker_with_clock(
         FakeRegular {
@@ -56,6 +57,7 @@ async fn regular_ack_is_after_publish_then_sleep_and_never_catches_up() {
     interval_tx.send_replace(PollIntervals {
         regular: Duration::from_millis(250),
         precise: Duration::from_millis(10),
+        subscription: None,
     });
     clock.advance(Duration::from_millis(100));
     wait_until(|| lock(&regular_captures).len() == 2).await;
@@ -78,6 +80,7 @@ async fn precise_slot_overwrites_and_context_mismatch_advances_nothing() {
     let (_interval_tx, interval_rx) = watch::channel(PollIntervals {
         regular: Duration::from_secs(1),
         precise: Duration::from_millis(10),
+        subscription: None,
     });
     let worker = spawn_state_worker_with_clock(
         FakeRegular {
@@ -148,6 +151,7 @@ async fn stale_regular_epoch_is_recaptured_instead_of_terminating_worker() {
     let (_interval_tx, interval_rx) = watch::channel(PollIntervals {
         regular: Duration::from_secs(1),
         precise: Duration::from_millis(10),
+        subscription: None,
     });
     let worker = spawn_state_worker_with_clock(
         GatedRecordingRegular {
@@ -231,6 +235,7 @@ async fn rejected_precise_context_does_not_advance_index_or_sequence() {
     let (_interval_tx, interval_rx) = watch::channel(PollIntervals {
         regular: Duration::from_secs(1),
         precise: Duration::from_millis(10),
+        subscription: None,
     });
     let worker = spawn_state_worker_with_clock(
         BlockedRegular {
@@ -360,6 +365,7 @@ async fn shutdown_aborts_a_parked_transition_and_joins_readers() {
     let (_interval_tx, interval_rx) = watch::channel(PollIntervals {
         regular: Duration::from_secs(1),
         precise: Duration::from_secs(1),
+        subscription: None,
     });
     let worker = spawn_state_worker_with_clock(
         FakeRegular {
@@ -400,6 +406,7 @@ async fn shutdown_joins_precise_even_when_regular_panics() {
     let (_interval_tx, interval_rx) = watch::channel(PollIntervals {
         regular: Duration::from_secs(1),
         precise: Duration::from_secs(1),
+        subscription: None,
     });
     let worker = spawn_state_worker_with_clock(
         PanickingRegular {
@@ -468,6 +475,7 @@ async fn cancelled_transition_cannot_publish_when_its_result_becomes_ready() {
     let (_interval_tx, interval_rx) = watch::channel(PollIntervals {
         regular: Duration::from_secs(1),
         precise: Duration::from_secs(1),
+        subscription: None,
     });
     let worker = spawn_state_worker_with_clock(
         FakeRegular {
@@ -503,4 +511,113 @@ async fn cancelled_transition_cannot_publish_when_its_result_becomes_ready() {
         .await
         .expect("cancelled transition exits cleanly");
     assert!(lock(&publications).is_empty());
+}
+
+struct TimedRegular {
+    captures: Arc<Mutex<Vec<(std::time::Instant, bool)>>>,
+}
+
+impl RegularSnapshotReader for TimedRegular {
+    fn capture_regular(
+        &mut self,
+        request: &RegularCaptureRequest,
+    ) -> Result<Arc<RawRegularSnapshot>, StateWorkerError> {
+        lock(&self.captures).push((std::time::Instant::now(), request.context.api_cadence));
+        Ok(
+            RawRegularSnapshotBuilder::new(request.context, Ok(ReadStatus::Ready(raw_global())))
+                .publish(),
+        )
+    }
+}
+
+struct DeliveryRecorder(Arc<Mutex<Vec<(String, Delivery)>>>);
+
+impl SnapshotPublisher<String> for DeliveryRecorder {
+    fn publish(&self, publication: String, delivery: Delivery) -> Result<(), StateWorkerError> {
+        lock(&self.0).push((publication, delivery));
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subscriber_demand_samples_faster_but_keeps_api_cadence() {
+    let regular_interval = Duration::from_millis(40);
+    let captures = Arc::new(Mutex::new(Vec::new()));
+    let publications = Arc::new(Mutex::new(Vec::new()));
+    let (interval_tx, interval_rx) = watch::channel(PollIntervals {
+        regular: regular_interval,
+        precise: Duration::from_secs(30),
+        subscription: Some(Duration::from_millis(1)),
+    });
+    let worker = spawn_state_worker_with_clock(
+        TimedRegular {
+            captures: captures.clone(),
+        },
+        FakePrecise {
+            captures: Arc::new(Mutex::new(Vec::new())),
+            corrupt_first_mode: false,
+        },
+        RecordingTransition {
+            context: context(ClientType::Stable),
+            regular: Arc::new(AtomicUsize::new(0)),
+            precise_sequences: Arc::new(Mutex::new(Vec::new())),
+        },
+        Arc::new(DeliveryRecorder(publications.clone())),
+        context(ClientType::Stable),
+        RegularCapturePlan::default(),
+        interval_rx.into(),
+        Arc::new(Mutex::new(ReaderSynchronization::default())),
+        Arc::new(SystemWorkerClock::default()),
+    );
+
+    wait_until(|| lock(&captures).iter().filter(|(_, api)| *api).count() >= 3).await;
+    // Everything recorded before the switch was evaluated with demand active.
+    let subscribed = lock(&captures).len();
+    let subscribed_publications = lock(&publications).len();
+    interval_tx.send_replace(PollIntervals {
+        regular: regular_interval,
+        precise: Duration::from_secs(30),
+        subscription: None,
+    });
+    wait_until(|| lock(&captures).len() >= subscribed + 3).await;
+    worker.shutdown().await.expect("clean shutdown");
+
+    let captures = lock(&captures).clone();
+    let (cadence, fast): (Vec<&(std::time::Instant, bool)>, Vec<_>) =
+        captures[..subscribed].iter().partition(|(_, api)| *api);
+    assert!(
+        fast.len() > cadence.len(),
+        "subscriber samples run between API cadence captures"
+    );
+    assert!(
+        cadence
+            .windows(2)
+            .all(|pair| pair[1].0 - pair[0].0 >= regular_interval),
+        "API cadence captures stay POLL_RATE apart"
+    );
+    // One capture may already have been in flight when demand ended.
+    assert!(
+        captures[subscribed + 1..].iter().all(|(_, api)| *api),
+        "without demand every capture is an API capture"
+    );
+
+    let publications = lock(&publications)[..subscribed_publications].to_vec();
+    let regular = publications
+        .iter()
+        .filter(|(kind, _)| kind == "regular")
+        .map(|(_, delivery)| *delivery)
+        .collect::<Vec<_>>();
+    assert!(regular.contains(&Delivery::All) && regular.contains(&Delivery::Live));
+    let precise = publications
+        .iter()
+        .filter(|(kind, _)| kind == "precise")
+        .map(|(_, delivery)| *delivery)
+        .collect::<Vec<_>>();
+    assert_eq!(precise.first(), Some(&Delivery::Precise));
+    assert!(
+        precise[1..]
+            .iter()
+            .all(|delivery| *delivery == Delivery::Live),
+        "precise samples inside one PRECISE_DATA_POLL_RATE interval are live-only"
+    );
 }

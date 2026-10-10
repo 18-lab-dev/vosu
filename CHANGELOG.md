@@ -30,6 +30,8 @@ All notable user-visible changes to vosu are documented here. Version 1.0.0 is p
 
 ### Runtime and maintenance
 
+- Selected-field v2 subscriptions now sample game state on their own cadence. While any selection is established, both readers run every `V2_SUBSCRIPTION_DEBOUNCE` milliseconds, so subscribed fields can change before HTTP and compatibility WebSocket payloads. Those payloads keep their `POLL_RATE`/`PRECISE_DATA_POLL_RATE` cadence; beatmap changes and retries still reach them immediately. The osu!stable stall-pause heuristic no longer depends on how often state is sampled.
+- `V2_SUBSCRIPTION_DEBOUNCE` now defaults to `1` with a minimum of `1`. Saved values below the minimum clamp to `1`, and settings saves below `1` are rejected.
 - Disable Nagle's algorithm (`TCP_NODELAY`) on every accepted connection. Small WebSocket state frames written while an earlier frame was still unacknowledged waited for the client's delayed ACK (about 40 ms on Linux loopback) and then arrived in bursts; at the 1 ms selected-field cadence this showed up as live-time delivery jitter.
 - Fix automatic offset generation for lazer framework upgrades, including `2026.1005.0` on .NET 10: run both embedded helpers with the exact client's bundled CLR/framework in disposable staging instead of measuring under the helper's .NET 8 build runtime. No user-installed SDK, runtime download, or game-file modification is needed.
 - Include client-published NuGet framework replacements and their transitive dependencies in the staged helper runtime. Native Windows startup with the client's .NET 8 runtime and `System.Text.Json`/`System.IO.Pipelines` 10 now resolves the game and serves its live API without changing the game or verified helper payload.

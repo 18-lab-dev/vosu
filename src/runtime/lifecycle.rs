@@ -204,6 +204,7 @@ impl ProductionRuntime {
         let supervisor = ProductionStateSupervisor::start(
             instances.subscribe_current(),
             self.config.subscribe_current(),
+            hubs.v2_subscription.demand(),
             self.snapshots.clone(),
             self.logger.clone(),
         );

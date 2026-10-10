@@ -81,7 +81,7 @@ ENABLE_KEY_OVERLAY = true
 
 POLL_RATE = 150.0
 PRECISE_DATA_POLL_RATE = 10.0
-V2_SUBSCRIPTION_DEBOUNCE = 0.0
+V2_SUBSCRIPTION_DEBOUNCE = 1.0
 
 SERVER_IP = \"127.0.0.1\"
 SERVER_PORT = 24050.0
@@ -265,7 +265,7 @@ SERVER_PORT = -1.5
 
     assert_eq!(document.config().poll_rate, 100.0);
     assert_eq!(document.config().precise_data_poll_rate, 1.0);
-    assert_eq!(document.config().v2_subscription_debounce, 0.0);
+    assert_eq!(document.config().v2_subscription_debounce, 1.0);
     assert_eq!(document.config().server_port, -1.5);
 }
 

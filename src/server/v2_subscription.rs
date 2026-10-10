@@ -38,13 +38,13 @@ const SUBSCRIPTION_TIMEOUT_MESSAGE: &str = "subscription timed out";
 const SERIALIZATION_FAILED_MESSAGE: &str = "state serialization failed";
 const ALREADY_SUBSCRIBED_MESSAGE: &str = "subscription already established";
 
-/// One immutable source snapshot captured at a precise publication point.
+/// One immutable source snapshot captured at a live publication point.
 pub trait V2SubscriptionSnapshot: Send + Sync {
     fn revision(&self) -> u64;
     fn document(&self) -> Result<Option<Value>, ApiError>;
 }
 
-/// Supplies precise publication notifications and atomic snapshots.
+/// Supplies live publication notifications and atomic snapshots.
 pub trait V2SubscriptionProvider: Send + Sync {
     fn subscribe(&self) -> watch::Receiver<u64>;
     fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot>;
@@ -298,6 +298,8 @@ struct HubInner {
     accepting: AtomicBool,
     next_id: AtomicU64,
     wake: Notify,
+    /// Whether any open client has an established selection.
+    demand: watch::Sender<bool>,
     shutdown: CancellationToken,
     #[cfg(test)]
     extractions: AtomicU64,
@@ -330,6 +332,7 @@ impl V2SubscriptionHub {
             accepting: AtomicBool::new(true),
             next_id: AtomicU64::new(0),
             wake: Notify::new(),
+            demand: watch::Sender::new(false),
             shutdown: CancellationToken::new(),
             #[cfg(test)]
             extractions: AtomicU64::new(0),
@@ -381,6 +384,12 @@ impl V2SubscriptionHub {
                 terminal: terminal_rx,
             },
         )
+    }
+
+    /// Whether any client has an established selection; state workers sample
+    /// at the subscription interval while it is true.
+    pub fn demand(&self) -> watch::Receiver<bool> {
+        self.0.demand.subscribe()
     }
 
     pub fn set_debounce(&self, debounce: Duration) {
@@ -493,6 +502,7 @@ impl V2SubscriptionHub {
             let wake = self.0.wake.notified();
             let source_revision = *publications.borrow_and_update();
             let deadline = self.dispatch(source_revision);
+            self.refresh_demand();
             tokio::select! {
                 _ = self.0.shutdown.cancelled() => break,
                 changed = publications.changed() => if changed.is_err() { break; },
@@ -503,6 +513,18 @@ impl V2SubscriptionHub {
                 } => {},
             }
         }
+        self.0.demand.send_replace(false);
+    }
+
+    fn refresh_demand(&self) {
+        let subscribed = self.0.clients.load().values().any(|client| {
+            client.state.load(Ordering::Acquire) != CLOSED && lock(&client.plan).is_some()
+        });
+        self.0.demand.send_if_modified(|current| {
+            let changed = *current != subscribed;
+            *current = subscribed;
+            changed
+        });
     }
 
     fn dispatch(&self, source_revision: u64) -> Option<Instant> {

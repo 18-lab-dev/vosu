@@ -135,7 +135,7 @@ def launch(cfg: dict[str, Any]) -> tuple[dict[str, subprocess.Popen[bytes]], dic
                 "",
                 f"POLL_RATE = {cfg['poll_rate_ms']}.0",
                 "PRECISE_DATA_POLL_RATE = 10.0",
-                "V2_SUBSCRIPTION_DEBOUNCE = 0.0",
+                "V2_SUBSCRIPTION_DEBOUNCE = 1.0",
                 "",
                 'SERVER_IP = "127.0.0.1"',
                 f"SERVER_PORT = {port}.0",

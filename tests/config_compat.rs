@@ -17,7 +17,7 @@ const EXPECTED_DEFAULT: &str = concat!(
     "\n",
     "POLL_RATE = 150.0\n",
     "PRECISE_DATA_POLL_RATE = 10.0\n",
-    "V2_SUBSCRIPTION_DEBOUNCE = 0.0\n",
+    "V2_SUBSCRIPTION_DEBOUNCE = 1.0\n",
     "\n",
     "SERVER_IP = \"127.0.0.1\"\n",
     "SERVER_PORT = 24050.0\n",
@@ -45,17 +45,17 @@ fn formatting_order_defaults_and_group_boundaries_are_stable() {
 #[test]
 fn parsing_fallbacks_clamps_and_refresh_retention_match_source() {
     let mut document = ConfigDocument::parse(
-        "POLL_RATE = 99.9\nPRECISE_DATA_POLL_RATE = 0.0\nV2_SUBSCRIPTION_DEBOUNCE = 0.125\nSERVER_PORT = \"not-a-number\"\nDEBUG_LOG = \"true\"\nSERVER_IP = \"localhost\"\nUNKNOWN = \"value\"\n",
+        "POLL_RATE = 99.9\nPRECISE_DATA_POLL_RATE = 0.0\nV2_SUBSCRIPTION_DEBOUNCE = 1.125\nSERVER_PORT = \"not-a-number\"\nDEBUG_LOG = \"true\"\nSERVER_IP = \"localhost\"\nUNKNOWN = \"value\"\n",
     )
     .expect("parse typed TOML");
     let config = document.config();
     assert_eq!(config.poll_rate, 100.0);
     assert_eq!(config.precise_data_poll_rate, 1.0);
-    assert_eq!(config.v2_subscription_debounce, 0.125);
+    assert_eq!(config.v2_subscription_debounce, 1.125);
     assert!(
         document
             .serialize()
-            .contains("V2_SUBSCRIPTION_DEBOUNCE = 0.125")
+            .contains("V2_SUBSCRIPTION_DEBOUNCE = 1.125")
     );
     assert_eq!(
         config.server_port, 24_050.0,
@@ -73,19 +73,19 @@ fn parsing_fallbacks_clamps_and_refresh_retention_match_source() {
     );
 
     let warnings = document
-        .refresh("CALCULATE_PP = false\nPOLL_RATE = nan\nV2_SUBSCRIPTION_DEBOUNCE = -0.25\n")
+        .refresh("CALCULATE_PP = false\nPOLL_RATE = nan\nV2_SUBSCRIPTION_DEBOUNCE = 0.25\n")
         .expect("refresh valid typed TOML");
     assert_eq!(
         warnings,
-        ["Config %V2_SUBSCRIPTION_DEBOUNCE% value %-0.25% below minimum %0%, clamping."]
+        ["Config %V2_SUBSCRIPTION_DEBOUNCE% value %0.25% is below the minimum %1%, clamping."]
     );
     assert!(!document.config().calculate_pp);
     assert_eq!(document.config().poll_rate, 150.0);
-    assert_eq!(document.config().v2_subscription_debounce, 0.0);
+    assert_eq!(document.config().v2_subscription_debounce, 1.0);
     assert!(
         document
             .serialize()
-            .contains("V2_SUBSCRIPTION_DEBOUNCE = 0.0")
+            .contains("V2_SUBSCRIPTION_DEBOUNCE = 1.0")
     );
     assert_eq!(
         document.config().server_ip,
@@ -107,7 +107,7 @@ async fn legacy_env_files_migrate_to_typed_toml_with_binding_precedence() {
     .unwrap();
     fs::write(
         &older_legacy,
-        "SERVER_PORT=24053\nPRECISE_DATA_POLL_RATE=5\nV2_SUBSCRIPTION_DEBOUNCE=0.125\nDEPRECATED_BINDING=drop-me\n",
+        "SERVER_PORT=24053\nPRECISE_DATA_POLL_RATE=5\nV2_SUBSCRIPTION_DEBOUNCE=1.125\nDEPRECATED_BINDING=drop-me\n",
     )
     .unwrap();
 
@@ -118,7 +118,7 @@ async fn legacy_env_files_migrate_to_typed_toml_with_binding_precedence() {
     assert_eq!(store.current().server_port, 24_052.0);
     assert_eq!(store.current().poll_rate, 100.0);
     assert_eq!(store.current().precise_data_poll_rate, 5.0);
-    assert_eq!(store.current().v2_subscription_debounce, 0.125);
+    assert_eq!(store.current().v2_subscription_debounce, 1.125);
     assert_eq!(store.current().static_folder_path, "./from-vosu-env");
 
     let persisted = fs::read_to_string(&current).unwrap();
@@ -160,7 +160,7 @@ async fn current_toml_priority_reload_last_good_and_shutdown_flush() {
     .unwrap();
     fs::write(
         &older_legacy,
-        "SERVER_PORT=24063\nPOLL_RATE=180\nPRECISE_DATA_POLL_RATE=6\nV2_SUBSCRIPTION_DEBOUNCE=0.5\n",
+        "SERVER_PORT=24063\nPOLL_RATE=180\nPRECISE_DATA_POLL_RATE=6\nV2_SUBSCRIPTION_DEBOUNCE=1.5\n",
     )
     .unwrap();
 
@@ -174,7 +174,7 @@ async fn current_toml_priority_reload_last_good_and_shutdown_flush() {
         "present wrong TOML type shadows both legacy sources"
     );
     assert_eq!(store.current().precise_data_poll_rate, 5.0);
-    assert_eq!(store.current().v2_subscription_debounce, 0.5);
+    assert_eq!(store.current().v2_subscription_debounce, 1.5);
     assert_eq!(store.current().static_folder_path, "./from-toml");
 
     let mut changes = store.subscribe();

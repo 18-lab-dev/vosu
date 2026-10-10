@@ -712,11 +712,11 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
             ),
             settings_item(
                 "V2 subscription debounce",
-                "Minimum milliseconds between selected-field WebSocket frames.",
+                "Selected-field sampling interval and minimum milliseconds between its WebSocket frames.",
                 &settings_number(
                     "V2_SUBSCRIPTION_DEBOUNCE",
                     config.v2_subscription_debounce,
-                    0.0,
+                    1.0,
                     ConfigDocument::MAX_INTERVAL_MS,
                     "any",
                 ),

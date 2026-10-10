@@ -1,11 +1,11 @@
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::{Notify, mpsc, watch};
 
 use super::{
-    PollIntervalUpdates, PreciseSnapshotReader, ReadContext, RegularCapturePlan,
+    Delivery, PollIntervalUpdates, PreciseSnapshotReader, ReadContext, RegularCapturePlan,
     RegularCaptureRequest, RegularSnapshotReader, SnapshotPublisher, SnapshotTransition,
     StateWorkerError,
 };
@@ -212,21 +212,23 @@ where
 
     let regular_clock = clock.clone();
     let regular_context = live_context.clone();
+    let regular_intervals = intervals.clone();
     let regular_thread = thread::Builder::new()
         .name("vosu-regular-reader".into())
         .spawn(move || {
+            let mut last_api_capture: Option<Instant> = None;
             while !regular_clock.is_cancelled() {
                 let permit = match permit_rx.recv() {
                     Ok(value) => value,
                     Err(std::sync::mpsc::RecvError) => break,
                 };
-                let mut request = match permit {
-                    RegularPermit::Initial(request) => request,
+                let (mut request, initial) = match permit {
+                    RegularPermit::Initial(request) => (request, true),
                     RegularPermit::Committed(delay, request) => {
                         if !regular_clock.sleep(delay) {
                             break;
                         }
-                        request
+                        (request, false)
                     }
                 };
                 if let Ok(context) = regular_context.lock() {
@@ -235,6 +237,17 @@ where
                     request.context.base_precise_global_sequence =
                         context.latest_precise_global_sequence;
                 }
+                // Subscriber-driven captures run faster than POLL_RATE; only
+                // those spaced by at least POLL_RATE reach API consumers.
+                let current = regular_intervals.current();
+                let now = Instant::now();
+                let api_cadence = initial
+                    || current.subscription.is_none()
+                    || last_api_capture.is_none_or(|at| now.duration_since(at) >= current.regular);
+                if api_cadence {
+                    last_api_capture = Some(now);
+                }
+                request.context.api_cadence = api_cadence;
                 let result = regular_reader.capture_regular(&request);
                 if regular_tx.blocking_send(result).is_err() {
                     break;
@@ -261,7 +274,7 @@ where
                     produced_sequence,
                     sync,
                 ));
-                let delay = precise_intervals.current().precise;
+                let delay = precise_intervals.current().precise_delay();
                 if !precise_clock.sleep(delay) {
                     break;
                 }
@@ -275,6 +288,7 @@ where
         let mut context = initial_context;
         let mut regular_sequence = 1u64;
         let mut current_capture = initial_capture;
+        let mut last_api_precise: Option<Instant> = None;
         loop {
             if reducer_clock.is_cancelled() {
                 return Ok(());
@@ -285,6 +299,11 @@ where
                     let Some(regular) = regular else { return Ok(()) };
                     let snapshot = regular?;
                     let observed = snapshot.context();
+                    let delivery = if observed.api_cadence {
+                        Delivery::All
+                    } else {
+                        Delivery::Live
+                    };
                     if observed.source != context.source
                         || observed.epoch.instance_generation != context.instance_generation
                         || observed.produced_sequence != regular_sequence
@@ -316,7 +335,7 @@ where
                     if reducer_clock.is_cancelled() {
                         return Ok(());
                     }
-                    publisher.publish(committed.publication)?;
+                    publisher.publish(committed.publication, delivery)?;
                     context = committed.context;
                     let shared_context = Arc::new(context.clone());
                     if let Ok(mut current) = reducer_context.lock() {
@@ -337,7 +356,7 @@ where
                         ),
                         plan: current_capture.clone(),
                     };
-                    let delay = intervals.current().regular;
+                    let delay = intervals.current().regular_delay();
                     if permit_tx.send(RegularPermit::Committed(delay, request)).is_err() {
                         if reducer_clock.is_cancelled() {
                             return Ok(());
@@ -373,7 +392,18 @@ where
                         if reducer_clock.is_cancelled() {
                             return Ok(());
                         }
-                        publisher.publish(committed.publication)?;
+                        let current = intervals.current();
+                        let now = Instant::now();
+                        let delivery = if current.subscription.is_none()
+                            || last_api_precise
+                                .is_none_or(|at| now.duration_since(at) >= current.precise)
+                        {
+                            last_api_precise = Some(now);
+                            Delivery::Precise
+                        } else {
+                            Delivery::Live
+                        };
+                        publisher.publish(committed.publication, delivery)?;
                         if let Some(next_context) = committed.context {
                             context = next_context;
                         } else {

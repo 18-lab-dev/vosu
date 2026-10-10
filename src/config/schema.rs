@@ -33,7 +33,7 @@ impl Default for Config {
             enable_key_overlay: true,
             poll_rate: 150.0,
             precise_data_poll_rate: 10.0,
-            v2_subscription_debounce: 0.0,
+            v2_subscription_debounce: 1.0,
             show_mp_commands: false,
             read_mania_scroll_speed: true,
             server_ip: "127.0.0.1".to_owned(),
@@ -149,8 +149,8 @@ const SCHEMA_ITEMS: [ConfigItem; 15] = [
     item(
         ConfigKey::V2SubscriptionDebounce,
         "V2_SUBSCRIPTION_DEBOUNCE",
-        ConfigDefault::Number(0.0),
-        Some(0.0),
+        ConfigDefault::Number(1.0),
+        Some(1.0),
     ),
     item(
         ConfigKey::ShowMpCommands,

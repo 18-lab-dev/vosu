@@ -133,6 +133,41 @@ async fn play_retry_rewind_disarms_stall_paused_until_time_moves() {
 }
 
 #[tokio::test]
+async fn subscriber_samples_between_cadence_points_never_assert_stall_pause() {
+    let mut bundle = StateBundle::new(ClientType::Stable, 103, Arc::new(EchoCalculation));
+    // (sequence, play time, API cadence capture, expected paused)
+    let samples = [
+        (1, 100, true, false),
+        (2, 101, false, false),
+        // Fast samples routinely see an unchanged clock while the game runs.
+        (3, 101, false, false),
+        (4, 101, false, false),
+        // The clock advanced since the previous cadence capture: still playing.
+        (5, 101, true, false),
+        (6, 101, false, false),
+        // Unchanged for a whole cadence interval: paused.
+        (7, 101, true, true),
+        (8, 101, false, true),
+        // Any forward movement resumes immediately, even between cadence points.
+        (9, 102, false, false),
+    ];
+    for (sequence, time, api_cadence, paused) in samples {
+        let mut context = RegularCaptureContext::new(ClientType::Stable, 103, 0, sequence);
+        context.api_cadence = api_cadence;
+        let snapshot = RawRegularSnapshotBuilder::new(
+            context,
+            Ok(ReadStatus::Ready(raw_global(GameState::Play, time))),
+        )
+        .publish();
+        let applied = bundle.apply_regular(snapshot).await.expect("sample");
+        assert_eq!(
+            applied.publication.regular.global.paused, paused,
+            "sample {sequence}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn lazer_pause_then_select_play_resets_retained_gameplay_epoch() {
     let mut bundle = StateBundle::new(ClientType::Lazer, 12, Arc::new(EchoCalculation));
     let mut dt = default_calculated_mods();

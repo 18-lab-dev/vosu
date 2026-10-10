@@ -388,11 +388,16 @@ impl RequestAuthorizer for ReloadableAuthorizer {
 }
 
 /// Concrete HTTP and WebSocket state provider over one atomic snapshot owner.
+///
+/// API consumers read `snapshots`. The selected-field subscription reads
+/// `live`, which also carries the samples taken between API cadence points.
 pub struct SnapshotProviders {
     snapshots: Arc<SnapshotManager>,
+    live: SnapshotManager,
     encoder: Arc<dyn SnapshotEncoder>,
     regular_event: watch::Sender<u64>,
     precise_event: watch::Sender<u64>,
+    live_event: watch::Sender<u64>,
     regular_poll_ms: AtomicU64,
     precise_poll_ms: AtomicU64,
 }
@@ -402,11 +407,14 @@ impl SnapshotProviders {
         let revision = initial.revision();
         let (regular_event, _) = watch::channel(revision);
         let (precise_event, _) = watch::channel(revision);
+        let (live_event, _) = watch::channel(revision);
         Self {
-            snapshots: Arc::new(SnapshotManager::new(initial)),
+            snapshots: Arc::new(SnapshotManager::new(Arc::clone(&initial))),
+            live: SnapshotManager::new(initial),
             encoder,
             regular_event,
             precise_event,
+            live_event,
             regular_poll_ms: AtomicU64::new(150),
             precise_poll_ms: AtomicU64::new(10),
         }
@@ -427,10 +435,17 @@ impl SnapshotProviders {
         );
     }
 
-    /// Publishes one atomic state point. Precise consumers depend on every
+    /// Publishes one atomic state point to API and live consumers alike.
+    pub fn publish(&self, manager: Arc<ManagerSnapshot>) -> Arc<CombinedSnapshot> {
+        let snapshot = self.publish_api(Arc::clone(&manager));
+        self.publish_live(manager);
+        snapshot
+    }
+
+    /// Publishes one atomic API state point. Precise consumers depend on every
     /// component and are always woken. Regular schemas are not woken for a
     /// precise-only replacement, matching the source's independent cadence.
-    pub fn publish(&self, manager: Arc<ManagerSnapshot>) -> Arc<CombinedSnapshot> {
+    pub fn publish_api(&self, manager: Arc<ManagerSnapshot>) -> Arc<CombinedSnapshot> {
         let revision = manager.revision();
         let previous = self.snapshots.load();
         let snapshot = self.snapshots.publish(manager);
@@ -449,6 +464,13 @@ impl SnapshotProviders {
         }
         self.precise_event.send_replace(revision);
         snapshot
+    }
+
+    /// Publishes one atomic state point for the selected-field subscription only.
+    pub fn publish_live(&self, manager: Arc<ManagerSnapshot>) {
+        let revision = manager.revision();
+        self.live.publish(manager);
+        self.live_event.send_replace(revision);
     }
 
     pub fn load(&self) -> Arc<CombinedSnapshot> {
@@ -502,12 +524,12 @@ impl V2SubscriptionSnapshot for V2SubscriptionSnapshotView {
 
 impl V2SubscriptionProvider for SnapshotProviders {
     fn subscribe(&self) -> watch::Receiver<u64> {
-        self.precise_event.subscribe()
+        self.live_event.subscribe()
     }
 
     fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot> {
         Arc::new(V2SubscriptionSnapshotView {
-            snapshot: self.snapshots.load(),
+            snapshot: self.live.load(),
         })
     }
 }

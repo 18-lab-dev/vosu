@@ -40,6 +40,7 @@ impl StateBundle {
             previous_mp3_length: None,
             previous_time: 0.0,
             play_clock_armed: false,
+            stall_reference_play_time: 0.0,
             is_tourney_manager: false,
             is_tourney_spectator: false,
             calculate_pp: true,
@@ -92,15 +93,23 @@ impl StateBundle {
     /// Stall heuristic for clients without an authoritative pause flag.
     ///
     /// Only reports paused after play_time has advanced forward while staying in
-    /// Play. Entering play, retries (time rewind), and pre-start clock holds stay
-    /// unpaused so overlays keep rendering.
+    /// Play and then held across a whole API cadence interval. Entering play,
+    /// retries (time rewind), and pre-start clock holds stay unpaused so
+    /// overlays keep rendering. Subscriber-driven samples between API cadence
+    /// captures may resume but never assert a pause: samples milliseconds apart
+    /// routinely observe an unchanged clock while the game is running.
     fn derive_paused_from_play_time_stall(
         &mut self,
         previous_status: i64,
         status: i64,
         previous_play_time: f64,
         play_time: f64,
+        api_cadence: bool,
     ) -> bool {
+        let reference = self.stall_reference_play_time;
+        if api_cadence {
+            self.stall_reference_play_time = play_time;
+        }
         let play = GameState::Play.value() as i64;
         if status != play {
             self.play_clock_armed = false;
@@ -119,7 +128,10 @@ impl StateBundle {
             }
             return false;
         }
-        self.play_clock_armed
+        if !api_cadence {
+            return self.global.paused;
+        }
+        self.play_clock_armed && play_time == reference
     }
 
     pub(super) fn increment_epoch(&mut self) {
@@ -292,6 +304,7 @@ impl StateBundle {
                         raw_global.status,
                         previous_play_time,
                         raw_global.play_time,
+                        snapshot.context().api_cadence,
                     ),
                 };
                 self.global.previous_play_time = raw_global.play_time;

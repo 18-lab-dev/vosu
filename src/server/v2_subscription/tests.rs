@@ -293,6 +293,37 @@ async fn initial_absent_to_present_null_and_focus_loss_are_delivered() {
 }
 
 #[tokio::test]
+async fn demand_tracks_established_selections_only() {
+    let provider = FakeProvider::new(1, Some(json!({"a": 1})));
+    let hub = V2SubscriptionHub::new(provider, Duration::ZERO);
+    let mut demand = hub.demand();
+    let runner = tokio::spawn({
+        let hub = hub.clone();
+        async move { hub.run().await }
+    });
+
+    let (connection, _receiver) = hub.connect();
+    tokio::task::yield_now().await;
+    assert!(
+        !*demand.borrow(),
+        "a connection without a selection is not demand"
+    );
+
+    connection.subscribe(vec!["/a".into()]).unwrap();
+    demand.wait_for(|active| *active).await.unwrap();
+
+    connection.close(1000);
+    demand.wait_for(|active| !*active).await.unwrap();
+
+    let (second, _second_receiver) = hub.connect();
+    second.subscribe(vec!["/a".into()]).unwrap();
+    demand.wait_for(|active| *active).await.unwrap();
+    hub.shutdown();
+    runner.await.unwrap();
+    assert!(!*demand.borrow(), "a stopped hub releases demand");
+}
+
+#[tokio::test]
 async fn pending_client_coalesces_directly_from_queued_a_to_latest_c() {
     let provider = FakeProvider::new(1, Some(json!({"a": 1})));
     let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);

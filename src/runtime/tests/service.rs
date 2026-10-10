@@ -114,10 +114,10 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     }
     assert!(settings.contains("V2 subscription debounce"));
     assert!(settings.contains(
-        "Minimum milliseconds between selected-field WebSocket frames."
+        "Selected-field sampling interval and minimum milliseconds between its WebSocket frames."
     ));
     assert!(settings.contains(
-        r#"data-id="V2_SUBSCRIPTION_DEBOUNCE" type="number" value="0" min="0" max="60000" step="any" required"#
+        r#"data-id="V2_SUBSCRIPTION_DEBOUNCE" type="number" value="1" min="1" max="60000" step="any" required"#
     ));
     assert!(settings.contains(
         r#"data-id="PRECISE_DATA_POLL_RATE" type="number" value="10" min="1" max="60000" step="any" required"#
@@ -185,7 +185,7 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
         .save(serde_json::json!({
             "POLL_RATE": " 175.5 ",
             "PRECISE_DATA_POLL_RATE": "\t12.25\n",
-            "V2_SUBSCRIPTION_DEBOUNCE": " 0.125 ",
+            "V2_SUBSCRIPTION_DEBOUNCE": " 1.125 ",
             "SERVER_PORT": " 24051 "
         }))
         .await
@@ -194,7 +194,7 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     let current = store.current();
     assert_eq!(current.poll_rate, 175.5);
     assert_eq!(current.precise_data_poll_rate, 12.25);
-    assert_eq!(current.v2_subscription_debounce, 0.125);
+    assert_eq!(current.v2_subscription_debounce, 1.125);
     assert_eq!(
         listen_target(&current).unwrap(),
         ListenTarget::new("127.0.0.1", 24_051)
@@ -208,7 +208,7 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     let current = reloaded.current();
     assert_eq!(current.poll_rate, 175.5);
     assert_eq!(current.precise_data_poll_rate, 12.25);
-    assert_eq!(current.v2_subscription_debounce, 0.125);
+    assert_eq!(current.v2_subscription_debounce, 1.125);
     assert_eq!(current.server_port, 24_051.0);
     reloaded.shutdown().await.unwrap();
 }
@@ -225,7 +225,8 @@ async fn out_of_range_or_unparseable_save_preserves_runtime_and_disk_configurati
     let cases = [
         ("POLL_RATE", serde_json::json!(99)),
         ("PRECISE_DATA_POLL_RATE", serde_json::json!(0.5)),
-        ("V2_SUBSCRIPTION_DEBOUNCE", serde_json::json!(-1)),
+        ("V2_SUBSCRIPTION_DEBOUNCE", serde_json::json!(0)),
+        ("V2_SUBSCRIPTION_DEBOUNCE", serde_json::json!(0.5)),
         ("SERVER_PORT", serde_json::json!(0)),
         ("SERVER_PORT", serde_json::json!(65_536)),
         ("SERVER_PORT", serde_json::json!("24050.5")),

@@ -79,7 +79,7 @@ use crate::{
         },
     },
     state::{
-        PollIntervalUpdates, ReadContext, RegularCapturePlan, SnapshotPublisher,
+        Delivery, PollIntervalUpdates, ReadContext, RegularCapturePlan, SnapshotPublisher,
         SourcePreciseReader, SourceRegularReader, StateBundle, StateBundleSnapshot,
         StateWorkerError, StateWorkerHandle, duration_from_millis_saturating, spawn_state_worker,
     },

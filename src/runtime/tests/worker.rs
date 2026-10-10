@@ -1,4 +1,4 @@
-fn state_publication(pid: u32, generation: u64, reset_epoch: u64) -> StatePublication {
+fn state_bundle(generation: u64, reset_epoch: u64) -> Arc<StateBundleSnapshot> {
     use crate::{
         model::states::HitErrorArray,
         state::{
@@ -8,39 +8,45 @@ fn state_publication(pid: u32, generation: u64, reset_epoch: u64) -> StatePublic
         },
     };
 
+    Arc::new(StateBundleSnapshot {
+        source: ClientType::Stable,
+        generation,
+        reset_epoch,
+        regular: Arc::new(RegularState {
+            global: GlobalState::default(),
+            settings: SettingsState::default(),
+            beatmap: BeatmapPPState::default(),
+            menu: MenuState::default(),
+            bass_density: BassDensityState::default(),
+            gameplay: GameplayState::default(),
+            result_screen: ResultScreenState::default(),
+            tourney: TourneyManagerState::default(),
+            user: UserState::default(),
+            lazer_multi_spectating: LazerMultiSpectatingState::default(),
+            ranked_play: RankedPlayState::default(),
+            room: Default::default(),
+        }),
+        precise: Arc::new(PreciseState {
+            status: 0,
+            play_time: 0.0,
+            mode: 0,
+            key_overlay: Arc::new(Vec::new()),
+            keypresses: Arc::new(Vec::new()),
+            hit_errors: Arc::new(HitErrorArray::default()),
+            total_hit_errors: 0.0,
+            committed_hit_error_index: 0,
+            unstable_rate: 0.0,
+        }),
+    })
+}
+
+fn state_publication(pid: u32, generation: u64, reset_epoch: u64) -> StatePublication {
+    let state = state_bundle(generation, reset_epoch);
     StatePublication {
         pid,
         generation,
-        snapshot: Arc::new(StateBundleSnapshot {
-            source: ClientType::Stable,
-            generation,
-            reset_epoch,
-            regular: Arc::new(RegularState {
-                global: GlobalState::default(),
-                settings: SettingsState::default(),
-                beatmap: BeatmapPPState::default(),
-                menu: MenuState::default(),
-                bass_density: BassDensityState::default(),
-                gameplay: GameplayState::default(),
-                result_screen: ResultScreenState::default(),
-                tourney: TourneyManagerState::default(),
-                user: UserState::default(),
-                lazer_multi_spectating: LazerMultiSpectatingState::default(),
-                ranked_play: RankedPlayState::default(),
-                room: Default::default(),
-            }),
-            precise: Arc::new(PreciseState {
-                status: 0,
-                play_time: 0.0,
-                mode: 0,
-                key_overlay: Arc::new(Vec::new()),
-                keypresses: Arc::new(Vec::new()),
-                hit_errors: Arc::new(HitErrorArray::default()),
-                total_hit_errors: 0.0,
-                committed_hit_error_index: 0,
-                unstable_rate: 0.0,
-            }),
-        }),
+        api: Arc::clone(&state),
+        live: state,
     }
 }
 
@@ -56,8 +62,8 @@ fn publication_queue_coalesces_each_pid_to_its_latest_snapshot() {
     let drained = queue.drain();
     assert_eq!(drained.len(), 2);
     assert_eq!(drained.keys().copied().collect::<Vec<_>>(), vec![7, 9]);
-    assert_eq!(drained[&7].snapshot.reset_epoch, 12);
-    assert_eq!(drained[&9].snapshot.reset_epoch, 20);
+    assert_eq!(drained[&7].live.reset_epoch, 12);
+    assert_eq!(drained[&9].live.reset_epoch, 20);
     assert!(queue.drain().is_empty());
 }
 
@@ -72,19 +78,13 @@ fn publication_queue_never_replaces_a_new_generation_with_late_stale_work() {
     let drained = queue.drain();
     assert_eq!(drained.len(), 1);
     assert_eq!(drained[&7].generation, 4);
-    assert_eq!(drained[&7].snapshot.reset_epoch, 40);
+    assert_eq!(drained[&7].live.reset_epoch, 40);
 }
 
 #[test]
 fn equivalent_state_publication_preserves_revision_and_snapshot() {
-    let first = state_publication(7, 1, 10).snapshot;
-    let equivalent = Arc::new(StateBundleSnapshot {
-        source: first.source,
-        generation: first.generation,
-        reset_epoch: first.reset_epoch,
-        regular: Arc::clone(&first.regular),
-        precise: Arc::clone(&first.precise),
-    });
+    let first = state_bundle(1, 10);
+    let equivalent = Arc::new(StateBundleSnapshot::clone(&first));
     let mut states = BTreeMap::new();
     let mut revisions = BTreeMap::new();
 
@@ -93,12 +93,7 @@ fn equivalent_state_publication_preserves_revision_and_snapshot() {
     assert_eq!(revisions[&7], 1);
     assert!(Arc::ptr_eq(&states[&7], &first));
 
-    update_state_publication(
-        &mut states,
-        &mut revisions,
-        7,
-        state_publication(7, 1, 10).snapshot,
-    );
+    update_state_publication(&mut states, &mut revisions, 7, state_bundle(1, 10));
     assert_eq!(revisions[&7], 2);
 }
 
@@ -106,23 +101,58 @@ fn equivalent_state_publication_preserves_revision_and_snapshot() {
 fn publication_sink_suppresses_equivalent_snapshots() {
     let queue = Arc::new(StatePublicationQueue::default());
     let sink = StatePublicationSink::new(7, 1, Arc::clone(&queue));
-    let first = state_publication(7, 1, 10).snapshot;
-    let equivalent = Arc::new(StateBundleSnapshot {
-        source: first.source,
-        generation: first.generation,
-        reset_epoch: first.reset_epoch,
-        regular: Arc::clone(&first.regular),
-        precise: Arc::clone(&first.precise),
-    });
+    let first = state_bundle(1, 10);
+    let equivalent = Arc::new(StateBundleSnapshot::clone(&first));
 
-    sink.publish(first).unwrap();
+    sink.publish(first, Delivery::All).unwrap();
     assert_eq!(queue.drain().len(), 1);
-    sink.publish(equivalent).unwrap();
+    sink.publish(equivalent, Delivery::All).unwrap();
     assert!(queue.drain().is_empty());
 
-    sink.publish(state_publication(7, 1, 10).snapshot)
-        .unwrap();
+    sink.publish(state_bundle(1, 10), Delivery::All).unwrap();
     assert_eq!(queue.drain().len(), 1);
+}
+
+#[test]
+fn subscriber_samples_reach_live_state_before_api_cadence() {
+    let queue = Arc::new(StatePublicationQueue::default());
+    let sink = StatePublicationSink::new(7, 1, Arc::clone(&queue));
+    let cadence = state_bundle(1, 10);
+    sink.publish(Arc::clone(&cadence), Delivery::All).unwrap();
+    queue.drain();
+
+    // A subscriber-driven regular sample is live-only.
+    let fast = Arc::new(StateBundleSnapshot {
+        regular: Arc::clone(&state_bundle(1, 10).regular),
+        ..StateBundleSnapshot::clone(&cadence)
+    });
+    sink.publish(Arc::clone(&fast), Delivery::Live).unwrap();
+    let drained = queue.drain();
+    assert!(Arc::ptr_eq(&drained[&7].live, &fast));
+    assert!(Arc::ptr_eq(&drained[&7].api, &cadence));
+
+    // A due precise sample advances only the API's precise component.
+    let precise = Arc::new(StateBundleSnapshot {
+        precise: Arc::clone(&state_bundle(1, 10).precise),
+        ..StateBundleSnapshot::clone(&fast)
+    });
+    sink.publish(Arc::clone(&precise), Delivery::Precise)
+        .unwrap();
+    let api = Arc::clone(&queue.drain()[&7].api);
+    assert!(Arc::ptr_eq(&api.regular, &cadence.regular));
+    assert!(Arc::ptr_eq(&api.precise, &precise.precise));
+
+    // A reset epoch reaches API readers at once, even between cadence points.
+    let reset = state_bundle(1, 11);
+    sink.publish(Arc::clone(&reset), Delivery::Live).unwrap();
+    let drained = queue.drain();
+    assert!(Arc::ptr_eq(&drained[&7].api, &reset));
+    assert!(Arc::ptr_eq(&drained[&7].live, &reset));
+
+    // The next API cadence capture catches API readers up.
+    let caught_up = state_bundle(1, 11);
+    sink.publish(Arc::clone(&caught_up), Delivery::All).unwrap();
+    assert!(Arc::ptr_eq(&queue.drain()[&7].api, &caught_up));
 }
 
 #[tokio::test]

@@ -297,7 +297,7 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 | `ENABLE_KEY_OVERLAY` | `true` | Publish key-overlay data in compatible schemas. |
 | `POLL_RATE` | `150` | Regular state interval in milliseconds; range `100`–`60000`. |
 | `PRECISE_DATA_POLL_RATE` | `10` | Precise state interval in milliseconds; range `1`–`60000`. |
-| `V2_SUBSCRIPTION_DEBOUNCE` | `0` | Minimum interval in milliseconds between selected-field WebSocket frames; range `0`–`60000`, fractional values supported. |
+| `V2_SUBSCRIPTION_DEBOUNCE` | `1` | Selected-field sampling interval and minimum interval between its WebSocket frames, in milliseconds; range `1`–`60000`, fractional values supported. |
 | `SHOW_MP_COMMANDS` | `false` | Include multiplayer commands where supported. |
 | `READ_MANIA_SCROLL_SPEED` | `true` | Read mania scroll speed. |
 | `SERVER_IP` | `127.0.0.1` | Listener hostname or address. |
@@ -380,7 +380,7 @@ File routes enforce root containment and support validated single HTTP byte rang
 
 - `GET /`, `/settings`, `/available`, `/favicon.ico` (favicon responses add `X-Vosu-Identity: vosu` for bounded second-launch discovery without changing page bodies)
 - `GET /assets/{path}` and the fallback counter-static route
-- `POST /api/settingsSave` rejects the whole save when a submitted interval or port is not a finite number or is out of range: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` 1–60000, `V2_SUBSCRIPTION_DEBOUNCE` 0–60000 (milliseconds), and `SERVER_PORT` a whole number 1–65535.
+- `POST /api/settingsSave` rejects the whole save when a submitted interval or port is not a finite number or is out of range: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` 1–60000, `V2_SUBSCRIPTION_DEBOUNCE` 1–60000 (milliseconds), and `SERVER_PORT` a whole number 1–65535.
 - `POST /api/runUpdates` returns an HTTP 200 JSON `error` for externally managed installs instead of attempting replacement.
 - `POST /api/generateReport`
 - `GET /api/counters/search/{query}[?source=installed|available]` returns card HTML for installed counters by default or for the catalog with `source=available`; any other `source` returns 400. The query keeps letters, digits, and whitespace, and a card matches when any word matches its name, author, or compatible clients. Lookup failures return 502 with an escaped `Error:` body.
@@ -413,7 +413,7 @@ Unknown near-miss paths do not upgrade. Frames and assembled messages are limite
 
 Command control queues and the shared relay mailbox each hold at most 16 frames/events. Relay saturation drops new refresh events; a recipient whose control queue is full is disconnected without blocking other recipients. Filter input is limited to 256 nodes and eight nesting levels, with equivalent filters deduplicated before projection.
 
-The selected-field endpoint expects one text message within five seconds: a JSON array of 1–256 non-overlapping RFC 6901 JSON Pointers into the `/json/v2` document. A subscription such as `["/keys","/beatmap/mode","/state/number"]` receives compact initial `[0, revision, [[index, value], ...]]` and update `[1, revision, [[changedIndex, value], ...], [removedIndex, ...]]` frames. Send `["ping", nonce]` for `["pong", nonce, revision]`. Invalid filters receive `[2, code, message]`. Updates are debounced by `V2_SUBSCRIPTION_DEBOUNCE`; due revisions use the latest snapshot.
+The selected-field endpoint expects one text message within five seconds: a JSON array of 1–256 non-overlapping RFC 6901 JSON Pointers into the `/json/v2` document. A subscription such as `["/keys","/beatmap/mode","/state/number"]` receives compact initial `[0, revision, [[index, value], ...]]` and update `[1, revision, [[changedIndex, value], ...], [removedIndex, ...]]` frames. Send `["ping", nonce]` for `["pong", nonce, revision]`. Invalid filters receive `[2, code, message]`. While at least one selection is established, vosu samples game state every `V2_SUBSCRIPTION_DEBOUNCE` milliseconds (never slower than `POLL_RATE`/`PRECISE_DATA_POLL_RATE`), so selected fields can change before the HTTP and compatibility WebSocket payloads, which keep their `POLL_RATE`/`PRECISE_DATA_POLL_RATE` cadence. A beatmap change or retry still reaches every API immediately. Frames are sent only when a selected value changes, at most once per `V2_SUBSCRIPTION_DEBOUNCE` per client, and always carry the latest snapshot. Faster sampling costs CPU: each sample reruns memory reads and live pp calculation.
 
 Control-frame backpressure is bounded too: an established selected-field connection whose pong queue is full closes with code `1011` rather than pinning the reader indefinitely.
 

@@ -99,12 +99,12 @@ impl ConfigDocument {
             self.config.precise_data_poll_rate = 1.0;
         }
 
-        if self.config.v2_subscription_debounce < 0.0 {
+        if self.config.v2_subscription_debounce < 1.0 {
             warnings.push(format!(
-                "Config %V2_SUBSCRIPTION_DEBOUNCE% value %{}% below minimum %0%, clamping.",
+                "Config %V2_SUBSCRIPTION_DEBOUNCE% value %{}% is below the minimum %1%, clamping.",
                 format_number(self.config.v2_subscription_debounce)
             ));
-            self.config.v2_subscription_debounce = 0.0;
+            self.config.v2_subscription_debounce = 1.0;
         }
 
         for (name, interval) in [
