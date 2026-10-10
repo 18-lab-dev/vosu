@@ -220,7 +220,7 @@ Candidate/rollback readiness uses a one-use secret delivered only through the ex
 
 ## Quality risks and change hotspots
 
-1. **Compatibility drift.** Four schemas, two calculator contracts, and stable/lazer sentinel behavior are intentionally distinct. Changes should start at the owning builder/reader, then be checked with `tools/live-parity` and targeted tests rather than normalized in a shared convenience layer.
+1. **Compatibility drift.** Four schemas, two calculator contracts, and stable/lazer sentinel behavior are intentionally distinct. Changes should start at the owning builder/reader, then be checked with targeted compatibility tests rather than normalized in a shared convenience layer. `tools/live-parity` is an optional diagnostic for suspected upstream divergence.
 2. **Target-process races.** Addresses can become stale between discovery and reads. Keep native reads all-or-error, validate lengths/addresses, preserve generation and context checks, and never move decoding into platform syscall code.
 3. **High-frequency work.** Precise polling can be much faster than regular polling. Avoid allocations, blocking Tokio tasks, or unbounded fan-out on `MemoryReader`, reducer, projection, and WebSocket hot paths. Use the measured evidence in [benchmarks](../testing/benchmarks.md), not assumed throughput.
 4. **Atomicity regressions.** Loading focus, regular state, precise state, or configuration independently in a wire builder can expose impossible combinations. Extend `ManagerSnapshot`/`CombinedSnapshot` and publish once instead.

@@ -40,6 +40,5 @@ API payloads are the most compatibility-sensitive area: upstream `hitErrorArray`
 
 ## Backlog
 
-- **Live parity operations cadence and pinned-artifact ownership** — anchor: `tools/live-parity/`, `AGENTS.md`; the repository defines the gate and supported matrix but not a recurring maintainer schedule.
 - **Quarantined updater transaction operator procedure** — anchor: `src/updater/transaction.rs`, [architecture overview](architecture/overview.md); recovery behavior is documented, but a step-by-step diagnosis/escalation procedure is not explicit.
 - **Linux stable/Wine parity evidence** — anchor: `tools/live-parity/live_parity.py::SUPPORTED_MATRIX`; runtime support exists, while the inspected parity matrix currently lists Linux lazer rather than Linux stable.

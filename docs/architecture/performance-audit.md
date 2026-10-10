@@ -78,7 +78,7 @@ Important limitations:
 
 **Invariant/risk.** Live state calculation and [`LegacyRosuEngine`](../../src/calculation/engine.rs) are separate compatibility contracts and must remain separate. Preserve exact calculator revisions, ruleset/mod/scoring/clock-rate cache dimensions, source identity invalidation, and result bytes/numerics.
 
-**Validation experiment.** Count difficulty, conversion, strain, and performance invocations for map load. Benchmark representative large maps for every supported ruleset and representative mods, recording CPU, allocation bytes, and peak RSS. Require bit-for-bit result equality and live-parity checks before and after reuse.
+**Validation experiment.** Count difficulty, conversion, strain, and performance invocations for map load. Benchmark representative large maps for every supported ruleset and representative mods, recording CPU, allocation bytes, and peak RSS. Require bit-for-bit result equality before and after reuse.
 
 ### 3. State publications are coalesced; manager metadata is still rebuilt
 
@@ -92,7 +92,7 @@ The supervisor still reconstructs `ready` and `desired` maps on each loop; `publ
 
 **Invariant/risk.** Preserve stale-publication rejection, cancellation/join behavior, deterministic PID order, focus/role semantics, semantic revisions, and one atomic all-instance `ManagerSnapshot`. A newer generation must never be replaced by an older publication.
 
-**Validation experiment.** Instrument coalesced count, supervisor-loop time, allocations, and RSS. Run 1/8/32 workers with injected supervisor delays and mixed generation replacement. Verify bounded pending state, latest accepted publication, no stale generation reappearance, and unchanged atomic snapshot tests/live parity.
+**Validation experiment.** Instrument coalesced count, supervisor-loop time, allocations, and RSS. Run 1/8/32 workers with injected supervisor delays and mixed generation replacement. Verify bounded pending state, latest accepted publication, no stale generation reappearance, and unchanged atomic snapshot tests.
 
 ### 4. Precise publication copies cumulative history and mod context
 
@@ -160,7 +160,7 @@ The supervisor still reconstructs `ready` and `desired` maps on each loop; `publ
 2. **Add observability before optimization.** Counters should cover discovery stages, native batch/syscall setup, context clone bytes, live-calculator invocation stages, publication queue age/coalescing, filtered projection allocation, legacy admission, and response bytes/peak concurrency.
 3. **Build realistic local workloads.** Add developer-only scenarios for live stable/lazer native reads, large maps across rulesets/mods, multi-instance precise publication, filtered WebSocket clients, concurrent legacy requests, and near-limit logs/catalogs. Keep the pinned toolchain and identical Criterion/profile controls for paired runs.
 4. **Use the right tools.** Criterion is suitable for isolated CPU/allocation comparisons once fixtures represent the path. Use a sampling profiler for daemon CPU and a heap/RSS profiler for retained/transient memory. Record host, revision, configuration, fixtures, sample controls, and confidence intervals in [benchmarks.md](../testing/benchmarks.md).
-5. **Gate changes on behavior.** Performance comparisons must be paired with API byte parity, live parity where applicable, generation/staleness tests, queue-bound tests, platform-specific process tests, and security boundary tests. A faster result that changes semantics is a regression.
+5. **Gate changes on behavior.** Performance comparisons must be paired with API byte parity, generation/staleness tests, queue-bound tests, platform-specific process tests, and security boundary tests. A faster result that changes semantics is a regression.
 
 Lower-priority, cold/control-plane candidates should stay behind the roadmap above: [`RuntimeConfig::save`](../../src/runtime/config.rs) clones a JSON object on settings writes; [`RelayWorker`](../../src/server/service/relay.rs) has an unbounded event input and serial bounded recipient sends; [`ConfigStore`](../../src/config/store.rs) uses unbounded `StoreCommand` and filesystem-event queues; [`ReloadableCounterService::reload_static_root`](../../src/counters/service.rs) retains retired generations until shutdown; and [`RuntimePages::render`](../../src/runtime/service.rs) can repeat recursive counter discovery per page/search request. Validate each with burst/reload/request profiles and explicit queue/retention metrics before changing it. Preserve configuration publish barriers, relay targeting/replies, counter path validation, and static-root lifecycle semantics.
 

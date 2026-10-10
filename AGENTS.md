@@ -37,7 +37,7 @@ cargo bench --locked --package vosu --bench hot_paths -- <benchmark-filter>
 
 The `test-harness` feature is development-only. `build.rs` intentionally rejects it in release builds; never treat it as a production switch.
 
-Live source-versus-Rust parity is an interactive, attested gate, not a normal unit test. Use a strict JSON configuration accepted by the CLI, distinct loopback ports, and the pinned reference/client artifacts. Windows supports stable or lazer; Linux supports lazer. During capture, traverse menu → active play → paused → result, then close the client.
+Live source-versus-Rust parity is an optional interactive diagnostic, not a required check before merging, pushing, or releasing ([ADR 0011](docs/decisions/0011-live-parity-optional.md)). Run it only to investigate a suspected divergence from upstream. It needs a strict JSON configuration accepted by the CLI, distinct loopback ports, and the pinned reference/client artifacts. Windows supports stable or lazer; Linux supports lazer. During capture, traverse menu → active play → paused → result, then close the client.
 
 ```sh
 python tools/live-parity/run.py config-schema
@@ -67,7 +67,7 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 - Configuration or counter persistence: affected unit tests plus `cargo test --locked --test config_compat` (and the relevant server compatibility test for counter APIs).
 - Process discovery or memory reading: affected unit tests and, on each affected native OS, `cargo test --locked --test process_memory -- --nocapture`.
 - Updater/release behavior: `cargo test --locked --test updater_compat`, native `cargo test --locked --test updater_native -- --nocapture`, and `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture` when packaging/startup changes.
-- Calculator/state semantics: affected `vosu-pp` tests and `cargo test --locked --test performance_invariants`; use live parity when observable live schemas or state timing can change.
+- Calculator/state semantics: affected `vosu-pp` tests and `cargo test --locked --test performance_invariants`, plus `state_api_compat`/`server_compat` when observable schemas or state timing can change.
 - Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](docs/testing/benchmarks.md).
 - Before merging a Rust change, run the applicable native smoke path and the CI checks above; platform-specific code requires evidence from that platform.
 

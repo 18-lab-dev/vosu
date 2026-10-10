@@ -78,7 +78,7 @@ not evidence of current native execution.
 
 ## Verification workflow
 
-Use targeted compatibility tests first, then live parity when observable state or wire timing changes. `tools/live-parity/run.py` validates strict configuration, attested processes/sockets, pinned artifacts, and the menu → active play → paused → result → close lifecycle. It compares vosu against the pinned upstream reference for the declared Windows stable/lazer and Linux lazer matrix.
+Use targeted compatibility tests to gate changes to observable state or wire timing. Live parity is an optional diagnostic for suspected divergence from upstream ([ADR 0011](../decisions/0011-live-parity-optional.md)). `tools/live-parity/run.py` validates strict configuration, attested processes/sockets, pinned artifacts, and the menu → active play → paused → result → close lifecycle. It compares vosu against the pinned upstream reference for the declared Windows stable/lazer and Linux lazer matrix.
 
 Active v1/v2 observations are matched in receipt order within the same state
 and confirmed retry segment. Matching first maximizes one-to-one reference
