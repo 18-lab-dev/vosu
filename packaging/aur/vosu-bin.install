@@ -1,6 +1,6 @@
 post_install() {
     if ! /usr/bin/vosu --setup; then
-        printf '%s\n' 'vosu: capability setup failed; run sudo vosu --setup on the host.' >&2
+        printf '%s\n' 'vosu: capability setup failed; run /usr/bin/vosu --setup on the host.' >&2
     fi
     return 0
 }

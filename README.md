@@ -66,7 +66,8 @@ Linux binaries require glibc **2.35 or newer** (Debian 12+, Ubuntu 22.04+,
 current Fedora and Arch). Packages install the desktop launcher and icons,
 and automatically grant process-reading capabilities on install and upgrade.
 If the host refuses capabilities, installation still succeeds and prints a
-hint to run `sudo vosu --setup`. Never run the daemon itself as root.
+hint to run `/usr/bin/vosu --setup` as your desktop user; it asks for
+authentication itself. Never run the daemon itself as root.
 Launch **vosu** from the application menu or run `vosu` as your desktop user.
 Packaged installs do not use the [self-updater](#automatic-updates), and no
 apt, dnf, or pacman repository is configured, so a system upgrade does not

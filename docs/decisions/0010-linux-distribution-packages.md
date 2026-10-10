@@ -19,7 +19,8 @@ privilege must remain separate: only capability setup runs as root.
    2.35. Pin nfpm's release archive and SHA-256 to upstream release checksums.
 2. Package install and upgrade hooks run `/usr/bin/vosu --setup` as root.
    Capability failure never aborts a transaction; print a one-line hint to run
-   `sudo vosu --setup`. Do not run the telemetry daemon as root.
+   `/usr/bin/vosu --setup` as the desktop user, which requests polkit
+   authentication itself. Do not run the telemetry daemon as root.
 3. One executable serves portable and packaged installs. On Linux and Windows,
    a program directory not writable by the current user means externally
    managed installation: skip startup update checks, reject explicit update

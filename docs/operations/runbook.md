@@ -115,7 +115,7 @@ containers install the corresponding local package with dependency resolution,
 check launcher/icons, and run `vosu --help`. Debian also starts an isolated,
 unprivileged daemon and checks HTTP 200. Capability setup is deliberately
 nonfatal: post-install and post-upgrade run `/usr/bin/vosu --setup` as root,
-printing `sudo vosu --setup` recovery guidance on failure. `getcap` records
+printing `/usr/bin/vosu --setup` recovery guidance on failure. `getcap` records
 whether the container could grant capabilities. The daemon never runs as root.
 The smoke records file capabilities before clearing them only inside the
 disposable container: rootless containers can set a capability outside their

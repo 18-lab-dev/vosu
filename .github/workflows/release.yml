@@ -267,7 +267,7 @@ jobs:
           package=$(find dist -maxdepth 1 -name '*.deb' -printf '%f')
           set -o pipefail
           podman run --rm --cap-drop SETFCAP -v "$PWD/dist:/packages:ro" -v "$PWD/packaging/linux:/checks:ro" debian:12 sh /checks/smoke-install.sh "/packages/$package" 2>&1 | tee /tmp/restricted-install.log
-          grep -F 'vosu: capability setup failed; run sudo vosu --setup on the host.' /tmp/restricted-install.log
+          grep -F 'vosu: capability setup failed; run /usr/bin/vosu --setup on the host.' /tmp/restricted-install.log
 
   publish:
     name: Publish exact release assets
