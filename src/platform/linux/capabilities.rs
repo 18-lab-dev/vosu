@@ -35,9 +35,13 @@ pub(super) fn install(executable: &Path) -> io::Result<()> {
     ensure_executable(executable)?;
     let mut tools = NativeToolProvider;
     let mut runner = NativeCommandRunner;
-    if let Some(report) =
-        install_with_privilege(executable, effective_user_id(), &mut tools, &mut runner)?
-    {
+    if let Some(report) = install_with_privilege(
+        executable,
+        effective_user_id(),
+        &mut tools,
+        &mut runner,
+        &mut io::stderr(),
+    )? {
         report.write_to(&mut io::stdout().lock(), executable)?;
     }
     Ok(())
@@ -53,6 +57,7 @@ fn install_with_privilege(
     effective_user_id: libc::uid_t,
     tools: &mut impl ToolProvider,
     runner: &mut impl CommandRunner,
+    notice: &mut impl Write,
 ) -> io::Result<Option<InstallReport>> {
     if effective_user_id == 0 {
         let setcap = tools.setcap()?;
@@ -68,6 +73,18 @@ fn install_with_privilege(
             ),
         )
     })?;
+    if replaceable_without_root(executable) {
+        // Warn rather than refuse: portable ZIP users need these capabilities under Yama
+        // ptrace_scope 1, and code that can already rewrite a user-owned binary gains only
+        // user-to-root, a small step on a single-user desktop. A closed stderr must not
+        // block setup, so the write result is ignored.
+        let _ = writeln!(
+            notice,
+            "warning: {executable:?} is writable without root; anything running as your user \
+             can replace it before you authenticate, and the replacement would run as root. \
+             Distribution packages avoid this."
+        );
+    }
     elevate_setup(&pkexec, executable, runner)?;
     Ok(None)
 }
@@ -161,8 +178,7 @@ fn trusted_tool(candidates: &[&str], name: &str) -> io::Result<PathBuf> {
         };
         if metadata.is_file()
             && metadata.permissions().mode() & 0o111 != 0
-            && metadata.uid() == 0
-            && metadata.permissions().mode() & 0o022 == 0
+            && root_controlled(&metadata)
         {
             return Ok(path);
         }
@@ -172,6 +188,17 @@ fn trusted_tool(candidates: &[&str], name: &str) -> io::Result<PathBuf> {
         io::ErrorKind::NotFound,
         format!("could not find a root-owned, non-writable {name} in standard system paths"),
     ))
+}
+
+fn root_controlled(metadata: &fs::Metadata) -> bool {
+    metadata.uid() == 0 && metadata.permissions().mode() & 0o022 == 0
+}
+
+/// An unreadable executable or directory counts as replaceable: the warning is the safe default.
+fn replaceable_without_root(executable: &Path) -> bool {
+    !std::iter::once(executable)
+        .chain(executable.parent())
+        .all(|path| fs::metadata(path).is_ok_and(|metadata| root_controlled(&metadata)))
 }
 
 trait CommandRunner {
@@ -824,8 +851,9 @@ mod tests {
         };
         let mut runner = RecordingRunner::with_status_responses([status_with_code(0)]);
 
-        let report = install_with_privilege(executable, 1000, &mut tools, &mut runner)
-            .expect("successful polkit elevation");
+        let report =
+            install_with_privilege(executable, 1000, &mut tools, &mut runner, &mut io::sink())
+                .expect("successful polkit elevation");
 
         assert!(report.is_none());
         assert_eq!(tools.lookups, vec!["pkexec"]);
@@ -857,9 +885,14 @@ mod tests {
         };
         let mut runner = RecordingRunner::with_status_responses([status_with_code(126)]);
 
-        let error =
-            install_with_privilege(Path::new("/opt/vosu/vosu"), 1000, &mut tools, &mut runner)
-                .expect_err("cancelled authentication must fail");
+        let error = install_with_privilege(
+            Path::new("/opt/vosu/vosu"),
+            1000,
+            &mut tools,
+            &mut runner,
+            &mut io::sink(),
+        )
+        .expect_err("cancelled authentication must fail");
 
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
         assert!(error.to_string().contains("authentication was cancelled"));
@@ -874,9 +907,14 @@ mod tests {
 
         let mut missing_tools = RecordingToolProvider::default();
         let mut missing_runner = RecordingRunner::default();
-        let missing_error =
-            install_with_privilege(executable, 1000, &mut missing_tools, &mut missing_runner)
-                .expect_err("missing pkexec must fail");
+        let missing_error = install_with_privilege(
+            executable,
+            1000,
+            &mut missing_tools,
+            &mut missing_runner,
+            &mut io::sink(),
+        )
+        .expect_err("missing pkexec must fail");
         assert_eq!(missing_error.kind(), io::ErrorKind::NotFound);
         assert!(
             missing_error
@@ -896,9 +934,14 @@ mod tests {
             ..RecordingToolProvider::default()
         };
         let mut denied_runner = RecordingRunner::with_status_responses([status_with_code(127)]);
-        let denied_error =
-            install_with_privilege(executable, 1000, &mut denied_tools, &mut denied_runner)
-                .expect_err("failed authentication must fail");
+        let denied_error = install_with_privilege(
+            executable,
+            1000,
+            &mut denied_tools,
+            &mut denied_runner,
+            &mut io::sink(),
+        )
+        .expect_err("failed authentication must fail");
         assert_eq!(denied_error.kind(), io::ErrorKind::PermissionDenied);
         assert!(
             denied_error
@@ -935,10 +978,15 @@ mod tests {
         let responses = [successful_output()];
         let mut runner = RecordingRunner::with_responses(responses);
 
-        let report =
-            install_with_privilege(Path::new("/opt/vosu/vosu"), 0, &mut tools, &mut runner)
-                .expect("root setup")
-                .expect("root setup report");
+        let report = install_with_privilege(
+            Path::new("/opt/vosu/vosu"),
+            0,
+            &mut tools,
+            &mut runner,
+            &mut io::sink(),
+        )
+        .expect("root setup")
+        .expect("root setup report");
 
         assert_eq!(tools.lookups, vec!["setcap"]);
         assert!(
@@ -946,5 +994,52 @@ mod tests {
             "root setup requested authentication"
         );
         assert_eq!(report.final_capabilities, PTRACE_CAPABILITY_SET);
+    }
+
+    #[test]
+    fn user_owned_executable_warns_before_authentication_and_still_elevates() {
+        let directory = tempfile::tempdir().expect("create portable install directory");
+        let executable = directory.path().join("vosu");
+        fs::write(&executable, b"").expect("create portable executable");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+            .expect("mark portable executable");
+        let mut tools = RecordingToolProvider {
+            pkexec: Some(PathBuf::from("/usr/bin/pkexec")),
+            ..RecordingToolProvider::default()
+        };
+        let mut runner = RecordingRunner::with_status_responses([status_with_code(0)]);
+        let mut notice = Vec::new();
+
+        install_with_privilege(&executable, 1000, &mut tools, &mut runner, &mut notice)
+            .expect("portable setup still elevates");
+
+        // A root test runner owns the temporary directory, which is then root-controlled.
+        let notice = String::from_utf8(notice).expect("UTF-8 notice");
+        assert_eq!(
+            notice.contains("writable without root"),
+            effective_user_id() != 0
+        );
+        assert_eq!(
+            notice.lines().count(),
+            usize::from(effective_user_id() != 0)
+        );
+        assert_eq!(runner.status_calls.len(), 1);
+    }
+
+    #[test]
+    fn root_controlled_executable_elevates_without_warning() {
+        let executable = fs::canonicalize("/bin/sh").expect("resolve system shell");
+        let mut tools = RecordingToolProvider {
+            pkexec: Some(PathBuf::from("/usr/bin/pkexec")),
+            ..RecordingToolProvider::default()
+        };
+        let mut runner = RecordingRunner::with_status_responses([status_with_code(0)]);
+        let mut notice = Vec::new();
+
+        install_with_privilege(&executable, 1000, &mut tools, &mut runner, &mut notice)
+            .expect("packaged setup elevates");
+
+        assert!(notice.is_empty(), "{}", String::from_utf8_lossy(&notice));
+        assert_eq!(runner.status_calls.len(), 1);
     }
 }

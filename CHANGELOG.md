@@ -26,6 +26,7 @@ All notable user-visible changes to vosu are documented here. Version 1.0.0 is p
 - Preserve headerless/file-origin read-only overlay access and stock settings commands. Hosted counters can still save settings without new tokens or code; non-hosted sockets may read settings but cannot save them.
 - Management writes require exact HTTP scheme/host/port browser provenance; `Origin` is authoritative, with `Referer` fallback only when absent. Missing, null, malformed, or duplicate provenance cannot authorize writes. Non-hosted settings sockets retain reads but close with 1008 before saving or relaying mutations.
 - Made an unprivileged `vosu --setup` request OS-owned authentication through a trusted polkit `pkexec` boundary before any capability change. Root execution skips authentication; cancellation, denial, unavailable/noninteractive elevation, and missing `pkexec` fail without invoking `setcap`. Vosu never reads credentials and has no sudo fallback.
+- `vosu --setup` warns before the authentication prompt when the executable or its directory is writable without root, as with a portable ZIP: the polkit prompt authorizes whatever file currently sits at that path. Setup still continues so portable installs can receive capabilities.
 - Bound native telemetry, calculator inputs, counter installation and transport work without losing stable hit-error catch-up, ordered filter precedence or settings refreshes during receive-side connection contention. Preserve per-recipient control-queue backpressure.
 
 ### Runtime and maintenance
