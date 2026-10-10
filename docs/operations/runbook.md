@@ -170,8 +170,8 @@ has passed.
   `LICENSE-APACHE`, `THIRD_PARTY_NOTICES.md`, calculator license texts including
   `crates/vosu-pp/THIRD_PARTY_LICENSES.txt` and both local fork licenses, and the
   historical oracle license referenced by the notices. License paths retain their
-  repository layout. `Cargo.lock` and `assets/SHA256SUMS` accompany the provenance;
-  the latter describes repository inputs, not archive-member checksums.
+  repository layout. `Cargo.lock`, `assets/SHA256SUMS`, and the provenance audit
+  accompany them; the manifest describes repository inputs, not archive members.
   The historical oracle executable is not shipped. This is the retained repository
   attribution bundle, not a newly generated license audit of every registry dependency.
 - **Smoke:** `scripts/version-build.py package` checks the exact ZIP member set

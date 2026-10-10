@@ -34,8 +34,11 @@ jobs:
           sudo apt-get install --yes clang libbpf-dev libelf-dev pkg-config zlib1g-dev imagemagick rpm libarchive-tools
           echo "C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu" >> "$GITHUB_ENV"
 
-      - name: Check attribution, retained notices, and integrity manifests
-        run: python scripts/check-provenance.py
+      - name: Check retained calculator notices in LICENSE
+        run: python scripts/assemble-release-license.py
+
+      - name: Check embedded asset digests
+        run: python scripts/check-asset-hashes.py
 
       - name: Validate release tag and package version
         run: python scripts/package-release.py validate-tag --tag "$RELEASE_TAG"
@@ -124,8 +127,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Check attribution, retained notices, and integrity manifests
-        run: python scripts/check-provenance.py
+      - name: Check retained calculator notices in LICENSE
+        run: python scripts/assemble-release-license.py
+
+      - name: Check embedded asset digests
+        run: python scripts/check-asset-hashes.py
 
       - name: Validate release tag and package version
         run: python scripts/package-release.py validate-tag --tag "$env:RELEASE_TAG"

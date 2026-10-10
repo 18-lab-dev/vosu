@@ -43,9 +43,7 @@ def expected_license(root):
     introduction = (
         f"Source: {SOURCE}\n"
         "The following material retains its own license terms.\n"
-        "Declared Cargo licenses and packaged-notice availability are inventoried in\n"
-        "the repository's docs/dependency-license-inventory.json. Neither that\n"
-        "inventory nor this appendix certifies complete distribution compliance.\n\n"
+        "This appendix does not certify complete distribution compliance.\n\n"
     ).encode()
     return first_party + MARKER + introduction + source
 
@@ -60,7 +58,7 @@ def main():
         path = args.root / "LICENSE"
         if args.write:
             path.write_bytes(expected)
-            print("Refreshed LICENSE appendix; run check-provenance.py --refresh-license-hash")
+            print("Refreshed LICENSE appendix")
         elif path.read_bytes() != expected:
             raise ValueError("LICENSE calculator appendix is stale; run this script with --write")
         else:

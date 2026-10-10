@@ -1,7 +1,11 @@
-"""Exercise license integrity without treating fixture bytes as a native build."""
+"""Exercise release packaging scripts with fixture bytes, not native builds."""
 
 import importlib.util
+import json
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 import warnings
@@ -19,6 +23,12 @@ LINUX_SPEC = importlib.util.spec_from_file_location(
 )
 linux = importlib.util.module_from_spec(LINUX_SPEC)
 LINUX_SPEC.loader.exec_module(linux)
+
+VERSION_BUILD = Path(__file__).with_name("version-build.py")
+VERSION_SPEC = importlib.util.spec_from_file_location("version_build", VERSION_BUILD)
+version_build = importlib.util.module_from_spec(VERSION_SPEC)
+VERSION_SPEC.loader.exec_module(version_build)
+REPOSITORY = Path(__file__).resolve().parents[1]
 
 
 class ReleaseLicenseTests(unittest.TestCase):
@@ -132,6 +142,39 @@ class DistributionReleaseTests(unittest.TestCase):
             self.assertIn("\tpkgver = 1.2.3\n", srcinfo)
             self.assertIn("\tsha256sums = " + linux.sha256(archive), srcinfo)
             self.assertNotIn("@VERSION@", pkgbuild)
+
+
+class DevelopmentArchiveTests(unittest.TestCase):
+    def test_archive_carries_current_attribution_and_build_metadata(self):
+        sha = "9c2187e683775485b8551fd6e7cb09b6e6786332"
+        for platform, (target, executable, features) in version_build.TARGETS.items():
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as directory:
+                checkout = Path(directory) / "checkout"
+                for name in (*version_build.ATTRIBUTION, "Cargo.toml", "rust-toolchain.toml"):
+                    destination = checkout / name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(REPOSITORY / name, destination)
+                binary = checkout / "target" / target / "release" / executable
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(b"explicit non-daemon fixture")
+                output = Path(directory) / "dist"
+                subprocess.run(
+                    [sys.executable, VERSION_BUILD, "package", "--platform", platform,
+                     "--sha", sha, "--output", output,
+                     "--destination", Path(directory) / "extract"],
+                    cwd=checkout, check=True, capture_output=True,
+                )
+                [archive] = output.glob("*.zip")
+                with zipfile.ZipFile(archive) as file:
+                    self.assertEqual(
+                        set(file.namelist()),
+                        {executable, "BUILD-INFO.json", *version_build.ATTRIBUTION},
+                    )
+                    for name in version_build.ATTRIBUTION:
+                        self.assertEqual(file.read(name), (REPOSITORY / name).read_bytes(), name)
+                    info = json.loads(file.read("BUILD-INFO.json"))
+                self.assertEqual((info["target"], info["features"], info["commit"]),
+                                 (target, features, sha))
 
 
 if __name__ == "__main__":

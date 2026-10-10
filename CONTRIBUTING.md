@@ -94,7 +94,9 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 python scripts/check-doc-links.py
-python scripts/check-provenance.py --package-fixtures
+python scripts/assemble-release-license.py
+python scripts/check-asset-hashes.py
+python -m unittest discover -s scripts -p test_package_release.py
 ```
 
 For a narrower loop, [Testing and verification](docs/testing/verification.md#fast-selection-by-change)
@@ -107,11 +109,12 @@ Keep these in the same pull request:
 
 - Documentation: README for user-visible contracts, `docs/` for architecture
   and workflows, and `CHANGELOG.md` for notable user-visible changes.
-- Integrity manifests: changes to `assets/` need the new hash in
-  `assets/SHA256SUMS`. The `homepage.css`/`homepage.html` hashes are also stored
-  in `Cargo.toml` metadata. After any `Cargo.toml` or `Cargo.lock` change, run
-  `python scripts/check-provenance.py --refresh-dependency-inventory`. The
-  provenance check names any stale entry.
+- Integrity manifest: a change to a file listed in `assets/SHA256SUMS`
+  (dashboard assets, branding, `offsets.json`, `LICENSE`) needs
+  `python scripts/check-asset-hashes.py --write` after review.
+- Release `LICENSE`: it embeds the calculator notices from
+  `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`. After changing either, run
+  `python scripts/assemble-release-license.py --write`.
 - Public contracts: routes, payload shapes, status codes, and WebSocket paths
   stay exact unless the change deliberately updates their tests and docs.
 

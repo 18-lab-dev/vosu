@@ -17,7 +17,7 @@ Set up a checkout with [CONTRIBUTING.md](../CONTRIBUTING.md), then start with th
 - [Testing and verification](testing/verification.md)
 - [Benchmark methods, measurements, and limitations](testing/benchmarks.md)
 - [Precise input validation](testing/input-validation.md)
-- [Source-provenance audit](provenance-audit.md) and [locked dependency-license inventory](dependency-license-inventory.json)
+- [Source-provenance audit](provenance-audit.md)
 
 ## Historical evidence
 

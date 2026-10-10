@@ -90,9 +90,9 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 
 ## Vendored, generated, and documentation boundaries
 
-- `assets/server/` and `assets/offsets.json` are vendored embedded inputs, not a frontend build workspace. Any byte change must preserve provenance and update `assets/SHA256SUMS`; update the matching `package.metadata.vosu` pins/hashes and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) when their evidence changes.
+- `assets/server/` and `assets/offsets.json` are embedded inputs, not a frontend build workspace. Any byte change to a file listed in `assets/SHA256SUMS` must be reviewed and its digest refreshed with `python scripts/check-asset-hashes.py --write`. When regenerating `assets/offsets.json`, also record its provenance in `package.metadata.vosu` and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) as described in the [offsets procedure](docs/operations/offsets-asset.md).
 - Treat `crates/vosu-pp/rosu-pp-api/` and `crates/vosu-pp/rosu-map-api/`, `tools/oracle/reference/`, oracle inputs, and calculator fixtures as provenance-pinned upstream evidence. Do not casually reformat or hand-normalize them; use the owning oracle/provenance tooling and preserve licenses, revision records, manifests, and source mappings.
-- Do not hand-edit `Cargo.lock`; regenerate it with Cargo and review the dependency change. Recompute checksum manifests from the exact retained bytes and review the provenance change.
+- Do not hand-edit `Cargo.lock`; regenerate it with Cargo and review the dependency change. When `crates/vosu-pp/THIRD_PARTY_LICENSES.txt` changes, regenerate the release `LICENSE` with `python scripts/assemble-release-license.py --write`, then refresh its digest.
 - Update README user contracts when commands, requirements, configuration, routes, installation, or runtime behavior change. Update architecture for structural boundaries, add an ADR for a durable decision, and update benchmark notes only with reproducible measurements.
 
 ## Maintained documentation

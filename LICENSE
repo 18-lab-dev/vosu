@@ -236,9 +236,7 @@ SOFTWARE.
 
 Source: crates/vosu-pp/THIRD_PARTY_LICENSES.txt
 The following material retains its own license terms.
-Declared Cargo licenses and packaged-notice availability are inventoried in
-the repository's docs/dependency-license-inventory.json. Neither that
-inventory nor this appendix certifies complete distribution compliance.
+This appendix does not certify complete distribution compliance.
 
 vosu-pp native live calculator
 ====================================

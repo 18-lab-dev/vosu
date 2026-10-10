@@ -159,16 +159,14 @@ manifest for redistributed components.
 
 The September 2026 cleanup separates dashboard settings into
 `assets/server/homepage-settings.js` and settings/dialog/responsive styles into
-`assets/server/homepage-controls.css`, loaded by the existing homepage. The
-retained bytes are covered by `assets/SHA256SUMS`; `package.metadata.vosu` retains
-the base stylesheet hash. These are local structural changes, not new upstream
-revisions. Calculator attribution and unchanged retained test provenance are
-recorded in `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`.
+`assets/server/homepage-controls.css`, loaded by the existing homepage. These
+are local structural changes, not new upstream revisions. Calculator
+attribution and unchanged retained test provenance are recorded in
+`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`.
 
 The counter-management CSRF fix locally changes `homepage.js` management calls
 and the report form in `homepage.html` to POST, with matching navigation styling
-in `homepage.css`. These first-party changes do not change upstream provenance;
-the exact retained bytes and base stylesheet metadata hash are updated together.
+in `homepage.css`. These first-party changes do not change upstream provenance.
 
 The October 2026 dashboard rework locally moves the page tabs and search into
 the top bar, removes the overlay-tools links, `/local-overlays` guide, and
@@ -179,7 +177,7 @@ side when there is room, adapts preview and text sizes to the viewport, and make
 runtime settings a searchable, autosaving single column across `homepage.html`,
 `homepage.js`, `homepage-settings.js`, `homepage.css`, and
 `homepage-controls.css`. These first-party changes do not change upstream
-provenance; the exact retained bytes and metadata hashes are updated together.
+provenance.
 
 The daemon desktop integration adds first-party best-effort tray actions and a
 native start-on-login setting. The dashboard login control restores its prior
@@ -192,7 +190,7 @@ locks remain; restoring/building follows the README's maintainer workflow.
 
 ## Direct Rust packages
 
-The [dependency inventory](docs/dependency-license-inventory.json) records every locked third-party Cargo package resolved with `--all-features`, including build/development dependencies and platforms not shipped by Linux/Windows releases. It retains each version, archive checksum, declared license expression, source repository, and top-level packaged-notice hashes. Regenerate it with `python scripts/check-provenance.py --refresh-dependency-inventory` after manifest/lock changes. Input hashes normalize checkout CRLF to LF; upstream notice hashes preserve exact archive bytes. This inventory does not select license alternatives or certify complete redistribution notices: nested/vendored material, native/system libraries, and the embedded .NET payload require their own evidence. The direct-package summary below is not the exhaustive list.
+The lists below cover direct dependencies. `cargo metadata --locked --format-version 1 --all-features` resolves every locked third-party package with its declared license expression and source. This does not select license alternatives or certify complete redistribution notices: nested/vendored material, native/system libraries, and the embedded .NET payload require their own review.
 
 ### MIT
 
@@ -222,12 +220,11 @@ These development packages, the private `vosu-test-harness` workspace member, or
 
 - project-authored repository code: `LICENSE-MIT` or `LICENSE-APACHE`
 - release archive license member: `LICENSE` (combined first-party terms and retained calculator MIT texts)
-  The `assets/SHA256SUMS` license entry tracks the current combined-license bytes (`baa319fe56dbf6efd6a09eba4ceca2b3d1b1105bdf996b77281623853bb91002`). Refresh both values whenever `LICENSE` changes; other retained asset hashes remain tied to their exact bytes.
 - calculator crate project-authored code: `crates/vosu-pp/LICENSE-MIT` or `crates/vosu-pp/LICENSE-APACHE`
 - pinned lazer-calculator LGPL-3.0 reference: `tools/oracle/reference/lazer-calculator/LICENSE`
 - local `vosu-rosu-pp-api` MIT license text: `crates/vosu-pp/rosu-pp-api/LICENSE`
 - local `vosu-rosu-map` MIT license text: `crates/vosu-pp/rosu-map-api/LICENSE`
 - calculator MIT texts and exact-source links: `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`
-- embedded asset integrity manifest: `assets/SHA256SUMS`
+- embedded asset and release `LICENSE` integrity manifest: `assets/SHA256SUMS`
 - Rust package source/checksum lock: `Cargo.lock`
 - Rust package license metadata/source: the package manifests in the Cargo registry source selected by `Cargo.lock` and the repository links returned by `cargo metadata --locked --format-version 1`

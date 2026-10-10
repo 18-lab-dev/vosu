@@ -337,6 +337,13 @@ No legal clearance is claimed.
 
 ## Integrity and packaging
 
+Since 2026-10-10 ([ADR 0012](decisions/0012-simplify-provenance-checks.md)),
+`assets/SHA256SUMS` is verified by `scripts/check-asset-hashes.py`. The Cargo
+metadata asset hashes, the notices digest cross-reference, the
+dependency-license inventory, and `scripts/check-provenance.py` are retired;
+bullets below that describe them record the state of this audit, not current
+checks. The release `LICENSE` appendix check and packaging tests remain.
+
 - `assets/SHA256SUMS` has 18 entries. Only its `LICENSE` row changes for the
   first-party notice, scope clarification, and retained calculator notices. The digest repeated in
   `THIRD_PARTY_NOTICES.md` must match it.
@@ -397,22 +404,17 @@ Those questions must not be hidden by the updated first-party notice.
 From the repository root, after an approved notice or retained-text change:
 
 ```sh
-# Rebuild only the retained calculator appendix, then refresh the LICENSE row
-# and its repeated notice digest. Other asset hashes must already match.
+# Rebuild the retained calculator appendix in the release LICENSE, then
+# refresh its digest in assets/SHA256SUMS.
 python scripts/assemble-release-license.py --write
-python scripts/check-provenance.py --refresh-license-hash --refresh-dependency-inventory
+python scripts/check-asset-hashes.py --write
 
-# Regenerate the full declared Cargo license inventory after manifest/lock changes.
-python scripts/check-provenance.py --refresh-dependency-inventory
-
-# Check retained text, all asset hashes, first-party copies, Windows metadata
-# expectations, and Linux/Windows tag and development packaging with fixtures.
+# Check the appendix, asset digests, and the release/development packaging scripts.
 python scripts/assemble-release-license.py
-python scripts/check-provenance.py --package-fixtures
+python scripts/check-asset-hashes.py
 python -m unittest discover -s scripts -p test_package_release.py
 python scripts/check-doc-links.py
 git diff --check
-sha256sum --check assets/SHA256SUMS
 
 # Regenerate offset-helper bundles from the changed license/notices inputs on
 # a host with the pinned .NET prerequisites. The script writes bundle.json,

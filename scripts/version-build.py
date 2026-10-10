@@ -20,7 +20,7 @@ ATTRIBUTION = (
     "tools/oracle/reference/lazer-calculator/LICENSE",
     "Cargo.lock", "assets/SHA256SUMS",
     "crates/vosu-pp/rosu-pp-api/LICENSE", "crates/vosu-pp/rosu-map-api/LICENSE",
-    "docs/provenance-audit.md", "docs/dependency-license-inventory.json",
+    "docs/provenance-audit.md",
 )
 TARGETS = {
     "linux": ("x86_64-unknown-linux-gnu", "vosu", ["linux-process-events"]),

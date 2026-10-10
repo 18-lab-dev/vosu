@@ -24,7 +24,8 @@ The required checks in `AGENTS.md` and `.github/workflows/ci.yml` are:
 
 ```sh
 python scripts/check-doc-links.py
-python scripts/check-provenance.py --package-fixtures
+python scripts/assemble-release-license.py
+python scripts/check-asset-hashes.py
 python -m unittest discover -s scripts -p test_package_release.py
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
