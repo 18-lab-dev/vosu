@@ -23,6 +23,20 @@ cargo bench --locked --no-default-features --bench memory_reader_bench
 Implementations: `benches/`; targets: `Cargo.toml`. Append `-- <group-or-ID>`
 to filter Criterion cases.
 
+### Live native reader
+
+The dev-only example attaches read-only to an existing client PID and measures
+the production regular and precise capture adapters, without network publication.
+Setup is excluded; nine sample means follow warm-up. Keep the client in the same
+state throughout the run. Lazer uses the daemon's versioned cache or embedded
+offsets; if unavailable, run the release daemon once to populate the reported
+cache path. Read/byte counts are null because the native reader has no counters.
+
+```sh
+cargo build --release --locked --example live_reader_bench
+target/release/examples/live_reader_bench --pid 1234 --client lazer --warmup 100 --cycles 1000 --samples 9
+```
+
 ## Upstream 2359305 update comparison
 
 Measured on **2026-09-29**: the working tree targeting upstream

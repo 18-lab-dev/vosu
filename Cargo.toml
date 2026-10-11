@@ -120,6 +120,9 @@ name = "memory_reader_bench"
 harness = false
 
 [[example]]
+name = "live_reader_bench"
+
+[[example]]
 name = "process_event_bench"
 required-features = ["linux-process-events"]
 

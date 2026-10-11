@@ -83,6 +83,17 @@ impl Paths {
         Self::resolve(&SystemPathResolver)
     }
 
+    /// Resolves the native cache root without creating or migrating directories.
+    #[doc(hidden)]
+    pub fn system_cache_root() -> io::Result<PathBuf> {
+        let resolver = SystemPathResolver;
+        let executable = resolver.current_exe()?;
+        let program = executable
+            .parent()
+            .ok_or_else(|| io::Error::other("current executable has no parent"))?;
+        platform_roots(&resolver, program).map(|(_, _, cache)| cache)
+    }
+
     pub fn program(&self) -> &Path {
         &self.program
     }
