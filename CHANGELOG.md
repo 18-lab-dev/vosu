@@ -1,8 +1,8 @@
 # Changelog
 
-All notable user-visible changes to vosu are documented here. Version 1.0.0 is prepared locally but not yet published; older sections are retained release history and use the product names and artifact names that were current at the time.
+All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
-## 1.0.0 — 2026-10-09
+## 1.0.0 — 2026-10-10
 
 ### Dashboard
 
@@ -10,6 +10,8 @@ All notable user-visible changes to vosu are documented here. Version 1.0.0 is p
 - Show larger installed cards with enlargeable live previews, and list catalog overlays with lazy-loaded preview images and their metadata.
 - Adapt the dashboard to the screen: catalog rows sit side by side when there is room, previews follow the window height so short laptop screens show more cards, catalog text scales with its card, and the whole layout grows slightly on large monitors. Phones get a compact header with full-width page tabs and settings checkboxes beside their labels; short landscape screens no longer pin the header.
 - Autosave runtime settings with interval/port validation; preserve the unsaved/error status until every rejected field is corrected.
+- Show a community-overlays notice above the **Available** listing: listed overlays are third-party work from the tosu catalog, run with the dashboard's access, and should be installed only when trusted. It links the upstream catalog and the privacy policy.
+- Describe **Automatic updates** accurately: turning it off stops startup installation, but release builds still check for a new version at every start.
 
 ### Packaging and desktop
 
@@ -19,6 +21,7 @@ All notable user-visible changes to vosu are documented here. Version 1.0.0 is p
 - Launching vosu while another instance already serves the configured address opens that instance's dashboard and exits instead of failing to bind.
 - Add the Linux-only **Start at login** setting (`START_AT_LOGIN`), which manages a marked systemd user unit for the graphical session.
 - Treat an executable whose directory the user cannot write (for example a package-managed `/usr/bin/vosu`) as externally managed: skip self-update checks, reject `POST /api/runUpdates` with an explanation, and disable the dashboard's automatic-update setting.
+- Build tagged releases from a clean target directory without restoring any Cargo cache. Windows releases stay unsigned until SignPath signing is enabled; signed releases must carry a timestamped signature issued to SignPath Foundation.
 
 ### Security
 
@@ -68,9 +71,14 @@ All notable user-visible changes to vosu are documented here. Version 1.0.0 is p
 - Build the pinned upstream Node reference on Linux without requiring `cmd.exe`; retain protected `cmd.exe` and MSVC discovery requirements on Windows.
 - Mark Linux osu!stable through Wine as experimental and not release-verified; retain its existing discovery/read implementation without claiming a live-parity pass.
 - Record clean strict Windows stable, Windows lazer, and native Linux lazer release-gate captures with exact source/artifact identities; preserve failed sampling-boundary captures without claiming those boundaries are fixed.
+
 ### Documentation
 
 - Move maintained Markdown from `openwiki/` to `docs/`, update live navigation and relative references, and document the reviewed-maintenance workflow without generator dependencies.
+- Add a [privacy policy](PRIVACY.md) covering every network request (GitHub update checks and downloads, the tosu catalog, overlay download hosts, and catalog preview images), the local API, and locally stored data.
+- Add a [code signing policy](CODE_SIGNING_POLICY.md) for SignPath Foundation signing of the Windows executable, link it from the README and release notes, and add uninstall instructions.
+- Document the community-overlay licensing position in the third-party notices, and record the decision to keep counters on the dashboard origin ([ADR 0013](docs/decisions/0013-counters-share-dashboard-origin.md)).
+- Add a [security and installation disclosure](docs/security.md) (memory access, Linux capabilities and process-event backends, installed files, system changes, network exposure) and a [security policy](SECURITY.md) for private vulnerability reports.
 - Record the final released-tosu comparison on native Windows and the Linux VM, keeping whole-daemon resources separate from synthetic reader latency and preserving the unfavorable Linux VM precise-reader result. See the [measured protocol and limitations](docs/testing/benchmarks.md#released-tosu-comparison-2026-10-09); those measurements describe the recorded 0.3.0 generation, not the final 1.0.0 dashboard build.
 
 
