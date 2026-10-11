@@ -106,9 +106,25 @@ For a later manual upgrade, stop vosu, replace the executable and `LICENSE` with
 
 `ENABLE_AUTOUPDATE=true` follows stable `shiruviaa/vosu` releases. The updater verifies the selected platform archive against its published SHA-256 digest, stages exactly one root executable, and uses a crash-recoverable helper and rollback flow.
 
-`POST /api/runUpdates` starts the same update path from the same-origin dashboard. Set `ENABLE_AUTOUPDATE=false` or launch with `--update=false` to disable the startup check. `--update=true` enables it for one launch.
+`POST /api/runUpdates` starts the same update path from the same-origin dashboard. Set `ENABLE_AUTOUPDATE=false` or launch with `--update=false` to stop startup installation; `--update=true` enables it for one launch. Release builds still check GitHub for the latest release at every start so the dashboard can offer the update. The [privacy policy](PRIVACY.md) lists that and every other network request.
 
 If the current user cannot write the executable's directory, vosu treats the install as externally managed on both Linux and Windows. Startup skips update checking and recovery, **Automatic updates** is disabled with an explanation, and `POST /api/runUpdates` returns the usual updater-error HTTP 200 JSON response: `{"error":"vosu is managed by your package manager; update it there"}`. Update these installs through their package manager instead.
+
+### Uninstall
+
+Quit vosu from its tray icon first. On Linux, turn off **Settings → General → Start at login** if you enabled it; otherwise run `systemctl --user disable vosu.service` and delete `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/vosu.service`.
+
+- **Portable archive or manual per-user install:** delete the executable and `LICENSE`, or the whole directory you extracted. On Windows that directory also holds the configuration, overlays, settings, logs, and cache, so deleting it removes everything.
+- **Linux packages:** `sudo apt remove vosu`, `sudo dnf remove vosu`, or `sudo pacman -R vosu`. AUR installs: `sudo pacman -R vosu-bin`.
+- **Linux user data:** packages and portable installs leave your data in place. Delete `${XDG_CONFIG_HOME:-$HOME/.config}/vosu`, `${XDG_DATA_HOME:-$HOME/.local/share}/vosu`, and `${XDG_CACHE_HOME:-$HOME/.cache}/vosu` to remove configuration, overlays, logs, and caches.
+
+## Code signing policy
+
+Windows release executables are signed through SignPath once SignPath Foundation approves the project; until then they are unsigned, and each release's notes state which applies. Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org). The [code signing policy](CODE_SIGNING_POLICY.md) lists team roles, what is signed, and how each signing request is approved.
+
+## Privacy
+
+vosu has no accounts, telemetry, or analytics. It contacts GitHub for update checks and downloads, and the tosu catalog and overlay download hosts when you browse or install community overlays. The [privacy policy](PRIVACY.md) details each request and the data kept on your computer. The [security and installation disclosure](docs/security.md) describes how vosu reads the game, the Linux capabilities it requests, and everything it installs or changes; report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## Command-line options
 
@@ -292,7 +308,7 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 
 | Binding | Default | Meaning |
 | --- | ---: | --- |
-| `ENABLE_AUTOUPDATE` | `true` | Check for and install stable vosu releases. |
+| `ENABLE_AUTOUPDATE` | `true` | Install stable vosu releases at startup. Self-updating release builds check for new releases at every start either way. |
 | `OPEN_DASHBOARD_ON_STARTUP` | `true` | Open the effective dashboard listener after startup. |
 | `START_AT_LOGIN` | `false` | Linux only: run vosu as a systemd user service at graphical login. |
 | `DEBUG_LOG` | `false` | Include debug-level file and console logging. |
@@ -331,7 +347,9 @@ Installed overlays appear as equal-size cards, at most four per row (five on scr
 
 Counter settings support text, color, number, checkbox, button, options, commands, textarea, password, header entries. Each counter package owns its authoritative schema at `<static-root>/<counter>/settings.schema.toml`; only mutable values are stored centrally at `<config>/settings/<counter>.settings.values.toml`. `/settings` page handles daemon counter settings.
 
-The counter catalog is served by the upstream tosu service at `https://tosu.app/api.json`; vosu does not operate a website. Production counter downloads require HTTPS. Redirects are bounded; HTTPS-to-HTTP downgrades and loopback, private, or reserved destinations are rejected. ZIP paths, symlinks, entry counts, and expanded size are checked before same-filesystem replacement.
+The **Available** page lists community overlays from the upstream tosu catalog at `https://tosu.app/api.json`; vosu does not operate a website or catalog service. Listed overlays are made and maintained by their respective authors, not by vosu, and vosu does not review or endorse them. The page states this above the listing and links to the [upstream catalog repository](https://github.com/tosuapp/counters) and the [privacy policy](PRIVACY.md). The catalog has no single license: each author keeps the rights to their overlay, and vosu does not bundle, mirror, or redistribute overlays. **Install** downloads the archive from the link the catalog lists for it; check that overlay's own license before you modify or redistribute it.
+
+Production counter downloads require HTTPS. Redirects are bounded; HTTPS-to-HTTP downgrades and loopback, private, or reserved destinations are rejected. ZIP paths, symlinks, entry counts, and expanded size are checked before same-filesystem replacement.
 
 ## HTTP API
 
@@ -397,7 +415,7 @@ POST bodies are capped at 1 MiB. Generated reports escape machine, configuration
 
 Management POSTs require the existing trusted-peer policy **and** browser provenance matching the native HTTP listener's exact scheme, host, and port. `Origin` is authoritative; only when absent may a same-origin `Referer` authorize the action. Missing, opaque (`null`), malformed, or duplicate provenance is not mutation intent. Forwarded headers are not trusted; HTTPS reverse-proxy origins are not an implicit exception. Rejected mutations return 403. Former management GETs return 404, with no redirect or legacy mutation alias. Non-browser management clients must explicitly supply the same origin; this is CSRF protection, not authentication against malicious local programs.
 
-Installed counter scripts share the dashboard's origin and are therefore trusted code, not isolated tenants. They can satisfy the same-origin mutation check and invoke management operations beyond their own settings. Do not install untrusted counters; origin checks do not fix this privilege boundary. Full isolation is deferred rather than breaking existing counter settings/storage behavior.
+Installed counter scripts share the dashboard's origin and are therefore trusted code, not isolated tenants. They can satisfy the same-origin mutation check and invoke management operations beyond their own settings. Do not install untrusted counters; origin checks do not fix this privilege boundary. [ADR 0013](docs/decisions/0013-counters-share-dashboard-origin.md) keeps the shared origin so counter URLs, counter storage, and settings links stay compatible, and the **Available** page warns about it.
 
 Read-only JSON, static/file routes, counter-settings GETs, and state/settings WebSockets need no new headers or tokens. Headerless and opaque/file-origin reads remain available to trusted peers. Hosted stock counters retain `window.COUNTER_PATH` and the existing settings protocol unchanged. On legacy sockets, `getSettings`, `updateSettings` replies, and `applyFilters` remain readable without mutation authorization; `saveSettings` requires same-origin provenance captured at upgrade, otherwise the socket closes with 1008 before saving or relaying. File-loaded and other non-hosted overlays may read settings but must use the hosted settings page to write them.
 

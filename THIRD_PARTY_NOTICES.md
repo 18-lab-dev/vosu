@@ -12,6 +12,14 @@ First-party notice: `Copyright (c) 2026 sxlvia`, as confirmed by the maintainer 
 - **Current and historical pins:** current Cargo metadata and oracle locks use upstream `2359305a63f2aaebb201bc8d2eee58177f52590e`. Historical calculator pin `1a67fd64cc38fe60306328dde0a429e3211ca4ed` was recovered in the local tosu fork: it follows upstream `v4.25.0` at `9f42c88714da69ac2ba248126a189416c55d733c` with two `qt715` commits touching stable Random-mod seed reporting and data-loop exits. It is a fork revision, not that upstream release.
 - **Retained reference:** `tools/oracle/reference/lazer-calculator` preserves its own LGPL license, revision, and checksum manifest. The first-party dual-license grant does not relicense this reference or any copied or translated upstream material.
 
+## Community overlays and the tosu catalog
+
+- **Catalog service:** the dashboard's **Available** page reads the overlay catalog published by the tosu project at `https://tosu.app/api.json` and displays its names, authors, author links, metadata, and preview images. vosu neither copies the catalog into this repository nor mirrors it, and the maintainers do not operate it. Its source repository is [tosuapp/counters](https://github.com/tosuapp/counters).
+- **Overlay rights:** listed overlays are written and maintained by their respective authors, who keep their rights in them. The upstream counters repository has no repository-wide license, so neither the catalog nor any permission from its operator licenses an individual author's overlay. Each overlay's own license, if any, governs its use, modification, and redistribution.
+- **No redistribution:** vosu releases contain no catalog overlays. **Install** downloads an overlay from the link the catalog lists for it, at the user's request, into the user's own overlay folder.
+- **No endorsement:** vosu does not review, maintain, or endorse catalog overlays. The **Available** page shows this notice, and the [privacy policy](PRIVACY.md) covers the requests involved.
+- **Separate from provenance:** none of this affects the tosu-derived source questions in the [provenance audit](docs/provenance-audit.md).
+
 ## Native live-calculation sources
 
 The production `vosu-pp` calculator uses a Rust facade and MIT source forks. Its source-authority map and retained license texts are in [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). Recovered authoring records contradict the replacement's clean-room characterization; this notice does not certify implementation independence.

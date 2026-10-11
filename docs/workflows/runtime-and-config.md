@@ -51,7 +51,7 @@ Counter static serving resolves a trailing-slash counter path to its `index.html
 
 ## Self-update
 
-The updater separates release selection, metadata/digest validation, staging, transaction records, platform helper behavior, and startup recovery (`src/updater/`). Production updates select the exact platform archive from `https://api.github.com/repos/shiruviaa/vosu/releases/latest`, require the published SHA-256 digest, stage one root executable, atomically replace the current binary, and retain rollback/crash recovery state. Set `ENABLE_AUTOUPDATE = false` in `vosu.toml` or pass `--update=false` to disable startup checks; same-origin `POST /api/runUpdates` starts the explicit path.
+The updater separates release selection, metadata/digest validation, staging, transaction records, platform helper behavior, and startup recovery (`src/updater/`). Production updates select the exact platform archive from `https://api.github.com/repos/shiruviaa/vosu/releases/latest`, require the published SHA-256 digest, stage one root executable, atomically replace the current binary, and retain rollback/crash recovery state. Set `ENABLE_AUTOUPDATE = false` in `vosu.toml` or pass `--update=false` to disable startup installation; release builds on self-updating installs still query the release metadata at every start to report available updates. Same-origin `POST /api/runUpdates` starts the explicit path.
 
 Do not bypass the transaction boundary from routes or scripts. If recovery quarantines an ambiguous prior transaction, preserve the evidence and consult the updater implementation/tests; a complete operator escalation procedure remains a documented backlog item.
 

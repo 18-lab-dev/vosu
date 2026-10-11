@@ -18,6 +18,7 @@ Set up a checkout with [CONTRIBUTING.md](../CONTRIBUTING.md), then start with th
 - [Benchmark methods, measurements, and limitations](testing/benchmarks.md)
 - [Precise input validation](testing/input-validation.md)
 - [Source-provenance audit](provenance-audit.md)
+- [Privacy policy](../PRIVACY.md), [security and installation disclosure](security.md), [security policy](../SECURITY.md), and [code signing policy](../CODE_SIGNING_POLICY.md)
 
 ## Historical evidence
 
