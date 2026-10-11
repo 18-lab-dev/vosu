@@ -202,6 +202,50 @@ The temporary dashboard daemon and browser tab were stopped after verification.
 No native Windows 1.0.0 execution, signed-resource validation, publication, push,
 or licensing clearance is claimed.
 
+## 1.0.0 release — 2026-10-10
+
+Released source: `57b322bae580198d0c0fae7360615348b85a47e8`, tagged `v1.0.0`
+(the 2026-10-09 local tag, which pointed at the earlier generation above, was
+replaced before publication). The checks below ran against that exact clean commit.
+
+- **Linux:** `cargo fmt --all -- --check`; workspace/all-target/all-feature
+  Clippy with warnings denied; `cargo test --workspace --all-features --locked`
+  (1,178 passed, 3 ignored, including doctests); `cargo xwin clippy` for
+  `x86_64-pc-windows-msvc` with `C_INCLUDE_PATH` unset; maintained-document
+  links; release `LICENSE` appendix; asset digests; release-packaging script
+  tests; and actionlint 1.7.12 on all four workflows.
+- **Native Windows (VM):** Clippy with warnings denied, workspace
+  lib/bin/test/example tests, and doctests passed from a checksum-verified
+  `git archive` of the commit. The first workspace run failed one timing-sensitive
+  test, `updater_native::handoff::helper_waits_past_legacy_two_second_window_for_durable_handoff_ack`
+  ("helper did not retry the missing authorized handoff record"). Five
+  isolated reruns of `updater_native` and a full workspace rerun passed. No
+  updater code changed in this release generation.
+- **Windows verifier:** on a debug `vosu.exe`, `scripts/verify-windows-release.ps1
+  -RequireSignature:($env:SIGN_RELEASE -eq 'true')` accepted the unsigned
+  binary's version resources with `SIGN_RELEASE=false` and rejected it as
+  `NotSigned` with `SIGN_RELEASE=true`.
+- **Linux release smoke:** a local release build was packaged as
+  `vosu-linux-v1.0.0.zip`, extracted, and passed `vosu-release-smoke`.
+- **Hosted:** Rust CI run `38100412602` passed Ubuntu validation and native
+  Windows verification. Release run `38101204069` passed the Linux and Windows
+  jobs, all five clean-container package installs, and publication.
+
+The Windows executable is unsigned because SignPath signing is not enabled yet.
+Published asset SHA-256 digests, as reported by GitHub:
+
+| Asset | SHA-256 |
+| --- | --- |
+| `vosu-windows-v1.0.0.zip` | `4e7657ff0ea645cc55f5455e4c13c589ec4439c3267b8bc4d9b41ab0811cf1b3` |
+| `vosu-linux-v1.0.0.zip` | `e40a98de9c356931c82735879062fc92cb2969cac6ac34507e0a5fff030794d7` |
+| `vosu_1.0.0_amd64.deb` | `458704af89b494bc5c1cd4108035faab10176ebda9ff05662e10ebb80f3e8972` |
+| `vosu-1.0.0-1.x86_64.rpm` | `95e655760d3aa8da91c67f56da170135cf978014f19c01a62d2513057ac7a4ec` |
+| `vosu-1.0.0-1-x86_64.pkg.tar.zst` | `4eb3ba796b741c92aeda32ff82a95f8663ca1bdf0537f76a1685701377914862` |
+| `vosu-bin-aur-v1.0.0.tar.gz` | `0ab5b0d0781bfdf415a1830d5f55cff3dd6bb8b9b0bfd0a8ffc2fb16aadaaa47` |
+
+Live parity was not run ([ADR 0011](../decisions/0011-live-parity-optional.md)).
+Benchmarks for this commit are in the [1.0.0 release results](benchmarks.md#100-release-results--2026-10-10).
+
 
 ## Upstream 2359305 update evidence
 

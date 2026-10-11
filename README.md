@@ -35,14 +35,14 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 
 ### Portable archive
 
-The current source version is **1.0.0**. When its matching [GitHub release](https://github.com/shiruviaa/vosu/releases) is published, download `vosu-linux-v1.0.0.zip` or `vosu-windows-v1.0.0.zip`, then:
+The current release is **1.0.0**. Download `vosu-linux-v1.0.0.zip` or `vosu-windows-v1.0.0.zip` from the [v1.0.0 release](https://github.com/shiruviaa/vosu/releases/tag/v1.0.0), then:
 
 1. Extract the complete archive into a writable directory. Its root contains `vosu` or `vosu.exe`, plus `LICENSE`.
 2. On Linux, restore the executable bit if your archive tool removed it: `chmod +x vosu`.
 3. Run `./vosu` on Linux or `vosu.exe` on Windows.
 4. Open <http://127.0.0.1:24050/>. By default, vosu opens the dashboard after startup.
 
-Do not run the Windows executable directly from an archive or a OneDrive-controlled directory. The updater cannot provide safe replacement and rollback in those locations.
+Do not run the Windows executable directly from an archive or a OneDrive-controlled directory. The updater cannot provide safe replacement and rollback in those locations. The 1.0.0 Windows executable is unsigned (see [Code signing policy](#code-signing-policy)), so Windows SmartScreen may warn before the first launch.
 
 ### Linux packages
 

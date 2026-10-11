@@ -85,6 +85,126 @@ Criterion reported **300.45 ns** per 64-byte self-process read, with interval **
 
 Criterion also reported a **79.7% time increase** against its retained local baseline. That baseline's exact source/machine-state provenance was not re-attested for this run; this is not a controlled before/after comparison or a whole-daemon CPU claim. The benchmark does not measure a live game, multiplayer decoding, or the no-pidfd stat fallback. Retain the earlier results below as dated evidence rather than rewriting them.
 
+## 1.0.0 release results — 2026-10-10
+
+Both runs measured the released `v1.0.0` commit
+`57b322bae580198d0c0fae7360615348b85a47e8` with Rust 1.96.1, locked
+dependencies, and Criterion defaults (100 samples, 3 s warm-up, 5 s
+measurement). Values are arithmetic means and 95% confidence intervals from
+Criterion's `new/estimates.json`. Linux and hosted Windows timings come from
+different machines and are not comparable with each other.
+
+### Linux
+
+- Ryzen 9 9950X3D, CachyOS Linux `7.2.9-1-cachyos-bore`, performance governor,
+  no CPU pinning or isolation. Clean checkout of the release commit. One-minute
+  host load was 6.35 at the start and 5.56 at the end; the idle Windows VM was
+  running on the same host.
+- Commands are those under [Reproduce](#reproduce), with a fresh `CRITERION_HOME`.
+  All 25 hot-path cases and the memory-reader target completed successfully.
+
+The 2026-09-09 column repeats the [earlier full-suite results](#prior-full-suite-local-results),
+which measured an uncommitted tree on kernel `7.2.2`. Changes are descriptive,
+not controlled before/after comparisons.
+
+| Benchmark ID | 2026-09-09 mean | 1.0.0 mean | 1.0.0 95% confidence interval | Change |
+| --- | ---: | ---: | ---: | ---: |
+| `batch_scan/three_patterns_2mib` | 48.736 µs | 55.880 µs | 55.244–56.538 µs | +14.7% |
+| `linux_process_memory/current_process_64_bytes` | 168.792 ns | 323.225 ns | 320.984–326.511 ns | +91.5% |
+| `map_calculation/full_difficulty_performance` | 12.699 µs | 12.235 µs | 12.199–12.273 µs | -3.7% |
+| `map_calculation/gradual_all_objects` | 10.448 µs | 10.311 µs | 10.277–10.349 µs | -1.3% |
+| `map_calculation/parse` | 1.646 µs | 1.565 µs | 1.558–1.571 µs | -4.9% |
+| `map_calculation/unchanged_cache_key` | 11.079 ns | 10.284 ns | 10.254–10.317 ns | -7.2% |
+| `publication/unfiltered_clients/1` | 2.070 ms | 2.052 ms | 2.046–2.058 ms | -0.9% |
+| `publication/unfiltered_clients/100` | 2.084 ms | 2.055 ms | 2.047–2.063 ms | -1.4% |
+| `publication/unfiltered_clients/1000` | 2.151 ms | 2.155 ms | 2.140–2.170 ms | +0.2% |
+| `raw_snapshot_reads/lazer_regular_fields` | 85.332 µs | 5.998 µs | 5.930–6.058 µs | -93.0% |
+| `raw_snapshot_reads/stable_regular_fields` | 572.740 ns | 207.013 ns | 206.329–207.740 ns | -63.9% |
+| `serialization_cache/stream_companion_bytes_clone` | 13.004 ns | 12.951 ns | 12.896–13.033 ns | -0.4% |
+| `serialization_cache/v1_bytes_clone` | 12.873 ns | 13.108 ns | 13.039–13.192 ns | +1.8% |
+| `serialization_cache/v2_bytes_clone` | 13.741 ns | 12.906 ns | 12.873–12.947 ns | -6.1% |
+| `serialization_cache/v2_precise_bytes_clone` | 13.838 ns | 13.051 ns | 12.999–13.107 ns | -5.7% |
+| `serializers_cold/stream_companion` | 7.040 µs | 7.037 µs | 6.136–8.727 µs | -0.0% |
+| `serializers_cold/v1` | 6.896 µs | 5.048 µs | 4.907–5.195 µs | -26.8% |
+| `serializers_cold/v2` | 10.224 µs | 11.471 µs | 10.168–13.911 µs | +12.2% |
+| `serializers_cold/v2_precise` | 4.588 µs | 3.851 µs | 3.747–3.961 µs | -16.1% |
+| `v2_subscription/distinct_plans/1` | 8.414 µs | 7.899 µs | 7.871–7.930 µs | -6.1% |
+| `v2_subscription/distinct_plans/100` | 56.661 µs | 43.196 µs | 43.060–43.335 µs | -23.8% |
+| `v2_subscription/distinct_plans/1000` | 595.639 µs | 442.293 µs | 439.052–445.461 µs | -25.7% |
+| `v2_subscription/shared_plan/1` | 8.132 µs | 7.899 µs | 7.869–7.929 µs | -2.9% |
+| `v2_subscription/shared_plan/100` | 38.781 µs | 26.987 µs | 26.902–27.079 µs | -30.4% |
+| `v2_subscription/shared_plan/1000` | 354.395 µs | 231.969 µs | 228.720–236.355 µs | -34.5% |
+
+- **Selected-field subscriptions** are 24–35% faster at 100 and 1,000 clients.
+- **`raw_snapshot_reads/lazer_regular_fields`** reflects the upstream 2359305
+  offset layout and reader change, not a live-reader speedup; see the
+  [update comparison](#upstream-2359305-update-comparison).
+- **`linux_process_memory/current_process_64_bytes`** matches the roughly
+  300 ns cost recorded after the [security generation checks](#security-generation-checks--2026-10-02)
+  were added around each native read.
+- Cold-serializer intervals stay wide, especially StreamCompanion and v2;
+  treat their changes as noise until isolated reruns confirm them.
+
+Deterministic memory reader, one invocation, medians of nine sample means:
+
+| Workload | Time / cycle |
+| --- | ---: |
+| Native self-process lazer precise capture, 18 keys | 102.677 µs |
+| Stable idle decoder | 237.07 ns |
+| Stable key-overlay decoder | 233.21 ns |
+
+Counting fixtures: lazer 24 exact + 2 batch reads / 912 requested bytes per
+cycle; stable key-overlay 5 exact + 2 batch reads / 258 bytes. The lazer
+fixture changed with the upstream 2359305 update (it was 26 + 3 reads / 570
+bytes on 2026-09-09), so its earlier 8.315 µs is not a baseline. The new value
+is in line with the 109.7 µs Linux VM result in the
+[precise-reader microbenchmarks](#precise-reader-microbenchmarks).
+
+### Hosted Windows
+
+The [`Windows benchmarks`](../../.github/workflows/benchmarks-windows.yml) workflow
+ran on `windows-latest` (run `38101226442`): Windows Server 2025 Datacenter,
+runner image `win25-vs2026` `20260925.250.1`, AMD EPYC 7763 with one core / two
+logical processors, 8 GiB memory, native MSVC. Both targets exited 0; all 29
+hot-path cases completed, including the five `windows_process_memory` cases.
+Shared hosted runners add noise, and the uploaded artifact expires after 14 days.
+
+| Benchmark ID | Mean / iteration | 95% confidence interval |
+| --- | ---: | ---: |
+| `batch_scan/three_patterns_2mib` | 334.575 µs | 328.828–341.114 µs |
+| `map_calculation/full_difficulty_performance` | 35.928 µs | 35.016–36.960 µs |
+| `map_calculation/gradual_all_objects` | 28.963 µs | 28.173–29.889 µs |
+| `map_calculation/parse` | 5.190 µs | 5.049–5.352 µs |
+| `map_calculation/unchanged_cache_key` | 21.580 ns | 21.006–22.260 ns |
+| `publication/unfiltered_clients/1` | 13.790 ms | 13.332–14.225 ms |
+| `publication/unfiltered_clients/100` | 14.027 ms | 13.618–14.425 ms |
+| `publication/unfiltered_clients/1000` | 14.193 ms | 13.815–14.565 ms |
+| `raw_snapshot_reads/lazer_regular_fields` | 12.997 µs | 12.720–13.329 µs |
+| `raw_snapshot_reads/stable_regular_fields` | 826.833 ns | 807.058–849.349 ns |
+| `serialization_cache/stream_companion_bytes_clone` | 20.804 ns | 19.121–23.119 ns |
+| `serialization_cache/v1_bytes_clone` | 18.739 ns | 18.613–18.884 ns |
+| `serialization_cache/v2_bytes_clone` | 18.718 ns | 18.576–18.883 ns |
+| `serialization_cache/v2_precise_bytes_clone` | 18.871 ns | 18.724–19.041 ns |
+| `serializers_cold/stream_companion` | 22.272 µs | 21.504–23.163 µs |
+| `serializers_cold/v1` | 13.098 µs | 12.605–13.787 µs |
+| `serializers_cold/v2` | 46.428 µs | 44.031–49.110 µs |
+| `serializers_cold/v2_precise` | 9.901 µs | 7.835–13.861 µs |
+| `v2_subscription/distinct_plans/1` | 24.712 µs | 23.841–25.867 µs |
+| `v2_subscription/distinct_plans/100` | 136.162 µs | 132.872–139.805 µs |
+| `v2_subscription/distinct_plans/1000` | 1.427 ms | 1.361–1.496 ms |
+| `v2_subscription/shared_plan/1` | 32.855 µs | 31.394–34.589 µs |
+| `v2_subscription/shared_plan/100` | 53.584 µs | 52.139–55.301 µs |
+| `v2_subscription/shared_plan/1000` | 378.174 µs | 371.335–385.717 µs |
+| `windows_process_memory/read_exact_64_bytes` | 486.939 ns | 477.184–498.445 ns |
+| `windows_process_memory/read_many_contiguous_8x8_bytes` | 541.494 ns | 533.365–550.998 ns |
+| `windows_process_memory/read_many_gapped_8x8_bytes` | 569.688 ns | 554.376–586.886 ns |
+| `windows_process_memory/read_many_single_64_bytes` | 480.538 ns | 469.901–493.419 ns |
+| `windows_process_memory/read_many_wide_8x8_bytes` | 1.284 µs | 1.259–1.314 µs |
+
+Memory reader on the hosted runner: lazer precise capture 48,561.60 ns,
+stable idle 1,264.90 ns, stable key overlay 632.37 ns per cycle, with the same
+read counts as Linux.
+
 ## Prior full-suite local results
 
 - **2026-09-09**, revision `9b0648c4b90d5b9eeddd480e1c7029c7f8be71d2`
@@ -144,7 +264,7 @@ not syscall or allocation measurements.
 
 ## Native Windows coverage
 
-**Hosted Criterion measurements remain pending.** The manual
+The [1.0.0 hosted Windows results](#hosted-windows) are the first recorded run. The manual
 [`Windows benchmarks`](../../.github/workflows/benchmarks-windows.yml) workflow
 runs both targets on `windows-latest` with Rust 1.96.1 and native MSVC, including
 all five `windows_process_memory` cases. It uploads logs, exit codes, revision,
