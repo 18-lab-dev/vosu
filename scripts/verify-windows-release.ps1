@@ -3,7 +3,15 @@ param(
     [string]$Binary,
 
     [Parameter(Mandatory = $true)]
-    [string]$Tag
+    [string]$Tag,
+
+    # Common name of the certificate SignPath Foundation issues for open-source
+    # projects; any other valid signer means the wrong certificate was used.
+    [string]$ExpectedSigner = "SignPath Foundation",
+
+    # Releases are unsigned until SignPath signing is enabled; the workflow
+    # passes this only for signed runs, which must then pass every check below.
+    [switch]$RequireSignature
 )
 
 $ErrorActionPreference = "Stop"
@@ -129,8 +137,19 @@ finally {
 }
 
 $signature = Get-AuthenticodeSignature -LiteralPath $binaryPath
-if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-    throw "Signed executable failed Authenticode validation: $($signature.Status)"
+if ($RequireSignature) {
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+        throw "Signed executable failed Authenticode validation: $($signature.Status)"
+    }
+    $signer = $signature.SignerCertificate.GetNameInfo(
+        [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+    if ($signer -ne $ExpectedSigner) {
+        throw "Executable is signed by '$signer', expected '$ExpectedSigner'"
+    }
+    # Without a timestamp the signature stops validating when the certificate expires.
+    if ($null -eq $signature.TimeStamperCertificate) {
+        throw "Executable signature has no timestamp countersignature"
+    }
 }
 
-Write-Output "Verified signed Windows resources for $binaryPath"
+Write-Output "Verified Windows resources for $binaryPath (signature: $($signature.Status))"

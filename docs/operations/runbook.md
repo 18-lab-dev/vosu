@@ -75,21 +75,49 @@ The October 2026 hardening preserves existing dashboard/counter URLs and setting
 - **Updater readiness:** only the exact spawned candidate/rollback process receives the one-use readiness secret through its private stdin pipe. The secret is no longer passed in process-visible arguments; the transaction token alone cannot authorize readiness. Native helper replacement/rollback coverage remains required on each supported OS.
   This private readiness protocol is a clean cutover for the first daemon release; the only currently published release asset is the offset-generator bundle. Development binaries built with the older argument-token protocol must be replaced manually rather than relying on an old helper to update across this boundary.
 
-**Still unresolved:** installed counters share management authority with the dashboard; native clients can forge browser provenance. Memory-derived file roots and automatic generation still rely on a trusted same-account game installation. Counter settings/schema files and total rendered output do not have a complete aggregate budget. Per-input and per-queue caps do not bound all concurrent calculations/connections. Legacy curve/slider expansion, other calculator hot-path complexity and some hit-error classification costs remain outside this patch. Keep loopback binding, normal-user execution and trusted counter/game installations; do not describe these mitigations as full isolation.
+**Still unresolved:** installed counters share management authority with the dashboard; native clients can forge browser provenance. [ADR 0013](../decisions/0013-counters-share-dashboard-origin.md) keeps this shared origin for compatibility and records the evaluated isolation designs; the **Available** page discloses it to users. Memory-derived file roots and automatic generation still rely on a trusted same-account game installation. Counter settings/schema files and total rendered output do not have a complete aggregate budget. Per-input and per-queue caps do not bound all concurrent calculations/connections. Legacy curve/slider expansion, other calculator hot-path complexity and some hit-error classification costs remain outside this patch. Keep loopback binding, normal-user execution and trusted counter/game installations; do not describe these mitigations as full isolation.
 
 
 ## Updates and releases
 
-Startup updates follow stable releases, verify the selected platform archive’s published SHA-256 digest, stage exactly one root executable, and use a crash-recoverable helper/rollback flow. Set `ENABLE_AUTOUPDATE = false` in `vosu.toml` or pass `--update=false` to disable startup checks; use same-origin `POST /api/runUpdates` for the explicit route. Do not run Windows directly from an archive or OneDrive-controlled directory because safe replacement/rollback may be unavailable.
+Startup updates follow stable releases, verify the selected platform archive’s published SHA-256 digest, stage exactly one root executable, and use a crash-recoverable helper/rollback flow. Set `ENABLE_AUTOUPDATE = false` in `vosu.toml` or pass `--update=false` to disable startup installation; release builds on self-updating installs still query the latest-release metadata at every start to report available updates. Use same-origin `POST /api/runUpdates` for the explicit route. Do not run Windows directly from an archive or OneDrive-controlled directory because safe replacement/rollback may be unavailable.
 
-Release packaging requires exact platform archives containing only the executable and `LICENSE`; release smoke tests exercise an extracted binary. Windows additionally signs and verifies the executable through the release workflow. The updater currently reads latest-release metadata from `shiruviaa/vosu`; confirm this source when diagnosing update failures. See `scripts/package-release.py` and `scripts/verify-windows-release.ps1` for enforcement.
+Release packaging requires exact platform archives containing only the executable and `LICENSE`; release smoke tests exercise an extracted binary. Windows additionally signs and verifies the executable through the release workflow; the [code signing policy](../../CODE_SIGNING_POLICY.md) records team roles and the manual SignPath approval step, and must be updated with any change to who signs or how. The updater currently reads latest-release metadata from `shiruviaa/vosu`; confirm this source when diagnosing update failures. See `scripts/package-release.py` and `scripts/verify-windows-release.ps1` for enforcement.
+
+### SignPath signing setup
+
+Signing is off until the repository variable `SIGNPATH_ORGANIZATION_ID` exists. Without it, the Windows job packages the unsigned executable and `scripts/verify-windows-release.ps1` checks only its version resources; the release notes say the executable is unsigned. With it, the job submits `vosu.exe` to that SignPath organization, project `vosu`, signing policy `release-signing`, packages the signed result, and runs the verifier with `-RequireSignature`. The step passes no artifact-configuration slug, so SignPath uses the project's default artifact configuration. The previously configured organization ID is `5b025426-9c79-4f04-87e8-64cf64131d0b`. Prerequisites outside this repository:
+
+1. The repository must be public; SignPath Foundation signs open-source projects only.
+2. The SignPath project `vosu` must be connected to `shiruviaa/vosu` as a trusted GitHub build system, so SignPath verifies that each request comes from a run of this repository's workflow (origin verification).
+3. The `release-signing` policy must require manual approval by an approver listed in the code signing policy.
+4. The default artifact configuration must sign only `vosu.exe` and restrict its product name. The uploaded GitHub artifact is a ZIP with `vosu.exe` at its root:
+
+   ```xml
+   <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+     <zip-file>
+       <pe-file path="vosu.exe" product-name="vosu">
+         <authenticode-sign />
+       </pe-file>
+     </zip-file>
+   </artifact-configuration>
+   ```
+
+   `build.rs` sets `ProductName` to `vosu` and `ProductVersion` to the package version, and `scripts/verify-windows-release.ps1` checks both against the tag after signing. A static configuration cannot pin a per-release version, so the version check stays in the workflow.
+5. The repository secret `SIGNPATH_API_TOKEN` must belong to a SignPath CI user that can submit to this project, and the variable `SIGNPATH_ORGANIZATION_ID` is added only after everything else here is in place. Once the variable exists, a missing or invalid token fails the tagged release at the signing step rather than publishing an unsigned archive.
+6. Every team member must use MFA for GitHub and SignPath.
+
+Before enabling signing, and after any change to the SignPath project, an approver confirms items 2–4 and 6 in SignPath. As of 2026-10-10 none of these SignPath-side settings has been verified from this repository, and v1.0.0 is released unsigned; GitHub 2FA is enabled for both organization members but is not required by the organization. With `-RequireSignature`, `scripts/verify-windows-release.ps1` requires a valid Authenticode signature issued to `SignPath Foundation` with a timestamp countersignature.
 
 ### Linux distribution releases
 
 The Linux release and unsigned-development build jobs use Ubuntu 22.04.
 `python scripts/package-linux.py check-glibc --binary <vosu>` inspects
-`objdump -T` and rejects requirements newer than glibc 2.35. Build caches
-include the runner baseline so newer-host objects cannot leak into releases.
+`objdump -T` and rejects requirements newer than glibc 2.35. Tagged release jobs
+restore no Cargo caches: they build in a clean target directory from freshly
+downloaded, `Cargo.lock`-verified crates, so no output from another run can reach
+a published or signed binary. Development build caches include the runner
+baseline so newer-host objects cannot leak into those artifacts.
 Python 3.12 is installed explicitly because the runner defaults to Python 3.10.
 
 After the exact two-entry ZIP passes smoke testing, release CI installs nfpm

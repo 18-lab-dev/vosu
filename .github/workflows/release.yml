@@ -52,24 +52,10 @@ jobs:
         with:
           toolchain: 1.96.1
           targets: x86_64-unknown-linux-gnu
-      - name: Restore Cargo downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-downloads-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-downloads-${{ runner.os }}-
-      - id: week
-        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
-      - name: Cache release build artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target
-          key: cargo-Linux-ubuntu22-rust-1.96.1-release-events-x86_64-${{ hashFiles('Cargo.lock') }}-${{ steps.week.outputs.week }}
-          restore-keys: |
-            cargo-Linux-ubuntu22-rust-1.96.1-release-events-x86_64-${{ hashFiles('Cargo.lock') }}-
-            cargo-Linux-ubuntu22-rust-1.96.1-release-events-x86_64-
+      # Release jobs restore no Cargo caches. A cached target directory would let
+      # output compiled by an earlier run reach a published (or signed) binary,
+      # and Cargo trusts already-downloaded .crate files without re-checking
+      # Cargo.lock checksums; fresh downloads are verified against it.
 
 
       - name: Build verified offset generator bundle
@@ -145,26 +131,6 @@ jobs:
         with:
           toolchain: 1.96.1
           targets: x86_64-pc-windows-msvc
-      - name: Restore Cargo downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-downloads-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-downloads-${{ runner.os }}-
-      - id: week
-        shell: bash
-        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
-      - name: Cache release build artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target
-          key: cargo-Windows-rust-1.96.1-release-msvc-x86_64-${{ hashFiles('Cargo.lock') }}-${{ steps.week.outputs.week }}
-          restore-keys: |
-            cargo-Windows-rust-1.96.1-release-msvc-x86_64-${{ hashFiles('Cargo.lock') }}-
-            cargo-Windows-rust-1.96.1-release-msvc-x86_64-
-
 
       - name: Build verified offset generator bundle
         run: python scripts/prepare-offset-generator.py --rid win-x64
@@ -172,8 +138,23 @@ jobs:
         run: cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc
 
 
+      # Signing is active only once SignPath approves the project and the
+      # SIGNPATH_ORGANIZATION_ID variable and SIGNPATH_API_TOKEN secret exist;
+      # until then the release ships the same executable unsigned.
+      - name: Select signing mode
+        shell: bash
+        run: |
+          if [ -n "${{ vars.SIGNPATH_ORGANIZATION_ID }}" ]; then
+            echo "SIGN_RELEASE=true" >> "$GITHUB_ENV"
+            echo "RELEASE_BINARY=signed/vosu.exe" >> "$GITHUB_ENV"
+          else
+            echo "SIGN_RELEASE=false" >> "$GITHUB_ENV"
+            echo "RELEASE_BINARY=target/x86_64-pc-windows-msvc/release/vosu.exe" >> "$GITHUB_ENV"
+          fi
+
       - name: Upload unsigned daemon for SignPath
         id: upload-unsigned-windows
+        if: env.SIGN_RELEASE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: unsigned-vosu-windows-${{ github.ref_name }}
@@ -181,23 +162,23 @@ jobs:
           if-no-files-found: error
 
       - name: Submit tagged daemon to SignPath
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.SIGN_RELEASE == 'true'
         uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: 5b025426-9c79-4f04-87e8-64cf64131d0b
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
           project-slug: vosu
           signing-policy-slug: release-signing
           github-artifact-id: ${{ steps.upload-unsigned-windows.outputs.artifact-id }}
           wait-for-completion: true
           output-artifact-directory: signed
 
-      - name: Package signed daemon and license
+      - name: Package daemon and license
         run: >-
           python scripts/package-release.py package
           --platform windows
           --tag "$env:RELEASE_TAG"
-          --binary signed/vosu.exe
+          --binary "$env:RELEASE_BINARY"
           --output dist
 
       - name: Extract validated package
@@ -219,6 +200,7 @@ jobs:
           ./scripts/verify-windows-release.ps1
           -Binary "release-smoke/windows/vosu.exe"
           -Tag "$env:RELEASE_TAG"
+          -RequireSignature:($env:SIGN_RELEASE -eq 'true')
 
       - name: Upload Windows release archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -305,10 +287,45 @@ jobs:
           --tag "$RELEASE_TAG"
           --directory dist
 
+      - name: Write release notes
+        env:
+          SIGNED: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, re
+          tag = os.environ["RELEASE_TAG"]
+          version = tag.removeprefix("v")
+          changelog = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          section = re.search(
+              rf"^## {re.escape(version)}\b[^\n]*\n(.*?)(?=^## |\Z)", changelog, re.S | re.M
+          )
+          if section is None:
+              raise SystemExit(f"CHANGELOG.md has no section for {version}")
+          base = f"https://github.com/shiruviaa/vosu/blob/{tag}"
+          if os.environ["SIGNED"] == "true":
+              signing = (
+                  f"The Windows executable is signed under the [code signing policy]({base}/CODE_SIGNING_POLICY.md)."
+                  " Free code signing provided by [SignPath.io](https://about.signpath.io),"
+                  " certificate by [SignPath Foundation](https://signpath.org)."
+              )
+          else:
+              signing = (
+                  "SignPath signing is not active yet, so this release's Windows executable is unsigned."
+                  f" See the [code signing policy]({base}/CODE_SIGNING_POLICY.md)."
+              )
+          notes = (
+              section.group(1).strip()
+              + f"\n\n## Code signing policy\n\n{signing}"
+              + f"\n\n[Privacy policy]({base}/PRIVACY.md) · [Security and installation disclosure]({base}/docs/security.md)\n"
+          )
+          pathlib.Path("release-notes.md").write_text(notes, encoding="utf-8")
+          PY
+
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3.0.2
         with:
           fail_on_unmatched_files: true
+          body_path: release-notes.md
           files: |
             dist/vosu-windows-${{ github.ref_name }}.zip
             dist/vosu-linux-${{ github.ref_name }}.zip
