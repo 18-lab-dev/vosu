@@ -2,6 +2,8 @@ Copyright (c) 2026 sxlvia
 
 Project-authored repository code and documentation are dual-licensed under either the MIT License or Apache License, Version 2.0, at your option, where the respective contributors have licensing authority.
 
+The vosu logo, wordmark and icons are not covered by those licenses; they are licensed under CC BY 4.0 as described in "Branding assets" below.
+
 The complete canonical terms are reproduced below. Separately licensed third-party and provenance-pinned material remains under its own terms; see THIRD_PARTY_NOTICES.md.
 
 ===== MIT License =====
@@ -231,6 +233,32 @@ SOFTWARE.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+===== Branding assets =====
+
+The vosu logo, wordmark and app icons are Copyright (c) 2026 sxlvia. This
+covers the files in assets/branding/, assets/icon.ico,
+assets/server/favicon.ico, the brand marks drawn in the dashboard and report
+pages (assets/server/homepage.html and assets/server/report.html), and the
+copies built into vosu's program, tray icon and packages.
+
+They are licensed under the Creative Commons Attribution 4.0 International
+License (CC BY 4.0): https://creativecommons.org/licenses/by/4.0/
+You may use, copy, change and share them for any purpose, including
+commercially, as long as you credit sxlvia, link to the license, and say if you
+changed them. For example: "vosu logo by sxlvia, licensed under CC BY 4.0".
+Keeping this LICENSE file with the artwork, as vosu's own release archives and
+packages do, is enough credit when you redistribute vosu or a fork of it.
+
+No credit is needed just for showing vosu. As an extra permission on top of
+CC BY 4.0, you may show the logo and icons without crediting anyone when you
+use or talk about vosu: in streams, videos, screenshots, tutorials, reviews,
+or when linking to the project. Credit is only needed when you redistribute
+the artwork itself or reuse it in your own work, such as a modified logo or
+merchandise.
+
+Neither this license nor the extra permission implies that sxlvia or vosu
+endorses you or your project.
 
 ===== Retained calculator notices =====
 

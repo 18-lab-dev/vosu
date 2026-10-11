@@ -462,3 +462,5 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and pull-reques
 ## License
 
 Project-authored code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, where the respective contributors have licensing authority. The release archive retains the root [`LICENSE`](LICENSE) member. Bundled assets, dependencies, and provenance-pinned material remain under their applicable terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). The first-party notice is `Copyright (c) 2026 sxlvia`. The root release license includes the six retained calculator MIT texts. The [provenance audit](docs/provenance-audit.md) records source matches and files whose origins remain uncertain.
+
+The vosu logo and icons are © 2026 sxlvia under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the terms are in the "Branding assets" section of [`LICENSE`](LICENSE). Showing them while using or talking about vosu (streams, videos, screenshots) needs no credit.

@@ -2,6 +2,12 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased
+
+### Licensing
+
+- The vosu logo and icons are now licensed separately from the code, under CC BY 4.0 crediting sxlvia, with an extra permission to show them without credit when using or talking about vosu. The terms are in `LICENSE` and ship in every release archive and package.
+
 ## 1.0.0 — 2026-10-10
 
 ### Dashboard
