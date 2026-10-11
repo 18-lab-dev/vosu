@@ -219,6 +219,162 @@ Memory reader on the hosted runner: lazer precise capture 48,561.60 ns,
 stable idle 1,264.90 ns, stable key overlay 632.37 ns per cycle, with the same
 read counts as Linux.
 
+## 1.0.0 against tosu 4.26.2 in live clients — 2026-10-11
+
+Both products ran from their published release assets: vosu `v1.0.0`
+(`vosu.exe` SHA-256 `4cd54b1ea0fa1fce…`, Linux `vosu` `644130e344aa0f74…`) and
+tosu `v4.26.2` (`tosu.exe` `0b365384f2454245…`, Linux `tosu`
+`fa22300bcdc88c3b…`). Each run used fresh per-run copies with matched settings:
+`POLL_RATE` 150, `PRECISE_DATA_POLL_RATE` 10, PP calculation and key overlay
+on, loopback-only listeners, automatic updates off, tosu's in-game overlay off,
+and a warmed vosu lazer offsets cache. The workload was one silent 25-minute
+map with 6001 circles (checksum `954a4cf2a177d1d008d52c80b1b371a3`) played by
+Autoplay in the osu! ruleset on lazer `2026.1005.0` and stable `b20260924.1`.
+
+The host is a Ryzen 9 9950X3D with the RTX 5090 passed through to one guest at
+a time:
+
+- **Windows guest:** Windows 11 IoT Enterprise LTSC 26100, 8 logical
+  processors. Stable ran from the user's installation, whose `Songs` and
+  `Skins` links were pointed at a local folder for the run and then restored;
+  its databases and per-user configuration were verified unchanged afterward.
+- **Linux guest:** Arch Linux, `linux-zen` 7.1.4, 8 vCPUs pinned to the V-cache
+  CCD, 24 GiB, glibc 2.43. Clients ran on a headless labwc (Vulkan on the RTX
+  5090) through its Xwayland. Lazer used the release AppImage with a fresh
+  profile. Stable used a copy of the host's osu-winello Wine 11.8 Staging build,
+  prefix and program folder, with Wine's ALSA audio driver because its
+  PulseAudio driver never advanced the audio clock in this guest. The vosu
+  copies carried the file capabilities `vosu --setup` grants on an
+  eBPF-capable kernel (the eBPF process-event backend was selected); the tosu
+  copies carried `cap_sys_ptrace`, which Yama `ptrace_scope=1` requires. Both
+  ran as the desktop user.
+
+The tosu-side harness is task-owned and outside this repository. It bundles
+tosu commit `b21b4526d8db9ce124f5a8bf475ef5421837f5b7` with benchmark entry
+points that call the unchanged production functions.
+
+### Hot paths
+
+Measured on idle guests, before any client was started. vosu used Criterion
+on the release commit. The tosu harness gives each case at least 3 s of
+warm-up and 100 equally weighted samples of about 50 ms, reporting the mean and
+a 95% Student t interval; that is Criterion-like, not Criterion. Values are
+means per iteration.
+
+| Benchmark ID | Windows tosu | Windows vosu | tosu / vosu | Linux tosu | Linux vosu | tosu / vosu |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `batch_scan/three_patterns_2mib` | 1.603 ms | 195.934 µs | 8.18× | 1.069 ms | 62.559 µs | 17.09× |
+| `linux_process_memory/current_process_64_bytes` | — | — | — | 991.577 ns | 304.825 ns | 3.25× |
+| `map_calculation/full_difficulty_performance` | 332.630 µs | 17.344 µs | 19.18× | 227.061 µs | 14.172 µs | 16.02× |
+| `map_calculation/gradual_all_objects` | 437.981 µs | 14.608 µs | 29.98× | 252.084 µs | 14.567 µs | 17.31× |
+| `map_calculation/parse` | 41.892 µs | 2.309 µs | 18.14× | 37.245 µs | 1.628 µs | 22.87× |
+| `raw_snapshot_reads/lazer_regular_fields` | 400.973 µs | 5.895 µs | 68.02× | 206.320 µs | 6.082 µs | 33.92× |
+| `raw_snapshot_reads/stable_regular_fields` | 18.604 µs | 337.148 ns | 55.18× | 8.095 µs | 219.466 ns | 36.89× |
+| `serializers_cold/stream_companion` | 9.558 µs | 11.500 µs | 0.83× | 7.673 µs | 7.193 µs | 1.07× |
+| `serializers_cold/v1` | 11.319 µs | 8.084 µs | 1.40× | 9.269 µs | 4.671 µs | 1.98× |
+| `serializers_cold/v2` | 16.640 µs | 13.639 µs | 1.22× | 13.710 µs | 11.781 µs | 1.16× |
+| `serializers_cold/v2_precise` | 888.088 ns | 4.866 µs | 0.18× | 863.276 ns | 3.528 µs | 0.24× |
+| `windows_process_memory/read_exact_64_bytes` | 1.035 µs | 400.119 ns | 2.59× | — | — | — |
+| `windows_process_memory/read_many_contiguous_8x8_bytes` | 8.169 µs | 436.657 ns | 18.71× | — | — | — |
+| `windows_process_memory/read_many_gapped_8x8_bytes` | 8.156 µs | 439.031 ns | 18.58× | — | — | — |
+| `windows_process_memory/read_many_single_64_bytes` | 1.028 µs | 399.726 ns | 2.57× | — | — | — |
+| `windows_process_memory/read_many_wide_8x8_bytes` | 8.207 µs | 1.053 µs | 7.79× | — | — | — |
+
+The rows exercise the closest tosu production path, not identical work:
+
+- tosu's map calculation goes through its native lazer calculator
+  (`0.6.1-20260729-main.0`), including the JavaScript bridge.
+- tosu's raw-snapshot cases take error and not-ready paths on the zeroed
+  fixture, and its lazer case rescans because the fixture fails its GameBase
+  check.
+- `batch_scan` calls tosu's inner scanner through an adapter, not its
+  process-wide scan.
+- tosu has no batched read API, so the read-many cases issue eight reads, and
+  every read allocates a returned buffer.
+- tosu's precise serializer surfaces four keys; vosu's fixture has 18. The
+  serializer inputs differ in general.
+
+On Windows the vosu `serializers_cold/v1` and `stream_companion` intervals are
+wide (6.3–11.6 µs and 9.6–15.1 µs). The vosu-only groups have no tosu
+counterpart. Its `publication` cases took about 18 ms on Windows and 2.1 ms on
+Linux; that difference was not investigated. All results are in the evidence
+bundle.
+
+### Live readers
+
+With no daemon running, each reader attached directly to the playing client,
+alternating vosu and tosu for five invocations each. An invocation runs
+100 warm-up cycles, then nine samples of 1000 (vosu) or 100 (tosu) cycles, and
+reports the median sample mean. vosu used `examples/live_reader_bench.rs`,
+which calls the daemon's regular and precise capture adapters after the
+production reducer has chosen its capture plan. tosu used its production
+`Process`, pattern resolution and instance initialization with polling
+disabled. The table shows the median of the five invocation medians and their
+range; setup is excluded from the cycle times.
+
+| Client | Product | Regular cycle | Precise cycle | Errors | Setup |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Windows lazer | vosu | 572.4 µs (566.4–574.8) | 32.7 µs (32.0–33.1) | 0 | 74 ms |
+| Windows lazer | tosu | 793.7 µs (788.1–799.4) | 167.7 µs (163.3–172.7) | 0 | 1559 ms |
+| Windows stable | vosu | 190.6 µs (184.9–208.2) | 20.5 µs (20.2–22.6) | 0 | 88 ms |
+| Windows stable | tosu | 492.0 µs (477.6–512.6) | 42.1 µs (40.8–48.9) | 0 | 735 ms |
+| Linux lazer | vosu | 193.6 µs (189.1–215.6) | 10.7 µs (10.3–11.8) | 0 | 69 ms |
+| Linux lazer | tosu | 145.3 µs (138.5–178.0) | 32.3 µs (31.9–36.9) | 0 | 3634 ms |
+| Linux stable (Wine) | vosu | 90.9 µs (one invocation) | 7.7 µs (one invocation) | 0 | — |
+
+- On Linux lazer, tosu's ranked-play read returned the production not-ready
+  sentinel on every regular cycle (counted, not an error). The cycle continued
+  through settings, gameplay, leaderboard and user reads, 504 reads per cycle
+  (542 on Windows). The two readers do not read identical field sets, so cycle
+  times compare equivalent production work, not identical work.
+- The Linux stable row has one vosu invocation because the tosu harness refused
+  the client: its own guard requires a 32-bit process for `--client stable`,
+  and osu-winello's Wine reported the `osu!.exe` process as 64-bit. That guard
+  belongs to the harness, not to tosu. Separately, the tosu 4.26.2 daemon found
+  this client and published its state and clock, but play score, combo, hits
+  and mods stayed empty; the cause was not investigated. No Linux stable
+  head-to-head was run.
+- The first Windows stable invocation failed because the example rejected memory
+  errors in its first setup capture, which still uses the default menu plan.
+  The example now requires only the plan-selected final setup capture to be
+  clean; the timed code did not change. Windows lazer used the earlier build.
+
+### Daemon CPU and memory
+
+A psutil collector (7.0.0 on Windows, 7.2.2 on Linux) sampled each daemon's
+process tree once per second after 30 s of warm-up, for three 45 s windows per
+mode. In **background** mode each window made one `/json/v2` request at its
+start and one at its end on a new connection. In **consumer** mode it requested
+`/json/v2` at 10 Hz over keep-alive. Every window had to keep the same map,
+client, ruleset and mods, a monotonic play clock and non-decreasing score, and
+consumer windows had to hold their cadence; all windows were accepted. Values are
+medians over the three windows. **vosu alone** ran by itself; the other
+columns come from vosu and tosu running together. On Linux the collector ran as
+root because processes with file capabilities are not dumpable.
+
+| Client | Mode | vosu alone CPU | vosu CPU | tosu CPU | vosu RSS | tosu RSS | vosu private | tosu private | `/json/v2` latency vosu / tosu |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Windows lazer | background | 1.98% | 2.15% | 2.78% | 44.1 MB | 91.1 MB | 7.0 MB | 80.0 MB | 6.86 / 4.55 ms |
+| Windows lazer | consumer | 2.29% | 1.67% | 2.85% | 44.4 MB | 93.9 MB | 7.4 MB | 83.3 MB | 0.37 / 0.87 ms |
+| Windows stable | background | 1.46% | 1.77% | 2.01% | 50.3 MB | 154.0 MB | 13.4 MB | 136.2 MB | 17.34 / 13.78 ms |
+| Windows stable | consumer | 1.63% | 1.74% | 3.75% | 51.5 MB | 162.6 MB | 14.7 MB | 157.8 MB | 0.44 / 3.71 ms |
+| Linux lazer | background | 1.02% | 1.00% | 1.42% | 35.8 MB | 265.4 MB | 31.9 MB | 255.2 MB | 0.73 / 3.67 ms |
+| Linux lazer | consumer | 1.07% | 1.13% | 2.51% | 37.5 MB | 273.6 MB | 33.6 MB | 263.4 MB | 0.27 / 2.70 ms |
+| Linux stable (Wine) | background | 0.80% | — | — | 29.7 MB | — | 25.8 MB | — | 0.65 ms / — |
+| Linux stable (Wine) | consumer | 0.93% | — | — | 30.4 MB | — | 26.5 MB | — | 0.25 ms / — |
+
+- CPU is a percentage of one logical core.
+- RSS is the Windows working set or Linux resident set.
+- Private memory is Windows private commit or Linux `Private_Clean +
+  Private_Dirty + Private_Hugetlb`, so it is not comparable across platforms.
+- Background latency covers only two cold requests per window, each on a new
+  connection, so it mostly measures connection setup.
+
+Evidence (launch identities, collector configurations, per-window samples,
+reader logs, Criterion output and the tosu harness with its mapping and
+checksums) is retained under `~/.cache/vosu-1.0.0-live-20261011/` on the
+measurement host.
+
 ## Prior full-suite local results
 
 - **2026-09-09**, revision `9b0648c4b90d5b9eeddd480e1c7029c7f8be71d2`
