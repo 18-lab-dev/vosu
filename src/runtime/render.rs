@@ -10,11 +10,23 @@ pub(super) fn local_overlay(counter: &crate::counters::Counter) -> LocalOverlay 
 
 const SEARCH_FORM: &str = r#"<form class="search-form" role="search"><label class="visually-hidden" for="counter-search">Search overlays</label><div class="search-control"><input id="counter-search" class="search-bar" type="search" autocomplete="off" placeholder="Search name, author, or client" aria-controls="counter-results"><kbd aria-hidden="true">/</kbd></div></form>"#;
 
+/// Third-party disclosure for the Available page. It sits outside the results
+/// section so catalog searches, which replace only the results, keep it.
+pub(super) const CATALOG_NOTICE: &str = concat!(
+    r#"<section class="catalog-notice" aria-labelledby="catalog-notice-title">"#,
+    r#"<h2 id="catalog-notice-title">Community overlays</h2>"#,
+    r#"<p>Overlays listed here are made and maintained by their respective authors, not by Vosu, and Vosu does not review or endorse them. The catalog is provided by the tosu project. Each author keeps the rights to their overlay.</p>"#,
+    r#"<p>Installed overlays run their authors' JavaScript with the same access as this dashboard: they can read game data, install, remove, and configure overlays, and change Vosu settings. Install only overlays you trust.</p>"#,
+    r#"<p><a href="https://github.com/tosuapp/counters" target="_blank" rel="noopener noreferrer">View upstream catalog</a> · <a href="https://github.com/shiruviaa/vosu/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">Privacy policy</a></p>"#,
+    "</section>",
+);
+
 pub(super) fn render_homepage(
     template: EmbeddedResponse,
     local_count: Option<usize>,
     available_count: Option<usize>,
     search: bool,
+    notice: &str,
     list: &str,
     update_version: Option<&str>,
 ) -> EmbeddedResponse {
@@ -31,6 +43,7 @@ pub(super) fn render_homepage(
             "AVAILABLE_AMOUNT" => &available_count,
             "SEARCH" if search => SEARCH_FORM,
             "SEARCH" => "",
+            "NOTICE" => notice,
             "LIST" => list,
             "UPDATE_HIDDEN" if update_version.is_some() => "",
             "UPDATE_HIDDEN" => "hidden",
@@ -650,7 +663,7 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
             if externally_managed {
                 "Updates are managed by your Linux package manager; automatic updates are disabled."
             } else {
-                "Check for a new Vosu release during startup and install it automatically."
+                "Install new Vosu releases automatically during startup. Vosu checks for them at every start either way, so it can show the update notice."
             },
             &update_switch,
         ),

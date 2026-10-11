@@ -177,7 +177,7 @@ impl PageDataProvider for RuntimePages {
                     let html = render_local_counters(&local, None, &authority);
                     (
                         if html.is_empty() {
-                            r#"<div class="empty-state"><h2>No local overlays yet</h2><p>Install an overlay from the Vosu catalog or add one from this computer.</p><a class="button button-primary" href="/available">Browse available overlays</a></div>"#.to_owned()
+                            r#"<div class="empty-state"><h2>No local overlays yet</h2><p>Install an overlay from the catalog or add one from this computer.</p><a class="button button-primary" href="/available">Browse available overlays</a></div>"#.to_owned()
                         } else {
                             html
                         },
@@ -213,6 +213,11 @@ impl PageDataProvider for RuntimePages {
                 local_count,
                 available_count,
                 !matches!(page, DynamicPage::EmptySettings),
+                if matches!(page, DynamicPage::Available) {
+                    CATALOG_NOTICE
+                } else {
+                    ""
+                },
                 &list,
                 self.update_version.as_deref(),
             ))

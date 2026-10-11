@@ -25,6 +25,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         Some(2),
         None,
         true,
+        "",
         r#"<article class="counter-card">counter</article>"#,
         None,
     );
@@ -34,6 +35,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         "{{AVAILABLE_AMOUNT}}",
         "{{SEARCH}}",
         "{{LIST}}",
+        "{{NOTICE}}",
         "{{UPDATE_HIDDEN}}",
         "{{CURRENT_VERSION}}",
         "{{NEW_VERSION}}",
@@ -47,6 +49,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         Some(1),
         None,
         true,
+        "",
         "<p>{{CURRENT_VERSION}} {{LIST}} {{UNKNOWN</p>",
         None,
     );
@@ -63,6 +66,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         Some(0),
         Some(0),
         true,
+        "",
         "",
         Some("99.0.0"),
     );
@@ -161,6 +165,7 @@ async fn dynamic_pages_keep_discovered_installed_count_when_catalog_fetch_fails(
         .unwrap();
     let dashboard = String::from_utf8(dashboard.body.to_vec()).unwrap();
     assert!(dashboard.contains(r#"data-count="installed">2</span>"#));
+    assert!(!dashboard.contains(r#"class="catalog-notice""#));
 
     let unavailable = pages
         .render(DynamicPage::Available, None)
@@ -169,6 +174,8 @@ async fn dynamic_pages_keep_discovered_installed_count_when_catalog_fetch_fails(
     let unavailable = String::from_utf8(unavailable.body.to_vec()).unwrap();
     assert!(unavailable.contains(r#"data-count="installed">2</span>"#));
     assert!(unavailable.contains("Error:"));
+    // The third-party disclosure must not depend on a reachable catalog.
+    assert!(unavailable.contains(r#"class="catalog-notice""#));
 
     counters.shutdown().await;
     config.shutdown().await.unwrap();

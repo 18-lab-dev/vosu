@@ -313,6 +313,37 @@ a:hover {
   text-transform: uppercase;
 }
 
+/* Sits above the catalog listing and shares its width, so it reads as the
+   listing's preface rather than a page-wide alert. */
+.catalog-notice {
+  width: min(100%, 150rem);
+  margin: 0 auto 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--ink-raised);
+}
+
+.catalog-notice h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+.catalog-notice p {
+  margin: 0;
+  color: var(--paper-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.catalog-notice p + p {
+  margin-top: 0.45rem;
+}
+
+.catalog-notice a {
+  color: var(--cyan);
+}
+
 .dashboard-main {
   width: 100%;
   min-width: 0;
