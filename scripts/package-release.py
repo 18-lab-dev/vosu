@@ -119,6 +119,59 @@ def verify_release_set(args: argparse.Namespace) -> None:
     print("\n".join(sorted(set(expected) | packages)))
 
 
+REPOSITORY_URL = "https://github.com/shiruviaa/vosu"
+MARKDOWN_LINK = re.compile(r"(!?\[[^\]\n]*\]\()([^)\s]+)(\))")
+
+
+def pin_repository_links(markdown: str, tag: str) -> str:
+    """Point repository-relative link targets at the tagged tree.
+
+    CHANGELOG.md links are relative to the repository root; on a release page
+    they would resolve against the releases URL instead of the source files.
+    """
+
+    def pin(match: re.Match[str]) -> str:
+        target = match.group(2)
+        if re.match(r"[a-z][a-z0-9+.-]*:", target, re.I) or target.startswith(("#", "/")):
+            return match.group(0)
+        return f"{match.group(1)}{REPOSITORY_URL}/blob/{tag}/{target.removeprefix('./')}{match.group(3)}"
+
+    return MARKDOWN_LINK.sub(pin, markdown)
+
+
+def release_notes(tag: str, changelog: str, signed: bool) -> str:
+    version = tag.removeprefix("v")
+    section = re.search(
+        rf"^## {re.escape(version)}\b[^\n]*\n(.*?)(?=^## |\Z)", changelog, re.S | re.M
+    )
+    if section is None:
+        raise ValueError(f"CHANGELOG.md has no section for {version}")
+    base = f"{REPOSITORY_URL}/blob/{tag}"
+    if signed:
+        signing = (
+            f"The Windows executable is signed under the [code signing policy]({base}/CODE_SIGNING_POLICY.md)."
+            " Free code signing provided by [SignPath.io](https://about.signpath.io),"
+            " certificate by [SignPath Foundation](https://signpath.org)."
+        )
+    else:
+        signing = (
+            "SignPath signing is not active yet, so this release's Windows executable is unsigned."
+            f" See the [code signing policy]({base}/CODE_SIGNING_POLICY.md)."
+        )
+    return (
+        pin_repository_links(section.group(1).strip(), tag)
+        + f"\n\n## Code signing policy\n\n{signing}"
+        + f"\n\n[Privacy policy]({base}/PRIVACY.md) · [Security and installation disclosure]({base}/docs/security.md)\n"
+    )
+
+
+def write_release_notes(args: argparse.Namespace) -> None:
+    version_from_tag(args.tag, args.manifest)
+    notes = release_notes(args.tag, args.changelog.read_text(encoding="utf-8"), args.signed)
+    args.output.write_text(notes, encoding="utf-8")
+    print(args.output)
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument(
@@ -155,6 +208,13 @@ def parser() -> argparse.ArgumentParser:
     verify.add_argument("--directory", type=Path, required=True)
     verify.add_argument("--license", type=Path, default=Path("LICENSE"))
     verify.set_defaults(run=verify_release_set)
+
+    notes = subparsers.add_parser("notes", help="write release notes from the tag's CHANGELOG section")
+    notes.add_argument("--tag", required=True)
+    notes.add_argument("--changelog", type=Path, default=Path("CHANGELOG.md"))
+    notes.add_argument("--signed", action="store_true")
+    notes.add_argument("--output", type=Path, required=True)
+    notes.set_defaults(run=write_release_notes)
     return result
 
 

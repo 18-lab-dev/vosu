@@ -98,6 +98,29 @@ class DistributionReleaseTests(unittest.TestCase):
                 with self.subTest(tag=tag), self.assertRaises(ValueError):
                     release.version_from_tag(tag, manifest)
 
+    def test_release_notes_pin_relative_links_and_keep_only_the_tag_section(self):
+        changelog = (
+            "# Changelog\n\n## 1.2.3 — 2026-01-01\n\n"
+            "- See [privacy](PRIVACY.md), [ADR](./docs/decisions/0001-x.md#why), "
+            "[site](https://example.com/a), [anchor](#top), [root](/abs), "
+            "[mail](mailto:a@b.c) and ![icon](assets/i.svg).\n\n"
+            "## 1.2.2 — 2025-12-01\n\n- older [entry](OLD.md)\n"
+        )
+        base = "https://github.com/shiruviaa/vosu/blob/v1.2.3"
+        notes = release.release_notes("v1.2.3", changelog, signed=False)
+        self.assertIn(f"[privacy]({base}/PRIVACY.md)", notes)
+        self.assertIn(f"[ADR]({base}/docs/decisions/0001-x.md#why)", notes)
+        self.assertIn(f"![icon]({base}/assets/i.svg)", notes)
+        for unchanged in ("(https://example.com/a)", "(#top)", "(/abs)", "(mailto:a@b.c)"):
+            self.assertIn(unchanged, notes)
+        self.assertNotIn("older", notes)
+        self.assertIn("unsigned", notes)
+        self.assertNotIn("certificate by", notes)
+        signed = release.release_notes("v1.2.3", changelog, signed=True)
+        self.assertIn("certificate by [SignPath Foundation]", signed)
+        with self.assertRaises(ValueError):
+            release.release_notes("v9.9.9", changelog, signed=False)
+
     def test_release_set_requires_packages_and_aur(self):
         import argparse
         with tempfile.TemporaryDirectory() as directory:

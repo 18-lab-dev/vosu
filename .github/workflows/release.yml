@@ -288,38 +288,11 @@ jobs:
           --directory dist
 
       - name: Write release notes
-        env:
-          SIGNED: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
-        run: |
-          python - <<'PY'
-          import os, pathlib, re
-          tag = os.environ["RELEASE_TAG"]
-          version = tag.removeprefix("v")
-          changelog = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
-          section = re.search(
-              rf"^## {re.escape(version)}\b[^\n]*\n(.*?)(?=^## |\Z)", changelog, re.S | re.M
-          )
-          if section is None:
-              raise SystemExit(f"CHANGELOG.md has no section for {version}")
-          base = f"https://github.com/shiruviaa/vosu/blob/{tag}"
-          if os.environ["SIGNED"] == "true":
-              signing = (
-                  f"The Windows executable is signed under the [code signing policy]({base}/CODE_SIGNING_POLICY.md)."
-                  " Free code signing provided by [SignPath.io](https://about.signpath.io),"
-                  " certificate by [SignPath Foundation](https://signpath.org)."
-              )
-          else:
-              signing = (
-                  "SignPath signing is not active yet, so this release's Windows executable is unsigned."
-                  f" See the [code signing policy]({base}/CODE_SIGNING_POLICY.md)."
-              )
-          notes = (
-              section.group(1).strip()
-              + f"\n\n## Code signing policy\n\n{signing}"
-              + f"\n\n[Privacy policy]({base}/PRIVACY.md) · [Security and installation disclosure]({base}/docs/security.md)\n"
-          )
-          pathlib.Path("release-notes.md").write_text(notes, encoding="utf-8")
-          PY
+        run: >-
+          python scripts/package-release.py notes
+          --tag "$RELEASE_TAG"
+          ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && '--signed' || '' }}
+          --output release-notes.md
 
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3.0.2
