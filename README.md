@@ -35,14 +35,14 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 
 ### Portable archive
 
-The current release is **1.0.0**. Download `vosu-linux-v1.0.0.zip` or `vosu-windows-v1.0.0.zip` from the [v1.0.0 release](https://github.com/shiruviaa/vosu/releases/tag/v1.0.0), then:
+The current release is **1.0.1**. Download `vosu-linux-v1.0.1.zip` or `vosu-windows-v1.0.1.zip` from the [v1.0.1 release](https://github.com/shiruviaa/vosu/releases/tag/v1.0.1), then:
 
 1. Extract the complete archive into a writable directory. Its root contains `vosu` or `vosu.exe`, plus `LICENSE`.
 2. On Linux, restore the executable bit if your archive tool removed it: `chmod +x vosu`.
 3. Run `./vosu` on Linux or `vosu.exe` on Windows.
 4. Open <http://127.0.0.1:24050/>. By default, vosu opens the dashboard after startup.
 
-Do not run the Windows executable directly from an archive or a OneDrive-controlled directory. The updater cannot provide safe replacement and rollback in those locations. The 1.0.0 Windows executable is unsigned (see [Code signing policy](#code-signing-policy)), so Windows SmartScreen may warn before the first launch.
+Do not run the Windows executable directly from an archive or a OneDrive-controlled directory. The updater cannot provide safe replacement and rollback in those locations. The 1.0.1 Windows executable is unsigned (see [Code signing policy](#code-signing-policy)), so Windows SmartScreen may warn before the first launch.
 
 ### Linux packages
 
@@ -51,15 +51,15 @@ Download the package for your distribution from the matching
 
 ```sh
 # Debian 12+ / Ubuntu 22.04+
-sudo apt install ./vosu_1.0.0_amd64.deb
+sudo apt install ./vosu_1.0.1_amd64.deb
 # Fedora
-sudo dnf install ./vosu-1.0.0-1.x86_64.rpm
+sudo dnf install ./vosu-1.0.1-1.x86_64.rpm
 # Arch Linux
-sudo pacman -U vosu-1.0.0-1-x86_64.pkg.tar.zst
+sudo pacman -U vosu-1.0.1-1-x86_64.pkg.tar.zst
 ```
 
 Arch users can alternatively build the `vosu-bin` package once it is published
-on the AUR. Each release includes `vosu-bin-aur-v1.0.0.tar.gz` with its
+on the AUR. Each release includes `vosu-bin-aur-v1.0.1.tar.gz` with its
 rendered PKGBUILD, `.SRCINFO`, and install hook for the AUR maintainer.
 
 Linux binaries require glibc **2.35 or newer** (Debian 12+, Ubuntu 22.04+,

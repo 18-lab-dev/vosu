@@ -107,7 +107,7 @@ Signing is off until the repository variable `SIGNPATH_ORGANIZATION_ID` exists. 
 5. The repository secret `SIGNPATH_API_TOKEN` must belong to a SignPath CI user that can submit to this project, and the variable `SIGNPATH_ORGANIZATION_ID` is added only after everything else here is in place. Once the variable exists, a missing or invalid token fails the tagged release at the signing step rather than publishing an unsigned archive.
 6. Every team member must use MFA for GitHub and SignPath.
 
-Before enabling signing, and after any change to the SignPath project, an approver confirms items 2–4 and 6 in SignPath. As of 2026-10-10 none of these SignPath-side settings has been verified from this repository, and v1.0.0 is released unsigned; GitHub 2FA is enabled for both organization members but is not required by the organization. With `-RequireSignature`, `scripts/verify-windows-release.ps1` requires a valid Authenticode signature issued to `SignPath Foundation` with a timestamp countersignature.
+Before enabling signing, and after any change to the SignPath project, an approver confirms items 2–4 and 6 in SignPath. As of 2026-10-12 none of these SignPath-side settings has been verified from this repository, and v1.0.0 and v1.0.1 are released unsigned; GitHub 2FA is enabled for both organization members but is not required by the organization. With `-RequireSignature`, `scripts/verify-windows-release.ps1` requires a valid Authenticode signature issued to `SignPath Foundation` with a timestamp countersignature.
 
 ### Linux distribution releases
 
