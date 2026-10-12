@@ -42,7 +42,7 @@ The current release is **1.0.1**. Download `vosu-linux-v1.0.1.zip` or `vosu-wind
 3. Run `./vosu` on Linux or `vosu.exe` on Windows.
 4. Open <http://127.0.0.1:24050/>. By default, vosu opens the dashboard after startup.
 
-Do not run the Windows executable directly from an archive or a OneDrive-controlled directory. The updater cannot provide safe replacement and rollback in those locations. The 1.0.1 Windows executable is unsigned (see [Code signing policy](#code-signing-policy)), so Windows SmartScreen may warn before the first launch.
+Do not run the Windows executable directly from an archive or a OneDrive-controlled directory. The updater cannot provide safe replacement and rollback in those locations. Windows executables are unsigned, so Windows SmartScreen may warn before the first launch.
 
 ### Linux packages
 
@@ -134,9 +134,15 @@ Quit vosu from its tray icon first. On Linux, turn off **Settings â†’ General â†
 - **Linux packages:** `sudo apt remove vosu`, `sudo dnf remove vosu`, or `sudo pacman -R vosu`. AUR installs: `sudo pacman -R vosu-git`.
 - **Linux user data:** packages and portable installs leave your data in place. Delete `${XDG_CONFIG_HOME:-$HOME/.config}/vosu`, `${XDG_DATA_HOME:-$HOME/.local/share}/vosu`, and `${XDG_CACHE_HOME:-$HOME/.cache}/vosu` to remove configuration, overlays, logs, and caches.
 
+<!--
+SignPath signing is hidden until SignPath Foundation approves the project; until
+then every Windows release is unsigned. Restore this section once releases are
+signed through SignPath.
+
 ## Code signing policy
 
 Windows release executables are signed through SignPath once SignPath Foundation approves the project; until then they are unsigned, and each release's notes state which applies. Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org). The [code signing policy](CODE_SIGNING_POLICY.md) lists team roles, what is signed, and how each signing request is approved.
+-->
 
 ## Privacy
 
@@ -236,8 +242,8 @@ for required CI. Downloads identify the version and full commit, expire after
 14 days, and include repository attribution/license texts and build provenance.
 Run extracted development binaries with `--update=false`. See the
 [operations runbook](docs/operations/runbook.md#unsigned-development-artifacts)
-for gating, cache, packaging, and smoke-test details. Tagged publication and its
-SignPath integration are unchanged; this workflow does not sign or publish releases.
+for gating, cache, packaging, and smoke-test details. Tagged publication is
+unchanged; this workflow does not sign or publish releases.
 
 ## Platform support
 
