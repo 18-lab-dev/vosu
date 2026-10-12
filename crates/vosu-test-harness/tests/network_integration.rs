@@ -24,7 +24,9 @@ use vosu::{
         StartupPlatform,
     },
     config::{Config, ConfigChanged, ConfigDocument, ConfigStore},
-    counters::{CounterOpener, CounterService, DownloadRequest, HardenedCounterDownloader},
+    counters::{
+        CounterError, CounterOpener, CounterService, DownloadRequest, HardenedCounterDownloader,
+    },
     net::{Deadlines, DownloadLimits, NetworkError, StreamingClient},
     runtime::{TestProductionCompositionOptions, start_test_production_composition},
     server::runtime::ListenTarget,
@@ -204,6 +206,56 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
     mock.shutdown()
         .await
         .expect("fixture drains without active requests");
+}
+
+#[tokio::test]
+async fn counter_download_failures_name_the_download_host() {
+    let mock = MockNetwork::start().await.expect("start loopback fixture");
+    let client = StreamingClient::for_test_network(
+        mock.test_network_config()
+            .expect("valid exact-listener config"),
+        deadlines(),
+        DownloadLimits::default(),
+    );
+    let roots = TempDir::new().expect("temporary roots");
+    let static_root = roots.path().join("static");
+    let counters = CounterService::new(
+        static_root.clone(),
+        roots.path().join("settings"),
+        Arc::new(RecordingOpener::default()),
+        Arc::new(HardenedCounterDownloader::with_client(
+            client,
+            roots.path().join("cache"),
+        )),
+    );
+    let port = mock.address().port();
+    for (path, reason) in [
+        ("/status/503", "response status 503"),
+        (
+            "/downloads/rate-limited.zip",
+            "response is not a ZIP archive",
+        ),
+    ] {
+        let error = counters
+            .download(&DownloadRequest {
+                url: format!("http://vosu-harness.invalid:{port}{path}"),
+                name: "harness-counter".to_owned(),
+                update: false,
+            })
+            .await
+            .expect_err("failed download must not install");
+        assert!(
+            matches!(
+                &error,
+                CounterError::Host { host, reason: actual }
+                    if host == "vosu-harness.invalid" && actual == reason
+            ),
+            "{path}: {error}"
+        );
+        assert!(!static_root.join("harness-counter").exists());
+    }
+    counters.shutdown().await;
+    mock.shutdown().await.expect("fixture drains");
 }
 
 #[tokio::test]

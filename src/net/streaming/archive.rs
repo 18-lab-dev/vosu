@@ -74,7 +74,7 @@ pub(super) fn preflight_zip_entries(
 ) -> Result<(), NetworkError> {
     let length = file.metadata()?.len();
     if length < 22 {
-        return Err(NetworkError::UnsafeZip("missing ZIP end record".into()));
+        return Err(NetworkError::NotZip);
     }
 
     // `zip` deliberately falls back through every EOCD signature in the file,
@@ -129,7 +129,7 @@ pub(super) fn preflight_zip_entries(
         offset += read as u64;
     }
     if !found {
-        return Err(NetworkError::UnsafeZip("missing ZIP end record".into()));
+        return Err(NetworkError::NotZip);
     }
     file.seek(SeekFrom::Start(0))?;
     Ok(())

@@ -4,6 +4,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased
 
+### Dashboard
+
+- The **Available** page notice now names tosu.app and osuck.link, states that vosu is not affiliated with the tosu project and does not operate either service, and points catalog or download outages to the tosu project.
+- A failed overlay install names the download host when the host caused it, including a host that answers with a text page instead of a ZIP archive (osuck.link does this when rate-limiting), instead of reporting an opaque ZIP error.
+
 ### Licensing
 
 - The vosu logo and icons are now licensed separately from the code, under CC BY 4.0 crediting sxlvia, with an extra permission to show them without credit when using or talking about vosu. The terms are in `LICENSE` and ship in every release archive and package.

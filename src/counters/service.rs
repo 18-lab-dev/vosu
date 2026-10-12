@@ -84,7 +84,8 @@ impl CounterDownloader for HardenedCounterDownloader {
             let archive_path = archive.path().to_path_buf();
             client
                 .download_atomic(&request.url, USER_AGENT, &archive_path, &cancel)
-                .await?;
+                .await
+                .map_err(|error| attribute_to_host(error, &request.url))?;
             tokio::task::spawn_blocking(move || {
                 crate::net::streaming::extract_zip_atomic(
                     &archive_path,
@@ -94,9 +95,39 @@ impl CounterDownloader for HardenedCounterDownloader {
                 )
             })
             .await
-            .map_err(|error| CounterError::Download(error.to_string()))??;
+            .map_err(|error| CounterError::Download(error.to_string()))?
+            .map_err(|error| attribute_to_host(error, &request.url))?;
             Ok(())
         })
+    }
+}
+
+fn download_host(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .unwrap_or_else(|| "the download host".to_owned())
+}
+
+/// Names the host for failures it caused, including a body with no ZIP archive
+/// in it: osuck.link answers rate limits with an HTTP 200 text page, which
+/// users would otherwise report to vosu. Policy rejections (scheme, private
+/// destination, downgrade, size), unsafe archives, and local I/O stay vosu's own
+/// errors.
+fn attribute_to_host(error: crate::net::streaming::NetworkError, url: &str) -> CounterError {
+    use crate::net::streaming::NetworkError;
+    match error {
+        NetworkError::Status(_)
+        | NetworkError::Timeout
+        | NetworkError::Request(_)
+        | NetworkError::Resolve(_)
+        | NetworkError::RedirectLocation
+        | NetworkError::RedirectLimit
+        | NetworkError::NotZip => CounterError::Host {
+            host: download_host(url),
+            reason: error.to_string(),
+        },
+        other => CounterError::Network(other),
     }
 }
 
@@ -120,6 +151,8 @@ pub enum CounterError {
     InvalidEncoding,
     #[error("download failed: {0}")]
     Download(String),
+    #[error("{host} (not operated by vosu): {reason}")]
+    Host { host: String, reason: String },
     #[error(transparent)]
     Network(#[from] crate::net::streaming::NetworkError),
     #[error("counter install capacity is full")]

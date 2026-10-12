@@ -248,6 +248,8 @@ pub enum NetworkError {
     Zip(#[from] zip::result::ZipError),
     #[error("unsafe ZIP entry: {0}")]
     UnsafeZip(String),
+    #[error("response is not a ZIP archive")]
+    NotZip,
 }
 
 #[derive(Clone)]

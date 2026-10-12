@@ -15,7 +15,8 @@ const SEARCH_FORM: &str = r#"<form class="search-form" role="search"><label clas
 pub(super) const CATALOG_NOTICE: &str = concat!(
     r#"<section class="catalog-notice" aria-labelledby="catalog-notice-title">"#,
     r#"<h2 id="catalog-notice-title">Community overlays</h2>"#,
-    r#"<p>Overlays listed here are made and maintained by their respective authors, not by Vosu, and Vosu does not review or endorse them. The catalog is provided by the tosu project. Each author keeps the rights to their overlay.</p>"#,
+    r#"<p>Overlays listed here are made and maintained by their respective authors, not by Vosu, and Vosu does not review or endorse them. Each author keeps the rights to their overlay.</p>"#,
+    r#"<p>The catalog is served by tosu.app, and its overlay downloads are currently hosted on osuck.link. Vosu is not affiliated with the tosu project and does not operate or control either service, so report catalog or download outages to the <a href="https://github.com/tosuapp/tosu/issues" target="_blank" rel="noopener noreferrer">tosu project</a>, not to Vosu.</p>"#,
     r#"<p>Installed overlays run their authors' JavaScript with the same access as this dashboard: they can read game data, install, remove, and configure overlays, and change Vosu settings. Install only overlays you trust.</p>"#,
     r#"<p><a href="https://github.com/tosuapp/counters" target="_blank" rel="noopener noreferrer">View upstream catalog</a> · <a href="https://github.com/shiruviaa/vosu/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">Privacy policy</a></p>"#,
     "</section>",

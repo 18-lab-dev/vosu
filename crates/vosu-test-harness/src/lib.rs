@@ -247,6 +247,12 @@ async fn handle_request(
             "text/plain",
             Bytes::from_static(b"must not be buffered"),
         ),
+        // Mirrors a host that answers rate limits with HTTP 200 and plain text.
+        "/downloads/rate-limited.zip" => response(
+            StatusCode::OK,
+            "text/plain",
+            Bytes::from_static(b"Chill out a bit please, no need for a request spam"),
+        ),
         "/slow" => {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             response(StatusCode::OK, "text/plain", Bytes::from_static(b"late"))
