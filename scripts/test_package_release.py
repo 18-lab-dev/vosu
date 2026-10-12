@@ -125,7 +125,7 @@ class DistributionReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.release_notes("v9.9.9", changelog, signed=False)
 
-    def test_release_set_requires_packages(self):
+    def test_release_set_requires_distribution_packages(self):
         import argparse
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

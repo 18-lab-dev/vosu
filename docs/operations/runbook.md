@@ -131,21 +131,17 @@ python scripts/package-linux.py build --tag v1.0.0 \
 ```
 
 This stages the 256px PNG outside checksum-covered assets and builds and
-inspects Debian, RPM and Arch package file lists/metadata. The published set is
-exactly the two ZIPs, `vosu_<version>_amd64.deb`, `vosu-<version>-1.x86_64.rpm`
-and `vosu-<version>-1-x86_64.pkg.tar.zst`. `package-release.py verify-set`
-rejects missing or extra assets.
+inspects Debian, RPM, and Arch packages. The published set is exactly the two
+ZIPs, `vosu_<version>_amd64.deb`, `vosu-<version>-1.x86_64.rpm`, and
+`vosu-<version>-1-x86_64.pkg.tar.zst`. `package-release.py verify-set` rejects
+missing or extra assets.
 
 The AUR package is `vosu-git`, which builds `main` from source with
-[`packaging/aur/PKGBUILD`](../../packaging/aur/PKGBUILD) and
-`vosu-git.install`. Releases do not render it, because its version comes from
-`git describe`. After changing it, build it in a clean Arch container, run
-`namcap` on the PKGBUILD and package, regenerate `.SRCINFO` with
-`makepkg --printsrcinfo`, and hand both files and the install hook to the AUR
-maintainer. Two warnings are expected: makepkg reports a `$srcdir` reference,
-which is the eBPF program's source path recorded in its embedded BTF debug
-data, and namcap calls `libcap` possibly unneeded, although the install hook
-runs its `setcap`.
+[`packaging/aur/PKGBUILD`](../../packaging/aur/PKGBUILD) and `vosu.install`.
+Releases do not render it because its version comes from `git describe`. After
+changing it, build it in a clean Arch container, run `namcap` on the PKGBUILD
+and package, regenerate `.SRCINFO` with `makepkg --printsrcinfo`, and publish
+the recipe through the AUR maintainer account.
 
 Before publication, clean Debian 12, Ubuntu 22.04/24.04, Fedora and Arch
 containers install the corresponding local package with dependency resolution,

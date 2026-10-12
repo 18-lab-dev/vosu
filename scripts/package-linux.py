@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and inspect distro packages."""
+"""Build and inspect distro packages and the Linux release archive."""
 from __future__ import annotations
 
 import argparse

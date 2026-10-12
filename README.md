@@ -58,10 +58,16 @@ sudo dnf install ./vosu-1.0.1-1.x86_64.rpm
 sudo pacman -U vosu-1.0.1-1-x86_64.pkg.tar.zst
 ```
 
-Arch users can alternatively build the `vosu-git` package from the AUR once it
-is published. It builds the current `main` branch from source with
-[`packaging/aur/PKGBUILD`](packaging/aur/PKGBUILD) and needs the .NET 8 SDK at
-build time for the embedded offset generator.
+Arch users can build the source `vosu-git` package from the AUR once it is
+published. The canonical recipe is
+[`packaging/aur/PKGBUILD`](packaging/aur/PKGBUILD), which builds the current
+`main` branch and needs the .NET 8 SDK at build time for the embedded offset
+generator. For a local checkout:
+
+```sh
+cd packaging/aur
+makepkg -si
+```
 
 Linux binaries require glibc **2.35 or newer** (Debian 12+, Ubuntu 22.04+,
 current Fedora and Arch). Packages install the desktop launcher and icons,
@@ -74,9 +80,10 @@ Packaged installs do not use the [self-updater](#automatic-updates), and no
 apt, dnf, or pacman repository is configured, so a system upgrade does not
 pick up new versions. To upgrade, download the newer release package and
 install it with the same command; the package manager replaces the old
-version. AUR users update `vosu-git` with an AUR helper or by rebuilding it,
-which picks up the latest `main`. Start at login remains an opt-in dashboard
-setting; packages do not ship or enable a systemd service.
+version. AUR users update `vosu-git` with an AUR helper or by rebuilding it
+from the current repository, which picks up the latest `main`. Start at login
+remains an opt-in dashboard setting; packages do not ship or enable a systemd
+service.
 
 ### Verifying downloads
 
@@ -131,7 +138,7 @@ If the current user cannot write the executable's directory, vosu treats the ins
 Quit vosu from its tray icon first. On Linux, turn off **Settings → General → Start at login** if you enabled it; otherwise run `systemctl --user disable vosu.service` and delete `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/vosu.service`.
 
 - **Portable archive or manual per-user install:** delete the executable and `LICENSE`, or the whole directory you extracted. On Windows that directory also holds the configuration, overlays, settings, logs, and cache, so deleting it removes everything.
-- **Linux packages:** `sudo apt remove vosu`, `sudo dnf remove vosu`, or `sudo pacman -R vosu`. AUR installs: `sudo pacman -R vosu-git`.
+- **Linux packages:** `sudo apt remove vosu`, `sudo dnf remove vosu`, or `sudo pacman -R vosu`. Source AUR installs: `sudo pacman -R vosu-git`.
 - **Linux user data:** packages and portable installs leave your data in place. Delete `${XDG_CONFIG_HOME:-$HOME/.config}/vosu`, `${XDG_DATA_HOME:-$HOME/.local/share}/vosu`, and `${XDG_CACHE_HOME:-$HOME/.cache}/vosu` to remove configuration, overlays, logs, and caches.
 
 <!--

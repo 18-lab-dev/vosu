@@ -26,14 +26,11 @@ privilege must remain separate: only capability setup runs as root.
    managed installation: skip startup update checks, reject explicit update
    requests using existing updater-error conventions, and disable Automatic
    updates with package-manager guidance in the dashboard.
-4. Commit an AUR `vosu-bin` template and render release-specific versions and
-   SHA-256 values into a release tarball with `.SRCINFO` and install hooks.
-   The template downloads the unchanged Linux ZIP plus desktop/icon resources
-   from the matching source tag. A maintainer publishes these files to AUR;
-   GitHub release publication does not impersonate that separate operation.
-   **Superseded 2026-10-12:** the AUR maintainer publishes only `vosu-git`,
-   built from `main` with `packaging/aur/PKGBUILD`; releases no longer carry an
-   AUR bundle.
+4. Keep the source-built Arch `vosu-git` recipe in
+   `packaging/aur/PKGBUILD` with its generated `.SRCINFO` and install hook.
+   The repository is the distribution source; release CI does not render or
+   publish a prebuilt AUR binary bundle. This supersedes the former
+   release-specific `vosu-bin` AUR bundle.
 5. Install `/usr/bin/vosu`, a desktop launcher (`Exec=vosu`, `Icon=vosu`,
    `Terminal=false`), scalable and 256px icons, and license text in packages.
    The runtime tray is always present when a tray host exists and offers Open

@@ -1,15 +1,18 @@
-# Maintainer: sxlvia <qt715 at proton dot me>
+# Maintainer: Kazoku <k4zoku@pm.me>
+# Contributor: sxlvia <qt715 at proton dot me>
 #
 # Builds the current main branch. Commits are signed with the release key
 # 6F0F0D30C09D3A036246A8102CB6524BB54B2CDA, but the source is not fetched with
 # `?signed`: a HEAD merged through GitHub's web UI carries GitHub's signature
 # instead, and verification would then fail the build.
-pkgname=vosu-git
-pkgver=1.0.1.r0.g3107607
+_pkgbase=vosu
+
+pkgname=${_pkgbase}-git
+pkgver=0
 pkgrel=1
-pkgdesc='Native osu! telemetry daemon with a local dashboard'
+pkgdesc="Native osu! telemetry daemon with a local dashboard"
 arch=('x86_64')
-url='https://github.com/shiruviaa/vosu'
+url="https://github.com/shiruviaa/vosu"
 license=('MIT OR Apache-2.0' 'CC-BY-4.0')
 # libcap provides the setcap binary that `vosu --setup` runs from the install
 # hook; namcap cannot see that and reports it as possibly unneeded. The embedded
@@ -19,54 +22,56 @@ depends=('glibc' 'libelf' 'zlib' 'libcap' 'icu' 'hicolor-icon-theme')
 # Arch's rust and rustup packages conflict and both provide cargo. The .NET 8
 # SDK builds the offset generator that release builds embed.
 makedepends=('git' 'cargo' 'clang' 'libbpf' 'pkgconf' 'dotnet-sdk-8.0' 'python' 'imagemagick')
-provides=('vosu')
-conflicts=('vosu')
+provides=("${_pkgbase}")
+conflicts=("${_pkgbase}")
 # makepkg's LTO flags would reach the clang invocation that compiles the eBPF
 # program for the bpf target.
 options=('!lto' '!debug')
-install=vosu-git.install
-source=('git+https://github.com/shiruviaa/vosu.git')
+install=vosu.install
+source=("${_pkgbase}::git+${url}.git#branch=main")
 sha256sums=('SKIP')
 
 _toolchain() {
-  sed -n 's/^channel *= *"\(.*\)"/\1/p' "$srcdir/vosu/rust-toolchain.toml"
+    sed -n 's/^channel *= *"\(.*\)"/\1/p' "$srcdir/${_pkgbase}/rust-toolchain.toml"
 }
 
 pkgver() {
-  cd vosu
-  git describe --long --tags --abbrev=7 --match 'v[0-9]*' \
-    | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+    cd "${_pkgbase}"
+    git describe --long --tags --abbrev=7 --always --match 'v[0-9]*' \
+        | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
 }
 
 prepare() {
-  cd vosu
-  # With rustup, build with the repository's pinned toolchain. System Rust
-  # ignores RUSTUP_TOOLCHAIN and only has to meet the crate's rust-version.
-  export RUSTUP_TOOLCHAIN="$(_toolchain)"
-  if command -v rustup >/dev/null; then
-    rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
-  fi
-  cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
+    cd "${_pkgbase}"
+    # With rustup, build with the repository's pinned toolchain. System Rust
+    # ignores RUSTUP_TOOLCHAIN and only has to meet the crate's rust-version.
+    export RUSTUP_TOOLCHAIN="$(_toolchain)"
+    if command -v rustup >/dev/null; then
+        rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+    fi
+    cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
 }
 
 build() {
-  cd vosu
-  export RUSTUP_TOOLCHAIN="$(_toolchain)"
-  export CARGO_TARGET_DIR=target
-  export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_PACKAGES="$srcdir/nuget"
-  # Release builds refuse to compile without the embedded offset generator.
-  python scripts/prepare-offset-generator.py --rid linux-x64
-  cargo build --frozen --release --no-default-features --features linux-process-events
-  magick assets/branding/vosu-app-icon.png -resize 256x256 "$srcdir/vosu.png"
+    cd "${_pkgbase}"
+    export RUSTUP_TOOLCHAIN="$(_toolchain)"
+    export CARGO_TARGET_DIR=target
+    export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_PACKAGES="$srcdir/nuget"
+    # Release builds refuse to compile without the embedded offset generator.
+    python scripts/prepare-offset-generator.py --rid linux-x64
+    cargo build --frozen --release --no-default-features --features linux-process-events
+    magick assets/branding/vosu-app-icon.png -resize 256x256 "$srcdir/vosu.png"
 }
 
 package() {
-  cd vosu
-  install -Dm755 target/release/vosu "$pkgdir/usr/bin/vosu"
-  install -Dm644 packaging/linux/vosu.desktop "$pkgdir/usr/share/applications/vosu.desktop"
-  install -Dm644 assets/branding/vosu-app-icon.svg \
-    "$pkgdir/usr/share/icons/hicolor/scalable/apps/vosu.svg"
-  install -Dm644 "$srcdir/vosu.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/vosu.png"
-  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname/" \
-    LICENSE LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md
+    cd "${_pkgbase}"
+    install -Dm755 target/release/vosu "${pkgdir}/usr/bin/vosu"
+    install -Dm644 packaging/linux/vosu.desktop \
+        "${pkgdir}/usr/share/applications/vosu.desktop"
+    install -Dm644 assets/branding/vosu-app-icon.svg \
+        "${pkgdir}/usr/share/icons/hicolor/scalable/apps/vosu.svg"
+    install -Dm644 "$srcdir/vosu.png" \
+        "${pkgdir}/usr/share/icons/hicolor/256x256/apps/vosu.png"
+    install -Dm644 -t "${pkgdir}/usr/share/licenses/${pkgname}/" \
+        LICENSE LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md
 }
