@@ -93,7 +93,7 @@ jobs:
           echo '0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783  /tmp/nfpm.tar.gz' | sha256sum --check
           mkdir -p /tmp/nfpm
           tar -xzf /tmp/nfpm.tar.gz -C /tmp/nfpm nfpm
-      - name: Build and inspect distro packages and AUR bundle
+      - name: Build and inspect distro packages
         run: python scripts/package-linux.py build --tag "$RELEASE_TAG" --binary target/x86_64-unknown-linux-gnu/release/vosu --output dist --nfpm /tmp/nfpm/nfpm
 
       - name: Upload Linux release archive
@@ -305,4 +305,3 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/*.pkg.tar.zst
-            dist/vosu-bin-aur-${{ github.ref_name }}.tar.gz

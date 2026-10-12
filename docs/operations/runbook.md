@@ -84,6 +84,8 @@ Startup updates follow stable releases, verify the selected platform archive’s
 
 Release packaging requires exact platform archives containing only the executable and `LICENSE`; release smoke tests exercise an extracted binary. Windows additionally signs and verifies the executable through the release workflow; the [code signing policy](../../CODE_SIGNING_POLICY.md) records team roles and the manual SignPath approval step, and must be updated with any change to who signs or how. The updater currently reads latest-release metadata from `shiruviaa/vosu`; confirm this source when diagnosing update failures. See `scripts/package-release.py` and `scripts/verify-windows-release.ps1` for enforcement.
 
+After the release workflow publishes, sign every release file locally with the OpenPGP release key (`6F0F 0D30 C09D 3A03 6246  A810 2CB6 524B B54B 2CDA`, public key in [`packaging/release-signing-key.asc`](../../packaging/release-signing-key.asc)): `python scripts/sign-release.py --tag v<version>`. The script checks each asset against GitHub's recorded SHA-256 digest, uploads `<asset>.sig`, and re-verifies signatures that already exist, so a rerun fails on an asset replaced after signing. The key never goes to CI; the same key signs commits and tags.
+
 ### SignPath signing setup
 
 Signing is off until the repository variable `SIGNPATH_ORGANIZATION_ID` exists. Without it, the Windows job packages the unsigned executable and `scripts/verify-windows-release.ps1` checks only its version resources; the release notes say the executable is unsigned. With it, the job submits `vosu.exe` to that SignPath organization, project `vosu`, signing policy `release-signing`, packages the signed result, and runs the verifier with `-RequireSignature`. The step passes no artifact-configuration slug, so SignPath uses the project's default artifact configuration. The previously configured organization ID is `5b025426-9c79-4f04-87e8-64cf64131d0b`. Prerequisites outside this repository:
@@ -128,15 +130,22 @@ python scripts/package-linux.py build --tag v1.0.0 \
   --binary target/x86_64-unknown-linux-gnu/release/vosu --output dist
 ```
 
-This stages the 256px PNG outside checksum-covered assets, builds and inspects
-Debian, RPM and Arch package file lists/metadata, and renders the AUR bundle
-from the Linux ZIP and tagged desktop/icon bytes. The published set is exactly
-the two ZIPs, `vosu_<version>_amd64.deb`,
-`vosu-<version>-1.x86_64.rpm`, `vosu-<version>-1-x86_64.pkg.tar.zst`,
-and `vosu-bin-aur-v<version>.tar.gz`. `package-release.py verify-set` rejects
-missing or extra assets. The AUR tarball contains `PKGBUILD`, `.SRCINFO` and
-`vosu-bin.install`; extract it, compare `makepkg --printsrcinfo` with `.SRCINFO`,
-and publish those files to the separate AUR `vosu-bin` repository.
+This stages the 256px PNG outside checksum-covered assets and builds and
+inspects Debian, RPM and Arch package file lists/metadata. The published set is
+exactly the two ZIPs, `vosu_<version>_amd64.deb`, `vosu-<version>-1.x86_64.rpm`
+and `vosu-<version>-1-x86_64.pkg.tar.zst`. `package-release.py verify-set`
+rejects missing or extra assets.
+
+The AUR package is `vosu-git`, which builds `main` from source with
+[`packaging/aur/PKGBUILD`](../../packaging/aur/PKGBUILD) and
+`vosu-git.install`. Releases do not render it, because its version comes from
+`git describe`. After changing it, build it in a clean Arch container, run
+`namcap` on the PKGBUILD and package, regenerate `.SRCINFO` with
+`makepkg --printsrcinfo`, and hand both files and the install hook to the AUR
+maintainer. Two warnings are expected: makepkg reports a `$srcdir` reference,
+which is the eBPF program's source path recorded in its embedded BTF debug
+data, and namcap calls `libcap` possibly unneeded, although the install hook
+runs its `setcap`.
 
 Before publication, clean Debian 12, Ubuntu 22.04/24.04, Fedora and Arch
 containers install the corresponding local package with dependency resolution,

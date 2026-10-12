@@ -31,6 +31,9 @@ privilege must remain separate: only capability setup runs as root.
    The template downloads the unchanged Linux ZIP plus desktop/icon resources
    from the matching source tag. A maintainer publishes these files to AUR;
    GitHub release publication does not impersonate that separate operation.
+   **Superseded 2026-10-12:** the AUR maintainer publishes only `vosu-git`,
+   built from `main` with `packaging/aur/PKGBUILD`; releases no longer carry an
+   AUR bundle.
 5. Install `/usr/bin/vosu`, a desktop launcher (`Exec=vosu`, `Icon=vosu`,
    `Terminal=false`), scalable and 256px icons, and license text in packages.
    The runtime tray is always present when a tray host exists and offers Open

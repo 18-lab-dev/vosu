@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Build and inspect distro packages and a release-specific AUR source bundle."""
+"""Build and inspect distro packages."""
 from __future__ import annotations
 
 import argparse
-import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -75,32 +74,6 @@ def verify_package(path, version):
     print(f'verified {path}: {metadata.strip()}')
 
 
-def sha256(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def render_aur(version, archive, output):
-    paths = [archive, Path('packaging/linux/vosu.desktop'), Path('assets/branding/vosu-app-icon.svg'), Path('assets/branding/vosu-app-icon.png')]
-    hashes = list(map(sha256, paths))
-    template = Path('packaging/aur/PKGBUILD.in').read_text()
-    for key, value in zip(['VERSION', 'ZIP_SHA256', 'DESKTOP_SHA256', 'SVG_SHA256', 'PNG_SHA256'], [version, *hashes]):
-        template = template.replace(f'@{key}@', value)
-    output.mkdir(parents=True, exist_ok=True)
-    (output / 'PKGBUILD').write_text(template)
-    shutil.copyfile('packaging/aur/vosu-bin.install', output / 'vosu-bin.install')
-    sources = [f'vosu-linux-v{version}.zip::https://github.com/shiruviaa/vosu/releases/download/v{version}/vosu-linux-v{version}.zip',
-               f'vosu.desktop::https://raw.githubusercontent.com/shiruviaa/vosu/v{version}/packaging/linux/vosu.desktop',
-               f'vosu.svg::https://raw.githubusercontent.com/shiruviaa/vosu/v{version}/assets/branding/vosu-app-icon.svg',
-               f'vosu-source.png::https://raw.githubusercontent.com/shiruviaa/vosu/v{version}/assets/branding/vosu-app-icon.png']
-    lines = ['pkgbase = vosu-bin', '\tpkgdesc = Native osu! telemetry daemon with a local dashboard', f'\tpkgver = {version}', '\tpkgrel = 1', '\turl = https://github.com/shiruviaa/vosu', '\tinstall = vosu-bin.install', '\tarch = x86_64', '\tlicense = MIT', '\tlicense = Apache-2.0', '\tmakedepends = imagemagick']
-    lines += [f'\tdepends = {dep}' for dep in ['glibc', 'libelf', 'zlib', 'libcap']]
-    lines += ['\tprovides = vosu', '\tconflicts = vosu', '\toptions = !strip']
-    lines += [f'\tsource = {source}' for source in sources]
-    lines += [f'\tsha256sums = {digest}' for digest in hashes]
-    lines += ['', 'pkgname = vosu-bin']
-    (output / '.SRCINFO').write_text('\n'.join(lines) + '\n')
-
-
 def build(args):
     version = release.version_from_tag(args.tag, Path('Cargo.toml'))
     check_glibc(args.binary)
@@ -116,12 +89,6 @@ def build(args):
             verify_package(args.output / name, version)
     archive = args.output / f'vosu-linux-v{version}.zip'
     release.verify_archive(archive, 'linux')
-    with tempfile.TemporaryDirectory(prefix='vosu-aur-') as temporary:
-        aur = Path(temporary)
-        render_aur(version, archive, aur)
-        with tarfile.open(args.output / f'vosu-bin-aur-v{version}.tar.gz', 'w:gz') as bundle:
-            for name in ['PKGBUILD', '.SRCINFO', 'vosu-bin.install']:
-                bundle.add(aur / name, arcname=name)
 
 
 def main():

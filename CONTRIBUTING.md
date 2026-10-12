@@ -65,7 +65,8 @@ ZIP with `scripts/package-release.py package`, then use
 `scripts/package-linux.py build` against the same binary and output directory.
 Build release binaries on Ubuntu 22.04, not the developer's newer glibc host.
 The [release runbook](docs/operations/runbook.md#linux-distribution-releases)
-describes package inspection, container smoke checks, and AUR publication.
+describes package inspection, container smoke checks, and the `vosu-git` AUR
+package.
 
 
 ## Repository map

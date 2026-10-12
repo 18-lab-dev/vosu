@@ -107,7 +107,6 @@ def verify_release_set(args: argparse.Namespace) -> None:
         f"vosu_{version}_amd64.deb",
         f"vosu-{version}-1.x86_64.rpm",
         f"vosu-{version}-1-x86_64.pkg.tar.zst",
-        f"vosu-bin-aur-v{version}.tar.gz",
     }
     actual = {path.name for path in args.directory.iterdir() if path.is_file()}
     if actual != set(expected) | packages:

@@ -58,9 +58,10 @@ sudo dnf install ./vosu-1.0.1-1.x86_64.rpm
 sudo pacman -U vosu-1.0.1-1-x86_64.pkg.tar.zst
 ```
 
-Arch users can alternatively build the `vosu-bin` package once it is published
-on the AUR. Each release includes `vosu-bin-aur-v1.0.1.tar.gz` with its
-rendered PKGBUILD, `.SRCINFO`, and install hook for the AUR maintainer.
+Arch users can alternatively build the `vosu-git` package from the AUR once it
+is published. It builds the current `main` branch from source with
+[`packaging/aur/PKGBUILD`](packaging/aur/PKGBUILD) and needs the .NET 8 SDK at
+build time for the embedded offset generator.
 
 Linux binaries require glibc **2.35 or newer** (Debian 12+, Ubuntu 22.04+,
 current Fedora and Arch). Packages install the desktop launcher and icons,
@@ -73,9 +74,24 @@ Packaged installs do not use the [self-updater](#automatic-updates), and no
 apt, dnf, or pacman repository is configured, so a system upgrade does not
 pick up new versions. To upgrade, download the newer release package and
 install it with the same command; the package manager replaces the old
-version. AUR users rebuild `vosu-bin` (manually or with an AUR helper) after
-its AUR entry is updated. Start at login remains an opt-in dashboard
+version. AUR users update `vosu-git` with an AUR helper or by rebuilding it,
+which picks up the latest `main`. Start at login remains an opt-in dashboard
 setting; packages do not ship or enable a systemd service.
+
+### Verifying downloads
+
+From v1.0.1, every release file has a detached OpenPGP signature `<file>.sig`
+made with sxlvia's release key, fingerprint
+`6F0F 0D30 C09D 3A03 6246  A810 2CB6 524B B54B 2CDA`. The public key is
+[`packaging/release-signing-key.asc`](packaging/release-signing-key.asc).
+
+```sh
+gpg --import packaging/release-signing-key.asc
+gpg --verify vosu-linux-v1.0.1.zip.sig vosu-linux-v1.0.1.zip
+```
+
+Check that gpg reports a good signature from that fingerprint. Commits made
+after v1.0.1, and later tags, are signed with the same key.
 
 ### Manual per-user installation
 
@@ -115,7 +131,7 @@ If the current user cannot write the executable's directory, vosu treats the ins
 Quit vosu from its tray icon first. On Linux, turn off **Settings → General → Start at login** if you enabled it; otherwise run `systemctl --user disable vosu.service` and delete `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/vosu.service`.
 
 - **Portable archive or manual per-user install:** delete the executable and `LICENSE`, or the whole directory you extracted. On Windows that directory also holds the configuration, overlays, settings, logs, and cache, so deleting it removes everything.
-- **Linux packages:** `sudo apt remove vosu`, `sudo dnf remove vosu`, or `sudo pacman -R vosu`. AUR installs: `sudo pacman -R vosu-bin`.
+- **Linux packages:** `sudo apt remove vosu`, `sudo dnf remove vosu`, or `sudo pacman -R vosu`. AUR installs: `sudo pacman -R vosu-git`.
 - **Linux user data:** packages and portable installs leave your data in place. Delete `${XDG_CONFIG_HOME:-$HOME/.config}/vosu`, `${XDG_DATA_HOME:-$HOME/.local/share}/vosu`, and `${XDG_CACHE_HOME:-$HOME/.cache}/vosu` to remove configuration, overlays, logs, and caches.
 
 ## Code signing policy

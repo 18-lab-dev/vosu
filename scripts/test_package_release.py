@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import warnings
 import zipfile
 
@@ -28,6 +29,9 @@ VERSION_BUILD = Path(__file__).with_name("version-build.py")
 VERSION_SPEC = importlib.util.spec_from_file_location("version_build", VERSION_BUILD)
 version_build = importlib.util.module_from_spec(VERSION_SPEC)
 VERSION_SPEC.loader.exec_module(version_build)
+SIGN_SPEC = importlib.util.spec_from_file_location("sign_release", Path(__file__).with_name("sign-release.py"))
+sign_release = importlib.util.module_from_spec(SIGN_SPEC)
+SIGN_SPEC.loader.exec_module(sign_release)
 REPOSITORY = Path(__file__).resolve().parents[1]
 
 
@@ -121,7 +125,7 @@ class DistributionReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.release_notes("v9.9.9", changelog, signed=False)
 
-    def test_release_set_requires_packages_and_aur(self):
+    def test_release_set_requires_packages(self):
         import argparse
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -137,7 +141,7 @@ class DistributionReleaseTests(unittest.TestCase):
                 with zipfile.ZipFile(dist / f"vosu-{platform}-v1.2.3.zip", "w") as archive:
                     archive.writestr(executable, b"explicit non-daemon fixture")
                     archive.writestr("LICENSE", license_path.read_bytes())
-            names = [*linux.package_names("1.2.3"), "vosu-bin-aur-v1.2.3.tar.gz"]
+            names = linux.package_names("1.2.3")
             # Only the release-set filename consumer is under test here; native
             # package contents are exercised with real binaries, not fixtures.
             for name in names:
@@ -151,20 +155,6 @@ class DistributionReleaseTests(unittest.TestCase):
             (dist / "unexpected").touch()
             with self.assertRaises(ValueError):
                 release.verify_release_set(args)
-
-    def test_aur_version_and_archive_checksum(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            archive = root / "vosu-linux-v1.2.3.zip"
-            archive.write_bytes(b"release archive")
-            linux.render_aur("1.2.3", archive, root / "aur")
-            pkgbuild = (root / "aur/PKGBUILD").read_text()
-            srcinfo = (root / "aur/.SRCINFO").read_text()
-            self.assertIn("pkgver=1.2.3\n", pkgbuild)
-            self.assertIn(linux.sha256(archive), pkgbuild)
-            self.assertIn("\tpkgver = 1.2.3\n", srcinfo)
-            self.assertIn("\tsha256sums = " + linux.sha256(archive), srcinfo)
-            self.assertNotIn("@VERSION@", pkgbuild)
 
 
 class DevelopmentArchiveTests(unittest.TestCase):
@@ -198,6 +188,47 @@ class DevelopmentArchiveTests(unittest.TestCase):
                     info = json.loads(file.read("BUILD-INFO.json"))
                 self.assertEqual((info["target"], info["features"], info["commit"]),
                                  (target, features, sha))
+
+
+@unittest.skipUnless(shutil.which("gpg"), "gpg is required")
+class ReleaseSignatureTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix="sig-")
+        self.root = Path(self.temporary.name)
+        home = self.root / "gnupg"
+        home.mkdir(mode=0o700)
+        patcher = unittest.mock.patch.dict("os.environ", {"GNUPGHOME": str(home)})
+        patcher.start()
+        self.addCleanup(self.temporary.cleanup)
+        self.addCleanup(patcher.stop)
+        self.addCleanup(subprocess.run, ["gpgconf", "--kill", "all"], check=False)
+        self.release_key = self.generate("Release <release@example.invalid>")
+        self.other_key = self.generate("Other <other@example.invalid>")
+        self.asset = self.root / "vosu-linux-v1.2.3.zip"
+        self.asset.write_bytes(b"published archive")
+
+    def generate(self, identity):
+        subprocess.run(["gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+                        "--quick-gen-key", identity, "ed25519", "sign", "never"],
+                       check=True, capture_output=True)
+        listing = subprocess.run(["gpg", "--with-colons", "--list-keys", identity],
+                                 check=True, capture_output=True, text=True).stdout
+        return next(line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:"))
+
+    def test_fresh_signature_is_attributed_to_the_release_key(self):
+        signature = sign_release.sign(self.asset, self.release_key)
+        self.assertEqual(sign_release.signer(self.asset, signature), self.release_key)
+
+    def test_replaced_asset_with_stale_signature_fails(self):
+        signature = sign_release.sign(self.asset, self.release_key)
+        self.asset.write_bytes(b"replaced archive")
+        with self.assertRaises(SystemExit):
+            sign_release.require_signed_by(self.asset, signature, self.release_key)
+
+    def test_signature_by_another_key_fails(self):
+        signature = sign_release.sign(self.asset, self.other_key)
+        with self.assertRaises(SystemExit):
+            sign_release.require_signed_by(self.asset, signature, self.release_key)
 
 
 if __name__ == "__main__":

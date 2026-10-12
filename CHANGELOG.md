@@ -2,6 +2,13 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased
+
+### Packaging
+
+- The AUR package is now `vosu-git`, built from `main` with `packaging/aur/PKGBUILD`. Releases no longer include the `vosu-bin-aur-v<version>.tar.gz` bundle.
+- Release files, commits and tags are signed with an OpenPGP release key (`6F0F 0D30 C09D 3A03 6246  A810 2CB6 524B B54B 2CDA`), starting with the published 1.0.1 files; each `<file>.sig` sits next to its file on the release page. The public key is `packaging/release-signing-key.asc`.
+
 ## 1.0.1 — 2026-10-12
 
 ### Dashboard
