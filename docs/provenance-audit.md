@@ -43,6 +43,30 @@ not a project attribution to fill in. Preserve both files and the matching
 embedded Apache sections. Preserve all actual third-party notices and license
 texts when replacing first-party notices.
 
+## Relicensing permission (2026-10-12)
+
+On 2026-10-12 the maintainer asked Mikhail Babynichev (KotRik), the copyright
+holder named in tosu's `LICENSE`, whether the tosu-derived portions of vosu, the
+Rust port of tosu code, could be distributed under MIT OR Apache-2.0 with
+attribution to tosu and its contributors kept. He replied in writing: "No
+problem, have fun! I give my permission". The maintainer retains the exchange.
+
+- **Scope:** the tosu-derived Rust in vosu, including the memory readers, API
+  projections, state, server, process, configuration, counter and updater code
+  this audit traces to the July 2026 port. Those portions are distributed under
+  the project's MIT OR Apache-2.0 terms with tosu credited in
+  [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
+- **Upstream license:** he confirmed tosu is LGPL; the `GPL-3.0` in its
+  `package.json` is an unmaintained npm field. That settles the discrepancy
+  recorded below.
+- **Other contributors:** he was asked to name any part he could not relicense
+  himself and named none.
+- **Not covered:** the former calculator wrapper and its retained reference
+  `tools/oracle/reference/lazer-calculator` are LGPL work authored by
+  storycraft. The `vosu-pp` adapter questions in the remediation review below
+  are unchanged by this permission, and the retained reference keeps its own
+  LGPL license.
+
 ## History and source boundaries
 
 | Evidence | Supported conclusion | Remaining limit |
@@ -71,6 +95,11 @@ Two separately identified upstream comparison archives were inspected:
 and the current `2359305a` pin. Neither is identical to the historical fork revision.
 
 ## Production files requiring provenance review
+
+This table is the dated 2026-10-02 comparison. The tosu-derived memory, API and
+state rows are now covered by the
+[relicensing permission](#relicensing-permission-2026-10-12); the dashboard row
+is too, since that material came from tosu.
 
 | Local files | Comparison and finding | Required follow-up |
 | --- | --- | --- |
@@ -125,6 +154,9 @@ SHA-256 `cc1ea9718b312d17c286c953768912c0136299f5328b87c2d4be1fac6cc7c4b4`.
 This is conflicting upstream evidence, not an unambiguous grant to choose or
 broaden. Preserve the upstream attribution and evidence; seek clarification
 before assigning terms to any confirmed tosu-derived production fragment.
+**Resolved 2026-10-12:** tosu's copyright holder confirmed tosu is LGPL and
+permitted MIT OR Apache-2.0 for the tosu-derived Rust; see
+[Relicensing permission](#relicensing-permission-2026-10-12).
 
 The listed memory/API/state/facade origins cannot be established confidently
 from the available history. They remain explicitly flagged in this audit and
@@ -134,6 +166,10 @@ the applicable upstream notice and license, identify the exact affected paths
 and source revision, and resolve the combined-work distribution terms before
 release. The existing historical LGPL reference and MIT forks retain their
 own exact license files and licensing boundaries.
+
+For the tosu-derived memory/API/state code, the
+[2026-10-12 relicensing permission](#relicensing-permission-2026-10-12) settles
+the distribution terms; the `vosu-pp` facade questions remain as recorded below.
 
 ## Remediation review (2026-10-09)
 
@@ -289,8 +325,8 @@ be generalized into clearance of all surrounding wrapper code.
 
 | Flag | Disposition | Remaining question |
 | --- | --- | --- |
-| Stable `signatures.rs`, `settings.rs`, `readers.rs` | **Historical tosu port documented; current rights unresolved.** Recovered `StableReader.jsonl` records a source-equivalent assignment and reads of `packages/tosu/src/memory/stable.ts` at 2026-07-14 04:02–04:03. Current correspondences were reproduced; no permissively licensed authority for this implementation was established | A permissive-source reconstruction or permission. Relicensing is not the chosen remedy; code-origin evidence and the legal significance of reuse are separate questions |
-| `src/memory/lazer/*`, `src/api/*`, `src/state/*` | **Historical translations reported by the authoring-session investigation; current rights unresolved.** The investigation records tosu traversal and builder source use. First-party generated offsets against MIT osu! assemblies do not establish independence of surrounding readers and projections | A permissive-source reconstruction or permission for protectable reused implementation. API-required names, field shapes and offsets do not alone establish protected derivation |
+| Stable `signatures.rs`, `settings.rs`, `readers.rs` | **Historical tosu port documented; relicensing permitted 2026-10-12.** Recovered `StableReader.jsonl` records a source-equivalent assignment and reads of `packages/tosu/src/memory/stable.ts` at 2026-07-14 04:02–04:03. Current correspondences were reproduced. tosu's copyright holder permitted MIT OR Apache-2.0 for this tosu-derived code | None for licensing; tosu attribution is retained |
+| `src/memory/lazer/*`, `src/api/*`, `src/state/*` | **Historical translations reported by the authoring-session investigation; relicensing permitted 2026-10-12.** The investigation records tosu traversal and builder source use. tosu's copyright holder permitted MIT OR Apache-2.0 for this tosu-derived code | None for licensing; tosu attribution is retained |
 | `vosu-pp` `model.rs`, `data.rs` | Permissive types support the field meanings and numerical attributes. The original struct followed a read of the LGPL `Data/ScoreInfoData.cs`; the rewrite consulted old projection code and wrapper-derived details | Data/strain projection origins and the compatibility-shape arrangement remain under review. Matching public fields do not alone establish protected derivation; cosmetic reordering is not a remedy |
 | `vosu-pp` `performance.rs` | **Catch equation supported by MIT sources and original authoring records.** The current signed block was also written after reads of former Rust | Signed-score adaptation and surrounding implementation origins remain under review; the equation alone is not an external LGPL finding |
 | `vosu-pp` `scoring.rs` | MIT osu-tools, rosu-pp and osu! support calculation behavior; rewrite records also show LGPL simulator/accuracy reads | Classic gating, signed-result adapters and implementation independence are not cleared by corresponding formulas |
@@ -316,7 +352,7 @@ expression. The memory/API correspondences were outside this assignment.
   interface arrangement taken from the wrapper need permission.
 - The historical pin is now identified as a local tosu fork revision; its
   upstream license discrepancy remains separate.
-- The upstream tosu license conflict.
+- The upstream tosu license conflict, resolved on 2026-10-12: tosu is LGPL.
 
 No legal clearance is claimed.
 

@@ -1,6 +1,9 @@
 Copyright (c) 2026 sxlvia
+Copyright (c) 2023-2026 Mikhail Babynichev and tosu contributors
 
 Project-authored repository code and documentation are dual-licensed under either the MIT License or Apache License, Version 2.0, at your option, where the respective contributors have licensing authority.
+
+vosu began as a Rust port of tosu (https://github.com/tosuapp/tosu). Its tosu-derived portions are distributed under the same MIT OR Apache-2.0 terms with the permission of tosu's copyright holder, Mikhail Babynichev, given on 2026-10-12.
 
 The vosu logo, wordmark and icons are not covered by those licenses; they are licensed under CC BY 4.0 as described in "Branding assets" below.
 
@@ -11,6 +14,7 @@ The complete canonical terms are reproduced below. Separately licensed third-par
 MIT License
 
 Copyright (c) 2026 sxlvia
+Copyright (c) 2023-2026 Mikhail Babynichev and tosu contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
