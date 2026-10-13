@@ -367,24 +367,28 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             .await
             .unwrap();
 
-        let (mut second_text, mut buffered) = subscription_client(listener.address()).await;
-        second_text
-            .write_all(&masked_client_frame(0x1, br#"["/play/score"]"#))
-            .await
-            .unwrap();
-        assert_eq!(server_frame(&mut second_text, &mut buffered).await.0, 0x1);
-        second_text
-            .write_all(&masked_client_frame(0x1, br#"["/play/name"]"#))
-            .await
-            .unwrap();
-        let (opcode, payload) = server_frame(&mut second_text, &mut buffered).await;
-        assert_eq!(opcode, 0x1);
-        assert_eq!(
-            payload,
-            br#"[2,5,"subscription already established"]"#.as_slice()
-        );
-        let (opcode, payload) = server_frame(&mut second_text, &mut buffered).await;
-        assert_eq!((opcode, close_code(&payload)), (0x8, 1008));
+        // An application-level ping is not a protocol message: like a second selection, it
+        // must end the immutable subscription rather than receive a pong.
+        for second_message in [br#"["/play/name"]"#.as_slice(), br#"["ping",7]"#.as_slice()] {
+            let (mut second_text, mut buffered) = subscription_client(listener.address()).await;
+            second_text
+                .write_all(&masked_client_frame(0x1, br#"["/play/score"]"#))
+                .await
+                .unwrap();
+            assert_eq!(server_frame(&mut second_text, &mut buffered).await.0, 0x1);
+            second_text
+                .write_all(&masked_client_frame(0x1, second_message))
+                .await
+                .unwrap();
+            let (opcode, payload) = server_frame(&mut second_text, &mut buffered).await;
+            assert_eq!(opcode, 0x1);
+            assert_eq!(
+                payload,
+                br#"[2,5,"subscription already established"]"#.as_slice()
+            );
+            let (opcode, payload) = server_frame(&mut second_text, &mut buffered).await;
+            assert_eq!((opcode, close_code(&payload)), (0x8, 1008));
+        }
 
         let (mut binary, mut buffered) = subscription_client(listener.address()).await;
         binary
