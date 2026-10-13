@@ -1,15 +1,18 @@
 //! Source-compatible `/json/v2/precise` wire builder.
 
 use bytes::Bytes;
-use serde::Serialize;
+use serde_json::ser::Formatter;
 use std::cmp::Ordering;
+use std::io;
 use std::sync::Arc;
 
+use crate::api::json::{JsFormatter, write_js_number};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerSnapshot};
 use crate::model::api::v2::{KeyOverlayButton, Keypress, Keys, PreciseResponse, PreciseTourney};
 use crate::model::states::{
     KeyOverlayButton as StateKeyOverlayButton, KeypressButton as StateKeypressButton,
 };
+use crate::state::PreciseState;
 
 /// Builds the exact V2 precise document from one immutable publication point.
 pub fn build(snapshot: &CombinedSnapshot) -> Result<PreciseResponse, ApiError> {
@@ -20,86 +23,161 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<PreciseResponse, ApiError> {
         hit_errors: precise.hit_errors.all.clone(),
         press_hit_errors: precise.hit_errors.press.clone(),
         release_hit_errors: precise.hit_errors.release.clone(),
-        tourney: build_tourney(snapshot.manager()),
+        tourney: tourney_spectators(snapshot.manager())
+            .into_iter()
+            .map(|(ipc_id, precise)| PreciseTourney {
+                ipc_id,
+                keys: build_keys(&precise.key_overlay, &precise.keypresses),
+                hit_errors: precise.hit_errors.all.clone(),
+                press_hit_errors: precise.hit_errors.press.clone(),
+                release_hit_errors: precise.hit_errors.release.clone(),
+            })
+            .collect(),
     })
 }
 
 /// Encodes the unfiltered V2 precise document once for this combined generation.
+///
+/// The bytes are written directly rather than through a serde DTO because this
+/// is the highest-rate cold document; `build` stays the owned contract, and
+/// tests require both to serialize identically.
 pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
     snapshot.encode_unfiltered(ApiSchema::V2Precise, |snapshot| {
         let precise = snapshot.precise().ok_or(ApiError::NotReady)?;
-        let value = PreciseEncode {
-            keys: build_keys(&precise.key_overlay, &precise.keypresses),
-            hit_errors: &precise.hit_errors.all,
-            press_hit_errors: &precise.hit_errors.press,
-            release_hit_errors: &precise.hit_errors.release,
-            tourney: build_tourney_encode(snapshot.manager()),
-        };
-        super::v2::encode_dto(&value)
+        let tourney = tourney_spectators(snapshot.manager());
+        let capacity = tourney
+            .iter()
+            .fold(encoded_capacity(precise), |total, (_, spectator)| {
+                total + 32 + encoded_capacity(spectator)
+            });
+        let mut output = Vec::with_capacity(capacity);
+        write_document(&mut output, precise, &tourney)
+            .map_err(|error| ApiError::serialization(error.to_string()))?;
+        Ok(Bytes::from(output))
     })
 }
 
-#[derive(Serialize)]
-struct PreciseEncode<'a> {
-    keys: Keys,
-    #[serde(rename = "hitErrors")]
-    hit_errors: &'a [f64],
-    #[serde(rename = "pressHitErrors")]
-    press_hit_errors: &'a [f64],
-    #[serde(rename = "releaseHitErrors")]
-    release_hit_errors: &'a [f64],
-    tourney: Vec<PreciseTourneyEncode<'a>>,
+/// Approximate output size so the cold encode does not repeatedly regrow its
+/// buffer; an underestimate only costs ordinary `Vec` growth.
+fn encoded_capacity(precise: &PreciseState) -> usize {
+    let hit_errors = &precise.hit_errors;
+    256 + 96 * precise.keypresses.len()
+        + 24 * (hit_errors.all.len() + hit_errors.press.len() + hit_errors.release.len())
 }
 
-#[derive(Serialize)]
-struct PreciseTourneyEncode<'a> {
-    #[serde(rename = "ipcId")]
-    ipc_id: f64,
-    keys: Keys,
-    #[serde(rename = "hitErrors")]
-    hit_errors: &'a [f64],
-    #[serde(rename = "pressHitErrors")]
-    press_hit_errors: &'a [f64],
-    #[serde(rename = "releaseHitErrors")]
-    release_hit_errors: &'a [f64],
-}
-
-fn build_tourney_encode(manager: &ManagerSnapshot) -> Vec<PreciseTourneyEncode<'_>> {
-    if !manager
-        .instances()
-        .values()
-        .any(|instance| instance.is_tournament_manager())
-    {
-        return Vec::new();
+fn write_document(
+    output: &mut Vec<u8>,
+    precise: &PreciseState,
+    tourney: &[(f64, &PreciseState)],
+) -> io::Result<()> {
+    output.extend_from_slice(b"{");
+    write_fields(output, precise)?;
+    output.extend_from_slice(b",\"tourney\":[");
+    for (index, (ipc_id, spectator)) in tourney.iter().enumerate() {
+        if index > 0 {
+            output.push(b',');
+        }
+        output.extend_from_slice(b"{\"ipcId\":");
+        write_js_number(output, *ipc_id)?;
+        output.push(b',');
+        write_fields(output, spectator)?;
+        output.push(b'}');
     }
-
-    let mut spectators: Vec<_> = manager
-        .instances()
-        .values()
-        .filter_map(|instance| {
-            let settings = instance.settings();
-            if !settings.tournament_spectator {
-                return None;
-            }
-            settings
-                .tournament_ipc_id
-                .map(|ipc_id| (ipc_id, instance.state().precise.as_ref()))
-        })
-        .collect();
-    spectators.sort_by(|(left, _), (right, _)| left.partial_cmp(right).unwrap_or(Ordering::Equal));
-    spectators
-        .into_iter()
-        .map(|(ipc_id, precise)| PreciseTourneyEncode {
-            ipc_id,
-            keys: build_keys(&precise.key_overlay, &precise.keypresses),
-            hit_errors: &precise.hit_errors.all,
-            press_hit_errors: &precise.hit_errors.press,
-            release_hit_errors: &precise.hit_errors.release,
-        })
-        .collect()
+    output.extend_from_slice(b"]}");
+    Ok(())
 }
 
-fn build_tourney(manager: &ManagerSnapshot) -> Vec<PreciseTourney> {
+/// Writes the `keys` through `releaseHitErrors` members shared by the focused
+/// document and each tourney entry, in [`PreciseResponse`] field order.
+fn write_fields(output: &mut Vec<u8>, precise: &PreciseState) -> io::Result<()> {
+    let legacy = &precise.key_overlay;
+    output.extend_from_slice(b"\"keys\":{\"k1\":");
+    write_key(output, legacy.first())?;
+    output.extend_from_slice(b",\"k2\":");
+    write_key(output, legacy.get(1))?;
+    output.extend_from_slice(b",\"m1\":");
+    write_key(output, legacy.get(2))?;
+    output.extend_from_slice(b",\"m2\":");
+    write_key(output, legacy.get(3))?;
+    output.extend_from_slice(b",\"all\":[");
+    for (index, button) in precise.keypresses.iter().enumerate() {
+        if index > 0 {
+            output.push(b',');
+        }
+        output.extend_from_slice(b"{\"name\":");
+        write_str(output, &button.name)?;
+        output.extend_from_slice(if button.is_pressed {
+            &b",\"isPressed\":true,\"count\":"[..]
+        } else {
+            &b",\"isPressed\":false,\"count\":"[..]
+        });
+        JsFormatter.write_i64(output, button.count)?;
+        match button.pressed_at {
+            Some(value) => {
+                output.extend_from_slice(b",\"pressedAt\":");
+                write_js_number(output, value)?;
+            }
+            None => output.extend_from_slice(b",\"pressedAt\":null"),
+        }
+        match button.released_at {
+            Some(value) => {
+                output.extend_from_slice(b",\"releasedAt\":");
+                write_js_number(output, value)?;
+                output.push(b'}');
+            }
+            None => output.extend_from_slice(b",\"releasedAt\":null}"),
+        }
+    }
+    let hit_errors = &precise.hit_errors;
+    output.extend_from_slice(b"]},\"hitErrors\":");
+    write_numbers(output, &hit_errors.all)?;
+    output.extend_from_slice(b",\"pressHitErrors\":");
+    write_numbers(output, &hit_errors.press)?;
+    output.extend_from_slice(b",\"releaseHitErrors\":");
+    write_numbers(output, &hit_errors.release)
+}
+
+fn write_key(output: &mut Vec<u8>, button: Option<&StateKeyOverlayButton>) -> io::Result<()> {
+    let key = build_key(button);
+    output.extend_from_slice(if key.is_pressed {
+        &b"{\"isPressed\":true,\"count\":"[..]
+    } else {
+        &b"{\"isPressed\":false,\"count\":"[..]
+    });
+    JsFormatter.write_i64(output, key.count)?;
+    output.push(b'}');
+    Ok(())
+}
+
+/// Writes a JSON string; names normally need no escaping, and the general
+/// serde_json escaper (which defines the exact escape spelling) handles the rest.
+fn write_str(output: &mut Vec<u8>, value: &str) -> io::Result<()> {
+    if value
+        .bytes()
+        .all(|byte| byte >= 0x20 && byte != b'"' && byte != b'\\')
+    {
+        output.push(b'"');
+        output.extend_from_slice(value.as_bytes());
+        output.push(b'"');
+        Ok(())
+    } else {
+        serde_json::to_writer(output, value).map_err(io::Error::other)
+    }
+}
+
+fn write_numbers(output: &mut Vec<u8>, values: &[f64]) -> io::Result<()> {
+    output.push(b'[');
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            output.push(b',');
+        }
+        write_js_number(output, *value)?;
+    }
+    output.push(b']');
+    Ok(())
+}
+
+fn tourney_spectators(manager: &ManagerSnapshot) -> Vec<(f64, &PreciseState)> {
     if !manager
         .instances()
         .values()
@@ -126,17 +204,7 @@ fn build_tourney(manager: &ManagerSnapshot) -> Vec<PreciseTourney> {
     // `Array.prototype.sort` is stable and a NaN comparator result behaves as
     // equality. `partial_cmp(None) => Equal` preserves that source behavior.
     spectators.sort_by(|(left, _), (right, _)| left.partial_cmp(right).unwrap_or(Ordering::Equal));
-
     spectators
-        .into_iter()
-        .map(|(ipc_id, precise)| PreciseTourney {
-            ipc_id,
-            keys: build_keys(&precise.key_overlay, &precise.keypresses),
-            hit_errors: precise.hit_errors.all.clone(),
-            press_hit_errors: precise.hit_errors.press.clone(),
-            release_hit_errors: precise.hit_errors.release.clone(),
-        })
-        .collect()
 }
 
 pub(crate) fn build_keys(
@@ -441,6 +509,72 @@ mod tests {
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
             r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[]},"hitErrors":[],"pressHitErrors":[],"releaseHitErrors":[],"tourney":[{"ipcId":2.5,"keys":{"k1":{"isPressed":false,"count":2},"k2":{"isPressed":true,"count":22},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":false,"count":2,"pressedAt":null,"releasedAt":null},{"name":"K2","isPressed":true,"count":22,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[-2.5],"pressHitErrors":[-2.5],"releaseHitErrors":[]},{"ipcId":30.25,"keys":{"k1":{"isPressed":true,"count":30},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":true,"count":30,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[30.5],"pressHitErrors":[30.5],"releaseHitErrors":[]},{"ipcId":null,"keys":{"k1":{"isPressed":true,"count":99},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":true,"count":99,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[99],"pressHitErrors":[99],"releaseHitErrors":[]}]}"#
         );
+    }
+
+    #[test]
+    fn encode_matches_owned_response_bytes() {
+        let numbers = [
+            -0.0,
+            0.1,
+            -7.5,
+            1e21,
+            9_007_199_254_740_993.0,
+            f64::NAN,
+            f64::NEG_INFINITY,
+            123_456_789.0,
+            5e-7,
+        ];
+        let names = [
+            "K1",
+            "q\"\\\u{1}\u{7f}é\u{2028}😀",
+            "",
+            "\u{7f}é\u{2028}😀 /",
+            "\u{1f}",
+        ];
+        let spectator = |count: i64| {
+            let mut precise = precise_for_mode(
+                1,
+                names
+                    .iter()
+                    .enumerate()
+                    .map(|(index, name)| button(name, index % 2 == 0, count + index as i64))
+                    .collect(),
+                numbers.to_vec(),
+            );
+            let state = Arc::make_mut(&mut precise);
+            state.keypresses = Arc::new(
+                state
+                    .keypresses
+                    .iter()
+                    .zip(numbers.iter().cycle())
+                    .map(|(key, &time)| StateKeypressButton {
+                        pressed_at: Some(time),
+                        released_at: (key.count % 2 == 0).then_some(-time),
+                        ..key.clone()
+                    })
+                    .collect(),
+            );
+            state.hit_errors = Arc::new(HitErrorArray {
+                all: numbers.to_vec(),
+                press: numbers[..4].to_vec(),
+                release: numbers[4..].to_vec(),
+            });
+            precise
+        };
+        let snapshot = snapshot(
+            Some(50),
+            vec![
+                entry(50, bundle(1, spectator(i64::MIN)), false, None),
+                entry(30, bundle(2, spectator(0)), true, None),
+                entry(40, bundle(3, spectator(i64::MAX - 8)), false, Some(-0.0)),
+                entry(60, bundle(4, spectator(-3)), false, Some(f64::NAN)),
+                entry(70, bundle(5, spectator(7)), false, Some(1e300)),
+            ],
+        );
+
+        let owned = crate::api::v2::encode_dto(&build(&snapshot).expect("precise response"))
+            .expect("owned encoding");
+        assert_eq!(encode(&snapshot).expect("precise encoding"), owned);
     }
 
     #[test]
