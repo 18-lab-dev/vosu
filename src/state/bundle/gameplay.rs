@@ -13,6 +13,18 @@ type StableJudgementMatch = (usize, usize, ManiaJudgementKind, StableJudgementOr
 
 const STABLE_MANIA_METADATA_MAX_FAILURES: u64 = 10;
 const STABLE_MANIA_METADATA_MAX_WAIT: Duration = Duration::from_secs(2);
+/// Replay frames are read after the hit-error list in the same capture, so a judgement's key
+/// transition is normally present when its error arrives. These bounds only stop an error the
+/// map metadata cannot explain from withholding every later error from both arrays.
+const STABLE_MANIA_MATCH_GRACE_MS: i64 = 250;
+const STABLE_MANIA_MATCH_MAX_WAIT: Duration = Duration::from_secs(1);
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PendingStableError {
+    value: f64,
+    replay_time: Option<i64>,
+    enqueued_at: Instant,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum StableManiaMetadata {
@@ -58,10 +70,11 @@ pub(super) struct StableManiaHitErrorState {
     used_events: Vec<bool>,
     transition_indexes: HashMap<StableReplayTransition, usize>,
     used_transitions: Vec<bool>,
-    pending: VecDeque<f64>,
+    pending: VecDeque<PendingStableError>,
     replay_frame_index: i64,
+    latest_replay_time: Option<i64>,
     last_keys: u32,
-    last_order: Option<StableJudgementOrder>,
+    last_time: Option<i64>,
 }
 
 impl StableManiaHitErrorState {
@@ -107,6 +120,10 @@ impl StableManiaHitErrorState {
             if frame.y == -500.0 {
                 continue;
             }
+            self.latest_replay_time = Some(
+                self.latest_replay_time
+                    .map_or(frame.time, |latest| latest.max(frame.time)),
+            );
             let keys = frame.keys & ((1 << 18) - 1);
             let changed = self.last_keys ^ keys;
             for lane in 0..18 {
@@ -148,11 +165,11 @@ impl StableManiaHitErrorState {
             &self.metadata,
             StableManiaMetadataState::Uninitialized | StableManiaMetadataState::Pending { .. }
         ) || matches!(&self.metadata, StableManiaMetadataState::Ready { .. })
-            && self.last_order.is_none();
+            && self.last_time.is_none();
         if can_rebind {
             self.events.clear();
             self.used_events.clear();
-            self.last_order = None;
+            self.last_time = None;
             self.metadata = StableManiaMetadataState::Pending {
                 target_checksum,
                 started_at: now,
@@ -236,15 +253,20 @@ impl StableManiaHitErrorState {
             if self.used_transitions[transition_index] {
                 continue;
             }
+            // Stable appends every judgement of one input frame at that frame's time, but not
+            // necessarily in object order (two holds released in one frame arrive tail-last
+            // first), so only the judgement time is monotonic.
+            if self.last_time.is_some_and(|last| time < last) {
+                continue;
+            }
             let order = (
                 time,
                 event.object_index,
                 u8::from(event.kind == ManiaJudgementKind::Release),
             );
-            if self.last_order.is_some_and(|last| order < last)
-                || best
-                    .as_ref()
-                    .is_some_and(|(_, _, _, best_order)| order >= *best_order)
+            if best
+                .as_ref()
+                .is_some_and(|(_, _, _, best_order)| order >= *best_order)
             {
                 continue;
             }
@@ -266,7 +288,13 @@ impl StableManiaHitErrorState {
         if !self.apply_frames(batch) {
             self.disable();
         }
-        self.pending.extend(values.iter().copied());
+        let replay_time = self.latest_replay_time;
+        self.pending
+            .extend(values.iter().map(|&value| PendingStableError {
+                value,
+                replay_time,
+                enqueued_at: now,
+            }));
         if let Some(metadata) = metadata {
             self.observe_metadata(metadata, calculation_failures, now);
         }
@@ -274,33 +302,52 @@ impl StableManiaHitErrorState {
         let mut press = Vec::new();
         let mut release = Vec::new();
         if matches!(&self.metadata, StableManiaMetadataState::Unavailable { .. }) {
-            press.extend(self.pending.drain(..));
+            press.extend(self.pending.drain(..).map(|pending| pending.value));
             return (press, release);
         }
         if !matches!(&self.metadata, StableManiaMetadataState::Ready { .. }) {
             return (press, release);
         }
-        while let Some(&value) = self.pending.front() {
-            let judgement = match self.next_judgement(value) {
+        while let Some(&pending) = self.pending.front() {
+            let judgement = match self.next_judgement(pending.value) {
                 Ok(Some(judgement)) => judgement,
-                Ok(None) => break,
+                Ok(None) => {
+                    if !self.evidence_expired(&pending, now) {
+                        break;
+                    }
+                    // The original array already holds this error; publishing it as a press
+                    // keeps every later error flowing instead of withholding the rest of the play.
+                    self.pending.pop_front();
+                    press.push(pending.value);
+                    continue;
+                }
                 Err(()) => {
                     self.disable();
-                    press.extend(self.pending.drain(..));
+                    press.extend(self.pending.drain(..).map(|pending| pending.value));
                     break;
                 }
             };
-            let (event_index, transition_index, kind, order) = judgement;
+            let (event_index, transition_index, kind, (time, ..)) = judgement;
             self.used_events[event_index] = true;
             self.used_transitions[transition_index] = true;
-            self.last_order = Some(order);
+            self.last_time = Some(time);
             self.pending.pop_front();
             match kind {
-                ManiaJudgementKind::Press => press.push(value),
-                ManiaJudgementKind::Release => release.push(value),
+                ManiaJudgementKind::Press => press.push(pending.value),
+                ManiaJudgementKind::Release => release.push(pending.value),
             }
         }
         (press, release)
+    }
+
+    fn evidence_expired(&self, pending: &PendingStableError, now: Instant) -> bool {
+        now.saturating_duration_since(pending.enqueued_at) >= STABLE_MANIA_MATCH_MAX_WAIT
+            || pending
+                .replay_time
+                .zip(self.latest_replay_time)
+                .is_some_and(|(enqueued, latest)| {
+                    latest >= enqueued.saturating_add(STABLE_MANIA_MATCH_GRACE_MS)
+                })
     }
 }
 
@@ -956,5 +1003,142 @@ mod tests {
                 (Vec::new(), vec![-10.0])
             );
         }
+    }
+
+    fn hold(lane: u8, object_index: usize, start: i64, end: i64) -> [ManiaJudgementEvent; 2] {
+        [
+            ManiaJudgementEvent {
+                target: start,
+                lane,
+                object_index,
+                kind: ManiaJudgementKind::Press,
+            },
+            ManiaJudgementEvent {
+                target: end,
+                lane,
+                object_index,
+                kind: ManiaJudgementKind::Release,
+            },
+        ]
+    }
+
+    fn frames(keys: &[(i64, u32)]) -> StableReplayFrameBatch {
+        StableReplayFrameBatch {
+            start_index: 0,
+            index: keys.len() as i64,
+            frames: std::sync::Arc::new(
+                keys.iter()
+                    .map(|&(time, keys)| StableReplayFrame { time, keys, y: 0.0 })
+                    .collect(),
+            ),
+        }
+    }
+
+    /// Recorded from a live osu!stable chord of four holds released early: lanes 2 and 0
+    /// release in separate frames at the same millisecond, and stable appends the lane-2
+    /// tail (a later object) first. The previous object-order check withheld every error
+    /// after it for the rest of the play.
+    #[test]
+    fn stable_same_millisecond_releases_classify_in_input_order() {
+        let events = [
+            hold(0, 0, 22_560, 22_960),
+            hold(1, 1, 22_560, 23_060),
+            hold(2, 2, 22_560, 23_260),
+            hold(3, 3, 22_560, 22_860),
+        ]
+        .concat();
+        let batch = frames(&[
+            (22_505, 2),
+            (22_506, 3),
+            (22_515, 7),
+            (22_516, 15),
+            (22_528, 13),
+            (22_536, 9),
+            (22_536, 8),
+            (22_539, 0),
+        ]);
+        let mut state = StableManiaHitErrorState::default();
+        assert_eq!(
+            state.partition(
+                &[-55.0, -54.0, -45.0, -44.0, -532.0, -724.0, -424.0, -321.0],
+                &batch,
+                Some("map"),
+                0,
+                Some(StableManiaMetadata::Ready(events)),
+                Instant::now(),
+            ),
+            (
+                vec![-55.0, -54.0, -45.0, -44.0],
+                vec![-532.0, -724.0, -424.0, -321.0]
+            )
+        );
+    }
+
+    #[test]
+    fn unexplained_stable_error_is_published_as_press_without_withholding_later_errors() {
+        let events = hold(0, 0, 1_000, 1_400).to_vec();
+        let now = Instant::now();
+        let mut state = StableManiaHitErrorState::default();
+        // 77 matches no transition; -5 is the hold's press at 995.
+        assert_eq!(
+            state.partition(
+                &[77.0, -5.0],
+                &frames(&[(995, 1)]),
+                Some("map"),
+                0,
+                Some(StableManiaMetadata::Ready(events.clone())),
+                now,
+            ),
+            (Vec::new(), Vec::new())
+        );
+        // The replay stream passing the grace window settles the unexplained error.
+        let mut advanced = frames(&[(995, 1), (1_244, 1), (1_245, 1)]);
+        advanced.start_index = 0;
+        assert_eq!(
+            state.partition(&[], &advanced, Some("map"), 0, None, now),
+            (vec![77.0, -5.0], Vec::new())
+        );
+
+        // Without replay progress (for example while paused), wall time settles it instead.
+        let mut paused = StableManiaHitErrorState::default();
+        let batch = frames(&[(995, 1)]);
+        assert_eq!(
+            paused.partition(
+                &[77.0, -5.0],
+                &batch,
+                Some("map"),
+                0,
+                Some(StableManiaMetadata::Ready(events)),
+                now,
+            ),
+            (Vec::new(), Vec::new())
+        );
+        let unchanged = StableReplayFrameBatch {
+            start_index: 1,
+            index: 1,
+            frames: std::sync::Arc::new(Vec::new()),
+        };
+        assert_eq!(
+            paused.partition(
+                &[],
+                &unchanged,
+                Some("map"),
+                0,
+                None,
+                now + STABLE_MANIA_MATCH_MAX_WAIT - Duration::from_millis(1),
+            ),
+            (Vec::new(), Vec::new())
+        );
+        assert_eq!(
+            paused.partition(
+                &[],
+                &unchanged,
+                Some("map"),
+                0,
+                None,
+                now + STABLE_MANIA_MATCH_MAX_WAIT,
+            ),
+            (vec![77.0, -5.0], Vec::new())
+        );
     }
 }

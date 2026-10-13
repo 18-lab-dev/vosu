@@ -452,8 +452,9 @@ CircleSize:4
 511,192,300,1,0,0:0:0:0:
 "#;
 
+        let events = source_mania_judgement_events(source, false).unwrap();
         assert_eq!(
-            source_mania_judgement_events(source).unwrap(),
+            events,
             [
                 ManiaJudgementEvent {
                     target: 100,
@@ -481,4 +482,10 @@ CircleSize:4
                 },
             ]
         );
+        let mirrored: Vec<_> = source_mania_judgement_events(source, true)
+            .unwrap()
+            .into_iter()
+            .map(|event| event.lane)
+            .collect();
+        assert_eq!(mirrored, [3, 2, 2, 0]);
     }

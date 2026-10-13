@@ -231,7 +231,12 @@ pub(super) fn parse_raw_hit_object(line: &str) -> Option<(RawLastObject, i64)> {
     };
     Some((object, kind))
 }
-pub(super) fn source_mania_judgement_events(source: &str) -> Option<Vec<ManiaJudgementEvent>> {
+/// `mirror` applies osu!stable's Mirror mod, which reverses columns; its replay
+/// frames record the reversed columns that the player actually pressed.
+pub(super) fn source_mania_judgement_events(
+    source: &str,
+    mirror: bool,
+) -> Option<Vec<ManiaJudgementEvent>> {
     let keys = section_integer_value(source, "Difficulty", "CircleSize")?;
     if !(1..=18).contains(&keys) {
         return None;
@@ -248,7 +253,8 @@ pub(super) fn source_mania_judgement_events(source: &str) -> Option<Vec<ManiaJud
             .next()
             .and_then(|value| parse_integer_prefix(js_trim(value), MAX_COORDINATE_VALUE))?;
         let (object, _) = parse_raw_hit_object(line)?;
-        let lane = ((x.clamp(0, 511) as usize * keys) / 512).min(keys - 1) as u8;
+        let lane = ((x.clamp(0, 511) as usize * keys) / 512).min(keys - 1);
+        let lane = if mirror { keys - 1 - lane } else { lane } as u8;
         let current_object_index = object_index;
         object_index += 1;
         match object {

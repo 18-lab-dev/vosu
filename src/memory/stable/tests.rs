@@ -261,6 +261,99 @@ fn stable_hit_errors_are_appended_to_all_and_press() {
     assert!(suffix.release_corrections.is_empty());
 }
 
+type ListGrowth = Box<dyn FnOnce(&mut Vec<u8>) + Send>;
+
+/// The game grows its hit-error list (moving it to a larger array) right after the
+/// reader's first read of the list header, as happened live at the ninth error.
+struct GrowingListMemory {
+    bytes: parking_lot::Mutex<Vec<u8>>,
+    header: [usize; 2],
+    grow: parking_lot::Mutex<Option<ListGrowth>>,
+}
+impl ProcessMemory for GrowingListMemory {
+    fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+        let mut bytes = self.bytes.lock();
+        let source = bytes
+            .get(address..address + dst.len())
+            .ok_or_else(|| MemoryError::Read {
+                address,
+                len: dst.len(),
+                message: "outside fixture".into(),
+            })?;
+        dst.copy_from_slice(source);
+        if self.header.contains(&address)
+            && let Some(grow) = self.grow.lock().take()
+        {
+            grow(&mut bytes);
+        }
+        Ok(())
+    }
+    fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        for read in reads {
+            self.read_exact(read.address, read.dst)?;
+        }
+        Ok(())
+    }
+    fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
+        Ok(vec![MemoryRegion {
+            address: 0,
+            size: self.bytes.lock().len(),
+        }])
+    }
+}
+
+#[test]
+fn stable_hit_errors_never_pair_a_grown_size_with_the_abandoned_array() {
+    let mut bytes = vec![0; 0x3000];
+    let (ruleset_anchor, ruleset, gameplay, score, list) = (
+        0x1200usize,
+        0x1300usize,
+        0x1400usize,
+        0x1500usize,
+        0x1600usize,
+    );
+    let (old_items, new_items) = (0x1700usize, 0x1800usize);
+    put_u32(&mut bytes, 0x900 - 0xb, ruleset_anchor as u32);
+    put_u32(&mut bytes, ruleset_anchor + 4, ruleset as u32);
+    put_u32(&mut bytes, ruleset + 0x64, gameplay as u32);
+    put_u32(&mut bytes, gameplay + 0x38, score as u32);
+    put_u32(&mut bytes, score + 0x38, list as u32);
+    put_u32(&mut bytes, list + 4, old_items as u32);
+    put_i32(&mut bytes, list + 0xc, 8);
+    let values = [-8, 5, -3, 12, 0, -1, 9, -14, -79];
+    for (index, value) in values[..8].iter().enumerate() {
+        put_i32(&mut bytes, old_items + LEADER_START + 4 * index, *value);
+    }
+    // .NET List growth: copy into the larger array, publish it, then the new size.
+    let grow = Box::new(move |bytes: &mut Vec<u8>| {
+        for (index, value) in values.iter().enumerate() {
+            put_i32(bytes, new_items + LEADER_START + 4 * index, *value);
+        }
+        put_u32(bytes, list + 4, new_items as u32);
+        put_i32(bytes, list + 0xc, 9);
+    });
+    let memory = GrowingListMemory {
+        bytes: parking_lot::Mutex::new(bytes),
+        header: [list + 4, list + 0xc],
+        grow: parking_lot::Mutex::new(Some(grow)),
+    };
+    let mut reader = StableMemory::new(
+        ProcessHandle::new(Arc::new(memory), ProcessBitness::X86),
+        fixture_patterns(),
+    );
+
+    let mut observed = Vec::new();
+    let mut index = 0;
+    for _ in 0..2 {
+        let ReadStatus::Ready(suffix) = reader.hit_errors(index).unwrap() else {
+            panic!("stable hit errors ready");
+        };
+        observed.extend(suffix.errors.all);
+        index = suffix.index;
+    }
+    assert_eq!(observed, values.map(f64::from));
+}
+
 #[test]
 fn stable_hit_errors_catches_up_in_bounded_captures_and_rewinds() {
     const COUNT: i32 = 5_000;

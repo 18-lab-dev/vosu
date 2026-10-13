@@ -641,8 +641,10 @@ impl StateBundle {
             && parsed.cache_key().source_checksum == source_key
             && parsed.cache_key().memory_identity.as_deref() == Some(checksum)
         {
+            let mirror =
+                snapshot.capture().mods().number & crate::calculation::osu_mods::MIRROR != 0;
             return parsed
-                .mania_judgement_events()
+                .mania_judgement_events(mirror)
                 .map_or(StableManiaMetadata::Unavailable, StableManiaMetadata::Ready);
         }
 

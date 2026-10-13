@@ -4,6 +4,14 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased
 
+### Gameplay
+
+- osu!stable mania: `pressHitErrors` and `releaseHitErrors` no longer stop updating for the rest of a play when stable records two judgements from the same millisecond in a different order than the map lists them (for example two hold notes released together). Hits kept appearing in `hitErrorArray` but stopped reaching the press/release arrays, so overlays reading them lost every later hit.
+- osu!stable mania: a hit error that cannot be matched to a key press or release no longer holds back later hits. It is published as a press once the replay has moved 250 ms past it or one second has passed.
+- osu!stable mania: hold-note releases are now classified with the Mirror mod. Before, Mirror plays published every hit as a press.
+- osu!stable: reading the hit-error list while the game grew it could pair the new length with the old storage and replace that hit's error with a made-up 0. vosu now reads the length first, which always matches the storage it reads.
+- The selected-field subscription README section no longer documents an application-level `["ping", nonce]` heartbeat that was never implemented; any text sent after subscribing closes the connection with code 1008.
+
 ### Packaging
 
 - The AUR package is now `vosu-git`, built from `main` with `packaging/aur/PKGBUILD`. Releases no longer include the `vosu-bin-aur-v<version>.tar.gz` bundle.

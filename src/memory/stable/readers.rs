@@ -59,8 +59,9 @@ impl StableMemory {
         if list == 0 {
             return Ok(None);
         }
-        let items = self.ptr(self.add(list, 4)?)?;
+        // Size before items: see `hit_errors`.
         let size = self.process.read_i32(self.add(list, 0xc)?)?.max(0) as i64;
+        let items = self.ptr(self.add(list, 4)?)?;
         if size > MAX_REPLAY_FRAMES {
             return Err(MemoryError::Corrupt {
                 context: "stable replay frames",
@@ -429,8 +430,12 @@ impl MemoryReader for StableMemory {
             return self.not_ready();
         }
         let b = self.ptr(self.add(s, 0x38)?)?;
-        let items = self.ptr(self.add(b, 4)?)?;
+        // A growing .NET List publishes its new items array before its new size. Reading the
+        // size first therefore always pairs it with an array that holds that many elements;
+        // the reverse order can pair a grown size with the abandoned array and read past its
+        // end (observed live as a fabricated 0 replacing the ninth error).
         let size = self.process.read_i32(self.add(b, 0xc)?)? as i64;
+        let items = self.ptr(self.add(b, 4)?)?;
         if !(0..=MAX_STABLE_HIT_ERRORS).contains(&size) {
             return Err(MemoryError::Corrupt {
                 context: "hit errors",

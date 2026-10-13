@@ -373,9 +373,9 @@ impl ParsedBeatmap {
     }
     // Standard-to-mania lane conversion is stable-version-specific. Keep
     // converted maps press-only instead of guessing release assignments.
-    pub(crate) fn mania_judgement_events(&self) -> Option<Vec<ManiaJudgementEvent>> {
+    pub(crate) fn mania_judgement_events(&self, mirror: bool) -> Option<Vec<ManiaJudgementEvent>> {
         (self.original_mode == Ruleset::Mania)
-            .then(|| source_mania_judgement_events(&self.source))
+            .then(|| source_mania_judgement_events(&self.source, mirror))
             .flatten()
     }
 
