@@ -185,36 +185,67 @@ counts, not syscall or allocation measurements. The lazer capture is also the
 vosu side of the [precise-reader fixture](#precise-reader-fixture), which
 records the same run.
 
-## Filtered projection
+## Performance changes for 1.1.0 (paired)
 
-Measured on 2026-10-13 from the integrated `9b08082` tree plus the review
-follow-ups in this change, using Rust 1.96.1, locked offline dependencies and
-default release features on the Ryzen 9 9950X3D host. The host-exclusive lock
-and CPU affinity `8-15,24-31` serialized the run. Criterion collected 60 samples
-per case, with 3 s warm-up and 20 s measurement; intervals below are its reported
-95% timing confidence intervals. No baseline was rerun in this integration,
-so these candidate timings are not a paired speedup claim.
+Measured on 2026-10-13 on the Ryzen 9 9950X3D host with Rust 1.96.1, locked
+offline dependencies and default release features. **Before** is `45cfcd3`
+(benchmark prerequisites only, no optimization); **after** is the integrated
+optimization series on top of it. Both builds ran alternately, before then after,
+three times, every benchmark pinned to CPU 8 on the non-V-cache CCD with no other
+benchmark or build running. Criterion used 2 s warm-up and 8 s measurement per
+case; the values are the median of the three Criterion means, and the ranges are
+the minimum and maximum of those three means. The precise reader is the median
+of fifteen `memory_reader_bench` invocations.
 
-| Workload | Candidate timing | 95% confidence interval |
-| --- | ---: | ---: |
-| v2, 100 clients, identical filters | 23.389 µs | 23.354–23.423 µs |
-| v2, 100 clients, unique filters | 550.74 µs | 549.58–552.20 µs |
+| Benchmark | Before | After | Before / after | Before range | After range |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `regular_reader/lazer_gameplay` | 89.49 µs | 16.58 µs | 5.40× | 89.24–90.00 µs | 16.38–16.62 µs |
+| `regular_reader/lazer_menu` | 107.29 µs | 42.44 µs | 2.53× | 106.13–108.05 µs | 41.92–43.00 µs |
+| `regular_reader/stable_gameplay` | 45.43 µs | 36.53 µs | 1.24× | 45.31–46.03 µs | 35.69–38.08 µs |
+| `regular_reader/stable_menu` | 49.39 µs | 39.17 µs | 1.26× | 49.19–49.53 µs | 38.68–40.51 µs |
+| `memory_reader_bench` (lazer precise capture) | 10.67 µs | 8.94 µs | 1.19× | 10.44–10.88 µs | 8.72–9.05 µs |
+| `filtered_projection/v2_identical/100` | 5.201 ms | 23.35 µs | 222.7× | 5.169–5.208 ms | 23.27–23.45 µs |
+| `filtered_projection/v2_unique/100` | 5.758 ms | 558.8 µs | 10.3× | 5.735–5.787 ms | 547.5–572.6 µs |
+| `v2_subscription/distinct_plans/1000` | 397.6 µs | 159.3 µs | 2.50× | 396.0–403.8 µs | 158.7–160.8 µs |
+| `v2_subscription/shared_plan/1000` | 200.9 µs | 104.2 µs | 1.93× | 200.5–206.2 µs | 101.3–115.5 µs |
+| `serializers_cold/v2_precise` | 4.185 µs | 2.948 µs | 1.42× | 3.925–5.427 µs | 2.885–3.005 µs |
+| `serializers_cold/v1` | 4.538 µs | 4.475 µs | 1.01× | 4.516–4.680 µs | 4.191–4.878 µs |
+| `serializers_cold/v2` | 10.585 µs | 10.208 µs | 1.04× | 10.112–13.387 µs | 9.609–11.427 µs |
+| `serializers_cold/stream_companion` | 6.653 µs | 6.338 µs | 1.05× | 6.247–7.926 µs | 6.313–6.371 µs |
 
-The maintained harness now honors Criterion CLI sampling and timing controls.
-Reproduce the affected cases from the repository root after preparing the
-matching helper bundle as described above:
+Native backend calls and requested bytes per capture cycle, printed once by
+`autoresearch_regular_reader` outside timing:
+
+| Case | Before calls | After calls | Before bytes | After bytes |
+| --- | ---: | ---: | ---: | ---: |
+| lazer gameplay | 268 | 32 | 1,889 | 5,426 |
+| lazer menu | 314 | 136 | 2,267 | 8,764 |
+| stable gameplay | 135 | 135 | 813 | 813 |
+| stable menu | 148 | 148 | 906 | 906 |
+
+- The v1, v2 and StreamCompanion encoders are unchanged in source; their small
+  differences are within the run-to-run spread.
+- Lazer reads request more bytes because batching reads whole spans instead of
+  individual fields; the number of native calls is what dropped. The stable
+  speedup comes from the single post-read process-generation check.
+- These are synthetic, Linux-only fixtures. They do not measure live clients,
+  Windows, network transport, whole-daemon CPU or memory. Windows has no
+  batched cross-process read, so the reader batching cannot reduce native calls
+  there in the same way.
+- The filtered harness exercises production projection and in-process
+  WebSocket fan-out with changing snapshots, a paused Tokio clock and reference
+  byte comparisons. Its broadcast-pass cache shares identical ordered filter
+  plans and keeps at most 64 variants / 1 MiB of payload bytes, so the
+  unique-filter result includes that bounded behaviour.
+
+Reproduce with the same benchmark binaries:
 
 ```sh
-cargo bench --offline --locked --package vosu --bench autoresearch_filtered_projection -- 'filtered_projection/v2_(identical|unique)/100$' --sample-size 60 --measurement-time 20 --warm-up-time 3
+cargo bench --offline --locked --package vosu --bench hot_paths -- '^(serializers_cold/|v2_subscription/(distinct_plans|shared_plan)/1000$)'
+cargo bench --offline --locked --package vosu --bench autoresearch_regular_reader
+cargo bench --offline --locked --package vosu --bench autoresearch_filtered_projection -- '^filtered_projection/v2_(identical|unique)/100$'
+cargo bench --offline --locked --package vosu --bench memory_reader_bench
 ```
-
-The harness exercises production filtered projection and in-process WebSocket
-fan-out with changing synthetic snapshots, a paused Tokio clock, and reference
-byte comparisons; it does not measure network transport, live memory reads,
-whole-daemon CPU, allocations, or peak RSS. Direct projection skips unselected
-DTO subtrees. The broadcast-pass cache shares identical ordered filter plans
-and retains at most 64 variants / 1 MiB of payload bytes, then encodes uncached
-variants normally. Unique-filter results include that bounded-cache behavior.
 
 ## Released tosu comparison
 

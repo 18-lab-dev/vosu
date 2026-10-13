@@ -32,9 +32,9 @@ and baselines, use shared frame chunks, and bypass memoization for unique
 plans. Cold encoders reserve output capacity; v2 precise writes directly from
 snapshot data. Item 6 is addressed by direct selected-field projection and a
 bounded shared broadcast-pass cache. These are implementation descriptions,
-not claims of a fresh benchmark or live-parity run. The
-[benchmark guide](../testing/benchmarks.md#filtered-projection) records the
-reviewed historical short-run evidence and its limitations.
+not claims of a live-parity run. The
+[benchmark guide](../testing/benchmarks.md#performance-changes-for-110-paired)
+records paired before/after synthetic measurements and their limitations.
 
 ## Executive summary
 
@@ -146,7 +146,7 @@ The supervisor still reconstructs `ready` and `desired` maps on each loop; `publ
 
 **Invariant/risk.** Preserve JavaScript property/index ordering, requested filter ordering and nesting, numeric/non-finite behavior, exact JSON, per-client generation acknowledgements, one-slot data/control channels, and poll-rate throttling.
 
-**Evidence and remaining validation.** The [filtered projection benchmark](../testing/benchmarks.md#filtered-projection) records reviewed historical 10-sample/2-second synthetic v2 runs for 100 identical and unique filters, explicitly not a rerun of the integrated tree. The maintained harness honors CLI timing controls and compares production output with reference bytes across changing snapshots and all four schemas. Full-duration CPU, allocation, peak temporary/retained RSS, and live-network profiles remain separate measurements; if revisited, include nested objects, arrays, UTF-16-like index keys, non-finite values, and continuously unique filters while preserving cache bounds.
+**Evidence and remaining validation.** The [paired benchmark section](../testing/benchmarks.md#performance-changes-for-110-paired) records serial before/after synthetic v2 runs for 100 identical and unique filters on the integrated tree. The maintained harness honors CLI timing controls and compares production output with reference bytes across changing snapshots and all four schemas. Full-duration CPU, allocation, peak temporary/retained RSS, and live-network profiles remain separate measurements; if revisited, include nested objects, arrays, UTF-16-like index keys, non-finite values, and continuously unique filters while preserving cache bounds.
 
 ### 7. Legacy calculation needs bounded blocking admission
 
