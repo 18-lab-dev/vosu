@@ -251,6 +251,11 @@ fn batched_global_matches_sequential_decoding_for_a_player_screen() {
     let ReadStatus::Ready(global) = &batched else {
         panic!("player screen global not ready: {batched:?}");
     };
+    // Production joins with the platform separator, so Windows yields `/games/osu\files`.
+    let expected_files = std::path::Path::new("/games/osu")
+        .join("files")
+        .to_string_lossy()
+        .into_owned();
     assert_eq!(
         (
             global.status,
@@ -270,7 +275,7 @@ fn batched_global_matches_sequential_decoding_for_a_player_screen() {
             true,
             2,
             false,
-            "/games/osu/files",
+            expected_files.as_str(),
         )
     );
     assert_eq!(batched, sequential);
