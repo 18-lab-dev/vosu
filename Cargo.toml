@@ -119,6 +119,18 @@ harness = false
 name = "memory_reader_bench"
 harness = false
 
+[[bench]]
+name = "autoresearch_filtered_projection"
+harness = false
+
+[[bench]]
+name = "autoresearch_regular_reader"
+harness = false
+
+[[bench]]
+name = "autoresearch_http_v2"
+harness = false
+
 [[example]]
 name = "live_reader_bench"
 
