@@ -154,6 +154,32 @@ fn request_shape_and_frozen_compact_frames_are_exact() {
     .unwrap();
     assert_eq!(update.as_ref(), br#"[1,9,[[0,3],[2,null]],[1]]"#);
     assert_eq!(
+        initial_frame(0, &[None, None]).unwrap().as_ref(),
+        br#"[0,0,[]]"#
+    );
+    assert_eq!(
+        update_frame(10, &[Some(json!(1))], &[None])
+            .unwrap()
+            .as_ref(),
+        br#"[1,10,[],[0]]"#
+    );
+    assert_eq!(
+        update_frame(11, &[Some(json!(1)), None], &[Some(json!(1)), None])
+            .unwrap()
+            .as_ref(),
+        br#"[1,11,[],[]]"#
+    );
+    assert_eq!(
+        update_frame(
+            12,
+            &[Some(json!(1)), None, Some(json!(3))],
+            &[None, None, None],
+        )
+        .unwrap()
+        .as_ref(),
+        br#"[1,12,[],[0,2]]"#
+    );
+    assert_eq!(
         error_frame(INVALID_REQUEST, INVALID_REQUEST_MESSAGE).as_ref(),
         br#"[2,1,"invalid subscription request"]"#
     );

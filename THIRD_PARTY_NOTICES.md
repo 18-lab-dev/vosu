@@ -204,7 +204,7 @@ The lists below cover direct dependencies. `cargo metadata --locked --format-ver
 
 ### MIT
 
-- `axum`, `bytes`, `dotenvy`, `open`, `rosu-map`, `rosu-mods`, `rosu-pp`, `rust-embed`, `serde-value`, `sysinfo`, `tokio`, `tokio-util`, `tracing`, `tracing-subscriber`, `winresource`, `zip`, and `zmij`
+- `axum`, `bytes`, `dotenvy`, `open`, `rosu-map`, `rosu-mods`, `rosu-pp`, `rust-embed`, `sysinfo`, `tokio`, `tokio-util`, `tracing`, `tracing-subscriber`, `winresource`, `zip`, and `zmij`
 - local MIT forks `vosu-rosu-map` and `vosu-rosu-pp-api` (MIT; complete texts and pinned source links are in `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`)
 
 ### MIT OR Apache-2.0 (or the equivalent reversed expression)
@@ -223,6 +223,7 @@ The lists below cover direct dependencies. `cargo metadata --locked --format-ver
 
 - `criterion`: Apache-2.0 OR MIT
 - `parking_lot`: MIT OR Apache-2.0
+- `serde-value`: MIT; reference serializer used only by projection equivalence tests
 
 These development packages, the private `vosu-test-harness` workspace member, oracle tools, test fixtures, and benchmark code are not entries in the two-file production release archive.
 

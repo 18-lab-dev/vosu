@@ -65,8 +65,7 @@ pub enum V2SubscriptionOutbound {
 }
 
 /// The one-frame data queue. Delivery reserves it (`PENDING`) until `write_completed`, so it
-/// never needs a second slot, and a mutex slot plus `Notify` costs about half of a bounded
-/// `mpsc` send and receive.
+/// never needs a second slot. A mutex slot plus `Notify` retains that bounded delivery contract.
 struct DataSlot {
     state: Mutex<DataState>,
     ready: Notify,

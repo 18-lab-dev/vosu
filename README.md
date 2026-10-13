@@ -264,7 +264,7 @@ unchanged; this workflow does not sign or publish releases.
 
 Run vosu as the same desktop user as osu!. Tournament and debug-client processes are filtered by command line.
 
-Discovery admits only processes owned by the daemon's desktop account: the real UID on Linux and the primary-token user SID on Windows. Linux memory handles also check the captured process generation around reads; PID reuse is not a new authorized target. Run separate daemon instances for separate desktop accounts.
+Discovery admits only processes owned by the daemon's desktop account: the real UID on Linux and the primary-token user SID on Windows. Linux memory handles also check the captured process generation once, after each native read; PID reuse is not a new authorized target. Run separate daemon instances for separate desktop accounts.
 
 | Platform | osu!stable | osu!lazer |
 | --- | --- | --- |
@@ -473,7 +473,11 @@ Unknown near-miss paths do not upgrade. Frames and assembled messages are limite
 
 Command control queues and the shared relay mailbox each hold at most 16 frames/events. Relay saturation drops new refresh events; a recipient whose control queue is full is disconnected without blocking other recipients. Filter input is limited to 256 nodes and eight nesting levels, with equivalent filters deduplicated before projection.
 
+Filtered compatibility streams share identical ordered filter plans only within a broadcast pass. The shared cache retains at most 64 variants and 1 MiB of payload bytes; exceeding either limit does not reject a filter, but encodes it without retaining it for reuse. Projection preserves requested ordering and the existing wire schemas.
+
 The selected-field endpoint expects one text message within five seconds: a JSON array of 1–256 non-overlapping RFC 6901 JSON Pointers into the `/json/v2` document. A subscription such as `["/keys","/beatmap/mode","/state/number"]` receives compact initial `[0, revision, [[index, value], ...]]` and update `[1, revision, [[changedIndex, value], ...], [removedIndex, ...]]` frames. Invalid filters receive `[2, code, message]`. The selection is immutable: any later text message, including an application-level `["ping", nonce]`, receives `[2, 5, "subscription already established"]` and closes the connection with code `1008`. Keepalive uses WebSocket control frames only; vosu answers each Ping with a Pong. While at least one selection is established, vosu samples game state every `V2_SUBSCRIPTION_DEBOUNCE` milliseconds (never slower than `POLL_RATE`/`PRECISE_DATA_POLL_RATE`), so selected fields can change before the HTTP and compatibility WebSocket payloads, which keep their `POLL_RATE`/`PRECISE_DATA_POLL_RATE` cadence. A beatmap change or retry still reaches every API immediately. Frames are sent only when a selected value changes, at most once per `V2_SUBSCRIPTION_DEBOUNCE` per client, and always carry the latest snapshot. Faster sampling costs CPU: each sample reruns memory reads and live pp calculation.
+
+Selected-field delivery is latest-only, not an append-only event log: a newer pending snapshot replaces an older unsent one. Consumers must use the received values as current state and cannot assume every intermediate revision or input transition will be delivered.
 
 Control-frame backpressure is bounded too: an established selected-field connection whose pong queue is full closes with code `1011` rather than pinning the reader indefinitely.
 

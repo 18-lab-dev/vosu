@@ -248,6 +248,7 @@ impl LinuxProcessMemory {
         }
 
         let mut scratch = [0u8; SCRATCH];
+        let scratch_ptr = scratch.as_mut_ptr();
         let empty = libc::iovec {
             iov_base: std::ptr::null_mut(),
             iov_len: 0,
@@ -264,7 +265,8 @@ impl LinuxProcessMemory {
                 }
             } else {
                 libc::iovec {
-                    iov_base: scratch[offset..].as_mut_ptr().cast(),
+                    // SAFETY: the checked total scratch length covers this disjoint span.
+                    iov_base: unsafe { scratch_ptr.add(offset) }.cast(),
                     iov_len: end - start,
                 }
             };

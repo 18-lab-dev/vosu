@@ -117,10 +117,11 @@ struct SharedProjections {
 
 impl SharedProjections {
     fn encode(&mut self, snapshot: &dyn StateSnapshot, plan: &Arc<FilterPlan>) -> Option<Bytes> {
-        if let Some((_, payload)) = self.entries.iter().find(|(candidate, _)| {
-            Arc::ptr_eq(candidate, plan)
-                || (candidate.hash == plan.hash && candidate.filters == plan.filters)
-        }) {
+        if let Some((_, payload)) = self
+            .entries
+            .iter()
+            .find(|(candidate, _)| candidate.hash == plan.hash && candidate.filters == plan.filters)
+        {
             return payload.clone();
         }
         let payload = snapshot.encode_filtered(&plan.filters).ok();

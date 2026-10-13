@@ -18,9 +18,27 @@ Linux process-event backends, default features, capability selection, recovery, 
 
 The earlier queue/retirement findings below are historical: relays now use a 16-event mailbox with nonblocking recipient delivery, compatibility control queues are bounded at 16 while state queues remain capacity one, and counter root generations share admission/cancellation/join accounting without a retired registry. This intentionally permits ordinary command bursts while bounding stalled recipients. Calculator input/rate/graph and decoded-collection budgets reject excessive work; no throughput improvement or process-wide aggregate memory bound is claimed. See the [security hardening notes](../operations/runbook.md#security-hardening-and-remaining-trust) for remaining risks.
 
+## Performance integration status — 2026-10-13
+
+The integrated reader batches independent lazer fields and nearby Linux read
+ranges, reuses capture-local roots and beatmap/track observations, and checks
+Linux process generation once after each native read. With a player, menu
+fields, beatmap hash, and MP3 length observe the global-read instant; without
+a player, the hash may still be read in `menu`. `ConfigPlan` is excluded from
+this reader integration.
+
+Selected-field subscriptions share extraction and frames for matching plans
+and baselines, use shared frame chunks, and bypass memoization for unique
+plans. Cold encoders reserve output capacity; v2 precise writes directly from
+snapshot data. Item 6 is addressed by direct selected-field projection and a
+bounded shared broadcast-pass cache. These are implementation descriptions,
+not claims of a fresh benchmark or live-parity run. The
+[benchmark guide](../testing/benchmarks.md#filtered-projection) records the
+reviewed historical short-run evidence and its limitations.
+
 ## Executive summary
 
-This audit tracks eight opportunities worth measuring. They are **candidates, not promises**: except where explicitly described as a local observation, their impact is inferred from static control-flow, allocation, ownership, and queue analysis. Linux idle discovery's broad metadata scan has since been addressed with name-first filtering. The highest-priority remaining candidates are repeated live-calculator work during map load, repeated manager reconstruction after coalesced state publication, and filtered WebSocket projection per client.
+This audit tracks eight opportunities worth measuring. They are **candidates, not promises**: except where explicitly described as a local observation, their impact is inferred from static control-flow, allocation, ownership, and queue analysis. Linux idle discovery's broad metadata scan has since been addressed with name-first filtering, and filtered WebSocket projection duplication is addressed as described in item 6. The highest-priority remaining candidates include repeated live-calculator work during map load and repeated manager reconstruction after coalesced state publication.
 
 The safest sequence is to repair measurement first, instrument the production boundaries, and then change only paths shown to matter. Any optimization must preserve public API compatibility, one-point immutable atomic snapshots, generation/staleness checks, the existing bounded/latest-only capture, supervisor handoff, and client-delivery stages, the separation between live and legacy calculators, filesystem and authorization checks, and Linux/Windows semantics.
 
@@ -38,8 +56,8 @@ Important limitations:
 
 - The Criterion memory fixtures do not perform native cross-process reads, and the five-object map is not representative of large or varied maps.
 - Cold serializer benchmarks exclude snapshot construction; warm serializer benchmarks intentionally exercise cached `Bytes` clones.
-- The publication benchmark is currently blocked: [`PublicationProvider::poll_rate`](../../benches/hot_paths.rs) returns 60 seconds while each iteration waits for delivery. The recorded 6000.2-second observation in [benchmarks.md](../testing/benchmarks.md) produced no usable publication result. This is a **measurement blocker**, not evidence of a production runtime regression. Fix the synthetic provider or benchmark cadence, not production throttling behavior.
-- No heap profile, native-read trace, realistic multi-instance capture, filtered-client publication run, or concurrent calculation load test was available. All impact statements below are therefore labeled **Hypothesis** unless they describe source behavior directly.
+- The original publication benchmark's 60-second provider cadence was a historical measurement blocker, not a production runtime regression. The maintained [benchmark guide](../testing/benchmarks.md#vosu-hot-paths) now records completed synthetic publication runs; those observations retain their recorded source generation.
+- No heap profile, native-read trace, realistic multi-instance capture, live filtered-client network run, or concurrent calculation load test is recorded here. Filtered fan-out has reviewed synthetic short-run evidence only. Remaining impact statements below are labeled **Hypothesis** unless they describe source behavior directly.
 
 ## Prioritized findings
 
@@ -50,7 +68,7 @@ Important limitations:
 | P1 | Manager snapshot rebuild after coalesced state publication | Per-PID latest-only slots bound retained state; supervisor still rebuilds ordered manager metadata after each drained batch | Injected supervisor delay and multi-instance allocation/RSS profile |
 | P1 | Precise hit-error history and mod-context cloning | Every precise publication copies cumulative hit errors; the precise loop separately clones variable-size mod context | Allocation profile versus hit-error/mod cardinality and cadence |
 | P1 | Native remote-read batching | Linux reparses maps and allocates chunks/iovecs per `read_many`; capture readers issue multiple logical reads | Syscall/allocation trace against live stable and lazer processes |
-| P1 | Filtered WebSocket projection duplication | Every filtered client independently builds and serializes projection trees | 1/10/100-client CPU, allocations, RSS, and byte-parity run |
+| Addressed | Filtered WebSocket projection duplication | Direct selected-field projection; identical ordered filters share a bounded per-pass cache | Reviewed synthetic fan-out evidence; full-duration CPU/allocation/RSS and live transport profiles remain separate |
 | P1 | Bounded admission for legacy calculation | Synchronous parse/I/O/calculation executes from async requests without admission bound | Concurrent request p50/p99, Tokio utilization, queue/RSS profile |
 | P1 | Whole-log and catalog response memory spikes | Reports whole-read retained logs; catalog may buffer and parse a response up to 1 GiB | Adversarial-size peak-RSS and cancellation tests |
 
@@ -120,15 +138,15 @@ The supervisor still reconstructs `ready` and `desired` maps on each loop; `publ
 
 ### 6. Filtered WebSocket clients duplicate projection work
 
-**Classification:** P1, **Hypothesis** (filtered production path is not benchmarked).
+**Classification:** Addressed; synthetic short-run evidence only, not a live transport or whole-daemon performance claim.
 
-**Source and mechanism.** [`ProductionSnapshotEncoder::encode`](../../src/runtime/projection.rs) builds a schema value, serializes through both `serde_json` and `serde_value`, materializes `ProjectionValue`, clones selected subtrees, and canonicalizes keys. [`WebSocketHub::run`](../../src/server/websocket.rs) calls filtered encoding independently for each filtered client. Identical filters therefore repeat full DTO/projection work; unlike unfiltered publication, they do not share the snapshot's cached `Bytes`.
+**Current mechanism.** [`ProductionSnapshotEncoder::encode`](../../src/runtime/projection.rs) serializes only selected DTO fields directly into the projection tree, avoiding the full `serde_json` and `serde_value` document round-trip. Final projection still applies the requested filter order and JavaScript key canonicalization. [`WebSocketHub::run`](../../src/server/websocket.rs) shares the result for identical ordered filter plans within one broadcast pass. Hashes are precomputed when filters are set, with exact equality checking before reuse.
 
-**Safe direction.** Consider a streaming/lockstep projector or a **bounded per-generation** cache keyed by canonical filter only after profiles establish benefit. A cache must cap variant count and retained payload bytes; identical-filter sharing is preferable to a global unbounded filter cache.
+**Bounds and lifetime.** The shared cache is discarded after the pass and retains at most 64 variants and 1 MiB of payload bytes. Clients beyond either bound are still served by individual encoding, not rejected or queued for cache admission. No global or cross-generation filter cache is introduced.
 
 **Invariant/risk.** Preserve JavaScript property/index ordering, requested filter ordering and nesting, numeric/non-finite behavior, exact JSON, per-client generation acknowledgements, one-slot data/control channels, and poll-rate throttling.
 
-**Validation experiment.** Measure CPU, allocations, peak temporary and retained RSS, and output size for 1/10/100 clients with identical and unique filters across all four schemas, including nested objects, arrays, UTF-16-like index keys, and non-finite values. Require byte-for-byte output equality and verify cache bounds under continuously unique filters.
+**Evidence and remaining validation.** The [filtered projection benchmark](../testing/benchmarks.md#filtered-projection) records reviewed historical 10-sample/2-second synthetic v2 runs for 100 identical and unique filters, explicitly not a rerun of the integrated tree. The maintained harness honors CLI timing controls and compares production output with reference bytes across changing snapshots and all four schemas. Full-duration CPU, allocation, peak temporary/retained RSS, and live-network profiles remain separate measurements; if revisited, include nested objects, arrays, UTF-16-like index keys, non-finite values, and continuously unique filters while preserving cache bounds.
 
 ### 7. Legacy calculation needs bounded blocking admission
 

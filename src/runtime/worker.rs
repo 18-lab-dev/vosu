@@ -644,8 +644,8 @@ pub(super) async fn run_instance_state_worker(
 }
 
 pub(super) enum PreparedReaders {
-    Stable(StableMemory, StableMemory),
-    Lazer(LazerMemory, LazerMemory),
+    Stable(Box<(StableMemory, StableMemory)>),
+    Lazer(Box<(LazerMemory, LazerMemory)>),
 }
 
 pub(super) async fn create_state_worker(
@@ -669,10 +669,10 @@ pub(super) async fn create_state_worker(
                             | crate::process::ReadStatus::Unchanged
                             | crate::process::ReadStatus::Unsupported(_) => return Ok(None),
                         };
-                    Ok(Some(PreparedReaders::Stable(
+                    Ok(Some(PreparedReaders::Stable(Box::new((
                         StableMemory::new(process.clone(), patterns),
                         StableMemory::new(process, patterns),
-                    )))
+                    )))))
                 }
                 ClientType::Lazer => {
                     let Some(offsets) = offsets else {
@@ -687,10 +687,10 @@ pub(super) async fn create_state_worker(
                     {
                         return Ok(None);
                     }
-                    Ok(Some(PreparedReaders::Lazer(
+                    Ok(Some(PreparedReaders::Lazer(Box::new((
                         regular,
                         LazerMemory::new(process, offsets, pattern),
-                    )))
+                    )))))
                 }
             }
         },
@@ -707,24 +707,30 @@ pub(super) async fn create_state_worker(
         demand: subscription_demand,
     };
     let worker = match readers {
-        PreparedReaders::Stable(regular, precise) => finish_state_worker(
-            entry,
-            config,
-            intervals,
-            publisher,
-            synchronization,
-            regular,
-            precise,
-        )?,
-        PreparedReaders::Lazer(regular, precise) => finish_state_worker(
-            entry,
-            config,
-            intervals,
-            publisher,
-            synchronization,
-            regular,
-            precise,
-        )?,
+        PreparedReaders::Stable(readers) => {
+            let (regular, precise) = *readers;
+            finish_state_worker(
+                entry,
+                config,
+                intervals,
+                publisher,
+                synchronization,
+                regular,
+                precise,
+            )?
+        }
+        PreparedReaders::Lazer(readers) => {
+            let (regular, precise) = *readers;
+            finish_state_worker(
+                entry,
+                config,
+                intervals,
+                publisher,
+                synchronization,
+                regular,
+                precise,
+            )?
+        }
     };
     Ok(Some(worker))
 }

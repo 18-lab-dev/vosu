@@ -30,9 +30,9 @@ to filter Criterion cases.
 Keep the default `linux-process-events` feature for the Linux memory reader;
 releases ship it. With `--no-default-features` the native reader has no pidfd
 and checks the process generation by reading `/proc/<pid>/stat` after every
-native read, so the timing measures that fallback instead (the
-[precise-reader fixture](#precise-reader-fixture) results predate this and read
-it before and after each read, about ten times slower).
+native read, so the timing measures that fallback instead. Current pidfd-backed
+reads also check once, after the read. Older measurements below retain their
+original source-generation semantics and are not measurements of this change.
 Windows releases use no default features, so the Windows commands below keep
 `--no-default-features`.
 
@@ -49,6 +49,13 @@ cache path. Read/byte counts are null because the native reader has no counters.
 cargo build --release --locked --example live_reader_bench
 target/release/examples/live_reader_bench --pid 1234 --client lazer --warmup 100 --cycles 1000 --samples 9
 ```
+
+Current lazer regular captures reuse the beatmap head and track length read by
+`global`. With a player, menu fields, beatmap hash, and MP3 length therefore
+observe the global-read instant rather than independent later reads. Without
+a player, the hash may still be read in `menu`. This is capture-local reuse,
+not a cache across captures. The reader integration excludes `ConfigPlan`;
+do not attribute changes to that separate configuration-plan experiment.
 
 ## Scope of the synthetic results
 
@@ -107,8 +114,9 @@ different machines and are not comparable with each other.
 | `v2_subscription/shared_plan/100` | 26.987 µs | 26.902–27.079 µs |
 | `v2_subscription/shared_plan/1000` | 231.969 µs | 228.720–236.355 µs |
 
-- **`linux_process_memory/current_process_64_bytes`** includes the pidfd
-  process-generation check before and after each native read.
+- **`linux_process_memory/current_process_64_bytes`** was measured with the
+  historical before-and-after pidfd generation checks. Current code performs
+  one post-read check; the recorded timing has not been rerun for that change.
 - Cold-serializer intervals are wide, especially StreamCompanion and v2;
   confirm differences in them with isolated reruns.
 
@@ -176,6 +184,37 @@ cycle; stable key-overlay 5 exact + 2 batch reads / 258 bytes. These are API
 counts, not syscall or allocation measurements. The lazer capture is also the
 vosu side of the [precise-reader fixture](#precise-reader-fixture), which
 records the same run.
+
+## Filtered projection
+
+Measured on 2026-10-13 from the integrated `9b08082` tree plus the review
+follow-ups in this change, using Rust 1.96.1, locked offline dependencies and
+default release features on the Ryzen 9 9950X3D host. The host-exclusive lock
+and CPU affinity `8-15,24-31` serialized the run. Criterion collected 60 samples
+per case, with 3 s warm-up and 20 s measurement; intervals below are its reported
+95% timing confidence intervals. No baseline was rerun in this integration,
+so these candidate timings are not a paired speedup claim.
+
+| Workload | Candidate timing | 95% confidence interval |
+| --- | ---: | ---: |
+| v2, 100 clients, identical filters | 23.389 µs | 23.354–23.423 µs |
+| v2, 100 clients, unique filters | 550.74 µs | 549.58–552.20 µs |
+
+The maintained harness now honors Criterion CLI sampling and timing controls.
+Reproduce the affected cases from the repository root after preparing the
+matching helper bundle as described above:
+
+```sh
+cargo bench --offline --locked --package vosu --bench autoresearch_filtered_projection -- 'filtered_projection/v2_(identical|unique)/100$' --sample-size 60 --measurement-time 20 --warm-up-time 3
+```
+
+The harness exercises production filtered projection and in-process WebSocket
+fan-out with changing synthetic snapshots, a paused Tokio clock, and reference
+byte comparisons; it does not measure network transport, live memory reads,
+whole-daemon CPU, allocations, or peak RSS. Direct projection skips unselected
+DTO subtrees. The broadcast-pass cache shares identical ordered filter plans
+and retains at most 64 variants / 1 MiB of payload bytes, then encodes uncached
+variants normally. Unique-filter results include that bounded-cache behavior.
 
 ## Released tosu comparison
 

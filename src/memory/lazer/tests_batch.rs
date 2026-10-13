@@ -276,3 +276,204 @@ fn batched_global_matches_sequential_decoding_for_a_player_screen() {
     assert_eq!(batched, sequential);
     assert_eq!(batched_state, sequential_state);
 }
+
+/// Rejects the first batch containing one chosen read, then permits that read on fallback.
+/// Single reads remain available, like a transient failure of the native batch operation.
+struct FailBatchOnce {
+    memory: Arc<SparseMemory>,
+    address: usize,
+    failed: std::sync::atomic::AtomicBool,
+}
+
+impl ProcessMemory for FailBatchOnce {
+    fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+        self.memory.read_exact(address, dst)
+    }
+
+    fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        if reads.iter().any(|read| read.address == self.address)
+            && !self.failed.swap(true, Ordering::Relaxed)
+        {
+            return Err(MemoryError::Read {
+                address: self.address,
+                len: 0,
+                message: "transient carried read failure".into(),
+            });
+        }
+        self.memory.read_many(reads)
+    }
+
+    fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
+        self.memory.readable_regions()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CarriedBeatmapCase {
+    PlayerHash,
+    HeadWithoutPlayerHash,
+    TransientHeadFailure,
+}
+
+fn assert_global_menu_mp3_equivalence(case: CarriedBeatmapCase) {
+    const HASH: &str = "0123456789abcdef0123456789abcdef";
+    const LENGTH: f64 = 234_567.6;
+    let offsets = LazerOffsets::embedded().unwrap();
+    let decode = |batched: bool| {
+        let (mut memory, base, _) = player_screen(&offsets);
+        let [bindable, working, info, set, hash, track] =
+            [0x40_000, 0x41_000, 0x42_000, 0x43_000, 0x44_000, 0x45_000];
+        for address in [bindable, working, info, set, hash, track] {
+            memory.put(address, [0u8; 0x700]);
+        }
+        memory.ptr(
+            base + offsets.osu_game_osu_game_base.beatmap_k_backing_field,
+            bindable,
+        );
+        memory.ptr(bindable + 0x20, working);
+        let working_offsets =
+            &offsets.osu_game_beatmaps_working_beatmap_cache_beatmap_manager_working_beatmap;
+        memory.ptr(working + working_offsets.beatmap_info, info);
+        memory.ptr(working + working_offsets.beatmap_set_info, set);
+        let beatmap = &offsets.osu_game_beatmaps_beatmap_info;
+        let status_address = info + beatmap.status_int_k_backing_field;
+        memory.i32(status_address, 1);
+        memory.string_ptr(info + beatmap.md5_hash_k_backing_field, hash, HASH);
+        // Resolve the existing fixture's beatmap clock instead of relying on its allocation
+        // order; it is deliberately distinct from the player's gameplay clock.
+        let memory = Arc::new(memory);
+        let process = ProcessHandle::new(memory.clone(), ProcessBitness::X64);
+        let beatmap_clock = process
+            .read_pointer(base + offsets.osu_game_osu_game_base.beatmap_clock)
+            .unwrap();
+        let decoupled = process
+            .read_pointer(
+                beatmap_clock
+                    + offsets
+                        .osu_game_beatmaps_framed_beatmap_clock
+                        .decoupled_track,
+            )
+            .unwrap();
+        drop(process);
+        let mut memory = Arc::try_unwrap(memory).ok().expect("fixture memory unique");
+        memory.ptr(
+            decoupled
+                + offsets
+                    .osu_framework_timing_decoupling_framed_clock
+                    .source_k_backing_field,
+            track,
+        );
+        let length_address = track + offsets.osu_framework_audio_track_track.length;
+        memory.f64(length_address, LENGTH);
+        let memory = Arc::new(memory);
+        let failure = match case {
+            CarriedBeatmapCase::PlayerHash => None,
+            CarriedBeatmapCase::HeadWithoutPlayerHash => Some(hash + 8),
+            CarriedBeatmapCase::TransientHeadFailure => Some(status_address),
+        };
+        let fault = failure.map(|address| {
+            Arc::new(FailBatchOnce {
+                memory: memory.clone(),
+                address,
+                failed: std::sync::atomic::AtomicBool::new(false),
+            })
+        });
+        let process: Arc<dyn ProcessMemory> = if !batched {
+            Arc::new(ScalarOnly(memory.clone()))
+        } else if let Some(fault) = &fault {
+            fault.clone()
+        } else {
+            memory.clone()
+        };
+        let mut decoder = decoder(process);
+        decoder.set_resolved_state(base, 0);
+        decoder.synchronize_capture_config(false, true);
+        let global = decoder.global().expect("global");
+        assert!(matches!(&global, ReadStatus::Ready(_)));
+        if batched {
+            if let Some(fault) = &fault {
+                assert!(fault.failed.load(Ordering::Relaxed), "{case:?}");
+            }
+            match case {
+                CarriedBeatmapCase::PlayerHash | CarriedBeatmapCase::HeadWithoutPlayerHash => {
+                    let (head, gamemode, carried_hash) = decoder
+                        .captured_beatmap
+                        .as_ref()
+                        .expect("carried beatmap head");
+                    assert_eq!((head.info, head.status, head.hash), (info, 1, hash));
+                    assert_eq!(*gamemode, 1);
+                    assert_eq!(
+                        carried_hash.as_deref(),
+                        matches!(case, CarriedBeatmapCase::PlayerHash).then_some(HASH),
+                    );
+                }
+                CarriedBeatmapCase::TransientHeadFailure => {
+                    assert!(decoder.captured_beatmap.is_none());
+                    assert_eq!(memory.read_count(status_address), 0);
+                }
+            }
+            assert_eq!(
+                decoder.captured_track_length,
+                (!matches!(case, CarriedBeatmapCase::HeadWithoutPlayerHash)).then_some(LENGTH),
+            );
+        } else {
+            assert!(decoder.captured_beatmap.is_none());
+            assert!(decoder.captured_track_length.is_none());
+        }
+        let hash_reads = memory.read_count(hash + 8);
+        let status_reads = memory.read_count(status_address);
+        let length_reads = memory.read_count(length_address);
+        let batches = memory.batches.load(Ordering::Relaxed);
+        let menu = decoder.menu(HASH).expect("menu checksum");
+        assert_eq!(
+            menu,
+            ReadStatus::Ready(Menu::Checksum(MenuChecksum {
+                gamemode: 1,
+                ranked_status: 4.0,
+            })),
+        );
+        assert!(decoder.captured_beatmap.is_none());
+        if batched {
+            match case {
+                CarriedBeatmapCase::PlayerHash => {
+                    assert_eq!(memory.read_count(hash + 8), hash_reads);
+                    assert_eq!(memory.read_count(status_address), status_reads);
+                    assert_eq!(memory.batches.load(Ordering::Relaxed), batches);
+                }
+                CarriedBeatmapCase::HeadWithoutPlayerHash => {
+                    assert!(memory.read_count(hash + 8) > hash_reads);
+                    assert_eq!(memory.read_count(status_address), status_reads);
+                }
+                CarriedBeatmapCase::TransientHeadFailure => {
+                    assert!(memory.read_count(status_address) > status_reads);
+                    assert!(memory.batches.load(Ordering::Relaxed) > batches);
+                }
+            }
+        }
+        let length = decoder.mp3_length().expect("mp3 length");
+        assert_eq!(length, ReadStatus::Ready(234_568.0));
+        assert!(decoder.captured_track_length.is_none());
+        if batched && !matches!(case, CarriedBeatmapCase::HeadWithoutPlayerHash) {
+            assert_eq!(memory.read_count(length_address), length_reads);
+        } else {
+            assert!(memory.read_count(length_address) > length_reads);
+        }
+        (global, menu, length)
+    };
+    assert_eq!(decode(true), decode(false), "{case:?}");
+}
+
+#[test]
+fn batched_global_carries_beatmap_head_player_hash_and_track_for_menu_and_mp3() {
+    assert_global_menu_mp3_equivalence(CarriedBeatmapCase::PlayerHash);
+}
+
+#[test]
+fn batched_global_carries_beatmap_head_when_player_hash_read_falls_back() {
+    assert_global_menu_mp3_equivalence(CarriedBeatmapCase::HeadWithoutPlayerHash);
+}
+
+#[test]
+fn transient_global_beatmap_head_failure_recovers_in_menu_with_carried_track() {
+    assert_global_menu_mp3_equivalence(CarriedBeatmapCase::TransientHeadFailure);
+}

@@ -243,11 +243,8 @@ fn bench(c: &mut Criterion) {
         .build()
         .unwrap();
     let mut group = c.benchmark_group("filtered_projection");
-    group
-        .sample_size(10)
-        .nresamples(10_000)
-        .warm_up_time(Duration::from_secs(1))
-        .measurement_time(Duration::from_secs(2));
+    // Keep Criterion CLI sampling and timing controls effective for paired runs.
+    group.nresamples(10_000);
     for (schema, api_schema, name) in SCHEMAS {
         for unique in [false, true] {
             for clients in [1, 10, 100] {
@@ -327,11 +324,7 @@ fn bench(c: &mut Criterion) {
     group.finish();
     let snapshot = fixture();
     let mut encoder = c.benchmark_group("filtered_encoder");
-    encoder
-        .sample_size(10)
-        .nresamples(10_000)
-        .warm_up_time(Duration::from_secs(1))
-        .measurement_time(Duration::from_secs(2));
+    encoder.nresamples(10_000);
     for (schema, api_schema, name) in SCHEMAS {
         for unique in [false, true] {
             let plans: Vec<_> = (0..100)

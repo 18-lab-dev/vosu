@@ -62,7 +62,7 @@ pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
 fn encoded_capacity(precise: &PreciseState) -> usize {
     let hit_errors = &precise.hit_errors;
     256 + 96 * precise.keypresses.len()
-        + 24 * (hit_errors.all.len() + hit_errors.press.len() + hit_errors.release.len())
+        + 8 * (hit_errors.all.len() + hit_errors.press.len() + hit_errors.release.len())
 }
 
 fn write_document(
