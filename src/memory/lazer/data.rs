@@ -473,10 +473,7 @@ impl LazerMemory {
 
     pub(super) fn selected_mods(&mut self) -> Result<Option<CalculateMods>, MemoryError> {
         let _ = self.ensure_mod_mapping(self.selected_gamemode);
-        let selected = self.ptr(add(
-            self.game_base()?,
-            self.offsets.osu_desktop_osu_game_desktop.selected_mods,
-        )?)?;
+        let selected = self.root(GameRoot::SelectedMods)?;
         if selected == 0 || self.process.read_u8(add(selected, 0x50)?)? == 1 {
             return Ok(None);
         }
@@ -573,12 +570,11 @@ impl LazerMemory {
         Ok(())
     }
     pub(super) fn multiplayer_room(&self) -> Result<usize, MemoryError> {
-        let c = self.ptr(add(
-            self.game_base()?,
-            self.offsets
-                .osu_game_osu_game_base
-                .multiplayer_client_k_backing_field,
-        )?)?;
+        let cached = self.capture_multiplayer_room.load(Ordering::Relaxed);
+        if cached != UNCACHED_POINTER {
+            return Ok(cached);
+        }
+        let c = self.root(GameRoot::MultiplayerClient)?;
         if c == 0 {
             return Ok(0);
         }
@@ -590,12 +586,7 @@ impl LazerMemory {
         )?)
     }
     pub(super) fn multi_room(&self) -> Result<usize, MemoryError> {
-        let c = self.ptr(add(
-            self.game_base()?,
-            self.offsets
-                .osu_game_osu_game_base
-                .multiplayer_client_k_backing_field,
-        )?)?;
+        let c = self.root(GameRoot::MultiplayerClient)?;
         if c == 0 {
             return Ok(0);
         }

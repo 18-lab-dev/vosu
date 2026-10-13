@@ -179,7 +179,127 @@ impl LinuxProcessMemory {
         Ok(regions)
     }
 
+    /// Reads requests whose ranges lie close together as one remote range each; the kernel
+    /// pins and walks every remote iovec separately, so a span is cheaper than its parts.
+    ///
+    /// Requests join a span only when the gap between them lies on pages a member already
+    /// touches. Readability is page-granular, so a span is readable exactly when each of its
+    /// requests is, and failures surface as they would for the separate reads. `None` leaves
+    /// the batch to [`Self::read_many_direct`]'s per-request ranges.
+    fn read_many_coalesced(
+        &self,
+        reads: &mut [ReadRequest<'_>],
+    ) -> Option<Result<(), MemoryError>> {
+        const CAPACITY: usize = 64;
+        const GAP: usize = 512;
+        const SCRATCH: usize = 4096;
+        const PAGE: usize = 4096;
+
+        let mut order = [(0usize, 0usize, 0usize); CAPACITY];
+        let mut count = 0;
+        for (index, request) in reads.iter().enumerate() {
+            if request.dst.is_empty() {
+                continue;
+            }
+            if count == CAPACITY {
+                return None;
+            }
+            let end = request.address.checked_add(request.dst.len())?;
+            order[count] = (request.address, end, index);
+            count += 1;
+        }
+        if count < 2 {
+            return None;
+        }
+        let order = &mut order[..count];
+        order.sort_unstable_by_key(|(start, _, _)| *start);
+
+        // (start, end, first member in `order`, member count, scratch offset)
+        let mut spans = [(0usize, 0usize, 0usize, 0usize, 0usize); CAPACITY];
+        let mut span_count = 0;
+        for (member, &(start, end, _)) in order.iter().enumerate() {
+            if span_count > 0 {
+                let span = &mut spans[span_count - 1];
+                let joined_end = span.1.max(end);
+                if start <= span.1.saturating_add(GAP)
+                    && start / PAGE <= (span.1 - 1) / PAGE + 1
+                    && joined_end - span.0 <= SCRATCH
+                {
+                    span.1 = joined_end;
+                    span.3 += 1;
+                    continue;
+                }
+            }
+            spans[span_count] = (start, end, member, 1, 0);
+            span_count += 1;
+        }
+        if span_count == count {
+            return None;
+        }
+        let mut scratch_len = 0;
+        for span in &mut spans[..span_count] {
+            if span.3 > 1 {
+                span.4 = scratch_len;
+                scratch_len += span.1 - span.0;
+            }
+        }
+        if scratch_len > SCRATCH {
+            return None;
+        }
+
+        let mut scratch = [0u8; SCRATCH];
+        let empty = libc::iovec {
+            iov_base: std::ptr::null_mut(),
+            iov_len: 0,
+        };
+        let mut local = [empty; CAPACITY];
+        let mut remote = [empty; CAPACITY];
+        for (index, &(start, end, first, members, offset)) in spans[..span_count].iter().enumerate()
+        {
+            local[index] = if members == 1 {
+                let dst = &mut reads[order[first].2].dst;
+                libc::iovec {
+                    iov_base: dst.as_mut_ptr().cast(),
+                    iov_len: dst.len(),
+                }
+            } else {
+                libc::iovec {
+                    iov_base: scratch[offset..].as_mut_ptr().cast(),
+                    iov_len: end - start,
+                }
+            };
+            remote[index] = libc::iovec {
+                iov_base: start as *mut libc::c_void,
+                iov_len: end - start,
+            };
+        }
+        let iov_max = *self.iov_max.get_or_init(|| self.syscall.iov_max().max(1));
+        for (local, remote) in local[..span_count]
+            .chunks_mut(iov_max)
+            .zip(remote[..span_count].chunks(iov_max))
+        {
+            if let Err(error) = self.read_batch_iov(local, remote) {
+                return Some(Err(error));
+            }
+        }
+        for &(start, _, first, members, offset) in &spans[..span_count] {
+            if members == 1 {
+                continue;
+            }
+            for &(address, end, index) in &order[first..first + members] {
+                let from = offset + (address - start);
+                reads[index]
+                    .dst
+                    .copy_from_slice(&scratch[from..from + (end - address)]);
+            }
+        }
+        Some(Ok(()))
+    }
+
     fn read_many_direct(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        if let Some(result) = self.read_many_coalesced(reads) {
+            return result;
+        }
         let mut stack_local: [libc::iovec; STACK_IOVEC_CAPACITY] =
             std::array::from_fn(|_| libc::iovec {
                 iov_base: std::ptr::null_mut(),
@@ -472,44 +592,45 @@ impl LinuxProcessMemory {
         address: usize,
         len: usize,
     ) -> Result<usize, MemoryError> {
-        let generation_matches = || {
-            #[cfg(feature = "linux-process-events")]
-            if let Some(pidfd) = self.pidfd.as_deref() {
-                return pidfd_is_alive(pidfd);
-            }
-            self.start_time.is_none_or(|start| {
-                u32::try_from(self.pid)
-                    .ok()
-                    .and_then(|pid| process_start_time_at(&self.proc_root, pid))
-                    == Some(start)
-            })
-        };
-        if !generation_matches() {
-            return Err(read_error(address, len, "process generation changed"));
-        }
-        let bytes = self
-            .syscall
-            .readv(self.pid, local, remote)
-            .map_err(|errno| {
-                let message = io::Error::from_raw_os_error(errno).to_string();
-                if matches!(errno, libc::EPERM | libc::EACCES) {
-                    MemoryError::PermissionDenied {
-                        address,
-                        len,
-                        message: format!("{message}. {PERMISSION_GUIDANCE}"),
-                    }
-                } else {
-                    read_error(address, len, message)
-                }
-            })?;
-        if !generation_matches() {
+        // PID-reuse guarantee: the pidfd (or, without one, the start time captured at open)
+        // names one process generation. Linux frees a PID only after its process has exited
+        // and been reaped, and an exited generation never matches again. So a generation that
+        // still matches after process_vm_readv returns proves the PID named the same process
+        // for the whole call, and any mismatch rejects the bytes (callers zero them). A second
+        // check before the call would cost a syscall per read without strengthening this.
+        let result = self.syscall.readv(self.pid, local, remote);
+        if !self.generation_matches() {
             return Err(read_error(
                 address,
                 len,
                 "process generation changed during read",
             ));
         }
-        Ok(bytes)
+        result.map_err(|errno| {
+            let message = io::Error::from_raw_os_error(errno).to_string();
+            if matches!(errno, libc::EPERM | libc::EACCES) {
+                MemoryError::PermissionDenied {
+                    address,
+                    len,
+                    message: format!("{message}. {PERMISSION_GUIDANCE}"),
+                }
+            } else {
+                read_error(address, len, message)
+            }
+        })
+    }
+
+    fn generation_matches(&self) -> bool {
+        #[cfg(feature = "linux-process-events")]
+        if let Some(pidfd) = self.pidfd.as_deref() {
+            return pidfd_is_alive(pidfd);
+        }
+        self.start_time.is_none_or(|start| {
+            u32::try_from(self.pid)
+                .ok()
+                .and_then(|pid| process_start_time_at(&self.proc_root, pid))
+                == Some(start)
+        })
     }
 }
 

@@ -95,8 +95,34 @@ pub struct LazerMemory {
     pub(super) pattern: LazerPattern,
     pub(super) game_base_address: RwLock<usize>,
     pub(super) validated_game_base: AtomicUsize,
-    pub(super) capture_api: AtomicUsize,
-    pub(super) capture_spectator_client: AtomicUsize,
+    /// Per-capture game roots (see `roots.rs`); `UNCACHED_POINTER` until read.
+    pub(super) capture_roots: [AtomicUsize; GAME_ROOTS],
+    pub(super) capture_roots_loaded: AtomicBool,
+    /// Per-capture player classification of `capture_player_screen` (0: none cached).
+    pub(super) capture_player_screen: AtomicUsize,
+    pub(super) capture_player: AtomicUsize,
+    /// Skin name from the last batched configuration read, for `settings` (see
+    /// `configuration.rs`); `None` when that read was sequential.
+    pub(super) batched_skin: Option<Option<String>>,
+    /// Per-capture snapshot of the current screen's field span (see `roots.rs`).
+    pub(super) screen_span: (usize, usize),
+    pub(super) capture_screen: AtomicUsize,
+    pub(super) capture_screen_pending: AtomicBool,
+    pub(super) capture_screen_words: [AtomicU64; SCREEN_SPAN_WORDS],
+    /// Pointers the batched `global` reads earlier in the capture for later readers:
+    /// `multiplayer_room()`, the beatmap track, the local API user, and the ranked-play state;
+    /// `UNCACHED_POINTER` until then (see `roots.rs`).
+    pub(super) capture_multiplayer_room: AtomicUsize,
+    pub(super) capture_track: AtomicUsize,
+    pub(super) capture_user: AtomicUsize,
+    pub(super) capture_ranked_state: AtomicUsize,
+    /// The personal leaderboard entry the batched `gameplay` decoded this capture, keyed by
+    /// player screen, for `leaderboard`.
+    pub(super) captured_personal: Option<(usize, LeaderboardPlayer)>,
+    /// The beatmap head, gamemode, and (when the player path read it) MD5 string the batched
+    /// `global` read this capture, for `menu`; and the track length, for `mp3_length`.
+    pub(super) captured_beatmap: Option<(BeatmapHead, i64, Option<String>)>,
+    pub(super) captured_track_length: Option<f64>,
     pub(super) current_screen: usize,
     pub(super) precise_player: Option<PrecisePlayerCache>,
     pub(super) selected_gamemode: i64,
@@ -111,4 +137,6 @@ pub struct LazerMemory {
     pub(super) leaderboard_visible: bool,
     pub(super) mod_mappings: BTreeMap<(i64, usize), &'static str>,
     pub(super) mapped_modes: [bool; 4],
+    /// Reused destination for batched configuration dictionary entries.
+    pub(super) config_scratch: Vec<u8>,
 }

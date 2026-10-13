@@ -2,14 +2,28 @@ use super::*;
 
 impl LazerMemory {
     pub fn new(process: ProcessHandle, offsets: Arc<LazerOffsets>, pattern: LazerPattern) -> Self {
+        let screen_span = screen_span(&offsets);
         Self {
             process,
             offsets,
             pattern,
             game_base_address: RwLock::new(0),
             validated_game_base: AtomicUsize::new(0),
-            capture_api: AtomicUsize::new(UNCACHED_POINTER),
-            capture_spectator_client: AtomicUsize::new(UNCACHED_POINTER),
+            capture_roots: std::array::from_fn(|_| AtomicUsize::new(UNCACHED_POINTER)),
+            capture_roots_loaded: AtomicBool::new(false),
+            capture_player_screen: AtomicUsize::new(0),
+            capture_player: AtomicUsize::new(0),
+            screen_span,
+            capture_screen: AtomicUsize::new(0),
+            capture_screen_pending: AtomicBool::new(false),
+            capture_screen_words: std::array::from_fn(|_| AtomicU64::new(0)),
+            capture_multiplayer_room: AtomicUsize::new(UNCACHED_POINTER),
+            capture_track: AtomicUsize::new(UNCACHED_POINTER),
+            capture_user: AtomicUsize::new(UNCACHED_POINTER),
+            capture_ranked_state: AtomicUsize::new(UNCACHED_POINTER),
+            captured_personal: None,
+            captured_beatmap: None,
+            captured_track_length: None,
             current_screen: 0,
             precise_player: None,
             selected_gamemode: 0,
@@ -24,6 +38,8 @@ impl LazerMemory {
             leaderboard_visible: false,
             mod_mappings: BTreeMap::new(),
             mapped_modes: [false; 4],
+            config_scratch: Vec::new(),
+            batched_skin: None,
         }
     }
 
@@ -46,9 +62,10 @@ impl LazerMemory {
             .write()
             .expect("lazer base lock poisoned") = game_base;
         self.validated_game_base.store(0, Ordering::Relaxed);
-        self.capture_api.store(UNCACHED_POINTER, Ordering::Relaxed);
-        self.capture_spectator_client
-            .store(UNCACHED_POINTER, Ordering::Relaxed);
+        self.reset_capture_roots(false);
+        self.captured_personal = None;
+        self.captured_beatmap = None;
+        self.captured_track_length = None;
         self.current_screen = current_screen;
         self.precise_player = None;
     }
@@ -78,6 +95,7 @@ impl LazerMemory {
                 .write()
                 .map_err(|_| corrupt("lazer game base", base, "lock poisoned"))? = base;
             self.validated_game_base.store(base, Ordering::Relaxed);
+            self.reset_capture_roots(false);
             return Ok(true);
         }
         Ok(false)
@@ -134,19 +152,28 @@ impl LazerMemory {
             .game_base_address
             .read()
             .map_err(|_| corrupt("lazer game base", 0, "lock poisoned"))?;
-        if cached != 0
-            && let Ok(vtable) = self.ptr(cached)
-            && vtable != 0
-            && self
-                .process
-                .read_i64(vtable)
-                .ok()
-                .map(|value| value as usize)
-                == Some(self.offsets.effective_game_base_vtable())
-        {
+        let valid = cached != 0
+            && self.ptr(cached).is_ok_and(|vtable| {
+                vtable != 0
+                    && match self.vtable_check_with_roots(cached, vtable) {
+                        Some(valid) => valid,
+                        None => {
+                            self.process
+                                .read_i64(vtable)
+                                .ok()
+                                .map(|value| value as usize)
+                                == Some(self.offsets.effective_game_base_vtable())
+                        }
+                    }
+            });
+        if valid {
             self.validated_game_base.store(cached, Ordering::Relaxed);
             return Ok(cached);
         }
+        self.resolve_game_base_by_scan(cached)
+    }
+
+    fn resolve_game_base_by_scan(&self, cached: usize) -> Result<usize, MemoryError> {
         let mut resolved = None;
         self.process.scan_first_valid(
             &self.pattern.scaling_container_target_draw_size,
@@ -182,29 +209,43 @@ impl LazerMemory {
         Ok(self.process.read_i32(address)? as i64)
     }
     pub(super) fn string_at(&self, address: usize) -> Result<String, MemoryError> {
-        match self.process.read_managed_string_pointer(address)? {
+        let object = self.ptr(address)?;
+        if let Some(value) = self.string_prefetched(object) {
+            return Ok(value);
+        }
+        // The exact reader reproduces every error the prefetch declined to classify.
+        match self.process.read_managed_string(object)? {
             ReadStatus::Ready(s) => Ok(s),
             ReadStatus::NotReady => Ok(String::new()),
             _ => unreachable!(),
         }
+    }
+
+    /// Reads a managed string's length and leading UTF-16 units in one native read;
+    /// `None` defers failures and invalid strings to the exact reader.
+    pub(super) fn string_prefetched(&self, object: usize) -> Option<String> {
+        if object == 0 {
+            return Some(String::new());
+        }
+        let (address, len) = self.string_head_span(object)?;
+        let mut head = [0u8; STRING_HEAD];
+        self.process.read_exact(address, &mut head[..len]).ok()?;
+        self.string_from_head(object, &head[..len])
     }
     pub(super) fn not_ready<T>(&self) -> MemoryRead<T> {
         Ok(ReadStatus::NotReady)
     }
 
     pub(super) fn get_current_screen(&self) -> Result<usize, MemoryError> {
-        let base = self.game_base()?;
-        let game = &self.offsets.osu_game_osu_game;
-        let stack = self.ptr(add(
-            base,
-            game.screen_stack
-                .unwrap_or(game.screen_stack_k_backing_field),
-        )?)?;
+        let stack = self.root(GameRoot::ScreenStack)?;
         let list = self.ptr(add(
             stack,
             self.offsets.osu_framework_screens_screen_stack.stack,
         )?)?;
         let (size, items) = self.list_info(list)?;
+        if let Some(current) = self.last_slot_pointer_batched(items, size) {
+            return Ok(current);
+        }
         let mut current = 0;
         for i in 0..size {
             let slot = add(
@@ -215,6 +256,24 @@ impl LazerMemory {
             current = self.ptr(slot)?;
         }
         Ok(current)
+    }
+
+    /// Reads every pointer slot of a list in one native read, as the sequential loop does
+    /// one slot at a time, and returns the last (0 when empty).
+    fn last_slot_pointer_batched(&self, items: usize, size: usize) -> Option<usize> {
+        let mut bytes = [0u8; BATCHED_LIST_BYTES];
+        let len = size.checked_mul(8).filter(|len| *len <= bytes.len())?;
+        if self.process.pointer_size() != 8 {
+            return None;
+        }
+        if len > 0 {
+            self.process.read_exact(items, &mut bytes[..len]).ok()?;
+        }
+        let mut current = 0;
+        for slot in bytes[..len].chunks_exact(8) {
+            current = le_pointer(slot)?;
+        }
+        Some(current)
     }
 
     pub(super) fn list_info(&self, list: usize) -> Result<(usize, usize), MemoryError> {
@@ -246,15 +305,7 @@ impl LazerMemory {
             };
             (marker, value)
         };
-        let (size, items) = if marker > 10_000_000 {
-            (value as i32, marker_address)
-        } else {
-            (marker, add(value as usize, 0x10)?)
-        };
-        if !(0..=MAX_COLLECTION as i32).contains(&size) {
-            return Err(corrupt("managed collection", list, "invalid size"));
-        }
-        Ok((size as usize, items))
+        list_shape(list, marker, value)
     }
 
     pub(super) fn list_items(
@@ -278,6 +329,10 @@ impl LazerMemory {
             return Err(corrupt("managed collection", list, "invalid size"));
         }
         let mut out = Vec::with_capacity(size);
+        if !inline && self.slot_pointers_batched(items, size, stride, &mut out) {
+            return Ok(out);
+        }
+        out.clear();
         for i in 0..size {
             let slot = add(
                 items,
@@ -291,11 +346,43 @@ impl LazerMemory {
         Ok(out)
     }
 
+    /// Reads the pointer at the start of each `stride`-byte slot from one native read of the
+    /// slot span; `false` defers to per-slot reads.
+    fn slot_pointers_batched(
+        &self,
+        items: usize,
+        size: usize,
+        stride: usize,
+        out: &mut Vec<usize>,
+    ) -> bool {
+        if size == 0 {
+            return true;
+        }
+        if self.process.pointer_size() != 8 || stride < 8 {
+            return false;
+        }
+        let mut bytes = [0u8; BATCHED_LIST_BYTES];
+        let Some(len) = (size - 1)
+            .checked_mul(stride)
+            .and_then(|len| len.checked_add(8))
+            .filter(|len| *len <= bytes.len())
+        else {
+            return false;
+        };
+        if self.process.read_exact(items, &mut bytes[..len]).is_err() {
+            return false;
+        }
+        for index in 0..size {
+            match le_pointer(&bytes[index * stride..]) {
+                Some(pointer) => out.push(pointer),
+                None => return false,
+            }
+        }
+        true
+    }
+
     pub(super) fn current_beatmap(&self) -> Result<(usize, usize), MemoryError> {
-        let bindable = self.ptr(add(
-            self.game_base()?,
-            self.offsets.osu_game_osu_game_base.beatmap_k_backing_field,
-        )?)?;
+        let bindable = self.root(GameRoot::Beatmap)?;
         let working = self.ptr(add(bindable, 0x20)?)?;
         let o = &self
             .offsets
@@ -324,10 +411,7 @@ impl LazerMemory {
     }
 
     pub(super) fn beatmap_clock(&self) -> Result<usize, MemoryError> {
-        self.ptr(add(
-            self.game_base()?,
-            self.offsets.osu_game_osu_game_base.beatmap_clock,
-        )?)
+        self.root(GameRoot::BeatmapClock)
     }
 
     pub(super) fn current_time_for_player(&self, player: usize) -> Result<f64, MemoryError> {
@@ -374,7 +458,8 @@ impl LazerMemory {
         else {
             return Ok(None);
         };
-        let Ok(container) = self.ptr(add(player, container_offset)?) else {
+        add(player, container_offset)?;
+        let Ok(container) = self.screen_ptr(player, container_offset) else {
             return Ok(None);
         };
         if container == 0 {
@@ -432,12 +517,14 @@ impl LazerMemory {
             .osu_game_rulesets_ui_drawable_ruleset
             .is_paused
             .filter(|offset| *offset != 0)
-            && let Ok(drawable) = self.ptr(add(
-                player,
-                self.offsets
+            && let Ok(drawable) = {
+                let offset = self
+                    .offsets
                     .osu_game_screens_play_player
-                    .drawable_ruleset_k_backing_field,
-            )?)
+                    .drawable_ruleset_k_backing_field;
+                add(player, offset)?;
+                self.screen_ptr(player, offset)
+            }
             && drawable != 0
             && let Ok(bind) = self.ptr(add(drawable, is_paused_offset)?)
             && bind != 0
@@ -463,7 +550,8 @@ impl LazerMemory {
         else {
             return Ok(None);
         };
-        let Ok(container) = self.ptr(add(player, container_offset)?) else {
+        add(player, container_offset)?;
+        let Ok(container) = self.screen_ptr(player, container_offset) else {
             return Ok(None);
         };
         if container == 0 {
@@ -508,4 +596,22 @@ impl LazerMemory {
         }
         Ok(result)
     }
+}
+
+/// Decodes a hybrid list header: a marker above ten million means the size is stored at +8
+/// and the items inline at +0x10; otherwise the marker is the size and +8 the items array.
+pub(super) fn list_shape(
+    list: usize,
+    marker: i32,
+    value: u64,
+) -> Result<(usize, usize), MemoryError> {
+    let (size, items) = if marker > 10_000_000 {
+        (value as i32, add(list, 0x10)?)
+    } else {
+        (marker, add(value as usize, 0x10)?)
+    };
+    if !(0..=MAX_COLLECTION as i32).contains(&size) {
+        return Err(corrupt("managed collection", list, "invalid size"));
+    }
+    Ok((size as usize, items))
 }

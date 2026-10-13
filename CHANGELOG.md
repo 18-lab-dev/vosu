@@ -8,6 +8,12 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 - osu!stable mania: a final hit error that matches no key press or release is now also published as a press after the play ends. In 1.0.2 the one-second fallback only ran during play, so such a hit could stay missing from `pressHitErrors` on the results screen.
 
+### Performance
+
+- osu!lazer settings are read in a handful of batched native reads instead of two reads per configuration entry, which removes most of a regular lazer capture's cost.
+- Other osu!lazer state (gameplay score and leaderboard entry, user, multiplayer room and ranked play, menu checksum, global state, skin name) also reads independent fields together, and pointers the capture reuses (game services, the current screen's fields) are read once per capture.
+- Linux: nearby fields requested together share one native read range, and each native read checks the process generation once, after the read, instead of before and after it. A reused PID or exited process is still rejected.
+
 ### Packaging
 
 - Release builds now create a draft GitHub release. The release key signs the draft's files and then publishes it, because the repository's immutable releases reject new files after publication.

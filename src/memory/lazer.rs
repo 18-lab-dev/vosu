@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 use chrono::{SecondsFormat, Utc};
@@ -32,21 +32,31 @@ const MAX_SCORE: f64 = 1_000_000.0;
 const GAME_BASE_DELTAS: [usize; 7] = [0x24, 0x28, 0x2c, 0x20, 0x30, 0x1c, 0x34];
 const UNCACHED_POINTER: usize = usize::MAX;
 
+mod batch;
 mod configuration;
 mod data;
+mod global_batch;
 mod helpers;
 mod models;
 mod reader;
 mod resolver;
+mod room_batch;
+mod roots;
+mod score_batch;
 mod scores;
 mod screens;
 
+use batch::*;
+use global_batch::BeatmapHead;
 use helpers::*;
 use models::*;
 pub use models::{LazerMemory, LazerPattern};
+use roots::{GAME_ROOTS, GameRoot, SCREEN_SPAN_WORDS, screen_span};
 
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod tests_batch;
 #[cfg(test)]
 mod tests_behavior;
 #[cfg(test)]

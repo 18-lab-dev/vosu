@@ -395,6 +395,129 @@ fn pidfd_liveness_changes_only_when_retained_process_exits() {
     assert!(!memory.is_alive());
 }
 
+/// Stands in for a reused PID: it reports a complete read of foreign bytes after optionally
+/// ending the retained process, so only the generation check can reject the result.
+struct ForeignAnswer {
+    /// Child PID to kill and reap inside the next read; zero for none.
+    exit_during_read: std::sync::atomic::AtomicU32,
+    on_read: Box<dyn Fn() + Send + Sync>,
+    calls: AtomicUsize,
+}
+
+impl ForeignAnswer {
+    fn new(on_read: impl Fn() + Send + Sync + 'static) -> Arc<Self> {
+        Arc::new(Self {
+            exit_during_read: std::sync::atomic::AtomicU32::new(0),
+            on_read: Box::new(on_read),
+            calls: AtomicUsize::new(0),
+        })
+    }
+}
+
+impl ProcessVmReadv for ForeignAnswer {
+    fn readv(
+        &self,
+        _pid: libc::pid_t,
+        local: &mut [libc::iovec],
+        _remote: &[libc::iovec],
+    ) -> Result<usize, i32> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let child = self.exit_during_read.swap(0, Ordering::SeqCst) as libc::pid_t;
+        if child != 0 {
+            // SAFETY: kill and waitpid take plain integers; the test owns this unreaped child.
+            unsafe {
+                assert_eq!(libc::kill(child, libc::SIGKILL), 0);
+                assert_eq!(libc::waitpid(child, std::ptr::null_mut(), 0), child);
+            }
+        }
+        (self.on_read)();
+        let mut total = 0;
+        for iov in local.iter_mut() {
+            // SAFETY: the backend passes borrowed destination buffers for this call.
+            unsafe { std::slice::from_raw_parts_mut(iov.iov_base.cast::<u8>(), iov.iov_len) }
+                .fill(0xaa);
+            total += iov.iov_len;
+        }
+        Ok(total)
+    }
+
+    fn iov_max(&self) -> usize {
+        1024
+    }
+}
+
+#[cfg(feature = "linux-process-events")]
+#[test]
+fn pidfd_rejects_reads_answered_after_the_retained_process_exits() {
+    let spawn = || {
+        std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep")
+    };
+    let open = |child: &std::process::Child, syscall: Arc<ForeignAnswer>| {
+        let pidfd = open_pidfd(child.id()).map(Arc::new);
+        assert!(pidfd.is_some(), "pidfd_open must work on this Linux");
+        LinuxProcessMemory::with_parts_and_pidfd(child.id(), PathBuf::from("/proc"), syscall, pidfd)
+    };
+
+    // Exit and reap before the read: the freed PID may already name another process.
+    let mut exited = spawn();
+    let syscall = ForeignAnswer::new(|| {});
+    let memory = open(&exited, syscall.clone());
+    exited.kill().expect("kill sleep");
+    exited.wait().expect("reap sleep");
+    let mut single = [9u8; 8];
+    assert!(memory.read_exact(0x1000, &mut single).is_err());
+    assert_eq!(single, [0; 8]);
+    let (mut first, mut second) = ([9u8; 4], [9u8; 4]);
+    assert!(
+        memory
+            .read_many(&mut [
+                ReadRequest::new(0x1000, &mut first),
+                ReadRequest::new(0x2000, &mut second),
+            ])
+            .is_err()
+    );
+    assert_eq!((first, second), ([0; 4], [0; 4]));
+    assert!(syscall.calls.load(Ordering::SeqCst) >= 2);
+
+    // Exit and reap while the read is in flight.
+    let during = spawn();
+    let syscall = ForeignAnswer::new(|| {});
+    let memory = open(&during, syscall.clone());
+    syscall
+        .exit_during_read
+        .store(during.id(), Ordering::SeqCst);
+    let mut bytes = [9u8; 8];
+    assert!(memory.read_exact(0x1000, &mut bytes).is_err());
+    assert_eq!(bytes, [0; 8]);
+    assert_eq!(syscall.exit_during_read.load(Ordering::SeqCst), 0);
+    // The reaped child needs no further wait; dropping `Child` neither kills nor waits.
+    drop(during);
+}
+
+#[test]
+fn start_time_rejects_pid_reused_during_read() {
+    let (fixture, _, _) = memory_fixture(MockMode::Exact, 1024, "1000-2000 rw-p 0 00:00 0\n");
+    let stat = fixture.path().join("20/stat");
+    let reused = format!("20 (osu!) S {} 42\n", "0 ".repeat(18));
+    let syscall = ForeignAnswer::new(move || {
+        fs::write(&stat, &reused).expect("reused stat");
+    });
+    let memory = LinuxProcessMemory::with_parts(20, fixture.path().to_path_buf(), syscall.clone());
+    assert!(memory.pidfd.is_none());
+    assert!(memory.is_alive());
+    let mut bytes = [9u8; 8];
+    let error = memory
+        .read_exact(0x1000, &mut bytes)
+        .expect_err("bytes answered by a reused PID");
+    assert!(matches!(error, MemoryError::Read { .. }), "{error:?}");
+    assert_eq!(bytes, [0; 8]);
+    assert!(syscall.calls.load(Ordering::SeqCst) >= 1);
+    assert!(!memory.is_alive());
+}
+
 fn memory_fixture(
     mode: MockMode,
     max: usize,
@@ -405,6 +528,89 @@ fn memory_fixture(
     let syscall = MockSyscall::new(mode, max);
     let memory = LinuxProcessMemory::with_parts(20, fixture.path().to_path_buf(), syscall.clone());
     (fixture, memory, syscall)
+}
+
+/// Records each remote range and answers with address-derived bytes.
+struct RangeRecorder {
+    ranges: parking_lot::Mutex<Vec<(usize, usize)>>,
+}
+
+impl ProcessVmReadv for RangeRecorder {
+    fn readv(
+        &self,
+        _pid: libc::pid_t,
+        local: &mut [libc::iovec],
+        remote: &[libc::iovec],
+    ) -> Result<usize, i32> {
+        assert_eq!(local.len(), remote.len());
+        let mut total = 0;
+        for (local, remote) in local.iter_mut().zip(remote) {
+            assert_eq!(local.iov_len, remote.iov_len);
+            let start = remote.iov_base as usize;
+            self.ranges.lock().push((start, remote.iov_len));
+            // SAFETY: the backend passes borrowed destination buffers for this call.
+            let dst = unsafe {
+                std::slice::from_raw_parts_mut(local.iov_base.cast::<u8>(), local.iov_len)
+            };
+            for (index, byte) in dst.iter_mut().enumerate() {
+                *byte = (start + index) as u8;
+            }
+            total += remote.iov_len;
+        }
+        Ok(total)
+    }
+
+    fn iov_max(&self) -> usize {
+        1024
+    }
+}
+
+#[test]
+fn batched_reads_deliver_each_destination_and_touch_only_requested_pages() {
+    const PAGE: usize = 4096;
+    let fixture = fixture();
+    add_process(fixture.path(), 20, 2, b"osu!\0", "");
+    let syscall = Arc::new(RangeRecorder {
+        ranges: parking_lot::Mutex::new(Vec::new()),
+    });
+    let memory = LinuxProcessMemory::with_parts(20, fixture.path().to_path_buf(), syscall.clone());
+    // Same-page neighbors, neighbors across a page boundary, a page-crossing request, an
+    // overlapping duplicate, and ranges whose gaps span pages no request touches.
+    let requested = [
+        (0x1ff8, 8),
+        (0x2010, 4),
+        (0x1000, 4),
+        (0x9000, 2),
+        (0x2010, 4),
+        (0x2ffe, 4),
+        (0x3100, 16),
+        (0x1004, 1),
+        (0x7ff0, 0x20),
+    ];
+    let mut buffers: Vec<Vec<u8>> = requested.iter().map(|(_, len)| vec![0xee; *len]).collect();
+    let mut requests: Vec<_> = requested
+        .iter()
+        .zip(&mut buffers)
+        .map(|((address, _), dst)| ReadRequest::new(*address, dst))
+        .collect();
+    memory.read_many(&mut requests).expect("batched read");
+    for ((address, _), bytes) in requested.iter().zip(&buffers) {
+        let expected: Vec<u8> = (0..bytes.len())
+            .map(|index| (address + index) as u8)
+            .collect();
+        assert_eq!(bytes, &expected, "destination at {address:#x}");
+    }
+    let touched = |start: usize, len: usize| start / PAGE..=(start + len - 1) / PAGE;
+    for (start, len) in syscall.ranges.lock().iter().copied() {
+        for page in touched(start, len) {
+            assert!(
+                requested
+                    .iter()
+                    .any(|(address, len)| touched(*address, *len).contains(&page)),
+                "remote range {start:#x}+{len:#x} touches unrequested page {page:#x}"
+            );
+        }
+    }
 }
 
 #[test]

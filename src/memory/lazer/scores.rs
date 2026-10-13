@@ -20,12 +20,7 @@ impl LazerMemory {
                 "invalid count",
             ));
         }
-        let client = self.ptr(add(
-            self.game_base()?,
-            self.offsets
-                .osu_game_osu_game_base
-                .multiplayer_client_k_backing_field,
-        )?)?;
+        let client = self.root(GameRoot::MultiplayerClient)?;
         let room = if client == 0 {
             0
         } else {
@@ -204,18 +199,14 @@ impl LazerMemory {
         let statistics = self.statistics(score_info, false)?;
         let maximum_statistics = self.statistics(score_info, true)?;
         let realm_user = self.ptr(add(score_info, o.realm_user_k_backing_field)?)?;
-        let mut username = self.string_at(add(
-            realm_user,
-            self.offsets
-                .osu_game_models_realm_user
-                .username_k_backing_field,
-        )?)?;
-        username = match username.as_str() {
-            "Autoplay" => "osu!".into(),
-            "osu!salad" => "salad!".into(),
-            "osu!topus" => "osu!topus!".into(),
-            _ => username,
-        };
+        let username = display_username(
+            self.string_at(add(
+                realm_user,
+                self.offsets
+                    .osu_game_models_realm_user
+                    .username_k_backing_field,
+            )?)?,
+        );
         let ruleset = self.ptr(add(score_info, o.ruleset_k_backing_field)?)?;
         let mode = self.i32(add(
             ruleset,
@@ -305,25 +296,210 @@ impl LazerMemory {
     }
 
     pub(super) fn read_user_at(&self, user: usize) -> Result<User, MemoryError> {
+        if let Some((user, _)) = self.read_user_batched(user, None) {
+            return Ok(user);
+        }
+        self.read_user_sequential(user)
+    }
+
+    fn guest_user() -> User {
+        User {
+            name: "Guest".into(),
+            accuracy: 0.0,
+            ranked_score: 0.0,
+            id: 0,
+            level: 0.0,
+            play_count: 0,
+            play_mode: 0,
+            rank: 0,
+            country_code: 0,
+            performance_points: 0.0,
+            raw_bancho_status: 0,
+            background_colour: 0xffff_ffffu32 as i64,
+            raw_login_status: 0,
+            matchmaking: None,
+        }
+    }
+
+    /// [`Self::read_user_sequential`] with one native batch per pointer level, optionally
+    /// also decoding the managed string at `avatar` (an offset on the same API user object;
+    /// `None` for a null string). `None` defers to the sequential path.
+    pub(super) fn read_user_batched(
+        &self,
+        user: usize,
+        avatar: Option<usize>,
+    ) -> Option<(User, Option<String>)> {
+        if self.process.pointer_size() != 8 {
+            return None;
+        }
+        let o = &self.offsets.osu_game_online_api_requests_responses_apiuser;
+        let mut id = [0u8; 4];
+        let mut objects = [[0u8; 8]; 6];
+        let mut stage = Stage::<7>::new();
+        let [stats, mode, mm, name, country, avatar_object] = &mut objects;
+        stage.push(add(user, o.id_k_backing_field).ok()?, &mut id);
+        stage.push(add(user, o.statistics).ok()?, stats);
+        stage.push(
+            add(
+                user,
+                self.offsets
+                    .osu_game_online_api_requests_responses_apime
+                    .play_mode,
+            )
+            .ok()?,
+            mode,
+        );
+        stage.push(add(user, o.matchmaking_statistics).ok()?, mm);
+        stage.push(add(user, o.username_k_backing_field).ok()?, name);
+        stage.push(add(user, o.country_code_string).ok()?, country);
+        if let Some(offset) = avatar {
+            stage.push(add(user, offset).ok()?, avatar_object);
+        }
+        stage.read(&self.process)?;
+        let id = le_i32(&id) as i64;
+        let [stats, mode, mm_array, name, country, avatar_object] = pointers(objects)?;
+        if id == 0 {
+            let avatar = match avatar_object {
+                0 => None,
+                object => Some(self.string_prefetched(object)?),
+            };
+            return Some((Self::guest_user(), avatar));
+        }
+
+        let u = &self.offsets.osu_game_users_user_statistics;
+        let stat_fields = [
+            (u.accuracy, 8),
+            (u.ranked_score, 8),
+            (u.level, 4),
+            (u.play_count, 4),
+            (u.global_rank + 4, 4),
+        ];
+        let mut stat_bytes = [[0u8; 8]; 5];
+        let mut mm_header = [0u8; 0x10];
+        let mut heads = [[0u8; STRING_HEAD]; 4];
+        let mut head_spans = [(0usize, 0usize); 4];
+        for (span, object) in head_spans
+            .iter_mut()
+            .zip([mode, name, country, avatar_object])
+        {
+            if object != 0 {
+                *span = self.string_head_span(object)?;
+            }
+        }
+        {
+            let mut requests: [ReadRequest<'_>; 10] =
+                std::array::from_fn(|_| ReadRequest::new(0, &mut []));
+            let mut count = 0;
+            if stats != 0 {
+                for (bytes, (offset, len)) in stat_bytes.iter_mut().zip(stat_fields) {
+                    requests[count] = ReadRequest::new(add(stats, offset).ok()?, &mut bytes[..len]);
+                    count += 1;
+                }
+            }
+            for (head, (address, len)) in heads.iter_mut().zip(head_spans) {
+                if len != 0 {
+                    requests[count] = ReadRequest::new(address, &mut head[..len]);
+                    count += 1;
+                }
+            }
+            if mm_array != 0 {
+                // The count at +8 and first element at +0x10, read together.
+                requests[count] = ReadRequest::new(add(mm_array, 8).ok()?, &mut mm_header);
+                count += 1;
+            }
+            self.process.read_many(&mut requests[..count]).ok()?;
+        }
+        let (pp, accuracy, ranked, level, plays, rank) = if stats == 0 {
+            (0.0, 0.0, 0.0, 0.0, 0, 0)
+        } else {
+            (
+                self.process
+                    .read_dotnet_decimal(add(stats, u.pp + 8).ok()?)
+                    .ok()?,
+                le_f64(&stat_bytes[0]),
+                le_i64(&stat_bytes[1]) as f64,
+                le_i32(&stat_bytes[2]) as f64,
+                le_i32(&stat_bytes[3]) as i64,
+                le_i32(&stat_bytes[4]) as i64,
+            )
+        };
+        let mut strings = [mode, name, country, avatar_object]
+            .into_iter()
+            .zip(heads.iter().zip(head_spans))
+            .map(|(object, (head, (_, len)))| {
+                if object == 0 {
+                    Some(String::new())
+                } else {
+                    self.string_from_head(object, &head[..len])
+                }
+            });
+        let mode_name = strings.next()??;
+        let name = strings.next()??;
+        let country = strings.next()??;
+        let avatar = strings.next()??;
+        let avatar = (avatar_object != 0).then_some(avatar);
+        let mode = match mode_name.as_str() {
+            "taiko" => 1,
+            "fruits" => 2,
+            "mania" => 3,
+            _ => 0,
+        };
+        let matchmaking = if mm_array == 0 || le_i32(&mm_header) <= 0 {
+            None
+        } else {
+            let mm = le_pointer(&mm_header[8..])?;
+            let m = &self
+                .offsets
+                .osu_game_online_api_requests_responses_apiuser_matchmaking_statistics;
+            let mut fields = [[0u8; 4]; 6];
+            {
+                let [has_rank, rank, rating, plays, wins, provisional] = &mut fields;
+                self.process
+                    .read_many(&mut [
+                        ReadRequest::new(add(mm, m.rank_k_backing_field).ok()?, &mut has_rank[..1]),
+                        ReadRequest::new(add(mm, m.rank_k_backing_field + 4).ok()?, rank),
+                        ReadRequest::new(add(mm, m.rating_k_backing_field).ok()?, rating),
+                        ReadRequest::new(add(mm, m.plays_k_backing_field).ok()?, plays),
+                        ReadRequest::new(add(mm, m.first_placements_k_backing_field).ok()?, wins),
+                        ReadRequest::new(
+                            add(mm, m.is_rating_provisional_k_backing_field).ok()?,
+                            &mut provisional[..1],
+                        ),
+                    ])
+                    .ok()?;
+            }
+            Some(MatchmakingStats {
+                rating: le_i32(&fields[2]) as f64,
+                rank: (fields[0][0] != 0).then(|| le_i32(&fields[1]) as i64),
+                plays: le_i32(&fields[3]) as i64,
+                wins: le_i32(&fields[4]) as i64,
+                is_provisional: fields[5][0] != 0,
+            })
+        };
+        let user = User {
+            name,
+            accuracy,
+            ranked_score: ranked,
+            id,
+            level,
+            play_count: plays,
+            play_mode: mode,
+            rank,
+            country_code: country_code(&country),
+            performance_points: pp,
+            raw_bancho_status: 0,
+            background_colour: 0xffff_ffffu32 as i64,
+            raw_login_status: 0,
+            matchmaking,
+        };
+        Some((user, avatar))
+    }
+
+    fn read_user_sequential(&self, user: usize) -> Result<User, MemoryError> {
         let o = &self.offsets.osu_game_online_api_requests_responses_apiuser;
         let id = self.i32(add(user, o.id_k_backing_field)?)?;
         if id == 0 {
-            return Ok(User {
-                name: "Guest".into(),
-                accuracy: 0.0,
-                ranked_score: 0.0,
-                id: 0,
-                level: 0.0,
-                play_count: 0,
-                play_mode: 0,
-                rank: 0,
-                country_code: 0,
-                performance_points: 0.0,
-                raw_bancho_status: 0,
-                background_colour: 0xffff_ffffu32 as i64,
-                raw_login_status: 0,
-                matchmaking: None,
-            });
+            return Ok(Self::guest_user());
         }
         let stats = self.ptr(add(user, o.statistics)?)?;
         let (pp, accuracy, ranked, level, plays, rank) = if stats == 0 {

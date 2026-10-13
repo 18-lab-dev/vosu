@@ -21,87 +21,69 @@ impl LazerMemory {
                     .osu_game_screens_select_song_select
                     .game_k_backing_field,
             );
-        Ok(self.ptr(add(address, offset)?)? == self.game_base()?)
+        Ok(self.screen_ptr(address, offset)? == self.game_base()?)
     }
     pub(super) fn check_player(&self, address: usize) -> Result<bool, MemoryError> {
         if address == 0 {
             return Ok(false);
         }
         let submitting = &self.offsets.osu_game_screens_play_submitting_player;
-        let submitting_api = self.ptr(add(address, submitting.api_k_backing_field)?)?;
-        let game_base = self.game_base()?;
-        let base = &self.offsets.osu_game_osu_game_base;
+        let submitting_api = self.screen_ptr(address, submitting.api_k_backing_field)?;
         let api = self.api()?;
         if submitting_api == api
-            && self.ptr(add(address, submitting.spectator_client_k_backing_field)?)?
+            && self.screen_ptr(address, submitting.spectator_client_k_backing_field)?
                 == self.spectator_client()?
         {
             return Ok(true);
         }
         let replay = &self.offsets.osu_game_screens_play_player;
-        Ok(self.ptr(add(address, replay.api_k_backing_field)?)? == api
-            && self.ptr(add(address, replay.score_manager_k_backing_field)?)?
-                == self.ptr(add(game_base, base.score_manager_k_backing_field)?)?)
+        Ok(self.screen_ptr(address, replay.api_k_backing_field)? == api
+            && self.screen_ptr(address, replay.score_manager_k_backing_field)?
+                == self.root(GameRoot::ScoreManager)?)
     }
     pub(super) fn check_player_loader(&self, address: usize) -> Result<bool, MemoryError> {
         if address == 0 {
             return Ok(false);
         }
-        Ok(self.ptr(add(
+        Ok(self.screen_ptr(
             address,
             self.offsets
                 .osu_game_screens_osu_screen
                 .logo_k_backing_field,
-        )?)? == self.ptr(add(
-            self.game_base()?,
-            self.offsets.osu_game_osu_game.osu_logo,
-        )?)? && self.ptr(add(
-            address,
-            self.offsets
-                .osu_game_screens_play_player_loader
-                .leaderboard_manager_k_backing_field,
-        )?)? == self.ptr(add(
-            self.game_base()?,
-            self.offsets
-                .osu_game_osu_game_base
-                .leaderboard_manager_k_backing_field,
-        )?)?)
+        )? == self.root(GameRoot::OsuLogo)?
+            && self.screen_ptr(
+                address,
+                self.offsets
+                    .osu_game_screens_play_player_loader
+                    .leaderboard_manager_k_backing_field,
+            )? == self.root(GameRoot::LeaderboardManager)?)
     }
     pub(super) fn check_result(&self, address: usize) -> Result<bool, MemoryError> {
         if address == 0 {
             return Ok(false);
         }
-        Ok(self.ptr(add(
+        Ok(self.screen_ptr(
             address,
             self.offsets
                 .osu_game_screens_ranking_solo_results_screen
                 .api_k_backing_field,
-        )?)? == self.api()?
-            && self.ptr(add(
+        )? == self.api()?
+            && self.screen_ptr(
                 address,
                 self.offsets
                     .osu_game_screens_osu_screen
                     .logo_k_backing_field,
-            )?)? == self.ptr(add(
-                self.game_base()?,
-                self.offsets.osu_game_osu_game.osu_logo,
-            )?)?)
+            )? == self.root(GameRoot::OsuLogo)?)
     }
     pub(super) fn check_spectator(&self, address: usize) -> Result<bool, MemoryError> {
         if address == 0 {
             return Ok(false);
         }
         let o = &self.offsets.osu_game_screens_play_spectator_player;
-        Ok(self.ptr(add(address, 0x3f0)?)? == self.api()?
-            && self.ptr(add(address, o.spectator_client_k_backing_field)?)?
+        Ok(self.screen_ptr(address, 0x3f0)? == self.api()?
+            && self.screen_ptr(address, o.spectator_client_k_backing_field)?
                 == self.spectator_client()?
-            && self.ptr(add(address, o.score)?)?
-                != self.ptr(add(
-                    self.game_base()?,
-                    self.offsets
-                        .osu_game_osu_game_base
-                        .session_statics_k_backing_field,
-                )?)?)
+            && self.screen_ptr(address, o.score)? != self.root(GameRoot::SessionStatics)?)
     }
     pub(super) fn check_watching_replay(
         &self,
@@ -111,12 +93,12 @@ impl LazerMemory {
         if player == 0 || address == 0 {
             return Ok(false);
         }
-        let drawable = self.ptr(add(
+        let drawable = self.screen_ptr(
             player,
             self.offsets
                 .osu_game_screens_play_player
                 .drawable_ruleset_k_backing_field,
-        )?)?;
+        )?;
         Ok(drawable != 0
             && self.ptr(add(
                 drawable,
@@ -124,12 +106,12 @@ impl LazerMemory {
                     .osu_game_rulesets_ui_drawable_ruleset
                     .replay_score_k_backing_field,
             )?)? != 0
-            && self.ptr(add(
+            && self.screen_ptr(
                 address,
                 self.offsets
                     .osu_game_screens_play_spectator_player
                     .spectator_client_k_backing_field,
-            )?)? != self.spectator_client()?)
+            )? != self.spectator_client()?)
     }
     pub(super) fn check_editor(&self, address: usize) -> Result<bool, MemoryError> {
         if address == 0 {
@@ -137,24 +119,16 @@ impl LazerMemory {
         }
         let o = &self.offsets.osu_game_screens_edit_editor;
         Ok(
-            self.ptr(add(address, o.api_k_backing_field)?)? == self.api()?
-                && self.ptr(add(address, o.realm_k_backing_field)?)?
-                    == self.ptr(add(
-                        self.game_base()?,
-                        self.offsets.osu_game_osu_game_base.realm,
-                    )?)?,
+            self.screen_ptr(address, o.api_k_backing_field)? == self.api()?
+                && self.screen_ptr(address, o.realm_k_backing_field)?
+                    == self.root(GameRoot::Realm)?,
         )
     }
     pub(super) fn check_multi_select(&self, address: usize) -> Result<bool, MemoryError> {
         if address == 0 {
             return Ok(false);
         }
-        let client = self.ptr(add(
-            self.game_base()?,
-            self.offsets
-                .osu_game_osu_game_base
-                .multiplayer_client_k_backing_field,
-        )?)?;
+        let client = self.root(GameRoot::MultiplayerClient)?;
         if client == 0 {
             return Ok(false);
         }
@@ -176,78 +150,74 @@ impl LazerMemory {
         {
             return Ok(false);
         }
-        Ok(self.ptr(add(
+        Ok(self.screen_ptr(
             address,
             self.offsets
                 .osu_game_screens_online_play_online_play_screen
                 .api_k_backing_field,
-        )?)? == self.api()?
-            && self.ptr(add(
+        )? == self.api()?
+            && self.screen_ptr(
                 address,
                 self.offsets
                     .osu_game_screens_online_play_multiplayer_multiplayer
                     .client_k_backing_field,
-            )?)? == client)
+            )? == client)
     }
     pub(super) fn check_multi_spectator(&self, address: usize) -> Result<bool, MemoryError> {
         if address == 0 {
             return Ok(false);
         }
-        let logo = self.ptr(add(
+        let logo = self.screen_ptr(
             address,
             self.offsets
                 .osu_game_screens_osu_screen
                 .logo_k_backing_field,
-        )?)?;
-        let spectator = self.ptr(add(
+        )?;
+        let spectator = self.screen_ptr(
             address,
             self.offsets
                 .osu_game_screens_spectate_spectator_screen
                 .spectator_client_k_backing_field,
-        )?)?;
-        let multiplayer = self.ptr(add(
+        )?;
+        let multiplayer = self.screen_ptr(
             address,
             self.offsets
                 .osu_game_screens_online_play_multiplayer_spectate_multi_spectator_screen
                 .multiplayer_client_k_backing_field,
-        )?)?;
-        Ok(logo
-            == self.ptr(add(
-                self.game_base()?,
-                self.offsets.osu_game_osu_game.osu_logo,
-            )?)?
-            && spectator
-                == self.ptr(add(
-                    self.game_base()?,
-                    self.offsets
-                        .osu_game_osu_game_base
-                        .spectator_client_k_backing_field,
-                )?)?
-            && multiplayer
-                == self.ptr(add(
-                    self.game_base()?,
-                    self.offsets
-                        .osu_game_osu_game_base
-                        .multiplayer_client_k_backing_field,
-                )?)?)
+        )?;
+        Ok(logo == self.root(GameRoot::OsuLogo)?
+            && spectator == self.root(GameRoot::SpectatorClient)?
+            && multiplayer == self.root(GameRoot::MultiplayerClient)?)
     }
+    /// The current screen when it is a player. The classification is cached for the capture,
+    /// keyed by screen, like the game roots it compares against (see `roots.rs`).
     pub(super) fn player(&self) -> Result<usize, MemoryError> {
-        if self.current_screen != 0 && self.check_player(self.current_screen)? {
-            Ok(self.current_screen)
-        } else {
-            Ok(0)
+        let screen = self.current_screen;
+        if screen == 0 {
+            return Ok(0);
         }
+        if self.capture_player_screen.load(Ordering::Relaxed) == screen {
+            return Ok(self.capture_player.load(Ordering::Relaxed));
+        }
+        let player = if self.check_player(screen)? {
+            screen
+        } else {
+            0
+        };
+        self.capture_player.store(player, Ordering::Relaxed);
+        self.capture_player_screen.store(screen, Ordering::Relaxed);
+        Ok(player)
     }
     pub(super) fn current_score(&self, player: usize) -> Result<usize, MemoryError> {
         if player == 0 {
             Ok(0)
         } else {
-            self.ptr(add(
+            self.screen_ptr(
                 player,
                 self.offsets
                     .osu_game_screens_play_player
                     .score_k_backing_field,
-            )?)
+            )
         }
     }
     pub(super) fn score_info(&self, player: usize) -> Result<usize, MemoryError> {
@@ -269,23 +239,7 @@ impl LazerMemory {
                 .osu_game_scoring_score_info
                 .mods_json_k_backing_field,
         )?)?;
-        if text.is_empty() {
-            return Ok(default_mods());
-        }
-        let array = serde_json::from_str::<Vec<Mod>>(&text)
-            .map_err(|_| corrupt("mods json", score_info, "invalid JSON"))?;
-        if array
-            .iter()
-            .filter_map(|item| item.settings.as_ref())
-            .any(|settings| {
-                ["accuracy_judge_mode", "reflection", "direction", "style"]
-                    .iter()
-                    .any(|key| settings.get(*key).is_some_and(Value::is_null))
-            })
-        {
-            return Err(corrupt("mods json", score_info, "null string setting"));
-        }
-        Ok(calculate_mods(array))
+        mods_from_json(score_info, &text)
     }
 
     pub(super) fn statistics(

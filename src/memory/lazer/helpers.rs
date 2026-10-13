@@ -235,6 +235,35 @@ pub(super) fn set_stat(s: &mut Statistics, key: i32, v: i64) {
 pub(super) fn object_count(s: &Statistics) -> i64 {
     s.meh + s.ok + s.good + s.great + s.perfect + s.miss
 }
+/// Decodes a score's `ModsJson` text; empty text means no mods.
+pub(super) fn mods_from_json(score_info: usize, text: &str) -> Result<CalculateMods, MemoryError> {
+    if text.is_empty() {
+        return Ok(default_mods());
+    }
+    let array = serde_json::from_str::<Vec<Mod>>(text)
+        .map_err(|_| corrupt("mods json", score_info, "invalid JSON"))?;
+    if array
+        .iter()
+        .filter_map(|item| item.settings.as_ref())
+        .any(|settings| {
+            ["accuracy_judge_mode", "reflection", "direction", "style"]
+                .iter()
+                .any(|key| settings.get(*key).is_some_and(Value::is_null))
+        })
+    {
+        return Err(corrupt("mods json", score_info, "null string setting"));
+    }
+    Ok(calculate_mods(array))
+}
+/// Maps lazer's built-in bot names to the names the source publishes.
+pub(super) fn display_username(username: String) -> String {
+    match username.as_str() {
+        "Autoplay" => "osu!".into(),
+        "osu!salad" => "salad!".into(),
+        "osu!topus" => "osu!topus!".into(),
+        _ => username,
+    }
+}
 pub(super) fn required_non_null(
     value: usize,
     context: &'static str,

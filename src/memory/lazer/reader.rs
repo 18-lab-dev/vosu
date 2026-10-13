@@ -40,9 +40,10 @@ impl SynchronizedMemoryReader for LazerMemory {
         _read_mania_scroll_speed: bool,
     ) {
         self.validated_game_base.store(0, Ordering::Relaxed);
-        self.capture_api.store(UNCACHED_POINTER, Ordering::Relaxed);
-        self.capture_spectator_client
-            .store(UNCACHED_POINTER, Ordering::Relaxed);
+        self.reset_capture_roots(true);
+        self.captured_personal = None;
+        self.captured_beatmap = None;
+        self.captured_track_length = None;
     }
 
     fn synchronize_precise(&mut self, state: ReaderSynchronization, mode: i64) {
@@ -84,10 +85,7 @@ impl LazerMemory {
 
 impl MemoryReader for LazerMemory {
     fn audio_velocity_base(&mut self) -> MemoryRead<AudioVelocityBase> {
-        let logo = self.ptr(add(
-            self.game_base()?,
-            self.offsets.osu_game_osu_game.osu_logo,
-        )?)?;
+        let logo = self.root(GameRoot::OsuLogo)?;
         let visualizer = self.ptr(add(
             logo,
             self.offsets.osu_game_screens_menu_osu_logo.visualizer,
@@ -108,22 +106,28 @@ impl MemoryReader for LazerMemory {
         Ok(ReadStatus::Ready(out))
     }
     fn user(&mut self) -> MemoryRead<User> {
-        let api = self.api()?;
-        if api == 0 {
-            return self.not_ready();
-        }
-        let state = self.ptr(add(
-            api,
-            self.offsets.osu_game_online_api_apiaccess.local_user_state,
-        )?)?;
-        let bindable = self.ptr(add(
-            state,
-            self.offsets.osu_game_online_api_local_user_state.local_user,
-        )?)?;
-        let user = if bindable == 0 {
-            0
+        // The batched `global` may already have walked this chain in this capture.
+        let cached = self.capture_user.load(Ordering::Relaxed);
+        let user = if cached != UNCACHED_POINTER {
+            cached
         } else {
-            self.ptr(add(bindable, 0x20)?)?
+            let api = self.api()?;
+            if api == 0 {
+                return self.not_ready();
+            }
+            let state = self.ptr(add(
+                api,
+                self.offsets.osu_game_online_api_apiaccess.local_user_state,
+            )?)?;
+            let bindable = self.ptr(add(
+                state,
+                self.offsets.osu_game_online_api_local_user_state.local_user,
+            )?)?;
+            if bindable == 0 {
+                0
+            } else {
+                self.ptr(add(bindable, 0x20)?)?
+            }
         };
         if user == 0 {
             return self.not_ready();
@@ -134,12 +138,12 @@ impl MemoryReader for LazerMemory {
         if !self.check_result(self.current_screen)? {
             return self.not_ready();
         }
-        let bindable = self.ptr(add(
+        let bindable = self.screen_ptr(
             self.current_screen,
             self.offsets
                 .osu_game_screens_ranking_solo_results_screen
                 .selected_score,
-        )?)?;
+        )?;
         let score = self.ptr(add(bindable, 0x20)?)?;
         if score == 0 {
             return self.not_ready();
@@ -164,12 +168,16 @@ impl MemoryReader for LazerMemory {
             return self.not_ready();
         }
         let player = required_non_null(self.player()?, "gameplay player", self.current_screen)?;
-        let hp = self.ptr(add(
+        if let Some((gameplay, personal)) = self.gameplay_batched(player) {
+            self.captured_personal = Some((player, personal));
+            return Ok(ReadStatus::Ready(gameplay));
+        }
+        let hp = self.screen_ptr(
             player,
             self.offsets
                 .osu_game_screens_play_player
                 .health_processor_k_backing_field,
-        )?)?;
+        )?;
         let bind = self.ptr(add(
             hp,
             self.offsets
@@ -196,12 +204,12 @@ impl MemoryReader for LazerMemory {
             "key overlay player",
             self.current_screen,
         )?;
-        let overlay = self.ptr(add(
+        let overlay = self.screen_ptr(
             player,
             self.offsets
                 .osu_game_screens_play_player
                 .hudoverlay_k_backing_field,
-        )?)?;
+        )?;
         let controller = self.ptr(add(
             overlay,
             self.offsets
@@ -330,8 +338,21 @@ impl MemoryReader for LazerMemory {
     }
     fn global(&mut self) -> MemoryRead<Global> {
         self.precise_player = None;
-        self.selected_gamemode = self.read_gamemode()?;
-        self.current_screen = self.get_current_screen()?;
+        let mut beatmap_hash = None;
+        match self.gamemode_and_screen_batched() {
+            Some((gamemode, screen, head)) => {
+                self.selected_gamemode = gamemode;
+                self.current_screen = screen;
+                if let Some(head) = head {
+                    beatmap_hash = (head.info != 0).then_some(head.hash);
+                    self.captured_beatmap = Some((head, gamemode, None));
+                }
+            }
+            None => {
+                self.selected_gamemode = self.read_gamemode()?;
+                self.current_screen = self.get_current_screen()?;
+            }
+        }
         if self.current_screen == 0 {
             return self.not_ready();
         }
@@ -339,6 +360,43 @@ impl MemoryReader for LazerMemory {
             self.menu_mods = menu_mods;
         }
         let player = self.player()?;
+        if player != 0
+            && let Some(batched) = self.player_global_batched(player, beatmap_hash)
+        {
+            if let Some((_, _, hash)) = &mut self.captured_beatmap {
+                *hash = batched.beatmap_hash.clone();
+            }
+            self.captured_track_length = batched.track_length;
+            // The same transitions `global` and its nested `global_precise` apply.
+            if batched.replay && batched.spectator {
+                self.watching_replay = false;
+                self.spectating = true
+            } else if batched.replay {
+                self.watching_replay = true;
+                self.spectating = false
+            }
+            self.show_interface = batched.show_interface;
+            self.status = GameState::Play.value() as i64;
+            self.player_loading = false;
+            self.precise_player = None;
+            return Ok(ReadStatus::Ready(Global {
+                is_watching_replay: self.watching_replay,
+                is_replay_ui_hidden: !self.replay_settings_overlay,
+                is_multi_spectating: batched.is_multi_spectating,
+                show_interface: self.show_interface,
+                chat_status: batched.chat_status,
+                status: GameState::Play.value() as i64,
+                paused: batched.paused,
+                play_time: js_round_number(batched.time),
+                game_time: 0,
+                menu_mods: self.menu_mods.clone(),
+                skin_folder: String::new(),
+                memory_songs_folder: Path::new(&batched.base_path)
+                    .join("files")
+                    .to_string_lossy()
+                    .into_owned(),
+            }));
+        }
         let is_loader = if player == 0 {
             self.check_player_loader(self.current_screen)?
         } else {
@@ -359,12 +417,12 @@ impl MemoryReader for LazerMemory {
             self.spectating = false
         }
         if player != 0 {
-            let hud = self.ptr(add(
+            let hud = self.screen_ptr(
                 player,
                 self.offsets
                     .osu_game_screens_play_player
                     .hudoverlay_k_backing_field,
-            )?)?;
+            )?;
             let show = self.ptr(add(
                 hud,
                 self.offsets
@@ -375,19 +433,13 @@ impl MemoryReader for LazerMemory {
         }
         let is_multi_spectating =
             self.multi_room()? != 0 && self.check_multi_spectator(self.current_screen)?;
-        let chat = self.ptr(add(
-            self.game_base()?,
-            self.offsets.osu_game_osu_game.chat_overlay,
-        )?)?;
+        let chat = self.root(GameRoot::ChatOverlay)?;
         let state = self.ptr(add(
             chat,
             self.offsets.osu_game_overlays_chat_overlay.state,
         )?)?;
         let chat_status = self.i32(add(state, 0x40)?)?;
-        let storage = self.ptr(add(
-            self.game_base()?,
-            self.offsets.osu_game_osu_game_base.storage_k_backing_field,
-        )?)?;
+        let storage = self.root(GameRoot::Storage)?;
         let wrapped = self.ptr(add(
             storage,
             self.offsets
@@ -489,6 +541,22 @@ impl MemoryReader for LazerMemory {
         }))
     }
     fn menu(&mut self, previous: &str) -> MemoryRead<Menu> {
+        // `current_beatmap`, `read_gamemode`, the status, and the hash as the batched `global`
+        // read them earlier in this capture.
+        if let Some((head, gamemode, hash)) = self.captured_beatmap.take() {
+            if head.info == 0 {
+                return self.not_ready();
+            }
+            let hash = hash.or_else(|| self.string_prefetched(head.hash));
+            if hash.as_deref() == Some(previous) {
+                return Ok(ReadStatus::Ready(Menu::Checksum(MenuChecksum {
+                    gamemode,
+                    ranked_status: lazer_ranked_status(head.status),
+                })));
+            }
+        } else if let Some(checksum) = self.menu_checksum_batched(previous) {
+            return Ok(ReadStatus::Ready(Menu::Checksum(checksum)));
+        }
         let (info, set) = self.current_beatmap()?;
         if info == 0 {
             return self.not_ready();
@@ -566,19 +634,28 @@ impl MemoryReader for LazerMemory {
         })))
     }
     fn mp3_length(&mut self) -> MemoryRead<Mp3Length> {
-        let clock = self.beatmap_clock()?;
-        let dec = self.ptr(add(
-            clock,
-            self.offsets
-                .osu_game_beatmaps_framed_beatmap_clock
-                .decoupled_track,
-        )?)?;
-        let source = self.ptr(add(
-            dec,
-            self.offsets
-                .osu_framework_timing_decoupling_framed_clock
-                .source_k_backing_field,
-        )?)?;
+        if let Some(length) = self.captured_track_length.take() {
+            return Ok(ReadStatus::Ready(js_round_number(length)));
+        }
+        // The batched `global` may already have read this capture's track pointer.
+        let cached = self.capture_track.load(Ordering::Relaxed);
+        let source = if cached != UNCACHED_POINTER {
+            cached
+        } else {
+            let clock = self.beatmap_clock()?;
+            let dec = self.ptr(add(
+                clock,
+                self.offsets
+                    .osu_game_beatmaps_framed_beatmap_clock
+                    .decoupled_track,
+            )?)?;
+            self.ptr(add(
+                dec,
+                self.offsets
+                    .osu_framework_timing_decoupling_framed_clock
+                    .source_k_backing_field,
+            )?)?
+        };
         Ok(ReadStatus::Ready(js_round_number(self.process.read_f64(
             add(source, self.offsets.osu_framework_audio_track_track.length)?,
         )?)))
@@ -598,7 +675,14 @@ impl MemoryReader for LazerMemory {
     }
     fn leaderboard(&mut self, _mode: i64) -> MemoryRead<Leaderboard> {
         let p = required_non_null(self.player()?, "leaderboard player", self.current_screen)?;
-        let personal = self.leaderboard_score(self.score_info(p)?, -1)?;
+        let captured = self.captured_personal.take();
+        let personal = match captured {
+            Some((player, personal)) if player == p => personal,
+            _ => match self.personal_leaderboard_batched(p) {
+                Some(personal) => personal,
+                None => self.leaderboard_score(self.score_info(p)?, -1)?,
+            },
+        };
         Ok(ReadStatus::Ready((
             self.leaderboard_visible,
             Some(personal),
@@ -611,6 +695,9 @@ impl MemoryReader for LazerMemory {
         let room = self.multiplayer_room()?;
         if room == 0 {
             return self.not_ready();
+        }
+        if let Some(ranked) = self.ranked_play_batched(room) {
+            return Ok(ranked);
         }
         let state = self.ptr(add(
             room,
@@ -707,6 +794,9 @@ impl MemoryReader for LazerMemory {
         if room == 0 {
             return self.not_ready();
         }
+        if let Some(room) = self.room_batched(room) {
+            return Ok(ReadStatus::Ready(room));
+        }
         let room_offsets = &self.offsets.osu_game_online_multiplayer_multiplayer_room;
         let room_id = self.process.read_i64(add(room, room_offsets.room_id)?)?;
         let Some(users_offset) = room_offsets.users_k_backing_field else {
@@ -768,13 +858,9 @@ impl MemoryReader for LazerMemory {
             "client.version".into(),
             Value::String(self.offsets.osu_version.clone()),
         );
+        let batched_skin = self.batched_skin.take();
         let skin = || -> Result<String, MemoryError> {
-            let manager = self.ptr(add(
-                self.game_base()?,
-                self.offsets
-                    .osu_game_osu_game_base
-                    .skin_manager_k_backing_field,
-            )?)?;
+            let manager = self.root(GameRoot::SkinManager)?;
             let current = self.ptr(add(
                 manager,
                 self.offsets.osu_game_skinning_skin_manager.current_skin,
@@ -785,7 +871,11 @@ impl MemoryReader for LazerMemory {
                 self.offsets.osu_game_skinning_skin.name_k_backing_field,
             )?)
         };
-        if let Ok(name) = skin() {
+        let name = match batched_skin {
+            Some(name) => name,
+            None => skin().ok(),
+        };
+        if let Some(name) = name {
             values.insert("skin.name".into(), Value::String(name));
         }
         #[cfg(windows)]

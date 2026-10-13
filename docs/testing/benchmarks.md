@@ -29,9 +29,10 @@ to filter Criterion cases.
 
 Keep the default `linux-process-events` feature for the Linux memory reader;
 releases ship it. With `--no-default-features` the native reader has no pidfd
-and checks the process generation by reading `/proc/<pid>/stat` before and
-after every native read, so the timing measures that fallback instead
-(about ten times slower; see the [precise-reader fixture](#precise-reader-fixture)).
+and checks the process generation by reading `/proc/<pid>/stat` after every
+native read, so the timing measures that fallback instead (the
+[precise-reader fixture](#precise-reader-fixture) results predate this and read
+it before and after each read, about ten times slower).
 Windows releases use no default features, so the Windows commands below keep
 `--no-default-features`.
 
