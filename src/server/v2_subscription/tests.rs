@@ -79,6 +79,42 @@ fn traversal_distinguishes_object_keys_array_indices_null_and_absence() {
 }
 
 #[test]
+fn object_lookup_agrees_below_and_above_the_linear_search_size() {
+    for size in 0..=LINEAR_KEY_SEARCH_MAX + 4 {
+        let mut object = serde_json::Map::new();
+        for id in 0..size {
+            // Same-length keys and a shared prefix make every miss reach the byte comparison.
+            let key = if id == 0 {
+                String::new()
+            } else {
+                format!("k{id:02}")
+            };
+            object.insert(key, json!({"id": id}));
+        }
+        let document = Value::Object(object);
+        for id in 0..size {
+            let key = if id == 0 {
+                String::new()
+            } else {
+                format!("k{id:02}")
+            };
+            assert_eq!(
+                traverse(&document, &[key.clone(), "id".into()]),
+                Some(&json!(id)),
+                "size {size} key {key:?}"
+            );
+        }
+        for missing in ["k99", "k0", "K01", "k01 ", "id"] {
+            assert_eq!(
+                traverse(&document, &[missing.into()]),
+                None,
+                "size {size} {missing:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn request_shape_and_frozen_compact_frames_are_exact() {
     assert_eq!(
         parse_subscription_request(br#"["/a","/b"]"#),
@@ -140,6 +176,74 @@ fn request_shape_and_frozen_compact_frames_are_exact() {
 }
 
 #[test]
+fn arena_frames_match_api_encoding_across_chunk_turnover_and_oversized_frames() {
+    let values = [
+        json!(null),
+        json!(true),
+        json!(-0.0),
+        json!(0.1 + 0.2),
+        json!(1e21),
+        json!(1e-7),
+        json!(f64::NEG_INFINITY),
+        json!(u64::MAX),
+        json!(i64::MIN),
+        json!("\"q\\b\u{1}\u{7f}\u{2028}日本語🎵"),
+        json!({"z": [1.5, {"a": null}], "a": []}),
+    ];
+    let oversized = json!("x".repeat(3 * FRAME_ARENA_CAPACITY));
+    let pairs = |state: &[Option<Value>]| -> Vec<(u16, Value)> {
+        state
+            .iter()
+            .enumerate()
+            .filter_map(|(id, value)| value.clone().map(|value| (id as u16, value)))
+            .collect()
+    };
+
+    let mut arena = FrameArena::default();
+    let mut frames = Vec::new();
+    let mut previous: Vec<Option<Value>> = Vec::new();
+    for revision in 0..800_u64 {
+        let len = (revision / 2) as usize % values.len() + 1;
+        let current: Vec<Option<Value>> = (0..len)
+            .map(|id| {
+                if revision == 400 && id == 0 {
+                    Some(oversized.clone())
+                } else {
+                    (!(id as u64 + revision).is_multiple_of(3))
+                        .then(|| values[(id + revision as usize) % values.len()].clone())
+                }
+            })
+            .collect();
+        let (frame, expected) = if revision.is_multiple_of(2) || previous.len() != len {
+            (
+                arena.initial(revision, &current).unwrap(),
+                crate::api::v2::encode_dto(&(0_u8, revision, pairs(&current))).unwrap(),
+            )
+        } else {
+            let changed: Vec<(u16, Value)> = pairs(&current)
+                .into_iter()
+                .filter(|(id, value)| previous[*id as usize].as_ref() != Some(value))
+                .collect();
+            let removed: Vec<u16> = (0..len)
+                .filter(|&id| previous[id].is_some() && current[id].is_none())
+                .map(|id| id as u16)
+                .collect();
+            (
+                arena.update(revision, &previous, &current).unwrap(),
+                crate::api::v2::encode_dto(&(1_u8, revision, changed, removed)).unwrap(),
+            )
+        };
+        frames.push((frame, expected));
+        previous = current;
+    }
+    // Compare only after every frame is encoded: later writes and chunk turnover must not
+    // disturb frames already handed out.
+    for (frame, expected) in &frames {
+        assert_eq!(frame, expected);
+    }
+}
+
+#[test]
 fn pong_queue_backpressure_is_nonblocking_and_bounded() {
     let provider = FakeProvider::new(1, None);
     let hub = V2SubscriptionHub::new(provider, Duration::ZERO);
@@ -151,6 +255,35 @@ fn pong_queue_backpressure_is_nonblocking_and_bounded() {
         receiver.control.try_recv(),
         Ok(V2SubscriptionOutbound::Pong(Bytes::from_static(b"first")))
     );
+}
+
+#[tokio::test]
+async fn data_slot_wakes_a_waiting_receiver_and_drains_before_end_of_stream() {
+    let text = |bytes: &'static [u8]| V2SubscriptionOutbound::Text(Bytes::from_static(bytes));
+    let provider = FakeProvider::new(1, None);
+    let hub = V2SubscriptionHub::new(provider, Duration::ZERO);
+    let (connection, receiver) = hub.connect();
+    let data = Arc::clone(&connection.client.data);
+
+    let waiting = tokio::spawn(async move {
+        let mut receiver = receiver;
+        let frame = receiver.recv().await;
+        (frame, receiver)
+    });
+    tokio::task::yield_now().await;
+    data.try_send(text(b"first")).unwrap();
+    let (frame, mut receiver) = waiting.await.unwrap();
+    assert_eq!(frame, Some(text(b"first")));
+
+    data.try_send(text(b"second")).unwrap();
+    assert_eq!(data.try_send(text(b"third")), Err(text(b"third")));
+
+    // Dropping the connection drops the client and with it every sender; the frame still
+    // queued is delivered before the end of the stream.
+    drop(connection);
+    drop(hub);
+    assert_eq!(receiver.recv().await, Some(text(b"second")));
+    assert_eq!(receiver.recv().await, None);
 }
 
 struct FakeSnapshot {
@@ -265,6 +398,18 @@ fn text(frame: V2SubscriptionOutbound) -> Value {
         panic!("expected text frame")
     };
     serde_json::from_slice(&bytes).unwrap()
+}
+
+fn client_plan(client: &Client) -> Option<Arc<Plan>> {
+    lock(&client.subscription)
+        .as_ref()
+        .map(|subscription| Arc::clone(&subscription.plan))
+}
+
+fn client_baseline(client: &Client) -> Option<Arc<[Option<Value>]>> {
+    lock(&client.subscription)
+        .as_ref()
+        .and_then(|subscription| subscription.baseline.clone())
 }
 
 #[tokio::test]
@@ -510,9 +655,8 @@ fn close_after_pending_reservation_cannot_restore_delivery_state() {
     worker.join().unwrap();
     closer.join().unwrap();
 
-    assert!(lock(&client.plan).is_none());
-    assert!(lock(&client.baseline).is_none());
-    assert!(lock(&client.last_queue_at).is_none());
+    // Plan, baseline, and queue instant are released together with the subscription.
+    assert!(lock(&client.subscription).is_none());
     assert!(lock(&hub.0.document).is_none());
     let plans = lock(&hub.0.plans);
     assert!(plans.is_empty());
@@ -529,7 +673,7 @@ fn closed_connection_rejects_late_subscription_without_retaining_plan() {
         connection.subscribe(vec!["/a".into()]),
         Err(SubscriptionRequestError::AlreadySubscribed)
     );
-    assert!(lock(&connection.client.plan).is_none());
+    assert!(lock(&connection.client.subscription).is_none());
     let plans = lock(&hub.0.plans);
     assert!(plans.is_empty());
 }
@@ -543,8 +687,8 @@ fn identical_active_plans_are_weakly_interned_and_released() {
     first.subscribe(vec!["/a".into(), "/b".into()]).unwrap();
     second.subscribe(vec!["/a".into(), "/b".into()]).unwrap();
 
-    let first_plan = lock(&first.client.plan).clone().unwrap();
-    let second_plan = lock(&second.client.plan).clone().unwrap();
+    let first_plan = client_plan(&first.client).unwrap();
+    let second_plan = client_plan(&second.client).unwrap();
     assert!(Arc::ptr_eq(&first_plan, &second_plan));
     let released = Arc::downgrade(&first_plan);
     drop(first_plan);
@@ -574,7 +718,7 @@ fn failed_cas_and_full_queue_do_not_advance_baseline() {
 
     connection.client.state.store(PENDING, Ordering::Release);
     hub.dispatch(1);
-    assert!(lock(&connection.client.baseline).is_none());
+    assert!(client_baseline(&connection.client).is_none());
 
     connection.client.state.store(OPEN, Ordering::Release);
     connection
@@ -585,7 +729,7 @@ fn failed_cas_and_full_queue_do_not_advance_baseline() {
         )))
         .unwrap();
     hub.dispatch(1);
-    assert!(lock(&connection.client.baseline).is_none());
+    assert!(client_baseline(&connection.client).is_none());
     assert_eq!(
         receiver.try_recv(),
         Some(V2SubscriptionOutbound::Text(Bytes::from_static(
@@ -597,13 +741,13 @@ fn failed_cas_and_full_queue_do_not_advance_baseline() {
     closed_connection.subscribe(vec!["/a".into()]).unwrap();
     drop(closed_receiver);
     hub.dispatch(1);
-    assert!(lock(&closed_connection.client.baseline).is_none());
+    assert!(client_baseline(&closed_connection.client).is_none());
     assert_eq!(closed_connection.client.state.load(Ordering::Acquire), OPEN);
 
     hub.dispatch(1);
     assert_eq!(text(receiver.try_recv().unwrap()), json!([0, 1, [[0, 1]]]));
     assert_eq!(
-        lock(&connection.client.baseline).as_deref(),
+        client_baseline(&connection.client).as_deref(),
         Some([Some(json!(1))].as_slice())
     );
 }
@@ -667,7 +811,7 @@ fn outer_encoding_failure_only_removes_the_failed_plan_group() {
     let (_healthy, mut healthy_rx) = hub.connect();
     failed.subscribe(vec!["/a".into()]).unwrap();
     _healthy.subscribe(vec!["/b".into()]).unwrap();
-    *lock(&hub.0.failed_encoding_plan) = lock(&failed.client.plan).clone();
+    *lock(&hub.0.failed_encoding_plan) = client_plan(&failed.client);
 
     hub.dispatch(1);
     assert_eq!(

@@ -3,6 +3,7 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
     hash::{Hash, Hasher},
+    io,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError, Weak,
         atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
@@ -11,10 +12,11 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut, buf::Writer};
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use serde::Serialize;
 use serde_json::Value;
+use serde_json::ser::{Formatter, Serializer};
 use tokio::sync::{Notify, mpsc, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -62,19 +64,70 @@ pub enum V2SubscriptionOutbound {
     },
 }
 
+/// The one-frame data queue. Delivery reserves it (`PENDING`) until `write_completed`, so it
+/// never needs a second slot, and a mutex slot plus `Notify` costs about half of a bounded
+/// `mpsc` send and receive.
+struct DataSlot {
+    state: Mutex<DataState>,
+    ready: Notify,
+}
+
+#[derive(Default)]
+struct DataState {
+    frame: Option<V2SubscriptionOutbound>,
+    /// The receiver is gone; frames are refused like sends to a closed channel.
+    closed: bool,
+}
+
+impl DataSlot {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(DataState::default()),
+            ready: Notify::new(),
+        }
+    }
+
+    /// Queues `frame` unless the slot is occupied or the receiver is gone.
+    fn try_send(&self, frame: V2SubscriptionOutbound) -> Result<(), V2SubscriptionOutbound> {
+        let mut state = lock(&self.state);
+        if state.closed || state.frame.is_some() {
+            return Err(frame);
+        }
+        state.frame = Some(frame);
+        drop(state);
+        // Stores a permit when the receiver is not waiting yet, so the wakeup cannot be lost.
+        self.ready.notify_one();
+        Ok(())
+    }
+
+    fn try_recv(&self) -> Option<V2SubscriptionOutbound> {
+        lock(&self.state).frame.take()
+    }
+}
+
 pub struct V2SubscriptionReceiver {
-    data: mpsc::Receiver<V2SubscriptionOutbound>,
+    data: Arc<DataSlot>,
     control: mpsc::Receiver<V2SubscriptionOutbound>,
     terminal: mpsc::Receiver<V2SubscriptionOutbound>,
 }
 
 impl V2SubscriptionReceiver {
     pub async fn recv(&mut self) -> Option<V2SubscriptionOutbound> {
-        tokio::select! {
-            biased;
-            frame = self.terminal.recv() => frame.or_else(|| self.control.try_recv().ok()).or_else(|| self.data.try_recv().ok()),
-            frame = self.control.recv() => frame.or_else(|| self.terminal.try_recv().ok()).or_else(|| self.data.try_recv().ok()),
-            frame = self.data.recv() => frame.or_else(|| self.terminal.try_recv().ok()).or_else(|| self.control.try_recv().ok()),
+        loop {
+            // A queued frame needs no wait: `try_recv` keeps the terminal, control, data
+            // priority without charging the coop budget or registering wakers on the empty
+            // channels. Skipping the budget cannot starve the runtime: at most four frames
+            // can be queued.
+            if let Some(frame) = self.try_recv() {
+                return Some(frame);
+            }
+            // The client's senders close together, so a closed terminal channel also ends data.
+            tokio::select! {
+                biased;
+                frame = self.terminal.recv() => return frame.or_else(|| self.control.try_recv().ok()).or_else(|| self.data.try_recv()),
+                frame = self.control.recv() => return frame.or_else(|| self.terminal.try_recv().ok()).or_else(|| self.data.try_recv()),
+                () = self.data.ready.notified() => {}
+            }
         }
     }
 
@@ -83,7 +136,15 @@ impl V2SubscriptionReceiver {
             .try_recv()
             .ok()
             .or_else(|| self.control.try_recv().ok())
-            .or_else(|| self.data.try_recv().ok())
+            .or_else(|| self.data.try_recv())
+    }
+}
+
+impl Drop for V2SubscriptionReceiver {
+    fn drop(&mut self) {
+        let mut state = lock(&self.data.state);
+        state.closed = true;
+        state.frame = None;
     }
 }
 
@@ -179,10 +240,17 @@ fn is_prefix(prefix: &[String], value: &[String]) -> bool {
     prefix.len() < value.len() && value.starts_with(prefix)
 }
 
+/// Objects up to this size are searched by comparing keys, which is cheaper than hashing the
+/// token with the map's SipHash; keys are unique, so both find the same entry.
+const LINEAR_KEY_SEARCH_MAX: usize = 8;
+
 fn traverse<'a>(document: &'a Value, tokens: &[String]) -> Option<&'a Value> {
     let mut current = document;
     for token in tokens {
         current = match current {
+            Value::Object(object) if object.len() <= LINEAR_KEY_SEARCH_MAX => object
+                .iter()
+                .find_map(|(key, value)| (key == token).then_some(value))?,
             Value::Object(object) => object.get(token)?,
             Value::Array(array) => array.get(parse_array_index(token)?)?,
             _ => return None,
@@ -208,40 +276,155 @@ fn extract(plan: &Plan, document: Option<&Value>) -> Arc<[Option<Value>]> {
     plan.pointers
         .iter()
         .map(|tokens| document.and_then(|value| traverse(value, tokens)).cloned())
-        .collect::<Vec<_>>()
-        .into()
+        .collect()
 }
 
-#[derive(Serialize)]
-struct ValuePair<'a>(u16, &'a Value);
+/// Number spelling identical to `crate::api::JsFormatter`, which `crate::api` exports only to
+/// tests; frames are serialized straight into a [`FrameArena`] rather than through
+/// `encode_dto`'s per-frame growing `Vec`.
+struct FrameFormatter;
 
+impl Formatter for FrameFormatter {
+    fn write_f32<W>(&mut self, writer: &mut W, value: f32) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        crate::calculation::write_js_json_number(writer, f64::from(value))
+    }
+
+    fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
+    where
+        W: ?Sized + io::Write,
+    {
+        crate::calculation::write_js_json_number(writer, value)
+    }
+}
+
+/// Initial capacity of each frame arena chunk.
+const FRAME_ARENA_CAPACITY: usize = 4096;
+
+/// Writes a frame's JSON skeleton directly, with the same punctuation and integer spelling as
+/// serde_json's compact output for the equivalent tuple; only selected values go through serde.
+struct FrameWriter<'a>(Writer<&'a mut BytesMut>);
+
+impl FrameWriter<'_> {
+    fn raw(&mut self, bytes: &'static [u8]) {
+        self.0.get_mut().extend_from_slice(bytes);
+    }
+
+    fn integer(&mut self, value: u64) -> serde_json::Result<()> {
+        FrameFormatter
+            .write_u64(&mut self.0, value)
+            .map_err(serde_json::Error::io)
+    }
+
+    /// Writes `[[id,value],...]`.
+    fn pairs<'v>(
+        &mut self,
+        pairs: impl Iterator<Item = (usize, &'v Value)>,
+    ) -> serde_json::Result<()> {
+        self.raw(b"[");
+        for (index, (id, value)) in pairs.enumerate() {
+            self.raw(if index == 0 { b"[" } else { b",[" });
+            self.integer(id as u64)?;
+            self.raw(b",");
+            value.serialize(&mut Serializer::with_formatter(&mut self.0, FrameFormatter))?;
+            self.raw(b"]");
+        }
+        self.raw(b"]");
+        Ok(())
+    }
+}
+
+/// Frames encoded during one dispatch, split off shared chunks so each frame costs no
+/// allocation of its own and clones only bump a reference count. A queued frame pins at most
+/// its chunk: `FRAME_ARENA_CAPACITY`, or the larger buffer an oversized frame needed.
+#[derive(Default)]
+struct FrameArena(Option<BytesMut>);
+
+impl FrameArena {
+    fn encode(
+        &mut self,
+        write: impl FnOnce(&mut FrameWriter<'_>) -> serde_json::Result<()>,
+    ) -> Result<Bytes, ApiError> {
+        let buffer = self
+            .0
+            .get_or_insert_with(|| BytesMut::with_capacity(FRAME_ARENA_CAPACITY));
+        let written = write(&mut FrameWriter((&mut *buffer).writer()));
+        match written {
+            Ok(()) => Ok(buffer.split().freeze()),
+            Err(error) => {
+                buffer.clear();
+                Err(ApiError::serialization(error.to_string()))
+            }
+        }
+    }
+
+    /// `[0,revision,[[id,value],...]]` with every present value.
+    fn initial(&mut self, revision: u64, state: &[Option<Value>]) -> Result<Bytes, ApiError> {
+        self.encode(|frame| {
+            frame.raw(b"[0,");
+            frame.integer(revision)?;
+            frame.raw(b",");
+            frame.pairs(
+                state
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(id, value)| value.as_ref().map(|value| (id, value))),
+            )?;
+            frame.raw(b"]");
+            Ok(())
+        })
+    }
+
+    /// `[1,revision,[[id,value],...],[id,...]]`: values that changed to present, then ids that
+    /// became absent.
+    fn update(
+        &mut self,
+        revision: u64,
+        baseline: &[Option<Value>],
+        current: &[Option<Value>],
+    ) -> Result<Bytes, ApiError> {
+        self.encode(|frame| {
+            frame.raw(b"[1,");
+            frame.integer(revision)?;
+            frame.raw(b",");
+            frame.pairs(baseline.iter().zip(current).enumerate().filter_map(
+                |(id, (old, new))| match new {
+                    Some(value) if old.as_ref() != Some(value) => Some((id, value)),
+                    _ => None,
+                },
+            ))?;
+            frame.raw(b",[");
+            let removed = baseline
+                .iter()
+                .zip(current)
+                .enumerate()
+                .filter(|(_, (old, new))| old.is_some() && new.is_none());
+            for (index, (id, _)) in removed.enumerate() {
+                if index > 0 {
+                    frame.raw(b",");
+                }
+                frame.integer(id as u64)?;
+            }
+            frame.raw(b"]]");
+            Ok(())
+        })
+    }
+}
+
+#[cfg(test)]
 fn initial_frame(revision: u64, state: &[Option<Value>]) -> Result<Bytes, ApiError> {
-    let values: Vec<_> = state
-        .iter()
-        .enumerate()
-        .filter_map(|(id, value)| value.as_ref().map(|value| ValuePair(id as u16, value)))
-        .collect();
-    crate::api::v2::encode_dto(&(0_u8, revision, values))
+    FrameArena::default().initial(revision, state)
 }
 
+#[cfg(test)]
 fn update_frame(
     revision: u64,
     baseline: &[Option<Value>],
     current: &[Option<Value>],
 ) -> Result<Bytes, ApiError> {
-    let mut values = Vec::new();
-    let mut removed = Vec::new();
-    for (id, (old, new)) in baseline.iter().zip(current).enumerate() {
-        if old == new {
-            continue;
-        }
-        if let Some(value) = new {
-            values.push(ValuePair(id as u16, value));
-        } else {
-            removed.push(id as u16);
-        }
-    }
-    crate::api::v2::encode_dto(&(1_u8, revision, values, removed))
+    FrameArena::default().update(revision, baseline, current)
 }
 
 fn error_frame(code: u16, message: &'static str) -> Bytes {
@@ -249,21 +432,26 @@ fn error_frame(code: u16, message: &'static str) -> Bytes {
         .unwrap_or_else(|_| Bytes::from_static(b"[2,4,\"state serialization failed\"]"))
 }
 
+/// An established selection and its delivery state; released together on close.
+struct Subscription {
+    plan: Arc<Plan>,
+    baseline: Option<Arc<[Option<Value>]>>,
+    last_queue_at: Option<Instant>,
+}
+
 struct Client {
-    plan: Mutex<Option<Arc<Plan>>>,
-    baseline: Mutex<Option<Arc<[Option<Value>]>>>,
-    last_queue_at: Mutex<Option<Instant>>,
+    subscription: Mutex<Option<Subscription>>,
     checked_revision: AtomicU64,
     state: AtomicU8,
     cleaned: AtomicBool,
     control: mpsc::Sender<V2SubscriptionOutbound>,
-    data: mpsc::Sender<V2SubscriptionOutbound>,
+    data: Arc<DataSlot>,
     terminal: mpsc::Sender<V2SubscriptionOutbound>,
 }
 
 impl Client {
     fn terminate(&self, code: u16, message: &'static str, close_code: u16) {
-        let _plan = lock(&self.plan);
+        let _subscription = lock(&self.subscription);
         if self.cleaned.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -277,7 +465,7 @@ impl Client {
     }
 
     fn close(&self, code: u16) {
-        let _plan = lock(&self.plan);
+        let _subscription = lock(&self.subscription);
         if self.cleaned.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -298,6 +486,9 @@ struct HubInner {
     accepting: AtomicBool,
     next_id: AtomicU64,
     wake: Notify,
+    /// Set by the first `wake` since the run loop last armed `wake`; later wakes in the same
+    /// window are already covered by that notification.
+    wake_pending: AtomicBool,
     /// Whether any open client has an established selection.
     demand: watch::Sender<bool>,
     shutdown: CancellationToken,
@@ -332,6 +523,7 @@ impl V2SubscriptionHub {
             accepting: AtomicBool::new(true),
             next_id: AtomicU64::new(0),
             wake: Notify::new(),
+            wake_pending: AtomicBool::new(false),
             demand: watch::Sender::new(false),
             shutdown: CancellationToken::new(),
             #[cfg(test)]
@@ -347,17 +539,15 @@ impl V2SubscriptionHub {
 
     pub fn connect(&self) -> (V2SubscriptionConnection, V2SubscriptionReceiver) {
         let id = self.0.next_id.fetch_add(1, Ordering::Relaxed);
-        let (data, data_rx) = mpsc::channel(1);
+        let data = Arc::new(DataSlot::new());
         let (control, control_rx) = mpsc::channel(1);
         let (terminal, terminal_rx) = mpsc::channel(2);
         let client = Arc::new(Client {
-            plan: Mutex::new(None),
-            baseline: Mutex::new(None),
-            last_queue_at: Mutex::new(None),
+            subscription: Mutex::new(None),
             checked_revision: AtomicU64::new(UNCHECKED),
             state: AtomicU8::new(OPEN),
             cleaned: AtomicBool::new(false),
-            data,
+            data: Arc::clone(&data),
             control,
             terminal,
         });
@@ -379,7 +569,7 @@ impl V2SubscriptionHub {
                 client,
             },
             V2SubscriptionReceiver {
-                data: data_rx,
+                data,
                 control: control_rx,
                 terminal: terminal_rx,
             },
@@ -423,7 +613,9 @@ impl V2SubscriptionHub {
     }
 
     fn wake(&self) {
-        self.0.wake.notify_waiters();
+        if !self.0.wake_pending.swap(true, Ordering::AcqRel) {
+            self.0.wake.notify_waiters();
+        }
     }
 
     fn remove(&self, id: u64) {
@@ -443,9 +635,7 @@ impl V2SubscriptionHub {
     }
 
     fn release_client(client: &Client) {
-        *lock(&client.plan) = None;
-        *lock(&client.baseline) = None;
-        *lock(&client.last_queue_at) = None;
+        *lock(&client.subscription) = None;
     }
 
     fn prune_plans(&self) {
@@ -457,7 +647,10 @@ impl V2SubscriptionHub {
     fn clear_document_if_unused(&self) {
         let mut document = lock(&self.0.document);
         let clients = self.0.clients.load_full();
-        if clients.values().all(|client| lock(&client.plan).is_none()) {
+        if clients
+            .values()
+            .all(|client| lock(&client.subscription).is_none())
+        {
             *document = None;
         }
     }
@@ -498,8 +691,11 @@ impl V2SubscriptionHub {
             if self.0.shutdown.is_cancelled() {
                 break;
             }
-            // Register before dispatch so writes completed during it cannot be lost.
+            // Register before dispatch so writes completed during it cannot be lost. Clearing
+            // `wake_pending` after registering makes the next `wake` notify this waiter, and
+            // the acquire makes state changes published before earlier wakes visible to dispatch.
             let wake = self.0.wake.notified();
+            self.0.wake_pending.swap(false, Ordering::AcqRel);
             let source_revision = *publications.borrow_and_update();
             let deadline = self.dispatch(source_revision);
             self.refresh_demand();
@@ -518,7 +714,7 @@ impl V2SubscriptionHub {
 
     fn refresh_demand(&self) {
         let subscribed = self.0.clients.load().values().any(|client| {
-            client.state.load(Ordering::Acquire) != CLOSED && lock(&client.plan).is_some()
+            client.state.load(Ordering::Acquire) != CLOSED && lock(&client.subscription).is_some()
         });
         self.0.demand.send_if_modified(|current| {
             let changed = *current != subscribed;
@@ -537,24 +733,32 @@ impl V2SubscriptionHub {
             if client.state.load(Ordering::Acquire) != OPEN {
                 continue;
             }
-            if client.checked_revision.load(Ordering::Acquire) == source_revision
-                && (source_revision != UNCHECKED || lock(&client.baseline).is_some())
-            {
+            let checked = client.checked_revision.load(Ordering::Acquire) == source_revision;
+            if checked && source_revision != UNCHECKED {
                 continue;
             }
-            let plan = lock(&client.plan).clone();
-            let Some(plan) = plan else { continue };
-            if !debounce.is_zero()
-                && let Some(queued) = *lock(&client.last_queue_at)
-            {
-                let Some(deadline) = queued.checked_add(debounce) else {
+            let plan = {
+                let subscription = lock(&client.subscription);
+                let Some(subscription) = subscription.as_ref() else {
                     continue;
                 };
-                if deadline > now {
-                    next_deadline = Some(next_deadline.map_or(deadline, |old| old.min(deadline)));
+                if checked && subscription.baseline.is_some() {
                     continue;
                 }
-            }
+                if !debounce.is_zero()
+                    && let Some(queued) = subscription.last_queue_at
+                {
+                    let Some(deadline) = queued.checked_add(debounce) else {
+                        continue;
+                    };
+                    if deadline > now {
+                        next_deadline =
+                            Some(next_deadline.map_or(deadline, |old| old.min(deadline)));
+                        continue;
+                    }
+                }
+                Arc::clone(&subscription.plan)
+            };
             eligible.push((*id, client, plan));
         }
         if eligible.is_empty() {
@@ -578,7 +782,7 @@ impl V2SubscriptionHub {
                     drop(eligible);
                     *lock(&self.0.document) = None;
                     for (id, client) in clients.iter() {
-                        if lock(&client.plan).is_some() {
+                        if lock(&client.subscription).is_some() {
                             client.terminate(
                                 SERIALIZATION_FAILED,
                                 SERIALIZATION_FAILED_MESSAGE,
@@ -600,63 +804,61 @@ impl V2SubscriptionHub {
             FxHashMap::with_capacity_and_hasher(plan_capacity, FxBuildHasher);
         let mut encoded: FxHashMap<(usize, Option<usize>), Result<Option<Bytes>, ApiError>> =
             FxHashMap::with_capacity_and_hasher(plan_capacity, FxBuildHasher);
+        let mut arena = FrameArena::default();
         for (id, client, plan) in eligible {
-            let plan_id = Arc::as_ptr(&plan) as usize;
-            let current = match extracted.entry(plan_id) {
-                Entry::Occupied(entry) => Arc::clone(entry.get()),
-                Entry::Vacant(entry) => {
-                    #[cfg(test)]
-                    self.0.extractions.fetch_add(1, Ordering::Relaxed);
-                    Arc::clone(entry.insert(extract(&plan, document.as_ref().as_ref())))
-                }
+            // One lock covers reading the baseline, reserving the queue slot, and recording the
+            // delivery; closing takes it too, so a released subscription is never restored.
+            let mut guard = lock(&client.subscription);
+            let Some(subscription) = guard.as_mut() else {
+                continue;
             };
-            let baseline = lock(&client.baseline).clone();
-            let baseline_id = baseline
-                .as_ref()
-                .map(|value| Arc::as_ptr(value) as *const () as usize);
-            let bytes = encoded.entry((plan_id, baseline_id)).or_insert_with(|| {
-                if baseline.as_deref() == Some(current.as_ref()) {
-                    return Ok(None);
-                }
+            let baseline = subscription.baseline.as_deref();
+            // Each eligible entry and each subscribed client holds one reference, so a count of
+            // two means no other client in this dispatch can reuse this plan's extraction or
+            // frame; skip the memo maps. A stale count can only cost recomputation.
+            let (current, frame) = if Arc::strong_count(&plan) <= 2 {
                 #[cfg(test)]
-                {
-                    self.0.encodings.fetch_add(1, Ordering::Relaxed);
-                    if lock(&self.0.failed_encoding_plan)
-                        .as_ref()
-                        .is_some_and(|failed| Arc::ptr_eq(failed, &plan))
-                    {
-                        return Err(ApiError::serialization("fake outer frame failure"));
+                self.0.extractions.fetch_add(1, Ordering::Relaxed);
+                let current = extract(&plan, document.as_ref().as_ref());
+                let frame = self.encode_frame(&mut arena, &plan, revision, baseline, &current);
+                (current, frame.map_err(drop))
+            } else {
+                let plan_id = Arc::as_ptr(&plan) as usize;
+                let current = match extracted.entry(plan_id) {
+                    Entry::Occupied(entry) => Arc::clone(entry.get()),
+                    Entry::Vacant(entry) => {
+                        #[cfg(test)]
+                        self.0.extractions.fetch_add(1, Ordering::Relaxed);
+                        Arc::clone(entry.insert(extract(&plan, document.as_ref().as_ref())))
                     }
-                }
-                match baseline.as_deref() {
-                    Some(old) => update_frame(revision, old, &current),
-                    None => initial_frame(revision, &current),
-                }
-                .map(Some)
-            });
-            let bytes = match bytes {
-                Ok(Some(bytes)) => bytes.clone(),
+                };
+                let baseline_id = baseline.map(|value| value.as_ptr() as usize);
+                let frame = match encoded.entry((plan_id, baseline_id)).or_insert_with(|| {
+                    self.encode_frame(&mut arena, &plan, revision, baseline, &current)
+                }) {
+                    Ok(frame) => Ok(frame.clone()),
+                    Err(_) => Err(()),
+                };
+                (current, frame)
+            };
+            let bytes = match frame {
+                Ok(Some(bytes)) => bytes,
                 Ok(None) => {
                     client.checked_revision.store(revision, Ordering::Release);
                     continue;
                 }
-                Err(_) => {
+                Err(()) => {
+                    drop(guard);
                     client.terminate(SERIALIZATION_FAILED, SERIALIZATION_FAILED_MESSAGE, 1011);
                     self.remove(id);
                     continue;
                 }
             };
-            if client
-                .state
-                .compare_exchange(OPEN, PENDING, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
-            {
-                continue;
-            }
-            let plan = lock(&client.plan);
             if client.cleaned.load(Ordering::Acquire)
-                || client.state.load(Ordering::Acquire) == CLOSED
-                || plan.is_none()
+                || client
+                    .state
+                    .compare_exchange(OPEN, PENDING, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
             {
                 continue;
             }
@@ -667,8 +869,8 @@ impl V2SubscriptionHub {
             }
             match client.data.try_send(V2SubscriptionOutbound::Text(bytes)) {
                 Ok(()) => {
-                    *lock(&client.baseline) = Some(current);
-                    *lock(&client.last_queue_at) = Some(Instant::now());
+                    subscription.baseline = Some(current);
+                    subscription.last_queue_at = Some(Instant::now());
                     client.checked_revision.store(revision, Ordering::Release);
                 }
                 Err(_) => {
@@ -687,12 +889,41 @@ impl V2SubscriptionHub {
         self.cleanup_retained_state(&clients);
         next_deadline
     }
+
+    /// Encodes `current` against a client's `baseline`, or `None` when nothing changed.
+    fn encode_frame(
+        &self,
+        arena: &mut FrameArena,
+        #[cfg_attr(not(test), allow(unused_variables))] plan: &Arc<Plan>,
+        revision: u64,
+        baseline: Option<&[Option<Value>]>,
+        current: &[Option<Value>],
+    ) -> Result<Option<Bytes>, ApiError> {
+        if baseline == Some(current) {
+            return Ok(None);
+        }
+        #[cfg(test)]
+        {
+            self.0.encodings.fetch_add(1, Ordering::Relaxed);
+            if lock(&self.0.failed_encoding_plan)
+                .as_ref()
+                .is_some_and(|failed| Arc::ptr_eq(failed, plan))
+            {
+                return Err(ApiError::serialization("fake outer frame failure"));
+            }
+        }
+        match baseline {
+            Some(old) => arena.update(revision, old, current),
+            None => arena.initial(revision, current),
+        }
+        .map(Some)
+    }
 }
 
 impl V2SubscriptionConnection {
     pub fn subscribe(&self, pointers: Vec<String>) -> Result<(), SubscriptionRequestError> {
         let document = lock(&self.hub.0.document);
-        let mut slot = lock(&self.client.plan);
+        let mut slot = lock(&self.client.subscription);
         if self.client.cleaned.load(Ordering::Acquire)
             || self.client.state.load(Ordering::Acquire) == CLOSED
         {
@@ -705,7 +936,11 @@ impl V2SubscriptionConnection {
             return Err(SubscriptionRequestError::AlreadySubscribed);
         }
         let plan = self.hub.intern_plan(compile_pointers(pointers)?);
-        *slot = Some(plan);
+        *slot = Some(Subscription {
+            plan,
+            baseline: None,
+            last_queue_at: None,
+        });
         drop(slot);
         drop(document);
         self.hub.wake();
@@ -763,7 +998,7 @@ impl V2SubscriptionConnection {
 
     pub fn cleanup(&self) {
         let remove = {
-            let _plan = lock(&self.client.plan);
+            let _subscription = lock(&self.client.subscription);
             if self.client.cleaned.swap(true, Ordering::AcqRel) {
                 false
             } else {
