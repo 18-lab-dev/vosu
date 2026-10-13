@@ -879,3 +879,78 @@ fn resolved_missing_mania_metadata_is_immediately_press_only() {
     assert_eq!(bundle.gameplay.hit_errors.press, [7.0]);
     assert!(bundle.gameplay.hit_errors.release.is_empty());
 }
+
+#[test]
+fn unmatched_final_stable_error_is_published_after_the_play_ends() {
+    let (checksum, parsed) = native_mania_map("final");
+    let mut bundle = StateBundle::new(ClientType::Stable, 46, Arc::new(EchoCalculation));
+    bundle.global.status = GameState::Play.value() as i64;
+    bundle.menu.checksum = Some(checksum.clone());
+    bundle.beatmap.checksum = Some(checksum.clone());
+    bundle.beatmap.source_key = Some(checksum);
+    bundle.beatmap.parsed = Some(parsed);
+    let context = || {
+        PreciseCaptureContext::new(
+            ClientType::Stable,
+            46,
+            0,
+            3,
+            default_calculated_mods(),
+            0,
+            0,
+        )
+    };
+    let global = |status: GameState, time| {
+        Ok(ReadStatus::Ready(GlobalPrecise {
+            status: status.value() as i64,
+            time,
+        }))
+    };
+    // -10 is the hold's press at 190; 77 matches no key transition.
+    let play = RawPreciseSnapshotBuilder::new(context(), 1, global(GameState::Play, 250.0))
+        .hit_errors(Ok(ReadStatus::Ready(HitErrors {
+            index: 2,
+            errors: HitErrorArray {
+                all: vec![-10.0, 77.0],
+                press: vec![-10.0, 77.0],
+                release: Vec::new(),
+            },
+            release_corrections: Vec::new(),
+            stable_replay_frames: Some(StableReplayFrameBatch {
+                start_index: 0,
+                index: 1,
+                frames: Arc::new(vec![StableReplayFrame {
+                    time: 190,
+                    keys: 2,
+                    y: 0.0,
+                }]),
+            }),
+        })))
+        .publish();
+    let start = Instant::now();
+    bundle.apply_precise_inner_at(&play, start);
+    assert_eq!(bundle.gameplay.hit_errors.press, [-10.0]);
+
+    // Results: no further gameplay capture reaches the classifier, and a hit list read
+    // outside Play must not be admitted.
+    let results = |sequence| {
+        RawPreciseSnapshotBuilder::new(context(), sequence, global(GameState::ResultScreen, 250.0))
+            .hit_errors(Ok(ReadStatus::Ready(HitErrors {
+                index: 3,
+                errors: HitErrorArray {
+                    all: vec![5.0],
+                    press: vec![5.0],
+                    release: Vec::new(),
+                },
+                release_corrections: Vec::new(),
+                stable_replay_frames: None,
+            })))
+            .publish()
+    };
+    bundle.apply_precise_inner_at(&results(2), start + Duration::from_millis(999));
+    assert_eq!(bundle.gameplay.hit_errors.press, [-10.0]);
+    bundle.apply_precise_inner_at(&results(3), start + Duration::from_secs(1));
+    assert_eq!(bundle.gameplay.hit_errors.all, [-10.0, 77.0]);
+    assert_eq!(bundle.gameplay.hit_errors.press, [-10.0, 77.0]);
+    assert!(bundle.gameplay.hit_errors.release.is_empty());
+}

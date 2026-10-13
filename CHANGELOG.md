@@ -4,6 +4,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased
 
+### Gameplay
+
+- osu!stable mania: a final hit error that matches no key press or release is now also published as a press after the play ends. In 1.0.2 the one-second fallback only ran during play, so such a hit could stay missing from `pressHitErrors` on the results screen.
+
 ### Packaging
 
 - Release builds now create a draft GitHub release. The release key signs the draft's files and then publishes it, because the repository's immutable releases reject new files after publication.

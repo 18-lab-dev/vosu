@@ -340,6 +340,37 @@ impl StableManiaHitErrorState {
         (press, release)
     }
 
+    /// Publishes pending errors whose wait has expired when no fresh gameplay capture reaches
+    /// `partition` (results screen, unreadable hit-error list), so the bound holds after the
+    /// play ends. It never admits new errors: those still require a fresh Play capture.
+    pub(super) fn flush_expired(&mut self, now: Instant) -> Vec<f64> {
+        if let StableManiaMetadataState::Pending { started_at, .. } = &self.metadata
+            && now.saturating_duration_since(*started_at) >= STABLE_MANIA_METADATA_MAX_WAIT
+        {
+            self.disable();
+        }
+        match &self.metadata {
+            StableManiaMetadataState::Unavailable { .. } => self
+                .pending
+                .drain(..)
+                .map(|pending| pending.value)
+                .collect(),
+            StableManiaMetadataState::Ready { .. } => {
+                let mut press = Vec::new();
+                while let Some(&pending) = self.pending.front()
+                    && self.evidence_expired(&pending, now)
+                {
+                    self.pending.pop_front();
+                    press.push(pending.value);
+                }
+                press
+            }
+            StableManiaMetadataState::Uninitialized | StableManiaMetadataState::Pending { .. } => {
+                Vec::new()
+            }
+        }
+    }
+
     fn evidence_expired(&self, pending: &PendingStableError, now: Instant) -> bool {
         now.saturating_duration_since(pending.enqueued_at) >= STABLE_MANIA_MATCH_MAX_WAIT
             || pending

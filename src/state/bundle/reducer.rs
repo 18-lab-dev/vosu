@@ -661,11 +661,20 @@ impl StateBundle {
     }
 
     pub(super) fn apply_precise_inner(&mut self, snapshot: &RawPreciseSnapshot) -> ReadContext {
+        self.apply_precise_inner_at(snapshot, Instant::now())
+    }
+
+    pub(super) fn apply_precise_inner_at(
+        &mut self,
+        snapshot: &RawPreciseSnapshot,
+        now: Instant,
+    ) -> ReadContext {
         if let Ok(ReadStatus::Ready(global)) = snapshot.global() {
             self.global.status = global.status;
             self.global.play_time = global.time;
             self.latest_precise_global_sequence = snapshot.produced_sequence();
         }
+        let mut partitioned = false;
         if self.global.status == GameState::Play.value() as i64 {
             if self.global.play_time >= 150.0
                 && let Some(Ok(ReadStatus::Ready(keys))) = snapshot.key_overlay()
@@ -788,13 +797,14 @@ impl StateBundle {
                                 target_checksum,
                                 self.calculation_failures,
                                 metadata,
-                                Instant::now(),
+                                now,
                             )
                         })
                     } else {
                         None
                     };
                 if let Some((press, release)) = stable_partition {
+                    partitioned = true;
                     self.gameplay.hit_errors.press.extend(press);
                     self.gameplay.hit_errors.release.extend(release);
                 } else {
@@ -811,6 +821,10 @@ impl StateBundle {
             }
         } else {
             self.gameplay.reset_keys();
+        }
+        if !partitioned {
+            let expired = self.stable_mania_hit_errors.flush_expired(now);
+            self.gameplay.hit_errors.press.extend(expired);
         }
         let (mode, mods) = self.current_mode_mods(self.global.status);
         self.accepted_precise_sequence = snapshot.produced_sequence();
