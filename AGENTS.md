@@ -68,7 +68,7 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 - Process discovery or memory reading: affected unit tests and, on each affected native OS, `cargo test --locked --test process_memory -- --nocapture`.
 - Updater/release behavior: `cargo test --locked --test updater_compat`, native `cargo test --locked --test updater_native -- --nocapture`, and `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture` when packaging/startup changes.
 - Calculator/state semantics: affected `vosu-pp` tests and `cargo test --locked --test performance_invariants`, plus `state_api_compat`/`server_compat` when observable schemas or state timing can change.
-- Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](docs/testing/benchmarks.md).
+- Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](docs/testing/benchmarks.md). The guide holds only each benchmark's latest result: replace the old section rather than appending a dated one; Git history keeps earlier results.
 - Before merging a Rust change, run the applicable native smoke path and the CI checks above; platform-specific code requires evidence from that platform.
 
 ## Local CI and push gate

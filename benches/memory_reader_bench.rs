@@ -1,7 +1,10 @@
 //! Deterministic stable/lazer decoder microbenchmark.
 //!
-//! Run with `./tools/autoresearch/memory-reader-bench.sh`. The CN_PROC/eBPF
-//! process-event experiment lives in
+//! Run with `./tools/autoresearch/memory-reader-bench.sh`. On Linux, keep the
+//! default `linux-process-events` feature that releases ship: without it the
+//! native reader has no pidfd and checks the process generation through
+//! `/proc/<pid>/stat` around every read, so the timing measures that fallback.
+//! The CN_PROC/eBPF process-event experiment lives in
 //! `tools/autoresearch/process-events-bench.sh`.
 //!
 //! The primary timing is a successful native self-process lazer precise capture

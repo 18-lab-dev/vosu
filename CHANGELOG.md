@@ -101,7 +101,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add a [code signing policy](CODE_SIGNING_POLICY.md) for SignPath Foundation signing of the Windows executable, link it from the README and release notes, and add uninstall instructions.
 - Document the community-overlay licensing position in the third-party notices, and record the decision to keep counters on the dashboard origin ([ADR 0013](docs/decisions/0013-counters-share-dashboard-origin.md)).
 - Add a [security and installation disclosure](docs/security.md) (memory access, Linux capabilities and process-event backends, installed files, system changes, network exposure) and a [security policy](SECURITY.md) for private vulnerability reports.
-- Record the final released-tosu comparison on native Windows and the Linux VM, keeping whole-daemon resources separate from synthetic reader latency and preserving the unfavorable Linux VM precise-reader result. See the [measured protocol and limitations](docs/testing/benchmarks.md#released-tosu-comparison-2026-10-09); those measurements describe the recorded 0.3.0 generation, not the final 1.0.0 dashboard build.
+- Record the final released-tosu comparison on native Windows and the Linux VM, keeping whole-daemon resources separate from synthetic reader latency and preserving the unfavorable Linux VM precise-reader result. See the [measured protocol and limitations](https://github.com/shiruviaa/vosu/blob/57b322bae580198d0c0fae7360615348b85a47e8/docs/testing/benchmarks.md#released-tosu-comparison-2026-10-09); those measurements describe the recorded 0.3.0 generation, not the final 1.0.0 dashboard build.
 
 
 ### Gameplay

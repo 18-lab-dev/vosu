@@ -156,10 +156,13 @@ temporary-version and deferred-version builds above.
   `VOSU_RELEASE_SMOKE_BINARY=<packaged-executable> cargo test --locked
   -p vosu-release-smoke --test release_smoke -- --ignored --nocapture`
   passed its actual packaged-production policy and shutdown scenario.
-- The [released-tosu comparison](benchmarks.md#released-tosu-comparison-2026-10-09)
-  records native Windows and Linux VM resource/API runs and reader fixtures
-  separately. It excludes host-Linux attempts, preserves the unfavorable
-  guest reader timing, and does not certify live schema parity.
+- The released-tosu comparison for this generation was recorded in the
+  benchmark guide at that commit; it remains in the guide's Git history. It
+  kept native Windows and Linux VM resource/API runs and reader fixtures
+  separate and excluded host-Linux attempts. Its Linux VM reader timing came
+  from a `--no-default-features` build without the pidfd generation check; the
+  current [precise-reader fixture](benchmarks.md#precise-reader-fixture)
+  measures the released features. It does not certify live schema parity.
 
 Evidence is retained under `~/.cache/vosu-final-20261008-4r3azwf2/`.
 At this benchmark generation, the version remained **0.3.0**; no dashboard
@@ -244,7 +247,8 @@ Published asset SHA-256 digests, as reported by GitHub:
 | `vosu-bin-aur-v1.0.0.tar.gz` | `0ab5b0d0781bfdf415a1830d5f55cff3dd6bb8b9b0bfd0a8ffc2fb16aadaaa47` |
 
 Live parity was not run ([ADR 0011](../decisions/0011-live-parity-optional.md)).
-Benchmarks for this commit are in the [1.0.0 release results](benchmarks.md#100-release-results--2026-10-10).
+Benchmarks for this commit were recorded in the [benchmark guide](benchmarks.md)
+at the release commit; later runs replace them there, so see its Git history.
 
 
 ## Upstream 2359305 update evidence
