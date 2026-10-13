@@ -305,3 +305,264 @@ fn projection_nonfinite_state_cannot_collide_with_source_values() {
     );
 }
 
+/// Filter lists probing every property of `value` down to `depth`: each key
+/// alone, array/string pseudo-properties and non-canonical indices beneath it,
+/// `Field`/`Nested` precedence in both orders, and empty nested selections.
+fn probing_filter_lists(value: &ProjectionValue, depth: usize) -> Vec<Vec<Filter>> {
+    let mut keys: Vec<String> = match value {
+        ProjectionValue::Object(entries) => entries.iter().map(|(key, _)| key.clone()).collect(),
+        ProjectionValue::Array(values) => {
+            let mut keys: Vec<_> = (0..values.len().min(3)).map(|i| i.to_string()).collect();
+            if values.len() > 3 {
+                keys.push((values.len() - 1).to_string());
+            }
+            keys
+        }
+        _ => vec!["0".into(), "1".into()],
+    };
+    keys.extend(["length", "01", "4294967295", "missing"].map(String::from));
+    let probe = || {
+        ["length", "0", "1", "01", "missing"]
+            .map(|key| Filter::Field(key.into()))
+            .to_vec()
+    };
+    let mut lists = Vec::new();
+    for key in &keys {
+        let field = || Filter::Field(key.clone());
+        let nested = |keys| Filter::Nested {
+            field: key.clone(),
+            keys,
+        };
+        lists.push(vec![field()]);
+        lists.push(vec![nested(probe())]);
+        lists.push(vec![nested(Vec::new())]);
+        lists.push(vec![nested(probe()), field()]);
+        lists.push(vec![field(), nested(probe())]);
+        if depth > 0
+            && let Some(child) = javascript_property(value, key)
+        {
+            for list in probing_filter_lists(&child, depth - 1) {
+                lists.push(vec![nested(list)]);
+            }
+        }
+    }
+    lists.push(keys.iter().map(|key| Filter::Field(key.clone())).collect());
+    lists
+}
+
+/// Projects `value` both from the full reference serialization and from the
+/// selected direct one and requires identical trees, which also tells
+/// nonfinite values from `null`.
+fn assert_selection_preserves_projection<T: Serialize>(value: &T, depth: usize) -> usize {
+    let full = serialize_projection_value(value).unwrap();
+    let lists = probing_filter_lists(&full, depth);
+    for filters in &lists {
+        let selected = serialize_selected(value, &Selected::from_filters(filters)).unwrap();
+        assert_eq!(
+            canonicalize_javascript_keys(project_filters(&selected, filters)),
+            canonicalize_javascript_keys(project_filters(&full, filters)),
+            "{}",
+            serde_json::to_string(filters).unwrap()
+        );
+    }
+    lists.len()
+}
+
+#[test]
+fn selected_serialization_projects_like_the_full_document_for_every_serde_shape() {
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize)]
+    struct Newtype(Option<f64>);
+    #[derive(Serialize)]
+    struct TupleStruct(f64, String);
+    #[derive(Serialize)]
+    enum Variant {
+        Unit,
+        Newtype(f64),
+        Tuple(f64, String),
+        Struct { value: f64, list: Vec<f64> },
+    }
+    #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+    enum VariantKey {
+        First,
+        Second,
+    }
+    #[derive(Serialize, PartialEq, Eq, PartialOrd, Ord)]
+    struct NewtypeKey(String);
+    struct RawBytes(Vec<u8>);
+    impl Serialize for RawBytes {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_bytes(&self.0)
+        }
+    }
+    /// A struct repeating a field name: JSON keeps the first position and
+    /// the last value.
+    struct Repeated(f64, f64);
+    impl Serialize for Repeated {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeStruct as _;
+            let mut object = serializer.serialize_struct("Repeated", 3)?;
+            object.serialize_field("dup", &self.0)?;
+            object.serialize_field("other", &1)?;
+            object.serialize_field("dup", &self.1)?;
+            object.end()
+        }
+    }
+    #[derive(Serialize)]
+    struct Adversarial {
+        #[serde(rename = "0")]
+        zero: Vec<Vec<f64>>,
+        #[serde(rename = "10")]
+        ten: Newtype,
+        length: f32,
+        text: String,
+        tuple: (f64, &'static str),
+        tuple_struct: TupleStruct,
+        unit: (),
+        none: Option<Vec<f64>>,
+        some: Option<Vec<f64>>,
+        strings: indexmap::IndexMap<String, f64>,
+        integers: BTreeMap<u32, f64>,
+        nested_integers: BTreeMap<i64, BTreeMap<String, Vec<f64>>>,
+        chars: BTreeMap<char, f64>,
+        bools: BTreeMap<bool, f64>,
+        variant_keys: BTreeMap<VariantKey, BTreeMap<String, f64>>,
+        newtype_keys: BTreeMap<NewtypeKey, f64>,
+        variants: Vec<Variant>,
+        bytes: RawBytes,
+        repeated: Vec<Repeated>,
+        raw: Box<serde_json::value::RawValue>,
+        json: serde_json::Value,
+    }
+
+    let value = Adversarial {
+        zero: vec![vec![1.0, f64::NAN], Vec::new(), vec![f64::INFINITY]],
+        ten: Newtype(Some(f64::NAN)),
+        length: f32::NAN,
+        text: "😀a\u{0}".into(),
+        tuple: (f64::NEG_INFINITY, "t"),
+        tuple_struct: TupleStruct(f64::NAN, "u".into()),
+        unit: (),
+        none: None,
+        some: Some(vec![f64::NAN, 2.0, 3.0, 4.0, 5.0]),
+        strings: [("a", f64::NAN), ("0", 1.5), ("length", 2.0)]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect(),
+        integers: [(3, f64::NAN), (0, 1.0)].into_iter().collect(),
+        nested_integers: [(-1, [("n".to_owned(), vec![f64::NAN])].into_iter().collect())]
+            .into_iter()
+            .collect(),
+        chars: [('x', f64::NAN)].into_iter().collect(),
+        bools: [(true, f64::NAN)].into_iter().collect(),
+        variant_keys: [(
+            VariantKey::Second,
+            [("v".to_owned(), f64::INFINITY)].into_iter().collect(),
+        )]
+        .into_iter()
+        .chain([(VariantKey::First, BTreeMap::new())])
+        .collect(),
+        newtype_keys: [(NewtypeKey("k".into()), f64::NAN)].into_iter().collect(),
+        bytes: RawBytes(vec![0, 7, 255]),
+        repeated: vec![
+            Repeated(f64::NAN, 1.0),
+            Repeated(1.0, f64::NAN),
+            Repeated(f64::NAN, f64::NAN),
+        ],
+        variants: vec![
+            Variant::Unit,
+            Variant::Newtype(f64::NAN),
+            Variant::Tuple(f64::INFINITY, "t".into()),
+            Variant::Struct {
+                value: f64::NAN,
+                list: vec![f64::NAN, 1.0],
+            },
+        ],
+        raw: serde_json::value::RawValue::from_string(
+            r#"{"b":[1,2.5,{"c":null}],"0":"z","b":3}"#.into(),
+        )
+        .unwrap(),
+        json: serde_json::json!({"k": [1, {"m": "n"}], "5": true, "1": null}),
+    };
+    assert!(assert_selection_preserves_projection(&value, 4) > 1_000);
+}
+
+#[test]
+fn selected_serialization_projects_like_the_full_document_for_all_schemas() {
+    use crate::model::states::{HitErrorArray, KeypressButton};
+    use crate::state::{PreciseState, RegularState};
+
+    let mut regular = RegularState {
+        global: Default::default(),
+        settings: Default::default(),
+        beatmap: Default::default(),
+        menu: Default::default(),
+        bass_density: Default::default(),
+        gameplay: Default::default(),
+        result_screen: Default::default(),
+        tourney: Default::default(),
+        user: Default::default(),
+        lazer_multi_spectating: Default::default(),
+        ranked_play: Default::default(),
+        room: Default::default(),
+    };
+    regular.menu.title = Some("狐 \"kitsune\"\n\\尾😀".into());
+    let precise = PreciseState {
+        status: 2,
+        play_time: f64::NAN,
+        mode: 0,
+        key_overlay: Arc::new(Vec::new()),
+        keypresses: Arc::new(
+            (1..=4)
+                .map(|index| KeypressButton {
+                    name: Arc::from(format!("K{index}")),
+                    is_pressed: index % 2 == 0,
+                    count: index,
+                    pressed_at: (index % 2 == 0).then_some(f64::INFINITY),
+                    released_at: None,
+                })
+                .collect(),
+        ),
+        hit_errors: Arc::new(HitErrorArray {
+            all: vec![1.0, f64::NAN, -2.5, f64::NEG_INFINITY, 7.0],
+            press: vec![f64::NAN],
+            release: Vec::new(),
+        }),
+        total_hit_errors: f64::INFINITY,
+        committed_hit_error_index: 0,
+        unstable_rate: f64::NAN,
+    };
+    let state = Arc::new(StateBundleSnapshot {
+        source: ClientType::Stable,
+        generation: 1,
+        reset_epoch: 0,
+        regular: Arc::new(regular),
+        precise: Arc::new(precise),
+    });
+    let instance = |pid, ipc: Option<f64>| {
+        ManagerInstanceSnapshot::new(
+            pid,
+            crate::instance::InstanceSettings {
+                tournament_spectator: ipc.is_some(),
+                tournament_ipc_id: ipc,
+                devserver_endpoint: None,
+            },
+            ipc.is_none(),
+            Arc::clone(&state),
+        )
+    };
+    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+        2,
+        Some(7),
+        true,
+        ApiRuntimeSettings::default(),
+        [instance(7, None), instance(8, Some(f64::NAN)), instance(9, Some(2.5))],
+    )));
+
+    assert_selection_preserves_projection(&crate::api::v1::build(&snapshot).unwrap(), 3);
+    assert_selection_preserves_projection(&crate::api::v2::build(&snapshot).unwrap(), 3);
+    assert_selection_preserves_projection(&crate::api::sc::build(&snapshot).unwrap(), 3);
+    assert_selection_preserves_projection(&crate::api::precise::build(&snapshot).unwrap(), 3);
+}
+

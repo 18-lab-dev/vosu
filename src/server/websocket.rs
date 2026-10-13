@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
@@ -75,11 +76,63 @@ pub enum Schema {
     V2Precise,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum Filter {
     Field(String),
     Nested { field: String, keys: Vec<Filter> },
+}
+
+/// Upper bounds for sharing filtered payloads between clients within one
+/// broadcast pass. Clients beyond either bound are still served; their
+/// projections are encoded individually instead of being retained for reuse.
+const MAX_SHARED_PROJECTIONS: usize = 64;
+const MAX_SHARED_PROJECTION_BYTES: usize = 1 << 20;
+
+/// A client's requested filter list with a hash precomputed when the filters
+/// are set, so broadcast passes compare plans without rehashing them.
+struct FilterPlan {
+    filters: Vec<Filter>,
+    hash: u64,
+}
+
+impl FilterPlan {
+    fn new(filters: Vec<Filter>) -> Self {
+        let mut hasher = DefaultHasher::new();
+        filters.hash(&mut hasher);
+        Self {
+            hash: hasher.finish(),
+            filters,
+        }
+    }
+}
+
+/// Filtered payloads encoded from one captured snapshot. It lives only for a
+/// single broadcast pass, so every reused payload belongs to that generation.
+#[derive(Default)]
+struct SharedProjections {
+    entries: Vec<(Arc<FilterPlan>, Option<Bytes>)>,
+    bytes: usize,
+}
+
+impl SharedProjections {
+    fn encode(&mut self, snapshot: &dyn StateSnapshot, plan: &Arc<FilterPlan>) -> Option<Bytes> {
+        if let Some((_, payload)) = self.entries.iter().find(|(candidate, _)| {
+            Arc::ptr_eq(candidate, plan)
+                || (candidate.hash == plan.hash && candidate.filters == plan.filters)
+        }) {
+            return payload.clone();
+        }
+        let payload = snapshot.encode_filtered(&plan.filters).ok();
+        let size = payload.as_ref().map_or(0, Bytes::len);
+        if self.entries.len() < MAX_SHARED_PROJECTIONS
+            && self.bytes.saturating_add(size) <= MAX_SHARED_PROJECTION_BYTES
+        {
+            self.bytes += size;
+            self.entries.push((Arc::clone(plan), payload.clone()));
+        }
+        payload
+    }
 }
 
 /// One immutable state generation. Every projection in one broadcast pass is
@@ -141,7 +194,7 @@ struct Fragments {
 
 struct Client {
     publishes_state: bool,
-    filters: ArcSwap<Vec<Filter>>,
+    filters: ArcSwap<FilterPlan>,
     data: mpsc::Sender<Outbound>,
     control: mpsc::Sender<Outbound>,
     state: AtomicU8,
@@ -167,6 +220,11 @@ impl Client {
             reason: "Server shutting down",
         });
         self.cancellation.cancel();
+    }
+
+    fn set_filters(&self, filters: Vec<Filter>) {
+        self.filters.store(Arc::new(FilterPlan::new(filters)));
+        self.last_generation.store(u64::MAX, Ordering::Release);
     }
 
     fn send_data(&self, data: Bytes, generation: u64, only_if_new: bool) -> bool {
@@ -225,12 +283,24 @@ impl OutboundReceiver {
         if self.terminated {
             return None;
         }
-        let cancellation = self.cancellation.clone();
-        let frame = tokio::select! {
-            biased;
-            _ = cancellation.cancelled() => None,
-            frame = self.control.recv() => frame,
-            frame = self.data.recv() => frame,
+        // A frame that is already queued is taken in the select's priority order
+        // without registering cancellation and channel wakers. A closed channel
+        // falls through so the select reports it exactly as before. Cancellation
+        // is checked once afterwards: a frame taken from a cancelled receiver is
+        // discarded for the terminal frame, which is what the select returns.
+        let ready = match self.control.try_recv() {
+            Ok(frame) => Some(frame),
+            Err(mpsc::error::TryRecvError::Empty) => self.data.try_recv().ok(),
+            Err(mpsc::error::TryRecvError::Disconnected) => None,
+        };
+        let frame = match ready {
+            Some(frame) => Some(frame),
+            None => tokio::select! {
+                biased;
+                _ = self.cancellation.cancelled() => None,
+                frame = self.control.recv() => frame,
+                frame = self.data.recv() => frame,
+            },
         };
         if self.cancellation.is_cancelled() {
             self.terminated = true;
@@ -263,6 +333,9 @@ struct HubInner {
     next_id: AtomicU64,
     wake: watch::Sender<u64>,
     writable: watch::Sender<u64>,
+    /// Set while a `writable` change is published but not yet consumed by
+    /// `run`; see `wake_writable`.
+    writable_pending: AtomicBool,
     shutdown: CancellationToken,
 }
 
@@ -302,6 +375,7 @@ impl WebSocketHub {
             next_id: AtomicU64::new(1),
             wake,
             writable,
+            writable_pending: AtomicBool::new(false),
             shutdown: CancellationToken::new(),
         }))
     }
@@ -326,7 +400,7 @@ impl WebSocketHub {
         let terminal = Arc::new(Mutex::new(None));
         let client = Arc::new(Client {
             publishes_state,
-            filters: ArcSwap::from_pointee(Vec::new()),
+            filters: ArcSwap::from_pointee(FilterPlan::new(Vec::new())),
             data,
             control,
             state: AtomicU8::new(CLIENT_OPEN),
@@ -375,7 +449,25 @@ impl WebSocketHub {
         let Some(snapshot) = self.0.provider.capture(self.0.schema) else {
             return;
         };
-        self.0.writable.send_replace(snapshot.generation());
+        let generation = snapshot.generation();
+        // An unconsumed change already carrying this ceiling makes `run` read
+        // every client's state after this caller's OPEN transition: the SeqCst
+        // fences pair with the one after `run` clears the flag. Re-sending it
+        // would only repeat the watch's eight-shard waiter notification.
+        std::sync::atomic::fence(Ordering::SeqCst);
+        if self.0.writable_pending.load(Ordering::SeqCst) && *self.0.writable.borrow() == generation
+        {
+            return;
+        }
+        self.0.writable_pending.store(true, Ordering::SeqCst);
+        self.0.writable.send_replace(generation);
+    }
+
+    /// Marks the observed `writable` change as consumed. Client states are read
+    /// only after this fence, so acknowledgements that skipped notifying are seen.
+    fn writable_consumed(&self) {
+        self.0.writable_pending.store(false, Ordering::SeqCst);
+        std::sync::atomic::fence(Ordering::SeqCst);
     }
 
     /// Seals the hub and closes every registered transport. The registry is
@@ -403,6 +495,8 @@ impl WebSocketHub {
         let mut state_events = self.0.provider.subscribe(self.0.schema);
         let mut local_wake = self.0.wake.subscribe();
         let mut writable = self.0.writable.subscribe();
+        // Subscribing marks any earlier change as seen; nothing will consume it.
+        self.writable_consumed();
         let mut cached: Option<(u64, Bytes)> = None;
         let mut next_send_at = tokio::time::Instant::now();
         let mut only_new_generation = false;
@@ -432,6 +526,7 @@ impl WebSocketHub {
                     },
                     changed = writable.changed() => {
                         if changed.is_err() { break; }
+                        self.writable_consumed();
                     },
                     _ = tokio::time::sleep(Duration::from_millis(500)) => {},
                 }
@@ -451,6 +546,7 @@ impl WebSocketHub {
                     },
                     changed = writable.changed() => {
                         if changed.is_err() { break; }
+                        self.writable_consumed();
                         Some((true, Some(*writable.borrow()), true))
                     },
                     _ = tokio::time::sleep_until(next_send_at) => Some((false, None, false)),
@@ -478,18 +574,18 @@ impl WebSocketHub {
                         Err(_) => cached = None,
                     }
                 }
-
+                let mut projections = SharedProjections::default();
                 for client in clients.values() {
                     if !client.publishes_state
                         || client.state.load(Ordering::Acquire) != CLIENT_OPEN
                     {
                         continue;
                     }
-                    let filters = client.filters.load();
-                    let payload = if filters.is_empty() {
+                    let plan = client.filters.load();
+                    let payload = if plan.filters.is_empty() {
                         cached.as_ref().map(|(_, bytes)| bytes.clone())
                     } else {
-                        snapshot.encode_filtered(&filters).ok()
+                        projections.encode(snapshot.as_ref(), &plan)
                     };
                     if let Some(payload) = payload {
                         client.send_data(payload, generation, only_new_generation);
@@ -522,10 +618,7 @@ impl Connection {
     }
 
     pub fn set_filters(&self, filters: Vec<Filter>) {
-        self.client.filters.store(Arc::new(filters));
-        self.client
-            .last_generation
-            .store(u64::MAX, Ordering::Release);
+        self.client.set_filters(filters);
         self.hub.wake();
     }
 
@@ -653,10 +746,7 @@ impl Connection {
 
 impl ConnectionControl {
     pub fn set_filters(&self, filters: Vec<Filter>) {
-        self.client.filters.store(Arc::new(filters));
-        self.client
-            .last_generation
-            .store(u64::MAX, Ordering::Release);
+        self.client.set_filters(filters);
         self.hub.wake();
     }
 

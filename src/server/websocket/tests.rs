@@ -811,3 +811,282 @@ async fn valid_fragments_assemble_once() {
         Some(Bytes::from_static(b"abcd"))
     );
 }
+
+/// Encodes the generation and the exact requested filters, so a payload reused
+/// for the wrong plan or generation is visible. `pad:N` appends N bytes.
+struct EchoSnapshot {
+    generation: u64,
+    calls: Arc<AtomicUsize>,
+}
+
+impl StateSnapshot for EchoSnapshot {
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn encode_unfiltered(&self) -> Result<Bytes, String> {
+        Ok(Bytes::from(self.generation.to_string()))
+    }
+
+    fn encode_filtered(&self, filters: &[Filter]) -> Result<Bytes, String> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        let mut payload = echo(self.generation, filters);
+        if let Some(Filter::Field(field)) = filters.first()
+            && let Some(size) = field.strip_prefix("pad:")
+        {
+            payload.push_str(&" ".repeat(size.parse().unwrap()));
+        }
+        Ok(Bytes::from(payload))
+    }
+}
+
+fn echo(generation: u64, filters: &[Filter]) -> String {
+    format!("{generation}:{}", serde_json::to_string(filters).unwrap())
+}
+
+struct EchoProvider {
+    generation: AtomicU64,
+    calls: Arc<AtomicUsize>,
+    events: watch::Sender<u64>,
+}
+
+impl EchoProvider {
+    fn new() -> Arc<Self> {
+        let (events, _) = watch::channel(1);
+        Arc::new(Self {
+            generation: AtomicU64::new(1),
+            calls: Arc::new(AtomicUsize::new(0)),
+            events,
+        })
+    }
+
+    fn publish(&self) {
+        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.events.send_replace(generation);
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::Relaxed)
+    }
+}
+
+impl StateProvider for EchoProvider {
+    // A long cadence leaves delivery to the explicit generation/writability wakes.
+    fn poll_rate(&self, _: Schema) -> Duration {
+        Duration::from_secs(60)
+    }
+
+    fn subscribe(&self, _: Schema) -> watch::Receiver<u64> {
+        self.events.subscribe()
+    }
+
+    fn capture(&self, _: Schema) -> Option<Arc<dyn StateSnapshot>> {
+        Some(Arc::new(EchoSnapshot {
+            generation: self.generation.load(Ordering::Acquire),
+            calls: Arc::clone(&self.calls),
+        }))
+    }
+}
+
+async fn echo_text(receiver: &mut OutboundReceiver) -> Bytes {
+    match tokio::time::timeout(Duration::from_secs(1), receiver.recv()).await {
+        Ok(Some(Outbound::Text(bytes))) => bytes,
+        frame => panic!("expected text frame, got {frame:?}"),
+    }
+}
+
+#[tokio::test]
+async fn identical_filter_plans_share_one_projection_per_generation() {
+    let provider = EchoProvider::new();
+    let hub = WebSocketHub::new(Schema::V2, provider.clone());
+    let plan = || {
+        vec![Filter::Nested {
+            field: "play".into(),
+            keys: vec![Filter::Field("0".into())],
+        }]
+    };
+    let mut clients: Vec<_> = (0..100)
+        .map(|_| {
+            let (connection, receiver) = hub.connect();
+            connection.set_filters(plan());
+            (connection, receiver)
+        })
+        .collect();
+    let runner = tokio::spawn({
+        let hub = hub.clone();
+        async move { hub.run().await }
+    });
+
+    for (_, receiver) in &mut clients {
+        assert_eq!(echo_text(receiver).await, echo(1, &plan()));
+    }
+    assert_eq!(provider.calls(), 1);
+
+    // Client 0 keeps its write pending; sharing must not deliver to it.
+    for (connection, _) in &clients[1..] {
+        connection.write_completed();
+    }
+    provider.publish();
+    hub.wake();
+    for (_, receiver) in &mut clients[1..] {
+        assert_eq!(echo_text(receiver).await, echo(2, &plan()));
+    }
+    assert!(clients[0].1.try_recv().is_none());
+    assert_eq!(provider.calls(), 2);
+
+    // Its own acknowledgement delivers the latest generation to it alone.
+    clients[0].0.write_completed();
+    assert_eq!(echo_text(&mut clients[0].1).await, echo(2, &plan()));
+    for (_, receiver) in &mut clients[1..] {
+        assert!(receiver.try_recv().is_none());
+    }
+
+    hub.shutdown();
+    runner.await.unwrap();
+}
+
+#[tokio::test]
+async fn unique_filter_plans_beyond_sharing_bound_each_get_their_projection() {
+    let provider = EchoProvider::new();
+    let hub = WebSocketHub::new(Schema::V1, provider.clone());
+    let count = MAX_SHARED_PROJECTIONS * 2 + 3;
+    let plan = |index: usize| vec![Filter::Field(format!("u{index}"))];
+    let mut clients: Vec<_> = (0..count)
+        .map(|index| {
+            let (connection, receiver) = hub.connect();
+            connection.set_filters(plan(index));
+            (connection, receiver)
+        })
+        .collect();
+    let runner = tokio::spawn({
+        let hub = hub.clone();
+        async move { hub.run().await }
+    });
+
+    for generation in [1, 2] {
+        if generation == 2 {
+            for (connection, _) in &clients {
+                connection.write_completed();
+            }
+            provider.publish();
+            hub.wake();
+        }
+        for (index, (_, receiver)) in clients.iter_mut().enumerate() {
+            assert_eq!(echo_text(receiver).await, echo(generation, &plan(index)));
+        }
+        assert_eq!(provider.calls(), count * generation as usize);
+    }
+
+    hub.shutdown();
+    runner.await.unwrap();
+}
+
+#[test]
+fn shared_projections_are_bounded_and_never_cross_plans() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let snapshot = EchoSnapshot {
+        generation: 1,
+        calls: Arc::clone(&calls),
+    };
+    let plan = |field: String| Arc::new(FilterPlan::new(vec![Filter::Field(field)]));
+
+    // Variant bound: equal plans in distinct allocations share until it is full.
+    let mut shared = SharedProjections::default();
+    for index in 0..MAX_SHARED_PROJECTIONS {
+        shared.encode(&snapshot, &plan(format!("v{index}")));
+    }
+    assert_eq!(calls.load(Ordering::Relaxed), MAX_SHARED_PROJECTIONS);
+    assert_eq!(
+        shared.encode(&snapshot, &plan("v0".into())).unwrap(),
+        echo(1, &[Filter::Field("v0".into())])
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), MAX_SHARED_PROJECTIONS);
+    for _ in 0..2 {
+        assert_eq!(
+            shared.encode(&snapshot, &plan("overflow".into())).unwrap(),
+            echo(1, &[Filter::Field("overflow".into())])
+        );
+    }
+    assert_eq!(calls.load(Ordering::Relaxed), MAX_SHARED_PROJECTIONS + 2);
+    assert_eq!(shared.entries.len(), MAX_SHARED_PROJECTIONS);
+
+    // Byte bound: a payload that would exceed it is never retained.
+    calls.store(0, Ordering::Relaxed);
+    let mut shared = SharedProjections::default();
+    let large = plan(format!("pad:{MAX_SHARED_PROJECTION_BYTES}"));
+    for _ in 0..2 {
+        assert!(shared.encode(&snapshot, &large).unwrap().len() > MAX_SHARED_PROJECTION_BYTES);
+    }
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    assert_eq!((shared.entries.len(), shared.bytes), (0, 0));
+
+    // A hash collision between different plans still compares the filters.
+    let colliding = |field: &str| {
+        Arc::new(FilterPlan {
+            filters: vec![Filter::Field(field.into())],
+            hash: 7,
+        })
+    };
+    assert_eq!(
+        shared.encode(&snapshot, &colliding("a")).unwrap(),
+        echo(1, &[Filter::Field("a".into())])
+    );
+    assert_eq!(
+        shared.encode(&snapshot, &colliding("b")).unwrap(),
+        echo(1, &[Filter::Field("b".into())])
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 4);
+}
+
+#[tokio::test]
+async fn each_acknowledgement_of_the_same_generation_gets_its_forced_delivery() {
+    let provider = EchoProvider::new();
+    let hub = WebSocketHub::new(Schema::V2, provider.clone());
+    let plan = || vec![Filter::Field("a".into())];
+    let mut clients: Vec<_> = (0..3)
+        .map(|_| {
+            let (connection, receiver) = hub.connect();
+            connection.set_filters(plan());
+            (connection, receiver)
+        })
+        .collect();
+    let runner = tokio::spawn({
+        let hub = hub.clone();
+        async move { hub.run().await }
+    });
+    for (_, receiver) in &mut clients {
+        assert_eq!(echo_text(receiver).await, echo(1, &plan()));
+    }
+
+    // Generation 2 arrives while every client is still writing frame 1.
+    provider.publish();
+    hub.wake();
+    tokio::task::yield_now().await;
+    for (_, receiver) in &mut clients {
+        assert!(receiver.try_recv().is_none());
+    }
+
+    // Each acknowledgement carries the same ceiling after the previous wake
+    // was consumed; none may be suppressed until the 60 s cadence.
+    for index in 0..clients.len() {
+        clients[index].0.write_completed();
+        assert_eq!(echo_text(&mut clients[index].1).await, echo(2, &plan()));
+        for (_, receiver) in &mut clients[index + 1..] {
+            assert!(receiver.try_recv().is_none());
+        }
+    }
+
+    // Acknowledgements batched before the hub runs coalesce yet all deliver.
+    provider.publish();
+    hub.wake();
+    tokio::task::yield_now().await;
+    for (connection, _) in &clients {
+        connection.write_completed();
+    }
+    for (_, receiver) in &mut clients {
+        assert_eq!(echo_text(receiver).await, echo(3, &plan()));
+    }
+
+    hub.shutdown();
+    runner.await.unwrap();
+}

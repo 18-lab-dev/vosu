@@ -50,18 +50,761 @@ impl SnapshotEncoder for ProductionSnapshotEncoder {
                 ApiSchema::V2Precise => crate::api::precise::encode(snapshot),
             };
         }
+        let selected = Selected::from_filters(filters);
         let value = match schema {
-            ApiSchema::V1 => serialize_projection_value(&crate::api::v1::build(snapshot)?)?,
-            ApiSchema::V2 => serialize_projection_value(&crate::api::v2::build(snapshot)?)?,
+            ApiSchema::V1 => serialize_selected(&crate::api::v1::build(snapshot)?, &selected)?,
+            ApiSchema::V2 => serialize_selected(&crate::api::v2::build(snapshot)?, &selected)?,
             ApiSchema::StreamCompanion => {
-                serialize_projection_value(&crate::api::sc::build(snapshot)?)?
+                serialize_selected(&crate::api::sc::build(snapshot)?, &selected)?
             }
             ApiSchema::V2Precise => {
-                serialize_projection_value(&crate::api::precise::build(snapshot)?)?
+                serialize_selected(&crate::api::precise::build(snapshot)?, &selected)?
             }
         };
         let projected = canonicalize_javascript_keys(project_filters(&value, filters));
         encode_javascript_json(&projected)
+    }
+}
+
+/// The part of a document that a filter list can observe. A property named by
+/// a `Field` filter is serialized in full; one reached only through `Nested`
+/// filters keeps just the properties those filters name. Every lookup that
+/// `project_filters` performs therefore sees the same value as in the full
+/// document, while the unobserved remainder is never serialized.
+///
+/// Pruning skips unobserved subtrees entirely, so their serialization cannot
+/// fail. That is not a behavioral difference here: the wire DTOs serialize
+/// infallibly (the unfiltered encoders write the same DTOs without errors).
+pub(super) enum Selection<'a> {
+    Full,
+    Partial(Selected<'a>),
+}
+
+#[derive(Default)]
+pub(super) struct Selected<'a> {
+    keys: Vec<SelectedKey<'a>>,
+}
+
+struct SelectedKey<'a> {
+    key: &'a str,
+    index: Option<u32>,
+    selection: Selection<'a>,
+}
+
+impl<'a> Selected<'a> {
+    pub(super) fn from_filters(filters: &'a [Filter]) -> Self {
+        let mut selected = Self::default();
+        selected.add(filters);
+        selected
+    }
+
+    fn add(&mut self, filters: &'a [Filter]) {
+        for filter in filters {
+            match filter {
+                Filter::Field(field) => *self.entry(field) = Selection::Full,
+                Filter::Nested { field, keys } => {
+                    if let Selection::Partial(selected) = self.entry(field) {
+                        selected.add(keys);
+                    }
+                }
+            }
+        }
+    }
+
+    fn entry(&mut self, key: &'a str) -> &mut Selection<'a> {
+        let position = match self.keys.iter().position(|entry| entry.key == key) {
+            Some(position) => position,
+            None => {
+                self.keys.push(SelectedKey {
+                    key,
+                    index: javascript_array_index(key),
+                    selection: Selection::Partial(Self::default()),
+                });
+                self.keys.len() - 1
+            }
+        };
+        &mut self.keys[position].selection
+    }
+
+    fn property(&self, key: &str) -> Option<&Selection<'a>> {
+        self.keys
+            .iter()
+            .find_map(|entry| (entry.key == key).then_some(&entry.selection))
+    }
+
+    fn element(&self, index: usize) -> Option<&Selection<'a>> {
+        self.keys.iter().find_map(|entry| {
+            entry
+                .index
+                .is_some_and(|candidate| candidate as usize == index)
+                .then_some(&entry.selection)
+        })
+    }
+}
+
+/// Serializes `value` straight into the projection tree, restricted to
+/// `selected`. The result is what `serialize_projection_value` derives from
+/// the serde_json and serde_value trees of the same value: serde_json's number,
+/// map-key, enum and `RawValue` conventions, with nonfinite floats kept
+/// distinct from `null` wherever serde_value's tree is reached by string keys.
+///
+/// Not reproduced: a single map holding keys of different types that convert
+/// to the same JSON string, which no wire DTO can contain.
+pub(super) fn serialize_selected<T: Serialize + ?Sized>(
+    value: &T,
+    selected: &Selected<'_>,
+) -> Result<ProjectionValue, ApiError> {
+    value
+        .serialize(ProjectionSerializer {
+            typed: true,
+            selected: Some(selected),
+        })
+        .map_err(|error| ApiError::serialization(error.to_string()))
+}
+
+type SerializeError = serde_json::Error;
+
+fn serialize_error(message: &'static str) -> SerializeError {
+    <SerializeError as serde::ser::Error>::custom(message)
+}
+
+/// serde_json's private marker for `RawValue`, whose text it parses as JSON.
+const RAW_VALUE_TOKEN: &str = "$serde_json::private::RawValue";
+
+#[derive(Clone, Copy)]
+struct ProjectionSerializer<'a> {
+    /// Whether serde_value still reaches this position through string keys.
+    /// Beneath other map keys or inside a `RawValue` only the JSON tree is
+    /// consulted, so a nonfinite float becomes plain `null`.
+    typed: bool,
+    /// `None` serializes the whole value.
+    selected: Option<&'a Selected<'a>>,
+}
+
+impl<'a> ProjectionSerializer<'a> {
+    fn full(typed: bool) -> Self {
+        Self {
+            typed,
+            selected: None,
+        }
+    }
+
+    fn select(typed: bool, selection: &'a Selection<'a>) -> Self {
+        Self {
+            typed,
+            selected: match selection {
+                Selection::Full => None,
+                Selection::Partial(selected) => Some(selected),
+            },
+        }
+    }
+
+    fn float(self, value: serde_json::Value) -> ProjectionValue {
+        match value {
+            serde_json::Value::Number(number) => ProjectionValue::Number(number),
+            _ if self.typed => ProjectionValue::NonFiniteNumber,
+            _ => ProjectionValue::Null,
+        }
+    }
+
+    fn object(self, capacity: usize) -> ObjectBuilder<'a> {
+        ObjectBuilder {
+            serializer: self,
+            entries: Vec::with_capacity(capacity),
+            key: None,
+        }
+    }
+
+    fn array(self, capacity: usize) -> ArrayBuilder<'a> {
+        ArrayBuilder {
+            serializer: self,
+            values: Vec::with_capacity(capacity),
+        }
+    }
+}
+
+fn integer(value: impl Into<serde_json::Number>) -> Result<ProjectionValue, SerializeError> {
+    Ok(ProjectionValue::Number(value.into()))
+}
+
+impl<'a> serde::Serializer for ProjectionSerializer<'a> {
+    type Ok = ProjectionValue;
+    type Error = SerializeError;
+    type SerializeSeq = ArrayBuilder<'a>;
+    type SerializeTuple = ArrayBuilder<'a>;
+    type SerializeTupleStruct = ArrayBuilder<'a>;
+    type SerializeTupleVariant = VariantBuilder<ArrayBuilder<'a>>;
+    type SerializeMap = ObjectBuilder<'a>;
+    type SerializeStruct = StructBuilder<'a>;
+    type SerializeStructVariant = VariantBuilder<ObjectBuilder<'a>>;
+
+    fn serialize_bool(self, value: bool) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Bool(value))
+    }
+
+    fn serialize_i8(self, value: i8) -> Result<ProjectionValue, SerializeError> {
+        integer(i64::from(value))
+    }
+
+    fn serialize_i16(self, value: i16) -> Result<ProjectionValue, SerializeError> {
+        integer(i64::from(value))
+    }
+
+    fn serialize_i32(self, value: i32) -> Result<ProjectionValue, SerializeError> {
+        integer(i64::from(value))
+    }
+
+    fn serialize_i64(self, value: i64) -> Result<ProjectionValue, SerializeError> {
+        integer(value)
+    }
+
+    fn serialize_u8(self, value: u8) -> Result<ProjectionValue, SerializeError> {
+        integer(u64::from(value))
+    }
+
+    fn serialize_u16(self, value: u16) -> Result<ProjectionValue, SerializeError> {
+        integer(u64::from(value))
+    }
+
+    fn serialize_u32(self, value: u32) -> Result<ProjectionValue, SerializeError> {
+        integer(u64::from(value))
+    }
+
+    fn serialize_u64(self, value: u64) -> Result<ProjectionValue, SerializeError> {
+        integer(value)
+    }
+
+    // serde_value has no 128-bit integers, so these never projected.
+    fn serialize_i128(self, _: i128) -> Result<ProjectionValue, SerializeError> {
+        Err(serialize_error("i128 is not supported"))
+    }
+
+    fn serialize_u128(self, _: u128) -> Result<ProjectionValue, SerializeError> {
+        Err(serialize_error("u128 is not supported"))
+    }
+
+    fn serialize_f32(self, value: f32) -> Result<ProjectionValue, SerializeError> {
+        Ok(self.float(serde_json::Value::from(value)))
+    }
+
+    fn serialize_f64(self, value: f64) -> Result<ProjectionValue, SerializeError> {
+        Ok(self.float(serde_json::Value::from(value)))
+    }
+
+    fn serialize_char(self, value: char) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::String(value.to_string()))
+    }
+
+    fn serialize_str(self, value: &str) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::String(value.to_owned()))
+    }
+
+    // serde_value keeps bytes apart from sequences; they are integers anyway.
+    fn serialize_bytes(self, value: &[u8]) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Array(
+            value
+                .iter()
+                .map(|&byte| ProjectionValue::Number(byte.into()))
+                .collect(),
+        ))
+    }
+
+    fn serialize_none(self) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Null)
+    }
+
+    fn serialize_some<T: Serialize + ?Sized>(
+        self,
+        value: &T,
+    ) -> Result<ProjectionValue, SerializeError> {
+        value.serialize(self)
+    }
+
+    fn serialize_unit(self) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Null)
+    }
+
+    fn serialize_unit_struct(self, _: &'static str) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Null)
+    }
+
+    fn serialize_unit_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        variant: &'static str,
+    ) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::String(variant.to_owned()))
+    }
+
+    fn serialize_newtype_struct<T: Serialize + ?Sized>(
+        self,
+        _: &'static str,
+        value: &T,
+    ) -> Result<ProjectionValue, SerializeError> {
+        value.serialize(self)
+    }
+
+    // Enum variants are serialized whole; only plain structs, maps and
+    // sequences are pruned.
+    fn serialize_newtype_variant<T: Serialize + ?Sized>(
+        self,
+        _: &'static str,
+        _: u32,
+        variant: &'static str,
+        value: &T,
+    ) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Object(vec![(
+            variant.to_owned(),
+            value.serialize(Self::full(self.typed))?,
+        )]))
+    }
+
+    fn serialize_seq(self, len: Option<usize>) -> Result<ArrayBuilder<'a>, SerializeError> {
+        Ok(self.array(len.unwrap_or(0)))
+    }
+
+    fn serialize_tuple(self, len: usize) -> Result<ArrayBuilder<'a>, SerializeError> {
+        Ok(self.array(len))
+    }
+
+    fn serialize_tuple_struct(
+        self,
+        _: &'static str,
+        len: usize,
+    ) -> Result<ArrayBuilder<'a>, SerializeError> {
+        Ok(self.array(len))
+    }
+
+    fn serialize_tuple_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        variant: &'static str,
+        len: usize,
+    ) -> Result<VariantBuilder<ArrayBuilder<'a>>, SerializeError> {
+        Ok(VariantBuilder {
+            variant,
+            inner: Self::full(self.typed).array(len),
+        })
+    }
+
+    fn serialize_map(self, len: Option<usize>) -> Result<ObjectBuilder<'a>, SerializeError> {
+        Ok(self.object(len.unwrap_or(0)))
+    }
+
+    fn serialize_struct(
+        self,
+        name: &'static str,
+        len: usize,
+    ) -> Result<StructBuilder<'a>, SerializeError> {
+        Ok(if name == RAW_VALUE_TOKEN {
+            StructBuilder::Raw(None)
+        } else {
+            StructBuilder::Object(self.object(len))
+        })
+    }
+
+    fn serialize_struct_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        variant: &'static str,
+        len: usize,
+    ) -> Result<VariantBuilder<ObjectBuilder<'a>>, SerializeError> {
+        Ok(VariantBuilder {
+            variant,
+            inner: Self::full(self.typed).object(len),
+        })
+    }
+}
+
+struct ArrayBuilder<'a> {
+    serializer: ProjectionSerializer<'a>,
+    values: Vec<ProjectionValue>,
+}
+
+impl ArrayBuilder<'_> {
+    fn push<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), SerializeError> {
+        let typed = self.serializer.typed;
+        let value = match self.serializer.selected {
+            None => value.serialize(ProjectionSerializer::full(typed))?,
+            Some(selected) => match selected.element(self.values.len()) {
+                Some(selection) => {
+                    value.serialize(ProjectionSerializer::select(typed, selection))?
+                }
+                // No filter reaches this element; it only keeps `length` and
+                // the following indices in place.
+                None => ProjectionValue::Null,
+            },
+        };
+        self.values.push(value);
+        Ok(())
+    }
+}
+
+impl serde::ser::SerializeSeq for ArrayBuilder<'_> {
+    type Ok = ProjectionValue;
+    type Error = SerializeError;
+
+    fn serialize_element<T: Serialize + ?Sized>(
+        &mut self,
+        value: &T,
+    ) -> Result<(), SerializeError> {
+        self.push(value)
+    }
+
+    fn end(self) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Array(self.values))
+    }
+}
+
+impl serde::ser::SerializeTuple for ArrayBuilder<'_> {
+    type Ok = ProjectionValue;
+    type Error = SerializeError;
+
+    fn serialize_element<T: Serialize + ?Sized>(
+        &mut self,
+        value: &T,
+    ) -> Result<(), SerializeError> {
+        self.push(value)
+    }
+
+    fn end(self) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Array(self.values))
+    }
+}
+
+impl serde::ser::SerializeTupleStruct for ArrayBuilder<'_> {
+    type Ok = ProjectionValue;
+    type Error = SerializeError;
+
+    fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), SerializeError> {
+        self.push(value)
+    }
+
+    fn end(self) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Array(self.values))
+    }
+}
+
+enum PendingKey<'a> {
+    Skip,
+    Keep(String, ProjectionSerializer<'a>),
+}
+
+struct ObjectBuilder<'a> {
+    serializer: ProjectionSerializer<'a>,
+    entries: Vec<(String, ProjectionValue)>,
+    key: Option<PendingKey<'a>>,
+}
+
+impl<'a> ObjectBuilder<'a> {
+    /// The serializer for a property, or `None` when no filter observes it.
+    fn property(&self, key: &str, string_key: bool) -> Option<ProjectionSerializer<'a>> {
+        let typed = self.serializer.typed && string_key;
+        match self.serializer.selected {
+            None => Some(ProjectionSerializer::full(typed)),
+            Some(selected) => selected
+                .property(key)
+                .map(|selection| ProjectionSerializer::select(typed, selection)),
+        }
+    }
+
+    /// Like serde_json's insertion-ordered map, a repeated key keeps its first
+    /// position and takes the last value.
+    fn insert(&mut self, key: String, value: ProjectionValue) {
+        match self
+            .entries
+            .iter_mut()
+            .find(|(candidate, _)| *candidate == key)
+        {
+            Some((_, existing)) => *existing = value,
+            None => self.entries.push((key, value)),
+        }
+    }
+
+    fn field<T: Serialize + ?Sized>(
+        &mut self,
+        key: &'static str,
+        value: &T,
+    ) -> Result<(), SerializeError> {
+        if let Some(serializer) = self.property(key, true) {
+            let value = value.serialize(serializer)?;
+            self.insert(key.to_owned(), value);
+        }
+        Ok(())
+    }
+}
+
+impl serde::ser::SerializeMap for ObjectBuilder<'_> {
+    type Ok = ProjectionValue;
+    type Error = SerializeError;
+
+    fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), SerializeError> {
+        let (key, string_key) = map_key(key)?;
+        self.key = Some(match self.property(&key, string_key) {
+            Some(serializer) => PendingKey::Keep(key, serializer),
+            None => PendingKey::Skip,
+        });
+        Ok(())
+    }
+
+    fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), SerializeError> {
+        match self.key.take() {
+            Some(PendingKey::Keep(key, serializer)) => {
+                let value = value.serialize(serializer)?;
+                self.insert(key, value);
+                Ok(())
+            }
+            Some(PendingKey::Skip) => Ok(()),
+            None => Err(serialize_error(
+                "serialize_value called before serialize_key",
+            )),
+        }
+    }
+
+    fn end(self) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Object(self.entries))
+    }
+}
+
+enum StructBuilder<'a> {
+    Object(ObjectBuilder<'a>),
+    /// A `RawValue`: its text is parsed and projected as plain JSON.
+    Raw(Option<ProjectionValue>),
+}
+
+impl serde::ser::SerializeStruct for StructBuilder<'_> {
+    type Ok = ProjectionValue;
+    type Error = SerializeError;
+
+    fn serialize_field<T: Serialize + ?Sized>(
+        &mut self,
+        key: &'static str,
+        value: &T,
+    ) -> Result<(), SerializeError> {
+        match self {
+            Self::Object(object) => object.field(key, value),
+            Self::Raw(raw) if key == RAW_VALUE_TOKEN => {
+                let KeyKind::Str(text) = value.serialize(KeyProbe)? else {
+                    return Err(serialize_error("expected raw JSON text"));
+                };
+                *raw = Some(projection_value_from_json(serde_json::from_str(&text)?));
+                Ok(())
+            }
+            Self::Raw(_) => Err(serialize_error("unexpected raw value field")),
+        }
+    }
+
+    fn end(self) -> Result<ProjectionValue, SerializeError> {
+        match self {
+            Self::Object(object) => Ok(ProjectionValue::Object(object.entries)),
+            Self::Raw(raw) => raw.ok_or_else(|| serialize_error("raw value was not emitted")),
+        }
+    }
+}
+
+struct VariantBuilder<B> {
+    variant: &'static str,
+    inner: B,
+}
+
+impl serde::ser::SerializeTupleVariant for VariantBuilder<ArrayBuilder<'_>> {
+    type Ok = ProjectionValue;
+    type Error = SerializeError;
+
+    fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), SerializeError> {
+        self.inner.push(value)
+    }
+
+    fn end(self) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Object(vec![(
+            self.variant.to_owned(),
+            ProjectionValue::Array(self.inner.values),
+        )]))
+    }
+}
+
+impl serde::ser::SerializeStructVariant for VariantBuilder<ObjectBuilder<'_>> {
+    type Ok = ProjectionValue;
+    type Error = SerializeError;
+
+    fn serialize_field<T: Serialize + ?Sized>(
+        &mut self,
+        key: &'static str,
+        value: &T,
+    ) -> Result<(), SerializeError> {
+        self.inner.field(key, value)
+    }
+
+    fn end(self) -> Result<ProjectionValue, SerializeError> {
+        Ok(ProjectionValue::Object(vec![(
+            self.variant.to_owned(),
+            ProjectionValue::Object(self.inner.entries),
+        )]))
+    }
+}
+
+/// The JSON object key for a map key, and whether serde_value records it as a
+/// string. Only string and unit-variant keys are; every other accepted key
+/// type goes through serde_json's own key conversion.
+fn map_key<T: Serialize + ?Sized>(key: &T) -> Result<(String, bool), SerializeError> {
+    struct SingleKey<'k, K: ?Sized>(&'k K);
+
+    impl<K: Serialize + ?Sized> Serialize for SingleKey<'_, K> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeMap as _;
+            let mut map = serializer.serialize_map(Some(1))?;
+            map.serialize_entry(self.0, &())?;
+            map.end()
+        }
+    }
+
+    match key.serialize(KeyProbe) {
+        Ok(KeyKind::Str(key)) => Ok((key, true)),
+        Ok(KeyKind::UnitVariant(variant)) => Ok((variant.to_owned(), true)),
+        Ok(KeyKind::Other) | Err(_) => match serde_json::to_value(SingleKey(key))? {
+            serde_json::Value::Object(map) => map
+                .into_iter()
+                .next()
+                .map(|(key, _)| (key, false))
+                .ok_or_else(|| serialize_error("map key was not emitted")),
+            _ => Err(serialize_error("map key was not emitted")),
+        },
+    }
+}
+
+enum KeyKind {
+    Str(String),
+    UnitVariant(&'static str),
+    Other,
+}
+
+/// Classifies a value by the one serde call that encodes it, without recursing.
+struct KeyProbe;
+
+macro_rules! other_key {
+    ($($method:ident($type:ty)),* $(,)?) => {
+        $(fn $method(self, _: $type) -> Result<KeyKind, SerializeError> {
+            Ok(KeyKind::Other)
+        })*
+    };
+}
+
+type NotAKey = serde::ser::Impossible<KeyKind, SerializeError>;
+
+impl serde::Serializer for KeyProbe {
+    type Ok = KeyKind;
+    type Error = SerializeError;
+    type SerializeSeq = NotAKey;
+    type SerializeTuple = NotAKey;
+    type SerializeTupleStruct = NotAKey;
+    type SerializeTupleVariant = NotAKey;
+    type SerializeMap = NotAKey;
+    type SerializeStruct = NotAKey;
+    type SerializeStructVariant = NotAKey;
+
+    other_key!(
+        serialize_bool(bool),
+        serialize_i8(i8),
+        serialize_i16(i16),
+        serialize_i32(i32),
+        serialize_i64(i64),
+        serialize_i128(i128),
+        serialize_u8(u8),
+        serialize_u16(u16),
+        serialize_u32(u32),
+        serialize_u64(u64),
+        serialize_u128(u128),
+        serialize_f32(f32),
+        serialize_f64(f64),
+        serialize_char(char),
+        serialize_bytes(&[u8]),
+        serialize_unit_struct(&'static str),
+    );
+
+    fn serialize_str(self, value: &str) -> Result<KeyKind, SerializeError> {
+        Ok(KeyKind::Str(value.to_owned()))
+    }
+
+    fn serialize_none(self) -> Result<KeyKind, SerializeError> {
+        Ok(KeyKind::Other)
+    }
+
+    fn serialize_some<T: Serialize + ?Sized>(self, _: &T) -> Result<KeyKind, SerializeError> {
+        Ok(KeyKind::Other)
+    }
+
+    fn serialize_unit(self) -> Result<KeyKind, SerializeError> {
+        Ok(KeyKind::Other)
+    }
+
+    fn serialize_unit_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        variant: &'static str,
+    ) -> Result<KeyKind, SerializeError> {
+        Ok(KeyKind::UnitVariant(variant))
+    }
+
+    fn serialize_newtype_struct<T: Serialize + ?Sized>(
+        self,
+        _: &'static str,
+        _: &T,
+    ) -> Result<KeyKind, SerializeError> {
+        Ok(KeyKind::Other)
+    }
+
+    fn serialize_newtype_variant<T: Serialize + ?Sized>(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: &T,
+    ) -> Result<KeyKind, SerializeError> {
+        Ok(KeyKind::Other)
+    }
+
+    fn serialize_seq(self, _: Option<usize>) -> Result<NotAKey, SerializeError> {
+        Err(serialize_error("not a key"))
+    }
+
+    fn serialize_tuple(self, _: usize) -> Result<NotAKey, SerializeError> {
+        Err(serialize_error("not a key"))
+    }
+
+    fn serialize_tuple_struct(self, _: &'static str, _: usize) -> Result<NotAKey, SerializeError> {
+        Err(serialize_error("not a key"))
+    }
+
+    fn serialize_tuple_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<NotAKey, SerializeError> {
+        Err(serialize_error("not a key"))
+    }
+
+    fn serialize_map(self, _: Option<usize>) -> Result<NotAKey, SerializeError> {
+        Err(serialize_error("not a key"))
+    }
+
+    fn serialize_struct(self, _: &'static str, _: usize) -> Result<NotAKey, SerializeError> {
+        Err(serialize_error("not a key"))
+    }
+
+    fn serialize_struct_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<NotAKey, SerializeError> {
+        Err(serialize_error("not a key"))
     }
 }
 
@@ -77,6 +820,9 @@ pub(super) enum ProjectionValue {
     NonFiniteNumber,
 }
 
+/// Reference semantics for `serialize_selected`: the full serde_json tree, with
+/// nonfinite floats recovered from the serde_value tree of the same value.
+#[cfg(test)]
 pub(super) fn serialize_projection_value<T>(value: &T) -> Result<ProjectionValue, ApiError>
 where
     T: Serialize,
@@ -88,6 +834,7 @@ where
     Ok(projection_value_from_serializations(json, &typed))
 }
 
+#[cfg(test)]
 pub(super) fn projection_value_from_serializations(
     json: serde_json::Value,
     typed: &serde_value::Value,
@@ -154,6 +901,7 @@ pub(super) fn projection_value_from_serializations(
     }
 }
 
+#[cfg(test)]
 pub(super) fn unwrap_serde_value(mut value: &serde_value::Value) -> &serde_value::Value {
     loop {
         value = match value {
