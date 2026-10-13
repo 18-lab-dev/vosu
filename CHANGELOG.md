@@ -2,7 +2,7 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
-## Unreleased
+## 1.0.2 — 2026-10-13
 
 ### Gameplay
 

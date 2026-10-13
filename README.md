@@ -35,7 +35,7 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 
 ### Portable archive
 
-The current release is **1.0.1**. Download `vosu-linux-v1.0.1.zip` or `vosu-windows-v1.0.1.zip` from the [v1.0.1 release](https://github.com/shiruviaa/vosu/releases/tag/v1.0.1), then:
+The current release is **1.0.2**. Download `vosu-linux-v1.0.2.zip` or `vosu-windows-v1.0.2.zip` from the [v1.0.2 release](https://github.com/shiruviaa/vosu/releases/tag/v1.0.2), then:
 
 1. Extract the complete archive into a writable directory. Its root contains `vosu` or `vosu.exe`, plus `LICENSE`.
 2. On Linux, restore the executable bit if your archive tool removed it: `chmod +x vosu`.
@@ -51,11 +51,11 @@ Download the package for your distribution from the matching
 
 ```sh
 # Debian 12+ / Ubuntu 22.04+
-sudo apt install ./vosu_1.0.1_amd64.deb
+sudo apt install ./vosu_1.0.2_amd64.deb
 # Fedora
-sudo dnf install ./vosu-1.0.1-1.x86_64.rpm
+sudo dnf install ./vosu-1.0.2-1.x86_64.rpm
 # Arch Linux
-sudo pacman -U vosu-1.0.1-1-x86_64.pkg.tar.zst
+sudo pacman -U vosu-1.0.2-1-x86_64.pkg.tar.zst
 ```
 
 Arch users can build the source `vosu-git` package from the AUR once it is
@@ -94,7 +94,7 @@ made with sxlvia's release key, fingerprint
 
 ```sh
 gpg --import packaging/release-signing-key.asc
-gpg --verify vosu-linux-v1.0.1.zip.sig vosu-linux-v1.0.1.zip
+gpg --verify vosu-linux-v1.0.2.zip.sig vosu-linux-v1.0.2.zip
 ```
 
 Check that gpg reports a good signature from that fingerprint. Commits made
