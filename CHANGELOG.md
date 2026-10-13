@@ -2,6 +2,13 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased
+
+### Packaging
+
+- Release builds now create a draft GitHub release. The release key signs the draft's files and then publishes it, because the repository's immutable releases reject new files after publication.
+- v1.0.2 was published before it could be signed and has no `.sig` files. Verify its downloads with GitHub's release attestation instead: `gh release verify-asset v1.0.2 <file> --repo shiruviaa/vosu`.
+
 ## 1.0.2 — 2026-10-13
 
 ### Gameplay

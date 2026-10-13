@@ -87,18 +87,26 @@ service.
 
 ### Verifying downloads
 
-From v1.0.1, every release file has a detached OpenPGP signature `<file>.sig`
+Every release file from v1.0.1 on has a detached OpenPGP signature `<file>.sig`
 made with sxlvia's release key, fingerprint
 `6F0F 0D30 C09D 3A03 6246  A810 2CB6 524B B54B 2CDA`. The public key is
 [`packaging/release-signing-key.asc`](packaging/release-signing-key.asc).
 
 ```sh
 gpg --import packaging/release-signing-key.asc
-gpg --verify vosu-linux-v1.0.2.zip.sig vosu-linux-v1.0.2.zip
+gpg --verify vosu-linux-v1.0.1.zip.sig vosu-linux-v1.0.1.zip
 ```
 
 Check that gpg reports a good signature from that fingerprint. Commits made
 after v1.0.1, and later tags, are signed with the same key.
+
+v1.0.2 is the exception: it was published before it could be signed, and the
+repository's immutable releases don't accept files added afterwards. Verify its
+downloads with GitHub's release attestation instead:
+
+```sh
+gh release verify-asset v1.0.2 vosu-linux-v1.0.2.zip --repo shiruviaa/vosu
+```
 
 ### Manual per-user installation
 

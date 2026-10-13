@@ -294,9 +294,13 @@ jobs:
           ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && '--signed' || '' }}
           --output release-notes.md
 
-      - name: Publish GitHub release assets
+      # A draft, not a published release: the repository uses immutable releases,
+      # which reject new assets after publication, and the OpenPGP signatures are
+      # added locally by scripts/sign-release.py --publish (the key never reaches CI).
+      - name: Create draft GitHub release
         uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3.0.2
         with:
+          draft: true
           fail_on_unmatched_files: true
           body_path: release-notes.md
           files: |
