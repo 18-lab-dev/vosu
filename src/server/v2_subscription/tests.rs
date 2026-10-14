@@ -255,7 +255,13 @@ fn arena_frames_match_api_encoding_across_chunk_turnover_and_oversized_frames() 
                 .map(|id| id as u16)
                 .collect();
             (
-                arena.update(revision, &previous, &current).unwrap(),
+                arena
+                    .update(revision, &current, &{
+                        let mut ids = Vec::new();
+                        changes(&previous, &current, &mut ids);
+                        ids
+                    })
+                    .unwrap(),
                 crate::api::v2::encode_dto(&(1_u8, revision, changed, removed)).unwrap(),
             )
         };
@@ -278,18 +284,18 @@ fn pong_queue_backpressure_is_nonblocking_and_bounded() {
     assert!(connection.send_pong(Bytes::from_static(b"first")));
     assert!(!connection.send_pong(Bytes::from_static(b"second")));
     assert_eq!(
-        receiver.control.try_recv(),
-        Ok(V2SubscriptionOutbound::Pong(Bytes::from_static(b"first")))
+        receiver.try_recv(),
+        Some(V2SubscriptionOutbound::Pong(Bytes::from_static(b"first")))
     );
 }
 
 #[tokio::test]
-async fn data_slot_wakes_a_waiting_receiver_and_drains_before_end_of_stream() {
+async fn mailbox_wakes_a_waiting_receiver_and_drains_before_end_of_stream() {
     let text = |bytes: &'static [u8]| V2SubscriptionOutbound::Text(Bytes::from_static(bytes));
     let provider = FakeProvider::new(1, None);
     let hub = V2SubscriptionHub::new(provider, Duration::ZERO);
     let (connection, receiver) = hub.connect();
-    let data = Arc::clone(&connection.client.data);
+    let mailbox = Arc::clone(&connection.client.mailbox);
 
     let waiting = tokio::spawn(async move {
         let mut receiver = receiver;
@@ -297,12 +303,12 @@ async fn data_slot_wakes_a_waiting_receiver_and_drains_before_end_of_stream() {
         (frame, receiver)
     });
     tokio::task::yield_now().await;
-    data.try_send(text(b"first")).unwrap();
+    mailbox.try_send_data(text(b"first")).unwrap();
     let (frame, mut receiver) = waiting.await.unwrap();
     assert_eq!(frame, Some(text(b"first")));
 
-    data.try_send(text(b"second")).unwrap();
-    assert_eq!(data.try_send(text(b"third")), Err(text(b"third")));
+    mailbox.try_send_data(text(b"second")).unwrap();
+    assert_eq!(mailbox.try_send_data(text(b"third")), Err(text(b"third")));
 
     // Dropping the connection drops the client and with it every sender; the frame still
     // queued is delivered before the end of the stream.
@@ -461,6 +467,107 @@ async fn initial_absent_to_present_null_and_focus_loss_are_delivered() {
     assert_eq!(text(receiver.recv().await.unwrap()), json!([1, 3, [], [0]]));
     hub.shutdown();
     runner.await.unwrap();
+}
+
+#[test]
+fn unshared_baseline_tracks_partial_changes_removals_and_reappearance() {
+    let provider = FakeProvider::new(1, Some(json!({"a": 1, "b": "x", "c": [1]})));
+    let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
+    let (connection, mut receiver) = hub.connect();
+    connection
+        .subscribe(vec!["/a".into(), "/b".into(), "/c".into()])
+        .unwrap();
+    let baseline = |connection: &V2SubscriptionConnection| {
+        client_baseline(&connection.client).map(|values| values.to_vec())
+    };
+
+    hub.dispatch(1);
+    assert_eq!(
+        text(receiver.try_recv().unwrap()),
+        json!([0, 1, [[0, 1], [1, "x"], [2, [1]]]])
+    );
+    connection.write_completed();
+
+    let steps = [
+        (
+            json!({"a": 2, "b": "x", "c": [1]}),
+            Some(json!([1, 2, [[0, 2]], []])),
+        ),
+        (
+            json!({"a": 2, "c": [1, 2]}),
+            Some(json!([1, 3, [[2, [1, 2]]], [1]])),
+        ),
+        (
+            json!({"a": 2, "b": "y", "c": [1, 2]}),
+            Some(json!([1, 4, [[1, "y"]], []])),
+        ),
+        (json!({"a": 2, "b": "y", "c": [1, 2], "d": 0}), None),
+    ];
+    for (revision, (document, expected)) in (2..).zip(steps) {
+        let selected = ["a", "b", "c"].map(|key| document.get(key).cloned());
+        provider.publish(revision, Some(document));
+        hub.dispatch(revision);
+        assert_eq!(receiver.try_recv().map(text), expected);
+        assert_eq!(baseline(&connection).as_deref(), Some(selected.as_slice()));
+        assert_eq!(
+            connection.client.checked_revision.load(Ordering::Acquire),
+            revision
+        );
+        connection.write_completed();
+    }
+}
+
+#[test]
+fn baseline_survives_a_plan_becoming_shared_and_unshared_again() {
+    let provider = FakeProvider::new(1, Some(json!({"a": 1, "b": 1})));
+    let hub = V2SubscriptionHub::new(provider.clone(), Duration::ZERO);
+    let (first, mut first_rx) = hub.connect();
+    first.subscribe(vec!["/a".into(), "/b".into()]).unwrap();
+    hub.dispatch(1);
+    assert_eq!(
+        text(first_rx.try_recv().unwrap()),
+        json!([0, 1, [[0, 1], [1, 1]]])
+    );
+    first.write_completed();
+
+    // An equal selection makes the plan shared: the first client's update is still computed
+    // against the values it last received while its plan was unshared.
+    let (second, mut second_rx) = hub.connect();
+    second.subscribe(vec!["/a".into(), "/b".into()]).unwrap();
+    provider.publish(2, Some(json!({"a": 2, "b": 1})));
+    hub.dispatch(2);
+    assert_eq!(
+        text(first_rx.try_recv().unwrap()),
+        json!([1, 2, [[0, 2]], []])
+    );
+    assert_eq!(
+        text(second_rx.try_recv().unwrap()),
+        json!([0, 2, [[0, 2], [1, 1]]])
+    );
+    first.write_completed();
+    second.write_completed();
+
+    // Unshared again: the first client now solely holds the extraction it shared, and its
+    // updates are computed against, and recorded into, those values.
+    second.close(1000);
+    drop(second_rx);
+    provider.publish(3, Some(json!({"a": 2, "b": 3})));
+    hub.dispatch(3);
+    assert_eq!(
+        text(first_rx.try_recv().unwrap()),
+        json!([1, 3, [[1, 3]], []])
+    );
+    first.write_completed();
+    provider.publish(4, Some(json!({"a": 4})));
+    hub.dispatch(4);
+    assert_eq!(
+        text(first_rx.try_recv().unwrap()),
+        json!([1, 4, [[0, 4]], [1]])
+    );
+    assert_eq!(
+        client_baseline(&first.client).as_deref(),
+        Some([Some(json!(4)), None].as_slice())
+    );
 }
 
 #[tokio::test]
@@ -681,7 +788,7 @@ fn close_after_pending_reservation_cannot_restore_delivery_state() {
     worker.join().unwrap();
     closer.join().unwrap();
 
-    // Plan, baseline, and queue instant are released together with the subscription.
+    // Plan and baseline are released together with the subscription.
     assert!(lock(&client.subscription).is_none());
     assert!(lock(&hub.0.document).is_none());
     let plans = lock(&hub.0.plans);
@@ -749,8 +856,8 @@ fn failed_cas_and_full_queue_do_not_advance_baseline() {
     connection.client.state.store(OPEN, Ordering::Release);
     connection
         .client
-        .data
-        .try_send(V2SubscriptionOutbound::Text(Bytes::from_static(
+        .mailbox
+        .try_send_data(V2SubscriptionOutbound::Text(Bytes::from_static(
             b"occupied",
         )))
         .unwrap();
