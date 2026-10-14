@@ -187,56 +187,64 @@ records the same run.
 
 ## Performance changes for 1.1.0 (paired)
 
-Measured on 2026-10-13 on the Ryzen 9 9950X3D host with Rust 1.96.1, locked
-offline dependencies and default release features. **Before** is `45cfcd3`
-(benchmark prerequisites only, no optimization); **after** is the integrated
-optimization series on top of it. Both builds ran alternately, before then after,
-three times, every benchmark pinned to CPU 8 on the non-V-cache CCD with no other
-benchmark or build running. Criterion used 2 s warm-up and 8 s measurement per
-case; the values are the median of the three Criterion means, and the ranges are
-the minimum and maximum of those three means. The precise reader is the median
-of fifteen `memory_reader_bench` invocations.
+Measured on 2026-10-14 on the Ryzen 9 9950X3D host with Rust 1.96.1, locked
+offline dependencies and default release features. Three builds of the same
+benchmarks ran alternately, three times each, every benchmark pinned to CPU 8 on
+the non-V-cache CCD with no other benchmark or build running:
 
-| Benchmark | Before | After | Before / after | Before range | After range |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `regular_reader/lazer_gameplay` | 89.49 µs | 16.58 µs | 5.40× | 89.24–90.00 µs | 16.38–16.62 µs |
-| `regular_reader/lazer_menu` | 107.29 µs | 42.44 µs | 2.53× | 106.13–108.05 µs | 41.92–43.00 µs |
-| `regular_reader/stable_gameplay` | 45.43 µs | 36.53 µs | 1.24× | 45.31–46.03 µs | 35.69–38.08 µs |
-| `regular_reader/stable_menu` | 49.39 µs | 39.17 µs | 1.26× | 49.19–49.53 µs | 38.68–40.51 µs |
-| `memory_reader_bench` (lazer precise capture) | 10.67 µs | 8.94 µs | 1.19× | 10.44–10.88 µs | 8.72–9.05 µs |
-| `filtered_projection/v2_identical/100` | 5.201 ms | 23.35 µs | 222.7× | 5.169–5.208 ms | 23.27–23.45 µs |
-| `filtered_projection/v2_unique/100` | 5.758 ms | 558.8 µs | 10.3× | 5.735–5.787 ms | 547.5–572.6 µs |
-| `v2_subscription/distinct_plans/1000` | 397.6 µs | 159.3 µs | 2.50× | 396.0–403.8 µs | 158.7–160.8 µs |
-| `v2_subscription/shared_plan/1000` | 200.9 µs | 104.2 µs | 1.93× | 200.5–206.2 µs | 101.3–115.5 µs |
-| `serializers_cold/v2_precise` | 4.185 µs | 2.948 µs | 1.42× | 3.925–5.427 µs | 2.885–3.005 µs |
-| `serializers_cold/v1` | 4.538 µs | 4.475 µs | 1.01× | 4.516–4.680 µs | 4.191–4.878 µs |
-| `serializers_cold/v2` | 10.585 µs | 10.208 µs | 1.04× | 10.112–13.387 µs | 9.609–11.427 µs |
-| `serializers_cold/stream_companion` | 6.653 µs | 6.338 µs | 1.05× | 6.247–7.926 µs | 6.313–6.371 µs |
+- **1.0.2 code**: `5b855e1`, the 1.0.2 sources plus the benchmark prerequisites,
+  no optimization.
+- **After round 1**: `ae0294d`, the first optimization series.
+- **After round 2**: the second optimization series on top of it.
 
-Native backend calls and requested bytes per capture cycle, printed once by
+Criterion used 2 s warm-up, 20 s measurement and 60 samples per case; values are
+the median of the three Criterion means and ranges span them (µs unless marked).
+The precise reader is the median of fifteen `memory_reader_bench` invocations.
+
+| Benchmark | 1.0.2 code | After round 1 | After round 2 | 1.0.2 / now | 1.0.2 range | Round 1 range | Round 2 range |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `regular_reader/lazer_gameplay` | 90.99 µs | 16.67 µs | 15.61 µs | 5.83× | 90.16–91.61 | 16.56–16.68 | 15.56–16.32 |
+| `regular_reader/lazer_menu` | 107.18 µs | 42.51 µs | 28.15 µs | 3.81× | 106.49–111.46 | 42.24–42.55 | 28.03–28.70 |
+| `regular_reader/stable_gameplay` | 46.55 µs | 36.32 µs | 12.14 µs | 3.84× | 46.40–47.12 | 36.12–36.67 | 12.01–12.16 |
+| `regular_reader/stable_menu` | 50.37 µs | 39.14 µs | 10.05 µs | 5.01× | 50.07–50.80 | 38.95–39.17 | 9.86–10.31 |
+| `memory_reader_bench` (lazer precise capture) | 10.64 µs | 8.90 µs | 9.75 µs | 1.09× | 10.43–11.36 | 8.74–9.13 | 8.74–11.32 |
+| `filtered_projection/v2_identical/100` | 5.262 ms | 23.65 µs | 18.99 µs | 277× | 5.242–5.854 ms | 23.42–23.77 µs | 18.93–19.85 µs |
+| `filtered_projection/v2_unique/100` | 5.867 ms | 558.9 µs | 30.41 µs | 193× | 5.836–6.337 ms | 552.8–563.3 µs | 29.37–31.11 µs |
+| `v2_subscription/distinct_plans/1000` | 425.8 µs | 161.0 µs | 83.05 µs | 5.13× | 420.8–426.8 | 159.7–161.4 | 81.63–84.85 |
+| `v2_subscription/shared_plan/1000` | 220.0 µs | 102.9 µs | 59.12 µs | 3.72× | 217.8–221.0 | 102.5–104.4 | 58.63–59.76 |
+| `serializers_cold/v1` | 7.377 µs | 6.898 µs | 4.851 µs | 1.52× | 5.917–7.476 | 5.662–6.952 | 3.752–4.976 |
+| `serializers_cold/v2` | 16.30 µs | 14.25 µs | 6.808 µs | 2.39× | 13.58–17.68 | 12.56–15.18 | 5.805–7.509 |
+| `serializers_cold/v2_precise` | 5.946 µs | 4.246 µs | 5.231 µs | 1.14× | 5.115–6.208 | 3.659–5.193 | 4.045–5.417 |
+| `serializers_cold/stream_companion` | 8.142 µs | 9.396 µs | 4.955 µs | 1.64× | 7.815–9.402 | 8.282–10.12 | 4.716–6.259 |
+
+Native backend calls per capture cycle, printed once by
 `autoresearch_regular_reader` outside timing:
 
-| Case | Before calls | After calls | Before bytes | After bytes |
-| --- | ---: | ---: | ---: | ---: |
-| lazer gameplay | 268 | 32 | 1,889 | 5,426 |
-| lazer menu | 314 | 136 | 2,267 | 8,764 |
-| stable gameplay | 135 | 135 | 813 | 813 |
-| stable menu | 148 | 148 | 906 | 906 |
+| Case | 1.0.2 code | After round 1 | After round 2 |
+| --- | ---: | ---: | ---: |
+| lazer gameplay | 268 | 32 | 28 |
+| lazer menu | 314 | 136 | 72 |
+| stable gameplay | 135 | 135 | 29 |
+| stable menu | 148 | 148 | 21 |
 
-- The v1, v2 and StreamCompanion encoders are unchanged in source; their small
-  differences are within the run-to-run spread.
-- Lazer reads request more bytes because batching reads whole spans instead of
-  individual fields; the number of native calls is what dropped. The stable
-  speedup comes from the single post-read process-generation check.
+- The desktop session (osu!, vosulay and a browser) was running during this
+  run and is not pinned, so the sub-10 µs serializer cases have wide ranges. A
+  separate six-round alternation of round 1 against round 2 confirmed v1
+  (1.50×), v2 (2.26×) and streamCompanion (1.59×) in six of six pairs. It found
+  no consistent change for `v2_precise` (0.93×, three of six pairs) or the
+  precise reader (1.01×), so their round-2 differences above are noise. Round 2
+  did not change either path's behaviour.
+- Batching reads whole spans instead of individual fields, so it requests more
+  bytes while making far fewer native calls.
 - These are synthetic, Linux-only fixtures. They do not measure live clients,
-  Windows, network transport, whole-daemon CPU or memory. Windows has no
-  batched cross-process read, so the reader batching cannot reduce native calls
-  there in the same way.
+  Windows, network transport, whole-daemon CPU or memory. Windows has no batched
+  cross-process read, so the reader batching cannot reduce native calls there
+  in the same way.
 - The filtered harness exercises production projection and in-process
   WebSocket fan-out with changing snapshots, a paused Tokio clock and reference
   byte comparisons. Its broadcast-pass cache shares identical ordered filter
-  plans and keeps at most 64 variants / 1 MiB of payload bytes, so the
-  unique-filter result includes that bounded behaviour.
+  plans (at most 64 variants / 1 MiB of payload), and top-level properties
+  shared across distinct plans are bounded by a work budget.
 
 Reproduce with the same benchmark binaries:
 
