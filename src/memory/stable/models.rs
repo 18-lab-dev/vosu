@@ -1,3 +1,4 @@
+use super::batched::CapturePrefetch;
 use super::*;
 
 pub struct StableMemory {
@@ -21,6 +22,7 @@ pub struct StableMemory {
     pub(super) replay_cache_start: i64,
     pub(super) replay_frames: Vec<StableReplayFrame>,
     pub(super) replay_batch: Option<StableReplayFrameBatch>,
+    pub(super) capture: CapturePrefetch,
 }
 
 impl StableMemory {
@@ -46,6 +48,7 @@ impl StableMemory {
             replay_cache_start: 0,
             replay_frames: Vec::new(),
             replay_batch: None,
+            capture: CapturePrefetch::default(),
         }
     }
     pub fn resolve(process: ProcessHandle) -> MemoryRead<Self> {
@@ -64,6 +67,7 @@ impl StableMemory {
         self.ruleset_container = 0;
         self.status_container = 0;
         self.play_time_container = 0;
+        self.capture = CapturePrefetch::default();
     }
     pub(super) fn with_random_seed(
         &self,
@@ -106,7 +110,20 @@ impl StableMemory {
     pub(super) fn string_ptr(&self, a: usize) -> Result<String, MemoryError> {
         self.string(self.ptr(a)?)
     }
+    /// A batched reader failed: its sequential fallback, and the rest of the capture, walk
+    /// the validated ruleset chain again instead of trusting the value `global` carried.
+    /// Everything `global` read through that ruleset goes with it, so no later reader pairs
+    /// a freshly read ruleset with links read from the carried one.
+    pub(super) fn drop_carried_ruleset(&mut self) {
+        self.capture.ruleset = None;
+        self.capture.gameplay = None;
+        self.capture.leaderboard = None;
+        self.capture.audio = None;
+    }
     pub(super) fn ruleset(&mut self) -> Result<usize, MemoryError> {
+        if let Some(ruleset) = self.capture.ruleset {
+            return Ok(ruleset);
+        }
         let result = (|| {
             let anchor = self.patterns.rulesets_addr.checked_sub(0xb).ok_or(
                 MemoryError::AddressOverflow {

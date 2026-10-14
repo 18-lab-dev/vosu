@@ -1,5 +1,6 @@
 //! Batched decoders for the multiplayer room and ranked-play state; each returns `None` to
 //! defer to the sequential decoder (see `batch.rs`).
+use super::resolver::list_shape;
 use super::*;
 
 /// Rooms with more members than this take the sequential decoder.
@@ -14,6 +15,67 @@ const PAGE: usize = 4096;
 
 fn nullable_i32(bytes: &[u8; 8]) -> Option<i32> {
     (bytes[0] != 0).then(|| le_i32(&bytes[4..]))
+}
+
+/// A multiplayer room's id and users list, and its ranked-play state's fields, read by the
+/// batched `global` paths with the room this capture (see `global_batch.rs`); `room` and
+/// `ranked_play` start from them instead of reading them again.
+#[derive(Clone, Copy)]
+pub(super) struct RoomHead {
+    pub(super) room: usize,
+    pub(super) room_id: [u8; 8],
+    /// Absent when the offsets have no users field.
+    pub(super) users: Option<[u8; 8]>,
+    /// The users list's header (`list_info`'s read at +8) when the list is non-null.
+    pub(super) users_header: Option<[u8; 12]>,
+    /// The non-null match state and its fields.
+    pub(super) ranked: Option<(usize, RankedState)>,
+}
+
+/// The ranked-play room state fields `ranked_play` reads first.
+#[derive(Clone, Copy, Default)]
+pub(super) struct RankedState {
+    stage: [u8; 4],
+    round: [u8; 4],
+    stars: [u8; 8],
+    damage: [u8; 8],
+    dict: [u8; 8],
+    active: [u8; 8],
+    winning: [u8; 8],
+}
+
+impl RankedState {
+    pub(super) fn push<'a, const N: usize>(
+        &'a mut self,
+        offsets: &LazerOffsets,
+        state: usize,
+        stage: &mut Stage<'a, N>,
+    ) -> Option<()> {
+        let o = &offsets.osu_game_online_multiplayer_match_types_ranked_play_ranked_play_room_state;
+        stage.push(add(state, o.stage_k_backing_field).ok()?, &mut self.stage);
+        stage.push(
+            add(state, o.current_round_k_backing_field).ok()?,
+            &mut self.round,
+        );
+        stage.push(
+            add(state, o.star_rating_k_backing_field).ok()?,
+            &mut self.stars,
+        );
+        stage.push(
+            add(state, o.damage_multiplier_k_backing_field).ok()?,
+            &mut self.damage,
+        );
+        stage.push(add(state, o.users_k_backing_field).ok()?, &mut self.dict);
+        stage.push(
+            add(state, o.active_user_id_k_backing_field).ok()?,
+            &mut self.active,
+        );
+        stage.push(
+            add(state, o.winning_user_id_k_backing_field).ok()?,
+            &mut self.winning,
+        );
+        Some(())
+    }
 }
 
 impl LazerMemory {
@@ -46,33 +108,31 @@ impl LazerMemory {
         if state == 0 {
             return Some(ReadStatus::NotReady);
         }
-        let o = &self
-            .offsets
-            .osu_game_online_multiplayer_match_types_ranked_play_ranked_play_room_state;
-        let (mut stage_value, mut round, mut stars, mut damage) =
-            ([0u8; 4], [0u8; 4], [0u8; 8], [0u8; 8]);
-        let (mut dict, mut active, mut winning) = ([0u8; 8], [0u8; 8], [0u8; 8]);
-        let mut stage = Stage::<7>::new();
-        stage.push(add(state, o.stage_k_backing_field).ok()?, &mut stage_value);
-        stage.push(
-            add(state, o.current_round_k_backing_field).ok()?,
-            &mut round,
-        );
-        stage.push(add(state, o.star_rating_k_backing_field).ok()?, &mut stars);
-        stage.push(
-            add(state, o.damage_multiplier_k_backing_field).ok()?,
-            &mut damage,
-        );
-        stage.push(add(state, o.users_k_backing_field).ok()?, &mut dict);
-        stage.push(
-            add(state, o.active_user_id_k_backing_field).ok()?,
-            &mut active,
-        );
-        stage.push(
-            add(state, o.winning_user_id_k_backing_field).ok()?,
-            &mut winning,
-        );
-        stage.read(&self.process)?;
+        let carried = self
+            .captured_room
+            .filter(|head| head.room == room)
+            .and_then(|head| head.ranked)
+            .filter(|(carried, _)| *carried == state)
+            .map(|(_, fields)| fields);
+        let fields = match carried {
+            Some(fields) => fields,
+            None => {
+                let mut fields = RankedState::default();
+                let mut stage = Stage::<7>::new();
+                fields.push(&self.offsets, state, &mut stage)?;
+                stage.read(&self.process)?;
+                fields
+            }
+        };
+        let RankedState {
+            stage: stage_value,
+            round,
+            stars,
+            damage,
+            dict,
+            active,
+            winning,
+        } = fields;
         let Some(stage_enum) = RankedPlayStage::from_value(le_i32(&stage_value)) else {
             return Some(ReadStatus::NotReady);
         };
@@ -194,18 +254,44 @@ impl LazerMemory {
         }
         let room_offsets = &self.offsets.osu_game_online_multiplayer_multiplayer_room;
         let users_offset = room_offsets.users_k_backing_field?;
-        let (mut room_id, mut users) = ([0u8; 8], [0u8; 8]);
-        let mut stage = Stage::<2>::new();
-        stage.push(add(room, room_offsets.room_id).ok()?, &mut room_id);
-        stage.push(add(room, users_offset).ok()?, &mut users);
-        stage.read(&self.process)?;
+        let carried = self.captured_room.filter(|head| head.room == room);
+        let (room_id, users) = match carried.and_then(|head| Some((head.room_id, head.users?))) {
+            Some(carried) => carried,
+            None => {
+                let (mut room_id, mut users) = ([0u8; 8], [0u8; 8]);
+                let mut stage = Stage::<2>::new();
+                stage.push(add(room, room_offsets.room_id).ok()?, &mut room_id);
+                stage.push(add(room, users_offset).ok()?, &mut users);
+                stage.read(&self.process)?;
+                (room_id, users)
+            }
+        };
         let users = le_pointer(&users)?;
         if users == 0 {
             return None;
         }
-        let members = self
-            .list_items_bounded(users, false, 8, MAX_ROOM_USERS)
-            .ok()?;
+        let members = match carried.and_then(|head| head.users_header) {
+            // `list_items_bounded` from the header it would read first.
+            Some(header) => {
+                let (size, items) = list_shape(
+                    users,
+                    le_i32(&header[8..]),
+                    u64::from_le_bytes(header[..8].try_into().unwrap()),
+                )
+                .ok()?;
+                if size > MAX_ROOM_USERS {
+                    return None;
+                }
+                let mut members = Vec::with_capacity(size);
+                if !self.slot_pointers_batched(items, size, 8, &mut members) {
+                    return None;
+                }
+                members
+            }
+            None => self
+                .list_items_bounded(users, false, 8, MAX_ROOM_USERS)
+                .ok()?,
+        };
         if members.len() > BATCHED_ROOM_USERS {
             return None;
         }

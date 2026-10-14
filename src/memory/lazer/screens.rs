@@ -132,22 +132,28 @@ impl LazerMemory {
         if client == 0 {
             return Ok(false);
         }
-        let connected = self.ptr(add(
-            client,
-            self.offsets
-                .osu_game_online_multiplayer_online_multiplayer_client
-                .is_connected_k_backing_field,
-        )?)?;
-        if connected == 0 || self.process.read_u8(add(connected, 0x40)?)? != 1 {
-            return Ok(false);
-        }
-        if self.ptr(add(
-            client,
-            self.offsets
-                .osu_game_online_multiplayer_multiplayer_client
-                .room,
-        )?)? != 0
-        {
+        let (connected, room) = match self.menu_global.multi {
+            Some(prefetched) => prefetched,
+            None => {
+                let connected = self.ptr(add(
+                    client,
+                    self.offsets
+                        .osu_game_online_multiplayer_online_multiplayer_client
+                        .is_connected_k_backing_field,
+                )?)?;
+                if connected == 0 || self.process.read_u8(add(connected, 0x40)?)? != 1 {
+                    return Ok(false);
+                }
+                let room = self.ptr(add(
+                    client,
+                    self.offsets
+                        .osu_game_online_multiplayer_multiplayer_client
+                        .room,
+                )?)?;
+                (true, room)
+            }
+        };
+        if !connected || room != 0 {
             return Ok(false);
         }
         Ok(self.screen_ptr(

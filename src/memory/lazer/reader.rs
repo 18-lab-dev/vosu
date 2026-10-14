@@ -44,6 +44,8 @@ impl SynchronizedMemoryReader for LazerMemory {
         self.captured_personal = None;
         self.captured_beatmap = None;
         self.captured_track_length = None;
+        self.menu_global = MenuGlobal::default();
+        self.captured_room = None;
     }
 
     fn synchronize_precise(&mut self, state: ReaderSynchronization, mode: i64) {
@@ -367,6 +369,7 @@ impl MemoryReader for LazerMemory {
                 *hash = batched.beatmap_hash.clone();
             }
             self.captured_track_length = batched.track_length;
+            self.captured_room = batched.room_head;
             // The same transitions `global` and its nested `global_precise` apply.
             if batched.replay && batched.spectator {
                 self.watching_replay = false;
@@ -396,6 +399,9 @@ impl MemoryReader for LazerMemory {
                     .to_string_lossy()
                     .into_owned(),
             }));
+        }
+        if player == 0 {
+            self.prefetch_menu_global(beatmap_hash);
         }
         let is_loader = if player == 0 {
             self.check_player_loader(self.current_screen)?
@@ -433,25 +439,35 @@ impl MemoryReader for LazerMemory {
         }
         let is_multi_spectating =
             self.multi_room()? != 0 && self.check_multi_spectator(self.current_screen)?;
-        let chat = self.root(GameRoot::ChatOverlay)?;
-        let state = self.ptr(add(
-            chat,
-            self.offsets.osu_game_overlays_chat_overlay.state,
-        )?)?;
-        let chat_status = self.i32(add(state, 0x40)?)?;
-        let storage = self.root(GameRoot::Storage)?;
-        let wrapped = self.ptr(add(
-            storage,
-            self.offsets
-                .osu_game_io_wrapped_storage
-                .underlying_storage_k_backing_field,
-        )?)?;
-        let base_path = self.string_at(add(
-            wrapped,
-            self.offsets
-                .osu_framework_platform_storage
-                .base_path_k_backing_field,
-        )?)?;
+        let chat_status = match self.menu_global.chat_status.take() {
+            Some(chat_status) => chat_status,
+            None => {
+                let chat = self.root(GameRoot::ChatOverlay)?;
+                let state = self.ptr(add(
+                    chat,
+                    self.offsets.osu_game_overlays_chat_overlay.state,
+                )?)?;
+                self.i32(add(state, 0x40)?)?
+            }
+        };
+        let base_path = match self.menu_global.base_path.take() {
+            Some(base_path) => base_path,
+            None => {
+                let storage = self.root(GameRoot::Storage)?;
+                let wrapped = self.ptr(add(
+                    storage,
+                    self.offsets
+                        .osu_game_io_wrapped_storage
+                        .underlying_storage_k_backing_field,
+                )?)?;
+                self.string_at(add(
+                    wrapped,
+                    self.offsets
+                        .osu_framework_platform_storage
+                        .base_path_k_backing_field,
+                )?)?
+            }
+        };
         let files = Path::new(&base_path)
             .join("files")
             .to_string_lossy()
@@ -554,8 +570,16 @@ impl MemoryReader for LazerMemory {
                     ranked_status: lazer_ranked_status(head.status),
                 })));
             }
+            // The rest of the full read, from the carried pair; `current_beatmap` and
+            // `read_gamemode` would read the same values.
+            if let Some(menu) = self.menu_full_from(head.info, head.set, gamemode, previous) {
+                return menu;
+            }
         } else if let Some(checksum) = self.menu_checksum_batched(previous) {
             return Ok(ReadStatus::Ready(Menu::Checksum(checksum)));
+        }
+        if let Some(menu) = self.menu_full_batched(previous) {
+            return menu;
         }
         let (info, set) = self.current_beatmap()?;
         if info == 0 {

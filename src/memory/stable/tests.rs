@@ -123,7 +123,7 @@ fn handle(base: usize, bytes: Vec<u8>) -> ProcessHandle {
         ProcessBitness::X86,
     )
 }
-fn fixture_patterns() -> StablePatterns {
+pub(super) fn fixture_patterns() -> StablePatterns {
     StablePatterns {
         base_addr: 0x200,
         play_time_addr: 0x300,

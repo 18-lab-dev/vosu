@@ -18,6 +18,7 @@ use crate::process::{
     MemoryError, MemoryRead, Pattern, ProcessHandle, ReadRequest, ReadStatus, checked_address_add,
 };
 
+mod batched;
 mod helpers;
 mod models;
 mod readers;
@@ -25,6 +26,8 @@ mod settings;
 mod signatures;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_batch;
 
 pub use models::StableMemory;
 pub use signatures::StablePatterns;

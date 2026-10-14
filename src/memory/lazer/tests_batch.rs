@@ -72,7 +72,7 @@ fn maximum_offsets_disable_spans_and_keep_checked_address_errors() {
 
 /// A gameplay screen whose player has a replay drawable ruleset, a paused bindable, a HUD,
 /// and a gameplay clock, inside a connected multiplayer room.
-fn player_screen(offsets: &LazerOffsets) -> (SparseMemory, usize, usize) {
+pub(super) fn player_screen(offsets: &LazerOffsets) -> (SparseMemory, usize, usize) {
     let mut memory = SparseMemory::default();
     let mut next = 0x10_000;
     let mut object = |memory: &mut SparseMemory| {

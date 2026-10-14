@@ -17,6 +17,8 @@ pub(super) struct PlayerGlobal {
     pub(super) beatmap_hash: Option<String>,
     /// The beatmap track length, when the player path read it.
     pub(super) track_length: Option<f64>,
+    /// The room's id, users list, and ranked-play state fields, for `room` and `ranked_play`.
+    pub(super) room_head: Option<RoomHead>,
 }
 
 /// What `menu` needs for its checksum comparison, read by the batched `global` from the same
@@ -24,6 +26,8 @@ pub(super) struct PlayerGlobal {
 #[derive(Clone, Copy)]
 pub(super) struct BeatmapHead {
     pub(super) info: usize,
+    /// The beatmap set read with the info, as `current_beatmap` reads the pair.
+    pub(super) set: usize,
     pub(super) status: i32,
     /// The MD5 string object (`0`: null).
     pub(super) hash: usize,
@@ -142,10 +146,10 @@ impl LazerMemory {
         let marker = le_i32(&header[8..]);
         let value = u64::from_le_bytes(header[..8].try_into().unwrap());
         let (size, items) = list_shape(list, marker, value).ok()?;
-        // The set pointer is read with the info, as `current_beatmap` does, but `menu`'s
-        // checksum path does not use it.
-        let beatmap_info = match working {
-            Some(_) => Some(le_pointer(&pair)?),
+        // The set pointer is read with the info, as `current_beatmap` does; `menu` starts
+        // from the pair when the beatmap changed.
+        let beatmap_pair = match working {
+            Some(_) => Some((le_pointer(&pair[..8])?, le_pointer(&pair[8..])?)),
             None => None,
         };
 
@@ -157,7 +161,7 @@ impl LazerMemory {
         if len > 0 {
             stage.push(items, &mut slots[..len]);
         }
-        if let Some(info) = beatmap_info.filter(|info| *info != 0) {
+        if let Some((info, _)) = beatmap_pair.filter(|(info, _)| *info != 0) {
             stage.push(add(info, b.status_int_k_backing_field).ok()?, &mut status);
             stage.push(add(info, b.md5_hash_k_backing_field).ok()?, &mut hash);
         }
@@ -166,15 +170,17 @@ impl LazerMemory {
         for slot in slots[..len].chunks_exact(8) {
             screen = le_pointer(slot)?;
         }
-        let head = match beatmap_info {
+        let head = match beatmap_pair {
             None => None,
-            Some(0) => Some(BeatmapHead {
+            Some((0, _)) => Some(BeatmapHead {
                 info: 0,
+                set: 0,
                 status: 0,
                 hash: 0,
             }),
-            Some(info) => Some(BeatmapHead {
+            Some((info, set)) => Some(BeatmapHead {
                 info,
+                set,
                 status: le_i32(&status),
                 hash: le_pointer(&hash)?,
             }),
@@ -378,7 +384,9 @@ impl LazerMemory {
             beatmap_time,
         ] = &mut bytes;
         let (mut track, mut user_bindable, mut ranked_state) = ([0u8; 8], [0u8; 8], [0u8; 8]);
-        let mut stage = Stage::<11>::new();
+        let (mut room_id, mut room_users) = ([0u8; 8], [0u8; 8]);
+        let room_offsets = &self.offsets.osu_game_online_multiplayer_multiplayer_room;
+        let mut stage = Stage::<13>::new();
         if user_state != 0 {
             stage.push(
                 add(
@@ -392,15 +400,14 @@ impl LazerMemory {
         let ranked_room = client != 0 && room != 0;
         if ranked_room {
             stage.push(
-                add(
-                    room,
-                    self.offsets
-                        .osu_game_online_multiplayer_multiplayer_room
-                        .match_state_k_backing_field,
-                )
-                .ok()?,
+                add(room, room_offsets.match_state_k_backing_field).ok()?,
                 &mut ranked_state,
             );
+            // `room`'s first reads.
+            stage.push(add(room, room_offsets.room_id).ok()?, &mut room_id);
+            if let Some(users) = room_offsets.users_k_backing_field {
+                stage.push(add(room, users).ok()?, &mut room_users);
+            }
         }
         stage.push(add(show, 0x40).ok()?, &mut show_value[..1]);
         if connected != 0 {
@@ -449,10 +456,14 @@ impl LazerMemory {
         } else {
             0
         };
-        if ranked_room {
+        let ranked_state = if ranked_room {
+            let ranked_state = le_pointer(&ranked_state)?;
             self.capture_ranked_state
-                .store(le_pointer(&ranked_state)?, Ordering::Relaxed);
-        }
+                .store(ranked_state, Ordering::Relaxed);
+            ranked_state
+        } else {
+            0
+        };
         let user_bindable = le_pointer(&user_bindable)?;
         let base_path = le_pointer(&bytes[3])?;
         let gameplay_decoupled = le_pointer(&bytes[4])?;
@@ -462,7 +473,22 @@ impl LazerMemory {
         let mut head = [0u8; STRING_HEAD];
         let mut user = [0u8; 8];
         let mut track_length = [0u8; 8];
-        let mut stage = Stage::<4>::new();
+        let mut ranked_fields = RankedState::default();
+        // `room`'s users list header, as `list_info` reads it.
+        let room_users = if ranked_room && room_offsets.users_k_backing_field.is_some() {
+            le_pointer(&room_users)?
+        } else {
+            0
+        };
+        let mut users_header = [0u8; 12];
+        let mut stage = Stage::<12>::new();
+        // `ranked_play`'s first reads.
+        if ranked_state != 0 {
+            ranked_fields.push(&self.offsets, ranked_state, &mut stage)?;
+        }
+        if room_users != 0 {
+            stage.push(add(room_users, 8).ok()?, &mut users_header);
+        }
         // `mp3_length`'s value read for the rest of this capture.
         if track != 0 {
             stage.push(
@@ -556,6 +582,15 @@ impl LazerMemory {
                 None => None,
             },
             track_length: (track != 0).then(|| le_f64(&track_length)),
+            room_head: ranked_room.then_some(RoomHead {
+                room,
+                room_id,
+                users: room_offsets
+                    .users_k_backing_field
+                    .map(|_| room_users.to_le_bytes()),
+                users_header: (room_users != 0).then_some(users_header),
+                ranked: (ranked_state != 0).then_some((ranked_state, ranked_fields)),
+            }),
         })
     }
 }

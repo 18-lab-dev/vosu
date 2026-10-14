@@ -123,6 +123,10 @@ pub struct LazerMemory {
     /// `global` read this capture, for `menu`; and the track length, for `mp3_length`.
     pub(super) captured_beatmap: Option<(BeatmapHead, i64, Option<String>)>,
     pub(super) captured_track_length: Option<f64>,
+    /// Non-player `global` reads taken ahead this capture (see `menu_global.rs`).
+    pub(super) menu_global: MenuGlobal,
+    /// The room head the batched `global` read this capture (see `room_batch.rs`).
+    pub(super) captured_room: Option<RoomHead>,
     pub(super) current_screen: usize,
     pub(super) precise_player: Option<PrecisePlayerCache>,
     pub(super) selected_gamemode: i64,

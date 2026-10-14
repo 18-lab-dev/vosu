@@ -107,7 +107,34 @@ fn mod_checksum(array: &[Mod]) -> String {
     checksum
 }
 
+/// Bitfield decodes a reader thread made most recently. Every regular capture decodes the
+/// menu, gameplay, and leaderboard mods again although they rarely change, and each decode
+/// serializes and hashes the mod array; `decode_mods` is a pure function of `bits`, so a
+/// clone of an earlier result is that result.
+const RECENT_MODS: usize = 4;
+
 pub(super) fn mods(bits: i64) -> CalculateMods {
+    thread_local! {
+        static RECENT: std::cell::RefCell<Vec<(i64, CalculateMods)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    RECENT.with_borrow_mut(|recent| {
+        if let Some(index) = recent.iter().position(|(cached, _)| *cached == bits) {
+            let entry = recent.remove(index);
+            let value = entry.1.clone();
+            recent.push(entry);
+            return value;
+        }
+        let value = decode_mods(bits);
+        if recent.len() == RECENT_MODS {
+            recent.remove(0);
+        }
+        recent.push((bits, value.clone()));
+        value
+    })
+}
+
+pub(super) fn decode_mods(bits: i64) -> CalculateMods {
     const VALUES: [(i64, &str); 31] = [
         (1, "NF"),
         (2, "EZ"),

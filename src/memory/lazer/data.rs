@@ -74,10 +74,7 @@ impl LazerMemory {
         if *mapped {
             return Ok(());
         }
-        let available = self.ptr(add(
-            self.game_base()?,
-            self.offsets.osu_desktop_osu_game_desktop.available_mods,
-        )?)?;
+        let available = self.root(GameRoot::AvailableMods)?;
         if available == 0 {
             return Ok(());
         }
@@ -589,6 +586,9 @@ impl LazerMemory {
         let c = self.root(GameRoot::MultiplayerClient)?;
         if c == 0 {
             return Ok(0);
+        }
+        if let Some((connected, room)) = self.menu_global.multi {
+            return Ok(if connected { room } else { 0 });
         }
         let connected = self.ptr(add(
             c,

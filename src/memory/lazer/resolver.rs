@@ -24,6 +24,8 @@ impl LazerMemory {
             captured_personal: None,
             captured_beatmap: None,
             captured_track_length: None,
+            menu_global: MenuGlobal::default(),
+            captured_room: None,
             current_screen: 0,
             precise_player: None,
             selected_gamemode: 0,
@@ -66,6 +68,8 @@ impl LazerMemory {
         self.captured_personal = None;
         self.captured_beatmap = None;
         self.captured_track_length = None;
+        self.menu_global = MenuGlobal::default();
+        self.captured_room = None;
         self.current_screen = current_screen;
         self.precise_player = None;
     }
@@ -348,7 +352,7 @@ impl LazerMemory {
 
     /// Reads the pointer at the start of each `stride`-byte slot from one native read of the
     /// slot span; `false` defers to per-slot reads.
-    fn slot_pointers_batched(
+    pub(super) fn slot_pointers_batched(
         &self,
         items: usize,
         size: usize,
@@ -472,6 +476,11 @@ impl LazerMemory {
     }
 
     pub(super) fn clock_current_time(&self, clock: usize) -> Result<f64, MemoryError> {
+        if let Some((prefetched, time)) = self.menu_global.beatmap_time
+            && prefetched == clock
+        {
+            return Ok(time);
+        }
         // Gameplay FramedBeatmapClocks advance their DecouplingFramedClock during
         // lead-in even when the shared track/menu beatmapClock is still stopped.
         if let Ok(decoupled) = self.ptr(add(

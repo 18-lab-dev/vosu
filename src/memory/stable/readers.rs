@@ -3,8 +3,8 @@ const MAX_STABLE_HIT_ERRORS: i64 = 100_000;
 const MAX_STABLE_HIT_ERROR_SUFFIX: i64 = 4_096;
 pub(super) const MAX_TOURNEY_CHAT_CHANNELS: usize = 256;
 pub(super) const MAX_TOURNEY_CHAT_MESSAGES: usize = 2_048;
-const MAX_LEADERBOARD_PLAYERS: usize = 256;
-const MAX_LEADERBOARD_NAME_BYTES: usize = 256 * 1024;
+pub(super) const MAX_LEADERBOARD_PLAYERS: usize = 256;
+pub(super) const MAX_LEADERBOARD_NAME_BYTES: usize = 256 * 1024;
 const MAX_REPLAY_FRAMES: i64 = 500_000;
 
 use super::*;
@@ -21,6 +21,7 @@ impl SynchronizedMemoryReader for StableMemory {
         self.ruleset_container = 0;
         self.status_container = 0;
         self.play_time_container = 0;
+        self.capture = super::batched::CapturePrefetch::default();
     }
 
     fn synchronize_precise(&mut self, _state: ReaderSynchronization, mode: i64) {
@@ -136,10 +137,8 @@ impl StableMemory {
         self.replay_batch = Some(batch.clone());
         Ok(Some(batch))
     }
-}
-
-impl MemoryReader for StableMemory {
-    fn audio_velocity_base(&mut self) -> MemoryRead<AudioVelocityBase> {
+    /// Unbatched reference reader; also the fallback deciding every batched error.
+    pub(super) fn audio_velocity_base_sequential(&mut self) -> MemoryRead<AudioVelocityBase> {
         let r = self.ruleset()?;
         if r == 0 {
             return self.not_ready();
@@ -154,7 +153,7 @@ impl MemoryReader for StableMemory {
         }
         Ok(ReadStatus::Ready(out))
     }
-    fn user(&mut self) -> MemoryRead<User> {
+    pub(super) fn user_sequential(&mut self) -> MemoryRead<User> {
         let b = self.ptr2(self.patterns.user_profile_ptr)?;
         if b == 0 {
             return self.not_ready();
@@ -177,44 +176,11 @@ impl MemoryReader for StableMemory {
             matchmaking: None,
         }))
     }
-    fn result_screen(&mut self) -> MemoryRead<ResultScreen> {
-        let r = self.ruleset()?;
-        if r == 0 {
-            return self.not_ready();
-        }
-        let b = self.ptr(self.add(r, 0x38)?)?;
-        if b == 0 {
-            return self.not_ready();
-        }
-        let mode = self.i32(self.add(b, 0x64)?)?;
-        let x = self.ptr(self.add(b, 0x1c)?)?;
-        let m = self.with_random_seed(
-            mods(self.i32(self.add(x, 0xc)?)? ^ self.i32(self.add(x, 8)?)?),
-            r,
-            mode,
-        )?;
-        let counts = self.score_counts(b)?;
-        let s = legacy_stats(
-            mode, counts[1], counts[0], counts[2], counts[5], counts[3], counts[4],
-        );
-        let accuracy = accuracy(mode, &s, &m);
-        Ok(ReadStatus::Ready(ResultScreen {
-            online_id: js_long(self.process.read_i64(self.add(b, 4)?)?),
-            player_name: self.string_ptr(self.add(b, 0x28)?)?,
-            mods: m,
-            mode,
-            accuracy,
-            max_combo: counts[7],
-            score: self.i32(self.add(b, 0x78)?)? as f64,
-            statistics: s,
-            maximum_statistics: default_stats(),
-            date: net_date(
-                self.process.read_i32(self.add(b, 0xa4)?)?,
-                self.process.read_i32(self.add(b, 0xa0)?)?,
-            )?,
-        }))
-    }
-    fn gameplay(&mut self, play_time: f64, first_object_time: Option<i64>) -> MemoryRead<Gameplay> {
+    pub(super) fn gameplay_sequential(
+        &mut self,
+        play_time: f64,
+        first_object_time: Option<i64>,
+    ) -> MemoryRead<Gameplay> {
         let r = self.ruleset()?;
         if r == 0 {
             return self.not_ready();
@@ -326,6 +292,279 @@ impl MemoryReader for StableMemory {
             combo: vals[6],
             max_combo: vals[7],
             pp: None,
+        }))
+    }
+    pub(super) fn global_sequential(&mut self) -> MemoryRead<Global> {
+        let menu = mods(self.ptr2(self.patterns.menu_mods_ptr)? as i64);
+        let chat = self
+            .process
+            .read_i8(self.ptr(self.patterns.chat_checker_ptr)?)? as i64;
+        let watching = self
+            .process
+            .read_u8(self.ptr(self.add(self.patterns.can_run_slowly_addr, 0x46)?)?)?
+            == 1;
+        let game_time = self.ptr2(self.patterns.game_time_ptr)? as i64;
+        let status = self.status_value()?;
+        let play_time = if status == 3 {
+            0.0
+        } else {
+            self.play_time_value()? as f64
+        };
+        let sc = self.ptr(self.add(self.patterns.settings_class_addr, 8)?)?;
+        let songs_ptr = self.ptr(self.add(self.ptr(self.add(sc, 0xb8)?)?, 4)?)?;
+        let songs = self.string(songs_ptr)?;
+        let show = self
+            .process
+            .read_u8(self.add(self.ptr(self.add(sc, 4)?)?, 0xc)?)?
+            != 0;
+        let mut hidden = false;
+        if watching {
+            let r = self.ruleset()?;
+            if r != 0 {
+                hidden = self.process.read_u8(self.add(r, 0x1d8)?)? != 0
+            }
+        }
+        let skin_addr = self.ptr(self.add(self.patterns.skin_data_addr, 7)?)?;
+        let skin = if skin_addr == 0 {
+            String::new()
+        } else {
+            let b = self.ptr(skin_addr)?;
+            if b == 0 {
+                String::new()
+            } else {
+                self.string_ptr(self.add(b, 0x44)?)?
+            }
+        };
+        Ok(ReadStatus::Ready(Global {
+            is_watching_replay: watching,
+            is_replay_ui_hidden: hidden,
+            is_multi_spectating: false,
+            show_interface: show,
+            chat_status: chat,
+            status,
+            paused: None,
+            play_time,
+            game_time,
+            menu_mods: menu,
+            skin_folder: skin,
+            memory_songs_folder: songs,
+        }))
+    }
+    pub(super) fn menu_sequential(&mut self, prev: &str) -> MemoryRead<Menu> {
+        let beat = self.ptr2(self.patterns.base_addr.checked_sub(0xc).ok_or(
+            MemoryError::AddressOverflow {
+                base: self.patterns.base_addr,
+                offset: 0xc,
+            },
+        )?)?;
+        if beat == 0 {
+            return self.not_ready();
+        }
+        let mode = self.ptr2(self.patterns.base_addr.checked_sub(0x33).ok_or(
+            MemoryError::AddressOverflow {
+                base: self.patterns.base_addr,
+                offset: 0x33,
+            },
+        )?)? as i64;
+        let checksum = self.string_ptr(self.add(beat, 0x6c)?)?;
+        let filename = self.string_ptr(self.add(beat, 0x90)?)?;
+        let ranked = stable_ranked_status(self.i32(self.add(beat, 0x12c)?)?);
+        if checksum == prev || !filename.ends_with(".osu") {
+            return Ok(ReadStatus::Ready(Menu::Checksum(MenuChecksum {
+                gamemode: mode,
+                ranked_status: ranked,
+            })));
+        }
+        let strf = |o| self.string_ptr(self.add(beat, o)?);
+        let audio = strf(0x64)?;
+        let bg = strf(0x68)?;
+        let base_mode = self.ptr(self.patterns.base_addr.checked_sub(0x33).unwrap())?;
+        Ok(ReadStatus::Ready(Menu::Full(MenuFull {
+            gamemode: mode,
+            checksum,
+            filename,
+            plays: self.i32(self.add(base_mode, 0xc)?)?,
+            artist: strf(0x18)?,
+            artist_original: strf(0x1c)?,
+            title: strf(0x24)?,
+            title_original: strf(0x28)?,
+            ar: self.process.read_f32(self.add(beat, 0x2c)?)? as f64,
+            cs: self.process.read_f32(self.add(beat, 0x30)?)? as f64,
+            hp: self.process.read_f32(self.add(beat, 0x34)?)? as f64,
+            od: self.process.read_f32(self.add(beat, 0x38)?)? as f64,
+            audio_file_mimetype: mime(&audio),
+            audio_filename: audio,
+            background_file_mimetype: mime(&bg),
+            background_filename: bg,
+            folder: strf(0x78)?,
+            creator: strf(0x7c)?,
+            difficulty: strf(0xac)?,
+            map_id: self.i32(self.add(beat, 0xc8)?)?,
+            set_id: self.i32(self.add(beat, 0xcc)?)?,
+            ranked_status: ranked,
+            object_count: self.i32(self.add(beat, 0xf8)?)?,
+        })))
+    }
+    pub(super) fn leaderboard_sequential(&mut self, mode: i64) -> MemoryRead<Leaderboard> {
+        let r = self.ruleset()?;
+        let base = self.ptr(self.add(r, 0x78)?)?;
+        if base == 0 {
+            return Ok(ReadStatus::Ready((false, None, vec![])));
+        }
+        let addr = self.ptr(self.add(base, 0x24)?)?;
+        if addr == 0 {
+            return Ok(ReadStatus::Ready((false, None, vec![])));
+        }
+        let player = self.ptr(self.add(addr, 0x10)?)?;
+        let visible = self
+            .process
+            .read_u8(self.add(self.ptr(self.add(player, 0x24)?)?, 0x20)?)?
+            != 0;
+        let current = self.leaderboard_player(player, mode)?;
+        let list = self.ptr(self.add(addr, 4)?)?;
+        let raw_n = self.process.read_i32(self.add(list, 0xc)?)?;
+        if !(0..=MAX_LEADERBOARD_PLAYERS as i32).contains(&raw_n) {
+            return Err(MemoryError::Corrupt {
+                context: "leaderboard",
+                address: list,
+                message: "invalid count",
+            });
+        }
+        let n = raw_n as usize;
+        if n < 1 {
+            return Ok(ReadStatus::Ready((visible, current, vec![])));
+        }
+        let items = self.ptr(self.add(list, 4)?)?;
+        let mut out = Vec::with_capacity(n);
+        let mut name_bytes = 0usize;
+        for i in 0..n {
+            let player =
+                self.leaderboard_player(self.ptr(self.add(items, LEADER_START + 4 * i)?)?, mode)?;
+            match player {
+                Some(player) => {
+                    name_bytes = name_bytes.saturating_add(player.name.len());
+                    if name_bytes > MAX_LEADERBOARD_NAME_BYTES {
+                        return Err(MemoryError::Corrupt {
+                            context: "leaderboard",
+                            address: items,
+                            message: "aggregate name budget exceeded",
+                        });
+                    }
+                    out.push(player);
+                }
+                None => break,
+            }
+        }
+        Ok(ReadStatus::Ready((visible, current, out)))
+    }
+    pub(super) fn settings_sequential(&mut self) -> MemoryRead<Settings> {
+        let cp = self.ptr2(self.patterns.configuration_addr)?;
+        let bp = self.ptr2(self.patterns.bindings_addr)?;
+        if cp == 0 || bp == 0 {
+            return self.not_ready();
+        }
+        if cp != self.config_identity || self.config_positions.is_empty() {
+            self.config_positions = self.setting_positions(cp, true)?;
+            self.config_identity = cp
+        }
+        if bp != self.binding_identity || self.binding_positions.is_empty() {
+            self.binding_positions = self.setting_positions(bp, false)?;
+            self.binding_identity = bp
+        }
+        let mut out = IndexMap::new();
+        for (path, value) in self.config_values(cp, &self.config_positions)? {
+            // False, zero, and empty-string settings are valid source values;
+            // only unreadable/null entries are omitted by config_values.
+            out.insert(path, value);
+        }
+        for record in self.setting_records(bp, &self.binding_positions)? {
+            let Some(record) = record else { continue };
+            let key = i32::from_le_bytes(record[0..4].try_into().unwrap());
+            let value = i32::from_le_bytes(record[12..16].try_into().unwrap());
+            if key == 0 {
+                continue;
+            }
+            if let Some((_, path)) = BINDINGS.iter().find(|(id, _)| *id == key)
+                && let Some(name) = key_name(value)
+            {
+                out.insert((*path).into(), Value::String(name.into()));
+            }
+        }
+        if self.read_mania_scroll_speed {
+            let global = out.get("mania.scrollSpeed").and_then(Value::as_f64);
+            if let Some(speed) = self.beatmap_scroll_speed(global).unwrap_or(global) {
+                out.insert("mania.scrollSpeed".into(), json!(speed));
+            }
+        }
+        Ok(ReadStatus::Ready(out))
+    }
+}
+
+impl MemoryReader for StableMemory {
+    fn audio_velocity_base(&mut self) -> MemoryRead<AudioVelocityBase> {
+        self.audio_velocity_base_batched().or_else(|_| {
+            self.drop_carried_ruleset();
+            self.audio_velocity_base_sequential()
+        })
+    }
+    fn user(&mut self) -> MemoryRead<User> {
+        self.user_batched().or_else(|_| self.user_sequential())
+    }
+    fn gameplay(&mut self, play_time: f64, first_object_time: Option<i64>) -> MemoryRead<Gameplay> {
+        self.gameplay_batched(play_time, first_object_time)
+            .or_else(|_| {
+                self.drop_carried_ruleset();
+                self.gameplay_sequential(play_time, first_object_time)
+            })
+    }
+    fn global(&mut self) -> MemoryRead<Global> {
+        self.global_batched().or_else(|_| self.global_sequential())
+    }
+    fn menu(&mut self, prev: &str) -> MemoryRead<Menu> {
+        self.menu_batched(prev)
+            .or_else(|_| self.menu_sequential(prev))
+    }
+    fn leaderboard(&mut self, mode: i64) -> MemoryRead<Leaderboard> {
+        self.leaderboard_batched(mode).or_else(|_| {
+            self.drop_carried_ruleset();
+            self.leaderboard_sequential(mode)
+        })
+    }
+    fn result_screen(&mut self) -> MemoryRead<ResultScreen> {
+        let r = self.ruleset()?;
+        if r == 0 {
+            return self.not_ready();
+        }
+        let b = self.ptr(self.add(r, 0x38)?)?;
+        if b == 0 {
+            return self.not_ready();
+        }
+        let mode = self.i32(self.add(b, 0x64)?)?;
+        let x = self.ptr(self.add(b, 0x1c)?)?;
+        let m = self.with_random_seed(
+            mods(self.i32(self.add(x, 0xc)?)? ^ self.i32(self.add(x, 8)?)?),
+            r,
+            mode,
+        )?;
+        let counts = self.score_counts(b)?;
+        let s = legacy_stats(
+            mode, counts[1], counts[0], counts[2], counts[5], counts[3], counts[4],
+        );
+        let accuracy = accuracy(mode, &s, &m);
+        Ok(ReadStatus::Ready(ResultScreen {
+            online_id: js_long(self.process.read_i64(self.add(b, 4)?)?),
+            player_name: self.string_ptr(self.add(b, 0x28)?)?,
+            mods: m,
+            mode,
+            accuracy,
+            max_combo: counts[7],
+            score: self.i32(self.add(b, 0x78)?)? as f64,
+            statistics: s,
+            maximum_statistics: default_stats(),
+            date: net_date(
+                self.process.read_i32(self.add(b, 0xa4)?)?,
+                self.process.read_i32(self.add(b, 0xa0)?)?,
+            )?,
         }))
     }
     fn key_overlay(&mut self, mode: i64) -> MemoryRead<KeyOverlay> {
@@ -472,62 +711,6 @@ impl MemoryReader for StableMemory {
             stable_replay_frames,
         }))
     }
-    fn global(&mut self) -> MemoryRead<Global> {
-        let menu = mods(self.ptr2(self.patterns.menu_mods_ptr)? as i64);
-        let chat = self
-            .process
-            .read_i8(self.ptr(self.patterns.chat_checker_ptr)?)? as i64;
-        let watching = self
-            .process
-            .read_u8(self.ptr(self.add(self.patterns.can_run_slowly_addr, 0x46)?)?)?
-            == 1;
-        let game_time = self.ptr2(self.patterns.game_time_ptr)? as i64;
-        let status = self.status_value()?;
-        let play_time = if status == 3 {
-            0.0
-        } else {
-            self.play_time_value()? as f64
-        };
-        let sc = self.ptr(self.add(self.patterns.settings_class_addr, 8)?)?;
-        let songs_ptr = self.ptr(self.add(self.ptr(self.add(sc, 0xb8)?)?, 4)?)?;
-        let songs = self.string(songs_ptr)?;
-        let show = self
-            .process
-            .read_u8(self.add(self.ptr(self.add(sc, 4)?)?, 0xc)?)?
-            != 0;
-        let mut hidden = false;
-        if watching {
-            let r = self.ruleset()?;
-            if r != 0 {
-                hidden = self.process.read_u8(self.add(r, 0x1d8)?)? != 0
-            }
-        }
-        let skin_addr = self.ptr(self.add(self.patterns.skin_data_addr, 7)?)?;
-        let skin = if skin_addr == 0 {
-            String::new()
-        } else {
-            let b = self.ptr(skin_addr)?;
-            if b == 0 {
-                String::new()
-            } else {
-                self.string_ptr(self.add(b, 0x44)?)?
-            }
-        };
-        Ok(ReadStatus::Ready(Global {
-            is_watching_replay: watching,
-            is_replay_ui_hidden: hidden,
-            is_multi_spectating: false,
-            show_interface: show,
-            chat_status: chat,
-            status,
-            paused: None,
-            play_time,
-            game_time,
-            menu_mods: menu,
-            skin_folder: skin,
-            memory_songs_folder: songs,
-        }))
-    }
     fn global_precise(&mut self) -> MemoryRead<GlobalPrecise> {
         let status = self.status_value()?;
         let time = if status == 3 {
@@ -536,61 +719,6 @@ impl MemoryReader for StableMemory {
             self.play_time_value()? as f64
         };
         Ok(ReadStatus::Ready(GlobalPrecise { status, time }))
-    }
-    fn menu(&mut self, prev: &str) -> MemoryRead<Menu> {
-        let beat = self.ptr2(self.patterns.base_addr.checked_sub(0xc).ok_or(
-            MemoryError::AddressOverflow {
-                base: self.patterns.base_addr,
-                offset: 0xc,
-            },
-        )?)?;
-        if beat == 0 {
-            return self.not_ready();
-        }
-        let mode = self.ptr2(self.patterns.base_addr.checked_sub(0x33).ok_or(
-            MemoryError::AddressOverflow {
-                base: self.patterns.base_addr,
-                offset: 0x33,
-            },
-        )?)? as i64;
-        let checksum = self.string_ptr(self.add(beat, 0x6c)?)?;
-        let filename = self.string_ptr(self.add(beat, 0x90)?)?;
-        let ranked = stable_ranked_status(self.i32(self.add(beat, 0x12c)?)?);
-        if checksum == prev || !filename.ends_with(".osu") {
-            return Ok(ReadStatus::Ready(Menu::Checksum(MenuChecksum {
-                gamemode: mode,
-                ranked_status: ranked,
-            })));
-        }
-        let strf = |o| self.string_ptr(self.add(beat, o)?);
-        let audio = strf(0x64)?;
-        let bg = strf(0x68)?;
-        let base_mode = self.ptr(self.patterns.base_addr.checked_sub(0x33).unwrap())?;
-        Ok(ReadStatus::Ready(Menu::Full(MenuFull {
-            gamemode: mode,
-            checksum,
-            filename,
-            plays: self.i32(self.add(base_mode, 0xc)?)?,
-            artist: strf(0x18)?,
-            artist_original: strf(0x1c)?,
-            title: strf(0x24)?,
-            title_original: strf(0x28)?,
-            ar: self.process.read_f32(self.add(beat, 0x2c)?)? as f64,
-            cs: self.process.read_f32(self.add(beat, 0x30)?)? as f64,
-            hp: self.process.read_f32(self.add(beat, 0x34)?)? as f64,
-            od: self.process.read_f32(self.add(beat, 0x38)?)? as f64,
-            audio_file_mimetype: mime(&audio),
-            audio_filename: audio,
-            background_file_mimetype: mime(&bg),
-            background_filename: bg,
-            folder: strf(0x78)?,
-            creator: strf(0x7c)?,
-            difficulty: strf(0xac)?,
-            map_id: self.i32(self.add(beat, 0xc8)?)?,
-            set_id: self.i32(self.add(beat, 0xcc)?)?,
-            ranked_status: ranked,
-            object_count: self.i32(self.add(beat, 0xf8)?)?,
-        })))
     }
     fn mp3_length(&mut self) -> MemoryRead<Mp3Length> {
         let b = self.ptr2(self.patterns.get_audio_length_ptr)?;
@@ -723,58 +851,6 @@ impl MemoryReader for StableMemory {
             pp: self.i32(self.add(b, 0x9c)?)? as f64,
         }))
     }
-    fn leaderboard(&mut self, mode: i64) -> MemoryRead<Leaderboard> {
-        let r = self.ruleset()?;
-        let base = self.ptr(self.add(r, 0x78)?)?;
-        if base == 0 {
-            return Ok(ReadStatus::Ready((false, None, vec![])));
-        }
-        let addr = self.ptr(self.add(base, 0x24)?)?;
-        if addr == 0 {
-            return Ok(ReadStatus::Ready((false, None, vec![])));
-        }
-        let player = self.ptr(self.add(addr, 0x10)?)?;
-        let visible = self
-            .process
-            .read_u8(self.add(self.ptr(self.add(player, 0x24)?)?, 0x20)?)?
-            != 0;
-        let current = self.leaderboard_player(player, mode)?;
-        let list = self.ptr(self.add(addr, 4)?)?;
-        let raw_n = self.process.read_i32(self.add(list, 0xc)?)?;
-        if !(0..=MAX_LEADERBOARD_PLAYERS as i32).contains(&raw_n) {
-            return Err(MemoryError::Corrupt {
-                context: "leaderboard",
-                address: list,
-                message: "invalid count",
-            });
-        }
-        let n = raw_n as usize;
-        if n < 1 {
-            return Ok(ReadStatus::Ready((visible, current, vec![])));
-        }
-        let items = self.ptr(self.add(list, 4)?)?;
-        let mut out = Vec::with_capacity(n);
-        let mut name_bytes = 0usize;
-        for i in 0..n {
-            let player =
-                self.leaderboard_player(self.ptr(self.add(items, LEADER_START + 4 * i)?)?, mode)?;
-            match player {
-                Some(player) => {
-                    name_bytes = name_bytes.saturating_add(player.name.len());
-                    if name_bytes > MAX_LEADERBOARD_NAME_BYTES {
-                        return Err(MemoryError::Corrupt {
-                            context: "leaderboard",
-                            address: items,
-                            message: "aggregate name budget exceeded",
-                        });
-                    }
-                    out.push(player);
-                }
-                None => break,
-            }
-        }
-        Ok(ReadStatus::Ready((visible, current, out)))
-    }
     fn ranked_play(&mut self) -> MemoryRead<RankedPlay> {
         Ok(ReadStatus::Unsupported(
             "Stable: ranked play not implemented",
@@ -792,44 +868,7 @@ impl MemoryReader for StableMemory {
         ))
     }
     fn settings(&mut self) -> MemoryRead<Settings> {
-        let cp = self.ptr2(self.patterns.configuration_addr)?;
-        let bp = self.ptr2(self.patterns.bindings_addr)?;
-        if cp == 0 || bp == 0 {
-            return self.not_ready();
-        }
-        if cp != self.config_identity || self.config_positions.is_empty() {
-            self.config_positions = self.setting_positions(cp, true)?;
-            self.config_identity = cp
-        }
-        if bp != self.binding_identity || self.binding_positions.is_empty() {
-            self.binding_positions = self.setting_positions(bp, false)?;
-            self.binding_identity = bp
-        }
-        let mut out = IndexMap::new();
-        for (path, value) in self.config_values(cp, &self.config_positions)? {
-            // False, zero, and empty-string settings are valid source values;
-            // only unreadable/null entries are omitted by config_values.
-            out.insert(path, value);
-        }
-        for record in self.setting_records(bp, &self.binding_positions)? {
-            let Some(record) = record else { continue };
-            let key = i32::from_le_bytes(record[0..4].try_into().unwrap());
-            let value = i32::from_le_bytes(record[12..16].try_into().unwrap());
-            if key == 0 {
-                continue;
-            }
-            if let Some((_, path)) = BINDINGS.iter().find(|(id, _)| *id == key)
-                && let Some(name) = key_name(value)
-            {
-                out.insert((*path).into(), Value::String(name.into()));
-            }
-        }
-        if self.read_mania_scroll_speed {
-            let global = out.get("mania.scrollSpeed").and_then(Value::as_f64);
-            if let Some(speed) = self.beatmap_scroll_speed(global).unwrap_or(global) {
-                out.insert("mania.scrollSpeed".into(), json!(speed));
-            }
-        }
-        Ok(ReadStatus::Ready(out))
+        self.settings_batched()
+            .or_else(|_| self.settings_sequential())
     }
 }

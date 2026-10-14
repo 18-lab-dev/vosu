@@ -318,11 +318,15 @@ pub(super) fn lazer_path(hash: &str) -> Result<String, MemoryError> {
             message: "expected an ASCII hexadecimal MD5 or SHA-256 digest",
         });
     }
-    Ok(Path::new(&hash[..1])
-        .join(&hash[..2])
-        .join(hash)
-        .to_string_lossy()
-        .into_owned())
+    // `Path::new(a).join(b).join(hash)` for single-component relative parts, without the
+    // intermediate `PathBuf`s: one separator between components, the platform's own.
+    let mut path = String::with_capacity(hash.len() + 5);
+    path.push_str(&hash[..1]);
+    path.push(std::path::MAIN_SEPARATOR);
+    path.push_str(&hash[..2]);
+    path.push(std::path::MAIN_SEPARATOR);
+    path.push_str(hash);
+    Ok(path)
 }
 pub(super) fn mime(name: &str) -> String {
     let basename = name.rsplit(['/', '\\']).next().unwrap_or_default();

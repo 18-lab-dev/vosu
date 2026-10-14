@@ -15,6 +15,7 @@ pub(super) enum GameRoot {
     ScreenStack,
     Ruleset,
     SelectedMods,
+    AvailableMods,
     ChatOverlay,
     Storage,
     OsuLogo,
@@ -30,7 +31,7 @@ pub(super) enum GameRoot {
     Realm,
 }
 
-pub(super) const GAME_ROOTS: usize = 19;
+pub(super) const GAME_ROOTS: usize = 20;
 
 impl GameRoot {
     const ALL: [Self; GAME_ROOTS] = [
@@ -40,6 +41,7 @@ impl GameRoot {
         Self::ScreenStack,
         Self::Ruleset,
         Self::SelectedMods,
+        Self::AvailableMods,
         Self::ChatOverlay,
         Self::Storage,
         Self::OsuLogo,
@@ -68,6 +70,7 @@ impl GameRoot {
                 .unwrap_or(game.screen_stack_k_backing_field),
             Self::Ruleset => desktop.ruleset,
             Self::SelectedMods => desktop.selected_mods,
+            Self::AvailableMods => desktop.available_mods,
             Self::ChatOverlay => game.chat_overlay,
             Self::Storage => base.storage_k_backing_field,
             Self::OsuLogo => game.osu_logo,

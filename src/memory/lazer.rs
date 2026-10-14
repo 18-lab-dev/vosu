@@ -37,6 +37,8 @@ mod configuration;
 mod data;
 mod global_batch;
 mod helpers;
+mod menu_batch;
+mod menu_global;
 mod models;
 mod reader;
 mod resolver;
@@ -49,8 +51,10 @@ mod screens;
 use batch::*;
 use global_batch::BeatmapHead;
 use helpers::*;
+use menu_global::MenuGlobal;
 use models::*;
 pub use models::{LazerMemory, LazerPattern};
+use room_batch::{RankedState, RoomHead};
 use roots::{GAME_ROOTS, GameRoot, SCREEN_SPAN_WORDS, screen_span};
 
 #[cfg(test)]
@@ -61,3 +65,5 @@ mod tests_batch;
 mod tests_behavior;
 #[cfg(test)]
 mod tests_core;
+#[cfg(test)]
+mod tests_menu_batch;
