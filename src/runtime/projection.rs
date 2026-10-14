@@ -163,7 +163,16 @@ impl<D: Serialize> SharedDocument<D> {
             self.shared.refuse(key, budget);
             return Ok(());
         }
-        let value = match result? {
+        let value = match result {
+            Ok(value) => value,
+            Err(_) => {
+                // A full property may fail even when a selected subtree succeeds.
+                // Never attempt to share it again during this broadcast pass.
+                self.shared.refuse(key, usize::MAX);
+                return Ok(());
+            }
+        };
+        let value = match value {
             // Only `key` was selected, so it is the sole entry.
             ProjectionValue::Object(mut entries) => entries.pop().map(|(_, value)| value),
             document => javascript_property_ref(&document, key).map(Cow::into_owned),
@@ -211,7 +220,9 @@ impl SharedProperties {
     }
 
     fn property_mut(&mut self, key: &str) -> Option<&mut SharedProperty> {
-        self.properties.iter_mut().find(|property| property.key == key)
+        self.properties
+            .iter_mut()
+            .find(|property| property.key == key)
     }
 
     /// The property and the budget to serialize it whole with, if that is due.
@@ -221,8 +232,10 @@ impl SharedProperties {
             .largest_walk
             .saturating_mul(2)
             .max(property.spent / SHARE_RATIO);
-        (property.whole.is_none() && budget >= property.refused.saturating_mul(2))
-            .then_some((property.key, budget))
+        (property.whole.is_none()
+            && property.refused != usize::MAX
+            && budget >= property.refused.saturating_mul(2))
+        .then_some((property.key, budget))
     }
 
     fn spend(&mut self, walked: impl Iterator<Item = (&'static str, usize)>) {
@@ -1468,7 +1481,10 @@ fn write_object<K: AsRef<str>, V>(
     // which needs no allocation; more are sorted.
     const SCANNED_INDICES: usize = 8;
     let index = |(key, _): &(K, V)| javascript_array_index(key.as_ref());
-    let index_count = entries.iter().filter(|entry| index(entry).is_some()).count();
+    let index_count = entries
+        .iter()
+        .filter(|entry| index(entry).is_some())
+        .count();
     let mut written = 0;
     let mut write_entry = |bytes: &mut Vec<u8>, (key, value): &(K, V)| -> io::Result<()> {
         if written != 0 {
@@ -1488,7 +1504,9 @@ fn write_object<K: AsRef<str>, V>(
             let (order, entry) = entries
                 .iter()
                 .enumerate()
-                .filter_map(|(position, entry)| index(entry).map(|index| ((index, position), entry)))
+                .filter_map(|(position, entry)| {
+                    index(entry).map(|index| ((index, position), entry))
+                })
                 .filter(|(order, _)| previous.is_none_or(|previous| *order > previous))
                 .min_by_key(|(order, _)| *order)
                 .expect("a counted index key remains");
@@ -1680,10 +1698,12 @@ pub(super) fn javascript_property_ref<'v>(
             .and_then(|index| usize::try_from(index).ok())
             .and_then(|index| string.encode_utf16().nth(index))
             .map(|unit| {
-                Cow::Owned(char::from_u32(u32::from(unit)).map_or(
-                    ProjectionValue::Utf16CodeUnit(unit),
-                    |character| ProjectionValue::String(character.to_string()),
-                ))
+                Cow::Owned(
+                    char::from_u32(u32::from(unit))
+                        .map_or(ProjectionValue::Utf16CodeUnit(unit), |character| {
+                            ProjectionValue::String(character.to_string())
+                        }),
+                )
             }),
         ProjectionValue::Utf16CodeUnit(_) if key == "length" => Some(Cow::Owned(
             ProjectionValue::Number(serde_json::Number::from(1)),

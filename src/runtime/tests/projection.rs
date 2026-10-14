@@ -869,3 +869,42 @@ fn broadcast_pass_reuses_documents_only_for_the_same_publication_and_schema() {
     );
 }
 
+
+#[test]
+fn unshareable_property_keeps_successful_subtrees_available() {
+    struct Failing(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl Serialize for Failing {
+        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err(serde::ser::Error::custom("fixture cannot serialize"))
+        }
+    }
+    #[derive(Serialize)]
+    struct Parent {
+        small: u32,
+        failing: Failing,
+    }
+    #[derive(Serialize)]
+    struct Document {
+        parent: Parent,
+    }
+    let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut document = SharedDocument::new(Document {
+        parent: Parent {
+            small: 7,
+            failing: Failing(attempts.clone()),
+        },
+    });
+    let filters = [Filter::Nested {
+        field: "parent".into(),
+        keys: vec![Filter::Field("small".into())],
+    }];
+    for _ in 0..128 {
+        assert_eq!(
+            document.encode(&filters).unwrap(),
+            Bytes::from_static(br#"{"parent":{"small":7}}"#)
+        );
+    }
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert!(!document.is_shared("parent"));
+}

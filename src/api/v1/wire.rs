@@ -10,7 +10,7 @@
 use std::io::{self, Write};
 
 use super::*;
-use crate::api::json::{Serde, With, Wire, wire_object};
+use crate::api::json::{Serde, Wire, With, wire_object};
 
 /// Encodes the unfiltered v1 document exactly as `build_with` serializes
 /// through [`JsFormatter`](crate::api::json::JsFormatter).

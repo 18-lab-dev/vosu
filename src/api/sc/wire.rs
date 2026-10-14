@@ -109,11 +109,7 @@ fn write_bpm_text(out: &mut Vec<u8>, minimum: f64, maximum: f64, common: f64) ->
 /// Writes `format!("{value:?}")` re-cased, as [`country_name`] and
 /// [`ruleset_name`] produce enum names, falling back to the Unicode-aware
 /// conversion for non-ASCII spellings.
-fn write_debug_name(
-    out: &mut Vec<u8>,
-    value: &dyn std::fmt::Debug,
-    upper: bool,
-) -> io::Result<()> {
+fn write_debug_name(out: &mut Vec<u8>, value: &dyn std::fmt::Debug, upper: bool) -> io::Result<()> {
     out.push(b'"');
     let start = out.len();
     write!(out, "{value:?}")?;
@@ -235,9 +231,8 @@ fn write_document(
     let bpm = parsed.map(|map| map.bpm).unwrap_or_default();
     let times = parsed.map(|map| map.times).unwrap_or_default();
     let objects = parsed.map(|map| map.object_counts).unwrap_or_default();
-    let pp = |accuracy: u8| {
-        fix_decimals(beatmap.pp_acc.get(&accuracy).copied().unwrap_or_default())
-    };
+    let pp =
+        |accuracy: u8| fix_decimals(beatmap.pp_acc.get(&accuracy).copied().unwrap_or_default());
 
     let common_bpm = round4(bpm.common);
     let max_bpm = round4(bpm.maximum);

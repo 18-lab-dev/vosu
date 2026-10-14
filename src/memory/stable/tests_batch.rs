@@ -567,7 +567,7 @@ impl ProcessMemory for ChangingMemory {
 }
 
 #[test]
-fn failed_batched_reads_recover_through_the_ruleset_chain_not_the_carried_ruleset() {
+fn failed_batched_reads_after_spending_carries_recover_through_the_ruleset_chain() {
     let variant = Variant {
         status: 2,
         watching: false,
@@ -623,6 +623,98 @@ fn failed_batched_reads_recover_through_the_ruleset_chain_not_the_carried_rulese
         format!("{:?}", stable.audio_velocity_base()),
     );
     assert_eq!(actual, expected);
+    assert_eq!(stable.capture.ruleset, None);
+}
+
+#[test]
+fn first_reads_after_ruleset_swap_use_spans_carried_by_global() {
+    let variant = Variant {
+        status: 2,
+        watching: false,
+        gameplay_mode: 0,
+        mod_bits: 0,
+        checksum_matches: true,
+        first_object_time: Some(1000),
+    };
+    let original = graph(&variant);
+    let word = |address: usize| {
+        u32::from_le_bytes(original[address..address + 4].try_into().unwrap()) as usize
+    };
+    let container = word(fixture_patterns().rulesets_addr - 0xb);
+    let ruleset = word(container + 4);
+    let moved = SIZE - 0x200;
+    let mut replaced = original.clone();
+    replaced.copy_within(ruleset..ruleset + 0x200, moved);
+    // The replacement lacks these links, while this capture retains the old spans.
+    for offset in [0x44, 0x64, 0x78] {
+        replaced[moved + offset..moved + offset + 4].fill(0);
+    }
+    replaced[container + 4..container + 8].copy_from_slice(&(moved as u32).to_le_bytes());
+    let memory = Arc::new(ChangingMemory {
+        bytes: Mutex::new(original.clone()),
+        poisoned: Mutex::new(None),
+    });
+    let mut stable = StableMemory::new(
+        ProcessHandle::new(memory.clone(), ProcessBitness::X86),
+        fixture_patterns(),
+    );
+    stable.synchronize_capture_config(false, true);
+    assert!(matches!(stable.global(), Ok(ReadStatus::Ready(_))));
+    *memory.bytes.lock() = replaced;
+    *memory.poisoned.lock() = Some((ruleset, ruleset + 0x200));
+    let (mut reference, _) = reader(original, None);
+    let expected = (
+        format!("{:?}", reference.gameplay_sequential(4321.0, Some(1000))),
+        format!("{:?}", reference.leaderboard_sequential(0)),
+        format!("{:?}", reference.audio_velocity_base_sequential()),
+    );
+    let actual = (
+        format!("{:?}", stable.gameplay(4321.0, Some(1000))),
+        format!("{:?}", stable.leaderboard(0)),
+        format!("{:?}", stable.audio_velocity_base()),
+    );
+    assert_eq!(actual, expected);
+    assert!(actual.0.starts_with("Ok(Ready("), "{actual:?}");
+    assert_eq!(stable.capture.ruleset, Some(ruleset));
+}
+
+#[test]
+fn result_screen_retries_replaced_ruleset_after_global() {
+    let variant = Variant {
+        status: 7,
+        watching: false,
+        gameplay_mode: 0,
+        mod_bits: 0,
+        checksum_matches: true,
+        first_object_time: Some(1000),
+    };
+    let original = graph(&variant);
+    let word = |address: usize| {
+        u32::from_le_bytes(original[address..address + 4].try_into().unwrap()) as usize
+    };
+    let container = word(fixture_patterns().rulesets_addr - 0xb);
+    let ruleset = word(container + 4);
+    let moved = SIZE - 0x200;
+    let mut replaced = original.clone();
+    replaced.copy_within(ruleset..ruleset + 0x200, moved);
+    replaced[container + 4..container + 8].copy_from_slice(&(moved as u32).to_le_bytes());
+    let poisoned = Some((ruleset, ruleset + 0x200));
+    let memory = Arc::new(ChangingMemory {
+        bytes: Mutex::new(original),
+        poisoned: Mutex::new(None),
+    });
+    let mut stable = StableMemory::new(
+        ProcessHandle::new(memory.clone(), ProcessBitness::X86),
+        fixture_patterns(),
+    );
+    stable.synchronize_capture_config(false, true);
+    assert!(matches!(stable.global(), Ok(ReadStatus::Ready(_))));
+    *memory.bytes.lock() = replaced.clone();
+    *memory.poisoned.lock() = poisoned;
+    let (mut reference, _) = reader(replaced, poisoned);
+    let expected = format!("{:?}", reference.result_screen_sequential());
+    assert!(expected.starts_with("Ok(Ready("), "{expected}");
+    assert_eq!(format!("{:?}", stable.result_screen()), expected);
     assert_eq!(stable.capture.ruleset, None);
 }
 

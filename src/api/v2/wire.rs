@@ -209,7 +209,8 @@ const LINEAR_LOOKUP_LIMIT: usize = 32;
 fn child<'a>(value: Option<&'a Value>, key: &str) -> Option<&'a Value> {
     let map = value?.as_object()?;
     if map.len() <= LINEAR_LOOKUP_LIMIT {
-        map.iter().find_map(|(name, value)| (name == key).then_some(value))
+        map.iter()
+            .find_map(|(name, value)| (name == key).then_some(value))
     } else {
         map.get(key)
     }
@@ -244,7 +245,8 @@ fn write_settings(out: &mut Vec<u8>, state: &RegularState, source: ClientType) -
     let s = &state.settings.values;
     let top = |key: &str| {
         if s.len() <= LINEAR_LOOKUP_LIMIT {
-            s.iter().find_map(|(name, value)| (name == key).then_some(value))
+            s.iter()
+                .find_map(|(name, value)| (name == key).then_some(value))
         } else {
             s.get(key)
         }

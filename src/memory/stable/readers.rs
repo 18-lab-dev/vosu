@@ -30,6 +30,66 @@ impl SynchronizedMemoryReader for StableMemory {
 }
 
 impl StableMemory {
+    pub(super) fn result_screen_sequential(&mut self) -> MemoryRead<ResultScreen> {
+        let r = self.ruleset()?;
+        if r == 0 {
+            return self.not_ready();
+        }
+        let b = self.ptr(self.add(r, 0x38)?)?;
+        if b == 0 {
+            return self.not_ready();
+        }
+        let mode = self.i32(self.add(b, 0x64)?)?;
+        let x = self.ptr(self.add(b, 0x1c)?)?;
+        let m = self.with_random_seed(
+            mods(self.i32(self.add(x, 0xc)?)? ^ self.i32(self.add(x, 8)?)?),
+            r,
+            mode,
+        )?;
+        let counts = self.score_counts(b)?;
+        let s = legacy_stats(
+            mode, counts[1], counts[0], counts[2], counts[5], counts[3], counts[4],
+        );
+        let accuracy = accuracy(mode, &s, &m);
+        Ok(ReadStatus::Ready(ResultScreen {
+            online_id: js_long(self.process.read_i64(self.add(b, 4)?)?),
+            player_name: self.string_ptr(self.add(b, 0x28)?)?,
+            mods: m,
+            mode,
+            accuracy,
+            max_combo: counts[7],
+            score: self.i32(self.add(b, 0x78)?)? as f64,
+            statistics: s,
+            maximum_statistics: default_stats(),
+            date: net_date(
+                self.process.read_i32(self.add(b, 0xa4)?)?,
+                self.process.read_i32(self.add(b, 0xa0)?)?,
+            )?,
+        }))
+    }
+    fn tourney_sequential(&mut self) -> MemoryRead<Tourney> {
+        let r = self.ruleset()?;
+        if r == 0 {
+            return self.not_ready();
+        }
+        let l = self.ptr(self.add(r, 0x1c)?)?;
+        let q = self.ptr(self.add(r, 0x20)?)?;
+        let team = |b| -> Result<String, MemoryError> {
+            self.string(self.ptr(self.add(self.ptr(self.add(b, 0x20)?)?, 0x144)?)?)
+        };
+        Ok(ReadStatus::Ready(Tourney {
+            ipc_state: self.i32(self.add(r, 0x54)?)?,
+            left_stars: self.i32(self.add(l, 0x2c)?)?,
+            right_stars: self.i32(self.add(q, 0x2c)?)?,
+            best_of: self.i32(self.add(q, 0x30)?)?,
+            stars_visible: self.process.read_u8(self.add(q, 0x38)?)? != 0,
+            score_visible: self.process.read_u8(self.add(q, 0x39)?)? != 0,
+            first_team_name: team(l)?,
+            second_team_name: team(q)?,
+            first_team_score: self.i32(self.add(l, 0x28)?)?,
+            second_team_score: self.i32(self.add(q, 0x28)?)?,
+        }))
+    }
     fn reset_replay_frames(&mut self, score: usize, error_index: i64) {
         self.replay_score = score;
         self.replay_error_index = error_index;
@@ -531,41 +591,10 @@ impl MemoryReader for StableMemory {
         })
     }
     fn result_screen(&mut self) -> MemoryRead<ResultScreen> {
-        let r = self.ruleset()?;
-        if r == 0 {
-            return self.not_ready();
-        }
-        let b = self.ptr(self.add(r, 0x38)?)?;
-        if b == 0 {
-            return self.not_ready();
-        }
-        let mode = self.i32(self.add(b, 0x64)?)?;
-        let x = self.ptr(self.add(b, 0x1c)?)?;
-        let m = self.with_random_seed(
-            mods(self.i32(self.add(x, 0xc)?)? ^ self.i32(self.add(x, 8)?)?),
-            r,
-            mode,
-        )?;
-        let counts = self.score_counts(b)?;
-        let s = legacy_stats(
-            mode, counts[1], counts[0], counts[2], counts[5], counts[3], counts[4],
-        );
-        let accuracy = accuracy(mode, &s, &m);
-        Ok(ReadStatus::Ready(ResultScreen {
-            online_id: js_long(self.process.read_i64(self.add(b, 4)?)?),
-            player_name: self.string_ptr(self.add(b, 0x28)?)?,
-            mods: m,
-            mode,
-            accuracy,
-            max_combo: counts[7],
-            score: self.i32(self.add(b, 0x78)?)? as f64,
-            statistics: s,
-            maximum_statistics: default_stats(),
-            date: net_date(
-                self.process.read_i32(self.add(b, 0xa4)?)?,
-                self.process.read_i32(self.add(b, 0xa0)?)?,
-            )?,
-        }))
+        self.result_screen_sequential().or_else(|_| {
+            self.drop_carried_ruleset();
+            self.result_screen_sequential()
+        })
     }
     fn key_overlay(&mut self, mode: i64) -> MemoryRead<KeyOverlay> {
         let r = self.ruleset()?;
@@ -727,27 +756,10 @@ impl MemoryReader for StableMemory {
         )))
     }
     fn tourney(&mut self) -> MemoryRead<Tourney> {
-        let r = self.ruleset()?;
-        if r == 0 {
-            return self.not_ready();
-        }
-        let l = self.ptr(self.add(r, 0x1c)?)?;
-        let q = self.ptr(self.add(r, 0x20)?)?;
-        let team = |b| -> Result<String, MemoryError> {
-            self.string(self.ptr(self.add(self.ptr(self.add(b, 0x20)?)?, 0x144)?)?)
-        };
-        Ok(ReadStatus::Ready(Tourney {
-            ipc_state: self.i32(self.add(r, 0x54)?)?,
-            left_stars: self.i32(self.add(l, 0x2c)?)?,
-            right_stars: self.i32(self.add(q, 0x2c)?)?,
-            best_of: self.i32(self.add(q, 0x30)?)?,
-            stars_visible: self.process.read_u8(self.add(q, 0x38)?)? != 0,
-            score_visible: self.process.read_u8(self.add(q, 0x39)?)? != 0,
-            first_team_name: team(l)?,
-            second_team_name: team(q)?,
-            first_team_score: self.i32(self.add(l, 0x28)?)?,
-            second_team_score: self.i32(self.add(q, 0x28)?)?,
-        }))
+        self.tourney_sequential().or_else(|_| {
+            self.drop_carried_ruleset();
+            self.tourney_sequential()
+        })
     }
     fn tourney_chat(&mut self, messages: &[TourneyManagerChatItem]) -> MemoryRead<TourneyChat> {
         if self.chat_address == 0 {

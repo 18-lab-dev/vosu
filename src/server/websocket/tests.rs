@@ -1025,23 +1025,35 @@ async fn plan_changes_and_departures_keep_one_projection_per_distinct_plan() {
     });
 
     let fields = ["a", "b", "c"];
-    assert_eq!(deliver_fields(&provider, &hub, &mut clients, 1, &fields).await, 3);
+    assert_eq!(
+        deliver_fields(&provider, &hub, &mut clients, 1, &fields).await,
+        3
+    );
     // Once b moves to c's plan, the two share one projection.
     clients[1].0.set_filters(plan("c"));
     let fields = ["a", "c", "c"];
-    assert_eq!(deliver_fields(&provider, &hub, &mut clients, 2, &fields).await, 2);
+    assert_eq!(
+        deliver_fields(&provider, &hub, &mut clients, 2, &fields).await,
+        2
+    );
     // A newcomer joining a's plan shares it too.
     let (connection, receiver) = hub.connect();
     connection.set_filters(plan("a"));
     clients.push((connection, receiver));
     let fields = ["a", "c", "c", "a"];
-    assert_eq!(deliver_fields(&provider, &hub, &mut clients, 3, &fields).await, 2);
+    assert_eq!(
+        deliver_fields(&provider, &hub, &mut clients, 3, &fields).await,
+        2
+    );
     // Departures leave every remaining client its own correct frame.
     let (departed, _) = clients.remove(1);
     departed.cleanup();
     drop(departed);
     let fields = ["a", "c", "a"];
-    assert_eq!(deliver_fields(&provider, &hub, &mut clients, 4, &fields).await, 2);
+    assert_eq!(
+        deliver_fields(&provider, &hub, &mut clients, 4, &fields).await,
+        2
+    );
 
     hub.shutdown();
     runner.await.unwrap();
@@ -1170,7 +1182,11 @@ async fn a_dropped_receiver_releases_its_frame_and_refuses_state_frames() {
     connection.write_completed();
     assert!(connection.client.send_data(frame.clone(), 2, false));
     drop(receiver);
-    assert!(lock_unpoisoned(&connection.client.data.state).frame.is_none());
+    assert!(
+        lock_unpoisoned(&connection.client.data.state)
+            .frame
+            .is_none()
+    );
     connection.write_completed();
     assert!(!connection.client.send_data(frame, 3, false));
     assert_eq!(

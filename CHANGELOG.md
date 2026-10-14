@@ -12,10 +12,14 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 - osu!lazer settings are read in a handful of batched native reads instead of two reads per configuration entry, which removes most of a regular lazer capture's cost.
 - Other osu!lazer state (gameplay score and leaderboard entry, user, multiplayer room and ranked play, menu checksum, global state, skin name) also reads independent fields together, and pointers the capture reuses (game services, the current screen's fields) are read once per capture.
+- osu!stable regular captures batch pointer chains and related fields, reusing per-capture reads with sequential recovery when a batched read fails. The osu!lazer menu now batches its full traversal as well.
 - Linux: nearby fields requested together share one native read range, and each native read checks the process generation once, after the read, instead of before and after it. A reused PID or exited process is still rejected.
 - Selected-field v2 subscriptions share extraction and encoded frames for matching plans and baselines, write frames into shared bounded chunks, and skip memoization for plans used by only one client. Wire frames and latest-only delivery are unchanged.
+- Selected-field subscriptions deliver changes with fewer locks, allocations, and wakeups while retaining bounded queues and latest-only delivery.
 - Cold API serialization avoids repeated output-buffer growth; the high-rate v2 precise document writes directly from snapshot data without building an owned response first, preserving the existing JSON contract.
+- Unfiltered v1, v2, and streamCompanion responses now write directly from snapshots without first building owned response documents, preserving JSON bytes and field semantics.
 - Filtered compatibility WebSockets project only requested DTO fields directly, rather than materializing full JSON and typed trees. Identical ordered filter plans share encoded bytes within each broadcast pass, with at most 64 retained variants and 1 MiB of payload bytes; filters beyond either bound are still served without cache retention.
+- Distinct filtered WebSocket plans reuse a broadcast's schema document and write only selected fields; frequently visited properties share bounded projection work even when clients request different filters.
 
 ### Packaging
 

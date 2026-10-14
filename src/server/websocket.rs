@@ -376,7 +376,10 @@ impl DataSlot {
     }
 
     fn try_recv(&self) -> Option<Outbound> {
-        lock_unpoisoned(&self.state).frame.take().map(Outbound::Text)
+        lock_unpoisoned(&self.state)
+            .frame
+            .take()
+            .map(Outbound::Text)
     }
 }
 

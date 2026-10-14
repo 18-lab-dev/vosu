@@ -13,8 +13,8 @@ use crate::state::{StateBundleSnapshot, TourneyUserState};
 
 fn assert_direct_matches(snapshot: &CombinedSnapshot) {
     let direct = String::from_utf8(wire::encode(snapshot).unwrap()).unwrap();
-    let dto = String::from_utf8(crate::api::json::encode(&build(snapshot).unwrap(), 0).unwrap())
-        .unwrap();
+    let dto =
+        String::from_utf8(crate::api::json::encode(&build(snapshot).unwrap(), 0).unwrap()).unwrap();
     assert_eq!(direct, dto);
 }
 

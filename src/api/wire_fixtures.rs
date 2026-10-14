@@ -144,10 +144,19 @@ pub(crate) fn populated_regular(base: &RegularState, number: f64, text: &str) ->
         "resolution".into(),
         json!({"fullscreen": true, "width": 1920.9, "height": "x", "widthFullscreen": 2560}),
     );
-    settings.insert("client".into(), json!({"updateAvailable": 1, "branch": 2, "version": text}));
+    settings.insert(
+        "client".into(),
+        json!({"updateAvailable": 1, "branch": 2, "version": text}),
+    );
     settings.insert("scoreMeter".into(), json!({"type": 2, "size": number}));
-    settings.insert("cursor".into(), json!({"size": null, "menuSize": "large", "autoSize": true}));
-    settings.insert("mouse".into(), json!({"sensitivity": number, "rawInput": true}));
+    settings.insert(
+        "cursor".into(),
+        json!({"size": null, "menuSize": "large", "autoSize": true}),
+    );
+    settings.insert(
+        "mouse".into(),
+        json!({"sensitivity": number, "rawInput": true}),
+    );
     settings.insert(
         "tablet".into(),
         json!({"enabled": true, "x": 1, "y": -0.0, "width": 1e21, "rotation": 90.5}),
@@ -311,7 +320,11 @@ pub(crate) fn populated_precise(base: &PreciseState, number: f64, text: &str) ->
     precise.keypresses = Arc::new(
         (0..3)
             .map(|index| KeypressButton {
-                name: Arc::from(if index == 0 { text.to_owned() } else { format!("K{index}") }),
+                name: Arc::from(if index == 0 {
+                    text.to_owned()
+                } else {
+                    format!("K{index}")
+                }),
                 is_pressed: index % 2 == 0,
                 count: -index,
                 pressed_at: (index != 1).then_some(number),
