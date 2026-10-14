@@ -4,9 +4,10 @@ use bytes::Bytes;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
 use crate::calculation::beatmap::ParsedBeatmap;
-use crate::calculation::{calculate_grade, fix_decimals, fix_decimals_to, to_legacy_hits};
+use crate::calculation::{calculate_grade, to_legacy_hits};
 use crate::model::api::v2::*;
 use crate::model::enums::ClientType;
 use crate::model::memory::{LazerSpectatorEntry, User};
@@ -114,7 +115,18 @@ fn build_internal<'a, V: From<&'a [f64]>>(
 
 pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
     snapshot.encode_unfiltered(ApiSchema::V2, |snapshot| {
-        encode_dto_with_capacity(&build_internal::<&[f64]>(snapshot, false)?, 4 * 1024)
+        let direct = wire::encode(snapshot);
+        #[cfg(debug_assertions)]
+        {
+            let dto = build_internal::<&[f64]>(snapshot, false)
+                .and_then(|response| encode_dto(&response));
+            assert_eq!(
+                direct.as_deref().map(String::from_utf8_lossy),
+                dto.as_deref().map(String::from_utf8_lossy),
+                "direct V2 encoding diverged from the DTO contract",
+            );
+        }
+        direct.map(Bytes::from)
     })
 }
 
@@ -149,16 +161,13 @@ fn normalize_javascript_numbers(value: &mut Value) -> Result<(), ApiError> {
 }
 
 pub(crate) fn encode_dto<T: Serialize>(value: &T) -> Result<Bytes, ApiError> {
-    encode_dto_with_capacity(value, 0)
-}
-
-fn encode_dto_with_capacity<T: Serialize>(value: &T, capacity: usize) -> Result<Bytes, ApiError> {
-    crate::api::json::encode(value, capacity).map(Bytes::from)
+    crate::api::json::encode(value, 0).map(Bytes::from)
 }
 
 mod builders;
 pub(crate) mod names;
 mod tourney;
+mod wire;
 
 use builders::*;
 use names::*;

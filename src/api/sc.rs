@@ -6,10 +6,9 @@ use bytes::Bytes;
 use indexmap::IndexMap;
 use serde::Serialize;
 
+use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot};
-use crate::calculation::{
-    fix_decimals, fix_decimals_to, js_json_number, safe_join, to_legacy_hits,
-};
+use crate::calculation::{js_json_number, safe_join, to_legacy_hits};
 use crate::model::api::sc::{MapBreak, MapTimingPoint, Response};
 use crate::model::enums::{CountryCodes, Rulesets};
 use crate::model::states::{CalculateMods, KeyOverlayButton, LeaderboardPlayer};
@@ -255,11 +254,22 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
 /// Encodes this generation once and shares its immutable bytes.
 pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
     snapshot.encode_unfiltered(ApiSchema::StreamCompanion, |snapshot| {
-        encode_json_bytes(&build(snapshot)?).map(Bytes::from)
+        let direct = wire::encode(snapshot);
+        #[cfg(debug_assertions)]
+        {
+            let dto = build(snapshot).and_then(|response| encode_json_bytes(&response));
+            assert_eq!(
+                direct.as_deref().map(String::from_utf8_lossy),
+                dto.as_deref().map(String::from_utf8_lossy),
+                "direct streamCompanion encoding diverged from the DTO contract",
+            );
+        }
+        direct.map(Bytes::from)
     })
 }
 
 mod helpers;
+mod wire;
 
 use helpers::*;
 

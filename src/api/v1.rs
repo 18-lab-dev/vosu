@@ -1,5 +1,7 @@
 #[path = "v1/helpers.rs"]
 mod helpers;
+#[path = "v1/wire.rs"]
+mod wire;
 
 #[cfg(test)]
 use helpers::join_node_path;
@@ -18,8 +20,9 @@ use serde::Serialize;
 #[cfg(test)]
 use serde_json::ser::Serializer;
 
+use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
-use crate::calculation::{calculate_grade, fix_decimals, fix_decimals_to, to_legacy_hits};
+use crate::calculation::{calculate_grade, to_legacy_hits};
 use crate::model::memory::{LazerSpectatorEntry, Score};
 use crate::model::states::{CalculateMods, MultiplayerTeamType, Statistics};
 use crate::state::{GameplayState, LeaderboardPlayerState, PreciseState, RegularState};
@@ -282,18 +285,32 @@ fn build_with<'a, V: From<&'a [f64]>>(
 
 pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
     snapshot.encode_unfiltered(ApiSchema::V1, |snapshot| {
-        let value = build_with::<&[f64]>(snapshot)?;
-        crate::api::json::encode(&value, 2 * 1024).map(Bytes::from)
+        let direct = wire::encode(snapshot);
+        #[cfg(debug_assertions)]
+        {
+            let dto = build_with::<&[f64]>(snapshot)
+                .and_then(|value| crate::api::json::encode(&value, 0));
+            assert_eq!(
+                direct.as_deref().map(String::from_utf8_lossy),
+                dto.as_deref().map(String::from_utf8_lossy),
+                "direct v1 encoding diverged from the DTO contract",
+            );
+        }
+        direct.map(Bytes::from)
     })
 }
 
 fn selected_mods(status: i64, state: &RegularState) -> SelectedMods {
+    mods(selected_calculate_mods(status, state))
+}
+
+fn selected_calculate_mods(status: i64, state: &RegularState) -> &CalculateMods {
     if status == i64::from(GameState::Play.value()) {
-        mods(&state.gameplay.mods)
+        &state.gameplay.mods
     } else if status == i64::from(GameState::ResultScreen.value()) {
-        mods(&state.result_screen.raw.mods)
+        &state.result_screen.raw.mods
     } else {
-        mods(&state.global.menu_mods)
+        &state.global.menu_mods
     }
 }
 
@@ -717,3 +734,6 @@ fn lazer_gameplay(score: &Score, selected: SelectedMods) -> TourneyGameplay {
 #[cfg(test)]
 #[path = "v1/tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "v1/wire_tests.rs"]
+mod wire_tests;

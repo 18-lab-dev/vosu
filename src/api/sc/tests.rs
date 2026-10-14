@@ -1,3 +1,5 @@
+mod wire;
+
 use std::sync::Arc;
 
 use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};

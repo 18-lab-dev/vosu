@@ -1,12 +1,11 @@
 //! Source-compatible `/json/v2/precise` wire builder.
 
 use bytes::Bytes;
-use serde_json::ser::Formatter;
 use std::cmp::Ordering;
 use std::io;
 use std::sync::Arc;
 
-use crate::api::json::{JsFormatter, write_js_number};
+use crate::api::json::{write_i64, write_js_number, write_str};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerSnapshot};
 use crate::model::api::v2::{KeyOverlayButton, Keypress, Keys, PreciseResponse, PreciseTourney};
 use crate::model::states::{
@@ -90,8 +89,24 @@ fn write_document(
 /// Writes the `keys` through `releaseHitErrors` members shared by the focused
 /// document and each tourney entry, in [`PreciseResponse`] field order.
 fn write_fields(output: &mut Vec<u8>, precise: &PreciseState) -> io::Result<()> {
-    let legacy = &precise.key_overlay;
-    output.extend_from_slice(b"\"keys\":{\"k1\":");
+    output.extend_from_slice(b"\"keys\":");
+    write_keys(output, &precise.key_overlay, &precise.keypresses)?;
+    let hit_errors = &precise.hit_errors;
+    output.extend_from_slice(b",\"hitErrors\":");
+    write_numbers(output, &hit_errors.all)?;
+    output.extend_from_slice(b",\"pressHitErrors\":");
+    write_numbers(output, &hit_errors.press)?;
+    output.extend_from_slice(b",\"releaseHitErrors\":");
+    write_numbers(output, &hit_errors.release)
+}
+
+/// Writes the [`Keys`] object produced by [`build_keys`].
+pub(crate) fn write_keys(
+    output: &mut Vec<u8>,
+    legacy: &[StateKeyOverlayButton],
+    keypresses: &[StateKeypressButton],
+) -> io::Result<()> {
+    output.extend_from_slice(b"{\"k1\":");
     write_key(output, legacy.first())?;
     output.extend_from_slice(b",\"k2\":");
     write_key(output, legacy.get(1))?;
@@ -100,7 +115,7 @@ fn write_fields(output: &mut Vec<u8>, precise: &PreciseState) -> io::Result<()> 
     output.extend_from_slice(b",\"m2\":");
     write_key(output, legacy.get(3))?;
     output.extend_from_slice(b",\"all\":[");
-    for (index, button) in precise.keypresses.iter().enumerate() {
+    for (index, button) in keypresses.iter().enumerate() {
         if index > 0 {
             output.push(b',');
         }
@@ -111,7 +126,7 @@ fn write_fields(output: &mut Vec<u8>, precise: &PreciseState) -> io::Result<()> 
         } else {
             &b",\"isPressed\":false,\"count\":"[..]
         });
-        JsFormatter.write_i64(output, button.count)?;
+        write_i64(output, button.count);
         match button.pressed_at {
             Some(value) => {
                 output.extend_from_slice(b",\"pressedAt\":");
@@ -128,13 +143,8 @@ fn write_fields(output: &mut Vec<u8>, precise: &PreciseState) -> io::Result<()> 
             None => output.extend_from_slice(b",\"releasedAt\":null}"),
         }
     }
-    let hit_errors = &precise.hit_errors;
-    output.extend_from_slice(b"]},\"hitErrors\":");
-    write_numbers(output, &hit_errors.all)?;
-    output.extend_from_slice(b",\"pressHitErrors\":");
-    write_numbers(output, &hit_errors.press)?;
-    output.extend_from_slice(b",\"releaseHitErrors\":");
-    write_numbers(output, &hit_errors.release)
+    output.extend_from_slice(b"]}");
+    Ok(())
 }
 
 fn write_key(output: &mut Vec<u8>, button: Option<&StateKeyOverlayButton>) -> io::Result<()> {
@@ -144,25 +154,9 @@ fn write_key(output: &mut Vec<u8>, button: Option<&StateKeyOverlayButton>) -> io
     } else {
         &b"{\"isPressed\":false,\"count\":"[..]
     });
-    JsFormatter.write_i64(output, key.count)?;
+    write_i64(output, key.count);
     output.push(b'}');
     Ok(())
-}
-
-/// Writes a JSON string; names normally need no escaping, and the general
-/// serde_json escaper (which defines the exact escape spelling) handles the rest.
-fn write_str(output: &mut Vec<u8>, value: &str) -> io::Result<()> {
-    if value
-        .bytes()
-        .all(|byte| byte >= 0x20 && byte != b'"' && byte != b'\\')
-    {
-        output.push(b'"');
-        output.extend_from_slice(value.as_bytes());
-        output.push(b'"');
-        Ok(())
-    } else {
-        serde_json::to_writer(output, value).map_err(io::Error::other)
-    }
 }
 
 fn write_numbers(output: &mut Vec<u8>, values: &[f64]) -> io::Result<()> {

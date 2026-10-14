@@ -547,7 +547,7 @@ struct EncodedGraphCache {
     encoded: Arc<RawValue>,
 }
 
-fn encode_graph_once(source: &Arc<StrainGraph>) -> Result<Arc<RawValue>, ApiError> {
+pub(super) fn encode_graph_once(source: &Arc<StrainGraph>) -> Result<Arc<RawValue>, ApiError> {
     static CACHE: OnceLock<Mutex<Option<EncodedGraphCache>>> = OnceLock::new();
     let mut cache = CACHE
         .get_or_init(|| Mutex::new(None))
