@@ -594,15 +594,27 @@ async fn lifecycle_debounces_saves_and_suppresses_own_hash_event() {
     assert_eq!(third.old.server_port, 24_052.0);
     assert_eq!(third.new.server_port, 24_053.0);
 
-    tokio::time::sleep(Duration::from_millis(180)).await;
+    // Wait for the debounced save itself rather than a fixed delay: `RecordingReplace`
+    // counts the call before the rename lands, and a busy CI runner can take longer than
+    // the 50 ms debounce plus a fixed margin.
+    let saved_port = || {
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| ConfigDocument::parse(&text).ok())
+            .map(|document| document.config().server_port)
+    };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while saved_port() != Some(24_053.0) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "debounced save did not land within 5 s"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // The three updates must coalesce into exactly one save, including after a further
+    // debounce period.
+    tokio::time::sleep(Duration::from_millis(120)).await;
     assert_eq!(replacer.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        ConfigDocument::parse(&std::fs::read_to_string(&path).expect("saved config"))
-            .expect("parse saved TOML")
-            .config()
-            .server_port,
-        24_053.0
-    );
     assert!(
         tokio::time::timeout(Duration::from_millis(150), changes.recv())
             .await
