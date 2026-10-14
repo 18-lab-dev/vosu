@@ -1,6 +1,8 @@
 //! Transport-independent WebSocket routing, publication, and connection lifecycle.
 
 use std::{
+    any::Any,
+    cell::RefCell,
     collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
     sync::{
@@ -13,7 +15,7 @@ use std::{
 use arc_swap::ArcSwap;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{Notify, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 mod upgrade;
@@ -111,6 +113,9 @@ impl FilterPlan {
 /// single broadcast pass, so every reused payload belongs to that generation.
 #[derive(Default)]
 struct SharedProjections {
+    /// Each entry's plan hash, kept apart so a miss scans contiguous words
+    /// rather than every plan behind its `Arc`.
+    hashes: Vec<u64>,
     entries: Vec<(Arc<FilterPlan>, Option<Bytes>)>,
     bytes: usize,
 }
@@ -118,9 +123,11 @@ struct SharedProjections {
 impl SharedProjections {
     fn encode(&mut self, snapshot: &dyn StateSnapshot, plan: &Arc<FilterPlan>) -> Option<Bytes> {
         if let Some((_, payload)) = self
-            .entries
+            .hashes
             .iter()
-            .find(|(candidate, _)| candidate.hash == plan.hash && candidate.filters == plan.filters)
+            .zip(&self.entries)
+            .find(|(hash, (candidate, _))| **hash == plan.hash && candidate.filters == plan.filters)
+            .map(|(_, entry)| entry)
         {
             return payload.clone();
         }
@@ -130,10 +137,64 @@ impl SharedProjections {
             && self.bytes.saturating_add(size) <= MAX_SHARED_PROJECTION_BYTES
         {
             self.bytes += size;
+            self.hashes.push(plan.hash);
             self.entries.push((Arc::clone(plan), payload.clone()));
         }
         payload
     }
+}
+
+thread_local! {
+    /// Slots of the broadcast pass running on this thread, if any.
+    static PASS_LOCAL: RefCell<Option<Vec<Box<dyn Any>>>> = const { RefCell::new(None) };
+}
+
+/// Opens pass-local storage for one synchronous broadcast pass. Dropping it
+/// drops everything stored during the pass, so nothing derived from the
+/// captured snapshot outlives the pass, even when an encoder panics.
+pub(crate) struct BroadcastPass {
+    previous: Option<Vec<Box<dyn Any>>>,
+}
+
+impl BroadcastPass {
+    pub(crate) fn begin() -> Self {
+        Self {
+            previous: PASS_LOCAL.with(|slots| slots.replace(Some(Vec::new()))),
+        }
+    }
+}
+
+impl Drop for BroadcastPass {
+    fn drop(&mut self) {
+        let ended = PASS_LOCAL.with(|slots| slots.replace(self.previous.take()));
+        // Released after the borrow ends: a stored value's destructor may
+        // itself touch pass-local storage.
+        drop(ended);
+    }
+}
+
+/// Runs `f` with the current broadcast pass's slot of type `T`, which starts
+/// as `None`. Every projection in a pass is encoded from the same captured
+/// snapshot, so a `StateSnapshot` may keep work derived from that snapshot
+/// here for the next client; it must still check that a stored value belongs
+/// to the snapshot it is encoding. Returns `None` outside a pass, where no
+/// such scope exists, and on reentrant use, which must not alias the slot.
+pub(crate) fn with_pass_local<T: 'static, R>(f: impl FnOnce(&mut Option<T>) -> R) -> Option<R> {
+    PASS_LOCAL.with(|slots| {
+        let mut slots = slots.try_borrow_mut().ok()?;
+        let slots = slots.as_mut()?;
+        let position = match slots.iter().position(|slot| slot.is::<Option<T>>()) {
+            Some(position) => position,
+            None => {
+                slots.push(Box::new(None::<T>));
+                slots.len() - 1
+            }
+        };
+        let slot = slots[position]
+            .downcast_mut::<Option<T>>()
+            .expect("slot type was checked");
+        Some(f(slot))
+    })
 }
 
 /// One immutable state generation. Every projection in one broadcast pass is
@@ -196,7 +257,13 @@ struct Fragments {
 struct Client {
     publishes_state: bool,
     filters: ArcSwap<FilterPlan>,
-    data: mpsc::Sender<Outbound>,
+    /// Whether another client had a filter plan with the same hash at the
+    /// last plan or membership change; only such clients go through a pass's
+    /// shared projections. A mark made stale by a concurrent change costs
+    /// only performance: shared lookups compare whole plans, and an unmarked
+    /// client gets its own encoding.
+    shares_plan: AtomicBool,
+    data: Arc<DataSlot>,
     control: mpsc::Sender<Outbound>,
     state: AtomicU8,
     last_generation: AtomicU64,
@@ -244,9 +311,7 @@ impl Client {
         {
             return false;
         }
-        if self.state.load(Ordering::Acquire) == CLIENT_CLOSED
-            || self.data.try_send(Outbound::Text(data)).is_err()
-        {
+        if self.state.load(Ordering::Acquire) == CLIENT_CLOSED || !self.data.try_send(data) {
             let _ = self.state.compare_exchange(
                 CLIENT_PENDING,
                 CLIENT_OPEN,
@@ -271,8 +336,52 @@ impl Client {
     }
 }
 
+/// The one state frame queued for a client. Delivery reserves the client
+/// (`PENDING`) until `write_completed`, so it never needs a second slot; a
+/// mutex slot plus `Notify` keeps that bounded contract without a channel's
+/// semaphore and block list. The same structure serves the v2 subscription
+/// endpoint.
+struct DataSlot {
+    state: Mutex<DataState>,
+    ready: Notify,
+}
+
+#[derive(Default)]
+struct DataState {
+    frame: Option<Bytes>,
+    /// The receiver is gone; frames are refused like sends to a closed channel.
+    closed: bool,
+}
+
+impl DataSlot {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(DataState::default()),
+            ready: Notify::new(),
+        }
+    }
+
+    /// Queues `frame` unless the slot is occupied or the receiver is gone.
+    fn try_send(&self, frame: Bytes) -> bool {
+        let mut state = lock_unpoisoned(&self.state);
+        if state.closed || state.frame.is_some() {
+            return false;
+        }
+        state.frame = Some(frame);
+        drop(state);
+        // Stores a permit when the receiver is not waiting yet, so the wakeup
+        // cannot be lost.
+        self.ready.notify_one();
+        true
+    }
+
+    fn try_recv(&self) -> Option<Outbound> {
+        lock_unpoisoned(&self.state).frame.take().map(Outbound::Text)
+    }
+}
+
 pub struct OutboundReceiver {
-    data: mpsc::Receiver<Outbound>,
+    data: Arc<DataSlot>,
     control: mpsc::Receiver<Outbound>,
     cancellation: CancellationToken,
     terminal: Arc<Mutex<Option<Outbound>>>,
@@ -291,16 +400,25 @@ impl OutboundReceiver {
         // discarded for the terminal frame, which is what the select returns.
         let ready = match self.control.try_recv() {
             Ok(frame) => Some(frame),
-            Err(mpsc::error::TryRecvError::Empty) => self.data.try_recv().ok(),
+            Err(mpsc::error::TryRecvError::Empty) => self.data.try_recv(),
             Err(mpsc::error::TryRecvError::Disconnected) => None,
         };
         let frame = match ready {
             Some(frame) => Some(frame),
-            None => tokio::select! {
-                biased;
-                _ = self.cancellation.cancelled() => None,
-                frame = self.control.recv() => frame,
-                frame = self.data.recv() => frame,
+            // The client's senders close together, so a closed control channel
+            // also ends data.
+            None => loop {
+                tokio::select! {
+                    biased;
+                    _ = self.cancellation.cancelled() => break None,
+                    frame = self.control.recv() => break frame,
+                    () = self.data.ready.notified() => {
+                        // A permit can outlive the frame it announced.
+                        if let Some(frame) = self.data.try_recv() {
+                            break Some(frame);
+                        }
+                    }
+                }
             },
         };
         if self.cancellation.is_cancelled() {
@@ -321,7 +439,15 @@ impl OutboundReceiver {
         self.control
             .try_recv()
             .ok()
-            .or_else(|| self.data.try_recv().ok())
+            .or_else(|| self.data.try_recv())
+    }
+}
+
+impl Drop for OutboundReceiver {
+    fn drop(&mut self) {
+        let mut state = lock_unpoisoned(&self.data.state);
+        state.closed = true;
+        state.frame = None;
     }
 }
 
@@ -363,6 +489,26 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Marks each client in `clients` whose filter plan hash another filtered
+/// client shares. Callers hold `client_writes`, so marks follow the latest
+/// plan or membership change.
+fn mark_shared_plans(clients: &HashMap<ClientId, Arc<Client>>) {
+    let hash = |client: &Client| {
+        let plan = client.filters.load();
+        (client.publishes_state && !plan.filters.is_empty()).then_some(plan.hash)
+    };
+    let mut uses: HashMap<u64, usize> = HashMap::with_capacity(clients.len());
+    for client in clients.values() {
+        if let Some(hash) = hash(client) {
+            *uses.entry(hash).or_default() += 1;
+        }
+    }
+    for client in clients.values() {
+        let shared = hash(client).is_some_and(|hash| uses.get(&hash).is_some_and(|&uses| uses > 1));
+        client.shares_plan.store(shared, Ordering::Relaxed);
+    }
+}
+
 impl WebSocketHub {
     pub fn new(schema: Schema, provider: Arc<dyn StateProvider>) -> Self {
         let (wake, _) = watch::channel(0);
@@ -393,7 +539,7 @@ impl WebSocketHub {
 
     fn connect_inner(&self, publishes_state: bool) -> (Connection, OutboundReceiver) {
         let id = self.0.next_id.fetch_add(1, Ordering::Relaxed);
-        let (data, data_receiver) = mpsc::channel(1);
+        let data = Arc::new(DataSlot::new());
         // Allow ordinary command bursts without disconnecting an otherwise
         // healthy recipient before its writer gets scheduled.
         let (control, control_receiver) = mpsc::channel(16);
@@ -402,7 +548,8 @@ impl WebSocketHub {
         let client = Arc::new(Client {
             publishes_state,
             filters: ArcSwap::from_pointee(FilterPlan::new(Vec::new())),
-            data,
+            shares_plan: AtomicBool::new(false),
+            data: Arc::clone(&data),
             control,
             state: AtomicU8::new(CLIENT_OPEN),
             last_generation: AtomicU64::new(u64::MAX),
@@ -429,7 +576,7 @@ impl WebSocketHub {
                 fragments: Fragments::default(),
             },
             OutboundReceiver {
-                data: data_receiver,
+                data,
                 control: control_receiver,
                 cancellation,
                 terminal,
@@ -440,6 +587,12 @@ impl WebSocketHub {
 
     pub fn client_count(&self) -> usize {
         self.0.clients.load().len()
+    }
+
+    /// Refreshes every client's `shares_plan` mark after a plan change.
+    fn mark_shared_plans(&self) {
+        let _write = lock_unpoisoned(&self.0.client_writes);
+        mark_shared_plans(&self.0.clients.load());
     }
 
     pub fn wake(&self) {
@@ -576,6 +729,7 @@ impl WebSocketHub {
                     }
                 }
                 let mut projections = SharedProjections::default();
+                let _pass = BroadcastPass::begin();
                 for client in clients.values() {
                     if !client.publishes_state
                         || client.state.load(Ordering::Acquire) != CLIENT_OPEN
@@ -585,8 +739,12 @@ impl WebSocketHub {
                     let plan = client.filters.load();
                     let payload = if plan.filters.is_empty() {
                         cached.as_ref().map(|(_, bytes)| bytes.clone())
-                    } else {
+                    } else if client.shares_plan.load(Ordering::Relaxed) {
                         projections.encode(snapshot.as_ref(), &plan)
+                    } else {
+                        // No other client uses this plan, so nothing would
+                        // ever reuse a retained copy.
+                        snapshot.encode_filtered(&plan.filters).ok()
                     };
                     if let Some(payload) = payload {
                         client.send_data(payload, generation, only_new_generation);
@@ -620,6 +778,7 @@ impl Connection {
 
     pub fn set_filters(&self, filters: Vec<Filter>) {
         self.client.set_filters(filters);
+        self.hub.mark_shared_plans();
         self.hub.wake();
     }
 
@@ -698,6 +857,7 @@ impl Connection {
             let _write = lock_unpoisoned(&self.hub.0.client_writes);
             let mut clients = HashMap::clone(&self.hub.0.clients.load());
             clients.remove(&self.id);
+            mark_shared_plans(&clients);
             self.hub.0.clients.store(Arc::new(clients));
             self.hub.wake();
         }
@@ -748,6 +908,7 @@ impl Connection {
 impl ConnectionControl {
     pub fn set_filters(&self, filters: Vec<Filter>) {
         self.client.set_filters(filters);
+        self.hub.mark_shared_plans();
         self.hub.wake();
     }
 
@@ -766,6 +927,7 @@ impl ConnectionControl {
         let _write = lock_unpoisoned(&self.hub.0.client_writes);
         let mut clients = HashMap::clone(&self.hub.0.clients.load());
         clients.remove(&self.id);
+        mark_shared_plans(&clients);
         self.hub.0.clients.store(Arc::new(clients));
         self.hub.wake();
     }

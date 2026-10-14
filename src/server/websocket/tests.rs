@@ -981,6 +981,72 @@ async fn unique_filter_plans_beyond_sharing_bound_each_get_their_projection() {
     runner.await.unwrap();
 }
 
+/// Publishes `generation` (the first is delivered on start) to `clients`,
+/// whose plans are `[Filter::Field(field)]`, and returns how many
+/// projections that took.
+async fn deliver_fields(
+    provider: &EchoProvider,
+    hub: &WebSocketHub,
+    clients: &mut [(Connection, OutboundReceiver)],
+    generation: u64,
+    fields: &[&str],
+) -> usize {
+    let before = provider.calls();
+    if generation > 1 {
+        for (connection, _) in clients.iter() {
+            connection.write_completed();
+        }
+        provider.publish();
+        hub.wake();
+    }
+    for ((_, receiver), field) in clients.iter_mut().zip(fields) {
+        let plan = [Filter::Field((*field).into())];
+        assert_eq!(echo_text(receiver).await, echo(generation, &plan));
+    }
+    provider.calls() - before
+}
+
+#[tokio::test]
+async fn plan_changes_and_departures_keep_one_projection_per_distinct_plan() {
+    let provider = EchoProvider::new();
+    let hub = WebSocketHub::new(Schema::V2, provider.clone());
+    let plan = |field: &str| vec![Filter::Field(field.into())];
+    let mut clients: Vec<_> = ["a", "b", "c"]
+        .into_iter()
+        .map(|field| {
+            let (connection, receiver) = hub.connect();
+            connection.set_filters(plan(field));
+            (connection, receiver)
+        })
+        .collect();
+    let runner = tokio::spawn({
+        let hub = hub.clone();
+        async move { hub.run().await }
+    });
+
+    let fields = ["a", "b", "c"];
+    assert_eq!(deliver_fields(&provider, &hub, &mut clients, 1, &fields).await, 3);
+    // Once b moves to c's plan, the two share one projection.
+    clients[1].0.set_filters(plan("c"));
+    let fields = ["a", "c", "c"];
+    assert_eq!(deliver_fields(&provider, &hub, &mut clients, 2, &fields).await, 2);
+    // A newcomer joining a's plan shares it too.
+    let (connection, receiver) = hub.connect();
+    connection.set_filters(plan("a"));
+    clients.push((connection, receiver));
+    let fields = ["a", "c", "c", "a"];
+    assert_eq!(deliver_fields(&provider, &hub, &mut clients, 3, &fields).await, 2);
+    // Departures leave every remaining client its own correct frame.
+    let (departed, _) = clients.remove(1);
+    departed.cleanup();
+    drop(departed);
+    let fields = ["a", "c", "a"];
+    assert_eq!(deliver_fields(&provider, &hub, &mut clients, 4, &fields).await, 2);
+
+    hub.shutdown();
+    runner.await.unwrap();
+}
+
 #[test]
 fn shared_projections_are_bounded_and_never_cross_plans() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -1089,4 +1155,27 @@ async fn each_acknowledgement_of_the_same_generation_gets_its_forced_delivery() 
 
     hub.shutdown();
     runner.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_dropped_receiver_releases_its_frame_and_refuses_state_frames() {
+    let hub = WebSocketHub::new(Schema::V2, EchoProvider::new());
+    let (connection, mut receiver) = hub.connect();
+    let frame = Bytes::from_static(b"frame");
+    assert!(connection.client.send_data(frame.clone(), 1, false));
+    // The slot holds one frame until it is taken, like a one-slot channel.
+    assert!(!connection.client.data.try_send(frame.clone()));
+    assert_eq!(receiver.recv().await, Some(Outbound::Text(frame.clone())));
+
+    connection.write_completed();
+    assert!(connection.client.send_data(frame.clone(), 2, false));
+    drop(receiver);
+    assert!(lock_unpoisoned(&connection.client.data.state).frame.is_none());
+    connection.write_completed();
+    assert!(!connection.client.send_data(frame, 3, false));
+    assert_eq!(
+        connection.client.state.load(Ordering::Acquire),
+        CLIENT_OPEN,
+        "a refused frame leaves the client writable"
+    );
 }

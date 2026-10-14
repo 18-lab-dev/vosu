@@ -39,7 +39,7 @@ fn command_filters_preserve_last_write_precedence_at_each_depth() {
         else {
             panic!("valid filter command was rejected");
         };
-        let bytes = encode_javascript_json(&project_filters(&source, &filters)).unwrap();
+        let bytes = encode_projection(&source, &filters).unwrap();
         assert_eq!(serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(), expected);
     }
 }
@@ -51,7 +51,7 @@ fn nested_filters_project_only_declared_fields() {
         "play": {"score": 10}
     }))
     .unwrap();
-    let projected = project_filters(
+    let projected = encode_projection(
         &source,
         &[Filter::Nested {
             field: "menu".into(),
@@ -65,7 +65,7 @@ fn nested_filters_project_only_declared_fields() {
         }],
     );
     assert_eq!(
-        encode_javascript_json(&projected).unwrap(),
+        projected.unwrap(),
         Bytes::from_static(br#"{"menu":{"state":2,"bm":{"id":7}}}"#)
     );
 }
@@ -83,7 +83,7 @@ fn filtered_json_preserves_requested_order_and_javascript_numbers() {
         "play": 1,
     }))
     .unwrap();
-    let projected = project_filters(
+    let projected = encode_projection(
         &source,
         &[Filter::Nested {
             field: "menu".into(),
@@ -97,7 +97,7 @@ fn filtered_json_preserves_requested_order_and_javascript_numbers() {
         }],
     );
     assert_eq!(
-        encode_javascript_json(&projected).unwrap(),
+        projected.unwrap(),
         Bytes::from_static(
             br#"{"menu":{"negativeZero":0,"fixedUpper":100000000000000000000,"exponentialUpper":1e+21,"fixedLower":0.000001,"exponentialLower":1e-7}}"#,
         )
@@ -113,7 +113,7 @@ fn nested_filters_follow_javascript_primitive_array_and_index_order() {
         "clients": [{"name": "one"}, {"name": "two"}],
     }))
     .unwrap();
-    let projected = project_filters(
+    let projected = encode_projection(
         &source,
         &[
             Filter::Nested {
@@ -142,9 +142,8 @@ fn nested_filters_follow_javascript_primitive_array_and_index_order() {
             },
         ],
     );
-    let projected = canonicalize_javascript_keys(projected);
     assert_eq!(
-        encode_javascript_json(&projected).unwrap(),
+        projected.unwrap(),
         Bytes::from_static(
             br#"{"client":{},"hits":{"50":1,"100":2,"300":3,"geki":4},"clients":{"1":{"name":"two"}}}"#,
         )
@@ -159,7 +158,7 @@ fn javascript_properties_cover_array_and_utf16_string_access() {
         "surrogate": "💩",
     }))
     .unwrap();
-    let projected = canonicalize_javascript_keys(project_filters(
+    let projected = encode_projection(
         &source,
         &[
             Filter::Nested {
@@ -184,13 +183,117 @@ fn javascript_properties_cover_array_and_utf16_string_access() {
                 }],
             },
         ],
-    ));
+    );
     assert_eq!(
-        encode_javascript_json(&projected).unwrap(),
+        projected.unwrap(),
         Bytes::from_static(
             br#"{"errors":{"1":2,"length":3},"label":{"0":"A","1":"\ud83d","2":"\udca9","3":"B","length":4},"surrogate":{"0":{"0":"\ud83d","length":1}}}"#,
         )
     );
+}
+
+#[test]
+fn only_canonical_uint32_spellings_are_javascript_array_indices() {
+    for (key, index) in [
+        ("0", Some(0)),
+        ("7", Some(7)),
+        ("4294967294", Some(u32::MAX - 1)),
+        ("4294967295", None),
+        ("4294967296", None),
+        ("01", None),
+        ("00", None),
+        ("+1", None),
+        ("-1", None),
+        (" 1", None),
+        ("1 ", None),
+        ("1e3", None),
+        ("1.0", None),
+        ("٣", None),
+        ("", None),
+    ] {
+        assert_eq!(javascript_array_index(key), index, "{key:?}");
+    }
+}
+
+#[test]
+fn projected_strings_escape_exactly_like_serde_json() {
+    for text in [
+        "",
+        "plain name",
+        "\u{1f}",
+        " ",
+        "\u{7f}",
+        "quote \" inside",
+        "back\\slash",
+        "slash / kept",
+        "狐 tail 😀",
+        "line\nbreak\ttab\r",
+    ] {
+        let projected = encode_projection(
+            &ProjectionValue::Object(vec![(text.to_owned().into(), ProjectionValue::String(text.into()))]),
+            &[Filter::Field(text.into())],
+        )
+        .unwrap();
+        let quoted = serde_json::to_string(text).unwrap();
+        assert_eq!(projected, format!("{{{quoted}:{quoted}}}"), "{text:?}");
+    }
+}
+
+#[test]
+fn projected_numbers_print_like_javascript() {
+    let write = |number| encode_javascript_json(&ProjectionValue::Number(number)).unwrap();
+    let largest_exact = 9_007_199_254_740_991.0;
+    for value in [
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        37.0,
+        1.5,
+        -2.5,
+        largest_exact,
+        -largest_exact,
+        largest_exact + 1.0,
+        largest_exact + 3.0,
+        -(largest_exact + 3.0),
+        1e20,
+        1e21,
+        -1e21,
+        1e-7,
+    ] {
+        let number = serde_json::Number::from_f64(value).unwrap();
+        assert_eq!(write(number), crate::calculation::js_json_number(value), "{value:?}");
+    }
+    for value in [i64::MIN, -1, 0, 1, i64::MAX] {
+        assert_eq!(write(value.into()), value.to_string(), "{value}");
+    }
+    assert_eq!(write(u64::MAX.into()), u64::MAX.to_string());
+}
+
+#[test]
+fn whole_objects_write_index_keys_ascending_before_other_keys_at_any_count() {
+    for count in [1, 8, 9, 20] {
+        // Descending indices interleaved with names, so neither insertion
+        // nor lexicographic order is numeric order.
+        let mut object = serde_json::Map::new();
+        for index in (0..count).rev() {
+            object.insert(index.to_string(), serde_json::json!(index));
+            object.insert(format!("k{index}"), serde_json::json!(index));
+        }
+        let source =
+            serialize_projection_value(&serde_json::json!({ "object": object })).unwrap();
+        let indices = (0..count).map(|index| format!("\"{index}\":{index}"));
+        let names = (0..count).rev().map(|index| format!("\"k{index}\":{index}"));
+        let expected = format!(
+            "{{\"object\":{{{}}}}}",
+            indices.chain(names).collect::<Vec<_>>().join(",")
+        );
+        assert_eq!(
+            encode_projection(&source, &[Filter::Field("object".into())]).unwrap(),
+            Bytes::from(expected),
+            "{count} index keys"
+        );
+    }
 }
 
 #[test]
@@ -210,7 +313,7 @@ fn filtered_nonfinite_numbers_remain_values_until_json_encoding() {
         nested_nan: f64::NAN,
     })
     .unwrap();
-    let projected = project_filters(
+    let projected = encode_projection(
         &source,
         &[
             Filter::Field("direct_f32".into()),
@@ -226,7 +329,7 @@ fn filtered_nonfinite_numbers_remain_values_until_json_encoding() {
         ],
     );
     assert_eq!(
-        encode_javascript_json(&projected).unwrap(),
+        projected.unwrap(),
         Bytes::from_static(
             br#"{"direct_f32":null,"direct_f64":null,"nested_infinity":{},"nested_nan":{}}"#,
         )
@@ -252,7 +355,7 @@ fn v2_custom_number_serialization_preserves_nonfinite_projection_semantics() {
         },
     })
     .unwrap();
-    let projected = project_filters(
+    let projected = encode_projection(
         &source,
         &[
             Filter::Nested {
@@ -269,7 +372,7 @@ fn v2_custom_number_serialization_preserves_nonfinite_projection_semantics() {
         ],
     );
     assert_eq!(
-        encode_javascript_json(&projected).unwrap(),
+        projected.unwrap(),
         Bytes::from_static(br#"{"direct":{"playTime":null},"nested":{"playTime":{}}}"#)
     );
 }
@@ -289,7 +392,7 @@ fn projection_nonfinite_state_cannot_collide_with_source_values() {
         nonfinite: f64::NAN,
     })
     .unwrap();
-    let projected = project_filters(
+    let projected = encode_projection(
         &source,
         &[
             Filter::Field("ordinary".into()),
@@ -298,7 +401,7 @@ fn projection_nonfinite_state_cannot_collide_with_source_values() {
         ],
     );
     assert_eq!(
-        encode_javascript_json(&projected).unwrap(),
+        projected.unwrap(),
         Bytes::from_static(
             br#"{"ordinary":{"\u0000vosu-nonfinite-number":true},"text":"{\"\\u0000vosu-nonfinite-number\":true}","nonfinite":null}"#,
         )
@@ -310,7 +413,7 @@ fn projection_nonfinite_state_cannot_collide_with_source_values() {
 /// `Field`/`Nested` precedence in both orders, and empty nested selections.
 fn probing_filter_lists(value: &ProjectionValue, depth: usize) -> Vec<Vec<Filter>> {
     let mut keys: Vec<String> = match value {
-        ProjectionValue::Object(entries) => entries.iter().map(|(key, _)| key.clone()).collect(),
+        ProjectionValue::Object(entries) => entries.iter().map(|(key, _)| key.to_string()).collect(),
         ProjectionValue::Array(values) => {
             let mut keys: Vec<_> = (0..values.len().min(3)).map(|i| i.to_string()).collect();
             if values.len() > 3 {
@@ -338,6 +441,12 @@ fn probing_filter_lists(value: &ProjectionValue, depth: usize) -> Vec<Vec<Filter
         lists.push(vec![nested(Vec::new())]);
         lists.push(vec![nested(probe()), field()]);
         lists.push(vec![field(), nested(probe())]);
+        // The last of repeated nested filters wins, so the selection must
+        // cover the keys of every one, not just the first.
+        let probed = probe();
+        let (first, last) = probed.split_at(2);
+        lists.push(vec![nested(first.to_vec()), nested(last.to_vec())]);
+        lists.push(vec![nested(last.to_vec()), nested(first.to_vec())]);
         if depth > 0
             && let Some(child) = javascript_property(value, key)
         {
@@ -352,15 +461,23 @@ fn probing_filter_lists(value: &ProjectionValue, depth: usize) -> Vec<Vec<Filter
 
 /// Projects `value` both from the full reference serialization and from the
 /// selected direct one and requires identical trees, which also tells
-/// nonfinite values from `null`.
+/// nonfinite values from `null`, then requires the production writer to
+/// produce exactly the bytes of the reference projection.
 fn assert_selection_preserves_projection<T: Serialize>(value: &T, depth: usize) -> usize {
     let full = serialize_projection_value(value).unwrap();
     let lists = probing_filter_lists(&full, depth);
     for filters in &lists {
         let selected = serialize_selected(value, &Selected::from_filters(filters)).unwrap();
+        let reference = canonicalize_javascript_keys(project_filters(&full, filters));
         assert_eq!(
             canonicalize_javascript_keys(project_filters(&selected, filters)),
-            canonicalize_javascript_keys(project_filters(&full, filters)),
+            reference,
+            "{}",
+            serde_json::to_string(filters).unwrap()
+        );
+        assert_eq!(
+            encode_projection(&selected, filters).unwrap(),
+            encode_javascript_json(&reference).unwrap(),
             "{}",
             serde_json::to_string(filters).unwrap()
         );
@@ -488,8 +605,9 @@ fn selected_serialization_projects_like_the_full_document_for_every_serde_shape(
     assert!(assert_selection_preserves_projection(&value, 4) > 1_000);
 }
 
-#[test]
-fn selected_serialization_projects_like_the_full_document_for_all_schemas() {
+/// A focused stable snapshot whose four documents contain strings, nonfinite
+/// floats and tourney instances; `title` distinguishes publications.
+fn all_schema_snapshot(title: &str) -> CombinedSnapshot {
     use crate::model::states::{HitErrorArray, KeypressButton};
     use crate::state::{PreciseState, RegularState};
 
@@ -507,7 +625,7 @@ fn selected_serialization_projects_like_the_full_document_for_all_schemas() {
         ranked_play: Default::default(),
         room: Default::default(),
     };
-    regular.menu.title = Some("狐 \"kitsune\"\n\\尾😀".into());
+    regular.menu.title = Some(title.into());
     let precise = PreciseState {
         status: 2,
         play_time: f64::NAN,
@@ -552,17 +670,202 @@ fn selected_serialization_projects_like_the_full_document_for_all_schemas() {
             Arc::clone(&state),
         )
     };
-    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+    CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
         2,
         Some(7),
         true,
         ApiRuntimeSettings::default(),
         [instance(7, None), instance(8, Some(f64::NAN)), instance(9, Some(2.5))],
-    )));
+    )))
+}
 
+#[test]
+fn selected_serialization_projects_like_the_full_document_for_all_schemas() {
+    let snapshot = all_schema_snapshot("狐 \"kitsune\"\n\\尾😀");
     assert_selection_preserves_projection(&crate::api::v1::build(&snapshot).unwrap(), 3);
     assert_selection_preserves_projection(&crate::api::v2::build(&snapshot).unwrap(), 3);
     assert_selection_preserves_projection(&crate::api::sc::build(&snapshot).unwrap(), 3);
     assert_selection_preserves_projection(&crate::api::precise::build(&snapshot).unwrap(), 3);
+}
+
+#[test]
+fn distinct_plans_in_one_pass_encode_as_they_do_alone_for_all_schemas() {
+    use crate::server::websocket::BroadcastPass;
+
+    let snapshot = all_schema_snapshot("狐 \"kitsune\"\n\\尾😀");
+    for (schema, document) in [
+        (ApiSchema::V1, serialize_projection_value(&crate::api::v1::build(&snapshot).unwrap())),
+        (ApiSchema::V2, serialize_projection_value(&crate::api::v2::build(&snapshot).unwrap())),
+        (
+            ApiSchema::StreamCompanion,
+            serialize_projection_value(&crate::api::sc::build(&snapshot).unwrap()),
+        ),
+        (
+            ApiSchema::V2Precise,
+            serialize_projection_value(&crate::api::precise::build(&snapshot).unwrap()),
+        ),
+    ] {
+        // Repeated rounds keep reaching every property, so later plans in the
+        // pass project from properties serialized whole once enough partial
+        // walks have gone into them.
+        let lists = probing_filter_lists(&document.unwrap(), 2);
+        let encode = |filters: &[Filter]| {
+            ProductionSnapshotEncoder
+                .encode(&snapshot, schema, filters)
+                .unwrap()
+        };
+        let alone: Vec<_> = lists.iter().map(|filters| encode(filters)).collect();
+        let _pass = BroadcastPass::begin();
+        for round in 0..4 {
+            for (filters, alone) in lists.iter().zip(&alone) {
+                assert_eq!(
+                    &encode(filters),
+                    alone,
+                    "{schema:?} round {round}: {}",
+                    serde_json::to_string(filters).unwrap()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn properties_are_shared_whole_only_once_their_walks_have_cost_as_much() {
+    #[derive(Serialize)]
+    struct Document {
+        parent: Parent,
+    }
+    #[derive(Serialize)]
+    struct Parent {
+        small: u64,
+        items: Vec<u64>,
+    }
+
+    let mut document = SharedDocument::new(Document {
+        parent: Parent {
+            small: 7,
+            items: (0..10_000).collect(),
+        },
+    });
+    let nested = |key: &str, keys| Filter::Nested {
+        field: key.into(),
+        keys,
+    };
+    // Each walk opens only `parent`, never the large array beside `small`.
+    let small = [nested("parent", vec![Filter::Field("small".into())])];
+    for _ in 0..1_000 {
+        assert_eq!(
+            document.encode(&small).unwrap(),
+            Bytes::from_static(br#"{"parent":{"small":7}}"#)
+        );
+    }
+    assert!(
+        !document.is_shared("parent"),
+        "cheap walks must not pay for serializing the large array whole"
+    );
+
+    // A walk into the array already iterates every element.
+    let last = [nested(
+        "parent",
+        vec![nested("items", vec![Filter::Field("9999".into())])],
+    )];
+    for _ in 0..2 {
+        assert_eq!(
+            document.encode(&last).unwrap(),
+            Bytes::from_static(br#"{"parent":{"items":{"9999":9999}}}"#)
+        );
+    }
+    assert!(document.is_shared("parent"));
+    assert_eq!(
+        document.encode(&small).unwrap(),
+        Bytes::from_static(br#"{"parent":{"small":7}}"#)
+    );
+}
+
+#[test]
+fn large_text_beside_a_cheap_selection_is_never_shared_whole() {
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize)]
+    struct Document<T> {
+        parent: Parent<T>,
+    }
+    #[derive(Serialize)]
+    struct Parent<T> {
+        small: u64,
+        large: T,
+    }
+
+    fn assert_not_shared<T: Serialize>(kind: &str, large: T) {
+        let mut document = SharedDocument::new(Document {
+            parent: Parent { small: 7, large },
+        });
+        let small = [Filter::Nested {
+            field: "parent".into(),
+            keys: vec![Filter::Field("small".into())],
+        }];
+        for _ in 0..1_000 {
+            assert_eq!(
+                document.encode(&small).unwrap(),
+                Bytes::from_static(br#"{"parent":{"small":7}}"#),
+                "{kind}"
+            );
+        }
+        assert!(
+            !document.is_shared("parent"),
+            "cheap walks must not pay for copying the large {kind} whole"
+        );
+    }
+
+    let text = "x".repeat(1 << 20);
+    assert_not_shared("string", text.clone());
+    assert_not_shared("map key", BTreeMap::from([(text, 0u8)]));
+    let raw = format!("[{}0]", "0,".repeat(1 << 19));
+    assert_not_shared(
+        "raw value",
+        serde_json::value::RawValue::from_string(raw).unwrap(),
+    );
+}
+
+#[test]
+fn broadcast_pass_reuses_documents_only_for_the_same_publication_and_schema() {
+    use crate::server::websocket::BroadcastPass;
+
+    let first = all_schema_snapshot("first");
+    let second = all_schema_snapshot("second");
+    // A distinct snapshot object over the same immutable publication.
+    let first_again = CombinedSnapshot::from_manager(Arc::clone(first.manager()));
+    let filters = [Filter::Field("beatmap".into()), Filter::Field("menu".into())];
+    let schemas = [ApiSchema::V1, ApiSchema::V2];
+    let encode = |snapshot: &CombinedSnapshot, schema| {
+        ProductionSnapshotEncoder
+            .encode(snapshot, schema, &filters)
+            .unwrap()
+    };
+    // Encoded outside any pass, so every document is built afresh.
+    let expected = |snapshot: &CombinedSnapshot| schemas.map(|schema| encode(snapshot, schema));
+    let (first_expected, second_expected) = (expected(&first), expected(&second));
+    for (first, second) in first_expected.iter().zip(&second_expected) {
+        assert_ne!(first, second, "the publications must be distinguishable");
+    }
+    let references = Arc::strong_count(first.manager());
+
+    let pass = BroadcastPass::begin();
+    for (snapshot, expected) in [
+        (&first, &first_expected),
+        (&second, &second_expected),
+        (&first_again, &first_expected),
+        (&first, &first_expected),
+    ] {
+        for (schema, expected) in schemas.into_iter().zip(expected) {
+            assert_eq!(&encode(snapshot, schema), expected, "{schema:?}");
+        }
+    }
+    drop(pass);
+    assert_eq!(
+        Arc::strong_count(first.manager()),
+        references,
+        "nothing derived from a publication outlives its broadcast pass"
+    );
 }
 
