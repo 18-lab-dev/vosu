@@ -8,6 +8,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 - osu!stable mania: a final hit error that matches no key press or release is now also published as a press after the play ends. In 1.0.2 the one-second fallback only ran during play, so such a hit could stay missing from `pressHitErrors` on the results screen.
 
+### Command line
+
+- `vosu -V` and `vosu --version` print the version and exit. Previously the flag was ignored, so vosu started the daemon, or opened the running instance's dashboard and exited.
+
 ### Performance
 
 - osu!lazer settings are read in a handful of batched native reads instead of two reads per configuration entry, which removes most of a regular lazer capture's cost.

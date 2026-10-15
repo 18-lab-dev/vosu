@@ -170,9 +170,11 @@ The public command flags are standalone actions:
 ```text
 -h, --help
 -s, --setup
+-V, --version
 ```
 
-`--help` prints usage. Each public action must be the executable's only argument.
+`--help` prints usage and `--version` prints the version. Each public action
+must be the executable's only argument; other arguments start the daemon.
 On Linux, run `vosu --setup` as the normal desktop user to probe the compiled
 process-event backends and install their capabilities. Setup requests
 operating-system authentication when needed; do not run the ordinary daemon as

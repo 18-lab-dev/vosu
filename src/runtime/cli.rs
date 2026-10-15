@@ -6,12 +6,13 @@ use std::{
 #[cfg(target_os = "linux")]
 use std::env;
 
-pub(super) const HELP_TEXT: &str = "Usage: vosu [OPTION]\n\nOptions:\n  -h, --help   Print this help\n  -s, --setup  Authenticate and install supported Linux capabilities\n";
+pub(super) const HELP_TEXT: &str = "Usage: vosu [OPTION]\n\nOptions:\n  -h, --help     Print this help\n  -s, --setup    Authenticate and install supported Linux capabilities\n  -V, --version  Print the version\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CliCommand {
     Help,
     Setup,
+    Version,
     #[cfg(target_os = "linux")]
     ProbeBackend(BackendProbe),
 }
@@ -62,6 +63,7 @@ fn classify_argument(argument: &OsStr) -> ArgumentKind {
     match argument.to_str() {
         Some("-h" | "--help") => ArgumentKind::Command(CliCommand::Help),
         Some("-s" | "--setup") => ArgumentKind::Command(CliCommand::Setup),
+        Some("-V" | "--version") => ArgumentKind::Command(CliCommand::Version),
         Some("-g" | "--generate-offsets") => ArgumentKind::InvalidCommand,
         #[cfg(target_os = "linux")]
         Some("--vosu-internal-probe-backend=ebpf") => {
@@ -83,10 +85,11 @@ fn classify_argument(argument: &OsStr) -> ArgumentKind {
 fn malformed_public_command(argument: &str) -> bool {
     argument.starts_with("--help=")
         || argument.starts_with("--setup=")
+        || argument.starts_with("--version=")
         || argument.starts_with("--generate-offsets=")
         || (argument.len() > 2
             && argument.starts_with('-')
-            && matches!(argument.as_bytes()[1], b'h' | b's' | b'g'))
+            && matches!(argument.as_bytes()[1], b'h' | b's' | b'V' | b'g'))
 }
 
 #[cfg(target_os = "linux")]
@@ -102,6 +105,10 @@ pub(super) async fn run_command(command: CliCommand) -> io::Result<()> {
             Ok(())
         }
         CliCommand::Setup => run_setup(),
+        CliCommand::Version => {
+            println!("vosu {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         #[cfg(target_os = "linux")]
         CliCommand::ProbeBackend(backend) => run_backend_probe(backend),
     }

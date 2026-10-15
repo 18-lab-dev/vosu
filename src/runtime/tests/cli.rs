@@ -22,11 +22,17 @@ fn public_short_and_long_commands_are_equivalent() {
             CommandInvocation::Command(CliCommand::Setup)
         );
     }
+    for flag in ["-V", "--version"] {
+        assert_eq!(
+            classify_command_invocation(&command_line(&[flag])),
+            CommandInvocation::Command(CliCommand::Version)
+        );
+    }
 }
 
 #[test]
 fn public_commands_reject_extra_arguments() {
-    for flag in ["-h", "--help", "-s", "--setup"] {
+    for flag in ["-h", "--help", "-s", "--setup", "-V", "--version"] {
         assert_eq!(
             classify_command_invocation(&command_line(&[flag, "--update=false"])),
             CommandInvocation::InvalidInput,
@@ -61,6 +67,8 @@ fn public_commands_reject_values_and_combined_short_forms() {
     for argument in [
         "--help=true",
         "--setup=no",
+        "--version=1",
+        "-Vx",
         "--generate-offsets=elsewhere.json",
         "-hvalue",
         "-sg",
@@ -81,6 +89,7 @@ fn unrecognized_and_legacy_arguments_remain_daemon_arguments() {
     for arguments in [
         vec!["--update=false"],
         vec!["--helpful"],
+        vec!["--versions"],
         vec!["--setup-mode=automatic"],
         vec!["--generate-offsets-later"],
         vec!["--update-helper", "--update-token=token"],
