@@ -373,7 +373,7 @@ impl MemoryReader for LazerMemory {
                         .drawable_ruleset_k_backing_field,
                 )?;
                 let lazy = self.screen_ptr(drawable, fields.0)?;
-                // System.Lazy<Playfield>._value; UNVERIFIED live .NET layout.
+                // System.Lazy<Playfield>._value, measured under the client's own CoreCLR.
                 const LAZY_VALUE_OFFSET: usize = 0x18;
                 let playfield = self.screen_ptr(lazy, LAZY_VALUE_OFFSET)?;
                 let catcher = self.screen_ptr(playfield, fields.1)?;

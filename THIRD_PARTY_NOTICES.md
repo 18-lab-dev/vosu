@@ -100,16 +100,16 @@ The current generated calculator fixture and oracle lock target `osu-pp-calculat
 - **Release:** <https://github.com/ppy/osu/releases/tag/2026.921.0-lazer>
 - **Verification AppImage:** <https://github.com/ppy/osu/releases/download/2026.921.0-lazer/osu.AppImage>
 - **Verification AppImage SHA-256:** `dced9463b501009c95dbed891abd2f0acc2efb84ee4336f5b1cc3b7c04a5fc7d`
-- **Generated `assets/offsets.json` SHA-256:** `3dcbb07503bc2a0a5a3ab3745fd2e32a3072dca6d620e7a593c79d267132f497`
-  The measured fields are unchanged. All eight new mania, catch and spatial fields listed in Cargo metadata remain unmeasured zero sentinels pending live measurement; readers reject them until measured.
+- **Generated `assets/offsets.json` SHA-256:** `bbbcbb646b30a763001611318cb077e7d915608a48c3be7e1edbfd921312cd30`
+  Regenerated on 2026-10-15 by the embedded generator (`--assemblies-only`, re-hosted on the client's runtime as the daemon does) against a running instance of this AppImage. Every previously measured field is unchanged; the eight mania, catch and spatial fields are now measured.
 - **Generation runtime:** AppImage-bundled `Microsoft.NETCore.App 10.0.12`
 - **Spatial template extension:** `osu.Game.Rulesets.Osu.Objects.OsuHitObject`
-  `position`, `stackHeight`, and `scale` are unmeasured zero sentinels pending
-  live regeneration, not measured offsets. The reader skips spatial capture
-  until all three are measured. `HitEvent.Position` at inline +0x30 and generic
-  property/bindable layout constants are also unmeasured.
+  `position`, `stackHeight`, and `scale`. The inline `HitEvent.Position`
+  (+0x30), `Nullable<Vector2>` value (+4), `HitObjectProperty<T>` and
+  `Bindable<T>` value layouts that the readers use as constants were measured
+  under the same runtime with a field-address probe.
 - **Integrity manifest:** `assets/SHA256SUMS`
-- **Catch extension source:** [DrawableRuleset<T>.playfield](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game/Rulesets/UI/DrawableRuleset.cs), [CatchPlayfield.Catcher](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Catch/UI/CatchPlayfield.cs), [Catcher.Dashing](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Catch/UI/Catcher.cs), and framework [Drawable.x](https://github.com/ppy/osu-framework/blob/2026.921.0/osu.Framework/Graphics/Drawable.cs). The new placeholders and the runtime-specific `Lazy<Playfield>._value` assumption need native measurement; they are not part of the original generated evidence above.
+- **Catch extension source:** [DrawableRuleset<T>.playfield](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game/Rulesets/UI/DrawableRuleset.cs), [CatchPlayfield.Catcher](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Catch/UI/CatchPlayfield.cs), [Catcher.Dashing](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Catch/UI/Catcher.cs), and framework [Drawable.x](https://github.com/ppy/osu-framework/blob/2026.921.0/osu.Framework/Graphics/Drawable.cs). `Lazy<Playfield>._value` (+0x18) was measured with the same probe.
 
 ### Historical 2026.726.0 asset reproduction and .NET 8 bundle pins
 

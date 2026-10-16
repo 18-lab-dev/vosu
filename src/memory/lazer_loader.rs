@@ -49,14 +49,17 @@ pub struct LazerOffsetLoader<G> {
     generator: G,
     cache_dir: PathBuf,
     embedded: Bytes,
+    template_fields: Vec<(String, String)>,
 }
 
 impl<G: OffsetGenerator> LazerOffsetLoader<G> {
     pub fn new(generator: G, cache_dir: PathBuf, embedded: Bytes) -> Self {
+        let template_fields = template_fields(&embedded);
         Self {
             generator,
             cache_dir,
             embedded,
+            template_fields,
         }
     }
 
@@ -76,7 +79,7 @@ impl<G: OffsetGenerator> LazerOffsetLoader<G> {
             return Err(LazerLoadError::Cancelled);
         }
         let cache_path = self.cache_path(version)?;
-        if let Some(offsets) = read_matching(&cache_path, version) {
+        if let Some(offsets) = read_matching(&cache_path, version, &self.template_fields) {
             return Ok(Arc::new(offsets));
         }
         if let Ok(offsets) = LazerOffsets::from_json(&self.embedded)
@@ -114,8 +117,43 @@ impl<G: OffsetGenerator> LazerOffsetLoader<G> {
     }
 }
 
-fn read_matching(path: &Path, version: &str) -> Option<LazerOffsets> {
+/// Every `(type, field)` pair the embedded template asks the generator to measure.
+fn template_fields(embedded: &[u8]) -> Vec<(String, String)> {
+    let Ok(serde_json::Value::Object(types)) = serde_json::from_slice(embedded) else {
+        return Vec::new();
+    };
+    types
+        .into_iter()
+        .filter_map(|(name, fields)| match fields {
+            serde_json::Value::Object(fields) => Some((name, fields)),
+            _ => None,
+        })
+        .flat_map(|(name, fields)| {
+            fields
+                .into_iter()
+                .map(move |(field, _)| (name.clone(), field))
+        })
+        .collect()
+}
+
+fn read_matching(
+    path: &Path,
+    version: &str,
+    template_fields: &[(String, String)],
+) -> Option<LazerOffsets> {
     let bytes = std::fs::read(path).ok()?;
+    // The cache is keyed by client version only, so a file generated from an older
+    // template would otherwise parse with its newer groups defaulted to zero and keep
+    // those features off for that client version. Regenerate it instead.
+    let cached: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    if template_fields.iter().any(|(name, field)| {
+        cached
+            .get(name)
+            .and_then(|fields| fields.get(field))
+            .is_none()
+    }) {
+        return None;
+    }
     let offsets = LazerOffsets::from_json(&bytes).ok()?;
     (offsets.osu_version == version).then_some(offsets)
 }
@@ -401,6 +439,34 @@ mod tests {
         assert_eq!(
             std::fs::read(dir.path().join(format!("{version}.json"))).unwrap(),
             generated
+        );
+    }
+
+    #[tokio::test]
+    async fn same_version_cache_from_older_template_is_regenerated() {
+        let dir = tempfile::tempdir().unwrap();
+        let version = "2027.4.0";
+        let target = dir.path().join(format!("{version}.json"));
+        let mut stale: serde_json::Value = serde_json::from_slice(&fixture(version)).unwrap();
+        stale
+            .as_object_mut()
+            .unwrap()
+            .remove("osu.Game.Rulesets.Catch.UI.Catcher");
+        std::fs::write(&target, serde_json::to_vec(&stale).unwrap()).unwrap();
+        let generated = fixture(version);
+        let loader = LazerOffsetLoader::new(
+            FakeGenerator::new(generated.clone()),
+            dir.path().into(),
+            fixture("2026.1.0"),
+        );
+        let cancel = CancellationToken::new();
+        loader.resolve(5, version, &cancel).await.unwrap();
+        loader.resolve(6, version, &cancel).await.unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), generated);
+        assert_eq!(
+            *loader.generator.calls.lock().await,
+            vec![(5, version.to_owned())],
+            "a complete cache must be reused after regeneration"
         );
     }
 

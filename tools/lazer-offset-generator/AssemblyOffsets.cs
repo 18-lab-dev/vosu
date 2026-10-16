@@ -188,6 +188,10 @@ internal static class AssemblyOffsets
                 $"could not allocate uninitialized '{concrete.FullName}' while measuring '{field.Name}': {error.Message}",
                 error);
         }
+        // No constructor ran, so a finalizer (for example osu.Game.Skinning.Skin's
+        // Dispose(false)) would dereference null fields on the finalizer thread and
+        // crash the generator whenever a GC happens to collect the instance.
+        GC.SuppressFinalize(instance);
 
         Type owner = field.DeclaringType ?? declared;
         DynamicMethod method = new(

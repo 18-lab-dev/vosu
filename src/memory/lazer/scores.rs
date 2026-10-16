@@ -1,8 +1,14 @@
 use super::*;
 
+// Layouts inside constructed generic types, which the offset generator does not
+// measure; measured with ldflda under the 2026.921.0 and 2026.1005.0 clients' own
+// CoreCLR 10.0.12 (docs/operations/offsets-asset.md). HitObjectProperty<T> holds
+// the bindable reference, then backingValue. Bindable<T> puts its `disabled` bool
+// after 4-byte values but before an 8-byte Vector2.
 const HIT_OBJECT_PROPERTY_BINDABLE: usize = 0;
 const HIT_OBJECT_PROPERTY_VALUE: usize = 8;
 const BINDABLE_INT_VALUE: usize = 0x40;
+const BINDABLE_VECTOR2_VALUE: usize = 0x44;
 
 impl LazerMemory {
     pub fn spectating_data(&mut self, show_mp_commands: bool) -> MemoryRead<LazerSpectator> {
@@ -645,14 +651,10 @@ impl LazerMemory {
         event: usize,
         object: usize,
     ) -> Result<Option<(f64, f64)>, MemoryError> {
-        // UNMEASURED CoreCLR auto-layout: two refs [0,16), double at 16,
-        // enum at 24, Nullable<double> at 32, Nullable<Vector2> at 48.
+        // HitEvent is two refs, a double at 16, the result at 24, Nullable<double> at 32
+        // and Nullable<Vector2> at 48 (hasValue, then the value at 4); same measurement.
         const HIT_EVENT_POSITION: usize = 0x30;
         const NULLABLE_VECTOR_VALUE: usize = 4;
-        // UNMEASURED generic value-type internals; generator resolves class
-        // fields only. HitObjectProperty<T>: reference then backingValue.
-        const PROPERTY_VALUE: usize = 8;
-        const BINDABLE_VALUE: usize = 0x28;
         let Some(offsets) = self.offsets.osu_hit_object.as_ref() else {
             return Ok(None);
         };
@@ -664,23 +666,24 @@ impl LazerMemory {
             return Ok(None);
         }
         let cursor = add(position, NULLABLE_VECTOR_VALUE)?;
-        let property_value = |offset| -> Result<usize, MemoryError> {
+        let property_value = |offset, bindable_value| -> Result<usize, MemoryError> {
             let property = add(object, offset)?;
-            let bindable = self.ptr(property)?;
-            add(
-                if bindable == 0 { property } else { bindable },
-                if bindable == 0 {
-                    PROPERTY_VALUE
-                } else {
-                    BINDABLE_VALUE
-                },
-            )
+            let bindable = self.ptr(add(property, HIT_OBJECT_PROPERTY_BINDABLE)?)?;
+            if bindable == 0 {
+                add(property, HIT_OBJECT_PROPERTY_VALUE)
+            } else {
+                add(bindable, bindable_value)
+            }
         };
-        let center = property_value(offsets.position)?;
+        let center = property_value(offsets.position, BINDABLE_VECTOR2_VALUE)?;
         let height = self
             .process
-            .read_i32(property_value(offsets.stack_height)?)? as f32;
-        let scale = self.process.read_f32(property_value(offsets.scale)?)?;
+            .read_i32(property_value(offsets.stack_height, BINDABLE_INT_VALUE)?)?
+            as f32;
+        // Bindable<float> shares the 4-byte value layout of Bindable<int>.
+        let scale = self
+            .process
+            .read_f32(property_value(offsets.scale, BINDABLE_INT_VALUE)?)?;
         let stack = height * scale * -6.4;
         let x = self.process.read_f32(cursor)? - (self.process.read_f32(center)? + stack);
         let y = self.process.read_f32(add(cursor, 4)?)?

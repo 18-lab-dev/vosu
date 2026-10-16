@@ -1142,10 +1142,11 @@ fn osu_hit_offset_nullable_position_and_property_layout() {
         ] {
             let bindable = if bound { object + offset + 0x1000 } else { 0 };
             memory.ptr(object + offset, bindable);
-            let address = if bound {
-                bindable + 0x28
-            } else {
-                object + offset + 8
+            // Measured Bindable<T>.value: Vector2 at 0x44 (after `disabled`), int/float at 0x40.
+            let address = match (bound, offset) {
+                (true, 0x80) => bindable + 0x44,
+                (true, _) => bindable + 0x40,
+                (false, _) => object + offset + 8,
             };
             memory.put(address, value);
             if offset == 0x80 {

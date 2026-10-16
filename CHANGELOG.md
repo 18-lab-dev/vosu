@@ -21,6 +21,14 @@ All notable user-visible changes to vosu are documented here. Older sections are
   and timing-error triples for osu!standard circles and slider heads, with
   incremental replay/map matching on stable and judgement-position reads on lazer.
   Stable under HR reflects positions before applying the stack offset, as the game does.
+- osu!lazer: the embedded offsets now include the mania column, catch catcher and
+  standard hit-object position fields, so `keyHitErrors`, `catcher` and `hitOffsets`
+  work on lazer `2026.921.0` without runtime generation. A cached offsets file
+  generated before an update that adds offset fields is regenerated instead of
+  silently leaving those features off.
+- osu!lazer: runtime offset generation no longer fails intermittently with a crash
+  in `osu.Game.Skinning.Skin` finalization; the daemon previously retried and
+  sometimes ran without offsets for a while.
 - osu!stable mania: a final hit error that matches no key press or release is now also published as a press after the play ends. In 1.0.2 the one-second fallback only ran during play, so such a hit could stay missing from `pressHitErrors` on the results screen.
 - Stable `keys.all` now uses replay-frame logical actions with lazer-compatible B names/order, frame-time transitions and incremental counts, independently of in-game overlay visibility. Legacy key members and configuration gating are unchanged. Catch movement actions remain unpressed because stable records positions rather than left/right input; dash is recorded. Preloaded replay capture follows the play clock. Lazer now accepts the full 20-action dual-stage mania range.
 - Catch: v2 `play` and precise payloads expose a vosu-only `catcher` object with the client's playfield `x` and ordinary `dashing` state, omitted outside catch gameplay. Stable samples by current play time even for preloaded replays and without new hit errors; lazer uses precise native field reads.

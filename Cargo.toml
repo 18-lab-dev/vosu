@@ -31,18 +31,8 @@ lazer-offsets-source-url = "https://github.com/ppy/osu/tree/aaa75b7c0a9f21d558ce
 lazer-offsets-appimage-url = "https://github.com/ppy/osu/releases/download/2026.921.0-lazer/osu.AppImage"
 lazer-offsets-appimage-sha256 = "dced9463b501009c95dbed891abd2f0acc2efb84ee4336f5b1cc3b7c04a5fc7d"
 lazer-offsets-generation-runtime = "AppImage bundled Microsoft.NETCore.App 10.0.12"
-lazer-offsets-template-source = "tosuapp/tosu@2359305a63f2aaebb201bc8d2eee58177f52590e plus vosu pause/clock fields and unmeasured mania, catch and standard spatial fields"
-lazer-offsets-sha256 = "3dcbb07503bc2a0a5a3ab3745fd2e32a3072dca6d620e7a593c79d267132f497"
-lazer-offsets-unmeasured-fields = [
-    "osu.Game.Rulesets.Mania.Objects.ManiaHitObject.column",
-    "osu.Game.Rulesets.Catch.UI.DrawableCatchRuleset.playfield",
-    "osu.Game.Rulesets.Catch.UI.CatchPlayfield.<Catcher>k__BackingField",
-    "osu.Game.Rulesets.Catch.UI.Catcher.<Dashing>k__BackingField",
-    "osu.Framework.Graphics.Drawable.x",
-    "osu.Game.Rulesets.Osu.Objects.OsuHitObject.position",
-    "osu.Game.Rulesets.Osu.Objects.OsuHitObject.stackHeight",
-    "osu.Game.Rulesets.Osu.Objects.OsuHitObject.scale",
-]
+lazer-offsets-template-source = "tosuapp/tosu@2359305a63f2aaebb201bc8d2eee58177f52590e plus vosu pause/clock fields and mania, catch and standard spatial fields"
+lazer-offsets-sha256 = "bbbcbb646b30a763001611318cb077e7d915608a48c3be7e1edbfd921312cd30"
 # Historical 2026.726.0 reproduction inputs; not used for the current asset.
 lazer-offsets-runtime-pack = "Microsoft.NETCore.App.Runtime.linux-x64/8.0.29"
 lazer-offsets-runtime-source-revision = "18fd75c847399745c43b5970fec840ba71064e80"
