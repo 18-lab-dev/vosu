@@ -36,6 +36,10 @@ const PLAYFIELD_BASE_SIZE: Pos = Pos::new(512.0, 384.0);
 pub struct Osu;
 
 impl Osu {
+    /// Stable stacked circle/slider-head centers, reflected after stacking.
+    pub fn stacked_heads(difficulty: &Difficulty, map: &Beatmap) -> Vec<(f64, f32, f32)> {
+        difficulty::stacked_heads(difficulty, map)
+    }
     pub(crate) fn strains_csharp_compat(
         difficulty: &Difficulty,
         map: &Beatmap,

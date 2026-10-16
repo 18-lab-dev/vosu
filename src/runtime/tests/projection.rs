@@ -627,6 +627,7 @@ fn all_schema_snapshot(title: &str) -> CombinedSnapshot {
     };
     regular.menu.title = Some(title.into());
     let precise = PreciseState {
+        catcher: None,
         status: 2,
         play_time: f64::NAN,
         mode: 0,
@@ -642,11 +643,7 @@ fn all_schema_snapshot(title: &str) -> CombinedSnapshot {
                 })
                 .collect(),
         ),
-        hit_errors: Arc::new(HitErrorArray {
-            all: vec![1.0, f64::NAN, -2.5, f64::NEG_INFINITY, 7.0],
-            press: vec![f64::NAN],
-            release: Vec::new(),
-        }),
+        hit_errors: Arc::new(HitErrorArray { all: vec![1.0, f64::NAN, -2.5, f64::NEG_INFINITY, 7.0], press: vec![f64::NAN], release: Vec::new(), key: None, offsets: Vec::new() }),
         total_hit_errors: f64::INFINITY,
         committed_hit_error_index: 0,
         unstable_rate: f64::NAN,

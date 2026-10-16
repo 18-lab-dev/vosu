@@ -55,7 +55,12 @@ pub(super) fn build_tourney(
     });
     let mut mapped = Vec::with_capacity(clients.len());
     for (index, client) in clients.iter().enumerate() {
-        mapped.push(build_stable_client(client, index, clients.len())?);
+        mapped.push(build_stable_client(
+            client,
+            index,
+            clients.len(),
+            snapshot.runtime_settings().enable_mania_key_hit_errors,
+        )?);
     }
     let tourney = &manager.state().regular.tourney;
     let score = &tourney.scoreboard;
@@ -109,6 +114,7 @@ pub(super) fn build_stable_client(
     instance: &ManagerInstanceSnapshot,
     index: usize,
     len: usize,
+    enable_key_hits: bool,
 ) -> Result<TourneyClient, ApiError> {
     let bundle = instance.state();
     let state = bundle.regular.as_ref();
@@ -149,6 +155,9 @@ pub(super) fn build_stable_client(
             state.beatmap.attributes.as_ref(),
             mods,
             &bundle.precise.hit_errors,
+            enable_key_hits,
+            bundle.precise.active_catcher(),
+            bundle.precise.hit_offsets(),
         ),
     })
 }
@@ -260,6 +269,9 @@ pub(super) fn build_lazer_client(
         hit_error_array: Default::default(),
         press_hit_errors: Vec::new(),
         release_hit_errors: Vec::new(),
+        key_hit_errors: None,
+        catcher: None,
+        hit_offsets: Vec::new(),
         combo: Combo {
             current: score.combo,
             max: score.max_combo,

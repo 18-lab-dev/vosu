@@ -11,6 +11,7 @@ pub struct Config {
     pub debug_log: bool,
     pub calculate_pp: bool,
     pub enable_key_overlay: bool,
+    pub enable_mania_key_hit_errors: bool,
     pub poll_rate: f64,
     pub precise_data_poll_rate: f64,
     pub v2_subscription_debounce: f64,
@@ -31,6 +32,7 @@ impl Default for Config {
             debug_log: false,
             calculate_pp: true,
             enable_key_overlay: true,
+            enable_mania_key_hit_errors: false,
             poll_rate: 150.0,
             precise_data_poll_rate: 10.0,
             v2_subscription_debounce: 1.0,
@@ -52,6 +54,7 @@ pub enum ConfigKey {
     DebugLog,
     CalculatePp,
     EnableKeyOverlay,
+    EnableManiaKeyHitErrors,
     PollRate,
     PreciseDataPollRate,
     V2SubscriptionDebounce,
@@ -97,7 +100,7 @@ impl Default for ConfigSchema {
     }
 }
 
-const SCHEMA_ITEMS: [ConfigItem; 15] = [
+const SCHEMA_ITEMS: [ConfigItem; 16] = [
     item(
         ConfigKey::EnableAutoUpdate,
         "ENABLE_AUTOUPDATE",
@@ -132,6 +135,12 @@ const SCHEMA_ITEMS: [ConfigItem; 15] = [
         ConfigKey::EnableKeyOverlay,
         "ENABLE_KEY_OVERLAY",
         ConfigDefault::Boolean(true),
+        None,
+    ),
+    item(
+        ConfigKey::EnableManiaKeyHitErrors,
+        "ENABLE_MANIA_KEY_HIT_ERRORS",
+        ConfigDefault::Boolean(false),
         None,
     ),
     item(
@@ -210,7 +219,7 @@ pub const DEFAULT_SCHEMA: ConfigSchema = ConfigSchema {
 
 /// The source's serialization order, which intentionally differs from schema
 /// declaration order.
-pub const BINDING_ORDER: [&str; 15] = [
+pub const BINDING_ORDER: [&str; 16] = [
     "DEBUG_LOG",
     "ENABLE_AUTOUPDATE",
     "OPEN_DASHBOARD_ON_STARTUP",
@@ -219,6 +228,7 @@ pub const BINDING_ORDER: [&str; 15] = [
     "CALCULATE_PP",
     "READ_MANIA_SCROLL_SPEED",
     "ENABLE_KEY_OVERLAY",
+    "ENABLE_MANIA_KEY_HIT_ERRORS",
     "POLL_RATE",
     "PRECISE_DATA_POLL_RATE",
     "V2_SUBSCRIPTION_DEBOUNCE",

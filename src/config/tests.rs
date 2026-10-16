@@ -79,6 +79,7 @@ READ_MANIA_SCROLL_SPEED = true
 
 ENABLE_KEY_OVERLAY = true
 
+ENABLE_MANIA_KEY_HIT_ERRORS = false
 POLL_RATE = 150.0
 PRECISE_DATA_POLL_RATE = 10.0
 V2_SUBSCRIPTION_DEBOUNCE = 1.0
@@ -108,6 +109,7 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
             "DEBUG_LOG",
             "CALCULATE_PP",
             "ENABLE_KEY_OVERLAY",
+            "ENABLE_MANIA_KEY_HIT_ERRORS",
             "POLL_RATE",
             "PRECISE_DATA_POLL_RATE",
             "V2_SUBSCRIPTION_DEBOUNCE",
@@ -118,6 +120,24 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
             "STATIC_FOLDER_PATH",
             "ALLOWED_IPS",
         ]
+    );
+}
+
+#[test]
+fn mania_key_hit_errors_defaults_off_and_round_trips() {
+    assert!(
+        !ConfigDocument::parse("")
+            .unwrap()
+            .config()
+            .enable_mania_key_hit_errors
+    );
+    let document = ConfigDocument::parse("ENABLE_MANIA_KEY_HIT_ERRORS = true\n").unwrap();
+    assert!(document.config().enable_mania_key_hit_errors);
+    assert!(
+        ConfigDocument::parse(&document.serialize())
+            .unwrap()
+            .config()
+            .enable_mania_key_hit_errors
     );
 }
 

@@ -703,6 +703,14 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
                 &settings_switch("ENABLE_KEY_OVERLAY", config.enable_key_overlay),
             ),
             settings_item(
+                "Per-key mania hit errors",
+                "Expose opt-in press and release timing arrays for known mania columns.",
+                &settings_switch(
+                    "ENABLE_MANIA_KEY_HIT_ERRORS",
+                    config.enable_mania_key_hit_errors,
+                ),
+            ),
+            settings_item(
                 "Common poll interval",
                 "Milliseconds between reads of general game data.",
                 &settings_number(

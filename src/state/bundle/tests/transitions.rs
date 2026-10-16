@@ -81,6 +81,8 @@ fn unstable_rate_uses_all_errors_including_releases() {
             all: vec![0.0, 10.0],
             press: vec![0.0],
             release: vec![10.0],
+            key: None,
+            offsets: Vec::new(),
         },
         total_hit_errors: 10.0,
         total_hit_error_squares: 100.0,
@@ -97,6 +99,8 @@ fn unstable_rate_scales_by_current_clock_rate() {
             all: vec![0.0, 10.0],
             press: vec![0.0, 10.0],
             release: Vec::new(),
+            key: None,
+            offsets: Vec::new(),
         },
         total_hit_errors: 10.0,
         total_hit_error_squares: 100.0,
@@ -766,6 +770,8 @@ fn precise_publication_reuses_only_unchanged_nested_arcs() {
         all: vec![-4.0],
         press: vec![-4.0],
         release: Vec::new(),
+        key: None,
+        offsets: Vec::new(),
     };
     bundle.gameplay.total_hit_errors = -4.0;
     bundle.gameplay.previous_hit_error_index = 1;

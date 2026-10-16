@@ -79,6 +79,12 @@ impl ParsedBeatmap {
         self.state.playable.hit_objects.len() as u32
     }
 
+    /// Version-aware osu! stacking, including HR's displayed-coordinate reflection.
+    pub fn osu_stacked_heads(&self, legacy_mods: u32) -> Vec<(f64, f32, f32)> {
+        let difficulty = rosu_pp::Difficulty::new().mods(legacy_mods);
+        rosu_pp::osu::Osu::stacked_heads(&difficulty, &self.state.original)
+    }
+
     pub fn structured_mods(&self) -> &[StructuredMod] {
         &self.state.mods
     }

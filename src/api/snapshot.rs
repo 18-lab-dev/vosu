@@ -161,12 +161,14 @@ impl ManagerInstanceSnapshot {
 pub struct ApiRuntimeSettings {
     /// Whether streamCompanion key-overlay fields are populated.
     pub enable_key_overlay: bool,
+    pub enable_mania_key_hit_errors: bool,
 }
 
 impl Default for ApiRuntimeSettings {
     fn default() -> Self {
         Self {
             enable_key_overlay: true,
+            enable_mania_key_hit_errors: false,
         }
     }
 }

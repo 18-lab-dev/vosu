@@ -349,6 +349,8 @@ fn hit_event_list_rewind_preserves_history_and_resumes_appending() {
             all: vec![-12.0, 5.0],
             press: vec![-12.0],
             release: vec![5.0],
+            key: None,
+            offsets: Vec::new(),
         };
         bundle.gameplay.total_hit_errors = -7.0;
         bundle.gameplay.total_hit_error_squares = 169.0;
@@ -484,6 +486,11 @@ fn boundary_corrections_reclassify_exact_prior_presses_in_timing_order() {
         13.0,
     ];
     bundle.gameplay.hit_errors = press_hit_errors(all.clone());
+    let mut key = crate::model::states::KeyHitErrors::default();
+    for (&value, column) in all.iter().zip([0, 2, 0, 1, 2]) {
+        key.append(value, Some(column), false);
+    }
+    bundle.gameplay.hit_errors.key = Some(key);
     bundle.gameplay.total_hit_errors = all.iter().sum();
     bundle.gameplay.previous_hit_error_index = 40;
     let precise = RawPreciseSnapshotBuilder::new(
@@ -496,7 +503,10 @@ fn boundary_corrections_reclassify_exact_prior_presses_in_timing_order() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 42,
-        errors: HitErrorArray::default(),
+        errors: HitErrorArray {
+            key: Some(Default::default()),
+            ..Default::default()
+        },
         release_corrections: vec![
             ReleaseCorrection {
                 value: 7.0,
@@ -526,6 +536,11 @@ fn boundary_corrections_reclassify_exact_prior_presses_in_timing_order() {
     assert_eq!(bundle.gameplay.hit_errors.release.len(), 2);
     assert_eq!(bundle.gameplay.total_hit_errors, 27.0);
     assert_eq!(bundle.gameplay.previous_hit_error_index, 42);
+    let key = bundle.gameplay.hit_errors.key.as_ref().unwrap();
+    assert_eq!(key.press, [vec![11.0, -2.0], vec![], vec![13.0]]);
+    assert_eq!(key.release, [vec![], vec![7.0], vec![-2.0]]);
+    bundle.gameplay.reset_hit_errors();
+    assert!(bundle.gameplay.hit_errors.key.is_none());
 }
 
 #[test]
@@ -578,7 +593,7 @@ fn invalid_boundary_corrections_leave_hit_errors_unchanged() {
 }
 
 #[test]
-fn stable_precise_keys_keep_legacy_projection_and_complete_keypresses() {
+fn stable_overlay_only_keeps_legacy_projection() {
     let mut bundle = StateBundle::new(ClientType::Stable, 4, Arc::new(EchoCalculation));
     bundle.global.status = GameState::Play.value() as i64;
     bundle.global.play_time = 200.0;
@@ -614,37 +629,28 @@ fn stable_precise_keys_keep_legacy_projection_and_complete_keypresses() {
     bundle.gameplay.keypress_mode = 3;
     bundle.apply_precise_inner(&snapshot(1, 3));
     assert!(bundle.gameplay.key_overlay.is_empty());
-    assert_eq!(bundle.gameplay.keypresses.len(), 3);
+    assert!(bundle.gameplay.keypresses.is_empty());
 
     bundle.apply_precise_inner(&snapshot(2, 6));
     assert_eq!(bundle.gameplay.key_overlay.len(), 3);
-    assert_eq!(bundle.gameplay.keypresses.len(), 6);
+    assert!(bundle.gameplay.keypresses.is_empty());
     assert_eq!(bundle.gameplay.key_overlay[2].name.as_ref(), "K3");
-    assert_eq!(bundle.gameplay.keypresses[5].name.as_ref(), "K6");
 
     bundle.gameplay.keypress_mode = 0;
     bundle.apply_precise_inner(&snapshot(3, 6));
     assert_eq!(bundle.gameplay.key_overlay.len(), 4);
-    assert_eq!(bundle.gameplay.keypresses.len(), 6);
+    assert!(bundle.gameplay.keypresses.is_empty());
     assert_eq!(bundle.gameplay.key_overlay[3].name.as_ref(), "K4");
 }
 
 #[test]
 fn precise_keypress_timestamps_follow_observed_edges_and_reset_identity() {
-    let mut bundle = StateBundle::new(ClientType::Stable, 5, Arc::new(EchoCalculation));
+    let mut bundle = StateBundle::new(ClientType::Lazer, 5, Arc::new(EchoCalculation));
     bundle.gameplay.keypress_mode = 3;
 
     let snapshot = |sequence, time, keys: &[(&str, bool, i64)]| {
         RawPreciseSnapshotBuilder::new(
-            PreciseCaptureContext::new(
-                ClientType::Stable,
-                5,
-                0,
-                0,
-                default_calculated_mods(),
-                0,
-                0,
-            ),
+            PreciseCaptureContext::new(ClientType::Lazer, 5, 0, 0, default_calculated_mods(), 0, 0),
             sequence,
             Ok(ReadStatus::Ready(GlobalPrecise {
                 status: GameState::Play.value() as i64,
@@ -750,12 +756,16 @@ fn stale_parsed_map_waits_for_current_mania_metadata() {
     let frames = vec![
         StableReplayFrame {
             time: 200,
-            keys: 2,
+            x: 2.0,
+            buttons: 0,
+            buttons_raw: 0,
             y: 0.0,
         },
         StableReplayFrame {
             time: 390,
-            keys: 0,
+            x: 0.0,
+            buttons: 0,
+            buttons_raw: 0,
             y: 0.0,
         },
     ];
@@ -781,12 +791,14 @@ fn stale_parsed_map_waits_for_current_mania_metadata() {
             all: vec![-10.0],
             press: vec![-10.0],
             release: Vec::new(),
+            key: None,
+            offsets: Vec::new(),
         },
         release_corrections: Vec::new(),
         stable_replay_frames: Some(StableReplayFrameBatch {
             start_index: 0,
             index: 2,
-            frames: std::sync::Arc::new(frames),
+            frames: std::sync::Arc::new(frames.into()),
         }),
     })))
     .publish();
@@ -823,7 +835,7 @@ fn stale_parsed_map_waits_for_current_mania_metadata() {
         stable_replay_frames: Some(StableReplayFrameBatch {
             start_index: 2,
             index: 2,
-            frames: std::sync::Arc::new(Vec::new()),
+            frames: Default::default(),
         }),
     })))
     .publish();
@@ -864,12 +876,14 @@ fn resolved_missing_mania_metadata_is_immediately_press_only() {
             all: vec![7.0],
             press: vec![7.0],
             release: Vec::new(),
+            key: None,
+            offsets: Vec::new(),
         },
         release_corrections: Vec::new(),
         stable_replay_frames: Some(StableReplayFrameBatch {
             start_index: 0,
             index: 0,
-            frames: std::sync::Arc::new(Vec::new()),
+            frames: Default::default(),
         }),
     })))
     .publish();
@@ -878,6 +892,57 @@ fn resolved_missing_mania_metadata_is_immediately_press_only() {
     assert_eq!(bundle.gameplay.hit_errors.all, [7.0]);
     assert_eq!(bundle.gameplay.hit_errors.press, [7.0]);
     assert!(bundle.gameplay.hit_errors.release.is_empty());
+}
+
+#[test]
+fn stable_random_key_errors_never_guess_columns() {
+    let (checksum, parsed) = native_mania_map("random");
+    let mut bundle = StateBundle::new(ClientType::Stable, 46, Arc::new(EchoCalculation));
+    bundle.global.status = GameState::Play.value() as i64;
+    bundle.menu.checksum = Some(checksum.clone());
+    bundle.beatmap.checksum = Some(checksum.clone());
+    bundle.beatmap.source_key = Some(checksum);
+    bundle.beatmap.parsed = Some(parsed);
+    let mut mods = default_calculated_mods();
+    mods.number |= crate::calculation::osu_mods::RANDOM;
+    let play = RawPreciseSnapshotBuilder::new(
+        PreciseCaptureContext::new(ClientType::Stable, 46, 0, 3, mods, 0, 0),
+        1,
+        Ok(ReadStatus::Ready(GlobalPrecise {
+            status: GameState::Play.value() as i64,
+            time: 250.0,
+        })),
+    )
+    .hit_errors(Ok(ReadStatus::Ready(HitErrors {
+        index: 1,
+        errors: HitErrorArray {
+            all: vec![-10.0],
+            press: vec![-10.0],
+            key: Some(Default::default()),
+            ..Default::default()
+        },
+        release_corrections: Vec::new(),
+        stable_replay_frames: Some(StableReplayFrameBatch {
+            start_index: 0,
+            index: 1,
+            frames: Arc::new(
+                vec![StableReplayFrame {
+                    time: 190,
+                    x: 2.0,
+                    buttons: 0,
+                    buttons_raw: 0,
+                    y: 0.0,
+                }]
+                .into(),
+            ),
+        }),
+    })))
+    .publish();
+    bundle.apply_precise_inner(&play);
+    let key = bundle.gameplay.hit_errors.key.as_ref().unwrap();
+    assert!(key.press.is_empty());
+    assert!(key.release.is_empty());
+    assert_eq!(bundle.gameplay.hit_errors.all, [-10.0]);
 }
 
 #[test]
@@ -914,22 +979,33 @@ fn unmatched_final_stable_error_is_published_after_the_play_ends() {
                 all: vec![-10.0, 77.0],
                 press: vec![-10.0, 77.0],
                 release: Vec::new(),
+                key: Some(Default::default()),
+                offsets: Vec::new(),
             },
             release_corrections: Vec::new(),
             stable_replay_frames: Some(StableReplayFrameBatch {
                 start_index: 0,
                 index: 1,
-                frames: Arc::new(vec![StableReplayFrame {
-                    time: 190,
-                    keys: 2,
-                    y: 0.0,
-                }]),
+                frames: Arc::new(
+                    vec![StableReplayFrame {
+                        time: 190,
+                        x: 2.0,
+                        buttons: 0,
+                        buttons_raw: 0,
+                        y: 0.0,
+                    }]
+                    .into(),
+                ),
             }),
         })))
         .publish();
     let start = Instant::now();
     bundle.apply_precise_inner_at(&play, start);
     assert_eq!(bundle.gameplay.hit_errors.press, [-10.0]);
+    assert_eq!(
+        bundle.gameplay.hit_errors.key.as_ref().unwrap().press,
+        [vec![], vec![-10.0]]
+    );
 
     // Results: no further gameplay capture reaches the classifier, and a hit list read
     // outside Play must not be admitted.
@@ -941,6 +1017,8 @@ fn unmatched_final_stable_error_is_published_after_the_play_ends() {
                     all: vec![5.0],
                     press: vec![5.0],
                     release: Vec::new(),
+                    key: None,
+                    offsets: Vec::new(),
                 },
                 release_corrections: Vec::new(),
                 stable_replay_frames: None,
@@ -953,4 +1031,77 @@ fn unmatched_final_stable_error_is_published_after_the_play_ends() {
     assert_eq!(bundle.gameplay.hit_errors.all, [-10.0, 77.0]);
     assert_eq!(bundle.gameplay.hit_errors.press, [-10.0, 77.0]);
     assert!(bundle.gameplay.hit_errors.release.is_empty());
+}
+
+#[test]
+fn stable_frame_keys_ignore_hidden_overlay_but_preserve_update_gate_and_legacy() {
+    let mut bundle = StateBundle::new(ClientType::Stable, 4, Arc::new(EchoCalculation));
+    let snapshot = |sequence, overlay_read| {
+        let builder = RawPreciseSnapshotBuilder::new(
+            PreciseCaptureContext::new(
+                ClientType::Stable,
+                4,
+                0,
+                0,
+                default_calculated_mods(),
+                0,
+                0,
+            ),
+            sequence,
+            Ok(ReadStatus::Ready(GlobalPrecise {
+                status: GameState::Play.value() as i64,
+                time: 250.0,
+            })),
+        )
+        .hit_errors(Ok(ReadStatus::Ready(HitErrors {
+            index: 0,
+            errors: HitErrorArray::default(),
+            release_corrections: Vec::new(),
+            stable_replay_frames: Some(StableReplayFrameBatch {
+                start_index: 0,
+                index: 3,
+                frames: Arc::new(
+                    vec![
+                        StableReplayFrame {
+                            time: 100,
+                            x: 0.0,
+                            y: 0.0,
+                            buttons: 1,
+                            buttons_raw: 1,
+                        },
+                        StableReplayFrame {
+                            time: 110,
+                            x: 0.0,
+                            y: 0.0,
+                            buttons: 0,
+                            buttons_raw: 0,
+                        },
+                        StableReplayFrame {
+                            time: 120,
+                            x: 0.0,
+                            y: 0.0,
+                            buttons: 4,
+                            buttons_raw: 4,
+                        },
+                    ]
+                    .into(),
+                ),
+            }),
+        })));
+        if overlay_read {
+            builder.key_overlay(Ok(ReadStatus::NotReady)).publish()
+        } else {
+            builder.publish()
+        }
+    };
+    bundle.apply_precise_inner(&snapshot(1, false));
+    assert!(bundle.gameplay.keypresses.is_empty());
+    bundle.apply_precise_inner(&snapshot(2, true));
+    assert!(bundle.gameplay.key_overlay.is_empty());
+    assert_eq!(bundle.gameplay.keypresses.len(), 3);
+    assert_eq!(bundle.gameplay.keypresses[0].name.as_ref(), "B1");
+    assert_eq!(bundle.gameplay.keypresses[0].count, 2);
+    assert_eq!(bundle.gameplay.keypresses[0].pressed_at, Some(120.0));
+    assert_eq!(bundle.gameplay.keypresses[0].released_at, Some(110.0));
+    assert!(bundle.gameplay.keypresses[0].is_pressed);
 }

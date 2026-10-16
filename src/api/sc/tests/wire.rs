@@ -13,7 +13,10 @@ fn assert_direct_matches(snapshot: &CombinedSnapshot) {
 }
 
 fn runtime(enable_key_overlay: bool) -> ApiRuntimeSettings {
-    ApiRuntimeSettings { enable_key_overlay }
+    ApiRuntimeSettings {
+        enable_key_overlay,
+        enable_mania_key_hit_errors: false,
+    }
 }
 
 #[test]

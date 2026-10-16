@@ -15,6 +15,7 @@ const EXPECTED_DEFAULT: &str = concat!(
     "\n",
     "ENABLE_KEY_OVERLAY = true\n",
     "\n",
+    "ENABLE_MANIA_KEY_HIT_ERRORS = false\n",
     "POLL_RATE = 150.0\n",
     "PRECISE_DATA_POLL_RATE = 10.0\n",
     "V2_SUBSCRIPTION_DEBOUNCE = 1.0\n",

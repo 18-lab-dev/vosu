@@ -116,6 +116,37 @@ impl OsuDifficultySetup {
         }
     }
 }
+/// Reuse version-aware stacking; stable reflects the raw position under HR and
+/// then applies the unreflected stack offset, so stacks still lean up-left on
+/// screen (observed live from stable's HR autoplay cursor).
+pub(super) fn stacked_heads(difficulty: &Difficulty, map: &Beatmap) -> Vec<(f64, f32, f32)> {
+    let OsuDifficultySetup {
+        scaling_factor,
+        mut attrs,
+        time_preempt,
+        ..
+    } = OsuDifficultySetup::new(difficulty, map);
+    convert_objects(
+        map,
+        &scaling_factor,
+        crate::model::mods::Reflection::None,
+        time_preempt,
+        difficulty.get_mods().fr(),
+        usize::MAX,
+        &mut attrs,
+    )
+    .iter()
+    .filter(|object| !object.is_spinner())
+    .map(|object| {
+        let y = if difficulty.get_mods().reflection() == crate::model::mods::Reflection::Vertical {
+            384.0 - object.pos.y + object.stack_offset.y
+        } else {
+            object.stacked_pos().y
+        };
+        (object.start_time, object.stacked_pos().x, y)
+    })
+    .collect()
+}
 
 pub struct DifficultyValues {
     pub osu_objects: Box<[OsuObject]>,

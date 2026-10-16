@@ -51,6 +51,7 @@ fn snapshot() -> Arc<ManagerSnapshot> {
         room: Default::default(),
     };
     let precise = PreciseState {
+        catcher: None,
         status: 0,
         play_time: 0.0,
         mode: 3,

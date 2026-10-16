@@ -190,21 +190,26 @@ fn hit_errors(value: &Value) -> HitErrorArray {
         all: press.clone(),
         press,
         release: Vec::new(),
+        key: None,
+        offsets: Vec::new(),
     }
 }
 
-fn strip_vosu_hit_error_extensions(value: &mut Value) {
+fn strip_vosu_extensions(value: &mut Value) {
     match value {
         Value::Object(object) => {
             object.shift_remove("pressHitErrors");
+            object.shift_remove("keyHitErrors");
             object.shift_remove("releaseHitErrors");
+            object.shift_remove("catcher");
+            object.shift_remove("hitOffsets");
             for value in object.values_mut() {
-                strip_vosu_hit_error_extensions(value);
+                strip_vosu_extensions(value);
             }
         }
         Value::Array(values) => {
             for value in values {
-                strip_vosu_hit_error_extensions(value);
+                strip_vosu_extensions(value);
             }
         }
         _ => {}
@@ -381,6 +386,7 @@ fn regular(input: &Input) -> RegularState {
             density: number(&services.bass_density, "density"),
         },
         gameplay: GameplayState {
+            catcher: None,
             is_default_state: false,
             is_key_overlay_default_state: key_overlay.is_empty(),
             failed: boolean(gameplay, "failed"),
@@ -481,6 +487,7 @@ fn state(input: &Input) -> Arc<StateBundleSnapshot> {
         reset_epoch: 0,
         regular: Arc::new(regular),
         precise: Arc::new(PreciseState {
+            catcher: None,
             mode,
             status: input.status,
             play_time: 0.0,
@@ -694,7 +701,7 @@ fn committed_source_oracles_match_all_rust_wire_builders_byte_for_byte() {
             };
             let mut actual: Value = serde_json::from_slice(&encode(schema, &snapshot))
                 .expect("actual output must be valid");
-            strip_vosu_hit_error_extensions(&mut actual);
+            strip_vosu_extensions(&mut actual);
             if matches!(schema, "v2" | "v2-precise") {
                 let object = actual.as_object_mut().expect("v2 output must be an object");
                 if schema == "v2-precise" {

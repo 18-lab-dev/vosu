@@ -304,6 +304,15 @@ macro_rules! wire_object {
     };
 }
 pub(crate) use wire_object;
+impl Wire for crate::model::memory::Catcher {
+    fn write_wire(&self, output: &mut Vec<u8>) -> io::Result<()> {
+        wire_object!(output {
+            "x": f64::from(self.x),
+            "dashing": self.dashing,
+        });
+        Ok(())
+    }
+}
 
 pub(crate) fn encode<T: Serialize>(value: &T, capacity: usize) -> Result<Vec<u8>, ApiError> {
     let mut output = Vec::with_capacity(capacity);

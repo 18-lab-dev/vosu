@@ -32,6 +32,10 @@ pub trait MemoryReader: Send {
     fn gameplay(&mut self, play_time: f64, first_object_time: Option<i64>) -> MemoryRead<Gameplay>;
     fn key_overlay(&mut self, mode: i64) -> MemoryRead<KeyOverlay>;
     fn hit_errors(&mut self, last_index: i64) -> MemoryRead<HitErrors>;
+    fn set_mania_key_hit_errors(&mut self, _enabled: bool) {}
+    fn catcher(&mut self, _play_time: f64) -> MemoryRead<crate::model::memory::Catcher> {
+        Ok(ReadStatus::Unsupported("catcher"))
+    }
     fn global(&mut self) -> MemoryRead<Global>;
     fn global_precise(&mut self) -> MemoryRead<GlobalPrecise>;
     fn menu(&mut self, previous_checksum: &str) -> MemoryRead<Menu>;

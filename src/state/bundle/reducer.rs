@@ -28,6 +28,8 @@ impl StateBundle {
             bass_density: BassDensityState::default(),
             gameplay: GameplayState::default(),
             stable_mania_hit_errors: StableManiaHitErrorState::default(),
+            stable_keys: super::stable_keys::StableKeys::default(),
+            stable_offsets: hit_offsets::StableHitOffsets::default(),
             result_screen: ResultScreenState::default(),
             tourney: TourneyManagerState::default(),
             user: UserState::default(),
@@ -142,8 +144,10 @@ impl StateBundle {
     pub(super) fn reset_precise_epoch(&mut self) {
         self.increment_epoch();
         self.gameplay.reset_keys();
+        self.stable_keys = super::stable_keys::StableKeys::default();
         self.gameplay.reset_hit_errors();
         self.stable_mania_hit_errors.reset();
+        self.stable_offsets = hit_offsets::StableHitOffsets::default();
         self.gameplay.unstable_rate = 0.0;
         self.precise_dirty = true;
     }
@@ -674,6 +678,18 @@ impl StateBundle {
             self.global.play_time = global.time;
             self.latest_precise_global_sequence = snapshot.produced_sequence();
         }
+        self.gameplay.catcher = match (
+            snapshot.capture().mode(),
+            snapshot.global(),
+            snapshot.catcher(),
+        ) {
+            (2, Ok(ReadStatus::Ready(global)), Some(Ok(ReadStatus::Ready(catcher))))
+                if global.status == GameState::Play.value() as i64 =>
+            {
+                Some(*catcher)
+            }
+            _ => None,
+        };
         let mut partitioned = false;
         if self.global.status == GameState::Play.value() as i64 {
             if self.global.play_time >= 150.0
@@ -707,35 +723,37 @@ impl StateBundle {
                             key
                         })
                         .collect();
-                    self.gameplay.keypresses = sanitized
-                        .iter()
-                        .enumerate()
-                        .map(|(index, key)| {
-                            let previous =
-                                identities_match.then(|| &self.gameplay.keypresses[index]);
-                            let (pressed_at, released_at) = match previous {
-                                Some(previous) if previous.is_pressed == key.is_pressed => {
-                                    (previous.pressed_at, previous.released_at)
+                    if self.source == ClientType::Lazer {
+                        self.gameplay.keypresses = sanitized
+                            .iter()
+                            .enumerate()
+                            .map(|(index, key)| {
+                                let previous =
+                                    identities_match.then(|| &self.gameplay.keypresses[index]);
+                                let (pressed_at, released_at) = match previous {
+                                    Some(previous) if previous.is_pressed == key.is_pressed => {
+                                        (previous.pressed_at, previous.released_at)
+                                    }
+                                    Some(previous) if key.is_pressed => {
+                                        (Some(self.global.play_time), previous.released_at)
+                                    }
+                                    Some(previous) => {
+                                        (previous.pressed_at, Some(self.global.play_time))
+                                    }
+                                    None if key.is_pressed => (Some(self.global.play_time), None),
+                                    None => (None, None),
+                                };
+                                KeypressButton {
+                                    name: Arc::clone(&key.name),
+                                    is_pressed: key.is_pressed,
+                                    count: key.count,
+                                    pressed_at,
+                                    released_at,
                                 }
-                                Some(previous) if key.is_pressed => {
-                                    (Some(self.global.play_time), previous.released_at)
-                                }
-                                Some(previous) => {
-                                    (previous.pressed_at, Some(self.global.play_time))
-                                }
-                                None if key.is_pressed => (Some(self.global.play_time), None),
-                                None => (None, None),
-                            };
-                            KeypressButton {
-                                name: Arc::clone(&key.name),
-                                is_pressed: key.is_pressed,
-                                count: key.count,
-                                pressed_at,
-                                released_at,
-                            }
-                        })
-                        .collect();
-                    self.gameplay.keypress_identity_mode = Some(self.gameplay.keypress_mode);
+                            })
+                            .collect();
+                        self.gameplay.keypress_identity_mode = Some(self.gameplay.keypress_mode);
+                    }
                     self.gameplay.key_overlay = if self.source == ClientType::Lazer {
                         sanitized
                     } else if sanitized.len() < 4 {
@@ -758,6 +776,98 @@ impl StateBundle {
                         if global.status == GameState::Play.value() as i64
                 )
             {
+                if errors.errors.key.is_some() {
+                    let len = self.gameplay.hit_errors.press.len();
+                    self.gameplay.hit_errors.key.get_or_insert_with(|| {
+                        crate::model::states::KeyHitErrors {
+                            press_columns: vec![None; len],
+                            ..Default::default()
+                        }
+                    });
+                } else {
+                    self.gameplay.hit_errors.key = None;
+                }
+                if self.source == ClientType::Stable
+                    && snapshot.key_overlay().is_some()
+                    && let Some(batch) = errors.stable_replay_frames.as_ref()
+                {
+                    let columns = self
+                        .beatmap
+                        .parsed
+                        .as_ref()
+                        .filter(|_| {
+                            self.beatmap.checksum == self.menu.checksum
+                                && self.beatmap.mods.checksum == snapshot.capture().mods().checksum
+                        })
+                        .map_or_else(
+                            || {
+                                let mut columns = self.menu.cs.unwrap_or(0.0);
+                                let mut dual = false;
+                                for entry in &snapshot.capture().mods().array {
+                                    if entry.acronym == "DS" {
+                                        dual = true;
+                                    } else if let Some(count) = entry
+                                        .acronym
+                                        .strip_suffix('K')
+                                        .and_then(|value| value.parse::<u8>().ok())
+                                        .filter(|count| (1..=10).contains(count))
+                                    {
+                                        columns = f64::from(count);
+                                    }
+                                }
+                                columns * if dual { 2.0 } else { 1.0 }
+                            },
+                            |map| map.engine.converted_difficulty.circle_size,
+                        )
+                        .round()
+                        .clamp(0.0, 20.0) as usize;
+                    self.stable_keys.apply(
+                        snapshot.capture().mode(),
+                        columns,
+                        self.global.play_time,
+                        batch,
+                        &mut self.gameplay.keypresses,
+                    );
+                    self.gameplay.is_key_overlay_default_state = false;
+                }
+                if snapshot.capture().mode() == 0 {
+                    if self.source == ClientType::Stable {
+                        if self.stable_offsets.heads.is_none()
+                            && let Some(checksum) = self.menu.checksum.as_deref()
+                            && self.beatmap.checksum.as_deref() == Some(checksum)
+                            && let Some(parsed) = self.beatmap.parsed.as_ref()
+                            && parsed.cache_key().memory_identity.as_deref() == Some(checksum)
+                            && self.beatmap.source_key.as_deref()
+                                == Some(parsed.cache_key().source_checksum.as_str())
+                        {
+                            let mods = snapshot.capture().mods().number;
+                            // Stable exposes HR, but no supported positional randomisation.
+                            if mods & crate::calculation::osu_mods::MIRROR == 0 {
+                                self.stable_offsets.heads = Some(
+                                    vosu_pp::LiveLazerEngine
+                                        .parse_str(parsed.source())
+                                        .ok()
+                                        .map(|map| map.osu_stacked_heads(mods as u32))
+                                        .unwrap_or_default(),
+                                );
+                            } else {
+                                self.stable_offsets.heads = Some(Vec::new());
+                            }
+                        }
+                        let offsets = self.stable_offsets.update(
+                            &errors.errors.all,
+                            errors.stable_replay_frames.as_ref(),
+                            self.global.play_time,
+                            now,
+                        );
+                        self.gameplay.hit_errors.offsets.extend(offsets);
+                    } else {
+                        self.gameplay
+                            .hit_errors
+                            .offsets
+                            .extend_from_slice(&errors.errors.offsets);
+                    }
+                }
                 let mut release_corrections: Vec<_> = errors.release_corrections.iter().collect();
                 release_corrections
                     .sort_by_key(|correction| std::cmp::Reverse(correction.press_offset));
@@ -773,6 +883,9 @@ impl StateBundle {
                         == correction.value.to_bits()
                     {
                         self.gameplay.hit_errors.press.remove(position);
+                        if let Some(key) = &mut self.gameplay.hit_errors.key {
+                            key.correct_release(position, correction.value);
+                        }
                         self.gameplay.hit_errors.release.push(correction.value);
                     }
                 }
@@ -791,6 +904,11 @@ impl StateBundle {
                                 .stable_mania_hit_errors
                                 .needs_metadata(target_checksum)
                                 .then(|| self.stable_mania_metadata(snapshot));
+                            self.stable_mania_hit_errors.key = (errors.errors.key.is_some()
+                                && snapshot.capture().mods().number
+                                    & crate::calculation::osu_mods::RANDOM
+                                    == 0)
+                                .then(Default::default);
                             self.stable_mania_hit_errors.partition(
                                 &errors.errors.all,
                                 batch,
@@ -807,6 +925,11 @@ impl StateBundle {
                     partitioned = true;
                     self.gameplay.hit_errors.press.extend(press);
                     self.gameplay.hit_errors.release.extend(release);
+                    if let Some(key) = &mut self.gameplay.hit_errors.key
+                        && let Some(batch) = self.stable_mania_hit_errors.key.take()
+                    {
+                        key.extend(&batch);
+                    }
                 } else {
                     self.gameplay
                         .hit_errors
@@ -816,14 +939,24 @@ impl StateBundle {
                         .hit_errors
                         .release
                         .extend_from_slice(&errors.errors.release);
+                    if let Some(key) = &mut self.gameplay.hit_errors.key
+                        && let Some(batch) = &errors.errors.key
+                    {
+                        key.extend(batch);
+                    }
                 }
                 self.gameplay.previous_hit_error_index = errors.index;
             }
         } else {
             self.gameplay.reset_keys();
+            self.stable_keys = super::stable_keys::StableKeys::default();
         }
         if !partitioned {
             let expired = self.stable_mania_hit_errors.flush_expired(now);
+            if let Some(key) = &mut self.gameplay.hit_errors.key {
+                key.press_columns
+                    .resize(key.press_columns.len() + expired.len(), None);
+            }
             self.gameplay.hit_errors.press.extend(expired);
         }
         let (mode, mods) = self.current_mode_mods(self.global.status);

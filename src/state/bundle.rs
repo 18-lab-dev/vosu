@@ -68,12 +68,16 @@ fn default_pp_acc() -> BTreeMap<u8, f64> {
 mod calculation;
 #[path = "bundle/gameplay.rs"]
 mod gameplay;
+#[path = "bundle/hit_offsets.rs"]
+mod hit_offsets;
 #[path = "bundle/models.rs"]
 mod models;
 #[path = "bundle/publication.rs"]
 mod publication;
 #[path = "bundle/reducer.rs"]
 mod reducer;
+#[path = "bundle/stable_keys.rs"]
+mod stable_keys;
 
 pub use calculation::*;
 pub use gameplay::*;
@@ -100,6 +104,8 @@ pub struct StateBundle {
     bass_density: BassDensityState,
     gameplay: GameplayState,
     stable_mania_hit_errors: StableManiaHitErrorState,
+    stable_keys: stable_keys::StableKeys,
+    stable_offsets: hit_offsets::StableHitOffsets,
     result_screen: ResultScreenState,
     tourney: TourneyManagerState,
     user: UserState,

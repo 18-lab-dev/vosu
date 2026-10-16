@@ -163,6 +163,7 @@ impl RawPreciseSnapshotBuilder {
                 global,
                 key_overlay: None,
                 hit_errors: None,
+                catcher: None,
             },
         }
     }
@@ -170,6 +171,12 @@ impl RawPreciseSnapshotBuilder {
     #[must_use]
     pub fn key_overlay(mut self, read: MemoryRead<KeyOverlay>) -> Self {
         self.snapshot.key_overlay = Some(read);
+        self
+    }
+
+    #[must_use]
+    pub fn catcher(mut self, read: MemoryRead<crate::model::memory::Catcher>) -> Self {
+        self.snapshot.catcher = Some(read);
         self
     }
 

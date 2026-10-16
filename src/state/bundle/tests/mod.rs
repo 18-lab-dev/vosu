@@ -13,6 +13,8 @@ fn press_hit_errors(values: Vec<f64>) -> HitErrorArray {
         all: values.clone(),
         press: values,
         release: Vec::new(),
+        key: None,
+        offsets: Vec::new(),
     }
 }
 

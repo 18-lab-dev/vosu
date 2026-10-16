@@ -1,5 +1,9 @@
 use super::*;
 
+const HIT_OBJECT_PROPERTY_BINDABLE: usize = 0;
+const HIT_OBJECT_PROPERTY_VALUE: usize = 8;
+const BINDABLE_INT_VALUE: usize = 0x40;
+
 impl LazerMemory {
     pub fn spectating_data(&mut self, show_mp_commands: bool) -> MemoryRead<LazerSpectator> {
         let gameplay = self.ptr(add(
@@ -609,6 +613,79 @@ impl LazerMemory {
                 .read_u8(add(score_info, o.passed_k_backing_field)?)?
                 != 0,
         })
+    }
+
+    pub(super) fn mania_column(&self, object: usize) -> Option<usize> {
+        let offset = self
+            .offsets
+            .mania_hit_object
+            .as_ref()?
+            .column
+            .filter(|&offset| offset != 0)?;
+        let property = add(object, offset).ok()?;
+        let bindable = self
+            .ptr(add(property, HIT_OBJECT_PROPERTY_BINDABLE).ok()?)
+            .ok()?;
+        let address = if bindable == 0 {
+            add(property, HIT_OBJECT_PROPERTY_VALUE).ok()?
+        } else {
+            add(bindable, BINDABLE_INT_VALUE).ok()?
+        };
+        let column = self.process.read_i32(address).ok()?;
+        (0..20).contains(&column).then_some(column as usize)
+    }
+    /// Spatial reads are independent of timing: missing/unmeasured spatial fields
+    /// must not discard an otherwise valid judgement.
+    pub(super) fn read_hit_offset(&self, event: usize, object: usize) -> Option<(f64, f64)> {
+        self.read_hit_offset_inner(event, object).ok().flatten()
+    }
+
+    fn read_hit_offset_inner(
+        &self,
+        event: usize,
+        object: usize,
+    ) -> Result<Option<(f64, f64)>, MemoryError> {
+        // UNMEASURED CoreCLR auto-layout: two refs [0,16), double at 16,
+        // enum at 24, Nullable<double> at 32, Nullable<Vector2> at 48.
+        const HIT_EVENT_POSITION: usize = 0x30;
+        const NULLABLE_VECTOR_VALUE: usize = 4;
+        // UNMEASURED generic value-type internals; generator resolves class
+        // fields only. HitObjectProperty<T>: reference then backingValue.
+        const PROPERTY_VALUE: usize = 8;
+        const BINDABLE_VALUE: usize = 0x28;
+        let Some(offsets) = self.offsets.osu_hit_object.as_ref() else {
+            return Ok(None);
+        };
+        if offsets.position == 0 || offsets.stack_height == 0 || offsets.scale == 0 {
+            return Ok(None);
+        }
+        let position = add(event, HIT_EVENT_POSITION)?;
+        if self.process.read_u8(position)? != 1 {
+            return Ok(None);
+        }
+        let cursor = add(position, NULLABLE_VECTOR_VALUE)?;
+        let property_value = |offset| -> Result<usize, MemoryError> {
+            let property = add(object, offset)?;
+            let bindable = self.ptr(property)?;
+            add(
+                if bindable == 0 { property } else { bindable },
+                if bindable == 0 {
+                    PROPERTY_VALUE
+                } else {
+                    BINDABLE_VALUE
+                },
+            )
+        };
+        let center = property_value(offsets.position)?;
+        let height = self
+            .process
+            .read_i32(property_value(offsets.stack_height)?)? as f32;
+        let scale = self.process.read_f32(property_value(offsets.scale)?)?;
+        let stack = height * scale * -6.4;
+        let x = self.process.read_f32(cursor)? - (self.process.read_f32(center)? + stack);
+        let y = self.process.read_f32(add(cursor, 4)?)?
+            - (self.process.read_f32(add(center, 4)?)? + stack);
+        Ok((x.is_finite() && y.is_finite()).then_some((f64::from(x), f64::from(y))))
     }
 
     pub(super) fn read_hit_event(

@@ -146,15 +146,119 @@ pub type Mp3Length = f64;
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct StableReplayFrame {
     pub time: i64,
-    pub keys: u32,
+    pub x: f32,
+    pub buttons: u8,
+    pub buttons_raw: u32,
     pub y: f32,
 }
 
+impl StableReplayFrame {
+    pub fn mania_keys(&self) -> u32 {
+        self.x as u32
+    }
+}
+
+/// Immutable 256-frame chunks bound append copying independently of map duration.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct StableReplayFrames {
+    chunks: Vec<Arc<[StableReplayFrame]>>,
+    len: usize,
+}
+
+impl From<Vec<StableReplayFrame>> for StableReplayFrames {
+    fn from(frames: Vec<StableReplayFrame>) -> Self {
+        let mut result = Self::default();
+        result.extend(frames);
+        result
+    }
+}
+
+impl StableReplayFrames {
+    pub const LIMIT: usize = 8_192;
+    /// Stable's play clock steps back by about 1 ms a few times per second (observed live
+    /// while watching a replay). Frame consumers treat a step back up to this size as
+    /// jitter; a larger one is a real rewind, such as the clock leaving the song-select
+    /// preview position.
+    pub const CLOCK_STEP_BACK_MS: i64 = 1_000;
+    const CHUNK: usize = 256;
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &StableReplayFrame> {
+        self.chunks.iter().flat_map(|chunk| chunk.iter())
+    }
+
+    pub(crate) fn extend(&mut self, frames: Vec<StableReplayFrame>) {
+        let mut frames = frames.into_iter();
+        if let Some(chunk) = self.chunks.pop_if(|chunk| chunk.len() < Self::CHUNK) {
+            let mut tail = chunk.to_vec();
+            self.len -= tail.len();
+            tail.extend(frames.by_ref().take(Self::CHUNK - tail.len()));
+            self.len += tail.len();
+            self.chunks.push(tail.into());
+        }
+        loop {
+            let chunk: Vec<_> = frames.by_ref().take(Self::CHUNK).collect();
+            if chunk.is_empty() {
+                break;
+            }
+            self.len += chunk.len();
+            self.chunks.push(chunk.into());
+        }
+        while self.len > Self::LIMIT {
+            self.len -= self.chunks.remove(0).len();
+        }
+    }
+}
+
+/// Rolling history independent of hit-error acknowledgement. Consumers acknowledge `index`;
+/// a cursor older than `start_index` has fallen behind and must resynchronise.
+/// At most 8192 frames are retained; chunk eviction can leave up to 255 fewer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StableReplayFrameBatch {
     pub start_index: i64,
     pub index: i64,
-    pub frames: Arc<Vec<StableReplayFrame>>,
+    pub frames: Arc<StableReplayFrames>,
+}
+
+impl StableReplayFrameBatch {
+    pub fn newest(&self) -> Option<&StableReplayFrame> {
+        self.frames
+            .iter()
+            .rev()
+            .find(|frame| frame.time != -12_345 || frame.y != -500.0)
+    }
+
+    pub fn frames_since(&self, index: i64) -> Option<impl Iterator<Item = &StableReplayFrame>> {
+        (self.start_index..=self.index).contains(&index).then(|| {
+            let offset = (index - self.start_index) as usize;
+            self.frames
+                .chunks
+                .iter()
+                .skip(offset / StableReplayFrames::CHUNK)
+                .enumerate()
+                .flat_map(move |(index, chunk)| {
+                    chunk.iter().skip(if index == 0 {
+                        offset % StableReplayFrames::CHUNK
+                    } else {
+                        0
+                    })
+                })
+        })
+    }
+}
+
+/// Client-stored catch playfield position, without screen-space transforms.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Catcher {
+    pub x: f32,
+    pub dashing: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

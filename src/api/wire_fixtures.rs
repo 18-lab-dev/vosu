@@ -336,6 +336,8 @@ pub(crate) fn populated_precise(base: &PreciseState, number: f64, text: &str) ->
         all: NUMBERS.to_vec(),
         press: vec![number],
         release: Vec::new(),
+        key: None,
+        offsets: Vec::new(),
     });
     precise
 }

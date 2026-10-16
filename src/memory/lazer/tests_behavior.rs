@@ -307,8 +307,8 @@ fn key_overlay_uses_bindable_collection_and_all_button_names() {
     );
     memory.ptr(bindable + 0x18, collection);
     memory.ptr(collection + 8, items);
-    memory.i32(collection + 0x10, 18);
-    for index in 0..18 {
+    memory.i32(collection + 0x10, 20);
+    for index in 0..20 {
         let button = trigger + index * 0x400;
         memory.ptr(items + 0x10 + index * 8, button);
         memory.ptr(button + 0x208, button + 0x300);
@@ -322,7 +322,7 @@ fn key_overlay_uses_bindable_collection_and_all_button_names() {
     };
     assert_eq!(
         buttons,
-        (0..18)
+        (0..20)
             .map(|index| KeyOverlayButton {
                 name: format!("B{}", index + 1).into(),
                 is_pressed: index % 4 == 1,
@@ -392,7 +392,7 @@ fn key_overlay_rejects_more_buttons_than_have_names() {
     );
     memory.ptr(bindable + 0x18, collection);
     memory.ptr(collection + 8, items);
-    memory.i32(collection + 0x10, 19);
+    memory.i32(collection + 0x10, 21);
 
     let mut decoder = reader(Arc::new(memory));
     decoder.set_resolved_state(base, player);
@@ -968,4 +968,50 @@ fn every_supported_mod_setting_decoder_has_observable_keys() {
             .unwrap_or_default();
         assert_eq!(keys, expected, "{acronym} mode {mode}");
     }
+}
+
+#[test]
+fn catcher_decodes_typed_chain_and_batches_precise_position_and_dash() {
+    let mut offsets = LazerOffsets::embedded().unwrap();
+    // Synthetic/version-adjusted offsets, not measurements of a live client.
+    offsets.catch_ruleset.playfield = 0x380;
+    offsets.catch_playfield.catcher = 0x400;
+    offsets.drawable.x = 0x100;
+    offsets.catcher.dashing = 0x500;
+    let (player, drawable, lazy, playfield, catcher) =
+        (0x10000, 0x20000, 0x30000, 0x40000, 0x50000);
+    let mut memory = SparseMemory::default();
+    memory.ptr(
+        player
+            + offsets
+                .osu_game_screens_play_player
+                .drawable_ruleset_k_backing_field,
+        drawable,
+    );
+    memory.ptr(drawable + offsets.catch_ruleset.playfield, lazy);
+    memory.ptr(lazy + 0x18, playfield);
+    memory.ptr(playfield + offsets.catch_playfield.catcher, catcher);
+    memory.put(catcher + offsets.drawable.x, 123.125f32.to_le_bytes());
+    memory.put(catcher + offsets.catcher.dashing, [1]);
+    let memory = Arc::new(memory);
+    let mut decoder = reader(memory.clone());
+    decoder.offsets = Arc::new(offsets);
+    decoder.current_screen = player;
+    decoder.precise_player = Some(PrecisePlayerCache {
+        screen: player,
+        player,
+        key_used: false,
+        hit_used: false,
+    });
+    let expected = ReadStatus::Ready(crate::model::memory::Catcher {
+        x: 123.125,
+        dashing: true,
+    });
+    assert_eq!(decoder.catcher(1000.0).unwrap(), expected);
+    assert_eq!(decoder.catcher(1001.0).unwrap(), expected);
+    assert_eq!(memory.batches.load(Ordering::Relaxed), 2);
+    assert_eq!(memory.read_count(lazy + 0x18), 1);
+    decoder.current_screen = 0x60000;
+    decoder.precise_player = None;
+    assert_eq!(decoder.catcher(0.0).unwrap(), ReadStatus::NotReady);
 }

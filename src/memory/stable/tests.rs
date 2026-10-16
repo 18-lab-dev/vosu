@@ -401,8 +401,10 @@ fn stable_hit_errors_catches_up_in_bounded_captures_and_rewinds() {
 }
 
 #[test]
-fn stable_mania_replay_frames_remain_cached_until_hit_errors_are_acknowledged() {
+fn stable_mania_replay_frames_remain_cached_across_hit_error_acknowledgement() {
     let mut bytes = vec![0; 0x4000];
+    put_u32(&mut bytes, 0x305, 0x350);
+    put_i32(&mut bytes, 0x350, 1000);
     let ruleset_anchor = 0x1200usize;
     let ruleset = 0x1300usize;
     let gameplay = 0x1400usize;
@@ -449,21 +451,27 @@ fn stable_mania_replay_frames_remain_cached_until_hit_errors_are_acknowledged() 
     assert_eq!(batch.start_index, 0);
     assert_eq!(batch.index, 3);
     assert_eq!(
-        batch.frames.as_slice(),
+        batch.frames.iter().copied().collect::<Vec<_>>(),
         [
             StableReplayFrame {
                 time: -12_345,
-                keys: 256,
+                x: 256.0,
+                buttons: 0,
+                buttons_raw: 0,
                 y: -500.0,
             },
             StableReplayFrame {
                 time: 103,
-                keys: 1,
+                x: 1.0,
+                buttons: 0,
+                buttons_raw: 0,
                 y: 0.0,
             },
             StableReplayFrame {
                 time: 110,
-                keys: 0,
+                x: 0.0,
+                buttons: 0,
+                buttons_raw: 0,
                 y: 0.0,
             },
         ]
@@ -479,14 +487,540 @@ fn stable_mania_replay_frames_remain_cached_until_hit_errors_are_acknowledged() 
     let ReadStatus::Ready(acknowledged) = reader.hit_errors(1).unwrap() else {
         panic!("acknowledged stable mania hit errors ready");
     };
-    assert_eq!(
-        acknowledged.stable_replay_frames.unwrap(),
-        StableReplayFrameBatch {
-            start_index: 3,
-            index: 3,
-            frames: std::sync::Arc::new(Vec::new()),
-        }
+    assert_eq!(acknowledged.stable_replay_frames.unwrap(), batch);
+}
+
+// Count backend operations, not ReadRequest entries: native backends implement
+// read_many as one scatter/gather operation for these small fixtures.
+struct CountingReplayMemory {
+    memory: MutableMemory,
+    reads: AtomicUsize,
+}
+
+impl ProcessMemory for CountingReplayMemory {
+    fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.memory.read_exact(address, dst)
+    }
+
+    fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.memory.read_many(reads)
+    }
+
+    fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
+        self.memory.readable_regions()
+    }
+}
+
+fn counting_replay(
+    total: usize,
+    size: usize,
+    time: i32,
+) -> (Arc<CountingReplayMemory>, StableMemory) {
+    let items = 0x2000;
+    let frame_base = items + total * 4 + 16;
+    let mut bytes = vec![0; frame_base + total * 20];
+    put_u32(&mut bytes, 0x305, 0x350);
+    put_i32(&mut bytes, 0x350, time);
+    put_u32(&mut bytes, 0x1534, 0x1800);
+    put_u32(&mut bytes, 0x1804, items as u32);
+    put_i32(&mut bytes, 0x180c, size as i32);
+    for index in 0..total {
+        let frame = frame_base + index * 20;
+        put_u32(&mut bytes, items + LEADER_START + index * 4, frame as u32);
+        put_f32(&mut bytes, frame + 4, (index % 16) as f32);
+        put_i32(&mut bytes, frame + 16, index as i32 * 10);
+    }
+    let memory = Arc::new(CountingReplayMemory {
+        memory: MutableMemory {
+            bytes: ArcSwap::from_pointee(bytes),
+            batches: AtomicUsize::new(0),
+        },
+        reads: AtomicUsize::new(0),
+    });
+    let mut reader = StableMemory::new(
+        ProcessHandle::new(memory.clone(), ProcessBitness::X86),
+        fixture_patterns(),
     );
+    reader.play_time_container = 0x350;
+    (memory, reader)
+}
+
+// Read-only reference for the old prefix-positioning algorithm. It performs
+// the same header/clock, binary-search and bounded suffix reads as the old
+// reader, without duplicating its frame decoding or retained-history logic.
+fn legacy_replay_reads(reader: &mut StableMemory, index: i64) -> i64 {
+    let process = &reader.process;
+    let list = process.read_u32(0x1534).unwrap() as usize;
+    let size = process.read_i32(list + 12).unwrap() as i64;
+    let items = process.read_u32(list + 4).unwrap() as usize;
+    let time = reader.play_time_value().unwrap();
+    let mut low = 0;
+    let mut high = size;
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let frame = reader
+            .process
+            .read_u32(items + LEADER_START + 4 * middle as usize)
+            .unwrap();
+        if reader.process.read_i32(frame as usize + 16).unwrap() as i64 <= time {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    let start = index.max(low - crate::model::memory::StableReplayFrames::LIMIT as i64);
+    let count = (low - start) as usize;
+    if count > 0 {
+        let mut pointers = vec![0; count * 4];
+        reader
+            .process
+            .read_exact(items + LEADER_START + 4 * start as usize, &mut pointers)
+            .unwrap();
+        let mut frames = vec![[0; 16]; count];
+        let mut requests = pointers
+            .chunks_exact(4)
+            .zip(frames.iter_mut())
+            .map(|(pointer, frame)| {
+                ReadRequest::new(
+                    u32::from_le_bytes(pointer.try_into().unwrap()) as usize + 4,
+                    frame,
+                )
+            })
+            .collect::<Vec<_>>();
+        reader.process.read_many(&mut requests).unwrap();
+    }
+    low
+}
+
+#[test]
+fn stable_live_replay_appends_need_only_six_backend_reads() {
+    let (memory, mut reader) = counting_replay(16_384, 4_096, i32::MAX);
+    let first = reader.replay_frame_batch(0x1500, 0).unwrap().unwrap();
+    assert_eq!(first.index, 4_096);
+    let mut size = 4_096;
+    for appended in [1, 2, 8, 32, 128, 1_024] {
+        let previous = size;
+        size += appended;
+        let mut next = (**memory.memory.bytes.load()).clone();
+        put_i32(&mut next, 0x180c, size);
+        memory.memory.bytes.store(Arc::new(next));
+        memory.reads.store(0, Ordering::Relaxed);
+        assert_eq!(
+            legacy_replay_reads(&mut reader, previous as i64),
+            size as i64
+        );
+        let before = memory.reads.swap(0, Ordering::Relaxed);
+        let batch = reader.replay_frame_batch(0x1500, 0).unwrap().unwrap();
+        let after = memory.reads.swap(0, Ordering::Relaxed);
+        // Three ordered header reads, one cached clock batch, one pointer
+        // slice and one frame scatter/gather, independent of append count.
+        assert_eq!(after, 6);
+        assert!(before >= 30);
+        assert_eq!(
+            batch.frames_since(previous as i64).unwrap().count(),
+            appended as usize
+        );
+        eprintln!("stable live N={appended}: legacy={before}, forward={after}");
+    }
+    let before = reader.replay_frame_batch(0x1500, 0).unwrap().unwrap();
+    memory.reads.store(0, Ordering::Relaxed);
+    let after = reader.replay_frame_batch(0x1500, 0).unwrap().unwrap();
+    assert_eq!(memory.reads.load(Ordering::Relaxed), 4);
+    assert!(Arc::ptr_eq(&before.frames, &after.frames));
+}
+
+#[test]
+fn stable_preloaded_replay_walks_forward_without_repeated_searches() {
+    let (memory, mut reader) = counting_replay(30_000, 30_000, 100_000);
+    let first = reader.replay_frame_batch(0x1500, 0).unwrap().unwrap();
+    assert_eq!((first.start_index, first.index), (1_809, 10_001));
+    assert_eq!(first.frames.len(), 8_192);
+    for time in (100_010..=101_000).step_by(10) {
+        let previous = reader.replay_frame_index;
+        let mut next = (**memory.memory.bytes.load()).clone();
+        put_i32(&mut next, 0x350, time);
+        memory.memory.bytes.store(Arc::new(next));
+        memory.reads.store(0, Ordering::Relaxed);
+        assert_eq!(
+            legacy_replay_reads(&mut reader, previous),
+            time as i64 / 10 + 1
+        );
+        let before = memory.reads.swap(0, Ordering::Relaxed);
+        let batch = reader.replay_frame_batch(0x1500, 0).unwrap().unwrap();
+        let after = memory.reads.swap(0, Ordering::Relaxed);
+        assert!(
+            after == 4 || after == 6,
+            "no per-step native search: {after}"
+        );
+        assert!(before >= 34);
+        assert_eq!(batch.index, time as i64 / 10 + 1);
+        assert_eq!(batch.newest().unwrap().time, time as i64);
+        // Retention evicts whole shared chunks, so the bound is not an
+        // assertion that every rolling batch is exactly LIMIT frames long.
+        assert!(batch.frames.len() <= 8_192);
+        assert_eq!(batch.frames_since(previous).unwrap().count(), 1);
+        if time == 100_010 || time == 100_020 {
+            eprintln!("stable preloaded t={time}: legacy={before}, forward={after}");
+        }
+    }
+    // A real rewind must discard both exposed history and prefetched futures.
+    let mut next = (**memory.memory.bytes.load()).clone();
+    put_i32(&mut next, 0x350, 500);
+    memory.memory.bytes.store(Arc::new(next));
+    let rewound = reader.replay_frame_batch(0x1500, 0).unwrap().unwrap();
+    assert_eq!((rewound.start_index, rewound.index), (0, 51));
+}
+
+#[test]
+fn stable_replay_reads_size_before_a_relocated_pointer_array() {
+    let (fixture, _) = counting_replay(9, 8, i32::MAX);
+    let mut bytes = (**fixture.memory.bytes.load()).clone();
+    bytes.resize(bytes.len() + 64, 0);
+    // Place the abandoned array at the very end: pairing it with size 9
+    // would read outside the fixture, rather than accidentally decoding zero.
+    let old_items = bytes.len() - LEADER_START - 8 * 4;
+    let old_pointers = bytes[0x2000 + LEADER_START..0x2000 + LEADER_START + 8 * 4].to_vec();
+    bytes[old_items + LEADER_START..].copy_from_slice(&old_pointers);
+    put_u32(&mut bytes, 0x1804, old_items as u32);
+    let memory = Arc::new(GrowingListMemory {
+        bytes: parking_lot::Mutex::new(bytes),
+        header: [0x1804, 0x180c],
+        grow: parking_lot::Mutex::new(Some(Box::new(|bytes| {
+            put_u32(bytes, 0x1804, 0x2000);
+            put_i32(bytes, 0x180c, 9);
+        }))),
+    });
+    let mut reader = StableMemory::new(
+        ProcessHandle::new(memory, ProcessBitness::X86),
+        fixture_patterns(),
+    );
+    assert_eq!(
+        reader.replay_frame_batch(0x1500, 0).unwrap().unwrap().index,
+        8
+    );
+    assert_eq!(
+        reader.replay_frame_batch(0x1500, 0).unwrap().unwrap().index,
+        9
+    );
+}
+
+#[test]
+fn stable_mania_retries_a_repaired_prefetched_frame_only_when_due() {
+    let (memory, mut reader) = counting_replay(3, 3, 0);
+    reader.gameplay_mode = 3;
+    let mut next = (**memory.memory.bytes.load()).clone();
+    let frame = u32::from_le_bytes(
+        next[0x2000 + LEADER_START + 4..0x2000 + LEADER_START + 8]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    put_f32(&mut next, frame + 4, f32::NAN);
+    memory.memory.bytes.store(Arc::new(next));
+    assert_eq!(
+        reader.replay_frame_batch(0x1500, 0).unwrap().unwrap().index,
+        1
+    );
+    let mut next = (**memory.memory.bytes.load()).clone();
+    put_i32(&mut next, 0x350, 10);
+    memory.memory.bytes.store(Arc::new(next));
+    assert!(matches!(
+        reader.replay_frame_batch(0x1500, 0),
+        Err(MemoryError::Corrupt { .. })
+    ));
+    assert_eq!(reader.replay_frame_index, 1);
+    let mut next = (**memory.memory.bytes.load()).clone();
+    put_f32(&mut next, frame + 4, 1.0);
+    memory.memory.bytes.store(Arc::new(next));
+    assert_eq!(
+        reader.replay_frame_batch(0x1500, 0).unwrap().unwrap().index,
+        2
+    );
+}
+
+#[test]
+fn stable_degraded_replay_repositions_without_reusing_stale_lookahead() {
+    for seek_time in [500, 250_000] {
+        let (memory, mut reader) = counting_replay(30_000, 30_000, 100_000);
+        assert_eq!(
+            reader.replay_frame_batch(0x1500, 0).unwrap().unwrap().index,
+            10_001
+        );
+        let mut next = (**memory.memory.bytes.load()).clone();
+        let pointer = 0x2000 + LEADER_START + 10_001 * 4;
+        let frame = u32::from_le_bytes(next[pointer..pointer + 4].try_into().unwrap()) as usize;
+        put_f32(&mut next, frame + 4, f32::NAN);
+        put_i32(&mut next, 0x350, 100_010);
+        memory.memory.bytes.store(Arc::new(next));
+        assert!(reader.replay_frame_batch(0x1500, 0).unwrap().is_none());
+        assert_eq!(reader.replay_frame_index, 10_002);
+        assert!(!reader.replay_pending.is_empty());
+        let mut next = (**memory.memory.bytes.load()).clone();
+        put_i32(&mut next, 0x350, seek_time);
+        memory.memory.bytes.store(Arc::new(next));
+        let batch = reader.replay_frame_batch(0x1500, 0).unwrap().unwrap();
+        assert_eq!(batch.index, seek_time as i64 / 10 + 1);
+        assert_eq!(batch.newest().unwrap().time, seek_time as i64);
+        assert_eq!(
+            batch.frames.iter().next().unwrap().time,
+            batch.start_index * 10
+        );
+    }
+}
+
+#[test]
+fn stable_replay_prefix_survives_a_play_clock_step_back() {
+    let mut bytes = vec![0; 0x4000];
+    put_u32(&mut bytes, 0x305, 0x350);
+    put_i32(&mut bytes, 0x350, 1000);
+    let (ruleset_anchor, ruleset, gameplay, score) = (0x1200usize, 0x1300, 0x1400, 0x1500);
+    let (error_list, error_items) = (0x1600usize, 0x1700usize);
+    let (replay_list, replay_items) = (0x1800usize, 0x1900usize);
+    let frames = [0x1a00usize, 0x1b00, 0x1c00];
+    put_u32(&mut bytes, 0x900 - 0xb, ruleset_anchor as u32);
+    put_u32(&mut bytes, ruleset_anchor + 4, ruleset as u32);
+    put_u32(&mut bytes, ruleset + 0x64, gameplay as u32);
+    put_u32(&mut bytes, gameplay + 0x38, score as u32);
+    put_u32(&mut bytes, score + 0x38, error_list as u32);
+    put_u32(&mut bytes, error_list + 4, error_items as u32);
+    put_u32(&mut bytes, score + 0x34, replay_list as u32);
+    put_u32(&mut bytes, replay_list + 4, replay_items as u32);
+    put_i32(&mut bytes, replay_list + 0xc, frames.len() as i32);
+    for (index, (frame, keys, time)) in [
+        (frames[0], 0.0, 100),
+        (frames[1], 1.0, 200),
+        (frames[2], 0.0, 300),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        put_u32(
+            &mut bytes,
+            replay_items + LEADER_START + 4 * index,
+            frame as u32,
+        );
+        put_f32(&mut bytes, frame + 4, keys);
+        put_i32(&mut bytes, frame + 0x10, time);
+    }
+    let memory = Arc::new(MutableMemory {
+        bytes: ArcSwap::from_pointee(bytes),
+        batches: AtomicUsize::new(0),
+    });
+    let mut reader = StableMemory::new(
+        ProcessHandle::new(memory.clone(), ProcessBitness::X86),
+        fixture_patterns(),
+    );
+    reader.synchronize_precise(ReaderSynchronization::default(), 3);
+    let batch = |reader: &mut StableMemory| {
+        let ReadStatus::Ready(errors) = reader.hit_errors(0).unwrap() else {
+            panic!("stable hit errors ready");
+        };
+        errors.stable_replay_frames.unwrap()
+    };
+    let before = batch(&mut reader);
+    assert_eq!((before.start_index, before.index), (0, 3));
+
+    // The play clock reads 5 ms behind the newest exposed frame.
+    let mut next = (**memory.bytes.load()).clone();
+    put_i32(&mut next, 0x350, 295);
+    memory.bytes.store(Arc::new(next));
+    assert_eq!(batch(&mut reader), before);
+}
+
+#[test]
+fn stable_replay_newest_skips_only_seed_sentinels() {
+    let seed = StableReplayFrame {
+        time: -12_345,
+        x: 256.0,
+        y: -500.0,
+        buttons: 0,
+        buttons_raw: 0,
+    };
+    let cursor = StableReplayFrame {
+        time: 100,
+        x: 20.0,
+        ..seed
+    };
+    let batch = StableReplayFrameBatch {
+        start_index: 0,
+        index: 2,
+        frames: Arc::new(vec![seed, cursor].into()),
+    };
+    assert_eq!(batch.newest(), Some(&cursor));
+    let seed_only = StableReplayFrameBatch {
+        start_index: 0,
+        index: 1,
+        frames: Arc::new(vec![seed].into()),
+    };
+    assert_eq!(seed_only.newest(), None);
+    let trailing_seed = StableReplayFrameBatch {
+        start_index: 0,
+        index: 3,
+        frames: Arc::new(vec![seed, cursor, seed].into()),
+    };
+    assert_eq!(trailing_seed.newest(), Some(&cursor));
+}
+
+#[test]
+fn stable_all_rulesets_decode_raw_replay_slots_and_bound_long_map_history() {
+    for mode in 0..=3 {
+        let total = 30_000usize;
+        let items = 0x2000;
+        let frame_base = items + total * 4 + 16;
+        let mut bytes = vec![0; frame_base + total * 20];
+        put_u32(&mut bytes, 0x305, 0x350);
+        put_i32(&mut bytes, 0x350, i32::MAX);
+        put_u32(&mut bytes, 0x900 - 0xb, 0x1200);
+        put_u32(&mut bytes, 0x1204, 0x1300);
+        put_u32(&mut bytes, 0x1364, 0x1400);
+        put_u32(&mut bytes, 0x1438, 0x1500);
+        put_u32(&mut bytes, 0x1538, 0x1600);
+        put_u32(&mut bytes, 0x1604, 0x1700);
+        put_u32(&mut bytes, 0x1534, 0x1800);
+        put_u32(&mut bytes, 0x1804, items as u32);
+        for index in 0..total {
+            let frame = frame_base + index * 20;
+            put_u32(&mut bytes, items + LEADER_START + index * 4, frame as u32);
+            put_f32(
+                &mut bytes,
+                frame + 4,
+                if mode == 3 {
+                    (index % 16) as f32
+                } else {
+                    123.25
+                },
+            );
+            put_f32(&mut bytes, frame + 8, 234.5);
+            put_u32(&mut bytes, frame + 12, 0xaabb_cc00 | (index % 32) as u32);
+            put_i32(&mut bytes, frame + 16, index as i32 * 50);
+        }
+        let memory = Arc::new(MutableMemory {
+            bytes: ArcSwap::from_pointee(bytes),
+            batches: AtomicUsize::new(0),
+        });
+        let mut reader = StableMemory::new(
+            ProcessHandle::new(memory.clone(), ProcessBitness::X86),
+            fixture_patterns(),
+        );
+        reader.synchronize_precise(ReaderSynchronization::default(), mode);
+        let mut acknowledged_frame = 0;
+        let mut previous: Option<StableReplayFrameBatch> = None;
+        for size in (100..=total).step_by(100) {
+            let mut next = (**memory.bytes.load()).clone();
+            put_i32(&mut next, 0x180c, size as i32);
+            memory.bytes.store(Arc::new(next));
+            let ReadStatus::Ready(errors) = reader.hit_errors(0).unwrap() else {
+                panic!("replay capture ready");
+            };
+            let batch = errors.stable_replay_frames.unwrap();
+            assert_eq!(batch.index, size as i64);
+            assert!(batch.frames.len() <= crate::model::memory::StableReplayFrames::LIMIT);
+            assert_eq!(batch.frames_since(acknowledged_frame).unwrap().count(), 100);
+            let newest = batch.newest().unwrap();
+            assert_eq!(newest.time, (size - 1) as i64 * 50);
+            assert_eq!(
+                newest.x,
+                if mode == 3 {
+                    ((size - 1) % 16) as f32
+                } else {
+                    123.25
+                }
+            );
+            assert_eq!(newest.y, 234.5);
+            assert_eq!(newest.buttons, ((size - 1) % 32) as u8);
+            assert_eq!(newest.buttons_raw, 0xaabb_cc00 | ((size - 1) % 32) as u32);
+            if let Some(previous) = previous {
+                assert_eq!(previous.newest().unwrap().time, (size - 101) as i64 * 50);
+            }
+            acknowledged_frame = batch.index;
+            previous = Some(batch);
+        }
+        let batch = previous.unwrap();
+        assert!(batch.start_index > 0);
+        assert!(batch.frames_since(0).is_none());
+        assert!(batch.frames_since(batch.index + 1).is_none());
+        assert!(batch.frames_since(batch.index).unwrap().next().is_none());
+        assert!(memory.batches.load(Ordering::Relaxed) >= 300);
+        let mut late_reader = StableMemory::new(
+            ProcessHandle::new(memory.clone(), ProcessBitness::X86),
+            fixture_patterns(),
+        );
+        late_reader.synchronize_precise(ReaderSynchronization::default(), mode);
+        let ReadStatus::Ready(late) = late_reader.hit_errors(0).unwrap() else {
+            panic!("late capture ready");
+        };
+        let late = late.stable_replay_frames.unwrap();
+        assert_eq!(
+            late.frames.len(),
+            crate::model::memory::StableReplayFrames::LIMIT
+        );
+        assert_eq!(late.index, total as i64);
+        assert_eq!(late.start_index, total as i64 - late.frames.len() as i64);
+        // A preloaded complete replay must retain the beginning while the clock
+        // is there, rather than exposing only the final rolling window.
+        let mut early = (**memory.bytes.load()).clone();
+        put_i32(&mut early, 0x350, 500);
+        memory.bytes.store(Arc::new(early));
+        let ReadStatus::Ready(early) = reader.hit_errors(0).unwrap() else {
+            panic!("preloaded replay capture ready");
+        };
+        let early = early.stable_replay_frames.unwrap();
+        assert_eq!((early.start_index, early.index), (0, 11));
+        assert_eq!(early.newest().unwrap().time, 500);
+        let mut rewound = (**memory.bytes.load()).clone();
+        put_i32(&mut rewound, 0x350, i32::MAX);
+        put_i32(&mut rewound, 0x180c, 2);
+        memory.bytes.store(Arc::new(rewound));
+        let ReadStatus::Ready(rewound) = reader.hit_errors(0).unwrap() else {
+            panic!("rewound capture ready");
+        };
+        let rewound = rewound.stable_replay_frames.unwrap();
+        assert_eq!(rewound.start_index, 0);
+        assert_eq!(rewound.index, 2);
+        assert_eq!(rewound.frames.len(), 2);
+        let mut invalid = (**memory.bytes.load()).clone();
+        put_i32(&mut invalid, 0x180c, 3);
+        put_f32(&mut invalid, frame_base + 2 * 20 + 4, f32::NAN);
+        memory.bytes.store(Arc::new(invalid));
+        if mode == 3 {
+            assert!(matches!(
+                reader.hit_errors(0),
+                Err(MemoryError::Corrupt { .. })
+            ));
+        } else {
+            // A bad spatial suffix loses only frame data, never timing errors.
+            let mut next = (**memory.bytes.load()).clone();
+            put_i32(&mut next, 0x160c, 1);
+            put_i32(&mut next, 0x1700 + LEADER_START, 7);
+            memory.bytes.store(Arc::new(next));
+            let ReadStatus::Ready(errors) = reader.hit_errors(0).unwrap() else {
+                panic!("hit errors survive invalid frames");
+            };
+            assert_eq!(errors.index, 1);
+            assert_eq!(errors.errors.all, [7.0]);
+            assert!(errors.stable_replay_frames.is_none());
+            assert_eq!(reader.replay_frame_index, 3);
+
+            let mut next = (**memory.bytes.load()).clone();
+            put_i32(&mut next, 0x180c, 4);
+            memory.bytes.store(Arc::new(next));
+            let ReadStatus::Ready(later) = reader.hit_errors(1).unwrap() else {
+                panic!("later frames ready");
+            };
+            let batch = later.stable_replay_frames.unwrap();
+            assert_eq!((batch.start_index, batch.index), (3, 4));
+            assert_eq!(batch.frames.len(), 1);
+            assert_eq!(batch.newest().unwrap().time, 150);
+            assert_eq!(
+                reader.catcher(150.0).unwrap(),
+                ReadStatus::Ready(crate::model::memory::Catcher {
+                    x: 123.25,
+                    dashing: false
+                })
+            );
+        }
+    }
 }
 
 #[test]
@@ -1102,4 +1636,55 @@ fn mp3_length_preserves_javascript_rounding_and_nonfinite_values() {
     assert!(read_length(f64::NAN).is_nan());
     assert_eq!(read_length(f64::INFINITY), f64::INFINITY);
     assert_eq!(read_length(f64::NEG_INFINITY), f64::NEG_INFINITY);
+}
+
+#[test]
+fn catch_position_tracks_play_time_without_new_judgements() {
+    let count = 3usize;
+    let items = 0x2000;
+    let frame_base = items + count * 4 + 16;
+    let mut bytes = vec![0; frame_base + count * 20];
+    put_u32(&mut bytes, 0x305, 0x350);
+    put_u32(&mut bytes, 0x900 - 0xb, 0x1200);
+    put_u32(&mut bytes, 0x1204, 0x1300);
+    put_u32(&mut bytes, 0x1364, 0x1400);
+    put_u32(&mut bytes, 0x1438, 0x1500);
+    put_u32(&mut bytes, 0x1538, 0x1600);
+    put_u32(&mut bytes, 0x1604, 0x1700);
+    put_u32(&mut bytes, 0x1534, 0x1800);
+    put_u32(&mut bytes, 0x1804, items as u32);
+    put_i32(&mut bytes, 0x180c, count as i32);
+    for index in 0..count {
+        let frame = frame_base + index * 20;
+        put_u32(&mut bytes, items + LEADER_START + index * 4, frame as u32);
+        put_f32(&mut bytes, frame + 4, index as f32);
+        put_f32(&mut bytes, frame + 8, 0.0);
+        put_u32(&mut bytes, frame + 12, (index % 2) as u32);
+        put_i32(&mut bytes, frame + 16, index as i32 * 100);
+    }
+    let memory = Arc::new(MutableMemory {
+        bytes: ArcSwap::from_pointee(bytes),
+        batches: AtomicUsize::new(0),
+    });
+    let mut reader = StableMemory::new(
+        ProcessHandle::new(memory.clone(), ProcessBitness::X86),
+        fixture_patterns(),
+    );
+    reader.synchronize_precise(ReaderSynchronization::default(), 2);
+    for (time, x, dashing) in [(50.0, 0.0, false), (150.0, 1.0, true), (250.0, 2.0, false)] {
+        // Shared replay capture retains only frames at the native playback clock.
+        let mut next = (**memory.bytes.load()).clone();
+        put_i32(&mut next, 0x350, time as i32);
+        memory.bytes.store(Arc::new(next));
+        let ReadStatus::Ready(errors) = reader.hit_errors(0).unwrap() else {
+            panic!("empty judgement suffix must still capture replay frames");
+        };
+        assert_eq!(errors.index, 0);
+        assert!(errors.errors.all.is_empty());
+        assert_eq!(
+            reader.catcher(time).unwrap(),
+            ReadStatus::Ready(crate::model::memory::Catcher { x, dashing })
+        );
+    }
+    assert_eq!(reader.catcher(-1.0).unwrap(), ReadStatus::NotReady);
 }

@@ -161,6 +161,13 @@ impl KeyOverlayUpdates {
             Self::Config(value) => value.borrow().enable_key_overlay,
         }
     }
+
+    fn mania_key_hit_errors(&self) -> bool {
+        match self {
+            Self::Direct(_) => false,
+            Self::Config(value) => value.borrow().enable_mania_key_hit_errors,
+        }
+    }
 }
 
 pub struct SourcePreciseReader<R> {
@@ -237,8 +244,20 @@ impl<R: SynchronizedMemoryReader + 'static> PreciseSnapshotReader for SourcePrec
             if play_time >= 150.0 && self.enable_key_overlay.current() {
                 snapshot = snapshot.key_overlay(self.reader.key_overlay(context.mode));
             }
-            snapshot =
-                snapshot.hit_errors(self.reader.hit_errors(context.committed_hit_error_index));
+            let enabled = self.enable_key_overlay.mania_key_hit_errors();
+            self.reader.set_mania_key_hit_errors(enabled);
+            let mut errors = self.reader.hit_errors(context.committed_hit_error_index);
+            if let Ok(crate::process::ReadStatus::Ready(errors)) = &mut errors {
+                if enabled {
+                    errors.errors.key.get_or_insert_default();
+                } else {
+                    errors.errors.key = None;
+                }
+            }
+            snapshot = snapshot.hit_errors(errors);
+            if context.mode == 2 {
+                snapshot = snapshot.catcher(self.reader.catcher(play_time));
+            }
         }
         Ok(snapshot.publish())
     }

@@ -94,27 +94,35 @@ impl StableMemory {
         self.replay_score = score;
         self.replay_error_index = error_index;
         self.replay_frame_index = 0;
-        self.replay_cache_start = 0;
-        self.replay_frames.clear();
         self.replay_batch = None;
+        self.replay_pending.clear();
     }
 
-    fn replay_frame_batch(
+    pub(super) fn replay_frame_batch(
         &mut self,
         score: usize,
         acknowledged_error_index: i64,
     ) -> Result<Option<StableReplayFrameBatch>, MemoryError> {
-        if self.gameplay_mode != 3 {
-            return Ok(None);
+        match self.read_replay_frame_batch(score, acknowledged_error_index) {
+            Ok(batch) => Ok(batch),
+            Err(error) if self.gameplay_mode == 3 => Err(error),
+            Err(_) => {
+                // Cursor/spatial data must not hold up ordinary hit-error publication.
+                self.replay_batch = None;
+                Ok(None)
+            }
         }
+    }
+
+    fn read_replay_frame_batch(
+        &mut self,
+        score: usize,
+        acknowledged_error_index: i64,
+    ) -> Result<Option<StableReplayFrameBatch>, MemoryError> {
         if self.replay_score != score || acknowledged_error_index < self.replay_error_index {
             self.reset_replay_frames(score, acknowledged_error_index);
-        } else if acknowledged_error_index > self.replay_error_index {
-            self.replay_error_index = acknowledged_error_index;
-            self.replay_cache_start = self.replay_frame_index;
-            self.replay_frames.clear();
-            self.replay_batch = None;
         }
+        self.replay_error_index = acknowledged_error_index;
 
         let list = self.ptr(self.add(score, 0x34)?)?;
         if list == 0 {
@@ -130,69 +138,153 @@ impl StableMemory {
                 message: "invalid frame count",
             });
         }
-        if size < self.replay_frame_index {
+        // A preloaded replay needs one bounded positioning search on attachment or
+        // rewind. Normal polling walks forward through the same batched frames we
+        // publish; it never reads individual pointers/timestamps to find the prefix.
+        let play_time = self.play_time_value()?;
+        if size < self.replay_frame_index
+            || self
+                .replay_batch
+                .as_ref()
+                .and_then(StableReplayFrameBatch::newest)
+                .is_some_and(|newest| {
+                    newest.time - play_time
+                        > crate::model::memory::StableReplayFrames::CLOCK_STEP_BACK_MS
+                })
+        {
             self.reset_replay_frames(score, acknowledged_error_index);
         }
-
-        let count = (size - self.replay_frame_index).max(0) as usize;
-        if count > 0 {
-            let pointer_address = self.add(
-                items,
-                LEADER_START + 4 * self.replay_frame_index.max(0) as usize,
-            )?;
-            let mut pointer_bytes = vec![0; count * 4];
-            self.process
-                .read_exact(pointer_address, &mut pointer_bytes)?;
-            let mut frame_bytes = vec![[0; 16]; count];
-            let addresses = pointer_bytes
-                .chunks_exact(4)
-                .map(|bytes| {
-                    let frame = u32::from_le_bytes(bytes.try_into().unwrap()) as usize;
-                    self.add(frame, 4)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut requests = addresses
-                .iter()
-                .copied()
-                .zip(frame_bytes.iter_mut())
-                .map(|(address, bytes)| ReadRequest::new(address, bytes))
-                .collect::<Vec<_>>();
-            self.process.read_many(&mut requests)?;
-
-            let mut frames = Vec::with_capacity(count);
-            for bytes in frame_bytes {
-                let keys = f32::from_le_bytes(bytes[..4].try_into().unwrap());
-                let y = f32::from_le_bytes(bytes[4..8].try_into().unwrap());
-                if !keys.is_finite()
-                    || keys.fract() != 0.0
-                    || !(0.0..=262_143.0).contains(&keys)
-                    || !y.is_finite()
-                {
-                    return Err(MemoryError::Corrupt {
-                        context: "stable replay frames",
-                        address: list,
-                        message: "invalid mania replay frame",
-                    });
+        if size < self.replay_frame_index + self.replay_pending.len() as i64 {
+            self.replay_pending.clear();
+        }
+        let limit = crate::model::memory::StableReplayFrames::LIMIT as i64;
+        let mut end = size;
+        if self.replay_batch.is_none() && size > limit {
+            let mut low = 0;
+            let mut high = size;
+            while low < high {
+                let middle = low + (high - low) / 2;
+                let frame = self.ptr(self.add(items, LEADER_START + 4 * middle as usize)?)?;
+                let time = self.process.read_i32(self.add(frame, 16)?)? as i64;
+                if time <= play_time {
+                    low = middle + 1;
+                } else {
+                    high = middle;
                 }
+            }
+            end = low;
+            if end < self.replay_frame_index {
+                self.reset_replay_frames(score, acknowledged_error_index);
+            }
+            let start = (end - limit).max(self.replay_frame_index);
+            if start != self.replay_frame_index {
+                self.replay_pending.clear();
+                self.replay_frame_index = start;
+            }
+        }
+        loop {
+            if self.replay_pending.is_empty() && self.replay_frame_index < end {
+                let remaining = end - self.replay_frame_index;
+                // Look ahead only a small chunk in long preloaded replays. Keep
+                // future raw frames until their time arrives (validate on exposure).
+                // Live appends up to the retention limit still take just two reads.
+                let count = if remaining > limit {
+                    64
+                } else {
+                    remaining as usize
+                };
+                let start = self.replay_frame_index;
+                let pointer_address = self.add(items, LEADER_START + 4 * start as usize)?;
+                if self.gameplay_mode != 3 {
+                    // A failed suffix is lost, not retried forever. Mania remains
+                    // strict and retryable, including native read failures.
+                    self.replay_frame_index += count as i64;
+                }
+                let mut pointer_bytes = vec![0; count * 4];
+                self.process
+                    .read_exact(pointer_address, &mut pointer_bytes)?;
+                let mut frame_bytes = vec![[0; 16]; count];
+                let addresses = pointer_bytes
+                    .chunks_exact(4)
+                    .map(|bytes| {
+                        let frame = u32::from_le_bytes(bytes.try_into().unwrap()) as usize;
+                        self.add(frame, 4)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut requests = addresses
+                    .iter()
+                    .copied()
+                    .zip(frame_bytes.iter_mut())
+                    .map(|(address, bytes)| ReadRequest::new(address, bytes))
+                    .collect::<Vec<_>>();
+                self.process.read_many(&mut requests)?;
+                self.replay_frame_index = start;
+                self.replay_pending = frame_bytes.into();
+            }
+            let count = self
+                .replay_pending
+                .iter()
+                .take_while(|bytes| {
+                    i32::from_le_bytes(bytes[12..].try_into().unwrap()) as i64 <= play_time
+                })
+                .count();
+            if count == 0 {
+                break;
+            }
+            let mut frames = Vec::with_capacity(count);
+            let mut invalid = false;
+            for bytes in self.replay_pending.iter().take(count) {
+                let x = f32::from_le_bytes(bytes[..4].try_into().unwrap());
+                let y = f32::from_le_bytes(bytes[4..8].try_into().unwrap());
+                invalid |= !x.is_finite()
+                    || !y.is_finite()
+                    || (self.gameplay_mode == 3
+                        && (x.fract() != 0.0 || !(0.0..=262_143.0).contains(&x)));
                 frames.push(StableReplayFrame {
                     time: i32::from_le_bytes(bytes[12..].try_into().unwrap()) as i64,
-                    keys: keys as u32,
+                    x,
+                    buttons: bytes[8],
+                    buttons_raw: u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
                     y,
                 });
             }
-            self.replay_frames.extend(frames);
-            self.replay_frame_index = size;
+            if !invalid || self.gameplay_mode != 3 {
+                self.replay_pending.drain(..count);
+                self.replay_frame_index += count as i64;
+            }
+            if invalid {
+                if self.gameplay_mode == 3 {
+                    self.replay_pending.clear();
+                }
+                return Err(MemoryError::Corrupt {
+                    context: "stable replay frames",
+                    address: list,
+                    message: "invalid replay frame",
+                });
+            }
+            let mut retained = self
+                .replay_batch
+                .as_ref()
+                .map(|batch| (*batch.frames).clone())
+                .unwrap_or_default();
+            retained.extend(frames);
+            self.replay_batch = Some(StableReplayFrameBatch {
+                start_index: self.replay_frame_index - retained.len() as i64,
+                index: self.replay_frame_index,
+                frames: Arc::new(retained),
+            });
+            if !self.replay_pending.is_empty() || self.replay_frame_index >= end {
+                break;
+            }
         }
-        if count == 0
-            && let Some(batch) = &self.replay_batch
-        {
+        if let Some(batch) = &self.replay_batch {
             return Ok(Some(batch.clone()));
         }
 
         let batch = StableReplayFrameBatch {
-            start_index: self.replay_cache_start,
+            start_index: self.replay_frame_index,
             index: self.replay_frame_index,
-            frames: Arc::new(self.replay_frames.clone()),
+            frames: Arc::default(),
         };
         self.replay_batch = Some(batch.clone());
         Ok(Some(batch))
@@ -739,6 +831,24 @@ impl MemoryReader for StableMemory {
             release_corrections: Vec::new(),
             stable_replay_frames,
         }))
+    }
+    fn catcher(&mut self, play_time: f64) -> MemoryRead<crate::model::memory::Catcher> {
+        use crate::model::memory::Catcher;
+        // The ordinary suffix capture refreshes this batch even when no judgement arrived.
+        if let Some(frame) = self
+            .replay_batch
+            .as_ref()
+            .and_then(StableReplayFrameBatch::newest)
+            .filter(|frame| frame.time <= play_time as i64)
+        {
+            return Ok(ReadStatus::Ready(Catcher {
+                x: frame.x,
+                dashing: frame.buttons == 1,
+            }));
+        }
+        // Playback-prefix retention is shared by all stable frame consumers. A missing
+        // predecessor means the current position is not available; never use a future frame.
+        self.not_ready()
     }
     fn global_precise(&mut self) -> MemoryRead<GlobalPrecise> {
         let status = self.status_value()?;

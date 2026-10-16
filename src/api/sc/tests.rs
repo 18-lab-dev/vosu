@@ -97,6 +97,7 @@ fn snapshot_with_precise(
         matchmaking: None,
     });
     let precise = Arc::new(PreciseState {
+        catcher: None,
         status,
         play_time,
         mode: 0,
@@ -132,6 +133,8 @@ fn snapshot_with_precise(
             all: vec![-4.0, 5.0],
             press: vec![-4.0],
             release: vec![5.0],
+            key: None,
+            offsets: Vec::new(),
         }),
         total_hit_errors: 1.0,
         committed_hit_error_index: 2,
@@ -160,6 +163,7 @@ fn snapshot_with_precise(
         true,
         ApiRuntimeSettings {
             enable_key_overlay: enabled,
+            enable_mania_key_hit_errors: false,
         },
         [entry],
     )))

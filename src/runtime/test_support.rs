@@ -75,6 +75,7 @@ pub async fn start_test_production_composition(
             0,
             ApiRuntimeSettings {
                 enable_key_overlay: config.enable_key_overlay,
+                enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
             },
         )),
         Arc::new(ProductionSnapshotEncoder),

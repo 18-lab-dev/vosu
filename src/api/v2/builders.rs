@@ -448,10 +448,20 @@ pub(super) fn build_play<'a, V: From<&'a [f64]>>(
     attrs: Option<&crate::calculation::progressive::ProgressiveAttributes>,
     mods: &CalculateMods,
     precise_hits: &'a HitErrorArray,
+    enable_key_hits: bool,
+    catcher: Option<crate::model::memory::Catcher>,
+    hit_offsets: &'a [f64],
 ) -> Play<V> {
     let a = attrs.copied().unwrap_or_default();
     let s = &gameplay.statistics;
     Play {
+        key_hit_errors: enable_key_hits.then(|| {
+            precise_hits
+                .key
+                .as_ref()
+                .map(crate::model::states::KeyHitErrors::payload)
+                .unwrap_or_default()
+        }),
         failed: gameplay.failed,
         player_name: gameplay.player_name.clone(),
         mode: number_name(Some(gameplay.mode), ruleset_name(gameplay.mode)),
@@ -477,6 +487,8 @@ pub(super) fn build_play<'a, V: From<&'a [f64]>>(
         hit_error_array: V::from(precise_hits.all.as_slice()),
         press_hit_errors: V::from(precise_hits.press.as_slice()),
         release_hit_errors: V::from(precise_hits.release.as_slice()),
+        catcher,
+        hit_offsets: V::from(hit_offsets),
         combo: Combo {
             current: gameplay.combo,
             max: gameplay.max_combo,

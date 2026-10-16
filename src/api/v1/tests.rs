@@ -71,6 +71,7 @@ fn bundle_with_precise(
 }
 fn precise() -> PreciseState {
     PreciseState {
+        catcher: None,
         status: 0,
         play_time: 0.0,
         mode: 0,
@@ -149,6 +150,8 @@ fn borrowed_encoding_preserves_populated_graph_and_hit_arrays() {
         all: vec![-3.5, 6.25],
         press: vec![-3.5],
         release: vec![6.25],
+        key: None,
+        offsets: Vec::new(),
     });
     let snapshot = snapshot_with_precise(10, ClientType::Stable, state, precise);
     let owned = build(&snapshot).unwrap();
@@ -196,6 +199,8 @@ fn play_and_result_select_the_source_mods_and_precise_values() {
         all: vec![1.5, -2.25],
         press: vec![1.5],
         release: vec![-2.25],
+        key: None,
+        offsets: Vec::new(),
     });
     precise.unstable_rate = 12.5;
     precise.status = i64::from(GameState::Play.value());

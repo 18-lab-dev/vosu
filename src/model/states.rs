@@ -95,7 +95,7 @@ static KEY_NAMES: LazyLock<[Arc<str>; 18]> = LazyLock::new(|| {
     ]
 });
 
-static BUTTON_NAMES: LazyLock<[Arc<str>; 18]> = LazyLock::new(|| {
+static BUTTON_NAMES: LazyLock<[Arc<str>; 20]> = LazyLock::new(|| {
     [
         Arc::from("B1"),
         Arc::from("B2"),
@@ -115,6 +115,8 @@ static BUTTON_NAMES: LazyLock<[Arc<str>; 18]> = LazyLock::new(|| {
         Arc::from("B16"),
         Arc::from("B17"),
         Arc::from("B18"),
+        Arc::from("B19"),
+        Arc::from("B20"),
     ]
 });
 
@@ -139,7 +141,7 @@ impl KeyOverlayButton {
     }
 
     pub(crate) const fn lazer_button_count() -> usize {
-        18
+        20
     }
 
     pub(crate) fn lazer_name(index: usize) -> Arc<str> {
@@ -152,6 +154,74 @@ pub struct HitErrorArray {
     pub all: Vec<f64>,
     pub press: Vec<f64>,
     pub release: Vec<f64>,
+    #[serde(skip)]
+    pub key: Option<KeyHitErrors>,
+    #[serde(skip)]
+    pub offsets: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct KeyHitErrors {
+    pub press: Vec<Vec<f64>>,
+    pub release: Vec<Vec<f64>>,
+    #[serde(skip)]
+    pub press_columns: Vec<Option<usize>>,
+}
+
+impl KeyHitErrors {
+    pub fn payload(&self) -> Self {
+        Self {
+            press: self.press.clone(),
+            release: self.release.clone(),
+            press_columns: Vec::new(),
+        }
+    }
+
+    pub fn append(&mut self, value: f64, column: Option<usize>, release: bool) {
+        if !release {
+            self.press_columns.push(column);
+        }
+        if let Some(column) = column.filter(|&column| column < 20) {
+            self.press
+                .resize_with(self.press.len().max(column + 1), Vec::new);
+            self.release
+                .resize_with(self.release.len().max(column + 1), Vec::new);
+            if release {
+                self.release[column].push(value);
+            } else {
+                self.press[column].push(value);
+            }
+        }
+    }
+
+    pub fn correct_release(&mut self, position: usize, value: f64) {
+        if position >= self.press_columns.len() {
+            return;
+        }
+        if let Some(column) = self.press_columns[position] {
+            let index = self.press_columns[..position]
+                .iter()
+                .filter(|&&c| c == Some(column))
+                .count();
+            self.press[column].remove(index);
+            self.release[column].push(value);
+        }
+        self.press_columns.remove(position);
+    }
+
+    pub fn extend(&mut self, other: &Self) {
+        self.press
+            .resize_with(self.press.len().max(other.press.len()), Vec::new);
+        self.release
+            .resize_with(self.release.len().max(other.release.len()), Vec::new);
+        for (target, values) in self.press.iter_mut().zip(&other.press) {
+            target.extend_from_slice(values);
+        }
+        for (target, values) in self.release.iter_mut().zip(&other.release) {
+            target.extend_from_slice(values);
+        }
+        self.press_columns.extend_from_slice(&other.press_columns);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

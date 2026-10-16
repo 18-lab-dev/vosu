@@ -345,6 +345,63 @@ fn hit_event_size_result_and_identity_rules_match_modes() {
 }
 
 #[test]
+fn mania_key_columns_are_read_only_when_enabled() {
+    let items = 0x10_000;
+    let mut memory = SparseMemory::default();
+    put_hit_event(&mut memory, items, 0x58, -2.0, 3);
+    put_hit_event(&mut memory, items + 0x40, 0x58, 4.0, 3);
+    memory.ptr(hit_object(items) + 0x44, 0);
+    memory.i32(hit_object(items) + 0x4c, 2);
+    memory.ptr(hit_object(items + 0x40) + 0x44, 0x900_000);
+    memory.i32(0x900_040, 0);
+    memory.i32(hit_object(items + 0x40) + 0x4c, 17);
+    let mut reader = reader(Arc::new(memory));
+    reader.selected_gamemode = 3;
+    Arc::make_mut(&mut reader.offsets).mania_hit_object =
+        Some(crate::memory::lazer_offsets::ManiaHitObjectOffsets { column: Some(0x44) });
+    assert!(
+        reader
+            .read_hit_error_suffix(items, 2, 0)
+            .unwrap()
+            .errors
+            .key
+            .is_none()
+    );
+    reader.mania_key_hit_errors = true;
+    let suffix = reader.read_hit_error_suffix(items, 2, 0).unwrap();
+    let keys = suffix.errors.key.unwrap();
+    assert_eq!(keys.press, [vec![4.0], vec![], vec![-2.0]]);
+    assert_eq!(keys.release.len(), 3);
+    assert!(keys.release.iter().all(Vec::is_empty));
+    assert_eq!(reader.mania_column(0xdead), None);
+}
+
+#[test]
+fn mania_dual_stage_final_columns_publish_press_and_release_errors() {
+    let mut memory = SparseMemory::default();
+    for (column, object) in [(18, 0x1000), (19, 0x2000), (20, 0x3000)] {
+        memory.ptr(object + 0x44, 0);
+        memory.i32(object + 0x4c, column);
+    }
+    let mut reader = reader(Arc::new(memory));
+    Arc::make_mut(&mut reader.offsets).mania_hit_object =
+        Some(crate::memory::lazer_offsets::ManiaHitObjectOffsets { column: Some(0x44) });
+    let mut keys = crate::model::states::KeyHitErrors::default();
+    for (column, object) in [(18, 0x1000), (19, 0x2000)] {
+        assert_eq!(reader.mania_column(object), Some(column));
+        keys.append(4.0, reader.mania_column(object), false);
+        keys.append(-2.0, reader.mania_column(object), true);
+        assert_eq!(keys.press[column], [4.0]);
+        assert_eq!(keys.release[column], [-2.0]);
+    }
+    assert_eq!(reader.mania_column(0x3000), None);
+    assert_eq!(keys.press.len(), 20);
+    keys.correct_release(1, 4.0);
+    assert!(keys.press[19].is_empty());
+    assert_eq!(keys.release[19], [-2.0, 4.0]);
+}
+
+#[test]
 fn non_mania_duplicate_timings_remain_press_only() {
     let items = 0x10_000usize;
     let mut memory = SparseMemory::default();
@@ -424,8 +481,15 @@ fn suffix_boundary_correction_targets_prior_press_offset_and_skips_known_tail() 
     put_hit_event(&mut memory, items + 0x140, 0x58, 40.0, 2);
     put_hold_aggregate(&mut memory, items + 0x180, 0x88, hit_object(items));
     put_hit_event(&mut memory, items + 0x1c0, 0x58, 50.0, 2);
+    for index in [0, 1, 2, 3, 5, 7] {
+        memory.ptr(hit_object(items + index * 0x40) + 0x44, 0);
+        memory.i32(hit_object(items + index * 0x40) + 0x4c, (index % 4) as i32);
+    }
     let mut reader = reader(Arc::new(memory));
     reader.selected_gamemode = 3;
+    reader.mania_key_hit_errors = true;
+    Arc::make_mut(&mut reader.offsets).mania_hit_object =
+        Some(crate::memory::lazer_offsets::ManiaHitObjectOffsets { column: Some(0x44) });
 
     let before_boundary = reader.read_hit_error_suffix(items, 6, 0).unwrap();
     let suffix = reader.read_hit_error_suffix(items, 8, 6).unwrap();
@@ -443,6 +507,13 @@ fn suffix_boundary_correction_targets_prior_press_offset_and_skips_known_tail() 
             press_offset: 3,
         }]
     );
+    let mut keys = before_boundary.errors.key.unwrap();
+    assert_eq!(keys.release[2], [20.0]);
+    keys.correct_release(0, -2.0);
+    keys.extend(suffix.errors.key.as_ref().unwrap());
+    assert!(keys.press[0].is_empty());
+    assert_eq!(keys.release[0], [-2.0]);
+    assert_eq!(keys.press[3], [30.0, 50.0]);
     assert_eq!(
         suffix.errors.all.len(),
         suffix.errors.press.len() + suffix.errors.release.len()
@@ -1052,4 +1123,70 @@ fn room_decodes_managed_users_and_handles_optional_fields_and_bounds() {
             }
         }
     }
+}
+
+#[test]
+fn osu_hit_offset_nullable_position_and_property_layout() {
+    for bound in [false, true] {
+        let event = 0x1000;
+        let object = hit_object(event);
+        let mut memory = SparseMemory::default();
+        put_hit_event(&mut memory, event, 0xe8, -7.0, 3);
+        memory.put(event + 0x30, [1]);
+        memory.put(event + 0x34, 110f32.to_le_bytes());
+        memory.put(event + 0x38, 190f32.to_le_bytes());
+        for (offset, value) in [
+            (0x80, 100f32.to_le_bytes()),
+            (0xa0, 2i32.to_le_bytes()),
+            (0xb0, 0.5f32.to_le_bytes()),
+        ] {
+            let bindable = if bound { object + offset + 0x1000 } else { 0 };
+            memory.ptr(object + offset, bindable);
+            let address = if bound {
+                bindable + 0x28
+            } else {
+                object + offset + 8
+            };
+            memory.put(address, value);
+            if offset == 0x80 {
+                memory.put(address + 4, 200f32.to_le_bytes());
+            }
+        }
+        let mut reader = reader(Arc::new(memory));
+        reader.selected_gamemode = 0;
+        Arc::make_mut(&mut reader.offsets).osu_hit_object =
+            Some(crate::memory::lazer_offsets::OsuHitObjectOffsets {
+                position: 0x80,
+                stack_height: 0xa0,
+                scale: 0xb0,
+            });
+        let result = reader.read_hit_error_suffix(event, 1, 0).unwrap();
+        assert_eq!(result.errors.all, [-7.0]);
+        assert_eq!(result.errors.offsets.len(), 3);
+        assert!((result.errors.offsets[0] - 16.4).abs() < 0.0001);
+        assert!((result.errors.offsets[1] + 3.6).abs() < 0.0001);
+        assert_eq!(result.errors.offsets[2], -7.0);
+    }
+}
+
+#[test]
+fn osu_hit_offset_absent_or_unmeasured_keeps_timing() {
+    let event = 0x1000;
+    let mut memory = SparseMemory::default();
+    put_hit_event(&mut memory, event, 0xe8, 3.0, 3);
+    memory.put(event + 0x30, [0]);
+    let mut reader = reader(Arc::new(memory));
+    reader.selected_gamemode = 0;
+    let result = reader.read_hit_error_suffix(event, 1, 0).unwrap();
+    assert_eq!(result.errors.all, [3.0]);
+    assert!(result.errors.offsets.is_empty());
+    Arc::make_mut(&mut reader.offsets).osu_hit_object =
+        Some(crate::memory::lazer_offsets::OsuHitObjectOffsets {
+            position: 0x80,
+            stack_height: 0xa0,
+            scale: 0xb0,
+        });
+    let result = reader.read_hit_error_suffix(event, 1, 0).unwrap();
+    assert_eq!(result.errors.all, [3.0]);
+    assert!(result.errors.offsets.is_empty());
 }

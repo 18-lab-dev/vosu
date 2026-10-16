@@ -5,6 +5,7 @@ fn non_focused_instance_generation_invalidates_manager_revision() {
         focused_pid: Some(7),
         game_focused: true,
         enable_key_overlay: true,
+        enable_mania_key_hit_errors: false,
         instances: BTreeMap::from([(7, 10), (9, 20)]),
     };
     assert_eq!(revisions.observe(initial.clone()), 1);

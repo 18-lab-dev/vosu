@@ -148,6 +148,7 @@ fn regular_state() -> RegularState {
 
 fn precise_state() -> PreciseState {
     PreciseState {
+        catcher: None,
         status: 0,
         play_time: 0.0,
         mode: 3,

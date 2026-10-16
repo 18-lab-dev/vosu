@@ -52,6 +52,7 @@ pub fn fixture_offset(offset: usize) -> CombinedSnapshot {
         room: Default::default(),
     };
     let precise = PreciseState {
+        catcher: None,
         status: 0,
         play_time: 0.0,
         mode: 3,
@@ -71,6 +72,8 @@ pub fn fixture_offset(offset: usize) -> CombinedSnapshot {
             all: (0..100).map(|i| (i + offset) as f64).collect(),
             press: vec![-2.0, 3.0],
             release: vec![4.0],
+            key: None,
+            offsets: Vec::new(),
         }),
         total_hit_errors: 0.0,
         committed_hit_error_index: 0,

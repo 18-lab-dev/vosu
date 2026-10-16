@@ -290,6 +290,8 @@ impl PreciseSnapshotReader for FakePrecise {
                 all: vec![1.0],
                 press: vec![1.0],
                 release: Vec::new(),
+                key: None,
+                offsets: Vec::new(),
             },
             release_corrections: Vec::new(),
             stable_replay_frames: None,

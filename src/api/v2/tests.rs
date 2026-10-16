@@ -503,10 +503,14 @@ fn default_builder_has_exact_root_order_and_source_default_tourney() {
 fn play_threads_press_and_release_hit_errors_with_exact_wire_shape() {
     let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
     let mut precise = (*base.precise).clone();
+    precise.status = 2;
+    precise.mode = 0;
     precise.hit_errors = Arc::new(HitErrorArray {
         all: vec![-3.5, 6.25],
         press: vec![-3.5],
         release: vec![6.25],
+        key: None,
+        offsets: vec![2.0, -4.0, -3.5],
     });
     let state = Arc::new(StateBundleSnapshot {
         source: base.source,
@@ -530,6 +534,62 @@ fn play_threads_press_and_release_hit_errors_with_exact_wire_shape() {
         encode(&snapshot).unwrap(),
         encode_dto(&build(&snapshot).unwrap()).unwrap()
     );
+    assert_eq!(
+        serde_json::to_value(build(&snapshot).unwrap()).unwrap()["play"]["hitOffsets"],
+        serde_json::json!([2.0, -4.0, -3.5])
+    );
+    let precise = crate::api::precise::build(&snapshot).unwrap();
+    assert_eq!(precise.hit_offsets, [2.0, -4.0, -3.5]);
+    assert_eq!(
+        crate::api::precise::encode(&snapshot).unwrap().as_ref(),
+        encode_dto(&precise).unwrap().as_ref()
+    );
+}
+
+#[test]
+fn key_hit_errors_are_opt_in_and_wire_identical_for_both_v2_payloads() {
+    for enabled in [false, true] {
+        let base = StateBundle::new(ClientType::Lazer, 1, Arc::new(NeverCalculate)).snapshot();
+        let mut precise = (*base.precise).clone();
+        let mut hits = HitErrorArray::default();
+        let mut keys = crate::model::states::KeyHitErrors::default();
+        keys.append(-3.5, Some(2), false);
+        keys.append(6.25, Some(0), true);
+        hits.key = Some(keys);
+        precise.hit_errors = Arc::new(hits);
+        let state = Arc::new(StateBundleSnapshot {
+            precise: Arc::new(precise),
+            ..(*base).clone()
+        });
+        let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+            1,
+            Some(10),
+            true,
+            ApiRuntimeSettings {
+                enable_mania_key_hit_errors: enabled,
+                ..Default::default()
+            },
+            [manager_entry(10, state, false, None)],
+        )));
+        let value = build(&snapshot).unwrap();
+        assert_eq!(value.play.key_hit_errors.is_some(), enabled);
+        assert_eq!(encode(&snapshot).unwrap(), encode_dto(&value).unwrap());
+        let precise = crate::api::precise::build(&snapshot).unwrap();
+        assert_eq!(precise.key_hit_errors.is_some(), enabled);
+        assert_eq!(
+            crate::api::precise::encode(&snapshot).unwrap(),
+            encode_dto(&precise).unwrap()
+        );
+        if enabled {
+            assert_eq!(
+                value.play.key_hit_errors.unwrap().press,
+                [vec![], vec![], vec![-3.5]]
+            );
+        } else {
+            assert!(!json(&value).contains("keyHitErrors"));
+            assert!(!json(&precise).contains("keyHitErrors"));
+        }
+    }
 }
 
 #[test]
@@ -859,4 +919,80 @@ fn lazer_room_serializes_users_and_omits_when_absent() {
     let empty = default_snapshot(ClientType::Lazer);
     let empty: Value = serde_json::from_slice(&encode(&empty).unwrap()).unwrap();
     assert!(empty.get("room").is_none());
+}
+
+#[test]
+fn catcher_is_additive_only_during_catch_gameplay_and_both_encoders_agree() {
+    let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
+    for (status, mode, present) in [
+        (2, 2, true),
+        (0, 2, false),
+        (7, 2, false),
+        (2, 0, false),
+        (2, 3, false),
+    ] {
+        let mut precise = (*base.precise).clone();
+        precise.status = status;
+        precise.mode = mode;
+        precise.catcher = Some(crate::model::memory::Catcher {
+            x: 123.125,
+            dashing: true,
+        });
+        let state = Arc::new(StateBundleSnapshot {
+            precise: Arc::new(precise),
+            ..(*base).clone()
+        });
+        let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+            1,
+            Some(10),
+            true,
+            ApiRuntimeSettings {
+                enable_mania_key_hit_errors: true,
+                ..Default::default()
+            },
+            [manager_entry(10, state, false, None)],
+        )));
+        let dto = build(&snapshot).unwrap();
+        let encoded = encode(&snapshot).unwrap();
+        assert_eq!(encoded, encode_dto(&dto).unwrap());
+        let value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(value["play"].get("catcher").is_some(), present);
+        if present {
+            assert_eq!(
+                value["play"]["catcher"],
+                serde_json::json!({"x":123.125,"dashing":true})
+            );
+            assert_extension_order(&encoded, "hitErrorArray");
+        }
+        let precise_dto = crate::api::precise::build(&snapshot).unwrap();
+        let precise_encoded = crate::api::precise::encode(&snapshot).unwrap();
+        assert_eq!(
+            precise_encoded.as_ref(),
+            crate::api::json::encode(&precise_dto, 0)
+                .unwrap()
+                .as_slice()
+        );
+        let value: serde_json::Value = serde_json::from_slice(&precise_encoded).unwrap();
+        assert_eq!(value.get("catcher").is_some(), present);
+        if present {
+            assert_extension_order(&precise_encoded, "hitErrors");
+        }
+    }
+}
+
+fn assert_extension_order(encoded: &[u8], aggregate: &str) {
+    let text = std::str::from_utf8(encoded).unwrap();
+    let fields = [
+        aggregate,
+        "pressHitErrors",
+        "releaseHitErrors",
+        "hitOffsets",
+        "keyHitErrors",
+        "catcher",
+    ];
+    let positions: Vec<_> = fields
+        .iter()
+        .map(|field| text.find(&format!("\"{field}\":")).unwrap())
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
 }

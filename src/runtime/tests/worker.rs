@@ -26,17 +26,15 @@ fn state_bundle(generation: u64, reset_epoch: u64) -> Arc<StateBundleSnapshot> {
             ranked_play: RankedPlayState::default(),
             room: Default::default(),
         }),
-        precise: Arc::new(PreciseState {
-            status: 0,
-            play_time: 0.0,
-            mode: 0,
-            key_overlay: Arc::new(Vec::new()),
-            keypresses: Arc::new(Vec::new()),
-            hit_errors: Arc::new(HitErrorArray::default()),
-            total_hit_errors: 0.0,
-            committed_hit_error_index: 0,
-            unstable_rate: 0.0,
-        }),
+        precise: Arc::new(PreciseState { catcher: None, status: 0,
+        play_time: 0.0,
+        mode: 0,
+        key_overlay: Arc::new(Vec::new()),
+        keypresses: Arc::new(Vec::new()),
+        hit_errors: Arc::new(HitErrorArray::default()),
+        total_hit_errors: 0.0,
+        committed_hit_error_index: 0,
+        unstable_rate: 0.0, }),
     })
 }
 

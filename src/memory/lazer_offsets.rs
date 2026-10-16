@@ -49,11 +49,28 @@ pub fn validate_version(version: &str) -> Result<(), LazerOffsetsError> {
     Ok(())
 }
 
+/// Class-field offsets; zero denotes not yet measured, not an object address.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OsuHitObjectOffsets {
+    pub position: usize,
+    #[serde(rename = "stackHeight")]
+    pub stack_height: usize,
+    pub scale: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ManiaHitObjectOffsets {
+    #[serde(rename = "column")]
+    pub column: Option<usize>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct LazerOffsets {
     pub osu_version: String,
     pub game_base_vtable: Option<usize>,
+    #[serde(rename = "osu.Game.Rulesets.Mania.Objects.ManiaHitObject", default)]
+    pub mania_hit_object: Option<ManiaHitObjectOffsets>,
     #[serde(rename = "osu.Game.OsuGame")]
     pub osu_game_osu_game: OffsetGroup1,
     #[serde(rename = "osu.Framework.Game")]
@@ -188,8 +205,40 @@ pub struct LazerOffsets {
     pub osu_game_online_multiplayer_match_types_ranked_play_ranked_play_room_state: OffsetGroup65,
     #[serde(rename = "osu.Game.Online.Multiplayer.MatchTypes.RankedPlay.RankedPlayUserInfo")]
     pub osu_game_online_multiplayer_match_types_ranked_play_ranked_play_user_info: OffsetGroup66,
+    #[serde(default, rename = "osu.Game.Rulesets.Catch.UI.DrawableCatchRuleset")]
+    pub catch_ruleset: CatchRulesetOffsets,
+    #[serde(default, rename = "osu.Game.Rulesets.Catch.UI.CatchPlayfield")]
+    pub catch_playfield: CatchPlayfieldOffsets,
+    #[serde(default, rename = "osu.Game.Rulesets.Catch.UI.Catcher")]
+    pub catcher: CatcherOffsets,
+    #[serde(default, rename = "osu.Framework.Graphics.Drawable")]
+    pub drawable: DrawableOffsets,
+    #[serde(rename = "osu.Game.Rulesets.Osu.Objects.OsuHitObject", default)]
+    pub osu_hit_object: Option<OsuHitObjectOffsets>,
     #[serde(flatten)]
     pub extras: IndexMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CatchRulesetOffsets {
+    pub playfield: usize,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CatchPlayfieldOffsets {
+    #[serde(rename = "<Catcher>k__BackingField")]
+    pub catcher: usize,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CatcherOffsets {
+    #[serde(rename = "<Dashing>k__BackingField")]
+    pub dashing: usize,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DrawableOffsets {
+    pub x: usize,
 }
 
 impl LazerOffsets {

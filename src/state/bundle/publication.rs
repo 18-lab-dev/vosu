@@ -130,6 +130,10 @@ impl StateBundle {
             key_overlay,
             keypresses,
             hit_errors,
+            catcher: (self.global.status == GameState::Play.value() as i64
+                && self.gameplay.keypress_mode == 2)
+                .then_some(self.gameplay.catcher)
+                .flatten(),
             total_hit_errors: self.gameplay.total_hit_errors,
             committed_hit_error_index: self.gameplay.previous_hit_error_index,
             unstable_rate: self.gameplay.unstable_rate,

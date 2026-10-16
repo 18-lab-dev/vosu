@@ -41,6 +41,7 @@ fn regular(play_time: f64) -> Arc<RegularState> {
 
 fn precise(play_time: f64) -> Arc<PreciseState> {
     Arc::new(PreciseState {
+        catcher: None,
         status: 0,
         play_time,
         mode: 0,
@@ -180,6 +181,7 @@ fn component_or_manager_changes_invalidate_dependent_caches() {
         true,
         ApiRuntimeSettings {
             enable_key_overlay: false,
+            enable_mania_key_hit_errors: false,
         },
         manager_one.instances().values().cloned(),
     ));
@@ -455,6 +457,7 @@ fn synthetic_live_state_worker_smoke_encodes_every_transition() {
                     state
                 };
                 let precise = Arc::new(PreciseState {
+                    catcher: None,
                     status: i64::from(status.value()),
                     play_time,
                     mode: 0,
@@ -474,6 +477,8 @@ fn synthetic_live_state_worker_smoke_encodes_every_transition() {
                         all: vec![generation as f64],
                         press: vec![generation as f64],
                         release: Vec::new(),
+                        key: None,
+                        offsets: Vec::new(),
                     }),
                     total_hit_errors: generation as f64,
                     committed_hit_error_index: generation as i64,

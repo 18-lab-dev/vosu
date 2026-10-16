@@ -19,9 +19,8 @@ pub struct StableMemory {
     pub(super) replay_score: usize,
     pub(super) replay_error_index: i64,
     pub(super) replay_frame_index: i64,
-    pub(super) replay_cache_start: i64,
-    pub(super) replay_frames: Vec<StableReplayFrame>,
     pub(super) replay_batch: Option<StableReplayFrameBatch>,
+    pub(super) replay_pending: std::collections::VecDeque<[u8; 16]>,
     pub(super) capture: CapturePrefetch,
 }
 
@@ -45,9 +44,8 @@ impl StableMemory {
             replay_score: 0,
             replay_error_index: 0,
             replay_frame_index: 0,
-            replay_cache_start: 0,
-            replay_frames: Vec::new(),
             replay_batch: None,
+            replay_pending: std::collections::VecDeque::new(),
             capture: CapturePrefetch::default(),
         }
     }

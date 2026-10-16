@@ -1,7 +1,7 @@
 ---
 type: Validation Guide
 title: Precise input validation
-description: Maintainer workflow for validating source-reported input counts and sampled input edges on osu!stable and osu!lazer.
+description: Maintainer workflow for validating logical input counts and sampled publications on osu!stable and osu!lazer.
 tags: [testing, validation, precise-input, stable, lazer]
 ---
 
@@ -11,10 +11,10 @@ This guide is the maintainer workflow for validating vosu's additive precise-inp
 
 The harness validates two different properties:
 
-1. **Source-reported press counts:** counter changes establish how many presses the attached client reported.
-2. **Sampled edge observation:** state changes and their gameplay timestamps are recorded only when an edge is visible at vosu's precise polling cadence.
+1. **Logical press counts:** lazer counter changes establish how many presses the attached client reported; stable counts down-edges in retained replay frames.
+2. **Published edge observation:** the harness samples API publications. Stable timestamps come from replay frames, while lazer timestamps come from precise samples.
 
-These are not equivalent. A complete short tap can occur between samples: its press count still advances, but neither its press nor release state may be observed. The capture is therefore **not a lossless edge log**. `countDelta` is authoritative for source-reported presses over a capture segment; `observedPresses` and `observedReleases` count only sampled edges. `estimatedMissedPresses` is `countDelta - observedPresses`, clamped at zero.
+These are not equivalent. A complete short tap can occur between publications: its press count still advances, but neither its press nor release state may be observed by the harness. Stable can retain both edge timestamps from such a tap even though the published state is released. The capture is therefore **not a lossless edge log**. `countDelta` counts presses over the segment (subject to stable's documented replay-history loss); `observedPresses` and `observedReleases` count sampled state edges. `estimatedMissedPresses` is `countDelta - observedPresses`, clamped at zero. Compare the [ruleset mapping](../../README.md#state-and-calculation): catch movement actions on stable intentionally remain unpressed, and legacy key members still depend on the original overlay source.
 
 ## Command scope
 

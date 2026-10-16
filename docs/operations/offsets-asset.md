@@ -9,12 +9,16 @@ description: Historical maintainer procedure that reproduced the 2026.726.0 asse
 This is a maintainer procedure for `assets/offsets.json`. It is not a user or
 contributor prerequisite: daemon builds and runtime offset generation never run it.
 
+The mania per-key template adds `osu.Game.Rulesets.Mania.Objects.ManiaHitObject.column` with an explicitly unmeasured **zero** placeholder. The reader rejects zero and publishes no guessed columns. Measure this entry against the selected release before shipping per-key lazer support; the generator replaces numeric placeholders with measured instance offsets. Its inline `HitObjectProperty<int>` layout uses named constants for `backingBindable` (+0) and `backingValue` (+8), and reuses the existing bindable integer value layout (+0x40); confirm these live too. The assembly generator does not currently support measuring the interior of a constructed generic value type, so those constants are not fictitious CLR template fields.
+
 The commands below reproduce the explicitly historical `2026.726.0` asset.
 They document prior source, runtime, DAC, and generator inputs; they are not a
 recipe for the currently retained `2026.921.0` asset. Provenance for the current
 asset is listed in `THIRD_PARTY_NOTICES.md` and Cargo metadata. Do not replace
 it from this historical recipe without independently measuring the exact
 release/runtime and verifying the native reader.
+
+The catch extension adds typed class fields `DrawableCatchRuleset.playfield` (inherited `Lazy<Playfield>`), `CatchPlayfield.<Catcher>k__BackingField`, `Catcher.<Dashing>k__BackingField`, and `osu.Framework.Graphics.Drawable.x`. Their asset values are **zero, unmeasured placeholders**; the catch reader does not use them until all are populated. The separate named `LAZY_VALUE_OFFSET = 0x18` for `System.Lazy<Playfield>._value` is also unverified and must be checked against the exact .NET runtime. Generate the four class fields with the existing offset generator, then verify the complete player → drawable ruleset → lazy playfield → playfield → catcher chain natively. The inherited `Drawable.x` is a float, not a `Vector2 position` field in framework 2026.921.0. X and Dashing are read together each precise cycle; the chain is refreshed at least every 100 ms and on screen change or read failure. Verify managed-object movement and retry/seek transitions live before release.
 
 ## Build only the patched Satori DAC
 

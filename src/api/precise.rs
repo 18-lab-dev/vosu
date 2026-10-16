@@ -22,6 +22,21 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<PreciseResponse, ApiError> {
         hit_errors: precise.hit_errors.all.clone(),
         press_hit_errors: precise.hit_errors.press.clone(),
         release_hit_errors: precise.hit_errors.release.clone(),
+        hit_offsets: precise.hit_offsets().to_vec(),
+        key_hit_errors: snapshot
+            .runtime_settings()
+            .enable_mania_key_hit_errors
+            .then(|| {
+                Box::new(
+                    precise
+                        .hit_errors
+                        .key
+                        .as_ref()
+                        .map(crate::model::states::KeyHitErrors::payload)
+                        .unwrap_or_default(),
+                )
+            }),
+        catcher: precise.active_catcher(),
         tourney: tourney_spectators(snapshot.manager())
             .into_iter()
             .map(|(ipc_id, precise)| PreciseTourney {
@@ -50,8 +65,13 @@ pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
                 total + 32 + encoded_capacity(spectator)
             });
         let mut output = Vec::with_capacity(capacity);
-        write_document(&mut output, precise, &tourney)
-            .map_err(|error| ApiError::serialization(error.to_string()))?;
+        write_document(
+            &mut output,
+            precise,
+            &tourney,
+            snapshot.runtime_settings().enable_mania_key_hit_errors,
+        )
+        .map_err(|error| ApiError::serialization(error.to_string()))?;
         Ok(Bytes::from(output))
     })
 }
@@ -68,9 +88,29 @@ fn write_document(
     output: &mut Vec<u8>,
     precise: &PreciseState,
     tourney: &[(f64, &PreciseState)],
+    enable_key_hits: bool,
 ) -> io::Result<()> {
     output.extend_from_slice(b"{");
     write_fields(output, precise)?;
+    output.extend_from_slice(b",\"hitOffsets\":");
+    write_numbers(output, precise.hit_offsets())?;
+    if enable_key_hits {
+        output.extend_from_slice(b",\"keyHitErrors\":");
+        crate::api::json::Wire::write_wire(
+            &crate::api::json::Serde(
+                precise
+                    .hit_errors
+                    .key
+                    .as_ref()
+                    .unwrap_or(&Default::default()),
+            ),
+            output,
+        )?;
+    }
+    if let Some(catcher) = precise.active_catcher() {
+        output.extend_from_slice(b",\"catcher\":");
+        crate::api::json::Wire::write_wire(&catcher, output)?;
+    }
     output.extend_from_slice(b",\"tourney\":[");
     for (index, (ipc_id, spectator)) in tourney.iter().enumerate() {
         if index > 0 {
@@ -82,7 +122,8 @@ fn write_document(
         write_fields(output, spectator)?;
         output.push(b'}');
     }
-    output.extend_from_slice(b"]}");
+    output.push(b']');
+    output.push(b'}');
     Ok(())
 }
 
@@ -296,6 +337,7 @@ mod tests {
             })
             .collect();
         Arc::new(PreciseState {
+            catcher: None,
             status: 2,
             play_time: 1234.0,
             mode,
@@ -305,6 +347,8 @@ mod tests {
                 all: hit_errors.clone(),
                 press: hit_errors,
                 release: Vec::new(),
+                key: None,
+                offsets: Vec::new(),
             }),
             total_hit_errors: 0.0,
             committed_hit_error_index: 0,
@@ -362,6 +406,7 @@ mod tests {
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
             r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[]},"hitErrors":[],"pressHitErrors":[],"releaseHitErrors":[],"tourney":[]}"#
+                .replace(",\"tourney\":", ",\"hitOffsets\":[],\"tourney\":")
         );
     }
 
@@ -383,6 +428,8 @@ mod tests {
             all: vec![-7.5, 2.25],
             press: vec![-7.5],
             release: vec![2.25],
+            key: None,
+            offsets: Vec::new(),
         });
         let legacy = Arc::new(precise.key_overlay[..3].to_vec());
         Arc::make_mut(&mut precise).key_overlay = legacy;
@@ -502,6 +549,7 @@ mod tests {
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
             r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[]},"hitErrors":[],"pressHitErrors":[],"releaseHitErrors":[],"tourney":[{"ipcId":2.5,"keys":{"k1":{"isPressed":false,"count":2},"k2":{"isPressed":true,"count":22},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":false,"count":2,"pressedAt":null,"releasedAt":null},{"name":"K2","isPressed":true,"count":22,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[-2.5],"pressHitErrors":[-2.5],"releaseHitErrors":[]},{"ipcId":30.25,"keys":{"k1":{"isPressed":true,"count":30},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":true,"count":30,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[30.5],"pressHitErrors":[30.5],"releaseHitErrors":[]},{"ipcId":null,"keys":{"k1":{"isPressed":true,"count":99},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":true,"count":99,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[99],"pressHitErrors":[99],"releaseHitErrors":[]}]}"#
+                .replace(",\"tourney\":", ",\"hitOffsets\":[],\"tourney\":")
         );
     }
 
@@ -552,6 +600,8 @@ mod tests {
                 all: numbers.to_vec(),
                 press: numbers[..4].to_vec(),
                 release: numbers[4..].to_vec(),
+                key: None,
+                offsets: Vec::new(),
             });
             precise
         };

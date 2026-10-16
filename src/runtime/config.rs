@@ -119,6 +119,7 @@ pub(super) fn apply_config_values(
     boolean!("DEBUG_LOG", debug_log);
     boolean!("CALCULATE_PP", calculate_pp);
     boolean!("ENABLE_KEY_OVERLAY", enable_key_overlay);
+    boolean!("ENABLE_MANIA_KEY_HIT_ERRORS", enable_mania_key_hit_errors);
     boolean!("SHOW_MP_COMMANDS", show_mp_commands);
     boolean!("READ_MANIA_SCROLL_SPEED", read_mania_scroll_speed);
     number!("POLL_RATE", poll_rate);

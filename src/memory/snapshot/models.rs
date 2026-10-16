@@ -306,6 +306,7 @@ pub struct RawPreciseSnapshot {
     pub(super) global: MemoryRead<GlobalPrecise>,
     pub(super) key_overlay: ConditionalRead<KeyOverlay>,
     pub(super) hit_errors: ConditionalRead<HitErrors>,
+    pub(super) catcher: ConditionalRead<crate::model::memory::Catcher>,
 }
 
 impl RawPreciseSnapshot {
@@ -332,6 +333,11 @@ impl RawPreciseSnapshot {
     #[must_use]
     pub fn key_overlay(&self) -> Option<&MemoryRead<KeyOverlay>> {
         self.key_overlay.as_ref()
+    }
+
+    #[must_use]
+    pub fn catcher(&self) -> Option<&MemoryRead<crate::model::memory::Catcher>> {
+        self.catcher.as_ref()
     }
 
     /// Complete suffix read from `capture.start_index()` through

@@ -2,8 +2,8 @@ use super::*;
 
 fn read_many_key_fields<const WIDTH: usize>(
     process: &ProcessHandle,
-    addresses: &[usize; 18],
-    destinations: &mut [[u8; WIDTH]; 18],
+    addresses: &[usize; KeyOverlayButton::lazer_button_count()],
+    destinations: &mut [[u8; WIDTH]; KeyOverlayButton::lazer_button_count()],
     len: usize,
     pressed_addresses: &[usize],
     pressed_destinations: &mut [[u8; 1]],
@@ -19,7 +19,7 @@ fn read_many_key_fields<const WIDTH: usize>(
                 .zip(pressed_destinations)
                 .map(|(&address, dst)| ReadRequest::new(address, dst)),
         );
-    let mut requests: [_; 27] = std::array::from_fn(|_| {
+    let mut requests: [_; 30] = std::array::from_fn(|_| {
         fields
             .next()
             .unwrap_or_else(|| ReadRequest::new(0, &mut []))
@@ -307,6 +307,9 @@ impl MemoryReader for LazerMemory {
         }
         Ok(ReadStatus::Ready(out))
     }
+    fn set_mania_key_hit_errors(&mut self, enabled: bool) {
+        self.mania_key_hit_errors = enabled;
+    }
     fn hit_errors(&mut self, last: i64) -> MemoryRead<HitErrors> {
         if self.player_loading {
             return Ok(ReadStatus::Ready(HitErrors {
@@ -337,6 +340,68 @@ impl MemoryReader for LazerMemory {
         Ok(ReadStatus::Ready(
             self.read_hit_error_suffix(items, size, last)?,
         ))
+    }
+    fn catcher(&mut self, _play_time: f64) -> MemoryRead<crate::model::memory::Catcher> {
+        use crate::model::memory::Catcher;
+        let fields = (
+            self.offsets.catch_ruleset.playfield,
+            self.offsets.catch_playfield.catcher,
+            self.offsets.drawable.x,
+            self.offsets.catcher.dashing,
+        );
+        // Zero template entries are deliberately UNMEASURED, not usable addresses.
+        if self.player_loading || [fields.0, fields.1, fields.2, fields.3].contains(&0) {
+            return self.not_ready();
+        }
+        let now = std::time::Instant::now();
+        let catcher = match self.catcher_cache {
+            Some((screen, catcher, refreshed))
+                if screen == self.current_screen
+                    && now.duration_since(refreshed) < std::time::Duration::from_millis(100) =>
+            {
+                catcher
+            }
+            _ => {
+                let player = self.precise_player.as_ref().map_or(0, |cache| cache.player);
+                if player == 0 {
+                    return self.not_ready();
+                }
+                let drawable = self.screen_ptr(
+                    player,
+                    self.offsets
+                        .osu_game_screens_play_player
+                        .drawable_ruleset_k_backing_field,
+                )?;
+                let lazy = self.screen_ptr(drawable, fields.0)?;
+                // System.Lazy<Playfield>._value; UNVERIFIED live .NET layout.
+                const LAZY_VALUE_OFFSET: usize = 0x18;
+                let playfield = self.screen_ptr(lazy, LAZY_VALUE_OFFSET)?;
+                let catcher = self.screen_ptr(playfield, fields.1)?;
+                if catcher == 0 {
+                    return self.not_ready();
+                }
+                self.catcher_cache = Some((self.current_screen, catcher, now));
+                catcher
+            }
+        };
+        let mut x = [0; 4];
+        let mut dashing = [0; 1];
+        if let Err(error) = self.process.read_many(&mut [
+            crate::process::ReadRequest::new(add(catcher, fields.2)?, &mut x),
+            crate::process::ReadRequest::new(add(catcher, fields.3)?, &mut dashing),
+        ]) {
+            self.catcher_cache = None;
+            return Err(error);
+        }
+        let x = f32::from_le_bytes(x);
+        if !x.is_finite() || dashing[0] > 1 {
+            self.catcher_cache = None;
+            return self.not_ready();
+        }
+        Ok(ReadStatus::Ready(Catcher {
+            x,
+            dashing: dashing[0] != 0,
+        }))
     }
     fn global(&mut self) -> MemoryRead<Global> {
         self.precise_player = None;
@@ -927,6 +992,9 @@ impl LazerMemory {
         let mut index = start_index;
         let mut suffix_events = Vec::new();
         let mut errors = HitErrorArray::default();
+        if self.mania_key_hit_errors {
+            errors.key = Some(Default::default());
+        }
         while index < size {
             let event = self.read_hit_event(add(items, index * 0x40)?)?;
             match event {
@@ -935,9 +1003,15 @@ impl LazerMemory {
                 }
                 // Only mania needs retained identities to classify hold releases.
                 Some(event) if self.selected_gamemode == 3 => suffix_events.push(event),
-                Some(HitErrorEvent::Timing { value, .. }) => {
+                Some(HitErrorEvent::Timing { value, object }) => {
                     errors.all.push(value);
                     errors.press.push(value);
+                    if self.selected_gamemode == 0
+                        && let Some((x, y)) =
+                            self.read_hit_offset(add(items, index * 0x40)?, object)
+                    {
+                        errors.offsets.extend_from_slice(&[x, y, value]);
+                    }
                 }
                 Some(HitErrorEvent::ManiaHoldAggregate { .. }) | None => {}
             }
@@ -954,6 +1028,13 @@ impl LazerMemory {
         for event in &suffix_events {
             if let HitErrorEvent::Timing { value, object } = *event {
                 errors.all.push(value);
+                if let Some(keys) = errors.key.as_mut() {
+                    keys.append(
+                        value,
+                        self.mania_column(object),
+                        suffix_tails.contains(&object),
+                    );
+                }
                 if self.selected_gamemode == 3 && suffix_tails.contains(&object) {
                     errors.release.push(value);
                 } else {

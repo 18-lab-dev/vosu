@@ -59,6 +59,9 @@ fn build_internal<'a, V: From<&'a [f64]>>(
             state.beatmap.attributes.as_ref(),
             current_mods,
             &focused.precise.hit_errors,
+            snapshot.runtime_settings().enable_mania_key_hit_errors,
+            focused.precise.active_catcher(),
+            focused.precise.hit_offsets(),
         ),
         keys: crate::api::precise::build_keys(
             &focused.precise.key_overlay,

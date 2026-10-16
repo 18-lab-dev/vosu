@@ -200,6 +200,8 @@ async fn lazer_pause_then_select_play_resets_retained_gameplay_epoch() {
         all: vec![4.0, -6.0],
         press: vec![4.0],
         release: vec![-6.0],
+        key: None,
+        offsets: Vec::new(),
     };
     bundle.gameplay.total_hit_errors = -2.0;
     bundle.gameplay.previous_hit_error_index = 2;
@@ -319,6 +321,8 @@ async fn scoreless_lazer_pause_marks_epoch_for_select_play_reset() {
         all: vec![5.0, -7.0],
         press: vec![5.0],
         release: vec![-7.0],
+        key: None,
+        offsets: Vec::new(),
     };
     bundle.gameplay.total_hit_errors = -2.0;
     bundle.gameplay.previous_hit_error_index = 2;

@@ -75,6 +75,7 @@ pub(super) struct StableManiaHitErrorState {
     latest_replay_time: Option<i64>,
     last_keys: u32,
     last_time: Option<i64>,
+    pub(super) key: Option<crate::model::states::KeyHitErrors>,
 }
 
 impl StableManiaHitErrorState {
@@ -104,19 +105,18 @@ impl StableManiaHitErrorState {
             || expected_len < 0
             || expected_len as usize != batch.frames.len()
             || batch.index < self.replay_frame_index
-            || batch.start_index > self.replay_frame_index
         {
             return false;
         }
-        let Some(offset) = self
-            .replay_frame_index
-            .checked_sub(batch.start_index)
-            .map(|value| value as usize)
-            .filter(|offset| *offset <= batch.frames.len())
-        else {
-            return false;
-        };
-        for frame in &batch.frames[offset..] {
+        // Frames before the retained window are gone, for example after attaching late in
+        // a long play. Their transitions cannot be recovered, so errors that needed them
+        // fall back to presses through the usual grace bound; later errors still match.
+        // The first retained frame is only a key-state baseline, not a set of transitions.
+        let mut baseline = batch.start_index > self.replay_frame_index;
+        if baseline {
+            self.replay_frame_index = batch.start_index;
+        }
+        for frame in batch.frames_since(self.replay_frame_index).unwrap() {
             if frame.y == -500.0 {
                 continue;
             }
@@ -124,7 +124,11 @@ impl StableManiaHitErrorState {
                 self.latest_replay_time
                     .map_or(frame.time, |latest| latest.max(frame.time)),
             );
-            let keys = frame.keys & ((1 << 18) - 1);
+            let keys = frame.mania_keys() & ((1 << 18) - 1);
+            if std::mem::take(&mut baseline) {
+                self.last_keys = keys;
+                continue;
+            }
             let changed = self.last_keys ^ keys;
             for lane in 0..18 {
                 let mask = 1 << lane;
@@ -303,6 +307,9 @@ impl StableManiaHitErrorState {
         let mut release = Vec::new();
         if matches!(&self.metadata, StableManiaMetadataState::Unavailable { .. }) {
             press.extend(self.pending.drain(..).map(|pending| pending.value));
+            if let Some(key) = &mut self.key {
+                key.press_columns.resize(press.len(), None);
+            }
             return (press, release);
         }
         if !matches!(&self.metadata, StableManiaMetadataState::Ready { .. }) {
@@ -319,11 +326,17 @@ impl StableManiaHitErrorState {
                     // keeps every later error flowing instead of withholding the rest of the play.
                     self.pending.pop_front();
                     press.push(pending.value);
+                    if let Some(key) = &mut self.key {
+                        key.append(pending.value, None, false);
+                    }
                     continue;
                 }
                 Err(()) => {
                     self.disable();
                     press.extend(self.pending.drain(..).map(|pending| pending.value));
+                    if let Some(key) = &mut self.key {
+                        key.press_columns.resize(press.len(), None);
+                    }
                     break;
                 }
             };
@@ -332,6 +345,13 @@ impl StableManiaHitErrorState {
             self.used_transitions[transition_index] = true;
             self.last_time = Some(time);
             self.pending.pop_front();
+            if let Some(key) = &mut self.key {
+                key.append(
+                    pending.value,
+                    Some(self.events[event_index].lane as usize),
+                    kind == ManiaJudgementKind::Release,
+                );
+            }
             match kind {
                 ManiaJudgementKind::Press => press.push(pending.value),
                 ManiaJudgementKind::Release => release.push(pending.value),
@@ -410,6 +430,7 @@ pub struct GameplayState {
     pub keypresses: Vec<KeypressButton>,
     pub keypress_identity_mode: Option<i64>,
     pub hit_errors: HitErrorArray,
+    pub catcher: Option<crate::model::memory::Catcher>,
     pub total_hit_errors: f64,
     pub total_hit_error_squares: f64,
     pub previous_hit_error_index: i64,
@@ -450,6 +471,7 @@ impl Default for GameplayState {
             keypresses: Vec::new(),
             keypress_identity_mode: None,
             hit_errors: HitErrorArray::default(),
+            catcher: None,
             total_hit_errors: 0.0,
             total_hit_error_squares: 0.0,
             previous_hit_error_index: 0,
@@ -521,6 +543,8 @@ impl GameplayState {
         self.hit_errors.all.clear();
         self.hit_errors.press.clear();
         self.hit_errors.release.clear();
+        self.hit_errors.key = None;
+        self.hit_errors.offsets.clear();
         self.total_hit_errors = 0.0;
         self.total_hit_error_squares = 0.0;
         self.previous_hit_error_index = 0;
@@ -746,9 +770,25 @@ pub struct PreciseState {
     pub key_overlay: Arc<Vec<KeyOverlayButton>>,
     pub keypresses: Arc<Vec<KeypressButton>>,
     pub hit_errors: Arc<HitErrorArray>,
+    pub catcher: Option<crate::model::memory::Catcher>,
     pub total_hit_errors: f64,
     pub committed_hit_error_index: i64,
     pub unstable_rate: f64,
+}
+
+impl PreciseState {
+    #[must_use]
+    pub fn active_catcher(&self) -> Option<crate::model::memory::Catcher> {
+        self.catcher
+            .filter(|_| self.status == GameState::Play.value() as i64 && self.mode == 2)
+    }
+    pub(crate) fn hit_offsets(&self) -> &[f64] {
+        if self.status == GameState::Play.value() as i64 && self.mode == 0 {
+            &self.hit_errors.offsets
+        } else {
+            &[]
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -813,27 +853,37 @@ mod tests {
         let frames = vec![
             StableReplayFrame {
                 time: -12_345,
-                keys: 256,
+                x: 256.0,
+                buttons: 0,
+                buttons_raw: 0,
                 y: -500.0,
             },
             StableReplayFrame {
                 time: 103,
-                keys: 1,
+                x: 1.0,
+                buttons: 0,
+                buttons_raw: 0,
                 y: 0.0,
             },
             StableReplayFrame {
                 time: 110,
-                keys: 0,
+                x: 0.0,
+                buttons: 0,
+                buttons_raw: 0,
                 y: 0.0,
             },
             StableReplayFrame {
                 time: 190,
-                keys: 2,
+                x: 2.0,
+                buttons: 0,
+                buttons_raw: 0,
                 y: 0.0,
             },
             StableReplayFrame {
                 time: 350,
-                keys: 0,
+                x: 0.0,
+                buttons: 0,
+                buttons_raw: 0,
                 y: 0.0,
             },
         ];
@@ -845,7 +895,7 @@ mod tests {
             &StableReplayFrameBatch {
                 start_index: 0,
                 index: 4,
-                frames: std::sync::Arc::new(frames[..4].to_vec()),
+                frames: std::sync::Arc::new(frames[..4].to_vec().into()),
             },
             Some("map"),
             0,
@@ -859,7 +909,7 @@ mod tests {
             &StableReplayFrameBatch {
                 start_index: 0,
                 index: 5,
-                frames: std::sync::Arc::new(frames),
+                frames: std::sync::Arc::new(frames.into()),
             },
             Some("map"),
             0,
@@ -876,7 +926,7 @@ mod tests {
         let batch = StableReplayFrameBatch {
             start_index: 0,
             index: 0,
-            frames: std::sync::Arc::new(Vec::new()),
+            frames: Default::default(),
         };
 
         assert_eq!(
@@ -923,7 +973,7 @@ mod tests {
         let batch = StableReplayFrameBatch {
             start_index: 0,
             index: 0,
-            frames: std::sync::Arc::new(Vec::new()),
+            frames: Default::default(),
         };
 
         assert_eq!(
@@ -991,12 +1041,16 @@ mod tests {
         let frames = vec![
             StableReplayFrame {
                 time: 200,
-                keys: 2,
+                x: 2.0,
+                buttons: 0,
+                buttons_raw: 0,
                 y: 0.0,
             },
             StableReplayFrame {
                 time: 390,
-                keys: 0,
+                x: 0.0,
+                buttons: 0,
+                buttons_raw: 0,
                 y: 0.0,
             },
         ];
@@ -1009,7 +1063,7 @@ mod tests {
                     &StableReplayFrameBatch {
                         start_index: 0,
                         index: 2,
-                        frames: std::sync::Arc::new(frames.clone()),
+                        frames: std::sync::Arc::new(frames.clone().into()),
                     },
                     provisional_target,
                     5,
@@ -1024,7 +1078,7 @@ mod tests {
                     &StableReplayFrameBatch {
                         start_index: 2,
                         index: 2,
-                        frames: std::sync::Arc::new(Vec::new()),
+                        frames: Default::default(),
                     },
                     Some("current-map"),
                     0,
@@ -1059,8 +1113,15 @@ mod tests {
             index: keys.len() as i64,
             frames: std::sync::Arc::new(
                 keys.iter()
-                    .map(|&(time, keys)| StableReplayFrame { time, keys, y: 0.0 })
-                    .collect(),
+                    .map(|&(time, keys)| StableReplayFrame {
+                        time,
+                        x: keys as f32,
+                        buttons: 0,
+                        buttons_raw: 0,
+                        y: 0.0,
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
             ),
         }
     }
@@ -1088,7 +1149,10 @@ mod tests {
             (22_536, 8),
             (22_539, 0),
         ]);
-        let mut state = StableManiaHitErrorState::default();
+        let mut state = StableManiaHitErrorState {
+            key: Some(Default::default()),
+            ..Default::default()
+        };
         assert_eq!(
             state.partition(
                 &[-55.0, -54.0, -45.0, -44.0, -532.0, -724.0, -424.0, -321.0],
@@ -1103,6 +1167,38 @@ mod tests {
                 vec![-532.0, -724.0, -424.0, -321.0]
             )
         );
+        let key = state.key.unwrap();
+        assert_eq!(
+            key.press,
+            [vec![-54.0], vec![-55.0], vec![-45.0], vec![-44.0]]
+        );
+        assert_eq!(
+            key.release,
+            [vec![-424.0], vec![-532.0], vec![-724.0], vec![-321.0]]
+        );
+    }
+
+    #[test]
+    fn stable_key_errors_preserve_mirrored_displayed_lanes() {
+        let mut state = StableManiaHitErrorState {
+            key: Some(Default::default()),
+            ..Default::default()
+        };
+        let events = hold(3, 0, 1_000, 1_400).to_vec();
+        assert_eq!(
+            state.partition(
+                &[-5.0, 3.0],
+                &frames(&[(995, 8), (1403, 0)]),
+                Some("mirror"),
+                0,
+                Some(StableManiaMetadata::Ready(events)),
+                Instant::now(),
+            ),
+            (vec![-5.0], vec![3.0])
+        );
+        let key = state.key.unwrap();
+        assert_eq!(key.press, [vec![], vec![], vec![], vec![-5.0]]);
+        assert_eq!(key.release, [vec![], vec![], vec![], vec![3.0]]);
     }
 
     #[test]
@@ -1147,7 +1243,7 @@ mod tests {
         let unchanged = StableReplayFrameBatch {
             start_index: 1,
             index: 1,
-            frames: std::sync::Arc::new(Vec::new()),
+            frames: Default::default(),
         };
         assert_eq!(
             paused.partition(
@@ -1171,5 +1267,38 @@ mod tests {
             ),
             (vec![77.0, -5.0], Vec::new())
         );
+    }
+
+    #[test]
+    fn late_attach_after_frame_eviction_still_classifies_retained_transitions() {
+        let mut events = hold(0, 0, 1_000, 1_400).to_vec();
+        events.extend(hold(1, 1, 5_000, 5_400));
+        // Attached after frames 0..50 left the retained window: the first hold's
+        // transitions are gone; the window starts with both keys up.
+        let mut window = frames(&[(4_000, 0), (4_995, 2), (5_404, 0), (5_700, 0)]);
+        window.start_index = 50;
+        window.index = 54;
+        let now = Instant::now();
+        let mut state = StableManiaHitErrorState::default();
+        let first = state.partition(
+            &[-3.0, 7.0, -5.0, 4.0],
+            &window,
+            Some("map"),
+            0,
+            Some(StableManiaMetadata::Ready(events)),
+            now,
+        );
+        let settled = state.partition(
+            &[],
+            &window,
+            Some("map"),
+            0,
+            None,
+            now + STABLE_MANIA_MATCH_MAX_WAIT,
+        );
+        let press: Vec<_> = first.0.into_iter().chain(settled.0).collect();
+        let release: Vec<_> = first.1.into_iter().chain(settled.1).collect();
+        // The evicted hold falls back to presses; the retained one still splits.
+        assert_eq!((press, release), (vec![-3.0, 7.0, -5.0], vec![4.0]));
     }
 }

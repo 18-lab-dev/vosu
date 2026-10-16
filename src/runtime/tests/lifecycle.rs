@@ -25,23 +25,21 @@ fn precise_publication_wakes_native_subscription_without_waking_regular_stream()
         room: Default::default(),
     });
     let precise = |play_time| {
-        Arc::new(PreciseState {
-            status: 2,
-            play_time,
-            mode: 0,
-            key_overlay: Arc::new(Vec::new()),
-            keypresses: Arc::new(vec![KeypressButton {
-                name: "K1".into(),
-                is_pressed: true,
-                count: 7,
-                pressed_at: Some(play_time),
-                released_at: None,
-            }]),
-            hit_errors: Arc::new(HitErrorArray::default()),
-            total_hit_errors: 0.0,
-            committed_hit_error_index: 0,
-            unstable_rate: 0.0,
-        })
+        Arc::new(PreciseState { catcher: None, status: 2,
+        play_time,
+        mode: 0,
+        key_overlay: Arc::new(Vec::new()),
+        keypresses: Arc::new(vec![KeypressButton {
+            name: "K1".into(),
+            is_pressed: true,
+            count: 7,
+            pressed_at: Some(play_time),
+            released_at: None,
+        }]),
+        hit_errors: Arc::new(HitErrorArray::default()),
+        total_hit_errors: 0.0,
+        committed_hit_error_index: 0,
+        unstable_rate: 0.0, })
     };
     let manager = |revision, precise| {
         let state = Arc::new(StateBundleSnapshot {

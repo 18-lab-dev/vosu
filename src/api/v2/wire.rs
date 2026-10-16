@@ -126,7 +126,7 @@ impl Document<'_> {
                 write_beatmap(out, state, parsed, current_mode, precise.play_time)
             }),
             "play": With(|out: &mut Vec<u8>| {
-                write_play(out, &state.gameplay, state.beatmap.attributes.as_ref(), current_mods, &precise.hit_errors)
+                write_play(out, &state.gameplay, state.beatmap.attributes.as_ref(), current_mods, precise, self.snapshot.runtime_settings().enable_mania_key_hit_errors)
             }),
             "keys": With(|out: &mut Vec<u8>| {
                 crate::api::precise::write_keys(out, &precise.key_overlay, &precise.keypresses)
@@ -576,10 +576,13 @@ fn write_play(
     gameplay: &GameplayState,
     attrs: Option<&crate::calculation::progressive::ProgressiveAttributes>,
     mods: &CalculateMods,
-    precise_hits: &HitErrorArray,
+    precise: &crate::state::PreciseState,
+    enable_key_hits: bool,
 ) -> io::Result<()> {
+    let precise_hits = &precise.hit_errors;
     let a = attrs.copied().unwrap_or_default();
     let s: &Statistics = &gameplay.statistics;
+    let empty = crate::model::states::KeyHitErrors::default();
     wire_object!(out {
         "failed": gameplay.failed,
         "playerName": gameplay.player_name,
@@ -606,6 +609,9 @@ fn write_play(
         "hitErrorArray": precise_hits.all.as_slice(),
         "pressHitErrors": precise_hits.press.as_slice(),
         "releaseHitErrors": precise_hits.release.as_slice(),
+        "hitOffsets": precise.hit_offsets(),
+        "keyHitErrors"?: enable_key_hits.then(|| Serde(precise_hits.key.as_ref().unwrap_or(&empty))),
+        "catcher"?: precise.active_catcher(),
         "combo": {
             "current": gameplay.combo,
             "max": gameplay.max_combo,

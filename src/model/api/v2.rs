@@ -337,6 +337,16 @@ pub struct Play<V = Vec<f64>> {
     pub press_hit_errors: V,
     #[serde(rename = "releaseHitErrors")]
     pub release_hit_errors: V,
+    #[serde(rename = "hitOffsets")]
+    pub hit_offsets: V,
+    #[serde(
+        rename = "keyHitErrors",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub key_hit_errors: Option<crate::model::states::KeyHitErrors>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catcher: Option<crate::model::memory::Catcher>,
     pub combo: Combo,
     pub mods: CalculateMods,
     pub rank: Rank,
@@ -421,6 +431,16 @@ pub struct PreciseResponse {
     pub press_hit_errors: Vec<f64>,
     #[serde(rename = "releaseHitErrors")]
     pub release_hit_errors: Vec<f64>,
+    #[serde(rename = "hitOffsets")]
+    pub hit_offsets: Vec<f64>,
+    #[serde(
+        rename = "keyHitErrors",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub key_hit_errors: Option<Box<crate::model::states::KeyHitErrors>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catcher: Option<crate::model::memory::Catcher>,
     pub tourney: Vec<PreciseTourney>,
 }
 

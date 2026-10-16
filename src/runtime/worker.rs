@@ -823,6 +823,7 @@ pub(super) fn build_manager_snapshot(
         focused_pid,
         game_focused: lifecycle.focus.game_focused,
         enable_key_overlay: config.enable_key_overlay,
+        enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
         instances: ready
             .iter()
             .map(|(entry, _)| {
@@ -851,6 +852,7 @@ pub(super) fn build_manager_snapshot(
         lifecycle.focus.game_focused,
         ApiRuntimeSettings {
             enable_key_overlay: config.enable_key_overlay,
+            enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
         },
         entries,
     )))
@@ -868,6 +870,7 @@ pub(super) struct ManagerSemantics {
     pub(super) focused_pid: Option<u32>,
     pub(super) game_focused: bool,
     pub(super) enable_key_overlay: bool,
+    pub(super) enable_mania_key_hit_errors: bool,
     pub(super) instances: BTreeMap<u32, u64>,
 }
 

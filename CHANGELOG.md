@@ -6,7 +6,14 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ### Gameplay
 
+- Added opt-in `ENABLE_MANIA_KEY_HIT_ERRORS` (default false) and vosu v2/precise `keyHitErrors` per-column press/release arrays. Stable preserves matched displayed lanes, including Mirror; lazer reads object columns and mirrors hold-release corrections.
+- Added vosu v2 `play.hitOffsets` and precise `hitOffsets`: flat cursor-x/y-offset
+  and timing-error triples for osu!standard circles and slider heads, with
+  incremental replay/map matching on stable and judgement-position reads on lazer.
+  Stable under HR reflects positions before applying the stack offset, as the game does.
 - osu!stable mania: a final hit error that matches no key press or release is now also published as a press after the play ends. In 1.0.2 the one-second fallback only ran during play, so such a hit could stay missing from `pressHitErrors` on the results screen.
+- Stable `keys.all` now uses replay-frame logical actions with lazer-compatible B names/order, frame-time transitions and incremental counts, independently of in-game overlay visibility. Legacy key members and configuration gating are unchanged. Catch movement actions remain unpressed because stable records positions rather than left/right input; dash is recorded. Preloaded replay capture follows the play clock. Lazer now accepts the full 20-action dual-stage mania range.
+- Catch: v2 `play` and precise payloads expose a vosu-only `catcher` object with the client's playfield `x` and ordinary `dashing` state, omitted outside catch gameplay. Stable samples by current play time even for preloaded replays and without new hit errors; lazer uses precise native field reads.
 
 ### Command line
 
