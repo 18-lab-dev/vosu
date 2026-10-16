@@ -2,6 +2,7 @@
 pub struct ProductionRouteDelegate {
     services: ProductionServices,
     api_keys: Option<Arc<super::api_keys::ApiKeys>>,
+    connections: OverlayConnections,
 }
 
 impl ProductionRouteDelegate {
@@ -11,7 +12,7 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default() }
     }
     pub fn with_api_keys(mut self, keys: Arc<super::api_keys::ApiKeys>) -> Self {
         self.api_keys = Some(keys);
@@ -31,6 +32,12 @@ impl ProductionRouteDelegate {
             Endpoint::CounterOpen => self.counter_open(&request),
             Endpoint::CounterOpenRoot => self.counter_open_root(),
             Endpoint::CounterDelete => self.counter_delete(&request),
+            Endpoint::CounterDetails => self.counter_details(request).await,
+            Endpoint::DashboardStatus => {
+                let mut status = self.services.report_input.dashboard_status();
+                status["connections"] = json!(self.connections.counts());
+                json_response(StatusCode::OK, status)
+            }
             Endpoint::CounterSettings => self.counter_settings(request, body).await,
             Endpoint::ApiKeys => {
                 let Some(keys) = &self.api_keys else { return internal_error("API key store unavailable"); };
@@ -43,7 +50,7 @@ impl ProductionRouteDelegate {
                     }
                 }
             }
-            Endpoint::SettingsSave => self.settings_save(body).await,
+            Endpoint::SettingsSave => self.settings_save(request.headers(), body).await,
             Endpoint::RunUpdates => self.run_updates(response_flush_barrier(&request)).await,
             Endpoint::GenerateReport => self.generate_report().await,
             Endpoint::Asset
@@ -154,6 +161,18 @@ impl ProductionRouteDelegate {
         }
     }
 
+    async fn counter_details(&self, request: Request<Body>) -> Response {
+        let Some(name) = decoded_capture(&request, "/api/counters/details/") else {
+            return json_response(StatusCode::BAD_REQUEST, json!({"error": "invalid folder name"}));
+        };
+        let counters = Arc::clone(&self.services.counters);
+        match tokio::task::spawn_blocking(move || counters.details(&name)).await {
+            Ok(Ok(details)) => json_response(StatusCode::OK, details),
+            Ok(Err(error)) => json_response(StatusCode::BAD_REQUEST, json!({"error": error.to_string()})),
+            Err(_) => internal_error("overlay size worker failed"),
+        }
+    }
+
     async fn counter_settings(&self, request: Request<Body>, body: Bytes) -> Response {
         if request.uri().path() == "/api/counters/profiles" {
             return self.counter_profiles(&request, &body);
@@ -254,8 +273,8 @@ impl ProductionRouteDelegate {
         }
     }
 
-    async fn settings_save(&self, body: Bytes) -> Response {
-        let values = match serde_json::from_slice(&body) {
+    async fn settings_save(&self, headers: &axum::http::HeaderMap, body: Bytes) -> Response {
+        let mut values: Value = match serde_json::from_slice(&body) {
             Ok(value) => value,
             Err(error) => {
                 return json_response(
@@ -264,6 +283,9 @@ impl ProductionRouteDelegate {
                 );
             }
         };
+        if let Some(object) = values.as_object_mut() {
+            object.insert("_request_origin".into(), headers.get(header::HOST).and_then(|v| v.to_str().ok()).map_or(Value::Null, |host| Value::String(format!("http://{host}"))));
+        }
         match self.services.config.save(values).await {
             Ok(()) => json_response(StatusCode::OK, json!({ "status": "updated" })),
             Err(error) => {
@@ -423,6 +445,8 @@ impl ProductionRouteDelegate {
                 Bytes::from_static(NOT_FOUND.as_bytes()),
             );
         };
+        let connections = self.connections.clone();
+        let overlay = socket_overlay(&request);
         if endpoint == Endpoint::WsV2Subscribe {
             let hub = self.services.websocket.subscriptions.clone();
             return websocket::upgrade_response(
@@ -430,6 +454,7 @@ impl ProductionRouteDelegate {
                 request,
                 tracker,
                 move |_, socket| async move {
+                    let _registration = connections.register(overlay);
                     bridge_v2_subscription_socket(socket, hub).await;
                 },
             )
@@ -468,6 +493,7 @@ impl ProductionRouteDelegate {
             request,
             tracker,
             move |_, socket| async move {
+                let _registration = connections.register(overlay);
                 bridge_socket(
                     socket,
                     hub,

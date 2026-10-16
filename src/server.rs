@@ -5,6 +5,7 @@ pub mod auth;
 pub(crate) mod broker;
 pub mod catalog;
 pub mod files;
+pub mod origins;
 pub mod pages;
 pub mod routes;
 pub mod runtime;

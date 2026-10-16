@@ -13,13 +13,9 @@ const SEARCH_FORM: &str = r#"<form class="search-form" role="search"><label clas
 /// Third-party disclosure for the Available page. It sits outside the results
 /// section so catalog searches, which replace only the results, keep it.
 pub(super) const CATALOG_NOTICE: &str = concat!(
-    r#"<section class="catalog-notice" aria-labelledby="catalog-notice-title">"#,
-    r#"<h2 id="catalog-notice-title">Community overlays</h2>"#,
-    r#"<p>Overlays listed here are made and maintained by their respective authors, not by Vosu, and Vosu does not review or endorse them. Each author keeps the rights to their overlay.</p>"#,
-    r#"<p>The catalog is served by tosu.app, and its overlay downloads are currently hosted on osuck.link. Vosu is not affiliated with the tosu project and does not operate or control either service, so report catalog or download outages to the <a href="https://github.com/tosuapp/tosu/issues" target="_blank" rel="noopener noreferrer">tosu project</a>, not to Vosu.</p>"#,
-    r#"<p>Installed overlays run their authors' JavaScript with the same access as this dashboard: they can read game data, install, remove, and configure overlays, and change Vosu settings. Install only overlays you trust.</p>"#,
-    r#"<p><a href="https://github.com/tosuapp/counters" target="_blank" rel="noopener noreferrer">View upstream catalog</a> · <a href="https://github.com/shiruviaa/vosu/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">Privacy policy</a></p>"#,
-    "</section>",
+    r#"<details class="catalog-notice" open><summary>Community overlays · third-party code</summary>"#,
+    r#"<p>Install only overlays you trust. They run their authors' JavaScript on the overlay origin, separate from this dashboard. Catalog: <a href="https://tosu.app" target="_blank" rel="noopener noreferrer">tosu.app</a>; downloads: osuck.link. Vosu does not review or endorse these overlays.</p>"#,
+    "</details>",
 );
 
 pub(super) fn render_homepage(
@@ -234,7 +230,6 @@ pub(super) fn render_catalog_counters(
                         .settings
                         .as_ref()
                         .is_some_and(|value| !value.is_empty()),
-                    external_settings: counter.has_settings,
                     assets: &assets,
                     resolution: &counter.resolution,
                     compatible: counter.compatiblewith.as_deref().unwrap_or_default(),
@@ -278,7 +273,6 @@ pub(super) struct CounterCard<'a> {
     pub(super) download_link: Option<&'a str>,
     pub(super) author_links: &'a [String],
     pub(super) settings: bool,
-    pub(super) external_settings: bool,
     pub(super) assets: &'a [&'a str],
     pub(super) resolution: &'a [serde_json::Value],
     pub(super) compatible: &'a [String],
@@ -362,13 +356,23 @@ fn usecase_labels(usecase: Option<&serde_json::Value>) -> Vec<String> {
     };
     values
         .into_iter()
+        .flat_map(|value| value.split(','))
         .filter(|value| !value.trim().is_empty())
-        .map(|value| match value {
-            "ingame" => "In-game".to_owned(),
-            "obs-overlay" => "OBS".to_owned(),
-            other => other.to_owned(),
+        .map(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "ingame" | "in-game" | "in game" => "In-game".to_owned(),
+            "obs-overlay" | "obs-overlays" | "obs" => "OBS".to_owned(),
+            _ => value.trim().to_owned(),
         })
         .collect()
+}
+
+fn display_version(version: &str) -> String {
+    let raw = version.trim().trim_start_matches('v');
+    let mut parts: Vec<&str> = raw.split('.').collect();
+    if parts.len() == 3 && parts[2] == "0" {
+        parts.pop();
+    }
+    parts.join(".")
 }
 
 /// Catalog entries are listing rows led by one preview image at a time; the
@@ -380,7 +384,7 @@ fn render_catalog_card(card: &CounterCard<'_>, status: &str, identity: &str) -> 
     let download = escape_html(card.download_link.unwrap_or_default());
     let update = if card.updatable && card.download_link.is_some() {
         format!(
-            r#"<button class="button button-cyan" type="button" data-action="update-counter" data-download-url="{download}" data-install-name="{install_name}">Update</button>"#
+            r#"<button class="button badge-warning" type="button" data-action="update-counter" data-download-url="{download}" data-install-name="{install_name}">Update available</button>"#
         )
     } else {
         String::new()
@@ -425,9 +429,9 @@ fn render_catalog_card(card: &CounterCard<'_>, status: &str, identity: &str) -> 
         _ => format!(
             concat!(
                 r#"<div class="gallery" data-gallery-index="0">{slides}{enlarge}"#,
-                r#"<button class="gallery__nav gallery__nav--prev" type="button" data-action="gallery-prev" aria-label="Previous {name} preview">‹</button>"#,
+                r#"<div class="gallery__controls"><button class="gallery__nav gallery__nav--prev" type="button" data-action="gallery-prev" aria-label="Previous {name} preview">‹</button>"#,
                 r#"<button class="gallery__nav gallery__nav--next" type="button" data-action="gallery-next" aria-label="Next {name} preview">›</button>"#,
-                r#"<span class="gallery__count" aria-live="polite">1 / {count}</span></div>"#,
+                r#"<span class="gallery__count" aria-live="polite">1 / {count}</span></div></div>"#,
             ),
             slides = slides,
             enlarge = enlarge,
@@ -457,17 +461,11 @@ fn render_catalog_card(card: &CounterCard<'_>, status: &str, identity: &str) -> 
     if card.downloaded {
         tags.push_str(r#"<span class="badge">Installed</span>"#);
     }
-    if card.updatable {
-        tags.push_str(r#"<span class="badge badge-cyan">Update available</span>"#);
-    }
-    if card.external_settings {
-        tags.push_str(r#"<span class="badge badge-cyan">Has settings</span>"#);
-    }
     format!(
         concat!(
             r#"<article class="counter-card catalog-card{status}"{identity}>{gallery}"#,
             r#"<div class="catalog-card__main"><div class="counter-card__title-row"><h2 title="{name}">{name}</h2><span class="counter-card__version">v{version}</span></div>"#,
-            r#"<p class="counter-card__meta"><span>by {author}</span>{links}</p>"#,
+            r#"<p class="counter-card__meta">{author}{links}</p>"#,
             r#"<p class="catalog-card__facts">{facts}</p>"#,
             r#"<div class="catalog-card__footer"><p class="catalog-card__tags">{tags}</p><div class="counter-actions">{update}{primary}</div></div>"#,
             "</div></article>",
@@ -476,8 +474,14 @@ fn render_catalog_card(card: &CounterCard<'_>, status: &str, identity: &str) -> 
         identity = identity,
         gallery = gallery,
         name = name,
-        version = escape_html(card.version),
-        author = escape_html(card.author),
+        version = escape_html(&display_version(card.version)),
+        author = if card.author.trim().eq_ignore_ascii_case("unknown")
+            || card.author.trim().is_empty()
+        {
+            String::new()
+        } else {
+            format!("<span>by {}</span>", escape_html(card.author))
+        },
         links = render_author_links(card.name, card.author_links),
         facts = facts,
         tags = tags,
@@ -574,13 +578,21 @@ fn render_installed_card(
     } else {
         String::new()
     };
+    let update = if card.updatable && card.download_link.is_some() {
+        format!(
+            r#"<button class="badge badge-warning" type="button" data-action="update-counter" data-download-url="{}" data-install-name="{folder}">Update available</button>"#,
+            escape_html(card.download_link.unwrap_or_default())
+        )
+    } else {
+        String::new()
+    };
     format!(
         concat!(
             r#"<article class="counter-card{status}" data-overlay-id="{folder}"{identity}>"#,
             r#"<div class="counter-card__preview"><div {stage}><iframe src="{src}" loading="lazy" width="{width}" height="{height}" scrolling="no" tabindex="-1" title="{name} overlay preview"></iframe></div><button class="preview-expand" type="button" data-action="expand-preview" aria-label="Enlarge {name} preview" title="Enlarge preview"><span>Enlarge</span></button></div>"#,
             r#"<div class="counter-card__body"><div class="counter-card__identity"><h2 title="{name}">{name}</h2>"#,
-            r#"<p class="counter-card__meta"><span>v{version}</span><span>{author}</span><button class="meta-copy" type="button" data-action="copy-metadata" data-copy-label="Resolution" data-copy-value="{resolution}" title="Copy resolution">{resolution}</button></p>"#,
-            "{folder_line}</div>{actions}</div>",
+            r#"<p class="counter-card__meta">{version}{author}<button class="meta-copy" type="button" data-action="copy-metadata" data-copy-label="Resolution" data-copy-value="{resolution}" title="Copy resolution">{resolution}</button></p>"#,
+            r#"{folder_line}<div class="counter-card__chips">{update}<span class="badge connected-chip" hidden></span></div></div>{actions}</div>"#,
             r#"<button class="counter-card__url" type="button" data-action="copy-metadata" data-copy-label="URL" data-copy-value="{url}" title="{url} (click to copy, Shift-click to open)"><code>/{folder}/</code><span class="counter-card__url-action">Copy URL</span></button>"#,
             "</article>",
         ),
@@ -588,15 +600,29 @@ fn render_installed_card(
         folder = folder,
         identity = identity,
         stage = stage,
-        src = escape_html(&path),
+        src = &absolute_url,
         width = width,
         height = height,
         name = name,
-        version = escape_html(card.version),
-        author = escape_html(card.author),
+        version = if card.version.trim().is_empty() {
+            String::new()
+        } else {
+            format!(
+                "<span>v{}</span>",
+                escape_html(&display_version(card.version))
+            )
+        },
+        author = if card.author.trim().is_empty()
+            || card.author.trim().eq_ignore_ascii_case("unknown")
+        {
+            String::new()
+        } else {
+            format!("<span>{}</span>", escape_html(card.author.trim()))
+        },
         resolution = resolution,
         folder_line = folder_line,
         actions = actions,
+        update = update,
         url = absolute_url,
     )
 }
@@ -679,7 +705,7 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         #[cfg(target_os = "linux")]
         settings_item(
             "Start at login",
-            "Run vosu as a systemd user service when you log in.",
+            "Run Vosu as a systemd user service when you log in.",
             &settings_switch("START_AT_LOGIN", config.start_at_login),
         ),
     ];
@@ -734,7 +760,7 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
             ),
             settings_item(
                 "V2 subscription debounce",
-                "Selected-field sampling interval and minimum milliseconds between its WebSocket frames.",
+                "Wait at least this long between updates sent to overlays that request selected V2 fields.",
                 &settings_number(
                     "V2_SUBSCRIPTION_DEBOUNCE",
                     config.v2_subscription_debounce,
@@ -759,11 +785,29 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
                 &settings_number("SERVER_PORT", config.server_port, 1.0, 65_535.0, "1"),
             ),
             settings_item(
+                "Dashboard address",
+                "Trusted dashboard listener. Loopback-only by default, independently of the overlay listener.",
+                &settings_text("DASHBOARD_IP", &config.dashboard_ip, ""),
+            ),
+            settings_item(
+                "Dashboard port",
+                "Separate port for trusted management pages. Overlays keep their original port and browser storage.",
+                &settings_number("DASHBOARD_PORT", config.dashboard_port, 1.0, 65_535.0, "1"),
+            ),
+            settings_item(
                 "Allowed IP addresses",
-                "Comma-separated clients permitted to connect. Wildcard octets such as 192.168.*.* are supported.",
+                "One IP address or CIDR range per line. Prefer CIDR, such as 100.64.0.0/10 for Tailscale, over legacy wildcard octets that may include public addresses (100.*.*.* is broader than Tailscale). The literal legacy hostname/raw-header token absolute comes from tosu defaults; it is not a wildcard or a peer-policy bypass.",
                 &format!(
-                    r#"<textarea class="settings-control" id="setting-ALLOWED_IPS" data-id="ALLOWED_IPS">{}</textarea>"#,
-                    escape_html(&config.allowed_ips),
+                    r#"<textarea class="settings-control allowlist-editor" id="setting-ALLOWED_IPS" data-id="ALLOWED_IPS" wrap="off" rows="5" spellcheck="false" aria-describedby="allowlist-warning">{}</textarea><span id="allowlist-warning" class="allowlist-warning" role="status"></span>"#,
+                    escape_html(
+                        &config
+                            .allowed_ips
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|entry| !entry.is_empty())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ),
                 ),
             ),
         ],
@@ -789,7 +833,7 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         ],
     );
     format!(
-        r#"<form class="settings" id="runtime-settings"><header class="settings-header"><div><h2>Runtime configuration</h2><p>Changes save when a field loses focus or a checkbox changes. Changing the listener address or port reconnects this page.</p></div><span class="settings-status" role="status" aria-live="polite">All changes saved</span></header>{general}{data}{server}{advanced}<p class="settings-empty" hidden>No settings match your search.</p></form>"#
+        r#"<form class="settings" id="runtime-settings"><header class="settings-header"><div><h2>Runtime configuration</h2><p>Network addresses, ports, and allowed clients require Apply, then Keep within 30 seconds or the change reverts. Other fields save when they lose focus or a checkbox changes.</p></div><span class="settings-status" role="status" aria-live="polite">All changes saved</span></header>{general}{data}{server}{advanced}<p class="settings-empty" hidden>No settings match your search.</p></form>"#
     )
 }
 

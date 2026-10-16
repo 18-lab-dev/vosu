@@ -311,12 +311,33 @@ fn providers() -> RouteProviders {
 }
 
 async fn dispatch(method: Method, uri: &str, origin: Option<&str>, body: Body) -> Response {
-    let mut request = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header(header::HOST, "localhost:24050");
+    let dashboard = origin == Some("http://localhost:24052");
+    let mut providers = providers();
+    let origins = Arc::new(
+        vosu::server::origins::Origins::new(
+            "http://127.0.0.1:24050".into(),
+            "http://127.0.0.1:24052".into(),
+        )
+        .unwrap(),
+    );
+    providers.authorization = Arc::new(vosu::server::origins::OriginAuthorizer {
+        inner: providers.authorization,
+        origins: Arc::clone(&origins),
+        dashboard,
+    });
+    let mut request = Request::builder().method(method).uri(uri).header(
+        header::HOST,
+        if dashboard {
+            "localhost:24052"
+        } else {
+            "localhost:24050"
+        },
+    );
     if let Some(origin) = origin {
         request = request.header(header::ORIGIN, origin);
+        if dashboard {
+            request = request.header("X-Vosu-CSRF", &origins.csrf);
+        }
     }
     let mut request = request.body(body).unwrap();
     request
@@ -325,7 +346,7 @@ async fn dispatch(method: Method, uri: &str, origin: Option<&str>, body: Body) -
             [127, 0, 0, 1],
             40000,
         )))));
-    routes::dispatch(State(providers()), request).await
+    routes::dispatch(State(providers), request).await
 }
 
 #[tokio::test]
@@ -364,7 +385,7 @@ async fn profile_management_retains_exact_routing_and_mutation_provenance() {
         dispatch(
             Method::POST,
             "/api/counters/profiles",
-            Some("http://localhost:24050"),
+            Some("http://localhost:24052"),
             Body::from("{}")
         )
         .await
@@ -425,7 +446,7 @@ async fn exact_method_routing_envelopes_cors_and_body_limit_are_observable() {
     let oversized = dispatch(
         Method::POST,
         "/api/settingsSave",
-        Some("http://localhost:24050"),
+        Some("http://localhost:24052"),
         Body::from(vec![0; routes::MAX_POST_BODY + 1]),
     )
     .await;

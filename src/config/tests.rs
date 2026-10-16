@@ -86,6 +86,8 @@ V2_SUBSCRIPTION_DEBOUNCE = 1.0
 
 SERVER_IP = \"127.0.0.1\"
 SERVER_PORT = 24050.0
+DASHBOARD_IP = \"127.0.0.1\"
+DASHBOARD_PORT = 24052.0
 ALLOWED_IPS = \"127.0.0.1,localhost,absolute\"
 
 STATIC_FOLDER_PATH = \"./static\"
@@ -117,6 +119,8 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
             "READ_MANIA_SCROLL_SPEED",
             "SERVER_IP",
             "SERVER_PORT",
+            "DASHBOARD_IP",
+            "DASHBOARD_PORT",
             "STATIC_FOLDER_PATH",
             "ALLOWED_IPS",
         ]

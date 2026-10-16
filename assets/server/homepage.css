@@ -1086,3 +1086,25 @@ a:hover {
   .settings-layout { flex-direction: column; align-items: stretch; }
   .settings-navigation { position: static; flex-basis: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Dashboard telemetry remains quiet and readable beside the overlay grid. */
+.attachment-status { padding: .55rem clamp(1rem, 3vw, 2rem); color: var(--paper-muted); border-bottom: 1px solid var(--line); font-size: .8rem; }
+.preview-scale { position: absolute; bottom: .5rem; left: .5rem; z-index: 3; padding: .15rem .4rem; border-radius: 4px; background: #100e18e8; color: var(--paper); font-size: .72rem; pointer-events: none; }
+.counter-card__chips { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin-top: .4rem; }
+.badge-warning { color: #ffce70; border: 1px solid #ffce7070; background: #ffce701a; cursor: pointer; }
+.badge-warning:hover { background: #ffce7033; }
+.connected-chip { color: #8fe6b0; background: #8fe6b018; }
+.confirm-description { white-space: pre-wrap; overflow-wrap: anywhere; }
+.catalog-notice summary { cursor: pointer; font-size: .85rem; color: var(--paper-muted); }
+.catalog-notice p { margin-top: .5rem; }
+.gallery:has(.gallery__controls) { grid-template-rows: minmax(0, 1fr) auto; }
+.gallery:has(.gallery__controls) .preview-expand { bottom: 2.5rem; }
+.gallery__controls { display: flex; width: 100%; justify-content: center; align-items: center; gap: .7rem; padding: .3rem; background: var(--ink); }
+.gallery__controls .gallery__nav { position: static; transform: none; width: 1.8rem; height: 1.8rem; }
+.gallery__controls .gallery__count { position: static; order: -1; }
+.settings-item__control:has(> .settings-unit) { display: flex; align-items: center; }
+.settings-item__control:has(> .settings-unit) .settings-control { min-width: 0; flex: 1; }
+.settings-unit { margin-left: .4rem; color: var(--paper-muted); }
+.allowlist-editor { white-space: pre; overflow-x: auto; resize: vertical; font-family: monospace; }
+.allowlist-warning { display: block; max-width: 26rem; color: #ffce70; font-size: .8rem; }
+#confirm-dialog .dialog-actions { position: static; margin: 0; }

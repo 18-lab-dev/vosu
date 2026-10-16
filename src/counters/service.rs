@@ -246,6 +246,10 @@ impl ReloadableCounterService {
         self.current.load_full().delete(name)
     }
 
+    pub fn details(&self, name: &str) -> Result<Value, CounterError> {
+        self.current.load_full().details(name)
+    }
+
     pub fn settings_store(&self) -> SettingsStore {
         self.current.load_full().settings.clone()
     }
@@ -490,6 +494,27 @@ impl CounterService {
         let path = self.openable_counter_path(name)?;
         self.opener.open(&path)?;
         Ok(())
+    }
+
+    /// Bounded metadata-only scan. Links are never followed, including a linked root.
+    pub fn details(&self, name: &str) -> Result<Value, CounterError> {
+        validate_component(name).map_err(|_| CounterError::InvalidName)?;
+        let path = fs::canonicalize(&self.static_root)?.join(name);
+        let metadata = fs::symlink_metadata(&path)?;
+        let mut scan = FolderSize::new(10_000, 32);
+        if metadata.is_dir() && !metadata_is_link(&metadata) {
+            if scan.directory(&path, 0).is_err() {
+                scan.complete = false;
+            }
+        } else {
+            scan.bytes = metadata.len();
+        }
+        Ok(serde_json::json!({
+            "path": path,
+            "bytes": scan.bytes,
+            "complete": scan.complete,
+            "entries": scan.entries,
+        }))
     }
 
     pub fn delete(&self, name: &str) -> Result<(), CounterError> {
@@ -858,5 +883,151 @@ fn hex(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
+    }
+}
+
+struct FolderSize {
+    bytes: u64,
+    entries: usize,
+    max_entries: usize,
+    max_depth: usize,
+    deadline: std::time::Instant,
+    complete: bool,
+}
+
+fn metadata_is_link(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // Includes junctions and other reparse points, not only symbolic links.
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+impl FolderSize {
+    fn new(max_entries: usize, max_depth: usize) -> Self {
+        Self {
+            bytes: 0,
+            entries: 0,
+            max_entries,
+            max_depth,
+            deadline: std::time::Instant::now() + Duration::from_millis(100),
+            complete: true,
+        }
+    }
+
+    fn directory(&mut self, path: &Path, depth: usize) -> io::Result<()> {
+        if depth >= self.max_depth
+            || self.entries >= self.max_entries
+            || std::time::Instant::now() >= self.deadline
+        {
+            self.complete = false;
+            return Ok(());
+        }
+        // Hold a no-follow directory descriptor while enumerating. Child paths
+        // remain anchored to that descriptor even if an installer renames it.
+        #[cfg(target_os = "linux")]
+        let directory = {
+            use std::os::unix::fs::OpenOptionsExt;
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+                .open(path)?
+        };
+        #[cfg(target_os = "linux")]
+        let path = {
+            use std::os::fd::AsRawFd;
+            PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()))
+        };
+        #[cfg(windows)]
+        let directory = {
+            use std::os::windows::fs::OpenOptionsExt;
+            // Open the reparse point itself, and deny delete/rename sharing
+            // while this directory and its descendants are enumerated.
+            let directory = OpenOptions::new()
+                .read(true)
+                .share_mode(0x1 | 0x2)
+                .custom_flags(0x0200_0000 | 0x0020_0000)
+                .open(path)?;
+            if metadata_is_link(&directory.metadata()?) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "linked directory",
+                ));
+            }
+            directory
+        };
+        #[cfg(windows)]
+        let _directory_guard = directory;
+        for entry in fs::read_dir(path)? {
+            if self.entries >= self.max_entries || std::time::Instant::now() >= self.deadline {
+                self.complete = false;
+                break;
+            }
+            self.entries += 1;
+            let Ok(entry) = entry else {
+                self.complete = false;
+                continue;
+            };
+            let Ok(metadata) = fs::symlink_metadata(entry.path()) else {
+                self.complete = false;
+                continue;
+            };
+            if metadata.is_dir() && !metadata_is_link(&metadata) {
+                if self.directory(&entry.path(), depth + 1).is_err() {
+                    self.complete = false;
+                }
+            } else {
+                self.bytes = self.bytes.saturating_add(metadata.len());
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod folder_size_tests {
+    use super::*;
+
+    #[test]
+    fn scan_reports_bytes_and_entry_depth_and_time_bounds() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("a"), b"12345").unwrap();
+        fs::write(root.path().join("b"), b"123").unwrap();
+        let mut all = FolderSize::new(10, 10);
+        all.directory(root.path(), 0).unwrap();
+        assert_eq!(all.bytes, 8);
+        assert!(all.complete);
+        let mut entries = FolderSize::new(1, 10);
+        entries.directory(root.path(), 0).unwrap();
+        assert_eq!(entries.entries, 1);
+        assert!(!entries.complete);
+        let mut depth = FolderSize::new(10, 0);
+        depth.directory(root.path(), 0).unwrap();
+        assert!(!depth.complete);
+        let mut timed = FolderSize::new(10, 10);
+        timed.deadline = std::time::Instant::now();
+        timed.directory(root.path(), 0).unwrap();
+        assert!(!timed.complete);
+        assert_eq!(timed.entries, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_never_follows_links_to_outside_or_cycles() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret"), vec![0; 1_000_000]).unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("outside")).unwrap();
+        std::os::unix::fs::symlink(root.path(), root.path().join("cycle")).unwrap();
+        let mut scan = FolderSize::new(10, 10);
+        scan.directory(root.path(), 0).unwrap();
+        assert!(scan.complete);
+        assert_eq!(scan.entries, 2);
+        assert!(scan.bytes < 1_000_000);
     }
 }

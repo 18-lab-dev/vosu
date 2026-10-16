@@ -139,6 +139,8 @@ def launch(cfg: dict[str, Any]) -> tuple[dict[str, subprocess.Popen[bytes]], dic
                 "",
                 'SERVER_IP = "127.0.0.1"',
                 f"SERVER_PORT = {port}.0",
+                'DASHBOARD_IP = "127.0.0.1"',
+                'DASHBOARD_PORT = 0.0',
                 'ALLOWED_IPS = "127.0.0.1,localhost,absolute"',
                 "",
                 'STATIC_FOLDER_PATH = "./static"',

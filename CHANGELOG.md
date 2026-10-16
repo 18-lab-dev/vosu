@@ -4,6 +4,22 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased
 
+### Dashboard origin
+
+- Move trusted dashboard pages and management APIs to an independent loopback listener on port 24052 (`DASHBOARD_IP`/`DASHBOARD_PORT`), keeping overlay URLs on port 24050 so localStorage and IndexedDB remain intact. Add `/api/dashboard` discovery and safe path/query-preserving redirects for old dashboard links. Tray, startup and second-instance links follow the dashboard listener.
+- Reject overlay-origin management mutations, require dashboard provenance plus a per-start CSRF token, and never serve overlay scripts on the dashboard origin. Scoped API keys, profiles, broker tokens, embed postMessage behavior and overlay command-socket settings remain compatible.
+- Add explicit network Apply with server-side 30-second automatic rollback unless confirmed from the new dashboard origin. Rebind both listeners independently. Support IPv4/IPv6 CIDR allowlists, including the precise Tailscale `100.64.0.0/10` range, alongside legacy wildcard octets.
+- Harden dashboard HTML with inert runtime context, CSP, Host checks, and no dashboard WebSocket upgrades. Network rollback targets cannot come from URL parameters; pending edits survive crashes as rollback journals, Keep checks both listeners, and dashboard binds cannot reuse recorded overlay origins.
+
+### Dashboard
+
+- Keep installed previews at or below their native size and label reduced previews with their scale.
+- Give overlay updates a warning-coloured action, remove redundant settings badges, and use styled update/delete dialogs with the folder path and a bounded on-disk file-size scan.
+- Match Installed cards against the catalog too, so their update action is visible without visiting Available; update the actual local folder even if it has a custom name. Hide empty author segments rather than leaving doubled metadata separators.
+- Show per-instance attachment/version/polling information and identified live WebSocket connection counts. Counts include previews and profile-qualified command sockets, not unique users; unidentified connections are intentionally omitted.
+- Present allowlist entries one per line, warn about public-space CIDR ranges (including `0.0.0.0/0` and `::/0`) and broad wildcards, add interval units, simplify subscription wording, and make the catalog notice collapsible with quieter carousel controls and normalized display metadata.
+- Download diagnostics through an authenticated fetch, and keep delete confirmation usable when a folder-size scan is incomplete or unavailable.
+
 ### Overlay settings
 
 - Add named, revocable, hash-only API keys with fixed settings/profile scopes,

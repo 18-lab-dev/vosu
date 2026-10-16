@@ -40,7 +40,7 @@ The current release is **1.0.2**. Download `vosu-linux-v1.0.2.zip` or `vosu-wind
 1. Extract the complete archive into a writable directory. Its root contains `vosu` or `vosu.exe`, plus `LICENSE`.
 2. On Linux, restore the executable bit if your archive tool removed it: `chmod +x vosu`.
 3. Run `./vosu` on Linux or `vosu.exe` on Windows.
-4. Open <http://127.0.0.1:24050/>. By default, vosu opens the dashboard after startup.
+4. Open <http://127.0.0.1:24052/>. By default, vosu opens the dashboard after startup. Overlay URLs stay on port **24050**, preserving their browser storage.
 
 Do not run the Windows executable directly from an archive or a OneDrive-controlled directory. The updater cannot provide safe replacement and rollback in those locations. Windows executables are unsigned, so Windows SmartScreen may warn before the first launch.
 
@@ -339,6 +339,8 @@ POLL_RATE = 150.0
 PRECISE_DATA_POLL_RATE = 10.0
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 24050.0
+DASHBOARD_IP = "127.0.0.1"
+DASHBOARD_PORT = 24052.0
 STATIC_FOLDER_PATH = "./static"
 ALLOWED_IPS = "127.0.0.1,localhost,absolute"
 ```
@@ -359,12 +361,18 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 | `V2_SUBSCRIPTION_DEBOUNCE` | `1` | Selected-field sampling interval and minimum interval between its WebSocket frames, in milliseconds; range `1`–`60000`, fractional values supported. |
 | `SHOW_MP_COMMANDS` | `false` | Include multiplayer commands where supported. |
 | `READ_MANIA_SCROLL_SPEED` | `true` | Read mania scroll speed. |
-| `SERVER_IP` | `127.0.0.1` | Listener hostname or address. |
-| `SERVER_PORT` | `24050` | Listener port. |
+| `SERVER_IP` | `127.0.0.1` | Overlay/data listener hostname or address (unchanged overlay origin). |
+| `SERVER_PORT` | `24050` | Overlay/data listener port. |
+| `DASHBOARD_IP` | `127.0.0.1` | Independent trusted dashboard listener, loopback-only by default even when overlays are shared on a LAN. |
+| `DASHBOARD_PORT` | `24052` | Trusted dashboard and management port. |
 | `STATIC_FOLDER_PATH` | `./static` | Counter root; the default maps to the data directory. |
-| `ALLOWED_IPS` | `127.0.0.1,localhost,absolute` | Peer IP patterns and allowed Origin/Referer host tokens. |
+| `ALLOWED_IPS` | `127.0.0.1,localhost,absolute` | Peer IPs/CIDRs, legacy IPv4 wildcard octets, and allowed Origin/Referer hostname tokens. Loopback peers are always allowed. `absolute` is a literal legacy hostname token, not a wildcard or authentication bypass. |
 
 Disk configuration clamps oversized/nonfinite intervals to `60000` ms with a warning. Settings API updates above that ceiling fail without publishing or persisting any part of the update.
+
+Network settings (`SERVER_IP`, `SERVER_PORT`, `DASHBOARD_IP`, `DASHBOARD_PORT`, `ALLOWED_IPS`) use **Apply network settings**, not autosave. Confirm **Keep network settings** from the new dashboard origin within 30 seconds; otherwise vosu restores the previous network configuration and listeners even if the browser closes. Only one change may be pending. Other settings still autosave. File edits remain live-rebindable without this dashboard-only confirmation workflow.
+
+Use CIDR for networks: `100.64.0.0/10` is the Tailscale range; `100.*.*.*` is a much broader legacy wildcard covering public address space. IPv6 CIDRs such as `fd00::/8` are supported. Hostnames (including `localhost` and legacy `absolute`) permit matching browser provenance, never arbitrary non-loopback peers.
 
 Authorization requires an allowed network peer and, when supplied, an allowed `Origin` or `Referer`. A hostname token does not allow an arbitrary remote peer. Keep the default loopback listener unless remote access is intentionally configured and protected.
 
@@ -479,7 +487,7 @@ File routes enforce root containment and support validated single HTTP byte rang
 
 - `GET /`, `/settings`, `/available`, `/favicon.ico` (favicon responses add `X-Vosu-Identity: vosu` for bounded second-launch discovery without changing page bodies)
 - `GET /assets/{path}` and the fallback counter-static route
-- `POST /api/settingsSave` rejects the whole save when a submitted interval or port is not a finite number or is out of range: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` 1–60000, `V2_SUBSCRIPTION_DEBOUNCE` 1–60000 (milliseconds), and `SERVER_PORT` a whole number 1–65535.
+- `POST /api/settingsSave` rejects the whole save when a submitted interval or port is not a finite number or is out of range: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` 1–60000, `V2_SUBSCRIPTION_DEBOUNCE` 1–60000 (milliseconds), and both `SERVER_PORT` and `DASHBOARD_PORT` whole numbers 1–65535. Network fields require `_network_action: "apply"` and then `_network_action: "confirm"` from the new origin before the 30-second server timeout.
 - `POST /api/runUpdates` returns an HTTP 200 JSON `error` for externally managed installs instead of attempting replacement.
 - `POST /api/generateReport`
 - `GET /api/counters/search/{query}[?source=installed|available]` returns card HTML for installed counters by default or for the catalog with `source=available`; any other `source` returns 400. The query keeps letters, digits, and whitespace, and a card matches when any word matches its name, author, or compatible clients. Lookup failures return 502 with an escaped `Error:` body.
@@ -553,9 +561,9 @@ See [ADR 0014](docs/decisions/0014-overlay-settings-profiles.md).
 
 POST bodies are capped at 1 MiB. Generated reports escape machine, configuration, counter, and log data before inserting it into HTML.
 
-Management POSTs require the existing trusted-peer policy **and** browser provenance matching the native HTTP listener's exact scheme, host, and port. `Origin` is authoritative; only when absent may a same-origin `Referer` authorize the action. Missing, opaque (`null`), malformed, or duplicate provenance is not mutation intent. Forwarded headers are not trusted; HTTPS reverse-proxy origins are not an implicit exception. Rejected mutations return 403. Former management GETs return 404, with no redirect or legacy mutation alias. Non-browser management clients must explicitly supply the same origin; this is CSRF protection, not authentication against malicious local programs.
+Management POSTs require the existing trusted-peer policy, exact **dashboard-origin** browser provenance, and the per-start `X-Vosu-CSRF` token injected only into dashboard pages. `Origin` is authoritative; only when absent may a same-origin `Referer` authorize the action. Missing, opaque (`null`), malformed, or duplicate provenance is not mutation intent. Forwarded headers are not trusted. Rejected mutations return 403. The overlay listener rejects management mutations even from same-origin overlay scripts; scoped API-key settings/profile writes and overlay command-socket settings writes remain available.
 
-Installed counter scripts share the dashboard's origin and are therefore trusted code, not isolated tenants. They can satisfy the same-origin mutation check and invoke management operations beyond their own settings. Do not install untrusted counters; origin checks do not fix this privilege boundary. [ADR 0013](docs/decisions/0013-counters-share-dashboard-origin.md) keeps the shared origin so counter URLs, counter storage, and settings links stay compatible, and the **Available** page warns about it.
+The dashboard moved to `http://127.0.0.1:24052`; overlays remain on `http://127.0.0.1:24050/<overlay>/` (including the `localhost` alias), so their localStorage/IndexedDB origins do not change. Dashboard previews load that overlay origin, never overlay code on the dashboard origin. Overlay-origin GETs to `/`, `/settings`, and `/available` redirect with path/query preserved to the configured dashboard address, never an arbitrary request Host. `GET /api/dashboard` returns `{"origin":"http://127.0.0.1:24052"}` using the effective dashboard bind, with wildcard addresses mapped to loopback. Tray, startup, and second-launch links use the dashboard origin. See [ADR 0016](docs/decisions/0016-separate-dashboard-origin.md), superseding the shared-origin portion of ADR 0013.
 
 Read-only JSON, static/file routes, counter-settings GETs, and state/settings WebSockets need no new headers or tokens. Headerless and opaque/file-origin reads remain available to trusted peers. Hosted stock counters retain `window.COUNTER_PATH` and the existing settings protocol unchanged. On legacy sockets, `getSettings`, `updateSettings` replies, and `applyFilters` remain readable without mutation authorization; `saveSettings` requires same-origin provenance captured at upgrade or the native command-broker credential described below, otherwise the socket closes with 1008 before saving or relaying. File-loaded and other non-hosted overlays may read settings but must use the hosted settings page or an authenticated native broker to write them.
 
@@ -618,7 +626,7 @@ Keys are not displayed in the embedded overlay editor (`embed=1`).
   `POST /api/counters/settings/<name>` value saves, never `?update=yes` schema saves.
 - `profiles:manage`: all `POST /api/counters/profiles` actions.
 - Neither scope grants updates, install/delete, reports, daemon settings, or
-  key management. Those remain exact same-origin only.
+  key management. Those require dashboard-origin provenance and its CSRF token.
 
 Native WebSocket clients set this header on the `/websocket/commands` upgrade:
 
@@ -660,7 +668,7 @@ management change replaces that registry.
 On Unix, loading a group/world-accessible file or one owned by another user
 warns without disabling otherwise valid keys. Restore private ownership and 0600 permissions.
 
-Dashboard-only management: same-origin `GET /api/keys` returns `{keys:[...]}`
+Dashboard-only management: dashboard-origin provenance and `X-Vosu-CSRF` are required for `GET /api/keys`, which returns `{keys:[...]}`
 without secrets/hashes; `POST /api/keys` accepts
 `{action:"create",name,scopes}` (returns `{key,entry}` once),
 `{action:"rename",id,name}`, or `{action:"revoke",id}`. Names are 1–64 printable

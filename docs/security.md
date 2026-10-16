@@ -50,7 +50,7 @@ vosu needs no elevation, installs no driver or service, and writes no registry k
 
 ## Network exposure
 
-The listener is `127.0.0.1:24050` by default. Anything on the computer that can connect can read game state, and browser pages from other origins are rejected unless allowed by `ALLOWED_IPS`. Management actions (installing, deleting, or opening overlays, changing settings, running updates) additionally require same-origin browser provenance. That check stops other websites, but not installed overlays, which share the dashboard's origin ([ADR 0013](decisions/0013-counters-share-dashboard-origin.md)), and not native programs, which can forge the header. Exposing the listener beyond loopback is an explicit configuration choice; the traffic is unencrypted and unauthenticated. The [README](../README.md#pages-counters-reports-and-updates) has the full authorization rules.
+The overlay/data listener remains `127.0.0.1:24050`; the independent dashboard defaults to `127.0.0.1:24052`. Both require allowed peers. Dashboard management additionally requires exact dashboard-origin provenance and a per-start `X-Vosu-CSRF` token injected only into dashboard pages. Overlay-origin management mutations return 403, except scoped API-key value/profile writes and the unchanged settings command socket. Dashboard pages never serve overlay files; previews use the unchanged overlay origin. [ADR 0016](decisions/0016-separate-dashboard-origin.md) supersedes ADR 0013's shared-origin decision without moving overlay localStorage/IndexedDB. Native same-account programs can still read dashboard pages and forge provenance; this is not local-user authentication. Keep both listeners loopback-only unless deliberate protected remote access is required. HTTP traffic is unencrypted. See the [README](../README.md#pages-counters-reports-and-updates).
 
 Native overlay brokers can authenticate a loopback `/websocket/commands` upgrade
 with the per-start `broker.json` bearer token ([integration contract](../README.md#native-overlay-brokers)).
@@ -77,13 +77,13 @@ User-managed [API keys](../README.md#api-keys) grant only explicit overlay-value
 command-write or profile-management scopes. Keys may authenticate permitted remote
 peers, never bypass `ALLOWED_IPS`, and cannot authorize daemon/key management,
 reports, updates, or counter installation/deletion. Dashboard management requires
-exact same-origin provenance. Key hashes and metadata persist in config-root
+exact dashboard-origin provenance and the dashboard's per-start CSRF token. Key hashes and metadata persist in config-root
 `api-keys.toml`; secrets are shown once, compared through constant-time SHA-256
 hash comparisons, and never logged. Revoke compromised keys immediately; open
 command sockets are actively closed with code 1008, even while idle. Plain HTTP/WS on a
 LAN exposes bearer credentials: use loopback or a trusted TLS proxy. Browser
 clients use the WebSocket subprotocol, never URL query parameters or cross-origin
-HTTP Authorization. Installed same-origin overlays still have dashboard authority.
+HTTP Authorization. Installed overlay scripts no longer have dashboard management authority.
 HTTP POSTs re-check their granted scope after receiving the body and before
 dispatch, so revoking during a slow upload prevents the pending mutation.
 On Unix, unsafe registry ownership or group/world access produces a warning
@@ -91,7 +91,7 @@ without refusing valid keys; key names reject bidirectional controls.
 
 ## Third-party overlays
 
-Overlays are third-party web pages that run in the user's browser or OBS. vosu does not review them. Installed overlays can read all game data the API exposes and use the dashboard's management actions. The **Available** page states this above the catalog listing.
+Overlays are third-party web pages that run in the user's browser or OBS. vosu does not review them. Installed overlays can read game data and use their existing settings command socket, but cannot mutate dashboard management APIs without an explicitly granted scoped API key. The dashboard listener never serves their scripts or static files.
 
 ## Analytics and crash reporting
 

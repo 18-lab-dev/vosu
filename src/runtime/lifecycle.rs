@@ -16,6 +16,8 @@ pub struct ProductionRuntime {
     available_update: Option<String>,
     counters: AsyncMutex<Option<Arc<ReloadableCounterService>>>,
     listener: AsyncMutex<Option<ListenerOwner>>,
+    dashboard_listener: AsyncMutex<Option<ListenerOwner>>,
+    origins: Arc<crate::server::origins::Origins>,
     hubs: AsyncMutex<Option<WebSocketHubs>>,
     processor: AsyncMutex<Option<Arc<CommandProcessor>>>,
     relays: AsyncMutex<Option<Arc<WebSocketRelaySink>>>,
@@ -23,7 +25,6 @@ pub struct ProductionRuntime {
     instances: AsyncMutex<Option<InstanceRuntime<NativeProcessProvider, EmbeddedOffsetGenerator>>>,
     ordinary_role: bool,
     tray: AsyncMutex<Option<crate::desktop::tray::TrayHandle>>,
-    dashboard_url: Arc<std::sync::RwLock<String>>,
     #[cfg(target_os = "linux")]
     login_state: Arc<AsyncMutex<bool>>,
 }
@@ -34,6 +35,10 @@ impl ProductionRuntime {
         if let Some(mut tray) = self.tray.lock().await.take() {
             tray.shutdown().await;
         }
+        let dashboard_listener = self.dashboard_listener.lock().await.take();
+        if let Some(listener) = dashboard_listener.as_ref() {
+            listener.stop_accepting();
+        }
         let listener = self.listener.lock().await.take();
         if let Some(listener) = listener.as_ref() {
             listener.stop_accepting();
@@ -42,6 +47,9 @@ impl ProductionRuntime {
             hubs.shutdown().await;
         }
         if let Some(listener) = listener {
+            listener.join().await;
+        }
+        if let Some(listener) = dashboard_listener {
             listener.join().await;
         }
         if let Some(processor) = self.processor.lock().await.take() {
@@ -75,6 +83,8 @@ impl ProductionRuntime {
             return Ok(());
         }
         let config = self.config.current();
+        self.config.validate_network(&config).await?;
+        let dashboard_target = dashboard_listen_target(&config)?;
         // Resolve every fallible construction input before starting any
         // long-lived task.
         let target = listen_target(&config)?;
@@ -120,6 +130,7 @@ impl ProductionRuntime {
             self.snapshots.clone(),
             duration_from_millis_saturating(config.v2_subscription_debounce),
         );
+        let dashboard_lifecycle = Arc::new(arc_swap::ArcSwapOption::empty());
         let services = ProductionServices::with_native_report_probe(
             PageService,
             Arc::new(RuntimePages {
@@ -134,16 +145,20 @@ impl ProductionRuntime {
             beatmap.clone(),
             Arc::new(RuntimeConfig {
                 config: Arc::clone(&self.config),
+                network: Arc::new(AsyncMutex::new(None)),
+                origins: Some(Arc::clone(&self.origins)),
                 #[cfg(target_os = "linux")]
                 login_state: Arc::clone(&self.login_state),
                 #[cfg(not(target_os = "linux"))]
                 login_state: Arc::new(AsyncMutex::new(config.start_at_login)),
             }),
+            // The receiver is bound once native discovery starts below.
             Arc::new(RuntimeReportInput {
                 config: Arc::clone(&self.config),
                 snapshots: self.snapshots.snapshot_manager(),
                 counters: Arc::clone(&counters),
                 logs: self.paths.data().join("logs"),
+                lifecycle: Arc::clone(&dashboard_lifecycle),
             }),
             Arc::new(RuntimeUpdater::production(
                 program,
@@ -162,7 +177,11 @@ impl ProductionRuntime {
             },
         );
         let providers = RouteProviders {
-            authorization: self.authorizer.clone(),
+            authorization: Arc::new(crate::server::origins::OriginAuthorizer {
+                inner: self.authorizer.clone(),
+                origins: Arc::clone(&self.origins),
+                dashboard: false,
+            }),
             state: Arc::new(SnapshotStateProvider::new(
                 self.snapshots.snapshot_manager(),
             )),
@@ -176,6 +195,12 @@ impl ProductionRuntime {
                 )),
             ),
         };
+        let mut dashboard_providers = providers.clone();
+        dashboard_providers.authorization = Arc::new(crate::server::origins::OriginAuthorizer {
+            inner: self.authorizer.clone(),
+            origins: Arc::clone(&self.origins),
+            dashboard: true,
+        });
         let listener = match ListenerOwner::start_with_broker(
             providers,
             target,
@@ -208,6 +233,31 @@ impl ProductionRuntime {
             "Server IP and port: {}",
             effective_listener.address
         ));
+        let dashboard_listener =
+            match ListenerOwner::start(dashboard_providers, dashboard_target).await {
+                Ok(listener) => listener,
+                Err(error) => {
+                    listener.stop_accepting();
+                    hubs.shutdown().await;
+                    listener.join().await;
+                    processor.shutdown().await;
+                    relays.shutdown().await;
+                    counters.shutdown().await;
+                    return Err(error);
+                }
+            };
+        let dashboard_effective = dashboard_listener
+            .state()
+            .effective
+            .expect("started dashboard listener has an effective address");
+        self.origins
+            .observe_listeners(listener.state.clone(), dashboard_listener.state.clone());
+        self.logger.info(format!(
+            "Dashboard IP and port: {}",
+            dashboard_effective.address
+        ));
+        *self.dashboard_listener.get_mut() = Some(dashboard_listener);
+        // Bind the existing discovery stream; do not maintain a second roster.
         let process_provider = NativeProcessProvider::new();
         self.logger.info(format!(
             "Process events backend: {}",
@@ -215,6 +265,7 @@ impl ProductionRuntime {
         ));
         let instances =
             InstanceRuntime::start_with_logger(process_provider, loader, self.logger.clone());
+        dashboard_lifecycle.store(Some(Arc::new(instances.subscribe_current())));
         let supervisor = ProductionStateSupervisor::start(
             instances.subscribe_current(),
             self.config.subscribe_current(),
@@ -233,23 +284,23 @@ impl ProductionRuntime {
         *self.relays.get_mut() = Some(relays);
         *self.supervisor.get_mut() = Some(supervisor);
         *self.instances.get_mut() = Some(instances);
-        *self
-            .dashboard_url
-            .write()
-            .unwrap_or_else(|error| error.into_inner()) = crate::desktop::dashboard_url(
-            &effective_listener.address.ip().to_string(),
-            effective_listener.address.port(),
-        );
         if self.ordinary_role {
-            let url = Arc::clone(&self.dashboard_url);
+            let origins = Arc::clone(&self.origins);
             *self.tray.get_mut() = Some(crate::desktop::tray::start(
-                Arc::new(move || {
-                    url.read()
-                        .unwrap_or_else(|error| error.into_inner())
-                        .clone()
-                }),
+                Arc::new(move || format!("{}/", origins.dashboard())),
                 self.shutdown_token.clone(),
             ));
+        }
+        if self.ordinary_role && config.open_dashboard_on_startup {
+            let url = format!("{}/", self.origins.dashboard());
+            if let Err(error) = tokio::task::spawn_blocking(move || open::that_detached(url))
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| result.map_err(|error| error.to_string()))
+            {
+                self.logger
+                    .warn(format!("Could not open dashboard: {error}"));
+            }
         }
         // Publish readiness only after every owned task is reachable through
         // `self`, so any signal/cleanup failure is followed by the normal
@@ -353,6 +404,22 @@ impl RuntimeHooks for ProductionRuntime {
             if self.update_handed_off.load(Ordering::Acquire) {
                 Ok(())
             } else {
+                self.config.claim_network_ownership().await?;
+                let current = self.config.current();
+                self.authorizer
+                    .reload(&current.allowed_ips, &current.server_ip);
+                *self.origins.overlay.write() = crate::desktop::dashboard_url(
+                    &current.server_ip,
+                    listen_target(&current)?.port,
+                )
+                .trim_end_matches('/')
+                .to_owned();
+                *self.origins.dashboard.write() = crate::desktop::dashboard_url(
+                    &current.dashboard_ip,
+                    dashboard_listen_target(&current)?.port,
+                )
+                .trim_end_matches('/')
+                .to_owned();
                 self.compose().await
             }
         })
@@ -414,8 +481,6 @@ impl RuntimeHooks for ProductionRuntime {
                                                 if effective_address != previous_address
                                                     && let Some(address) = effective_address
                                                 {
-                                                    *self.dashboard_url.write().unwrap_or_else(|error| error.into_inner()) =
-                                                        crate::desktop::dashboard_url(&address.ip().to_string(), address.port());
                                                     self.logger.info(format!(
                                                         "Server IP and port: {address}"
                                                     ));
@@ -430,6 +495,18 @@ impl RuntimeHooks for ProductionRuntime {
                                 Err(error) => self.logger.warn(format!(
                                     "Invalid requested listener; retaining previous listener: {error}"
                                 )),
+                            }
+                            match dashboard_listen_target(&effective) {
+                                Ok(target) => {
+                                    let mut listener = self.dashboard_listener.lock().await;
+                                    if let Some(listener) = listener.as_mut() {
+                                        match listener.stage(target).await {
+                                            Ok(()) => {},
+                                            Err(error) => self.logger.warn(format!("Failed to bind dashboard; retaining previous listener: {error}")),
+                                        }
+                                    }
+                                }
+                                Err(error) => self.logger.warn(format!("Invalid dashboard listener: {error}")),
                             }
                             return Ok(Some(ConfigChanged {
                                 old: change.old,
@@ -515,6 +592,12 @@ pub(super) fn listen_target(config: &Config) -> io::Result<ListenTarget> {
         config.server_port as u16,
     ))
 }
+pub(super) fn dashboard_listen_target(config: &Config) -> io::Result<ListenTarget> {
+    let mut dashboard = config.clone();
+    dashboard.server_ip = config.dashboard_ip.clone();
+    dashboard.server_port = config.dashboard_port;
+    listen_target(&dashboard)
+}
 
 pub(super) fn resolved_static_root(paths: &Paths, config: &Config) -> io::Result<PathBuf> {
     paths.static_path(&config.static_folder_path)
@@ -599,7 +682,7 @@ pub async fn run_cli() -> io::Result<()> {
     };
     let config = ConfigStore::initialize(paths.config().join("vosu.toml")).await?;
     if ordinary_role
-        && let Ok(target) = listen_target(&config.current())
+        && let Ok(target) = dashboard_listen_target(&config.current())
         && let Some(url) = crate::desktop::existing_dashboard(&target.host, target.port).await
     {
         println!("vosu is already running; opening {url}");
@@ -714,6 +797,14 @@ pub async fn run_cli() -> io::Result<()> {
         available_update: None,
         counters: AsyncMutex::new(None),
         listener: AsyncMutex::new(None),
+        dashboard_listener: AsyncMutex::new(None),
+        origins: Arc::new(crate::server::origins::Origins::new(
+            crate::desktop::dashboard_url(&current.server_ip, listen_target(&current)?.port),
+            crate::desktop::dashboard_url(
+                &current.dashboard_ip,
+                dashboard_listen_target(&current)?.port,
+            ),
+        )?),
         hubs: AsyncMutex::new(None),
         processor: AsyncMutex::new(None),
         supervisor: AsyncMutex::new(None),
@@ -721,7 +812,6 @@ pub async fn run_cli() -> io::Result<()> {
         instances: AsyncMutex::new(None),
         ordinary_role,
         tray: AsyncMutex::new(None),
-        dashboard_url: Arc::new(std::sync::RwLock::new(String::new())),
         #[cfg(target_os = "linux")]
         login_state: Arc::new(AsyncMutex::new(current.start_at_login)),
     };

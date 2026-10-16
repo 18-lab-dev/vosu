@@ -45,9 +45,10 @@
 
     <nav class="header-links" aria-label="Vosu resources">
       <a href="https://github.com/shiruviaa/vosu" target="_blank" rel="noopener noreferrer">Source</a>
-      <form action="/api/generateReport" method="post"><button type="submit">Download report</button></form>
+      <button type="button" data-action="diagnostics-report">Diagnostics report</button>
     </nav>
   </header>
+  <section id="attachment-status" class="attachment-status" aria-label="osu! attachment status" aria-live="polite">Checking osu! attachment…</section>
 
   <section id="update-notice" class="update-notice" {{UPDATE_HIDDEN}} aria-labelledby="update-title">
     <div>
@@ -92,6 +93,17 @@
       </header>
       <div class="preview-dialog__frame"></div>
     </div>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="dashboard-dialog" aria-labelledby="confirm-title">
+    <form method="dialog" class="dialog-frame">
+      <header class="dialog-header"><h2 id="confirm-title"></h2></header>
+      <div class="dialog-body"><p class="confirm-description"></p></div>
+      <footer class="dialog-actions">
+        <button class="button" value="cancel" autofocus>Cancel</button>
+        <button class="button button-primary" value="confirm">Confirm</button>
+      </footer>
+    </form>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden>

@@ -3,6 +3,7 @@
 mod document;
 mod io;
 mod migration;
+mod network;
 mod parser;
 mod reload;
 mod schema;

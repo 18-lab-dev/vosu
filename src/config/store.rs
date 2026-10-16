@@ -22,7 +22,10 @@ pub(super) type BeforePublishHook = Arc<dyn Fn(&Config) + Send + Sync>;
 
 /// Live, atomically published configuration backed by `vosu.toml`.
 pub struct ConfigStore {
-    path: PathBuf,
+    pub(super) path: PathBuf,
+    pub(super) atomic_replace: Arc<dyn super::AtomicReplace>,
+    pub(super) network_lock: tokio::sync::Mutex<()>,
+    pub(super) network_owner: std::sync::atomic::AtomicBool,
     current: Arc<ArcSwap<Config>>,
     changed: broadcast::Sender<ConfigChanged>,
     snapshots: watch::Sender<Arc<Config>>,
@@ -105,6 +108,7 @@ impl ConfigStore {
         let worker_snapshots = snapshots.clone();
         let worker_before_publish = Arc::clone(&before_publish);
         let worker_publish_lock = Arc::clone(&publish_lock);
+        let atomic_replace = options.atomic_replace.clone();
         // The single store owner preserves persistence/publication ordering, but
         // filesystem and synchronous reload hooks must not occupy a Tokio worker.
         let runtime = tokio::runtime::Handle::current();
@@ -126,6 +130,9 @@ impl ConfigStore {
 
         Ok(Self {
             path,
+            atomic_replace,
+            network_lock: tokio::sync::Mutex::new(()),
+            network_owner: std::sync::atomic::AtomicBool::new(false),
             current,
             changed,
             snapshots,
@@ -205,6 +212,12 @@ impl ConfigStore {
     }
 
     pub async fn shutdown(&self) -> io::Result<()> {
+        if self
+            .network_owner
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.rollback_pending_network().await?;
+        }
         let (send, receive) = oneshot::channel();
         self.commands
             .send(StoreCommand::Shutdown(send))

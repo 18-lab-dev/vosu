@@ -19,6 +19,8 @@ pub struct Config {
     pub read_mania_scroll_speed: bool,
     pub server_ip: String,
     pub server_port: f64,
+    pub dashboard_ip: String,
+    pub dashboard_port: f64,
     pub static_folder_path: String,
     pub allowed_ips: String,
 }
@@ -40,6 +42,8 @@ impl Default for Config {
             read_mania_scroll_speed: true,
             server_ip: "127.0.0.1".to_owned(),
             server_port: 24_050.0,
+            dashboard_ip: "127.0.0.1".to_owned(),
+            dashboard_port: 24_052.0,
             static_folder_path: "./static".to_owned(),
             allowed_ips: "127.0.0.1,localhost,absolute".to_owned(),
         }
@@ -62,6 +66,8 @@ pub enum ConfigKey {
     ReadManiaScrollSpeed,
     ServerIp,
     ServerPort,
+    DashboardIp,
+    DashboardPort,
     StaticFolderPath,
     AllowedIps,
 }
@@ -100,7 +106,7 @@ impl Default for ConfigSchema {
     }
 }
 
-const SCHEMA_ITEMS: [ConfigItem; 16] = [
+const SCHEMA_ITEMS: [ConfigItem; 18] = [
     item(
         ConfigKey::EnableAutoUpdate,
         "ENABLE_AUTOUPDATE",
@@ -186,6 +192,18 @@ const SCHEMA_ITEMS: [ConfigItem; 16] = [
         None,
     ),
     item(
+        ConfigKey::DashboardIp,
+        "DASHBOARD_IP",
+        ConfigDefault::String("127.0.0.1"),
+        None,
+    ),
+    item(
+        ConfigKey::DashboardPort,
+        "DASHBOARD_PORT",
+        ConfigDefault::Number(24_052.0),
+        None,
+    ),
+    item(
         ConfigKey::StaticFolderPath,
         "STATIC_FOLDER_PATH",
         ConfigDefault::String("./static"),
@@ -219,7 +237,7 @@ pub const DEFAULT_SCHEMA: ConfigSchema = ConfigSchema {
 
 /// The source's serialization order, which intentionally differs from schema
 /// declaration order.
-pub const BINDING_ORDER: [&str; 16] = [
+pub const BINDING_ORDER: [&str; 18] = [
     "DEBUG_LOG",
     "ENABLE_AUTOUPDATE",
     "OPEN_DASHBOARD_ON_STARTUP",
@@ -234,6 +252,8 @@ pub const BINDING_ORDER: [&str; 16] = [
     "V2_SUBSCRIPTION_DEBOUNCE",
     "SERVER_IP",
     "SERVER_PORT",
+    "DASHBOARD_IP",
+    "DASHBOARD_PORT",
     "ALLOWED_IPS",
     "STATIC_FOLDER_PATH",
 ];

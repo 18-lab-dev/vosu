@@ -25,7 +25,10 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    routes::{self, PeerAddress, ResponseFlushBarrier, ResponseFlushRegistry, RouteProviders},
+    routes::{
+        self, ConnectionAddresses, PeerAddress, ResponseFlushBarrier, ResponseFlushRegistry,
+        RouteProviders,
+    },
     websocket::UpgradeCallbackTracker,
 };
 pub const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -330,6 +333,17 @@ impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, Trac
     }
 }
 
+impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, TrackedListener>>
+    for ConnectionAddresses
+{
+    fn connect_info(stream: axum::serve::IncomingStream<'_, TrackedListener>) -> Self {
+        Self {
+            peer: stream.remote_addr().0,
+            local: stream.io().stream.local_addr().ok(),
+        }
+    }
+}
+
 struct AxumBoundListener {
     address: SocketAddr,
     accept_stop: CancellationToken,
@@ -385,7 +399,7 @@ impl TcpListenerFactory for AxumListenerFactory {
             .layer(axum::Extension(upgrades.clone()))
             .layer(axum::Extension(flushes.clone()))
             .layer(axum::Extension(self.broker.clone()))
-            .into_make_service_with_connect_info::<PeerAddress>();
+            .into_make_service_with_connect_info::<ConnectionAddresses>();
         let connections = Arc::new(ConnectionRegistry::default());
         let tracked = TrackedListener {
             listener,

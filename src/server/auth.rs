@@ -92,6 +92,35 @@ impl AuthorizationDecision {
     }
 }
 
+fn cidr_matches(token: &str, peer: IpAddr) -> Option<bool> {
+    let (network, prefix) = token.split_once('/')?;
+    let network = network.parse::<IpAddr>().ok()?;
+    let prefix = prefix.parse::<u32>().ok()?;
+    let peer = normalize_ip(peer);
+    match (network, peer) {
+        (IpAddr::V4(network), IpAddr::V4(peer)) if prefix <= 32 => {
+            let mask = u32::MAX.checked_shl(32 - prefix).unwrap_or(0);
+            Some(u32::from(network) & mask == u32::from(peer) & mask)
+        }
+        (IpAddr::V6(network), peer) if prefix <= 128 => {
+            if let Some(network) = network.to_ipv4_mapped() {
+                return (prefix >= 96).then(|| match peer {
+                    IpAddr::V4(peer) => {
+                        let mask = u32::MAX.checked_shl(128 - prefix).unwrap_or(0);
+                        u32::from(network) & mask == u32::from(peer) & mask
+                    }
+                    _ => false,
+                });
+            }
+            let mask = u128::MAX.checked_shl(128 - prefix).unwrap_or(0);
+            Some(
+                matches!(peer, IpAddr::V6(peer) if u128::from(network) & mask == u128::from(peer) & mask),
+            )
+        }
+        _ => Some(false),
+    }
+}
+
 impl AuthorizationPolicy {
     pub fn new(allowed_ips: &str, server_host: impl Into<String>) -> Self {
         Self {
@@ -129,6 +158,9 @@ impl AuthorizationPolicy {
         }
 
         self.allowed.iter().any(|token| {
+            if let Some(matches) = cidr_matches(token, peer) {
+                return matches;
+            }
             if let Some(pattern) = Ipv4Pattern::parse(token) {
                 return matches!(peer, IpAddr::V4(address) if pattern.matches(address));
             }
@@ -158,6 +190,9 @@ impl AuthorizationPolicy {
             .unwrap_or(hostname.trim());
         let parsed_host = hostname.parse::<IpAddr>().ok().map(normalize_ip);
         self.header_tokens().any(|token| {
+            if let Some(matches) = parsed_host.and_then(|host| cidr_matches(token, host)) {
+                return matches;
+            }
             if let Some(pattern) = Ipv4Pattern::parse(token) {
                 return matches!(parsed_host, Some(IpAddr::V4(address)) if pattern.matches(address));
             }
@@ -493,4 +528,46 @@ mod tests {
         assert!(policy.header_allowed("https://dashboard.local"));
         assert!(!policy.header_allowed("https://dashboard.local.evil"));
     }
+}
+
+#[test]
+fn cidr_policy_masks_ipv4_ipv6_and_mapped_peers_and_rejects_invalid_prefixes() {
+    let policy = AuthorizationPolicy::new("100.64.3.5/10,fd12::1/8", "localhost");
+    for ip in [
+        "100.64.0.0",
+        "100.127.255.255",
+        "::ffff:100.100.1.2",
+        "fdff::1",
+    ] {
+        assert!(policy.peer_allowed(ip.parse().unwrap()), "{ip}");
+        assert!(
+            policy.header_allowed(&format!(
+                "http://{}:24050",
+                if ip.contains(':') {
+                    format!("[{ip}]")
+                } else {
+                    ip.to_owned()
+                }
+            )),
+            "{ip}"
+        );
+    }
+    for ip in ["100.63.255.255", "100.128.0.0", "fcff::1", "2001:db8::1"] {
+        assert!(!policy.peer_allowed(ip.parse().unwrap()), "{ip}");
+    }
+    for token in [
+        "100.64.0.0/33",
+        "fd00::/129",
+        "100.64.0.0/-1",
+        "fd00::/nope",
+    ] {
+        let policy = AuthorizationPolicy::new(token, "localhost");
+        assert!(!policy.peer_allowed("100.100.1.2".parse().unwrap()));
+        assert!(!policy.peer_allowed("fd00::1".parse().unwrap()));
+    }
+    let mapped = AuthorizationPolicy::new("::ffff:100.64.0.0/106", "localhost");
+    assert!(mapped.peer_allowed("::ffff:100.127.0.1".parse().unwrap()));
+    assert!(!mapped.peer_allowed("100.128.0.1".parse().unwrap()));
+    assert!(AuthorizationPolicy::new("0.0.0.0/0", "").peer_allowed("203.0.113.1".parse().unwrap()));
+    assert!(AuthorizationPolicy::new("::/0", "").peer_allowed("2001:db8::1".parse().unwrap()));
 }

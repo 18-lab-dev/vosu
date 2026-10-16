@@ -172,6 +172,7 @@ impl ConfigDocument {
             ConfigKey::PreciseDataPollRate => self.config.precise_data_poll_rate = value,
             ConfigKey::V2SubscriptionDebounce => self.config.v2_subscription_debounce = value,
             ConfigKey::ServerPort => self.config.server_port = value,
+            ConfigKey::DashboardPort => self.config.dashboard_port = value,
             _ => unreachable!("schema number key has number storage"),
         }
     }
@@ -179,6 +180,7 @@ impl ConfigDocument {
     fn set_string(&mut self, key: ConfigKey, value: String) {
         match key {
             ConfigKey::ServerIp => self.config.server_ip = value,
+            ConfigKey::DashboardIp => self.config.dashboard_ip = value,
             ConfigKey::StaticFolderPath => self.config.static_folder_path = value,
             ConfigKey::AllowedIps => self.config.allowed_ips = value,
             _ => unreachable!("schema string key has string storage"),
@@ -205,6 +207,8 @@ impl ConfigDocument {
             "READ_MANIA_SCROLL_SPEED" => toml::Value::Boolean(self.config.read_mania_scroll_speed),
             "SERVER_IP" => toml::Value::String(self.config.server_ip.clone()),
             "SERVER_PORT" => toml::Value::Float(self.config.server_port),
+            "DASHBOARD_IP" => toml::Value::String(self.config.dashboard_ip.clone()),
+            "DASHBOARD_PORT" => toml::Value::Float(self.config.dashboard_port),
             "STATIC_FOLDER_PATH" => toml::Value::String(self.config.static_folder_path.clone()),
             "ALLOWED_IPS" => toml::Value::String(self.config.allowed_ips.clone()),
             _ => unreachable!("binding order contains only schema bindings"),

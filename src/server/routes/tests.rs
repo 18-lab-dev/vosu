@@ -14,6 +14,23 @@ fn exact_methods_never_add_head_or_options() {
         Some(Endpoint::SettingsSave)
     );
 }
+
+#[test]
+fn dashboard_metadata_routes_are_read_only() {
+    for (path, endpoint) in [
+        ("/api/dashboard/status", Endpoint::DashboardStatus),
+        ("/api/counters/details/counter", Endpoint::CounterDetails),
+    ] {
+        assert_eq!(classify(&Method::GET, path), Some(endpoint));
+        for method in [Method::POST, Method::PUT, Method::HEAD, Method::OPTIONS] {
+            assert_ne!(classify(&method, path), Some(endpoint));
+        }
+    }
+    assert_ne!(
+        classify(&Method::GET, "/api/dashboard/status/"),
+        Some(Endpoint::DashboardStatus)
+    );
+}
 #[test]
 fn counter_root_open_is_an_exact_post_route() {
     assert_eq!(
@@ -50,16 +67,20 @@ async fn management_mutations_require_post_and_exact_browser_origin() {
             Some("http://localhost:24861/path"),
             Some("http://localhost:24861"),
         ] {
+            let (providers, origins) = split_providers(true);
             let mut request = make_request(Method::POST, path, Body::empty());
             request
                 .headers_mut()
                 .insert(header::HOST, HeaderValue::from_static("localhost:24861"));
+            request
+                .headers_mut()
+                .insert("x-vosu-csrf", HeaderValue::from_str(&origins.csrf).unwrap());
             if let Some(origin) = origin {
                 request
                     .headers_mut()
                     .insert(header::ORIGIN, HeaderValue::from_str(origin).unwrap());
             }
-            let response = dispatch(State(providers(CachedJson::NotReady)), request).await;
+            let response = dispatch(State(providers), request).await;
             assert_eq!(
                 response.status(),
                 if origin == Some("http://localhost:24861") {
@@ -273,6 +294,7 @@ fn make_request(method: Method, uri: &str, body: Body) -> Request {
     Request::builder()
         .method(method)
         .uri(uri)
+        .header(header::HOST, "127.0.0.1:24861")
         .extension(ConnectInfo(
             "127.0.0.1:41234".parse::<SocketAddr>().unwrap(),
         ))
@@ -496,4 +518,280 @@ fn response_flush_barrier_preserves_keep_alive_and_pipelined_callbacks() {
     assert!(Arc::ptr_eq(&registry.barrier(peer).unwrap(), &barrier));
     registry.remove(peer);
     assert!(registry.barrier(peer).is_none());
+}
+
+fn split_providers(dashboard: bool) -> (RouteProviders, Arc<super::super::origins::Origins>) {
+    let mut providers = providers(CachedJson::NotReady);
+    let origins = Arc::new(
+        super::super::origins::Origins::new(
+            "http://127.0.0.1:24860".into(),
+            "http://127.0.0.1:24861".into(),
+        )
+        .unwrap(),
+    );
+    providers.authorization = Arc::new(super::super::origins::OriginAuthorizer {
+        inner: providers.authorization.clone(),
+        origins: origins.clone(),
+        dashboard,
+    });
+    (providers, origins)
+}
+
+#[tokio::test]
+async fn overlay_rejects_every_browser_management_mutation_even_with_same_origin() {
+    for path in [
+        "/api/counters/delete/expendable",
+        "/api/counters/download/fixture",
+        "/api/counters/open/expendable",
+        "/api/counters/open-root",
+        "/api/runUpdates",
+        "/api/generateReport",
+        "/api/settingsSave",
+        "/api/counters/settings/expendable",
+        "/api/counters/settings/expendable?update=yes",
+        "/api/counters/profiles",
+        "/api/keys",
+    ] {
+        let (providers, origins) = split_providers(false);
+        let mut request = make_request(Method::POST, path, Body::empty());
+        request
+            .headers_mut()
+            .insert(header::HOST, HeaderValue::from_static("127.0.0.1:24860"));
+        request.headers_mut().insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://127.0.0.1:24860"),
+        );
+        request
+            .headers_mut()
+            .insert("x-vosu-csrf", HeaderValue::from_str(&origins.csrf).unwrap());
+        assert_eq!(
+            dispatch(State(providers), request).await.status(),
+            StatusCode::FORBIDDEN,
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn dashboard_requires_token_and_provenance_and_never_serves_overlay_files() {
+    for (origin, token, expected) in [
+        ("http://127.0.0.1:24861", true, StatusCode::OK),
+        ("http://127.0.0.1:24861", false, StatusCode::FORBIDDEN),
+        ("http://127.0.0.1:24860", true, StatusCode::FORBIDDEN),
+    ] {
+        let (providers, origins) = split_providers(true);
+        let mut request = make_request(Method::POST, "/api/settingsSave", Body::empty());
+        request
+            .headers_mut()
+            .insert(header::HOST, HeaderValue::from_static("127.0.0.1:24861"));
+        request
+            .headers_mut()
+            .insert(header::ORIGIN, HeaderValue::from_str(origin).unwrap());
+        if token {
+            request
+                .headers_mut()
+                .insert("x-vosu-csrf", HeaderValue::from_str(&origins.csrf).unwrap());
+        }
+        assert_eq!(dispatch(State(providers), request).await.status(), expected);
+    }
+    for path in [
+        "/sample/",
+        "/sample/index.html",
+        "/sample/overlay.js",
+        "/sample/settings.json",
+        "/Songs/untrusted.html",
+        "/files/skin/untrusted.html",
+        "/files/beatmap/untrusted.html",
+        "/websocket/commands",
+    ] {
+        let (providers, _) = split_providers(true);
+        assert_eq!(
+            dispatch(
+                State(providers),
+                make_request(Method::GET, path, Body::empty())
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND,
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn redirects_preserve_path_query_without_trusting_attacker_host() {
+    for (host, expected) in [
+        ("127.0.0.1:24860", "http://127.0.0.1:24861"),
+        ("localhost:24860", "http://localhost:24861"),
+        ("attacker.example:24860", "http://127.0.0.1:24861"),
+        ("user@attacker.example", "http://127.0.0.1:24861"),
+    ] {
+        for path in [
+            "/?q=one%20two",
+            "/available?x=1",
+            "/settings?overlay=sample&profile=other&embed=1",
+        ] {
+            let (providers, _) = split_providers(false);
+            let mut request = make_request(Method::GET, path, Body::empty());
+            request
+                .headers_mut()
+                .insert(header::HOST, HeaderValue::from_str(host).unwrap());
+            let response = dispatch(State(providers), request).await;
+            assert_eq!(response.status(), StatusCode::FOUND);
+            assert_eq!(
+                response.headers()[header::LOCATION],
+                format!("{expected}{path}")
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn discovery_publishes_effective_dashboard_origin_and_no_csrf_secret() {
+    let (providers, origins) = split_providers(false);
+    let response = dispatch(
+        State(providers.clone()),
+        make_request(Method::GET, "/api/dashboard", Body::empty()),
+    )
+    .await;
+    let value: Value = serde_json::from_slice(&body(response).await).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!({"origin":"http://127.0.0.1:24861"})
+    );
+    *origins.dashboard.write() = crate::desktop::dashboard_url("0.0.0.0", 24862)
+        .trim_end_matches('/')
+        .to_owned();
+    let response = dispatch(
+        State(providers),
+        make_request(Method::GET, "/api/dashboard", Body::empty()),
+    )
+    .await;
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body(response).await).unwrap(),
+        serde_json::json!({"origin":"http://127.0.0.1:24862"})
+    );
+}
+
+#[tokio::test]
+async fn dashboard_ux_reads_are_not_overlay_management_routes() {
+    for path in ["/api/dashboard/status", "/api/counters/details/sample"] {
+        let (providers, _) = split_providers(false);
+        assert_eq!(
+            dispatch(
+                State(providers),
+                make_request(Method::GET, path, Body::empty())
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND,
+        );
+    }
+    let (providers, _) = split_providers(true);
+    let response = dispatch(
+        State(providers),
+        make_request(Method::OPTIONS, "/api/dashboard", Body::empty()),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(
+        !response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+            .is_some_and(|value| value.to_str().unwrap().contains("X-Vosu-CSRF"))
+    );
+}
+
+#[tokio::test]
+async fn dashboard_refuses_all_websocket_upgrades_and_untrusted_hosts() {
+    for path in [
+        "/ws",
+        "/tokens",
+        "/websocket/v2",
+        "/websocket/v2/precise",
+        "/websocket/v2/subscribe",
+        "/websocket/commands",
+    ] {
+        let (providers, _) = split_providers(true);
+        let mut request = make_request(Method::GET, path, Body::empty());
+        request
+            .headers_mut()
+            .insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+        request.headers_mut().insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://evil.example"),
+        );
+        assert_eq!(
+            dispatch(State(providers), request).await.status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    for path in [
+        "/",
+        "/settings",
+        "/api/dashboard",
+        "/api/dashboard/status",
+        "/api/counters/details/sample",
+    ] {
+        for host in [None, Some("rebind.attacker:24861"), Some("127.0.0.1:24860")] {
+            let (providers, _) = split_providers(true);
+            let mut request = make_request(Method::GET, path, Body::empty());
+            request.headers_mut().remove(header::HOST);
+            if let Some(host) = host {
+                request
+                    .headers_mut()
+                    .insert(header::HOST, HeaderValue::from_str(host).unwrap());
+            }
+            assert_eq!(
+                dispatch(State(providers), request).await.status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn dashboard_html_has_inert_context_csp_and_embed_framing_exception() {
+    struct Html;
+    impl RouteDelegate for Html {
+        fn handle(&self, _: Endpoint, _: Request, _: Bytes) -> ProviderFuture<'_, Response> {
+            Box::pin(async {
+                Response::builder()
+                    .header(header::CONTENT_TYPE, "text/html")
+                    .body(Body::from("<html><head></head><body></body></html>"))
+                    .unwrap()
+            })
+        }
+    }
+    for (path, framed) in [
+        ("/", false),
+        ("/settings", false),
+        ("/settings?embed=1", false),
+        ("/settings?embed=1&overlay=", false),
+        ("/settings?embed=0&embed=1&overlay=sample", false),
+        ("/settings?embed=1&overlay=&overlay=sample", false),
+        ("/settings?embed=1&overlay=sample", true),
+        ("/settings?embed=1&embed=0&overlay=sample", true),
+    ] {
+        let (mut providers, _) = split_providers(true);
+        providers.delegate = Arc::new(Html);
+        let response = dispatch(
+            State(providers),
+            make_request(Method::GET, path, Body::empty()),
+        )
+        .await;
+        let csp = response.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap();
+        assert!(csp.contains("script-src 'self';"));
+        assert_eq!(csp.contains("frame-ancestors 'none'"), !framed);
+        assert_eq!(
+            response.headers()[header::X_CONTENT_TYPE_OPTIONS],
+            "nosniff"
+        );
+        let html = String::from_utf8(body(response).await.to_vec()).unwrap();
+        assert!(html.contains("type=\"application/json\""));
+        assert!(!html.contains("<script>"));
+        assert!(!html.contains("window.VOSU_CSRF"));
+    }
 }

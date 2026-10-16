@@ -1,3 +1,51 @@
+    #[tokio::test]
+    async fn dashboard_read_apis_report_counts_and_safe_folder_details() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("static/counter");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("index.html"), b"12345").unwrap();
+        let counters = Arc::new(ReloadableCounterService::production(
+            root.path().join("static"), root.path().join("settings"), root.path().join("cache"),
+        ));
+        let (_, events) = tokio::sync::watch::channel(0);
+        let state = Arc::new(NoState { events });
+        let relays = Arc::new(WebSocketRelaySink::new());
+        let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), relays.clone()));
+        let unused = Arc::new(UnusedServices);
+        let delegate = ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
+            PageService, unused.clone(), counters, Arc::new(Current::default()),
+            unused.clone(), unused.clone(), unused,
+            WebSocketEndpoints {
+                v1: WebSocketHub::new(websocket::Schema::V1, state.clone()),
+                sc: WebSocketHub::new(websocket::Schema::StreamCompanion, state.clone()),
+                v2: WebSocketHub::new(websocket::Schema::V2, state.clone()),
+                precise: WebSocketHub::new(websocket::Schema::V2Precise, state.clone()),
+                commands: WebSocketHub::new(websocket::Schema::V1, state.clone()),
+                subscriptions: V2SubscriptionHub::new(state, std::time::Duration::ZERO),
+                processor: processor.clone(), relays: relays.clone(),
+            },
+        ));
+        let _first = delegate.connections.register(Some("counter".into()));
+        let _second = delegate.connections.register(Some("counter".into()));
+        let status = delegate.dispatch(Endpoint::DashboardStatus, Request::builder().uri("/api/dashboard/status").body(Body::empty()).unwrap(), Bytes::new()).await;
+        assert_eq!(status.status(), StatusCode::OK);
+        let status: Value = serde_json::from_slice(&axum::body::to_bytes(status.into_body(), 16384).await.unwrap()).unwrap();
+        assert_eq!(status["connections"]["counter"], 2);
+        assert_eq!(status["instances"], json!([]));
+        for (path, expected) in [("/api/counters/details/counter", StatusCode::OK), ("/api/counters/details/%2E%2E", StatusCode::BAD_REQUEST)] {
+            let response = delegate.dispatch(Endpoint::CounterDetails, Request::builder().uri(path).body(Body::empty()).unwrap(), Bytes::new()).await;
+            assert_eq!(response.status(), expected);
+            if expected == StatusCode::OK {
+                let details: Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 16384).await.unwrap()).unwrap();
+                assert_eq!(details["bytes"], 5);
+                assert_eq!(details["complete"], true);
+                assert_eq!(details["path"], folder.to_str().unwrap());
+            }
+        }
+        processor.shutdown().await;
+        relays.shutdown().await;
+    }
+
     #[test]
     fn profile_injection_qualifies_only_explicit_overrides() {
         let legacy = counter_path_script("counter/index.html").unwrap();

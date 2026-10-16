@@ -159,6 +159,13 @@ impl RuntimePages {
         .await
         .map_err(|error| error.to_string())
     }
+
+    async fn annotate_updates(&self, local: &mut [crate::counters::Counter]) {
+        let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
+        if let Ok(remote) = self.catalog.fetch(&installed, &self.shutdown).await {
+            annotate_installed_updates(local, &remote);
+        }
+    }
 }
 
 impl PageDataProvider for RuntimePages {
@@ -174,6 +181,8 @@ impl PageDataProvider for RuntimePages {
             let local_count = Some(local.len());
             let (list, available_count) = match page {
                 DynamicPage::Dashboard => {
+                    let mut local = local;
+                    self.annotate_updates(&mut local).await;
                     let html = render_local_counters(&local, None, &authority);
                     (
                         if html.is_empty() {
@@ -244,6 +253,8 @@ impl PageDataProvider for RuntimePages {
                     .map_err(|error| error.to_string())?;
                 render_catalog_counters(&remote, Some(&query), &authority)
             } else {
+                let mut local = local;
+                self.annotate_updates(&mut local).await;
                 render_local_counters(&local, Some(&query), &authority)
             };
             Ok(Bytes::from(if html.is_empty() {
@@ -252,6 +263,23 @@ impl PageDataProvider for RuntimePages {
                 html
             }))
         })
+    }
+}
+
+pub(super) fn annotate_installed_updates(
+    local: &mut [crate::counters::Counter],
+    remote: &[CatalogOverlay],
+) {
+    let updates = remote
+        .iter()
+        .filter(|overlay| overlay.updatable)
+        .map(|overlay| ((overlay.name.as_str(), overlay.author.as_str()), overlay))
+        .collect::<std::collections::HashMap<_, _>>();
+    for counter in local {
+        if let Some(remote) = updates.get(&(counter.name.as_str(), counter.author.as_str())) {
+            counter.updatable = true;
+            counter.download_link.clone_from(&remote.download_link);
+        }
     }
 }
 

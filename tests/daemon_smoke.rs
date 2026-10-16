@@ -33,7 +33,7 @@ fn available_port() -> u16 {
 
 fn legacy_config(port: u16, static_root: &Path) -> String {
     format!(
-        "ENABLE_AUTOUPDATE=false\nOPEN_DASHBOARD_ON_STARTUP=false\nDEBUG_LOG=false\nPOLL_RATE=150\nPRECISE_DATA_POLL_RATE=10\nSERVER_IP=127.0.0.1\nSERVER_PORT={port}\nSTATIC_FOLDER_PATH={}\nALLOWED_IPS=127.0.0.1,localhost,absolute\n",
+        "ENABLE_AUTOUPDATE=false\nOPEN_DASHBOARD_ON_STARTUP=false\nDEBUG_LOG=false\nPOLL_RATE=150\nPRECISE_DATA_POLL_RATE=10\nSERVER_IP=127.0.0.1\nSERVER_PORT={port}\nDASHBOARD_IP=127.0.0.1\nDASHBOARD_PORT=0\nSTATIC_FOLDER_PATH={}\nALLOWED_IPS=127.0.0.1,localhost,absolute\n",
         static_root.display(),
     )
 }
@@ -41,7 +41,7 @@ fn legacy_config(port: u16, static_root: &Path) -> String {
 fn toml_config(port: u16, static_root: &Path) -> String {
     let static_root = toml::Value::String(static_root.to_string_lossy().into_owned());
     format!(
-        "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nDEBUG_LOG = false\nPOLL_RATE = 150\nPRECISE_DATA_POLL_RATE = 10\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {port}\nSTATIC_FOLDER_PATH = {static_root}\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
+        "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nDEBUG_LOG = false\nPOLL_RATE = 150\nPRECISE_DATA_POLL_RATE = 10\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {port}\nDASHBOARD_IP = \"127.0.0.1\"\nDASHBOARD_PORT = 0\nSTATIC_FOLDER_PATH = {static_root}\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
     )
 }
 
@@ -309,7 +309,80 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     let base = format!("http://127.0.0.1:{port}");
     let dashboard = wait_get(&client, &format!("{base}/")).await;
     assert_eq!(dashboard.status(), 200);
+    assert!(
+        !dashboard
+            .headers()
+            .contains_key(reqwest::header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        "dashboard CSRF pages must not be CORS-readable by overlays"
+    );
+    let management = dashboard.url().origin().ascii_serialization();
     let dashboard = dashboard.text().await.unwrap();
+    let csrf = dashboard
+        .split("\"csrf\":\"")
+        .nth(1)
+        .expect("dashboard-only inert CSRF context")
+        .split('"')
+        .next()
+        .unwrap();
+    let discovery: serde_json::Value = client
+        .get(format!("{base}/api/dashboard"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(discovery["origin"], management);
+    assert!(!management.ends_with(&format!(":{port}")));
+    for path in ["/seeded-counter/", "/seeded-counter/app.js"] {
+        assert_eq!(
+            client
+                .get(format!("{management}{path}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    for path in [
+        "/api/counters/delete/seeded-counter",
+        "/api/counters/download/fixture",
+        "/api/counters/open/seeded-counter",
+        "/api/counters/open-root",
+        "/api/settingsSave",
+        "/api/runUpdates",
+        "/api/generateReport",
+        "/api/counters/profiles",
+        "/api/counters/settings/seeded-counter?update=yes",
+        "/api/counters/settings/seeded-counter",
+        "/api/keys",
+    ] {
+        assert_eq!(
+            client
+                .post(format!("{base}{path}"))
+                .header("Origin", &base)
+                .json(&serde_json::json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            403,
+            "{path}"
+        );
+        assert_eq!(
+            client
+                .post(format!("{management}{path}"))
+                .header("Origin", &management)
+                .json(&serde_json::json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            403,
+            "missing CSRF: {path}"
+        );
+    }
     assert!(dashboard.contains("vosu"));
     let migrated: toml::Table =
         toml::from_str(&fs::read_to_string(&current_config).expect("read migrated server TOML"))
@@ -619,8 +692,8 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     );
 
     // User-managed keys: scoped HTTP, native and browser sockets, live revocation.
-    let created: serde_json::Value = client.post(format!("{base}/api/keys"))
-        .header("Origin", &base)
+    let created: serde_json::Value = client.post(format!("{management}/api/keys"))
+        .header("Origin", &management).header("X-Vosu-CSRF", csrf)
         .json(&serde_json::json!({"action":"create","name":"Smoke settings","scopes":["settings:write"]}))
         .send().await.unwrap().json().await.unwrap();
     let key = created["key"].as_str().unwrap();
@@ -636,8 +709,9 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     );
     assert_eq!(
         client
-            .get(format!("{base}/api/keys"))
-            .header("Origin", &base)
+            .get(format!("{management}/api/keys"))
+            .header("Origin", &management)
+            .header("X-Vosu-CSRF", csrf)
             .send()
             .await
             .unwrap()
@@ -680,7 +754,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
             "{path}"
         );
     }
-    let profiles: serde_json::Value = client.post(format!("{base}/api/keys")).header("Origin", &base)
+    let profiles: serde_json::Value = client.post(format!("{management}/api/keys")).header("Origin", &management).header("X-Vosu-CSRF", csrf)
         .json(&serde_json::json!({"action":"create","name":"Smoke profiles","scopes":["profiles:manage"]}))
         .send().await.unwrap().json().await.unwrap();
     let profiles_key = profiles["key"].as_str().unwrap();
@@ -723,8 +797,9 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     )
     .await;
     client
-        .post(format!("{base}/api/keys"))
-        .header("Origin", &base)
+        .post(format!("{management}/api/keys"))
+        .header("Origin", &management)
+        .header("X-Vosu-CSRF", csrf)
         .json(&serde_json::json!({"action":"revoke","id":id}))
         .send()
         .await
@@ -734,8 +809,9 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     // Both clients remain idle: revocation itself must close them, without
     // waiting for an inbound write. A subsequent settings relay cannot reach them.
     client
-        .post(format!("{base}/api/counters/settings/seeded-counter"))
-        .header("Origin", &base)
+        .post(format!("{management}/api/counters/settings/seeded-counter"))
+        .header("Origin", &management)
+        .header("X-Vosu-CSRF", csrf)
         .json(&serde_json::json!([{"uniqueID":"title","value":"after revoke"}]))
         .send()
         .await
@@ -918,8 +994,9 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     drop(hosted);
 
     let saved = client
-        .post(format!("{base}/api/counters/settings/seeded-counter"))
-        .header(reqwest::header::ORIGIN, &base)
+        .post(format!("{management}/api/counters/settings/seeded-counter"))
+        .header(reqwest::header::ORIGIN, &management)
+        .header("X-Vosu-CSRF", csrf)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .body(r#"[{"uniqueID":"title","value":"saved over TOML"}]"#)
         .send()
@@ -977,8 +1054,8 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     }
 
     let rejected = client.post(format!(
-        "{base}/api/counters/download/http%3A%2F%2F127.0.0.1%3A9%2Fcounter.zip?name=blocked&update=false"
-    )).header(reqwest::header::ORIGIN, &base).send().await.unwrap();
+        "{management}/api/counters/download/http%3A%2F%2F127.0.0.1%3A9%2Fcounter.zip?name=blocked&update=false"
+    )).header(reqwest::header::ORIGIN, &management).header("X-Vosu-CSRF", csrf).send().await.unwrap();
     assert_eq!(rejected.status(), 200);
     let rejected_body = rejected.text().await.unwrap();
     assert!(
@@ -988,8 +1065,9 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert!(!static_root.join("blocked").exists());
 
     let report = client
-        .post(format!("{base}/api/generateReport"))
-        .header(reqwest::header::ORIGIN, &base)
+        .post(format!("{management}/api/generateReport"))
+        .header(reqwest::header::ORIGIN, &management)
+        .header("X-Vosu-CSRF", csrf)
         .send()
         .await
         .unwrap();
@@ -1037,6 +1115,11 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     let next_base = format!("http://127.0.0.1:{next_port}");
     let rebound = wait_get(&client, &format!("{next_base}/settings")).await;
     assert_eq!(rebound.status(), 200);
+    assert_eq!(
+        rebound.url().origin().ascii_serialization(),
+        management,
+        "overlay rebind must leave dashboard listener unchanged"
+    );
     let reloaded_settings = client
         .get(format!("{next_base}/api/counters/settings/seeded-counter"))
         .send()
@@ -1050,9 +1133,45 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         fs::read(&legacy_schema_json_path).unwrap(),
         changed_legacy_schema
     );
+    let next_dashboard_port = available_port();
+    fs::write(
+        &current_config,
+        toml_config(next_port, &static_root).replace(
+            "DASHBOARD_PORT = 0",
+            &format!("DASHBOARD_PORT = {next_dashboard_port}"),
+        ),
+    )
+    .unwrap();
+    let management = format!("http://127.0.0.1:{next_dashboard_port}");
+    assert_eq!(
+        wait_get(&client, &format!("{management}/settings"))
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(
+        client
+            .get(format!("{next_base}/api/counters/settings/seeded-counter"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200,
+        "dashboard rebind must leave overlay listener unchanged"
+    );
+    let discovery: serde_json::Value = client
+        .get(format!("{next_base}/api/dashboard"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(discovery["origin"], management);
     let saved = client
-        .post(format!("{next_base}/api/settingsSave"))
-        .header(reqwest::header::ORIGIN, &next_base)
+        .post(format!("{management}/api/settingsSave"))
+        .header(reqwest::header::ORIGIN, &management)
+        .header("X-Vosu-CSRF", csrf)
         .json(&serde_json::json!({
             "SHOW_MP_COMMANDS": true,
             "V2_SUBSCRIPTION_DEBOUNCE": 1.125
@@ -1082,8 +1201,9 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     );
 
     let deleted = client
-        .post(format!("{next_base}/api/counters/delete/seeded-counter"))
-        .header(reqwest::header::ORIGIN, &next_base)
+        .post(format!("{management}/api/counters/delete/seeded-counter"))
+        .header(reqwest::header::ORIGIN, &management)
+        .header("X-Vosu-CSRF", csrf)
         .send()
         .await
         .unwrap();

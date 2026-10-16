@@ -126,6 +126,7 @@ pub async fn start_test_production_composition(
             config: Arc::clone(&options.config),
             snapshots: snapshots.snapshot_manager(),
             counters: Arc::clone(&counters),
+            lifecycle: Arc::default(),
             logs: options.logs_root,
         }),
         options.updater,

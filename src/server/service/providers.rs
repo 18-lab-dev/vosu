@@ -261,6 +261,10 @@ pub trait ConfigUpdateService: Send + Sync {
 /// Runtime report input facade; report rendering remains in `report.rs`.
 pub trait ReportInputProvider: Send + Sync {
     fn capture(&self) -> Result<ReportInput, String>;
+    /// Read-only dashboard metadata; no machine probing or log collection.
+    fn dashboard_status(&self) -> Value {
+        json!({ "instances": [], "available": false })
+    }
 }
 
 pub struct DeferredUpdateTrigger(Option<Box<dyn FnOnce() + Send + 'static>>);

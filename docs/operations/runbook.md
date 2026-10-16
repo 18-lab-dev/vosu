@@ -34,8 +34,14 @@ ENABLE_AUTOUPDATE = true
 OPEN_DASHBOARD_ON_STARTUP = true
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 24050.0
+DASHBOARD_IP = "127.0.0.1"
+DASHBOARD_PORT = 24052.0
 POLL_RATE = 150.0
 ```
+
+Open the trusted dashboard on port **24052**; overlay URLs remain on **24050** so OBS sources and browser storage do not move. `GET /api/dashboard` on the overlay origin discovers the effective dashboard origin. Wildcard dashboard binds map to loopback for local discovery. Redirected old dashboard bookmarks preserve path and query and do not trust arbitrary Host headers.
+
+Network changes in the dashboard require **Apply network settings**, then **Keep network settings** on the new dashboard origin within 30 seconds. The daemon itself rolls back unconfirmed changes, including after a closed page or an unreachable port typo such as `2405`. Only one change may be pending. File edits rebind both listeners independently as before. CIDR entries are supported: Tailscale uses `100.64.0.0/10`, not the public-space-covering legacy `100.*.*.*`. IPv6 CIDRs work too. The legacy `absolute` token matches only that literal hostname/raw browser header, never arbitrary remote peers.
 
 Startup precedence is `vosu.toml > vosu.env > tosu.env > defaults`. The two `.env` files are migration inputs only: vosu writes canonical TOML atomically first and removes readable legacy files only after successful replacement. A malformed TOML file leaves the prior runtime configuration active during watch reload; at startup, malformed input leaves all sources untouched.
 
@@ -60,7 +66,7 @@ Offset/signature resolution may remain pending and retry while a process is aliv
 
 ## Security boundaries
 
-Keep the listener loopback-only unless remote access is deliberate and protected. Read authorization combines allowed peer/network patterns with allowed `Origin`/`Referer` tokens, retaining headerless/opaque overlay reads; a hostname token does not authorize an arbitrary remote peer. Management POSTs additionally require exact same-origin browser provenance (scheme, host, port), not merely a trusted hostname or loopback peer. Settings sockets retain reads but require that same provenance or the native command-broker credential below for writes; use the hosted settings page for unbrokered file-origin overlays. See the README for method cutover and reverse-proxy boundaries. Preserve request/frame limits, root-confined files, escaped reports, HTTPS-only downloads, private/reserved destination rejection, ZIP safety checks, and same-filesystem replacement.
+Keep both listeners loopback-only unless remote access is deliberate and protected. Read authorization combines allowed peer IPs/CIDRs/legacy wildcard octets with allowed `Origin`/`Referer` tokens; a hostname token never authorizes an arbitrary remote peer. Management mutations run only on the dashboard listener with exact dashboard-origin provenance and `X-Vosu-CSRF`. The overlay listener rejects browser management mutations. Scoped API keys retain their explicit settings/profile exceptions, and overlay settings sockets keep their existing overlay-origin provenance or native broker credential. Preserve request/frame limits, root-confined files, escaped reports, HTTPS-only downloads, private/reserved destination rejection, ZIP safety checks, and same-filesystem replacement.
 
 User-managed [API keys](../../README.md#api-keys) are a scoped alternative for
 trusted sandboxed/remote/web clients, alongside the unchanged loopback file
@@ -104,7 +110,7 @@ The October 2026 hardening preserves existing dashboard/counter URLs and setting
 - **Updater readiness:** only the exact spawned candidate/rollback process receives the one-use readiness secret through its private stdin pipe. The secret is no longer passed in process-visible arguments; the transaction token alone cannot authorize readiness. Native helper replacement/rollback coverage remains required on each supported OS.
   This private readiness protocol is a clean cutover for the first daemon release; the only currently published release asset is the offset-generator bundle. Development binaries built with the older argument-token protocol must be replaced manually rather than relying on an old helper to update across this boundary.
 
-**Still unresolved:** installed counters share management authority with the dashboard; native clients can forge browser provenance. [ADR 0013](../decisions/0013-counters-share-dashboard-origin.md) keeps this shared origin for compatibility and records the evaluated isolation designs; the **Available** page discloses it to users. Memory-derived file roots and automatic generation still rely on a trusted same-account game installation. Counter settings/schema files and total rendered output do not have a complete aggregate budget. Per-input and per-queue caps do not bound all concurrent calculations/connections. Legacy curve/slider expansion, other calculator hot-path complexity and some hit-error classification costs remain outside this patch. Keep loopback binding, normal-user execution and trusted counter/game installations; do not describe these mitigations as full isolation.
+**Still unresolved:** native same-account clients can read dashboard pages and forge browser provenance. The new dashboard port isolates installed overlay code from management APIs ([ADR 0016](../decisions/0016-separate-dashboard-origin.md)), not malicious local programs. Memory-derived file roots and automatic generation still rely on a trusted same-account game installation. Counter settings/schema files and total rendered output do not have a complete aggregate budget. Per-input and per-queue caps do not bound all concurrent calculations/connections. Legacy curve/slider expansion, other calculator hot-path complexity and some hit-error classification costs remain outside this patch. Keep loopback binding, normal-user execution and trusted counter/game installations; do not describe these mitigations as full isolation.
 
 
 ## Updates and releases

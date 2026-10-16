@@ -1,3 +1,32 @@
+#[tokio::test]
+async fn dashboard_attachment_status_uses_existing_roster_and_published_version() {
+    let root = tempfile::tempdir().unwrap();
+    let config = Arc::new(ConfigStore::initialize(root.path().join("vosu.toml")).await.unwrap());
+    let snapshots = Arc::new(SnapshotManager::new(Arc::new(ManagerSnapshot::not_ready(0, ApiRuntimeSettings::default()))));
+    let provider = RuntimeReportInput {
+        config: config.clone(), snapshots: snapshots.clone(),
+        counters: Arc::new(ReloadableCounterService::production(root.path().join("static"), root.path().join("settings"), root.path().join("cache"))),
+        logs: root.path().join("logs"), lifecycle: Arc::default(),
+    };
+    assert_eq!(provider.dashboard_status()["instances"], serde_json::json!([]));
+    let mut state = (*state_bundle(3, 0)).clone();
+    Arc::make_mut(&mut state.regular).settings.values.insert("client".into(), serde_json::json!({"version": "2026.1005.0"}));
+    snapshots.publish(Arc::new(ManagerSnapshot::new(1, Some(42), false, ApiRuntimeSettings::default(), [
+        ManagerInstanceSnapshot::new(42, crate::instance::InstanceSettings { tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None }, false, Arc::new(state))
+    ])));
+    let status = provider.dashboard_status();
+    assert_eq!(status["instances"][0]["pid"], 42);
+    assert_eq!(status["instances"][0]["client"], "stable");
+    assert_eq!(status["instances"][0]["version"], "2026.1005.0");
+    assert_eq!(status["instances"][0]["state"], "reading");
+    let (_, lifecycle) = tokio::sync::watch::channel(Arc::new(crate::instance::InstanceLifecycleSnapshot {
+        revision: 2, instances: Arc::from([]), focus: Default::default(),
+    }));
+    provider.lifecycle.store(Some(Arc::new(lifecycle)));
+    assert_eq!(provider.dashboard_status()["instances"], serde_json::json!([]), "exited instances must not linger through a stale published state");
+    config.shutdown().await.unwrap();
+}
+
 #[test]
 fn non_focused_instance_generation_invalidates_manager_revision() {
     let mut revisions = SemanticRevision::default();
@@ -91,6 +120,8 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         "V2_SUBSCRIPTION_DEBOUNCE",
         "SERVER_IP",
         "SERVER_PORT",
+        "DASHBOARD_IP",
+        "DASHBOARD_PORT",
         "ALLOWED_IPS",
         "DEBUG_LOG",
         "SHOW_MP_COMMANDS",
@@ -103,7 +134,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     }
     #[cfg(target_os = "linux")]
     {
-        assert!(settings.contains("Run vosu as a systemd user service when you log in."));
+        assert!(settings.contains("Run Vosu as a systemd user service when you log in."));
         assert!(settings.contains(r#"data-id="START_AT_LOGIN" type="checkbox" >"#));
         let enabled = render_runtime_settings(&Config {
             start_at_login: true,
@@ -119,7 +150,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     }
     assert!(settings.contains("V2 subscription debounce"));
     assert!(settings.contains(
-        "Selected-field sampling interval and minimum milliseconds between its WebSocket frames."
+        "Wait at least this long between updates sent to overlays that request selected V2 fields."
     ));
     assert!(settings.contains(
         r#"data-id="V2_SUBSCRIPTION_DEBOUNCE" type="number" value="1" min="1" max="60000" step="any" required"#
@@ -194,10 +225,12 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
             "POLL_RATE": " 175.5 ",
             "PRECISE_DATA_POLL_RATE": "\t12.25\n",
             "V2_SUBSCRIPTION_DEBOUNCE": " 1.125 ",
-            "SERVER_PORT": " 24051 "
+            "SERVER_PORT": " 24051 ",
+            "DASHBOARD_PORT": " 24052 ", "_network_action": "apply"
         }))
         .await
         .unwrap();
+    service.save(serde_json::json!({"_network_action":"confirm", "_request_origin":"http://127.0.0.1:24052"})).await.unwrap();
 
     let current = store.current();
     assert_eq!(current.poll_rate, 175.5);
@@ -238,8 +271,9 @@ async fn out_of_range_or_unparseable_save_preserves_runtime_and_disk_configurati
         ("SERVER_PORT", serde_json::json!(0)),
         ("SERVER_PORT", serde_json::json!(65_536)),
         ("SERVER_PORT", serde_json::json!("24050.5")),
+        ("DASHBOARD_PORT", serde_json::json!("24052.5")),
     ];
-    let unbounded = ["POLL_RATE", "PRECISE_DATA_POLL_RATE", "V2_SUBSCRIPTION_DEBOUNCE", "SERVER_PORT"]
+    let unbounded = ["POLL_RATE", "PRECISE_DATA_POLL_RATE", "V2_SUBSCRIPTION_DEBOUNCE", "SERVER_PORT", "DASHBOARD_PORT"]
         .into_iter()
         .flat_map(|key| {
             [
@@ -253,6 +287,7 @@ async fn out_of_range_or_unparseable_save_preserves_runtime_and_disk_configurati
     for (key, value) in cases.into_iter().chain(unbounded) {
         let mut object = serde_json::Map::new();
         object.insert(key.to_owned(), value.clone());
+        object.insert("_network_action".into(), serde_json::json!("apply"));
         object.insert("STATIC_FOLDER_PATH".to_owned(), serde_json::json!("/"));
         assert!(service.save(object.into()).await.is_err(), "{key}={value}");
         assert_eq!(*store.current(), *original);
@@ -346,7 +381,7 @@ fn counter_cards_preview_at_native_resolution_from_encoded_relative_paths() {
         },
         "localhost:24050",
     );
-    assert!(fixed.contains(r#"src="/accuracy%20by%20sxlvia/""#));
+    assert!(fixed.contains(r#"src="http://localhost:24050/accuracy%20by%20sxlvia/""#));
     assert!(fixed.contains(r#"data-preview-width="640" data-preview-height="480""#));
     assert!(fixed.contains(r#"width="640" height="480" scrolling="no""#));
     assert!(fixed.contains(r#"data-copy-value="http://localhost:24050/accuracy%20by%20sxlvia/""#));
@@ -360,7 +395,7 @@ fn counter_cards_preview_at_native_resolution_from_encoded_relative_paths() {
         },
         "127.0.0.1:24050",
     );
-    assert!(nested.contains(r#"src="/parent/50%25%20%231%3F/""#));
+    assert!(nested.contains(r#"src="http://127.0.0.1:24050/parent/50%25%20%231%3F/""#));
 
     let any = render_counter_card(
         &CounterCard {
@@ -383,6 +418,44 @@ fn counter_cards_preview_at_native_resolution_from_encoded_relative_paths() {
     );
     assert!(flexible.contains(r#"class="preview-stage is-fluid""#));
     assert!(flexible.contains(r#"width="100%" height="500""#));
+}
+
+#[test]
+fn installed_updates_use_catalog_metadata_and_actual_folder_target() {
+    let mut local: Vec<crate::counters::Counter> = serde_json::from_value(serde_json::json!([{
+        "folderName": "custom-folder", "name": "OffsetSuggester", "author": "Pinossaur",
+        "version": "0.1", "resolution": [350, 230], "authorlinks": [], "settings": []
+    }])).unwrap();
+    let remote = crate::server::catalog::decode_response(200, br#"[{"name":"OffsetSuggester","author":"Pinossaur","version":"1.0","downloadLink":"https://example.test/counter.zip"}]"#).unwrap();
+    let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
+    let remote = crate::server::catalog::merge_local(remote, &installed);
+    annotate_installed_updates(&mut local, &remote);
+    let html = render_local_counters(&local, None, "localhost:24050");
+    assert!(html.contains("Update available</button>"));
+    assert!(html.contains(r#"class="badge badge-warning""#));
+    assert!(html.contains(r#"data-action="update-counter""#));
+    assert!(html.contains(r#"data-install-name="custom-folder""#));
+    assert!(html.contains(r#"data-download-url="https://example.test/counter.zip""#));
+}
+
+#[test]
+fn card_meta_omits_empty_or_unknown_author_segments() {
+    for external in [false, true] {
+        for author in ["", "  ", "unknown", "Unknown"] {
+            let html = render_counter_card(&CounterCard {
+                name: "Native small", version: "1.0.0", author, external,
+                resolution: &[serde_json::json!(180), serde_json::json!(80)],
+                ..CounterCard::default()
+            }, "localhost:24050");
+            let meta = html.split(r#"<p class="counter-card__meta">"#).nth(1).unwrap().split("</p>").next().unwrap();
+            assert!(!meta.contains("<span></span>"), "{meta}");
+            assert!(!meta.contains("unknown"), "{meta}");
+            assert!(!meta.contains("by "), "{meta}");
+            if !external {
+                assert!(meta.starts_with("<span>v1.0</span><button"), "{meta}");
+            }
+        }
+    }
 }
 
 #[test]
@@ -649,3 +722,123 @@ fn startup_owner_conflict_remains_typed_for_exit_75_mapping() {
     assert!(!is_startup_owner_conflict(&io::Error::other("ordinary")));
 }
 
+
+#[tokio::test]
+async fn network_apply_requires_confirmation_on_new_origin_and_allows_only_one_pending_change() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Arc::new(ConfigStore::initialize(root.path().join("vosu.toml")).await.unwrap());
+    let service = RuntimeConfig::new(Arc::clone(&store));
+    assert!(service.save(serde_json::json!({"SERVER_PORT":2405})).await.is_err());
+    service.save(serde_json::json!({"SERVER_PORT":2405,"DASHBOARD_PORT":24892,"_network_action":"apply"})).await.unwrap();
+    assert_eq!(store.current().server_port, 2405.0);
+    assert!(service.save(serde_json::json!({"SERVER_PORT":24893,"_network_action":"apply"})).await.is_err());
+    assert!(service.save(serde_json::json!({"_network_action":"confirm","_request_origin":"http://127.0.0.1:24052"})).await.is_err());
+    service.save(serde_json::json!({"_network_action":"confirm","_request_origin":"http://127.0.0.1:24892"})).await.unwrap();
+    assert!(service.network.lock().await.is_none());
+    assert_eq!(store.current().server_port, 2405.0);
+    store.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn network_timer_reverts_port_typo_without_a_browser_and_preserves_other_autosaves() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("vosu.toml");
+    let store = Arc::new(ConfigStore::initialize(path.clone()).await.unwrap());
+    let service = RuntimeConfig::new(Arc::clone(&store));
+    service.save(serde_json::json!({"SERVER_PORT":2405,"DASHBOARD_PORT":24891,"ALLOWED_IPS":"100.64.0.0/10","_network_action":"apply"})).await.unwrap();
+    service.save(serde_json::json!({"DEBUG_LOG":true})).await.unwrap();
+    tokio::time::pause();
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(31)).await;
+    tokio::time::resume();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while service.network.lock().await.is_some() { tokio::task::yield_now().await; }
+    }).await.unwrap();
+    let current = store.current();
+    assert_eq!(current.server_port, 24050.0);
+    assert_eq!(current.dashboard_port, 24052.0);
+    assert_eq!(current.allowed_ips, "127.0.0.1,localhost,absolute");
+    assert!(current.debug_log);
+    let persisted: toml::Value = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(persisted["SERVER_PORT"].as_float(), Some(24050.0));
+    store.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn network_confirmation_waits_for_the_new_effective_dashboard_target() {
+    use crate::server::runtime::{EffectiveListener, ListenerState};
+    let root = tempfile::tempdir().unwrap();
+    let store = Arc::new(ConfigStore::initialize(root.path().join("vosu.toml")).await.unwrap());
+    let origins = Arc::new(crate::server::origins::Origins::new("http://127.0.0.1:24050".into(), "http://127.0.0.1:24052".into()).unwrap());
+    let state = |host: &str, port| ListenerState {
+        effective: Some(EffectiveListener { target: ListenTarget::new(host, port), address: format!("{host}:{port}").parse().unwrap() }),
+        ..ListenerState::default()
+    };
+    let (overlay_tx, overlay) = watch::channel(state("127.0.0.1", 24050));
+    let (dashboard_tx, dashboard) = watch::channel(state("127.0.0.1", 24052));
+    origins.observe_listeners(overlay, dashboard);
+    let mut service = RuntimeConfig::new(Arc::clone(&store));
+    service.origins = Some(origins);
+    service.save(serde_json::json!({"DASHBOARD_IP":"0.0.0.0","SERVER_PORT":24893,"_network_action":"apply","_request_origin":"http://127.0.0.1:24052"})).await.unwrap();
+    assert!(service.save(serde_json::json!({"_network_action":"confirm","_request_origin":"http://127.0.0.1:24052"})).await.is_err(), "retained old listener cannot confirm a failed replacement");
+    dashboard_tx.send(state("0.0.0.0", 24052)).unwrap();
+    assert!(service.save(serde_json::json!({"_network_action":"confirm","_request_origin":"http://192.168.1.7:24052"})).await.is_err(), "overlay replacement must also be effective");
+    overlay_tx.send(state("127.0.0.1", 24893)).unwrap();
+    service.save(serde_json::json!({"_network_action":"confirm","_request_origin":"http://192.168.1.7:24052"})).await.unwrap();
+    store.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn failed_network_rollback_keeps_guard_and_retries_until_persisted() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct FailingReplace(Arc<AtomicBool>);
+    impl crate::config::AtomicReplace for FailingReplace {
+        fn replace(&self, temp: &Path, target: &Path) -> io::Result<()> {
+            if self.0.load(Ordering::SeqCst) {
+                Err(io::Error::other("injected persistence failure"))
+            } else {
+                crate::platform::atomic_replace(temp, target)
+            }
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let fail = Arc::new(AtomicBool::new(false));
+    let store = Arc::new(ConfigStore::initialize_with_options(root.path().join("vosu.toml"),
+        crate::config::ConfigStoreOptions { atomic_replace: Arc::new(FailingReplace(fail.clone())),
+            ..crate::config::ConfigStoreOptions::default() }).await.unwrap());
+    let service = RuntimeConfig::new(store.clone());
+    service.save(serde_json::json!({"SERVER_PORT":2405,"_network_action":"apply"})).await.unwrap();
+    fail.store(true, Ordering::SeqCst);
+    tokio::time::pause();
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(31)).await;
+    tokio::time::resume();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while store.current().server_port != 24050.0 { tokio::task::yield_now().await; }
+    }).await.unwrap();
+    assert!(service.network.lock().await.is_some(), "failed flush cannot clear pending guard");
+    assert!(service.save(serde_json::json!({"_network_action":"confirm","_request_origin":"http://127.0.0.1:24052"})).await.is_err());
+    fail.store(false, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while service.network.lock().await.is_some() { tokio::task::yield_now().await; }
+    }).await.unwrap();
+    store.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn wildcard_network_apply_retains_the_verified_remote_return_origin() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Arc::new(ConfigStore::initialize(root.path().join("vosu.toml")).await.unwrap());
+    store.update(|config| config.dashboard_ip = "0.0.0.0".into());
+    store.flush().await.unwrap();
+    let origins = Arc::new(crate::server::origins::Origins::new(
+        "http://127.0.0.1:24050".into(), "http://127.0.0.1:24052".into()).unwrap());
+    let mut service = RuntimeConfig::new(store.clone());
+    service.origins = Some(origins.clone());
+    service.save(serde_json::json!({
+        "DASHBOARD_PORT":24895, "_network_action":"apply",
+        "_request_origin":"http://192.168.1.7:24052",
+    })).await.unwrap();
+    assert_eq!(origins.previous_dashboard.read().as_deref(), Some("http://192.168.1.7:24052"));
+    store.shutdown().await.unwrap();
+}

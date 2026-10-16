@@ -28,7 +28,7 @@ fn available_port() -> u16 {
 
 fn legacy_config(port: u16, static_root: &Path) -> String {
     format!(
-        "ENABLE_AUTOUPDATE=false\nOPEN_DASHBOARD_ON_STARTUP=false\nDEBUG_LOG=false\nPOLL_RATE=150\nPRECISE_DATA_POLL_RATE=10\nSERVER_IP=127.0.0.1\nSERVER_PORT={port}\nSTATIC_FOLDER_PATH={}\nALLOWED_IPS=127.0.0.1,localhost,absolute\n",
+        "ENABLE_AUTOUPDATE=false\nOPEN_DASHBOARD_ON_STARTUP=false\nDEBUG_LOG=false\nPOLL_RATE=150\nPRECISE_DATA_POLL_RATE=10\nSERVER_IP=127.0.0.1\nSERVER_PORT={port}\nDASHBOARD_PORT=0\nSTATIC_FOLDER_PATH={}\nALLOWED_IPS=127.0.0.1,localhost,absolute\n",
         static_root.display(),
     )
 }
@@ -36,7 +36,7 @@ fn legacy_config(port: u16, static_root: &Path) -> String {
 fn toml_config(port: u16, static_root: &Path) -> String {
     let static_root = toml::Value::String(static_root.to_string_lossy().into_owned());
     format!(
-        "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nDEBUG_LOG = false\nPOLL_RATE = 150\nPRECISE_DATA_POLL_RATE = 10\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {port}\nSTATIC_FOLDER_PATH = {static_root}\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
+        "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nDEBUG_LOG = false\nPOLL_RATE = 150\nPRECISE_DATA_POLL_RATE = 10\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {port}\nDASHBOARD_PORT = 0\nSTATIC_FOLDER_PATH = {static_root}\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
     )
 }
 
@@ -218,7 +218,16 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     let base = format!("http://127.0.0.1:{first_port}");
     let dashboard = wait_get(&client, &format!("{base}/")).await;
     assert_eq!(dashboard.status(), 200);
-    assert!(dashboard.text().await.unwrap().contains("vosu"));
+    let management = dashboard.url().origin().ascii_serialization();
+    let dashboard = dashboard.text().await.unwrap();
+    assert!(dashboard.contains("vosu"));
+    let csrf = dashboard
+        .split("\"csrf\":\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap();
     let canonical: toml::Table =
         toml::from_str(&fs::read_to_string(&config_path).expect("read canonical packaged config"))
             .expect("packaged daemon canonicalizes current TOML");
@@ -258,15 +267,16 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     assert!(counters.text().await.unwrap().contains("Seeded Counter"));
 
     let rejected = client.post(format!(
-        "{base}/api/counters/download/https%3A%2F%2F127.0.0.1%3A9%2Fcounter.zip?name=blocked&update=false"
-    )).header(reqwest::header::ORIGIN, &base).send().await.unwrap();
+        "{management}/api/counters/download/https%3A%2F%2F127.0.0.1%3A9%2Fcounter.zip?name=blocked&update=false"
+    )).header(reqwest::header::ORIGIN, &management).header("X-Vosu-CSRF", csrf).send().await.unwrap();
     assert_eq!(rejected.status(), 200);
     assert!(rejected.text().await.unwrap().contains("error"));
     assert!(!static_root.join("blocked").exists());
 
     let report = client
-        .post(format!("{base}/api/generateReport"))
-        .header(reqwest::header::ORIGIN, &base)
+        .post(format!("{management}/api/generateReport"))
+        .header(reqwest::header::ORIGIN, &management)
+        .header("X-Vosu-CSRF", csrf)
         .send()
         .await
         .unwrap();
@@ -305,8 +315,9 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     assert_eq!(rebound.status(), 200);
 
     let saved = client
-        .post(format!("{second_base}/api/settingsSave"))
-        .header(reqwest::header::ORIGIN, &second_base)
+        .post(format!("{management}/api/settingsSave"))
+        .header(reqwest::header::ORIGIN, &management)
+        .header("X-Vosu-CSRF", csrf)
         .json(&serde_json::json!({"SHOW_MP_COMMANDS": true}))
         .send()
         .await
@@ -327,8 +338,9 @@ async fn packaged_release_obeys_production_policy_and_shuts_down_cleanly() {
     );
 
     let deleted = client
-        .post(format!("{second_base}/api/counters/delete/seeded-counter"))
-        .header(reqwest::header::ORIGIN, &second_base)
+        .post(format!("{management}/api/counters/delete/seeded-counter"))
+        .header(reqwest::header::ORIGIN, &management)
+        .header("X-Vosu-CSRF", csrf)
         .send()
         .await
         .unwrap();

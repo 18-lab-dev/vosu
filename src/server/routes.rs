@@ -46,6 +46,8 @@ pub enum Endpoint {
     CounterOpen,
     CounterOpenRoot,
     CounterDelete,
+    CounterDetails,
+    DashboardStatus,
     CounterSettings,
     ApiKeys,
     SettingsSave,
@@ -142,6 +144,9 @@ pub trait RouteDelegate: Send + Sync {
 }
 
 pub trait RequestAuthorizer: Send + Sync {
+    fn origins(&self) -> Option<(&super::origins::Origins, bool)> {
+        None
+    }
     fn authorize(&self, peer: IpAddr, headers: RequestHeaders<'_>) -> AuthorizationDecision;
 }
 
@@ -248,6 +253,13 @@ impl ResponseFlushRegistry {
 #[derive(Clone, Copy, Debug)]
 pub struct PeerAddress(pub SocketAddr);
 
+/// Transport-observed peer and destination, never forwarded or Host-derived.
+#[derive(Clone, Copy, Debug)]
+pub struct ConnectionAddresses {
+    pub peer: SocketAddr,
+    pub local: Option<SocketAddr>,
+}
+
 #[derive(Clone)]
 pub struct RouteProviders {
     pub authorization: Arc<dyn RequestAuthorizer>,
@@ -271,14 +283,46 @@ pub fn service_with_upgrades(
     providers: RouteProviders,
     tracker: Arc<UpgradeCallbackTracker>,
     flushes: Arc<ResponseFlushRegistry>,
-) -> IntoMakeServiceWithConnectInfo<Router, PeerAddress> {
+) -> IntoMakeServiceWithConnectInfo<Router, ConnectionAddresses> {
     router(providers)
         .layer(Extension(tracker))
         .layer(Extension(flushes))
-        .into_make_service_with_connect_info::<PeerAddress>()
+        .into_make_service_with_connect_info::<ConnectionAddresses>()
 }
 
 pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Request) -> Response {
+    let addresses = request
+        .extensions()
+        .get::<ConnectInfo<ConnectionAddresses>>()
+        .copied();
+    let local_ip = addresses.and_then(|addresses| addresses.0.local.map(|address| address.ip()));
+    if let Some(addresses) = addresses {
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(PeerAddress(addresses.0.peer)));
+    }
+    if let Some((origins, true)) = providers.authorization.origins() {
+        let mut hosts = request.headers().get_all(header::HOST).iter();
+        if !hosts
+            .next()
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|host| {
+                format!("http://{host}") == origins.safe_origin(true, request.headers(), local_ip)
+            })
+            || hosts.next().is_some()
+        {
+            return Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(Body::from("Not Found"))
+                .unwrap();
+        }
+        if request.headers().contains_key(header::UPGRADE) {
+            return Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(Body::from("Not Found"))
+                .unwrap();
+        }
+    }
     let allowed = {
         let peer = request
             .extensions()
@@ -310,6 +354,20 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             .map(|address| address.ip())
             .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         let decision = providers.authorization.authorize(peer, headers);
+        let dashboard_source = !decision.header_ok
+            && providers
+                .authorization
+                .origins()
+                .is_some_and(|(origins, _)| {
+                    headers
+                        .origin
+                        .or(headers.referer)
+                        .and_then(|value| url::Url::parse(value).ok())
+                        .is_some_and(|source| {
+                            source.origin().ascii_serialization()
+                                == origins.safe_origin(true, request.headers(), local_ip)
+                        })
+                });
         let key_route = (request.method() == Method::POST
             && matches!(
                 classify(request.method(), request.uri().path()),
@@ -318,6 +376,8 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             || request.uri().path() == "/websocket/commands";
         decision.peer_ok
             && (decision.header_ok
+                || dashboard_source
+                || (request.method() == Method::GET && request.uri().path() == "/api/dashboard")
                 || (key_route
                     && super::api_keys::presented(request.headers(), true)
                         .is_ok_and(|k| k.is_some())))
@@ -371,6 +431,55 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     let Some(endpoint) = classify(&method, &path) else {
         return cors(not_found());
     };
+    if let Some((origins, dashboard)) = providers.authorization.origins() {
+        if method == Method::GET && path == "/api/dashboard" {
+            return cors(json(
+                StatusCode::OK,
+                Bytes::from(serde_json::json!({"origin": origins.dashboard()}).to_string()),
+            ));
+        }
+        if !dashboard
+            && matches!(
+                endpoint,
+                Endpoint::DashboardStatus | Endpoint::CounterDetails
+            )
+        {
+            return not_found();
+        }
+        if !dashboard
+            && matches!(
+                endpoint,
+                Endpoint::Root | Endpoint::Settings | Endpoint::Available
+            )
+        {
+            let target = format!(
+                "{}{}",
+                origins.safe_origin(true, request.headers(), local_ip),
+                request.uri().path_and_query().map_or("/", |v| v.as_str())
+            );
+            return Response::builder()
+                .status(StatusCode::FOUND)
+                .header(header::LOCATION, target)
+                .body(Body::empty())
+                .unwrap();
+        }
+        if dashboard
+            && matches!(
+                endpoint,
+                Endpoint::CounterStatic
+                    | Endpoint::WsCommands
+                    | Endpoint::BackgroundImage
+                    | Endpoint::BeatmapBackground
+                    | Endpoint::BeatmapAudio
+                    | Endpoint::BeatmapFile
+                    | Endpoint::SongsFile
+                    | Endpoint::BeatmapPath
+                    | Endpoint::SkinFile
+            )
+        {
+            return not_found();
+        }
+    }
     let keys = providers.delegate.api_keys();
     let credential =
         if method == Method::POST || (websocket_upgrade && endpoint == Endpoint::WsCommands) {
@@ -428,7 +537,14 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     } else {
         MutationAuthorization::default()
     };
-    if ((method == Method::POST && grant.is_none()) || endpoint == Endpoint::ApiKeys) && !mutation.0
+    let trusted_management = providers
+        .authorization
+        .origins()
+        .map_or(mutation.0, |(origins, dashboard)| {
+            dashboard && origins.authorized(request.headers(), local_ip)
+        });
+    if ((method == Method::POST && grant.is_none()) || endpoint == Endpoint::ApiKeys)
+        && !trusted_management
     {
         return cors(
             Response::builder()
@@ -443,6 +559,36 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     }
     if key_protocol {
         request.extensions_mut().insert(KeyProtocol);
+    }
+    let page_script = providers
+        .authorization
+        .origins()
+        .and_then(|(origins, dashboard)| {
+            (dashboard
+                && matches!(
+                    endpoint,
+                    Endpoint::Root | Endpoint::Settings | Endpoint::Available
+                ))
+            .then(|| origins.page_context(request.headers(), local_ip))
+        });
+    let embedded = endpoint == Endpoint::Settings
+        && request.uri().query().is_some_and(|query| {
+            let mut parameters = url::form_urlencoded::parse(query.as_bytes());
+            let embed = parameters.clone().find(|(key, _)| key == "embed");
+            let overlay = parameters.find(|(key, _)| key == "overlay");
+            embed.is_some_and(|(_, value)| value == "1")
+                && overlay.is_some_and(|(_, value)| !value.is_empty())
+        });
+    if let Some((origins, true)) = providers.authorization.origins()
+        && matches!(
+            endpoint,
+            Endpoint::Root | Endpoint::Available | Endpoint::CounterSearch
+        )
+    {
+        let origin = origins.safe_origin(false, request.headers(), local_ip);
+        if let Ok(host) = HeaderValue::from_str(origin.trim_start_matches("http://")) {
+            request.headers_mut().insert(header::HOST, host);
+        }
     }
     let response = match endpoint {
         Endpoint::State(route) => match providers.state.cached_json(route).await {
@@ -489,7 +635,52 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                 .await
         }
     };
-    cors(response)
+    let response = if let Some(script) = page_script
+        && response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .is_some_and(|v| v.as_bytes().starts_with(b"text/html"))
+    {
+        let (mut parts, body) = response.into_parts();
+        match to_bytes(body, 16 * 1024 * 1024).await {
+            Ok(bytes) => {
+                parts.headers.remove(header::CONTENT_LENGTH);
+                let csp = if embedded {
+                    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' http: https: data:; frame-src http:; connect-src http:; font-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'"
+                } else {
+                    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' http: https: data:; frame-src http:; connect-src http:; font-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'"
+                };
+                parts.headers.insert(
+                    header::CONTENT_SECURITY_POLICY,
+                    HeaderValue::from_static(csp),
+                );
+                parts.headers.insert(
+                    header::X_CONTENT_TYPE_OPTIONS,
+                    HeaderValue::from_static("nosniff"),
+                );
+                let html = String::from_utf8_lossy(&bytes).replacen(
+                    "<head>",
+                    &format!("<head>{script}"),
+                    1,
+                );
+                Response::from_parts(parts, Body::from(html))
+            }
+            Err(_) => not_found(),
+        }
+    } else {
+        response
+    };
+    if providers
+        .authorization
+        .origins()
+        .is_some_and(|(_, dashboard)| dashboard)
+    {
+        // Dashboard HTML contains the CSRF secret. Never expose it to overlay
+        // fetches via the overlay protocol's permissive read CORS policy.
+        response
+    } else {
+        cors(response)
+    }
 }
 
 pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
@@ -502,6 +693,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/json/v2" if get => Some(State(StateRoute::V2)),
         "/json/v2/precise" if get => Some(State(StateRoute::V2Precise)),
         "/api/calculate/pp" if get => Some(CalculatePp),
+        "/api/dashboard" if get => Some(Root),
         "/api/keys" if get || post => Some(ApiKeys),
         "/api/counters/profiles" if get || post => Some(CounterSettings),
         "/api/settingsSave" if post => Some(SettingsSave),
@@ -521,6 +713,8 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/websocket/v2/precise" if get => Some(WsV2Precise),
         "/websocket/v2/subscribe" if get => Some(WsV2Subscribe),
         "/websocket/commands" if get => Some(WsCommands),
+        "/api/dashboard/status" if get => Some(DashboardStatus),
+        _ if get && path.starts_with("/api/counters/details/") => Some(CounterDetails),
         _ if get && path.starts_with("/api/counters/search/") => Some(CounterSearch),
         "/api/counters/open-root" if post => Some(CounterOpenRoot),
         _ if post && path.starts_with("/api/counters/download/") => Some(CounterDownload),

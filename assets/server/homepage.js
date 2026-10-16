@@ -2,12 +2,15 @@ import { createSettingsEditor } from './homepage-settings.js';
 
 (() => {
   'use strict';
+  const context = JSON.parse(document.querySelector('#vosu-context')?.textContent ?? '{}');
+  const csrf = context.csrf ?? '';
 
   const embedParameters = new URLSearchParams(window.location.search);
   if (window.location.pathname === '/settings' && embedParameters.get('overlay')
       && embedParameters.get('embed') === '1') {
     document.body.classList.add('settings-embed');
     document.querySelector('.site-header')?.remove();
+    document.querySelector('#attachment-status')?.remove();
     document.querySelector('#update-notice')?.remove();
   }
 
@@ -21,8 +24,6 @@ import { createSettingsEditor } from './homepage-settings.js';
   const PINNED_KEY = 'vosu.pinned-overlays.v1';
   const INSTALLED_COUNT_KEY = 'total-installed-overlays';
   const AVAILABLE_COUNT_KEY = 'total-available-overlays';
-  const LISTENER_POLL_INTERVAL = 500;
-  const LISTENER_POLL_TIMEOUT = 15000;
 
   const state = {
     originalResults: results?.innerHTML ?? '',
@@ -60,6 +61,19 @@ import { createSettingsEditor } from './homepage-settings.js';
     }
   }
 
+  function navigateDashboard(url) {
+    // A cross-port navigation must not be rejected because the previous
+    // dashboard hostname is absent from the overlay header allowlist.
+    const link = document.createElement('a');
+    link.href = url;
+    link.rel = 'noreferrer';
+    link.referrerPolicy = 'no-referrer';
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }
+
   function absoluteHttpUrl(value) {
     try {
       const url = new URL(String(value));
@@ -74,6 +88,7 @@ import { createSettingsEditor } from './homepage-settings.js';
       ...options,
       headers: {
         Accept: 'application/json',
+        'X-Vosu-CSRF': csrf,
         ...(options.body ? { 'Content-Type': 'application/json' } : {}),
         ...(options.headers ?? {}),
       },
@@ -199,10 +214,16 @@ import { createSettingsEditor } from './homepage-settings.js';
       - Number.parseFloat(style.paddingTop)
       - Number.parseFloat(style.paddingBottom);
     if (!(availableWidth > 0) || !(availableHeight > 0)) return;
-    // Contain the overlay in its frame. Small overlays may grow up to the
-    // stage's limit so their content stays legible.
-    const maxScale = Number(stage.dataset.maxScale) || 2;
-    const scale = Math.min(maxScale, availableWidth / width, availableHeight / height);
+    // Never magnify a preview: its declared pixel dimensions remain meaningful.
+    const scale = Math.min(1, availableWidth / width, availableHeight / height);
+    let chip = container.querySelector('.preview-scale');
+    if (!chip) {
+      chip = document.createElement('span');
+      chip.className = 'preview-scale';
+      container.append(chip);
+    }
+    chip.hidden = scale >= 1;
+    chip.textContent = `${Math.round(scale * 100)}%`;
     stage.style.width = `${width * scale}px`;
     stage.style.height = `${height * scale}px`;
     iframe.style.transform = `scale(${scale})`;
@@ -404,11 +425,24 @@ import { createSettingsEditor } from './homepage-settings.js';
     }
   }
 
+  function confirmOverlay(title, description, action) {
+    const dialog = document.querySelector('#confirm-dialog');
+    if (!dialog || dialog.open) return Promise.resolve(false);
+    dialog.querySelector('h2').textContent = title;
+    dialog.querySelector('p').textContent = description;
+    dialog.querySelector('[value="confirm"]').textContent = action;
+    dialog.returnValue = '';
+    return new Promise((resolve) => {
+      dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
+      dialog.showModal();
+    });
+  }
+
   async function downloadCounter(button, update) {
     const downloadUrl = button.dataset.downloadUrl;
     const installName = button.dataset.installName;
     if (!downloadUrl || !installName || state.pending.has(installName)) return;
-    if (update && !window.confirm(`Update ${installName}?`)) return;
+    if (update && !await confirmOverlay(`Update ${installName}?`, 'Replace this overlay with the latest release?', 'Update')) return;
 
     state.pending.add(installName);
     setBusy(button, true, update ? 'Updating…' : 'Installing…');
@@ -431,7 +465,16 @@ import { createSettingsEditor } from './homepage-settings.js';
   async function deleteCounter(button) {
     const card = button.closest('.counter-card');
     const folder = button.dataset.folder;
-    if (!folder || !window.confirm(`Delete the local overlay “${folder}”?`)) return;
+    if (!folder) return;
+    let description = `${folder}\nSize unavailable. This cannot be undone.`;
+    try {
+      const details = await requestJson(`/api/counters/details/${encodeURIComponent(folder)}`);
+      const size = new Intl.NumberFormat().format(details.bytes);
+      description = `${details.path}\n${details.complete ? '' : 'At least '}${size} bytes on disk${details.complete ? '' : ' (scan incomplete)'}. This cannot be undone.`;
+    } catch (_error) {
+      // A disappearing or unreadable file must not prevent deletion.
+    }
+    if (!await confirmOverlay(`Delete ${folder}?`, description, 'Delete')) return;
     setBusy(button, true, 'Deleting…');
     try {
       await requestJson(`/api/counters/delete/${encodeURIComponent(folder)}`, { method: 'POST' });
@@ -536,7 +579,7 @@ import { createSettingsEditor } from './homepage-settings.js';
     try {
       const response = await fetch(`/api/counters/search/${encodeURIComponent(query)}?source=available`, {
         signal: controller.signal,
-        headers: { Accept: 'text/html' },
+        headers: { Accept: 'text/html', 'X-Vosu-CSRF': csrf },
       });
       const html = await response.text();
       if (!response.ok) {
@@ -592,27 +635,6 @@ import { createSettingsEditor } from './homepage-settings.js';
     }, 240);
   }
 
-  async function waitForListener(origin) {
-    const deadline = Date.now() + LISTENER_POLL_TIMEOUT;
-    while (Date.now() < deadline) {
-      try {
-        // An opaque response proves only that something answers HTTP there,
-        // which is all the redirect needs; it cannot read cross-origin bodies.
-        await fetch(new URL('/favicon.ico', origin), {
-          mode: 'no-cors',
-          cache: 'no-store',
-          signal: AbortSignal.timeout(2000),
-        });
-        return true;
-      } catch (_error) {
-        // Not listening yet.
-      }
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, LISTENER_POLL_INTERVAL);
-      });
-    }
-    return false;
-  }
 
   // Settings narrow with every word (AND), unlike overlay search, because the
   // list is short and users type a specific option name.
@@ -638,6 +660,7 @@ import { createSettingsEditor } from './homepage-settings.js';
   }
 
   function controlValue(control) {
+    if (control.dataset.id === 'ALLOWED_IPS') return control.value.split(/[\n,]+/).map((entry) => entry.trim()).filter(Boolean).join(',');
     return control.type === 'checkbox' ? control.checked : control.value;
   }
 
@@ -723,12 +746,105 @@ import { createSettingsEditor } from './homepage-settings.js';
     try { await refresh(); } catch (error) { status.textContent = errorText(error); }
   }
 
+  function initializeDashboardStatus() {
+    const header = document.querySelector('#attachment-status');
+    if (!header) return;
+    async function refresh() {
+      try {
+        const status = await requestJson('/api/dashboard/status');
+        if (header) {
+          const instances = status.instances ?? [];
+          header.textContent = status.available === false ? 'osu! attachment status unavailable'
+            : instances.length === 0 ? 'osu! not detected · waiting for a game'
+              : instances.map((instance) => `osu! ${instance.client} · PID ${instance.pid} · ${instance.version || 'version unknown'} · ${instance.state} · polling ${instance.pollIntervalMs} ms / precise ${instance.precisePollIntervalMs} ms`).join(' | ');
+        }
+        for (const card of installedCards()) {
+          const chip = card.querySelector('.connected-chip');
+          if (!chip) continue;
+          const count = status.connections?.[card.dataset.overlayId];
+          chip.hidden = !Number.isInteger(count) || count < 1;
+          chip.textContent = chip.hidden ? '' : `● ${count} connected`;
+          chip.title = 'Identified WebSocket connections, including dashboard previews; not unique users. Unidentified sockets cannot be counted.';
+        }
+      } catch (_error) {
+        if (header) header.textContent = 'osu! attachment status unavailable';
+        document.querySelectorAll('.connected-chip').forEach((chip) => { chip.hidden = true; });
+      } finally {
+        window.setTimeout(refresh, 2000);
+      }
+    }
+    refresh();
+  }
+
+  function cidrMayIncludePublic(entry) {
+    const parts = entry.split('/');
+    if (parts.length !== 2 || !/^\d+$/.test(parts[1])) return false;
+    let prefix = Number(parts[1]);
+    let bits = 32;
+    let value;
+    if (parts[0].includes(':')) {
+      bits = 128;
+      try {
+        const address = new URL(`http://[${parts[0]}]/`).hostname.slice(1, -1);
+        const halves = address.split('::');
+        const left = halves[0].split(':').filter(Boolean);
+        const right = (halves[1] ?? '').split(':').filter(Boolean);
+        const words = [...left, ...Array(8 - left.length - right.length).fill('0'), ...right];
+        value = words.reduce((number, word) => (number << 16n) | BigInt(`0x${word}`), 0n);
+      } catch (_error) { return false; }
+      if (prefix >= 96 && value >> 32n === 0xffffn) {
+        value &= 0xffffffffn;
+        prefix -= 96;
+        bits = 32;
+      }
+    } else {
+      const octets = parts[0].split('.');
+      if (octets.length !== 4 || octets.some((part) => !/^\d+$/.test(part) || Number(part) > 255)) return false;
+      value = octets.reduce((number, part) => (number << 8n) | BigInt(part), 0n);
+    }
+    if (prefix < 0 || prefix > bits) return false;
+    const privateRanges = bits === 32
+      ? [[0x0a000000n, 8], [0xac100000n, 12], [0xc0a80000n, 16],
+        [0x64400000n, 10], [0x7f000000n, 8], [0xa9fe0000n, 16]]
+      : [[0xfcn << 120n, 7], [0xfe80n << 112n, 10], [1n, 128]];
+    return !privateRanges.some(([network, length]) => prefix >= length
+      && value >> BigInt(bits - length) === network >> BigInt(bits - length));
+  }
+
+  function initializePresentation() {
+    const banner = document.querySelector('.catalog-notice');
+    if (banner) {
+      const key = 'vosu.catalog-notice-seen.v1';
+      banner.open = storageGet(key) !== '1';
+      storageSet(key, '1');
+    }
+    for (const id of ['POLL_RATE', 'PRECISE_DATA_POLL_RATE', 'V2_SUBSCRIPTION_DEBOUNCE']) {
+      const input = document.querySelector(`[data-id="${id}"]`);
+      if (!input) continue;
+      const suffix = document.createElement('span');
+      suffix.className = 'settings-unit';
+      suffix.textContent = 'ms';
+      input.after(suffix);
+    }
+    const allowlist = document.querySelector('[data-id="ALLOWED_IPS"]');
+    const warning = document.querySelector('#allowlist-warning');
+    function updateWarning() {
+      if (!warning || !allowlist) return;
+      const broad = allowlist.value.split(/[\n,]+/).map((entry) => entry.trim()).filter((entry) =>
+        cidrMayIncludePublic(entry)
+          || (entry.includes('*') && !/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(entry)));
+      warning.textContent = broad.length ? `Warning: ${broad.join(', ')} may allow public addresses. Prefer a precise CIDR range, such as 100.64.0.0/10 for Tailscale.` : '';
+    }
+    allowlist?.addEventListener('input', updateWarning);
+    updateWarning();
+  }
+
   function initializeRuntimeSettings() {
     const form = document.querySelector('#runtime-settings');
     if (!form) return;
     const status = form.querySelector('.settings-status');
-    const serverIp = form.querySelector('[data-id="SERVER_IP"]');
-    const serverPort = form.querySelector('[data-id="SERVER_PORT"]');
+    const networkKeys = new Set(['SERVER_IP', 'SERVER_PORT', 'DASHBOARD_IP', 'DASHBOARD_PORT', 'ALLOWED_IPS']);
+    const networkControls = [...form.querySelectorAll('[data-id]')].filter((field) => networkKeys.has(field.dataset.id));
     const startAtLogin = form.querySelector('[data-id="START_AT_LOGIN"]');
     let savedStartAtLogin = startAtLogin?.checked;
     let queue = Promise.resolve();
@@ -750,9 +866,7 @@ import { createSettingsEditor } from './homepage-settings.js';
     async function saveSetting(control) {
       const item = control.closest('.settings-item');
       const name = item?.querySelector('.settings-item__name')?.textContent ?? control.dataset.id;
-      const listener = control === serverIp || control === serverPort;
-      // The listener moves as a unit, so both halves are always sent together.
-      const controls = listener ? [serverIp, serverPort].filter(Boolean) : [control];
+      const controls = [control];
       const settings = Object.fromEntries(controls.map((field) => [field.dataset.id, controlValue(field)]));
       // Validate locally first: the server rejects these too, but a blank or
       // out-of-range field must never look saved.
@@ -778,32 +892,108 @@ import { createSettingsEditor } from './homepage-settings.js';
         return;
       }
       if (control === startAtLogin) savedStartAtLogin = control.checked;
-      if (!listener) {
-        setSavedStatus();
-        return;
-      }
-      const ip = String(settings.SERVER_IP ?? '');
-      const host = ip === '0.0.0.0' || ip === '::' ? 'localhost' : ip;
-      const displayHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
-      const origin = `http://${displayHost}:${settings.SERVER_PORT}`;
-      if (origin === window.location.origin) {
-        setSavedStatus();
-        return;
-      }
-      setStatus(`Waiting for Vosu at ${origin}…`);
-      if (await waitForListener(origin)) {
-        window.location.href = `${origin}${window.location.pathname}${window.location.search}`;
-        return;
-      }
-      setStatus(`Vosu did not respond at ${origin}`, 'error');
-      notify(`Vosu did not respond at ${origin}. Check the listener settings, then open that address manually.`, 'error', 0);
+      setSavedStatus();
     }
+
+    const apply = document.createElement('button');
+    apply.type = 'button';
+    apply.className = 'button button-primary';
+    apply.textContent = 'Apply network settings';
+    const networkStatus = document.createElement('p');
+    networkStatus.setAttribute('role', 'status');
+    const keep = document.createElement('button');
+    keep.type = 'button';
+    keep.className = 'button button-primary';
+    keep.textContent = 'Keep network settings';
+    keep.hidden = true;
+    form.append(apply, keep, networkStatus);
+    const params = new URLSearchParams(location.search);
+    const requestedDeadline = Number(params.get('network-deadline'));
+    const now = Date.now();
+    let deadline = Number.isFinite(requestedDeadline) && requestedDeadline > 0
+      ? Math.max(now, Math.min(now + 30000, requestedDeadline)) : 0;
+    let oldOrigin = context.rollbackOrigin || location.origin;
+    let newOrigin = location.origin;
+    let navigating = false;
+    let timer;
+    function finishNetwork() {
+      deadline = 0;
+      clearInterval(timer);
+      keep.hidden = true;
+      apply.disabled = false;
+      params.delete('network-deadline');
+      history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}`);
+    }
+    async function tickNetwork() {
+      if (!deadline || navigating) return;
+      const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      networkStatus.textContent = `Keep these network settings? Automatically reverting in ${seconds} s.`;
+      if (seconds === 0) {
+        navigating = true;
+        // Rollback runs in vosu even when this page has been closed.
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        navigateDashboard(`${oldOrigin}${location.pathname}`);
+      } else if (newOrigin !== location.origin) {
+        try {
+          // Readable, JSON discovery proves this is vosu, not an unrelated listener.
+          const response = await fetch(`${newOrigin}/api/dashboard`, {
+            signal: AbortSignal.timeout(1000), cache: 'no-store',
+          });
+          const result = await response.json();
+          if (response.ok && new URL(result.origin).port === new URL(newOrigin).port) {
+            navigating = true;
+            const target = new URL(location.href);
+            target.protocol = new URL(newOrigin).protocol;
+            target.host = new URL(newOrigin).host;
+            target.searchParams.set('network-deadline', String(deadline));
+            navigateDashboard(target.href);
+          }
+        } catch (_error) { /* The server timer restores an unreachable listener. */ }
+      }
+    }
+    function startNetworkTimer() {
+      apply.disabled = true;
+      keep.hidden = newOrigin !== location.origin;
+      timer = setInterval(tickNetwork, 1000);
+      tickNetwork();
+    }
+    if (deadline) startNetworkTimer();
+    keep.addEventListener('click', async () => {
+      keep.disabled = true;
+      try {
+        await requestJson('/api/settingsSave', { method: 'POST', body: JSON.stringify({ _network_action: 'confirm' }) });
+        finishNetwork();
+        networkStatus.textContent = 'Network settings kept.';
+      } catch (error) { networkStatus.textContent = errorText(error); }
+      finally { keep.disabled = false; }
+    });
+    apply.addEventListener('click', async () => {
+      const invalid = networkControls.find((field) => !field.checkValidity() || !field.value.trim());
+      if (invalid) { invalid.reportValidity(); return; }
+      const values = Object.fromEntries(networkControls.map((field) => [field.dataset.id, controlValue(field)]));
+      values.ALLOWED_IPS = String(values.ALLOWED_IPS).split(/[\n,]+/).map((entry) => entry.trim()).filter(Boolean).join(',');
+      const host = String(values.DASHBOARD_IP).trim();
+      const browserHost = host === '0.0.0.0' || host === '::' ? location.hostname : host;
+      newOrigin = `http://${browserHost.includes(':') && !browserHost.startsWith('[') ? `[${browserHost}]` : browserHost}:${values.DASHBOARD_PORT}`;
+      oldOrigin = location.origin;
+      apply.disabled = true;
+      deadline = Date.now() + 30000;
+      try {
+        await requestJson('/api/settingsSave', { method: 'POST', body: JSON.stringify({ ...values, _network_action: 'apply' }) });
+        startNetworkTimer();
+      } catch (error) {
+        apply.disabled = false;
+        deadline = 0;
+        networkStatus.textContent = errorText(error);
+      }
+    });
 
     // `change` fires when a text field loses focus (or Enter commits it) and
     // immediately for checkboxes; saves are serialized so they apply in order.
     form.addEventListener('change', (event) => {
       const control = event.target.closest('[data-id]');
       if (!control || control.disabled) return;
+      if (networkKeys.has(control.dataset.id)) { networkStatus.textContent = 'Network changes are not saved until Apply.'; return; }
       queue = queue.then(() => saveSetting(control));
     });
     form.addEventListener('submit', (event) => {
@@ -914,6 +1104,28 @@ import { createSettingsEditor } from './homepage-settings.js';
     results, requestJson, notify, setBusy, errorText, absoluteHttpUrl,
   });
 
+  async function downloadDiagnostics(button) {
+    setBusy(button, true, 'Generating report…');
+    try {
+      const response = await fetch('/api/generateReport', {
+        method: 'POST', headers: { 'X-Vosu-CSRF': csrf },
+      });
+      if (!response.ok) throw new Error(`Report failed (${response.status})`);
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `vosu-report-${Date.now()}.html`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+      notify(`Could not generate report: ${errorText(error)}`, 'error', 5000);
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
   document.addEventListener('click', (event) => {
     const control = event.target.closest('[data-action]');
     if (!control) return;
@@ -925,6 +1137,8 @@ import { createSettingsEditor } from './homepage-settings.js';
     }
     if (action === 'close-dialog') {
       closeDialog();
+    } else if (action === 'diagnostics-report') {
+      downloadDiagnostics(control);
     } else if (action === 'toggle-pin') {
       togglePin(control.closest('.counter-card'));
     } else if (action === 'pin-earlier') {
@@ -1001,6 +1215,8 @@ import { createSettingsEditor } from './homepage-settings.js';
   observePreviews();
   initializeRuntimeSettings();
   initializeApiKeys();
+  initializePresentation();
+  initializeDashboardStatus();
 
   const requestedOverlay = new URLSearchParams(window.location.search).get('overlay');
   if (window.location.pathname === '/settings' && requestedOverlay) {

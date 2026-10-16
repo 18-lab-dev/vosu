@@ -1,6 +1,6 @@
 # Keep installed counters on the dashboard origin
 
-- Status: Accepted
+- Status: Superseded (shared-origin decision) by [ADR 0016](0016-separate-dashboard-origin.md). Historical rationale below; overlays now retain their origin while the dashboard moves, and command-socket settings writes remain compatible.
 - Date: 2026-10-10
 
 ## Context

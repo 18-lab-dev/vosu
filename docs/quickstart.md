@@ -12,6 +12,38 @@ tags: [vosu, rust, documentation, onboarding]
 
 To set up a checkout, build, run, and run the checks, follow [CONTRIBUTING.md](../CONTRIBUTING.md). This page maps the maintainer documentation.
 
+## Dashboard connection and attachment indicators
+
+Installed cards show a connected chip only while at least one live WebSocket can
+be attributed to that overlay. The read-only `GET /api/dashboard/status` response
+contains per-folder `connections` and the existing native discovery roster,
+client type, published game version, and configured common/precise polling intervals.
+Instances without a published state show “resolving offsets” or “starting reader”,
+according to the existing lifecycle's offset readiness, rather than “not detected”.
+Published instances show “reading”; this is the reader lifecycle, not a separate health probe. Dashboard
+previews count too; these are socket counts, not unique OBS sources or people.
+
+The command socket's `l` identity is decoded using the command protocol, including
+`/@vosu-profile/<profile>/<overlay>` identities. Other sockets can be counted when
+they explicitly supply `l`, or a same-server Referer names an overlay folder.
+Browsers normally send only an Origin on a WebSocket handshake, not a Referer.
+Origin has no overlay path, so a stock `/ws`, `/tokens`, V2, precise, or subscription
+socket with only Origin cannot be assigned to a particular overlay. Native clients
+with neither identity nor Referer also cannot be counted. No zero or estimated
+count is shown for those cases.
+
+`GET /api/counters/details/<folder>` reports the absolute folder path, summed file
+lengths in bytes, scan entry count, and `complete`. The metadata-only scan skips
+symlinks and Windows reparse points, uses no-follow anchored directory descriptors
+on Linux, and stops at 10,000 entries, 32 levels, or a 100 ms work deadline. A
+truncated scan is labelled “at least” in the delete dialog. It never reads file
+contents. Filesystem calls themselves may take longer than the work deadline.
+Both UX read endpoints are dashboard-origin-only GET routes; the overlay listener
+returns 404 for them. Same-origin dashboard fetches include `X-Vosu-CSRF`, including
+these reads. The public cross-origin `/api/dashboard` discovery probe deliberately
+omits the secret. Size-scan errors mark the result incomplete; if details cannot be
+retrieved at all, deletion can still be confirmed without a size.
+
 ## Start here
 
 1. Read [Architecture overview](architecture/overview.md) for ownership, lifecycle, process generations, sampling, snapshots, and server boundaries.

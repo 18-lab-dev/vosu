@@ -58,6 +58,7 @@ include!("service/providers.rs");
 include!("service/relay.rs");
 include!("service/routing.rs");
 include!("service/websocket_transport.rs");
+include!("service/dashboard.rs");
 include!("service/responses.rs");
 
 #[cfg(test)]
