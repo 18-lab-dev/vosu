@@ -1,6 +1,139 @@
 use super::*;
 
 #[test]
+fn profile_values_are_isolated_and_default_keeps_legacy_storage() {
+    let (root, service, _, _) = fixture();
+    let folder = root.path().join("static/counter");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("settings.json"),
+        serde_json::to_vec(&all_settings()).unwrap(),
+    )
+    .unwrap();
+    let store = service.settings();
+    store
+        .save_user_values(
+            "counter",
+            &[SettingInput {
+                unique_id: "text".into(),
+                value: json!("legacy"),
+            }],
+        )
+        .unwrap();
+    let legacy_bytes = std::fs::read(store.values_path("counter")).unwrap();
+    store.manage_profile("create", "stream", None).unwrap();
+    let pinned = qualified_counter("counter", "stream");
+    assert_eq!(store.counter_values(&pinned).unwrap()["text"], "hello");
+    store
+        .save_user_values(
+            &pinned,
+            &[SettingInput {
+                unique_id: "text".into(),
+                value: json!("streaming"),
+            }],
+        )
+        .unwrap();
+    assert_eq!(store.counter_values("counter").unwrap()["text"], "legacy");
+    store.manage_profile("activate", "stream", None).unwrap();
+    assert_eq!(
+        store.counter_values("counter").unwrap()["text"],
+        "streaming"
+    );
+    assert_eq!(
+        store
+            .counter_values(&qualified_counter("counter", "default"))
+            .unwrap()["text"],
+        "legacy"
+    );
+    assert_eq!(
+        std::fs::read(store.values_path("counter")).unwrap(),
+        legacy_bytes
+    );
+    store
+        .manage_profile("create", "copy", Some("stream"))
+        .unwrap();
+    assert_eq!(
+        store
+            .counter_values(&qualified_counter("counter", "copy"))
+            .unwrap()["text"],
+        "streaming"
+    );
+    store.copy_overlay("counter", "default", "copy").unwrap();
+    assert_eq!(
+        store
+            .counter_values(&qualified_counter("counter", "copy"))
+            .unwrap()["text"],
+        "legacy"
+    );
+    store
+        .manage_profile("rename", "stream", Some("live"))
+        .unwrap();
+    assert_eq!(store.profiles().unwrap().active, "live");
+    store.manage_profile("delete", "live", None).unwrap();
+    assert_eq!(store.profiles().unwrap().active, "default");
+    assert!(store.manage_profile("delete", "default", None).is_err());
+    assert!(
+        store
+            .manage_profile("rename", "default", Some("other"))
+            .is_err()
+    );
+}
+
+#[test]
+fn profile_names_and_counts_are_rejected() {
+    let (_root, service, _, _) = fixture();
+    let store = service.settings();
+    for name in [
+        "",
+        "../escape",
+        "a/b",
+        "a\\b",
+        ".hidden",
+        "a:b",
+        "sp ace",
+        "é",
+        &"x".repeat(49),
+    ] {
+        assert!(
+            store.manage_profile("create", name, None).is_err(),
+            "{name}"
+        );
+    }
+    assert!(store.manage_profile("create", "DEFAULT", None).is_err());
+    for index in 0..31 {
+        store
+            .manage_profile("create", &format!("profile-{index}"), None)
+            .unwrap();
+    }
+    assert!(store.manage_profile("create", "overflow", None).is_err());
+    assert!(store.resolve_profile(Some("missing")).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn profile_directory_symlinks_cannot_redirect_values() {
+    let (root, service, _, _) = fixture();
+    let folder = root.path().join("static/counter");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("settings.json"),
+        serde_json::to_vec(&all_settings()).unwrap(),
+    )
+    .unwrap();
+    let store = service.settings();
+    store.manage_profile("create", "stream", None).unwrap();
+    let outside = root.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::create_dir_all(store.settings_root().join("profiles")).unwrap();
+    std::os::unix::fs::symlink(&outside, store.settings_root().join("profiles/stream")).unwrap();
+    let name = qualified_counter("counter", "stream");
+    assert!(store.load(&name).is_err());
+    assert!(store.save_user_values(&name, &[]).is_err());
+    assert!(store.manage_profile("delete", "stream", None).is_err());
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+}
+
+#[test]
 fn legacy_root_json_creates_authoritative_schema_without_modifying_root_sources() {
     let (root, service, _, _) = fixture();
     let folder = root.path().join("static/counter");

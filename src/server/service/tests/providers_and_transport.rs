@@ -1,4 +1,12 @@
     #[test]
+    fn profile_injection_qualifies_only_explicit_overrides() {
+        let legacy = counter_path_script("counter/index.html").unwrap();
+        assert_eq!(legacy, Bytes::from_static(br#"<script>window.COUNTER_PATH="counter";</script>"#));
+        let pinned = counter_path_script("counter/index.html?vosuProfile=stream").unwrap();
+        assert_eq!(pinned, Bytes::from_static(br#"<script>window.COUNTER_PATH="/@vosu-profile/stream/counter";window.VOSU_PROFILE="stream";</script>"#));
+    }
+
+    #[test]
     fn pp_query_maps_every_documented_knob() {
         let query = PpQuery {
             path: None,

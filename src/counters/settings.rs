@@ -2,11 +2,13 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
 use super::model::{CompactValues, CounterSetting, SettingInput, SettingType};
+
+static PROFILE_MUTATIONS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Debug, Error)]
 pub enum SettingsError {
@@ -28,12 +30,45 @@ pub enum SettingsError {
     TomlSerialize(#[from] toml::ser::Error),
     #[error("settings TOML conversion failed: {0}")]
     TomlConversion(String),
+    #[error("{0}")]
+    Profile(String),
 }
 
 #[derive(Clone, Debug)]
 pub struct SettingsStore {
     static_root: PathBuf,
     settings_root: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Profiles {
+    pub active: String,
+    pub profiles: Vec<String>,
+}
+
+pub fn qualified_counter(name: &str, profile: &str) -> String {
+    format!("/@vosu-profile/{profile}/{name}")
+}
+
+pub fn split_counter(name: &str) -> (&str, Option<&str>) {
+    if let Some(rest) = name.strip_prefix("/@vosu-profile/")
+        && let Some((profile, overlay)) = rest.split_once('/')
+    {
+        return (overlay, Some(profile));
+    }
+    (name, None)
+}
+
+fn validate_profile(name: &str) -> Result<(), SettingsError> {
+    if name.is_empty()
+        || name.len() > 48
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err(SettingsError::Profile("invalid profile name".into()));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -60,12 +95,190 @@ impl SettingsStore {
         &self.settings_root
     }
 
+    pub fn profiles(&self) -> Result<Profiles, SettingsError> {
+        let path = self.settings_root.join("profiles.json");
+        if !checked_exists(&path)? {
+            return Ok(Profiles {
+                active: "default".into(),
+                profiles: vec!["default".into()],
+            });
+        }
+        let registry: Profiles = read_json(&path)?;
+        if registry.profiles.is_empty()
+            || registry.profiles.len() > 32
+            || !registry.profiles.iter().any(|p| p == "default")
+            || !registry.profiles.contains(&registry.active)
+        {
+            return Err(SettingsError::Profile("invalid profile registry".into()));
+        }
+        let mut names = std::collections::HashSet::new();
+        for name in &registry.profiles {
+            validate_profile(name)?;
+            if !names.insert(name.to_ascii_lowercase()) {
+                return Err(SettingsError::Profile("duplicate profile name".into()));
+            }
+        }
+        Ok(registry)
+    }
+
+    pub fn resolve_profile(&self, profile: Option<&str>) -> Result<String, SettingsError> {
+        let registry = self.profiles()?;
+        let name = profile.unwrap_or(&registry.active);
+        if !registry.profiles.iter().any(|p| p == name) {
+            return Err(SettingsError::Profile("unknown profile".into()));
+        }
+        Ok(name.to_owned())
+    }
+
+    fn profile_root(&self, profile: &str) -> Result<PathBuf, SettingsError> {
+        if profile == "default" {
+            return Ok(self.settings_root.clone());
+        }
+        let parent = self.settings_root.join("profiles");
+        reject_symlink(&parent)?;
+        let path = parent.join(profile);
+        reject_symlink(&path)?;
+        Ok(path)
+    }
+
+    pub fn manage_profile(
+        &self,
+        action: &str,
+        name: &str,
+        target: Option<&str>,
+    ) -> Result<Profiles, SettingsError> {
+        let _guard = PROFILE_MUTATIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        fs::create_dir_all(&self.settings_root)?;
+        validate_profile(name)?;
+        let mut registry = self.profiles()?;
+        match action {
+            "create" | "rename" => {
+                let new_name = if action == "rename" {
+                    target.unwrap_or("")
+                } else {
+                    name
+                };
+                validate_profile(new_name)?;
+                if registry
+                    .profiles
+                    .iter()
+                    .any(|p| p.eq_ignore_ascii_case(new_name))
+                {
+                    return Err(SettingsError::Profile("profile already exists".into()));
+                }
+                if action == "create" {
+                    if registry.profiles.len() >= 32 {
+                        return Err(SettingsError::Profile("profile limit reached".into()));
+                    }
+                    if let Some(source) = target {
+                        self.resolve_profile(Some(source))?;
+                        let source_root = self.profile_root(source)?;
+                        let destination = self.profile_root(new_name)?;
+                        fs::create_dir_all(&source_root)?;
+                        fs::create_dir_all(&destination)?;
+                        for entry in fs::read_dir(source_root)? {
+                            let entry = entry?;
+                            if entry
+                                .file_name()
+                                .to_string_lossy()
+                                .ends_with(".settings.values.toml")
+                            {
+                                reject_symlink(&entry.path())?;
+                                atomic_bytes(
+                                    &destination.join(entry.file_name()),
+                                    &fs::read(entry.path())?,
+                                    true,
+                                )?;
+                            }
+                        }
+                    }
+                    registry.profiles.push(new_name.into());
+                } else {
+                    if name == "default" {
+                        return Err(SettingsError::Profile("default cannot be renamed".into()));
+                    }
+                    let index = registry
+                        .profiles
+                        .iter()
+                        .position(|p| p == name)
+                        .ok_or_else(|| SettingsError::Profile("unknown profile".into()))?;
+                    let source = self.profile_root(name)?;
+                    if source.exists() {
+                        fs::rename(source, self.profile_root(new_name)?)?;
+                    }
+                    registry.profiles[index] = new_name.into();
+                    if registry.active == name {
+                        registry.active = new_name.into();
+                    }
+                }
+            }
+            "delete" => {
+                self.resolve_profile(Some(name))?;
+                if name == "default" {
+                    return Err(SettingsError::Profile("default cannot be deleted".into()));
+                }
+                let root = self.profile_root(name)?;
+                if root.exists() {
+                    fs::remove_dir_all(root)?;
+                }
+                registry.profiles.retain(|p| p != name);
+                if registry.active == name {
+                    registry.active = "default".into();
+                }
+            }
+            "activate" => {
+                self.resolve_profile(Some(name))?;
+                registry.active = name.into();
+            }
+            _ => return Err(SettingsError::Profile("unknown profile action".into())),
+        }
+        atomic_bytes(
+            &self.settings_root.join("profiles.json"),
+            &serde_json::to_vec(&registry)?,
+            true,
+        )?;
+        Ok(registry)
+    }
+
+    pub fn copy_overlay(
+        &self,
+        name: &str,
+        source: &str,
+        target: &str,
+    ) -> Result<(), SettingsError> {
+        let _guard = PROFILE_MUTATIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.resolve_profile(Some(source))?;
+        self.resolve_profile(Some(target))?;
+        let (_, values) = self.load(&qualified_counter(name, source))?;
+        let root = self.profile_root(target)?;
+        fs::create_dir_all(&root)?;
+        write_values_toml(&root.join(format!("{name}.settings.values.toml")), &values)?;
+        Ok(())
+    }
+
     pub fn load(&self, name: &str) -> Result<(Vec<CounterSetting>, CompactValues), SettingsError> {
+        let (name, profile) = split_counter(name);
         validate_component(name)?;
+        let profile = self.resolve_profile(profile)?;
         let counter_dir = self.require_counter_directory(name)?;
         fs::create_dir_all(&self.settings_root)?;
         let settings = self.load_or_migrate_schema(name, &counter_dir)?;
-        let values = self.load_or_migrate_values(name, &counter_dir, &settings)?;
+        let values = if profile == "default" {
+            self.load_or_migrate_values(name, &counter_dir, &settings)?
+        } else {
+            let path = self
+                .profile_root(&profile)?
+                .join(format!("{name}.settings.values.toml"));
+            if checked_exists(&path)? {
+                read_values_toml(&path)?
+            } else {
+                defaults_from_schema(&settings)
+            }
+        };
         Ok((settings, values))
     }
 
@@ -95,7 +308,7 @@ impl SettingsStore {
         name: &str,
         payload: &[SettingInput],
     ) -> Result<CompactValues, SettingsError> {
-        validate_component(name)?;
+        validate_component(split_counter(name).0)?;
         let (settings, mut values) = self.load(name)?;
         for item in payload {
             let sanitized_id = sanitize_id(&item.unique_id);
@@ -125,8 +338,15 @@ impl SettingsStore {
         name: &str,
         payload: &[SettingInput],
     ) -> Result<CompactValues, SettingsError> {
+        let _guard = PROFILE_MUTATIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let values = self.prepare_user_values(name, payload)?;
-        write_values_toml(&self.values_path(name), &values)
+        let (name, profile) = split_counter(name);
+        let profile = self.resolve_profile(profile)?;
+        let root = self.profile_root(&profile)?;
+        fs::create_dir_all(&root)?;
+        write_values_toml(&root.join(format!("{name}.settings.values.toml")), &values)
     }
 
     pub fn save_developer_settings(
@@ -134,6 +354,8 @@ impl SettingsStore {
         name: &str,
         mut settings: Vec<CounterSetting>,
     ) -> Result<Vec<CounterSetting>, SettingsError> {
+        let (name, profile) = split_counter(name);
+        self.resolve_profile(profile)?;
         validate_component(name)?;
         self.require_counter_directory(name)?;
         for setting in &mut settings {

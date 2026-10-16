@@ -488,6 +488,68 @@ File routes enforce root containment and support validated single HTTP byte rang
 - `POST /api/counters/open-root` opens the configured counter/static root.
 - `POST /api/counters/delete/{name}`
 - `GET|POST /api/counters/settings/{name}`
+- `GET /api/counters/profiles` returns `{"active":"default","profiles":["default"]}` initially.
+- `POST /api/counters/profiles` accepts one JSON action: `{"action":"create","name":"stream"}` (optionally `"copyFrom":"default"`), `{"action":"rename","name":"stream","target":"live"}`, `{"action":"delete","name":"live"}`, `{"action":"activate","name":"stream"}`, or `{"action":"copyOverlay","name":"counter-folder","source":"default","target":"stream"}`. Success returns the updated registry; errors follow the counter API's HTTP 200 `{"error":"..."}` convention. POST requires the same exact-origin provenance as other management mutations. Unknown actions fail.
+
+### Overlay settings profiles
+
+Profiles group per-overlay values; schemas remain shared. The reserved `default` profile
+uses the existing `<config>/settings/<counter>.settings.values.toml` files without moving
+them. Others use `<config>/settings/profiles/<profile>/<counter>.settings.values.toml`;
+`<config>/settings/profiles.json` records the active profile and names. Files are
+atomically replaced in their own directory. Names are case-sensitive references but
+case-insensitively unique, contain only ASCII letters, digits, `_` and `-`, and are
+1–48 characters. At most 32 profiles including `default` are allowed. `default` cannot
+be renamed or deleted; deleting the active profile selects `default`. Empty profiles
+use schema defaults for overlays without saved values, never another profile's values.
+
+`GET /api/counters/settings/{name}?profile=stream` returns the unchanged
+`{"settings":[...],"values":{...}}` shape. POST to the same URL accepts the existing
+`[{"uniqueID":"field","value":...}]` body and returns `{"result":"success"}`.
+Omitting `profile` selects the global active profile. `update=yes` still edits the
+shared developer schema. Unknown profile references return a JSON error.
+
+The dashboard card editor and `/settings?overlay=<name>[&profile=<profile>]` inline
+editor expose profile selection, creation/copying, rename, deletion and global
+activation. Search matches titles, descriptions and IDs; matching sections retain
+their headers, and the section navigation is absent for schemas without headers.
+For vosulay's off-screen CEF iframe, append `&embed=1`. This renders only the
+editor, without dashboard navigation, updates, report download or external setting
+links. Profile and options selectors become keyboard-accessible in-page listboxes
+(arrows, Home/End and first-letter search); colours use hex input and RGB sliders.
+Profile deletion requires in-page confirmation. Native controls and the normal
+dashboard remain unchanged without this flag.
+
+After loading, every successful profile action (create/copy/rename/delete/activate)
+and every successful settings save, embed mode sends
+`parent.postMessage({type: "vosu-profiles", active: "default", profiles: ["default"]}, "*")`.
+`active` is the global active profile and `profiles` contains names only, never
+setting values. Embedders should validate `event.origin`, `event.source` and the
+message shape before consuming it. The wildcard target permits local/off-screen
+parents; the message does not grant mutation access.
+
+Loading this page through `http://localhost:<port>` works with the default
+127.0.0.1 listener: mutations compare the page Origin to the request Host, not to
+the listener's bind address. `localhost` is also in the default allowed host list.
+Mixing `localhost` and `127.0.0.1` between Origin and Host is rejected.
+
+An overlay URL may pin one instance with `?vosuProfile=stream`. Unknown names fall
+back to the current active profile when serving the page. With no override the
+served counter bytes and injected metadata are unchanged. With an override vosu
+injects `window.COUNTER_PATH="/@vosu-profile/stream/<counter>"` and
+`window.VOSU_PROFILE="stream"`. The leading slash and multi-component reserved
+prefix cannot be a real counter-folder name. Unmodified tosu command clients use
+this qualified value for their `l` socket parameter and `getSettings`, `saveSettings`
+and `updateSettings` frames; the values resolve to the pinned profile. **Limitation:**
+overlays that build asset URLs from `COUNTER_PATH` rather than their page URL must
+adapt before using an override; the qualified identity is not a static-file URL.
+
+Activating a profile refreshes unpinned clients over `/websocket/commands`.
+Saving or copying overlay values refreshes clients pinned to that profile and,
+when it is active, unpinned clients. Existing bounded command-relay queues and
+save coalescing remain in force. Renaming/deleting a pinned profile requires
+reloading the instance with a valid override; existing socket identities do not change.
+See [ADR 0014](docs/decisions/0014-overlay-settings-profiles.md).
 
 POST bodies are capped at 1 MiB. Generated reports escape machine, configuration, counter, and log data before inserting it into HTML.
 

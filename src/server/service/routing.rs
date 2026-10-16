@@ -5,6 +5,7 @@ pub struct ProductionRouteDelegate {
 
 impl ProductionRouteDelegate {
     pub fn new(services: ProductionServices) -> Self {
+        services.websocket.processor.bind_profiles(services.counters.settings_store());
         services
             .websocket
             .relays
@@ -138,8 +139,16 @@ impl ProductionRouteDelegate {
     }
 
     async fn counter_settings(&self, request: Request<Body>, body: Bytes) -> Response {
-        let name = decoded_capture(&request, "/api/counters/settings/").unwrap_or_default();
-        if name.is_empty() {
+        if request.uri().path() == "/api/counters/profiles" {
+            return self.counter_profiles(&request, &body);
+        }
+        let query = query_pairs(&request);
+        let overlay = decoded_capture(&request, "/api/counters/settings/").unwrap_or_default();
+        let name = match query_value(&query, "profile") {
+            Some(profile) => crate::counters::qualified_counter(&overlay, profile),
+            None => overlay.clone(),
+        };
+        if overlay.is_empty() {
             return json_response(StatusCode::OK, json!({ "error": "no folder name" }));
         }
         if request.method() == axum::http::Method::GET {
@@ -151,7 +160,6 @@ impl ProductionRouteDelegate {
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
             };
         }
-        let query = query_pairs(&request);
         if query_value(&query, "update") == Some("yes") {
             let parsed = serde_json::from_slice::<Vec<CounterSetting>>(&body);
             return match parsed {
@@ -168,7 +176,11 @@ impl ProductionRouteDelegate {
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
             };
         }
-        let relay_name = name.clone();
+        let resolved_profile = match self.services.counters.settings_store().resolve_profile(query_value(&query, "profile")) {
+            Ok(profile) => profile,
+            Err(error) => return json_response(StatusCode::OK, json!({ "error": error.to_string() })),
+        };
+        let name = crate::counters::qualified_counter(&overlay, &resolved_profile);
         match serde_json::from_slice::<Vec<SettingInput>>(&body) {
             Ok(values) => match self
                 .services
@@ -178,16 +190,51 @@ impl ProductionRouteDelegate {
             {
                 Ok(saved) => {
                     if saved {
-                        self.services
-                            .websocket
-                            .processor
-                            .refresh_settings(relay_name);
+                        self.refresh_profile(&overlay, &resolved_profile);
                     }
                     json_response(StatusCode::OK, json!({ "result": "success" }))
                 }
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
             },
             Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
+        }
+    }
+
+    fn counter_profiles(&self, request: &Request<Body>, body: &[u8]) -> Response {
+        let store = self.services.counters.settings_store();
+        let result = (|| -> Result<crate::counters::Profiles, String> {
+            if request.method() == axum::http::Method::GET {
+                return store.profiles().map_err(|e| e.to_string());
+            }
+            let value: Value = serde_json::from_slice(body).map_err(|e| e.to_string())?;
+            let field = |key| value.get(key).and_then(Value::as_str);
+            let action = field("action").ok_or("missing action")?;
+            let name = field("name").ok_or("missing name")?;
+            let before = store.profiles().map_err(|e| e.to_string())?;
+            let registry = if action == "copyOverlay" {
+                store.copy_overlay(name, field("source").ok_or("missing source")?,
+                    field("target").ok_or("missing target")?).map_err(|e| e.to_string())?;
+                self.refresh_profile(name, field("target").unwrap_or_default());
+                store.profiles().map_err(|e| e.to_string())?
+            } else {
+                store.manage_profile(action, name, field(if action == "create" { "copyFrom" } else { "target" }))
+                    .map_err(|e| e.to_string())?
+            };
+            if before.active != registry.active {
+                self.services.websocket.processor.refresh_active_settings();
+            }
+            Ok(registry)
+        })();
+        match result {
+            Ok(registry) => json_response(StatusCode::OK, json!(registry)),
+            Err(error) => json_response(StatusCode::OK, json!({ "error": error })),
+        }
+    }
+
+    fn refresh_profile(&self, overlay: &str, profile: &str) {
+        self.services.websocket.processor.refresh_settings(crate::counters::qualified_counter(overlay, profile));
+        if self.services.counters.settings_store().resolve_profile(None).is_ok_and(|p| p == profile) {
+            self.services.websocket.processor.refresh_settings(overlay);
         }
     }
 
@@ -282,6 +329,17 @@ impl ProductionRouteDelegate {
         }
     }
 
+
+    fn profile_html_path(&self, path: &str, request: &Request<Body>) -> String {
+        let query = query_pairs(request);
+        if let Some(requested) = query_value(&query, "vosuProfile") {
+            let store = self.services.counters.settings_store();
+            if let Ok(profile) = store.resolve_profile(Some(requested)).or_else(|_| store.resolve_profile(None)) {
+                return format!("{path}?vosuProfile={profile}");
+            }
+        }
+        path.to_owned()
+    }
     async fn file(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
         let current = self.services.beatmap.files();
         let path = request.uri().path();
@@ -304,7 +362,7 @@ impl ProductionRouteDelegate {
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
         if let Some(encoded_html_path) = counter_html_path {
-            counter_resource_response(outcome, range, &encoded_html_path).await
+            counter_resource_response(outcome, range, &self.profile_html_path(&encoded_html_path, &request)).await
         } else {
             resource_response(outcome, range).await
         }
@@ -312,7 +370,13 @@ impl ProductionRouteDelegate {
 
     async fn static_fallback(&self, fallback: StaticFallback, request: Request<Body>) -> Response {
         match fallback {
-            StaticFallback::RedirectTrailingSlash { location } => redirect(location),
+            StaticFallback::RedirectTrailingSlash { location } => {
+                let query = query_pairs(&request);
+                let location = if query_value(&query, "vosuProfile").is_some() {
+                    format!("{location}?{}", request.uri().query().unwrap_or_default())
+                } else { location };
+                redirect(location)
+            },
             StaticFallback::CounterPath { index_path, .. } => {
                 let current = self.services.beatmap.files();
                 let target = request.uri().to_string();
@@ -328,7 +392,7 @@ impl ProductionRouteDelegate {
                     .and_then(|value| value.to_str().ok())
                     .map(str::to_owned);
                 match outcome {
-                    Ok(value) => counter_resource_response(value, range, &index_path).await,
+                    Ok(value) => counter_resource_response(value, range, &self.profile_html_path(&index_path, &request)).await,
                     Err(_) => not_found(),
                 }
             }

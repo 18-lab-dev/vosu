@@ -3,6 +3,14 @@ import { createSettingsEditor } from './homepage-settings.js';
 (() => {
   'use strict';
 
+  const embedParameters = new URLSearchParams(window.location.search);
+  if (window.location.pathname === '/settings' && embedParameters.get('overlay')
+      && embedParameters.get('embed') === '1') {
+    document.body.classList.add('settings-embed');
+    document.querySelector('.site-header')?.remove();
+    document.querySelector('#update-notice')?.remove();
+  }
+
   const results = document.querySelector('#counter-results');
   const searchInput = document.querySelector('.search-bar');
   const searchForm = document.querySelector('.search-form');

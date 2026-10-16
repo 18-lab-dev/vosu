@@ -246,6 +246,9 @@ impl ReloadableCounterService {
         self.current.load_full().delete(name)
     }
 
+    pub fn settings_store(&self) -> SettingsStore {
+        self.current.load_full().settings.clone()
+    }
     pub fn get_settings(
         &self,
         name: &str,
@@ -276,7 +279,8 @@ impl ReloadableCounterService {
         name: String,
         payload: Vec<SettingInput>,
     ) -> Result<bool, CounterError> {
-        validate_component(&name).map_err(|_| CounterError::InvalidName)?;
+        validate_component(super::settings::split_counter(&name).0)
+            .map_err(|_| CounterError::InvalidName)?;
         let service = self.current.load_full();
         let generation = {
             let mut pending = self.pending.lock().await;

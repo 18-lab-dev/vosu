@@ -416,6 +416,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/json/v2" if get => Some(State(StateRoute::V2)),
         "/json/v2/precise" if get => Some(State(StateRoute::V2Precise)),
         "/api/calculate/pp" if get => Some(CalculatePp),
+        "/api/counters/profiles" if get || post => Some(CounterSettings),
         "/api/settingsSave" if post => Some(SettingsSave),
         "/api/runUpdates" if post => Some(RunUpdates),
         "/api/generateReport" if post => Some(GenerateReport),

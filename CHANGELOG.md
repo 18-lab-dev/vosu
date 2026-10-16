@@ -4,6 +4,16 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased
 
+### Overlay settings
+
+- Add named settings profiles with global activation, per-instance `vosuProfile`
+  overrides, a same-origin management API, and profile-aware command refreshes.
+  The reserved `default` profile retains existing values files. The vosulay iframe
+  editor supports `embed=1` without site navigation or native popup controls,
+  in-page deletion confirmation, and profile-name-only parent notifications.
+- Add profile management, title/description/ID search, and section navigation to
+  both dashboard card settings and the inline overlay settings page used by vosulay.
+
 ### Gameplay
 
 - Added opt-in `ENABLE_MANIA_KEY_HIT_ERRORS` (default false) and vosu v2/precise `keyHitErrors` per-column press/release arrays. Stable preserves matched displayed lanes, including Mirror; lazer reads object columns and mirrors hold-release corrections.

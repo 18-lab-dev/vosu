@@ -43,6 +43,16 @@ Tests inject temporary paths and a recording command runner, checking exact unit
 Linux uses XDG config/data/cache roots; Windows uses the executable directory. `src/platform.rs` centralizes these rules. First startup performs idempotent migration from former `tosu` locations without overwriting current state. Configuration migration reads canonical TOML together with readable legacy `vosu.env` and `tosu.env` inputs, with precedence `vosu.toml > vosu.env > tosu.env > defaults`; it writes canonical bytes first, and only successful replacement permits removing legacy dotenv files. If canonical TOML is malformed, initialization leaves all sources in place. After migration, steady-state reads, writes, and watches use only `vosu.toml`. Relative custom static paths resolve from the launch directory, while default static roots map to the platform data root.
 Counters are discovered recursively below the static root. `index.html` is the normal entrypoint; `metadata.txt` enriches catalog data; an immediate `ignore.txt` excludes a directory; `node_modules` is never traversed. Each counter package owns its authoritative schema at `<static-root>/<counter>/settings.schema.toml`, including developer schema saves, while mutable values live only at `<config>/settings/<counter>.settings.values.toml`; the root schema always wins. Without one, vosu creates it from root `settings.json` when present, otherwise by inferring scalar root `settings.toml`: strings become `text`, integers/floats become `number`, booleans become `checkbox`, and keys supply `uniqueID`/`title` and scalar defaults. Arrays, nested tables, and datetimes are rejected as ambiguous. Only after package sources does loading fall back to old config `<counter>.settings.toml` or `<counter>.settings.json`; all legacy counter schema and values inputs remain byte-for-byte untouched after canonical schema and values are created. Root JSON and TOML remain untouched, and when both exist JSON defines the schema while TOML may seed values.
 
+Settings profiles keep a daemon-wide active selection plus optional per-instance
+`vosuProfile` URL overrides. `default` retains the legacy values paths; other
+profiles live below `<config>/settings/profiles/<name>/`, with the registry at
+`<config>/settings/profiles.json`. Missing overlay values use schema defaults.
+The shared schema never varies by profile. The dashboard's card editor and
+`/settings?overlay=<name>&profile=<profile>` share profile management, field search
+and header navigation. See the [HTTP contract](../../README.md#overlay-settings-profiles)
+and [ADR 0014](../decisions/0014-overlay-settings-profiles.md) for command identities,
+push targeting, naming limits and legacy compatibility.
+
 Counter static serving resolves a trailing-slash counter path to its `index.html`, redirects a non-slash directory request to the slash form, and returns 404 instead of exposing a directory index when the index is absent. If catalog retrieval fails, the Available page still retains the locally discovered installed count while rendering the catalog error.
 
 ## Listener and shutdown

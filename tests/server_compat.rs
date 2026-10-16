@@ -133,6 +133,51 @@ async fn dispatch(method: Method, uri: &str, origin: Option<&str>, body: Body) -
 }
 
 #[tokio::test]
+async fn profile_management_retains_exact_routing_and_mutation_provenance() {
+    for method in [Method::GET, Method::POST] {
+        assert_eq!(
+            routes::classify(&method, "/api/counters/profiles"),
+            Some(Endpoint::CounterSettings)
+        );
+    }
+    for path in [
+        "/api/counters/profiles/",
+        "/api/counters/profilesx",
+        "/api/counters/profiles/create",
+    ] {
+        assert_ne!(
+            routes::classify(&Method::GET, path),
+            Some(Endpoint::CounterSettings)
+        );
+        assert!(routes::classify(&Method::POST, path).is_none());
+    }
+    for origin in [None, Some("null"), Some("http://localhost:24051")] {
+        assert_eq!(
+            dispatch(
+                Method::POST,
+                "/api/counters/profiles",
+                origin,
+                Body::from("{}")
+            )
+            .await
+            .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    assert_eq!(
+        dispatch(
+            Method::POST,
+            "/api/counters/profiles",
+            Some("http://localhost:24050"),
+            Body::from("{}")
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
 async fn exact_method_routing_envelopes_cors_and_body_limit_are_observable() {
     let ready = dispatch(Method::GET, "/json", None, Body::empty()).await;
     assert_eq!(ready.status(), StatusCode::OK);

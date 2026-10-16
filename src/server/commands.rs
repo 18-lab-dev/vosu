@@ -82,6 +82,7 @@ pub struct CommandProcessor {
     relays: Arc<dyn RelaySink>,
     save: Mutex<SaveCoordinator>,
     save_cancellation: CancellationToken,
+    profile_store: Mutex<Option<crate::counters::SettingsStore>>,
 }
 
 fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -102,9 +103,13 @@ impl CommandProcessor {
                 task: None,
             }),
             save_cancellation: CancellationToken::new(),
+            profile_store: Mutex::new(None),
         }
     }
 
+    pub fn bind_profiles(&self, store: crate::counters::SettingsStore) {
+        *lock_unpoisoned(&self.profile_store) = Some(store);
+    }
     pub fn process(&self, client: &CommandClient, data: &str) -> CommandAction {
         let Some(first) = data.find(':') else {
             return CommandAction::NoAck;
@@ -139,7 +144,16 @@ impl CommandProcessor {
                 let Ok(value) = serde_json::from_str::<Value>(payload) else {
                     return CommandAction::NoAck;
                 };
-                self.schedule_save(client.overlay.clone(), value);
+                let target = if let Some(store) = lock_unpoisoned(&self.profile_store).as_ref() {
+                    let (name, profile) = crate::counters::split_counter(&client.overlay);
+                    let Ok(profile) = store.resolve_profile(profile) else {
+                        return CommandAction::NoAck;
+                    };
+                    crate::counters::qualified_counter(name, &profile)
+                } else {
+                    client.overlay.clone()
+                };
+                self.schedule_save(target, value);
                 self.relays.relay(Relay {
                     except: Some(client.id),
                     command: "updateSettings".into(),
@@ -172,11 +186,20 @@ impl CommandProcessor {
         });
     }
 
+    pub fn refresh_active_settings(&self) {
+        self.refresh_settings("/@vosu-active");
+    }
+
     /// Applies the source relay targeting rules to a receiving client and
     /// returns the command frame to feed back through `process`.
     pub fn relay_frame(client: &CommandClient, relay: &Relay) -> Option<String> {
         if relay.except == Some(client.id) {
             return None;
+        }
+        if relay.command == "getSettings" && relay.overlay == "/@vosu-active" {
+            return (!client.overlay.is_empty()
+                && crate::counters::split_counter(&client.overlay).1.is_none())
+            .then(|| format!("getSettings:{}:", client.overlay));
         }
         if matches!(relay.command.as_str(), "getSettings" | "updateSettings")
             && relay.overlay != client.overlay
@@ -223,7 +246,15 @@ impl CommandProcessor {
                 .expect("save receiver is consumed only by its worker");
             let settings = Arc::clone(&self.settings);
             let cancellation = self.save_cancellation.clone();
-            save.task = Some(tokio::spawn(save_worker(settings, receiver, cancellation)));
+            let relays = Arc::clone(&self.relays);
+            let profiles = lock_unpoisoned(&self.profile_store).clone();
+            save.task = Some(tokio::spawn(save_worker(
+                settings,
+                receiver,
+                cancellation,
+                relays,
+                profiles,
+            )));
         }
         save.generation = save
             .generation
@@ -246,6 +277,8 @@ async fn save_worker(
     settings: Arc<dyn SettingsProvider>,
     mut receiver: watch::Receiver<Option<SaveRequest>>,
     cancellation: CancellationToken,
+    relays: Arc<dyn RelaySink>,
+    profiles: Option<crate::counters::SettingsStore>,
 ) {
     loop {
         tokio::select! {
@@ -285,7 +318,18 @@ async fn save_worker(
                         deadline = Instant::now() + SAVE_DEBOUNCE;
                         continue;
                     }
-                    let _ = settings.save(&request.overlay, request.value);
+                    if settings.save(&request.overlay, request.value).is_ok()
+                        && let Some(store) = profiles.as_ref()
+                    {
+                        let (name, profile) = crate::counters::split_counter(&request.overlay);
+                        let mut targets = vec![request.overlay.clone()];
+                        if profile.is_some_and(|p| store.resolve_profile(None).is_ok_and(|active| active == p)) {
+                            targets.push(name.to_owned());
+                        }
+                        for overlay in targets {
+                            relays.relay(Relay { except: None, command: "getSettings".into(), overlay, payload: None });
+                        }
+                    }
                     break;
                 }
             }
@@ -354,6 +398,26 @@ fn hex(value: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn active_refresh_targets_only_unpinned_clients() {
+        let (providers, processor, client) = setup("counter");
+        processor.refresh_active_settings();
+        let event = &lock_unpoisoned(&providers.relays)[0];
+        assert_eq!(
+            CommandProcessor::relay_frame(&client, event).as_deref(),
+            Some("getSettings:counter:")
+        );
+        let pinned = CommandClient {
+            id: 8,
+            overlay: "/@vosu-profile/stream/counter".into(),
+        };
+        assert!(CommandProcessor::relay_frame(&pinned, event).is_none());
+        let state_only = CommandClient {
+            id: 9,
+            overlay: String::new(),
+        };
+        assert!(CommandProcessor::relay_frame(&state_only, event).is_none());
+    }
 
     #[derive(Default)]
     struct Providers {
@@ -396,6 +460,66 @@ mod tests {
             panic!("expected reply")
         };
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    struct StoredSettings(crate::counters::SettingsStore);
+    impl SettingsProvider for StoredSettings {
+        fn get(&self, overlay: &str) -> Result<Value, String> {
+            self.0
+                .counter_values(overlay)
+                .map(Value::Object)
+                .map_err(|e| e.to_string())
+        }
+        fn save(&self, overlay: &str, body: Value) -> Result<(), String> {
+            let values = serde_json::from_value::<Vec<crate::counters::SettingInput>>(body)
+                .map_err(|e| e.to_string())?;
+            self.0
+                .save_user_values(overlay, &values)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn tosu_frames_use_qualified_and_unqualified_counter_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("static/counter");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("settings.json"),
+            br#"[{"uniqueID":"color","type":"text","value":"default"}]"#,
+        )
+        .unwrap();
+        let store = crate::counters::SettingsStore::new(
+            root.path().join("static"),
+            root.path().join("settings"),
+        );
+        store.manage_profile("create", "stream", None).unwrap();
+        let relays = Arc::new(Providers::default());
+        let processor =
+            CommandProcessor::new(Arc::new(StoredSettings(store.clone())), relays.clone());
+        processor.bind_profiles(store.clone());
+        for (id, path, value) in [
+            (1, "counter", "normal"),
+            (2, "/@vosu-profile/stream/counter", "pinned"),
+        ] {
+            let client = CommandClient::from_query(id, Some(path)).unwrap();
+            let frame =
+                format!(r#"saveSettings:{path}:[{{"uniqueID":"color","value":"{value}"}}]"#);
+            processor.process(&client, &frame);
+            tokio::task::yield_now().await;
+            tokio::time::advance(SAVE_DEBOUNCE + Duration::from_millis(1)).await;
+            tokio::task::yield_now().await;
+            assert_eq!(
+                reply_json(processor.process(&client, &format!("getSettings:{path}")))["message"]["color"],
+                value
+            );
+        }
+        assert_eq!(store.counter_values("counter").unwrap()["color"], "normal");
+        store.manage_profile("activate", "stream", None).unwrap();
+        assert_eq!(store.counter_values("counter").unwrap()["color"], "pinned");
+        processor.shutdown().await;
+        assert!(lock_unpoisoned(&relays.relays).iter().any(|r| r.command == "getSettings" && r.overlay == "/@vosu-profile/stream/counter"));
     }
 
     #[test]

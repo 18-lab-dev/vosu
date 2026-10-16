@@ -1,7 +1,98 @@
 export function createSettingsEditor({
   results, requestJson, notify, setBusy, errorText, absoluteHttpUrl,
 }) {
-  const state = { dialogRequest: 0 };
+  const state = { dialogRequest: 0, optionId: 0 };
+  const embed = location.pathname === '/settings'
+    && new URLSearchParams(location.search).get('embed') === '1'
+    && Boolean(new URLSearchParams(location.search).get('overlay'));
+
+  function notifyParent(registry) {
+    if (embed) parent.postMessage({
+      type: 'vosu-profiles', active: registry.active, profiles: [...registry.profiles],
+    }, '*');
+  }
+
+  function choiceControl(values, value, labels = values) {
+    if (!embed) {
+      const select = document.createElement('select');
+      select.className = 'setting-value';
+      values.forEach((item, index) => select.add(new Option(labels[index], item)));
+      select.value = String(value);
+      return select;
+    }
+    const control = document.createElement('div');
+    control.className = 'setting-value embed-listbox';
+    control.setAttribute('role', 'listbox');
+    control.tabIndex = 0;
+    control.value = values.includes(String(value)) ? String(value) : values[0] ?? '';
+    function choose(index, emit = true) {
+      control.value = values[index] ?? '';
+      [...control.children].forEach((option, i) => {
+        option.setAttribute('aria-selected', String(i === index));
+      });
+      if (control.children[index]) control.setAttribute('aria-activedescendant', control.children[index].id);
+      if (emit) control.children[index]?.scrollIntoView({ block: 'nearest' });
+      if (emit) control.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    values.forEach((item, index) => {
+      const option = document.createElement('div');
+      option.id = `embed-option-${++state.optionId}`;
+      option.setAttribute('role', 'option');
+      option.textContent = String(labels[index]);
+      option.addEventListener('click', () => { control.focus(); choose(index); });
+      control.appendChild(option);
+    });
+    control.addEventListener('keydown', (event) => {
+      let index = values.indexOf(control.value);
+      if (event.key === 'ArrowDown' || event.key === 'ArrowRight') index = Math.min(values.length - 1, index + 1);
+      else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') index = Math.max(0, index - 1);
+      else if (event.key === 'Home') index = 0;
+      else if (event.key === 'End') index = values.length - 1;
+      else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        const next = values.findIndex((item, offset) => offset > index && item.toLowerCase().startsWith(event.key.toLowerCase()));
+        index = next < 0 ? values.findIndex((item) => item.toLowerCase().startsWith(event.key.toLowerCase())) : next;
+        if (index < 0) return;
+      } else return;
+      event.preventDefault();
+      choose(index);
+    });
+    choose(values.indexOf(control.value), false);
+    return control;
+  }
+
+  function colourControl(value, title) {
+    const group = document.createElement('div');
+    group.className = 'embed-colour';
+    const hex = makeInput('text', value || '#f45cad');
+    hex.pattern = '#[0-9a-fA-F]{6}';
+    hex.required = true;
+    hex.setAttribute('aria-label', `${title} hex colour`);
+    const swatch = document.createElement('span');
+    swatch.className = 'embed-colour-swatch';
+    const sliders = ['Red', 'Green', 'Blue'].map((channel) => {
+      const slider = makeInput('range', 0);
+      slider.classList.remove('setting-value');
+      slider.min = 0;
+      slider.max = 255;
+      slider.setAttribute('aria-label', `${title} ${channel}`);
+      return fieldLabel(channel, slider);
+    });
+    // Keep the actual slider elements separately from their labels.
+    const ranges = sliders.map((label) => label.querySelector('input'));
+    function sync() {
+      if (!/^#[0-9a-f]{6}$/i.test(hex.value)) return;
+      swatch.style.backgroundColor = hex.value;
+      ranges.forEach((slider, index) => { slider.value = parseInt(hex.value.slice(1 + index * 2, 3 + index * 2), 16); });
+    }
+    ranges.forEach((slider) => slider.addEventListener('input', () => {
+      hex.value = `#${ranges.map((item) => Number(item.value).toString(16).padStart(2, '0')).join('')}`;
+      sync();
+    }));
+    hex.addEventListener('input', sync);
+    group.append(hex, swatch, ...sliders);
+    sync();
+    return group;
+  }
 
   const dialog = document.querySelector('#dashboard-dialog');
   const dialogTitle = document.querySelector('#dialog-title');
@@ -84,16 +175,9 @@ export function createSettingsEditor({
       control = makeInput('number', value ?? option.value ?? 0);
       control.step = 'any';
     } else if (type === 'options') {
-      control = document.createElement('select');
-      control.className = 'setting-value';
-      const values = Array.isArray(option.values) ? option.values.filter((item) => item !== '') : [];
-      values.forEach((item) => {
-        const choice = document.createElement('option');
-        choice.value = String(item);
-        choice.textContent = String(item);
-        control.appendChild(choice);
-      });
-      control.value = String(value ?? option.value ?? values[0] ?? '');
+      const values = Array.isArray(option.values) ? option.values.filter((item) => item !== '').map(String) : [];
+      control = choiceControl(values, value ?? option.value ?? values[0] ?? '');
+      if (embed) control.setAttribute('aria-label', String(option.title || option.name));
     } else {
       control = makeInput('text', value ?? option.value ?? '');
     }
@@ -177,6 +261,10 @@ export function createSettingsEditor({
       control = makeInput('number', value);
       control.step = 'any';
     } else if (kind === 'color') {
+      if (embed) {
+        fieldset.appendChild(colourControl(value, setting.title || id));
+        return fieldset;
+      }
       control = makeInput('color', value || '#f45cad');
     } else if (kind === 'password') {
       control = makeInput('password', value);
@@ -186,18 +274,10 @@ export function createSettingsEditor({
       control.className = 'setting-value';
       control.value = value === undefined || value === null ? '' : String(value);
     } else if (kind === 'options') {
-      control = document.createElement('select');
-      control.className = 'setting-value';
-      const options = Array.isArray(setting.options) ? setting.options.filter((item) => item !== '') : [];
-      options.forEach((item) => {
-        const option = document.createElement('option');
-        option.value = String(item);
-        option.textContent = String(item);
-        control.appendChild(option);
-      });
-      control.value = String(value ?? options[0] ?? '');
+      const options = Array.isArray(setting.options) ? setting.options.filter((item) => item !== '').map(String) : [];
+      control = choiceControl(options, value ?? options[0] ?? '');
     } else if (kind === 'button') {
-      const href = absoluteHttpUrl(value);
+      const href = embed ? null : absoluteHttpUrl(value);
       const link = document.createElement(href ? 'a' : 'span');
       link.className = 'button button-cyan';
       link.textContent = String(setting.title || 'Open link');
@@ -266,12 +346,43 @@ export function createSettingsEditor({
     return payload;
   }
 
+  function confirmDelete(container, profile) {
+    return new Promise((resolve) => {
+      const confirmation = document.createElement('section');
+      confirmation.className = 'embed-confirmation';
+      confirmation.setAttribute('role', 'alertdialog');
+      confirmation.setAttribute('aria-label', `Delete profile ${profile}?`);
+      const text = document.createElement('p');
+      text.textContent = `Delete profile “${profile}”? This cannot be undone.`;
+      const yes = document.createElement('button');
+      yes.type = 'button';
+      yes.className = 'button button-danger';
+      yes.textContent = 'Confirm delete';
+      const no = document.createElement('button');
+      no.type = 'button';
+      no.className = 'button';
+      no.textContent = 'Keep profile';
+      function finish(confirmed) {
+        confirmation.remove();
+        resolve(confirmed);
+      }
+      yes.addEventListener('click', () => finish(true));
+      no.addEventListener('click', () => finish(false));
+      confirmation.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+      });
+      confirmation.append(text, yes, no);
+      container.appendChild(confirmation);
+      no.focus();
+    });
+  }
+
   function renderCounterSettings(
     container,
     folder,
     schema,
     values,
-    { inline = false, dialogRequestId = null } = {},
+    { inline = false, dialogRequestId = null, profile, registry } = {},
   ) {
     container.replaceChildren();
     if (inline) {
@@ -285,15 +396,107 @@ export function createSettingsEditor({
       container.appendChild(header);
     }
 
+    const profiles = document.createElement('section');
+    profiles.className = 'settings-profiles';
+    const selector = choiceControl(registry.profiles, profile,
+      registry.profiles.map((name) => name === registry.active ? `${name} (active)` : name));
+    if (embed) selector.setAttribute('aria-label', 'Settings profile');
+    else selector.removeAttribute('class');
+    profiles.appendChild(fieldLabel('Settings profile', selector));
+    selector.addEventListener('change', () => loadCounterSettings(folder, { inline, profile: selector.value }));
+    const nameInput = makeInput('text', '');
+    nameInput.maxLength = 48;
+    nameInput.pattern = '[A-Za-z0-9_-]+';
+    profiles.appendChild(fieldLabel('New profile name', nameInput, 'Letters, numbers, hyphens and underscores; up to 48 characters.'));
+    const management = document.createElement('div');
+    management.className = 'dialog-actions';
+    for (const [label, action] of [['Create empty', 'create'], ['Copy profile', 'copy'], ['Rename', 'rename'], ['Delete', 'delete'], ['Activate globally', 'activate']]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = action === 'delete' ? 'button button-danger' : 'button';
+      button.textContent = label;
+      button.disabled = (profile === 'default' && ['rename', 'delete'].includes(action)) || (action === 'activate' && profile === registry.active);
+      button.addEventListener('click', async () => {
+        setBusy(button, true);
+        if (embed && action === 'delete' && !await confirmDelete(profiles, profile)) {
+          setBusy(button, false);
+          button.focus();
+          return;
+        }
+        try {
+          const body = { action, name: profile };
+          let selected = profile;
+          if (action === 'create' || action === 'copy') {
+            body.action = 'create';
+            body.name = nameInput.value.trim();
+            if (action === 'copy') body.copyFrom = profile;
+            selected = body.name;
+          } else if (action === 'rename') {
+            body.target = nameInput.value.trim();
+            selected = body.target;
+          } else if (action === 'delete') selected = 'default';
+          await requestJson('/api/counters/profiles', { method: 'POST', body: JSON.stringify(body) });
+          await loadCounterSettings(folder, { inline, profile: selected });
+        } catch (error) {
+          notify(`Could not manage profile: ${errorText(error)}`, 'error', 5000);
+        } finally { setBusy(button, false); }
+      });
+      management.appendChild(button);
+    }
+    profiles.appendChild(management);
+    container.appendChild(profiles);
+
     const form = document.createElement('form');
     form.className = 'dialog-form';
     const list = document.createElement('div');
     list.className = 'counter-settings-list';
+    const search = makeInput('search', '');
+    search.placeholder = 'Search title, description or ID';
+    search.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') event.preventDefault();
+    });
+    const navigation = document.createElement('nav');
+    navigation.className = 'settings-navigation';
+    navigation.setAttribute('aria-label', 'Settings sections');
+    const groups = [];
+    let group = { heading: null, link: null, fields: [] };
+    groups.push(group);
     schema.forEach((setting) => {
       const configured = Object.prototype.hasOwnProperty.call(values, setting.uniqueID)
         ? values[setting.uniqueID]
         : undefined;
-      list.appendChild(renderSettingField(setting, configured));
+      const field = renderSettingField(setting, configured);
+      list.appendChild(field);
+      if (String(setting.type).toLowerCase() === 'header') {
+        field.id = `settings-section-${groups.length}`;
+        const link = document.createElement('a');
+        link.href = `#${field.id}`;
+        link.textContent = setting.title || setting.uniqueID;
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          field.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          field.tabIndex = -1;
+          field.focus({ preventScroll: true });
+        });
+        navigation.appendChild(link);
+        group = { heading: field, link, fields: [] };
+        groups.push(group);
+      } else {
+        group.fields.push({ field, text: `${setting.title} ${setting.description} ${setting.uniqueID}`.toLocaleLowerCase() });
+      }
+    });
+    navigation.hidden = navigation.childElementCount === 0;
+    search.addEventListener('input', () => {
+      const term = search.value.trim().toLocaleLowerCase();
+      for (const section of groups) {
+        let visible = !term;
+        for (const entry of section.fields) {
+          entry.field.hidden = !entry.text.includes(term);
+          visible ||= !entry.field.hidden;
+        }
+        if (section.heading) section.heading.hidden = !visible;
+        if (section.link) section.link.hidden = !visible;
+      }
     });
     if (!schema.length) {
       const empty = document.createElement('div');
@@ -322,19 +525,23 @@ export function createSettingsEditor({
     save.textContent = 'Save overlay settings';
     save.disabled = !schema.some((setting) => setting.type !== 'header');
     actions.appendChild(save);
-    form.append(list, actions);
+    const layout = document.createElement('div');
+    layout.className = 'settings-layout';
+    layout.append(navigation, list);
+    form.append(fieldLabel('Search settings', search), layout, actions);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (!isCurrentDialogRequest(dialogRequestId)) return;
       setBusy(save, true, 'Saving…');
       try {
         const payload = collectCounterSettings(form, schema);
-        await requestJson(`/api/counters/settings/${encodeURIComponent(folder)}`, {
+        await requestJson(`/api/counters/settings/${encodeURIComponent(folder)}?profile=${encodeURIComponent(profile)}`, {
           method: 'POST',
           body: JSON.stringify(payload),
         });
         if (!isCurrentDialogRequest(dialogRequestId)) return;
         notify(`Saved settings for ${folder}.`, 'success');
+        if (embed) notifyParent(await requestJson('/api/counters/profiles'));
         if (!inline) closeDialog();
       } catch (error) {
         if (!isCurrentDialogRequest(dialogRequestId)) return;
@@ -346,7 +553,7 @@ export function createSettingsEditor({
     container.appendChild(form);
   }
 
-  async function loadCounterSettings(folder, { inline = false } = {}) {
+  async function loadCounterSettings(folder, { inline = false, profile = null } = {}) {
     const target = inline
       ? (results ? { container: results, requestId: null } : null)
       : openDialog(`Settings: ${folder}`, 'Edit values provided by this overlay.');
@@ -356,13 +563,17 @@ export function createSettingsEditor({
     loading.textContent = 'Loading overlay settings…';
     container.replaceChildren(loading);
     try {
-      const payload = await requestJson(`/api/counters/settings/${encodeURIComponent(folder)}`);
+      const registry = await requestJson('/api/counters/profiles');
+      const requested = profile ?? (inline ? new URLSearchParams(location.search).get('profile') : null);
+      const selected = requested ?? registry.active;
+      const payload = await requestJson(`/api/counters/settings/${encodeURIComponent(folder)}?profile=${encodeURIComponent(selected)}`);
       if (!isCurrentDialogRequest(requestId)) return;
       const schema = Array.isArray(payload.settings) ? payload.settings : [];
       const values = payload.values && typeof payload.values === 'object' && !Array.isArray(payload.values)
         ? payload.values
         : {};
-      renderCounterSettings(container, folder, schema, values, { inline, dialogRequestId: requestId });
+      renderCounterSettings(container, folder, schema, values, { inline, dialogRequestId: requestId, profile: selected, registry });
+      notifyParent(registry);
     } catch (error) {
       if (!isCurrentDialogRequest(requestId)) return;
       container.replaceChildren();

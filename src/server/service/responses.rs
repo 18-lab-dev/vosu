@@ -218,6 +218,8 @@ async fn resource_response_with_counter_path(
 
 
 fn counter_path_script(encoded_html_path: &str) -> Option<Bytes> {
+    let (encoded_html_path, profile) = encoded_html_path.split_once("?vosuProfile=")
+        .map_or((encoded_html_path, None), |(path, profile)| (path, Some(profile)));
     let decoded_html_path = percent_decode_once(encoded_html_path).ok()?;
     let logical_path = decoded_html_path.trim_start_matches('/');
     let counter_path = logical_path
@@ -225,7 +227,13 @@ fn counter_path_script(encoded_html_path: &str) -> Option<Bytes> {
         .map_or("", |(parent, _)| parent);
     let mut script = String::with_capacity(counter_path.len() + 48);
     script.push_str("<script>window.COUNTER_PATH=");
-    push_javascript_string(&mut script, counter_path);
+    if let Some(profile) = profile {
+        push_javascript_string(&mut script, &crate::counters::qualified_counter(counter_path, profile));
+        script.push_str(";window.VOSU_PROFILE=");
+        push_javascript_string(&mut script, profile);
+    } else {
+        push_javascript_string(&mut script, counter_path);
+    }
     script.push_str(";</script>");
     Some(Bytes::from(script))
 }

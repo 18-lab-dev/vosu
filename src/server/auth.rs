@@ -253,6 +253,31 @@ mod tests {
     }
 
     #[test]
+    fn localhost_settings_mutations_match_request_host_not_listener_address() {
+        use axum::http::HeaderValue;
+        let policy = AuthorizationPolicy::new("127.0.0.1,localhost,absolute", "127.0.0.1");
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("localhost:24050"));
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://localhost:24050"),
+        );
+        assert!(policy.is_allowed(
+            ip("127.0.0.1"),
+            RequestHeaders {
+                origin: Some("http://localhost:24050"),
+                referer: None,
+            },
+        ));
+        assert!(MutationAuthorization::from_headers(&headers).0);
+        // Loopback aliases are not interchangeable origins.
+        headers.insert(header::HOST, HeaderValue::from_static("127.0.0.1:24050"));
+        assert!(!MutationAuthorization::from_headers(&headers).0);
+        headers.insert(header::HOST, HeaderValue::from_static("localhost:24051"));
+        assert!(!MutationAuthorization::from_headers(&headers).0);
+    }
+
+    #[test]
     fn mutation_provenance_rejects_ambiguous_headers_and_parser_recovery() {
         use axum::http::HeaderValue;
         let mut headers = HeaderMap::new();

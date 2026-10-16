@@ -498,3 +498,14 @@ input[type="checkbox"].settings-control {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Off-screen CEF has no native select/colour popup surfaces. */
+.settings-embed .dashboard-main { padding: 1rem; }
+.embed-listbox { max-height: 12rem; overflow: auto; }
+.embed-listbox [role="option"] { padding: .5rem .75rem; cursor: pointer; }
+.embed-listbox [aria-selected="true"] { background: #50304b; color: #fff; }
+.embed-listbox:focus-visible { outline: 2px solid #7ae1f8; outline-offset: 2px; }
+.embed-colour { display: grid; gap: .65rem; }
+.embed-colour-swatch { height: 2rem; border: 1px solid #a99bb7; border-radius: .4rem; }
+.embed-confirmation { padding: 1rem; border: 1px solid #f45cad; border-radius: .5rem; }
+.embed-confirmation .button { margin-right: .5rem; }
