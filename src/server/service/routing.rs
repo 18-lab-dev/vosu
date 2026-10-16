@@ -424,10 +424,27 @@ impl ProductionRouteDelegate {
         let processor = Arc::clone(&self.services.websocket.processor);
         let relays = Arc::clone(&self.services.websocket.relays);
         let query = request.uri().query().map(str::to_owned);
-        let mutation = request.extensions()
+        let mut mutation = request.extensions()
             .get::<super::auth::MutationAuthorization>()
             .copied()
             .unwrap_or_default();
+        if endpoint == Endpoint::WsCommands
+            && request.headers().get(header::UPGRADE)
+                .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"))
+            && request.headers().get_all(header::CONNECTION).iter().any(|value|
+                value.to_str().is_ok_and(|value| value.split(',')
+                    .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))))
+            && let Some(Some(broker)) = request.extensions()
+                .get::<Option<Arc<super::broker::BrokerToken>>>()
+        {
+            let peer = request.extensions().get::<ConnectInfo<PeerAddress>>()
+                .map(|peer| peer.0.0.ip());
+            match broker.authorize(request.headers(), peer) {
+                Ok(valid) => mutation.0 |= valid,
+                Err(()) => return response(StatusCode::UNAUTHORIZED, "text/plain; charset=utf-8",
+                    Bytes::from_static(b"Invalid broker credential")),
+            }
+        }
         websocket::upgrade_response(
             websocket_endpoint(endpoint),
             request,

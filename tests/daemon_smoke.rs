@@ -64,6 +64,29 @@ async fn websocket_connect(
     path: &str,
     origin: Option<&str>,
 ) -> (tokio::net::TcpStream, Vec<u8>) {
+    websocket_connect_with_bearer(port, path, origin, None, 101).await
+}
+
+async fn websocket_connect_with_bearer(
+    port: u16,
+    path: &str,
+    origin: Option<&str>,
+    bearer: Option<&str>,
+    status: u16,
+) -> (tokio::net::TcpStream, Vec<u8>) {
+    let authorization = bearer
+        .map(|token| format!("Authorization: Bearer {token}\r\n"))
+        .unwrap_or_default();
+    websocket_connect_with_authorization(port, path, origin, &authorization, status).await
+}
+
+async fn websocket_connect_with_authorization(
+    port: u16,
+    path: &str,
+    origin: Option<&str>,
+    authorization: &str,
+    status: u16,
+) -> (tokio::net::TcpStream, Vec<u8>) {
     let origin = origin
         .map(|origin| format!("Origin: {origin}\r\n"))
         .unwrap_or_default();
@@ -74,7 +97,7 @@ async fn websocket_connect(
         .write_all(
             format!(
                 "GET {path} HTTP/1.1\r\n\
-                 Host: 127.0.0.1:{port}\r\n{origin}\
+                 Host: 127.0.0.1:{port}\r\n{origin}{authorization}\
                  Connection: Upgrade\r\n\
                  Upgrade: websocket\r\n\
                  Sec-WebSocket-Version: 13\r\n\
@@ -100,7 +123,7 @@ async fn websocket_connect(
     .await
     .expect("WebSocket upgrade timed out");
     assert!(
-        response[..header_end].starts_with(b"HTTP/1.1 101"),
+        response[..header_end].starts_with(format!("HTTP/1.1 {status}").as_bytes()),
         "unexpected WebSocket upgrade response: {}",
         String::from_utf8_lossy(&response[..header_end])
     );
@@ -264,6 +287,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         .env("XDG_CONFIG_HOME", &config_home)
         .env("XDG_DATA_HOME", &data_home)
         .env("XDG_CACHE_HOME", &cache_home)
+        .env("XDG_RUNTIME_DIR", roots.path().join("runtime"))
         .env("VOSU_PROCESS_EVENTS", "poll")
         .env("HOME", roots.path())
         .stdout(Stdio::piped())
@@ -589,6 +613,121 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         "authoritative root schema changed after legacy root JSON mutation"
     );
 
+    // Native brokers authenticate explicitly, without forging browser provenance.
+    let broker_path = roots.path().join("runtime/vosu/broker.json");
+    let credential: serde_json::Value =
+        serde_json::from_slice(&fs::read(&broker_path).unwrap()).unwrap();
+    assert_eq!(credential["version"], 1);
+    assert_eq!(credential["origin"], base);
+    let token = credential["token"].as_str().unwrap();
+    let mut wrong = token.as_bytes().to_vec();
+    wrong[0] = if wrong[0] == b'0' { b'1' } else { b'0' };
+    let wrong = String::from_utf8(wrong).unwrap();
+    for (authorization, status) in [
+        (format!("Authorization: Bearer {wrong}\r\n"), 401),
+        (
+            format!("Authorization: Bearer {token}\r\nAuthorization: Bearer {token}\r\n"),
+            401,
+        ),
+        (format!("Authorization: bearer {token}\r\n"), 101),
+        ("Authorization: Basic cached\r\n".to_owned(), 101),
+    ] {
+        let _ = websocket_connect_with_authorization(
+            port,
+            "/websocket/commands?l=seeded-counter",
+            None,
+            &authorization,
+            status,
+        )
+        .await;
+    }
+    let _ = websocket_connect_with_bearer(port, "/websocket/v2", None, Some(&wrong), 101).await;
+    let uncredentialed = client
+        .get(format!("{base}/websocket/commands"))
+        .send()
+        .await
+        .unwrap()
+        .status();
+    for credential in [token, &wrong] {
+        let response = client
+            .get(format!("{base}/websocket/commands"))
+            .bearer_auth(credential)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), uncredentialed);
+        assert_ne!(response.status(), 401);
+    }
+    let denied = client
+        .post(format!("{base}/api/counters/settings/seeded-counter"))
+        .bearer_auth(token)
+        .json(&serde_json::json!([{"uniqueID":"title","value":"not authorized"}]))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 403, "broker token must not authorize HTTP");
+    let _ = websocket_connect_with_bearer(
+        port,
+        "/websocket/commands?l=seeded-counter",
+        Some(&base),
+        Some("stale"),
+        401,
+    )
+    .await;
+    let (mut observer, mut observer_buffer) =
+        websocket_connect(port, "/websocket/commands?l=seeded-counter", None).await;
+    observer
+        .write_all(&masked_frame(1, b"getSettings:seeded-counter:"))
+        .await
+        .unwrap();
+    let _ = read_server_frame(&mut observer, &mut observer_buffer).await;
+    let (mut broker, _) = websocket_connect_with_bearer(
+        port,
+        "/websocket/commands?l=seeded-counter",
+        None,
+        Some(token),
+        101,
+    )
+    .await;
+    broker
+        .write_all(&masked_frame(
+            1,
+            br#"saveSettings:seeded-counter:[{"uniqueID":"title","value":"broker write"}]"#,
+        ))
+        .await
+        .unwrap();
+    let (opcode, payload) = read_server_frame(&mut observer, &mut observer_buffer).await;
+    assert_eq!(opcode, 1);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&payload).unwrap()["message"][0]["value"],
+        "broker write"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let persisted = client
+            .get(format!("{base}/api/counters/settings/seeded-counter"))
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+        if persisted == expected_settings("broker write") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "broker did not persist settings: {persisted}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        fs::read_to_string(&values_toml_path)
+            .unwrap()
+            .contains("broker write")
+    );
+    drop(broker);
+    drop(observer);
     // The stock hosted settings protocol needs no token or new message shape.
     let (mut hosted, _) =
         websocket_connect(port, "/websocket/commands?l=seeded-counter", Some(&base)).await;

@@ -202,6 +202,8 @@ async fn failed_rebind_then_config_rollback_clears_stale_retry_target() {
         state,
         cancel,
         task,
+        broker: None,
+        broker_logger: None,
     };
     assert!(owner.stage(replacement.clone()).await.is_err());
     let state = owner.state();
@@ -216,6 +218,41 @@ async fn failed_rebind_then_config_rollback_clears_stale_retry_target() {
         old_target,
         "rollback must replace the failed desired target even when it is already effective"
     );
+    owner.shutdown().await;
+}
+
+#[tokio::test]
+async fn broker_publication_failure_keeps_effective_rebind_and_disables_writes() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("broker.json");
+    let broker = Arc::new(crate::server::broker::BrokerToken::new(path.clone()).unwrap());
+    broker.publish("127.0.0.1:24050".parse().unwrap()).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(axum::http::header::AUTHORIZATION,
+        format!("Bearer {}", value["token"].as_str().unwrap()).parse().unwrap());
+    let peer = Some("127.0.0.1".parse().unwrap());
+    assert_eq!(broker.authorize(&headers, peer), Ok(true));
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    let target = ListenTarget::new("127.0.0.1", 24051);
+    let (desired, _desired_rx) = watch::channel(ListenTarget::new("127.0.0.1", 24050));
+    let (_state_tx, state) = watch::channel(ListenerState {
+        desired: Some(target.clone()),
+        effective: Some(crate::server::runtime::EffectiveListener {
+            target: target.clone(), address: "127.0.0.1:24051".parse().unwrap(),
+        }),
+        last_error: None,
+    });
+    let cancel = CancellationToken::new();
+    let task_cancel = cancel.clone();
+    let task = tokio::spawn(async move { task_cancel.cancelled().await; });
+    let mut owner = ListenerOwner {
+        desired, state, cancel, task, broker: Some(broker.clone()), broker_logger: None,
+    };
+    owner.stage(target.clone()).await.expect("live rebind must remain successful");
+    assert_eq!(owner.state().effective.unwrap().target, target);
+    assert_eq!(broker.authorize(&headers, peer), Err(()));
     owner.shutdown().await;
 }
 
@@ -241,6 +278,8 @@ async fn listener_accept_stop_is_separate_from_forced_drain_join() {
         state,
         cancel,
         task,
+        broker: None,
+        broker_logger: None,
     };
     owner.stop_accepting();
     assert_eq!(event_rx.recv().await, Some("accept-stopped"));

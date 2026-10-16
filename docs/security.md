@@ -52,6 +52,27 @@ vosu needs no elevation, installs no driver or service, and writes no registry k
 
 The listener is `127.0.0.1:24050` by default. Anything on the computer that can connect can read game state, and browser pages from other origins are rejected unless allowed by `ALLOWED_IPS`. Management actions (installing, deleting, or opening overlays, changing settings, running updates) additionally require same-origin browser provenance. That check stops other websites, but not installed overlays, which share the dashboard's origin ([ADR 0013](decisions/0013-counters-share-dashboard-origin.md)), and not native programs, which can forge the header. Exposing the listener beyond loopback is an explicit configuration choice; the traffic is unencrypted and unauthenticated. The [README](../README.md#pages-counters-reports-and-updates) has the full authorization rules.
 
+Native overlay brokers can authenticate a loopback `/websocket/commands` upgrade
+with the per-start `broker.json` bearer token ([integration contract](../README.md#native-overlay-brokers)).
+Any same-account process able to read that file can write counter settings and
+invoke the other same-origin command-socket writes. This makes the existing
+native-Origin-forgery limitation explicit; it is not an additional HTTP
+management credential and grants no authority on HTTP routes. Brokers must keep
+it out of page JavaScript/logs and authorize their own inbound counter frames.
+Linux uses a 0700 directory and atomically created 0600 files.
+Windows files inherit their parent directory's ACL, as documented by
+[Microsoft](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights).
+The usual per-user LocalAppData location is not a security guarantee: broad
+inheritable ACEs on an existing `%LOCALAPPDATA%\vosu` directory or its parents
+can let other accounts read the token. vosu does not replace those ACLs;
+administrators and other principals already entitled to read remain trusted.
+Credential publication errors disable broker writes with a warning rather than
+stopping the daemon. vosu never deletes `broker.json`: a stopped daemon's token
+is stale and authenticates nothing, and each start atomically replaces the file,
+so no shutdown check-then-unlink race exists. The private directory is not a
+boundary against another process running as that account.
+
+
 ## Third-party overlays
 
 Overlays are third-party web pages that run in the user's browser or OBS. vosu does not review them. Installed overlays can read all game data the API exposes and use the dashboard's management actions. The **Available** page states this above the catalog listing.

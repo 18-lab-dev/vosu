@@ -157,11 +157,20 @@ impl<F: TcpListenerFactory> ListenerBinder for TokioBinder<F> {
 #[derive(Clone)]
 pub struct AxumListenerFactory {
     providers: RouteProviders,
+    broker: Option<Arc<super::broker::BrokerToken>>,
 }
 
 impl AxumListenerFactory {
     pub fn new(providers: RouteProviders) -> Self {
-        Self { providers }
+        Self {
+            providers,
+            broker: None,
+        }
+    }
+
+    pub(crate) fn with_broker(mut self, broker: Option<Arc<super::broker::BrokerToken>>) -> Self {
+        self.broker = broker;
+        self
     }
 }
 #[derive(Default)]
@@ -372,11 +381,11 @@ impl TcpListenerFactory for AxumListenerFactory {
         let shutdown = accept_stop.clone();
         let upgrades = Arc::new(UpgradeCallbackTracker::new());
         let flushes = Arc::new(ResponseFlushRegistry::default());
-        let service = routes::service_with_upgrades(
-            self.providers.clone(),
-            upgrades.clone(),
-            flushes.clone(),
-        );
+        let service = routes::router(self.providers.clone())
+            .layer(axum::Extension(upgrades.clone()))
+            .layer(axum::Extension(flushes.clone()))
+            .layer(axum::Extension(self.broker.clone()))
+            .into_make_service_with_connect_info::<PeerAddress>();
         let connections = Arc::new(ConnectionRegistry::default());
         let tracked = TrackedListener {
             listener,

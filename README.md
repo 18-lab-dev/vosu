@@ -557,7 +557,54 @@ Management POSTs require the existing trusted-peer policy **and** browser proven
 
 Installed counter scripts share the dashboard's origin and are therefore trusted code, not isolated tenants. They can satisfy the same-origin mutation check and invoke management operations beyond their own settings. Do not install untrusted counters; origin checks do not fix this privilege boundary. [ADR 0013](docs/decisions/0013-counters-share-dashboard-origin.md) keeps the shared origin so counter URLs, counter storage, and settings links stay compatible, and the **Available** page warns about it.
 
-Read-only JSON, static/file routes, counter-settings GETs, and state/settings WebSockets need no new headers or tokens. Headerless and opaque/file-origin reads remain available to trusted peers. Hosted stock counters retain `window.COUNTER_PATH` and the existing settings protocol unchanged. On legacy sockets, `getSettings`, `updateSettings` replies, and `applyFilters` remain readable without mutation authorization; `saveSettings` requires same-origin provenance captured at upgrade, otherwise the socket closes with 1008 before saving or relaying. File-loaded and other non-hosted overlays may read settings but must use the hosted settings page to write them.
+Read-only JSON, static/file routes, counter-settings GETs, and state/settings WebSockets need no new headers or tokens. Headerless and opaque/file-origin reads remain available to trusted peers. Hosted stock counters retain `window.COUNTER_PATH` and the existing settings protocol unchanged. On legacy sockets, `getSettings`, `updateSettings` replies, and `applyFilters` remain readable without mutation authorization; `saveSettings` requires same-origin provenance captured at upgrade or the native command-broker credential described below, otherwise the socket closes with 1008 before saving or relaying. File-loaded and other non-hosted overlays may read settings but must use the hosted settings page or an authenticated native broker to write them.
+
+### Native overlay brokers
+
+An external native broker such as vosulay may save counter settings without
+forging `Origin`. Each daemon start generates 32 OS-CSPRNG bytes, encoded as 64
+lowercase hex characters, and atomically publishes
+`{"version":1,"origin":"http://127.0.0.1:24050","token":"<64 hex>"}`.
+The origin contains the actual bound listener address and port, including IPv6
+brackets when applicable; a successful listener rebind updates it.
+
+- Linux: `$XDG_RUNTIME_DIR/vosu/broker.json`; when `XDG_RUNTIME_DIR` is unset
+  or empty, `${XDG_CONFIG_HOME:-$HOME/.config}/vosu/broker.json`. Both the
+  runtime path and config fallback must be absolute; invalid paths disable
+  broker support with a warning. Directory mode is 0700 and file mode is 0600,
+  including during atomic replacement.
+- Windows: `%LOCALAPPDATA%\vosu\broker.json`, never the program folder. The
+  file inherits the directory ACL; a pre-existing directory with broader
+  inheritable permissions also exposes the token. Protect that directory and
+  its parents; vosu does not reset Windows ACLs.
+
+Send `Authorization: Bearer <token>` only on `/websocket/commands` upgrades
+for counter frames, and only to a loopback URL whose scheme, port and host
+match the file's origin (`localhost` and `127.0.0.1` may be treated as equivalent).
+Never attach it to HTTP requests or other routes. vosu accepts it only from
+loopback peers and compares the credential in constant time. Valid credentials
+give exactly the command-socket write permission of same-origin counters;
+invalid/stale credentials return HTTP 401 even when Origin would authorize a
+write. Missing credentials leave existing behavior unchanged. HTTP POSTs still
+require exact same-origin provenance regardless of this header.
+The Bearer scheme is case-insensitive; other Authorization schemes (such as
+Basic from a reverse proxy) are ignored, preserving their previous behavior.
+If credential creation/publication fails, vosu logs a warning and continues
+serving with broker writes disabled; a successful listener rebind still updates
+the dashboard address. Replacement uses the same platform atomic-replace path
+as other durable writes, including Windows sharing-violation retries.
+
+On 401, reread the file and retry once; if that fails, connect without the token
+for the existing read-only behavior. The file is never deleted: after vosu stops
+its token is stale and fails with 401, and the next start atomically replaces it.
+Deleting it on shutdown could race a newer daemon's file. Never log the token or expose
+it to page JavaScript. A broker must authorize its inbound requests using its own
+counter-frame Origin/Host and session secret before forwarding with this
+credential: it is a privileged bridge, not an open local proxy.
+Same-account processes able to read the file can write counter settings and
+invoke other command-socket mutations. This is explicit native-client trust,
+not isolation beyond the existing ability of native clients to forge Origin.
+
 
 ## WebSocket API
 

@@ -6,6 +6,13 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ### Overlay settings
 
+- Add per-start private broker credentials for loopback command WebSockets, so
+  counters hosted by native overlay brokers can save and relay settings without
+  forging Origin. Invalid credentials fail the upgrade with 401; HTTP management
+  authorization and headerless read-only behavior remain unchanged.
+  Treat Bearer scheme names case-insensitively and ignore other auth schemes;
+  publication failures warn and disable broker writes without stopping serving.
+  Use platform atomic replacement and identity-aware Unix shutdown cleanup.
 - Add named settings profiles with global activation, per-instance `vosuProfile`
   overrides, a same-origin management API, and profile-aware command refreshes.
   The reserved `default` profile retains existing values files. The vosulay iframe

@@ -60,7 +60,19 @@ Offset/signature resolution may remain pending and retry while a process is aliv
 
 ## Security boundaries
 
-Keep the listener loopback-only unless remote access is deliberate and protected. Read authorization combines allowed peer/network patterns with allowed `Origin`/`Referer` tokens, retaining headerless/opaque overlay reads; a hostname token does not authorize an arbitrary remote peer. Management POSTs additionally require exact same-origin browser provenance (scheme, host, port), not merely a trusted hostname or loopback peer. Settings sockets retain reads but require that same provenance for writes; use the hosted settings page for file-origin overlays. See the README for method cutover and reverse-proxy boundaries. Preserve request/frame limits, root-confined files, escaped reports, HTTPS-only downloads, private/reserved destination rejection, ZIP safety checks, and same-filesystem replacement.
+Keep the listener loopback-only unless remote access is deliberate and protected. Read authorization combines allowed peer/network patterns with allowed `Origin`/`Referer` tokens, retaining headerless/opaque overlay reads; a hostname token does not authorize an arbitrary remote peer. Management POSTs additionally require exact same-origin browser provenance (scheme, host, port), not merely a trusted hostname or loopback peer. Settings sockets retain reads but require that same provenance or the native command-broker credential below for writes; use the hosted settings page for unbrokered file-origin overlays. See the README for method cutover and reverse-proxy boundaries. Preserve request/frame limits, root-confined files, escaped reports, HTTPS-only downloads, private/reserved destination rejection, ZIP safety checks, and same-filesystem replacement.
+
+Native brokers may instead present the per-start `broker.json` token on loopback
+`/websocket/commands` upgrades, granting the same command-socket writes (not HTTP
+management authority). Invalid credentials return 401; absent credentials keep
+the prior behavior. See the [broker contract](../../README.md#native-overlay-brokers)
+for paths, origin matching, one reread/retry, and inbound broker authorization.
+Processes running as the same account that can read the file can write counter
+settings; native clients could already forge Origin. Linux directory/file modes
+are 0700/0600. Windows inherits ACLs: protect `%LOCALAPPDATA%\vosu` and its
+parents, especially pre-existing directories with broad inheritable ACEs.
+Clean shutdown removes the file; a crash leftover is invalid after restart.
+
 
 ### Security hardening and remaining trust
 

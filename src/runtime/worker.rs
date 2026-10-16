@@ -70,13 +70,36 @@ pub struct ListenerOwner {
     pub(super) state: watch::Receiver<ListenerState>,
     pub(super) cancel: CancellationToken,
     pub(super) task: JoinHandle<()>,
+    pub(super) broker: Option<Arc<crate::server::broker::BrokerToken>>,
+    pub(super) broker_logger: Option<crate::logging::Logger>,
 }
 
 impl ListenerOwner {
     /// Starts the listener runtime and waits until the initial address is
     /// actually bound. Readiness must never be reported before this returns.
     pub async fn start(providers: RouteProviders, target: ListenTarget) -> io::Result<Self> {
-        let factory = AxumListenerFactory::new(providers);
+        Self::start_with_broker(providers, target, Ok(None), None).await
+    }
+
+    pub(crate) async fn start_with_broker(
+        providers: RouteProviders,
+        target: ListenTarget,
+        path: io::Result<Option<PathBuf>>,
+        logger: Option<crate::logging::Logger>,
+    ) -> io::Result<Self> {
+        let broker = match path.and_then(|path| {
+            path.map(crate::server::broker::BrokerToken::new)
+                .transpose()
+        }) {
+            Ok(token) => token.map(Arc::new),
+            Err(error) => {
+                if let Some(logger) = &logger {
+                    logger.warn(format!("Native broker disabled: {error}"));
+                }
+                None
+            }
+        };
+        let factory = AxumListenerFactory::new(providers).with_broker(broker.clone());
         let (runtime, state) =
             ListenerRuntime::new(Arc::new(TokioResolver), Arc::new(TokioBinder(factory)));
         let (desired, desired_rx) = watch::channel(target.clone());
@@ -87,8 +110,13 @@ impl ListenerOwner {
             state,
             cancel,
             task,
+            broker,
+            broker_logger: logger,
         };
-        owner.wait_for_stage(&target).await?;
+        if let Err(error) = owner.wait_for_stage(&target).await {
+            owner.shutdown().await;
+            return Err(error);
+        }
         Ok(owner)
     }
 
@@ -123,6 +151,22 @@ impl ListenerOwner {
                 .as_ref()
                 .is_some_and(|effective| &effective.target == target)
             {
+                if let Some(broker) = &self.broker
+                    && let Err(error) = broker.publish(
+                        state
+                            .effective
+                            .as_ref()
+                            .expect("effective listener")
+                            .address,
+                    )
+                {
+                    broker.disable();
+                    if let Some(logger) = &self.broker_logger {
+                        logger.warn(format!(
+                            "Native broker disabled: credential publication failed: {error}"
+                        ));
+                    }
+                }
                 return Ok(());
             }
             if state.desired.as_ref() == Some(target)

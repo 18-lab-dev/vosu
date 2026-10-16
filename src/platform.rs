@@ -106,6 +106,26 @@ impl Paths {
         &self.config
     }
 
+    /// Local native-broker credential location (not the Windows program folder).
+    pub(crate) fn broker_path(&self) -> io::Result<PathBuf> {
+        self.broker_path_with(&SystemPathResolver)
+    }
+
+    fn broker_path_with(&self, resolver: &impl PathResolver) -> io::Result<PathBuf> {
+        #[cfg(target_os = "linux")]
+        let root = nonempty_env(resolver, "XDG_RUNTIME_DIR")
+            .map(|root| root.join("vosu"))
+            .unwrap_or_else(|| self.config.clone());
+        #[cfg(windows)]
+        let root = nonempty_env(resolver, "LOCALAPPDATA")
+            .map(|root| root.join("vosu"))
+            .ok_or_else(|| io::Error::other("LOCALAPPDATA is unavailable"))?;
+        if !root.is_absolute() {
+            return Err(io::Error::other("broker directory must be absolute"));
+        }
+        Ok(root.join("broker.json"))
+    }
+
     pub fn data(&self) -> &Path {
         &self.data
     }
@@ -153,7 +173,6 @@ impl Paths {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn nonempty_env(resolver: &impl PathResolver, name: &str) -> Option<PathBuf> {
     resolver
         .env_var(name)
@@ -246,6 +265,7 @@ mod tests {
     use std::io;
     use std::path::PathBuf;
 
+    #[derive(Clone)]
     struct InjectedResolver {
         executable: PathBuf,
         launch: PathBuf,
@@ -339,6 +359,31 @@ mod tests {
         assert!(paths.data().is_dir());
         assert!(paths.cache().is_dir());
         assert!(!launch.join("static").exists());
+    }
+
+    #[test]
+    fn broker_paths_require_absolute_nonempty_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let resolver = InjectedResolver::new(temp.path().join("vosu"), temp.path().to_path_buf())
+            .with_env("HOME", temp.path().to_path_buf());
+        let mut paths = Paths::resolve(&resolver).unwrap();
+        let fallback = paths.config.join("broker.json");
+        assert_eq!(paths.broker_path_with(&resolver).unwrap(), fallback);
+        let empty = resolver.clone().with_env("XDG_RUNTIME_DIR", PathBuf::new());
+        assert_eq!(paths.broker_path_with(&empty).unwrap(), fallback);
+        let runtime = resolver
+            .clone()
+            .with_env("XDG_RUNTIME_DIR", temp.path().join("runtime"));
+        assert_eq!(
+            paths.broker_path_with(&runtime).unwrap(),
+            temp.path().join("runtime/vosu/broker.json")
+        );
+        let relative = resolver
+            .clone()
+            .with_env("XDG_RUNTIME_DIR", PathBuf::from("relative"));
+        assert!(paths.broker_path_with(&relative).is_err());
+        paths.config = PathBuf::from("relative-config");
+        assert!(paths.broker_path_with(&resolver).is_err());
     }
 
     #[test]

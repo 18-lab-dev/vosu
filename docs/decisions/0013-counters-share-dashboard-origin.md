@@ -20,6 +20,25 @@ Keep counters on the dashboard origin. Management mutations keep requiring exact
 - The **Available** page states that listed overlays are third-party, run their authors' JavaScript with the dashboard's access, and should be installed only when trusted.
 - The README, [privacy policy](../../PRIVACY.md), and [third-party notices](../../THIRD_PARTY_NOTICES.md) describe the same boundary.
 
+### Native broker authentication (2026-10-16 amendment)
+
+Overlay software hosting counter frames outside vosu's origin must not forge
+`Origin`. Instead, vosu publishes a fresh 256-bit OS-random bearer credential
+each daemon start in a private per-user `broker.json`. Only loopback
+`/websocket/commands` upgrades accept it, with constant-time comparison.
+A valid token grants exactly the existing same-origin command-socket mutation
+permission; invalid/stale tokens fail the upgrade with 401. No token preserves
+existing behavior, and HTTP management routes ignore it.
+
+This explicitly trusts same-account native processes that can read the file;
+it does not claim to solve the native-client header-forgery limitation above.
+It avoids misrepresenting browser provenance while keeping existing counter
+message shapes, profiles, and refresh relays unchanged. Brokers must protect
+their inbound forwarding boundary and keep the token out of browser JavaScript
+and logs. See [README](../../README.md#native-overlay-brokers) for lifecycle,
+paths and Windows inherited-ACL residual risk.
+
+
 ## Consequences
 
 No overlay, OBS scene, vosulay integration, or dashboard URL changes. An installed counter remains trusted code with management authority, and that must keep being stated wherever counters are installed or described. Revisit this decision when breaking one of those compatibility contracts becomes acceptable; the three designs above are the evaluated starting points.

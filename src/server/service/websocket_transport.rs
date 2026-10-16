@@ -153,7 +153,7 @@ async fn bridge_socket(
                 text
             };
             // All legacy sockets can read settings and adjust their own filters.
-            // Only same-origin sockets may reach state-changing commands.
+            // Same-origin sockets and authenticated local command brokers may write.
             if !mutation.0 && !matches!(text.split_once(':').map(|(command, _)| command),
                 Some("getSettings" | "updateSettings" | "applyFilters"))
             {

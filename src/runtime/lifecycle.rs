@@ -169,7 +169,14 @@ impl ProductionRuntime {
             calculation: Arc::new(LegacyCalculateProvider::new(beatmap)),
             delegate: Arc::new(ProductionRouteDelegate::new(services)),
         };
-        let listener = match ListenerOwner::start(providers, target).await {
+        let listener = match ListenerOwner::start_with_broker(
+            providers,
+            target,
+            self.paths.broker_path().map(Some),
+            Some(self.logger.clone()),
+        )
+        .await
+        {
             Ok(listener) => listener,
             Err(error) => {
                 hubs.shutdown().await;
