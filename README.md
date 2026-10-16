@@ -606,6 +606,71 @@ invoke other command-socket mutations. This is explicit native-client trust,
 not isolation beyond the existing ability of native clients to forge Origin.
 
 
+### API keys
+
+Settings → **API keys** creates named credentials for trusted sandboxed, remote,
+or web software. Copy a new key immediately: vosu shows it only once. You can
+rename or revoke it later; permissions cannot be edited (revoke and recreate).
+Revocation immediately closes associated command sockets (1008), even while idle.
+Keys are not displayed in the embedded overlay editor (`embed=1`).
+
+- `settings:write`: existing command-socket writes and
+  `POST /api/counters/settings/<name>` value saves, never `?update=yes` schema saves.
+- `profiles:manage`: all `POST /api/counters/profiles` actions.
+- Neither scope grants updates, install/delete, reports, daemon settings, or
+  key management. Those remain exact same-origin only.
+
+Native WebSocket clients set this header on the `/websocket/commands` upgrade:
+
+```http
+Authorization: Bearer vosu_k_<64 lowercase hex characters>
+```
+
+For HTTP value saves (replace the example key with your saved secret):
+
+```sh
+curl -H "Authorization: Bearer $VOSU_API_KEY" -H 'Content-Type: application/json' \
+  --data '[{"uniqueID":"title","value":"My overlay"}]' \
+  http://127.0.0.1:24050/api/counters/settings/my-overlay
+```
+
+Browser WebSockets cannot set Authorization; offer both subprotocols instead:
+
+```js
+const socket = new WebSocket("ws://127.0.0.1:24050/websocket/commands?l=my-overlay",
+  ["vosu.key", "vosu.key." + key]);
+// socket.protocol === "vosu.key": vosu never echoes the secret subprotocol.
+```
+
+No URL query parameter authenticates a key. Cross-origin browser HTTP is not
+supported: CORS does not allow Authorization. Invalid/revoked keys and insufficient
+scopes return 401 (JSON for HTTP POSTs). Without a key, existing behavior remains.
+Keys work remotely only for peers allowed by `ALLOWED_IPS`; they never bypass that
+peer policy. Unlike the per-start loopback file token above, keys persist across
+restarts and authorize scoped HTTP writes.
+
+The config root holds `api-keys.toml`: `${XDG_CONFIG_HOME:-$HOME/.config}/vosu/`
+on Linux, the program directory on Windows. It contains SHA-256 hashes, not
+recoverable secrets, and public metadata (name, scopes, short prefix, creation
+and last-use timestamps). Unix files are created 0600 and atomically replaced;
+Windows inherits directory ACLs. At most 64 keys exist. Last-use persistence is
+throttled to once per minute per key. Malformed/unreadable files disable all keys
+with a warning without stopping vosu or overwriting the file; an explicit key
+management change replaces that registry.
+On Unix, loading a group/world-accessible file or one owned by another user
+warns without disabling otherwise valid keys. Restore private ownership and 0600 permissions.
+
+Dashboard-only management: same-origin `GET /api/keys` returns `{keys:[...]}`
+without secrets/hashes; `POST /api/keys` accepts
+`{action:"create",name,scopes}` (returns `{key,entry}` once),
+`{action:"rename",id,name}`, or `{action:"revoke",id}`. Names are 1–64 printable
+characters, excluding Unicode bidirectional controls; scopes contain one or both values above.
+
+Treat keys as passwords. Plain HTTP/WS exposes them to network observers on a
+LAN: keep loopback by default; use a trusted TLS reverse proxy for remote access.
+Do not put keys in URLs, logs, public pages, or untrusted overlay code.
+See [ADR 0015](docs/decisions/0015-user-managed-api-keys.md).
+
 ## WebSocket API
 
 | Upgrade path | Stream |

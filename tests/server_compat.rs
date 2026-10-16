@@ -62,6 +62,202 @@ use vosu::{
     },
 };
 
+#[tokio::test]
+async fn api_key_revoked_during_post_body_is_rejected_before_dispatch() {
+    struct KeysDelegate(Arc<vosu::server::api_keys::ApiKeys>);
+    impl RouteDelegate for KeysDelegate {
+        fn api_keys(&self) -> Option<Arc<vosu::server::api_keys::ApiKeys>> {
+            Some(self.0.clone())
+        }
+        fn handle(&self, _: Endpoint, _: Request<Body>, _: Bytes) -> ProviderFuture<'_, Response> {
+            panic!("revoked request must not reach its handler");
+        }
+    }
+    for (scope, path) in [
+        ("settings:write", "/api/counters/settings/test"),
+        ("profiles:manage", "/api/counters/profiles"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let keys = Arc::new(vosu::server::api_keys::ApiKeys::load(
+            root.path().join("api-keys.toml"),
+            None,
+        ));
+        let created = keys
+            .manage(&json!({"action":"create","name":"Slow POST","scopes":[scope]}))
+            .unwrap();
+        let key = created["key"].as_str().unwrap().to_owned();
+        let id = created["entry"]["id"].as_str().unwrap().to_owned();
+        let body_keys = keys.clone();
+        // The body stream is first polled only after header authorization.
+        // Revoke before supplying its bytes, deterministically exposing the race.
+        let body = Body::from_stream(futures_util::stream::once(async move {
+            assert!(
+                serde_json::to_value(body_keys.list()).unwrap()[0]
+                    .get("last_used")
+                    .is_some()
+            );
+            body_keys
+                .manage(&json!({"action":"revoke","id":id}))
+                .unwrap();
+            Ok::<_, io::Error>(Bytes::from_static(b"[]"))
+        }));
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri(path)
+            .header("Host", "127.0.0.1")
+            .header(header::AUTHORIZATION, format!("Bearer {key}"))
+            .body(body)
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(PeerAddress("127.0.0.1:12345".parse().unwrap())));
+        let providers = RouteProviders {
+            authorization: Arc::new(AuthorizationPolicy::new("", "127.0.0.1")),
+            state: Arc::new(StateFixture),
+            calculation: Arc::new(CalculateFixture),
+            delegate: Arc::new(KeysDelegate(keys)),
+        };
+        let response = routes::dispatch(State(providers), request).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{scope}");
+        let body = to_bytes(response.into_body(), 1024).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["error"],
+            "API key revoked"
+        );
+    }
+}
+
+#[tokio::test]
+async fn api_key_peer_scope_and_management_boundaries() {
+    struct KeysDelegate(Arc<vosu::server::api_keys::ApiKeys>);
+    impl RouteDelegate for KeysDelegate {
+        fn api_keys(&self) -> Option<Arc<vosu::server::api_keys::ApiKeys>> {
+            Some(self.0.clone())
+        }
+        fn handle(&self, _: Endpoint, _: Request<Body>, _: Bytes) -> ProviderFuture<'_, Response> {
+            Box::pin(async {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .body(Body::empty())
+                    .unwrap()
+            })
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let keys = Arc::new(vosu::server::api_keys::ApiKeys::load(
+        root.path().join("api-keys.toml"),
+        None,
+    ));
+    let created = keys
+        .manage(&json!({"action":"create","name":"Remote","scopes":["settings:write"]}))
+        .unwrap();
+    let key = created["key"].as_str().unwrap();
+    let providers = RouteProviders {
+        authorization: Arc::new(AuthorizationPolicy::new("192.0.2.7", "127.0.0.1")),
+        state: Arc::new(StateFixture),
+        calculation: Arc::new(CalculateFixture),
+        delegate: Arc::new(KeysDelegate(keys)),
+    };
+    for (method, path, peer, origin, credential, expected) in [
+        (
+            Method::POST,
+            "/api/counters/settings/test",
+            "192.0.2.7",
+            "https://foreign.example",
+            Some(key),
+            200,
+        ),
+        (
+            Method::POST,
+            "/api/counters/settings/test",
+            "192.0.2.8",
+            "https://foreign.example",
+            Some(key),
+            403,
+        ),
+        (
+            Method::POST,
+            "/api/counters/profiles",
+            "192.0.2.7",
+            "http://127.0.0.1",
+            Some(key),
+            401,
+        ),
+        (
+            Method::POST,
+            "/api/counters/settings/test?update=yes",
+            "192.0.2.7",
+            "http://127.0.0.1",
+            Some(key),
+            401,
+        ),
+        (
+            Method::POST,
+            "/api/runUpdates",
+            "192.0.2.7",
+            "http://127.0.0.1",
+            Some(key),
+            401,
+        ),
+        (
+            Method::POST,
+            "/api/counters/download/test",
+            "192.0.2.7",
+            "http://127.0.0.1",
+            Some(key),
+            401,
+        ),
+        (
+            Method::POST,
+            "/api/keys",
+            "192.0.2.7",
+            "http://127.0.0.1",
+            Some(key),
+            401,
+        ),
+        (
+            Method::GET,
+            "/api/keys",
+            "127.0.0.1",
+            "http://127.0.0.1",
+            None,
+            200,
+        ),
+        (Method::GET, "/api/keys", "127.0.0.1", "null", None, 403),
+        (Method::POST, "/api/keys", "127.0.0.1", "null", None, 403),
+        (
+            Method::POST,
+            "/api/keys/",
+            "127.0.0.1",
+            "http://127.0.0.1",
+            None,
+            404,
+        ),
+    ] {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("Host", "127.0.0.1")
+            .header("Origin", origin)
+            .body(Body::empty())
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(PeerAddress(SocketAddr::new(
+                peer.parse().unwrap(),
+                12345,
+            ))));
+        if let Some(key) = credential {
+            request.headers_mut().insert(
+                header::AUTHORIZATION,
+                format!("Bearer {key}").parse().unwrap(),
+            );
+        }
+        let response = routes::dispatch(State(providers.clone()), request).await;
+        assert_eq!(response.status().as_u16(), expected, "{path} from {peer}");
+    }
+}
+
 struct StateFixture;
 impl StateJsonProvider for StateFixture {
     fn cached_json(&self, route: StateRoute) -> ProviderFuture<'_, CachedJson> {

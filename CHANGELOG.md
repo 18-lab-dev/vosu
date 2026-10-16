@@ -6,6 +6,12 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ### Overlay settings
 
+- Add named, revocable, hash-only API keys with fixed settings/profile scopes,
+  same-origin dashboard management, native Bearer HTTP/WebSocket authentication,
+  browser WebSocket subprotocol authentication, and immediate open-socket revocation.
+  Revocation actively closes idle sockets and rejects in-flight POSTs whose bodies
+  finish after revocation; warn about unsafe Unix registry ownership/permissions.
+
 - Add per-start private broker credentials for loopback command WebSockets, so
   counters hosted by native overlay brokers can save and relay settings without
   forging Origin. Invalid credentials fail the upgrade with 401; HTTP management

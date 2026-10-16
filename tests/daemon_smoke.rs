@@ -127,6 +127,11 @@ async fn websocket_connect_with_authorization(
         "unexpected WebSocket upgrade response: {}",
         String::from_utf8_lossy(&response[..header_end])
     );
+    if authorization.starts_with("Sec-WebSocket-Protocol:") && status == 101 {
+        let headers = String::from_utf8_lossy(&response[..header_end]).to_ascii_lowercase();
+        assert!(headers.contains("sec-websocket-protocol: vosu.key\r\n"));
+        assert!(!headers.contains("vosu_k_"));
+    }
     (stream, response.split_off(header_end))
 }
 
@@ -611,6 +616,159 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         fs::read(&schema_toml_path).unwrap(),
         migrated_schema,
         "authoritative root schema changed after legacy root JSON mutation"
+    );
+
+    // User-managed keys: scoped HTTP, native and browser sockets, live revocation.
+    let created: serde_json::Value = client.post(format!("{base}/api/keys"))
+        .header("Origin", &base)
+        .json(&serde_json::json!({"action":"create","name":"Smoke settings","scopes":["settings:write"]}))
+        .send().await.unwrap().json().await.unwrap();
+    let key = created["key"].as_str().unwrap();
+    let id = created["entry"]["id"].as_str().unwrap();
+    assert_eq!(
+        client
+            .get(format!("{base}/api/keys"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    assert_eq!(
+        client
+            .get(format!("{base}/api/keys"))
+            .header("Origin", &base)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let saved = client
+        .post(format!("{base}/api/counters/settings/seeded-counter"))
+        .bearer_auth(key)
+        .json(&serde_json::json!([{"uniqueID":"title","value":"key write"}]))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), 200);
+    assert!(
+        saved
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()
+            .get("error")
+            .is_none()
+    );
+    for path in [
+        "/api/counters/profiles",
+        "/api/counters/settings/seeded-counter?update=yes",
+        "/api/keys",
+        "/api/runUpdates",
+        "/api/counters/download/test",
+    ] {
+        assert_eq!(
+            client
+                .post(format!("{base}{path}"))
+                .bearer_auth(key)
+                .json(&serde_json::json!({}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            401,
+            "{path}"
+        );
+    }
+    let profiles: serde_json::Value = client.post(format!("{base}/api/keys")).header("Origin", &base)
+        .json(&serde_json::json!({"action":"create","name":"Smoke profiles","scopes":["profiles:manage"]}))
+        .send().await.unwrap().json().await.unwrap();
+    let profiles_key = profiles["key"].as_str().unwrap();
+    assert_eq!(
+        client
+            .post(format!("{base}/api/counters/settings/seeded-counter"))
+            .bearer_auth(profiles_key)
+            .json(&serde_json::json!([]))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    assert_eq!(
+        client
+            .post(format!("{base}/api/counters/profiles"))
+            .bearer_auth(profiles_key)
+            .json(&serde_json::json!({"action":"create","name":"key-profile"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let (mut key_socket, mut key_buffer) = websocket_connect_with_bearer(
+        port,
+        "/websocket/commands?l=seeded-counter",
+        None,
+        Some(key),
+        101,
+    )
+    .await;
+    let (mut browser_socket, mut browser_buffer) = websocket_connect_with_authorization(
+        port,
+        "/websocket/commands?l=seeded-counter",
+        Some("https://third-party.example"),
+        &format!("Sec-WebSocket-Protocol: vosu.key, vosu.key.{key}\r\n"),
+        101,
+    )
+    .await;
+    client
+        .post(format!("{base}/api/keys"))
+        .header("Origin", &base)
+        .json(&serde_json::json!({"action":"revoke","id":id}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    // Both clients remain idle: revocation itself must close them, without
+    // waiting for an inbound write. A subsequent settings relay cannot reach them.
+    client
+        .post(format!("{base}/api/counters/settings/seeded-counter"))
+        .header("Origin", &base)
+        .json(&serde_json::json!([{"uniqueID":"title","value":"after revoke"}]))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    for (socket, buffered) in [
+        (&mut key_socket, &mut key_buffer),
+        (&mut browser_socket, &mut browser_buffer),
+    ] {
+        let (opcode, payload) = read_server_frame(socket, buffered).await;
+        assert_eq!(
+            opcode, 8,
+            "revoked idle sockets must not receive relayed settings"
+        );
+        assert_eq!(u16::from_be_bytes([payload[0], payload[1]]), 1008);
+    }
+    let _ = websocket_connect_with_bearer(port, "/websocket/commands", None, Some(key), 401).await;
+    let (mut query_socket, mut query_buffer) = websocket_connect(
+        port,
+        &format!("/websocket/commands?key={profiles_key}"),
+        None,
+    )
+    .await;
+    query_socket
+        .write_all(&masked_frame(1, b"saveSettings:seeded-counter:[]"))
+        .await
+        .unwrap();
+    assert_eq!(
+        read_server_frame(&mut query_socket, &mut query_buffer)
+            .await
+            .0,
+        8
     );
 
     // Native brokers authenticate explicitly, without forging browser provenance.

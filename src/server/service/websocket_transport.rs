@@ -10,7 +10,7 @@ async fn bridge_socket(
     commands: bool,
     client_namespace: u64,
     relays: Arc<WebSocketRelaySink>,
-    (query, mutation): (Option<&str>, super::auth::MutationAuthorization),
+    (query, mutation, key_grant): (Option<&str>, super::auth::MutationAuthorization, Option<super::api_keys::KeyGrant>),
 ) {
     let (connection, mut outbound) = if commands {
         hub.connect_commands()
@@ -35,11 +35,20 @@ async fn bridge_socket(
     let (mut sink, mut stream) = socket.split();
     let (terminal_tx, mut terminal_rx) = tokio::sync::mpsc::channel::<SocketTerminal>(1);
 
+    let revocation = key_grant.as_ref().map(|grant| grant.revoked.clone());
     let writer_connection = Arc::clone(&connection);
     let writer = async move {
         loop {
             let (frame, terminal) = tokio::select! {
                 biased;
+                _ = async {
+                    match &revocation {
+                        Some(token) => token.cancelled().await,
+                        None => std::future::pending::<()>().await,
+                    }
+                } => (None, Some(SocketTerminal::SendClose {
+                    code: 1008, reason: "API key revoked",
+                })),
                 terminal = terminal_rx.recv() => (None, terminal),
                 frame = outbound.recv() => (frame, None),
             };
@@ -154,7 +163,11 @@ async fn bridge_socket(
             };
             // All legacy sockets can read settings and adjust their own filters.
             // Same-origin sockets and authenticated local command brokers may write.
-            if !mutation.0 && !matches!(text.split_once(':').map(|(command, _)| command),
+            let authorized = key_grant.as_ref().map_or(mutation.0, super::api_keys::KeyGrant::allowed);
+            if key_grant.is_some() && !authorized {
+                return Some(SocketTerminal::SendClose { code: 1008, reason: "API key revoked" });
+            }
+            if !authorized && !matches!(text.split_once(':').map(|(command, _)| command),
                 Some("getSettings" | "updateSettings" | "applyFilters"))
             {
                 return Some(SocketTerminal::SendClose { code: 1008, reason: "Same-origin required" });

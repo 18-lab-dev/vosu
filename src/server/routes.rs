@@ -25,6 +25,8 @@ use super::{
 };
 
 pub const MAX_POST_BODY: usize = 1024 * 1024;
+#[derive(Clone, Copy)]
+pub(crate) struct KeyProtocol;
 pub type ProviderFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,6 +47,7 @@ pub enum Endpoint {
     CounterOpenRoot,
     CounterDelete,
     CounterSettings,
+    ApiKeys,
     SettingsSave,
     RunUpdates,
     GenerateReport,
@@ -127,6 +130,9 @@ pub trait CalculatePpProvider: Send + Sync {
 /// Implemented by page, counter, file, report, and WebSocket slices. This module
 /// owns only classification, method enforcement, body limiting, and envelopes.
 pub trait RouteDelegate: Send + Sync {
+    fn api_keys(&self) -> Option<Arc<super::api_keys::ApiKeys>> {
+        None
+    }
     fn handle(
         &self,
         endpoint: Endpoint,
@@ -303,7 +309,18 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         let peer = peer
             .map(|address| address.ip())
             .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-        providers.authorization.authorize(peer, headers).allowed()
+        let decision = providers.authorization.authorize(peer, headers);
+        let key_route = (request.method() == Method::POST
+            && matches!(
+                classify(request.method(), request.uri().path()),
+                Some(Endpoint::CounterSettings)
+            ))
+            || request.uri().path() == "/websocket/commands";
+        decision.peer_ok
+            && (decision.header_ok
+                || (key_route
+                    && super::api_keys::presented(request.headers(), true)
+                        .is_ok_and(|k| k.is_some())))
     };
     if !allowed {
         return cors(
@@ -354,12 +371,65 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     let Some(endpoint) = classify(&method, &path) else {
         return cors(not_found());
     };
-    let mutation = if method == Method::POST || websocket_upgrade {
+    let keys = providers.delegate.api_keys();
+    let credential =
+        if method == Method::POST || (websocket_upgrade && endpoint == Endpoint::WsCommands) {
+            super::api_keys::presented(request.headers(), websocket_upgrade)
+        } else {
+            Ok(None)
+        };
+    let mut grant = None;
+    let mut key_protocol = false;
+    match credential {
+        Ok(Some((key, protocol))) => {
+            let scope = if endpoint == Endpoint::WsCommands && websocket_upgrade {
+                Some(super::api_keys::Scope::SettingsWrite)
+            } else if endpoint == Endpoint::CounterSettings && method == Method::POST {
+                if path == "/api/counters/profiles" {
+                    Some(super::api_keys::Scope::ProfilesManage)
+                } else if !url::form_urlencoded::parse(
+                    request.uri().query().unwrap_or_default().as_bytes(),
+                )
+                .any(|(k, v)| k == "update" && v == "yes")
+                {
+                    Some(super::api_keys::Scope::SettingsWrite)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let authenticated = keys
+                .as_ref()
+                .zip(scope)
+                .and_then(|(store, scope)| store.verify(&key, scope).ok());
+            let Some(id) = authenticated else {
+                return cors(json(
+                    StatusCode::UNAUTHORIZED,
+                    error_json("Invalid API key or scope"),
+                ));
+            };
+            grant = keys
+                .as_ref()
+                .zip(scope)
+                .map(|(store, scope)| store.grant(id, scope));
+            key_protocol = protocol;
+        }
+        Err(()) => {
+            return cors(json(
+                StatusCode::UNAUTHORIZED,
+                error_json("Invalid API key credential"),
+            ));
+        }
+        Ok(None) => {}
+    }
+    let mutation = if method == Method::POST || websocket_upgrade || endpoint == Endpoint::ApiKeys {
         MutationAuthorization::from_headers(request.headers())
     } else {
         MutationAuthorization::default()
     };
-    if method == Method::POST && !mutation.0 {
+    if ((method == Method::POST && grant.is_none()) || endpoint == Endpoint::ApiKeys) && !mutation.0
+    {
         return cors(
             Response::builder()
                 .status(StatusCode::FORBIDDEN)
@@ -368,6 +438,12 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         );
     }
     request.extensions_mut().insert(mutation);
+    if let Some(grant) = grant {
+        request.extensions_mut().insert(grant);
+    }
+    if key_protocol {
+        request.extensions_mut().insert(KeyProtocol);
+    }
     let response = match endpoint {
         Endpoint::State(route) => match providers.state.cached_json(route).await {
             CachedJson::Ready(body) => json(StatusCode::OK, body),
@@ -397,6 +473,16 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             } else {
                 Bytes::new()
             };
+            if parts
+                .extensions
+                .get::<super::api_keys::KeyGrant>()
+                .is_some_and(|grant| !grant.allowed())
+            {
+                return cors(json(
+                    StatusCode::UNAUTHORIZED,
+                    error_json("API key revoked"),
+                ));
+            }
             providers
                 .delegate
                 .handle(endpoint, Request::from_parts(parts, Body::empty()), body)
@@ -416,6 +502,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/json/v2" if get => Some(State(StateRoute::V2)),
         "/json/v2/precise" if get => Some(State(StateRoute::V2Precise)),
         "/api/calculate/pp" if get => Some(CalculatePp),
+        "/api/keys" if get || post => Some(ApiKeys),
         "/api/counters/profiles" if get || post => Some(CounterSettings),
         "/api/settingsSave" if post => Some(SettingsSave),
         "/api/runUpdates" if post => Some(RunUpdates),

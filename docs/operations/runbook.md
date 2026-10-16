@@ -62,6 +62,23 @@ Offset/signature resolution may remain pending and retry while a process is aliv
 
 Keep the listener loopback-only unless remote access is deliberate and protected. Read authorization combines allowed peer/network patterns with allowed `Origin`/`Referer` tokens, retaining headerless/opaque overlay reads; a hostname token does not authorize an arbitrary remote peer. Management POSTs additionally require exact same-origin browser provenance (scheme, host, port), not merely a trusted hostname or loopback peer. Settings sockets retain reads but require that same provenance or the native command-broker credential below for writes; use the hosted settings page for unbrokered file-origin overlays. See the README for method cutover and reverse-proxy boundaries. Preserve request/frame limits, root-confined files, escaped reports, HTTPS-only downloads, private/reserved destination rejection, ZIP safety checks, and same-filesystem replacement.
 
+User-managed [API keys](../../README.md#api-keys) are a scoped alternative for
+trusted sandboxed/remote/web clients, alongside the unchanged loopback file
+token. `settings:write` grants command writes and overlay value POSTs, not schema
+saves; `profiles:manage` grants profile mutations. Neither grants updates,
+install/delete, daemon settings, reports or key management. Peer `ALLOWED_IPS`
+still applies. Use a TLS reverse proxy for remote access: HTTP/WS on a LAN leaks
+credentials to observers. Browsers authenticate via the documented WebSocket
+subprotocol; query strings never authenticate and CORS Authorization is not enabled.
+Manage keys only from the same-origin dashboard. The config-root `api-keys.toml`
+contains hashes and metadata, not secrets; keep Windows inherited ACLs private.
+A malformed registry disables keys with a warning and remains untouched until
+explicit management changes. Back it up before recovery. Revocation actively closes
+associated command sockets with 1008, even while idle; pending HTTP POSTs re-check
+authority after body receipt. Rename does not change scopes. On Unix, non-owner
+registry ownership or group/world permissions warn but do not disable valid keys.
+
+
 Native brokers may instead present the per-start `broker.json` token on loopback
 `/websocket/commands` upgrades, granting the same command-socket writes (not HTTP
 management authority). Invalid credentials return 401; absent credentials keep

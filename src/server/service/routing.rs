@@ -1,6 +1,7 @@
 #[derive(Clone)]
 pub struct ProductionRouteDelegate {
     services: ProductionServices,
+    api_keys: Option<Arc<super::api_keys::ApiKeys>>,
 }
 
 impl ProductionRouteDelegate {
@@ -10,7 +11,11 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services }
+        Self { services, api_keys: None }
+    }
+    pub fn with_api_keys(mut self, keys: Arc<super::api_keys::ApiKeys>) -> Self {
+        self.api_keys = Some(keys);
+        self
     }
     pub fn services(&self) -> &ProductionServices {
         &self.services
@@ -27,6 +32,17 @@ impl ProductionRouteDelegate {
             Endpoint::CounterOpenRoot => self.counter_open_root(),
             Endpoint::CounterDelete => self.counter_delete(&request),
             Endpoint::CounterSettings => self.counter_settings(request, body).await,
+            Endpoint::ApiKeys => {
+                let Some(keys) = &self.api_keys else { return internal_error("API key store unavailable"); };
+                if request.method() == axum::http::Method::GET {
+                    json_response(StatusCode::OK, json!({"keys": keys.list()}))
+                } else {
+                    match serde_json::from_slice::<Value>(&body).map_err(|_| "invalid JSON".to_owned()).and_then(|v| keys.manage(&v)) {
+                        Ok(value) => json_response(StatusCode::OK, value),
+                        Err(error) => json_response(StatusCode::BAD_REQUEST, json!({"error": error})),
+                    }
+                }
+            }
             Endpoint::SettingsSave => self.settings_save(body).await,
             Endpoint::RunUpdates => self.run_updates(response_flush_barrier(&request)).await,
             Endpoint::GenerateReport => self.generate_report().await,
@@ -428,7 +444,9 @@ impl ProductionRouteDelegate {
             .get::<super::auth::MutationAuthorization>()
             .copied()
             .unwrap_or_default();
-        if endpoint == Endpoint::WsCommands
+        let key_grant = request.extensions().get::<super::api_keys::KeyGrant>().cloned();
+        let key_protocol = request.extensions().get::<super::routes::KeyProtocol>().is_some();
+        if key_grant.is_none() && endpoint == Endpoint::WsCommands
             && request.headers().get(header::UPGRADE)
                 .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket"))
             && request.headers().get_all(header::CONNECTION).iter().any(|value|
@@ -445,7 +463,7 @@ impl ProductionRouteDelegate {
                     Bytes::from_static(b"Invalid broker credential")),
             }
         }
-        websocket::upgrade_response(
+        let mut result = websocket::upgrade_response(
             websocket_endpoint(endpoint),
             request,
             tracker,
@@ -457,16 +475,21 @@ impl ProductionRouteDelegate {
                     commands,
                     client_namespace,
                     relays,
-                    (query.as_deref(), mutation),
+                    (query.as_deref(), mutation, key_grant),
                 )
                 .await;
             },
         )
-        .await
+        .await;
+        if key_protocol && result.status() == StatusCode::SWITCHING_PROTOCOLS {
+            result.headers_mut().insert(header::SEC_WEBSOCKET_PROTOCOL, axum::http::HeaderValue::from_static("vosu.key"));
+        }
+        result
     }
 }
 
 impl RouteDelegate for ProductionRouteDelegate {
+    fn api_keys(&self) -> Option<Arc<super::api_keys::ApiKeys>> { self.api_keys.clone() }
     fn handle(
         &self,
         endpoint: Endpoint,

@@ -509,3 +509,12 @@ input[type="checkbox"].settings-control {
 .embed-colour-swatch { height: 2rem; border: 1px solid #a99bb7; border-radius: .4rem; }
 .embed-confirmation { padding: 1rem; border: 1px solid #f45cad; border-radius: .5rem; }
 .embed-confirmation .button { margin-right: .5rem; }
+
+.api-keys { width: min(100%, 46rem); box-sizing: border-box; margin: 2rem auto; padding: 1rem; background: var(--ink-raised); border: 1px solid var(--line); border-radius: var(--radius); }
+.api-key-create, .api-key-create fieldset { display: grid; gap: .75rem; }
+.api-key-create input[name="name"], .api-key-secret input { width: 100%; box-sizing: border-box; }
+.api-key-secret { margin-top: 1rem; padding: 1rem; border: 1px solid var(--rose); }
+.api-key-entry { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: .75rem; overflow-wrap: anywhere; }
+.api-keys .button { margin: .5rem .5rem .5rem 0; }
+.api-keys input:not([type="checkbox"]) { min-height: 2.3rem; padding: .5rem .7rem; color: var(--paper); background: var(--ink-soft); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); }
+.api-keys input[type="checkbox"] { accent-color: var(--rose); }

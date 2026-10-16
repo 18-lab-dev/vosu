@@ -73,6 +73,22 @@ so no shutdown check-then-unlink race exists. The private directory is not a
 boundary against another process running as that account.
 
 
+User-managed [API keys](../README.md#api-keys) grant only explicit overlay-value/
+command-write or profile-management scopes. Keys may authenticate permitted remote
+peers, never bypass `ALLOWED_IPS`, and cannot authorize daemon/key management,
+reports, updates, or counter installation/deletion. Dashboard management requires
+exact same-origin provenance. Key hashes and metadata persist in config-root
+`api-keys.toml`; secrets are shown once, compared through constant-time SHA-256
+hash comparisons, and never logged. Revoke compromised keys immediately; open
+command sockets are actively closed with code 1008, even while idle. Plain HTTP/WS on a
+LAN exposes bearer credentials: use loopback or a trusted TLS proxy. Browser
+clients use the WebSocket subprotocol, never URL query parameters or cross-origin
+HTTP Authorization. Installed same-origin overlays still have dashboard authority.
+HTTP POSTs re-check their granted scope after receiving the body and before
+dispatch, so revoking during a slow upload prevents the pending mutation.
+On Unix, unsafe registry ownership or group/world access produces a warning
+without refusing valid keys; key names reject bidirectional controls.
+
 ## Third-party overlays
 
 Overlays are third-party web pages that run in the user's browser or OBS. vosu does not review them. Installed overlays can read all game data the API exposes and use the dashboard's management actions. The **Available** page states this above the catalog listing.

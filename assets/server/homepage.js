@@ -641,6 +641,88 @@ import { createSettingsEditor } from './homepage-settings.js';
     return control.type === 'checkbox' ? control.checked : control.value;
   }
 
+  async function initializeApiKeys() {
+    const runtime = document.querySelector('#runtime-settings');
+    if (!runtime || new URLSearchParams(location.search).get('embed') === '1') return;
+    const section = document.createElement('section');
+    section.className = 'api-keys';
+    section.setAttribute('aria-labelledby', 'api-keys-title');
+    section.innerHTML = `<h2 id="api-keys-title">API keys</h2>
+      <p>Give trusted software only the access it needs. Remote connections still require ALLOWED_IPS. Use TLS outside loopback.</p>
+      <form class="api-key-create"><label>Name <input name="name" maxlength="64" required autocomplete="off"></label>
+      <fieldset><legend>Permissions (fixed when created)</legend>
+      <label><input type="checkbox" name="scope" value="settings:write"> Write overlay settings and command-socket settings</label>
+      <label><input type="checkbox" name="scope" value="profiles:manage"> Create, rename, activate, copy and delete profiles</label></fieldset>
+      <button class="button button-cyan" type="submit">Create API key</button></form>
+      <div class="api-key-secret" hidden></div><p class="api-key-status" role="status"></p><div class="api-key-list"></div>`;
+    runtime.after(section);
+    const status = section.querySelector('.api-key-status');
+    const list = section.querySelector('.api-key-list');
+    const secret = section.querySelector('.api-key-secret');
+    const form = section.querySelector('form');
+    const post = (payload) => requestJson('/api/keys', { method: 'POST', body: JSON.stringify(payload) });
+    const button = (text, run) => {
+      const control = document.createElement('button');
+      control.type = 'button'; control.className = 'button'; control.textContent = text;
+      control.addEventListener('click', async () => {
+        control.disabled = true;
+        try { await run(); } catch (error) { status.textContent = errorText(error); }
+        finally { control.disabled = false; }
+      });
+      return control;
+    };
+    async function refresh() {
+      const { keys } = await requestJson('/api/keys');
+      list.replaceChildren();
+      if (!keys.length) list.textContent = 'No API keys.';
+      for (const entry of keys) {
+        const row = document.createElement('article');
+        row.className = 'api-key-entry';
+        const title = document.createElement('h3'); title.textContent = entry.name;
+        const details = document.createElement('p');
+        details.textContent = `${entry.scopes.join(', ')} · ${entry.display}… · Created ${entry.created} · Last used ${entry.last_used || 'Never'}`;
+        const name = document.createElement('input'); name.value = entry.name; name.maxLength = 64;
+        name.setAttribute('aria-label', `Rename ${entry.name}`);
+        const rename = button('Rename', async () => {
+          await post({ action: 'rename', id: entry.id, name: name.value }); await refresh();
+          status.textContent = 'Key renamed.';
+        });
+        const confirmation = document.createElement('div'); confirmation.hidden = true;
+        confirmation.setAttribute('role', 'group'); confirmation.setAttribute('aria-label', `Revoke ${entry.name}?`);
+        const warning = document.createElement('p');
+        warning.textContent = `Revoke ${entry.name}? Software using this key will immediately lose write access, including open sockets.`;
+        confirmation.append(warning, button('Confirm revoke', async () => {
+          await post({ action: 'revoke', id: entry.id }); await refresh();
+          secret.replaceChildren(); secret.hidden = true; status.textContent = 'Key revoked.';
+        }), button('Cancel', () => { confirmation.hidden = true; }));
+        row.append(title, details, name, rename, button('Revoke', () => {
+          confirmation.hidden = false; confirmation.querySelector('button').focus();
+        }), confirmation);
+        list.append(row);
+      }
+    }
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const submit = form.querySelector('button'); submit.disabled = true;
+      secret.replaceChildren(); secret.hidden = true;
+      try {
+        const scopes = [...form.querySelectorAll('[name="scope"]:checked')].map((input) => input.value);
+        if (!scopes.length) throw new Error('Select at least one permission.');
+        const result = await post({ action: 'create', name: form.elements.name.value, scopes });
+        const warning = document.createElement('p'); warning.textContent = "Copy this key now. It won't be shown again. Keep it secret.";
+        const value = document.createElement('input'); value.readOnly = true; value.value = result.key;
+        value.setAttribute('aria-label', 'New API key (shown once)');
+        secret.append(warning, value, button('Copy key', async () => {
+          await navigator.clipboard.writeText(value.value); status.textContent = 'Key copied.';
+        }), button('Dismiss key', () => { secret.replaceChildren(); secret.hidden = true; }));
+        secret.hidden = false; value.focus(); value.select();
+        form.reset(); await refresh(); status.textContent = 'API key created.';
+      } catch (error) { status.textContent = errorText(error); }
+      finally { submit.disabled = false; }
+    });
+    try { await refresh(); } catch (error) { status.textContent = errorText(error); }
+  }
+
   function initializeRuntimeSettings() {
     const form = document.querySelector('#runtime-settings');
     if (!form) return;
@@ -918,6 +1000,7 @@ import { createSettingsEditor } from './homepage-settings.js';
   if (pageKey() === 'installed' && searchInput?.value) filterInstalled();
   observePreviews();
   initializeRuntimeSettings();
+  initializeApiKeys();
 
   const requestedOverlay = new URLSearchParams(window.location.search).get('overlay');
   if (window.location.pathname === '/settings' && requestedOverlay) {

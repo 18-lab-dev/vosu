@@ -167,7 +167,14 @@ impl ProductionRuntime {
                 self.snapshots.snapshot_manager(),
             )),
             calculation: Arc::new(LegacyCalculateProvider::new(beatmap)),
-            delegate: Arc::new(ProductionRouteDelegate::new(services)),
+            delegate: Arc::new(
+                ProductionRouteDelegate::new(services).with_api_keys(Arc::new(
+                    crate::server::api_keys::ApiKeys::load(
+                        self.paths.config().join("api-keys.toml"),
+                        Some(self.logger.clone()),
+                    ),
+                )),
+            ),
         };
         let listener = match ListenerOwner::start_with_broker(
             providers,

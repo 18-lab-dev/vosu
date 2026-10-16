@@ -20,3 +20,4 @@ description: "Files and subdirectories in Decisions."
 - [Simplify provenance checks to asset digests and the release LICENSE](0012-simplify-provenance-checks.md) - Accepted decision to keep the asset SHA-256 manifest and LICENSE appendix check while dropping duplicate hashes, notice cross-checks, the dependency-license inventory and the provenance script.
 - [Keep installed counters on the dashboard origin](0013-counters-share-dashboard-origin.md) - Accepted decision to keep counter URLs, storage, and settings links compatible and disclose that installed counters share dashboard management authority instead of isolating them.
 - [Overlay settings profiles](0014-overlay-settings-profiles.md) - Global active profiles and per-instance command identities without moving legacy values.
+- [User-managed API keys](0015-user-managed-api-keys.md) - Persistent scoped credentials alongside per-start file tokens, with immediate revocation and peer-policy enforcement.
