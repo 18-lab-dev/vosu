@@ -66,7 +66,9 @@ impl BrokerToken {
             }),
         )?;
         file.flush()?;
-        crate::platform::atomic_replace(file.path(), &self.path)?;
+        // ReplaceFileW fails with a sharing violation while the replacement is still open.
+        let file = file.into_temp_path();
+        crate::platform::atomic_replace(&file, &self.path)?;
         self.enabled.store(true, Ordering::Release);
         Ok(())
     }

@@ -165,8 +165,10 @@ impl ApiKeys {
         file.write_all(text.as_bytes())
             .and_then(|()| file.flush())
             .and_then(|()| file.as_file().sync_all())
-            .and_then(|()| crate::platform::atomic_replace(file.path(), &self.path))
-            .map_err(|_| "cannot save keys".into())
+            .map_err(|_| "cannot save keys")?;
+        // ReplaceFileW fails with a sharing violation while the replacement is still open.
+        let file = file.into_temp_path();
+        crate::platform::atomic_replace(&file, &self.path).map_err(|_| "cannot save keys".into())
     }
     pub fn list(&self) -> Vec<Entry> {
         self.state

@@ -510,7 +510,7 @@ impl CounterService {
             scan.bytes = metadata.len();
         }
         Ok(serde_json::json!({
-            "path": path,
+            "path": display_path(&path),
             "bytes": scan.bytes,
             "complete": scan.complete,
             "entries": scan.entries,
@@ -905,6 +905,43 @@ fn metadata_is_link(metadata: &fs::Metadata) -> bool {
     #[cfg(not(windows))]
     {
         metadata.file_type().is_symlink()
+    }
+}
+
+/// The canonical path without Windows' verbatim prefix (`\\?\C:\…` → `C:\…`,
+/// `\\?\UNC\server\share\…` → `\\server\share\…`), which users never type and the
+/// dashboard would otherwise show.
+fn display_path(path: &Path) -> PathBuf {
+    use std::path::{Component, Prefix};
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path.to_owned();
+    };
+    let mut plain = match prefix.kind() {
+        Prefix::VerbatimDisk(disk) => PathBuf::from(format!("{}:\\", char::from(disk))),
+        Prefix::VerbatimUNC(server, share) => {
+            let mut root = std::ffi::OsString::from(r"\\");
+            root.push(server);
+            root.push(r"\");
+            root.push(share);
+            root.push(r"\");
+            PathBuf::from(root)
+        }
+        _ => return path.to_owned(),
+    };
+    plain.extend(components.filter(|component| *component != Component::RootDir));
+    plain
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn display_path_drops_the_verbatim_prefix() {
+    for (canonical, shown) in [
+        (r"\\?\V:\vosu\static\counter", r"V:\vosu\static\counter"),
+        (r"\\?\UNC\host\share\static", r"\\host\share\static"),
+        (r"C:\already\plain", r"C:\already\plain"),
+    ] {
+        assert_eq!(display_path(Path::new(canonical)).as_os_str(), shown);
     }
 }
 
