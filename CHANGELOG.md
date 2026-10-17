@@ -2,7 +2,7 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
-## Unreleased
+## 1.1.0 — 2026-10-17
 
 ### Dashboard origin
 
@@ -12,11 +12,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Harden dashboard HTML with inert runtime context, CSP, Host checks, and no dashboard WebSocket upgrades. Network rollback targets cannot come from URL parameters; pending edits survive crashes as rollback journals, Keep checks both listeners, and dashboard binds cannot reuse recorded overlay origins.
 - Print full clickable overlay/API and dashboard URLs at startup and after successful rebinds, mapping wildcard binds to loopback.
 - Allow loopback native broker credentials to save HTTP settings values and manage profiles, with authorization rechecked after body reads; grant no schema or management authority.
-- Remove settings embed mode and parent notifications; all dashboard pages forbid framing.
+- Dashboard pages cannot be framed by other sites.
 
 ### Dashboard
 
-- Reduce profile management to a dropdown and overflow menu with in-app naming and delete confirmation. Remove the unused embedded settings frontend and its custom popup replacements.
+- Manage settings profiles from a dropdown and overflow menu (Create, Copy, Rename, Delete, Set as default) with in-app naming and delete confirmation.
 - Match API-key management to the runtime settings groups and rows, with compact permission dialogs, per-key overflow actions and a copyable show-once dialog.
 - Restore mouse dragging of pinned overlays with a visible insertion marker, retaining keyboard menu moves and the existing dashboard-origin saved order.
 - Add permanent local dismissal of the community-overlay notice and an About link to reopen it.
@@ -25,7 +25,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Match Installed cards against the catalog too, so their update action is visible without visiting Available; update the actual local folder even if it has a custom name. Hide empty author segments rather than leaving doubled metadata separators.
 - Show per-instance attachment/version/polling information and identified live WebSocket connection counts. Counts include previews and profile-qualified command sockets, not unique users; unidentified connections are intentionally omitted.
 - Present allowlist entries one per line, warn about public-space CIDR ranges (including `0.0.0.0/0` and `::/0`) and broad wildcards, add interval units, simplify subscription wording, and make the catalog notice collapsible with quieter carousel controls and normalized display metadata.
-- Download diagnostics through an authenticated fetch, and keep delete confirmation usable when a folder-size scan is incomplete or unavailable.
+- Rename "Download report" to "Diagnostics report".
 
 ### Overlay settings
 
@@ -41,12 +41,13 @@ All notable user-visible changes to vosu are documented here. Older sections are
   authorization and headerless read-only behavior remain unchanged.
   Treat Bearer scheme names case-insensitively and ignore other auth schemes;
   publication failures warn and disable broker writes without stopping serving.
-  Use platform atomic replacement and identity-aware Unix shutdown cleanup.
-- Add named settings profiles with global activation, per-instance `vosuProfile`
-  overrides, a same-origin management API, and profile-aware command refreshes.
+  The credential file is replaced atomically at each start and never deleted; a
+  stopped daemon's token is stale.
+- Add named settings profiles with a default profile for unpinned overlays, per-instance
+  `vosuProfile` overrides, a management API, and profile-aware command refreshes.
   The reserved `default` profile retains existing values files.
 - Add profile management, title/description/ID search, and section navigation to
-  both dashboard card settings and the inline overlay settings page used by vosulay.
+  the dashboard's card settings and inline `/settings?overlay=` editors.
 
 ### Gameplay
 
