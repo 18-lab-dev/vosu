@@ -10,7 +10,7 @@ tags: [workflow, configuration, operations, updater, platform]
 
 ## Startup
 
-`App::run` parses compatible startup arguments, captures startup environment, applies update/OneDrive policy, and invokes runtime hooks. `ProductionRuntime::compose` resolves fallible dependencies before starting long-lived services. Overlays normally listen on `127.0.0.1:24050`; trusted dashboard pages and management use the independent `127.0.0.1:24052` listener. Startup, tray and second-launch dashboard links use the latter. Both listeners rebind independently; dashboard network Apply requires confirmation within 30 seconds or the daemon restores the previous network fields. See [ADR 0016](../decisions/0016-separate-dashboard-origin.md).
+`App::run` parses compatible startup arguments, captures startup environment, applies update/OneDrive policy, and invokes runtime hooks. `ProductionRuntime::compose` resolves fallible dependencies before starting long-lived services. Overlays normally listen on `127.0.0.1:24050`; trusted dashboard pages and management use the independent `127.0.0.1:24051` listener. Startup, tray and second-launch dashboard links use the latter. Both listeners rebind independently; dashboard network Apply requires confirmation on the new origin before its rollback deadline.
 
 Configuration lives in the platform config root's `vosu.toml`, a flat typed TOML document with uppercase binding names. `ConfigStore` watches its parent directory for create/modify events, validates complete documents, publishes immutable values through `ArcSwap` and transition channels, and keeps the last-good runtime configuration when a reload is malformed. Programmatic updates publish immediately; a debounced save writes same-directory temporary bytes, flushes and syncs them, then performs atomic replacement. `register_before_publish` ensures resources such as static roots are replaced before matching configuration becomes observable.
 
@@ -24,7 +24,7 @@ PRECISE_DATA_POLL_RATE = 10.0
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 24050.0
 DASHBOARD_IP = "127.0.0.1"
-DASHBOARD_PORT = 24052.0
+DASHBOARD_PORT = 24051.0
 STATIC_FOLDER_PATH = "./static"
 ALLOWED_IPS = "127.0.0.1,localhost,absolute"
 ```

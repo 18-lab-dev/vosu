@@ -266,7 +266,7 @@ mod ownership_tests {
         assert_eq!(owner.current().dashboard_port, 24894.0);
         assert_eq!(std::fs::read(journal_path(&path)).unwrap(), journal);
         owner.rollback_pending_network().await.unwrap();
-        assert_eq!(owner.current().dashboard_port, 24052.0);
+        assert_eq!(owner.current().dashboard_port, 24051.0);
         let mut later = (*owner.current()).clone();
         later.dashboard_port = 24893.0;
         assert!(

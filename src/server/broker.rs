@@ -1,4 +1,4 @@
-//! Local native-broker credentials; never used as HTTP management authority.
+//! Local native-broker credentials for command sockets and scoped HTTP settings writes.
 
 use axum::http::{HeaderMap, header};
 use std::{
@@ -56,11 +56,12 @@ impl BrokerToken {
         // tempfile creates Unix files with mode 0600 at creation, before writing.
         // On Windows the file inherits the destination directory's ACL.
         let mut file = tempfile::NamedTempFile::new_in(directory)?;
+        let origin = crate::desktop::dashboard_url(&address.ip().to_string(), address.port());
         serde_json::to_writer(
             &mut file,
             &serde_json::json!({
                 "version": 1,
-                "origin": format!("http://{address}"),
+                "origin": origin.trim_end_matches('/'),
                 "token": std::str::from_utf8(&self.token).expect("hex is ASCII"),
             }),
         )?;
@@ -111,6 +112,26 @@ impl BrokerToken {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn published_origin_uses_connectable_browser_address() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("broker.json");
+        let broker = BrokerToken::new(path.clone()).unwrap();
+        for (bound, expected) in [
+            ("0.0.0.0:32123", "http://127.0.0.1:32123"),
+            ("[::]:32124", "http://[::1]:32124"),
+            ("127.0.0.2:32125", "http://127.0.0.2:32125"),
+            ("[::1]:32126", "http://[::1]:32126"),
+            ("192.0.2.1:32127", "http://192.0.2.1:32127"),
+            ("[2001:db8::1]:32128", "http://[2001:db8::1]:32128"),
+        ] {
+            broker.publish(bound.parse().unwrap()).unwrap();
+            let value: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(value["origin"], expected, "{bound}");
+        }
+    }
+
     #[test]
     fn lifecycle_format_rotation_and_permissions() {
         let root = tempfile::tempdir().unwrap();

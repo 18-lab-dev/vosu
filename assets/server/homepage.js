@@ -1,18 +1,10 @@
-import { createSettingsEditor } from './homepage-settings.js';
+import { createSettingsEditor, createActionDialog, createOverflow } from './homepage-settings.js';
 
 (() => {
   'use strict';
   const context = JSON.parse(document.querySelector('#vosu-context')?.textContent ?? '{}');
   const csrf = context.csrf ?? '';
 
-  const embedParameters = new URLSearchParams(window.location.search);
-  if (window.location.pathname === '/settings' && embedParameters.get('overlay')
-      && embedParameters.get('embed') === '1') {
-    document.body.classList.add('settings-embed');
-    document.querySelector('.site-header')?.remove();
-    document.querySelector('#attachment-status')?.remove();
-    document.querySelector('#update-notice')?.remove();
-  }
 
   const results = document.querySelector('#counter-results');
   const searchInput = document.querySelector('.search-bar');
@@ -327,6 +319,7 @@ import { createSettingsEditor } from './homepage-settings.js';
       const isPinned = pinnedSet.has(id);
       const name = card.dataset.counterName ?? id;
       card.classList.toggle('is-pinned', isPinned);
+      card.draggable = isPinned;
       const pin = card.querySelector('[data-action="toggle-pin"]');
       if (pin) {
         pin.setAttribute('aria-pressed', String(isPinned));
@@ -362,6 +355,53 @@ import { createSettingsEditor } from './homepage-settings.js';
     ];
     storePinnedIds();
     renderPins();
+  }
+
+  function initializePinDrag() {
+    if (pageKey() !== 'installed' || !results) return;
+    let dragged = null;
+    let destination = null;
+    let after = false;
+    function clear() {
+      results.querySelectorAll('.is-dragging, .drop-before, .drop-after').forEach((card) => card.classList.remove('is-dragging', 'drop-before', 'drop-after'));
+      dragged = null; destination = null;
+    }
+    results.addEventListener('dragstart', (event) => {
+      const card = event.target.closest('.counter-card.is-pinned');
+      if (!card || event.target.closest('a, button, input, iframe')) { event.preventDefault(); return; }
+      dragged = card.dataset.overlayId;
+      card.classList.add('is-dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', dragged);
+    });
+    results.addEventListener('dragover', (event) => {
+      if (!dragged) return;
+      const card = event.target.closest('.counter-card.is-pinned');
+      results.querySelectorAll('.drop-before, .drop-after').forEach((item) => item.classList.remove('drop-before', 'drop-after'));
+      destination = null;
+      if (!card || card.dataset.overlayId === dragged) return;
+      event.preventDefault(); event.dataTransfer.dropEffect = 'move';
+      const bounds = card.getBoundingClientRect();
+      after = event.clientX > bounds.left + bounds.width / 2;
+      destination = card.dataset.overlayId;
+      card.classList.add(after ? 'drop-after' : 'drop-before');
+    });
+    results.addEventListener('drop', (event) => {
+      if (dragged && destination) {
+        event.preventDefault();
+        const ordered = state.pinnedIds.filter((id) => id !== dragged);
+        ordered.splice(ordered.indexOf(destination) + Number(after), 0, dragged);
+        state.pinnedIds = ordered; storePinnedIds(); renderPins();
+      }
+      clear();
+    });
+    results.addEventListener('dragleave', (event) => {
+      if (!results.contains(event.relatedTarget)) {
+        results.querySelectorAll('.drop-before, .drop-after').forEach((card) => card.classList.remove('drop-before', 'drop-after'));
+        destination = null;
+      }
+    });
+    results.addEventListener('dragend', clear);
   }
 
   function removePin(id) {
@@ -666,83 +706,105 @@ import { createSettingsEditor } from './homepage-settings.js';
 
   async function initializeApiKeys() {
     const runtime = document.querySelector('#runtime-settings');
-    if (!runtime || new URLSearchParams(location.search).get('embed') === '1') return;
-    const section = document.createElement('section');
-    section.className = 'api-keys';
-    section.setAttribute('aria-labelledby', 'api-keys-title');
-    section.innerHTML = `<h2 id="api-keys-title">API keys</h2>
-      <p>Give trusted software only the access it needs. Remote connections still require ALLOWED_IPS. Use TLS outside loopback.</p>
-      <form class="api-key-create"><label>Name <input name="name" maxlength="64" required autocomplete="off"></label>
-      <fieldset><legend>Permissions (fixed when created)</legend>
-      <label><input type="checkbox" name="scope" value="settings:write"> Write overlay settings and command-socket settings</label>
-      <label><input type="checkbox" name="scope" value="profiles:manage"> Create, rename, activate, copy and delete profiles</label></fieldset>
-      <button class="button button-cyan" type="submit">Create API key</button></form>
-      <div class="api-key-secret" hidden></div><p class="api-key-status" role="status"></p><div class="api-key-list"></div>`;
-    runtime.after(section);
-    const status = section.querySelector('.api-key-status');
-    const list = section.querySelector('.api-key-list');
-    const secret = section.querySelector('.api-key-secret');
-    const form = section.querySelector('form');
+    if (!runtime) return;
+    const section = document.createElement('fieldset');
+    section.className = 'settings-group';
+    section.innerHTML = '<legend>API keys</legend>';
+    const status = document.createElement('p');
+    status.setAttribute('role', 'status');
+    const list = document.createElement('div');
     const post = (payload) => requestJson('/api/keys', { method: 'POST', body: JSON.stringify(payload) });
-    const button = (text, run) => {
+    function row(title, description, control, label = false) {
+      const item = document.createElement(label ? 'label' : 'div');
+      item.className = 'settings-item';
+      const copy = document.createElement('span'); copy.className = 'settings-item__copy';
+      const name = document.createElement('span'); name.className = 'settings-item__name'; name.textContent = title;
+      const detail = document.createElement('span'); detail.className = 'settings-item__description'; detail.textContent = description;
+      copy.append(name, detail);
+      const controls = document.createElement('span'); controls.className = 'settings-item__control'; controls.append(control);
+      item.append(copy, controls);
+      return item;
+    }
+    function button(text, run, primary = false) {
       const control = document.createElement('button');
-      control.type = 'button'; control.className = 'button'; control.textContent = text;
+      control.type = 'button'; control.className = primary ? 'button button-primary' : 'button'; control.textContent = text;
       control.addEventListener('click', async () => {
-        control.disabled = true;
+        setBusy(control, true);
         try { await run(); } catch (error) { status.textContent = errorText(error); }
-        finally { control.disabled = false; }
+        finally { setBusy(control, false); }
       });
       return control;
-    };
+    }
+    function keyDialog(title, submitText, run, { name, description } = {}) {
+      const { dialog, body } = createActionDialog(title);
+      const form = document.createElement('form'); form.className = 'dialog-form';
+      const input = document.createElement('input');
+      input.className = 'settings-control'; input.name = 'name'; input.required = true; input.maxLength = 64; input.autocomplete = 'off'; input.value = name ?? '';
+      if (name !== null) form.append(row('Name', 'A label to recognize this key.', input, true));
+      if (description) {
+        const text = document.createElement('p'); text.textContent = description; form.append(text);
+      }
+      if (name === undefined) {
+        for (const [scope, title, text] of [
+          ['settings:write', 'Write settings', 'Save overlay settings and command-socket settings.'],
+          ['profiles:manage', 'Manage profiles', 'Create, copy, rename, set the default and delete profiles.'],
+        ]) {
+          const toggle = document.createElement('input'); toggle.type = 'checkbox'; toggle.name = 'scope'; toggle.value = scope;
+          form.append(row(title, text, toggle, true));
+        }
+        const note = document.createElement('p'); note.className = 'field-help'; note.textContent = 'Permissions are fixed when the key is created.'; form.append(note);
+      }
+      const error = document.createElement('p'); error.setAttribute('role', 'alert');
+      const actions = document.createElement('div'); actions.className = 'dialog-actions';
+      const cancel = button('Cancel', () => dialog.close());
+      const submit = document.createElement('button'); submit.type = 'submit'; submit.className = 'button button-primary'; submit.textContent = submitText;
+      actions.append(cancel, submit); form.append(error, actions); body.append(form);
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault(); setBusy(submit, true);
+        try {
+          const result = await run(input.value, [...form.querySelectorAll('[name="scope"]:checked')].map((control) => control.value));
+          dialog.close(); await refresh();
+          if (result?.key) {
+            const shown = createActionDialog('API key created');
+            const warning = document.createElement('p'); warning.textContent = "Copy this key now. It won't be shown again. Keep it secret.";
+            const value = document.createElement('input'); value.className = 'settings-control'; value.readOnly = true; value.value = result.key;
+            value.setAttribute('aria-label', 'New API key (shown once)');
+            const actions = document.createElement('div'); actions.className = 'dialog-actions';
+            actions.append(button('Copy key', async () => {
+              await navigator.clipboard.writeText(value.value); status.textContent = 'Key copied.';
+            }), button('Done', () => shown.dialog.close(), true));
+            shown.body.append(warning, value, actions); value.focus(); value.select();
+          }
+        } catch (failure) { error.textContent = errorText(failure); }
+        finally { setBusy(submit, false); }
+      });
+      (name === null ? cancel : input).focus();
+    }
     async function refresh() {
       const { keys } = await requestJson('/api/keys');
       list.replaceChildren();
-      if (!keys.length) list.textContent = 'No API keys.';
       for (const entry of keys) {
-        const row = document.createElement('article');
-        row.className = 'api-key-entry';
-        const title = document.createElement('h3'); title.textContent = entry.name;
-        const details = document.createElement('p');
-        details.textContent = `${entry.scopes.join(', ')} · ${entry.display}… · Created ${entry.created} · Last used ${entry.last_used || 'Never'}`;
-        const name = document.createElement('input'); name.value = entry.name; name.maxLength = 64;
-        name.setAttribute('aria-label', `Rename ${entry.name}`);
-        const rename = button('Rename', async () => {
-          await post({ action: 'rename', id: entry.id, name: name.value }); await refresh();
-          status.textContent = 'Key renamed.';
-        });
-        const confirmation = document.createElement('div'); confirmation.hidden = true;
-        confirmation.setAttribute('role', 'group'); confirmation.setAttribute('aria-label', `Revoke ${entry.name}?`);
-        const warning = document.createElement('p');
-        warning.textContent = `Revoke ${entry.name}? Software using this key will immediately lose write access, including open sockets.`;
-        confirmation.append(warning, button('Confirm revoke', async () => {
-          await post({ action: 'revoke', id: entry.id }); await refresh();
-          secret.replaceChildren(); secret.hidden = true; status.textContent = 'Key revoked.';
-        }), button('Cancel', () => { confirmation.hidden = true; }));
-        row.append(title, details, name, rename, button('Revoke', () => {
-          confirmation.hidden = false; confirmation.querySelector('button').focus();
-        }), confirmation);
-        list.append(row);
+        const { wrapper, menu } = createOverflow(`Actions for ${entry.name}`);
+        menu.append(button('Rename', () => {
+          menu.hidePopover();
+          keyDialog('Rename API key', 'Save name', (name) => post({ action: 'rename', id: entry.id, name }), { name: entry.name });
+        }), button('Revoke', () => {
+          menu.hidePopover();
+          keyDialog('Revoke API key', 'Revoke key', () => post({ action: 'revoke', id: entry.id }), {
+            name: null, description: `Revoke “${entry.name}”? Software using this key will immediately lose write access, including open sockets.`,
+          });
+        }));
+        menu.querySelectorAll('button').forEach((control) => { control.className = ''; });
+        list.append(row(entry.name, `${entry.scopes.join(', ')} · ${entry.display}… · Created ${entry.created} · Last used ${entry.last_used || 'Never'}`, wrapper));
       }
     }
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const submit = form.querySelector('button'); submit.disabled = true;
-      secret.replaceChildren(); secret.hidden = true;
-      try {
-        const scopes = [...form.querySelectorAll('[name="scope"]:checked')].map((input) => input.value);
+    section.append(row('API access', 'Give trusted software only the access it needs. Remote connections still require ALLOWED_IPS. Use TLS outside loopback.',
+      button('Create API key', () => keyDialog('Create API key', 'Create key', (name, scopes) => {
         if (!scopes.length) throw new Error('Select at least one permission.');
-        const result = await post({ action: 'create', name: form.elements.name.value, scopes });
-        const warning = document.createElement('p'); warning.textContent = "Copy this key now. It won't be shown again. Keep it secret.";
-        const value = document.createElement('input'); value.readOnly = true; value.value = result.key;
-        value.setAttribute('aria-label', 'New API key (shown once)');
-        secret.append(warning, value, button('Copy key', async () => {
-          await navigator.clipboard.writeText(value.value); status.textContent = 'Key copied.';
-        }), button('Dismiss key', () => { secret.replaceChildren(); secret.hidden = true; }));
-        secret.hidden = false; value.focus(); value.select();
-        form.reset(); await refresh(); status.textContent = 'API key created.';
-      } catch (error) { status.textContent = errorText(error); }
-      finally { submit.disabled = false; }
-    });
+        return post({ action: 'create', name, scopes });
+      }), true)), list, status);
+    runtime.querySelector('.settings-empty')?.before(section);
+    if (!section.isConnected) runtime.append(section);
     try { await refresh(); } catch (error) { status.textContent = errorText(error); }
   }
 
@@ -814,9 +876,16 @@ import { createSettingsEditor } from './homepage-settings.js';
   function initializePresentation() {
     const banner = document.querySelector('.catalog-notice');
     if (banner) {
-      const key = 'vosu.catalog-notice-seen.v1';
-      banner.open = storageGet(key) !== '1';
-      storageSet(key, '1');
+      const key = 'vosu.catalog-notice-dismissed.v1';
+      const about = document.createElement('button');
+      about.type = 'button'; about.className = 'catalog-about'; about.textContent = 'About community overlays';
+      const dismiss = document.createElement('button');
+      dismiss.type = 'button'; dismiss.className = 'button'; dismiss.textContent = "Don't show again";
+      function show(visible) { banner.hidden = !visible; banner.open = visible; about.hidden = visible; }
+      dismiss.addEventListener('click', () => { storageSet(key, '1'); show(false); });
+      about.addEventListener('click', () => show(true));
+      banner.append(dismiss); banner.after(about);
+      show(storageGet(key) !== '1');
     }
     for (const id of ['POLL_RATE', 'PRECISE_DATA_POLL_RATE', 'V2_SUBSCRIPTION_DEBOUNCE']) {
       const input = document.querySelector(`[data-id="${id}"]`);
@@ -1127,6 +1196,11 @@ import { createSettingsEditor } from './homepage-settings.js';
   }
 
   document.addEventListener('click', (event) => {
+    if (event.target instanceof HTMLDialogElement) {
+      const bounds = event.target.getBoundingClientRect();
+      if (event.clientX < bounds.left || event.clientX > bounds.right
+        || event.clientY < bounds.top || event.clientY > bounds.bottom) event.target.close();
+    }
     const control = event.target.closest('[data-action]');
     if (!control) return;
     const action = control.dataset.action;
@@ -1216,6 +1290,7 @@ import { createSettingsEditor } from './homepage-settings.js';
   initializeRuntimeSettings();
   initializeApiKeys();
   initializePresentation();
+  initializePinDrag();
   initializeDashboardStatus();
 
   const requestedOverlay = new URLSearchParams(window.location.search).get('overlay');

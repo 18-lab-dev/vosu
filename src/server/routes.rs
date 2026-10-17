@@ -379,8 +379,14 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                 || dashboard_source
                 || (request.method() == Method::GET && request.uri().path() == "/api/dashboard")
                 || (key_route
-                    && super::api_keys::presented(request.headers(), true)
-                        .is_ok_and(|k| k.is_some())))
+                    && (super::api_keys::presented(request.headers(), true)
+                        .is_ok_and(|k| k.is_some())
+                        || request
+                            .headers()
+                            .get(header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok())
+                            .and_then(|value| value.split_once(' '))
+                            .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer")))))
     };
     if !allowed {
         return cors(
@@ -483,11 +489,26 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
     let keys = providers.delegate.api_keys();
     let credential =
         if method == Method::POST || (websocket_upgrade && endpoint == Endpoint::WsCommands) {
-            super::api_keys::presented(request.headers(), websocket_upgrade)
+            super::api_keys::presented(request.headers(), websocket_upgrade).map(|key| {
+                key.or_else(|| {
+                    (method == Method::POST)
+                        .then(|| {
+                            request
+                                .headers()
+                                .get(header::AUTHORIZATION)
+                                .and_then(|value| value.to_str().ok())
+                                .and_then(|value| value.split_once(' '))
+                                .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+                                .map(|(_, token)| (token.to_owned(), false))
+                        })
+                        .flatten()
+                })
+            })
         } else {
             Ok(None)
         };
     let mut grant = None;
+    let mut broker_grant = None;
     let mut key_protocol = false;
     match credential {
         Ok(Some((key, protocol))) => {
@@ -508,21 +529,53 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             } else {
                 None
             };
-            let authenticated = keys
-                .as_ref()
-                .zip(scope)
-                .and_then(|(store, scope)| store.verify(&key, scope).ok());
-            let Some(id) = authenticated else {
-                return cors(json(
-                    StatusCode::UNAUTHORIZED,
-                    error_json("Invalid API key or scope"),
-                ));
-            };
-            grant = keys
-                .as_ref()
-                .zip(scope)
-                .map(|(store, scope)| store.grant(id, scope));
-            key_protocol = protocol;
+            let broker = request
+                .extensions()
+                .get::<Option<Arc<super::broker::BrokerToken>>>()
+                .and_then(Option::as_ref);
+            let peer = request
+                .extensions()
+                .get::<ConnectInfo<PeerAddress>>()
+                .map(|peer| peer.0.0.ip())
+                .or_else(|| {
+                    request
+                        .extensions()
+                        .get::<ConnectInfo<SocketAddr>>()
+                        .map(|peer| peer.0.ip())
+                })
+                .or_else(|| {
+                    request
+                        .extensions()
+                        .get::<PeerAddress>()
+                        .map(|peer| peer.0.ip())
+                });
+            if method == Method::POST
+                && scope.is_some()
+                && providers
+                    .authorization
+                    .origins()
+                    .is_some_and(|(_, dashboard)| !dashboard)
+                && let Some(broker) = broker
+                && broker.authorize(request.headers(), peer) == Ok(true)
+            {
+                broker_grant = Some((Arc::clone(broker), peer));
+            } else {
+                let authenticated = keys
+                    .as_ref()
+                    .zip(scope)
+                    .and_then(|(store, scope)| store.verify(&key, scope).ok());
+                let Some(id) = authenticated else {
+                    return cors(json(
+                        StatusCode::UNAUTHORIZED,
+                        error_json("Invalid API key or scope"),
+                    ));
+                };
+                grant = keys
+                    .as_ref()
+                    .zip(scope)
+                    .map(|(store, scope)| store.grant(id, scope));
+                key_protocol = protocol;
+            }
         }
         Err(()) => {
             return cors(json(
@@ -543,7 +596,8 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         .map_or(mutation.0, |(origins, dashboard)| {
             dashboard && origins.authorized(request.headers(), local_ip)
         });
-    if ((method == Method::POST && grant.is_none()) || endpoint == Endpoint::ApiKeys)
+    if ((method == Method::POST && grant.is_none() && broker_grant.is_none())
+        || endpoint == Endpoint::ApiKeys)
         && !trusted_management
     {
         return cors(
@@ -570,14 +624,6 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                     Endpoint::Root | Endpoint::Settings | Endpoint::Available
                 ))
             .then(|| origins.page_context(request.headers(), local_ip))
-        });
-    let embedded = endpoint == Endpoint::Settings
-        && request.uri().query().is_some_and(|query| {
-            let mut parameters = url::form_urlencoded::parse(query.as_bytes());
-            let embed = parameters.clone().find(|(key, _)| key == "embed");
-            let overlay = parameters.find(|(key, _)| key == "overlay");
-            embed.is_some_and(|(_, value)| value == "1")
-                && overlay.is_some_and(|(_, value)| !value.is_empty())
         });
     if let Some((origins, true)) = providers.authorization.origins()
         && matches!(
@@ -619,6 +665,15 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             } else {
                 Bytes::new()
             };
+            if broker_grant
+                .as_ref()
+                .is_some_and(|(broker, peer)| broker.authorize(&parts.headers, *peer) != Ok(true))
+            {
+                return cors(json(
+                    StatusCode::UNAUTHORIZED,
+                    error_json("Broker credential revoked"),
+                ));
+            }
             if parts
                 .extensions
                 .get::<super::api_keys::KeyGrant>()
@@ -645,11 +700,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         match to_bytes(body, 16 * 1024 * 1024).await {
             Ok(bytes) => {
                 parts.headers.remove(header::CONTENT_LENGTH);
-                let csp = if embedded {
-                    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' http: https: data:; frame-src http:; connect-src http:; font-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'"
-                } else {
-                    "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' http: https: data:; frame-src http:; connect-src http:; font-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'"
-                };
+                let csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' http: https: data:; frame-src http:; connect-src http:; font-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'none'";
                 parts.headers.insert(
                     header::CONTENT_SECURITY_POLICY,
                     HeaderValue::from_static(csp),

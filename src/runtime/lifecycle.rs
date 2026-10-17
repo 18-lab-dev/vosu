@@ -230,8 +230,11 @@ impl ProductionRuntime {
             ));
         };
         self.logger.info(format!(
-            "Server IP and port: {}",
-            effective_listener.address
+            "Overlays and API: {}",
+            crate::desktop::dashboard_url(
+                &effective_listener.target.host,
+                effective_listener.address.port()
+            )
         ));
         let dashboard_listener =
             match ListenerOwner::start(dashboard_providers, dashboard_target).await {
@@ -253,8 +256,11 @@ impl ProductionRuntime {
         self.origins
             .observe_listeners(listener.state.clone(), dashboard_listener.state.clone());
         self.logger.info(format!(
-            "Dashboard IP and port: {}",
-            dashboard_effective.address
+            "Dashboard: {}",
+            crate::desktop::dashboard_url(
+                &dashboard_effective.target.host,
+                dashboard_effective.address.port()
+            )
         ));
         *self.dashboard_listener.get_mut() = Some(dashboard_listener);
         // Bind the existing discovery stream; do not maintain a second roster.
@@ -482,7 +488,7 @@ impl RuntimeHooks for ProductionRuntime {
                                                     && let Some(address) = effective_address
                                                 {
                                                     self.logger.info(format!(
-                                                        "Server IP and port: {address}"
+                                                        "Overlays and API: {}", crate::desktop::dashboard_url(&effective.server_ip, address.port())
                                                     ));
                                                 }
                                             }
@@ -500,8 +506,15 @@ impl RuntimeHooks for ProductionRuntime {
                                 Ok(target) => {
                                     let mut listener = self.dashboard_listener.lock().await;
                                     if let Some(listener) = listener.as_mut() {
+                                        let previous_address = listener.state().effective.map(|effective| effective.address);
                                         match listener.stage(target).await {
-                                            Ok(()) => {},
+                                            Ok(()) => {
+                                                if let Some(bound) = listener.state().effective
+                                                    && Some(bound.address) != previous_address
+                                                {
+                                                    self.logger.info(format!("Dashboard: {}", crate::desktop::dashboard_url(&bound.target.host, bound.address.port())));
+                                                }
+                                            },
                                             Err(error) => self.logger.warn(format!("Failed to bind dashboard; retaining previous listener: {error}")),
                                         }
                                     }

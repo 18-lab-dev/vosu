@@ -23,7 +23,7 @@ const EXPECTED_DEFAULT: &str = concat!(
     "SERVER_IP = \"127.0.0.1\"\n",
     "SERVER_PORT = 24050.0\n",
     "DASHBOARD_IP = \"127.0.0.1\"\n",
-    "DASHBOARD_PORT = 24052.0\n",
+    "DASHBOARD_PORT = 24051.0\n",
     "ALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n",
     "\n",
     "STATIC_FOLDER_PATH = \"./static\"\n",

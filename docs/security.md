@@ -50,14 +50,14 @@ vosu needs no elevation, installs no driver or service, and writes no registry k
 
 ## Network exposure
 
-The overlay/data listener remains `127.0.0.1:24050`; the independent dashboard defaults to `127.0.0.1:24052`. Both require allowed peers. Dashboard management additionally requires exact dashboard-origin provenance and a per-start `X-Vosu-CSRF` token injected only into dashboard pages. Overlay-origin management mutations return 403, except scoped API-key value/profile writes and the unchanged settings command socket. Dashboard pages never serve overlay files; previews use the unchanged overlay origin. [ADR 0016](decisions/0016-separate-dashboard-origin.md) supersedes ADR 0013's shared-origin decision without moving overlay localStorage/IndexedDB. Native same-account programs can still read dashboard pages and forge provenance; this is not local-user authentication. Keep both listeners loopback-only unless deliberate protected remote access is required. HTTP traffic is unencrypted. See the [README](../README.md#pages-counters-reports-and-updates).
+The overlay/data listener remains `127.0.0.1:24050`; the independent dashboard defaults to `127.0.0.1:24051`. Both require allowed peers. Dashboard management requires exact dashboard-origin provenance and a per-start `X-Vosu-CSRF` token injected only into dashboard pages. Overlay-origin management mutations return 403, except scoped API-key and native broker value/profile writes and the unchanged settings command socket. Dashboard pages never serve overlay files; previews use the unchanged overlay origin. All dashboard pages forbid framing. [ADR 0016](decisions/0016-separate-dashboard-origin.md) supersedes ADR 0013's shared-origin decision without moving overlay localStorage/IndexedDB. Native same-account programs can still read dashboard pages and forge provenance; this is not local-user authentication.
 
 Native overlay brokers can authenticate a loopback `/websocket/commands` upgrade
 with the per-start `broker.json` bearer token ([integration contract](../README.md#native-overlay-brokers)).
 Any same-account process able to read that file can write counter settings and
 invoke the other same-origin command-socket writes. This makes the existing
-native-Origin-forgery limitation explicit; it is not an additional HTTP
-management credential and grants no authority on HTTP routes. Brokers must keep
+native-Origin-forgery limitation explicit. On HTTP it grants only value saves and
+profile actions, never schema saves or management. Brokers must keep
 it out of page JavaScript/logs and authorize their own inbound counter frames.
 Linux uses a 0700 directory and atomically created 0600 files.
 Windows files inherit their parent directory's ACL, as documented by

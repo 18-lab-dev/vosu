@@ -24,11 +24,16 @@ Keep counters on the dashboard origin. Management mutations keep requiring exact
 
 Overlay software hosting counter frames outside vosu's origin must not forge
 `Origin`. Instead, vosu publishes a fresh 256-bit OS-random bearer credential
-each daemon start in a private per-user `broker.json`. Only loopback
+each daemon start in a private per-user `broker.json`. Loopback
 `/websocket/commands` upgrades accept it, with constant-time comparison.
-A valid token grants exactly the existing same-origin command-socket mutation
-permission; invalid/stale tokens fail the upgrade with 401. No token preserves
-existing behavior, and HTTP management routes ignore it.
+A valid token grants the existing same-origin command-socket mutation permission.
+On the overlay HTTP origin it also grants exactly `settings:write` value saves
+(`POST /api/counters/settings/<name>[?profile=]`, never `?update=yes`) and
+`profiles:manage` (`POST /api/counters/profiles`, all actions). GETs stay open.
+Other HTTP mutations, non-loopback peers and invalid/stale tokens return 401.
+POST authorization is rechecked after body reading, just like revocable API keys.
+Restart rotates the credential; brokers reread the file. No token preserves
+existing behavior. Dashboard management still requires provenance and CSRF.
 
 This explicitly trusts same-account native processes that can read the file;
 it does not claim to solve the native-client header-forgery limitation above.

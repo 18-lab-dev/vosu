@@ -892,14 +892,18 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         assert_eq!(response.status(), uncredentialed);
         assert_ne!(response.status(), 401);
     }
-    let denied = client
+    let saved = client
         .post(format!("{base}/api/counters/settings/seeded-counter"))
         .bearer_auth(token)
-        .json(&serde_json::json!([{"uniqueID":"title","value":"not authorized"}]))
+        .json(&serde_json::json!([{"uniqueID":"title","value":"native HTTP"}]))
         .send()
         .await
         .unwrap();
-    assert_eq!(denied.status(), 403, "broker token must not authorize HTTP");
+    assert_eq!(saved.status(), 200);
+    assert_eq!(
+        saved.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({"result":"success"})
+    );
     let _ = websocket_connect_with_bearer(
         port,
         "/websocket/commands?l=seeded-counter",
@@ -1245,10 +1249,15 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         info_messages.contains(&"Process events backend: polling"),
         "production log missing polling backend message:\n{latest_log}"
     );
-    let server_message = format!("Server IP and port: 127.0.0.1:{port}");
+    let server_message = format!("Overlays and API: http://127.0.0.1:{port}/");
     assert!(
         info_messages.contains(&server_message.as_str()),
         "production log missing initial server endpoint message:\n{latest_log}"
+    );
+    let dashboard_message = format!("Dashboard: {management}/");
+    assert!(
+        info_messages.contains(&dashboard_message.as_str()),
+        "production log missing dashboard URL:\n{latest_log}"
     );
 
     assert_no_update_artifacts(&cache_home.join("vosu"));

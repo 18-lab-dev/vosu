@@ -311,12 +311,12 @@ fn providers() -> RouteProviders {
 }
 
 async fn dispatch(method: Method, uri: &str, origin: Option<&str>, body: Body) -> Response {
-    let dashboard = origin == Some("http://localhost:24052");
+    let dashboard = origin == Some("http://localhost:24051");
     let mut providers = providers();
     let origins = Arc::new(
         vosu::server::origins::Origins::new(
             "http://127.0.0.1:24050".into(),
-            "http://127.0.0.1:24052".into(),
+            "http://127.0.0.1:24051".into(),
         )
         .unwrap(),
     );
@@ -328,7 +328,7 @@ async fn dispatch(method: Method, uri: &str, origin: Option<&str>, body: Body) -
     let mut request = Request::builder().method(method).uri(uri).header(
         header::HOST,
         if dashboard {
-            "localhost:24052"
+            "localhost:24051"
         } else {
             "localhost:24050"
         },
@@ -368,7 +368,7 @@ async fn profile_management_retains_exact_routing_and_mutation_provenance() {
         );
         assert!(routes::classify(&Method::POST, path).is_none());
     }
-    for origin in [None, Some("null"), Some("http://localhost:24051")] {
+    for origin in [None, Some("null"), Some("http://localhost:24899")] {
         assert_eq!(
             dispatch(
                 Method::POST,
@@ -385,7 +385,7 @@ async fn profile_management_retains_exact_routing_and_mutation_provenance() {
         dispatch(
             Method::POST,
             "/api/counters/profiles",
-            Some("http://localhost:24052"),
+            Some("http://localhost:24051"),
             Body::from("{}")
         )
         .await
@@ -446,7 +446,7 @@ async fn exact_method_routing_envelopes_cors_and_body_limit_are_observable() {
     let oversized = dispatch(
         Method::POST,
         "/api/settingsSave",
-        Some("http://localhost:24052"),
+        Some("http://localhost:24051"),
         Body::from(vec![0; routes::MAX_POST_BODY + 1]),
     )
     .await;

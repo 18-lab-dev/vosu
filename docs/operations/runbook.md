@@ -35,11 +35,11 @@ OPEN_DASHBOARD_ON_STARTUP = true
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 24050.0
 DASHBOARD_IP = "127.0.0.1"
-DASHBOARD_PORT = 24052.0
+DASHBOARD_PORT = 24051.0
 POLL_RATE = 150.0
 ```
 
-Open the trusted dashboard on port **24052**; overlay URLs remain on **24050** so OBS sources and browser storage do not move. `GET /api/dashboard` on the overlay origin discovers the effective dashboard origin. Wildcard dashboard binds map to loopback for local discovery. Redirected old dashboard bookmarks preserve path and query and do not trust arbitrary Host headers.
+Open the trusted dashboard on port **24051**; overlay URLs remain on **24050** so OBS sources and browser storage do not move. `GET /api/dashboard` on the overlay origin discovers the effective dashboard origin. Wildcard dashboard binds map to loopback for local discovery. Startup and successful rebind logs print full clickable `http://` URLs for both listeners. Redirected old dashboard bookmarks preserve path and query and do not trust arbitrary Host headers.
 
 Network changes in the dashboard require **Apply network settings**, then **Keep network settings** on the new dashboard origin within 30 seconds. The daemon itself rolls back unconfirmed changes, including after a closed page or an unreachable port typo such as `2405`. Only one change may be pending. File edits rebind both listeners independently as before. CIDR entries are supported: Tailscale uses `100.64.0.0/10`, not the public-space-covering legacy `100.*.*.*`. IPv6 CIDRs work too. The legacy `absolute` token matches only that literal hostname/raw browser header, never arbitrary remote peers.
 
@@ -69,7 +69,7 @@ Offset/signature resolution may remain pending and retry while a process is aliv
 Keep both listeners loopback-only unless remote access is deliberate and protected. Read authorization combines allowed peer IPs/CIDRs/legacy wildcard octets with allowed `Origin`/`Referer` tokens; a hostname token never authorizes an arbitrary remote peer. Management mutations run only on the dashboard listener with exact dashboard-origin provenance and `X-Vosu-CSRF`. The overlay listener rejects browser management mutations. Scoped API keys retain their explicit settings/profile exceptions, and overlay settings sockets keep their existing overlay-origin provenance or native broker credential. Preserve request/frame limits, root-confined files, escaped reports, HTTPS-only downloads, private/reserved destination rejection, ZIP safety checks, and same-filesystem replacement.
 
 User-managed [API keys](../../README.md#api-keys) are a scoped alternative for
-trusted sandboxed/remote/web clients, alongside the unchanged loopback file
+trusted sandboxed/remote/web clients, alongside the per-start loopback file
 token. `settings:write` grants command writes and overlay value POSTs, not schema
 saves; `profiles:manage` grants profile mutations. Neither grants updates,
 install/delete, daemon settings, reports or key management. Peer `ALLOWED_IPS`
@@ -86,15 +86,16 @@ registry ownership or group/world permissions warn but do not disable valid keys
 
 
 Native brokers may instead present the per-start `broker.json` token on loopback
-`/websocket/commands` upgrades, granting the same command-socket writes (not HTTP
-management authority). Invalid credentials return 401; absent credentials keep
+`/websocket/commands` upgrades and overlay-origin HTTP value saves and profile
+actions. It grants no schema or management authority. POST authorization is
+rechecked after reading the body. Invalid credentials return 401; absent credentials keep
 the prior behavior. See the [broker contract](../../README.md#native-overlay-brokers)
 for paths, origin matching, one reread/retry, and inbound broker authorization.
 Processes running as the same account that can read the file can write counter
 settings; native clients could already forge Origin. Linux directory/file modes
 are 0700/0600. Windows inherits ACLs: protect `%LOCALAPPDATA%\vosu` and its
 parents, especially pre-existing directories with broad inheritable ACEs.
-Clean shutdown removes the file; a crash leftover is invalid after restart.
+The file remains after shutdown, but its credential is invalid after restart.
 
 
 ### Security hardening and remaining trust

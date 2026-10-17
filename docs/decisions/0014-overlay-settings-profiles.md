@@ -12,9 +12,9 @@ Existing values must remain usable without migration.
 
 ## Decision
 
-Keep one global active profile and allow a per-instance `vosuProfile` page query.
+Keep one default profile and allow a per-instance `vosuProfile` page query.
 The reserved `default` profile is exactly the legacy values directory. Store other
-profiles under `settings/profiles/<name>/` and names plus active selection in
+profiles under `settings/profiles/<name>/` and names plus default selection in
 `settings/profiles.json`. The schema remains in each overlay package. Missing
 profile values fall back to schema defaults, not default-profile user values.
 Registry and values use same-directory atomic replacement. Management mutations
@@ -26,11 +26,11 @@ override, inject `COUNTER_PATH=/@vosu-profile/<profile>/<overlay>` and separatel
 `VOSU_PROFILE=<profile>`. The leading slash and reserved multi-component prefix
 cannot collide with a real immediate counter-folder component. Decode that
 identity at the settings boundary; do not create static-file aliases. Unknown
-page overrides resolve to the active profile at page load. Explicit unknown API
+page overrides resolve to the default profile at page load. Explicit unknown API
 profile names fail rather than silently writing a different profile.
 
-Global activation refreshes only unpinned command clients. A values write refreshes
-clients pinned to the written profile and unpinned clients when it is active.
+Changing the default profile refreshes only unpinned command clients. A values write refreshes
+clients pinned to the written profile and unpinned clients when it is the default.
 Keep the existing bounded relay/control queues and coalescing save worker.
 
 ## Consequences
@@ -44,15 +44,12 @@ schema writes affect every profile. Installed overlays remain trusted same-origi
 code under ADR 0013, and profile management uses the same mutation provenance.
 
 The first-party card and inline settings editors share profile management,
-field search and header navigation. vosulay embeds
-`/settings?overlay=<name>&embed=1` with optional `profile=<name>` and uses the
-documented HTTP API, rather than maintaining another settings renderer.
-Embed mode removes site navigation and external setting links, uses in-document
-listboxes and hex/RGB colour controls instead of native popup surfaces, and
-confirms deletion in-page. Ordinary pages retain native controls. The iframe
-posts `{type: "vosu-profiles", active, profiles}` to its parent after load, profile
-actions and successful saves; only profile names are exposed. Receivers validate
-origin/source and shape. Wildcard delivery supports local off-screen parents
-without relaxing the exact-Origin/Host mutation policy. A localhost page can
-mutate a 127.0.0.1-bound listener when both Origin and Host use localhost and the
-normal host allowlist permits it.
+field search and header navigation. The user-facing action is “Set as default”;
+the API retains action `activate` and registry field `active`. A `(default)` suffix marks
+the default profile in selectors (vosulay uses the same wording); the reserved `default`
+profile is shown without it.
+vosulay uses a native editor talking to the documented HTTP API through its
+Rust host and the per-start native broker
+credential. Dashboard pages cannot be framed and send no parent notifications.
+A localhost page can mutate a 127.0.0.1-bound listener when both Origin and Host
+use localhost and the normal host allowlist permits it.

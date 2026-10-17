@@ -43,7 +43,7 @@ impl Default for Config {
             server_ip: "127.0.0.1".to_owned(),
             server_port: 24_050.0,
             dashboard_ip: "127.0.0.1".to_owned(),
-            dashboard_port: 24_052.0,
+            dashboard_port: 24_051.0,
             static_folder_path: "./static".to_owned(),
             allowed_ips: "127.0.0.1,localhost,absolute".to_owned(),
         }
@@ -200,7 +200,7 @@ const SCHEMA_ITEMS: [ConfigItem; 18] = [
     item(
         ConfigKey::DashboardPort,
         "DASHBOARD_PORT",
-        ConfigDefault::Number(24_052.0),
+        ConfigDefault::Number(24_051.0),
         None,
     ),
     item(

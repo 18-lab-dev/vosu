@@ -8,7 +8,7 @@ Installed overlays are third-party JavaScript. Serving them on the dashboard ori
 
 ## Decision
 
-Keep overlays on `SERVER_IP:SERVER_PORT` (default `127.0.0.1:24050`), including the existing localhost alias. Move trusted pages and management APIs to an independent `DASHBOARD_IP:DASHBOARD_PORT` listener (default `127.0.0.1:24052`). Port 24051 is avoided because local tosu test builds use it.
+Keep overlays on `SERVER_IP:SERVER_PORT` (default `127.0.0.1:24050`), including the existing localhost alias. Move trusted pages and management APIs to an independent `DASHBOARD_IP:DASHBOARD_PORT` listener (default `127.0.0.1:24051`).
 
 Use a port rather than `dashboard.localhost`: ports work remotely and with every resolver/browser. A `.localhost` name would point at the remote user's own machine and relies on browser/resolver special handling. Neither design would justify changing overlay storage origins.
 
@@ -17,22 +17,18 @@ Use a port rather than `dashboard.localhost`: ports work remotely and with every
 | Origin | Routes |
 | --- | --- |
 | Overlay | Overlay static files and COUNTER_PATH injection; JSON, calculation, game files, and state WebSockets; `/websocket/commands` and its unchanged settings protocol; native broker and scoped API-key settings/profile writes; read-only profiles/settings/catalog APIs; `GET /api/dashboard`. |
-| Dashboard | `/`, `/available`, `/settings` (including profile/embed query parameters), embedded dashboard assets, read APIs used by dashboard pages, and every management mutation: install/delete/open/update, daemon settings, reports, schema edits, profile management, and key management. No overlay static files. |
+| Dashboard | `/`, `/available`, `/settings` (including profile query parameters), embedded dashboard assets, read APIs used by dashboard pages, and every management mutation: install/delete/open/update, daemon settings, reports, schema edits, profile management, and key management. No overlay static files. |
 
-Overlay GETs to dashboard pages return 302 with path and query preserved. Redirect authorities come from the effective dashboard listener; only a configured hostname or safe loopback alias can be retained from Host. Wildcard binds map to loopback for local dashboard discovery. Previews use the overlay origin. `/api/dashboard` publishes the effective dashboard origin to integrations such as vosulay; the embed postMessage payload/behavior is unchanged, but messages now originate from the dashboard origin.
+Overlay GETs to dashboard pages return 302 with path and query preserved. Redirect authorities come from the effective dashboard listener; only a configured hostname or safe loopback alias can be retained from Host. Wildcard binds map to loopback for local dashboard discovery. Previews use the overlay origin. `/api/dashboard` publishes the effective dashboard origin to integrations such as vosulay; native editors use HTTP APIs rather than framing dashboard pages.
 
 Dashboard mutations require trusted peers, exact dashboard-origin provenance, and a per-start random `X-Vosu-CSRF` token injected only into dashboard pages. Overlay-origin browser management writes fail with 403, even with overlay-origin provenance. Existing explicitly scoped key grants and command-socket settings writes remain compatible. Tray/startup/second-instance links use the dashboard listener. Both listeners rebind independently; a failed rebind retains its preceding effective listener.
 
 Every dashboard request also checks Host against the effective safe origin, and the
 dashboard listener refuses all WebSocket upgrades. Dashboard HTML uses a CSP that
 allows only same-origin script files, with runtime context carried in inert JSON,
-plus `X-Content-Type-Options: nosniff`. Normal pages send `frame-ancestors 'none'`.
-The explicit `/settings?overlay=…&embed=1` integration mode permits framing only
-with a non-empty first `overlay` and first `embed=1`, matching browser parsing.
-Vosulay may run on a separately configured origin. This remains a clickjacking residual:
-an untrusted page can frame embed mode and attempt to solicit user interaction.
-CSRF and exact-origin mutation checks still apply; embedding is not an additional
-authorization grant.
+plus `X-Content-Type-Options: nosniff`. Every dashboard page sends
+`frame-ancestors 'none'`; no query parameter enables framing. Native editors use
+the settings/profile HTTP API through the native broker credential instead.
 
 Network edits made in the dashboard are staged by an explicit Apply. Only one edit may be pending. Confirmation must arrive from the new dashboard origin within 30 seconds; an independent server timer restores only the previous network fields if not confirmed, even after a closed page. Other settings continue autosaving. CIDR allowlists support precise IPv4/IPv6 network ranges alongside legacy wildcard octets. `absolute` is retained as a literal legacy hostname token, never a universal peer grant.
 

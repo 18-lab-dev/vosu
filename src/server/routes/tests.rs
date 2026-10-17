@@ -751,7 +751,7 @@ async fn dashboard_refuses_all_websocket_upgrades_and_untrusted_hosts() {
 }
 
 #[tokio::test]
-async fn dashboard_html_has_inert_context_csp_and_embed_framing_exception() {
+async fn dashboard_html_has_inert_context_csp_and_never_allows_framing() {
     struct Html;
     impl RouteDelegate for Html {
         fn handle(&self, _: Endpoint, _: Request, _: Bytes) -> ProviderFuture<'_, Response> {
@@ -770,8 +770,8 @@ async fn dashboard_html_has_inert_context_csp_and_embed_framing_exception() {
         ("/settings?embed=1&overlay=", false),
         ("/settings?embed=0&embed=1&overlay=sample", false),
         ("/settings?embed=1&overlay=&overlay=sample", false),
-        ("/settings?embed=1&overlay=sample", true),
-        ("/settings?embed=1&embed=0&overlay=sample", true),
+        ("/settings?embed=1&overlay=sample", false),
+        ("/settings?embed=1&embed=0&overlay=sample", false),
     ] {
         let (mut providers, _) = split_providers(true);
         providers.delegate = Arc::new(Html);
@@ -794,4 +794,102 @@ async fn dashboard_html_has_inert_context_csp_and_embed_framing_exception() {
         assert!(!html.contains("<script>"));
         assert!(!html.contains("window.VOSU_CSRF"));
     }
+}
+
+#[tokio::test]
+async fn broker_http_permissions_are_exact_and_loopback_only() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("broker.json");
+    let broker = Arc::new(super::super::broker::BrokerToken::new(path.clone()).unwrap());
+    broker.publish("127.0.0.1:24860".parse().unwrap()).unwrap();
+    let published: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let token = published["token"].as_str().unwrap();
+    for (route, permitted) in [
+        ("/api/counters/settings/sample", true),
+        ("/api/counters/settings/sample?profile=stream", true),
+        ("/api/counters/profiles", true),
+        ("/api/counters/settings/sample?update=yes", false),
+        ("/api/counters/settings/sample?update=no&update=yes", false),
+        ("/api/settingsSave", false),
+        ("/api/keys", false),
+        ("/api/counters/delete/sample", false),
+        ("/api/counters/open-root", false),
+        ("/api/runUpdates", false),
+    ] {
+        for (peer, credential) in [
+            ("127.0.0.1:41234", token),
+            ("198.51.100.7:41234", token),
+            ("127.0.0.1:41234", "wrong"),
+        ] {
+            let (providers, _) = split_providers(false);
+            let mut request = make_request(Method::POST, route, Body::from("{}"));
+            request
+                .extensions_mut()
+                .insert(ConnectInfo(PeerAddress(peer.parse().unwrap())));
+            request.extensions_mut().insert(Some(broker.clone()));
+            request.headers_mut().insert(
+                header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {credential}")).unwrap(),
+            );
+            let response = dispatch(State(providers), request).await;
+            assert_eq!(
+                response.status(),
+                if permitted && peer.starts_with("127.") && credential == token {
+                    StatusCode::OK
+                } else {
+                    StatusCode::UNAUTHORIZED
+                },
+                "{route} {peer}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn broker_http_revalidates_after_body_read_and_restart_rotates_token() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("broker.json");
+    let broker = Arc::new(super::super::broker::BrokerToken::new(path.clone()).unwrap());
+    broker.publish("127.0.0.1:24860".parse().unwrap()).unwrap();
+    let published: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let credential =
+        HeaderValue::from_str(&format!("Bearer {}", published["token"].as_str().unwrap())).unwrap();
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let stream = futures_util::stream::once(async move {
+        rx.await.unwrap();
+        Ok::<_, std::io::Error>(Bytes::from_static(b"{}"))
+    });
+    let (providers, _) = split_providers(false);
+    let mut request = make_request(
+        Method::POST,
+        "/api/counters/settings/sample",
+        Body::from_stream(stream),
+    );
+    request.extensions_mut().insert(Some(broker.clone()));
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, credential.clone());
+    let pending = dispatch(State(providers), request);
+    tokio::pin!(pending);
+    assert!(futures_util::poll!(&mut pending).is_pending());
+    broker.disable();
+    tx.send(()).unwrap();
+    assert_eq!(pending.await.status(), StatusCode::UNAUTHORIZED);
+
+    let replacement = Arc::new(super::super::broker::BrokerToken::new(path).unwrap());
+    replacement
+        .publish("127.0.0.1:24860".parse().unwrap())
+        .unwrap();
+    let (providers, _) = split_providers(false);
+    let mut request = make_request(Method::POST, "/api/counters/profiles", Body::from("{}"));
+    request.extensions_mut().insert(Some(replacement));
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, credential);
+    assert_eq!(
+        dispatch(State(providers), request).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
 }

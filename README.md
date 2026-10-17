@@ -40,7 +40,7 @@ The current release is **1.0.2**. Download `vosu-linux-v1.0.2.zip` or `vosu-wind
 1. Extract the complete archive into a writable directory. Its root contains `vosu` or `vosu.exe`, plus `LICENSE`.
 2. On Linux, restore the executable bit if your archive tool removed it: `chmod +x vosu`.
 3. Run `./vosu` on Linux or `vosu.exe` on Windows.
-4. Open <http://127.0.0.1:24052/>. By default, vosu opens the dashboard after startup. Overlay URLs stay on port **24050**, preserving their browser storage.
+4. Open <http://127.0.0.1:24051/>. By default, vosu opens the dashboard after startup. Overlay URLs stay on port **24050**, preserving their browser storage.
 
 Do not run the Windows executable directly from an archive or a OneDrive-controlled directory. The updater cannot provide safe replacement and rollback in those locations. Windows executables are unsigned, so Windows SmartScreen may warn before the first launch.
 
@@ -340,7 +340,7 @@ PRECISE_DATA_POLL_RATE = 10.0
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 24050.0
 DASHBOARD_IP = "127.0.0.1"
-DASHBOARD_PORT = 24052.0
+DASHBOARD_PORT = 24051.0
 STATIC_FOLDER_PATH = "./static"
 ALLOWED_IPS = "127.0.0.1,localhost,absolute"
 ```
@@ -364,7 +364,7 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 | `SERVER_IP` | `127.0.0.1` | Overlay/data listener hostname or address (unchanged overlay origin). |
 | `SERVER_PORT` | `24050` | Overlay/data listener port. |
 | `DASHBOARD_IP` | `127.0.0.1` | Independent trusted dashboard listener, loopback-only by default even when overlays are shared on a LAN. |
-| `DASHBOARD_PORT` | `24052` | Trusted dashboard and management port. |
+| `DASHBOARD_PORT` | `24051` | Trusted dashboard and management port. |
 | `STATIC_FOLDER_PATH` | `./static` | Counter root; the default maps to the data directory. |
 | `ALLOWED_IPS` | `127.0.0.1,localhost,absolute` | Peer IPs/CIDRs, legacy IPv4 wildcard octets, and allowed Origin/Referer hostname tokens. Loopback peers are always allowed. `absolute` is a literal legacy hostname token, not a wildcard or authentication bypass. |
 
@@ -497,44 +497,38 @@ File routes enforce root containment and support validated single HTTP byte rang
 - `POST /api/counters/delete/{name}`
 - `GET|POST /api/counters/settings/{name}`
 - `GET /api/counters/profiles` returns `{"active":"default","profiles":["default"]}` initially.
-- `POST /api/counters/profiles` accepts one JSON action: `{"action":"create","name":"stream"}` (optionally `"copyFrom":"default"`), `{"action":"rename","name":"stream","target":"live"}`, `{"action":"delete","name":"live"}`, `{"action":"activate","name":"stream"}`, or `{"action":"copyOverlay","name":"counter-folder","source":"default","target":"stream"}`. Success returns the updated registry; errors follow the counter API's HTTP 200 `{"error":"..."}` convention. POST requires the same exact-origin provenance as other management mutations. Unknown actions fail.
+- `POST /api/counters/profiles` accepts one JSON action: `{"action":"create","name":"stream"}` (optionally `"copyFrom":"default"`), `{"action":"rename","name":"stream","target":"live"}`, `{"action":"delete","name":"live"}`, `{"action":"activate","name":"stream"}`, or `{"action":"copyOverlay","name":"counter-folder","source":"default","target":"stream"}`. Success returns the updated registry; errors follow the counter API's HTTP 200 `{"error":"..."}` convention. POST requires dashboard provenance and CSRF, a `profiles:manage` API key, or the loopback native broker token. Unknown actions fail.
 
 ### Overlay settings profiles
 
 Profiles group per-overlay values; schemas remain shared. The reserved `default` profile
 uses the existing `<config>/settings/<counter>.settings.values.toml` files without moving
 them. Others use `<config>/settings/profiles/<profile>/<counter>.settings.values.toml`;
-`<config>/settings/profiles.json` records the active profile and names. Files are
+`<config>/settings/profiles.json` records the default profile (API field `active`) and names. Files are
 atomically replaced in their own directory. Names are case-sensitive references but
 case-insensitively unique, contain only ASCII letters, digits, `_` and `-`, and are
 1–48 characters. At most 32 profiles including `default` are allowed. `default` cannot
-be renamed or deleted; deleting the active profile selects `default`. Empty profiles
-use schema defaults for overlays without saved values, never another profile's values.
+be renamed or deleted; deleting another profile currently used as the default selects
+`default`. Empty profiles use schema defaults for overlays without saved values,
+never another profile's values.
 
 `GET /api/counters/settings/{name}?profile=stream` returns the unchanged
 `{"settings":[...],"values":{...}}` shape. POST to the same URL accepts the existing
 `[{"uniqueID":"field","value":...}]` body and returns `{"result":"success"}`.
-Omitting `profile` selects the global active profile. `update=yes` still edits the
+Omitting `profile` selects the default profile. `update=yes` still edits the
 shared developer schema. Unknown profile references return a JSON error.
 
 The dashboard card editor and `/settings?overlay=<name>[&profile=<profile>]` inline
-editor expose profile selection, creation/copying, rename, deletion and global
-activation. Search matches titles, descriptions and IDs; matching sections retain
-their headers, and the section navigation is absent for schemas without headers.
-For vosulay's off-screen CEF iframe, append `&embed=1`. This renders only the
-editor, without dashboard navigation, updates, report download or external setting
-links. Profile and options selectors become keyboard-accessible in-page listboxes
-(arrows, Home/End and first-letter search); colours use hex input and RGB sliders.
-Profile deletion requires in-page confirmation. Native controls and the normal
-dashboard remain unchanged without this flag.
-
-After loading, every successful profile action (create/copy/rename/delete/activate)
-and every successful settings save, embed mode sends
-`parent.postMessage({type: "vosu-profiles", active: "default", profiles: ["default"]}, "*")`.
-`active` is the global active profile and `profiles` contains names only, never
-setting values. Embedders should validate `event.origin`, `event.source` and the
-message shape before consuming it. The wildcard target permits local/off-screen
-parents; the message does not grant mutation access.
+editor expose profile selection, creation/copying, rename, deletion and **Set as
+default** (API action `activate`). The dropdown marks the default profile for
+unpinned overlays with a `(default)` suffix; the reserved `default` profile needs no suffix.
+Search matches titles, descriptions and IDs; matching sections retain their headers.
+The sticky section navigation tracks the current section as the editor scrolls,
+and is absent for schemas without headers. All dashboard modals lock background
+page scrolling until closed, including Escape and backdrop dismissal.
+Native editors such as vosulay use the HTTP settings and profiles API through
+their Rust host; dashboard pages cannot be framed and have no embed mode or
+parent-window notifications.
 
 Loading this page through `http://localhost:<port>` works with the default
 127.0.0.1 listener: mutations compare the page Origin to the request Host, not to
@@ -542,7 +536,7 @@ the listener's bind address. `localhost` is also in the default allowed host lis
 Mixing `localhost` and `127.0.0.1` between Origin and Host is rejected.
 
 An overlay URL may pin one instance with `?vosuProfile=stream`. Unknown names fall
-back to the current active profile when serving the page. With no override the
+back to the current default profile when serving the page. With no override the
 served counter bytes and injected metadata are unchanged. With an override vosu
 injects `window.COUNTER_PATH="/@vosu-profile/stream/<counter>"` and
 `window.VOSU_PROFILE="stream"`. The leading slash and multi-component reserved
@@ -552,9 +546,9 @@ and `updateSettings` frames; the values resolve to the pinned profile. **Limitat
 overlays that build asset URLs from `COUNTER_PATH` rather than their page URL must
 adapt before using an override; the qualified identity is not a static-file URL.
 
-Activating a profile refreshes unpinned clients over `/websocket/commands`.
+Setting a default profile refreshes unpinned clients over `/websocket/commands`.
 Saving or copying overlay values refreshes clients pinned to that profile and,
-when it is active, unpinned clients. Existing bounded command-relay queues and
+when it is the default, unpinned clients. Existing bounded command-relay queues and
 save coalescing remain in force. Renaming/deleting a pinned profile requires
 reloading the instance with a valid override; existing socket identities do not change.
 See [ADR 0014](docs/decisions/0014-overlay-settings-profiles.md).
@@ -563,7 +557,7 @@ POST bodies are capped at 1 MiB. Generated reports escape machine, configuration
 
 Management POSTs require the existing trusted-peer policy, exact **dashboard-origin** browser provenance, and the per-start `X-Vosu-CSRF` token injected only into dashboard pages. `Origin` is authoritative; only when absent may a same-origin `Referer` authorize the action. Missing, opaque (`null`), malformed, or duplicate provenance is not mutation intent. Forwarded headers are not trusted. Rejected mutations return 403. The overlay listener rejects management mutations even from same-origin overlay scripts; scoped API-key settings/profile writes and overlay command-socket settings writes remain available.
 
-The dashboard moved to `http://127.0.0.1:24052`; overlays remain on `http://127.0.0.1:24050/<overlay>/` (including the `localhost` alias), so their localStorage/IndexedDB origins do not change. Dashboard previews load that overlay origin, never overlay code on the dashboard origin. Overlay-origin GETs to `/`, `/settings`, and `/available` redirect with path/query preserved to the configured dashboard address, never an arbitrary request Host. `GET /api/dashboard` returns `{"origin":"http://127.0.0.1:24052"}` using the effective dashboard bind, with wildcard addresses mapped to loopback. Tray, startup, and second-launch links use the dashboard origin. See [ADR 0016](docs/decisions/0016-separate-dashboard-origin.md), superseding the shared-origin portion of ADR 0013.
+The dashboard moved to `http://127.0.0.1:24051`; overlays remain on `http://127.0.0.1:24050/<overlay>/` (including the `localhost` alias), so their localStorage/IndexedDB origins do not change. Dashboard previews load that overlay origin, never overlay code on the dashboard origin. Overlay-origin GETs to `/`, `/settings`, and `/available` redirect with path/query preserved to the configured dashboard address, never an arbitrary request Host. `GET /api/dashboard` returns `{"origin":"http://127.0.0.1:24051"}` using the effective dashboard bind, with wildcard addresses mapped to loopback. Tray, startup, and second-launch links use the dashboard origin. See [ADR 0016](docs/decisions/0016-separate-dashboard-origin.md), superseding the shared-origin portion of ADR 0013.
 
 Read-only JSON, static/file routes, counter-settings GETs, and state/settings WebSockets need no new headers or tokens. Headerless and opaque/file-origin reads remain available to trusted peers. Hosted stock counters retain `window.COUNTER_PATH` and the existing settings protocol unchanged. On legacy sockets, `getSettings`, `updateSettings` replies, and `applyFilters` remain readable without mutation authorization; `saveSettings` requires same-origin provenance captured at upgrade or the native command-broker credential described below, otherwise the socket closes with 1008 before saving or relaying. File-loaded and other non-hosted overlays may read settings but must use the hosted settings page or an authenticated native broker to write them.
 
@@ -573,8 +567,10 @@ An external native broker such as vosulay may save counter settings without
 forging `Origin`. Each daemon start generates 32 OS-CSPRNG bytes, encoded as 64
 lowercase hex characters, and atomically publishes
 `{"version":1,"origin":"http://127.0.0.1:24050","token":"<64 hex>"}`.
-The origin contains the actual bound listener address and port, including IPv6
-brackets when applicable; a successful listener rebind updates it.
+The origin uses the listener's actual port and a connectable address, matching
+dashboard discovery: wildcard `0.0.0.0` becomes `127.0.0.1`, and wildcard `::`
+becomes `[::1]`. Specific binds remain unchanged, with IPv6 brackets when applicable.
+A successful listener rebind updates it. The token still authenticates only loopback peers.
 
 - Linux: `$XDG_RUNTIME_DIR/vosu/broker.json`; when `XDG_RUNTIME_DIR` is unset
   or empty, `${XDG_CONFIG_HOME:-$HOME/.config}/vosu/broker.json`. Both the
@@ -586,15 +582,17 @@ brackets when applicable; a successful listener rebind updates it.
   inheritable permissions also exposes the token. Protect that directory and
   its parents; vosu does not reset Windows ACLs.
 
-Send `Authorization: Bearer <token>` only on `/websocket/commands` upgrades
-for counter frames, and only to a loopback URL whose scheme, port and host
-match the file's origin (`localhost` and `127.0.0.1` may be treated as equivalent).
-Never attach it to HTTP requests or other routes. vosu accepts it only from
-loopback peers and compares the credential in constant time. Valid credentials
-give exactly the command-socket write permission of same-origin counters;
-invalid/stale credentials return HTTP 401 even when Origin would authorize a
-write. Missing credentials leave existing behavior unchanged. HTTP POSTs still
-require exact same-origin provenance regardless of this header.
+Send `Authorization: Bearer <token>` to the file's loopback origin (`localhost`
+and `127.0.0.1` may be treated as equivalent), only for `/websocket/commands`
+upgrades, `POST /api/counters/settings/<name>[?profile=<name>]` value saves,
+and `POST /api/counters/profiles` actions. HTTP permissions are exactly
+`settings:write` and `profiles:manage`: schema writes (`?update=yes`) and all
+management routes remain forbidden (401). GETs remain open reads.
+vosu accepts the token only from loopback peers and compares it in constant time,
+then revalidates after reading each POST body. Invalid, stale, wrong-scope or
+non-loopback credentials return 401 even when browser provenance permits a write.
+Restart rotates the token; reread the file rather than caching stale credentials.
+Keep the token in the native host, never page JavaScript or logs.
 The Bearer scheme is case-insensitive; other Authorization schemes (such as
 Basic from a reverse proxy) are ignored, preserving their previous behavior.
 If credential creation/publication fails, vosu logs a warning and continues
@@ -620,7 +618,7 @@ Settings → **API keys** creates named credentials for trusted sandboxed, remot
 or web software. Copy a new key immediately: vosu shows it only once. You can
 rename or revoke it later; permissions cannot be edited (revoke and recreate).
 Revocation immediately closes associated command sockets (1008), even while idle.
-Keys are not displayed in the embedded overlay editor (`embed=1`).
+Keys are managed only through the trusted dashboard.
 
 - `settings:write`: existing command-socket writes and
   `POST /api/counters/settings/<name>` value saves, never `?update=yes` schema saves.
@@ -654,8 +652,8 @@ No URL query parameter authenticates a key. Cross-origin browser HTTP is not
 supported: CORS does not allow Authorization. Invalid/revoked keys and insufficient
 scopes return 401 (JSON for HTTP POSTs). Without a key, existing behavior remains.
 Keys work remotely only for peers allowed by `ALLOWED_IPS`; they never bypass that
-peer policy. Unlike the per-start loopback file token above, keys persist across
-restarts and authorize scoped HTTP writes.
+peer policy. API keys persist across restarts; the loopback broker token rotates
+on every daemon start. Both authorize only their documented scoped HTTP writes.
 
 The config root holds `api-keys.toml`: `${XDG_CONFIG_HOME:-$HOME/.config}/vosu/`
 on Linux, the program directory on Windows. It contains SHA-256 hashes, not

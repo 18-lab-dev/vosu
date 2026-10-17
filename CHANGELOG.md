@@ -6,13 +6,20 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ### Dashboard origin
 
-- Move trusted dashboard pages and management APIs to an independent loopback listener on port 24052 (`DASHBOARD_IP`/`DASHBOARD_PORT`), keeping overlay URLs on port 24050 so localStorage and IndexedDB remain intact. Add `/api/dashboard` discovery and safe path/query-preserving redirects for old dashboard links. Tray, startup and second-instance links follow the dashboard listener.
-- Reject overlay-origin management mutations, require dashboard provenance plus a per-start CSRF token, and never serve overlay scripts on the dashboard origin. Scoped API keys, profiles, broker tokens, embed postMessage behavior and overlay command-socket settings remain compatible.
+- Move trusted dashboard pages and management APIs to an independent loopback listener on port 24051 (`DASHBOARD_IP`/`DASHBOARD_PORT`), keeping overlay URLs on port 24050 so localStorage and IndexedDB remain intact. Add `/api/dashboard` discovery and safe path/query-preserving redirects for old dashboard links. Tray, startup and second-instance links follow the dashboard listener.
+- Reject overlay-origin management mutations, require dashboard provenance plus a per-start CSRF token, and never serve overlay scripts on the dashboard origin. Scoped API keys, profiles, broker tokens and overlay command-socket settings remain compatible.
 - Add explicit network Apply with server-side 30-second automatic rollback unless confirmed from the new dashboard origin. Rebind both listeners independently. Support IPv4/IPv6 CIDR allowlists, including the precise Tailscale `100.64.0.0/10` range, alongside legacy wildcard octets.
 - Harden dashboard HTML with inert runtime context, CSP, Host checks, and no dashboard WebSocket upgrades. Network rollback targets cannot come from URL parameters; pending edits survive crashes as rollback journals, Keep checks both listeners, and dashboard binds cannot reuse recorded overlay origins.
+- Print full clickable overlay/API and dashboard URLs at startup and after successful rebinds, mapping wildcard binds to loopback.
+- Allow loopback native broker credentials to save HTTP settings values and manage profiles, with authorization rechecked after body reads; grant no schema or management authority.
+- Remove settings embed mode and parent notifications; all dashboard pages forbid framing.
 
 ### Dashboard
 
+- Reduce profile management to a dropdown and overflow menu with in-app naming and delete confirmation. Remove the unused embedded settings frontend and its custom popup replacements.
+- Match API-key management to the runtime settings groups and rows, with compact permission dialogs, per-key overflow actions and a copyable show-once dialog.
+- Restore mouse dragging of pinned overlays with a visible insertion marker, retaining keyboard menu moves and the existing dashboard-origin saved order.
+- Add permanent local dismissal of the community-overlay notice and an About link to reopen it.
 - Keep installed previews at or below their native size and label reduced previews with their scale.
 - Give overlay updates a warning-coloured action, remove redundant settings badges, and use styled update/delete dialogs with the folder path and a bounded on-disk file-size scan.
 - Match Installed cards against the catalog too, so their update action is visible without visiting Available; update the actual local folder even if it has a custom name. Hide empty author segments rather than leaving doubled metadata separators.
@@ -37,9 +44,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
   Use platform atomic replacement and identity-aware Unix shutdown cleanup.
 - Add named settings profiles with global activation, per-instance `vosuProfile`
   overrides, a same-origin management API, and profile-aware command refreshes.
-  The reserved `default` profile retains existing values files. The vosulay iframe
-  editor supports `embed=1` without site navigation or native popup controls,
-  in-page deletion confirmation, and profile-name-only parent notifications.
+  The reserved `default` profile retains existing values files.
 - Add profile management, title/description/ID search, and section navigation to
   both dashboard card settings and the inline overlay settings page used by vosulay.
 

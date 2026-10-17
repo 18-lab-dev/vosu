@@ -137,6 +137,11 @@ input[type="checkbox"].settings-control {
   text-align: center;
 }
 
+/* Native modal inertness does not prevent scroll chaining outside the dialog. */
+:root:has(dialog[open]) {
+  overflow: hidden;
+}
+
 .dashboard-dialog {
   width: min(94vw, 58rem);
   max-height: min(90vh, 58rem);
@@ -183,6 +188,7 @@ input[type="checkbox"].settings-control {
   min-height: 0;
   padding: 1.15rem;
   overflow: auto;
+  overscroll-behavior: contain;
   scroll-padding-block-end: 4.5rem;
 }
 
@@ -499,22 +505,16 @@ input[type="checkbox"].settings-control {
   }
 }
 
-/* Off-screen CEF has no native select/colour popup surfaces. */
-.settings-embed .dashboard-main { padding: 1rem; }
-.embed-listbox { max-height: 12rem; overflow: auto; }
-.embed-listbox [role="option"] { padding: .5rem .75rem; cursor: pointer; }
-.embed-listbox [aria-selected="true"] { background: #50304b; color: #fff; }
-.embed-listbox:focus-visible { outline: 2px solid #7ae1f8; outline-offset: 2px; }
-.embed-colour { display: grid; gap: .65rem; }
-.embed-colour-swatch { height: 2rem; border: 1px solid #a99bb7; border-radius: .4rem; }
-.embed-confirmation { padding: 1rem; border: 1px solid #f45cad; border-radius: .5rem; }
-.embed-confirmation .button { margin-right: .5rem; }
-
-.api-keys { width: min(100%, 46rem); box-sizing: border-box; margin: 2rem auto; padding: 1rem; background: var(--ink-raised); border: 1px solid var(--line); border-radius: var(--radius); }
-.api-key-create, .api-key-create fieldset { display: grid; gap: .75rem; }
-.api-key-create input[name="name"], .api-key-secret input { width: 100%; box-sizing: border-box; }
-.api-key-secret { margin-top: 1rem; padding: 1rem; border: 1px solid var(--rose); }
-.api-key-entry { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: .75rem; overflow-wrap: anywhere; }
-.api-keys .button { margin: .5rem .5rem .5rem 0; }
-.api-keys input:not([type="checkbox"]) { min-height: 2.3rem; padding: .5rem .7rem; color: var(--paper); background: var(--ink-soft); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); }
-.api-keys input[type="checkbox"] { accent-color: var(--rose); }
+.action-dialog { width: min(94vw, 34rem); }
+.action-dialog .dialog-body { max-height: 70vh; }
+.action-dialog h2 { font-size: 1.15rem; }
+.action-dialog input[type="checkbox"] { accent-color: var(--rose); width: 1.35rem; height: 1.35rem; }
+.settings-overflow { position: relative; justify-self: end; }
+.settings-item__description { overflow-wrap: anywhere; }
+.settings-group [role="status"]:empty,
+.action-dialog [role="alert"]:empty { display: none; }
+.catalog-about { color: var(--paper-muted); text-decoration: underline; background: transparent; cursor: pointer; font-size: .8rem; }
+.counter-card.is-pinned { cursor: grab; }
+.counter-card.is-dragging { opacity: .45; }
+.counter-card.drop-before { box-shadow: -5px 0 0 var(--cyan); }
+.counter-card.drop-after { box-shadow: 5px 0 0 var(--cyan); }

@@ -1,103 +1,59 @@
+let actionId = 0;
+
+export function createActionDialog(title) {
+  const dialog = document.createElement('dialog');
+  dialog.className = 'dashboard-dialog action-dialog';
+  const header = document.createElement('header');
+  header.className = 'dialog-header';
+  const heading = document.createElement('h2');
+  heading.id = `action-title-${++actionId}`;
+  heading.textContent = title;
+  dialog.setAttribute('aria-labelledby', heading.id);
+  header.append(heading);
+  const body = document.createElement('div');
+  body.className = 'dialog-body';
+  dialog.append(header, body);
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  document.body.append(dialog);
+  dialog.showModal();
+  return { dialog, body };
+}
+
+export function createOverflow(label, text = '⋯') {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'settings-overflow';
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'icon-button card-menu-toggle';
+  toggle.textContent = text;
+  toggle.setAttribute('aria-label', label);
+  const menu = document.createElement('div');
+  menu.className = 'card-menu';
+  menu.id = `action-menu-${++actionId}`;
+  menu.setAttribute('popover', 'auto');
+  toggle.setAttribute('popovertarget', menu.id);
+  wrapper.append(toggle, menu);
+  return { wrapper, menu };
+}
+
 export function createSettingsEditor({
   results, requestJson, notify, setBusy, errorText, absoluteHttpUrl,
 }) {
-  const state = { dialogRequest: 0, optionId: 0 };
-  const embed = location.pathname === '/settings'
-    && new URLSearchParams(location.search).get('embed') === '1'
-    && Boolean(new URLSearchParams(location.search).get('overlay'));
-
-  function notifyParent(registry) {
-    if (embed) parent.postMessage({
-      type: 'vosu-profiles', active: registry.active, profiles: [...registry.profiles],
-    }, '*');
-  }
+  const state = { dialogRequest: 0, navigationObserver: null };
 
   function choiceControl(values, value, labels = values) {
-    if (!embed) {
-      const select = document.createElement('select');
-      select.className = 'setting-value';
-      values.forEach((item, index) => select.add(new Option(labels[index], item)));
-      select.value = String(value);
-      return select;
-    }
-    const control = document.createElement('div');
-    control.className = 'setting-value embed-listbox';
-    control.setAttribute('role', 'listbox');
-    control.tabIndex = 0;
-    control.value = values.includes(String(value)) ? String(value) : values[0] ?? '';
-    function choose(index, emit = true) {
-      control.value = values[index] ?? '';
-      [...control.children].forEach((option, i) => {
-        option.setAttribute('aria-selected', String(i === index));
-      });
-      if (control.children[index]) control.setAttribute('aria-activedescendant', control.children[index].id);
-      if (emit) control.children[index]?.scrollIntoView({ block: 'nearest' });
-      if (emit) control.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-    values.forEach((item, index) => {
-      const option = document.createElement('div');
-      option.id = `embed-option-${++state.optionId}`;
-      option.setAttribute('role', 'option');
-      option.textContent = String(labels[index]);
-      option.addEventListener('click', () => { control.focus(); choose(index); });
-      control.appendChild(option);
-    });
-    control.addEventListener('keydown', (event) => {
-      let index = values.indexOf(control.value);
-      if (event.key === 'ArrowDown' || event.key === 'ArrowRight') index = Math.min(values.length - 1, index + 1);
-      else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') index = Math.max(0, index - 1);
-      else if (event.key === 'Home') index = 0;
-      else if (event.key === 'End') index = values.length - 1;
-      else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
-        const next = values.findIndex((item, offset) => offset > index && item.toLowerCase().startsWith(event.key.toLowerCase()));
-        index = next < 0 ? values.findIndex((item) => item.toLowerCase().startsWith(event.key.toLowerCase())) : next;
-        if (index < 0) return;
-      } else return;
-      event.preventDefault();
-      choose(index);
-    });
-    choose(values.indexOf(control.value), false);
-    return control;
-  }
-
-  function colourControl(value, title) {
-    const group = document.createElement('div');
-    group.className = 'embed-colour';
-    const hex = makeInput('text', value || '#f45cad');
-    hex.pattern = '#[0-9a-fA-F]{6}';
-    hex.required = true;
-    hex.setAttribute('aria-label', `${title} hex colour`);
-    const swatch = document.createElement('span');
-    swatch.className = 'embed-colour-swatch';
-    const sliders = ['Red', 'Green', 'Blue'].map((channel) => {
-      const slider = makeInput('range', 0);
-      slider.classList.remove('setting-value');
-      slider.min = 0;
-      slider.max = 255;
-      slider.setAttribute('aria-label', `${title} ${channel}`);
-      return fieldLabel(channel, slider);
-    });
-    // Keep the actual slider elements separately from their labels.
-    const ranges = sliders.map((label) => label.querySelector('input'));
-    function sync() {
-      if (!/^#[0-9a-f]{6}$/i.test(hex.value)) return;
-      swatch.style.backgroundColor = hex.value;
-      ranges.forEach((slider, index) => { slider.value = parseInt(hex.value.slice(1 + index * 2, 3 + index * 2), 16); });
-    }
-    ranges.forEach((slider) => slider.addEventListener('input', () => {
-      hex.value = `#${ranges.map((item) => Number(item.value).toString(16).padStart(2, '0')).join('')}`;
-      sync();
-    }));
-    hex.addEventListener('input', sync);
-    group.append(hex, swatch, ...sliders);
-    sync();
-    return group;
+    const select = document.createElement('select');
+    select.className = 'setting-value';
+    values.forEach((item, index) => select.add(new Option(labels[index], item)));
+    select.value = String(value);
+    return select;
   }
 
   const dialog = document.querySelector('#dashboard-dialog');
   const dialogTitle = document.querySelector('#dialog-title');
   const dialogDescription = document.querySelector('#dialog-description');
   const dialogBody = document.querySelector('#dialog-body');
+  dialog?.addEventListener('close', () => state.navigationObserver?.disconnect());
 
   function cloneValue(value) {
     if (typeof structuredClone === 'function') return structuredClone(value);
@@ -177,7 +133,7 @@ export function createSettingsEditor({
     } else if (type === 'options') {
       const values = Array.isArray(option.values) ? option.values.filter((item) => item !== '').map(String) : [];
       control = choiceControl(values, value ?? option.value ?? values[0] ?? '');
-      if (embed) control.setAttribute('aria-label', String(option.title || option.name));
+      control.setAttribute('aria-label', String(option.title || option.name));
     } else {
       control = makeInput('text', value ?? option.value ?? '');
     }
@@ -261,10 +217,6 @@ export function createSettingsEditor({
       control = makeInput('number', value);
       control.step = 'any';
     } else if (kind === 'color') {
-      if (embed) {
-        fieldset.appendChild(colourControl(value, setting.title || id));
-        return fieldset;
-      }
       control = makeInput('color', value || '#f45cad');
     } else if (kind === 'password') {
       control = makeInput('password', value);
@@ -277,7 +229,7 @@ export function createSettingsEditor({
       const options = Array.isArray(setting.options) ? setting.options.filter((item) => item !== '').map(String) : [];
       control = choiceControl(options, value ?? options[0] ?? '');
     } else if (kind === 'button') {
-      const href = embed ? null : absoluteHttpUrl(value);
+      const href = absoluteHttpUrl(value);
       const link = document.createElement(href ? 'a' : 'span');
       link.className = 'button button-cyan';
       link.textContent = String(setting.title || 'Open link');
@@ -346,34 +298,38 @@ export function createSettingsEditor({
     return payload;
   }
 
-  function confirmDelete(container, profile) {
+  function profilePrompt(action, profile) {
     return new Promise((resolve) => {
-      const confirmation = document.createElement('section');
-      confirmation.className = 'embed-confirmation';
-      confirmation.setAttribute('role', 'alertdialog');
-      confirmation.setAttribute('aria-label', `Delete profile ${profile}?`);
-      const text = document.createElement('p');
-      text.textContent = `Delete profile “${profile}”? This cannot be undone.`;
-      const yes = document.createElement('button');
-      yes.type = 'button';
-      yes.className = 'button button-danger';
-      yes.textContent = 'Confirm delete';
-      const no = document.createElement('button');
-      no.type = 'button';
-      no.className = 'button';
-      no.textContent = 'Keep profile';
-      function finish(confirmed) {
-        confirmation.remove();
-        resolve(confirmed);
-      }
-      yes.addEventListener('click', () => finish(true));
-      no.addEventListener('click', () => finish(false));
-      confirmation.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+      const deleting = action === 'delete';
+      const titles = { create: 'Create empty profile', copy: 'Copy profile', rename: 'Rename profile', delete: 'Delete profile' };
+      const { dialog: prompt, body } = createActionDialog(titles[action]);
+      const form = document.createElement('form');
+      form.className = 'dialog-form';
+      const input = makeInput('text', action === 'rename' ? profile : '');
+      input.required = true;
+      input.maxLength = 48;
+      input.pattern = '[A-Za-z0-9_-]+';
+      if (deleting) {
+        const text = document.createElement('p');
+        text.textContent = `Delete profile “${profile}”? This cannot be undone.`;
+        form.append(text);
+      } else form.append(fieldLabel('Profile name', input, 'Letters, numbers, hyphens and underscores; up to 48 characters.'));
+      const actions = document.createElement('div');
+      actions.className = 'dialog-actions';
+      const cancel = document.createElement('button');
+      cancel.type = 'button'; cancel.className = 'button'; cancel.textContent = 'Cancel';
+      cancel.addEventListener('click', () => prompt.close());
+      const submit = document.createElement('button');
+      submit.type = 'submit'; submit.className = deleting ? 'button button-danger' : 'button button-primary';
+      submit.textContent = deleting ? 'Delete profile' : 'Save profile';
+      actions.append(cancel, submit); form.append(actions); body.append(form);
+      prompt.addEventListener('close', () => resolve(null), { once: true });
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        resolve(deleting ? profile : input.value.trim());
+        prompt.close();
       });
-      confirmation.append(text, yes, no);
-      container.appendChild(confirmation);
-      no.focus();
+      (deleting ? cancel : input).focus();
     });
   }
 
@@ -385,6 +341,7 @@ export function createSettingsEditor({
     { inline = false, dialogRequestId = null, profile, registry } = {},
   ) {
     container.replaceChildren();
+    state.navigationObserver?.disconnect();
     if (inline) {
       container.classList.add('inline-counter-settings');
       const header = document.createElement('header');
@@ -399,40 +356,35 @@ export function createSettingsEditor({
     const profiles = document.createElement('section');
     profiles.className = 'settings-profiles';
     const selector = choiceControl(registry.profiles, profile,
-      registry.profiles.map((name) => name === registry.active ? `${name} (active)` : name));
-    if (embed) selector.setAttribute('aria-label', 'Settings profile');
-    else selector.removeAttribute('class');
-    profiles.appendChild(fieldLabel('Settings profile', selector));
+      // The reserved profile is literally named `default`; suffixing it again would read "default (default)".
+      registry.profiles.map((name) => name === registry.active && name !== 'default' ? `${name} (default)` : name));
+    selector.className = 'settings-control';
+    selector.setAttribute('aria-label', 'Settings profile');
+    selector.title = 'Settings profile; "(default)" marks the profile unpinned overlays use';
+    profiles.appendChild(selector);
     selector.addEventListener('change', () => loadCounterSettings(folder, { inline, profile: selector.value }));
-    const nameInput = makeInput('text', '');
-    nameInput.maxLength = 48;
-    nameInput.pattern = '[A-Za-z0-9_-]+';
-    profiles.appendChild(fieldLabel('New profile name', nameInput, 'Letters, numbers, hyphens and underscores; up to 48 characters.'));
-    const management = document.createElement('div');
-    management.className = 'dialog-actions';
-    for (const [label, action] of [['Create empty', 'create'], ['Copy profile', 'copy'], ['Rename', 'rename'], ['Delete', 'delete'], ['Activate globally', 'activate']]) {
+    const { wrapper: management, menu } = createOverflow('Profile actions', '☰');
+    for (const [label, action] of [['Create empty', 'create'], ['Copy profile', 'copy'], ['Rename', 'rename'], ['Delete', 'delete'], ['Set as default', 'activate']]) {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = action === 'delete' ? 'button button-danger' : 'button';
+      if (action === 'delete') button.className = 'card-menu__danger';
       button.textContent = label;
       button.disabled = (profile === 'default' && ['rename', 'delete'].includes(action)) || (action === 'activate' && profile === registry.active);
       button.addEventListener('click', async () => {
+        menu.hidePopover();
+        const name = action === 'activate' ? profile : await profilePrompt(action, profile);
+        if (name === null) return;
         setBusy(button, true);
-        if (embed && action === 'delete' && !await confirmDelete(profiles, profile)) {
-          setBusy(button, false);
-          button.focus();
-          return;
-        }
         try {
           const body = { action, name: profile };
           let selected = profile;
           if (action === 'create' || action === 'copy') {
             body.action = 'create';
-            body.name = nameInput.value.trim();
+            body.name = name;
             if (action === 'copy') body.copyFrom = profile;
             selected = body.name;
           } else if (action === 'rename') {
-            body.target = nameInput.value.trim();
+            body.target = name;
             selected = body.target;
           } else if (action === 'delete') selected = 'default';
           await requestJson('/api/counters/profiles', { method: 'POST', body: JSON.stringify(body) });
@@ -441,7 +393,7 @@ export function createSettingsEditor({
           notify(`Could not manage profile: ${errorText(error)}`, 'error', 5000);
         } finally { setBusy(button, false); }
       });
-      management.appendChild(button);
+      menu.appendChild(button);
     }
     profiles.appendChild(management);
     container.appendChild(profiles);
@@ -472,6 +424,7 @@ export function createSettingsEditor({
         const link = document.createElement('a');
         link.href = `#${field.id}`;
         link.textContent = setting.title || setting.uniqueID;
+        link.title = link.textContent;
         link.addEventListener('click', (event) => {
           event.preventDefault();
           field.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -541,7 +494,6 @@ export function createSettingsEditor({
         });
         if (!isCurrentDialogRequest(dialogRequestId)) return;
         notify(`Saved settings for ${folder}.`, 'success');
-        if (embed) notifyParent(await requestJson('/api/counters/profiles'));
         if (!inline) closeDialog();
       } catch (error) {
         if (!isCurrentDialogRequest(dialogRequestId)) return;
@@ -551,6 +503,26 @@ export function createSettingsEditor({
       }
     });
     container.appendChild(form);
+    const sections = groups.filter((section) => section.heading);
+    if (sections.length) {
+      const root = inline ? null : dialogBody;
+      const updateActiveSection = () => {
+        const visible = sections.filter((section) => !section.heading.hidden);
+        const top = (root?.getBoundingClientRect().top ?? 0) + 16;
+        const current = visible.findLast((section) => section.heading.getBoundingClientRect().top <= top)
+          ?? visible[0];
+        for (const section of sections) {
+          if (section === current) section.link.setAttribute('aria-current', 'location');
+          else section.link.removeAttribute('aria-current');
+        }
+      };
+      state.navigationObserver = new IntersectionObserver(updateActiveSection, {
+        root, rootMargin: '0px 0px -75% 0px', threshold: [0, 1],
+      });
+      sections.forEach((section) => state.navigationObserver.observe(section.heading));
+      search.addEventListener('input', updateActiveSection);
+      updateActiveSection();
+    }
   }
 
   async function loadCounterSettings(folder, { inline = false, profile = null } = {}) {
@@ -573,7 +545,6 @@ export function createSettingsEditor({
         ? payload.values
         : {};
       renderCounterSettings(container, folder, schema, values, { inline, dialogRequestId: requestId, profile: selected, registry });
-      notifyParent(registry);
     } catch (error) {
       if (!isCurrentDialogRequest(requestId)) return;
       container.replaceChildren();

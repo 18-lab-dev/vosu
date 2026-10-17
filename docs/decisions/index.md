@@ -19,6 +19,6 @@ description: "Files and subdirectories in Decisions."
 - [Make live parity an optional diagnostic](0011-live-parity-optional.md) - Accepted decision that live captures against upstream are an optional maintainer diagnostic, not a merge, push, or release gate.
 - [Simplify provenance checks to asset digests and the release LICENSE](0012-simplify-provenance-checks.md) - Accepted decision to keep the asset SHA-256 manifest and LICENSE appendix check while dropping duplicate hashes, notice cross-checks, the dependency-license inventory and the provenance script.
 - [Keep installed counters on the dashboard origin](0013-counters-share-dashboard-origin.md) - Accepted decision to keep counter URLs, storage, and settings links compatible and disclose that installed counters share dashboard management authority instead of isolating them.
-- [Overlay settings profiles](0014-overlay-settings-profiles.md) - Global active profiles and per-instance command identities without moving legacy values.
+- [Overlay settings profiles](0014-overlay-settings-profiles.md) - Default profiles and per-instance command identities without moving legacy values.
 - [User-managed API keys](0015-user-managed-api-keys.md) - Persistent scoped credentials alongside per-start file tokens, with immediate revocation and peer-policy enforcement.
 - [Separate the dashboard origin without moving overlays](0016-separate-dashboard-origin.md) - Supersedes ADR 0013's shared-origin boundary; independent listener, dashboard CSRF, unchanged overlay storage, and recoverable network Apply.
