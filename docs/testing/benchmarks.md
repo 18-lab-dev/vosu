@@ -187,58 +187,55 @@ records the same run.
 
 ## Performance changes for 1.1.0 (paired)
 
-Measured on 2026-10-14 on the Ryzen 9 9950X3D host with Rust 1.96.1, locked
-offline dependencies and default release features. Three builds of the same
-benchmarks ran alternately, three times each, every benchmark pinned to CPU 8 on
-the non-V-cache CCD with no other benchmark or build running:
-
-- **1.0.2 code**: `5b855e1`, the 1.0.2 sources plus the benchmark prerequisites,
-  no optimization.
-- **After round 1**: `ae0294d`, the first optimization series.
-- **After round 2**: the second optimization series on top of it.
+Measured on 2026-10-17 in the Linux guest described under
+[live-client runs](#live-client-runs), with Rust 1.96.1, locked offline
+dependencies and default release features, no client or daemon running. The
+1.0.2 code (`5b855e1`: the 1.0.2 sources plus the benchmark prerequisites, no
+optimization) and the 1.1.0 release commit `c791512` ran alternately, three
+rounds each, every benchmark process pinned to vCPU 2. Guest load averages
+were 1.79 / 2.05 / 0.99 at the start, after the build.
 
 Criterion used 2 s warm-up, 20 s measurement and 60 samples per case; values are
 the median of the three Criterion means and ranges span them (µs unless marked).
 In the 1.0.2 code the filtered benchmark's group sets 10 samples, 1 s warm-up
 and 2 s measurement itself, which take precedence over these options; the
-`fe3201c` version uses them. The precise reader is the median of fifteen
+`c791512` version uses them. The precise reader is the median of fifteen
 `memory_reader_bench` invocations.
 
-| Benchmark | 1.0.2 code | After round 1 | After round 2 | 1.0.2 / now | 1.0.2 range | Round 1 range | Round 2 range |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `regular_reader/lazer_gameplay` | 90.99 µs | 16.67 µs | 15.61 µs | 5.83× | 90.16–91.61 | 16.56–16.68 | 15.56–16.32 |
-| `regular_reader/lazer_menu` | 107.18 µs | 42.51 µs | 28.15 µs | 3.81× | 106.49–111.46 | 42.24–42.55 | 28.03–28.70 |
-| `regular_reader/stable_gameplay` | 46.55 µs | 36.32 µs | 12.14 µs | 3.84× | 46.40–47.12 | 36.12–36.67 | 12.01–12.16 |
-| `regular_reader/stable_menu` | 50.37 µs | 39.14 µs | 10.05 µs | 5.01× | 50.07–50.80 | 38.95–39.17 | 9.86–10.31 |
-| `memory_reader_bench` (lazer precise capture) | 10.64 µs | 8.90 µs | 9.75 µs | 1.09× | 10.43–11.36 | 8.74–9.13 | 8.74–11.32 |
-| `filtered_projection/v2_identical/100` | 5.262 ms | 23.65 µs | 18.99 µs | 277× | 5.242–5.854 ms | 23.42–23.77 µs | 18.93–19.85 µs |
-| `filtered_projection/v2_unique/100` | 5.867 ms | 558.9 µs | 30.41 µs | 193× | 5.836–6.337 ms | 552.8–563.3 µs | 29.37–31.11 µs |
-| `v2_subscription/distinct_plans/1000` | 425.8 µs | 161.0 µs | 83.05 µs | 5.13× | 420.8–426.8 | 159.7–161.4 | 81.63–84.85 |
-| `v2_subscription/shared_plan/1000` | 220.0 µs | 102.9 µs | 59.12 µs | 3.72× | 217.8–221.0 | 102.5–104.4 | 58.63–59.76 |
-| `serializers_cold/v1` | 7.377 µs | 6.898 µs | 4.851 µs | 1.52× | 5.917–7.476 | 5.662–6.952 | 3.752–4.976 |
-| `serializers_cold/v2` | 16.30 µs | 14.25 µs | 6.808 µs | 2.39× | 13.58–17.68 | 12.56–15.18 | 5.805–7.509 |
-| `serializers_cold/v2_precise` | 5.946 µs | 4.246 µs | 5.231 µs | 1.14× | 5.115–6.208 | 3.659–5.193 | 4.045–5.417 |
-| `serializers_cold/stream_companion` | 8.142 µs | 9.396 µs | 4.955 µs | 1.64× | 7.815–9.402 | 8.282–10.12 | 4.716–6.259 |
+| Benchmark | 1.0.2 code | `c791512` | 1.0.2 / now | 1.0.2 range | `c791512` range |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `regular_reader/lazer_gameplay` | 92.27 µs | 16.66 µs | 5.54× | 91.63–126.40 | 16.43–16.68 |
+| `regular_reader/lazer_menu` | 108.19 µs | 29.79 µs | 3.63× | 107.58–123.73 | 29.42–29.86 |
+| `regular_reader/stable_gameplay` | 45.71 µs | 12.70 µs | 3.60× | 45.27–45.71 | 12.42–12.73 |
+| `regular_reader/stable_menu` | 49.11 µs | 10.58 µs | 4.64× | 48.74–49.35 | 10.31–10.63 |
+| `memory_reader_bench` (lazer precise capture) | 10.64 µs | 8.789 µs | 1.21× | 10.44–10.97 | 8.687–8.959 |
+| `filtered_projection/v2_identical/100` | 6.179 ms | 19.90 µs | 311× | 6.151–6.434 ms | 19.84–19.96 µs |
+| `filtered_projection/v2_unique/100` | 6.950 ms | 31.71 µs | 219× | 6.796–7.194 ms | 31.61–31.72 µs |
+| `v2_subscription/distinct_plans/1000` | 409.1 µs | 85.58 µs | 4.78× | 409.0–435.8 | 85.27–86.55 |
+| `v2_subscription/shared_plan/1000` | 209.2 µs | 61.28 µs | 3.41× | 208.4–209.2 | 59.84–61.41 |
+| `serializers_cold/v1` | 4.450 µs | 2.647 µs | 1.68× | 4.437–5.939 | 2.639–2.818 |
+| `serializers_cold/v2` | 10.54 µs | 3.953 µs | 2.67× | 10.41–10.69 | 3.907–4.158 |
+| `serializers_cold/v2_precise` | 3.914 µs | 2.718 µs | 1.44× | 3.881–3.990 | 2.690–2.954 |
+| `serializers_cold/stream_companion` | 6.527 µs | 3.230 µs | 2.02× | 6.501–6.539 | 3.162–3.250 |
+| `http_v2/cold_connection` | 45.38 µs | 48.20 µs | 0.94× | 43.85–46.49 | 45.24–54.50 |
+| `http_v2/keep_alive` | 5.575 µs | 5.710 µs | 0.98× | 5.540–5.618 | 5.634–5.735 |
+| `http_v2/dispatch_only` | 364.3 ns | 381.4 ns | 0.96× | 354.9–374.4 | 380.3–382.1 |
 
 Native backend calls per capture cycle, printed once by
 `autoresearch_regular_reader` outside timing:
 
-| Case | 1.0.2 code | After round 1 | After round 2 |
-| --- | ---: | ---: | ---: |
-| lazer gameplay | 268 | 32 | 28 |
-| lazer menu | 314 | 136 | 72 |
-| stable gameplay | 135 | 135 | 29 |
-| stable menu | 148 | 148 | 21 |
+| Case | 1.0.2 code | `c791512` |
+| --- | ---: | ---: |
+| lazer gameplay | 268 | 28 |
+| lazer menu | 314 | 72 |
+| stable gameplay | 135 | 29 |
+| stable menu | 148 | 21 |
 
-- The desktop session (osu!, vosulay and a browser) was running during this
-  run and is not pinned, so the sub-10 µs serializer cases have wide ranges. A
-  separate six-round alternation of round 1 against round 2 confirmed v1
-  (1.50×), v2 (2.26×) and streamCompanion (1.59×) in six of six pairs. It found
-  no consistent change for `v2_precise` (0.93×, three of six pairs) or the
-  precise reader (1.01×), so their round-2 differences above are noise. Round 2
-  did not change either path's behaviour.
 - Batching reads whole spans instead of individual fields, so it requests more
-  bytes while making far fewer native calls.
+  bytes while making far fewer native calls (lazer gameplay: 5,418 bytes in 28
+  calls against 1,889 bytes in 268).
+- `autoresearch_http_v2` is 2–6% slower in `c791512` on both platforms, within
+  or near its ranges; 1.1.0 did not optimize the HTTP path.
 - These are synthetic Linux fixtures. They do not measure live clients,
   network transport, whole-daemon CPU or memory. Native Windows results follow;
   the live effect on both platforms is under [live readers](#live-readers).
@@ -254,38 +251,37 @@ Reproduce with the same benchmark binaries:
 cargo bench --offline --locked --package vosu --bench hot_paths -- '^(serializers_cold/|v2_subscription/(distinct_plans|shared_plan)/1000$)'
 cargo bench --offline --locked --package vosu --bench autoresearch_regular_reader
 cargo bench --offline --locked --package vosu --bench autoresearch_filtered_projection -- '^filtered_projection/v2_(identical|unique)/100$'
+cargo bench --offline --locked --package vosu --bench autoresearch_http_v2
 cargo bench --offline --locked --package vosu --bench memory_reader_bench
 ```
 
 ### Native Windows
 
-Measured on 2026-10-14 in the Windows guest described under
+Measured on 2026-10-17 in the Windows guest described under
 [live-client runs](#live-client-runs), with Rust 1.96.1, MSVC and
 `--no-default-features`, as Windows releases are built. The 1.0.2 code
-(`5b855e1`) and `fe3201c` (round 2 plus a test fix) ran alternately, three
-rounds each, every benchmark process pinned to one vCPU, with the Criterion
-options and statistics of the Linux run above. Guest CPU load was 5% at the
-start.
+(`5b855e1`) and `c791512` ran alternately, three rounds each, every benchmark
+process pinned to vCPU 2, with the Criterion options and statistics of the
+Linux run above. Guest CPU load was 5% at the start.
 
-| Benchmark | 1.0.2 code | `fe3201c` | 1.0.2 / now | 1.0.2 range | `fe3201c` range |
+| Benchmark | 1.0.2 code | `c791512` | 1.0.2 / now | 1.0.2 range | `c791512` range |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `memory_reader_bench` (lazer precise capture) | 19.00 µs | 18.96 µs | 1.00× | 18.89–19.10 | 18.88–24.61 |
-| `filtered_projection/v2_identical/100` | 7.530 ms | 25.12 µs | 300× | 7.527–7.643 ms | 24.95–35.93 µs |
-| `filtered_projection/v2_unique/100` | 7.548 ms | 39.14 µs | 193× | 7.530–7.551 ms | 38.66–55.90 µs |
-| `v2_subscription/distinct_plans/1000` | 559.5 µs | 100.9 µs | 5.54× | 552.5–562.2 | 100.4–101.5 |
-| `v2_subscription/shared_plan/1000` | 236.5 µs | 65.91 µs | 3.59× | 234.3–236.7 | 65.73–66.13 |
-| `serializers_cold/v1` | 6.550 µs | 2.884 µs | 2.27× | 6.317–8.144 | 2.841–3.008 |
-| `serializers_cold/v2` | 12.79 µs | 3.690 µs | 3.47× | 12.72–12.99 | 3.687–3.901 |
-| `serializers_cold/v2_precise` | 3.905 µs | 2.742 µs | 1.42× | 3.830–4.326 | 2.403–3.461 |
-| `serializers_cold/stream_companion` | 9.989 µs | 2.961 µs | 3.37× | 9.738–10.63 | 2.806–3.408 |
-| `http_v2/cold_connection` | 357.8 µs | 358.0 µs | 1.00× | 357.2–364.8 | 356.2–361.4 |
-| `http_v2/keep_alive` | 67.40 µs | 67.72 µs | 1.00× | 67.24–68.07 | 66.92–75.99 |
-| `http_v2/dispatch_only` | 607.3 ns | 622.6 ns | 0.98× | 606.9–609.6 | 615.1–788.2 |
+| `memory_reader_bench` (lazer precise capture) | 19.10 µs | 19.14 µs | 1.00× | 18.97–24.02 | 18.97–19.46 |
+| `filtered_projection/v2_identical/100` | 7.679 ms | 25.32 µs | 303× | 7.656–7.713 ms | 24.96–25.42 µs |
+| `filtered_projection/v2_unique/100` | 7.688 ms | 38.64 µs | 199× | 7.646–7.900 ms | 37.95–38.70 µs |
+| `v2_subscription/distinct_plans/1000` | 558.3 µs | 103.5 µs | 5.40× | 553.0–567.1 | 101.1–111.8 |
+| `v2_subscription/shared_plan/1000` | 237.2 µs | 66.29 µs | 3.58× | 236.9–239.7 | 66.12–71.04 |
+| `serializers_cold/v1` | 6.490 µs | 2.845 µs | 2.28× | 6.234–6.543 | 2.724–2.853 |
+| `serializers_cold/v2` | 12.79 µs | 4.248 µs | 3.01× | 12.75–13.09 | 3.859–4.610 |
+| `serializers_cold/v2_precise` | 3.855 µs | 2.642 µs | 1.46× | 3.847–3.886 | 2.411–2.667 |
+| `serializers_cold/stream_companion` | 9.410 µs | 3.751 µs | 2.51× | 9.316–9.505 | 3.044–4.777 |
+| `http_v2/cold_connection` | 359.5 µs | 370.1 µs | 0.97× | 358.1–363.5 | 359.7–387.8 |
+| `http_v2/keep_alive` | 67.29 µs | 69.70 µs | 0.97× | 67.23–73.41 | 67.84–70.14 |
+| `http_v2/dispatch_only` | 621.8 ns | 635.8 ns | 0.98× | 613.9–924.2 | 625.6–636.0 |
 
-- `autoresearch_http_v2` shows that round 2 did not change the cost of a cold
-  `/json/v2` request on a new connection, about 358 µs in both builds; the
-  background latency column of the [daemon table](#daemon-cpu-and-memory) is
-  dominated by that path.
+- A cold `/json/v2` request on a new connection costs about 360–370 µs in
+  both builds; the background latency column of the
+  [daemon table](#daemon-cpu-and-memory) is dominated by that path.
 - `autoresearch_regular_reader` runs only on Linux in this revision, so this
   table has no regular-reader case. Windows `read_many` issues one
   `ReadProcessMemory` per run of ascending requests within one 4 KiB page,
@@ -305,22 +301,24 @@ cargo bench --locked --no-default-features --package vosu --target x86_64-pc-win
 These runs compare vosu with released tosu **4.26.2** (tag
 `03202868c73c38938b65cce3f39b3c50e49b0fe4`, commit
 `b21b4526d8db9ce124f5a8bf475ef5421837f5b7`), the latest GitHub release when
-measured. The live-client runs used vosu `fe3201c` (the 1.1.0 candidate, which
-still reports version 1.0.2) on **2026-10-15**; the hot paths used vosu
-`v1.0.0` on **2026-10-11**, and the precise-reader fixture used vosu
-`9c47ccbe6d0a70da4b723bf7f5c30b89489251a9` on **2026-10-12**.
+measured. The live-client runs used the vosu 1.1.0 release commit `c791512` on
+**2026-10-17**; the hot paths used vosu `v1.0.0` on **2026-10-11**, and the
+precise-reader fixture used vosu `9c47ccbe6d0a70da4b723bf7f5c30b89489251a9` on
+**2026-10-12**.
 
 ### Live-client runs
 
-vosu was built from `fe3201c` with Rust 1.96.1 and each platform's release
-features: Windows `vosu.exe` (SHA-256 `8453190cd356ac7a…`) natively with MSVC
-and `--no-default-features`, Linux `vosu` (`a089842a443022d6…`) in the Linux
+vosu was built from `c791512` with Rust 1.96.1 and each platform's release
+features: Windows `vosu.exe` (SHA-256 `ba897fdc5120f85b…`) natively with MSVC
+and `--no-default-features`, Linux `vosu` (`dfe8537b790ca96e…`) in the Linux
 guest with default features. tosu ran from its published `v4.26.2` assets
 (`tosu.exe` `0b365384f2454245…`, Linux `tosu` `fa22300bcdc88c3b…`). Each run used
 fresh per-run copies with matched settings:
 `POLL_RATE` 150, `PRECISE_DATA_POLL_RATE` 10, PP calculation and key overlay
 on, loopback-only listeners, automatic updates off, tosu's in-game overlay off,
-and a warmed vosu lazer offsets cache. The workload was one silent 25-minute
+and a warmed vosu lazer offsets cache. vosu's opt-in `ENABLE_HIT_OFFSETS` and
+`ENABLE_MANIA_KEY_HIT_ERRORS` kept their default `false` except in the
+[hit-offsets row](#daemon-cpu-and-memory). The workload was one silent 25-minute
 map with 6001 circles (checksum `954a4cf2a177d1d008d52c80b1b371a3`) played by
 Autoplay in the osu! ruleset on lazer `2026.1005.0` and stable `b20260924.1`.
 
@@ -328,7 +326,8 @@ The host is a Ryzen 9 9950X3D with the RTX 5090 passed through to one guest at
 a time:
 
 - **Windows guest:** Windows 11 IoT Enterprise LTSC 26100, 8 logical
-  processors. Lazer ran from the user's installation and profile, signed out.
+  processors. Lazer ran from the user's installation and profile, signed out,
+  in a maximized window (it opened windowed and did not switch to borderless).
   Stable ran from the user's installation, whose `Songs` and `Skins` links were
   pointed at a local folder for the run and then restored; its databases and
   per-user configuration were verified unchanged afterward.
@@ -409,14 +408,14 @@ range; setup is excluded from the cycle times.
 
 | Client | Product | Regular cycle | Precise cycle | Errors | Setup |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Windows lazer | vosu | 147.2 µs (145.9–147.6) | 29.9 µs (29.7–30.2) | 0 | 64 ms |
-| Windows lazer | tosu | 739.9 µs (728.0–744.5) | 152.1 µs (151.0–156.2) | 0 | 1463 ms |
-| Windows stable | vosu | 132.3 µs (130.1–137.2) | 19.5 µs (19.4–21.0) | 0 | 79 ms |
-| Windows stable | tosu | 471.8 µs (456.4–479.6) | 42.2 µs (41.4–47.7) | 0 | 703 ms |
-| Linux lazer | vosu | 18.1 µs (17.7–19.1) | 8.5 µs (8.4–9.0) | 0 | 65 ms |
-| Linux lazer | tosu | 144.0 µs (138.0–162.2) | 33.2 µs (31.1–33.9) | 0 | 4065 ms |
-| Linux stable (Wine) | vosu | 27.2 µs (26.6–36.6) | 5.7 µs (5.5–6.7) | 0 | 23 ms |
-| Linux stable (Wine) | tosu | 146.8 µs (131.2–164.8) | 13.0 µs (10.1–14.5) | 0 | 312 ms |
+| Windows lazer | vosu | 148.0 µs (145.1–149.8) | 30.0 µs (29.8–31.0) | 0 | 71 ms |
+| Windows lazer | tosu | 737.0 µs (729.2–741.5) | 151.2 µs (150.2–152.5) | 0 | 1521 ms |
+| Windows stable | vosu | 132.7 µs (131.7–135.3) | 23.9 µs (23.8–24.3) | 0 | 85 ms |
+| Windows stable | tosu | 456.2 µs (448.6–472.9) | 40.7 µs (40.6–42.0) | 0 | 589 ms |
+| Linux lazer | vosu | 20.2 µs (17.8–21.3) | 9.1 µs (8.5–10.2) | 0 | 61 ms |
+| Linux lazer | tosu | 147.1 µs (138.1–183.1) | 32.8 µs (31.8–39.8) | 0 | 3972 ms |
+| Linux stable (Wine) | vosu | 33.7 µs (31.8–36.3) | 8.5 µs (7.6–9.4) | 0 | 22 ms |
+| Linux stable (Wine) | tosu | 189.6 µs (182.2–232.7) | 13.9 µs (11.8–16.9) | 0 | 286 ms |
 
 - On Linux lazer, tosu's ranked-play read returned the production not-ready
   sentinel on every regular cycle (counted, not an error). The cycle continued
@@ -427,14 +426,20 @@ range; setup is excluded from the cycle times.
   harness changed in one place: it no longer requires a 32-bit ELF for
   `--client stable`. osu-winello's Wine runs 32-bit `osu!.exe` inside a 64-bit
   ELF process, and tosu's own instance manager treats every Linux `osu!.exe` as
-  stable without that check. Guest load averages were 0.19–1.65 during the
+  stable without that check. Guest load averages were 0.15–1.98 during the
   Linux runs.
+- 1.1.0 reads stable replay frames on every precise cycle, in batches, to
+  derive keys and hit errors in every ruleset. On one stable process with no
+  daemon running, five alternating pairs of the 1.1.0 candidate `fe3201c`
+  (before that change) and `c791512` put the stable precise cycle at 20.22 µs
+  against 24.74 µs on Windows (1.22×) and 6.68 µs against 8.42 µs on Linux
+  (1.26×); regular cycles did not change. The lazer precise cycle is unaffected.
 
 ##### Linux regular-cycle reads by field group
 
 Separate instrumented invocations (three per product, medians shown) counted
 read calls per regular cycle by field group while the same Autoplay plays ran.
-vosu used a throwaway example, rebuilt against `fe3201c`, that wraps the
+vosu used a throwaway example, rebuilt against `c791512`, that wraps the
 production process backend with counters and calls the reader methods in
 `SourceRegularReader`'s order; its per-group sums were within one call of the
 production capture's own count. tosu's harness
@@ -456,28 +461,28 @@ Times include counter overhead.
 
 | Client | Group | vosu backend calls | vosu bytes | vosu time | tosu API calls | tosu bytes (excl. strings) | tosu time |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Linux lazer | global | 10.2 | 1,830 | 6.4 µs | 54 | ≥ 398 | 16.7 µs |
-| Linux lazer | menu | 0 | 0 | 0.0 µs | 14 | ≥ 96 | 4.9 µs |
-| Linux lazer | mp3 length | 0 | 0 | 0.0 µs | 6 | ≥ 48 | 1.9 µs |
-| Linux lazer | ranked play + room | 0 | 0 | 0.0 µs | 4 | ≥ 32 | 1.5 µs |
-| Linux lazer | **settings** | **9** | 4,330 | **7.9 µs** | **243** | ≥ 1,170 | **64.7 µs** |
-| Linux lazer | gameplay | 4 | 1,269 | 3.1 µs | 115 | ≥ 616 | 35.2 µs |
-| Linux lazer | leaderboard | 0 | 0 | 0.0 µs | 61 | ≥ 317 | 19.0 µs |
-| Linux lazer | user | 1 | 44 | 0.5 µs | 7 | ≥ 52 | 2.5 µs |
-| Linux lazer | total | 24 | 7,472 | 19.6 µs | 504 | — | 144.9 µs |
-| Linux stable (Wine) | global | 4 | 828 | 6.7 µs | 22 | ≥ 68 | 17.9 µs |
-| Linux stable (Wine) | menu | 4 | 828 | 3.6 µs | 9 | ≥ 28 | 6.5 µs |
-| Linux stable (Wine) | mp3 length | 3 | 16 | 1.6 µs | 3 | ≥ 16 | 2.0 µs |
-| Linux stable (Wine) | **settings** | **5.8** | 10,839 | **22.8 µs** | **224** | ≥ 744 | **126.4 µs** |
-| Linux stable (Wine) | gameplay | 5 | 336 | 3.9 µs | 28 | ≥ 104 | 27.4 µs |
-| Linux stable (Wine) | leaderboard | 0 | 0 | 0.1 µs | 3 | ≥ 12 | 3.2 µs |
-| Linux stable (Wine) | user | 4 | 448 | 3.1 µs | 17 | ≥ 69 | 10.0 µs |
-| Linux stable (Wine) | total | 25 | 13,286 | 38.9 µs | 306 | — | 188.7 µs |
+| Linux lazer | global | 10.2 | 1,830 | 6.7 µs | 54 | ≥ 398 | 17.9 µs |
+| Linux lazer | menu | 0 | 0 | 0.0 µs | 14 | ≥ 96 | 5.2 µs |
+| Linux lazer | mp3 length | 0 | 0 | 0.0 µs | 6 | ≥ 48 | 2.0 µs |
+| Linux lazer | ranked play + room | 0 | 0 | 0.1 µs | 4 | ≥ 32 | 1.6 µs |
+| Linux lazer | **settings** | **9** | 4,330 | **8.3 µs** | **243** | ≥ 1,170 | **67.8 µs** |
+| Linux lazer | gameplay | 4 | 1,269 | 3.3 µs | 115 | ≥ 616 | 38.3 µs |
+| Linux lazer | leaderboard | 0 | 0 | 0.0 µs | 61 | ≥ 317 | 19.8 µs |
+| Linux lazer | user | 1 | 44 | 0.6 µs | 7 | ≥ 52 | 2.7 µs |
+| Linux lazer | total | 24 | 7,472 | 19.2 µs | 504 | — | 155.0 µs |
+| Linux stable (Wine) | global | 4 | 828 | 4.9 µs | 22 | ≥ 68 | 15.0 µs |
+| Linux stable (Wine) | menu | 4 | 828 | 2.6 µs | 9 | ≥ 28 | 5.6 µs |
+| Linux stable (Wine) | mp3 length | 3 | 16 | 1.3 µs | 3 | ≥ 16 | 1.7 µs |
+| Linux stable (Wine) | **settings** | **4.8** | 11,369 | **16.4 µs** | **224** | ≥ 744 | **110.7 µs** |
+| Linux stable (Wine) | gameplay | 5 | 336 | 2.7 µs | 28 | ≥ 104 | 24.2 µs |
+| Linux stable (Wine) | leaderboard | 0 | 0 | 0.0 µs | 3 | ≥ 12 | 2.7 µs |
+| Linux stable (Wine) | user | 4 | 448 | 2.2 µs | 17 | ≥ 69 | 8.6 µs |
+| Linux stable (Wine) | total | 24 | 13,816 | 32.2 µs | 306 | — | 169.4 µs |
 
 Batched captures closed the settings gap: on Linux lazer vosu reads settings in
-9 backend calls (7.9 µs) against tosu's 243 API calls (64.7 µs), and the whole
-regular cycle in 24 calls (19.6 µs) against 504 (144.9 µs). On stable the cycle
-is 25 calls (38.9 µs) against 306 (188.7 µs). A batch reads whole spans, so vosu
+9 backend calls (8.3 µs) against tosu's 243 API calls (67.8 µs), and the whole
+regular cycle in 24 calls (19.2 µs) against 504 (155.0 µs). On stable the cycle
+is 24 calls (32.2 µs) against 306 (169.4 µs). A batch reads whole spans, so vosu
 requests more bytes than tosu while making far fewer calls. Groups with no vosu
 calls reuse fields that an earlier batch in the same capture already read; for
 example, lazer's batched gameplay read also decodes the personal leaderboard
@@ -499,14 +504,31 @@ root because processes with file capabilities are not dumpable.
 
 | Client | Mode | vosu alone CPU | vosu CPU | tosu CPU | vosu RSS | tosu RSS | vosu private | tosu private | `/json/v2` latency vosu / tosu |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Windows lazer | background | 1.35% | 1.35% | 2.15% | 42.5 MB | 91.1 MB | 7.0 MB | 81.6 MB | 4.76 / 4.89 ms |
-| Windows lazer | consumer | 1.35% | 1.60% | 3.06% | 42.6 MB | 95.7 MB | 7.5 MB | 86.7 MB | 0.26 / 0.65 ms |
-| Windows stable | background | 1.35% | 1.42% | 1.74% | 48.7 MB | 148.5 MB | 13.5 MB | 130.8 MB | 8.93 / 8.14 ms |
-| Windows stable | consumer | 1.53% | 1.74% | 3.61% | 49.2 MB | 152.8 MB | 14.0 MB | 137.4 MB | 0.37 / 3.51 ms |
-| Linux lazer | background | 0.87% | 0.84% | 1.36% | 29.1 MB | 270.6 MB | 25.3 MB | 260.5 MB | 0.77 / 3.25 ms |
-| Linux lazer | consumer | 0.98% | 0.93% | 2.42% | 30.4 MB | 280.6 MB | 26.6 MB | 270.5 MB | 0.26 / 2.51 ms |
-| Linux stable (Wine) | background | 0.78% | 0.76% | 0.91% | 35.4 MB | 279.6 MB | 31.4 MB | 270.8 MB | 0.89 / 3.81 ms |
-| Linux stable (Wine) | consumer | 0.87% | 0.84% | 2.00% | 36.6 MB | 284.3 MB | 32.6 MB | 275.5 MB | 0.25 / 2.86 ms |
+| Windows lazer | background | 1.67% | 1.67% | 2.78% | 41.7 MB | 88.8 MB | 7.1 MB | 78.6 MB | 9.90 / 10.45 ms |
+| Windows lazer | consumer | 1.49% | 1.70% | 2.64% | 42.2 MB | 91.2 MB | 7.9 MB | 82.7 MB | 0.30 / 0.68 ms |
+| Windows stable | background | 1.49% | 1.53% | 1.63% | 49.7 MB | 148.9 MB | 14.7 MB | 131.5 MB | 4.83 / 8.00 ms |
+| Windows stable | consumer | 1.70% | 1.81% | 3.19% | 50.9 MB | 152.7 MB | 16.0 MB | 135.7 MB | 0.36 / 3.43 ms |
+| Linux lazer | background | 0.89% | 0.84% | 1.42% | 29.8 MB | 266.2 MB | 25.9 MB | 256.1 MB | 0.77 / 3.25 ms |
+| Linux lazer | consumer | 0.96% | 0.96% | 2.53% | 31.0 MB | 276.1 MB | 27.2 MB | 266.1 MB | 0.25 / 2.61 ms |
+| Linux stable (Wine) | background | 1.00% | 0.96% | 1.04% | 39.7 MB | 266.6 MB | 35.8 MB | 257.7 MB | 0.80 / 4.42 ms |
+| Linux stable (Wine) | consumer | 1.11% | 1.07% | 2.27% | 40.5 MB | 274.7 MB | 36.6 MB | 265.8 MB | 0.29 / 3.06 ms |
+
+**Hit-offsets cost.** A separate vosu-alone run on Linux lazer set
+`ENABLE_HIT_OFFSETS = true` in the run's `vosu.toml` before warm-up, on a fresh
+Autoplay of the same map in the same lazer process, and confirmed that
+`/json/v2` published `play.hitOffsets` (432 entries at the start, 5,853 at the
+end); all six windows were accepted. Compared with the default vosu-alone run:
+
+| Linux lazer, vosu alone | Mode | CPU | RSS | Private | `/json/v2` latency |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `ENABLE_HIT_OFFSETS` off (default) | background | 0.89% | 37.1 MB | 33.3 MB | 0.56 ms |
+| `ENABLE_HIT_OFFSETS` on | background | 0.91% | 37.2 MB | 33.4 MB | 0.69 ms |
+| `ENABLE_HIT_OFFSETS` off (default) | consumer | 0.96% | 38.5 MB | 34.7 MB | 0.24 ms |
+| `ENABLE_HIT_OFFSETS` on | consumer | 1.16% | 38.9 MB | 35.0 MB | 0.39 ms |
+
+With the setting on, the precise reader also reads each hit's offset, and
+every `/json/v2` response carries the whole offset list, which grows through
+the play. The consumer difference was not split between those two costs.
 
 - CPU is a percentage of one logical core.
 - RSS is the Windows working set or Linux resident set.
@@ -523,15 +545,16 @@ root because processes with file capabilities are not dumpable.
   tosu; vosu started from its own run directory.
 
 Evidence is retained on the measurement host under
-`~/.cache/vosu-rebench-20261014/`: `windows-live/` and `linux-live/` (launch
-identities, collector configurations, per-window samples, reader logs and
-per-group breakdowns), `paired/` (Windows Criterion output and logs),
-`windows-build-logs/`, and `stage/` and `linux/` (the guest scripts, including
-`regular_read_breakdown.rs`). The harnesses come from
-`~/.cache/vosu-1.0.0-live-20261011/` (the tosu harness with its mapping and
-checksums, and the hot-path evidence) and `~/.cache/vosu-linux-matrix-20261013/`
-(the Linux launcher with `--tosu-cwd`, the patched tosu harness and
-`patch_tosu_harness.py`).
+`~/.cache/vosu-rebench-20261017/`: `windows-results/live-c791512/` and
+`linux-results-c791512/` (launch identities, collector configurations,
+per-window samples, reader logs, per-group breakdowns, the `fe3201c`/`c791512`
+stable pairs and the hit-offsets run), `windows-results/paired-c791512/` and
+`linux-results-c791512/paired/` (Criterion output and logs), and `windows/` and
+`linux/` (the guest scripts, including `regular_read_breakdown.rs`). The
+harnesses come from `~/.cache/vosu-1.0.0-live-20261011/` (the tosu harness with
+its mapping and checksums, and the hot-path evidence) and
+`~/.cache/vosu-linux-matrix-20261013/` (the Linux launcher with `--tosu-cwd`,
+the patched tosu harness and `patch_tosu_harness.py`).
 
 ### Precise-reader fixture
 
