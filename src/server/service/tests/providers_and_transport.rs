@@ -39,9 +39,14 @@
                 let details: Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 16384).await.unwrap()).unwrap();
                 assert_eq!(details["bytes"], 5);
                 assert_eq!(details["complete"], true);
-                // Paths, not strings: `folder` joins with '/', and the reported path must not
-                // carry Windows' `\\?\` verbatim prefix.
-                assert_eq!(std::path::Path::new(details["path"].as_str().unwrap()), folder);
+                // Compare canonical forms: the reported path is canonical, while `folder` may
+                // contain an 8.3 short name (hosted Windows TEMP is `C:\Users\RUNNER~1\...`).
+                let reported = details["path"].as_str().unwrap();
+                assert!(!reported.starts_with(r"\\?\"), "verbatim prefix leaked: {reported}");
+                assert_eq!(
+                    std::fs::canonicalize(reported).unwrap(),
+                    std::fs::canonicalize(&folder).unwrap()
+                );
             }
         }
         processor.shutdown().await;
