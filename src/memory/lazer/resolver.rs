@@ -31,6 +31,7 @@ impl LazerMemory {
             catcher_cache: None,
             selected_gamemode: 0,
             mania_key_hit_errors: false,
+            hit_offsets: false,
             scoring_display_mode: 0,
             watching_replay: false,
             spectating: false,

@@ -168,6 +168,13 @@ impl KeyOverlayUpdates {
             Self::Config(value) => value.borrow().enable_mania_key_hit_errors,
         }
     }
+
+    fn hit_offsets(&self) -> bool {
+        match self {
+            Self::Direct(_) => false,
+            Self::Config(value) => value.borrow().enable_hit_offsets,
+        }
+    }
 }
 
 pub struct SourcePreciseReader<R> {
@@ -246,6 +253,9 @@ impl<R: SynchronizedMemoryReader + 'static> PreciseSnapshotReader for SourcePrec
             }
             let enabled = self.enable_key_overlay.mania_key_hit_errors();
             self.reader.set_mania_key_hit_errors(enabled);
+            let offsets_enabled = self.enable_key_overlay.hit_offsets();
+            self.reader.set_hit_offsets(offsets_enabled);
+            snapshot = snapshot.enable_hit_offsets(offsets_enabled);
             let mut errors = self.reader.hit_errors(context.committed_hit_error_index);
             if let Ok(crate::process::ReadStatus::Ready(errors)) = &mut errors {
                 if enabled {

@@ -60,6 +60,7 @@ pub(super) fn build_tourney(
             index,
             clients.len(),
             snapshot.runtime_settings().enable_mania_key_hit_errors,
+            snapshot.runtime_settings().enable_hit_offsets,
         )?);
     }
     let tourney = &manager.state().regular.tourney;
@@ -115,6 +116,7 @@ pub(super) fn build_stable_client(
     index: usize,
     len: usize,
     enable_key_hits: bool,
+    enable_hit_offsets: bool,
 ) -> Result<TourneyClient, ApiError> {
     let bundle = instance.state();
     let state = bundle.regular.as_ref();
@@ -157,7 +159,7 @@ pub(super) fn build_stable_client(
             &bundle.precise.hit_errors,
             enable_key_hits,
             bundle.precise.active_catcher(),
-            bundle.precise.hit_offsets(),
+            enable_hit_offsets.then(|| bundle.precise.hit_offsets()),
         ),
     })
 }
@@ -271,7 +273,7 @@ pub(super) fn build_lazer_client(
         release_hit_errors: Vec::new(),
         key_hit_errors: None,
         catcher: None,
-        hit_offsets: Vec::new(),
+        hit_offsets: None,
         combo: Combo {
             current: score.combo,
             max: score.max_combo,

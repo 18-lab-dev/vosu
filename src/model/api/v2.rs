@@ -337,8 +337,8 @@ pub struct Play<V = Vec<f64>> {
     pub press_hit_errors: V,
     #[serde(rename = "releaseHitErrors")]
     pub release_hit_errors: V,
-    #[serde(rename = "hitOffsets")]
-    pub hit_offsets: V,
+    #[serde(rename = "hitOffsets", skip_serializing_if = "Option::is_none")]
+    pub hit_offsets: Option<V>,
     #[serde(
         rename = "keyHitErrors",
         skip_serializing_if = "Option::is_none",
@@ -431,8 +431,12 @@ pub struct PreciseResponse {
     pub press_hit_errors: Vec<f64>,
     #[serde(rename = "releaseHitErrors")]
     pub release_hit_errors: Vec<f64>,
-    #[serde(rename = "hitOffsets")]
-    pub hit_offsets: Vec<f64>,
+    #[serde(
+        rename = "hitOffsets",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub hit_offsets: Option<Vec<f64>>,
     #[serde(
         rename = "keyHitErrors",
         skip_serializing_if = "Option::is_none",

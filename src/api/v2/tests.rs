@@ -501,49 +501,58 @@ fn default_builder_has_exact_root_order_and_source_default_tourney() {
 
 #[test]
 fn play_threads_press_and_release_hit_errors_with_exact_wire_shape() {
-    let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
-    let mut precise = (*base.precise).clone();
-    precise.status = 2;
-    precise.mode = 0;
-    precise.hit_errors = Arc::new(HitErrorArray {
-        all: vec![-3.5, 6.25],
-        press: vec![-3.5],
-        release: vec![6.25],
-        key: None,
-        offsets: vec![2.0, -4.0, -3.5],
-    });
-    let state = Arc::new(StateBundleSnapshot {
-        source: base.source,
-        generation: base.generation,
-        reset_epoch: base.reset_epoch,
-        regular: Arc::clone(&base.regular),
-        precise: Arc::new(precise),
-    });
-    let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
-        1,
-        Some(10),
-        true,
-        ApiRuntimeSettings::default(),
-        [manager_entry(10, state, false, None)],
-    )));
+    for enabled in [false, true] {
+        let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
+        let mut precise = (*base.precise).clone();
+        precise.status = 2;
+        precise.mode = 0;
+        precise.hit_errors = Arc::new(HitErrorArray {
+            all: vec![-3.5, 6.25],
+            press: vec![-3.5],
+            release: vec![6.25],
+            key: None,
+            offsets: vec![2.0, -4.0, -3.5],
+        });
+        let state = Arc::new(StateBundleSnapshot {
+            source: base.source,
+            generation: base.generation,
+            reset_epoch: base.reset_epoch,
+            regular: Arc::clone(&base.regular),
+            precise: Arc::new(precise),
+        });
+        let snapshot = CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(
+            1,
+            Some(10),
+            true,
+            ApiRuntimeSettings {
+                enable_hit_offsets: enabled,
+                ..Default::default()
+            },
+            [manager_entry(10, state, false, None)],
+        )));
 
-    assert!(json(&build(&snapshot).unwrap().play).contains(
-        r#""hitErrorArray":[-3.5,6.25],"pressHitErrors":[-3.5],"releaseHitErrors":[6.25]"#
-    ));
-    assert_eq!(
-        encode(&snapshot).unwrap(),
-        encode_dto(&build(&snapshot).unwrap()).unwrap()
-    );
-    assert_eq!(
-        serde_json::to_value(build(&snapshot).unwrap()).unwrap()["play"]["hitOffsets"],
-        serde_json::json!([2.0, -4.0, -3.5])
-    );
-    let precise = crate::api::precise::build(&snapshot).unwrap();
-    assert_eq!(precise.hit_offsets, [2.0, -4.0, -3.5]);
-    assert_eq!(
-        crate::api::precise::encode(&snapshot).unwrap().as_ref(),
-        encode_dto(&precise).unwrap().as_ref()
-    );
+        assert!(json(&build(&snapshot).unwrap().play).contains(
+            r#""hitErrorArray":[-3.5,6.25],"pressHitErrors":[-3.5],"releaseHitErrors":[6.25]"#
+        ));
+        assert_eq!(
+            encode(&snapshot).unwrap(),
+            encode_dto(&build(&snapshot).unwrap()).unwrap()
+        );
+        let play = serde_json::to_value(build(&snapshot).unwrap()).unwrap();
+        assert_eq!(play["play"].get("hitOffsets").is_some(), enabled);
+        if enabled {
+            assert_eq!(
+                play["play"]["hitOffsets"],
+                serde_json::json!([2.0, -4.0, -3.5])
+            );
+        }
+        let precise = crate::api::precise::build(&snapshot).unwrap();
+        assert_eq!(precise.hit_offsets, enabled.then(|| vec![2.0, -4.0, -3.5]));
+        assert_eq!(
+            crate::api::precise::encode(&snapshot).unwrap().as_ref(),
+            encode_dto(&precise).unwrap().as_ref()
+        );
+    }
 }
 
 #[test]
@@ -948,6 +957,7 @@ fn catcher_is_additive_only_during_catch_gameplay_and_both_encoders_agree() {
             true,
             ApiRuntimeSettings {
                 enable_mania_key_hit_errors: true,
+                enable_hit_offsets: true,
                 ..Default::default()
             },
             [manager_entry(10, state, false, None)],

@@ -132,6 +132,7 @@ pub struct LazerMemory {
     pub(super) catcher_cache: Option<(usize, usize, std::time::Instant)>,
     pub(super) selected_gamemode: i64,
     pub(super) mania_key_hit_errors: bool,
+    pub(super) hit_offsets: bool,
     pub(super) scoring_display_mode: i32,
     pub(super) watching_replay: bool,
     pub(super) spectating: bool,

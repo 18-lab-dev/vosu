@@ -182,6 +182,7 @@ fn component_or_manager_changes_invalidate_dependent_caches() {
         ApiRuntimeSettings {
             enable_key_overlay: false,
             enable_mania_key_hit_errors: false,
+            enable_hit_offsets: false,
         },
         manager_one.instances().values().cloned(),
     ));

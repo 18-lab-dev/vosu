@@ -786,6 +786,7 @@ pub async fn run_cli() -> io::Result<()> {
             ApiRuntimeSettings {
                 enable_key_overlay: current.enable_key_overlay,
                 enable_mania_key_hit_errors: current.enable_mania_key_hit_errors,
+                enable_hit_offsets: current.enable_hit_offsets,
             },
         )),
         Arc::new(ProductionSnapshotEncoder),

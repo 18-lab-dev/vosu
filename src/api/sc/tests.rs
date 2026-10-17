@@ -164,6 +164,7 @@ fn snapshot_with_precise(
         ApiRuntimeSettings {
             enable_key_overlay: enabled,
             enable_mania_key_hit_errors: false,
+            enable_hit_offsets: false,
         },
         [entry],
     )))

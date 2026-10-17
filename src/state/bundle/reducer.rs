@@ -673,6 +673,16 @@ impl StateBundle {
         snapshot: &RawPreciseSnapshot,
         now: Instant,
     ) -> ReadContext {
+        if snapshot.hit_offsets_enabled() != self.stable_offsets.enabled {
+            self.stable_offsets.set_enabled(
+                snapshot.hit_offsets_enabled(),
+                if snapshot.capture().start_index() == 0 {
+                    f64::NEG_INFINITY
+                } else {
+                    self.global.play_time
+                },
+            );
+        }
         if let Ok(ReadStatus::Ready(global)) = snapshot.global() {
             self.global.status = global.status;
             self.global.play_time = global.time;
@@ -830,7 +840,7 @@ impl StateBundle {
                     );
                     self.gameplay.is_key_overlay_default_state = false;
                 }
-                if snapshot.capture().mode() == 0 {
+                if snapshot.hit_offsets_enabled() && snapshot.capture().mode() == 0 {
                     if self.source == ClientType::Stable {
                         if self.stable_offsets.heads.is_none()
                             && let Some(checksum) = self.menu.checksum.as_deref()

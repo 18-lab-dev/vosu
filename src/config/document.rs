@@ -160,6 +160,7 @@ impl ConfigDocument {
             ConfigKey::CalculatePp => self.config.calculate_pp = value,
             ConfigKey::EnableKeyOverlay => self.config.enable_key_overlay = value,
             ConfigKey::EnableManiaKeyHitErrors => self.config.enable_mania_key_hit_errors = value,
+            ConfigKey::EnableHitOffsets => self.config.enable_hit_offsets = value,
             ConfigKey::ShowMpCommands => self.config.show_mp_commands = value,
             ConfigKey::ReadManiaScrollSpeed => self.config.read_mania_scroll_speed = value,
             _ => unreachable!("schema boolean key has boolean storage"),
@@ -200,6 +201,7 @@ impl ConfigDocument {
             "ENABLE_MANIA_KEY_HIT_ERRORS" => {
                 toml::Value::Boolean(self.config.enable_mania_key_hit_errors)
             }
+            "ENABLE_HIT_OFFSETS" => toml::Value::Boolean(self.config.enable_hit_offsets),
             "POLL_RATE" => toml::Value::Float(self.config.poll_rate),
             "PRECISE_DATA_POLL_RATE" => toml::Value::Float(self.config.precise_data_poll_rate),
             "V2_SUBSCRIPTION_DEBOUNCE" => toml::Value::Float(self.config.v2_subscription_debounce),

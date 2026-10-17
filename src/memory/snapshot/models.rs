@@ -306,10 +306,16 @@ pub struct RawPreciseSnapshot {
     pub(super) global: MemoryRead<GlobalPrecise>,
     pub(super) key_overlay: ConditionalRead<KeyOverlay>,
     pub(super) hit_errors: ConditionalRead<HitErrors>,
+    pub(super) enable_hit_offsets: bool,
     pub(super) catcher: ConditionalRead<crate::model::memory::Catcher>,
 }
 
 impl RawPreciseSnapshot {
+    #[must_use]
+    pub const fn hit_offsets_enabled(&self) -> bool {
+        self.enable_hit_offsets
+    }
+
     #[must_use]
     pub fn capture(&self) -> &PreciseCaptureContext {
         self.capture.as_ref()

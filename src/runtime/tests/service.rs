@@ -35,6 +35,7 @@ fn non_focused_instance_generation_invalidates_manager_revision() {
         game_focused: true,
         enable_key_overlay: true,
         enable_mania_key_hit_errors: false,
+        enable_hit_offsets: false,
         instances: BTreeMap::from([(7, 10), (9, 20)]),
     };
     assert_eq!(revisions.observe(initial.clone()), 1);

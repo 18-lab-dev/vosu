@@ -33,6 +33,7 @@ pub trait MemoryReader: Send {
     fn key_overlay(&mut self, mode: i64) -> MemoryRead<KeyOverlay>;
     fn hit_errors(&mut self, last_index: i64) -> MemoryRead<HitErrors>;
     fn set_mania_key_hit_errors(&mut self, _enabled: bool) {}
+    fn set_hit_offsets(&mut self, _enabled: bool) {}
     fn catcher(&mut self, _play_time: f64) -> MemoryRead<crate::model::memory::Catcher> {
         Ok(ReadStatus::Unsupported("catcher"))
     }

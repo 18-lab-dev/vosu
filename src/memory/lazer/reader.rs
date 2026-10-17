@@ -310,6 +310,9 @@ impl MemoryReader for LazerMemory {
     fn set_mania_key_hit_errors(&mut self, enabled: bool) {
         self.mania_key_hit_errors = enabled;
     }
+    fn set_hit_offsets(&mut self, enabled: bool) {
+        self.hit_offsets = enabled;
+    }
     fn hit_errors(&mut self, last: i64) -> MemoryRead<HitErrors> {
         if self.player_loading {
             return Ok(ReadStatus::Ready(HitErrors {
@@ -1008,7 +1011,8 @@ impl LazerMemory {
                 Some(HitErrorEvent::Timing { value, object }) => {
                     errors.all.push(value);
                     errors.press.push(value);
-                    if self.selected_gamemode == 0
+                    if self.hit_offsets
+                        && self.selected_gamemode == 0
                         && let Some((x, y)) =
                             self.read_hit_offset(add(items, index * 0x40)?, object)
                     {

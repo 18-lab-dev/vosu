@@ -51,7 +51,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
 ### Gameplay
 
 - Added opt-in `ENABLE_MANIA_KEY_HIT_ERRORS` (default false) and vosu v2/precise `keyHitErrors` per-column press/release arrays. Stable preserves matched displayed lanes, including Mirror; lazer reads object columns and mirrors hold-release corrections.
-- Added vosu v2 `play.hitOffsets` and precise `hitOffsets`: flat cursor-x/y-offset
+- Added opt-in `ENABLE_HIT_OFFSETS` (default false) for vosu v2 `play.hitOffsets` and precise `hitOffsets`: flat cursor-x/y-offset
   and timing-error triples for osu!standard circles and slider heads, with
   incremental replay/map matching on stable and judgement-position reads on lazer.
   Stable under HR reflects positions before applying the stack offset, as the game does.

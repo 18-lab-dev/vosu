@@ -1154,7 +1154,8 @@ fn osu_hit_offset_nullable_position_and_property_layout() {
                 memory.put(address + 4, 200f32.to_le_bytes());
             }
         }
-        let mut reader = reader(Arc::new(memory));
+        let memory = Arc::new(memory);
+        let mut reader = reader(memory.clone());
         reader.selected_gamemode = 0;
         Arc::make_mut(&mut reader.offsets).osu_hit_object =
             Some(crate::memory::lazer_offsets::OsuHitObjectOffsets {
@@ -1162,6 +1163,24 @@ fn osu_hit_offset_nullable_position_and_property_layout() {
                 stack_height: 0xa0,
                 scale: 0xb0,
             });
+        let disabled = reader.read_hit_error_suffix(event, 1, 0).unwrap();
+        assert_eq!(disabled.errors.all, [-7.0]);
+        assert!(disabled.errors.offsets.is_empty());
+        for address in [
+            event + 0x30,
+            event + 0x34,
+            event + 0x38,
+            object + 0x80,
+            object + 0xa0,
+            object + 0xb0,
+        ] {
+            assert_eq!(
+                memory.read_count(address),
+                0,
+                "spatial read while disabled at {address:x}"
+            );
+        }
+        reader.hit_offsets = true;
         let result = reader.read_hit_error_suffix(event, 1, 0).unwrap();
         assert_eq!(result.errors.all, [-7.0]);
         assert_eq!(result.errors.offsets.len(), 3);
@@ -1179,6 +1198,7 @@ fn osu_hit_offset_absent_or_unmeasured_keeps_timing() {
     memory.put(event + 0x30, [0]);
     let mut reader = reader(Arc::new(memory));
     reader.selected_gamemode = 0;
+    reader.hit_offsets = true;
     let result = reader.read_hit_error_suffix(event, 1, 0).unwrap();
     assert_eq!(result.errors.all, [3.0]);
     assert!(result.errors.offsets.is_empty());

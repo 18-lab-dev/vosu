@@ -356,6 +356,7 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 | `CALCULATE_PP` | `true` | Enable live performance calculations. |
 | `ENABLE_KEY_OVERLAY` | `true` | Publish key-overlay data in compatible schemas. |
 | `ENABLE_MANIA_KEY_HIT_ERRORS` | `false` | Opt in to per-column mania press/release timing arrays in vosu v2 and precise payloads. |
+| `ENABLE_HIT_OFFSETS` | `false` | Opt in to osu!standard cursor-offset and timing triples in vosu v2 and precise payloads. |
 | `POLL_RATE` | `150` | Regular state interval in milliseconds; range `100`–`60000`. |
 | `PRECISE_DATA_POLL_RATE` | `10` | Precise state interval in milliseconds; range `1`–`60000`. |
 | `V2_SUBSCRIPTION_DEBOUNCE` | `1` | Selected-field sampling interval and minimum interval between its WebSocket frames, in milliseconds; range `1`–`60000`, fractional values supported. |
@@ -444,8 +445,8 @@ Edge timestamps are nullable gameplay milliseconds. Stable counts every retained
 
 Catch gameplay also publishes the vosu-only `catcher: { "x": number, "dashing": boolean }` object in v2 `play` and at the precise payload's top level. It is omitted in menus, results, and other rulesets. `x` is the client's stored playfield position in osu! pixels (0–512), not a screen-space coordinate; `dashing` is ordinary dash, not hyperdash. Stable selects the replay frame at the current play time (including preloaded watched replays), independently of new judgements. The legacy x slot and dash value 1 follow [lazer's legacy catch replay conversion](https://github.com/ppy/osu/blob/2026.921.0-lazer/osu.Game.Rulesets.Catch/Replays/CatchReplayFrame.cs); live stable autoplay confirmed both. Lazer reads the catcher's native X and Dashing fields during precise polling, using the measured catch entries of the offsets asset or runtime generation (see [offset maintenance](docs/operations/offsets-asset.md)).
 
-The v2 payloads also expose `play.hitOffsets` (regular v2) and top-level
-`hitOffsets` (precise v2): a flat stride-3 array `[x, y, error, …]` for osu!standard
+With `ENABLE_HIT_OFFSETS = true`, v2 payloads additionally expose `play.hitOffsets`
+(regular v2) and top-level `hitOffsets` (precise v2): a flat stride-3 array `[x, y, error, …]` for osu!standard
 circle and slider-head hits. `x`/`y` are cursor minus stacked center in displayed
 512×384 playfield pixels; `error` is the original matching timing error in ms.
 The array is empty outside standard gameplay; missing spatial evidence omits a
@@ -460,6 +461,10 @@ and object's position/stack/scale, so its applied positional mods need no map
 reconstruction. Lazer needs the measured spatial offsets from the embedded asset
 or runtime generation; without them it emits no triples. These fields are not
 added to v1 or streamCompanion.
+The field is omitted entirely by default. While disabled, stable skips spatial
+replay/map matching and lazer skips judgement-position and object-property reads.
+Enabling mid-attempt records subsequent hits only; it does not backfill history.
+`keys.all` and `catcher` are independent of this setting.
 
 These additive hit-error and `keys.all` fields are planned for a tosu port soon(tm). Until that lands, overlays targeting both servers must treat them as optional. Existing tosu overlays can use vosu's regular and precise v2 streams without adapting to the extensions.
 

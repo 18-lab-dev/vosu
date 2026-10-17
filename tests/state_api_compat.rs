@@ -202,7 +202,6 @@ fn strip_vosu_extensions(value: &mut Value) {
             object.shift_remove("keyHitErrors");
             object.shift_remove("releaseHitErrors");
             object.shift_remove("catcher");
-            object.shift_remove("hitOffsets");
             for value in object.values_mut() {
                 strip_vosu_extensions(value);
             }

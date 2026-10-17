@@ -16,6 +16,7 @@ fn runtime(enable_key_overlay: bool) -> ApiRuntimeSettings {
     ApiRuntimeSettings {
         enable_key_overlay,
         enable_mania_key_hit_errors: false,
+        enable_hit_offsets: false,
     }
 }
 

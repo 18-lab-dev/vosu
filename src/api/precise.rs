@@ -22,7 +22,10 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<PreciseResponse, ApiError> {
         hit_errors: precise.hit_errors.all.clone(),
         press_hit_errors: precise.hit_errors.press.clone(),
         release_hit_errors: precise.hit_errors.release.clone(),
-        hit_offsets: precise.hit_offsets().to_vec(),
+        hit_offsets: snapshot
+            .runtime_settings()
+            .enable_hit_offsets
+            .then(|| precise.hit_offsets().to_vec()),
         key_hit_errors: snapshot
             .runtime_settings()
             .enable_mania_key_hit_errors
@@ -70,6 +73,7 @@ pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
             precise,
             &tourney,
             snapshot.runtime_settings().enable_mania_key_hit_errors,
+            snapshot.runtime_settings().enable_hit_offsets,
         )
         .map_err(|error| ApiError::serialization(error.to_string()))?;
         Ok(Bytes::from(output))
@@ -89,11 +93,14 @@ fn write_document(
     precise: &PreciseState,
     tourney: &[(f64, &PreciseState)],
     enable_key_hits: bool,
+    enable_hit_offsets: bool,
 ) -> io::Result<()> {
     output.extend_from_slice(b"{");
     write_fields(output, precise)?;
-    output.extend_from_slice(b",\"hitOffsets\":");
-    write_numbers(output, precise.hit_offsets())?;
+    if enable_hit_offsets {
+        output.extend_from_slice(b",\"hitOffsets\":");
+        write_numbers(output, precise.hit_offsets())?;
+    }
     if enable_key_hits {
         output.extend_from_slice(b",\"keyHitErrors\":");
         crate::api::json::Wire::write_wire(
@@ -406,7 +413,6 @@ mod tests {
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
             r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[]},"hitErrors":[],"pressHitErrors":[],"releaseHitErrors":[],"tourney":[]}"#
-                .replace(",\"tourney\":", ",\"hitOffsets\":[],\"tourney\":")
         );
     }
 
@@ -549,7 +555,6 @@ mod tests {
         assert_eq!(
             std::str::from_utf8(&encoded).expect("UTF-8 JSON"),
             r#"{"keys":{"k1":{"isPressed":false,"count":0},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[]},"hitErrors":[],"pressHitErrors":[],"releaseHitErrors":[],"tourney":[{"ipcId":2.5,"keys":{"k1":{"isPressed":false,"count":2},"k2":{"isPressed":true,"count":22},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":false,"count":2,"pressedAt":null,"releasedAt":null},{"name":"K2","isPressed":true,"count":22,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[-2.5],"pressHitErrors":[-2.5],"releaseHitErrors":[]},{"ipcId":30.25,"keys":{"k1":{"isPressed":true,"count":30},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":true,"count":30,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[30.5],"pressHitErrors":[30.5],"releaseHitErrors":[]},{"ipcId":null,"keys":{"k1":{"isPressed":true,"count":99},"k2":{"isPressed":false,"count":0},"m1":{"isPressed":false,"count":0},"m2":{"isPressed":false,"count":0},"all":[{"name":"K1","isPressed":true,"count":99,"pressedAt":1234,"releasedAt":null}]},"hitErrors":[99],"pressHitErrors":[99],"releaseHitErrors":[]}]}"#
-                .replace(",\"tourney\":", ",\"hitOffsets\":[],\"tourney\":")
         );
     }
 

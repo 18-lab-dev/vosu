@@ -5,6 +5,8 @@ use std::collections::VecDeque;
 #[derive(Debug, Clone, Default)]
 pub(super) struct StableHitOffsets {
     pub heads: Option<Vec<(f64, f32, f32)>>,
+    pub enabled: bool,
+    pub since: f64,
     judged: Vec<bool>,
     frame_index: i64,
     buttons: Option<u8>,
@@ -13,6 +15,13 @@ pub(super) struct StableHitOffsets {
 }
 
 impl StableHitOffsets {
+    pub fn set_enabled(&mut self, enabled: bool, since: f64) {
+        *self = Self {
+            enabled,
+            since,
+            ..Default::default()
+        };
+    }
     pub fn update(
         &mut self,
         errors: &[f64],
@@ -32,6 +41,7 @@ impl StableHitOffsets {
                     }
                     if frame.time >= 0 {
                         if let Some(old) = self.buttons
+                            && frame.time as f64 > self.since
                             && frame.x.is_finite()
                             && frame.y.is_finite()
                         {
@@ -128,6 +138,28 @@ mod tests {
             index: frames.len() as i64,
             frames: Arc::new(StableReplayFrames::from(frames)),
         }
+    }
+
+    #[test]
+    fn enabling_mid_attempt_excludes_old_replay_edges_and_drops_pending_on_toggle() {
+        let mut matcher = StableHitOffsets::default();
+        matcher.set_enabled(true, 150.0);
+        matcher.heads = Some(vec![(100.0, 50.0, 80.0), (200.0, 10.0, 20.0)]);
+        let frames = batch(&[
+            (0, 0.0, 0.0, 0),
+            (105, 52.0, 77.0, 5),
+            (110, 52.0, 77.0, 0),
+            (205, 13.0, 24.0, 5),
+        ]);
+        assert_eq!(
+            matcher.update(&[5.0], Some(&frames), 205.0, Instant::now()),
+            [3.0, 4.0, 5.0]
+        );
+        assert_eq!(matcher.judged, [false, true]);
+        matcher.update(&[42.0], None, 205.0, Instant::now());
+        matcher.set_enabled(false, 205.0);
+        assert!(matcher.pending.is_empty());
+        assert!(matcher.heads.is_none());
     }
 
     #[test]

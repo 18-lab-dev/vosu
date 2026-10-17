@@ -737,6 +737,11 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
                 ),
             ),
             settings_item(
+                "Standard hit offsets",
+                "Expose cursor offsets and timing errors for standard circle and slider-head hits.",
+                &settings_switch("ENABLE_HIT_OFFSETS", config.enable_hit_offsets),
+            ),
+            settings_item(
                 "Common poll interval",
                 "Milliseconds between reads of general game data.",
                 &settings_number(

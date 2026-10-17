@@ -163,9 +163,16 @@ impl RawPreciseSnapshotBuilder {
                 global,
                 key_overlay: None,
                 hit_errors: None,
+                enable_hit_offsets: false,
                 catcher: None,
             },
         }
+    }
+
+    #[must_use]
+    pub fn enable_hit_offsets(mut self, enabled: bool) -> Self {
+        self.snapshot.enable_hit_offsets = enabled;
+        self
     }
 
     #[must_use]
