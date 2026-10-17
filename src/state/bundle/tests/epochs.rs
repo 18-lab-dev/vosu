@@ -503,6 +503,7 @@ fn boundary_corrections_reclassify_exact_prior_presses_in_timing_order() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 42,
+        list_len: 42,
         errors: HitErrorArray {
             key: Some(Default::default()),
             ..Default::default()
@@ -563,6 +564,7 @@ fn invalid_boundary_corrections_leave_hit_errors_unchanged() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 10,
+        list_len: 10,
         errors: HitErrorArray::default(),
         release_corrections: vec![
             ReleaseCorrection {
@@ -787,6 +789,7 @@ fn stale_parsed_map_waits_for_current_mania_metadata() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 1,
+        list_len: 1,
         errors: HitErrorArray {
             all: vec![-10.0],
             press: vec![-10.0],
@@ -830,6 +833,7 @@ fn stale_parsed_map_waits_for_current_mania_metadata() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 1,
+        list_len: 1,
         errors: HitErrorArray::default(),
         release_corrections: Vec::new(),
         stable_replay_frames: Some(StableReplayFrameBatch {
@@ -872,6 +876,7 @@ fn resolved_missing_mania_metadata_is_immediately_press_only() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 1,
+        list_len: 1,
         errors: HitErrorArray {
             all: vec![7.0],
             press: vec![7.0],
@@ -915,6 +920,7 @@ fn stable_random_key_errors_never_guess_columns() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 1,
+        list_len: 1,
         errors: HitErrorArray {
             all: vec![-10.0],
             press: vec![-10.0],
@@ -975,6 +981,7 @@ fn unmatched_final_stable_error_is_published_after_the_play_ends() {
     let play = RawPreciseSnapshotBuilder::new(context(), 1, global(GameState::Play, 250.0))
         .hit_errors(Ok(ReadStatus::Ready(HitErrors {
             index: 2,
+            list_len: 2,
             errors: HitErrorArray {
                 all: vec![-10.0, 77.0],
                 press: vec![-10.0, 77.0],
@@ -1013,6 +1020,7 @@ fn unmatched_final_stable_error_is_published_after_the_play_ends() {
         RawPreciseSnapshotBuilder::new(context(), sequence, global(GameState::ResultScreen, 250.0))
             .hit_errors(Ok(ReadStatus::Ready(HitErrors {
                 index: 3,
+                list_len: 3,
                 errors: HitErrorArray {
                     all: vec![5.0],
                     press: vec![5.0],
@@ -1055,6 +1063,7 @@ fn stable_frame_keys_ignore_hidden_overlay_but_preserve_update_gate_and_legacy()
         )
         .hit_errors(Ok(ReadStatus::Ready(HitErrors {
             index: 0,
+            list_len: 0,
             errors: HitErrorArray::default(),
             release_corrections: Vec::new(),
             stable_replay_frames: Some(StableReplayFrameBatch {

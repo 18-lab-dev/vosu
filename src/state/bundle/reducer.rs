@@ -909,6 +909,10 @@ impl StateBundle {
                                     & crate::calculation::osu_mods::RANDOM
                                     == 0)
                                 .then(Default::default);
+                            self.stable_mania_hit_errors.observe_list(
+                                errors.index - errors.errors.all.len() as i64,
+                                errors.list_len,
+                            );
                             self.stable_mania_hit_errors.partition(
                                 &errors.errors.all,
                                 batch,

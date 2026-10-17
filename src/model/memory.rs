@@ -268,6 +268,10 @@ pub struct HitErrors {
     pub errors: HitErrorArray,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub release_corrections: Vec<ReleaseCorrection>,
+    /// Length of the client's hit-error list when this capture read it. `index` stops short
+    /// of it while a bounded suffix read is still catching up.
+    #[serde(skip)]
+    pub list_len: i64,
     #[serde(skip)]
     pub stable_replay_frames: Option<StableReplayFrameBatch>,
 }

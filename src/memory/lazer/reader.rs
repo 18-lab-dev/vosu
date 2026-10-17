@@ -314,6 +314,7 @@ impl MemoryReader for LazerMemory {
         if self.player_loading {
             return Ok(ReadStatus::Ready(HitErrors {
                 index: 0,
+                list_len: 0,
                 errors: HitErrorArray::default(),
                 release_corrections: Vec::new(),
                 stable_replay_frames: None,
@@ -984,6 +985,7 @@ impl LazerMemory {
         if start_index > size {
             return Ok(HitErrors {
                 index: size as i64,
+                list_len: size as i64,
                 errors: HitErrorArray::default(),
                 release_corrections: Vec::new(),
                 stable_replay_frames: None,
@@ -1114,6 +1116,7 @@ impl LazerMemory {
 
         Ok(HitErrors {
             index: index as i64,
+            list_len: index as i64,
             errors,
             release_corrections,
             stable_replay_frames: None,

@@ -844,6 +844,7 @@ fn loading_sentinels_and_display_score_boundaries_match_source() {
         reader.hit_errors(99).unwrap(),
         ReadStatus::Ready(HitErrors {
             index: 0,
+            list_len: 0,
             errors: HitErrorArray::default(),
             release_corrections: Vec::new(),
             stable_replay_frames: None,

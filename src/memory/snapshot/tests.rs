@@ -159,6 +159,7 @@ fn precise_acceptance_requires_exact_base_and_new_sequence() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 14,
+        list_len: 14,
         errors: HitErrorArray {
             all: vec![-2.0, 3.0],
             press: vec![-2.0, 3.0],
@@ -228,6 +229,7 @@ fn empty_hit_error_rewind_is_valid_and_nonempty_rewind_is_not() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 2,
+        list_len: 2,
         errors: HitErrorArray::default(),
         release_corrections: Vec::new(),
         stable_replay_frames: None,
@@ -245,6 +247,7 @@ fn empty_hit_error_rewind_is_valid_and_nonempty_rewind_is_not() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 2,
+        list_len: 2,
         errors: HitErrorArray {
             all: vec![1.0],
             press: vec![1.0],
@@ -271,6 +274,7 @@ fn suffix_cannot_contain_more_hits_than_consumed_source_positions() {
     )
     .hit_errors(Ok(ReadStatus::Ready(HitErrors {
         index: 5,
+        list_len: 5,
         errors: HitErrorArray {
             all: vec![1.0],
             press: vec![1.0],

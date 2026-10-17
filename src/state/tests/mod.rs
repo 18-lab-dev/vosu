@@ -286,6 +286,7 @@ impl PreciseSnapshotReader for FakePrecise {
         )
         .hit_errors(Ok(ReadStatus::Ready(HitErrors {
             index: context.committed_hit_error_index + 1,
+            list_len: context.committed_hit_error_index + 1,
             errors: HitErrorArray {
                 all: vec![1.0],
                 press: vec![1.0],

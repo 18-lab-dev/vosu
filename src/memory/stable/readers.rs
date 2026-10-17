@@ -807,6 +807,7 @@ impl MemoryReader for StableMemory {
         if index > size {
             return Ok(ReadStatus::Ready(HitErrors {
                 index: size,
+                list_len: size,
                 errors: HitErrorArray::default(),
                 release_corrections: Vec::new(),
                 stable_replay_frames: self.replay_frame_batch(s, size)?,
@@ -827,6 +828,7 @@ impl MemoryReader for StableMemory {
         let stable_replay_frames = self.replay_frame_batch(s, last.max(0))?;
         Ok(ReadStatus::Ready(HitErrors {
             index,
+            list_len: size,
             errors,
             release_corrections: Vec::new(),
             stable_replay_frames,

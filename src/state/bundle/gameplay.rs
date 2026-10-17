@@ -24,6 +24,9 @@ struct PendingStableError {
     value: f64,
     replay_time: Option<i64>,
     enqueued_at: Instant,
+    /// Judged before a gap in the retained replay frames: its transition may be gone, and a
+    /// value-equal later transition would otherwise claim it (with that object's column).
+    historical: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +77,11 @@ pub(super) struct StableManiaHitErrorState {
     replay_frame_index: i64,
     latest_replay_time: Option<i64>,
     last_keys: u32,
+    /// List position of the next error `partition` receives, and the list length the last
+    /// capture saw (both from `observe_list`). Positions below `history_end` are historical.
+    next_position: i64,
+    list_len: i64,
+    history_end: i64,
     last_time: Option<i64>,
     pub(super) key: Option<crate::model::states::KeyHitErrors>,
 }
@@ -81,6 +89,12 @@ pub(super) struct StableManiaHitErrorState {
 impl StableManiaHitErrorState {
     pub(super) fn reset(&mut self) {
         *self = Self::default();
+    }
+
+    /// Aligns the next `partition` values with their hit-error list positions.
+    pub(super) fn observe_list(&mut self, first_index: i64, list_len: i64) {
+        self.next_position = first_index;
+        self.list_len = list_len;
     }
 
     pub(super) fn needs_metadata(&self, target_checksum: Option<&str>) -> bool {
@@ -108,13 +122,25 @@ impl StableManiaHitErrorState {
         {
             return false;
         }
-        // Frames before the retained window are gone, for example after attaching late in
-        // a long play. Their transitions cannot be recovered, so errors that needed them
-        // fall back to presses through the usual grace bound; later errors still match.
-        // The first retained frame is only a key-state baseline, not a set of transitions.
+        // Frames before the retained window are gone: vosu attached late in a long play, or
+        // fell more than the window behind. Errors already in the list then cannot be aligned
+        // with judgement events (a value-equal later transition could claim one), so they are
+        // published as presses without a column. Later errors classify from the retained
+        // frames. The first retained frame is only a key-state baseline, not transitions.
         let mut baseline = batch.start_index > self.replay_frame_index;
         if baseline {
             self.replay_frame_index = batch.start_index;
+            self.history_end = self.history_end.max(self.list_len);
+            for pending in &mut self.pending {
+                pending.historical = true;
+            }
+            // Errors judged after this capture belong to frames at or after its newest one.
+            if let Some(newest) = batch.newest().filter(|frame| frame.y != -500.0) {
+                self.last_time = Some(
+                    self.last_time
+                        .map_or(newest.time, |last| last.max(newest.time)),
+                );
+            }
         }
         for frame in batch.frames_since(self.replay_frame_index).unwrap() {
             if frame.y == -500.0 {
@@ -293,12 +319,16 @@ impl StableManiaHitErrorState {
             self.disable();
         }
         let replay_time = self.latest_replay_time;
-        self.pending
-            .extend(values.iter().map(|&value| PendingStableError {
+        for &value in values {
+            let historical = self.next_position < self.history_end;
+            self.next_position += 1;
+            self.pending.push_back(PendingStableError {
                 value,
                 replay_time,
                 enqueued_at: now,
-            }));
+                historical,
+            });
+        }
         if let Some(metadata) = metadata {
             self.observe_metadata(metadata, calculation_failures, now);
         }
@@ -316,6 +346,14 @@ impl StableManiaHitErrorState {
             return (press, release);
         }
         while let Some(&pending) = self.pending.front() {
+            if pending.historical {
+                self.pending.pop_front();
+                press.push(pending.value);
+                if let Some(key) = &mut self.key {
+                    key.append(pending.value, None, false);
+                }
+                continue;
+            }
             let judgement = match self.next_judgement(pending.value) {
                 Ok(Some(judgement)) => judgement,
                 Ok(None) => {
@@ -378,7 +416,7 @@ impl StableManiaHitErrorState {
             StableManiaMetadataState::Ready { .. } => {
                 let mut press = Vec::new();
                 while let Some(&pending) = self.pending.front()
-                    && self.evidence_expired(&pending, now)
+                    && (pending.historical || self.evidence_expired(&pending, now))
                 {
                     self.pending.pop_front();
                     press.push(pending.value);
@@ -1270,35 +1308,57 @@ mod tests {
     }
 
     #[test]
-    fn late_attach_after_frame_eviction_still_classifies_retained_transitions() {
+    fn errors_before_a_frame_gap_cannot_claim_later_value_equal_transitions() {
         let mut events = hold(0, 0, 1_000, 1_400).to_vec();
         events.extend(hold(1, 1, 5_000, 5_400));
-        // Attached after frames 0..50 left the retained window: the first hold's
-        // transitions are gone; the window starts with both keys up.
-        let mut window = frames(&[(4_000, 0), (4_995, 2), (5_404, 0), (5_700, 0)]);
-        window.start_index = 50;
-        window.index = 54;
+        let window = |keys: &[(i64, u32)]| {
+            let mut batch = frames(keys);
+            batch.start_index = 50;
+            batch.index = 50 + keys.len() as i64;
+            batch
+        };
         let now = Instant::now();
         let mut state = StableManiaHitErrorState::default();
-        let first = state.partition(
-            &[-3.0, 7.0, -5.0, 4.0],
-            &window,
-            Some("map"),
-            0,
-            Some(StableManiaMetadata::Ready(events)),
-            now,
-        );
-        let settled = state.partition(
-            &[],
-            &window,
-            Some("map"),
-            0,
-            None,
-            now + STABLE_MANIA_MATCH_MAX_WAIT,
-        );
-        let press: Vec<_> = first.0.into_iter().chain(settled.0).collect();
-        let release: Vec<_> = first.1.into_iter().chain(settled.1).collect();
-        // The evicted hold falls back to presses; the retained one still splits.
-        assert_eq!((press, release), (vec![-3.0, 7.0, -5.0], vec![4.0]));
+        let mut key = crate::model::states::KeyHitErrors::default();
+        let mut press = Vec::new();
+        let mut release = Vec::new();
+        // Attached after frames 0..50 (hold 0) were evicted. The list already holds that
+        // hold's release error, +5 ms, which equals hold 1's later release error.
+        for (first, list_len, keys, values, at) in [
+            (0, 1, &[(4_000, 0), (4_500, 0)][..], &[5.0][..], now),
+            (
+                1,
+                3,
+                &[(4_000, 0), (4_500, 0), (4_998, 2), (5_405, 0)][..],
+                &[-2.0, 5.0][..],
+                now,
+            ),
+            (
+                3,
+                3,
+                &[(4_000, 0), (4_500, 0), (4_998, 2), (5_405, 0)][..],
+                &[][..],
+                now + STABLE_MANIA_MATCH_MAX_WAIT,
+            ),
+        ] {
+            state.observe_list(first, list_len);
+            state.key = Some(Default::default());
+            let (p, r) = state.partition(
+                values,
+                &window(keys),
+                Some("map"),
+                0,
+                Some(StableManiaMetadata::Ready(events.clone())),
+                at,
+            );
+            press.extend(p);
+            release.extend(r);
+            key.extend(&state.key.take().unwrap());
+        }
+        // The historical error is a column-less press; hold 1 keeps its own press and release.
+        assert_eq!((press, release), (vec![5.0, -2.0], vec![5.0]));
+        assert_eq!(key.press_columns, [None, Some(1)]);
+        assert_eq!(key.press, [vec![], vec![-2.0]]);
+        assert_eq!(key.release, [vec![], vec![5.0]]);
     }
 }
