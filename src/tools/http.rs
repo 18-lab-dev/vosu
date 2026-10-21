@@ -58,6 +58,9 @@ fn stripped(headers: &HeaderMap) -> HeaderMap {
 }
 impl ToolHost {
     fn token_owner(&self, token: &str, host_api: bool) -> Option<Arc<Entry>> {
+        if let Some(owner) = self.cli_owner(token) {
+            return Some(owner);
+        }
         self.entries
             .lock()
             .values()
@@ -83,14 +86,23 @@ impl ToolHost {
         {
             return Some("ui".into());
         }
-        if let Some(token) = text_header(headers, "x-vosu-tool-token")
-            && let Some(owner) = self.token_owner(&token, false)
-            && owner
-                .manifest
-                .as_ref()
-                .is_some_and(|m| m.requires.iter().any(|d| d.id == target.id))
-        {
-            return Some(format!("tool:{}", owner.id));
+        if let Some(token) = text_header(headers, "x-vosu-tool-token") {
+            if let Some(owner) = self.cli_owner(&token) {
+                return (owner.id == target.id
+                    || owner
+                        .manifest
+                        .as_ref()
+                        .is_some_and(|m| m.requires.iter().any(|d| d.id == target.id)))
+                .then(|| format!("cli:{}", owner.id));
+            }
+            if let Some(owner) = self.token_owner(&token, false) {
+                return owner
+                    .manifest
+                    .as_ref()
+                    .is_some_and(|m| m.requires.iter().any(|d| d.id == target.id))
+                    .then(|| format!("tool:{}", owner.id));
+            }
+            return None;
         }
         (!write).then(|| "overlay".into())
     }
@@ -140,6 +152,7 @@ impl ToolHost {
         }
         match action {
             "enable" | "disable" | "trust" => {
+                let _gate = self.gate.lock().await;
                 if action == "trust" && entry.manifest.is_none() {
                     return Err("invalid tools cannot be trusted".into());
                 }
@@ -155,7 +168,10 @@ impl ToolHost {
                         .map_err(|e| e.to_string())?;
                 }
                 if action == "disable" {
-                    self.stop_serialized(&entry, false).await;
+                    self.cli_sessions
+                        .lock()
+                        .retain(|_, session| session.tool != id);
+                    self.stop(&entry).await;
                 }
             }
             "start" => self.start(id, true).await?,
@@ -251,6 +267,9 @@ impl ToolHost {
             .unwrap_or_default()
             .to_owned();
         if let Some(host) = path.strip_prefix("_host/v1/") {
+            if host == "cli" || host.starts_with("cli/") {
+                return self.cli_api(host, request, &body).await;
+            }
             return self.host_api(host, &request, &body);
         }
         let (id, tail) = path.split_once('/').unwrap_or((&path, ""));

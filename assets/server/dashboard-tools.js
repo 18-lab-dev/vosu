@@ -12,7 +12,7 @@ const STATUS_LABELS = {
   invalid: 'Invalid',
 };
 const SOURCE_LABELS = { dev: 'Dev', bundled: 'Bundled', user: 'User' };
-const KIND_LABELS = { ui: 'UI', service: 'Service', hybrid: 'UI + service' };
+const KIND_LABELS = { ui: 'UI', service: 'Service', hybrid: 'UI + service', cli: 'CLI' };
 const STARTUP_LABELS = { always: 'With vosu', 'on-demand': 'On demand' };
 const BUSY_LABELS = {
   start: 'Starting…',
@@ -72,7 +72,7 @@ function list(values) {
 }
 
 function hasService(view) {
-  return view.kind !== 'ui';
+  return view.kind === 'service' || view.kind === 'hybrid';
 }
 
 export function mountTools({
@@ -196,6 +196,11 @@ export function mountTools({
     }
     card.append(icon(view), el('div', { className: 'tool-card__head' }, index, title, byline.childNodes.length ? byline : null));
     if (view.description) card.append(el('p', { className: 'tool-card__description', text: view.description }));
+    if (view.cli) {
+      card.append(el('p', { className: 'tool-card__description' },
+        el('code', { text: view.cli.usage }),
+        view.cli.summary ? ` — ${view.cli.summary}` : null));
+    }
 
     const requires = list(view.requires);
     const requiredBy = list(view.required_by);

@@ -1,5 +1,6 @@
 //! Discovery, trust, credentials and lifetime ownership for out-of-process tools.
 pub(crate) mod bundled;
+mod cli;
 mod http;
 pub mod manifest;
 mod process;
@@ -104,11 +105,17 @@ struct Code {
     tool: String,
     expires: Instant,
 }
+struct CliSession {
+    tool: String,
+    token: String,
+    expires: Instant,
+}
 pub struct ToolHost {
     entries: Mutex<BTreeMap<String, Arc<Entry>>>,
     saved: Mutex<BTreeMap<String, Saved>>,
     codes: Mutex<HashMap<String, Code>>,
     sessions: Mutex<HashMap<String, String>>,
+    cli_sessions: Mutex<HashMap<String, CliSession>>,
     config: PathBuf,
     data: PathBuf,
     cache: PathBuf,
@@ -200,6 +207,7 @@ impl ToolHost {
             saved: Mutex::new(saved),
             codes: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
+            cli_sessions: Mutex::new(HashMap::new()),
             config,
             data,
             cache,
@@ -368,7 +376,10 @@ impl ToolHost {
             .map(|e| e.id.clone())
             .collect::<Vec<_>>();
         let state = entry.state.lock();
-        json!({"id":entry.id,"name":m.map_or(entry.id.as_str(), |m| &m.name),"version":m.map_or("", |m| &m.version),"description":m.map_or("", |m| &m.description),"author":m.map_or("", |m| &m.author),"homepage":m.and_then(|m| m.homepage.as_ref()),"icon_url":m.and_then(|m| m.icon.as_ref()).map(|_| format!("{}/tools/{}/_icon",self.overlay_url(),entry.id)),"source":entry.source,"path":entry.root,"trusted":self.trusted(entry),"enabled":self.enabled(entry),"kind":m.map(|m| match (m.ui.is_some(),m.service.is_some()) {(true,true)=>"hybrid",(true,false)=>"ui",_=>"service"}),"startup":m.and_then(|m| m.service.as_ref()).map(|s| &s.startup),"status":status,"status_detail":detail,"ui_url":m.filter(|m| m.ui.is_some()).map(|_|format!("{}/tools/{}/",self.overlay_url(),entry.id)),"requires":requires,"required_by":required_by,"permissions":m.map(|m| &m.permissions),"api":m.map(|m| &m.api),"has_settings":entry.root.join("settings.json").is_file(),"data":{"data_dir":entry.data_dir,"cache_dir":entry.cache_dir,"data_bytes":directory_bytes(&entry.data_dir),"cache_bytes":directory_bytes(&entry.cache_dir)},"process":{"pid":state.pid,"started_at":state.started_at,"restarts":state.restarts}})
+        let cli = m
+            .and_then(|m| m.cli.as_ref())
+            .map(|cli| json!({"usage":format!("vosux {}",entry.id),"summary":cli.summary}));
+        json!({"cli":cli,"id":entry.id,"name":m.map_or(entry.id.as_str(), |m| &m.name),"version":m.map_or("", |m| &m.version),"description":m.map_or("", |m| &m.description),"author":m.map_or("", |m| &m.author),"homepage":m.and_then(|m| m.homepage.as_ref()),"icon_url":m.and_then(|m| m.icon.as_ref()).map(|_| format!("{}/tools/{}/_icon",self.overlay_url(),entry.id)),"source":entry.source,"path":entry.root,"trusted":self.trusted(entry),"enabled":self.enabled(entry),"kind":m.map(|m| match (m.ui.is_some(),m.service.is_some()) {(true,true)=>"hybrid",(true,false)=>"ui",(false,true)=>"service",_=>"cli"}),"startup":m.and_then(|m| m.service.as_ref()).map(|s| &s.startup),"status":status,"status_detail":detail,"ui_url":m.filter(|m| m.ui.is_some()).map(|_|format!("{}/tools/{}/",self.overlay_url(),entry.id)),"requires":requires,"required_by":required_by,"permissions":m.map(|m| &m.permissions),"api":m.map(|m| &m.api),"has_settings":entry.root.join("settings.json").is_file(),"data":{"data_dir":entry.data_dir,"cache_dir":entry.cache_dir,"data_bytes":directory_bytes(&entry.data_dir),"cache_bytes":directory_bytes(&entry.cache_dir)},"process":{"pid":state.pid,"started_at":state.started_at,"restarts":state.restarts}})
     }
     async fn start(self: &Arc<Self>, id: &str, manual: bool) -> Result<(), String> {
         let _gate = self.gate.lock().await;
@@ -490,6 +501,7 @@ impl ToolHost {
     pub async fn shutdown(&self) {
         self.stopping.store(true, Ordering::Release);
         self.cancel.cancel();
+        self.cli_sessions.lock().clear();
         let entries = self.entries.lock().values().cloned().collect::<Vec<_>>();
         for entry in &entries {
             if let Some(stop) = &entry.state.lock().stop {
@@ -659,6 +671,9 @@ impl ToolHost {
         let old = self.entries.lock().values().cloned().collect::<Vec<_>>();
         for entry in old {
             if !found.values().any(|e| Arc::ptr_eq(e, &entry)) {
+                self.cli_sessions
+                    .lock()
+                    .retain(|_, session| session.tool != entry.id);
                 self.stop(&entry).await;
             }
         }

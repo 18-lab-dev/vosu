@@ -17,6 +17,14 @@ Add **tools** as vosu's first extension type, specified in the [tool protocol](.
 - Services bind loopback port 0, announce readiness on stdout, authenticate every forwarded request with a per-launch token, and exit when stdin closes.
 - Tool roots are watched and `--tool <directory>` runs a development tool from any checkout, restarting it when its executable changes, so authors iterate without packaging or restarting vosu.
 - Bundled tools are embedded into the release executable, then verified and atomically materialized into a version/tree-digest cache directory at startup. Development builds without `VOSU_BUNDLED_TOOLS` embed no tools. This preserves the updater's existing single-root-executable archive validation rather than weakening it to allow arbitrary executable archive members.
+- Tools may declare optional `[cli]` argv. `vosux` (argv[0] dispatch in the
+  same executable) and `vosu x` discover the running daemon through private
+  `broker.json`, then spawn directly with inherited terminal streams. The CLI
+  path bypasses daemon startup, locking, tray, logging and updater work.
+- The native broker can mint bounded, revocable, 24-hour CLI sessions. Unlike
+  service tokens, CLI tokens can write their own tool API as well as declared
+  dependencies, keeping the service the single writer of shared tool data.
+  The launcher revokes after child exit. Tools never receive the broker token.
 
 ### Write authority on a shared origin
 

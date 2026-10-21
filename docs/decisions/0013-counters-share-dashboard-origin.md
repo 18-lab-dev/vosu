@@ -27,11 +27,13 @@ Overlay software hosting counter frames outside vosu's origin must not forge
 each daemon start in a private per-user `broker.json`. Loopback
 `/websocket/commands` upgrades accept it, with constant-time comparison.
 A valid token grants the existing same-origin command-socket mutation permission.
-On the overlay HTTP origin it also grants exactly `settings:write` value saves
+On the overlay HTTP origin it grants `settings:write` value saves
 (`POST /api/counters/settings/<name>[?profile=]`, never `?update=yes`) and
-`profiles:manage` (`POST /api/counters/profiles`, all actions). GETs stay open.
+`profiles:manage` (`POST /api/counters/profiles`, all actions). The 1.2.0
+amendment additionally grants tool CLI listing, launch, UI-open and session
+revocation under `/tools/_host/v1/cli`; listing is not public.
 Other HTTP mutations, non-loopback peers and invalid/stale tokens return 401.
-POST authorization is rechecked after body reading, just like revocable API keys.
+Authorization is checked after body reading, just like revocable API keys.
 Restart rotates the credential; brokers reread the file. No token preserves
 existing behavior. Dashboard management still requires provenance and CSRF.
 

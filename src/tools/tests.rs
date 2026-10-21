@@ -544,3 +544,215 @@ async fn tool_settings_and_approval_persist_outside_overlay_settings() {
     assert_eq!(second.settings(&entry).unwrap()["count"], 25.0);
     second.shutdown().await;
 }
+
+#[tokio::test]
+async fn cli_broker_auth_sessions_and_authority() {
+    use crate::server::{broker::BrokerToken, routes::PeerAddress};
+    use axum::extract::ConnectInfo;
+    let root = tempfile::tempdir().unwrap();
+    let a = put(
+        root.path(),
+        "a",
+        "[cli]\ncommand=['bin/a']\nsummary='A CLI'\n[[requires]]\nid='b'\nversion='*'\n",
+    );
+    let b = put(root.path(), "b", "[cli]\ncommand=['bin/b']\n");
+    let c = put(
+        root.path(),
+        "c",
+        "[service]\ncommand=['bin/c']\n[api]\nread=['/v1/read']\nwrite=['/v1/write']\n",
+    );
+    let host = host(root.path(), vec![a, b, c]).await;
+    let stranger = put(
+        &root.path().join("data"),
+        "untrusted",
+        "[cli]\ncommand=['bin/untrusted']\n",
+    );
+    host.rescan().await;
+    assert!(stranger.exists());
+    let broker_path = root.path().join("broker.json");
+    let broker = Arc::new(BrokerToken::new(broker_path.clone()).unwrap());
+    broker.publish("127.0.0.1:25150".parse().unwrap()).unwrap();
+    let published: Value = serde_json::from_slice(&fs::read(broker_path).unwrap()).unwrap();
+    let credential = published["token"].as_str().unwrap();
+    let authenticated = |method, path: &str, token: &str, peer: &str| {
+        let mut req = request(method, path);
+        req.extensions_mut().insert(Some(broker.clone()));
+        req.extensions_mut()
+            .insert(ConnectInfo(PeerAddress(peer.parse().unwrap())));
+        req.headers_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
+        req
+    };
+    assert_eq!(
+        host.overlay(request(Method::GET, "/tools/_host/v1/cli"), Bytes::new())
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    for (token, peer) in [("wrong", "127.0.0.1:1000"), (credential, "192.0.2.1:1000")] {
+        assert_eq!(
+            host.overlay(
+                authenticated(Method::GET, "/tools/_host/v1/cli", token, peer),
+                Bytes::new()
+            )
+            .await
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let auth = |method, path: &str| authenticated(method, path, credential, "127.0.0.1:1000");
+    for (id, expected) in [
+        ("absent", StatusCode::NOT_FOUND),
+        ("untrusted", StatusCode::FORBIDDEN),
+        ("c", StatusCode::CONFLICT),
+    ] {
+        assert_eq!(
+            host.overlay(
+                auth(Method::POST, &format!("/tools/_host/v1/cli/{id}")),
+                Bytes::new()
+            )
+            .await
+            .status(),
+            expected
+        );
+    }
+    for (disabled, expected) in [("a", "disabled"), ("b", "blocked")] {
+        host.saved.lock().insert(
+            disabled.into(),
+            Saved {
+                enabled: Some(false),
+                trusted: true,
+            },
+        );
+        let denied = host
+            .overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())
+            .await;
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+        assert_eq!(value(denied).await["status"], expected);
+        host.saved.lock().remove(disabled);
+    }
+    host.entry("a").unwrap().state.lock().status = "invalid".into();
+    assert_eq!(
+        host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    host.entry("a").unwrap().state.lock().status = "running".into();
+    let listing = value(
+        host.overlay(auth(Method::GET, "/tools/_host/v1/cli"), Bytes::new())
+            .await,
+    )
+    .await;
+    assert_eq!(listing["tools"][0]["cli"]["usage"], "vosux a");
+    let launch = value(
+        host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())
+            .await,
+    )
+    .await;
+    assert_eq!(launch["env"]["VOSU_TOOL_INTERFACE"], "cli");
+    assert!(Path::new(launch["argv"][0].as_str().unwrap()).is_absolute());
+    let token = launch["env"]["VOSU_TOOL_TOKEN"].as_str().unwrap();
+    let mut headers = HeaderMap::new();
+    headers.insert("x-vosu-tool-token", token.parse().unwrap());
+    for (id, allowed) in [("a", true), ("b", true), ("c", false)] {
+        for write in [false, true] {
+            assert_eq!(
+                host.caller(&host.entry(id).unwrap(), &headers, write)
+                    .is_some(),
+                allowed
+            );
+        }
+    }
+    for (method, path) in [
+        (Method::GET, "/tools/c/api/v1/read"),
+        (Method::POST, "/tools/c/api/v1/write"),
+    ] {
+        let mut req = request(method, path);
+        *req.headers_mut() = headers.clone();
+        assert_eq!(
+            host.overlay(req, Bytes::new()).await.status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    assert_eq!(
+        host.caller(&host.entry("a").unwrap(), &headers, true)
+            .as_deref(),
+        Some("cli:a")
+    );
+    let other = value(
+        host.overlay(auth(Method::POST, "/tools/_host/v1/cli/b"), Bytes::new())
+            .await,
+    )
+    .await;
+    headers.insert(
+        "x-vosu-tool-token",
+        other["env"]["VOSU_TOOL_TOKEN"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap(),
+    );
+    assert!(
+        host.caller(&host.entry("a").unwrap(), &headers, true)
+            .is_none()
+    );
+    assert_eq!(
+        host.overlay(
+            auth(
+                Method::DELETE,
+                &format!(
+                    "/tools/_host/v1/cli/session/{}",
+                    launch["session"].as_str().unwrap()
+                )
+            ),
+            Bytes::new()
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    headers.insert("x-vosu-tool-token", token.parse().unwrap());
+    assert!(
+        host.caller(&host.entry("a").unwrap(), &headers, true)
+            .is_none()
+    );
+    assert_eq!(
+        host.overlay(
+            {
+                let mut req = request(Method::GET, "/tools/_host/v1/self");
+                req.headers_mut()
+                    .insert("x-vosu-tool-token", token.parse().unwrap());
+                req
+            },
+            Bytes::new()
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    host.cli_sessions
+        .lock()
+        .values_mut()
+        .for_each(|s| s.expires = Instant::now() - Duration::from_secs(1));
+    assert!(
+        host.cli_owner(other["env"]["VOSU_TOOL_TOKEN"].as_str().unwrap())
+            .is_none()
+    );
+    for _ in 0..64 {
+        assert_eq!(
+            host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())
+                .await
+                .status(),
+            StatusCode::OK
+        );
+    }
+    assert_eq!(
+        host.overlay(auth(Method::POST, "/tools/_host/v1/cli/a"), Bytes::new())
+            .await
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    host.shutdown().await;
+    assert!(host.cli_sessions.lock().is_empty());
+}
