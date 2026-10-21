@@ -3654,6 +3654,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "cc",
+ "clap",
  "md-5",
  "rosu-map",
  "rusqlite",
@@ -3683,6 +3684,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "clap",
  "futures-util",
  "libm",
  "reqwest",
@@ -3701,6 +3703,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "clap",
  "hound",
  "minimp3",
  "open",

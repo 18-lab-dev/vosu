@@ -4,6 +4,8 @@
 //! port 0, announces readiness on stdout, rejects requests that lack the
 //! per-launch token, and exits when vosu closes its stdin.
 
+pub mod cli;
+
 use std::{io::Write as _, net::Ipv4Addr, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
@@ -42,6 +44,13 @@ pub enum Error {
     Status { url: String, status: u16 },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Interface {
+    #[default]
+    Service,
+    Cli,
+}
+
 /// The launch environment vosu provides to a tool service.
 #[derive(Clone, Debug)]
 pub struct ToolEnv {
@@ -51,6 +60,7 @@ pub struct ToolEnv {
     pub vosu_url: String,
     pub data_dir: PathBuf,
     pub cache_dir: PathBuf,
+    pub interface: Interface,
 }
 
 fn var(name: &'static str) -> Result<String, Error> {
@@ -69,6 +79,16 @@ impl ToolEnv {
             vosu_url: var("VOSU_URL")?.trim_end_matches('/').to_owned(),
             data_dir: var("VOSU_TOOL_DATA_DIR")?.into(),
             cache_dir: var("VOSU_TOOL_CACHE_DIR")?.into(),
+            interface: match std::env::var("VOSU_TOOL_INTERFACE").as_deref() {
+                Ok("cli") => Interface::Cli,
+                Ok("service") | Err(_) => Interface::Service,
+                Ok(value) => {
+                    return Err(Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("unsupported VOSU_TOOL_INTERFACE {value:?}"),
+                    )));
+                }
+            },
         })
     }
 
@@ -77,6 +97,7 @@ impl ToolEnv {
             http: reqwest::Client::new(),
             base: self.vosu_url.clone(),
             token: self.token.clone(),
+            id: self.id.clone(),
         }
     }
 }
@@ -136,6 +157,7 @@ pub struct Client {
     http: reqwest::Client,
     base: String,
     token: Arc<str>,
+    id: String,
 }
 
 impl Client {
@@ -179,6 +201,14 @@ impl Client {
 
     pub async fn tool_json<T: DeserializeOwned>(&self, tool: &str, path: &str) -> Result<T, Error> {
         send_json(self.tool(reqwest::Method::GET, tool, path)).await
+    }
+
+    pub fn own(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        self.tool(method, &self.id, path)
+    }
+
+    pub async fn own_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
+        self.tool_json(&self.id, path).await
     }
 
     /// Effective settings with defaults applied.

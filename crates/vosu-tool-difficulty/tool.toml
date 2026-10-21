@@ -15,3 +15,7 @@ write = ["/v1/calculate"]
 
 [permissions]
 host = ["context"]
+
+[cli]
+command = ["bin/vosu-difficulty", "cli"]
+summary = "Calculate beatmap MSD, SSR, and rate tables"

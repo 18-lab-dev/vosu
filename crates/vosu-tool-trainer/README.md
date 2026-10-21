@@ -2,6 +2,14 @@
 
 18-LAB's native practice-copy tool for vosu. Open it from **Dashboard → Tools → osu! Trainer** to receive a write session. Opening `/tools/trainer/` directly is read-only. The selected client/map comes from the authenticated SDK context; all four rulesets are supported.
 
+## Command line
+
+Run `vosux trainer [--rate R | --bpm B] [--pitch | --no-pitch] [--hp V] [--cs V] [--ar V] [--od V] [--lock-ar] [--lock-od] [--json]` (or `vosu x trainer …`). Rates are 0.5–2.0, BPM must be positive, and stats are 0–10. Pitch preservation is the default. `--pitch` explicitly preserves pitch; `--no-pitch` changes it with speed. The attached client's selected map is used. Successful human output is the created `.osu` (stable) or `.osz` (lazer) path; warnings and progress go to stderr. `--json` returns the service's generated entry including files and warnings.
+
+`vosux trainer list [--json]` lists owned copies; `vosux trainer delete <id> [--json]` deletes an indexed copy under the existing ownership safeguards. Each command supports `--help`. Ctrl+C requests job cancellation and exits 130; service failures exit 1. These commands call the running tool service through vosu, never open its ownership index themselves. The executable without `cli` continues to run the service.
+
+After building all three tool binaries, run `python crates/vosu-tool-trainer/tests/cli_smoke.py` for a Python-stdlib-only CLI smoke. It starts real services with isolated HOME/XDG/data directories and an ephemeral loopback proxy, copies the mania fixture into temporary Songs, supplies generated WAV audio, and feeds a synthetic play/result WebSocket sequence. It exercises file/stdin/current/rates difficulty, practice generation/list/delete, skill profile/history/last, and populated JSON/CSV exports (including quoted titles and nested difficulty cells). No user daemon, Songs, or desktop is accessed.
+
 ## Practice copies
 
 Choose 0.5–2.0× or a target BPM, select pitch-preserving stretch or pitch-changing resampling, and optionally override HP/CS/AR/OD. Unlocked AR/OD follow rate-scaled approach/hit windows; locks keep the source value, and an explicit slider override takes precedence. Saved stats are limited to 0–10; rate-derived values beyond that range are visibly capped. AR uses osu!'s 1800/1200/450 ms piecewise curve, OD uses standard 80−6×OD, taiko 50−3×OD, mania 64−3×OD. Changing rate scales the map timestamps, not the live client's playback setting. Base BPM is the **first positive beat length**, so target BPM scales every tempo in a variable-BPM map by the same factor.
