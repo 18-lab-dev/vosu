@@ -1,8 +1,10 @@
 const id = decodeURIComponent(location.pathname.split('/')[2] || '');
 const tool = metadata.find(tool => tool.id === id) || {id, name: id, version: ''};
+// The session lives only in this document's memory. Any same-origin storage
+// (sessionStorage, localStorage, IndexedDB, cookies) is readable by an overlay
+// that later loads in this tab, so a reload deliberately drops write access
+// until the tool is opened from the dashboard again.
 let session = null;
-const storageKey = `vosu-tool-session:${epoch}:${id}`;
-try { session = sessionStorage.getItem(storageKey); } catch {}
 
 const ready = (async () => {
   const fragment = new URLSearchParams(location.hash.slice(1));
@@ -18,7 +20,6 @@ const ready = (async () => {
     });
     if (!response.ok) throw new Error('Tool launch code expired or was already used. Open the tool from the dashboard again.');
     session = (await response.json()).session;
-    try { sessionStorage.setItem(storageKey, session); } catch {}
   }
 })();
 

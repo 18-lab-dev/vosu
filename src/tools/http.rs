@@ -343,10 +343,9 @@ impl ToolHost {
                 })
                 .collect::<Vec<_>>();
             let source = format!(
-                "const metadata = {};\nconst dashboardUrl = {};\nconst epoch = {};\n{}",
+                "const metadata = {};\nconst dashboardUrl = {};\n{}",
                 json!(entries),
                 json!(self.dashboard_url()),
-                json!(self.bridge_epoch),
                 include_str!("../../assets/server/tool-bridge.js")
             );
             return (

@@ -115,7 +115,6 @@ pub struct ToolHost {
     roots: Vec<(PathBuf, &'static str)>,
     overlay_url: String,
     dashboard_url: String,
-    bridge_epoch: String,
     origins: Mutex<Option<Arc<crate::server::origins::Origins>>>,
     http: reqwest::Client,
     gate: tokio::sync::Mutex<()>,
@@ -207,7 +206,6 @@ impl ToolHost {
             roots,
             overlay_url,
             dashboard_url,
-            bridge_epoch: secret()?,
             origins: Mutex::new(None),
             http: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())

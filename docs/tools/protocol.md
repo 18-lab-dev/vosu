@@ -127,7 +127,7 @@ await vosu.fetch("v1/profile");          // relative to /tools/<id>/api/, adds t
 vosu.subscribe(fields, onFrame);         // /websocket/v2/subscribe helper
 ```
 
-Launch: the dashboard's **Open** calls `POST /api/tools/<id>/launch` (dashboard origin, CSRF) and opens the returned URL `<overlay origin>/tools/<id>/#vosu-launch=<code>&theme=<dark|light>`. The code is single-use and expires after 60 seconds; the bridge exchanges it via `POST /tools/_host/v1/session` `{"tool","code"}` → `{"session"}`, stores it in `sessionStorage`, and strips the fragment. Sessions last until vosu restarts. A UI opened without a launch code is read-only.
+Launch: the dashboard's **Open** calls `POST /api/tools/<id>/launch` (dashboard origin, CSRF) and opens the returned URL `<overlay origin>/tools/<id>/#vosu-launch=<code>&theme=<dark|light>` in a new tab without an opener. The code is single-use and expires after 60 seconds; the bridge exchanges it via `POST /tools/_host/v1/session` `{"tool","code"}` → `{"session"}`, keeps the session only in the page's JavaScript memory, and strips the fragment. Never persist it to `sessionStorage`, `localStorage`, IndexedDB, or cookies: those are shared with every overlay that later loads in the same tab. Sessions last until vosu restarts. A UI opened without a launch code, or reloaded, is read-only until opened from the dashboard again. Tool UIs must not open same-origin pages without `noopener` or embed overlays in frames, because such documents can script the tool page and use its session.
 
 ## Dashboard API (dashboard listener only)
 

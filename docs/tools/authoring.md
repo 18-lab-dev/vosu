@@ -47,9 +47,9 @@ Put `#:schema https://raw.githubusercontent.com/shiruviaa/vosu/main/docs/tools/t
 
 ### Read versus write
 
-List read-only path prefixes in `[api].read`: only GET, HEAD, and WebSocket upgrades are exposed to overlays. Put mutations in `[api].write`; they require the tool's UI session or an authenticated declared dependent tool. A write prefix wins if both lists match. Prefixes are segment-aware: `/v1/count` does not expose `/v1/countdown`. Unlisted paths return 404. Do not mutate state from a GET: overlays can call read routes without a UI session.
+List read-only path prefixes in `[api].read`: only GET, HEAD, and WebSocket upgrades are exposed to overlays. Put mutations in `[api].write`; they require the tool's UI session or an authenticated declared dependent tool. GET/HEAD/WebSocket on a path matching a `read` prefix stay public even if a `write` prefix also matches, so a route such as `/v1/jobs` can be listed in both: public status reads, authorized cancellation. Prefixes are segment-aware: `/v1/count` does not expose `/v1/countdown`. Unlisted paths return 404. Do not mutate state from a GET: overlays can call read routes without a UI session.
 
-Load `/tools/_host/v1/theme.css` for theme tokens, and import `vosu` from `/tools/_host/v1/bridge.js`. Await `vosu.ready` before fetching. Use `vosu.fetch("v1/count")`, which supplies the current UI session header; disable write controls when `vosu.canWrite` is false. The launch code is single-use and removed from the URL by the bridge. Never send the service token to browser code.
+Load `/tools/_host/v1/theme.css` for theme tokens, and import `vosu` from `/tools/_host/v1/bridge.js`. Await `vosu.ready` before fetching. Use `vosu.fetch("v1/count")`, which supplies the current UI session header; disable write controls when `vosu.canWrite` is false and point users at the dashboard's **Open**. The launch code is single-use and removed from the URL by the bridge. The session exists only in page memory: a reload is read-only by design. Never copy it into `sessionStorage`, `localStorage`, IndexedDB, or cookies (overlays share that storage), never open same-origin pages without `noopener`, and never frame overlays from a tool UI; any of those hands write access to overlay code. Never send the service token to browser code.
 
 ### Settings, jobs, and live data
 

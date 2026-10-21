@@ -20,9 +20,11 @@ Add **tools** as vosu's first extension type, specified in the [tool protocol](.
 
 ### Write authority on a shared origin
 
-Tool UIs share the overlay origin, so overlay JavaScript can read anything a tool UI can read and can load tool pages. Tool APIs therefore split routes into `read` (open, like other overlay reads) and `write`. Write routes require either a dependent tool's token or a **UI session** that only the dashboard can mint: Open requests a single-use launch code with CSRF and passes it in the URL fragment of a new tab, where the bridge exchanges it for a session kept in that tab's `sessionStorage`. An overlay in another browsing context never sees the fragment or the session. A UI opened directly is read-only.
+Tool UIs share the overlay origin, so overlay JavaScript can read anything a tool UI can read and can load tool pages. Tool APIs therefore split routes into `read` (open, like other overlay reads) and `write`. Write routes require either a dependent tool's token or a **UI session** that only the dashboard can mint: Open requests a single-use launch code with CSRF and passes it in the URL fragment of a new, opener-less tab, where the bridge exchanges it for a session held only in that document's JavaScript memory. A UI opened directly, or reloaded, is read-only until opened from the dashboard again.
 
-This is weaker than an opaque-origin sandbox: an overlay running in the same tab as a launched tool UI could read its session. It was preferred because opaque-origin UIs lose storage, module loading, and workers, which tools need, and because the dashboard origin must stay free of third-party JavaScript (ADR 0016).
+The session is deliberately never written to `sessionStorage`, `localStorage`, IndexedDB, or cookies: all of them are scoped to the origin, not the tool path, so an overlay that later loads in the same tab (or a window that inherits a copy of `sessionStorage`) could read it. An earlier `sessionStorage` design was reproduced as exploitable this way. Losing write access on reload is the accepted cost.
+
+This is still weaker than an opaque-origin sandbox. Any same-origin document holding a script reference to the tool document — a window the tool UI opens without `noopener`, or an overlay the tool UI frames — can reach its live bridge, so tool UIs must not do either. Opaque-origin UIs were rejected because they lose storage, module loading, and workers, which tools need, and the dashboard origin must stay free of third-party JavaScript (ADR 0016).
 
 ### Trust
 
