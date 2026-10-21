@@ -1,0 +1,76 @@
+{
+  "archive": "https://cdn.emik.dev/archive/dan/all.zip",
+  "source_page": "https://sites.google.com/view/danreform/home",
+  "charts": [
+    {
+      "dan": 1,
+      "pack": "1st Pack - v1.osz",
+      "file": "Various Artists - Dan ~ REFORM ~ 1st Pack (DDMythical) [~ 1st ~ (Marathon)].osu",
+      "md5": "521aacbb806bd0a5e450671565a44709",
+      "sha256": "5adb6c6d96652335b4c6f6707b52406bf2f96b51912687fd60a0e9c5b3a32485"
+    },
+    {
+      "dan": 2,
+      "pack": "1st Pack - v1.osz",
+      "file": "Various Artists - Dan ~ REFORM ~ 1st Pack (DDMythical) [~ 2nd ~ (Marathon)].osu",
+      "md5": "e5e7b0cd3a7da4bd39cd8f82eaa7cd8b",
+      "sha256": "39daf269e4ecf1734442771cbce26753d7cb20a671e71165af720b633ac6ecad"
+    },
+    {
+      "dan": 3,
+      "pack": "1st Pack - v1.osz",
+      "file": "Various Artists - Dan ~ REFORM ~ 1st Pack (DDMythical) [~ 3rd ~ (Marathon)].osu",
+      "md5": "31192103e37a913488720f3ae5b107de",
+      "sha256": "6ca81d33157d55d5f7c6a3040292b00a85d7e49dbb7497a55407c10bb5ed22c3"
+    },
+    {
+      "dan": 4,
+      "pack": "1st Pack - v1.osz",
+      "file": "Various Artists - Dan ~ REFORM ~ 1st Pack (DDMythical) [~ 4th ~ (Marathon)].osu",
+      "md5": "05c57c4a96dbdfbeb9fec810741b5fca",
+      "sha256": "9a58e065a20ce405263f756b2f51a0c54e30d2a793ca926cb23be5946188d367"
+    },
+    {
+      "dan": 5,
+      "pack": "1st Pack - v1.osz",
+      "file": "Various Artists - Dan ~ REFORM ~ 1st Pack (DDMythical) [~ 5th ~ (Marathon)].osu",
+      "md5": "23054363b86479ba1d9596d26a7acc69",
+      "sha256": "57ded740d281b24baea395822d08f7631b10805aaeee8f145c36ae74df6bd5c6"
+    },
+    {
+      "dan": 6,
+      "pack": "1st Pack - v1.osz",
+      "file": "Various Artists - Dan ~ REFORM ~ 1st Pack (DDMythical) [~ 6th ~ (Marathon)].osu",
+      "md5": "8e296aac6712ec47eda7e8a71f61c8c5",
+      "sha256": "144157837148aa668511f545d0f03d94b7aeaa546a855c9c23e753dd0e91448a"
+    },
+    {
+      "dan": 7,
+      "pack": "2nd Pack - v1.osz",
+      "file": "Various Artists - Dan ~ REFORM ~ 2nd Pack (DDMythical) [~ 7th ~ (Marathon)].osu",
+      "md5": "8e1be66b82e1480c4ad8a4e1a297b1b8",
+      "sha256": "df6add1b777f0c870e09ebefb5bf15d8074695906b0ba93926b6dee45e2307e8"
+    },
+    {
+      "dan": 8,
+      "pack": "2nd Pack - v1.osz",
+      "file": "Various Artists - Dan ~ REFORM ~ 2nd Pack (DDMythical) [~ 8th ~ (Marathon)].osu",
+      "md5": "92bba709bcc871333df46d606aaa5d48",
+      "sha256": "28cfcb8e4c46800661d0e0f5bb5e5d6dcdea8251c4410a5e217db8f78b40d1e7"
+    },
+    {
+      "dan": 9,
+      "pack": "2nd Pack - v1.osz",
+      "file": "Various Artists - Dan ~ REFORM ~ 2nd Pack (DDMythical) [~ 9th ~ (Marathon)].osu",
+      "md5": "d25a4b3fde5bc764d259b1bac6a7671c",
+      "sha256": "cc44f194b90368de7a708090a1cec3f20b4dfb9bd280fc42b84540163c30144b"
+    },
+    {
+      "dan": 10,
+      "pack": "2nd Pack - v1.osz",
+      "file": "Various Artists - Dan ~ REFORM ~ 2nd Pack (DDMythical) [~ 10th ~ (Marathon)].osu",
+      "md5": "1e0310955d28145ca287112360d162e8",
+      "sha256": "b8757f5ec6519a661b53688444b7e05797c98e78435d6baf1d34a49b56dd43b3"
+    }
+  ]
+}
