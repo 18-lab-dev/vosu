@@ -114,7 +114,8 @@ Keep these in the same pull request:
   (dashboard assets, branding, `offsets.json`, `LICENSE`) needs
   `python scripts/check-asset-hashes.py --write` after review.
 - Release `LICENSE`: it embeds the calculator notices from
-  `crates/vosu-pp/THIRD_PARTY_LICENSES.txt`. After changing either, run
+  `crates/vosu-pp/THIRD_PARTY_LICENSES.txt` and the dashboard font notices from
+  `assets/server/fonts-OFL.txt`. After changing any of them, run
   `python scripts/assemble-release-license.py --write`.
 - Public contracts: routes, payload shapes, status codes, and WebSocket paths
   stay exact unless the change deliberately updates their tests and docs.

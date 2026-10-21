@@ -14,8 +14,14 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
   const toastAction = toast?.querySelector('.toast__action');
 
   const PINNED_KEY = 'vosu.pinned-overlays.v1';
-  const INSTALLED_COUNT_KEY = 'total-installed-overlays';
-  const AVAILABLE_COUNT_KEY = 'total-available-overlays';
+  const THEME_KEY = 'vosu.theme.v1';
+  const COUNT_KEYS = {
+    installed: 'total-installed-overlays',
+    available: 'total-available-overlays',
+    tools: 'total-tools',
+  };
+  const INSTALLED_COUNT_KEY = COUNT_KEYS.installed;
+  const AVAILABLE_COUNT_KEY = COUNT_KEYS.available;
 
   const state = {
     originalResults: results?.innerHTML ?? '',
@@ -42,6 +48,45 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       // A blocked storage backend must not disable dashboard controls.
     }
   }
+
+  // WORKSTATION (dark) is the default; a first visit follows the system
+  // preference until the user picks a mode, which then persists. theme-init.js
+  // (THEME_KEY must match it) applies the same choice before first paint;
+  // this module owns the toggle and later system-preference changes.
+  const lightQuery = window.matchMedia?.('(prefers-color-scheme: light)') ?? null;
+  const MODE_NAMES = { dark: 'Workstation', light: 'Drafting' };
+
+  function storedTheme() {
+    const value = storageGet(THEME_KEY);
+    return value === 'dark' || value === 'light' ? value : null;
+  }
+
+  function currentTheme() {
+    const value = document.documentElement.dataset.theme;
+    if (value === 'dark' || value === 'light') return value;
+    return lightQuery?.matches ? 'light' : 'dark';
+  }
+
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'light' ? '#f2f1ec' : '#111214');
+    const next = theme === 'light' ? 'dark' : 'light';
+    document.querySelectorAll('[data-action="toggle-theme"]').forEach((toggle) => {
+      toggle.setAttribute('aria-label', `Colour mode: ${MODE_NAMES[theme]}. Switch to ${MODE_NAMES[next]}`);
+      toggle.title = `Switch to ${MODE_NAMES[next]} mode`;
+    });
+  }
+
+  function toggleTheme() {
+    const next = currentTheme() === 'light' ? 'dark' : 'light';
+    storageSet(THEME_KEY, next);
+    applyTheme(next);
+  }
+
+  applyTheme(storedTheme() ?? (lightQuery?.matches ? 'light' : 'dark'));
+  lightQuery?.addEventListener?.('change', (event) => {
+    if (!storedTheme()) applyTheme(event.matches ? 'light' : 'dark');
+  });
 
   function errorText(value) {
     if (value instanceof Error) return value.message;
@@ -91,7 +136,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       try {
         payload = JSON.parse(text);
       } catch (_error) {
-        throw new Error(`Unexpected response from Vosu (${response.status})`);
+        throw new Error(`Unexpected response from vosu (${response.status})`);
       }
     }
     if (!response.ok) throw new Error(errorText(payload.error ?? response.statusText));
@@ -141,28 +186,50 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     }
   }
 
+  const query = new URLSearchParams(window.location.search);
+  const requestedOverlay = window.location.pathname === '/settings' ? query.get('overlay') : null;
+  const requestedTool = window.location.pathname === '/settings' && !requestedOverlay ? query.get('tool') : null;
+
   function pageKey() {
     if (window.location.pathname === '/available') return 'available';
+    if (window.location.pathname === '/tools') return 'tools';
     if (window.location.pathname === '/settings') return 'settings';
     return 'installed';
   }
 
+  // Overlay and tool settings live under /settings but belong to the sheet
+  // they were opened from.
+  function sheetKey() {
+    if (requestedOverlay) return 'installed';
+    if (requestedTool) return 'tools';
+    return pageKey();
+  }
+
   function configurePageChrome() {
     const pages = {
-      installed: ['Installed overlays', 'Search installed overlays'],
-      available: ['Available overlays', 'Search the overlay catalog'],
-      settings: ['Vosu settings', 'Search settings'],
+      installed: ['01', 'Overlays / installed', 'Installed overlays', 'Search installed overlays'],
+      available: ['02', 'Overlays / catalog', 'Available overlays', 'Search the overlay catalog'],
+      tools: ['03', 'Tools', 'Tools', 'Search tools'],
+      settings: ['04', 'Settings / runtime', 'Settings', 'Search settings'],
     };
-    const current = pageKey();
+    const current = sheetKey();
     document.querySelectorAll('.nav-link[data-page]').forEach((link) => {
       if (link.dataset.page === current) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     });
+    let [number, kicker, heading, search] = pages[current];
+    if (requestedOverlay) [kicker, heading] = ['Overlays / settings', 'Overlay settings'];
+    if (requestedTool) [kicker, heading] = ['Tools / settings', 'Tool settings'];
     const title = document.querySelector('#page-title');
-    if (title) title.textContent = pages[current][0];
+    if (title) title.textContent = heading;
+    const numberLabel = document.querySelector('#page-number');
+    if (numberLabel) numberLabel.textContent = number;
+    const kickerLabel = document.querySelector('#page-kicker');
+    if (kickerLabel) kickerLabel.textContent = kicker;
+    document.title = `${heading} · vosu`;
     if (searchInput) {
-      searchInput.placeholder = pages[current][1];
-      searchInput.setAttribute('aria-label', pages[current][1]);
+      searchInput.placeholder = search;
+      searchInput.setAttribute('aria-label', search);
     }
   }
 
@@ -176,19 +243,32 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     if (!Number.isInteger(value) || value < 0) return;
     const badge = document.querySelector(`[data-count="${kind}"]`);
     if (badge) badge.textContent = String(value);
-    storageSet(kind === 'installed' ? INSTALLED_COUNT_KEY : AVAILABLE_COUNT_KEY, value);
+    storageSet(COUNT_KEYS[kind], value);
   }
 
   function initializeCounts() {
-    for (const kind of ['installed', 'available']) {
+    for (const kind of Object.keys(COUNT_KEYS)) {
       const serverCount = countFromBadge(kind);
       if (serverCount !== null) {
         setCount(kind, serverCount);
         continue;
       }
-      const cached = storageGet(kind === 'installed' ? INSTALLED_COUNT_KEY : AVAILABLE_COUNT_KEY);
+      const cached = storageGet(COUNT_KEYS[kind]);
       // Number(null) is 0, which would invent a count for a page never visited.
       if (cached !== null && Number.isInteger(Number(cached)) && Number(cached) >= 0) setCount(kind, Number(cached));
+    }
+  }
+
+  // The Tools page keeps its own count current; elsewhere one lookup keeps
+  // the badge honest. A vosu without the tool host answers 404, which leaves
+  // the badge empty.
+  async function refreshToolCount() {
+    if (pageKey() === 'tools') return;
+    try {
+      const { tools } = await requestJson('/api/tools');
+      if (Array.isArray(tools)) setCount('tools', tools.length);
+    } catch (_error) {
+      // The badge is informational; the Tools page reports real failures.
     }
   }
 
@@ -266,11 +346,21 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     empty.className = 'empty-state';
     const heading = document.createElement('h2');
     heading.textContent = 'No local overlays yet';
+    const text = document.createElement('p');
+    text.textContent = 'Install an overlay from the catalog, or copy an overlay folder into the overlays directory on this computer; vosu picks it up without a restart.';
+    const actions = document.createElement('div');
+    actions.className = 'counter-actions';
     const link = document.createElement('a');
     link.className = 'button button-primary';
     link.href = '/available';
     link.textContent = 'Browse available overlays';
-    empty.append(heading, link);
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'button';
+    open.dataset.action = 'open-overlays-root';
+    open.textContent = 'Open overlays folder';
+    actions.append(link, open);
+    empty.append(heading, text, actions);
     return empty;
   }
 
@@ -533,6 +623,18 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     }
   }
 
+  async function openOverlaysRoot(button) {
+    setBusy(button, true, 'Opening…');
+    try {
+      await requestJson('/api/counters/open-root', { method: 'POST' });
+      notify('Opened the overlays folder.', 'success');
+    } catch (error) {
+      notify(`Could not open the overlays folder: ${errorText(error)}`, 'error', 5000);
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
   async function openFolder(button) {
     const folder = button.dataset.folder;
     if (!folder) return;
@@ -553,10 +655,10 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     setBusy(button, true, 'Updating…');
     try {
       await requestJson('/api/runUpdates', { method: 'POST' });
-      notify('Vosu finished updating.', 'success');
+      notify('vosu finished updating.', 'success');
       document.querySelector('#update-notice')?.remove();
     } catch (error) {
-      notify(`Vosu could not update: ${errorText(error)}`, 'error', 5000);
+      notify(`vosu could not update: ${errorText(error)}`, 'error', 5000);
       setBusy(button, false);
     } finally {
       state.pending.delete('app-update');
@@ -656,6 +758,10 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       filterSettings();
       return;
     }
+    if (pageKey() === 'tools') {
+      state.filterTools?.(searchInput?.value ?? '');
+      return;
+    }
     window.clearTimeout(state.searchTimer);
     state.searchTimer = 0;
     const query = searchInput?.value.trim() ?? '';
@@ -697,6 +803,29 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     });
     const empty = form.querySelector('.settings-empty');
     if (empty) empty.hidden = anyVisible;
+    document.querySelectorAll('.settings-index a').forEach((link) => {
+      link.hidden = Boolean(document.getElementById(link.hash.slice(1))?.hidden);
+    });
+  }
+
+  // A sheet index beside the runtime form; groups are numbered by CSS
+  // counters, so the index repeats the same numbers.
+  function initializeSettingsIndex() {
+    const form = document.querySelector('#runtime-settings');
+    if (!form || !results) return;
+    const index = document.createElement('nav');
+    index.className = 'settings-index';
+    index.setAttribute('aria-label', 'Settings sections');
+    form.querySelectorAll(':scope > .settings-group').forEach((group, position) => {
+      group.id ||= `settings-group-${position + 1}`;
+      const link = document.createElement('a');
+      link.href = `#${group.id}`;
+      const number = document.createElement('span');
+      number.textContent = String(position + 1).padStart(2, '0');
+      link.append(number, group.querySelector('legend')?.textContent ?? '');
+      index.append(link);
+    });
+    if (index.childElementCount) results.append(index);
   }
 
   function controlValue(control) {
@@ -811,14 +940,47 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
   function initializeDashboardStatus() {
     const header = document.querySelector('#attachment-status');
     if (!header) return;
+    const clientCell = document.querySelector('[data-status-cell="client"]');
+    const pollCell = document.querySelector('[data-status-cell="poll"]');
+    // Rewriting identical text would make some screen readers re-announce the
+    // live region every two seconds.
+    function setText(element, text, title = text) {
+      if (!element) return;
+      if (element.textContent !== text) element.textContent = text;
+      if (element.title !== title) element.title = title;
+    }
+    function setCell(cell, text) {
+      if (!cell) return;
+      cell.hidden = !text;
+      setText(cell.querySelector('.status-value'), text);
+    }
+    function showAttachment(state, text, detail = text) {
+      header.dataset.state = state;
+      setText(header, text, detail);
+    }
     async function refresh() {
       try {
         const status = await requestJson('/api/dashboard/status');
-        if (header) {
-          const instances = status.instances ?? [];
-          header.textContent = status.available === false ? 'osu! attachment status unavailable'
-            : instances.length === 0 ? 'osu! not detected · waiting for a game'
-              : instances.map((instance) => `osu! ${instance.client} · PID ${instance.pid} · ${instance.version || 'version unknown'} · ${instance.state} · polling ${instance.pollIntervalMs} ms / precise ${instance.precisePollIntervalMs} ms`).join(' | ');
+        const instances = status.instances ?? [];
+        if (status.available === false) {
+          showAttachment('error', 'Attachment status unavailable');
+          setCell(clientCell, '');
+          setCell(pollCell, '');
+        } else if (instances.length === 0) {
+          showAttachment('idle', 'Not detected · waiting for a game');
+          setCell(clientCell, '');
+          setCell(pollCell, '');
+        } else {
+          const detail = instances.map((instance) => `osu! ${instance.client} · PID ${instance.pid} · ${instance.version || 'version unknown'} · ${instance.state} · polling ${instance.pollIntervalMs} ms / precise ${instance.precisePollIntervalMs} ms`).join(' | ');
+          const reading = instances.filter((instance) => instance.state === 'reading').length;
+          const lead = instances[0];
+          showAttachment(
+            reading > 0 ? 'reading' : 'starting',
+            instances.length > 1 ? `${instances.length} instances · ${reading} reading` : lead.state,
+            detail,
+          );
+          setCell(clientCell, instances.map((instance) => `${instance.client} ${instance.version || 'version unknown'} · PID ${instance.pid}`).join(' | '));
+          setCell(pollCell, `${lead.pollIntervalMs} ms / precise ${lead.precisePollIntervalMs} ms`);
         }
         for (const card of installedCards()) {
           const chip = card.querySelector('.connected-chip');
@@ -829,7 +991,9 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
           chip.title = 'Identified WebSocket connections, including dashboard previews; not unique users. Unidentified sockets cannot be counted.';
         }
       } catch (_error) {
-        if (header) header.textContent = 'osu! attachment status unavailable';
+        showAttachment('error', 'Attachment status unavailable');
+        setCell(clientCell, '');
+        setCell(pollCell, '');
         document.querySelectorAll('.connected-chip').forEach((chip) => { chip.hidden = true; });
       } finally {
         window.setTimeout(refresh, 2000);
@@ -975,7 +1139,13 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     keep.className = 'button button-primary';
     keep.textContent = 'Keep network settings';
     keep.hidden = true;
-    form.append(apply, keep, networkStatus);
+    // Apply sits with the fields it commits instead of after unrelated groups.
+    const networkActions = document.createElement('div');
+    networkActions.className = 'network-actions';
+    networkActions.append(apply, keep, networkStatus);
+    const networkGroup = networkControls[0]?.closest('.settings-group');
+    if (networkGroup) networkGroup.append(networkActions);
+    else form.append(networkActions);
     const params = new URLSearchParams(location.search);
     const requestedDeadline = Number(params.get('network-deadline'));
     const now = Date.now();
@@ -1169,7 +1339,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     if (event.target === previewDialog) previewDialog.close();
   });
 
-  const { closeDialog, loadCounterSettings } = createSettingsEditor({
+  const { closeDialog, loadCounterSettings, loadToolSettings } = createSettingsEditor({
     results, requestJson, notify, setBusy, errorText, absoluteHttpUrl,
   });
 
@@ -1211,6 +1381,8 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     }
     if (action === 'close-dialog') {
       closeDialog();
+    } else if (action === 'toggle-theme') {
+      toggleTheme();
     } else if (action === 'diagnostics-report') {
       downloadDiagnostics(control);
     } else if (action === 'toggle-pin') {
@@ -1227,6 +1399,8 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       deleteCounter(control);
     } else if (action === 'open-counter') {
       openFolder(control);
+    } else if (action === 'open-overlays-root') {
+      openOverlaysRoot(control);
     } else if (action === 'counter-settings') {
       loadCounterSettings(control.dataset.folder);
     } else if (action === 'app-update') {
@@ -1280,6 +1454,8 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       }
     }
     if (event.key === AVAILABLE_COUNT_KEY) setCount('available', Number(event.newValue));
+    if (event.key === COUNT_KEYS.tools) setCount('tools', Number(event.newValue));
+    if (event.key === THEME_KEY) applyTheme(storedTheme() ?? (lightQuery?.matches ? 'light' : 'dark'));
   });
 
   configurePageChrome();
@@ -1289,14 +1465,36 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
   observePreviews();
   initializeRuntimeSettings();
   initializeApiKeys();
+  initializeSettingsIndex();
   initializePresentation();
   initializePinDrag();
   initializeDashboardStatus();
+  refreshToolCount();
 
-  const requestedOverlay = new URLSearchParams(window.location.search).get('overlay');
-  if (window.location.pathname === '/settings' && requestedOverlay) {
-    const title = document.querySelector('#page-title');
-    if (title) title.textContent = 'Overlay settings';
+  if (requestedOverlay) {
     loadCounterSettings(requestedOverlay, { inline: true });
+  } else if (requestedTool) {
+    loadToolSettings(requestedTool, { inline: true });
+  }
+
+  // Loaded only on the Tools page so other pages do not parse it.
+  if (pageKey() === 'tools') {
+    import('./dashboard-tools.js').then(({ mountTools }) => {
+      state.filterTools = mountTools({
+        root: document.querySelector('#tools-root'),
+        results,
+        requestJson,
+        notify,
+        setBusy,
+        errorText,
+        absoluteHttpUrl,
+        confirmAction: confirmOverlay,
+        createActionDialog,
+        createOverflow,
+        currentTheme,
+        setCount: (value) => setCount('tools', value),
+      });
+      if (searchInput?.value) state.filterTools?.(searchInput.value);
+    }).catch((error) => notify(`Could not load the Tools page: ${errorText(error)}`, 'error', 0));
   }
 })();

@@ -1,2 +1,183 @@
-:root { color-scheme: dark; --bg: #111214; --bg-raised: #191a1d; --fg: #ecebe6; --muted: #969792; --accent: #ff963f; --font-body: sans-serif; --font-mono: monospace; }
-:root[data-theme="light"] { color-scheme: light; --bg: #f2f1ec; --fg: #202124; --accent: #175fad; }
+/*
+ * 18-LAB design tokens for vosu: the dashboard and tool UIs share this file.
+ * The dashboard links it from /assets/tokens.css; tools link the same bytes at
+ * /tools/_host/v1/theme.css. It therefore holds only @font-face and :root
+ * rules, and font URLs are absolute so they resolve from either path. Both
+ * vosu listeners serve /assets/.
+ *
+ * Two modes, one system: WORKSTATION (graphite + amber, the default) and
+ * DRAFTING (paper + blueprint). Select one with
+ * :root[data-theme="dark" | "light"]; without the attribute the operating
+ * system's colour-scheme preference decides.
+ *
+ * Fonts: Barlow, Barlow Condensed (c) 2017 The Barlow Project Authors;
+ * IBM Plex Mono (c) 2017 IBM Corp. SIL Open Font License 1.1, see
+ * /assets/fonts-OFL.txt.
+ */
+
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/assets/barlow-condensed-latin-500-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/assets/barlow-condensed-latin-600-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/assets/barlow-condensed-latin-700-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Barlow";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/assets/barlow-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Barlow";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/assets/barlow-latin-500-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Barlow";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/assets/barlow-latin-600-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/assets/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/assets/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+}
+
+/* WORKSTATION. Each mode borrows the other's accent as its quiet secondary
+   "signal" colour, which keeps the two reading as one system. */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111214;
+  --bg-raised: #17191c;
+  --bg-sunken: #0b0c0d;
+  --rule: #25282c;
+  --rule-strong: #3b3f45;
+  --fg: #ebe8e1;
+  --fg-dim: #b8b5ad;
+  --muted: #7e8288;
+  --accent: #ff963f;
+  --on-accent: #1a1007;
+  --signal: #7fa6cf;
+  --note: #7fa6cf;
+  --caution: #e8b04a;
+  --danger: #ef5b4f;
+  --grid-minor: rgb(235 232 225 / 0.028);
+  --grid-major: rgb(235 232 225 / 0.06);
+  --scrim: rgb(5 6 7 / 0.78);
+  --mode-label: "WORKSTATION";
+}
+
+/* DRAFTING. --muted and --caution are darker than the 18-LAB prototype's so
+   small text keeps 4.5:1 contrast on every light surface. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f2f1ec;
+  --bg-raised: #f8f7f3;
+  --bg-sunken: #e7e6df;
+  --rule: #d6dadd;
+  --rule-strong: #a7b2bd;
+  --fg: #132030;
+  --fg-dim: #3b4858;
+  --muted: #5b6775;
+  --accent: #175fad;
+  --on-accent: #f4f6f9;
+  --signal: #b8621b;
+  --note: #175fad;
+  --caution: #9a5207;
+  --danger: #b42318;
+  --grid-minor: rgb(23 95 173 / 0.05);
+  --grid-major: rgb(23 95 173 / 0.1);
+  --scrim: rgb(19 32 48 / 0.45);
+  --mode-label: "DRAFTING";
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --bg: #f2f1ec;
+    --bg-raised: #f8f7f3;
+    --bg-sunken: #e7e6df;
+    --rule: #d6dadd;
+    --rule-strong: #a7b2bd;
+    --fg: #132030;
+    --fg-dim: #3b4858;
+    --muted: #5b6775;
+    --accent: #175fad;
+    --on-accent: #f4f6f9;
+    --signal: #b8621b;
+    --note: #175fad;
+    --caution: #9a5207;
+    --danger: #b42318;
+    --grid-minor: rgb(23 95 173 / 0.05);
+    --grid-major: rgb(23 95 173 / 0.1);
+    --scrim: rgb(19 32 48 / 0.45);
+    --mode-label: "DRAFTING";
+  }
+}
+
+:root {
+  --font-display: "Barlow Condensed", "Bahnschrift", "DIN Condensed", sans-serif;
+  --font-body: "Barlow", "Bahnschrift", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
+
+  /* Type scale. Labels are mono caps at --step--2; body text is --step-0. */
+  --step--2: 0.6875rem;
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.25rem;
+  --step-2: 1.75rem;
+  --step-3: clamp(2.25rem, 1.6rem + 2.6vw, 3.75rem);
+
+  /* Spacing scale on a 4px base. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  --gutter: clamp(1rem, 0.5rem + 2vw, 2.5rem);
+  --max: 1440px;
+  --hair: 1px;
+  --notch: 8px;
+  --ease-draft: cubic-bezier(0.65, 0, 0.2, 1);
+}

@@ -14,7 +14,7 @@ const SEARCH_FORM: &str = r#"<form class="search-form" role="search"><label clas
 /// section so catalog searches, which replace only the results, keep it.
 pub(super) const CATALOG_NOTICE: &str = concat!(
     r#"<details class="catalog-notice" open><summary>Community overlays · third-party code</summary>"#,
-    r#"<p>Install only overlays you trust. They run their authors' JavaScript on the overlay origin, separate from this dashboard. Catalog: <a href="https://tosu.app" target="_blank" rel="noopener noreferrer">tosu.app</a>; downloads: osuck.link. Vosu does not review or endorse these overlays.</p>"#,
+    r#"<p>Install only overlays you trust. They run their authors' JavaScript on the overlay origin, separate from this dashboard. Catalog: <a href="https://tosu.app" target="_blank" rel="noopener noreferrer">tosu.app</a>; downloads: osuck.link. vosu does not review or endorse these overlays.</p>"#,
     "</details>",
 );
 
@@ -690,13 +690,13 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
             if externally_managed {
                 "Updates are managed by your Linux package manager; automatic updates are disabled."
             } else {
-                "Install new Vosu releases automatically during startup. Vosu checks for them at every start either way, so it can show the update notice."
+                "Install new vosu releases automatically during startup. vosu checks for them at every start either way, so it can show the update notice."
             },
             &update_switch,
         ),
         settings_item(
             "Open dashboard at startup",
-            "Open this local dashboard in the default browser after Vosu starts.",
+            "Open this local dashboard in the default browser after vosu starts.",
             &settings_switch(
                 "OPEN_DASHBOARD_ON_STARTUP",
                 config.open_dashboard_on_startup,
@@ -705,7 +705,7 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         #[cfg(target_os = "linux")]
         settings_item(
             "Start at login",
-            "Run Vosu as a systemd user service when you log in.",
+            "Run vosu as a systemd user service when you log in.",
             &settings_switch("START_AT_LOGIN", config.start_at_login),
         ),
     ];
@@ -781,12 +781,12 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         &[
             settings_item(
                 "Listener address",
-                "IP address where the Vosu HTTP server listens.",
+                "IP address where the vosu HTTP server listens.",
                 &settings_text("SERVER_IP", &config.server_ip, ""),
             ),
             settings_item(
                 "Listener port",
-                "Port for the Vosu HTTP server, from 1 through 65535. Ports below 1024 usually require administrator rights.",
+                "Port for the vosu HTTP server, from 1 through 65535. Ports below 1024 usually require administrator rights.",
                 &settings_number("SERVER_PORT", config.server_port, 1.0, 65_535.0, "1"),
             ),
             settings_item(
@@ -832,7 +832,7 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
             ),
             settings_item(
                 "Overlays directory",
-                "Directory Vosu scans for local overlays.",
+                "Directory vosu scans for local overlays.",
                 &settings_text("STATIC_FOLDER_PATH", &config.static_folder_path, ""),
             ),
         ],
