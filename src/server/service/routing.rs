@@ -3,6 +3,7 @@ pub struct ProductionRouteDelegate {
     services: ProductionServices,
     api_keys: Option<Arc<super::api_keys::ApiKeys>>,
     connections: OverlayConnections,
+    tools: Option<Arc<crate::tools::ToolHost>>,
 }
 
 impl ProductionRouteDelegate {
@@ -12,10 +13,14 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default() }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), tools: None }
     }
     pub fn with_api_keys(mut self, keys: Arc<super::api_keys::ApiKeys>) -> Self {
         self.api_keys = Some(keys);
+        self
+    }
+    pub fn with_tools(mut self, tools: Arc<crate::tools::ToolHost>) -> Self {
+        self.tools = Some(tools);
         self
     }
     pub fn services(&self) -> &ProductionServices {
@@ -24,6 +29,14 @@ impl ProductionRouteDelegate {
 
     async fn dispatch(&self, endpoint: Endpoint, request: Request<Body>, body: Bytes) -> Response {
         match endpoint {
+            Endpoint::ToolOverlay => match &self.tools {
+                Some(tools) => tools.overlay(request, body).await,
+                None => not_found(),
+            },
+            Endpoint::ToolManagement => match &self.tools {
+                Some(tools) => tools.dashboard(request, body).await,
+                None => not_found(),
+            },
             Endpoint::State(_) | Endpoint::CalculatePp => {
                 internal_error("route provider dispatch invariant violated")
             }
@@ -57,6 +70,7 @@ impl ProductionRouteDelegate {
             | Endpoint::Favicon
             | Endpoint::Root
             | Endpoint::Settings
+            | Endpoint::Tools
             | Endpoint::Available => self.page(endpoint, request).await,
             Endpoint::BackgroundImage
             | Endpoint::BeatmapBackground
@@ -338,12 +352,13 @@ impl ProductionRouteDelegate {
                 }
                 Endpoint::Root
                 | Endpoint::Settings
+                | Endpoint::Tools
                 | Endpoint::Available => self.services.pages.lookup_get(
                     path,
                     request
                         .uri()
                         .query()
-                        .and_then(|query| decoded_query_value(query, "overlay"))
+                        .and_then(|query| decoded_query_value(query, "overlay").or_else(|| decoded_query_value(query, "tool")))
                         .is_some_and(|value| !value.is_empty()),
                 ),
                 _ => unreachable!(),

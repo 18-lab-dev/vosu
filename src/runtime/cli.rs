@@ -6,7 +6,7 @@ use std::{
 #[cfg(target_os = "linux")]
 use std::env;
 
-pub(super) const HELP_TEXT: &str = "Usage: vosu [OPTION]\n\nOptions:\n  -h, --help     Print this help\n  -s, --setup    Authenticate and install supported Linux capabilities\n  -V, --version  Print the version\n";
+pub(super) const HELP_TEXT: &str = "Usage: vosu [OPTION]\n\nOptions:\n  -h, --help     Print this help\n  -s, --setup    Authenticate and install supported Linux capabilities\n  -V, --version  Print the version\n  --tool <dir>   Load a trusted development tool (repeatable)\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CliCommand {

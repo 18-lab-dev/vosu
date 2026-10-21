@@ -54,6 +54,7 @@ pub enum DynamicPage {
     Settings,
     EmptySettings,
     Available,
+    Tools,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -195,6 +196,7 @@ impl PageService {
             }
             "/settings" => PageLookup::Dynamic(DynamicPage::Settings),
             "/available" => PageLookup::Dynamic(DynamicPage::Available),
+            "/tools" => PageLookup::Dynamic(DynamicPage::Tools),
             path if path.starts_with("/.well-know") => PageLookup::NotFound,
             path => PageLookup::Static(static_fallback(path)),
         }

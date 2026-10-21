@@ -1,0 +1,14 @@
+manifest_version = 1
+id = "fixture"
+name = "Tool host fixture"
+version = "1.0.0"
+[ui]
+root = "web"
+[service]
+command = ["python3", "service.py"]
+startup = "on-demand"
+[api]
+read = ["/v1/read", "/v1/stream"]
+write = ["/v1/write", "/v1/crash"]
+[permissions]
+host = ["context"]

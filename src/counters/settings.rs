@@ -491,6 +491,9 @@ impl SettingsStore {
 }
 
 pub fn validate_component(name: &str) -> Result<(), SettingsError> {
+    if name.eq_ignore_ascii_case("tools") {
+        return Err(SettingsError::InvalidName);
+    }
     let mut components = Path::new(name).components();
     match (components.next(), components.next()) {
         (Some(std::path::Component::Normal(component)), None)
@@ -509,7 +512,7 @@ fn sanitize_id(id: &str) -> String {
     id.chars().filter(|ch| ch.is_ascii_alphanumeric()).collect()
 }
 
-fn coerce_number(value: Value) -> Value {
+pub(crate) fn coerce_number(value: Value) -> Value {
     match value {
         Value::Number(_) => value,
         Value::String(text) => text
@@ -524,14 +527,14 @@ fn coerce_number(value: Value) -> Value {
     }
 }
 
-fn coerce_checkbox(value: Value) -> Value {
+pub(crate) fn coerce_checkbox(value: Value) -> Value {
     match value {
         Value::String(text) => Value::Bool(text == "true"),
         other => other,
     }
 }
 
-fn normalize_settings(settings: &mut [CounterSetting]) {
+pub(crate) fn normalize_settings(settings: &mut [CounterSetting]) {
     for setting in settings {
         setting.value = match setting.kind {
             SettingType::Number => coerce_number(setting.value.clone()),

@@ -223,6 +223,7 @@ The lists below cover direct dependencies. `cargo metadata --locked --format-ver
 - `memchr`: Unlicense OR MIT
 - `notify`: CC0-1.0
 - Linux-only `ksni` 0.3.6: Unlicense; pure-Rust StatusNotifierItem/D-Bus tray support (<https://github.com/iovxw/ksni>). The fallback pixmap is decoded with `png` 0.18.1 (MIT OR Apache-2.0, <https://github.com/image-rs/image-png>) from the existing first-party branding PNG. Windows tray support uses the existing `windows-sys` 0.61.2 dependency (MIT OR Apache-2.0) and native Windows APIs, without a GTK/AppIndicator runtime dependency.
+- `tokio-tungstenite` 0.29.0 and `tungstenite` 0.29.0: MIT; existing Axum WebSocket transport dependencies also used directly for the supervised tool WebSocket proxy (<https://github.com/snapview/tokio-tungstenite>, <https://github.com/snapview/tungstenite-rs>).
 - local project-authored code and `vosu-pp` package: `MIT OR Apache-2.0` where the project has licensing authority; separately identified retained inputs remain under their own terms
 - Linux-only `libbpf-rs` and build-time `libbpf-cargo`: LGPL-2.1-only OR BSD-2-Clause. Their transitive `libbpf-sys` binding is BSD-2-Clause and statically includes libbpf 1.7.0 under LGPL-2.1-only OR BSD-2-Clause. Linux releases dynamically link the system libelf (LGPL-2.1-or-later OR LGPL-3.0-or-later) and zlib (Zlib) libraries.
 

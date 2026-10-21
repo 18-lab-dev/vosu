@@ -65,6 +65,9 @@ pub enum Endpoint {
     Root,
     Settings,
     Available,
+    Tools,
+    ToolOverlay,
+    ToolManagement,
     CounterStatic,
     WsV1,
     WsTokens,
@@ -428,6 +431,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                     | Endpoint::WsV2
                     | Endpoint::WsV2Precise
                     | Endpoint::WsV2Subscribe
+                    | Endpoint::ToolOverlay
                     | Endpoint::WsCommands
             )
         )
@@ -447,7 +451,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         if !dashboard
             && matches!(
                 endpoint,
-                Endpoint::DashboardStatus | Endpoint::CounterDetails
+                Endpoint::DashboardStatus | Endpoint::CounterDetails | Endpoint::ToolManagement
             )
         {
             return not_found();
@@ -455,7 +459,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         if !dashboard
             && matches!(
                 endpoint,
-                Endpoint::Root | Endpoint::Settings | Endpoint::Available
+                Endpoint::Root | Endpoint::Settings | Endpoint::Available | Endpoint::Tools
             )
         {
             let target = format!(
@@ -473,6 +477,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             && matches!(
                 endpoint,
                 Endpoint::CounterStatic
+                    | Endpoint::ToolOverlay
                     | Endpoint::WsCommands
                     | Endpoint::BackgroundImage
                     | Endpoint::BeatmapBackground
@@ -487,26 +492,27 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         }
     }
     let keys = providers.delegate.api_keys();
-    let credential =
-        if method == Method::POST || (websocket_upgrade && endpoint == Endpoint::WsCommands) {
-            super::api_keys::presented(request.headers(), websocket_upgrade).map(|key| {
-                key.or_else(|| {
-                    (method == Method::POST)
-                        .then(|| {
-                            request
-                                .headers()
-                                .get(header::AUTHORIZATION)
-                                .and_then(|value| value.to_str().ok())
-                                .and_then(|value| value.split_once(' '))
-                                .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
-                                .map(|(_, token)| (token.to_owned(), false))
-                        })
-                        .flatten()
-                })
+    let credential = if (method == Method::POST && endpoint != Endpoint::ToolOverlay)
+        || (websocket_upgrade && endpoint == Endpoint::WsCommands)
+    {
+        super::api_keys::presented(request.headers(), websocket_upgrade).map(|key| {
+            key.or_else(|| {
+                (method == Method::POST)
+                    .then(|| {
+                        request
+                            .headers()
+                            .get(header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok())
+                            .and_then(|value| value.split_once(' '))
+                            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+                            .map(|(_, token)| (token.to_owned(), false))
+                    })
+                    .flatten()
             })
-        } else {
-            Ok(None)
-        };
+        })
+    } else {
+        Ok(None)
+    };
     let mut grant = None;
     let mut broker_grant = None;
     let mut key_protocol = false;
@@ -596,7 +602,10 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         .map_or(mutation.0, |(origins, dashboard)| {
             dashboard && origins.authorized(request.headers(), local_ip)
         });
-    if ((method == Method::POST && grant.is_none() && broker_grant.is_none())
+    if ((method == Method::POST
+        && endpoint != Endpoint::ToolOverlay
+        && grant.is_none()
+        && broker_grant.is_none())
         || endpoint == Endpoint::ApiKeys)
         && !trusted_management
     {
@@ -621,7 +630,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
             (dashboard
                 && matches!(
                     endpoint,
-                    Endpoint::Root | Endpoint::Settings | Endpoint::Available
+                    Endpoint::Root | Endpoint::Settings | Endpoint::Available | Endpoint::Tools
                 ))
             .then(|| origins.page_context(request.headers(), local_ip))
         });
@@ -652,7 +661,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         },
         endpoint => {
             let (parts, body) = request.into_parts();
-            let body = if method == Method::POST {
+            let body = if method == Method::POST || endpoint == Endpoint::ToolOverlay {
                 match to_bytes(body, MAX_POST_BODY).await {
                     Ok(body) => body,
                     Err(_) => {
@@ -758,6 +767,12 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/" if get => Some(Root),
         "/settings" if get => Some(Settings),
         "/available" if get => Some(Available),
+        "/tools" if get => Some(Tools),
+        "/tools" => None,
+        _ if path.starts_with("/tools/") => Some(ToolOverlay),
+        _ if (get || post) && (path == "/api/tools" || path.starts_with("/api/tools/")) => {
+            Some(ToolManagement)
+        }
         "/ws" if get => Some(WsV1),
         "/tokens" if get => Some(WsTokens),
         "/websocket/v2" if get => Some(WsV2),

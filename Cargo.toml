@@ -89,6 +89,7 @@ tempfile = "3.26.0"
 thiserror = "2.0.18"
 tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util", "signal", "test-util", "process"] }
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
+tokio-tungstenite = "=0.29.0"
 toml = "=1.1.2"
 vosu-pp = { path = "crates/vosu-pp" }
 tracing = "=0.1.44"
@@ -101,7 +102,7 @@ parking_lot = "0.12.5"
 subtle = "=2.6.1"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Wdk_System_SystemInformation", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Media", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_System_WindowsProgramming", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "=0.61.2", features = ["Wdk_System_SystemInformation", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Media", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_System_WindowsProgramming", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 wmi = "=0.18.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]

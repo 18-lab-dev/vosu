@@ -15,12 +15,16 @@ Each tool is one directory containing `tool.toml`. vosu scans these roots, in or
 | Root | Location | Trust |
 | --- | --- | --- |
 | Development | Each `--tool <directory>` passed on the vosu command line | Trusted for that run: the user launched it |
-| Bundled | `<directory of the vosu executable>/tools/<id>/` (Linux packages: the packaged `tools` directory next to the executable) | Trusted; shipped and verified with vosu |
+| Bundled | Release-build embedded tree, verified and materialized under `<vosu cache directory>/tools/bundled/bundled-<version>-<tree digest>/` | Trusted; shipped inside the verified vosu executable |
 | User | `<vosu data directory>/tools/<id>/` | Untrusted until the user approves it in the dashboard |
 
 A development tool replaces a bundled or user tool with the same `id` for that run, so a checkout of a first-party tool can be developed against an installed vosu. A user tool that duplicates a bundled `id` is reported as `invalid`. In bundled and user roots the directory name must equal `id`.
 
 vosu watches every root. Added, removed, or edited manifests and `settings.json` files apply without restarting vosu. For development tools, a change to the service executable also restarts a running service, so `cargo build` or saving a script is the whole edit loop.
+
+Release builds set `VOSU_BUNDLED_TOOLS` to an absolute staged directory whose immediate children are tool ids. Normal development builds embed no tools. Materialization uses a temporary sibling, synced files and atomic rename, checks cached bytes before reuse, and removes obsolete bundled versions. Release archives retain the updater's single-root-executable invariant.
+
+For a development service, a missing relative command is resolved by file name in Cargo output: starting at the tool directory, each ancestor containing `Cargo.toml` is checked for `$CARGO_TARGET_DIR/{debug,release}/<file>` (a relative environment value is resolved against that ancestor), or `target/{debug,release}/<file>` when the variable is unset. Debug is tried before release; the nearest matching ancestor wins. Bare executable names such as `python3` resolve through `PATH`; paths containing a separator resolve under the tool directory before the development fallback. On Windows an extensionless executable gets `.exe`.
 
 ## Manifest (`tool.toml`)
 
@@ -39,13 +43,13 @@ root = "web"                     # static directory, served at /tools/<id>/
 entry = "index.html"             # default "index.html"
 
 [service]                        # optional: background process
-command = ["bin/vosu-skill-tracker"]  # argv; argv[0] relative to the tool directory.
+command = ["bin/vosu-skill-tracker"]  # argv; paths relative to tool dir; bare names use PATH.
                                  # On Windows ".exe" is appended when argv[0] has no extension.
-startup = "always"               # "always" (start with vosu) | "on-demand" (first request; stopped after 10 idle minutes)
+startup = "always"               # "always" (start with vosu) | "on-demand" (default; first request, stop after 10 idle minutes)
 
 [api]                            # routes reachable through /tools/<id>/api/; anything unlisted is 404
 read = ["/v1/profile", "/v1/history", "/v1/current", "/v1/stream"]  # path prefixes; GET/HEAD and WebSocket upgrade; open to overlays
-write = ["/v1/import"]           # path prefixes; every method; requires a UI session or a dependent tool
+write = ["/v1/import"]           # authenticated mutations, plus authenticated GET/HEAD where not also in read
 
 [[requires]]                     # optional, repeated: tools this tool calls
 id = "difficulty"
@@ -57,7 +61,7 @@ host = ["context", "songs:write"]  # see "Host API" below
 
 `settings.json` in the tool directory, when present, uses exactly the overlay `settings.json` schema and is rendered by the dashboard's existing settings editor. Profiles do not apply to tools.
 
-Prefix matching is segment-aware: `/v1/beatmap` matches `/v1/beatmap` and `/v1/beatmap/…`, never `/v1/beatmaps`. `write` wins when a path matches both lists.
+Prefix matching is segment-aware: `/v1/beatmap` matches `/v1/beatmap` and `/v1/beatmap/…`, never `/v1/beatmaps`. Access is method-aware: GET/HEAD/WebSocket upgrades matching `read` are open even when the same prefix is also in `write`. Other methods require a matching `write` prefix and authenticated write authority. GET/HEAD on write-only prefixes also require that authority; unlisted routes return 404.
 
 ## Process contract
 
@@ -91,8 +95,8 @@ The `/tools` path prefix is reserved on the overlay listener: overlays cannot be
 
 Access rules for `/tools/<id>/api/*`:
 
-- `read` routes: GET/HEAD/WebSocket from anyone permitted by the overlay listener's peer policy; CORS `*` like other overlay read APIs.
-- `write` routes: require `X-Vosu-Tool-Session` (a UI session for this tool) or `X-Vosu-Tool-Token` of a running tool that lists this tool in `[[requires]]`. Otherwise 403.
+- `read` routes: GET/HEAD/WebSocket from anyone permitted by the overlay listener's peer policy; CORS `*` like other overlay read APIs. Matching a `write` prefix does not change the open-read rule.
+- Mutating methods on `write` routes, and GET/HEAD on write-only routes: require `X-Vosu-Tool-Session` (a UI session for this tool) or `X-Vosu-Tool-Token` of a running tool that lists this tool in `[[requires]]`. Otherwise 403. Methods other than GET/HEAD never use `read` alone; WebSocket upgrades require a read prefix.
 - A dependent tool presenting its token gets both `read` and `write` routes of its declared dependencies.
 
 ## Host API (for services)

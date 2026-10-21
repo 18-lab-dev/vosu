@@ -16,6 +16,7 @@ Add **tools** as vosu's first extension type, specified in the [tool protocol](.
 - Tools may depend on other tools. A dependent tool calls its dependencies through the same proxy with its per-launch token, so shared providers (for example the first-party difficulty provider) compute and cache once.
 - Services bind loopback port 0, announce readiness on stdout, authenticate every forwarded request with a per-launch token, and exit when stdin closes.
 - Tool roots are watched and `--tool <directory>` runs a development tool from any checkout, restarting it when its executable changes, so authors iterate without packaging or restarting vosu.
+- Bundled tools are embedded into the release executable, then verified and atomically materialized into a version/tree-digest cache directory at startup. Development builds without `VOSU_BUNDLED_TOOLS` embed no tools. This preserves the updater's existing single-root-executable archive validation rather than weakening it to allow arbitrary executable archive members.
 
 ### Write authority on a shared origin
 

@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::{Value, json};
 
 /// Process-wide resource owner used by [`App`].
 ///
@@ -6,6 +7,39 @@ use super::*;
 pub(super) struct RuntimeBeatmap {
     pub(super) snapshots: Arc<SnapshotManager>,
     pub(super) counters: Arc<ReloadableCounterService>,
+}
+
+impl RuntimeBeatmap {
+    pub(super) fn tool_context(&self) -> Value {
+        let manager = self.snapshots.load();
+        let Some(focused) = manager.focused() else {
+            return json!({"client":null,"songs_dir":null,"beatmap":null});
+        };
+        let regular = &focused.regular;
+        let files = runtime_beatmap_files(regular, focused.source, &self.counters.current_root());
+        let root = files.songs_root.and_then(|p| std::fs::canonicalize(p).ok());
+        let resolve = |relative: &Option<PathBuf>| -> Option<PathBuf> {
+            let root = root.as_ref()?;
+            let relative = relative.as_ref()?;
+            let path = std::fs::canonicalize(root.join(relative)).ok()?;
+            path.starts_with(root).then_some(path)
+        };
+        let file = resolve(&files.beatmap_file);
+        let mode = match regular.global.status {
+            2 => Some(regular.gameplay.mode),
+            7 => Some(regular.result_screen.raw.mode),
+            _ => regular.menu.gamemode,
+        };
+        let beatmap = file.map(|file| json!({
+            "checksum": regular.menu.checksum,
+            "mode": match mode { Some(1) => "taiko", Some(2) => "fruits", Some(3) => "mania", _ => "osu" },
+            "folder": file.parent(),
+            "file": file,
+            "audio": resolve(&files.audio_file),
+            "background": resolve(&files.background_file),
+        }));
+        json!({"client": if focused.source == ClientType::Lazer { "lazer" } else { "stable" }, "songs_dir":root,"beatmap":beatmap})
+    }
 }
 
 pub(super) fn current_file_relative(
@@ -195,6 +229,10 @@ impl PageDataProvider for RuntimePages {
                 }
                 DynamicPage::Settings => (render_runtime_settings(&self.config.current()), None),
                 DynamicPage::EmptySettings => (String::new(), None),
+                DynamicPage::Tools => (
+                    r#"<div id="tools-root" class="tools-root"></div>"#.to_owned(),
+                    None,
+                ),
                 DynamicPage::Available => {
                     let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
                     match self.catalog.fetch(&installed, &self.shutdown).await {

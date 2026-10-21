@@ -445,6 +445,13 @@ pub fn resolve_encoded_counter_resource(
     let Some(alias_name) = components.next() else {
         return resolve_child(logical_child, &decoded, request_target, missing);
     };
+    if alias_name
+        .as_os_str()
+        .to_string_lossy()
+        .eq_ignore_ascii_case("tools")
+    {
+        return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
+    }
     let alias_path = root.join(alias_name.as_os_str());
     let is_symlink = match fs::symlink_metadata(&alias_path) {
         Ok(metadata) => metadata.file_type().is_symlink(),

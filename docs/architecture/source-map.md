@@ -22,6 +22,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Server and transport | `src/server/`, `src/net/` | Exact routes, auth, files, pages, WebSockets, commands and streaming |
 | Calculation | `src/calculation/`, `crates/vosu-pp/`, `crates/vosu-pp/rosu-map-api/`, `crates/vosu-pp/rosu-pp-api/` | Beatmaps, progressive state, live pp, legacy endpoint calculation, and provenance-pinned calculator APIs |
 | Configuration and counters | `src/config/`, `src/counters/` | Canonical `vosu.toml`, one-time legacy dotenv migration, settings, discovery and downloads |
+| Hosted tools | `src/tools/`, `assets/server/tool-bridge.js`, `crates/vosu-tool-sdk/` | Manifest/discovery, trust/settings persistence, child supervision, authenticated HTTP/WebSocket proxy and browser bridge |
 | Updating | `src/updater/` | Release selection, digest verification, staging, replacement, rollback |
 | Reports and logging | `src/report/`, `src/logging/` | Report rendering, escaping, retention and operational diagnostics |
 | Integration evidence | `tools/live-parity/`, `tools/oracle/` | Pinned parity captures, calculator provenance and diffs |
