@@ -1,0 +1,19 @@
+manifest_version = 1
+id = "trainer"
+name = "osu! Trainer"
+version = "0.1.0"
+description = "Create rate-adjusted practice copies without changing your original beatmaps."
+author = "18-LAB"
+[ui]
+root = "web"
+[service]
+command = ["bin/vosu-trainer"]
+startup = "on-demand"
+[api]
+read = ["/v1/current", "/v1/generated", "/v1/jobs"]
+write = ["/v1/generate", "/v1/jobs", "/v1/delete"]
+[[requires]]
+id = "difficulty"
+version = ">=0.1.0"
+[permissions]
+host = ["context", "songs:write"]

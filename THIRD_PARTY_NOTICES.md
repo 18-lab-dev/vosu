@@ -12,6 +12,30 @@ First-party notice: `Copyright (c) 2026 sxlvia`, as confirmed by the maintainer 
 - **Modification:** one standalone-build preprocessor guard; no calculator arithmetic changes. Original project-authored C ABI, conversion and durable provider. Exact mapping, selection research, computed Reform calibration sources, and hold-head-only limitations: [`PROVENANCE.md`](crates/vosu-tool-difficulty/PROVENANCE.md).
 - **New Rust/native dependency:** rusqlite 0.39.0 (MIT), bundled SQLite (public domain); exact transitive identities in `Cargo.lock`. No Companella, ONNX model, course charts, audio, or minacalc-rs code is redistributed. Synthetic test chart is CC0.
 
+## Trainer audio stack
+
+`crates/vosu-tool-trainer` independently implements practice-map transforms;
+no FunOrange osu-trainer code, SoundTouch, LAME, or Symphonia is included.
+Symphonia's MPL-2.0 is file-level copyleft, not an approved license under this
+release's stricter permissive-only dependency policy, so it was not selected.
+
+| Package / bundled native code | License | Purpose |
+| --- | --- | --- |
+| minimp3 0.6.1 / minimp3-sys 0.6.0 | MIT / CC0-1.0 native minimp3 | MP3 decoding |
+| hound 3.5.1 | Apache-2.0 | PCM/float WAV decoding |
+| vorbis_rs 0.5.6, aotuv_lancer_vorbis_sys 0.1.6, ogg_next_sys 0.1.5 | BSD-3-Clause | Vorbis decoding and OGG Vorbis encoding, statically built |
+| Signalsmith Stretch / Linear via signalsmith-stretch 0.1.3 | MIT | Pitch-preserving offline time stretch (C++, `cc` / bindgen) |
+| rubato 0.16.2 | MIT | Band-limited sinc resampling with pitch change |
+
+Exact native and wrapper license texts, including Xiph.org/Aoyumi, Alejandro
+González, Geraint Luff/Signalsmith Audio, and decoder notices, are retained in
+[`crates/vosu-tool-trainer/web/licenses.txt`](crates/vosu-tool-trainer/web/licenses.txt)
+and distributed as a tool UI asset. Package checksums are in `Cargo.lock`.
+Sources: [minimp3-rs](https://github.com/germangb/minimp3-rs),
+[hound](https://github.com/ruuda/hound),
+[vorbis-rs](https://github.com/ComunidadAylas/vorbis-rs),
+[Signalsmith wrapper](https://github.com/colinmarc/signalsmith-stretch-rs),
+[rubato](https://github.com/HEnquist/rubato).
 
 ## tosu compatibility and retained provenance
 

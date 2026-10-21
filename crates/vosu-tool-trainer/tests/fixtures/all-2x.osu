@@ -1,0 +1,54 @@
+osu file format v14
+
+[General]
+AudioFilename:output.ogg
+PreviewTime:1000
+Mode: 3
+
+[Editor]
+Bookmarks:500,1000,2000
+DistanceSpacing: 1.2
+
+[Metadata]
+Title: Trainer test
+Artist: 18-LAB
+Creator: Test
+Version:[Original] 2x (240bpm) AR9 OD8
+BeatmapID:0
+BeatmapSetID:456
+
+[Difficulty]
+HPDrainRate:5
+CircleSize:4
+OverallDifficulty:8
+ApproachRate:9
+SliderMultiplier:1.4
+SliderTickRate:1
+
+[Events]
+// All event types and nested storyboard commands
+0,0,"background, with comma.jpg",0,0
+Video,500,"movie.mp4"
+2,1000,2000
+Sample,1500,0,"sound.wav",100
+Sprite,Foreground,Centre,"sprite.png",320,240
+ F,0,500,1000,0,1
+ L,1000,4
+  M,0,0,500,0,0,100,100
+ T,Passing,1000,4000
+  P,0,500,,A
+Animation,Foreground,Centre,"anim.png",320,240,10,50,LoopForever
+
+[TimingPoints]
+0,250,4,1,0,100,1,0
+500,-100,4,1,0,100,0,0
+1000,200,4,1,0,100,1,0
+
+[Colours]
+Combo1 : 255,128,0
+
+[HitObjects]
+64,192,500,1,0,0:0:0:0:
+128,192,1000,2,0,B|256:192|320:192,2,280,0|0,0:0|0:0,0:0:0:0:
+256,192,1500,8,0,2500,0:0:0:0:
+448,192,3000,128,0,4000:0:0:0:0:
