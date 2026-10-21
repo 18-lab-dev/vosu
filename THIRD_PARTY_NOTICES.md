@@ -4,6 +4,15 @@ This file inventories third-party material retained in the vosu repository. vosu
 
 First-party notice: `Copyright (c) 2026 sxlvia`, as confirmed by the maintainer for vosu work begun in 2026. The notice is repeated in `LICENSE-MIT`, the combined root `LICENSE`, and the matching calculator copies. It applies to project-authored material over which the respective contributors have licensing authority; it does not claim ownership of upstream work or resolve the source-provenance questions below.
 
+## Difficulty tool: MinaCalc 527
+
+- **Material:** `crates/vosu-tool-difficulty/vendor/MinaCalc/**`, `vendor/Models/NoteData/NoteDataStructures.h`, and `vendor/LICENSE`; complete file list and vendored SHA-256 identities: [`vendor-files.txt`](crates/vosu-tool-difficulty/vendor-files.txt).
+- **Upstream:** [Etterna revision `2d706147cc4bcf95a8ceb24dc4f4129be207f803`](https://github.com/etternagame/etterna/tree/2d706147cc4bcf95a8ceb24dc4f4129be207f803/src/Etterna/MinaCalc), calculator version 527.
+- **License/copyright:** MIT, Copyright (c) 2016–2023 Etterna <etternadev@gmail.com>; full license retained in [`vendor/LICENSE`](crates/vosu-tool-difficulty/vendor/LICENSE).
+- **Modification:** one standalone-build preprocessor guard; no calculator arithmetic changes. Original project-authored C ABI, conversion and durable provider. Exact mapping, selection research, computed Reform calibration sources, and hold-head-only limitations: [`PROVENANCE.md`](crates/vosu-tool-difficulty/PROVENANCE.md).
+- **New Rust/native dependency:** rusqlite 0.39.0 (MIT), bundled SQLite (public domain); exact transitive identities in `Cargo.lock`. No Companella, ONNX model, course charts, audio, or minacalc-rs code is redistributed. Synthetic test chart is CC0.
+
+
 ## tosu compatibility and retained provenance
 
 - **Upstream credit:** tosu and its contributors, including Mikhail Babynichev (Kotrik). The upstream [v4.25.0 package metadata](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/package.json) names that author; its [license document](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/LICENSE) retains `Copyright (C) 2023-2026 Mikhail Babynichev <https://kotrik.ru/>`. This is upstream attribution, not a first-party vosu copyright notice. tosu is LGPL v3; the `GPL-3.0` in its `package.json` is an unmaintained npm field, as its copyright holder confirmed on 2026-10-12.
