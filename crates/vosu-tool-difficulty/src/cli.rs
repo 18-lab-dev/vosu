@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::io::Read;
 use vosu_tool_sdk::{
     ToolEnv,
-    cli::{Method, print_output, range},
+    cli::{Method, SKILLS, dan, number, print_result, range, ratings, table, text},
     send_json,
 };
 #[derive(Parser, Debug)]
@@ -37,7 +37,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(score) = args.score {
         query.push_str(&format!("&score={score}"));
     }
-    let result: Value = if let Some(file) = args.file {
+    let result: Value = if let Some(file) = &args.file {
         let reader: Box<dyn Read> = if file == "-" {
             Box::new(std::io::stdin())
         } else {
@@ -61,6 +61,13 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .own_json(&format!("v1/beatmap/current?{query}"))
             .await?
     };
+    let header = format!(
+        "{} — {}K · {} notes · {}×",
+        args.file.as_deref().unwrap_or("Selected beatmap"),
+        result["keys"],
+        result["notes"],
+        number(&result["rate"])
+    );
     let result = if args.rates {
         let checksum = result["checksum"]
             .as_str()
@@ -71,8 +78,37 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         result
     };
-    print_output(&result, args.json)?;
+    print_result(&result, args.json, || human(&result, &header))?;
     Ok(())
+}
+
+fn human(result: &Value, header: &str) -> String {
+    if let Some(rates) = result["rates"].as_array() {
+        let rows = rates
+            .iter()
+            .map(|r| {
+                std::iter::once(format!("{}×", number(&r["rate"])))
+                    .chain(SKILLS.iter().map(|s| number(&r["msd"][s])))
+                    .collect()
+            })
+            .collect::<Vec<_>>();
+        let headers = std::iter::once("Rate").chain(SKILLS).collect::<Vec<_>>();
+        return format!("{header}\n\n{}", table(&headers, &rows));
+    }
+    let reason = result["unsupported"]
+        .as_str()
+        .unwrap_or("no estimate for this key count or rating");
+    let unsupported = if result["unsupported"].is_string() {
+        format!("\nUnsupported: {}", text(&result["unsupported"]))
+    } else {
+        String::new()
+    };
+    format!(
+        "{header}\n\n{}\n\n{}{}",
+        ratings(&result["msd"], Some(&result["ssr"])),
+        dan(&result["dan"], reason),
+        unsupported
+    )
 }
 #[cfg(test)]
 mod tests {
@@ -94,5 +130,26 @@ mod tests {
             assert!(Args::try_parse_from(args).is_err());
         }
         assert!(Args::try_parse_from(["difficulty", "--rates", "--json"]).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+    #[test]
+    fn terminal_tables_round_values_and_explain_missing_dan() {
+        let value =
+            serde_json::json!({"msd":{"overall":12.345678},"ssr":{"overall":11.123456},"dan":null});
+        let output = human(&value, "chart.osu — 4K · 100 notes · 0.85×");
+        assert!(output.contains("chart.osu"));
+        assert!(output.contains("12.35") && output.contains("11.12"));
+        assert!(output.contains("dan: — (no estimate"));
+        assert!(!output.contains("12.345678"));
+        let output = human(
+            &serde_json::json!({"rates":[{"rate":0.7,"msd":{"overall":6.721776}}]}),
+            "Rate table",
+        );
+        assert!(output.contains("0.70×") && output.contains("6.72"));
+        assert!(!output.contains("rates["));
     }
 }

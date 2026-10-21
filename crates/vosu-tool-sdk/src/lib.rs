@@ -40,8 +40,12 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Http(#[from] reqwest::Error),
-    #[error("{url} returned HTTP {status}")]
-    Status { url: String, status: u16 },
+    #[error("{message} (HTTP {status} from {resource})")]
+    Status {
+        resource: String,
+        status: u16,
+        message: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -224,11 +228,38 @@ impl Client {
 
 /// Sends `request` and decodes a 2xx JSON body.
 pub async fn send_json<T: DeserializeOwned>(request: reqwest::RequestBuilder) -> Result<T, Error> {
-    let response = request.send().await?;
+    let mut response = request.send().await?;
     let status = response.status();
     if !status.is_success() {
+        let path = response.url().path();
+        let resource = match path
+            .strip_prefix("/tools/")
+            .and_then(|s| s.split_once("/api/"))
+        {
+            Some((tool, route)) => format!("{tool} /{route}"),
+            None => path.to_owned(),
+        };
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if chunk.len() > 8192 - body.len() {
+                break;
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let message = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| value["error"].as_str().map(str::to_owned))
+            .map(|text| text.chars().filter(|c| !c.is_control()).take(512).collect())
+            .filter(|text: &String| !text.is_empty())
+            .unwrap_or_else(|| {
+                status
+                    .canonical_reason()
+                    .unwrap_or("request failed")
+                    .to_owned()
+            });
         return Err(Error::Status {
-            url: response.url().to_string(),
+            resource,
+            message,
             status: status.as_u16(),
         });
     }

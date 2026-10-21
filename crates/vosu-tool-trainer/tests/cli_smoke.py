@@ -48,6 +48,7 @@ def main():
             protocol_version = 'HTTP/1.1'
             def request(self):
                 if self.path == '/websocket/v2/subscribe':
+                    self.close_connection = True
                     key = self.headers['Sec-WebSocket-Key']
                     accept = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
                     self.send_response(101)
@@ -128,7 +129,7 @@ def main():
                 assert result.returncode == 0, (tool, args, result.returncode, result.stderr)
                 print(tool, ' '.join(args), '=>', result.stdout[:180].strip())
                 return result.stdout
-            assert 'msd.overall:' in cli('difficulty', str(chart))
+            assert 'Skillset' in cli('difficulty', str(chart))
             assert json.loads(cli('difficulty', '-', '--json', stdin=text))['msd']
             assert len(json.loads(cli('difficulty', '--rates', '--json'))['rates']) == 14
             assert json.loads(cli('difficulty', str(chart), '--rate', '0.85', '--score', '0.93', '--json'))['ssr']
@@ -139,7 +140,7 @@ def main():
             cli('trainer', 'delete', entries[0]['id'], '--json')
             assert not path.exists()
             assert not json.loads(cli('trainer', 'list', '--json'))['maps']
-            assert 'rating_model:' in cli('skill-tracker', 'profile')
+            assert 'Skill profile' in cli('skill-tracker', 'profile')
             assert 'ratings' in json.loads(cli('skill-tracker', 'profile', '--json'))
             deadline = time.monotonic() + 10
             while True:

@@ -467,7 +467,11 @@ async fn subscription(a: Shared) {
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     if std::env::args().nth(1).as_deref() == Some("cli") {
-        return cli::run().await;
+        if let Err(error) = cli::run().await {
+            eprintln!("vosux skill-tracker: {error}");
+            std::process::exit(1);
+        }
+        return Ok(());
     }
     let env = ToolEnv::from_env()?;
     tokio::fs::create_dir_all(&env.data_dir).await?;

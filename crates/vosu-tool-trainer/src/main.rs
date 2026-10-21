@@ -41,7 +41,11 @@ fn error(e: impl std::fmt::Display) -> ApiError {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     if std::env::args().nth(1).as_deref() == Some("cli") {
-        return cli::run().await;
+        if let Err(error) = cli::run().await {
+            eprintln!("vosux trainer: {error}");
+            std::process::exit(1);
+        }
+        return Ok(());
     }
     let env = ToolEnv::from_env()?;
     std::fs::create_dir_all(&env.data_dir)?;
