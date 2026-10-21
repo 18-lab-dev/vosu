@@ -56,9 +56,10 @@ Native overlay brokers can authenticate a loopback `/websocket/commands` upgrade
 with the per-start `broker.json` bearer token ([integration contract](../README.md#native-overlay-brokers)).
 Any same-account process able to read that file can write counter settings and
 invoke the other same-origin command-socket writes. This makes the existing
-native-Origin-forgery limitation explicit. On HTTP it grants only value saves and
-profile actions, never schema saves or management. Brokers must keep
-it out of page JavaScript/logs and authorize their own inbound counter frames.
+native-Origin-forgery limitation explicit. On HTTP it grants value saves,
+profile actions, and broker-authenticated tool CLI listing, launch, open,
+and session revocation; never schema saves or other management.
+Brokers must keep it out of page JavaScript/logs and authorize their own inbound counter frames.
 Linux uses a 0700 directory and atomically created 0600 files.
 Windows files inherit their parent directory's ACL, as documented by
 [Microsoft](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights).
@@ -100,6 +101,16 @@ Tools are programs, not sandboxed overlays. Development tools passed with repeat
 Tool UI and API routes live only on the overlay listener under `/tools/`; the dashboard never serves their scripts. API prefixes are matched on segment boundaries. GET/HEAD and WebSocket routes declared `read` are public to allowed overlay peers; mutating methods require a matching `write` prefix and a tool-bound UI session or the per-launch token of a running declared dependent. A dashboard launch opens an opener-less tab with a single-use 60-second code in the URL fragment; the browser bridge strips the fragment and keeps the exchanged session only in that document's memory, never in same-origin storage, so an overlay later loaded in the same tab cannot recover it and a reload returns the UI to read-only. Sessions expire when vosu exits. Sharing an origin with overlays is not an opaque-origin sandbox: a same-origin window or frame that the tool UI itself opens without `noopener` (or embeds) can script the tool document and use its session, so tool UIs must not open or frame overlay pages that way.
 
 Every supervised service receives a fresh 256-bit OS-random token. Proxy requests discard cookies, hop-by-hop headers, and caller-supplied `X-Vosu-*` headers before adding the service token and caller identity; bodies are bounded to 1 MiB and responses stream. Services must authenticate their loopback port themselves (the SDK does so). Host and session tokens use constant-time comparisons and are never intentionally exposed in logs or browser metadata. Closing vosu closes child stdin, waits five seconds, then kills remaining processes; Linux parent-death signals and Windows Job Objects provide a daemon-death backstop. See the complete [protocol and trust contract](tools/protocol.md).
+
+CLI processes receive a separate, tool-bound 256-bit secret, not the native
+broker credential. At most 64 sessions coexist; each expires after 24 hours,
+daemon shutdown, tool replacement, explicit revocation, or disable. The launcher
+revokes its session after child exit (including spawn failure). CLI tokens have
+the tool's permission-filtered host access plus read/write access to its own
+declared API and declared dependencies, never unrelated tools. Forwarded requests
+identify `X-Vosu-Caller: cli:<id>` and authenticate with the service's token.
+CLI processes run with the user's OS rights and inherited terminal environment;
+these grants are not a sandbox.
 
 
 ## Analytics and crash reporting

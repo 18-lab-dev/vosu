@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tarfile
 import unittest
 import unittest.mock
 import warnings
@@ -36,6 +37,27 @@ SIGN_SPEC = importlib.util.spec_from_file_location("sign_release", Path(__file__
 sign_release = importlib.util.module_from_spec(SIGN_SPEC)
 SIGN_SPEC.loader.exec_module(sign_release)
 REPOSITORY = Path(__file__).resolve().parents[1]
+
+
+class LauncherPackageTests(unittest.TestCase):
+    def test_vosux_is_a_relative_symlink(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "package.tar"
+            for target, valid in [("vosu", True), ("/usr/bin/vosu", False), ("other", False)]:
+                with tarfile.open(archive, "w") as tar:
+                    item = tarfile.TarInfo("usr/bin/vosux")
+                    item.type = tarfile.SYMTYPE
+                    item.linkname = target
+                    item.mode = 0o777
+                    tar.addfile(item)
+                if valid:
+                    self.assertEqual(linux.tar_entries(["cat", str(archive)]), {"usr/bin/vosux": 0o777})
+                else:
+                    with self.assertRaisesRegex(ValueError, "relative symlink"):
+                        linux.tar_entries(["cat", str(archive)])
+        config = (REPOSITORY / "packaging/linux/nfpm.yaml").read_text()
+        self.assertIn("  - src: vosu\n    dst: /usr/bin/vosux\n    type: symlink", config)
+        self.assertIn("usr/bin/vosux", linux.FILES)
 
 
 class ReleaseLicenseTests(unittest.TestCase):

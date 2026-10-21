@@ -1,6 +1,9 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    if let Some(args) = vosu::vosux::arguments(std::env::args_os()) {
+        std::process::exit(vosu::vosux::run(args));
+    }
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

@@ -231,6 +231,17 @@ Developers can use `vosu --tool <directory>` for a trusted development override.
 See the [authoring guide](docs/tools/authoring.md) and
 [protocol contract](docs/tools/protocol.md), or run the dependency-free
 [Python example](examples/tools/hello-python/).
+
+Run installed tools from a terminal with `vosu x --list` (or `--list --json`),
+`vosu x <tool> [ARGS...]`, or `vosu x --open <tool>`. Linux distro packages also
+install `vosux -> vosu` beside the executable; Windows ZIPs retain one executable:
+use `vosu x` or create your own link. Options apply only before the tool id;
+`vosux trainer --help` is the trainer's help. A UI-only tool opens its UI when
+invoked without arguments. The daemon must already be running. Tools inherit
+terminal stdin/stdout/stderr and return their exit status, without shell expansion.
+CLI launch does not start a second daemon. The private native broker credential
+authorizes launching only enabled, trusted, valid tools and opening their UIs.
+
 ### Hosted tool routes and security
 
 The dashboard's `/tools` page manages tools; `/api/tools` lists status and metadata, and `/api/tools/<id>/…` manages lifecycle, settings, logs and data. Management POSTs require dashboard provenance and CSRF. The overlay listener redirects `GET /tools` to that page and serves tool UIs at `/tools/<id>/` and declared service APIs at `/tools/<id>/api/…`. The `tools` counter name is reserved.
@@ -612,11 +623,13 @@ A successful listener rebind updates it. The token still authenticates only loop
   its parents; vosu does not reset Windows ACLs.
 
 Send `Authorization: Bearer <token>` to the file's loopback origin (`localhost`
-and `127.0.0.1` may be treated as equivalent), only for `/websocket/commands`
+and `127.0.0.1` may be treated as equivalent), for `/websocket/commands`
 upgrades, `POST /api/counters/settings/<name>[?profile=<name>]` value saves,
-and `POST /api/counters/profiles` actions. HTTP permissions are exactly
-`settings:write` and `profiles:manage`: schema writes (`?update=yes`) and all
-management routes remain forbidden (401). GETs remain open reads.
+`POST /api/counters/profiles` actions, and the
+[`/tools/_host/v1/cli` launcher endpoints](docs/tools/protocol.md#command-line-tools-vosux).
+Counter HTTP permissions are `settings:write` and `profiles:manage`: schema
+writes (`?update=yes`) and other management routes remain forbidden (401).
+Tool launcher routes require broker authentication even for listing.
 vosu accepts the token only from loopback peers and compares it in constant time,
 then revalidates after reading each POST body. Invalid, stale, wrong-scope or
 non-loopback credentials return 401 even when browser provenance permits a write.

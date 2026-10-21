@@ -15,6 +15,9 @@ contents:
     expand: true
     file_info:
       mode: 0755
+  - src: vosu
+    dst: /usr/bin/vosux
+    type: symlink
   - src: packaging/linux/vosu.desktop
     dst: /usr/share/applications/vosu.desktop
   - src: assets/branding/vosu-app-icon.svg

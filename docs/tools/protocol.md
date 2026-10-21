@@ -47,6 +47,10 @@ command = ["bin/vosu-skill-tracker"]  # argv; relative paths containing a separa
                                  # Bare names (e.g. "python") resolve through PATH. On Windows extensionless executable paths gain ".exe".
 startup = "always"               # "always" (start with vosu) | "on-demand" (default; first request, stop after 10 idle minutes)
 
+[cli]                            # optional: terminal process; same command resolution as service
+command = ["bin/vosu-skill-tracker", "cli"]
+summary = "Profile and play history"  # optional one-line description
+
 [api]                            # routes reachable through /tools/<id>/api/; anything unlisted is 404
 read = ["/v1/profile", "/v1/history", "/v1/current", "/v1/stream"]  # path prefixes; GET/HEAD and WebSocket upgrade; open to overlays
 write = ["/v1/import"]           # authenticated mutations, plus authenticated GET/HEAD where not also in read
@@ -77,6 +81,7 @@ vosu starts a service with the tool directory as working directory, stdin piped,
 | `VOSU_URL` | Base URL of the vosu overlay listener reachable from this machine, e.g. `http://127.0.0.1:24050`, no trailing slash |
 | `VOSU_TOOL_DATA_DIR` | Durable per-tool directory (created). Kept when the tool is disabled. |
 | `VOSU_TOOL_CACHE_DIR` | Evictable per-tool directory (created). The dashboard may clear it while the tool is stopped. |
+| `VOSU_TOOL_INTERFACE` | `service` for supervised HTTP services; `cli` for a command-line invocation |
 
 Readiness: the service binds a TCP listener on `127.0.0.1` port `0`, then writes exactly one line `vosu-tool-ready <port>` to stdout. vosu waits up to 20 seconds; afterwards it probes `GET /healthz` (with the token header) and expects 2xx. Other stdout/stderr lines go to a bounded per-tool log shown in the dashboard.
 
@@ -152,6 +157,7 @@ All POSTs require dashboard provenance and `X-Vosu-CSRF`, like other management 
   "kind": "hybrid", "startup": "always",
   "status": "running", "status_detail": null,
   "ui_url": "http://127.0.0.1:24050/tools/skill-tracker/",
+  "cli": {"usage": "vosux skill-tracker", "summary": "Profile and play history"},
   "requires": [{"id": "difficulty", "version": ">=0.1.0", "satisfied": true}],
   "required_by": [],
   "permissions": {"host": ["context"]},
@@ -162,7 +168,7 @@ All POSTs require dashboard provenance and `X-Vosu-CSRF`, like other management 
 }
 ```
 
-`source` is `dev`, `bundled`, or `user`. `status` is one of `stopped`, `starting`, `running`, `failed`, `blocked` (a dependency is missing, disabled, or unsatisfied), `untrusted`, `disabled`, `invalid` (manifest error; `status_detail` explains). UI-only tools report `running` when enabled.
+`source` is `dev`, `bundled`, or `user`. `kind` is `ui`, `service`, `hybrid` (UI and service), or `cli` (CLI only). `status` is one of `stopped`, `starting`, `running`, `failed`, `blocked` (a dependency is missing, disabled, or unsatisfied), `untrusted`, `disabled`, `invalid` (manifest error; `status_detail` explains). Tools without a service report `running` when enabled; CLI processes are owned by their launchers, not supervised services.
 
 Starting a tool first starts its service dependencies. Dependency cycles make every tool in the cycle `invalid`.
 
@@ -174,3 +180,62 @@ These are not enforced, but first-party tools follow them so overlays and other 
 - Errors are JSON `{"error": "<message>"}` with a 4xx/5xx status.
 - Work longer than about a second is a job: `POST` returns `202 {"job": "<id>"}`, `GET /v1/jobs/<id>` returns `{"state": "queued"|"running"|"done"|"failed"|"cancelled", "progress": 0.0..1.0, "message", "result"}`, and `DELETE /v1/jobs/<id>` cancels.
 - Live data is a WebSocket on a `read` route that sends a full JSON snapshot on connect and on every change.
+
+## Command-line tools (vosux)
+
+`vosu x [OPTIONS] <tool> [ARGS...]` and `vosux [OPTIONS] <tool> [ARGS...]`
+use the same executable. `vosux` is argv[0] dispatch, case-insensitive on Windows
+with `.exe` stripped, not another binary. Linux distro packages install a sibling
+`vosux -> vosu` symlink; Windows ZIPs stay single-executable. The launcher performs
+no daemon initialization, logging, listener, tray, updater, or single-instance work.
+
+Options are recognized only before the tool id: `--list` (also the default with
+no tool), `--list --json`, `--help`, and `--open <tool>`. Every argument after the
+id, including `--help`, `--`, whitespace, and option-like text, goes verbatim to
+the child without a shell. A tool with `[ui]` but no `[cli]` opens its UI when
+invoked without arguments; arguments instead produce usage error 2.
+
+`[cli].command` is a nonempty argv array, resolved exactly as `[service].command`,
+including development Cargo fallback. `summary` is optional and cannot contain
+NUL or line breaks. CLI-only tools are allowed. ToolView always includes `cli`:
+`null` or `{"usage":"vosux <id>","summary":"…"}` (summary may be null).
+The dashboard shows that usage and summary.
+
+The launcher discovers `origin` and `token` through the per-user
+[`broker.json`](../../README.md#native-overlay-brokers). The following overlay
+routes require a transport-observed loopback peer and
+`Authorization: Bearer <native broker token>`, even for reads:
+
+| Route | Response |
+| --- | --- |
+| `GET /tools/_host/v1/cli` | `{"tools":[{"id","name","version","status","cli","ui":true,"trusted":true,"enabled":true}]}` |
+| `POST /tools/_host/v1/cli/<id>` | `{"session":"opaque id","argv":["absolute executable","…"],"cwd":"tool directory","env":{…}}` |
+| `DELETE /tools/_host/v1/cli/session/<session>` | Revokes the session (idempotent) |
+| `POST /tools/_host/v1/cli/<id>/open` | `{"url":"…"}` with the same single-use launch code as dashboard Open; optional JSON `{"theme":"light"}` or `"dark"`, default dark |
+
+Unknown tools return 404; no CLI returns 409; untrusted, disabled, invalid or
+dependency-blocked tools return 403 with `error` and `status`. Session exhaustion
+returns 503. Each session has a fresh 256-bit token; at most 64 live sessions
+coexist and expire after 24 hours or daemon restart. Disable/replacement and
+explicit revocation invalidate tokens. Expired/revoked tokens fail host API
+authentication (401) and proxy authority checks (403).
+
+The returned environment contains `VOSU_TOOL_PROTOCOL`, `VOSU_TOOL_ID`,
+`VOSU_TOOL_TOKEN`, `VOSU_URL`, `VOSU_TOOL_DATA_DIR`, `VOSU_TOOL_CACHE_DIR`, and
+`VOSU_TOOL_INTERFACE=cli`. Merge it over the launcher's current environment.
+CLI tokens have their tool's permission-filtered host API access, read/write
+access to declared dependencies, and read/write access to their own declared
+`/tools/<id>/api/` routes. No access to undeclared tools is granted. The proxy
+sets `X-Vosu-Caller: cli:<id>` and replaces the token with the target service
+credential, retaining the service as the single writer of shared state.
+
+The child runs directly in the returned cwd with inherited stdin/stdout/stderr.
+After child exit (or spawn failure), the launcher best-effort revokes the session.
+Exit status is the child's; Unix signal exits map to `128 + signal`.
+Launcher errors: 2 usage, 69 daemon unavailable (missing/stale broker file or
+connection refused), 77 tool not runnable, 127 unknown tool, 1 other.
+Unix children stay in the foreground process group: terminal Ctrl+C/Ctrl+\\
+reach the child directly while vosux waits; SIGTERM/SIGHUP are forwarded to the
+child. Windows children share the console; a temporary vosux console handler
+consumes Ctrl+C/Ctrl+Break in the launcher only, letting the child decide.
+

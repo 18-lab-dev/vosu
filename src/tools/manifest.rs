@@ -18,6 +18,7 @@ pub struct Manifest {
     pub icon: Option<String>,
     pub ui: Option<Ui>,
     pub service: Option<Service>,
+    pub cli: Option<Cli>,
     #[serde(default)]
     pub api: Api,
     #[serde(default)]
@@ -34,6 +35,12 @@ pub struct Ui {
 }
 fn entry() -> String {
     "index.html".into()
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Cli {
+    pub command: Vec<String>,
+    pub summary: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -106,8 +113,8 @@ impl Manifest {
             return Err("name must not be empty".into());
         }
         Version::parse(&self.version).map_err(|e| format!("version: {e}"))?;
-        if self.ui.is_none() && self.service.is_none() {
-            return Err("at least one of [ui] or [service] is required".into());
+        if self.ui.is_none() && self.service.is_none() && self.cli.is_none() {
+            return Err("at least one of [ui], [service] or [cli] is required".into());
         }
         if let Some(homepage) = &self.homepage {
             let url = url::Url::parse(homepage).map_err(|e| format!("homepage: {e}"))?;
@@ -144,6 +151,24 @@ impl Manifest {
                     "service.command[0] must be a confined relative path or bare executable name"
                         .into(),
                 );
+            }
+        }
+        if let Some(cli) = &self.cli {
+            if cli.command.is_empty()
+                || cli.command.iter().any(|v| v.contains('\0'))
+                || !relative(&cli.command[0])
+            {
+                return Err(
+                    "cli.command must be non-empty argv with a confined executable and no NUL"
+                        .into(),
+                );
+            }
+            if cli
+                .summary
+                .as_ref()
+                .is_some_and(|s| s.contains(['\r', '\n', '\0']))
+            {
+                return Err("cli.summary must be one line without NUL".into());
             }
         }
         for (kind, prefixes) in [("read", &self.api.read), ("write", &self.api.write)] {
@@ -257,5 +282,24 @@ mod tests {
                 .unwrap_err()
                 .contains("name")
         );
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+    #[test]
+    fn cli_manifest_validation() {
+        let base = "manifest_version=1\nid='demo'\nname='Demo'\nversion='1.0.0'\n[cli]\ncommand=['bin/demo','cli']\nsummary='One line'\n";
+        assert!(Manifest::parse(base).is_ok());
+        for (from, to) in [
+            ("['bin/demo','cli']", "[]"),
+            ("bin/demo", "../demo"),
+            ("bin/demo", "/bin/demo"),
+            ("summary='One line'", "summary=\"two\\nlines\""),
+            ("summary='One line'", "unknown=true"),
+        ] {
+            assert!(Manifest::parse(&base.replace(from, to)).is_err(), "{to}");
+        }
     }
 }

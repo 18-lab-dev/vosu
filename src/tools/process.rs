@@ -161,6 +161,7 @@ async fn launch(host: &ToolHost, entry: &Arc<Entry>, stop: &CancellationToken) -
         .args(&service.command[1..])
         .current_dir(&entry.root)
         .env("VOSU_TOOL_PROTOCOL", "1")
+        .env("VOSU_TOOL_INTERFACE", "service")
         .env("VOSU_TOOL_ID", &manifest.id)
         .env("VOSU_TOOL_TOKEN", &token)
         .env("VOSU_URL", host.overlay_url())

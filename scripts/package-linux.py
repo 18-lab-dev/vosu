@@ -33,7 +33,7 @@ def package_names(version):
     return [f'vosu_{version}_amd64.deb', f'vosu-{version}-1.x86_64.rpm', f'vosu-{version}-1-x86_64.pkg.tar.zst']
 
 
-FILES = {'usr/bin/vosu', 'usr/share/applications/vosu.desktop',
+FILES = {'usr/bin/vosu', 'usr/bin/vosux', 'usr/share/applications/vosu.desktop',
          'usr/share/icons/hicolor/scalable/apps/vosu.svg',
          'usr/share/icons/hicolor/256x256/apps/vosu.png', 'usr/share/licenses/vosu/LICENSE'}
 
@@ -41,8 +41,13 @@ FILES = {'usr/bin/vosu', 'usr/share/applications/vosu.desktop',
 def tar_entries(command):
     with subprocess.Popen(command, stdout=subprocess.PIPE) as stream:
         with tarfile.open(fileobj=stream.stdout, mode='r|') as archive:
-            entries = {item.name.removeprefix('./'): item.mode for item in archive
-                       if item.isfile() and not item.name.removeprefix('./').startswith('.')}
+            entries = {}
+            for item in archive:
+                name = item.name.removeprefix('./')
+                if name == 'usr/bin/vosux' and (not item.issym() or item.linkname != 'vosu'):
+                    raise ValueError('vosux must be a relative symlink to vosu')
+                if (item.isfile() or item.issym()) and not name.startswith('.'):
+                    entries[name] = item.mode
         if stream.wait() != 0:
             raise ValueError(f'package archive inspection failed: {command}')
     return entries
@@ -59,6 +64,11 @@ def verify_package(path, version):
         entries = {fields[0].lstrip('/'): int(fields[4], 8) & 0o777
                    for line in run('rpm', '-qp', '--dump', str(path)).splitlines()
                    if (fields := line.split())}
+        dump = run('rpm', '-qp', '--dump', str(path))
+        link = [line.split() for line in dump.splitlines()
+                if line.split()[0] == '/usr/bin/vosux']
+        if len(link) != 1 or link[0][-1] != 'vosu' or int(link[0][4], 8) & 0o170000 != 0o120000:
+            raise ValueError('vosux must be a relative symlink to vosu')
         metadata = run('rpm', '-qp', '--qf', '%{NAME} %{VERSION} %{RELEASE} %{ARCH}', str(path))
         if metadata != f'vosu {version} 1 x86_64':
             raise ValueError(f'incorrect RPM metadata: {metadata}')

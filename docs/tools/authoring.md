@@ -75,3 +75,36 @@ Distribute user tools as a directory under `<vosu data directory>/tools/<id>/`; 
 6. Through an isolated vosu, verify read-only UI access, dashboard launch/session writes, dependency permissions, and disable/restart behavior.
 
 The repository's `python scripts/test_stage_tools.py` exercises schema examples, temporary-workspace staging (including Windows filenames), and the Python service handshake/authentication/settings/EOF lifecycle without touching a running vosu. Release archive tests remain `python scripts/test_package_release.py`.
+
+## Add a vosux command
+
+Declare a terminal entry point separately from your long-running service:
+
+```toml
+[cli]
+command = ["bin/vosu-my-tool", "cli"]
+summary = "Describe the command in one line"
+```
+
+Use `vosu x my-tool --help` (Linux packages also provide `vosux my-tool --help`).
+Everything after the tool id belongs to your CLI. The launcher resolves argv
+exactly like a service, including the development Cargo fallback, and inherits
+terminal stdin/stdout/stderr. The daemon must already be running and the tool
+must be trusted and enabled. Keep human output on stdout, progress on stderr,
+and offer `--json` for scripts. Return useful exit codes.
+
+`VOSU_TOOL_INTERFACE` distinguishes `cli` from `service`; Rust SDK `ToolEnv`
+exposes `Interface`. CLI tokens can call the permission-filtered host API,
+declared dependencies, and their own service's declared routes. Use SDK
+`Client::own` / `own_json` instead of writing the service's database directly:
+one writer prevents concurrent CLI invocations from corrupting shared state.
+For long jobs use `Client::wait_job`, which reports progress and cancels the
+job on Ctrl+C. The CLI does not emit a readiness line or run the service's
+stdin-EOF lifetime loop. Never print its token or expose it in a browser.
+
+Use `vosu x --list [--json]` to inspect installed command summaries and
+`vosu x --open my-tool` to open the UI with a write session. UI-only tools open
+automatically when invoked without arguments. See the complete
+[launcher and token contract](protocol.md#command-line-tools-vosux) for session
+limits, exit codes, and signal behavior.
+
