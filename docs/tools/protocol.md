@@ -6,18 +6,21 @@ description: "Manifest, process, HTTP, browser-bridge, and dashboard contract be
 
 # Tool protocol v1
 
-A **tool** is an application that vosu discovers, supervises, and serves next to overlays. Tools may ship a browser UI, a background HTTP service, or both. Any language that can read environment variables, write one stdout line, and serve HTTP on loopback can implement a tool. Rust tools may use the `vosu-tool-sdk` crate. The decision record is [ADR 0017](../decisions/0017-tool-host.md).
+A **tool** is an application that vosu discovers, supervises, and serves next to overlays. Tools may ship a browser UI, a background HTTP service, or both. Any language that can read environment variables, write one stdout line, and serve HTTP on loopback can implement a tool. Rust tools may use the `vosu-tool-sdk` crate; [`examples/tools/hello-python`](../../examples/tools/hello-python/) is a dependency-free Python reference. The decision record is [ADR 0017](../decisions/0017-tool-host.md). Editors can validate manifests with [`tool.schema.json`](tool.schema.json).
 
 ## Layout and discovery
 
-Each tool is one directory containing `tool.toml`. vosu scans two roots, in order:
+Each tool is one directory containing `tool.toml`. vosu scans these roots, in order:
 
 | Root | Location | Trust |
 | --- | --- | --- |
+| Development | Each `--tool <directory>` passed on the vosu command line | Trusted for that run: the user launched it |
 | Bundled | `<directory of the vosu executable>/tools/<id>/` (Linux packages: the packaged `tools` directory next to the executable) | Trusted; shipped and verified with vosu |
 | User | `<vosu data directory>/tools/<id>/` | Untrusted until the user approves it in the dashboard |
 
-A user tool whose `id` equals a bundled tool's is reported as `invalid` (duplicate). The directory name must equal `id`.
+A development tool replaces a bundled or user tool with the same `id` for that run, so a checkout of a first-party tool can be developed against an installed vosu. A user tool that duplicates a bundled `id` is reported as `invalid`. In bundled and user roots the directory name must equal `id`.
+
+vosu watches every root. Added, removed, or edited manifests and `settings.json` files apply without restarting vosu. For development tools, a change to the service executable also restarts a running service, so `cargo build` or saving a script is the whole edit loop.
 
 ## Manifest (`tool.toml`)
 
@@ -139,7 +142,7 @@ All POSTs require dashboard provenance and `X-Vosu-CSRF`, like other management 
 {
   "id": "skill-tracker", "name": "Skill Tracker", "version": "0.1.0",
   "description": "…", "author": "18-LAB", "homepage": null, "icon_url": "http://127.0.0.1:24050/tools/skill-tracker/icon.svg",
-  "source": "bundled", "trusted": true, "enabled": true,
+  "source": "bundled", "path": "…/tools/skill-tracker", "trusted": true, "enabled": true,
   "kind": "hybrid", "startup": "always",
   "status": "running", "status_detail": null,
   "ui_url": "http://127.0.0.1:24050/tools/skill-tracker/",
@@ -153,6 +156,15 @@ All POSTs require dashboard provenance and `X-Vosu-CSRF`, like other management 
 }
 ```
 
-`status` is one of `stopped`, `starting`, `running`, `failed`, `blocked` (a dependency is missing, disabled, or unsatisfied), `untrusted`, `disabled`, `invalid` (manifest error; `status_detail` explains). UI-only tools report `running` when enabled.
+`source` is `dev`, `bundled`, or `user`. `status` is one of `stopped`, `starting`, `running`, `failed`, `blocked` (a dependency is missing, disabled, or unsatisfied), `untrusted`, `disabled`, `invalid` (manifest error; `status_detail` explains). UI-only tools report `running` when enabled.
 
 Starting a tool first starts its service dependencies. Dependency cycles make every tool in the cycle `invalid`.
+
+## Conventions for tool APIs
+
+These are not enforced, but first-party tools follow them so overlays and other tools can rely on the same shapes:
+
+- Version every route under `/v1/`; add `/v2/` beside it rather than changing `/v1/` shapes.
+- Errors are JSON `{"error": "<message>"}` with a 4xx/5xx status.
+- Work longer than about a second is a job: `POST` returns `202 {"job": "<id>"}`, `GET /v1/jobs/<id>` returns `{"state": "queued"|"running"|"done"|"failed"|"cancelled", "progress": 0.0..1.0, "message", "result"}`, and `DELETE /v1/jobs/<id>` cancels.
+- Live data is a WebSocket on a `read` route that sends a full JSON snapshot on connect and on every change.

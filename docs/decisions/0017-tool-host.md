@@ -15,6 +15,7 @@ Add **tools** as vosu's first extension type, specified in the [tool protocol](.
 - The dashboard listener gains a Tools page and management APIs, following ADR 0016: lifecycle, trust, settings, logs, and data actions are dashboard-origin mutations with CSRF.
 - Tools may depend on other tools. A dependent tool calls its dependencies through the same proxy with its per-launch token, so shared providers (for example the first-party difficulty provider) compute and cache once.
 - Services bind loopback port 0, announce readiness on stdout, authenticate every forwarded request with a per-launch token, and exit when stdin closes.
+- Tool roots are watched and `--tool <directory>` runs a development tool from any checkout, restarting it when its executable changes, so authors iterate without packaging or restarting vosu.
 
 ### Write authority on a shared origin
 
