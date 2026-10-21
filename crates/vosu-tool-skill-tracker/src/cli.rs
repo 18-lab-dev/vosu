@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::io::{BufWriter, Write};
 use vosu_tool_sdk::{
     ToolEnv,
-    cli::{Method, print_output, progress},
+    cli::{Method, Progress, dan, number, print_result, ratings, table, text},
     send_json,
 };
 #[derive(Parser, Debug)]
@@ -63,10 +63,15 @@ pub async fn run() -> Result<(), crate::Error> {
         Command::Import => {
             let job: Value = send_json(client.own(Method::POST, "v1/import")).await?;
             let id = job["job"].as_str().ok_or("missing job id")?;
-            match client.wait_job("skill-tracker", id, progress).await {
+            let mut progress = Progress::new("importing stable scores");
+            let result = client
+                .wait_job("skill-tracker", id, |job| progress.update(job))
+                .await;
+            drop(progress);
+            match result {
                 Ok(job) => job,
                 Err(e) => {
-                    eprintln!("{e}");
+                    eprintln!("vosux skill-tracker: {e}");
                     std::process::exit(e.exit_code());
                 }
             }
@@ -75,9 +80,11 @@ pub async fn run() -> Result<(), crate::Error> {
             let mut output = BufWriter::new(std::io::stdout().lock());
             let mut before = None;
             let mut first = true;
-            let mut columns = Vec::new();
+            let columns = csv_columns();
             if matches!(format, Format::Json) {
                 write!(output, "[")?;
+            } else {
+                writeln!(output, "{}", csv_header(&columns))?;
             }
             loop {
                 let mut path = "v1/history?limit=200".to_owned();
@@ -98,23 +105,7 @@ pub async fn run() -> Result<(), crate::Error> {
                             write!(output, "{play}")?;
                         }
                         Format::Csv => {
-                            if first {
-                                columns = play
-                                    .as_object()
-                                    .ok_or("invalid play")?
-                                    .keys()
-                                    .cloned()
-                                    .collect();
-                                writeln!(
-                                    output,
-                                    "{}",
-                                    columns
-                                        .iter()
-                                        .map(|s| csv_cell(s))
-                                        .collect::<Vec<_>>()
-                                        .join(",")
-                                )?;
-                            }
+                            // Fixed schema keeps empty and populated exports identical.
                             writeln!(output, "{}", csv_row(play, &columns))?;
                         }
                     }
@@ -133,8 +124,109 @@ pub async fn run() -> Result<(), crate::Error> {
             return Ok(());
         }
     };
-    print_output(&result, args.json)?;
+    print_result(&result, args.json, || human(&result))?;
     Ok(())
+}
+
+fn csv_columns() -> Vec<String> {
+    [
+        "accuracy",
+        "calculation_error",
+        "checksum",
+        "client",
+        "difficulty",
+        "eligible",
+        "id",
+        "judgments",
+        "keys",
+        "max_combo",
+        "mode",
+        "mods",
+        "outcome",
+        "pp",
+        "rate",
+        "score",
+        "source",
+        "stars",
+        "timestamp",
+        "title",
+        "wife",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+fn csv_header(columns: &[String]) -> String {
+    columns
+        .iter()
+        .map(|s| csv_cell(s))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+fn human(value: &Value) -> String {
+    if value["ratings"].is_object() {
+        let counts = value["play_counts"]
+            .as_object()
+            .map(|counts| {
+                counts
+                    .iter()
+                    .map(|(mode, n)| format!("{mode}: {n}"))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            })
+            .unwrap_or_default();
+        return format!(
+            "Skill profile\n\n{}\n\n{}\nPlays: {}\nModel: {}\n{}",
+            ratings(&value["ratings"], None),
+            dan(&value["dan"], "no qualifying play"),
+            if counts.is_empty() { "none" } else { &counts },
+            text(&value["rating_model"]),
+            text(&value["accuracy_notice"])
+        );
+    }
+    if value["state"].is_string() {
+        return format!(
+            "Import {} — {}\n{}",
+            text(&value["state"]),
+            text(&value["message"]),
+            value["result"]
+        );
+    }
+    let plays: Vec<&Value> = if let Some(plays) = value["plays"].as_array() {
+        plays.iter().collect()
+    } else if value.is_null() {
+        Vec::new()
+    } else {
+        vec![value]
+    };
+    let rows = plays
+        .iter()
+        .map(|play| {
+            vec![
+                text(&play["timestamp"]),
+                text(&play["title"]),
+                format!("{}×", number(&play["rate"])),
+                format!("{}%", number(&play["accuracy"])),
+                number(&play["difficulty"]["msd"]["overall"]),
+                number(&play["difficulty"]["ssr"]["overall"]),
+                text(&play["outcome"]),
+                text(&play["wife"]["model"]),
+            ]
+        })
+        .collect::<Vec<_>>();
+    table(
+        &[
+            "Date",
+            "Map",
+            "Rate",
+            "Acc",
+            "MSD",
+            "SSR",
+            "Result",
+            "Accuracy model",
+        ],
+        &rows,
+    )
 }
 fn csv_cell(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
@@ -187,5 +279,32 @@ mod tests {
             ),
             "\"a,\"\"b\"\"\nnext\",\"{\"\"overall\"\":12}\""
         );
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+    #[test]
+    fn empty_csv_has_full_schema_header() {
+        let header = csv_header(&csv_columns());
+        assert!(header.starts_with("\"accuracy\","));
+        assert!(header.ends_with("\"wife\""));
+        assert_eq!(csv_columns().len(), 21);
+        assert!(header.contains("\"difficulty\""));
+    }
+    #[test]
+    fn profile_and_play_tables_round_ratings() {
+        let profile = human(
+            &serde_json::json!({"ratings":{"overall":12.34567},"play_counts":{"mania":3},"dan":null,"rating_model":"test","accuracy_notice":"experimental"}),
+        );
+        assert!(profile.contains("12.35") && profile.contains("mania: 3"));
+        assert!(profile.contains("dan: —"));
+        let output = human(
+            &serde_json::json!({"title":"Chart","timestamp":"2026-10-21","rate":0.85,"accuracy":98.23456,"difficulty":{"msd":{"overall":12.3456},"ssr":{"overall":11.2345}},"outcome":"passed","wife":{"model":"wife3-j4-offsets"}}),
+        );
+        assert!(output.contains("98.23%") && output.contains("12.35") && output.contains("11.23"));
+        assert!(output.contains("wife3-j4-offsets") && output.contains("passed"));
+        assert!(!output.contains("98.23456"));
     }
 }

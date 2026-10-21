@@ -85,3 +85,74 @@ async fn interrupt_while_polling_deletes_job() {
     assert!(*state.deleted.lock().unwrap());
     task.abort();
 }
+
+#[tokio::test]
+async fn status_errors_preserve_bounded_service_messages() {
+    use axum::http::StatusCode;
+    let app = Router::new()
+        .route(
+            "/tools/difficulty/api/v1/beatmap/current",
+            get(|| async {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error":"no selected beatmap"})),
+                )
+            }),
+        )
+        .route(
+            "/long",
+            get(|| async {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error":format!("\n{}", "x".repeat(1000))})),
+                )
+            }),
+        )
+        .route(
+            "/huge",
+            get(|| async {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error":"x".repeat(20000)})),
+                )
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client = ToolEnv {
+        id: "difficulty".into(),
+        token: "secret".into(),
+        vosu_url: format!("http://{address}"),
+        data_dir: "unused".into(),
+        cache_dir: "unused".into(),
+        interface: Interface::Cli,
+    }
+    .client();
+    let error = client
+        .own_json::<Value>("v1/beatmap/current")
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "no selected beatmap (HTTP 404 from difficulty /v1/beatmap/current)"
+    );
+    let error = client
+        .get_json::<Value>("/long")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(!error.contains('\n'));
+    assert!(error.len() < 600);
+    assert_eq!(
+        client
+            .get_json::<Value>("/huge")
+            .await
+            .unwrap_err()
+            .to_string(),
+        "Bad Request (HTTP 400 from /huge)"
+    );
+    task.abort();
+}

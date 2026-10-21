@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use serde_json::Value;
 use vosu_tool_sdk::{
     ToolEnv,
-    cli::{CliError, Method, print_output, progress, range},
+    cli::{CliError, Method, Progress, print_result, range, table, text},
     send_json,
 };
 #[derive(Parser, Debug)]
@@ -79,20 +79,33 @@ pub async fn run() -> anyhow::Result<()> {
             let id = job["job"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("missing job id"))?;
-            let job = match client.wait_job("trainer", id, progress).await {
+            let label = match args.bpm {
+                Some(bpm) => format!("generating at {bpm:.2} BPM"),
+                None => format!("generating {:.2}×", options.rate),
+            };
+            let mut progress = Progress::new(label);
+            let job = client
+                .wait_job("trainer", id, |job| progress.update(job))
+                .await;
+            drop(progress);
+            let job = match job {
                 Ok(job) => job,
                 Err(e) => {
-                    eprintln!("{e}");
+                    eprintln!("vosux trainer: {e}");
                     std::process::exit(e.exit_code());
                 }
             };
             if let Some(warnings) = job["result"]["warnings"].as_array() {
                 for warning in warnings {
-                    eprintln!("Warning: {}", warning.as_str().unwrap_or("unknown warning"));
+                    if !args.json {
+                        println!("Warning: {}", text(warning));
+                    }
                 }
             }
-            if let Some(warning) = job["import_error"].as_str() {
-                eprintln!("Warning: {warning}");
+            if let Some(warning) = job["import_error"].as_str()
+                && !args.json
+            {
+                println!("Warning: {warning}");
             }
             if !args.json {
                 println!(
@@ -106,7 +119,7 @@ pub async fn run() -> anyhow::Result<()> {
             job["result"].clone()
         }
     };
-    print_output(&result, args.json)?;
+    print_result(&result, args.json, || human(&result))?;
     Ok(())
 }
 fn created_path(result: &Value) -> Option<&str> {
@@ -115,6 +128,25 @@ fn created_path(result: &Value) -> Option<&str> {
         .iter()
         .filter_map(|f| f["path"].as_str())
         .find(|p| p.ends_with(".osu") || p.ends_with(".osz"))
+}
+
+fn human(result: &Value) -> String {
+    if let Some(id) = result["deleted"].as_str() {
+        return format!("Deleted {id}");
+    }
+    let rows = result["maps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|entry| {
+            vec![
+                text(&entry["id"]),
+                text(&entry["name"]),
+                created_path(entry).unwrap_or("—").to_owned(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    table(&["ID", "Practice copy", "Path"], &rows)
 }
 #[cfg(test)]
 mod tests {
@@ -141,5 +173,19 @@ mod tests {
             ),
             Some("practice.osu")
         );
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+    #[test]
+    fn list_and_delete_are_concise() {
+        let output = human(
+            &serde_json::json!({"maps":[{"id":"abc","name":"Practice","files":[{"path":"/Songs/practice.osu"}]}]}),
+        );
+        assert!(output.contains("Practice copy") && output.contains("/Songs/practice.osu"));
+        assert!(!output.contains("maps["));
+        assert_eq!(human(&serde_json::json!({"deleted":"abc"})), "Deleted abc");
     }
 }

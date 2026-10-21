@@ -9,10 +9,10 @@ Use `vosux skill-tracker` (or `vosu x skill-tracker`) with:
 - `profile [--json]`: ratings, dan estimate, play counts and model notices.
 - `history [--last N] [--mode osu|taiko|fruits|mania] [--json]`: newest plays, default 50, maximum 200.
 - `last [--json]`: latest persisted play, including MSD/SSR, accuracy and Wife model; JSON `null` if there are no plays.
-- `export [--format json|csv]`: stream full history, newest first, to stdout. JSON is an array; CSV includes every play field, with nested values encoded as JSON cells and RFC-style quoted/escaped strings. Export is paginated rather than loading the whole database.
+- `export [--format json|csv]`: stream full history, newest first, to stdout. JSON is an array; CSV includes every play field, with nested values encoded as JSON cells and RFC-style quoted/escaped strings. Empty CSV exports still include the same header row. Export is paginated rather than loading the whole database.
 - `import [--json]`: run the existing stable import job with stderr progress; Ctrl+C sends cancellation and exits 130, failure exits 1.
 
-All commands support `--help`, use the CLI token through the vosu proxy, and leave database writes to the service. Human output uses labelled fields; `--json` preserves service response shapes. Without the `cli` subcommand the binary retains its continuous service behavior.
+All commands support `--help`, use the CLI token through the vosu proxy, and leave database writes to the service. Human profile output includes a two-decimal skill rating table, dan and play counts. History/last show aligned date/map/rate/accuracy/MSD/SSR/result tables with each play's accuracy model. No ANSI color is emitted; progress updates in place only on a terminal. Errors use `vosux skill-tracker: <message>` with service explanations and HTTP context. `--json` preserves service response shapes. Without the `cli` subcommand the binary retains its continuous service behavior.
 
 
 ## Recording and persistence

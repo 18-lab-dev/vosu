@@ -201,7 +201,11 @@ async fn rates(State(app): State<App>, Path(md5): Path<String>) -> Result<Json<V
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if std::env::args().nth(1).as_deref() == Some("cli") {
-        return cli::run().await;
+        if let Err(error) = cli::run().await {
+            eprintln!("vosux difficulty: {error}");
+            std::process::exit(1);
+        }
+        return Ok(());
     }
     let env = ToolEnv::from_env()?;
     std::fs::create_dir_all(&env.data_dir)?;
