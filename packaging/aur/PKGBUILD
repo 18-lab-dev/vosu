@@ -59,6 +59,10 @@ build() {
     export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_PACKAGES="$srcdir/nuget"
     # Release builds refuse to compile without the embedded offset generator.
     python scripts/prepare-offset-generator.py --rid linux-x64
+    cargo build --frozen --release --no-default-features \
+        -p vosu-tool-difficulty -p vosu-tool-trainer -p vosu-tool-skill-tracker
+    python scripts/stage-tools.py --out target/bundled
+    export VOSU_BUNDLED_TOOLS="$PWD/target/bundled/tools"
     cargo build --frozen --release --no-default-features --features linux-process-events
     magick assets/branding/vosu-app-icon.png -resize 256x256 "$srcdir/vosu.png"
 }

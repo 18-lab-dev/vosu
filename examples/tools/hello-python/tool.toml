@@ -1,0 +1,18 @@
+#:schema ../../../docs/tools/tool.schema.json
+manifest_version = 1
+id = "hello-python"
+name = "Hello Python"
+version = "0.1.0"
+description = "Dependency-free example with a read-only counter and a session-protected increment."
+author = "18-LAB"
+
+[ui]
+root = "web"
+
+[service]
+command = ["python", "main.py"]
+startup = "on-demand"
+
+[api]
+read = ["/v1/count"]
+write = ["/v1/increment"]

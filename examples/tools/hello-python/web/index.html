@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hello Python · vosu</title>
+<link rel="stylesheet" href="/tools/_host/v1/theme.css">
+<style>
+body { margin: 2rem; background: var(--bg); color: var(--fg); font-family: var(--font-body); }
+main { max-width: 40rem; border-top: 1px solid var(--rule); padding-top: 1rem; }
+h1 { font-family: var(--font-display); }
+small, output { font-family: var(--font-mono); }
+button { background: var(--accent); color: var(--on-accent); border: 0; padding: .8rem; cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+</style>
+<main>
+<small>01 / REFERENCE TOOL</small>
+<h1>Hello Python</h1>
+<p>Count: <output id="count">—</output></p>
+<button id="increment" disabled>Increment</button>
+<button id="refresh">Refresh</button>
+<p id="status" role="status"></p>
+</main>
+<script type="module">
+import { vosu } from '/tools/_host/v1/bridge.js';
+const status = document.querySelector('#status');
+const count = document.querySelector('#count');
+const increment = document.querySelector('#increment');
+async function request(path, options) {
+  const response = await vosu.fetch(path, options);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+  count.textContent = body.count;
+}
+async function act(path, options) {
+  try { await request(path, options); }
+  catch (error) { status.textContent = error.message; }
+}
+try {
+  await vosu.ready;
+  increment.disabled = !vosu.canWrite;
+  status.textContent = vosu.canWrite ? 'UI session active.' : 'Read-only. Open from the dashboard to increment.';
+  await act('v1/count');
+  increment.onclick = () => act('v1/increment', { method: 'POST' });
+  document.querySelector('#refresh').onclick = () => act('v1/count');
+} catch (error) { status.textContent = error.message; }
+</script>
+</html>

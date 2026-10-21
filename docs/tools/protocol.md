@@ -15,7 +15,7 @@ Each tool is one directory containing `tool.toml`. vosu scans these roots, in or
 | Root | Location | Trust |
 | --- | --- | --- |
 | Development | Each `--tool <directory>` passed on the vosu command line | Trusted for that run: the user launched it |
-| Bundled | `<directory of the vosu executable>/tools/<id>/` (Linux packages: the packaged `tools` directory next to the executable) | Trusted; shipped and verified with vosu |
+| Bundled | Embedded in the vosu executable at release build time; materialized under `<cache dir>/tools/bundled/<version>-<digest>/<id>/` | Trusted; shipped and verified with vosu |
 | User | `<vosu data directory>/tools/<id>/` | Untrusted until the user approves it in the dashboard |
 
 A development tool replaces a bundled or user tool with the same `id` for that run, so a checkout of a first-party tool can be developed against an installed vosu. A user tool that duplicates a bundled `id` is reported as `invalid`. In bundled and user roots the directory name must equal `id`.
@@ -39,8 +39,8 @@ root = "web"                     # static directory, served at /tools/<id>/
 entry = "index.html"             # default "index.html"
 
 [service]                        # optional: background process
-command = ["bin/vosu-skill-tracker"]  # argv; argv[0] relative to the tool directory.
-                                 # On Windows ".exe" is appended when argv[0] has no extension.
+command = ["bin/vosu-skill-tracker"]  # argv; relative paths containing a separator resolve inside the tool directory.
+                                 # Bare names (e.g. "python") resolve through PATH. On Windows extensionless executable paths gain ".exe".
 startup = "always"               # "always" (start with vosu) | "on-demand" (first request; stopped after 10 idle minutes)
 
 [api]                            # routes reachable through /tools/<id>/api/; anything unlisted is 404
@@ -56,6 +56,8 @@ host = ["context", "songs:write"]  # see "Host API" below
 ```
 
 `settings.json` in the tool directory, when present, uses exactly the overlay `settings.json` schema and is rendered by the dashboard's existing settings editor. Profiles do not apply to tools.
+Editors supporting JSON Schema for TOML (Taplo / Even Better TOML) can put `#:schema https://raw.githubusercontent.com/shiruviaa/vosu/main/docs/tools/tool.schema.json` on the first line. A local manifest can instead use `#:schema ../../docs/tools/tool.schema.json`, adjusted relative to that manifest. The schema validates structure; vosu additionally checks filesystem confinement, dependencies, and semantic versions.
+
 
 Prefix matching is segment-aware: `/v1/beatmap` matches `/v1/beatmap` and `/v1/beatmap/…`, never `/v1/beatmaps`. `write` wins when a path matches both lists.
 
