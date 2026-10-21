@@ -255,3 +255,10 @@ These development packages, the private `vosu-test-harness` workspace member, or
 - embedded asset and release `LICENSE` integrity manifest: `assets/SHA256SUMS`
 - Rust package source/checksum lock: `Cargo.lock`
 - Rust package license metadata/source: the package manifests in the Cargo registry source selected by `Cargo.lock` and the repository links returned by `cargo metadata --locked --format-version 1`
+
+## Skill Tracker tool
+
+- `rusqlite` 0.38.0 and `libsqlite3-sys` 0.36.0: MIT (<https://github.com/rusqlite/rusqlite>); bundled SQLite is public domain (<https://sqlite.org/copyright.html>). Transitive `hashlink`, `fallible-iterator`, `fallible-streaming-iterator`, `hashbrown`, `foldhash` and build helper `vcpkg` use MIT and/or Apache-2.0-compatible terms. See the locked package manifests for exact expressions.
+- `libm` 0.2.16: MIT (<https://github.com/rust-lang/compiler-builtins>), used for portable complementary error function evaluation.
+- `tokio-tungstenite` / `tungstenite` 0.29.0: MIT (<https://github.com/snapview/tokio-tungstenite>, <https://github.com/snapview/tungstenite-rs>), already used transitively by the daemon's WebSocket server.
+- Wife3 and player aggregate formulas ported from Etterna 0.75.1, revision `2d706147cc4bcf95a8ceb24dc4f4129be207f803`, `src/RageUtil/Utils/RageUtil.h`, `src/Etterna/MinaCalc/MinaCalcHelpers.h`, and `src/Etterna/Singletons/ScoreManager.cpp` (<https://github.com/etternagame/etterna/tree/2d706147cc4bcf95a8ceb24dc4f4129be207f803>). Copyright (c) 2016-2023 Etterna; MIT text retained at `crates/vosu-tool-skill-tracker/LICENSE-ETTERNA`.
