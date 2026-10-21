@@ -12,8 +12,13 @@ pub struct Bundle {
     _lease: fs::File,
 }
 
-pub fn materialize(cache: &Path) -> io::Result<Bundle> {
-    materialize_files(cache, env!("CARGO_PKG_VERSION"), BUNDLED_TOOLS)
+/// `None` when this build embeds no tools (development and CI builds), so
+/// they do not create an empty bundled cache tree on every start.
+pub fn materialize(cache: &Path) -> io::Result<Option<Bundle>> {
+    if BUNDLED_TOOLS.is_empty() {
+        return Ok(None);
+    }
+    materialize_files(cache, env!("CARGO_PKG_VERSION"), BUNDLED_TOOLS).map(Some)
 }
 fn bundle_lease(cache: &Path, name: &str) -> io::Result<fs::File> {
     fs::OpenOptions::new()
@@ -56,7 +61,11 @@ fn verify(root: &Path, files: &[(&str, &[u8])]) -> bool {
                 && fs::read(root.join(name)).is_ok_and(|data| data == *bytes)
         })
 }
-fn materialize_files(cache: &Path, version: &str, files: &[(&str, &[u8])]) -> io::Result<Bundle> {
+pub(super) fn materialize_files(
+    cache: &Path,
+    version: &str,
+    files: &[(&str, &[u8])],
+) -> io::Result<Bundle> {
     let mut digest = Sha256::new();
     for (name, data) in files {
         digest.update((name.len() as u64).to_le_bytes());

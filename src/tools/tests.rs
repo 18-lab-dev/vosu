@@ -18,11 +18,21 @@ fn put(root: &Path, id: &str, requires: &str) -> PathBuf {
     dir
 }
 async fn host(root: &Path, dev: Vec<PathBuf>) -> Arc<ToolHost> {
+    host_with_bundle(root, dev, None).await
+}
+async fn host_with_bundle(
+    root: &Path,
+    dev: Vec<PathBuf>,
+    bundle: Option<bundled::Bundle>,
+) -> Arc<ToolHost> {
     let host = ToolHost::new(
         root.join("config"),
         root.join("data"),
         root.join("cache"),
-        dev,
+        ExtraRoots {
+            dev,
+            bundled: bundle,
+        },
         "http://127.0.0.1:25150".into(),
         "http://127.0.0.1:25151".into(),
         Arc::new(|| json!({"client":null,"songs_dir":null,"beatmap":null})),
@@ -305,14 +315,17 @@ async fn supervisor_readiness_backoff_logs_and_stdin_shutdown() {
 #[tokio::test]
 async fn user_bundle_duplicates_are_invalid_and_cycles_do_not_poison_dependents() {
     let root = tempfile::tempdir().unwrap();
-    let host = host(root.path(), Vec::new()).await;
-    let bundled_root = &host
-        .roots
-        .iter()
-        .find(|(_, source)| *source == "bundled")
-        .unwrap()
-        .0;
-    put(bundled_root, "collision", "");
+    let collision = manifest("collision", "");
+    let bundle = bundled::materialize_files(
+        &root.path().join("cache/bundled"),
+        "test",
+        &[
+            ("collision/tool.toml", collision.as_bytes()),
+            ("collision/web/index.html", b"tool-ui"),
+        ],
+    )
+    .unwrap();
+    let host = host_with_bundle(root.path(), Vec::new(), Some(bundle)).await;
     put(&host.data, "collision", "");
     put(&host.data, "cycle", "[[requires]]\nid='cycle'\nversion='*'");
     put(

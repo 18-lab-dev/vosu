@@ -56,6 +56,8 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 - `src/updater/`: release selection, verified staging, replacement, rollback, and recovery.
 - `src/calculation.rs` and `crates/vosu-pp/`: stable and lazer performance calculation; the latter is a Rust facade over provenance-pinned MIT source forks. The remaining source-provenance questions are recorded in `docs/provenance-audit.md`.
 - `src/runtime/`, `src/app.rs`, `src/logging/`, `src/report/`: daemon orchestration and operational services.
+- `src/tools/`: tool host — manifest validation, discovery and bundled-tree materialization, supervision, `/tools/` proxy and access rules, host API, launch sessions, dashboard tool APIs. The contract is [docs/tools/protocol.md](docs/tools/protocol.md) (ADR 0017); change both together.
+- `crates/vosu-tool-sdk/`: Rust SDK for the tool protocol. `crates/vosu-tool-difficulty/`, `crates/vosu-tool-trainer/`, `crates/vosu-tool-skill-tracker/`: first-party tools (own binaries, `tool.toml`, `web/`), embedded into release executables via `scripts/stage-tools.py` and `VOSU_BUNDLED_TOOLS`. Tools never link the daemon crate.
 - `crates/vosu-test-harness/`: integration-test support only. `tests/` holds compatibility, native, daemon smoke, and performance contracts. `crates/vosu-release-smoke/` exercises an externally packaged executable without depending on the daemon crate. `benches/hot_paths.rs` holds Criterion benchmarks.
 - `tools/live-parity/`: deterministic live capture, attestation, comparison, and diff tooling. `tools/oracle/` holds calculator provenance/evidence tooling.
 
@@ -91,8 +93,8 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 ## Vendored, generated, and documentation boundaries
 
 - `assets/server/` and `assets/offsets.json` are embedded inputs, not a frontend build workspace. Any byte change to a file listed in `assets/SHA256SUMS` must be reviewed and its digest refreshed with `python scripts/check-asset-hashes.py --write`. When regenerating `assets/offsets.json`, also record its provenance in `package.metadata.vosu` and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) as described in the [offsets procedure](docs/operations/offsets-asset.md).
-- Treat `crates/vosu-pp/rosu-pp-api/` and `crates/vosu-pp/rosu-map-api/`, `tools/oracle/reference/`, oracle inputs, and calculator fixtures as provenance-pinned upstream evidence. Do not casually reformat or hand-normalize them; use the owning oracle/provenance tooling and preserve licenses, revision records, manifests, and source mappings.
-- Do not hand-edit `Cargo.lock`; regenerate it with Cargo and review the dependency change. When `crates/vosu-pp/THIRD_PARTY_LICENSES.txt` changes, regenerate the release `LICENSE` with `python scripts/assemble-release-license.py --write`, then refresh its digest.
+- Treat `crates/vosu-pp/rosu-pp-api/` and `crates/vosu-pp/rosu-map-api/`, `crates/vosu-tool-difficulty/vendor/` (MinaCalc, see its `PROVENANCE.md`), `tools/oracle/reference/`, oracle inputs, and calculator fixtures as provenance-pinned upstream evidence. Do not casually reformat or hand-normalize them; use the owning oracle/provenance tooling and preserve licenses, revision records, manifests, and source mappings.
+- Do not hand-edit `Cargo.lock`; regenerate it with Cargo and review the dependency change. When `crates/vosu-pp/THIRD_PARTY_LICENSES.txt` or a bundled tool notice listed in `scripts/assemble-release-license.py` changes, regenerate the release `LICENSE` with `python scripts/assemble-release-license.py --write`, then refresh its digest.
 - Update README user contracts when commands, requirements, configuration, routes, installation, or runtime behavior change. Update architecture for structural boundaries, add an ADR for a durable decision, and update benchmark notes only with reproducible measurements.
 
 ## Maintained documentation

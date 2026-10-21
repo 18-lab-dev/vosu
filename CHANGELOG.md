@@ -2,6 +2,28 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## 1.2.0 — Unreleased
+
+### Tools
+
+- Host tools: out-of-process applications in any language, described by a `tool.toml` manifest, with an optional browser UI, an optional supervised background service, versioned APIs, dependencies on other tools, and requested host permissions. See the [tool protocol](docs/tools/protocol.md) and [authoring guide](docs/tools/authoring.md).
+- Serve tools on the overlay listener under the reserved `/tools/` prefix: UIs at `/tools/<id>/`, service APIs at `/tools/<id>/api/`. No overlay can be installed or served as `tools`. Read routes are open to overlays; writes need a tab session minted by the dashboard's Open action or a dependent tool's per-launch token.
+- Supervise services: loopback readiness handshake, health checks, on-demand start and idle stop, crash restart with backoff, dependency-first start, bounded logs, and orderly shutdown; children are killed with vosu on Linux and Windows.
+- Run a tool from any directory with `vosu --tool <directory>`; manifests reload live and development services restart when their executable changes.
+- User tools in `<data dir>/tools/<id>/` require explicit trust on the dashboard. Release executables embed the first-party tools, so archives and packages stay single-executable.
+- Add a Python reference tool and a JSON Schema for `tool.toml`.
+
+### First-party tools
+
+- **Difficulty**: shared osu!mania difficulty provider with Etterna MinaCalc 527 MSD (4K/6K/7K), score-goal SSR, rate tables, and an experimental 4K Reform dan estimate, cached once for every tool and overlay.
+- **osu! Trainer**: rate-changed practice copies (pitch-preserving stretch or pitch-shifting resample, target BPM), HP/CS/AR/OD overrides with rate-compensated AR/OD locks, MSD/dan preview at the chosen rate, generated-map management, and importable `.osz` exports for lazer. Originals are never modified.
+- **Skill Tracker**: records stable and lazer plays, computes experimental Etterna-style skillset ratings and dan progression, imports osu!stable local scores, and exposes profile, history, session, and live-stream APIs for overlays.
+
+### Dashboard
+
+- Redesign every page in the 18-LAB style with WORKSTATION (dark) and DRAFTING (light) modes, embedded Barlow and IBM Plex Mono fonts, and a restyled diagnostics report.
+- Add a Tools page with status, dependencies, permissions, API routes, storage, logs, lifecycle and trust actions, and tool settings that reuse the overlay settings editor.
+
 ## 1.1.0 — 2026-10-17
 
 ### Dashboard origin

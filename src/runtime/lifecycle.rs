@@ -186,7 +186,12 @@ impl ProductionRuntime {
             self.paths.config().join("tools"),
             self.paths.data().join("tools"),
             self.paths.cache().join("tools"),
-            self.dev_tools.clone(),
+            crate::tools::ExtraRoots {
+                dev: self.dev_tools.clone(),
+                bundled: crate::tools::bundled::materialize(
+                    &self.paths.cache().join("tools/bundled"),
+                )?,
+            },
             self.origins.overlay(),
             self.origins.dashboard(),
             Arc::new(move || context_beatmap.tool_context()),

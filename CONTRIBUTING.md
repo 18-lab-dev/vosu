@@ -32,6 +32,21 @@ needs only Rust and a native C toolchain; no Node.js, Electron, or .NET.
    Set it only for Linux-target builds and checks. Leave it unset for the
    Windows MSVC cross-check (`cargo xwin`); CI keeps it out of that step too.
 
+   The trainer tool's bundled Vorbis C sources trip clang-cl's
+   `incompatible-pointer-types` error under `cargo xwin` (native MSVC only
+   warns), and its time-stretch binding runs bindgen, so Windows builds need
+   LLVM's `libclang` (set `LIBCLANG_PATH` if it is not found). Run the
+   cross-check as:
+
+   ```sh
+   env -u C_INCLUDE_PATH 'CFLAGS_x86_64-pc-windows-msvc=-Wno-error=incompatible-pointer-types' \
+     cargo xwin clippy --workspace --all-targets --all-features --locked \
+     --target x86_64-pc-windows-msvc -- -D warnings
+   ```
+
+   The hyphenated variable name is required: `cargo xwin` overwrites the
+   underscore spelling.
+
 3. Install Python 3.11 or newer for the repository checks in `scripts/`
    (they read TOML with the standard-library `tomllib`).
 4. Clone, build, and run:

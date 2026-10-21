@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage first-party tools beside a release executable (Python 3.11+)."""
+"""Stage first-party tools for embedding into a release executable via VOSU_BUNDLED_TOOLS (Python 3.11+)."""
 from __future__ import annotations
 
 import argparse

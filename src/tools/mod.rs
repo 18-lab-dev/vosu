@@ -1,5 +1,5 @@
 //! Discovery, trust, credentials and lifetime ownership for out-of-process tools.
-mod bundled;
+pub(crate) mod bundled;
 mod http;
 pub mod manifest;
 mod process;
@@ -124,7 +124,7 @@ pub struct ToolHost {
     cancel: CancellationToken,
     watcher: Mutex<Option<tokio::task::JoinHandle<()>>>,
     context: Arc<dyn Fn() -> Value + Send + Sync>,
-    _bundle: bundled::Bundle,
+    _bundle: Option<bundled::Bundle>,
 }
 pub fn secret() -> io::Result<String> {
     use std::fmt::Write as _;
@@ -168,21 +168,28 @@ pub fn development_roots(args: &[std::ffi::OsString]) -> io::Result<Vec<PathBuf>
     }
     result.into_iter().map(std::path::absolute).collect()
 }
+/// Tool roots ahead of the user root, in precedence order.
+pub struct ExtraRoots {
+    pub dev: Vec<PathBuf>,
+    pub bundled: Option<bundled::Bundle>,
+}
 impl ToolHost {
     pub async fn new(
         config: PathBuf,
         data: PathBuf,
         cache: PathBuf,
-        dev: Vec<PathBuf>,
+        extra: ExtraRoots,
         overlay_url: String,
         dashboard_url: String,
         context: Arc<dyn Fn() -> Value + Send + Sync>,
     ) -> io::Result<Arc<Self>> {
-        let bundled = bundled::materialize(&cache.join("bundled"))?;
+        let ExtraRoots { dev, bundled } = extra;
         let user = data.clone();
         fs::create_dir_all(&user)?;
         let mut roots = dev.into_iter().map(|p| (p, "dev")).collect::<Vec<_>>();
-        roots.push((bundled.root.clone(), "bundled"));
+        if let Some(bundle) = &bundled {
+            roots.push((bundle.root.clone(), "bundled"));
+        }
         roots.push((user, "user"));
         let saved = match fs::read(config.join("state.json")) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
