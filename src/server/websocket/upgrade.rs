@@ -54,7 +54,7 @@ pub struct UpgradeCallbackTracker {
     drained: Notify,
 }
 
-pub(super) struct UpgradeRegistration {
+pub(crate) struct UpgradeRegistration {
     tracker: Arc<UpgradeCallbackTracker>,
     completed: AtomicBool,
 }
@@ -94,7 +94,7 @@ impl UpgradeCallbackTracker {
         }
     }
 
-    pub(super) fn register(self: &Arc<Self>) -> Option<Arc<UpgradeRegistration>> {
+    pub(crate) fn register(self: &Arc<Self>) -> Option<Arc<UpgradeRegistration>> {
         if !self.accepting.load(Ordering::Acquire) {
             return None;
         }
@@ -129,7 +129,7 @@ impl UpgradeRegistration {
         }
     }
 
-    pub(super) async fn run<F>(self: Arc<Self>, future: F)
+    pub(crate) async fn run<F>(self: Arc<Self>, future: F)
     where
         F: Future<Output = ()>,
     {

@@ -37,7 +37,7 @@ flowchart LR
     Parity -. compares against pinned upstream daemon .-> Reference[upstream tosu parity reference]
 ```
 
-The product boundary is the single `vosu` process. osu! is an observed external process; consumers, including independent overlay software, release services, and the local filesystem are external dependencies. [ADR 0008](../decisions/0008-external-in-game-overlays.md) keeps in-game overlay UI and state outside this boundary. `tools/live-parity/run.py` is not a production container: it orchestrates deterministic upstream-tosu-versus-vosu captures for the supported Windows/stable, Windows/lazer, and Linux/lazer matrix declared in `tools/live-parity/live_parity.py`.
+The daemon boundary is the `vosu` process; hosted tools are supervised out-of-process applications behind its HTTP contract. osu! is an observed external process; consumers, including independent overlay software, release services, and the local filesystem are external dependencies. [ADR 0008](../decisions/0008-external-in-game-overlays.md) keeps in-game overlay UI and state outside this boundary. `tools/live-parity/run.py` is not a production container: it orchestrates deterministic upstream-tosu-versus-vosu captures for the supported Windows/stable, Windows/lazer, and Linux/lazer matrix declared in `tools/live-parity/live_parity.py`.
 
 ## Containers and ownership
 
@@ -115,6 +115,7 @@ checksum-verified payload and game installation remain untouched.
 | Configuration | `src/config/*` | `ConfigStore`, `ConfigDocument`, `ConfigSchema` |
 | Desktop integration | `src/desktop/*` | session tray, executable ownership policy, Linux `login::reconcile` |
 | Self-update | `src/updater/*` | startup recovery, release validation, prepare/transaction/platform stages |
+| Hosted tools | `src/tools/{mod,manifest,process,http,bundled}.rs` | `ToolHost`, manifest validation, supervised children, proxy/session authorization, embedded bundle materialization |
 | Live compatibility validation | `tools/live-parity/*` | `run.py`, `parity_capture.py`, `parity_compare.py`, `parity_diff.py` |
 
 ## Runtime data flow
@@ -172,6 +173,9 @@ Regular and precise notifications remain independent. `src/runtime/projection.rs
 `auth::MutationAuthorization` separates exact same-origin mutation intent from the overlay-compatible read policy. Dispatch enforces it before every management POST and captures it in request extensions for WebSocket upgrades. The production socket transport permits read/settings/filter commands on untrusted-origin sockets, but closes them before any state-changing command reaches `CommandProcessor`. This preserves stock hosted counter writes and non-hosted reads without adding a handshake token.
 
 `src/server/origins.rs` separates trusted dashboard pages/management from the unchanged overlay origin ([ADR 0016](../decisions/0016-separate-dashboard-origin.md)). Each listener has an explicit origin role and shares effective address metadata. Dashboard mutations require exact dashboard provenance plus a per-start CSRF token; dashboard HTML is not CORS-readable, and overlay static files never run on that listener. Overlay command-socket settings and scoped key grants retain their compatibility contracts. This browser-origin boundary does not authenticate against malicious native same-account clients.
+
+`src/tools` reserves `/tools` before counter static routing. `ToolHost` discovers development, embedded-bundled, and user tools, persists trust/enabled state and settings in a separate config namespace, and owns bounded service logs and supervised child lifetimes. Services receive per-launch secrets, bind ephemeral loopback ports, and pass readiness/health checks before requests are forwarded. Public read prefixes remain overlay-readable; mutations require a dashboard-minted tab session or a declared dependent tool token. Dashboard-only `/api/tools` management retains provenance and CSRF checks. Shutdown closes child stdin and enforces a five-second exit bound; Linux parent-death signals and Windows kill-on-close jobs additionally contain daemon death. See the [tool protocol](../tools/protocol.md).
+
 
 Compatibility WebSocket connection ownership lives in `src/server/websocket.rs::WebSocketHub`; selected-field v2 subscriptions use the separate `src/server/v2_subscription.rs::V2SubscriptionHub`. Publication tasks live in `WebSocketHubs`. Both hub types bound each client to one pending state frame and shutdown seals registration and sends protocol close 1001 before cancelling publication loops. Commands are parsed and dispatched by `src/server/commands.rs::CommandProcessor`; relay lifecycle remains separate in `src/server/service/relay.rs`, and the selected-field endpoint does not register a command or relay client.
 

@@ -18,4 +18,5 @@ pub mod report;
 pub mod runtime;
 pub mod server;
 pub mod state;
+pub mod tools;
 pub mod updater;

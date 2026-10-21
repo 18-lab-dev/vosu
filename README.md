@@ -180,6 +180,8 @@ process-event backends and install their capabilities. Setup requests
 operating-system authentication when needed; do not run the ordinary daemon as
 root.
 
+The daemon also accepts repeatable `--tool <directory>` arguments to load trusted development tools directly from a checkout. Manifests and settings reload live; rebuilding a development service restarts it. See the [tool protocol](docs/tools/protocol.md) for Cargo binary fallback, user installation, and release embedding.
+
 Offset resolution is automatic. For each discovered osu!lazer process, vosu first
 checks a valid cache entry for that exact process version, then the matching
 embedded offsets asset, and finally runs the embedded self-contained generator
@@ -229,6 +231,11 @@ Developers can use `vosu --tool <directory>` for a trusted development override.
 See the [authoring guide](docs/tools/authoring.md) and
 [protocol contract](docs/tools/protocol.md), or run the dependency-free
 [Python example](examples/tools/hello-python/).
+### Hosted tool routes and security
+
+The dashboard's `/tools` page manages tools; `/api/tools` lists status and metadata, and `/api/tools/<id>/…` manages lifecycle, settings, logs and data. Management POSTs require dashboard provenance and CSRF. The overlay listener redirects `GET /tools` to that page and serves tool UIs at `/tools/<id>/` and declared service APIs at `/tools/<id>/api/…`. The `tools` counter name is reserved.
+
+Declared GET/HEAD/WebSocket read routes are available to allowed overlay peers. Writes require a tool-bound tab session minted by the dashboard's Open action, or the token of a running tool that declares the target as a dependency. Tool settings and trust state live under the config root's `tools/`; durable data and evictable caches use separate per-tool directories. User-installed tools in the data root's `tools/<id>/` need explicit trust approval. Tools run as your OS account, not in a sandbox: permissions disclose intent and gate host context access, but do not restrict filesystem rights. Only approve code you trust. See [security](docs/security.md#hosted-tools).
 
 ## Build from source
 

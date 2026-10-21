@@ -15,6 +15,8 @@ pub struct ProductionRuntime {
     update_handed_off: AtomicBool,
     available_update: Option<String>,
     counters: AsyncMutex<Option<Arc<ReloadableCounterService>>>,
+    tools: AsyncMutex<Option<Arc<crate::tools::ToolHost>>>,
+    dev_tools: Vec<PathBuf>,
     listener: AsyncMutex<Option<ListenerOwner>>,
     dashboard_listener: AsyncMutex<Option<ListenerOwner>>,
     origins: Arc<crate::server::origins::Origins>,
@@ -32,6 +34,9 @@ pub struct ProductionRuntime {
 impl ProductionRuntime {
     async fn shutdown(&self) -> io::Result<()> {
         self.shutdown_token.cancel();
+        if let Some(tools) = self.tools.lock().await.take() {
+            tools.shutdown().await;
+        }
         if let Some(mut tray) = self.tray.lock().await.take() {
             tray.shutdown().await;
         }
@@ -176,6 +181,18 @@ impl ProductionRuntime {
                 relays: relays.clone(),
             },
         );
+        let context_beatmap = beatmap.clone();
+        let tools = crate::tools::ToolHost::new(
+            self.paths.config().join("tools"),
+            self.paths.data().join("tools"),
+            self.paths.cache().join("tools"),
+            self.dev_tools.clone(),
+            self.origins.overlay(),
+            self.origins.dashboard(),
+            Arc::new(move || context_beatmap.tool_context()),
+        )
+        .await?;
+        *self.tools.get_mut() = Some(tools.clone());
         let providers = RouteProviders {
             authorization: Arc::new(crate::server::origins::OriginAuthorizer {
                 inner: self.authorizer.clone(),
@@ -187,12 +204,12 @@ impl ProductionRuntime {
             )),
             calculation: Arc::new(LegacyCalculateProvider::new(beatmap)),
             delegate: Arc::new(
-                ProductionRouteDelegate::new(services).with_api_keys(Arc::new(
-                    crate::server::api_keys::ApiKeys::load(
+                ProductionRouteDelegate::new(services)
+                    .with_api_keys(Arc::new(crate::server::api_keys::ApiKeys::load(
                         self.paths.config().join("api-keys.toml"),
                         Some(self.logger.clone()),
-                    ),
-                )),
+                    )))
+                    .with_tools(tools.clone()),
             ),
         };
         let mut dashboard_providers = providers.clone();
@@ -255,6 +272,7 @@ impl ProductionRuntime {
             .expect("started dashboard listener has an effective address");
         self.origins
             .observe_listeners(listener.state.clone(), dashboard_listener.state.clone());
+        tools.activate(Some(self.origins.clone()));
         self.logger.info(format!(
             "Dashboard: {}",
             crate::desktop::dashboard_url(
@@ -810,6 +828,8 @@ pub async fn run_cli() -> io::Result<()> {
         update_handed_off: AtomicBool::new(false),
         available_update: None,
         counters: AsyncMutex::new(None),
+        tools: AsyncMutex::new(None),
+        dev_tools: crate::tools::development_roots(args.raw())?,
         listener: AsyncMutex::new(None),
         dashboard_listener: AsyncMutex::new(None),
         origins: Arc::new(crate::server::origins::Origins::new(

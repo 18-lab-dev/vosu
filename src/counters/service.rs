@@ -768,6 +768,9 @@ fn recursive_named_files(
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
             let name = entry.file_name();
+            if allow_top_level_alias && name.to_string_lossy().eq_ignore_ascii_case("tools") {
+                continue;
+            }
             if name.to_string_lossy().starts_with('.') {
                 continue;
             }

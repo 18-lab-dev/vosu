@@ -56,6 +56,8 @@ async fn management_mutations_require_post_and_exact_browser_origin() {
         "/api/generateReport",
         "/api/settingsSave",
         "/api/counters/settings/expendable",
+        "/api/tools/fixture/launch",
+        "/api/tools/fixture/settings",
     ] {
         for origin in [
             None,
@@ -91,7 +93,7 @@ async fn management_mutations_require_post_and_exact_browser_origin() {
                 "{path}: {origin:?}",
             );
         }
-        if path != "/api/counters/settings/expendable" {
+        if path != "/api/counters/settings/expendable" && !path.starts_with("/api/tools/") {
             let request = make_request(Method::GET, path, Body::empty());
             assert_eq!(
                 dispatch(State(providers(CachedJson::NotReady)), request)
@@ -630,6 +632,8 @@ async fn redirects_preserve_path_query_without_trusting_attacker_host() {
             "/?q=one%20two",
             "/available?x=1",
             "/settings?overlay=sample&profile=other&embed=1",
+            "/tools",
+            "/settings?tool=fixture",
         ] {
             let (providers, _) = split_providers(false);
             let mut request = make_request(Method::GET, path, Body::empty());
@@ -675,7 +679,11 @@ async fn discovery_publishes_effective_dashboard_origin_and_no_csrf_secret() {
 
 #[tokio::test]
 async fn dashboard_ux_reads_are_not_overlay_management_routes() {
-    for path in ["/api/dashboard/status", "/api/counters/details/sample"] {
+    for path in [
+        "/api/dashboard/status",
+        "/api/counters/details/sample",
+        "/api/tools",
+    ] {
         let (providers, _) = split_providers(false);
         assert_eq!(
             dispatch(

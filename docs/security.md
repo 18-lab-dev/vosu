@@ -93,6 +93,15 @@ without refusing valid keys; key names reject bidirectional controls.
 
 Overlays are third-party web pages that run in the user's browser or OBS. vosu does not review them. Installed overlays can read game data and use their existing settings command socket, but cannot mutate dashboard management APIs without an explicitly granted scoped API key. The dashboard listener never serves their scripts or static files.
 
+## Hosted tools
+
+Tools are programs, not sandboxed overlays. Development tools passed with repeatable `--tool <directory>` are trusted for that run; bundled tools are embedded in the verified executable and materialized into a verified cache tree. User tools under the data directory's `tools/<id>` remain untrusted until explicitly approved in the dashboard. Approval allows a process to run with your OS account's rights. The `context` host permission controls disclosure of selected-instance absolute game paths; `songs:write` declares filesystem-writing intent but is advisory, not an OS restriction. A tool such as the trainer may write new maps to your songs directory.
+
+Tool UI and API routes live only on the overlay listener under `/tools/`; the dashboard never serves their scripts. API prefixes are matched on segment boundaries. GET/HEAD and WebSocket routes declared `read` are public to allowed overlay peers; mutating methods require a matching `write` prefix and a tool-bound UI session or the per-launch token of a running declared dependent. A dashboard launch creates a single-use 60-second code exchanged from the URL fragment; the browser bridge strips the fragment and keeps the session in that tab's session storage. Sessions expire when vosu exits. Sharing an origin with overlays is not an opaque-origin sandbox: code executing in the launched tool tab can access its session.
+
+Every supervised service receives a fresh 256-bit OS-random token. Proxy requests discard cookies, hop-by-hop headers, and caller-supplied `X-Vosu-*` headers before adding the service token and caller identity; bodies are bounded to 1 MiB and responses stream. Services must authenticate their loopback port themselves (the SDK does so). Host and session tokens use constant-time comparisons and are never intentionally exposed in logs or browser metadata. Closing vosu closes child stdin, waits five seconds, then kills remaining processes; Linux parent-death signals and Windows Job Objects provide a daemon-death backstop. See the complete [protocol and trust contract](tools/protocol.md).
+
+
 ## Analytics and crash reporting
 
 vosu has no telemetry, analytics, or crash reporting. Diagnostic reports are generated locally on request and never uploaded.

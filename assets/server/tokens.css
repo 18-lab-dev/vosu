@@ -1,0 +1,2 @@
+:root { color-scheme: dark; --bg: #111214; --bg-raised: #191a1d; --fg: #ecebe6; --muted: #969792; --accent: #ff963f; --font-body: sans-serif; --font-mono: monospace; }
+:root[data-theme="light"] { color-scheme: light; --bg: #f2f1ec; --fg: #202124; --accent: #175fad; }
