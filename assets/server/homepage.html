@@ -3,10 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#100E18">
-  <title>Vosu dashboard</title>
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#111214">
+  <title>vosu dashboard</title>
   <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="preload" href="/assets/barlow-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/assets/barlow-condensed-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/assets/ibm-plex-mono-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/assets/tokens.css">
   <link rel="stylesheet" href="/assets/homepage.css">
   <link rel="stylesheet" href="/assets/homepage-controls.css">
   <script src="/assets/homepage.js" type="module"></script>
@@ -15,52 +19,88 @@
   <a class="skip-link" href="#main-content">Skip to dashboard content</a>
 
   <header class="site-header">
-    <a class="brand" href="/" aria-label="Vosu dashboard home">
-      <svg class="brand-mark" viewBox="0 0 1024 1024" role="img" aria-labelledby="dashboard-mark-title dashboard-mark-description" shape-rendering="geometricPrecision">
-        <title id="dashboard-mark-title">Vosu</title>
-        <desc id="dashboard-mark-description">The rose Vosu signal-V mark and cyan signal node on a rounded dark tile.</desc>
-        <rect width="1024" height="1024" rx="144" fill="#100E18"></rect>
-        <g aria-label="Vosu signal-V symbol" transform="translate(512 500) scale(6.2) translate(-128 -113)">
-          <path d="M18 36 H32 L64 94 L96 36 H110" transform="translate(64 46)" fill="none" stroke="#F45CAD" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"></path>
-          <circle cx="128" cy="140" r="10" fill="#100E18"></circle>
-          <circle cx="128" cy="140" r="5.5" fill="#7AE1F8"></circle>
-        </g>
-      </svg>
-      <span class="brand-name">Vosu</span>
-    </a>
-
-    <nav class="page-tabs" aria-label="Dashboard pages">
-      <a class="nav-link" data-page="installed" href="/">
-        <span>Installed</span>
-        <span class="nav-count" data-count="installed">{{LOCAL_AMOUNT}}</span>
+    <div class="shell-bar">
+      <a class="brand" href="/" aria-label="vosu dashboard home, by 18-LAB">
+        <svg class="brand-mark" viewBox="8 24 112 84" aria-hidden="true" focusable="false">
+          <path class="brand-mark__v" d="M18 36 H32 L64 94 L96 36 H110"></path>
+          <circle class="brand-mark__gap" cx="64" cy="94" r="10"></circle>
+          <circle class="brand-mark__node" cx="64" cy="94" r="5.5"></circle>
+        </svg>
+        <span class="brand-name">vosu</span>
+        <span class="brand-sub">18-LAB</span>
       </a>
-      <a class="nav-link" data-page="available" href="/available">
-        <span>Available</span>
-        <span class="nav-count" data-count="available">{{AVAILABLE_AMOUNT}}</span>
-      </a>
-      <a class="nav-link" data-page="settings" href="/settings">Settings</a>
-    </nav>
 
-    {{SEARCH}}
+      <nav class="page-tabs" aria-label="Dashboard pages">
+        <a class="nav-link" data-page="installed" href="/">
+          <span class="nav-index" aria-hidden="true">01</span>
+          <span class="nav-label">Overlays</span>
+          <span class="nav-count" data-count="installed">{{LOCAL_AMOUNT}}</span>
+        </a>
+        <a class="nav-link" data-page="available" href="/available">
+          <span class="nav-index" aria-hidden="true">02</span>
+          <span class="nav-label">Available</span>
+          <span class="nav-count" data-count="available">{{AVAILABLE_AMOUNT}}</span>
+        </a>
+        <a class="nav-link" data-page="tools" href="/tools">
+          <span class="nav-index" aria-hidden="true">03</span>
+          <span class="nav-label">Tools</span>
+          <span class="nav-count" data-count="tools"></span>
+        </a>
+        <a class="nav-link" data-page="settings" href="/settings">
+          <span class="nav-index" aria-hidden="true">04</span>
+          <span class="nav-label">Settings</span>
+        </a>
+      </nav>
 
-    <nav class="header-links" aria-label="Vosu resources">
-      <a href="https://github.com/shiruviaa/vosu" target="_blank" rel="noopener noreferrer">Source</a>
-      <button type="button" data-action="diagnostics-report">Diagnostics report</button>
-    </nav>
+      <div class="header-tools">
+        <button class="mode-toggle" type="button" data-action="toggle-theme" aria-label="Colour mode">
+          <span class="mode-glyph" aria-hidden="true"></span>
+          <span class="mode-name" aria-hidden="true"></span>
+        </button>
+        <a class="header-link" href="https://github.com/shiruviaa/vosu" target="_blank" rel="noopener noreferrer">Source</a>
+        <button class="header-link" type="button" data-action="diagnostics-report">Diagnostics report</button>
+      </div>
+    </div>
+
+    <div class="status-strip" role="group" aria-label="vosu status">
+      <p class="status-cell status-cell--link">
+        <span class="status-key status-key--name">osu!</span>
+        <span id="attachment-status" class="status-value attachment-status" data-state="pending" aria-live="polite">Checking attachment…</span>
+      </p>
+      <p class="status-cell" data-status-cell="client" hidden>
+        <span class="status-key">Client</span>
+        <span class="status-value" data-status="client"></span>
+      </p>
+      <p class="status-cell" data-status-cell="poll" hidden>
+        <span class="status-key">Poll</span>
+        <span class="status-value" data-status="poll"></span>
+      </p>
+      <p class="status-cell status-cell--version">
+        <span class="status-key status-key--name">vosu</span>
+        <span class="status-value">{{CURRENT_VERSION}}</span>
+      </p>
+    </div>
   </header>
-  <section id="attachment-status" class="attachment-status" aria-label="osu! attachment status" aria-live="polite">Checking osu! attachment…</section>
 
   <section id="update-notice" class="update-notice" {{UPDATE_HIDDEN}} aria-labelledby="update-title">
-    <div>
-      <p class="eyebrow">Vosu update</p>
+    <p class="update-notice__label">Update</p>
+    <div class="update-notice__copy">
       <h2 id="update-title">Version {{NEW_VERSION}} is ready</h2>
       <p>This daemon is running {{CURRENT_VERSION}}. Start the built-in updater when you are ready.</p>
     </div>
-    <button class="button button-primary" type="button" data-action="app-update">Update Vosu</button>
+    <button class="button button-primary" type="button" data-action="app-update">Update vosu</button>
   </section>
 
   <main id="main-content" class="dashboard-main" tabindex="-1">
-    <h1 id="page-title" class="visually-hidden">Overlays</h1>
+    <header class="page-head">
+      <p class="sheet-label" aria-hidden="true">
+        <span class="sheet-no" id="page-number"></span>
+        <span class="sheet-rule"></span>
+        <span id="page-kicker"></span>
+      </p>
+      <h1 id="page-title">Dashboard</h1>
+      {{SEARCH}}
+    </header>
 
     {{NOTICE}}
 
@@ -69,6 +109,13 @@
     </section>
   </main>
 
+  <footer class="title-block" aria-label="About this dashboard">
+    <p class="title-cell"><span class="title-key">Drawn by</span><span class="title-value">18-LAB</span></p>
+    <p class="title-cell"><span class="title-key">Product</span><span class="title-value">vosu {{CURRENT_VERSION}}</span></p>
+    <p class="title-cell"><span class="title-key">Mode</span><span class="title-value title-value--mode"></span></p>
+    <p class="title-cell title-cell--wide"><span class="title-key">Notice</span><span class="title-value">Not affiliated with ppy or the tosu project.</span></p>
+  </footer>
+
   <dialog id="dashboard-dialog" class="dashboard-dialog" aria-labelledby="dialog-title">
     <div class="dialog-frame">
       <header class="dialog-header">
@@ -76,7 +123,7 @@
           <h2 id="dialog-title"></h2>
           <p id="dialog-description"></p>
         </div>
-        <button class="icon-button" type="button" data-action="close-dialog" aria-label="Close dialog">Close</button>
+        <button class="icon-button" type="button" data-action="close-dialog" aria-label="Close dialog">✕</button>
       </header>
       <div id="dialog-body" class="dialog-body"></div>
     </div>

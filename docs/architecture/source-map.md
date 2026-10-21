@@ -57,9 +57,13 @@ JSON/beatmap evidence are data, not source-size exceptions or splitting targets.
   parsing. Their `bin/` and `obj/` trees are reproducible ignored build output.
   The prepared platform ZIP and checksum are release build inputs, while package
   locks remain maintained inputs.
-- The dashboard loads `homepage.js` as an ES module. `homepage-settings.js` owns
-  the overlay settings dialog; `homepage-controls.css` follows the
-  base stylesheet and preserves settings/dialog/responsive cascade order.
+- The dashboard loads `homepage.js` as an ES module. `tokens.css` is the single
+  source of design tokens and `@font-face` rules; tool UIs receive the same file
+  as `/tools/_host/v1/theme.css`, so it holds only `:root` and font rules with
+  absolute `/assets/` URLs. `homepage-settings.js` owns the overlay and tool
+  settings editor; `dashboard-tools.js` owns the Tools page and loads only
+  there; `homepage-controls.css` follows the base stylesheet and preserves
+  settings/dialog/responsive cascade order.
 
 ## Workspace boundaries
 

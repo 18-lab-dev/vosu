@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check or refresh the retained calculator notices in the release LICENSE.
+"""Check or refresh the retained calculator and font notices in the release LICENSE.
 
 The updater requires a two-entry ZIP, so these notices travel inside LICENSE.
 This is not a complete inventory of all linked dependency license obligations.
@@ -13,6 +13,10 @@ import sys
 
 MARKER = b"\n===== Retained calculator notices =====\n\n"
 SOURCE = "crates/vosu-pp/THIRD_PARTY_LICENSES.txt"
+# The dashboard fonts are embedded in the executable, so the release must
+# carry their SIL Open Font License text.
+FONT_MARKER = b"\n===== Retained font notices =====\n\n"
+FONT_SOURCE = "assets/server/fonts-OFL.txt"
 # Digests of the pinned MIT texts with CRLF and surrounding LF framing normalized.
 # Original source-byte digests and revision links remain in SOURCE.
 RETAINED_TEXT_SHA256 = {
@@ -29,6 +33,8 @@ def expected_license(root):
     current = (root / "LICENSE").read_bytes()
     if current.count(MARKER) > 1:
         raise ValueError("duplicate calculator appendix markers in LICENSE")
+    if current.count(FONT_MARKER) > 1:
+        raise ValueError("duplicate font appendix markers in LICENSE")
     first_party = current.split(MARKER)[0].rstrip(b"\n") + b"\n"
     source = (root / SOURCE).read_bytes()
     for name, expected in RETAINED_TEXT_SHA256.items():
@@ -45,7 +51,12 @@ def expected_license(root):
         "The following material retains its own license terms.\n"
         "This appendix does not certify complete distribution compliance.\n\n"
     ).encode()
-    return first_party + MARKER + introduction + source
+    font_source = (root / FONT_SOURCE).read_bytes()
+    if b"SIL OPEN FONT LICENSE Version 1.1" not in font_source:
+        raise ValueError(f"{FONT_SOURCE} must contain the SIL Open Font License 1.1 text")
+    font_introduction = f"Source: {FONT_SOURCE}\n\n".encode()
+    return (first_party + MARKER + introduction + source.rstrip(b"\n") + b"\n"
+            + FONT_MARKER + font_introduction + font_source)
 
 
 def main():
@@ -60,9 +71,9 @@ def main():
             path.write_bytes(expected)
             print("Refreshed LICENSE appendix")
         elif path.read_bytes() != expected:
-            raise ValueError("LICENSE calculator appendix is stale; run this script with --write")
+            raise ValueError("LICENSE appendix is stale; run this script with --write")
         else:
-            print("LICENSE contains the exact retained calculator notices")
+            print("LICENSE contains the exact retained calculator and font notices")
     except (OSError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

@@ -135,7 +135,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     }
     #[cfg(target_os = "linux")]
     {
-        assert!(settings.contains("Run Vosu as a systemd user service when you log in."));
+        assert!(settings.contains("Run vosu as a systemd user service when you log in."));
         assert!(settings.contains(r#"data-id="START_AT_LOGIN" type="checkbox" >"#));
         let enabled = render_runtime_settings(&Config {
             start_at_login: true,

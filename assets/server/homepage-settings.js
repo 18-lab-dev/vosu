@@ -333,26 +333,7 @@ export function createSettingsEditor({
     });
   }
 
-  function renderCounterSettings(
-    container,
-    folder,
-    schema,
-    values,
-    { inline = false, dialogRequestId = null, profile, registry } = {},
-  ) {
-    container.replaceChildren();
-    state.navigationObserver?.disconnect();
-    if (inline) {
-      container.classList.add('inline-counter-settings');
-      const header = document.createElement('header');
-      const title = document.createElement('h2');
-      title.textContent = `Overlay settings: ${folder}`;
-      const text = document.createElement('p');
-      text.textContent = 'These values are stored by Vosu for this overlay.';
-      header.append(title, text);
-      container.appendChild(header);
-    }
-
+  function profileBar(folder, inline, profile, registry) {
     const profiles = document.createElement('section');
     profiles.className = 'settings-profiles';
     const selector = choiceControl(registry.profiles, profile,
@@ -396,7 +377,42 @@ export function createSettingsEditor({
       menu.appendChild(button);
     }
     profiles.appendChild(management);
-    container.appendChild(profiles);
+    return profiles;
+  }
+
+  // `target` is an overlay ({ kind: 'overlay', id: folder }) or a tool
+  // ({ kind: 'tool', id, name }). Tools share the schema and value shapes but
+  // have no profiles (docs/tools/protocol.md).
+  function renderCounterSettings(
+    container,
+    target,
+    schema,
+    values,
+    { inline = false, dialogRequestId = null, profile, registry } = {},
+  ) {
+    const folder = target.id;
+    const isTool = target.kind === 'tool';
+    const noun = isTool ? 'tool' : 'overlay';
+    container.replaceChildren();
+    state.navigationObserver?.disconnect();
+    if (inline) {
+      container.classList.add('inline-counter-settings');
+      const header = document.createElement('header');
+      const back = document.createElement('a');
+      back.className = 'settings-back';
+      back.href = isTool ? '/tools' : '/';
+      back.textContent = isTool ? '← All tools' : '← Installed overlays';
+      const title = document.createElement('h2');
+      title.textContent = isTool ? `${target.name || folder} settings` : `Overlay settings: ${folder}`;
+      const text = document.createElement('p');
+      text.textContent = isTool
+        ? 'These values are stored by vosu for this tool. Its service reads them through the host API.'
+        : 'These values are stored by vosu for this overlay.';
+      header.append(back, title, text);
+      container.appendChild(header);
+    }
+
+    if (!isTool) container.appendChild(profileBar(folder, inline, profile, registry));
 
     const form = document.createElement('form');
     form.className = 'dialog-form';
@@ -457,7 +473,7 @@ export function createSettingsEditor({
       const title = document.createElement('h2');
       title.textContent = 'No settings exposed';
       const text = document.createElement('p');
-      text.textContent = 'This overlay does not define user-editable settings.';
+      text.textContent = `This ${noun} does not define user-editable settings.`;
       empty.append(title, text);
       list.appendChild(empty);
     }
@@ -475,7 +491,7 @@ export function createSettingsEditor({
     const save = document.createElement('button');
     save.type = 'submit';
     save.className = 'button button-primary';
-    save.textContent = 'Save overlay settings';
+    save.textContent = `Save ${noun} settings`;
     save.disabled = !schema.some((setting) => setting.type !== 'header');
     actions.appendChild(save);
     const layout = document.createElement('div');
@@ -487,17 +503,19 @@ export function createSettingsEditor({
       if (!isCurrentDialogRequest(dialogRequestId)) return;
       setBusy(save, true, 'Saving…');
       try {
-        const payload = collectCounterSettings(form, schema);
-        await requestJson(`/api/counters/settings/${encodeURIComponent(folder)}?profile=${encodeURIComponent(profile)}`, {
+        const url = isTool
+          ? `/api/tools/${encodeURIComponent(folder)}/settings`
+          : `/api/counters/settings/${encodeURIComponent(folder)}?profile=${encodeURIComponent(profile)}`;
+        await requestJson(url, {
           method: 'POST',
           body: JSON.stringify(payload),
         });
         if (!isCurrentDialogRequest(dialogRequestId)) return;
-        notify(`Saved settings for ${folder}.`, 'success');
+        notify(`Saved settings for ${isTool ? target.name || folder : folder}.`, 'success');
         if (!inline) closeDialog();
       } catch (error) {
         if (!isCurrentDialogRequest(dialogRequestId)) return;
-        notify(`Could not save overlay settings: ${errorText(error)}`, 'error', 5000);
+        notify(`Could not save ${noun} settings: ${errorText(error)}`, 'error', 5000);
       } finally {
         setBusy(save, false);
       }
@@ -508,7 +526,10 @@ export function createSettingsEditor({
       const root = inline ? null : dialogBody;
       const updateActiveSection = () => {
         const visible = sections.filter((section) => !section.heading.hidden);
-        const top = (root?.getBoundingClientRect().top ?? 0) + 16;
+        // Inline pages scroll under the pinned site header, not the viewport top.
+        const header = root ? null : document.querySelector('.site-header');
+        const pinned = header && getComputedStyle(header).position === 'sticky' ? header.getBoundingClientRect().bottom : 0;
+        const top = (root?.getBoundingClientRect().top ?? pinned) + 16;
         const current = visible.findLast((section) => section.heading.getBoundingClientRect().top <= top)
           ?? visible[0];
         for (const section of sections) {
@@ -525,35 +546,73 @@ export function createSettingsEditor({
     }
   }
 
-  async function loadCounterSettings(folder, { inline = false, profile = null } = {}) {
+  function settingsPayload(payload) {
+    const schema = Array.isArray(payload.settings) ? payload.settings : [];
+    const values = payload.values && typeof payload.values === 'object' && !Array.isArray(payload.values)
+      ? payload.values
+      : {};
+    return { schema, values };
+  }
+
+  function showLoadError(container, requestId, error) {
+    if (!isCurrentDialogRequest(requestId)) return;
+    container.replaceChildren();
+    const message = document.createElement('p');
+    message.setAttribute('role', 'alert');
+    message.textContent = `Could not load settings: ${errorText(error)}`;
+    container.appendChild(message);
+    notify(message.textContent, 'error', 5000);
+  }
+
+  function loadingTarget(inline, title, description, text) {
     const target = inline
       ? (results ? { container: results, requestId: null } : null)
-      : openDialog(`Settings: ${folder}`, 'Edit values provided by this overlay.');
+      : openDialog(title, description);
+    if (!target) return null;
+    const loading = document.createElement('p');
+    loading.className = 'tools-loading';
+    loading.textContent = text;
+    target.container.replaceChildren(loading);
+    return target;
+  }
+
+  async function loadCounterSettings(folder, { inline = false, profile = null } = {}) {
+    const target = loadingTarget(inline, `Settings: ${folder}`, 'Edit values provided by this overlay.', 'Loading overlay settings…');
     if (!target) return;
     const { container, requestId } = target;
-    const loading = document.createElement('p');
-    loading.textContent = 'Loading overlay settings…';
-    container.replaceChildren(loading);
     try {
       const registry = await requestJson('/api/counters/profiles');
       const requested = profile ?? (inline ? new URLSearchParams(location.search).get('profile') : null);
       const selected = requested ?? registry.active;
       const payload = await requestJson(`/api/counters/settings/${encodeURIComponent(folder)}?profile=${encodeURIComponent(selected)}`);
       if (!isCurrentDialogRequest(requestId)) return;
-      const schema = Array.isArray(payload.settings) ? payload.settings : [];
-      const values = payload.values && typeof payload.values === 'object' && !Array.isArray(payload.values)
-        ? payload.values
-        : {};
-      renderCounterSettings(container, folder, schema, values, { inline, dialogRequestId: requestId, profile: selected, registry });
+      const { schema, values } = settingsPayload(payload);
+      renderCounterSettings(container, { kind: 'overlay', id: folder }, schema, values, { inline, dialogRequestId: requestId, profile: selected, registry });
     } catch (error) {
-      if (!isCurrentDialogRequest(requestId)) return;
-      container.replaceChildren();
-      const message = document.createElement('p');
-      message.textContent = `Could not load settings: ${errorText(error)}`;
-      container.appendChild(message);
-      notify(message.textContent, 'error', 5000);
+      showLoadError(container, requestId, error);
     }
   }
 
-  return { closeDialog, loadCounterSettings };
+  async function loadToolSettings(id, { inline = false, name = '' } = {}) {
+    const target = loadingTarget(inline, `Settings: ${name || id}`, 'Edit values provided by this tool.', 'Loading tool settings…');
+    if (!target) return;
+    const { container, requestId } = target;
+    const base = `/api/tools/${encodeURIComponent(id)}`;
+    try {
+      // The display name is decoration; a failed lookup must not block editing.
+      const [payload, view] = await Promise.all([
+        requestJson(`${base}/settings`),
+        name ? Promise.resolve({ name }) : requestJson(base).catch(() => ({})),
+      ]);
+      if (!isCurrentDialogRequest(requestId)) return;
+      const { schema, values } = settingsPayload(payload);
+      const title = typeof view.name === 'string' && view.name ? view.name : id;
+      if (inline) document.title = `${title} settings · vosu`;
+      renderCounterSettings(container, { kind: 'tool', id, name: title }, schema, values, { inline, dialogRequestId: requestId });
+    } catch (error) {
+      showLoadError(container, requestId, error);
+    }
+  }
+
+  return { closeDialog, loadCounterSettings, loadToolSettings };
 }

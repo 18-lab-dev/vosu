@@ -22,6 +22,15 @@ First-party notice: `Copyright (c) 2026 sxlvia`, as confirmed by the maintainer 
 - **No endorsement:** vosu does not review, maintain, or endorse catalog overlays. The **Available** page shows this notice, and the [privacy policy](PRIVACY.md) covers the requests involved.
 - **Separate from provenance:** none of this affects the tosu-derived source questions in the [provenance audit](docs/provenance-audit.md).
 
+## Dashboard fonts
+
+The dashboard and tool UIs embed WOFF2 Latin subsets taken unmodified from [Fontsource](https://github.com/fontsource/font-files) 5.3.0 packages, each under the SIL Open Font License 1.1 (OFL-1.1):
+
+- **Barlow Condensed** 500, 600, 700 (`@fontsource/barlow-condensed`) and **Barlow** 400, 500, 600 (`@fontsource/barlow`): Copyright 2017 The Barlow Project Authors (<https://github.com/jpt/barlow>).
+- **IBM Plex Mono** 400, 500 (`@fontsource/ibm-plex-mono`): Copyright 2017 IBM Corp.
+
+The files are `assets/server/*-latin-*-normal.woff2`. Their copyright notices and the full license text are in [`assets/server/fonts-OFL.txt`](assets/server/fonts-OFL.txt), which `scripts/assemble-release-license.py` appends to the release `LICENSE` because the fonts ship inside the executable. The fonts are not sold by themselves.
+
 ## Native live-calculation sources
 
 The production `vosu-pp` calculator uses a Rust facade and MIT source forks. Its source-authority map and retained license texts are in [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). Recovered authoring records contradict the replacement's clean-room characterization; this notice does not certify implementation independence.
@@ -237,7 +246,8 @@ These development packages, the private `vosu-test-harness` workspace member, or
 ## License text locations and sources
 
 - project-authored repository code: `LICENSE-MIT` or `LICENSE-APACHE`
-- release archive license member: `LICENSE` (combined first-party terms and retained calculator MIT texts)
+- release archive license member: `LICENSE` (combined first-party terms, retained calculator MIT texts, and the dashboard font OFL notice)
+- dashboard font copyright notices and SIL Open Font License 1.1 text: `assets/server/fonts-OFL.txt` (also served at `/assets/fonts-OFL.txt`)
 - calculator crate project-authored code: `crates/vosu-pp/LICENSE-MIT` or `crates/vosu-pp/LICENSE-APACHE`
 - pinned lazer-calculator LGPL-3.0 reference: `tools/oracle/reference/lazer-calculator/LICENSE`
 - local `vosu-rosu-pp-api` MIT license text: `crates/vosu-pp/rosu-pp-api/LICENSE`
