@@ -50,9 +50,9 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
   }
 
   // WORKSTATION (dark) is the default; a first visit follows the system
-  // preference until the user picks a mode, which then persists. tokens.css
-  // already follows the preference before this module runs, so only a stored
-  // choice that differs from the system can flash on load.
+  // preference until the user picks a mode, which then persists. theme-init.js
+  // (THEME_KEY must match it) applies the same choice before first paint;
+  // this module owns the toggle and later system-preference changes.
   const lightQuery = window.matchMedia?.('(prefers-color-scheme: light)') ?? null;
   const MODE_NAMES = { dark: 'Workstation', light: 'Drafting' };
 

@@ -3,21 +3,49 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#100E18">
-  <title>Vosu diagnostic report</title>
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#111214">
+  <title>vosu diagnostic report</title>
   <style>
+    /* The report is a downloaded, self-contained file: it cannot load the
+       dashboard's tokens.css or fonts, so it repeats the 18-LAB token values
+       and falls back to locally installed faces. */
     :root {
       color-scheme: dark;
-      --ink: #100e18;
-      --panel: #181423;
-      --panel-soft: #211b30;
-      --paper: #f9f7ff;
-      --muted: #bbb5ca;
-      --rose: #f45cad;
-      --cyan: #7ae1f8;
-      --line: rgba(249, 247, 255, 0.16);
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --bg: #111214;
+      --bg-raised: #17191c;
+      --bg-sunken: #0b0c0d;
+      --rule: #25282c;
+      --rule-strong: #3b3f45;
+      --fg: #ebe8e1;
+      --fg-dim: #b8b5ad;
+      --muted: #7e8288;
+      --accent: #ff963f;
+      --note: #7fa6cf;
+      --caution: #e8b04a;
+      --danger: #ef5b4f;
+      --font-display: "Barlow Condensed", "Bahnschrift", "DIN Condensed", "Arial Narrow", sans-serif;
+      --font-body: "Barlow", "Bahnschrift", system-ui, sans-serif;
+      --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+      font-family: var(--font-body);
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        color-scheme: light;
+        --bg: #f2f1ec;
+        --bg-raised: #f8f7f3;
+        --bg-sunken: #e7e6df;
+        --rule: #d6dadd;
+        --rule-strong: #a7b2bd;
+        --fg: #132030;
+        --fg-dim: #3b4858;
+        --muted: #5b6775;
+        --accent: #175fad;
+        --note: #175fad;
+        --caution: #9a5207;
+        --danger: #b42318;
+      }
     }
 
     * {
@@ -27,19 +55,21 @@
     html {
       min-width: 20rem;
       min-height: 100%;
-      background: var(--ink);
+      background: var(--bg);
     }
 
     body {
       width: min(100% - 2rem, 78rem);
       min-height: 100vh;
       margin: 0 auto;
-      color: var(--paper);
-      background: var(--ink);
+      color: var(--fg);
+      line-height: 1.5;
+      background: var(--bg);
+      counter-reset: sheet;
     }
 
     a {
-      color: var(--cyan);
+      color: var(--accent);
       text-underline-offset: 0.2em;
     }
 
@@ -48,15 +78,29 @@
       gap: 1rem;
       align-items: center;
       padding: 2rem 0 1.5rem;
-      border-bottom: 1px solid var(--line);
+      border-bottom: 1px solid var(--rule-strong);
     }
 
     .report-mark {
       flex: 0 0 auto;
-      width: 4rem;
-      height: 4rem;
-      border: 1px solid var(--line);
-      border-radius: 0.9rem;
+      width: 3.25rem;
+      height: auto;
+      overflow: visible;
+    }
+
+    .report-mark path {
+      fill: none;
+      stroke: var(--accent);
+      stroke-width: 12;
+      stroke-linecap: square;
+    }
+
+    .report-mark .gap {
+      fill: var(--bg);
+    }
+
+    .report-mark .node {
+      fill: var(--note);
     }
 
     .report-header h1,
@@ -64,39 +108,76 @@
       margin: 0;
     }
 
+    .report-kicker,
+    .report-header p,
+    th,
+    .group h3,
+    footer {
+      font-family: var(--font-mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .report-kicker {
+      color: var(--accent);
+      font-size: 0.6875rem;
+    }
+
     .report-header h1 {
-      font-size: clamp(1.7rem, 5vw, 2.6rem);
-      line-height: 1;
+      font-family: var(--font-display);
+      font-size: clamp(2rem, 6vw, 3.25rem);
+      font-weight: 600;
+      line-height: 0.95;
+      text-transform: uppercase;
     }
 
     .report-header p {
-      margin-top: 0.45rem;
+      margin-top: 0.5rem;
       color: var(--muted);
+      font-size: 0.75rem;
       font-variant-numeric: tabular-nums;
     }
 
     main {
       display: grid;
-      gap: 1rem;
-      padding: 1.5rem 0 2rem;
+      gap: 1.75rem;
+      padding: 1.75rem 0 2.5rem;
     }
 
     .group {
       min-width: 0;
+      counter-increment: sheet;
     }
 
+    /* Numbered sheet label: "01 / SYSTEM CONFIGURATION" with a hairline. */
     .group h3 {
-      margin: 0 0 0.5rem;
-      color: var(--paper);
-      font-size: 1rem;
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      margin: 0 0 0.6rem;
+      color: var(--fg);
+      font-size: 0.6875rem;
+      font-weight: 500;
+    }
+
+    .group h3::before {
+      color: var(--accent);
+      content: counter(sheet, decimal-leading-zero) " /";
+    }
+
+    .group h3::after {
+      flex: 1;
+      height: 1px;
+      content: "";
+      background: var(--rule-strong);
     }
 
     .group-content {
+      position: relative;
       min-width: 0;
       overflow: auto;
-      border: 1px solid var(--line);
-      border-radius: 0.8rem;
-      background: var(--panel);
+      border: 1px solid var(--rule-strong);
+      background: var(--bg-raised);
     }
 
     table {
@@ -107,40 +188,46 @@
 
     th,
     td {
-      padding: 0.72rem 0.8rem;
+      padding: 0.6rem 0.8rem;
       overflow-wrap: anywhere;
       text-align: left;
       vertical-align: top;
-      border-bottom: 1px solid var(--line);
+      border-bottom: 1px solid var(--rule);
     }
 
     th {
-      color: var(--cyan);
-      font-size: 0.76rem;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      background: var(--panel-soft);
+      position: sticky;
+      top: 0;
+      color: var(--muted);
+      font-size: 0.6875rem;
+      font-weight: 500;
+      background: var(--bg-sunken);
     }
 
     tr:last-child td {
       border-bottom: 0;
     }
 
+    /* Key cells break only between words, so "System Type" never splits into
+       letters; their width then stays at the longest key. */
     .highlight {
-      color: var(--rose);
-      font-weight: 750;
+      color: var(--fg);
+      font-weight: 600;
+      overflow-wrap: break-word;
     }
 
     .scrollable {
       max-height: 38rem;
       overflow: auto;
-      scrollbar-color: var(--rose) var(--panel-soft);
+      scrollbar-color: var(--rule-strong) var(--bg-sunken);
     }
 
     .vosu-cfg table,
+    .instances table,
+    .counters table,
     .logs table {
-      font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
     }
 
     .logs .message {
@@ -157,18 +244,18 @@
 
     .status-error,
     .status-debugError {
-      color: #ff7a8a;
-      font-weight: 750;
+      color: var(--danger);
+      font-weight: 600;
     }
 
     .status-warning,
     .status-warn {
-      color: #ffd479;
-      font-weight: 750;
+      color: var(--caution);
+      font-weight: 600;
     }
 
     .status-info {
-      color: var(--cyan);
+      color: var(--note);
     }
 
     .status-debug,
@@ -179,12 +266,16 @@
     footer {
       padding: 1rem 0 2rem;
       color: var(--muted);
-      font-size: 0.82rem;
-      border-top: 1px solid var(--line);
+      font-size: 0.6875rem;
+      border-top: 1px solid var(--rule-strong);
     }
 
     footer p {
       margin: 0;
+    }
+
+    footer a {
+      text-transform: none;
     }
 
     @media (max-width: 42rem) {
@@ -198,23 +289,33 @@
 
       th,
       td {
-        padding: 0.6rem;
+        padding: 0.5rem;
       }
     }
 
     @media print {
       :root {
         color-scheme: light;
-        --ink: #ffffff;
-        --panel: #ffffff;
-        --panel-soft: #f2eef8;
-        --paper: #100e18;
-        --muted: #4d465c;
-        --line: rgba(16, 14, 24, 0.2);
+        --bg: #ffffff;
+        --bg-raised: #ffffff;
+        --bg-sunken: #f2f1ec;
+        --rule: #d6dadd;
+        --rule-strong: #a7b2bd;
+        --fg: #132030;
+        --fg-dim: #3b4858;
+        --muted: #5b6775;
+        --accent: #175fad;
+        --note: #175fad;
+        --caution: #9a5207;
+        --danger: #b42318;
       }
 
       body {
         width: 100%;
+      }
+
+      th {
+        position: static;
       }
 
       .scrollable {
@@ -231,18 +332,14 @@
 </head>
 <body>
   <header class="report-header">
-    <svg class="report-mark" viewBox="0 0 1024 1024" role="img" aria-labelledby="report-mark-title report-mark-description" shape-rendering="geometricPrecision">
-      <title id="report-mark-title">Vosu</title>
-      <desc id="report-mark-description">The rose Vosu signal-V mark and cyan signal node on a rounded dark tile.</desc>
-      <rect width="1024" height="1024" rx="144" fill="#100E18"></rect>
-      <g aria-label="Vosu signal-V symbol" transform="translate(512 500) scale(6.2) translate(-128 -113)">
-        <path d="M18 36 H32 L64 94 L96 36 H110" transform="translate(64 46)" fill="none" stroke="#F45CAD" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"></path>
-        <circle cx="128" cy="140" r="10" fill="#100E18"></circle>
-        <circle cx="128" cy="140" r="5.5" fill="#7AE1F8"></circle>
-      </g>
+    <svg class="report-mark" viewBox="8 24 112 84" role="img" aria-label="vosu">
+      <path d="M18 36 H32 L64 94 L96 36 H110"></path>
+      <circle class="gap" cx="64" cy="94" r="10"></circle>
+      <circle class="node" cx="64" cy="94" r="5.5"></circle>
     </svg>
     <div>
-      <h1>Vosu diagnostic report</h1>
+      <span class="report-kicker">vosu · 18-LAB</span>
+      <h1>Diagnostic report</h1>
       <p>Captured {{TIME}} UTC</p>
     </div>
   </header>
@@ -293,7 +390,7 @@
   </main>
 
   <footer>
-    <p>Generated locally by <a href="https://github.com/shiruviaa/vosu">Vosu</a>. Review before sharing; reports can contain system and overlay details.</p>
+    <p>Generated locally by <a href="https://github.com/shiruviaa/vosu">vosu</a>. Review before sharing; reports can contain system and overlay details.</p>
   </footer>
 </body>
 </html>
