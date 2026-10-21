@@ -17,3 +17,7 @@ id = "difficulty"
 version = ">=0.1.0"
 [permissions]
 host = ["context", "songs:write"]
+
+[cli]
+command = ["bin/vosu-trainer", "cli"]
+summary = "Create and manage rate-adjusted practice copies"

@@ -2,6 +2,19 @@
 
 First-party vosu tool (`skill-tracker`, protocol v1). Runs continuously while enabled, requires `difficulty` and host `context` permission. No account, cloud storage, browser build step, or runtime beyond the native service. Develop with `cargo build -p vosu-tool-skill-tracker --locked` and `vosu --tool crates/vosu-tool-skill-tracker`.
 
+## Command line
+
+Use `vosux skill-tracker` (or `vosu x skill-tracker`) with:
+
+- `profile [--json]`: ratings, dan estimate, play counts and model notices.
+- `history [--last N] [--mode osu|taiko|fruits|mania] [--json]`: newest plays, default 50, maximum 200.
+- `last [--json]`: latest persisted play, including MSD/SSR, accuracy and Wife model; JSON `null` if there are no plays.
+- `export [--format json|csv]`: stream full history, newest first, to stdout. JSON is an array; CSV includes every play field, with nested values encoded as JSON cells and RFC-style quoted/escaped strings. Export is paginated rather than loading the whole database.
+- `import [--json]`: run the existing stable import job with stderr progress; Ctrl+C sends cancellation and exits 130, failure exits 1.
+
+All commands support `--help`, use the CLI token through the vosu proxy, and leave database writes to the service. Human output uses labelled fields; `--json` preserves service response shapes. Without the `cli` subcommand the binary retains its continuous service behavior.
+
+
 ## Recording and persistence
 
 The service subscribes to `/websocket/v2/subscribe` with the ordered selectors `/state`, `/client`, `/beatmap`, `/play`, `/resultsScreen`, `/game/paused`, `/session/playCount`, `/rankedPlay`. It reconstructs both initial `[0,revision,pairs]` and delta `[1,revision,pairs,removed_ids]` frames. Stable and lazer use the normalized v2 state: play `2`, results `7`. Pause does not finish a play. Leaving play records a quit, an observed `play.failed` remains failed, results without a failure records a pass, map change and retry record the prior attempt as a quit. A clock rewind of >500 ms with reduced score, or increased session play count, identifies a retry within play state. A lost subscription records an `interrupted` attempt, excluded from ratings; it never guesses a pass across missing frames. Empty attempts are discarded.

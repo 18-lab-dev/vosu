@@ -1,3 +1,5 @@
+mod cli;
+
 use axum::{
     Json, Router,
     body::Bytes,
@@ -198,6 +200,9 @@ async fn rates(State(app): State<App>, Path(md5): Path<String>) -> Result<Json<V
 }
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("cli") {
+        return cli::run().await;
+    }
     let env = ToolEnv::from_env()?;
     std::fs::create_dir_all(&env.data_dir)?;
     let database = env.data_dir.join("difficulty.sqlite3");

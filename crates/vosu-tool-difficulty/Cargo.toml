@@ -11,6 +11,7 @@ name = "vosu-difficulty"
 path = "src/main.rs"
 
 [dependencies]
+clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 axum = { version = "=0.8.9", features = ["query"] }
 md-5 = "0.11.0"
 rosu-map = "=0.2.1"

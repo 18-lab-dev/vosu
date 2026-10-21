@@ -17,3 +17,7 @@ id = "difficulty"
 version = ">=0.1.0"
 [permissions]
 host = ["context"]
+
+[cli]
+command = ["bin/vosu-skill-tracker", "cli"]
+summary = "Inspect ratings, export history, and import stable scores"

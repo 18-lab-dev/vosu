@@ -1,3 +1,4 @@
+mod cli;
 mod detect;
 mod rating;
 mod stable;
@@ -465,6 +466,9 @@ async fn subscription(a: Shared) {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    if std::env::args().nth(1).as_deref() == Some("cli") {
+        return cli::run().await;
+    }
     let env = ToolEnv::from_env()?;
     tokio::fs::create_dir_all(&env.data_dir).await?;
     let store = Store::open(&env.data_dir.join("plays.sqlite3"))?;
