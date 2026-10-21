@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/shiruviaa/vosu/main/docs/tools/tool.schema.json",
+  "title": "vosu tool manifest (protocol v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "id", "name", "version"],
+  "properties": {
+    "manifest_version": {"const": 1, "type": "integer"},
+    "id": {"$ref": "#/$defs/id"},
+    "name": {"type": "string", "minLength": 1},
+    "version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"},
+    "description": {"type": "string"},
+    "author": {"type": "string"},
+    "homepage": {"type": "string", "pattern": "^https?://[^\\s]+$"},
+    "icon": {"allOf": [{"$ref": "#/$defs/path"}, {"pattern": "\\.(svg|png)$"}]},
+    "ui": {
+      "type": "object", "additionalProperties": false, "required": ["root"],
+      "properties": {"root": {"$ref": "#/$defs/path"}, "entry": {"$ref": "#/$defs/path", "default": "index.html"}}
+    },
+    "service": {
+      "type": "object", "additionalProperties": false, "required": ["command"],
+      "properties": {
+        "command": {"type": "array", "minItems": 1, "prefixItems": [{"type": "string", "minLength": 1}], "items": {"type": "string"}},
+        "startup": {"enum": ["always", "on-demand"]}
+      }
+    },
+    "api": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"read": {"$ref": "#/$defs/routes"}, "write": {"$ref": "#/$defs/routes"}}
+    },
+    "requires": {
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "version"],
+        "properties": {"id": {"$ref": "#/$defs/id"}, "version": {"type": "string", "minLength": 1, "description": "Rust semver version requirement, e.g. >=0.1.0 or ^1.2"}}
+      }
+    },
+    "permissions": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"host": {"type": "array", "items": {"enum": ["context", "songs:write"]}}}
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"},
+    "path": {"type": "string", "minLength": 1, "pattern": "^(?![/\\\\])(?![A-Za-z]:)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$"},
+    "routes": {"type": "array", "items": {"type": "string", "pattern": "^/[^?#\\\\\\s]*$"}}
+  }
+}

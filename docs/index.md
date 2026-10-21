@@ -13,6 +13,7 @@ Set up a checkout with [CONTRIBUTING.md](../CONTRIBUTING.md), then start with th
 - [Architecture and source ownership](architecture/index.md)
 - [Decision records](decisions/index.md)
 - [Tool protocol v1](tools/protocol.md)
+- [Authoring and testing tools](tools/authoring.md)
 - [Runtime, configuration, and compatibility workflows](workflows/index.md)
 - [Operations and release runbook](operations/runbook.md)
 - [Testing and verification](testing/verification.md)

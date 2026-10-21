@@ -120,6 +120,34 @@ Startup updates follow stable releases, verify the selected platform archive’s
 
 Release packaging requires exact platform archives containing only the executable and `LICENSE`; release smoke tests exercise an extracted binary. Windows additionally signs and verifies the executable through the release workflow; the [code signing policy](../../CODE_SIGNING_POLICY.md) records team roles and the manual SignPath approval step, and must be updated with any change to who signs or how. The updater currently reads latest-release metadata from `shiruviaa/vosu`; confirm this source when diagnosing update failures. See `scripts/package-release.py` and `scripts/verify-windows-release.ps1` for enforcement.
 
+First-party tools are embedded, not extra ZIP members or `/usr/bin/tools` files.
+Build the tool binaries first with the daemon's target, profile and `--locked`,
+stage them, then build the daemon with the absolute staged tools root:
+
+```sh
+cargo build --release --locked --no-default-features --target x86_64-unknown-linux-gnu \
+  -p vosu-tool-difficulty -p vosu-tool-trainer -p vosu-tool-skill-tracker
+python scripts/stage-tools.py --target x86_64-unknown-linux-gnu --out target/bundled
+VOSU_BUNDLED_TOOLS="$PWD/target/bundled/tools" cargo build --release --locked \
+  --no-default-features --features linux-process-events --target x86_64-unknown-linux-gnu
+```
+
+On Windows use `x86_64-pc-windows-msvc`, omit `linux-process-events`, and set
+`$env:VOSU_BUNDLED_TOOLS` to the absolute `target/bundled/tools` directory before
+the daemon build. `--target-dir` and `--profile` on the staging script select
+non-default Cargo output locations. Staging validates crate ids and commands,
+replaces the complete staged tree, and includes only manifests, settings, web
+assets and executable binaries. The host materializes the embedded tree under
+`<cache dir>/tools/bundled/<version>-<digest>/`; no executable-directory writes
+are needed. Packages therefore retain the real binary at `/usr/bin/vosu` with
+no symlink or layout change. The updater still verifies the same asset digest
+and replaces one root executable, atomically carrying its bundled tools with it.
+
+Tool builds require a C/C++ compiler and libclang for generated bindings;
+Linux's existing Clang dependency provides this, and Windows release jobs
+explicitly locate the hosted LLVM `libclang.dll` before building. Audio codec
+and stretching libraries are compiled into the tool, not installed as runtimes.
+
 The release workflow creates a **draft** release. Sign every file locally with the OpenPGP release key (`6F0F 0D30 C09D 3A03 6246  A810 2CB6 524B B54B 2CDA`, public key in [`packaging/release-signing-key.asc`](../../packaging/release-signing-key.asc)) and publish in one step: `python scripts/sign-release.py --tag v<version> --publish`. The script checks each asset against GitHub's recorded SHA-256 digest, uploads `<asset>.sig`, re-verifies signatures that already exist (so a rerun fails on an asset replaced after signing), and publishes the draft only once every asset is signed. The repository has immutable releases enabled, so a published release accepts no new files: never publish the draft by hand before signing. v1.0.2 was published by the earlier workflow before signing and has no `.sig` files; its assets verify with `gh release verify-asset v1.0.2 <file> --repo shiruviaa/vosu`. The key never goes to CI; the same key signs commits and tags.
 
 ### SignPath signing setup

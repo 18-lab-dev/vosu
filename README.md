@@ -213,6 +213,23 @@ Offset entries are keyed by client version and remain the validated
 keyed by platform/runtime and embedded bundle checksum, so a helper from another
 release build cannot be reused accidentally.
 
+## Tools
+
+The dashboard's **Tools** page manages first-party difficulty, trainer, and skill
+tracker applications alongside overlays. Open a tool from the dashboard to grant
+its UI a write session; opening the same URL directly is read-only. Review a
+third-party tool's author and requested permissions before trusting it: tools run
+with your OS permissions and are not sandboxed.
+
+Release binaries contain first-party tools, materialized into a versioned cache
+directory on launch. ZIPs remain the executable plus `LICENSE`, and Linux packages
+keep `/usr/bin/vosu`; no adjacent `tools/` installation is needed. User tools go
+under `<vosu data directory>/tools/<id>/` and require dashboard approval.
+Developers can use `vosu --tool <directory>` for a trusted development override.
+See the [authoring guide](docs/tools/authoring.md) and
+[protocol contract](docs/tools/protocol.md), or run the dependency-free
+[Python example](examples/tools/hello-python/).
+
 ## Build from source
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the step-by-step development setup, including per-distribution Linux packages. In short:
