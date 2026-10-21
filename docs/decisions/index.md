@@ -22,3 +22,4 @@ description: "Files and subdirectories in Decisions."
 - [Overlay settings profiles](0014-overlay-settings-profiles.md) - Default profiles and per-instance command identities without moving legacy values.
 - [User-managed API keys](0015-user-managed-api-keys.md) - Persistent scoped credentials alongside per-start file tokens, with immediate revocation and peer-policy enforcement.
 - [Separate the dashboard origin without moving overlays](0016-separate-dashboard-origin.md) - Supersedes ADR 0013's shared-origin boundary; independent listener, dashboard CSRF, unchanged overlay storage, and recoverable network Apply.
+- [Host tools on the overlay listener under a reserved `/tools` prefix](0017-tool-host.md) - Out-of-process tools with manifests, supervision, inter-tool dependencies, read/write API split, and dashboard-minted UI sessions.

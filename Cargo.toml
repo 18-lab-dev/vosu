@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
+members = [".", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-test-harness", "crates/vosu-release-smoke", "crates/vosu-tool-sdk"]
 resolver = "3"
 
 [workspace.package]
