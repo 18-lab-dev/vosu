@@ -4,6 +4,31 @@ This file inventories third-party material retained in the vosu repository. vosu
 
 First-party notice: `Copyright (c) 2026 sxlvia`, as confirmed by the maintainer for vosu work begun in 2026. The notice is repeated in `LICENSE-MIT`, the combined root `LICENSE`, and the matching calculator copies. It applies to project-authored material over which the respective contributors have licensing authority; it does not claim ownership of upstream work or resolve the source-provenance questions below.
 
+## Trainer audio stack
+
+`crates/vosu-tool-trainer` independently implements practice-map transforms;
+no FunOrange osu-trainer code, SoundTouch, LAME, or Symphonia is included.
+Symphonia's MPL-2.0 is file-level copyleft, not an approved license under this
+release's stricter permissive-only dependency policy, so it was not selected.
+
+| Package / bundled native code | License | Purpose |
+| --- | --- | --- |
+| minimp3 0.6.1 / minimp3-sys 0.6.0 | MIT / CC0-1.0 native minimp3 | MP3 decoding |
+| hound 3.5.1 | Apache-2.0 | PCM/float WAV decoding |
+| vorbis_rs 0.5.6, aotuv_lancer_vorbis_sys 0.1.6, ogg_next_sys 0.1.5 | BSD-3-Clause | Vorbis decoding and OGG Vorbis encoding, statically built |
+| Signalsmith Stretch / Linear via signalsmith-stretch 0.1.3 | MIT | Pitch-preserving offline time stretch (C++, `cc` / bindgen) |
+| rubato 0.16.2 | MIT | Band-limited sinc resampling with pitch change |
+
+Exact native and wrapper license texts, including Xiph.org/Aoyumi, Alejandro
+González, Geraint Luff/Signalsmith Audio, and decoder notices, are retained in
+[`crates/vosu-tool-trainer/web/licenses.txt`](crates/vosu-tool-trainer/web/licenses.txt)
+and distributed as a tool UI asset. Package checksums are in `Cargo.lock`.
+Sources: [minimp3-rs](https://github.com/germangb/minimp3-rs),
+[hound](https://github.com/ruuda/hound),
+[vorbis-rs](https://github.com/ComunidadAylas/vorbis-rs),
+[Signalsmith wrapper](https://github.com/colinmarc/signalsmith-stretch-rs),
+[rubato](https://github.com/HEnquist/rubato).
+
 ## tosu compatibility and retained provenance
 
 - **Upstream credit:** tosu and its contributors, including Mikhail Babynichev (Kotrik). The upstream [v4.25.0 package metadata](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/package.json) names that author; its [license document](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/LICENSE) retains `Copyright (C) 2023-2026 Mikhail Babynichev <https://kotrik.ru/>`. This is upstream attribution, not a first-party vosu copyright notice. tosu is LGPL v3; the `GPL-3.0` in its `package.json` is an unmaintained npm field, as its copyright holder confirmed on 2026-10-12.
