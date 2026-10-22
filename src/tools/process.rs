@@ -103,7 +103,19 @@ pub async fn supervise(host: Arc<ToolHost>, entry: Arc<Entry>, stop: Cancellatio
             break;
         }
         match launch(&host, &entry, &stop).await {
-            Ok(true) => break,
+            Ok(Exit::Stopped) => break,
+            Ok(Exit::Exited) => {
+                entry.log("host", "service exited");
+                let mut state = entry.state.lock();
+                state.port = None;
+                state.token = None;
+                state.pid = None;
+                state.status = "stopped".into();
+                state.detail = Some("exited".into());
+                state.desired = false;
+                entry.ready.notify_waiters();
+                return;
+            }
             result => {
                 entry.log("host", &format!("service exited unexpectedly: {result:?}"));
                 let now = std::time::Instant::now();
@@ -140,7 +152,13 @@ pub async fn supervise(host: Arc<ToolHost>, entry: Arc<Entry>, stop: Cancellatio
     entry.ready.notify_waiters();
 }
 
-async fn launch(host: &ToolHost, entry: &Arc<Entry>, stop: &CancellationToken) -> io::Result<bool> {
+#[derive(Debug)]
+enum Exit {
+    Stopped,
+    Exited,
+}
+
+async fn launch(host: &ToolHost, entry: &Arc<Entry>, stop: &CancellationToken) -> io::Result<Exit> {
     let manifest = entry
         .manifest
         .as_ref()
@@ -209,10 +227,19 @@ async fn launch(host: &ToolHost, entry: &Arc<Entry>, stop: &CancellationToken) -
         "stderr",
         None,
     ));
+    let mut exit = None;
     let ready = tokio::select! {
         () = stop.cancelled() => None,
-        result = tokio::time::timeout(Duration::from_secs(20), ready_rx.recv()) => result.ok().flatten(),
-        _ = child.wait() => None,
+        result = tokio::time::timeout(Duration::from_secs(20), async {
+            match ready_rx.recv().await {
+                Some(port) => port,
+                None => std::future::pending().await,
+            }
+        }) => result.ok(),
+        result = child.wait() => {
+            exit = Some(result);
+            None
+        },
     };
     let healthy = if let Some(port) = ready {
         let result = host
@@ -236,7 +263,13 @@ async fn launch(host: &ToolHost, entry: &Arc<Entry>, stop: &CancellationToken) -
         false
     };
     let orderly = if healthy {
-        tokio::select! { () = stop.cancelled() => true, _ = child.wait() => false }
+        tokio::select! {
+            () = stop.cancelled() => true,
+            result = child.wait() => {
+                exit = Some(result);
+                false
+            }
+        }
     } else {
         stop.is_cancelled()
     };
@@ -252,10 +285,18 @@ async fn launch(host: &ToolHost, entry: &Arc<Entry>, stop: &CancellationToken) -
     stderr.abort();
     let _ = stdout.await;
     let _ = stderr.await;
+    if orderly || stop.is_cancelled() {
+        return Ok(Exit::Stopped);
+    }
+    // Only an exit observed before closing stdin is a voluntary service exit.
+    // Handshake/health failures followed by a graceful EOF exit remain crashes.
+    if exit.is_some_and(|result| result.is_ok_and(|status| status.success())) {
+        return Ok(Exit::Exited);
+    }
     if !healthy && !orderly {
         return Err(io::Error::other("readiness handshake or /healthz failed"));
     }
-    Ok(orderly)
+    Err(io::Error::other("service crashed"))
 }
 
 async fn capture<R: AsyncRead + Unpin>(

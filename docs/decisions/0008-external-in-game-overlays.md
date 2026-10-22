@@ -28,6 +28,11 @@ Remove the dedicated in-game overlay surface as a clean cutover:
 
 External in-game overlay software is a separate product and API client. It may consume only vosu's remaining documented interfaces. The generic `/websocket/commands` endpoint remains for counter settings and filter commands, ordinary dashboard and counter “overlay” terminology remains, and key-overlay telemetry remains part of the compatible API schemas.
 
+### 1.2.0 amendment: optional supervised vosulay
+
+[vosulay](https://github.com/shiruviaa/vosulay) is offered as an optional official catalog tool through the generic [tool host](0017-tool-host.md). vosu may install, start, stop, and supervise its separate process and open its manager UI; overlay rendering, game integration, configuration, and persistence remain owned by vosulay outside the daemon. This does not restore `/api/ingame` or any dedicated in-process overlay surface. Standalone vosulay remains supported independently of vosu's tool mode.
+
+
 ## Consequences
 
 - Removing the retained compatibility shell is intentionally breaking for clients that depend on its configuration, page, storage, or catalog commands.

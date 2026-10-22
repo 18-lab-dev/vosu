@@ -11,7 +11,7 @@ function button(label, run, disabled = false) {
 export function mountCatalogSources({ root, requestJson, notify, errorText, setBusy }) {
   const section = node('section', undefined, 'tools-catalog'); section.id = 'catalog-sources';
   const heading = node('h2', 'Catalog sources');
-  const intro = node('p', 'Tools and overlays from owner/repo[@tag] or an HTTPS catalog.json URL. Earlier sources win duplicate ids. Only shiruviaa/vosu-tools grants automatic tool trust; all other tools need approval.', 'field-help');
+  const intro = node('p', 'Tools and overlays from owner/repo[@tag] or an HTTPS catalog.json URL. Earlier sources win duplicate ids. Only exact shiruviaa/vosu-tools and shiruviaa/vosulay sources grant automatic tool trust (including when re-added); tagged or URL variants and all other tools need approval.', 'field-help');
   const rows = node('div', undefined, 'catalog-source-list');
   const status = node('p', '', 'field-help'); status.setAttribute('role', 'status');
   let sources = [];

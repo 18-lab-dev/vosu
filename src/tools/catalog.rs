@@ -4,13 +4,18 @@ use sha2::{Digest, Sha256};
 use std::io::Read;
 
 const OFFICIAL_SOURCE: &str = "shiruviaa/vosu-tools";
+const VOSULAY_SOURCE: &str = "shiruviaa/vosulay";
+
+fn official_source(source: &str) -> bool {
+    matches!(source, OFFICIAL_SOURCE | VOSULAY_SOURCE)
+}
 const MAX_PACKAGE: u64 = 512 * 1024 * 1024;
 
 fn record_source(state: &mut Saved, source: &str) {
     if state.catalog_source.as_deref() != Some(source) {
         state.trusted = false;
     }
-    state.official = source == OFFICIAL_SOURCE;
+    state.official = official_source(source);
     state.trusted |= state.official;
     state.catalog_source = Some(source.into());
 }

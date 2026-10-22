@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct Source {
     source: String,
@@ -49,7 +49,7 @@ fn resolve(source: &str) -> Result<String, String> {
     Ok(url.into())
 }
 fn default_sources() -> Vec<Source> {
-    [OFFICIAL_SOURCE, "shiruviaa/vosu-overlays"]
+    [OFFICIAL_SOURCE, VOSULAY_SOURCE, "shiruviaa/vosu-overlays"]
         .into_iter()
         .map(|source| Source {
             source: source.into(),
@@ -92,10 +92,27 @@ impl ToolHost {
     fn sources_path(&self) -> PathBuf {
         self.config.join("catalog-sources.json")
     }
+    fn sources_migration_path(&self) -> PathBuf {
+        self.config.join("catalog-sources-v2.json")
+    }
     fn load_sources(&self) -> Result<Vec<Source>, String> {
         match fs::read(self.sources_path()) {
             Ok(bytes) => {
-                serde_json::from_slice(&bytes).map_err(|e| format!("catalog sources: {e}"))
+                let sources: Vec<Source> =
+                    serde_json::from_slice(&bytes).map_err(|e| format!("catalog sources: {e}"))?;
+                let legacy = [OFFICIAL_SOURCE, "shiruviaa/vosu-overlays"].map(|source| Source {
+                    source: source.into(),
+                    enabled: true,
+                });
+                if sources == legacy && !self.sources_migration_path().exists() {
+                    let sources = default_sources();
+                    atomic_json(&self.sources_path(), &sources).map_err(|e| e.to_string())?;
+                    atomic_json(&self.sources_migration_path(), &true)
+                        .map_err(|e| e.to_string())?;
+                    Ok(sources)
+                } else {
+                    Ok(sources)
+                }
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(default_sources()),
             Err(error) => Err(error.to_string()),
@@ -129,6 +146,8 @@ impl ToolHost {
             }
         }
         let _operation = self.catalog_operation.lock().await;
+        // An explicit edit must never be mistaken for untouched legacy defaults.
+        atomic_json(&self.sources_migration_path(), &true).map_err(|e| e.to_string())?;
         atomic_json(&self.sources_path(), &input.sources).map_err(|e| e.to_string())?;
         *self.catalog.lock() = Catalog::default();
         self.source_view()

@@ -411,6 +411,9 @@ impl ToolHost {
             if status == "failed" && !manual {
                 return Err("tool failed; start it from the dashboard".into());
             }
+            if !manual && entry.state.lock().detail.as_deref() == Some("exited") {
+                return Err("tool exited; start it from the dashboard or vosux".into());
+            }
             let stale = {
                 let mut state = entry.state.lock();
                 if state.task.as_ref().is_some_and(|t| t.is_finished()) {

@@ -504,7 +504,10 @@ impl ToolHost {
                 "too many pending tool requests",
             );
         };
-        if let Err(message) = self.start(&entry.id, false).await {
+        // A native CLI invocation is an explicit request to run the tool;
+        // overlay polling must not resurrect a voluntarily stopped service.
+        let manual = caller.strip_prefix("cli:") == Some(entry.id.as_str());
+        if let Err(message) = self.start(&entry.id, manual).await {
             return error(StatusCode::SERVICE_UNAVAILABLE, message);
         }
         let activity = Activity::new(entry.clone());

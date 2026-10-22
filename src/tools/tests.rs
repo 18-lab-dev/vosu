@@ -301,6 +301,172 @@ async fn supervisor_readiness_backoff_logs_and_stdin_shutdown() {
     #[cfg(target_os = "linux")]
     assert!(!Path::new(&format!("/proc/{pid}")).exists());
 }
+#[cfg(unix)]
+#[tokio::test]
+async fn voluntary_exit_stays_stopped_and_can_be_started_again() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = copied_fixture(root.path());
+    let manifest = fs::read_to_string(fixture.join("tool.toml")).unwrap();
+    fs::write(
+        fixture.join("tool.toml"),
+        manifest.replace("on-demand", "always"),
+    )
+    .unwrap();
+    let host = host(root.path(), vec![fixture]).await;
+    host.start("fixture", true).await.unwrap();
+    let entry = host.entry("fixture").unwrap();
+    let first_pid = entry.state.lock().pid.unwrap();
+    let (port, token) = {
+        let state = entry.state.lock();
+        (state.port.unwrap(), state.token.clone().unwrap())
+    };
+    let _ = host
+        .http
+        .post(format!("http://127.0.0.1:{port}/v1/exit"))
+        .header("x-vosu-tool-token", token)
+        .send()
+        .await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if entry.state.lock().status == "stopped" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // Cross multiple watcher ticks: an always service must not be resurrected.
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    {
+        let state = entry.state.lock();
+        assert_eq!(state.status, "stopped");
+        assert_eq!(state.detail.as_deref(), Some("exited"));
+        assert!(!state.desired);
+        assert_eq!(state.restarts, 0);
+        assert!(state.port.is_none() && state.token.is_none() && state.pid.is_none());
+    }
+    assert_eq!(
+        host.overlay(
+            request(Method::GET, "/tools/fixture/api/v1/read"),
+            Bytes::new(),
+        )
+        .await
+        .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(entry.state.lock().status, "stopped");
+    host.start("fixture", true).await.unwrap();
+    assert_eq!(entry.state.lock().status, "running");
+    assert_ne!(entry.state.lock().pid, Some(first_pid));
+    host.stop_serialized(&entry, true).await;
+    assert!(!entry.state.lock().desired);
+    assert_eq!(entry.state.lock().detail, None);
+    assert_eq!(entry.state.lock().restarts, 0);
+    // A vosux invocation's own CLI token is an explicit start request, unlike
+    // overlay polling or another tool's dependency request.
+    entry.state.lock().detail = Some("exited".into());
+    host.cli_sessions.lock().insert(
+        "fixture-cli".into(),
+        CliSession {
+            tool: "fixture".into(),
+            token: "fixture-cli-token".into(),
+            expires: Instant::now() + Duration::from_secs(60),
+        },
+    );
+    let mut cli = request(Method::GET, "/tools/fixture/api/v1/read");
+    cli.headers_mut()
+        .insert("x-vosu-tool-token", "fixture-cli-token".parse().unwrap());
+    assert_eq!(
+        host.overlay(cli, Bytes::new()).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(entry.state.lock().status, "running");
+    host.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn voluntary_exit_before_readiness_is_not_a_crash() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = copied_fixture(root.path());
+    let manifest = fs::read_to_string(fixture.join("tool.toml")).unwrap();
+    fs::write(
+        fixture.join("tool.toml"),
+        manifest.replace("\"service.py\"", "\"service.py\", \"--exit-before-ready\""),
+    )
+    .unwrap();
+    let host = host(root.path(), vec![fixture]).await;
+    assert_eq!(host.start("fixture", true).await.unwrap_err(), "exited");
+    let entry = host.entry("fixture").unwrap();
+    assert_eq!(entry.state.lock().status, "stopped");
+    assert_eq!(entry.state.lock().restarts, 0);
+    assert!(!entry.state.lock().desired);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn catalog_defaults_and_only_untouched_legacy_sources_migrate() {
+    let root = tempfile::tempdir().unwrap();
+    let host = host(root.path(), Vec::new()).await;
+    let expected = json!([
+        {"source":"shiruviaa/vosu-tools","enabled":true},
+        {"source":"shiruviaa/vosulay","enabled":true},
+        {"source":"shiruviaa/vosu-overlays","enabled":true}
+    ]);
+    let identities = |view: Value| {
+        view["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|source| json!({"source":source["source"],"enabled":source["enabled"]}))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(json!(identities(host.source_view().unwrap())), expected);
+    let path = host.config.join("catalog-sources.json");
+    let legacy = json!([
+        {"source":"shiruviaa/vosu-tools","enabled":true},
+        {"source":"shiruviaa/vosu-overlays","enabled":true}
+    ]);
+    atomic_json(&path, &legacy).unwrap();
+    assert_eq!(json!(identities(host.source_view().unwrap())), expected);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),
+        expected
+    );
+    fs::remove_file(host.config.join("catalog-sources-v2.json")).unwrap();
+    for customized in [
+        json!([]),
+        json!([{"source":"shiruviaa/vosu-tools","enabled":true}]),
+        json!([
+            {"source":"shiruviaa/vosu-tools","enabled":false},
+            {"source":"shiruviaa/vosu-overlays","enabled":true}
+        ]),
+        json!([
+            {"source":"shiruviaa/vosu-overlays","enabled":true},
+            {"source":"shiruviaa/vosu-tools","enabled":true}
+        ]),
+        json!([
+            {"source":"shiruviaa/vosu-tools","enabled":true},
+            {"source":"shiruviaa/vosu-overlays","enabled":true},
+            {"source":"owner/custom","enabled":true}
+        ]),
+    ] {
+        atomic_json(&path, &customized).unwrap();
+        let before = fs::read(&path).unwrap();
+        assert_eq!(json!(identities(host.source_view().unwrap())), customized);
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+    // Removing vosulay through Settings may recreate the old two-entry list,
+    // but it is now an explicit edit and must remain removed on subsequent reads.
+    let edited = host
+        .save_sources(&serde_json::to_vec(&json!({"sources": legacy})).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(json!(identities(edited)), legacy);
+    assert_eq!(json!(identities(host.source_view().unwrap())), legacy);
+    host.shutdown().await;
+}
 
 #[tokio::test]
 async fn cycles_do_not_poison_dependents() {

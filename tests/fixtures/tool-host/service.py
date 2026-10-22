@@ -13,6 +13,8 @@ DATA.mkdir(parents=True, exist_ok=True)
 (DATA / 'pid').write_text(str(os.getpid()))
 if '--crash-before-ready' in sys.argv:
     sys.exit(7)
+if '--exit-before-ready' in sys.argv:
+    sys.exit(0)
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
@@ -55,6 +57,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/v1/crash':
             print('crashing on request', flush=True)
             os._exit(7)
+        if self.path == '/v1/exit':
+            os._exit(0)
         self.do_GET()
 
 server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
