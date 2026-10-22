@@ -28,6 +28,38 @@ async fn dashboard_attachment_status_uses_existing_roster_and_published_version(
 }
 
 #[test]
+fn tool_context_exposes_only_selected_instance_game_and_skin_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let snapshots = Arc::new(SnapshotManager::new(Arc::new(ManagerSnapshot::not_ready(0, ApiRuntimeSettings::default()))));
+    let provider = RuntimeBeatmap {
+        snapshots: snapshots.clone(),
+        counters: Arc::new(ReloadableCounterService::production(root.path().join("static"), root.path().join("settings"), root.path().join("cache"))),
+    };
+    assert!(provider.tool_context()["osu_dir"].is_null());
+    assert!(provider.tool_context()["skin"].is_null());
+    let game = root.path().join("selected-game");
+    for source in [ClientType::Stable, ClientType::Lazer] {
+        let mut state = (*state_bundle(1, 0)).clone();
+        state.source = source;
+        let regular = Arc::make_mut(&mut state.regular);
+        regular.global.game_folder = game.to_string_lossy().into_owned();
+        regular.global.skin_folder = "Selected Skin".into();
+        snapshots.publish(Arc::new(ManagerSnapshot::new(1, Some(42), false, ApiRuntimeSettings::default(), [
+            ManagerInstanceSnapshot::new(42, crate::instance::InstanceSettings { tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None }, false, Arc::new(state))
+        ])));
+        let context = provider.tool_context();
+        assert_eq!(context["skin"]["name"], "Selected Skin");
+        if source == ClientType::Stable {
+            assert_eq!(context["osu_dir"], serde_json::json!(game));
+            assert_eq!(context["skin"]["folder"], serde_json::json!(game.join("Skins/Selected Skin")));
+        } else {
+            assert!(context["osu_dir"].is_null());
+            assert!(context["skin"]["folder"].is_null());
+        }
+    }
+}
+
+#[test]
 fn non_focused_instance_generation_invalidates_manager_revision() {
     let mut revisions = SemanticRevision::default();
     let initial = ManagerSemantics {

@@ -13,7 +13,7 @@ impl RuntimeBeatmap {
     pub(super) fn tool_context(&self) -> Value {
         let manager = self.snapshots.load();
         let Some(focused) = manager.focused() else {
-            return json!({"client":null,"songs_dir":null,"beatmap":null});
+            return json!({"client":null,"songs_dir":null,"osu_dir":null,"skin":null,"beatmap":null});
         };
         let regular = &focused.regular;
         let files = runtime_beatmap_files(regular, focused.source, &self.counters.current_root());
@@ -38,7 +38,16 @@ impl RuntimeBeatmap {
             "audio": resolve(&files.audio_file),
             "background": resolve(&files.background_file),
         }));
-        json!({"client": if focused.source == ClientType::Lazer { "lazer" } else { "stable" }, "songs_dir":root,"beatmap":beatmap})
+        let stable = focused.source != ClientType::Lazer;
+        let osu_dir = stable
+            .then(|| PathBuf::from(&regular.global.game_folder))
+            .filter(|path| path.is_absolute());
+        let skin_folder = stable
+            .then(|| stable_skin_root(&regular.global.game_folder, &regular.global.skin_folder))
+            .flatten()
+            .filter(|path| path.is_absolute());
+        json!({"client": if stable { "stable" } else { "lazer" }, "songs_dir":root,
+            "osu_dir":osu_dir,"skin":{"name":regular.global.skin_folder,"folder":skin_folder},"beatmap":beatmap})
     }
 }
 

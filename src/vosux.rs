@@ -27,7 +27,13 @@ pub fn arguments(args: impl IntoIterator<Item = OsString>) -> Option<Vec<OsStrin
 enum Invocation {
     Help,
     List(bool),
+    Sources,
     Open(String),
+    Catalog {
+        id: String,
+        action: String,
+        remove_data: Option<bool>,
+    },
     Tool(String, Vec<OsString>),
 }
 fn parse(args: Vec<OsString>) -> Result<Invocation, String> {
@@ -39,6 +45,39 @@ fn parse(args: Vec<OsString>) -> Result<Invocation, String> {
             Some("--help") => return Ok(Invocation::Help),
             Some("--list") => list = true,
             Some("--json") => json = true,
+            Some("--sources") => {
+                if list || json || args.next().is_some() {
+                    return Err("usage: vosux --sources".into());
+                }
+                return Ok(Invocation::Sources);
+            }
+            Some(option @ ("--install" | "--update" | "--uninstall")) => {
+                let id = args
+                    .next()
+                    .and_then(|s| s.into_string().ok())
+                    .ok_or("catalog action requires a tool id")?;
+                if list || json || !crate::tools::manifest::valid_id(&id) {
+                    return Err("invalid catalog invocation".into());
+                }
+                let remove_data = match args.next().as_deref().and_then(|s| s.to_str()) {
+                    Some("--keep-data") if option == "--uninstall" => Some(false),
+                    Some("--remove-data") if option == "--uninstall" => Some(true),
+                    None if option != "--uninstall" => None,
+                    _ => {
+                        return Err(
+                            "uninstall requires exactly one of --keep-data or --remove-data".into(),
+                        );
+                    }
+                };
+                if args.next().is_some() {
+                    return Err("unexpected catalog arguments".into());
+                }
+                return Ok(Invocation::Catalog {
+                    id,
+                    action: option.trim_start_matches("--").into(),
+                    remove_data,
+                });
+            }
             Some("--open") => {
                 let id = args
                     .next()
@@ -98,6 +137,15 @@ struct Connection {
 }
 impl Connection {
     async fn request(&self, method: reqwest::Method, path: &str) -> Result<Value, Failure> {
+        self.request_body(method, path, &serde_json::json!({}))
+            .await
+    }
+    async fn request_body(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: &Value,
+    ) -> Result<Value, Failure> {
         let reply = self
             .client
             .request(
@@ -105,6 +153,7 @@ impl Connection {
                 format!("{}/tools/_host/v1/cli{path}", self.broker.origin),
             )
             .bearer_auth(&self.broker.token)
+            .json(body)
             .send()
             .await
             .map_err(unavailable)?;
@@ -149,7 +198,7 @@ pub fn run(args: Vec<OsString>) -> i32 {
         let invocation = parse(args).map_err(|e| (2, e))?;
         if invocation == Invocation::Help {
             println!(
-                "Usage: vosux [--list [--json] | --open <tool> | <tool> [ARGS...]]\n       vosu x [OPTIONS] <tool> [ARGS...]\nOptions apply only before the tool id; tool arguments are passed verbatim."
+                "Usage: vosux [--list [--json] | --sources | --open <tool> | --install <id> | --update <id> | --uninstall <id> (--keep-data|--remove-data) | <tool> [ARGS...]]\n       vosu x [OPTIONS] <tool> [ARGS...]\nOptions apply only before the tool id; tool arguments are passed verbatim."
             );
             return Ok(0);
         }
@@ -197,6 +246,65 @@ async fn execute(invocation: Invocation) -> Result<i32, Failure> {
     };
     match invocation {
         Invocation::Help => unreachable!(),
+        Invocation::Sources => {
+            let value = connection
+                .request(reqwest::Method::GET, "/catalog/sources")
+                .await?;
+            for source in value["sources"]
+                .as_array()
+                .ok_or((1, "invalid sources response".into()))?
+            {
+                println!(
+                    "{}\t{}\t{}",
+                    source["source"].as_str().unwrap_or_default(),
+                    if source["enabled"] == true {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    },
+                    source["status"].as_str().unwrap_or_default()
+                );
+            }
+            Ok(0)
+        }
+        Invocation::Catalog {
+            id,
+            action,
+            remove_data,
+        } => {
+            let value = connection
+                .request_body(
+                    reqwest::Method::POST,
+                    &format!("/catalog/{id}/{action}"),
+                    &serde_json::json!({"remove_data":remove_data}),
+                )
+                .await?;
+            let job = value["job_id"]
+                .as_str()
+                .ok_or((1, "missing catalog job id".into()))?;
+            loop {
+                let state = connection
+                    .request(reqwest::Method::GET, &format!("/catalog/jobs/{job}"))
+                    .await?;
+                match state["status"].as_str() {
+                    Some("completed") => {
+                        println!("{action} {id}: completed");
+                        return Ok(0);
+                    }
+                    Some("failed") => {
+                        return Err((
+                            1,
+                            state["error"]
+                                .as_str()
+                                .unwrap_or("catalog operation failed")
+                                .into(),
+                        ));
+                    }
+                    Some("running") => tokio::time::sleep(Duration::from_millis(250)).await,
+                    _ => return Err((1, "invalid catalog job response".into())),
+                }
+            }
+        }
         Invocation::List(json) => {
             let value = connection.request(reqwest::Method::GET, "").await?;
             if json {
@@ -397,6 +505,42 @@ mod tests {
             &["--unknown"],
         ] {
             assert!(parse(args(a)).is_err());
+        }
+    }
+    #[test]
+    fn catalog_options() {
+        assert_eq!(parse(args(&["--sources"])).unwrap(), Invocation::Sources);
+        assert!(parse(args(&["--sources", "extra"])).is_err());
+        for action in ["install", "update"] {
+            assert_eq!(
+                parse(args(&[&format!("--{action}"), "practice"])).unwrap(),
+                Invocation::Catalog {
+                    id: "practice".into(),
+                    action: action.into(),
+                    remove_data: None
+                }
+            );
+        }
+        for (flag, remove) in [("--keep-data", false), ("--remove-data", true)] {
+            assert_eq!(
+                parse(args(&["--uninstall", "practice", flag])).unwrap(),
+                Invocation::Catalog {
+                    id: "practice".into(),
+                    action: "uninstall".into(),
+                    remove_data: Some(remove)
+                }
+            );
+        }
+        for values in [
+            vec!["--install"],
+            vec!["--install", "../bad"],
+            vec!["--install", "practice", "extra"],
+            vec!["--update", "practice", "--remove-data"],
+            vec!["--uninstall", "practice"],
+            vec!["--uninstall", "practice", "--keep-data", "--remove-data"],
+            vec!["--list", "--install", "practice"],
+        ] {
+            assert!(parse(args(&values)).is_err(), "{values:?}");
         }
     }
     #[cfg(unix)]

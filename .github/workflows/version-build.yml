@@ -99,18 +99,6 @@ jobs:
           dotnet-version: 8.0.x
       - name: Prepare embedded offset generator
         run: python scripts/prepare-offset-generator.py --rid ${{ matrix.rid }}
-      - name: Locate Windows libclang for tool bindings
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $clang = Join-Path $env:ProgramFiles 'LLVM/bin'
-          if (!(Test-Path "$clang/libclang.dll")) { throw 'Hosted LLVM libclang.dll is required for tool builds' }
-          "LIBCLANG_PATH=$clang" >> $env:GITHUB_ENV
-      - name: Build and stage bundled tools
-        run: |
-          cargo build --release --locked --no-default-features --target ${{ matrix.target }} -p vosu-tool-difficulty -p vosu-tool-trainer -p vosu-tool-skill-tracker
-          python scripts/stage-tools.py --target ${{ matrix.target }} --out target/bundled
-          echo "VOSU_BUNDLED_TOOLS=$GITHUB_WORKSPACE/target/bundled/tools" >> "$GITHUB_ENV"
       # Always invoke Cargo: a restored cache is an input, not the current binary.
       - name: Build Linux production binary
         if: runner.os == 'Linux'

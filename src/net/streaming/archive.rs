@@ -322,6 +322,17 @@ pub fn extract_zip_atomic(
     limits: ZipLimits,
     cancel: &CancellationToken,
 ) -> Result<(), NetworkError> {
+    extract_zip_atomic_validated(archive_path, destination, limits, cancel, |_| Ok(()))
+}
+
+/// Validate and prepare the complete staging tree before replacing an installation.
+pub fn extract_zip_atomic_validated(
+    archive_path: &Path,
+    destination: &Path,
+    limits: ZipLimits,
+    cancel: &CancellationToken,
+    validate: impl FnOnce(&Path) -> Result<(), NetworkError>,
+) -> Result<(), NetworkError> {
     let parent = destination
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "destination has no parent"))?;
@@ -370,11 +381,11 @@ pub fn extract_zip_atomic(
         {
             return Err(NetworkError::UnsafeZip(name));
         }
-        if entry
-            .unix_mode()
-            .is_some_and(|mode| mode & 0o170000 == 0o120000)
-        {
-            return Err(NetworkError::UnsafeZip("symbolic link".into()));
+        if entry.unix_mode().is_some_and(|mode| {
+            let kind = mode & 0o170000;
+            kind != 0 && kind != 0o100000 && kind != 0o040000
+        }) {
+            return Err(NetworkError::UnsafeZip("non-regular archive entry".into()));
         }
         let entry_size = entry.size();
         let remaining = limits
@@ -436,6 +447,7 @@ pub fn extract_zip_atomic(
         expanded += copied;
         target.sync_all()?;
     }
+    validate(staging.path())?;
     if cancel.is_cancelled() {
         return Err(NetworkError::Cancelled);
     }

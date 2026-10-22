@@ -123,11 +123,37 @@ impl ToolHost {
             .strip_prefix("/api/tools")
             .unwrap_or_default()
             .trim_start_matches('/');
+        if path == "catalog/sources" {
+            return match *request.method() {
+                Method::GET => self.source_view(),
+                Method::POST => self.save_sources(&body).await,
+                _ => Err("method not allowed".into()),
+            };
+        }
+        if request.method() == Method::POST
+            && let Some(target) = path.strip_prefix("catalog/overlays/")
+            && let Some((id, action)) = target.split_once('/')
+            && matches!(action, "install" | "update")
+        {
+            return self.begin_catalog(id, &format!("overlay-{action}"), &body);
+        }
+        if request.method() == Method::GET {
+            if path == "catalog" {
+                return self.catalog_view().await;
+            }
+            if let Some(job) = path.strip_prefix("catalog/jobs/") {
+                return self.catalog_job(job);
+            }
+        }
         if path.is_empty() && request.method() == Method::GET {
             let entries = self.entries.lock().values().cloned().collect::<Vec<_>>();
             return Ok(json!({"tools":entries.iter().map(|e| self.view(e)).collect::<Vec<_>>() }));
         }
         let (id, action) = path.split_once('/').unwrap_or((path, ""));
+        if request.method() == Method::POST && matches!(action, "install" | "update" | "uninstall")
+        {
+            return self.begin_catalog(id, action, &body);
+        }
         let entry = self.entry(id)?;
         if request.method() == Method::GET {
             return match action {

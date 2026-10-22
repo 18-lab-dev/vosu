@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check or refresh the retained calculator, font, and bundled tool notices in the release LICENSE.
+"""Check or refresh the retained calculator and font notices in the release LICENSE.
 
 The updater requires a two-entry ZIP, so these notices travel inside LICENSE.
 This is not a complete inventory of all linked dependency license obligations.
@@ -17,14 +17,6 @@ SOURCE = "crates/vosu-pp/THIRD_PARTY_LICENSES.txt"
 # carry their SIL Open Font License text.
 FONT_MARKER = b"\n===== Retained font notices =====\n\n"
 FONT_SOURCE = "assets/server/fonts-OFL.txt"
-# Release builds embed the first-party tools in the executable, so their
-# third-party notices must travel in the same LICENSE.
-TOOL_MARKER = b"\n===== Retained bundled tool notices =====\n\n"
-TOOL_SOURCES = (
-    "crates/vosu-tool-difficulty/vendor/LICENSE",
-    "crates/vosu-tool-skill-tracker/LICENSE-ETTERNA",
-    "crates/vosu-tool-trainer/web/licenses.txt",
-)
 # Digests of the pinned MIT texts with CRLF and surrounding LF framing normalized.
 # Original source-byte digests and revision links remain in SOURCE.
 RETAINED_TEXT_SHA256 = {
@@ -43,8 +35,6 @@ def expected_license(root):
         raise ValueError("duplicate calculator appendix markers in LICENSE")
     if current.count(FONT_MARKER) > 1:
         raise ValueError("duplicate font appendix markers in LICENSE")
-    if current.count(TOOL_MARKER) > 1:
-        raise ValueError("duplicate bundled tool appendix markers in LICENSE")
     first_party = current.split(MARKER)[0].rstrip(b"\n") + b"\n"
     source = (root / SOURCE).read_bytes()
     for name, expected in RETAINED_TEXT_SHA256.items():
@@ -65,13 +55,8 @@ def expected_license(root):
     if b"SIL OPEN FONT LICENSE Version 1.1" not in font_source:
         raise ValueError(f"{FONT_SOURCE} must contain the SIL Open Font License 1.1 text")
     font_introduction = f"Source: {FONT_SOURCE}\n\n".encode()
-    tools = b"".join(
-        f"Source: {path}\n\n".encode() + (root / path).read_bytes().rstrip(b"\n") + b"\n\n"
-        for path in TOOL_SOURCES
-    )
     return (first_party + MARKER + introduction + source.rstrip(b"\n") + b"\n"
-            + FONT_MARKER + font_introduction + font_source.rstrip(b"\n") + b"\n"
-            + TOOL_MARKER + tools.rstrip(b"\n") + b"\n")
+            + FONT_MARKER + font_introduction + font_source.rstrip(b"\n") + b"\n")
 
 
 def main():
@@ -88,7 +73,7 @@ def main():
         elif path.read_bytes() != expected:
             raise ValueError("LICENSE appendix is stale; run this script with --write")
         else:
-            print("LICENSE contains the exact retained calculator, font, and bundled tool notices")
+            print("LICENSE contains the exact retained calculator and font notices")
     except (OSError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

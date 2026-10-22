@@ -11,7 +11,7 @@ const STATUS_LABELS = {
   disabled: 'Disabled',
   invalid: 'Invalid',
 };
-const SOURCE_LABELS = { dev: 'Dev', bundled: 'Bundled', user: 'User' };
+const SOURCE_LABELS = { dev: 'Dev', official: 'Official', user: 'User' };
 const KIND_LABELS = { ui: 'UI', service: 'Service', hybrid: 'UI + service', cli: 'CLI' };
 const STARTUP_LABELS = { always: 'With vosu', 'on-demand': 'On demand' };
 const BUSY_LABELS = {
@@ -107,6 +107,95 @@ export function mountTools({
   root.replaceChildren(banner);
 
   const api = (id, suffix = '') => `/api/tools/${encodeURIComponent(id)}${suffix}`;
+  const availableCards = el('div', { className: 'tools-root' });
+  const catalogStatus = el('p', { className: 'tools-loading', text: 'Fetching catalog sources…', attrs: { role: 'status' } });
+  const catalogRefresh = el('button', { className: 'button', text: 'Refresh catalog', attrs: { type: 'button' } });
+  const available = el('section', { className: 'tools-catalog', attrs: { 'aria-labelledby': 'tools-available-title' } },
+    el('header', { className: 'tools-catalog__header' },
+      el('h2', { text: '02 / Available', attrs: { id: 'tools-available-title' } }), catalogRefresh),
+    el('p', { className: 'field-help', text: 'Tools from your catalog sources. Packages are verified before use; only the default official source is trusted automatically. Other tools require explicit approval.' }),
+    catalogStatus, availableCards);
+  root.after(available);
+  let catalogTools = [];
+
+  function renderCatalog() {
+    availableCards.replaceChildren(...catalogTools.filter((tool) => matches(tool, tokensOf(state.query))).map((tool) => {
+      const installed = state.tools.find((entry) => entry.id === tool.id);
+      const update = installed && tool.update_available;
+      const card = el('article', { className: 'tool-card' },
+        icon(tool),
+        el('div', { className: 'tool-card__head' },
+          el('p', { className: 'tool-card__index' },
+            el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : tool.source === 'shiruviaa/vosu-tools' ? 'Official' : 'User catalog' }),
+            update ? el('span', { className: 'badge', text: 'Update available' }) : null),
+          el('h2', {}, tool.name, el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
+          el('p', { className: 'tool-card__author', text: `by ${tool.author} · ${tool.source}` })),
+        el('p', { className: 'tool-card__description', text: tool.description }));
+      const actions = el('div', { className: 'tool-card__actions' });
+      const add = (label, action, removeData) => {
+        const button = actionButton(label, action, { primary: action === 'install', disabled: tool.shadowed || !tool.supported || (installed && !tool.managed) });
+        button.addEventListener('click', () => catalogAction(button, tool, action, removeData));
+        actions.append(button);
+      };
+      if (tool.shadowed) actions.append(el('span', { className: 'field-help', text: 'An earlier source provides this id.' }));
+      else if (!installed) add('Install', 'install');
+      else if (tool.managed) {
+        if (update) add('Update', 'update');
+        add('Uninstall…', 'uninstall');
+        if (!update) actions.append(el('span', { className: 'field-help', text: `Installed v${installed.version}` }));
+      } else actions.append(el('span', { className: 'field-help', text: `Using ${SOURCE_LABELS[installed.source]} tool` }));
+      if (!tool.supported) actions.append(el('span', { className: 'field-help', text: 'Not available for this platform' }));
+      if (list(tool.requires).length) card.append(el('p', { className: 'tool-card__description', text: `Requires: ${tool.requires.map((r) => `${r.id} ${r.version}`).join(', ')} (installed first)` }));
+      card.append(actions);
+      return card;
+    }));
+  }
+
+  async function fetchCatalog() {
+    setBusy(catalogRefresh, true, 'Fetching…');
+    try {
+      const payload = await requestJson('/api/tools/catalog');
+      catalogTools = list(payload.tools);
+      catalogTools.push(...list(payload.shadowed).filter((entry) => entry.kind === 'tool'));
+      catalogStatus.textContent = `${list(payload.tools).length} tools · ${list(payload.sources).map((source) => `${source.source}: ${source.status}${source.last_error ? ` (${source.last_error})` : ''}`).join(' · ')}`;
+      renderCatalog();
+    } catch (error) {
+      catalogStatus.textContent = `Catalog unavailable: ${errorText(error)}. Installed tools still work.`;
+    } finally { setBusy(catalogRefresh, false); }
+  }
+  catalogRefresh.addEventListener('click', fetchCatalog);
+
+  function chooseUninstall(button, tool) {
+    const { dialog, body } = createActionDialog(`Uninstall ${tool.name}?`);
+    body.append(el('p', { text: 'Choose what happens to this tool’s saved data and cache.' }));
+    for (const [label, removeData] of [['Keep data', false], ['Remove data', true]]) {
+      const choice = el('button', { className: `button${removeData ? ' button-danger' : ' button-primary'}`, text: label, attrs: { type: 'button' } });
+      choice.addEventListener('click', () => { dialog.close(); catalogAction(button, tool, 'uninstall', removeData); });
+      body.append(choice);
+    }
+    const cancel = el('button', { className: 'button', text: 'Cancel', attrs: { type: 'button' } });
+    cancel.addEventListener('click', () => dialog.close());
+    body.append(cancel); cancel.focus();
+  }
+
+  async function catalogAction(button, tool, action, removeData) {
+    if (action === 'uninstall' && removeData === undefined) { chooseUninstall(button, tool); return; }
+    setBusy(button, true, 'Queued…');
+    try {
+      const response = await requestJson(api(tool.id, `/${action}`), { method: 'POST', body: JSON.stringify({ remove_data: removeData }) });
+      for (;;) {
+        const job = await requestJson(`/api/tools/catalog/jobs/${encodeURIComponent(response.job_id)}`);
+        catalogStatus.textContent = `${tool.name}: ${job.phase}`;
+        if (job.status === 'completed') break;
+        if (job.status === 'failed') throw new Error(job.error || 'Installation failed');
+        await new Promise((resolve) => window.setTimeout(resolve, 350));
+      }
+      notify(`${tool.name}: ${action} completed.`, 'success');
+      await refresh();
+      await fetchCatalog();
+    } catch (error) { notify(`${tool.name}: ${errorText(error)}`, 'error', 5000); }
+    finally { setBusy(button, false); }
+  }
 
   function tokensOf(query) {
     return String(query).toLocaleLowerCase().split(/\s+/).filter(Boolean);
@@ -659,9 +748,11 @@ export function mountTools({
   });
 
   refresh();
+  fetchCatalog();
 
   return (query) => {
     state.query = query;
     applyFilter();
+    renderCatalog();
   };
 }

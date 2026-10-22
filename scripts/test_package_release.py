@@ -13,8 +13,6 @@ import unittest.mock
 import warnings
 import zipfile
 
-# Keep staging/protocol tests in the existing CI packaging test entrypoint.
-from test_stage_tools import ManifestTests, PythonServiceTests, StagingTests
 
 
 SPEC = importlib.util.spec_from_file_location(
