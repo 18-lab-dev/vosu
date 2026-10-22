@@ -39,6 +39,13 @@ export const vosu = Object.freeze({
     if (session) headers.set('X-Vosu-Tool-Session', session);
     return fetch(url, {...options, headers, credentials: 'omit'});
   },
+  // Effective settings.json values (defaults applied), password-type fields
+  // excluded. Re-read whenever fresh values are needed.
+  async settings() {
+    const response = await fetch(`/tools/${encodeURIComponent(id)}/_settings`, {credentials: 'omit', cache: 'no-store'});
+    if (!response.ok) throw new Error(`Tool settings unavailable (HTTP ${response.status})`);
+    return (await response.json()).values;
+  },
   subscribe(fields, onFrame) {
     const url = new URL('/websocket/v2/subscribe', location.origin);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';

@@ -44,6 +44,52 @@ fn request(method: Method, path: &str) -> Request {
 }
 
 #[tokio::test]
+async fn art_is_served_in_every_status_and_sandboxed() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = put(&root.path().join("data"), "artful", "");
+    fs::create_dir_all(dir.join("art")).unwrap();
+    fs::write(
+        dir.join("tool.toml"),
+        "manifest_version=1\nid='artful'\nname='Art'\nversion='1.0.0'\nicon='art/icon.svg'\nbanner='art/banner.png'\n[ui]\nroot='web'\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("art/icon.svg"),
+        "<svg xmlns='http://www.w3.org/2000/svg'/>",
+    )
+    .unwrap();
+    fs::write(dir.join("art/banner.png"), b"\x89PNG").unwrap();
+    fs::write(dir.join("art/other.svg"), "<svg/>").unwrap();
+    let host = host(root.path(), Vec::new()).await;
+    let entry = host.entry("artful").unwrap();
+    // A user tool starts untrusted: its UI is unavailable, its art is not.
+    assert_eq!(host.status(&entry).0, "untrusted");
+    for status in ["untrusted", "failed"] {
+        entry.state.lock().status = status.into();
+        for path in ["/tools/artful/_icon", "/tools/artful/_banner"] {
+            let response = host.overlay(request(Method::GET, path), Bytes::new()).await;
+            assert_eq!(response.status(), StatusCode::OK, "{status} {path}");
+            assert!(
+                response.headers()["content-security-policy"]
+                    .to_str()
+                    .unwrap()
+                    .ends_with("sandbox")
+            );
+        }
+        for path in ["/tools/artful/", "/tools/artful/art/other.svg"] {
+            assert_eq!(
+                host.overlay(request(Method::GET, path), Bytes::new())
+                    .await
+                    .status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{status} {path}"
+            );
+        }
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test]
 async fn discovery_precedence_invalid_settings_and_cycles() {
     let root = tempfile::tempdir().unwrap();
     let dev = put(&root.path().join("dev"), "demo", "");
@@ -671,6 +717,66 @@ async fn tool_settings_and_approval_persist_outside_overlay_settings() {
     assert_eq!(second.status(&entry).0, "disabled");
     assert_eq!(second.settings(&entry).unwrap()["count"], 25.0);
     second.shutdown().await;
+}
+
+#[tokio::test]
+async fn password_settings_never_reach_the_dashboard() {
+    let root = tempfile::tempdir().unwrap();
+    let tool = put(&root.path().join("dev"), "secretive", "");
+    fs::write(
+        tool.join("settings.json"),
+        r#"[{"uniqueID":"secret","type":"password","value":"default-secret"},{"uniqueID":"name","type":"text","value":"x"}]"#,
+    )
+    .unwrap();
+    let host = host(root.path(), vec![tool]).await;
+    let read = || async {
+        value(
+            host.dashboard(
+                request(Method::GET, "/api/tools/secretive/settings"),
+                Bytes::new(),
+            )
+            .await,
+        )
+        .await
+    };
+    let save = |body: &'static [u8]| {
+        host.dashboard(
+            request(Method::POST, "/api/tools/secretive/settings"),
+            Bytes::from_static(body),
+        )
+    };
+    let effective = || host.settings(&host.entry("secretive").unwrap()).unwrap()["secret"].clone();
+    let settings = read().await;
+    assert_eq!(settings["values"]["secret"], "");
+    assert_eq!(settings["settings"][0]["value"], "");
+    assert_eq!(settings["secrets"]["secret"], true);
+    assert!(!settings.to_string().contains("default-secret"));
+    assert_eq!(
+        save(br#"[{"uniqueID":"secret","value":"hunter2"}]"#)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(effective(), "hunter2");
+    // Blank or omitted keeps the secret; null clears it.
+    save(br#"[{"uniqueID":"secret","value":""},{"uniqueID":"name","value":"y"}]"#).await;
+    save(br#"[{"uniqueID":"name","value":"z"}]"#).await;
+    assert_eq!(effective(), "hunter2");
+    assert!(!read().await.to_string().contains("hunter2"));
+    // The overlay-origin read route omits password values entirely.
+    let readable = value(
+        host.overlay(
+            request(Method::GET, "/tools/secretive/_settings"),
+            Bytes::new(),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(readable, json!({"values": {"name": "z"}}));
+    save(br#"[{"uniqueID":"secret","value":null}]"#).await;
+    assert_eq!(effective(), "");
+    assert_eq!(read().await["secrets"]["secret"], false);
+    host.shutdown().await;
 }
 
 #[tokio::test]

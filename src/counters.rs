@@ -1,6 +1,7 @@
 //! Counter discovery, settings, downloads, and lifecycle.
 
 mod model;
+mod names;
 mod service;
 mod settings;
 #[cfg(test)]
@@ -10,6 +11,7 @@ pub use model::{
     CompactValues, Counter, CounterSetting, DownloadRequest, LifecycleReply, SettingInput,
     SettingType,
 };
+pub use names::{OverlayName, OverlayNames};
 pub use service::{
     CounterDownloader, CounterError, CounterOpener, CounterService, HardenedCounterDownloader,
     ReloadableCounterService, SystemOpener, parse_metadata,

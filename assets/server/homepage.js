@@ -407,7 +407,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     cards.forEach((card) => {
       const id = card.dataset.overlayId;
       const isPinned = pinnedSet.has(id);
-      const name = card.dataset.counterName ?? id;
+      const name = card.dataset.counterTitle ?? card.dataset.counterName ?? id;
       card.classList.toggle('is-pinned', isPinned);
       card.draggable = isPinned;
       const pin = card.querySelector('[data-action="toggle-pin"]');
@@ -516,7 +516,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
 
   function cardMatches(card, tokens) {
     if (tokens.length === 0) return true;
-    const name = normalizeSearchText(card.dataset.counterName);
+    const name = normalizeSearchText(`${card.dataset.counterName ?? ''} ${card.dataset.counterNickname ?? ''}`);
     const author = normalizeSearchText(card.dataset.counterAuthor);
     const compatible = (card.dataset.counterCompatible ?? '')
       .split(',')
@@ -621,6 +621,118 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       notify(`Could not delete ${folder}: ${errorText(error)}`, 'error', 5000);
       setBusy(button, false);
     }
+  }
+
+  // Nickname (dashboard display name) and URL alias (`/acc/` redirecting to
+  // the folder) for one installed overlay; the folder stays its identity.
+  function renameCounter(button) {
+    const card = button.closest('.counter-card');
+    const folder = button.dataset.folder;
+    if (!card || !folder) return;
+    const { dialog, body } = createActionDialog(`Nickname and URL: ${card.dataset.counterTitle ?? folder}`);
+    const form = document.createElement('form');
+    form.className = 'dialog-form rename-form';
+    const field = (label, input, help) => {
+      const wrapper = document.createElement('label');
+      wrapper.className = 'field-label';
+      const title = document.createElement('span');
+      title.textContent = label;
+      const hint = document.createElement('span');
+      hint.className = 'field-help';
+      hint.textContent = help;
+      wrapper.append(title, input, hint);
+      return { wrapper, hint };
+    };
+    const nickname = document.createElement('input');
+    nickname.type = 'text';
+    nickname.maxLength = 64;
+    nickname.autocomplete = 'off';
+    nickname.value = card.dataset.counterNickname ?? '';
+    nickname.placeholder = card.dataset.counterName ?? folder;
+    const alias = document.createElement('input');
+    alias.type = 'text';
+    alias.maxLength = 48;
+    alias.autocomplete = 'off';
+    alias.spellcheck = false;
+    alias.value = card.dataset.counterAlias ?? '';
+    alias.placeholder = 'acc';
+    const nicknameField = field('Nickname', nickname, 'Shown on this dashboard instead of the overlay name. Leave blank to use the name.');
+    const aliasField = field('URL alias', alias, '');
+    const overlayOrigin = new URL(card.querySelector('.preview-stage iframe')?.src ?? window.location.origin).origin;
+    const describeAlias = () => {
+      const value = alias.value.trim().toLowerCase();
+      aliasField.hint.textContent = value
+        ? `${overlayOrigin}/${value}/ opens /${folder}/. Lowercase letters, digits, - and _.`
+        : `Optional short browser-source URL. Without one, use ${overlayOrigin}/${folder}/.`;
+    };
+    alias.addEventListener('input', describeAlias);
+    describeAlias();
+    const status = document.createElement('p');
+    status.className = 'field-help';
+    status.setAttribute('role', 'status');
+    const actions = document.createElement('div');
+    actions.className = 'dialog-actions';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'button';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => dialog.close());
+    const save = document.createElement('button');
+    save.type = 'submit';
+    save.className = 'button button-primary';
+    save.textContent = 'Save';
+    actions.append(cancel, save);
+    form.append(nicknameField.wrapper, aliasField.wrapper, status, actions);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      setBusy(save, true, 'Saving…');
+      try {
+        const saved = await requestJson(`/api/counters/names/${encodeURIComponent(folder)}`, {
+          method: 'POST',
+          body: JSON.stringify({ nickname: nickname.value, alias: alias.value }),
+        });
+        applyCounterNames(card, folder, saved);
+        notify(`Saved the name and URL of ${card.dataset.counterTitle}.`, 'success');
+        dialog.close();
+      } catch (error) {
+        status.textContent = errorText(error);
+        setBusy(save, false);
+      }
+    });
+    body.append(form);
+    nickname.focus();
+  }
+
+  function applyCounterNames(card, folder, saved) {
+    const original = card.dataset.counterName ?? folder;
+    const title = saved.nickname || original;
+    card.dataset.counterTitle = title;
+    card.dataset.counterNickname = saved.nickname ?? '';
+    card.dataset.counterAlias = saved.alias ?? '';
+    const heading = card.querySelector('.counter-card__identity h2');
+    if (heading) { heading.textContent = title; heading.title = title; }
+    let line = card.querySelector('.counter-card__folder');
+    if (saved.nickname) {
+      if (!line) {
+        line = document.createElement('p');
+        line.className = 'counter-card__folder';
+        card.querySelector('.counter-card__meta')?.after(line);
+      }
+      line.title = `Folder: ${folder}`;
+      line.replaceChildren(Object.assign(document.createElement('span'), { className: 'visually-hidden', textContent: 'Overlay: ' }), original);
+    } else if (line?.title) {
+      line.remove();
+    }
+    const url = card.querySelector('.counter-card__url');
+    const frame = card.querySelector('.preview-stage iframe');
+    if (url && frame) {
+      const base = new URL(frame.src);
+      const value = saved.alias ? `${base.origin}/${saved.alias}/` : base.href;
+      url.dataset.copyValue = value;
+      url.title = `${value} (click to copy, Shift-click to open)`;
+      url.querySelector('code').textContent = saved.alias ? `/${saved.alias}/` : `/${folder}/`;
+    }
+    card.querySelector('[data-action="toggle-pin"]')?.setAttribute('aria-label', `Pin ${title}`);
   }
 
   async function openOverlaysRoot(button) {
@@ -1304,7 +1416,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     if (sourceFrame.dataset.colorScheme) frame.dataset.colorScheme = sourceFrame.dataset.colorScheme;
     stage.append(frame);
     const resolution = card.querySelector('.meta-copy')?.textContent ?? '';
-    openPreviewDialog(card.dataset.counterName ?? '', resolution, stage);
+    openPreviewDialog(card.dataset.counterTitle ?? card.dataset.counterName ?? '', resolution, stage);
     fitPreview(stage);
     previewObserver?.observe(previewFrame);
   }
@@ -1318,7 +1430,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     image.alt = shown.alt;
     image.referrerPolicy = 'no-referrer';
     const card = button.closest('.counter-card');
-    openPreviewDialog(card?.dataset.counterName ?? '', shown.alt, image);
+    openPreviewDialog(card?.dataset.counterTitle ?? card?.dataset.counterName ?? '', shown.alt, image);
   }
 
   function stepGallery(button, direction) {
@@ -1403,10 +1515,13 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       deleteCounter(control);
     } else if (action === 'open-counter') {
       openFolder(control);
+    } else if (action === 'rename-counter') {
+      control.closest('.card-menu')?.hidePopover?.();
+      renameCounter(control);
     } else if (action === 'open-overlays-root') {
       openOverlaysRoot(control);
     } else if (action === 'counter-settings') {
-      loadCounterSettings(control.dataset.folder);
+      loadCounterSettings(control.dataset.folder, { name: control.closest('.counter-card')?.dataset.counterTitle });
     } else if (action === 'app-update') {
       runAppUpdate(control);
     } else if (action === 'copy-metadata') {
@@ -1505,6 +1620,8 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
         createOverflow,
         currentTheme,
         setCount: (value) => setCount('tools', value),
+        // Same dialog as an overlay card's Settings button.
+        openToolSettings: (id, name) => loadToolSettings(id, { name }),
       });
       if (searchInput?.value) state.filterTools?.(searchInput.value);
     }).catch((error) => notify(`Could not load the Tools page: ${errorText(error)}`, 'error', 0));

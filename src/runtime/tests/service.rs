@@ -463,7 +463,7 @@ fn installed_updates_use_catalog_metadata_and_actual_folder_target() {
     let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
     let remote = crate::server::catalog::merge_local(remote, &installed);
     annotate_installed_updates(&mut local, &remote);
-    let html = render_local_counters(&local, &[], None, "localhost:24050");
+    let html = render_local_counters(&local, &[], &Default::default(), None, "localhost:24050");
     assert!(html.contains("Update available</button>"));
     assert!(html.contains(r#"class="badge badge-warning""#));
     assert!(html.contains(r#"data-action="update-counter""#));
@@ -543,6 +543,7 @@ fn duplicate_installed_titles_show_their_folder() {
             counter("other", "other"),
         ],
         &[preview_scheme::PreviewScheme::Dark],
+        &Default::default(),
         None,
         "localhost:24050",
     );
@@ -553,6 +554,32 @@ fn duplicate_installed_titles_show_their_folder() {
     // the others keep the light default.
     assert_eq!(html.matches(r#"data-color-scheme="dark""#).count(), 1);
     assert!(html.contains(r#"<iframe src="http://localhost:24050/accuracy/" data-color-scheme="dark""#));
+}
+
+#[test]
+fn nicknames_and_aliases_rename_cards_but_keep_the_folder_frame() {
+    let counter: crate::counters::Counter = serde_json::from_value(serde_json::json!({
+        "folderName": "accuracy by sxlvia", "name": "accuracy", "author": "sxlvia", "version": "1.0",
+        "resolution": [], "authorlinks": [], "settings": []
+    }))
+    .unwrap();
+    let names = std::collections::BTreeMap::from([(
+        "accuracy by sxlvia".to_owned(),
+        crate::counters::OverlayName { nickname: Some("Acc <main>".into()), alias: Some("acc".into()) },
+    )]);
+    let html = render_local_counters(std::slice::from_ref(&counter), &[], &names, None, "localhost:24050");
+    assert!(html.contains(r#"<h2 title="Acc &lt;main&gt;">Acc &lt;main&gt;</h2>"#));
+    assert!(html.contains(r#"data-counter-name="accuracy" data-counter-title="Acc &lt;main&gt;""#));
+    assert!(html.contains(r#"data-counter-alias="acc""#));
+    // The frame loads the real folder; the copied browser-source URL is the alias.
+    assert!(html.contains(r#"<iframe src="http://localhost:24050/accuracy%20by%20sxlvia/""#));
+    assert!(html.contains(r#"data-copy-value="http://localhost:24050/acc/""#));
+    assert!(html.contains("<code>/acc/</code>"));
+    assert!(html.contains(r#"data-action="rename-counter""#));
+    // The nickname is searchable alongside the original name.
+    for query in ["acc main", "accuracy"] {
+        assert!(!render_local_counters(std::slice::from_ref(&counter), &[], &names, Some(query), "h").is_empty(), "{query}");
+    }
 }
 
 #[test]

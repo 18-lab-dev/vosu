@@ -13,6 +13,7 @@
 .counter-setting > textarea.setting-value,
 .counter-setting > select.setting-value,
 .counter-setting > input.setting-value:not([type="checkbox"]),
+.setting-secret > input.setting-value,
 .action-dialog input:not([type="checkbox"]) {
   width: 100%;
   min-height: 2.4rem;
@@ -32,7 +33,8 @@
 .settings-control:not(:disabled):hover,
 .field-label :is(input, textarea, select):not(:disabled):hover,
 .command-field :is(input, select):not(:disabled):hover,
-.counter-setting > .setting-value:not(:disabled):hover {
+.counter-setting > .setting-value:not(:disabled):hover,
+.setting-secret > .setting-value:not(:disabled):hover {
   border-color: var(--fg-dim);
 }
 
@@ -40,6 +42,7 @@
 .field-label :is(input, textarea, select):focus,
 .command-field :is(input, select):focus,
 .counter-setting > .setting-value:focus,
+.setting-secret > .setting-value:focus,
 .action-dialog input:focus {
   border-color: var(--accent);
   outline: none;
@@ -56,7 +59,26 @@
 
 input[type="number"],
 .allowlist-editor,
-.counter-setting > input[type="password"] {
+.counter-setting > input[type="password"],
+.setting-secret > input[type="password"] {
+  font-family: var(--font-mono);
+}
+
+/* Help text inside a mono-caps field label reads as a sentence. */
+.field-label .field-help {
+  font-family: var(--font-body);
+  font-size: var(--step--1);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.rename-form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.rename-form [role="status"]:not(:empty) {
+  color: var(--danger);
   font-family: var(--font-mono);
 }
 
@@ -140,6 +162,45 @@ input[type="checkbox"].settings-control {
 
   .settings-index {
     display: none;
+  }
+}
+
+/* Wide screens: the sheet index moves to a sticky left rail and the groups
+   flow into balanced columns, numbered top to bottom, instead of one narrow
+   column beside empty space. */
+@media (min-width: 90rem) {
+  .results:has(> .settings) {
+    grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr);
+    gap: var(--space-6);
+  }
+
+  .results:has(> .settings) > .settings-index {
+    order: -1;
+  }
+
+  #runtime-settings.settings {
+    display: block;
+    width: 100%;
+    columns: 2 30rem;
+    column-gap: var(--space-5);
+  }
+
+  #runtime-settings > .settings-header,
+  #runtime-settings > .settings-empty {
+    column-span: all;
+    margin-bottom: var(--space-5);
+  }
+
+  #runtime-settings > .settings-group {
+    display: block;
+    margin-bottom: var(--space-5);
+    break-inside: avoid;
+  }
+}
+
+@media (min-width: 150rem) {
+  #runtime-settings.settings {
+    columns: 3 30rem;
   }
 }
 
@@ -400,6 +461,23 @@ input[type="checkbox"].settings-control {
 
 .settings-profiles > .settings-overflow {
   flex: 0 0 auto;
+}
+
+/* A saved password: an empty input that keeps the secret, beside Clear. */
+.setting-secret {
+  display: flex;
+  gap: var(--space-2);
+  align-items: stretch;
+}
+
+.setting-secret > .setting-value {
+  flex: 1;
+  min-width: 0;
+}
+
+.setting-secret > .button[aria-pressed="true"] {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .settings-overflow {

@@ -169,7 +169,27 @@ impl ToolHost {
                         json!({"lines":entry.logs.lock().iter().filter(|line| line.seq > after).collect::<Vec<_>>()}),
                     )
                 }
-                "settings" => Ok(json!({"settings":entry.schema, "values":self.settings(&entry)?})),
+                "settings" => {
+                    // Password values never reach the dashboard; it learns only
+                    // whether one is in effect. The tool's own service still
+                    // reads the real value from the host settings API.
+                    let mut values = self.settings(&entry)?;
+                    let mut schema =
+                        serde_json::to_value(&entry.schema).map_err(|e| e.to_string())?;
+                    let mut secrets = serde_json::Map::new();
+                    for (index, setting) in entry.schema.iter().enumerate() {
+                        if setting.kind != crate::counters::SettingType::Password {
+                            continue;
+                        }
+                        let configured = values.get(&setting.unique_id).is_some_and(|value| {
+                            !matches!(value, Value::Null) && value.as_str() != Some("")
+                        });
+                        secrets.insert(setting.unique_id.clone(), json!(configured));
+                        values.insert(setting.unique_id.clone(), json!(""));
+                        schema[index]["value"] = json!("");
+                    }
+                    Ok(json!({"settings":schema, "values":values, "secrets":secrets}))
+                }
                 _ => Err("unknown tool action".into()),
             };
         }
@@ -269,6 +289,12 @@ impl ToolHost {
                             crate::counters::SettingType::Checkbox => {
                                 crate::counters::coerce_checkbox(item.value)
                             }
+                            // A blank password keeps the stored secret; null clears it.
+                            crate::counters::SettingType::Password => match item.value {
+                                Value::Null => json!(""),
+                                Value::String(text) if text.is_empty() => continue,
+                                value => value,
+                            },
                             _ => item.value,
                         };
                         values.insert(setting.unique_id.clone(), value);
@@ -308,12 +334,6 @@ impl ToolHost {
         if !matches!(request.method().as_str(), "GET" | "HEAD") {
             return error(StatusCode::NOT_FOUND, "not found");
         }
-        if !matches!(
-            self.status(&entry).0.as_str(),
-            "running" | "stopped" | "starting"
-        ) {
-            return error(StatusCode::SERVICE_UNAVAILABLE, "tool is unavailable");
-        }
         let Some(manifest) = &entry.manifest else {
             return error(StatusCode::NOT_FOUND, "not found");
         };
@@ -322,6 +342,31 @@ impl ToolHost {
             "_banner" => Some(&manifest.banner),
             _ => None,
         };
+        // Card art identifies a tool in every state, including disabled,
+        // untrusted, and failed ones; only the declared files are served.
+        if art.is_none()
+            && !matches!(
+                self.status(&entry).0.as_str(),
+                "running" | "stopped" | "starting"
+            )
+        {
+            return error(StatusCode::SERVICE_UNAVAILABLE, "tool is unavailable");
+        }
+        if tail == "_settings" {
+            // Readable by the tool's UI and by overlays like other tool reads,
+            // so password-type values are withheld.
+            return match self.settings(&entry) {
+                Ok(mut values) => {
+                    for setting in &entry.schema {
+                        if setting.kind == crate::counters::SettingType::Password {
+                            values.remove(&setting.unique_id);
+                        }
+                    }
+                    json_response(StatusCode::OK, json!({ "values": values }))
+                }
+                Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
+            };
+        }
         let (root, relative) = if let Some(art) = art {
             let Some(art) = art else {
                 return error(StatusCode::NOT_FOUND, "not found");
@@ -365,6 +410,14 @@ impl ToolHost {
                     .header(header::CONTENT_TYPE, file.content_type)
                     .header(header::CONTENT_LENGTH, file.length);
                 response = response.header(header::X_CONTENT_TYPE_OPTIONS, "nosniff");
+                if art.is_some() {
+                    // Art may come from a tool the user has not trusted; an SVG
+                    // opened directly must not run script on the overlay origin.
+                    response = response.header(
+                        header::CONTENT_SECURITY_POLICY,
+                        "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
+                    );
+                }
                 let body = if request.method() == Method::HEAD {
                     Body::empty()
                 } else {

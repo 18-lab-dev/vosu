@@ -139,10 +139,12 @@ pub(super) fn matches_catalog_query(
 }
 
 /// `schemes[i]` is the declared preview colour scheme of `counters[i]`; a
-/// missing entry keeps the light default.
+/// missing entry keeps the light default. `names` holds dashboard nicknames
+/// and URL aliases keyed by folder.
 pub(super) fn render_local_counters(
     counters: &[crate::counters::Counter],
     schemes: &[PreviewScheme],
+    names: &std::collections::BTreeMap<String, crate::counters::OverlayName>,
     query: Option<&str>,
     authority: &str,
 ) -> String {
@@ -151,15 +153,18 @@ pub(super) fn render_local_counters(
         .enumerate()
         .filter(|(_, counter)| {
             query.is_none_or(|query| {
-                matches_catalog_query(
-                    &counter.name,
-                    &counter.author,
-                    counter.compatiblewith.as_deref().unwrap_or_default(),
-                    query,
-                )
+                let compatible = counter.compatiblewith.as_deref().unwrap_or_default();
+                matches_catalog_query(&counter.name, &counter.author, compatible, query)
+                    || names
+                        .get(&counter.folder_name)
+                        .and_then(|name| name.nickname.as_deref())
+                        .is_some_and(|nickname| {
+                            matches_catalog_query(nickname, &counter.author, compatible, query)
+                        })
             })
         })
         .map(|(index, counter)| {
+            let name = names.get(&counter.folder_name);
             let duplicate_name = counters
                 .iter()
                 .filter(|other| other.name.eq_ignore_ascii_case(&counter.name))
@@ -180,6 +185,8 @@ pub(super) fn render_local_counters(
                     compatible: counter.compatiblewith.as_deref().unwrap_or_default(),
                     show_folder: duplicate_name,
                     preview_scheme: schemes.get(index).copied().unwrap_or_default(),
+                    nickname: name.and_then(|name| name.nickname.as_deref()),
+                    alias: name.and_then(|name| name.alias.as_deref()),
                     ..CounterCard::default()
                 },
                 authority,
@@ -243,6 +250,8 @@ pub(super) fn render_catalog_counters(
                     usecase: counter.usecase.as_ref(),
                     // Catalog cards show images, not live frames.
                     preview_scheme: PreviewScheme::Light,
+                    nickname: None,
+                    alias: None,
                 },
                 authority,
             )
@@ -290,6 +299,10 @@ pub(super) struct CounterCard<'a> {
     pub(super) usecase: Option<&'a serde_json::Value>,
     /// Colour scheme the installed overlay declares; its preview frame matches it.
     pub(super) preview_scheme: PreviewScheme,
+    /// Dashboard display name replacing `name` on installed cards.
+    pub(super) nickname: Option<&'a str>,
+    /// Short URL path (`/acc/`) that redirects to the folder.
+    pub(super) alias: Option<&'a str>,
 }
 
 const PIN_ICON: &str = r#"<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 3h6l-1 6 3 3v2h-4v6l-1 1-1-1v-6H7v-2l3-3z"/></svg>"#;
@@ -304,8 +317,11 @@ pub(super) fn render_counter_card(card: &CounterCard<'_>, authority: &str) -> St
         ""
     };
     let identity = format!(
-        r#" data-counter-name="{}" data-counter-author="{}" data-counter-version="{}" data-counter-compatible="{}""#,
+        r#" data-counter-name="{}" data-counter-title="{}" data-counter-nickname="{}" data-counter-alias="{}" data-counter-author="{}" data-counter-version="{}" data-counter-compatible="{}""#,
         escape_html(card.name),
+        escape_html(card.nickname.unwrap_or(card.name)),
+        escape_html(card.nickname.unwrap_or_default()),
+        escape_html(card.alias.unwrap_or_default()),
         escape_html(card.author),
         escape_html(card.version),
         escape_html(&card.compatible.join(",")),
@@ -509,10 +525,21 @@ fn render_installed_card(
     identity: &str,
     authority: &str,
 ) -> String {
-    let name = escape_html(card.name);
+    // The nickname names the overlay everywhere on the dashboard; the folder
+    // remains its identity and its frame's address.
+    let name = escape_html(card.nickname.unwrap_or(card.name));
     let folder = escape_html(card.folder);
     let path = overlay_path(card.folder);
     let absolute_url = escape_html(&format!("http://{authority}{path}"));
+    // Browser sources may use the alias, which redirects to the folder.
+    let shown_path = card.alias.map_or_else(
+        || format!("/{}/", card.folder),
+        |alias| format!("/{alias}/"),
+    );
+    let copy_url = escape_html(&card.alias.map_or_else(
+        || format!("http://{authority}{path}"),
+        |alias| format!("http://{authority}/{alias}/"),
+    ));
     let settings = if card.settings {
         format!(
             r#"<button class="icon-button" type="button" data-action="counter-settings" data-folder="{folder}" aria-label="Settings for {name}" title="Settings">{SETTINGS_ICON}</button>"#
@@ -530,6 +557,7 @@ fn render_installed_card(
             r#"<button class="icon-button card-menu-toggle" type="button" popovertarget="{menu}" aria-label="More actions for {name}" title="More actions">⋯</button>"#,
             r#"<div class="card-menu" id="{menu}" popover>"#,
             r#"<button type="button" data-action="open-counter" data-folder="{folder}">Open folder</button>"#,
+            r#"<button type="button" data-action="rename-counter" data-folder="{folder}">Nickname and URL…</button>"#,
             r#"<button class="card-menu__pin" type="button" data-action="pin-earlier">Move pin earlier</button>"#,
             r#"<button class="card-menu__pin" type="button" data-action="pin-later">Move pin later</button>"#,
             r#"<hr>"#,
@@ -581,7 +609,12 @@ fn render_installed_card(
             "100%".to_owned(),
         ),
     };
-    let folder_line = if card.show_folder {
+    let folder_line = if card.nickname.is_some() {
+        format!(
+            r#"<p class="counter-card__folder" title="Folder: {folder}"><span class="visually-hidden">Overlay: </span>{}</p>"#,
+            escape_html(card.name)
+        )
+    } else if card.show_folder {
         format!(
             r#"<p class="counter-card__folder"><span class="visually-hidden">Folder: </span>{folder}</p>"#
         )
@@ -603,7 +636,7 @@ fn render_installed_card(
             r#"<div class="counter-card__body"><div class="counter-card__identity"><h2 title="{name}">{name}</h2>"#,
             r#"<p class="counter-card__meta">{version}{author}<button class="meta-copy" type="button" data-action="copy-metadata" data-copy-label="Resolution" data-copy-value="{resolution}" title="Copy resolution">{resolution}</button></p>"#,
             r#"{folder_line}<div class="counter-card__chips">{update}<span class="badge connected-chip" hidden></span></div></div>{actions}</div>"#,
-            r#"<button class="counter-card__url" type="button" data-action="copy-metadata" data-copy-label="URL" data-copy-value="{url}" title="{url} (click to copy, Shift-click to open)"><code>/{folder}/</code><span class="counter-card__url-action">Copy URL</span></button>"#,
+            r#"<button class="counter-card__url" type="button" data-action="copy-metadata" data-copy-label="URL" data-copy-value="{url}" title="{url} (click to copy, Shift-click to open)"><code>{shown}</code><span class="counter-card__url-action">Copy URL</span></button>"#,
             "</article>",
         ),
         status = status,
@@ -637,7 +670,8 @@ fn render_installed_card(
         folder_line = folder_line,
         actions = actions,
         update = update,
-        url = absolute_url,
+        url = copy_url,
+        shown = escape_html(&shown_path),
     )
 }
 

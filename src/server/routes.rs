@@ -47,6 +47,8 @@ pub enum Endpoint {
     CounterOpenRoot,
     CounterDelete,
     CounterDetails,
+    /// Dashboard-only nickname/alias update for one installed overlay.
+    CounterNames,
     DashboardStatus,
     CounterSettings,
     ApiKeys,
@@ -451,7 +453,10 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         if !dashboard
             && matches!(
                 endpoint,
-                Endpoint::DashboardStatus | Endpoint::CounterDetails | Endpoint::ToolManagement
+                Endpoint::DashboardStatus
+                    | Endpoint::CounterDetails
+                    | Endpoint::CounterNames
+                    | Endpoint::ToolManagement
             )
         {
             return not_found();
@@ -786,6 +791,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         _ if post && path.starts_with("/api/counters/download/") => Some(CounterDownload),
         _ if post && path.starts_with("/api/counters/open/") => Some(CounterOpen),
         _ if post && path.starts_with("/api/counters/delete/") => Some(CounterDelete),
+        _ if post && path.starts_with("/api/counters/names/") => Some(CounterNames),
         _ if (get || post) && path.starts_with("/api/counters/settings/") => Some(CounterSettings),
         _ if get && path.starts_with("/Songs/") => Some(SongsFile),
         _ if get && path.starts_with("/files/beatmap/") => Some(BeatmapPath),
