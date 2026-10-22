@@ -114,6 +114,7 @@ Access rules for `/tools/<id>/api/*`:
 - `read` routes: GET/HEAD/WebSocket from anyone permitted by the overlay listener's peer policy; CORS `*` like other overlay read APIs. Matching a `write` prefix does not change the open-read rule.
 - Mutating methods on `write` routes, and GET/HEAD on write-only routes: require `X-Vosu-Tool-Session` (a UI session for this tool) or `X-Vosu-Tool-Token` of a running tool that lists this tool in `[[requires]]`. Otherwise 403. Methods other than GET/HEAD never use `read` alone; WebSocket upgrades require a read prefix.
 - A dependent tool presenting its token gets both `read` and `write` routes of its declared dependencies.
+- Any other valid tool or CLI token may use `read` routes, so a tool can call another tool as an optional dependency (without `[[requires]]`, a missing tool never blocks it); `X-Vosu-Caller` then names the calling tool. An invalid or revoked token is rejected with 403 rather than downgraded.
 
 ## Host API (for services)
 
@@ -269,8 +270,9 @@ The returned environment contains `VOSU_TOOL_PROTOCOL`, `VOSU_TOOL_ID`,
 `VOSU_TOOL_TOKEN`, `VOSU_URL`, `VOSU_TOOL_DATA_DIR`, `VOSU_TOOL_CACHE_DIR`, and
 `VOSU_TOOL_INTERFACE=cli`. Merge it over the launcher's current environment.
 CLI tokens have their tool's permission-filtered host API access, read/write
-access to declared dependencies, and read/write access to their own declared
-`/tools/<id>/api/` routes. No access to undeclared tools is granted. The proxy
+access to declared dependencies, read access to other tools' `read` routes, and
+read/write access to their own declared `/tools/<id>/api/` routes. Writes to
+undeclared tools are refused. The proxy
 sets `X-Vosu-Caller: cli:<id>` and replaces the token with the target service
 credential, retaining the service as the single writer of shared state.
 

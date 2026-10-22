@@ -87,20 +87,22 @@ impl ToolHost {
             return Some("ui".into());
         }
         if let Some(token) = text_header(headers, "x-vosu-tool-token") {
-            if let Some(owner) = self.cli_owner(&token) {
-                return (owner.id == target.id
+            // A valid token never narrows access below an anonymous overlay:
+            // tools may call another tool's read routes as an optional
+            // dependency. Writes still need a declared dependency.
+            let declared = |owner: &Entry| {
+                owner.id == target.id
                     || owner
                         .manifest
                         .as_ref()
-                        .is_some_and(|m| m.requires.iter().any(|d| d.id == target.id)))
-                .then(|| format!("cli:{}", owner.id));
+                        .is_some_and(|m| m.requires.iter().any(|d| d.id == target.id))
+            };
+            if let Some(owner) = self.cli_owner(&token) {
+                return (declared(&owner) || !write).then(|| format!("cli:{}", owner.id));
             }
             if let Some(owner) = self.token_owner(&token, false) {
-                return owner
-                    .manifest
-                    .as_ref()
-                    .is_some_and(|m| m.requires.iter().any(|d| d.id == target.id))
-                    .then(|| format!("tool:{}", owner.id));
+                let dependent = owner.id != target.id && declared(&owner);
+                return (dependent || !write).then(|| format!("tool:{}", owner.id));
             }
             return None;
         }

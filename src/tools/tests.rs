@@ -245,6 +245,13 @@ async fn access_matrix_includes_sessions_dependencies_and_method_overlap() {
     assert!(host.caller(&target, &headers, true).is_none());
     headers.insert("x-vosu-tool-token", "stranger-secret".parse().unwrap());
     assert!(host.caller(&target, &headers, true).is_none());
+    // Optional dependencies: a valid non-dependent token reads like an overlay.
+    assert_eq!(
+        host.caller(&target, &headers, false).as_deref(),
+        Some("tool:stranger")
+    );
+    headers.insert("x-vosu-tool-token", "forged-secret".parse().unwrap());
+    assert!(host.caller(&target, &headers, false).is_none());
     headers.insert("x-vosu-tool-token", "dependency-secret".parse().unwrap());
     assert_eq!(
         host.caller(&target, &headers, true).as_deref(),
@@ -891,26 +898,18 @@ async fn cli_broker_auth_sessions_and_authority() {
     let token = launch["env"]["VOSU_TOOL_TOKEN"].as_str().unwrap();
     let mut headers = HeaderMap::new();
     headers.insert("x-vosu-tool-token", token.parse().unwrap());
-    for (id, allowed) in [("a", true), ("b", true), ("c", false)] {
-        for write in [false, true] {
-            assert_eq!(
-                host.caller(&host.entry(id).unwrap(), &headers, write)
-                    .is_some(),
-                allowed
-            );
-        }
+    // Undeclared tools: reads as an optional dependency, never writes.
+    for (id, read, write) in [("a", true, true), ("b", true, true), ("c", true, false)] {
+        let entry = host.entry(id).unwrap();
+        assert_eq!(host.caller(&entry, &headers, false).is_some(), read);
+        assert_eq!(host.caller(&entry, &headers, true).is_some(), write);
     }
-    for (method, path) in [
-        (Method::GET, "/tools/c/api/v1/read"),
-        (Method::POST, "/tools/c/api/v1/write"),
-    ] {
-        let mut req = request(method, path);
-        *req.headers_mut() = headers.clone();
-        assert_eq!(
-            host.overlay(req, Bytes::new()).await.status(),
-            StatusCode::FORBIDDEN
-        );
-    }
+    let mut req = request(Method::POST, "/tools/c/api/v1/write");
+    *req.headers_mut() = headers.clone();
+    assert_eq!(
+        host.overlay(req, Bytes::new()).await.status(),
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(
         host.caller(&host.entry("a").unwrap(), &headers, true)
             .as_deref(),
