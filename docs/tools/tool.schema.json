@@ -14,7 +14,8 @@
     "description": {"type": "string"},
     "author": {"type": "string"},
     "homepage": {"type": "string", "pattern": "^https?://[^\\s]+$"},
-    "icon": {"allOf": [{"$ref": "#/$defs/path"}, {"pattern": "\\.(svg|png)$"}]},
+    "icon": {"allOf": [{"$ref": "#/$defs/path"}, {"pattern": "\\.(svg|png)$"}], "description": "Square SVG, or PNG at least 256×256; shown at 40–64 px on Tools cards"},
+    "banner": {"allOf": [{"$ref": "#/$defs/path"}, {"pattern": "\\.(png|jpg|jpeg|webp|svg)$"}], "description": "3:1 card art (recommended 1200×400), cropped to fill the card width"},
     "ui": {
       "type": "object", "additionalProperties": false, "required": ["root"],
       "properties": {"root": {"$ref": "#/$defs/path"}, "entry": {"$ref": "#/$defs/path", "default": "index.html"}}

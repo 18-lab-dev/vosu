@@ -9,6 +9,8 @@ fn tool(id: &str, version: &str) -> Tool {
         description: "fixture".into(),
         author: "18-LAB".into(),
         homepage: None,
+        icon_url: None,
+        banner_url: None,
         protocol: 1,
         interfaces: vec!["ui".into()],
         requires: Vec::new(),
@@ -70,9 +72,42 @@ fn parsing_and_validation() {
     let mut invalid = valid.clone();
     invalid.tools[0].packages.get_mut("any").unwrap().sha256 = "bad".into();
     assert!(invalid.validate().is_err());
-    let mut invalid = valid;
+    let mut invalid = valid.clone();
     invalid.tools[0].version = "not-semver".into();
     assert!(invalid.validate().is_err());
+    // Card art is optional, HTTPS-only, and carried into the catalog view.
+    let mut art = valid.clone();
+    art.tools[0].icon_url = Some("https://example.com/vosu-tool-fixture-icon.svg".into());
+    art.tools[0].banner_url = Some("https://example.com/vosu-tool-fixture-banner.webp".into());
+    art.validate().unwrap();
+    let value = serde_json::to_value(&art.tools[0]).unwrap();
+    assert_eq!(
+        value["banner_url"],
+        "https://example.com/vosu-tool-fixture-banner.webp"
+    );
+    for url in ["http://example.com/icon.svg", "data:image/svg+xml,<svg/>"] {
+        let mut invalid = valid.clone();
+        invalid.tools[0].icon_url = Some(url.into());
+        assert!(invalid.validate().is_err(), "{url}");
+        let mut invalid = valid.clone();
+        invalid.tools[0].banner_url = Some(url.into());
+        assert!(invalid.validate().is_err(), "{url}");
+    }
+}
+#[test]
+fn overlay_art_urls_are_https_only() {
+    let overlay: Overlay = serde_json::from_value(serde_json::json!({
+        "id": "fixture", "name": "Fixture", "version": "1.0.0", "description": "", "author": "18-LAB",
+        "homepage": null, "resolution": [600, 120], "preview": null,
+        "icon_url": "https://example.com/vosu-overlay-fixture-icon.png",
+        "package": {"url": "https://example.com/fixture.zip", "sha256": "00".repeat(32), "size": 1}
+    }))
+    .unwrap();
+    assert_eq!(overlay.banner_url, None);
+    sources::validate_overlay(&overlay).unwrap();
+    let mut invalid = overlay.clone();
+    invalid.banner_url = Some("http://example.com/banner.png".into());
+    assert!(sources::validate_overlay(&invalid).is_err());
 }
 #[test]
 fn requires_order_and_cycles() {

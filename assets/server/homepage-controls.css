@@ -724,12 +724,14 @@ input[type="checkbox"].settings-control {
 
 /* ------------------------------------------------------------- tools */
 
+/* Cards in a row share its height; each card pins its actions to the bottom
+   edge so the buttons line up across the row. */
 .tools-root {
   grid-column: 1 / -1;
   display: grid;
   gap: var(--grid-gap);
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 34rem), 1fr));
-  align-items: start;
+  align-items: stretch;
   counter-reset: tool;
 }
 
@@ -738,14 +740,15 @@ input[type="checkbox"].settings-control {
   display: grid;
   gap: var(--space-4);
   padding-top: var(--space-6);
-  border-top: 1px solid var(--border);
+  border-top: var(--hair) solid var(--rule-strong);
 }
 
 .tools-catalog__header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--space-2) var(--space-4);
 }
 
 .tools-catalog__header h2 {
@@ -753,6 +756,15 @@ input[type="checkbox"].settings-control {
   font-family: var(--font-mono);
   font-size: var(--step--1);
   text-transform: uppercase;
+}
+
+.tools-installed__header {
+  grid-column: 1 / -1;
+}
+
+/* Catalog overlay cards reuse the tool card; their sheet index reads O-nn. */
+.tools-root--overlays .tool-card__index::before {
+  content: "O-" counter(tool, decimal-leading-zero);
 }
 
 .catalog-source-list { display: grid; gap: var(--space-4); }
@@ -785,12 +797,14 @@ input[type="checkbox"].settings-control {
 }
 
 .tool-card {
+  --tool-pad-y: var(--space-4);
+  --tool-pad-x: var(--space-5);
   position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
   min-width: 0;
-  padding: var(--space-4) var(--space-5);
+  padding: var(--tool-pad-y) var(--tool-pad-x);
   background: var(--bg-raised);
   border: var(--hair) solid var(--rule-strong);
   counter-increment: tool;
@@ -801,21 +815,57 @@ input[type="checkbox"].settings-control {
   border-color: var(--muted);
 }
 
+/* Status stripe along the left edge, drawn above the banner. */
+.tool-card::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 2;
+  width: 3px;
+  content: "";
+  pointer-events: none;
+  background: var(--tool-stripe, transparent);
+}
+
 .tool-card[data-status="failed"],
 .tool-card[data-status="invalid"] {
-  box-shadow: inset 3px 0 0 var(--danger);
+  --tool-stripe: var(--danger);
 }
 
 .tool-card[data-status="untrusted"],
 .tool-card[data-status="blocked"] {
-  box-shadow: inset 3px 0 0 var(--caution);
+  --tool-stripe: var(--caution);
 }
 
 .tool-card[data-status="running"] {
-  box-shadow: inset 3px 0 0 var(--accent);
+  --tool-stripe: var(--accent);
+}
+
+/* Manifest `banner` / catalog `banner_url`: 3:1 art across the card top,
+   cropped to fill. Cards without one start with the identity row. */
+.tool-card__banner {
+  aspect-ratio: 3 / 1;
+  margin: calc(-1 * var(--tool-pad-y)) calc(-1 * var(--tool-pad-x)) 0;
+  overflow: hidden;
+  background: var(--bg-sunken);
+  border-bottom: var(--hair) solid var(--rule-strong);
+}
+
+.tool-card__banner img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tool-card__top {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3) var(--space-4);
+  align-items: start;
 }
 
 .tool-card__icon {
+  position: relative;
   display: grid;
   width: 3.25rem;
   height: 3.25rem;
@@ -828,6 +878,15 @@ input[type="checkbox"].settings-control {
   background: var(--bg-sunken);
   border: var(--hair) solid var(--rule-strong);
   place-items: center;
+}
+
+/* Below a banner the icon rises into it, so art and identity read as one. */
+.tool-card__banner + .tool-card__top .tool-card__icon {
+  width: 4rem;
+  height: 4rem;
+  margin-top: calc(-1 * var(--space-6));
+  background: var(--bg-raised);
+  border-color: var(--muted);
 }
 
 .tool-card__icon img {
@@ -887,7 +946,6 @@ input[type="checkbox"].settings-control {
 }
 
 .tool-card__description {
-  grid-column: 1 / -1;
   max-width: 72ch;
   margin: 0;
   color: var(--fg-dim);
@@ -1016,7 +1074,7 @@ input[type="checkbox"].settings-control {
 }
 
 .tool-card__actions {
-  grid-column: 1 / -1;
+  margin-top: auto;
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
@@ -1200,7 +1258,7 @@ input[type="checkbox"].settings-control {
   }
 
   .tool-card {
-    padding: var(--space-4);
+    --tool-pad-x: var(--space-4);
   }
 
   .tool-card__actions .settings-overflow {

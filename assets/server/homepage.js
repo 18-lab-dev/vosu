@@ -1048,7 +1048,10 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       function show(visible) { banner.hidden = !visible; banner.open = visible; about.hidden = visible; }
       dismiss.addEventListener('click', () => { storageSet(key, '1'); show(false); });
       about.addEventListener('click', () => show(true));
-      banner.append(dismiss); banner.after(about);
+      // Dismissed, the notice leaves only this link, tucked under the search
+      // field in the page head so the listing keeps the usual head-to-grid gap.
+      banner.append(dismiss);
+      (document.querySelector('.page-head') ?? banner.parentElement).append(about);
       show(storageGet(key) !== '1');
     }
     for (const id of ['POLL_RATE', 'PRECISE_DATA_POLL_RATE', 'V2_SUBSCRIPTION_DEBOUNCE']) {
@@ -1298,6 +1301,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     frame.height = sourceFrame.getAttribute('height');
     frame.title = sourceFrame.title;
     frame.setAttribute('scrolling', 'no');
+    if (sourceFrame.dataset.colorScheme) frame.dataset.colorScheme = sourceFrame.dataset.colorScheme;
     stage.append(frame);
     const resolution = card.querySelector('.meta-copy')?.textContent ?? '';
     openPreviewDialog(card.dataset.counterName ?? '', resolution, stage);

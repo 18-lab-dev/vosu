@@ -22,6 +22,8 @@ button:disabled { opacity: .5; cursor: default; }
 </main>
 <script type="module">
 import { vosu } from '/tools/_host/v1/bridge.js';
+// theme.css is optional; this example uses its tokens and picks the mode itself.
+document.documentElement.dataset.theme = vosu.colorScheme;
 const status = document.querySelector('#status');
 const count = document.querySelector('#count');
 const increment = document.querySelector('#increment');

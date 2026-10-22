@@ -317,11 +317,16 @@ impl ToolHost {
         let Some(manifest) = &entry.manifest else {
             return error(StatusCode::NOT_FOUND, "not found");
         };
-        let (root, relative) = if tail == "_icon" {
-            let Some(icon) = &manifest.icon else {
+        let art = match tail {
+            "_icon" => Some(&manifest.icon),
+            "_banner" => Some(&manifest.banner),
+            _ => None,
+        };
+        let (root, relative) = if let Some(art) = art {
+            let Some(art) = art else {
                 return error(StatusCode::NOT_FOUND, "not found");
             };
-            (entry.root.clone(), icon.as_str())
+            (entry.root.clone(), art.as_str())
         } else {
             let Some(ui) = &manifest.ui else {
                 return error(StatusCode::NOT_FOUND, "tool has no UI");

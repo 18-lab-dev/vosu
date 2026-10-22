@@ -463,7 +463,7 @@ fn installed_updates_use_catalog_metadata_and_actual_folder_target() {
     let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
     let remote = crate::server::catalog::merge_local(remote, &installed);
     annotate_installed_updates(&mut local, &remote);
-    let html = render_local_counters(&local, None, "localhost:24050");
+    let html = render_local_counters(&local, &[], None, "localhost:24050");
     assert!(html.contains("Update available</button>"));
     assert!(html.contains(r#"class="badge badge-warning""#));
     assert!(html.contains(r#"data-action="update-counter""#));
@@ -542,12 +542,17 @@ fn duplicate_installed_titles_show_their_folder() {
             counter("accuracy by sxlvia", "Accuracy"),
             counter("other", "other"),
         ],
+        &[preview_scheme::PreviewScheme::Dark],
         None,
         "localhost:24050",
     );
     assert_eq!(html.matches(r#"class="counter-card__folder""#).count(), 2);
     assert!(html.contains(r#"<span class="visually-hidden">Folder: </span>accuracy by sxlvia</p>"#));
     assert!(!html.contains(r#"</span>other</p>"#));
+    // Only the overlay that declares a dark scheme gets a dark preview frame;
+    // the others keep the light default.
+    assert_eq!(html.matches(r#"data-color-scheme="dark""#).count(), 1);
+    assert!(html.contains(r#"<iframe src="http://localhost:24050/accuracy/" data-color-scheme="dark""#));
 }
 
 #[test]

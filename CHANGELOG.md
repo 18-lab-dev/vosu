@@ -13,6 +13,8 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Run a tool from any directory with `vosu --tool <directory>`; manifests reload live and development services restart when their executable changes.
 - User tools in `<data dir>/tools/<id>/` require explicit trust on the dashboard. Official tools and their SDK now live separately in [vosu-tools](https://github.com/shiruviaa/vosu-tools); vosu embeds none.
 - Add a Python reference tool and a JSON Schema for `tool.toml`.
+- Let tools own their look: the browser bridge exposes the dashboard's colour mode as `vosu.colorScheme` and no longer sets `data-theme` on tool pages; `/tools/_host/v1/theme.css` stays available as an optional resource.
+- Add an optional manifest `banner` (3:1) beside `icon`, served at `/tools/<id>/_banner` and reported as ToolView `banner_url`; catalog tool and overlay entries may carry HTTPS `icon_url` and `banner_url`.
 
 ### Official catalog
 
@@ -27,6 +29,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 - Redesign every page in the 18-LAB style with WORKSTATION (dark) and DRAFTING (light) modes, embedded Barlow and IBM Plex Mono fonts, and a restyled diagnostics report.
 - Add a Tools page with status, dependencies, permissions, API routes, storage, logs, lifecycle and trust actions, and tool settings that reuse the overlay settings editor.
+- Show tool and catalog-overlay icons and banners on installed and Available cards, falling back to initials; list each interface (UI, Service, CLI) as its own chip; give cards in a row equal heights with their actions aligned at the bottom; number the Installed and Available sections alike.
+- Make overlay previews transparent in both modes. Each installed preview frame takes the colour scheme its overlay declares, because browsers paint an opaque backdrop behind an embedded page whose scheme differs from its frame's. Available previews sit on the neutral sheet colour.
+- Keep the "About community overlays" link under the search field after the notice is dismissed, and rename the footer's "Product" cell to "Project".
 
 ## 1.1.0 — 2026-10-17
 

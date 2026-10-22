@@ -43,6 +43,9 @@ pub(super) struct Tool {
     pub description: String,
     pub author: String,
     pub homepage: Option<String>,
+    /// HTTPS art shown on Available cards before installation.
+    pub icon_url: Option<String>,
+    pub banner_url: Option<String>,
     pub protocol: u32,
     pub interfaces: Vec<String>,
     #[serde(default)]
@@ -70,6 +73,8 @@ pub(super) struct Overlay {
     pub description: String,
     pub author: String,
     pub homepage: Option<String>,
+    pub icon_url: Option<String>,
+    pub banner_url: Option<String>,
     pub resolution: Option<[u32; 2]>,
     pub preview: Option<String>,
     #[serde(default)]
@@ -138,6 +143,9 @@ impl Catalog {
                     return Err("invalid catalog requirement".into());
                 }
                 semver::VersionReq::parse(&requirement.version).map_err(|e| e.to_string())?;
+            }
+            for url in tool.icon_url.iter().chain(&tool.banner_url) {
+                validate_url(url)?;
             }
             for package in tool.packages.values() {
                 validate_url(&package.url)?;
