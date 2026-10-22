@@ -108,6 +108,7 @@ export function mountTools({
   createActionDialog,
   currentTheme,
   setCount,
+  openToolSettings,
 }) {
   if (!root) return null;
   // Cards are re-rendered by polling; a live region would re-announce them.
@@ -345,11 +346,7 @@ export function mountTools({
       }));
     }
     if (view.has_settings) {
-      actions.append(el('a', {
-        className: 'button',
-        text: 'Settings',
-        attrs: { href: `/settings?tool=${encodeURIComponent(view.id)}`, 'aria-label': `Settings for ${name}` },
-      }));
+      actions.append(actionButton('Settings', 'settings', { describe: `Settings for ${name}` }));
     }
     if (hasService(view) && usable) {
       const running = status === 'running' || status === 'starting';
@@ -760,6 +757,7 @@ export function mountTools({
     const action = button.dataset.toolAction;
     if (action === 'launch') launch(button, view);
     else if (action === 'data') openData(view);
+    else if (action === 'settings') openToolSettings(view.id, view.name || view.id);
     else if (action === 'logs') openLogs(view);
     else lifecycle(button, view, action);
   });

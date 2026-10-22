@@ -14,7 +14,8 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - User tools in `<data dir>/tools/<id>/` require explicit trust on the dashboard. Official tools and their SDK now live separately in [vosu-tools](https://github.com/shiruviaa/vosu-tools); vosu embeds none.
 - Add a Python reference tool and a JSON Schema for `tool.toml`.
 - Let tools own their look: the browser bridge exposes the dashboard's colour mode as `vosu.colorScheme` and no longer sets `data-theme` on tool pages; `/tools/_host/v1/theme.css` stays available as an optional resource.
-- Add an optional manifest `banner` (3:1) beside `icon`, served at `/tools/<id>/_banner` and reported as ToolView `banner_url`; catalog tool and overlay entries may carry HTTPS `icon_url` and `banner_url`.
+- Add an optional manifest `banner` (3:1) beside `icon`, served at `/tools/<id>/_banner` and reported as ToolView `banner_url`; catalog tool and overlay entries may carry HTTPS `icon_url` and `banner_url`. Serve icons and banners in every tool status, sandboxed against script.
+- Add `GET /tools/<id>/_settings` and the bridge's `vosu.settings()` so tool UIs read their effective settings. `password` settings are write-only from the dashboard (never returned; blank keeps, Clear removes) and never included in that route; only the tool's service reads them through the host API.
 
 ### Official catalog
 
@@ -33,6 +34,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Show tool and catalog-overlay icons and banners on installed and Available cards, falling back to initials; list each interface (UI, Service, CLI) as its own chip; give cards in a row equal heights with their actions aligned at the bottom; number the Installed and Available sections alike.
 - Make overlay previews transparent in both modes. Each installed preview frame takes the colour scheme its overlay declares, because browsers paint an opaque backdrop behind an embedded page whose scheme differs from its frame's. Available previews sit on the neutral sheet colour.
 - Keep the "About community overlays" link under the search field after the notice is dismissed, and rename the footer's "Product" cell to "Project".
+- Edit tool settings from the tool's card in the same dialog overlays use; tools without `settings.json` show no Settings action.
+- Give installed overlays a dashboard nickname and a short URL alias (`/acc/` redirecting to the overlay's folder) from the card's **⋯** menu; aliases are validated against vosu's routes, folders, and other aliases and persist in `overlay-names.json`.
+- Use the width of large screens on Settings: a sticky section rail and runtime groups in two columns from 1440 px (three from 2400 px).
 
 ## 1.1.0 — 2026-10-17
 

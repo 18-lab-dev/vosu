@@ -181,6 +181,7 @@ impl Drop for ActiveInstall {
 pub struct ReloadableCounterService {
     current: ArcSwap<CounterService>,
     pending: tokio::sync::Mutex<HashMap<String, u64>>,
+    names: super::names::OverlayNames,
 }
 
 impl ReloadableCounterService {
@@ -192,11 +193,35 @@ impl ReloadableCounterService {
         ))
     }
 
+    /// Overlay names live beside the settings directory, in the config root.
     pub fn from_service(service: CounterService) -> Self {
+        let settings_root = service.settings.settings_root();
+        let names = super::names::OverlayNames::load(
+            settings_root
+                .parent()
+                .unwrap_or(settings_root)
+                .join("overlay-names.json"),
+        );
         Self {
             current: ArcSwap::from_pointee(service),
             pending: tokio::sync::Mutex::new(HashMap::new()),
+            names,
         }
+    }
+
+    pub fn names(&self) -> &super::names::OverlayNames {
+        &self.names
+    }
+
+    /// Points a nickname/alias change at the current static root.
+    pub fn set_name(
+        &self,
+        folder: &str,
+        nickname: Option<&str>,
+        alias: Option<&str>,
+    ) -> Result<super::names::OverlayName, String> {
+        self.names
+            .set(&self.current.load().static_root, folder, nickname, alias)
     }
 
     pub fn reload_static_root(&self, static_root: PathBuf) {
@@ -226,8 +251,16 @@ impl ReloadableCounterService {
         self.pending.lock().await.get(name).copied()
     }
 
+    /// Lists overlays and drops names of folders that no longer exist.
     pub fn discover(&self) -> Result<Vec<Counter>, CounterError> {
-        self.current.load_full().discover()
+        let counters = self.current.load_full().discover()?;
+        if let Err(error) = self
+            .names
+            .retain_folders(counters.iter().map(|counter| counter.folder_name.as_str()))
+        {
+            tracing::warn!(%error, "Could not prune overlay names");
+        }
+        Ok(counters)
     }
 
     pub async fn download(&self, request: &DownloadRequest) -> Result<(), CounterError> {
@@ -243,7 +276,11 @@ impl ReloadableCounterService {
     }
 
     pub fn delete(&self, name: &str) -> Result<(), CounterError> {
-        self.current.load_full().delete(name)
+        self.current.load_full().delete(name)?;
+        if let Err(error) = self.names.remove(name) {
+            tracing::warn!(%error, "Could not drop the deleted overlay's name");
+        }
+        Ok(())
     }
 
     pub fn details(&self, name: &str) -> Result<Value, CounterError> {

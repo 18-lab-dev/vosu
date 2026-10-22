@@ -46,6 +46,7 @@ impl ProductionRouteDelegate {
             Endpoint::CounterOpenRoot => self.counter_open_root(),
             Endpoint::CounterDelete => self.counter_delete(&request),
             Endpoint::CounterDetails => self.counter_details(request).await,
+            Endpoint::CounterNames => self.counter_names(&request, &body),
             Endpoint::DashboardStatus => {
                 let mut status = self.services.report_input.dashboard_status();
                 status["connections"] = json!(self.connections.counts());
@@ -160,6 +161,58 @@ impl ProductionRouteDelegate {
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
             },
         }
+    }
+
+    /// `POST /api/counters/names/<folder>` with `{"nickname","alias"}`;
+    /// null or blank clears a value.
+    fn counter_names(&self, request: &Request<Body>, body: &[u8]) -> Response {
+        #[derive(serde::Deserialize)]
+        struct Names {
+            nickname: Option<String>,
+            alias: Option<String>,
+        }
+        let Some(folder) = decoded_capture(request, "/api/counters/names/").filter(|name| !name.is_empty()) else {
+            return json_response(StatusCode::BAD_REQUEST, json!({ "error": "no folder name" }));
+        };
+        let Ok(names) = serde_json::from_slice::<Names>(body) else {
+            return json_response(StatusCode::BAD_REQUEST, json!({ "error": "invalid JSON" }));
+        };
+        match self.services.counters.set_name(&folder, names.nickname.as_deref(), names.alias.as_deref()) {
+            Ok(saved) => json_response(StatusCode::OK, json!(saved)),
+            Err(error) => json_response(StatusCode::BAD_REQUEST, json!({ "error": error })),
+        }
+    }
+
+    /// An overlay URL alias (`/acc/…`) redirects to its folder (`/accuracy%20by%20sxlvia/…`)
+    /// so relative assets, `COUNTER_PATH` and settings identity stay on the
+    /// real folder. A real folder of the same name always wins. 302, because
+    /// the alias can be changed or removed later.
+    fn alias_redirect(&self, request: &Request<Body>) -> Option<Response> {
+        let path = request.uri().path().strip_prefix('/')?;
+        let (alias, rest) = path.split_once('/').unwrap_or((path, ""));
+        if alias.is_empty() || self.services.counters.current_root().join(alias).exists() {
+            return None;
+        }
+        let folder = self.services.counters.names().folder_for_alias(alias)?;
+        let mut url = url::Url::parse("http://localhost/").expect("static base URL is valid");
+        url.path_segments_mut()
+            .expect("HTTP URLs have path segments")
+            .pop_if_empty()
+            .extend(folder.split('/'))
+            .push("");
+        let mut location = format!("{}{rest}", url.path());
+        if let Some(query) = request.uri().query() {
+            location.push('?');
+            location.push_str(query);
+        }
+        Some(
+            Response::builder()
+                .status(StatusCode::FOUND)
+                .header(header::LOCATION, location)
+                .header(header::CACHE_CONTROL, "no-store")
+                .body(Body::empty())
+                .unwrap(),
+        )
     }
 
     fn counter_delete(&self, request: &Request<Body>) -> Response {
@@ -394,6 +447,11 @@ impl ProductionRouteDelegate {
         path.to_owned()
     }
     async fn file(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
+        if endpoint == Endpoint::CounterStatic
+            && let Some(redirect) = self.alias_redirect(&request)
+        {
+            return redirect;
+        }
         let current = self.services.beatmap.files();
         let path = request.uri().path();
         if endpoint == Endpoint::SkinFile && path == "/files/skin/" {

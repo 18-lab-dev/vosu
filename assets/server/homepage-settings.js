@@ -165,7 +165,9 @@ export function createSettingsEditor({
     list.appendChild(row);
   }
 
-  function renderSettingField(setting, configuredValue) {
+  // `secret` is defined only for hosts that withhold password values (tools):
+  // true when one is in effect, false when none is.
+  function renderSettingField(setting, configuredValue, secret) {
     const kind = String(setting.type ?? 'text').toLowerCase();
     const id = String(setting.uniqueID ?? '');
     if (kind === 'header') {
@@ -219,8 +221,33 @@ export function createSettingsEditor({
     } else if (kind === 'color') {
       control = makeInput('color', value || '#f45cad');
     } else if (kind === 'password') {
-      control = makeInput('password', value);
+      control = makeInput('password', secret === undefined ? value : '');
       control.autocomplete = 'off';
+      if (secret === true) {
+        // The stored secret is never sent here: blank keeps it, Clear removes it.
+        control.placeholder = 'Saved — leave blank to keep';
+        const clear = document.createElement('button');
+        clear.type = 'button';
+        clear.className = 'button setting-secret-clear';
+        clear.textContent = 'Clear';
+        clear.addEventListener('click', () => {
+          const clearing = fieldset.dataset.clearSecret !== 'true';
+          fieldset.dataset.clearSecret = String(clearing);
+          control.value = '';
+          control.placeholder = clearing ? 'Will be cleared on save' : 'Saved — leave blank to keep';
+          clear.textContent = clearing ? 'Keep' : 'Clear';
+          clear.setAttribute('aria-pressed', String(clearing));
+        });
+        control.addEventListener('input', () => {
+          if (control.value && fieldset.dataset.clearSecret === 'true') clear.click();
+        });
+        control.setAttribute('aria-label', String(setting.title || id));
+        const row = document.createElement('div');
+        row.className = 'setting-secret';
+        row.append(control, clear);
+        fieldset.appendChild(row);
+        return fieldset;
+      }
     } else if (kind === 'textarea') {
       control = document.createElement('textarea');
       control.className = 'setting-value';
@@ -291,6 +318,7 @@ export function createSettingsEditor({
         if (!control) return;
         if (kind === 'checkbox') value = control.checked;
         else if (kind === 'number' && control.value !== '') value = Number(control.value);
+        else if (kind === 'password' && fieldset.dataset.clearSecret === 'true' && !control.value) value = null;
         else value = control.value;
       }
       payload.push({ uniqueID: id, value });
@@ -388,7 +416,7 @@ export function createSettingsEditor({
     target,
     schema,
     values,
-    { inline = false, dialogRequestId = null, profile, registry } = {},
+    { inline = false, dialogRequestId = null, profile, registry, secrets } = {},
   ) {
     const folder = target.id;
     const isTool = target.kind === 'tool';
@@ -433,7 +461,7 @@ export function createSettingsEditor({
       const configured = Object.prototype.hasOwnProperty.call(values, setting.uniqueID)
         ? values[setting.uniqueID]
         : undefined;
-      const field = renderSettingField(setting, configured);
+      const field = renderSettingField(setting, configured, secrets?.[setting.uniqueID]);
       list.appendChild(field);
       if (String(setting.type).toLowerCase() === 'header') {
         field.id = `settings-section-${groups.length}`;
@@ -503,6 +531,8 @@ export function createSettingsEditor({
       if (!isCurrentDialogRequest(dialogRequestId)) return;
       setBusy(save, true, 'Saving…');
       try {
+        // Collect inside the try: invalid command rows throw a user-facing error.
+        const payload = collectCounterSettings(form, schema);
         const url = isTool
           ? `/api/tools/${encodeURIComponent(folder)}/settings`
           : `/api/counters/settings/${encodeURIComponent(folder)}?profile=${encodeURIComponent(profile)}`;
@@ -548,10 +578,9 @@ export function createSettingsEditor({
 
   function settingsPayload(payload) {
     const schema = Array.isArray(payload.settings) ? payload.settings : [];
-    const values = payload.values && typeof payload.values === 'object' && !Array.isArray(payload.values)
-      ? payload.values
-      : {};
-    return { schema, values };
+    const object = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+    // Tools report `secrets` instead of password values; overlays have none.
+    return { schema, values: object(payload.values) ?? {}, secrets: object(payload.secrets) ?? undefined };
   }
 
   function showLoadError(container, requestId, error) {
@@ -576,8 +605,8 @@ export function createSettingsEditor({
     return target;
   }
 
-  async function loadCounterSettings(folder, { inline = false, profile = null } = {}) {
-    const target = loadingTarget(inline, `Settings: ${folder}`, 'Edit values provided by this overlay.', 'Loading overlay settings…');
+  async function loadCounterSettings(folder, { inline = false, profile = null, name = '' } = {}) {
+    const target = loadingTarget(inline, `Settings: ${name || folder}`, 'Edit values provided by this overlay.', 'Loading overlay settings…');
     if (!target) return;
     const { container, requestId } = target;
     try {
@@ -605,10 +634,10 @@ export function createSettingsEditor({
         name ? Promise.resolve({ name }) : requestJson(base).catch(() => ({})),
       ]);
       if (!isCurrentDialogRequest(requestId)) return;
-      const { schema, values } = settingsPayload(payload);
+      const { schema, values, secrets } = settingsPayload(payload);
       const title = typeof view.name === 'string' && view.name ? view.name : id;
       if (inline) document.title = `${title} settings · vosu`;
-      renderCounterSettings(container, { kind: 'tool', id, name: title }, schema, values, { inline, dialogRequestId: requestId });
+      renderCounterSettings(container, { kind: 'tool', id, name: title }, schema, values, { inline, dialogRequestId: requestId, secrets });
     } catch (error) {
       showLoadError(container, requestId, error);
     }

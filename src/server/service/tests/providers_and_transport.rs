@@ -53,6 +53,60 @@
         relays.shutdown().await;
     }
 
+    #[tokio::test]
+    async fn overlay_aliases_redirect_to_their_folder_until_a_real_folder_takes_the_name() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("static/accuracy by sxlvia")).unwrap();
+        let counters = Arc::new(ReloadableCounterService::production(
+            root.path().join("static"), root.path().join("config/settings"), root.path().join("cache"),
+        ));
+        let (_, events) = tokio::sync::watch::channel(0);
+        let state = Arc::new(NoState { events });
+        let relays = Arc::new(WebSocketRelaySink::new());
+        let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), relays.clone()));
+        let unused = Arc::new(UnusedServices);
+        let delegate = ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
+            PageService, unused.clone(), counters, Arc::new(Current::default()),
+            unused.clone(), unused.clone(), unused,
+            WebSocketEndpoints {
+                v1: WebSocketHub::new(websocket::Schema::V1, state.clone()),
+                sc: WebSocketHub::new(websocket::Schema::StreamCompanion, state.clone()),
+                v2: WebSocketHub::new(websocket::Schema::V2, state.clone()),
+                precise: WebSocketHub::new(websocket::Schema::V2Precise, state.clone()),
+                commands: WebSocketHub::new(websocket::Schema::V1, state.clone()),
+                subscriptions: V2SubscriptionHub::new(state, std::time::Duration::ZERO),
+                processor: processor.clone(), relays: relays.clone(),
+            },
+        ));
+        assert_eq!(crate::server::routes::classify(&axum::http::Method::POST, "/api/counters/names/x"), Some(Endpoint::CounterNames));
+        assert_eq!(crate::server::routes::classify(&axum::http::Method::GET, "/api/counters/names/x"), None);
+        let set = |body: &'static str| delegate.dispatch(
+            Endpoint::CounterNames,
+            Request::builder().method("POST").uri("/api/counters/names/accuracy%20by%20sxlvia").body(Body::empty()).unwrap(),
+            Bytes::from_static(body.as_bytes()),
+        );
+        assert_eq!(set(r#"{"nickname":"Acc","alias":"tools"}"#).await.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(set(r#"{"nickname":"Acc","alias":"acc"}"#).await.status(), StatusCode::OK);
+        assert!(root.path().join("config/overlay-names.json").is_file());
+        let get = |uri: &'static str| delegate.dispatch(
+            Endpoint::CounterStatic, Request::builder().uri(uri).body(Body::empty()).unwrap(), Bytes::new(),
+        );
+        for (uri, location) in [
+            ("/acc", "/accuracy%20by%20sxlvia/"),
+            ("/ACC/assets/a.css?x=1", "/accuracy%20by%20sxlvia/assets/a.css?x=1"),
+        ] {
+            let response = get(uri).await;
+            assert_eq!(response.status(), StatusCode::FOUND, "{uri}");
+            assert_eq!(response.headers()[header::LOCATION], location, "{uri}");
+        }
+        assert_ne!(get("/other/").await.status(), StatusCode::FOUND);
+        // A folder created later under the alias's name takes precedence.
+        std::fs::create_dir_all(root.path().join("static/acc")).unwrap();
+        assert_ne!(get("/acc/").await.status(), StatusCode::FOUND);
+        processor.shutdown().await;
+        relays.shutdown().await;
+    }
+
     #[test]
     fn profile_injection_qualifies_only_explicit_overrides() {
         let legacy = counter_path_script("counter/index.html").unwrap();

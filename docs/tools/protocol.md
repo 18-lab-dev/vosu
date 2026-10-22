@@ -66,10 +66,10 @@ version = ">=0.1.0"              # semver requirement on the dependency's manife
 host = ["context", "songs:write"]  # see "Host API" below
 ```
 
-`settings.json` in the tool directory, when present, uses exactly the overlay `settings.json` schema and is rendered by the dashboard's existing settings editor. Profiles do not apply to tools.
+`settings.json` in the tool directory, when present, uses exactly the overlay `settings.json` schema and is edited from the tool's card on the Tools page (**Settings** opens the same dialog overlays use; `/settings?tool=<id>` shows it as a page). Profiles do not apply to tools. Settings of `type: "password"` are write-only from the dashboard: they are never shown or returned there, a blank field keeps the stored value, and **Clear** removes it. Use that type for credentials; only the tool's own service reads the value, through `GET /tools/_host/v1/settings`.
 Editors supporting JSON Schema for TOML (Taplo / Even Better TOML) can put `#:schema https://raw.githubusercontent.com/shiruviaa/vosu/main/docs/tools/tool.schema.json` on the first line. A local manifest can instead use `#:schema ../../docs/tools/tool.schema.json`, adjusted relative to that manifest. The schema validates structure; vosu additionally checks filesystem confinement, dependencies, and semantic versions.
 
-`icon` and `banner` give a tool its identity on the dashboard. The icon is square (SVG, or PNG at least 256×256) and is shown at 40–64 px. The banner is 3:1 (recommended 1200×400) and spans the full card width, cropped with `object-fit: cover`, so keep important content centred. Both are served from the tool directory on the overlay origin as `/tools/<id>/_icon` and `/tools/<id>/_banner` while the tool is usable; ToolView reports them as `icon_url` and `banner_url`. A missing or unreadable icon falls back to the name's initials, and a missing banner leaves the card without one.
+`icon` and `banner` give a tool its identity on the dashboard. The icon is square (SVG, or PNG at least 256×256) and is shown at 40–64 px. The banner is 3:1 (recommended 1200×400) and spans the full card width, cropped with `object-fit: cover`, so keep important content centred. Both are served from the tool directory on the overlay origin as `/tools/<id>/_icon` and `/tools/<id>/_banner` in every tool status, including disabled, untrusted, and failed tools, with a sandboxing `Content-Security-Policy` so an SVG opened directly cannot run script; ToolView reports them as `icon_url` and `banner_url`. A missing or unreadable icon falls back to the name's initials, and a missing banner leaves the card without one.
 
 Prefix matching is segment-aware: `/v1/beatmap` matches `/v1/beatmap` and `/v1/beatmap/…`, never `/v1/beatmaps`. Access is method-aware: GET/HEAD/WebSocket upgrades matching `read` are open even when the same prefix is also in `write`. Other methods require a matching `write` prefix and authenticated write authority. GET/HEAD on write-only prefixes also require that authority; unlisted routes return 404.
 
@@ -103,7 +103,8 @@ The `/tools` path prefix is reserved on the overlay listener: overlays cannot be
 | --- | --- |
 | `GET /tools` | 302 to the dashboard Tools page |
 | `/tools/<id>/api/<rest>` | Proxied to the service as `/<rest>` with query string, method, body (≤ 1 MiB), and WebSocket upgrades on `read` routes. Hop-by-hop headers, cookies, and `X-Vosu-*` request headers are stripped and re-set by vosu. On-demand services are started and the request held until ready. 503 when the tool is disabled, untrusted, failed, or blocked. |
-| `/tools/<id>/<path>` | Static file from `[ui].root` (root-confined, traversal-safe); `/tools/<id>/` serves `entry`. `/tools/<id>/_icon` and `/tools/<id>/_banner` serve the manifest art. 404 for service-only tools. |
+| `/tools/<id>/<path>` | Static file from `[ui].root` (root-confined, traversal-safe); `/tools/<id>/` serves `entry`. `/tools/<id>/_icon` and `/tools/<id>/_banner` serve the manifest art in any status. 404 for service-only tools. |
+| `GET /tools/<id>/_settings` | `{"values": {"<setting id>": value}}`: effective `settings.json` values with defaults applied, for the tool's UI. Read-only and open like other tool reads (overlays can read it too), so `password` settings are never included. 503 while the tool is unavailable. |
 | `/tools/_host/v1/*` | Host API and browser bridge (below) |
 | `GET /files/skin/` | Public current-skin metadata: `{"client":"stable"\|"lazer"\|null,"name":string\|null,"files":bool,"builtin":string\|null}`. Same overlay peer policy and CORS as other file reads; never exposes absolute paths. Re-read when starting an operation because the selected skin can change. |
 | `GET /files/skin/<path>` | Current stable or imported lazer skin file. Lazer filename lookup is case-insensitive, accepts relative subfolders, and resolves into its content-addressed files store with root confinement. Missing or unavailable lazer files return 404. Built-in lazer skins report `files:false` and `builtin` (`argon`, `argon-pro`, `triangles`, `legacy`, `retro`); use your own defaults. |
@@ -139,6 +140,7 @@ vosu.canWrite;               // true when this tab holds a UI session
 vosu.dashboardUrl;           // dashboard origin, for "Settings" links
 await vosu.fetch("v1/profile");          // relative to /tools/<id>/api/, adds the session header
 vosu.subscribe(fields, onFrame);         // /websocket/v2/subscribe helper
+await vosu.settings();                   // GET /tools/<id>/_settings → values (no password settings)
 ```
 
 `vosu.colorScheme` is a hint, read once when the bridge loads: the launch fragment's `theme=` value when present, otherwise `prefers-color-scheme`. The bridge sets no attributes or styles on the page. Tools that support both modes should follow it and declare a matching CSS `color-scheme` so native controls (select popups, scrollbars, date and number pickers) stay legible. Older bridges lack the property; tools can fall back with `vosu.colorScheme ?? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")`.
@@ -156,7 +158,7 @@ All POSTs require dashboard provenance and `X-Vosu-CSRF`, like other management 
 | `GET /api/tools/<id>` | `ToolView` |
 | `GET /api/tools/<id>/logs?after=<seq>` | `{"lines": [{"seq","ts","stream": "stdout"\|"stderr"\|"host","text"}]}` (bounded, newest 1000) |
 | `POST /api/tools/<id>/{enable,disable,start,stop,restart,trust,launch,open-data,clear-cache}` | Lifecycle and data actions; `launch` returns `{"url"}` |
-| `GET`/`POST /api/tools/<id>/settings` | Same request/response shapes as `/api/counters/settings/<name>` without profiles |
+| `GET`/`POST /api/tools/<id>/settings` | Same request/response shapes as `/api/counters/settings/<name>` without profiles, except `password` settings: GET returns them as `""` (also in the schema's default) plus `"secrets": {"<id>": true\|false}` telling whether a value is in effect; POST keeps the stored value for `""` or an omitted field and clears it for `null` |
 
 `ToolView`:
 

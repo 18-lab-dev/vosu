@@ -270,7 +270,8 @@ impl PageDataProvider for RuntimePages {
                     let mut local = local;
                     self.annotate_updates(&mut local).await;
                     let schemes = self.preview_schemes(&local).await;
-                    let html = render_local_counters(&local, &schemes, None, &authority);
+                    let names = self.counters.names().snapshot();
+                    let html = render_local_counters(&local, &schemes, &names, None, &authority);
                     (
                         if html.is_empty() {
                             r#"<div class="empty-state"><h2>No local overlays yet</h2><p>Install an overlay from the catalog, or copy an overlay folder into the overlays directory on this computer; vosu picks it up without a restart.</p><div class="counter-actions"><a class="button button-primary" href="/available">Browse available overlays</a><button class="button" type="button" data-action="open-overlays-root">Open overlays folder</button></div></div>"#.to_owned()
@@ -350,7 +351,8 @@ impl PageDataProvider for RuntimePages {
                 let mut local = local;
                 self.annotate_updates(&mut local).await;
                 let schemes = self.preview_schemes(&local).await;
-                render_local_counters(&local, &schemes, Some(&query), &authority)
+                let names = self.counters.names().snapshot();
+                render_local_counters(&local, &schemes, &names, Some(&query), &authority)
             };
             Ok(Bytes::from(if html.is_empty() {
                 empty_counter_search()
