@@ -45,6 +45,7 @@ impl LazerMemory {
             mapped_modes: [false; 4],
             config_scratch: Vec::new(),
             batched_skin: None,
+            skin_cache: None,
         }
     }
 

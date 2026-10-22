@@ -205,6 +205,7 @@ fn raw_global(status: GameState, time: i64) -> RawGlobal {
         game_time: time,
         menu_mods: default_calculated_mods(),
         skin_folder: "skin".into(),
+        current_skin: None,
         memory_songs_folder: "songs".into(),
     }
 }

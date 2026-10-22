@@ -282,6 +282,14 @@ pub struct ReleaseCorrection {
     pub press_offset: usize,
 }
 
+/// Current imported lazer skin. Paths are relative to its content-addressed files root.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CurrentSkin {
+    pub name: String,
+    pub builtin: Option<String>,
+    pub files: std::collections::BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Global {
     #[serde(rename = "isWatchingReplay")]
@@ -307,6 +315,8 @@ pub struct Global {
     pub menu_mods: CalculateMods,
     #[serde(rename = "skinFolder")]
     pub skin_folder: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_skin: Option<std::sync::Arc<CurrentSkin>>,
     #[serde(rename = "memorySongsFolder")]
     pub memory_songs_folder: String,
 }

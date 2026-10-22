@@ -499,6 +499,7 @@ impl StableMemory {
             game_time,
             menu_mods: menu,
             skin_folder: skin,
+            current_skin: None,
             memory_songs_folder: songs,
         }))
     }

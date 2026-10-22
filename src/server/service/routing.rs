@@ -396,6 +396,9 @@ impl ProductionRouteDelegate {
     async fn file(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
         let current = self.services.beatmap.files();
         let path = request.uri().path();
+        if endpoint == Endpoint::SkinFile && path == "/files/skin/" {
+            return json_response(StatusCode::OK, skin_metadata(&current));
+        }
         let counter_html_path = (endpoint == Endpoint::CounterStatic).then(|| {
             let relative = path.trim_start_matches('/');
             if path.ends_with('/') {

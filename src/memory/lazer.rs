@@ -47,6 +47,7 @@ mod roots;
 mod score_batch;
 mod scores;
 mod screens;
+mod skin;
 
 use batch::*;
 use global_batch::BeatmapHead;

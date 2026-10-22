@@ -25,6 +25,10 @@ impl OffsetGroup59 {
 pub struct OffsetGroup60 {
     #[serde(rename = "<Name>k__BackingField")]
     pub name_k_backing_field: usize,
+    #[serde(default)]
+    pub store: usize,
+    #[serde(default, rename = "SkinInfo")]
+    pub skin_info: usize,
     #[serde(flatten)]
     pub extras: IndexMap<String, Value>,
 }

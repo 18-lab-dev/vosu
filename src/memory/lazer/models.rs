@@ -104,6 +104,7 @@ pub struct LazerMemory {
     /// Skin name from the last batched configuration read, for `settings` (see
     /// `configuration.rs`); `None` when that read was sequential.
     pub(super) batched_skin: Option<Option<String>>,
+    pub(super) skin_cache: Option<(usize, usize, Arc<crate::model::memory::CurrentSkin>)>,
     /// Per-capture snapshot of the current screen's field span (see `roots.rs`).
     pub(super) screen_span: (usize, usize),
     pub(super) capture_screen: AtomicUsize,

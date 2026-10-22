@@ -1,7 +1,7 @@
 ---
 type: Runbook
 title: Reproduce the vendored osu!lazer offsets asset
-description: Historical maintainer procedure that reproduced the 2026.726.0 assets/offsets.json from pinned osu!, Satori, and .NET inputs.
+description: Reproduce the current 2026.921.0 offsets and skin-resource extension, with historical 2026.726.0 Satori inputs retained below.
 ---
 
 # Reproduce the vendored osu!lazer offsets asset
@@ -12,6 +12,66 @@ contributor prerequisite: daemon builds and runtime offset generation never run 
 The 1.1.0 template adds eight class fields: `osu.Game.Rulesets.Mania.Objects.ManiaHitObject.column`, the catch fields below, and `OsuHitObject.position`, `stackHeight` and `scale`. Readers skip a feature whose fields are zero, so a template entry may ship as a zero placeholder only until it is measured. On 2026-10-15 all eight were generated for the retained `2026.921.0` asset by the embedded generator against a running instance of the verification AppImage, re-hosted on its bundled runtime as the daemon does; every earlier field came out unchanged. Generated caches for `2026.1005.0` have identical values.
 
 The readers also use constants for layouts inside constructed generic types, which the assembly generator does not measure: `HitObjectProperty<T>` holds the `Bindable<T>` reference at +0 and `backingValue` at +8; `Bindable<int>` and `Bindable<float>` keep `value` at +0x40, but `Bindable<Vector2>` keeps it at +0x44 because the `disabled` bool precedes the 8-byte value; `HitEvent.Position` is a `Nullable<Vector2>` at +0x30 with its value at +4; `Lazy<Playfield>._value` is at +0x18. These were measured on both clients' bundled runtime (`10.0.12-dev`, the client's own CoreLib) with a throwaway probe that takes `ldflda` field addresses, the same technique as the generator's `--assemblies-only` mode. Re-measure them whenever the asset moves to a release with a different runtime.
+
+## Current skin extension (2026-10-22)
+
+The current skin reader follows `SkinManager.CurrentSkin` → `Bindable<Skin>.value`
+→ `Skin.store` → the first `ResourceStore<byte[]>.stores` entry
+→ `RealmBackedResourceStore<SkinInfo>.fileToStoragePathMapping`
+→ `Lazy<Dictionary<string,string>>._value`. The dictionary already contains
+lowercase filenames mapped to content-addressed storage paths. This avoids
+decoding Realm's native database objects and follows the exact mapping used by
+[lazer's store](https://github.com/ppy/osu/blob/aaa75b7c0a9f21d558ce84cd0ffac6c739bad8e7/osu.Game/Skinning/RealmBackedResourceStore.cs).
+Skin identity comes from `Skin.SkinInfo` → `Live<SkinInfo>.ID`; reserved GUIDs,
+not display names, identify the five built-in skins. An imported skin named
+"Argon" therefore remains an imported skin.
+
+All five added offsets were generated, not hand-edited. The owning generator
+now resolves CLR-style closed generic names in assembly-only mode and measures
+the MethodTable signature using the same first-word operation as its live mode.
+On the exact pinned AppImage/runtime every pre-existing field and signature
+remained unchanged. The new offsets are: Skin.store 56, Skin.SkinInfo 32,
+ResourceStore.stores 16, realm store mapping 48, Live.ID 8.
+
+The same runtime's field-address probe measured Dictionary `_entries` +0x10,
+`_count` +0x38, Lazy `_value` +0x18, and the 24-byte dictionary Entry's key +0,
+value +8, hashCode +16 and next +20. These constructed-generic layouts join the
+existing reader constants above; remeasure them when changing the bundled CLR.
+
+Reproduce the asset without launching a game or touching a user profile:
+
+```sh
+work=$(mktemp -d /tmp/vosu-skin-offsets.XXXXXX)
+curl --fail --location --output "$work/osu.AppImage" \
+  https://github.com/ppy/osu/releases/download/2026.921.0-lazer/osu.AppImage
+echo "dced9463b501009c95dbed891abd2f0acc2efb84ee4336f5b1cc3b7c04a5fc7d  $work/osu.AppImage" | sha256sum --check
+chmod u+x "$work/osu.AppImage"
+(cd "$work" && ./osu.AppImage --appimage-extract)
+dotnet restore tools/lazer-offset-generator/lazer-offset-generator.csproj \
+  --locked-mode -p:UseAppHost=false
+dotnet build tools/lazer-offset-generator/lazer-offset-generator.csproj \
+  --no-restore -p:UseAppHost=false -c Release
+cp -a "$work/squashfs-root/usr/bin" "$work/runtime"
+cp tools/lazer-offset-generator/bin/Release/net8.0/lazer-offset-generator.dll "$work/runtime/osu!.dll"
+cp tools/lazer-offset-generator/bin/Release/net8.0/Microsoft.Diagnostics.Runtime.dll "$work/runtime/"
+"$work/runtime/osu!" --assemblies-only \
+  --assembly-dir "$work/squashfs-root/usr/bin" \
+  --template assets/offsets.json --output "$work/offsets.json"
+sha256sum "$work/offsets.json"
+```
+
+Expected SHA-256: `53ef1a474082d036b27160302d15106717f075cedf2ab9fa2410dd2487ba0887`.
+The executable above runs the generator assembly, not the game. Original game
+assemblies remain in a separate directory so the generator can reflect them.
+Review before replacing the asset and refreshing its integrity/provenance.
+
+Offline behavioral reproduction:
+`cargo test --locked --lib --all-features skin -- --nocapture`.
+The sparse-memory fixture traverses the actual reader chain, checks the mapping,
+built-in GUID identity, imported-name collision, and cache reuse; HTTP resolution
+tests exercise case folding, percent decoding, missing/builtin files and traversal.
+This does **not** verify attachment to the user's live lazer session, real skin
+switch timing, or a live Realm notification invalidating the lazy mapping.
 
 The commands below reproduce the explicitly historical `2026.726.0` asset.
 They document prior source, runtime, DAC, and generator inputs; they are not a

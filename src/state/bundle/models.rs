@@ -179,6 +179,7 @@ pub struct GlobalState {
     pub menu_mods: CalculateMods,
     pub game_folder: String,
     pub skin_folder: String,
+    pub current_skin: Option<std::sync::Arc<crate::model::memory::CurrentSkin>>,
     pub songs_folder: String,
     pub memory_songs_folder: String,
 }
@@ -199,6 +200,7 @@ impl Default for GlobalState {
             menu_mods: default_calculated_mods(),
             game_folder: String::new(),
             skin_folder: String::new(),
+            current_skin: None,
             songs_folder: String::new(),
             memory_songs_folder: String::new(),
         }

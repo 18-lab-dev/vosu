@@ -59,6 +59,21 @@ pub struct OsuHitObjectOffsets {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct SkinResourceStoreOffsets {
+    pub stores: usize,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct SkinRealmStoreOffsets {
+    #[serde(rename = "fileToStoragePathMapping")]
+    pub mapping: usize,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct SkinLiveOffsets {
+    #[serde(rename = "<ID>k__BackingField")]
+    pub id: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ManiaHitObjectOffsets {
     #[serde(rename = "column")]
     pub column: Option<usize>,
@@ -69,6 +84,21 @@ pub struct ManiaHitObjectOffsets {
 pub struct LazerOffsets {
     pub osu_version: String,
     pub game_base_vtable: Option<usize>,
+    #[serde(
+        rename = "osu.Framework.IO.Stores.ResourceStore<System.Byte[]>",
+        default
+    )]
+    pub skin_resource_store: Option<SkinResourceStoreOffsets>,
+    #[serde(
+        rename = "osu.Game.Skinning.RealmBackedResourceStore<osu.Game.Skinning.SkinInfo>",
+        default
+    )]
+    pub skin_realm_store: Option<SkinRealmStoreOffsets>,
+    #[serde(
+        rename = "osu.Game.Database.RealmLive<osu.Game.Skinning.SkinInfo>",
+        default
+    )]
+    pub skin_live: Option<SkinLiveOffsets>,
     #[serde(rename = "osu.Game.Rulesets.Mania.Objects.ManiaHitObject", default)]
     pub mania_hit_object: Option<ManiaHitObjectOffsets>,
     #[serde(rename = "osu.Game.OsuGame")]

@@ -46,8 +46,11 @@ impl RuntimeBeatmap {
             .then(|| stable_skin_root(&regular.global.game_folder, &regular.global.skin_folder))
             .flatten()
             .filter(|path| path.is_absolute());
+        let skin = regular.global.current_skin.as_deref();
         json!({"client": if stable { "stable" } else { "lazer" }, "songs_dir":root,
-            "osu_dir":osu_dir,"skin":{"name":regular.global.skin_folder,"folder":skin_folder},"beatmap":beatmap})
+            "osu_dir":osu_dir,"skin":{"name":skin.map(|s| s.name.as_str()).unwrap_or(&regular.global.skin_folder),
+                "folder":skin_folder,"files":if stable { skin_folder.as_ref().is_some_and(|p| p.is_dir()) } else { skin.is_some_and(|s| !s.files.is_empty()) },
+                "builtin":skin.and_then(|s| s.builtin.as_deref())},"beatmap":beatmap})
     }
 }
 
@@ -90,7 +93,26 @@ pub(super) fn runtime_beatmap_files(
         background_file: current_file_relative(folder, regular.menu.background_filename.as_deref()),
         audio_file: current_file_relative(folder, regular.menu.audio_filename.as_deref()),
         songs_root,
-        skin_root: stable_skin_root(&regular.global.game_folder, &regular.global.skin_folder),
+        skin_root: if source == ClientType::Lazer {
+            None
+        } else {
+            stable_skin_root(&regular.global.game_folder, &regular.global.skin_folder)
+        },
+        skin: regular.global.current_skin.clone(),
+        skin_client: Some(if source == ClientType::Lazer {
+            "lazer"
+        } else {
+            "stable"
+        }),
+        skin_name: Some(
+            regular
+                .global
+                .current_skin
+                .as_ref()
+                .map(|s| &s.name)
+                .unwrap_or(&regular.global.skin_folder)
+                .clone(),
+        ),
         static_root: Some(static_root.to_owned()),
         lazer: source == ClientType::Lazer,
         ready,

@@ -323,6 +323,9 @@ impl StateBundle {
                     .memory_songs_folder
                     .clone_from(&raw_global.memory_songs_folder);
                 self.global.skin_folder = safe_join([raw_global.skin_folder.as_str()]);
+                self.global
+                    .current_skin
+                    .clone_from(&raw_global.current_skin);
                 if !regular_global_is_stale {
                     self.global.status = raw_global.status;
                     self.global.play_time = raw_global.play_time;

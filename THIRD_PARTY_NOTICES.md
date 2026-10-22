@@ -109,8 +109,8 @@ The current generated calculator fixture and oracle lock target `osu-pp-calculat
 - **Release:** <https://github.com/ppy/osu/releases/tag/2026.921.0-lazer>
 - **Verification AppImage:** <https://github.com/ppy/osu/releases/download/2026.921.0-lazer/osu.AppImage>
 - **Verification AppImage SHA-256:** `dced9463b501009c95dbed891abd2f0acc2efb84ee4336f5b1cc3b7c04a5fc7d`
-- **Generated `assets/offsets.json` SHA-256:** `bbbcbb646b30a763001611318cb077e7d915608a48c3be7e1edbfd921312cd30`
-  Regenerated on 2026-10-15 by the embedded generator (`--assemblies-only`, re-hosted on the client's runtime as the daemon does) against a running instance of this AppImage. Every previously measured field is unchanged; the eight mania, catch and spatial fields are now measured.
+- **Generated `assets/offsets.json` SHA-256:** `53ef1a474082d036b27160302d15106717f075cedf2ab9fa2410dd2487ba0887`
+  Regenerated on 2026-10-22 by the owned generator (`--assemblies-only`, re-hosted on this AppImage's bundled runtime), without attaching to a live client. Every previously measured field and the MethodTable signature is unchanged. Adds `Skin.store`, `Skin.SkinInfo`, `ResourceStore<byte[]>.stores`, `RealmBackedResourceStore<SkinInfo>.fileToStoragePathMapping`, and `RealmLive<SkinInfo>.<ID>k__BackingField`. The generic dictionary/entry and lazy layouts were measured with a field-address probe on the same runtime; see the offsets runbook.
 - **Generation runtime:** AppImage-bundled `Microsoft.NETCore.App 10.0.12`
 - **Spatial template extension:** `osu.Game.Rulesets.Osu.Objects.OsuHitObject`
   `position`, `stackHeight`, and `scale`. The inline `HitEvent.Position`

@@ -1,7 +1,17 @@
+fn skin_metadata(selected: &BeatmapFiles) -> Value {
+    let skin = selected.skin.as_deref();
+    json!({
+        "client": selected.skin_client,
+        "name": selected.skin_name,
+        "files": if selected.lazer { skin.is_some_and(|s| !s.files.is_empty()) }
+            else { selected.skin_root.as_ref().is_some_and(|p| p.is_dir()) },
+        "builtin": skin.and_then(|s| s.builtin.as_deref()),
+    })
+}
+
 #[derive(Debug)]
 enum FileRouteError {
     Unsafe,
-    LazerSkinUnavailable,
 }
 
 impl From<files::SafePathError> for FileRouteError {
@@ -13,9 +23,6 @@ impl From<files::SafePathError> for FileRouteError {
 fn file_route_error_response(error: FileRouteError) -> Response {
     match error {
         FileRouteError::Unsafe => not_found(),
-        FileRouteError::LazerSkinUnavailable => {
-            internal_error("This endpoint is unavailable for the lazer client.")
-        }
     }
 }
 
@@ -54,7 +61,19 @@ fn resolve_file_endpoint(
             root_missing(selected.songs_root.as_deref(), selected),
         )?,
         Endpoint::SkinFile if selected.lazer => {
-            return Err(FileRouteError::LazerSkinUnavailable);
+            let encoded = path.strip_prefix("/files/skin/").unwrap_or_default();
+            let name = files::decode_request_path(encoded)?.replace('\\', "/");
+            if name.is_empty() || name.split('/').any(|p| p.is_empty() || p == "." || p == ".." || p.contains(':')) {
+                return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
+            }
+            let Some(relative) = selected.skin.as_ref().and_then(|s| s.files.get(&name.to_lowercase())) else {
+                return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
+            };
+            let mut outcome = files::resolve_resource(selected.songs_root.as_deref(), relative, target, MissingKind::NotFound)?;
+            if let ResourceOutcome::File(file) = &mut outcome {
+                file.content_type = files::content_type(Path::new(&name));
+            }
+            outcome
         }
         Endpoint::SkinFile => files::resolve_encoded_resource(
             selected.skin_root.as_deref(),
