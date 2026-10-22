@@ -106,7 +106,7 @@ The `/tools` path prefix is reserved on the overlay listener: overlays cannot be
 | `/tools/<id>/<path>` | Static file from `[ui].root` (root-confined, traversal-safe); `/tools/<id>/` serves `entry`. `/tools/<id>/_icon` and `/tools/<id>/_banner` serve the manifest art in any status. 404 for service-only tools. |
 | `GET /tools/<id>/_settings` | `{"values": {"<setting id>": value}}`: effective `settings.json` values with defaults applied, for the tool's UI. Read-only and open like other tool reads (overlays can read it too), so `password` settings are never included. 503 while the tool is unavailable. |
 | `/tools/_host/v1/*` | Host API and browser bridge (below) |
-| `GET /files/skin/` | Public current-skin metadata: `{"client":"stable"\|"lazer"\|null,"name":string\|null,"files":bool,"builtin":string\|null}`. Same overlay peer policy and CORS as other file reads; never exposes absolute paths. Re-read when starting an operation because the selected skin can change. |
+| `GET /files/skin/` | Public current-skin metadata: `{"client":"stable"\|"lazer"\|null,"name":string\|null,"files":bool,"builtin":string\|null,"base":string\|null}`. `base` is the rendering family (`argon`, `argon-pro`, `triangles`, `legacy`, `retro`) for built-in and imported skins; null means unknown. Stable uses `legacy`. Same overlay peer policy/CORS as other file reads; never exposes absolute paths. Re-read before an operation because the selected skin can change. |
 | `GET /files/skin/<path>` | Current stable or imported lazer skin file. Lazer filename lookup is case-insensitive, accepts relative subfolders, and resolves into its content-addressed files store with root confinement. Missing or unavailable lazer files return 404. Built-in lazer skins report `files:false` and `builtin` (`argon`, `argon-pro`, `triangles`, `legacy`, `retro`); use your own defaults. |
 
 Access rules for `/tools/<id>/api/*`:
@@ -124,6 +124,12 @@ Base `VOSU_URL/tools/_host/v1`, authenticated with `X-Vosu-Tool-Token`. Public o
 | `GET /self` | none | `{"id","version","data_dir","cache_dir"}` |
 | `GET /settings` | none | Effective settings object `{ "<setting id>": value }` with defaults applied |
 | `GET /context` | `context` | `{"client": "stable"\|"lazer"\|null, "songs_dir": abs path\|null, "osu_dir": abs path\|null, "skin": null\|{"name": string, "folder": abs path\|null, "files": bool, "builtin": string\|null}, "beatmap": null \| {"checksum","mode","folder","file","audio","background"}}`; all values come from the selected instance. `osu_dir` is the stable installation directory (null for lazer); `skin.name` is the current skin and `skin.folder` is stable's `Skins/<name>` (null for lazer). `skin.files` indicates accessible current skin files; `skin.builtin` identifies a built-in lazer skin (otherwise null). With no selected instance both `osu_dir` and `skin` are null. `checksum` is the .osu MD5; `mode` is `"osu"\|"taiko"\|"fruits"\|"mania"` including converts. Beatmap paths are absolute; audio/background may be null. |
+
+The context's `skin` object also includes additive `base:string|null`, with the
+same rendering-family semantics as `/files/skin/`. Rendering state and selected
+mods are available through the public [v2 renderer fields](../../README.md#renderer-state-v2);
+no service token is needed to subscribe. A valid pointer to a missing optional
+field reports per-pointer absence rather than rejecting the subscription.
 
 `songs:write` is advisory: it declares that the service writes into the osu! songs directory and is shown at approval. Host permissions limit what vosu APIs return; they do not sandbox the process, which runs with the user's OS rights. Approving a user tool is an explicit trust decision.
 

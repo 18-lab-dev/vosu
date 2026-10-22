@@ -511,6 +511,31 @@ Maintainer workflow, evidence interpretation, troubleshooting, and maintenance t
 
 All calculation parameters are optional: `path`, `lazer`, `mode` (`0` osu, `1` taiko, `2` catch, `3` mania), `ar`, `cs`, `hp`, `od`, `clockRate`, `passedObjects`, `combo`, `nMisses`, `n100`, `n300`, `n50`, `nGeki`, `nKatu`, `mods` (legacy bits or a JSON mod object/array), `acc`, `sliderEndHits`, `smallTickHits`, `largeTickHits`, and `hitresultPriority`.
 
+### Renderer state (v2)
+
+Tools following the current map can subscribe to these additive fields through
+`/websocket/v2/subscribe` (the same fields appear in `/json/v2`):
+
+| JSON Pointer | Meaning |
+| --- | --- |
+| `/play/source` | `null` outside gameplay; `player` for local play (including multiplayer), `replay`, `spectator`, `autoplay` (AT/CN), or `watching` for stable's combined replay/spectate flag. A preview must hide for `state.number == 2` and `source == "player"`; treat missing/unknown sources during play as hidden too. |
+| `/beatmap/time/live` | Existing absolute map clock in milliseconds, including the song-select preview track. Do not replace it with time since opening the tool. |
+| `/beatmap/time/rate`, `/beatmap/time/running` | Actual lazer track frequency × tempo and decoupled-clock running flag. They follow custom rates and dynamic rate-adjust mods, rather than guessing from acronyms. Null when unavailable. Stable rate uses its fixed selected/gameplay mods; stable running remains null because no authoritative flag is read. |
+| `/settings/mode/number` | Current effective ruleset, including converts. `/play/mods/array` contains current song-select mod selection (with lazer settings), switching to gameplay/results mods in those states. Unset lazer random seeds are null until the client chooses one. |
+| `/settings/mania/scrollSpeedValue`, `/settings/mania/scrollTime` | Optional lazer double-precision speed and unadjusted base visible-time range `11485 / speed` ms. Existing integer `scrollSpeed` is retained. The renderer must still apply rate and skin hit-position scaling; do not apply this lazer formula to stable. |
+| `/settings/mania/scrollDirection` | Existing `{number,name}` (`0/up`, `1/down`). Lazer reads its ruleset setting. Stable has no equivalent read; its skin.ini `UpsideDown` must be honoured by the renderer. |
+| `/settings/mania/timingBasedNoteColouring` | Optional lazer ruleset boolean. |
+| `/settings/mania/perBeatmapScrollSpeed` | Optional stable current-map speed when per-map speeds are enabled and its memory value is available (`READ_MANIA_SCROLL_SPEED` must be enabled). |
+| `/settings/visual` | Optional object with nullable `snakingInSliders`, `snakingOutSliders`, `hitLighting`, `beatmapColours`, `hitAnimations`, `rateAdjustedHitAnimation`. Lazer reads client/ruleset config; stable exposes its `SnakingSliders` and `HitLighting`. Ruleset-dependent animation toggles describe the selected ruleset, not a previously selected one. Beatmap skin permission remains the inverse of `/settings/skin/ignoreBeatmapSkins`. |
+| `/settings/visual/scalingMode`, `/settings/visual/positionX`, `/settings/visual/positionY`, `/settings/visual/sizeX`, `/settings/visual/sizeY` | Optional lazer viewport scaling mode and normalized position/size settings; unknown values are null. Skin hit positions and column widths remain skin resources, not separate client configuration. |
+
+With a subscription active, regular and precise sampling use
+`V2_SUBSCRIPTION_DEBOUNCE` (default 1 ms), including song select. This permits
+30 Hz or faster updates at the default but is not a guaranteed frame rate:
+users can configure a slower interval, and publication/backpressure stays
+latest-only. Missing but syntactically valid JSON Pointers are permitted and
+report per-pointer absence; they do not invalidate the whole subscription.
+
 ### Current game files
 
 - `GET /backgroundImage`
@@ -519,7 +544,7 @@ All calculation parameters are optional: `path`, `lazer`, `mode` (`0` osu, `1` t
 - `GET /files/beatmap/file`
 - `GET /Songs/{path}`
 - `GET /files/beatmap/{path}`
-- `GET /files/skin/`; current skin metadata `{"client":"stable"|"lazer"|null,"name":string|null,"files":bool,"builtin":string|null}` without absolute paths
+- `GET /files/skin/`; current skin metadata `{"client":"stable"|"lazer"|null,"name":string|null,"files":bool,"builtin":string|null,"base":string|null}` without absolute paths. `base` identifies the rendering family (`argon`, `argon-pro`, `triangles`, `legacy`, `retro`) for built-in **and imported** skins; unknown families are null. Stable skins use `legacy`.
 - `GET /files/skin/{path}`; stable and imported lazer skin files (case-insensitive lazer filenames, including subfolders); unavailable/missing lazer files return 404. Built-in lazer skins have no files: metadata reports `files:false` with `builtin` equal to `argon`, `argon-pro`, `triangles`, `legacy`, or `retro`.
 
 File routes enforce root containment and support validated single HTTP byte ranges for media.

@@ -440,18 +440,13 @@ impl MemoryReader for LazerMemory {
             self.captured_track_length = batched.track_length;
             self.captured_room = batched.room_head;
             // The same transitions `global` and its nested `global_precise` apply.
-            if batched.replay && batched.spectator {
-                self.watching_replay = false;
-                self.spectating = true
-            } else if batched.replay {
-                self.watching_replay = true;
-                self.spectating = false
-            }
+            self.set_playback_source(batched.replay, batched.spectator);
             self.show_interface = batched.show_interface;
             self.status = GameState::Play.value() as i64;
             self.player_loading = false;
             self.precise_player = None;
             return Ok(ReadStatus::Ready(Global {
+                render: Some(self.render_state(player)),
                 is_watching_replay: self.watching_replay,
                 is_replay_ui_hidden: !self.replay_settings_overlay,
                 is_multi_spectating: batched.is_multi_spectating,
@@ -481,13 +476,7 @@ impl MemoryReader for LazerMemory {
         if player != 0 {
             let spectator = self.check_spectator(self.current_screen)?;
             let replay = self.check_watching_replay(self.current_screen, player)?;
-            if replay && spectator {
-                self.watching_replay = false;
-                self.spectating = true
-            } else if replay {
-                self.watching_replay = true;
-                self.spectating = false
-            }
+            self.set_playback_source(replay, spectator);
         } else if !is_loader {
             self.watching_replay = false;
             self.spectating = false
@@ -550,6 +539,7 @@ impl MemoryReader for LazerMemory {
         };
         self.precise_player = None;
         Ok(ReadStatus::Ready(Global {
+            render: Some(self.render_state(player)),
             is_watching_replay: self.watching_replay,
             is_replay_ui_hidden: !self.replay_settings_overlay,
             is_multi_spectating,
@@ -580,13 +570,7 @@ impl MemoryReader for LazerMemory {
         if playing {
             let spectator = self.check_spectator(self.current_screen)?;
             let replay = self.check_watching_replay(self.current_screen, player)?;
-            if replay && spectator {
-                self.watching_replay = false;
-                self.spectating = true
-            } else if replay {
-                self.watching_replay = true;
-                self.spectating = false
-            }
+            self.set_playback_source(replay, spectator);
         } else {
             self.watching_replay = false;
             self.spectating = false
@@ -953,6 +937,7 @@ impl MemoryReader for LazerMemory {
             "client.version".into(),
             Value::String(self.offsets.osu_version.clone()),
         );
+        let _ = self.ruleset_visual_settings(&mut values);
         let batched_skin = self.batched_skin.take();
         let skin = || -> Result<String, MemoryError> {
             let manager = self.root(GameRoot::SkinManager)?;

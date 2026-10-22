@@ -98,6 +98,13 @@ internal static class AssemblyOffsets
         JsonObject fields = [];
         foreach (string fieldName in entry.Fields)
         {
+            if (declared.IsEnum)
+            {
+                FieldInfo literal = declared.GetField(fieldName, BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new GeneratorException($"could not resolve enum '{entry.Name}.{fieldName}'");
+                fields[fieldName] = Convert.ToInt32(literal.GetRawConstantValue());
+                continue;
+            }
             FieldInfo field = FindField(declared, fieldName)
                 ?? throw new GeneratorException(
                     $"could not resolve field '{entry.Name}.{fieldName}'");

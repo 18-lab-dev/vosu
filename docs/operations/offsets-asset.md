@@ -60,7 +60,7 @@ cp tools/lazer-offset-generator/bin/Release/net8.0/Microsoft.Diagnostics.Runtime
 sha256sum "$work/offsets.json"
 ```
 
-Expected SHA-256: `53ef1a474082d036b27160302d15106717f075cedf2ab9fa2410dd2487ba0887`.
+Expected SHA-256 (including the render-state extension below): `5eb036c5366713a2d79015304016f213af41f84da96a476e5f67bfdf350a7d47`.
 The executable above runs the generator assembly, not the game. Original game
 assemblies remain in a separate directory so the generator can reflect them.
 Review before replacing the asset and refreshing its integrity/provenance.
@@ -72,6 +72,63 @@ built-in GUID identity, imported-name collision, and cache reuse; HTTP resolutio
 tests exercise case folding, percent decoding, missing/builtin files and traversal.
 This does **not** verify attachment to the user's live lazer session, real skin
 switch timing, or a live Realm notification invalidating the lazy mapping.
+
+## Renderer-state extension (2026-10-22)
+
+Using the same pinned release, source revision and runtime as above, the owned
+generator added 37 measurements without changing any existing measurement:
+
+- `DecouplingFramedClock.<IsRunning>k__BackingField` (57).
+- `AdjustableAudioComponent.adjustments`, `AudioAdjustments.frequencyAggregate`
+  and `tempoAggregate`, `AggregateBindable<double>.result`, and
+  `Bindable<double>.value`. The reader follows the track source and multiplies
+  frequency × tempo, as the framework's `Track.Rate` does.
+- `Bindable<int?>.value` (68), preserving null random seeds rather than reading
+  their uninitialized integer payload. The nullable's integer payload follows
+  its `HasValue` flag at +4.
+- Four SkinManager built-in references (legacy 40, argon 120, triangles 128,
+  retro 136). Imported skins use the same concrete classes; their MethodTables
+  are compared with these instances. A probe under the pinned runtime verified
+  MethodTable's parent at +0x10 against `BaseType.TypeHandle` for `ArgonProSkin`
+  and `DefaultLegacySkin`, allowing their derived/base families to be recognized.
+- 26 requested `osu.Game.Configuration.OsuSetting` enum literals. The owning
+  generator now reads literal values for enum template types (in assembly and
+  ClrMD modes), while still measuring instance fields for class template types.
+  These values are versioned with each client's offsets, not hardcoded in the
+  reader. Notable corrected keys on this release: ReleaseStream 35,
+  ScoreDisplayMode 60, ReplaySettingsOverlay 90, BeatmapSkins 56,
+  BeatmapColours 57 and HitLighting 75. The previous reader's 54 was
+  ScreenshotFormat, not BeatmapSkins.
+
+Sources:
+[beatmap clock](https://github.com/ppy/osu/blob/aaa75b7c0a9f21d558ce84cd0ffac6c739bad8e7/osu.Game/Beatmaps/FramedBeatmapClock.cs),
+[configuration](https://github.com/ppy/osu/blob/aaa75b7c0a9f21d558ce84cd0ffac6c739bad8e7/osu.Game/Configuration/OsuConfigManager.cs),
+[mania scroll formula](https://github.com/ppy/osu/blob/aaa75b7c0a9f21d558ce84cd0ffac6c739bad8e7/osu.Game.Rulesets.Mania/UI/DrawableManiaRuleset.cs),
+and framework
+[decoupling clock](https://github.com/ppy/osu-framework/blob/a0b031e7ff6c83d81da26fcbece7d25edbd222b4/osu.Framework/Timing/DecouplingFramedClock.cs)
+and [track rate](https://github.com/ppy/osu-framework/blob/a0b031e7ff6c83d81da26fcbece7d25edbd222b4/osu.Framework/Audio/Track/Track.cs).
+Lazer viewport scaling position/size are floats; mania scroll speed is double.
+Stable visual toggle spellings (`SnakingSliders`, `HitLighting`) were checked
+against a read-only local stable configuration; no stable offsets were invented.
+
+Reproduce the asset with the commands above, then rebuild the generator bundle
+after any generator source change:
+`python scripts/prepare-offset-generator.py --rid linux-x64`.
+The verified bundle SHA-256 for this source is
+`8a1d2017fb83b1f0750782001055807a99fbf8560526a438bdf5e3186c2d42bb`.
+The bundle lives under ignored `target/offset-generator/`; it is not committed.
+
+Offline checks include `cargo test --locked --lib --all-features`: sparse-memory
+tests cover effective track rate/running, clearing replay/spectator state,
+imported skin families, nullable random seeds, and batched/sequential config
+agreement. API tests cover fractional mania speed, selected mod settings and
+converted ruleset in song select, null unknown clock state, and matching DTO/direct
+serialization. Source proves the menu beatmap clock is changed to the music
+controller's selected track; default subscription sampling is 1 ms while demanded,
+but neither a live track clock nor achieved update frequency was measured here.
+No user session was attached. Native Windows execution, real skin switching,
+live per-map stable speed discovery and dynamic-mod track-rate changes remain
+unverified; Windows MSVC cross-checks are not substitutes for those observations.
 
 The commands below reproduce the explicitly historical `2026.726.0` asset.
 They document prior source, runtime, DAC, and generator inputs; they are not a

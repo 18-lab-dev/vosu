@@ -246,6 +246,7 @@ pub(super) fn build_lazer_client(
         &score.statistics,
     );
     let play = Play {
+        source: Some(PlaySource::Spectator),
         failed: false,
         player_name: score.player_name.clone(),
         mode: number_name(Some(score.mode), ruleset_name(score.mode)),

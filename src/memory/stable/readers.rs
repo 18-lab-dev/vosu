@@ -488,6 +488,7 @@ impl StableMemory {
             }
         };
         Ok(ReadStatus::Ready(Global {
+            render: None,
             is_watching_replay: watching,
             is_replay_ui_hidden: hidden,
             is_multi_spectating: false,
@@ -643,12 +644,7 @@ impl StableMemory {
                 out.insert((*path).into(), Value::String(name.into()));
             }
         }
-        if self.read_mania_scroll_speed {
-            let global = out.get("mania.scrollSpeed").and_then(Value::as_f64);
-            if let Some(speed) = self.beatmap_scroll_speed(global).unwrap_or(global) {
-                out.insert("mania.scrollSpeed".into(), json!(speed));
-            }
-        }
+        self.apply_mania_speed(&mut out);
         Ok(ReadStatus::Ready(out))
     }
 }

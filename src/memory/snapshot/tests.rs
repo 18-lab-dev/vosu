@@ -18,6 +18,7 @@ fn mods(checksum: &str) -> CalculateMods {
 
 fn global() -> Global {
     Global {
+        render: None,
         is_watching_replay: false,
         is_replay_ui_hidden: false,
         is_multi_spectating: false,

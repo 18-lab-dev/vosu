@@ -1,4 +1,5 @@
 mod hit_windows;
+mod render_state;
 mod wire;
 use std::sync::Arc;
 
@@ -387,6 +388,8 @@ fn fractional_and_nonfinite_ipc_ids_follow_javascript_json() {
 #[test]
 fn mp3_length_preserves_fraction_and_serializes_nonfinite_as_null() {
     let time = |mp3_length| BeatmapTime {
+        rate: None,
+        running: None,
         live: 0.0,
         first_object: 0,
         last_object: 0.0,
@@ -394,42 +397,48 @@ fn mp3_length_preserves_fraction_and_serializes_nonfinite_as_null() {
     };
     assert_eq!(
         json(&time(None)),
-        r#"{"live":0,"firstObject":0,"lastObject":0}"#
+        r#"{"live":0,"rate":null,"running":null,"firstObject":0,"lastObject":0}"#
     );
     assert_eq!(
         json(&time(Some(12.5))),
-        r#"{"live":0,"firstObject":0,"lastObject":0,"mp3Length":12.5}"#
+        r#"{"live":0,"rate":null,"running":null,"firstObject":0,"lastObject":0,"mp3Length":12.5}"#
     );
     assert_eq!(
         json(&time(Some(f64::NEG_INFINITY))),
-        r#"{"live":0,"firstObject":0,"lastObject":0,"mp3Length":null}"#
+        r#"{"live":0,"rate":null,"running":null,"firstObject":0,"lastObject":0,"mp3Length":null}"#
     );
     assert_eq!(
         json(&BeatmapTime {
+            rate: None,
+            running: None,
             live: 0.0,
             first_object: 0,
             last_object: 12.5,
             mp3_length: None,
         }),
-        r#"{"live":0,"firstObject":0,"lastObject":12.5}"#
+        r#"{"live":0,"rate":null,"running":null,"firstObject":0,"lastObject":12.5}"#
     );
     assert_eq!(
         json(&BeatmapTime {
+            rate: None,
+            running: None,
             live: 0.0,
             first_object: 0,
             last_object: 1e21,
             mp3_length: None,
         }),
-        r#"{"live":0,"firstObject":0,"lastObject":1e+21}"#
+        r#"{"live":0,"rate":null,"running":null,"firstObject":0,"lastObject":1e+21}"#
     );
     assert_eq!(
         json(&BeatmapTime {
+            rate: None,
+            running: None,
             live: 0.0,
             first_object: 0,
             last_object: f64::NEG_INFINITY,
             mp3_length: None,
         }),
-        r#"{"live":0,"firstObject":0,"lastObject":null}"#
+        r#"{"live":0,"rate":null,"running":null,"firstObject":0,"lastObject":null}"#
     );
     assert_eq!(
         json(&Session {
@@ -447,12 +456,14 @@ fn mp3_length_preserves_fraction_and_serializes_nonfinite_as_null() {
     );
     assert_eq!(
         json(&BeatmapTime {
+            rate: None,
+            running: None,
             live: f64::NAN,
             first_object: 0,
             last_object: 0.0,
             mp3_length: None,
         }),
-        r#"{"live":null,"firstObject":0,"lastObject":0}"#
+        r#"{"live":null,"rate":null,"running":null,"firstObject":0,"lastObject":0}"#
     );
     assert_eq!(
         json(&Session {

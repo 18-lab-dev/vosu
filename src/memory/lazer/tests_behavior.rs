@@ -792,6 +792,16 @@ fn decode_mod_fixture(acronym: &str, mode: i64) -> Mod {
         memory.f64(bindable + 0x40, 1.25 + index as f64);
         memory.i32(bindable + 0x48, 100 + index as i32);
     }
+    if matches!(acronym, "RD" | "TP") {
+        let seed = if acronym == "RD" { 0x2000 } else { 0x2200 };
+        let offset = LazerOffsets::embedded()
+            .unwrap()
+            .bindable_nullable_int
+            .as_ref()
+            .unwrap()
+            .value;
+        memory.put(seed + offset, [1]);
+    }
     if acronym == "EZ" {
         memory.i32(object + 0x20, 3);
     }

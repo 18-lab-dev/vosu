@@ -105,26 +105,25 @@ pub mod fixture {
             }
             list
         }
-        fn config(&mut self, p: usize, keys: &[i32]) {
+        fn config(&mut self, p: usize, keys: &[(i32, usize)], local: bool) {
             let config = self.child(p);
             let store = self.child(config + 0x20);
             let entries = self.child(store + 0x10);
             self.i32(store + 0x38, keys.len() as i32);
-            for (i, &key) in keys.iter().enumerate() {
+            for (i, &(key, width)) in keys.iter().enumerate() {
                 let e = entries + 0x10 + i * 0x18;
                 let bind = self.child(e);
                 self.i32(e + 0x10, key);
                 self.f64(bind + 0x40, 0.5);
-                if [12, 88, 4, 10, 19, 20, 56, 54].contains(&key) {
+                if width == 1 {
                     self.put(bind + 0x40, &[1]);
-                }
-                if [34, 58, 30, 40, 39, 14].contains(&key) {
+                } else if width == 4 {
                     self.i32(bind + 0x40, 0);
                 }
-                if [2, 3].contains(&key) && keys.contains(&88) {
+                if local && [11, 12, 22, 23, 24, 25].contains(&i) {
                     self.f32(bind + 0x40, 1.25);
                 }
-                if [7, 11].contains(&key) && !keys.contains(&88) {
+                if [7, 11].contains(&key) && !local {
                     self.i32(bind + 0x44, 1920);
                     self.i32(bind + 0x48, 1080);
                 }
@@ -322,13 +321,13 @@ pub mod fixture {
                 }
                 image.config(
                     base + o.osu_game_osu_game_base.local_config_k_backing_field,
-                    &[
-                        34, 58, 30, 40, 39, 12, 88, 6, 7, 22, 23, 2, 3, 4, 10, 19, 20, 56, 54,
-                    ],
+                    &o.local_config_keys.as_ref().unwrap().fields(),
+                    true,
                 );
                 image.config(
                     base + o.osu_game_osu_game.framework_config_k_backing_field,
-                    &[14, 7, 11, 3, 5, 4, 21],
+                    &[(14, 4), (7, 8), (11, 8), (3, 8), (5, 8), (4, 8), (21, 8)],
+                    false,
                 );
                 let skin_manager =
                     image.child(base + o.osu_game_osu_game_base.skin_manager_k_backing_field);

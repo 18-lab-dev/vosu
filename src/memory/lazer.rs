@@ -40,6 +40,7 @@ mod helpers;
 mod menu_batch;
 mod menu_global;
 mod models;
+mod presentation;
 mod reader;
 mod resolver;
 mod room_batch;
@@ -48,6 +49,8 @@ mod score_batch;
 mod scores;
 mod screens;
 mod skin;
+#[cfg(test)]
+mod tests_presentation;
 
 use batch::*;
 use global_batch::BeatmapHead;

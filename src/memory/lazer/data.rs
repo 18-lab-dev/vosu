@@ -171,6 +171,21 @@ impl LazerMemory {
         settings.insert(key.to_owned(), value);
     }
 
+    pub(super) fn nullable_seed(&self, bindable: usize) -> Result<Value, MemoryError> {
+        let offset = self
+            .offsets
+            .bindable_nullable_int
+            .as_ref()
+            .ok_or_else(|| corrupt("mod seed", bindable, "unmeasured nullable bindable"))?
+            .value;
+        let address = add(bindable, offset)?;
+        match self.process.read_u8(address)? {
+            0 => Ok(Value::Null),
+            1 => Ok(Value::from(self.process.read_i32(add(address, 4)?)?)),
+            _ => Err(corrupt("mod seed", bindable, "invalid nullable flag")),
+        }
+    }
+
     pub(super) fn read_mod(&self, acronym: &str, object: usize) -> Result<Mod, MemoryError> {
         let mut settings = IndexMap::new();
         match acronym {
@@ -252,11 +267,7 @@ impl LazerMemory {
             }
             "TP" => {
                 let seed = self.bind_ptr(object, 0x20)?;
-                Self::setting(
-                    &mut settings,
-                    "seed",
-                    Value::from(self.process.read_i32(add(seed, 0x48)?)?),
-                );
+                Self::setting(&mut settings, "seed", self.nullable_seed(seed)?);
                 Self::setting(&mut settings, "metronome", self.bind_bool(object, 0x28)?);
             }
             "DA" => {
@@ -335,11 +346,7 @@ impl LazerMemory {
                         self.bind_f32(object, 0x18)?,
                     )
                 }
-                Self::setting(
-                    &mut settings,
-                    "seed",
-                    Value::from(self.process.read_i32(add(seed, 0x48)?)?),
-                );
+                Self::setting(&mut settings, "seed", self.nullable_seed(seed)?);
             }
             "MR" if self.selected_gamemode < 2 => Self::setting(
                 &mut settings,

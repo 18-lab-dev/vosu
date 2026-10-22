@@ -9,6 +9,8 @@ mod groups_01_20;
 mod groups_21_38;
 mod groups_39_58;
 mod groups_59_66;
+mod presentation;
+pub use presentation::LocalConfigKeys;
 
 pub use groups_01_20::*;
 pub use groups_21_38::*;
@@ -80,10 +82,48 @@ pub struct ManiaHitObjectOffsets {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct AudioComponentOffsets {
+    pub adjustments: usize,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct AudioAdjustmentsOffsets {
+    #[serde(rename = "frequencyAggregate")]
+    pub frequency: usize,
+    #[serde(rename = "tempoAggregate")]
+    pub tempo: usize,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct AggregateDoubleOffsets {
+    pub result: usize,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct BindableValueOffsets {
+    pub value: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct LazerOffsets {
     pub osu_version: String,
     pub game_base_vtable: Option<usize>,
+    #[serde(default, rename = "osu.Game.Configuration.OsuSetting")]
+    pub local_config_keys: Option<LocalConfigKeys>,
+    #[serde(default, rename = "osu.Framework.Audio.AdjustableAudioComponent")]
+    pub audio_component: Option<AudioComponentOffsets>,
+    #[serde(default, rename = "osu.Framework.Audio.AudioAdjustments")]
+    pub audio_adjustments: Option<AudioAdjustmentsOffsets>,
+    #[serde(
+        default,
+        rename = "osu.Framework.Bindables.AggregateBindable<System.Double>"
+    )]
+    pub aggregate_double: Option<AggregateDoubleOffsets>,
+    #[serde(default, rename = "osu.Framework.Bindables.Bindable<System.Double>")]
+    pub bindable_double: Option<BindableValueOffsets>,
+    #[serde(
+        default,
+        rename = "osu.Framework.Bindables.Bindable<System.Nullable<System.Int32>>"
+    )]
+    pub bindable_nullable_int: Option<BindableValueOffsets>,
     #[serde(
         rename = "osu.Framework.IO.Stores.ResourceStore<System.Byte[]>",
         default

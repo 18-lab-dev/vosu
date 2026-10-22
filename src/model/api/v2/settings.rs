@@ -77,6 +77,30 @@ pub struct Mania {
     pub scroll_speed: i64,
     #[serde(rename = "scrollDirection")]
     pub scroll_direction: ScrollDirection,
+    #[serde(
+        default,
+        rename = "scrollSpeedValue",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scroll_speed_value: Option<f64>,
+    #[serde(
+        default,
+        rename = "scrollTime",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scroll_time: Option<f64>,
+    #[serde(
+        default,
+        rename = "timingBasedNoteColouring",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub timing_based_note_colouring: Option<bool>,
+    #[serde(
+        default,
+        rename = "perBeatmapScrollSpeed",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub per_beatmap_scroll_speed: Option<f64>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Skin {
@@ -153,6 +177,22 @@ pub struct Keybinds {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Visual {
+    pub snaking_in_sliders: Option<bool>,
+    pub snaking_out_sliders: Option<bool>,
+    pub hit_lighting: Option<bool>,
+    pub beatmap_colours: Option<bool>,
+    pub hit_animations: Option<bool>,
+    pub rate_adjusted_hit_animation: Option<bool>,
+    pub scaling_mode: Option<i64>,
+    pub position_x: Option<f64>,
+    pub position_y: Option<f64>,
+    pub size_x: Option<f64>,
+    pub size_y: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(rename = "interfaceVisible")]
     pub interface_visible: bool,
@@ -180,4 +220,6 @@ pub struct Settings {
     pub audio: Audio,
     pub background: Background,
     pub keybinds: Keybinds,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual: Option<Visual>,
 }

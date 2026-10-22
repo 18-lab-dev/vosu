@@ -1,6 +1,24 @@
 use super::*;
 
 impl StableMemory {
+    pub(super) fn apply_mania_speed(&mut self, out: &mut Settings) {
+        out.insert("mania.perBeatmapScrollSpeed".into(), Value::Null);
+        if self.read_mania_scroll_speed {
+            let global = out.get("mania.scrollSpeed").and_then(Value::as_f64);
+            if let Some(speed) = self.beatmap_scroll_speed(global).unwrap_or(global) {
+                out.insert("mania.scrollSpeed".into(), json!(speed));
+                if self.mania_speed_address != 0
+                    && out
+                        .get("mania.usePerBeatmapSpeedScale")
+                        .and_then(Value::as_bool)
+                        == Some(true)
+                {
+                    out.insert("mania.perBeatmapScrollSpeed".into(), json!(speed));
+                }
+            }
+        }
+    }
+
     pub(super) fn leaderboard_player(
         &self,
         b: usize,
@@ -194,7 +212,7 @@ impl StableMemory {
     }
 }
 
-pub(super) const CONFIG: [(&str, &str, &str); 37] = [
+pub(super) const CONFIG: [(&str, &str, &str); 39] = [
     ("VolumeUniversal", "int", "audio.volume.master"),
     ("VolumeEffect", "int", "audio.volume.effect"),
     ("VolumeMusic", "int", "audio.volume.music"),
@@ -236,6 +254,8 @@ pub(super) const CONFIG: [(&str, &str, &str); 37] = [
     ("IgnoreBeatmapSkins", "bool", "skin.ignoreBeatmapSkins"),
     ("Skin", "bstring", "skin.name"),
     ("UseTaikoSkin", "bool", "skin.useTaikoSkin"),
+    ("SnakingSliders", "bool", "visual.snakingInSliders"),
+    ("HitLighting", "bool", "visual.hitLighting"),
 ];
 pub(super) const BINDINGS: [(i32, &str); 11] = [
     (2, "keybinds.osu.k1"),

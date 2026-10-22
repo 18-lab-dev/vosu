@@ -192,7 +192,8 @@ internal static partial class Program
                     {
                         fields.Add(
                             fieldName,
-                            ResolveObjectFieldOffset(type, entry.Name, fieldName, target.DataReader.PointerSize));
+                            type.IsEnum ? type.AsEnum().GetEnumValue<int>(fieldName)
+                                : ResolveObjectFieldOffset(type, entry.Name, fieldName, target.DataReader.PointerSize));
                     }
 
                     resolvedTypes.Add(entry.Name, new ResolvedType(type, fields));
