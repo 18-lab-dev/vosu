@@ -75,6 +75,25 @@ fn embed_generator_bundle() {
                 }
                 false
             } else {
+                if std::env::var("PROFILE").as_deref() == Ok("release") {
+                    // The checksum only proves the zip is intact. A bundle
+                    // prepared from older generator sources still passes it
+                    // while failing on templates that need newer generator
+                    // code, so release builds also require matching sources.
+                    let marker = zip.with_file_name(format!(
+                        "{}.inputs.sha256",
+                        zip.file_stem().unwrap().to_string_lossy()
+                    ));
+                    println!("cargo:rerun-if-changed={}", marker.display());
+                    let recorded = std::fs::read_to_string(&marker).unwrap_or_default();
+                    let current = generator_source_fingerprint();
+                    if recorded.trim() != current {
+                        panic!(
+                            "offset generator bundle {} was prepared from different generator sources; rerun scripts/prepare-offset-generator.py",
+                            zip.display()
+                        );
+                    }
+                }
                 true
             }
         }
@@ -104,6 +123,50 @@ fn embed_generator_bundle() {
     }
     source.push_str("}\n");
     std::fs::write(output, source).expect("failed to write generated daemon asset bindings");
+}
+
+/// Mirrors `fingerprint()` in scripts/prepare-offset-generator.py.
+fn generator_source_fingerprint() -> String {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+    use std::path::{Path, PathBuf};
+
+    let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let mut inputs: Vec<PathBuf> = [
+        "scripts/prepare-offset-generator.py",
+        "tools/lazer-offset-generator/lazer-offset-generator.csproj",
+        "tools/lazer-offset-generator/packages.lock.json",
+        "tools/lazer-offset-target/lazer-offset-target.csproj",
+        "tools/lazer-offset-target/packages.lock.json",
+        "LICENSE",
+        "LICENSE-MIT",
+        "LICENSE-APACHE",
+        "THIRD_PARTY_NOTICES.md",
+    ]
+    .iter()
+    .map(|relative| root.join(relative))
+    .collect();
+    for directory in ["tools/lazer-offset-generator", "tools/lazer-offset-target"] {
+        let mut sources: Vec<PathBuf> = std::fs::read_dir(root.join(directory))
+            .expect("read offset generator sources")
+            .map(|entry| entry.expect("offset generator source entry").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "cs"))
+            .collect();
+        sources.sort();
+        inputs.extend(sources);
+    }
+    let mut digest = Sha256::new();
+    for path in &inputs {
+        println!("cargo:rerun-if-changed={}", path.display());
+        let relative = path.strip_prefix(&root).unwrap_or(Path::new(""));
+        digest.update(relative.to_string_lossy().replace('\\', "/").as_bytes());
+        digest.update(std::fs::read(path).expect("read offset generator input"));
+    }
+    let mut hex = String::with_capacity(64);
+    for byte in digest.finalize() {
+        write!(hex, "{byte:02x}").unwrap();
+    }
+    hex
 }
 
 #[cfg(all(feature = "linux-process-events", target_os = "linux"))]
