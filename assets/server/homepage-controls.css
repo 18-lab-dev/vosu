@@ -733,6 +733,43 @@ input[type="checkbox"].settings-control {
   counter-reset: tool;
 }
 
+.tools-catalog {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--space-4);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border);
+}
+
+.tools-catalog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.tools-catalog__header h2 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  text-transform: uppercase;
+}
+
+.catalog-source-list { display: grid; gap: var(--space-4); }
+.catalog-source-row {
+  display: grid;
+  grid-template-columns: auto minmax(12rem, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--muted);
+}
+.catalog-source-row .field-help { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.catalog-source-row .setting-value { width: 100%; min-width: 0; }
+@media (max-width: 800px) {
+  .catalog-source-row { grid-template-columns: 1fr; }
+}
+
 .tools-root[aria-busy="true"] > .tools-loading {
   display: block;
 }

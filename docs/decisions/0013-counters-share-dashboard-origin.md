@@ -30,8 +30,10 @@ A valid token grants the existing same-origin command-socket mutation permission
 On the overlay HTTP origin it grants `settings:write` value saves
 (`POST /api/counters/settings/<name>[?profile=]`, never `?update=yes`) and
 `profiles:manage` (`POST /api/counters/profiles`, all actions). The 1.2.0
-amendment additionally grants tool CLI listing, launch, UI-open and session
-revocation under `/tools/_host/v1/cli`; listing is not public.
+amendment additionally grants tool CLI listing, launch, UI-open, session
+revocation, catalog-source listing, and tool package install/update/uninstall
+jobs under `/tools/_host/v1/cli`; these are not public. Package management
+does not approve untrusted tools or grant overlay package mutation authority.
 Other HTTP mutations, non-loopback peers and invalid/stale tokens return 401.
 Authorization is checked after body reading, just like revocable API keys.
 Restart rotates the credential; brokers reread the file. No token preserves

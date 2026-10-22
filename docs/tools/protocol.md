@@ -15,14 +15,16 @@ Each tool is one directory containing `tool.toml`. vosu scans these roots, in or
 | Root | Location | Trust |
 | --- | --- | --- |
 | Development | Each `--tool <directory>` passed on the vosu command line | Trusted for that run: the user launched it |
-| Bundled | Release-build embedded tree, verified and materialized under `<vosu cache directory>/tools/bundled/bundled-<version>-<tree digest>/` | Trusted; shipped inside the verified vosu executable |
+| Official | Catalog-installed packages in `<vosu data directory>/tools/<id>/` | Trusted; downloaded from the official catalog and verified against its SHA-256 and size |
 | User | `<vosu data directory>/tools/<id>/` | Untrusted until the user approves it in the dashboard |
 
-A development tool replaces a bundled or user tool with the same `id` for that run, so a checkout of a first-party tool can be developed against an installed vosu. A user tool that duplicates a bundled `id` is reported as `invalid`. In bundled and user roots the directory name must equal `id`.
+A development tool replaces an official or user tool with the same `id` for that run. Catalog installation never overwrites a development or user tool. In official and user roots the directory name must equal `id`. Installation provenance is stored in vosu's private tools state, not an archive-controlled manifest flag.
+
+Durable tool data is stored separately at `<vosu data directory>/tool-data/<id>/`, and caches at `<vosu cache directory>/tools/<id>/`. The installation root contains only packages (and temporary hidden staging siblings); no valid tool id can collide with durable data.
 
 vosu watches every root. Added, removed, or edited manifests and `settings.json` files apply without restarting vosu. For development tools, a change to the service executable also restarts a running service, so `cargo build` or saving a script is the whole edit loop.
 
-Release builds set `VOSU_BUNDLED_TOOLS` to an absolute staged directory whose immediate children are tool ids. Normal development builds embed no tools. Materialization uses a temporary sibling, synced files and atomic rename, checks cached bytes before reuse, and removes obsolete bundled versions. Release archives retain the updater's single-root-executable invariant.
+vosu embeds no tools. The official SDK, packages, and catalog are maintained in [vosu-tools](https://github.com/shiruviaa/vosu-tools). Installation downloads dependencies first, checks HTTPS destinations and redirects, verifies package size and SHA-256, rejects unsafe ZIP entries, and validates the manifest before atomically replacing a tool. Running services restart after updates; failed extraction leaves the previous installation intact.
 
 For a development service, a missing relative command is resolved by file name in Cargo output: starting at the tool directory, each ancestor containing `Cargo.toml` is checked for `$CARGO_TARGET_DIR/{debug,release}/<file>` (a relative environment value is resolved against that ancestor), or `target/{debug,release}/<file>` when the variable is unset. Debug is tried before release; the nearest matching ancestor wins. Bare executable names such as `python3` resolve through `PATH`; paths containing a separator resolve under the tool directory before the development fallback. On Windows an extensionless executable gets `.exe`.
 
@@ -114,7 +116,7 @@ Base `VOSU_URL/tools/_host/v1`, authenticated with `X-Vosu-Tool-Token`. Public o
 | --- | --- | --- |
 | `GET /self` | none | `{"id","version","data_dir","cache_dir"}` |
 | `GET /settings` | none | Effective settings object `{ "<setting id>": value }` with defaults applied |
-| `GET /context` | `context` | `{"client": "stable"\|"lazer"\|null, "songs_dir": abs path\|null, "beatmap": null \| {"checksum","mode","folder","file","audio","background"}}`; `checksum` is the .osu MD5, `mode` is `"osu"\|"taiko"\|"fruits"\|"mania"` (the played ruleset, including converts), paths are absolute filesystem paths of the selected instance (`audio`/`background` may be null). |
+| `GET /context` | `context` | `{"client": "stable"\|"lazer"\|null, "songs_dir": abs path\|null, "osu_dir": abs path\|null, "skin": null\|{"name": string, "folder": abs path\|null}, "beatmap": null \| {"checksum","mode","folder","file","audio","background"}}`; all values come from the selected instance. `osu_dir` is the stable installation directory (null for lazer); `skin.name` is the current skin and `skin.folder` is stable's `Skins/<name>` (null for lazer). With no selected instance both fields are null. `checksum` is the .osu MD5; `mode` is `"osu"\|"taiko"\|"fruits"\|"mania"` including converts. Beatmap paths are absolute; audio/background may be null. |
 
 `songs:write` is advisory: it declares that the service writes into the osu! songs directory and is shown at approval. Host permissions limit what vosu APIs return; they do not sandbox the process, which runs with the user's OS rights. Approving a user tool is an explicit trust decision.
 
@@ -153,7 +155,7 @@ All POSTs require dashboard provenance and `X-Vosu-CSRF`, like other management 
 {
   "id": "skill-tracker", "name": "Skill Tracker", "version": "0.1.0",
   "description": "…", "author": "18-LAB", "homepage": null, "icon_url": "http://127.0.0.1:24050/tools/skill-tracker/icon.svg",
-  "source": "bundled", "path": "…/tools/skill-tracker", "trusted": true, "enabled": true,
+  "source": "official", "update_available": false, "path": "…/tools/skill-tracker", "trusted": true, "enabled": true,
   "kind": "hybrid", "startup": "always",
   "status": "running", "status_detail": null,
   "ui_url": "http://127.0.0.1:24050/tools/skill-tracker/",
@@ -168,9 +170,28 @@ All POSTs require dashboard provenance and `X-Vosu-CSRF`, like other management 
 }
 ```
 
-`source` is `dev`, `bundled`, or `user`. `kind` is `ui`, `service`, `hybrid` (UI and service), or `cli` (CLI only). `status` is one of `stopped`, `starting`, `running`, `failed`, `blocked` (a dependency is missing, disabled, or unsatisfied), `untrusted`, `disabled`, `invalid` (manifest error; `status_detail` explains). Tools without a service report `running` when enabled; CLI processes are owned by their launchers, not supervised services.
+`source` is `dev`, `official`, or `user`. `update_available` compares the installed version with the last fetched catalog. `kind` is `ui`, `service`, `hybrid` (UI and service), or `cli` (CLI only). `status` is one of `stopped`, `starting`, `running`, `failed`, `blocked` (a dependency is missing, disabled, or unsatisfied), `untrusted`, `disabled`, `invalid` (manifest error; `status_detail` explains). Tools without a service report `running` when enabled; CLI processes are owned by their launchers, not supervised services.
 
 Starting a tool first starts its service dependencies. Dependency cycles make every tool in the cycle `invalid`.
+
+### Catalog sources and installation
+
+Settings / **Catalog sources** manages an ordered list of enabled or disabled sources. A source is `owner/repo`, `owner/repo@tag`, or an HTTPS URL ending in `/catalog.json`. Repository shorthand resolves to GitHub `/releases/latest/download/catalog.json` or `/releases/download/<tag>/catalog.json`. Defaults are `shiruviaa/vosu-tools` and `shiruviaa/vosu-overlays`; either may be disabled, removed, or reordered. The list is atomically persisted in `<vosu config directory>/tools/catalog-sources.json`. There is no separate catalog URL override.
+
+`GET /api/tools/catalog/sources` returns `{"sources":[{"source","enabled","url","status","last_error","fetched_at"}]}`. CSRF-protected `POST` to the same endpoint replaces the list with `{"sources":[{"source":"owner/repo","enabled":true}]}`. `GET /api/tools/catalog` fetches all enabled sources, returning merged `tools`, `overlays`, source fetch results, and `shadowed` entries. Earlier sources win each tool/overlay id; later entries are displayed as shadowed and cannot be installed. Entries carry `source`; tool views also include `installed`, `managed`, `installed_version`, `supported`, and `update_available`. Catalogs may contain tools, overlays, or both; dependencies resolve across enabled sources.
+
+Only tools from the exact default source `shiruviaa/vosu-tools` are installed as `official` and trusted automatically. All other catalog tools are `user` and remain untrusted until approved, just like manual installations. Size/digest verification establishes package integrity, not author trust. Catalog-installed tools cannot overwrite development tools or manually installed directories.
+
+Only `test-harness` builds accept source URLs at `http://tools.invalid:<port>/…/catalog.json` when `VOSU_TOOL_CATALOG_TEST_SOCKET` names that exact loopback listener; production builds contain no HTTP/loopback exception.
+
+`POST /api/tools/<id>/install`, `/update`, and `/uninstall` use the dashboard's normal CSRF protection. Uninstall requires JSON `{"remove_data":false}` to keep data or `{"remove_data":true}` to remove it; installed dependents must be removed first. Each action returns `{"job_id":"…"}`. Poll `GET /api/tools/catalog/jobs/<job_id>` for `{id,status,phase,tool,error}`; status is `running`, `completed`, or `failed`.
+
+The dashboard's Available page includes source overlays alongside the unchanged community catalog, with its existing third-party disclosure. `POST /api/tools/catalog/overlays/<id>/install` or `/update` verifies package size/digest and archive safety, requires root `index.html`, and atomically installs `<static folder>/<id>`. The body `{"install_tools":true}` explicitly accepts installing missing `requires_tools` first; absent approval the job fails rather than silently running extra programs. Tool approval remains separate. Overlay setting values live outside the replaced directory and survive updates. Remove overlays through the existing installed-overlay delete action.
+
+`vosux --install <id>`, `--update <id>`, and `--uninstall <id> (--keep-data|--remove-data)` use broker-authenticated overlay endpoints `POST /tools/_host/v1/cli/catalog/<id>/<action>` and `GET /tools/_host/v1/cli/catalog/jobs/<job_id>`, with the same bodies/results. No dashboard credential is disclosed.
+
+`vosux --sources` lists configured sources through broker-authenticated `GET /tools/_host/v1/cli/catalog/sources`. Install/update/uninstall CLI options remain tool-only.
+
 
 ## Conventions for tool APIs
 

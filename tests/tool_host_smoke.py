@@ -51,6 +51,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='vosu-tool-smoke-') as temporary:
         root = Path(temporary)
         environment = dict(os.environ)
+        for variable in ['DISPLAY', 'WAYLAND_DISPLAY', 'DBUS_SESSION_BUS_ADDRESS']:
+            environment.pop(variable, None)
         for variable, directory in [('HOME', 'home'), ('XDG_CONFIG_HOME', 'config'),
                                     ('XDG_DATA_HOME', 'data'), ('XDG_CACHE_HOME', 'cache'),
                                     ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
@@ -129,7 +131,7 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
                 daemon.send_signal(signal.SIGTERM)
                 assert daemon.wait(timeout=15) == 0
                 assert child_pid is not None and not Path(f'/proc/{child_pid}').exists()
-                marker = root / 'data/vosu/tools/data/fixture/stdin-closed'
+                marker = root / 'data/vosu/tool-data/fixture/stdin-closed'
                 assert marker.read_text() == 'yes'
                 print('vosu SIGTERM -> exit 0; child stdin EOF marker=yes; no orphaned child')
             except BaseException:

@@ -22,7 +22,7 @@ The host uses the tool directory as its working directory. `command = ["python",
 
 ## Rust with vosu-tool-sdk
 
-Add a binary crate depending on the workspace's `vosu-tool-sdk`, `axum`, and Tokio. The SDK reads the launch environment, checks the token on every route, binds loopback port 0, emits readiness, adds `/healthz`, and shuts down on stdin EOF:
+The SDK now lives in [vosu-tools](https://github.com/shiruviaa/vosu-tools), under `crates/vosu-tool-sdk`; add it as a dependency from that repository, alongside `axum` and Tokio. The SDK reads the launch environment, checks the token on every route, binds loopback port 0, emits readiness, adds `/healthz`, and shuts down on stdin EOF:
 
 ```rust
 use axum::{routing::get, Router};
@@ -74,7 +74,7 @@ Distribute user tools as a directory under `<vosu data directory>/tools/<id>/`; 
 5. Close stdin and require clean exit within five seconds, including while clients are connected.
 6. Through an isolated vosu, verify read-only UI access, dashboard launch/session writes, dependency permissions, and disable/restart behavior.
 
-The repository's `python scripts/test_stage_tools.py` exercises schema examples, temporary-workspace staging (including Windows filenames), and the Python service handshake/authentication/settings/EOF lifecycle without touching a running vosu. Release archive tests remain `python scripts/test_package_release.py`.
+Run `cargo test --locked -p vosu tools::` for the host manifest, discovery, catalog, supervision, and protocol tests. Release archive tests remain `python scripts/test_package_release.py`. SDK and official package tests live in [vosu-tools](https://github.com/shiruviaa/vosu-tools).
 
 ## Add a vosux command
 

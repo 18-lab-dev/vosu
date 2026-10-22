@@ -60,11 +60,6 @@ jobs:
 
       - name: Build verified offset generator bundle
         run: python scripts/prepare-offset-generator.py --rid linux-x64
-      - name: Build and stage bundled tools
-        run: |
-          cargo build --release --locked --no-default-features --target x86_64-unknown-linux-gnu -p vosu-tool-difficulty -p vosu-tool-trainer -p vosu-tool-skill-tracker
-          python scripts/stage-tools.py --target x86_64-unknown-linux-gnu --out target/bundled
-          echo "VOSU_BUNDLED_TOOLS=$GITHUB_WORKSPACE/target/bundled/tools" >> "$GITHUB_ENV"
       - name: Build daemon
         run: cargo build --release --locked --no-default-features --features linux-process-events --target x86_64-unknown-linux-gnu
       - name: Assert glibc 2.35 baseline
@@ -139,20 +134,6 @@ jobs:
 
       - name: Build verified offset generator bundle
         run: python scripts/prepare-offset-generator.py --rid win-x64
-      - name: Locate Windows libclang for tool bindings
-        shell: pwsh
-        run: |
-          $clang = Join-Path $env:ProgramFiles 'LLVM/bin'
-          if (!(Test-Path "$clang/libclang.dll")) { throw 'Hosted LLVM libclang.dll is required for tool builds' }
-          "LIBCLANG_PATH=$clang" >> $env:GITHUB_ENV
-      - name: Build and stage bundled tools
-        shell: pwsh
-        run: |
-          cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc -p vosu-tool-difficulty -p vosu-tool-trainer -p vosu-tool-skill-tracker
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/stage-tools.py --target x86_64-pc-windows-msvc --out target/bundled
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "VOSU_BUNDLED_TOOLS=$env:GITHUB_WORKSPACE/target/bundled/tools" >> $env:GITHUB_ENV
       - name: Build daemon
         run: cargo build --release --locked --no-default-features --target x86_64-pc-windows-msvc
 

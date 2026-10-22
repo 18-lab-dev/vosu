@@ -16,7 +16,7 @@ Add **tools** as vosu's first extension type, specified in the [tool protocol](.
 - Tools may depend on other tools. A dependent tool calls its dependencies through the same proxy with its per-launch token, so shared providers (for example the first-party difficulty provider) compute and cache once.
 - Services bind loopback port 0, announce readiness on stdout, authenticate every forwarded request with a per-launch token, and exit when stdin closes.
 - Tool roots are watched and `--tool <directory>` runs a development tool from any checkout, restarting it when its executable changes, so authors iterate without packaging or restarting vosu.
-- Bundled tools are embedded into the release executable, then verified and atomically materialized into a version/tree-digest cache directory at startup. Development builds without `VOSU_BUNDLED_TOOLS` embed no tools. This preserves the updater's existing single-root-executable archive validation rather than weakening it to allow arbitrary executable archive members.
+- Official tools are distributed separately through the vosu-tools HTTPS catalog. Size and SHA-256 verification, hardened ZIP extraction, manifest identity checks and atomic replacement precede trust. This preserves the daemon updater's single-root-executable archive validation. No tools or SDK are embedded in vosu releases.
 - Tools may declare optional `[cli]` argv. `vosux` (argv[0] dispatch in the
   same executable) and `vosu x` discover the running daemon through private
   `broker.json`, then spawn directly with inherited terminal streams. The CLI
@@ -36,7 +36,7 @@ This is still weaker than an opaque-origin sandbox. Any same-origin document hol
 
 ### Trust
 
-Bundled tools ship with and are verified by vosu releases. User-installed tools are untrusted until approved on the dashboard, because their services run as the user's OS account. Host permissions constrain only vosu APIs; they are not an OS sandbox and the dashboard says so at approval.
+Only tools installed from the default `shiruviaa/vosu-tools` source are `official` and automatically trusted. Catalog sources are user-configurable and ordered; other catalog tools and manually installed tools are `user` and remain untrusted until approved on the dashboard. Integrity checks do not establish author trust. Overlays from these sources have no tool trust gate and retain the existing third-party JavaScript disclosure. Services run as the user's OS account: host permissions constrain only vosu APIs, not an OS sandbox.
 
 ## Rejected alternatives
 

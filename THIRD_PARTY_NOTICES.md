@@ -4,39 +4,6 @@ This file inventories third-party material retained in the vosu repository. vosu
 
 First-party notice: `Copyright (c) 2026 sxlvia`, as confirmed by the maintainer for vosu work begun in 2026. The notice is repeated in `LICENSE-MIT`, the combined root `LICENSE`, and the matching calculator copies. It applies to project-authored material over which the respective contributors have licensing authority; it does not claim ownership of upstream work or resolve the source-provenance questions below.
 
-## Difficulty tool: MinaCalc 527
-
-- **Material:** `crates/vosu-tool-difficulty/vendor/MinaCalc/**`, `vendor/Models/NoteData/NoteDataStructures.h`, and `vendor/LICENSE`; complete file list and vendored SHA-256 identities: [`vendor-files.txt`](crates/vosu-tool-difficulty/vendor-files.txt).
-- **Upstream:** [Etterna revision `2d706147cc4bcf95a8ceb24dc4f4129be207f803`](https://github.com/etternagame/etterna/tree/2d706147cc4bcf95a8ceb24dc4f4129be207f803/src/Etterna/MinaCalc), calculator version 527.
-- **License/copyright:** MIT, Copyright (c) 2016–2023 Etterna <etternadev@gmail.com>; full license retained in [`vendor/LICENSE`](crates/vosu-tool-difficulty/vendor/LICENSE).
-- **Modification:** one standalone-build preprocessor guard; no calculator arithmetic changes. Original project-authored C ABI, conversion and durable provider. Exact mapping, selection research, computed Reform calibration sources, and hold-head-only limitations: [`PROVENANCE.md`](crates/vosu-tool-difficulty/PROVENANCE.md).
-- **New Rust/native dependency:** rusqlite 0.39.0 (MIT), bundled SQLite (public domain); exact transitive identities in `Cargo.lock`. No Companella, ONNX model, course charts, audio, or minacalc-rs code is redistributed. Synthetic test chart is CC0.
-
-## Trainer audio stack
-
-`crates/vosu-tool-trainer` independently implements practice-map transforms;
-no FunOrange osu-trainer code, SoundTouch, LAME, or Symphonia is included.
-Symphonia's MPL-2.0 is file-level copyleft, not an approved license under this
-release's stricter permissive-only dependency policy, so it was not selected.
-
-| Package / bundled native code | License | Purpose |
-| --- | --- | --- |
-| minimp3 0.6.1 / minimp3-sys 0.6.0 | MIT / CC0-1.0 native minimp3 | MP3 decoding |
-| hound 3.5.1 | Apache-2.0 | PCM/float WAV decoding |
-| vorbis_rs 0.5.6, aotuv_lancer_vorbis_sys 0.1.6, ogg_next_sys 0.1.5 | BSD-3-Clause | Vorbis decoding and OGG Vorbis encoding, statically built |
-| Signalsmith Stretch / Linear via signalsmith-stretch 0.1.3 | MIT | Pitch-preserving offline time stretch (C++, `cc` / bindgen) |
-| rubato 0.16.2 | MIT | Band-limited sinc resampling with pitch change |
-
-Exact native and wrapper license texts, including Xiph.org/Aoyumi, Alejandro
-González, Geraint Luff/Signalsmith Audio, and decoder notices, are retained in
-[`crates/vosu-tool-trainer/web/licenses.txt`](crates/vosu-tool-trainer/web/licenses.txt)
-and distributed as a tool UI asset. Package checksums are in `Cargo.lock`.
-Sources: [minimp3-rs](https://github.com/germangb/minimp3-rs),
-[hound](https://github.com/ruuda/hound),
-[vorbis-rs](https://github.com/ComunidadAylas/vorbis-rs),
-[Signalsmith wrapper](https://github.com/colinmarc/signalsmith-stretch-rs),
-[rubato](https://github.com/HEnquist/rubato).
-
 ## tosu compatibility and retained provenance
 
 - **Upstream credit:** tosu and its contributors, including Mikhail Babynichev (Kotrik). The upstream [v4.25.0 package metadata](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/package.json) names that author; its [license document](https://github.com/tosuapp/tosu/blob/9f42c88714da69ac2ba248126a189416c55d733c/LICENSE) retains `Copyright (C) 2023-2026 Mikhail Babynichev <https://kotrik.ru/>`. This is upstream attribution, not a first-party vosu copyright notice. tosu is LGPL v3; the `GPL-3.0` in its `package.json` is an unmaintained npm field, as its copyright holder confirmed on 2026-10-12.
@@ -292,9 +259,3 @@ These development packages, the private `vosu-test-harness` workspace member, or
 - Rust package source/checksum lock: `Cargo.lock`
 - Rust package license metadata/source: the package manifests in the Cargo registry source selected by `Cargo.lock` and the repository links returned by `cargo metadata --locked --format-version 1`
 
-## Skill Tracker tool
-
-- `rusqlite` 0.39.0 and `libsqlite3-sys` 0.37.0 (shared with the Difficulty tool): MIT (<https://github.com/rusqlite/rusqlite>); bundled SQLite is public domain (<https://sqlite.org/copyright.html>). Transitive `hashlink`, `fallible-iterator`, `fallible-streaming-iterator`, `hashbrown`, `foldhash` and build helper `vcpkg` use MIT and/or Apache-2.0-compatible terms. See the locked package manifests for exact expressions.
-- `libm` 0.2.16: MIT (<https://github.com/rust-lang/compiler-builtins>), used for portable complementary error function evaluation.
-- `tokio-tungstenite` / `tungstenite` 0.29.0: MIT (<https://github.com/snapview/tokio-tungstenite>, <https://github.com/snapview/tungstenite-rs>), already used transitively by the daemon's WebSocket server.
-- Wife3 and player aggregate formulas ported from Etterna 0.75.1, revision `2d706147cc4bcf95a8ceb24dc4f4129be207f803`, `src/RageUtil/Utils/RageUtil.h`, `src/Etterna/MinaCalc/MinaCalcHelpers.h`, and `src/Etterna/Singletons/ScoreManager.cpp` (<https://github.com/etternagame/etterna/tree/2d706147cc4bcf95a8ceb24dc4f4129be207f803>). Copyright (c) 2016-2023 Etterna; MIT text retained at `crates/vosu-tool-skill-tracker/LICENSE-ETTERNA`.

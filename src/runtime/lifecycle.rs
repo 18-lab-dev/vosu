@@ -188,15 +188,14 @@ impl ProductionRuntime {
             self.paths.cache().join("tools"),
             crate::tools::ExtraRoots {
                 dev: self.dev_tools.clone(),
-                bundled: crate::tools::bundled::materialize(
-                    &self.paths.cache().join("tools/bundled"),
-                )?,
             },
             self.origins.overlay(),
             self.origins.dashboard(),
             Arc::new(move || context_beatmap.tool_context()),
         )
         .await?;
+        let tool_counters = counters.clone();
+        tools.set_overlay_root(Arc::new(move || tool_counters.current_root()));
         *self.tools.get_mut() = Some(tools.clone());
         let providers = RouteProviders {
             authorization: Arc::new(crate::server::origins::OriginAuthorizer {

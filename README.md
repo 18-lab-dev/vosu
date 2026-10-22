@@ -180,7 +180,7 @@ process-event backends and install their capabilities. Setup requests
 operating-system authentication when needed; do not run the ordinary daemon as
 root.
 
-The daemon also accepts repeatable `--tool <directory>` arguments to load trusted development tools directly from a checkout. Manifests and settings reload live; rebuilding a development service restarts it. See the [tool protocol](docs/tools/protocol.md) for Cargo binary fallback, user installation, and release embedding.
+The daemon also accepts repeatable `--tool <directory>` arguments to load trusted development tools directly from a checkout. Manifests and settings reload live; rebuilding a development service restarts it. See the [tool protocol](docs/tools/protocol.md) for Cargo binary fallback and official/user installation.
 
 Offset resolution is automatic. For each discovered osu!lazer process, vosu first
 checks a valid cache entry for that exact process version, then the matching
@@ -217,17 +217,13 @@ release build cannot be reused accidentally.
 
 ## Tools
 
-The dashboard's **Tools** page manages first-party difficulty, trainer, and skill
-tracker applications alongside overlays. Open a tool from the dashboard to grant
-its UI a write session; opening the same URL directly is read-only. Review a
-third-party tool's author and requested permissions before trusting it: tools run
-with your OS permissions and are not sandboxed.
+The dashboard's **Tools** page manages installed applications and lists tools from your catalog sources in **Available**, with install, update, and uninstall actions. Official [18-LAB tools and their SDK](https://github.com/shiruviaa/vosu-tools) live separately; vosu embeds none. Packages are downloaded over HTTPS, checked against catalog SHA-256 and size, and installed atomically, dependencies first. Updating restarts a running service.
 
-Release binaries contain first-party tools, materialized into a versioned cache
-directory on launch. ZIPs remain the executable plus `LICENSE`, and Linux packages
-keep `/usr/bin/vosu`; no adjacent `tools/` installation is needed. User tools go
-under `<vosu data directory>/tools/<id>/` and require dashboard approval.
-Developers can use `vosu --tool <directory>` for a trusted development override.
+Open a tool from the dashboard to grant its UI a write session; opening the same URL directly is read-only. Review a third-party tool's author and requested permissions before trusting it: tools run with your OS permissions and are not sandboxed. User tools go under `<vosu data directory>/tools/<id>/` and require dashboard approval. Developers can use `vosu --tool <directory>` for a trusted development override.
+
+Install from the terminal with `vosux --install <id>`, update with `vosux --update <id>`, and uninstall with `vosux --uninstall <id> --keep-data` or `--remove-data`. The `vosu x` form accepts the same options. **Settings / Catalog sources** lets you add, remove, disable, and reorder `owner/repo[@tag]` references or HTTPS `catalog.json` URLs. Defaults are `shiruviaa/vosu-tools` and `shiruviaa/vosu-overlays`; both are removable. Earlier sources win duplicate ids; later entries are shown as shadowed. `vosux --sources` lists the configured sources.
+
+Catalogs may provide both tools and overlays. Only tools from the default `shiruviaa/vosu-tools` source are automatically trusted; tools from any other source remain `user` and need dashboard approval. The overlay **Available** page lists source overlays beside the existing community catalog, preserves its third-party disclosure, and offers to install required tools. Overlay updates preserve settings values; removal uses the existing overlay delete action. See the [catalog source contract](docs/tools/protocol.md#catalog-sources-and-installation) for configuration and APIs.
 See the [authoring guide](docs/tools/authoring.md) and
 [protocol contract](docs/tools/protocol.md), or run the dependency-free
 [Python example](examples/tools/hello-python/).
@@ -236,11 +232,11 @@ Run installed tools from a terminal with `vosu x --list` (or `--list --json`),
 `vosu x <tool> [ARGS...]`, or `vosu x --open <tool>`. Linux distro packages also
 install `vosux -> vosu` beside the executable; Windows ZIPs retain one executable:
 use `vosu x` or create your own link. Options apply only before the tool id;
-`vosux trainer --help` is the trainer's help. A UI-only tool opens its UI when
+`vosux practice --help` is the practice tool's help. A UI-only tool opens its UI when
 invoked without arguments. The daemon must already be running. Tools inherit
 terminal stdin/stdout/stderr and return their exit status, without shell expansion.
 CLI launch does not start a second daemon. The private native broker credential
-authorizes launching only enabled, trusted, valid tools and opening their UIs.
+authorizes launching only enabled, trusted, valid tools and opening their UIs, plus tool catalog installation/update/uninstall jobs and source listing. Catalog installation never approves a user-source tool automatically.
 
 ### Hosted tool routes and security
 

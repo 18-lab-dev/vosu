@@ -10,14 +10,16 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Serve tools on the overlay listener under the reserved `/tools/` prefix: UIs at `/tools/<id>/`, service APIs at `/tools/<id>/api/`. No overlay can be installed or served as `tools`. Read routes are open to overlays; writes need a dependent tool's per-launch token or a session minted by the dashboard's Open action. That session lives only in the opened page's memory, never in browser storage overlays can read, so reloading a tool page makes it read-only until it is opened again.
 - Supervise services: loopback readiness handshake, health checks, on-demand start and idle stop, crash restart with backoff, dependency-first start, bounded logs, and orderly shutdown; children are killed with vosu on Linux and Windows.
 - Run a tool from any directory with `vosu --tool <directory>`; manifests reload live and development services restart when their executable changes.
-- User tools in `<data dir>/tools/<id>/` require explicit trust on the dashboard. Release executables embed the first-party tools, so archives and packages stay single-executable.
+- User tools in `<data dir>/tools/<id>/` require explicit trust on the dashboard. Official tools and their SDK now live separately in [vosu-tools](https://github.com/shiruviaa/vosu-tools); vosu embeds none.
 - Add a Python reference tool and a JSON Schema for `tool.toml`.
 
-### First-party tools
+### Official catalog
 
-- **Difficulty**: shared osu!mania difficulty provider with Etterna MinaCalc 527 MSD (4K/6K/7K), score-goal SSR, rate tables, and an experimental 4K Reform dan estimate, cached once for every tool and overlay.
-- **osu! Trainer**: rate-changed practice copies (pitch-preserving stretch or pitch-shifting resample, target BPM), HP/CS/AR/OD overrides with rate-compensated AR/OD locks, MSD/dan preview at the chosen rate, generated-map management, and importable `.osz` exports for lazer. Originals are never modified.
-- **Skill Tracker**: records stable and lazer plays, computes experimental Etterna-style skillset ratings and dan progression, imports osu!stable local scores, and exposes profile, history, session, and live-stream APIs for overlays.
+- Install, update, and uninstall official tools from the Tools page's Available section or `vosux --install`, `--update`, and `--uninstall` with an explicit keep/remove-data choice.
+- Verify HTTPS destinations, redirects, package SHA-256 and size, ZIP safety, and manifest identity before atomic installation; install dependencies first and restart running services after updates. Surface update badges and job progress.
+- Add selected-instance `osu_dir` and current `skin` name/folder to the permission-filtered tool host context (lazer folders remain null).
+- Manage ordered catalog sources (`owner/repo[@tag]` or HTTPS catalog URLs) in Settings, with enable/disable, add/remove/reorder and per-source fetch results. Merge tools and overlays across sources; show provenance and shadowed duplicates. Trust only tools from the default official source automatically.
+- Install/update catalog-source overlays alongside the existing community catalog, retaining settings and offering required tools; keep the existing overlay disclosure and deletion flow. Add `vosux --sources`; CLI install/update/uninstall remain tool-only.
 
 ### Dashboard
 

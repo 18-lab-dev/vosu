@@ -14,7 +14,6 @@ fn main() {
     }
 
     embed_generator_bundle();
-    embed_tools();
 
     #[cfg(windows)]
     embed_windows_resource();
@@ -161,52 +160,4 @@ fn embed_windows_resource() {
 #[cfg(windows)]
 const fn version_quad(major: u64, minor: u64, patch: u64, build: u64) -> u64 {
     (major << 48) | (minor << 32) | (patch << 16) | build
-}
-
-fn embed_tools() {
-    use std::{env, fs, path::Path};
-    println!("cargo:rerun-if-env-changed=VOSU_BUNDLED_TOOLS");
-    fn visit(root: &Path, dir: &Path, entries: &mut Vec<(String, std::path::PathBuf)>) {
-        println!("cargo:rerun-if-changed={}", dir.display());
-        for item in fs::read_dir(dir).expect("read bundled tools") {
-            let item = item.expect("bundled tool entry");
-            let kind = item.file_type().expect("bundled tool metadata");
-            assert!(
-                !kind.is_symlink(),
-                "bundled tools must not contain symlinks"
-            );
-            if kind.is_dir() {
-                visit(root, &item.path(), entries);
-            } else if kind.is_file() {
-                entries.push((
-                    item.path()
-                        .strip_prefix(root)
-                        .unwrap()
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                    item.path(),
-                ));
-            }
-        }
-    }
-    let mut entries = Vec::new();
-    if let Some(root) = env::var_os("VOSU_BUNDLED_TOOLS") {
-        let root = Path::new(&root);
-        assert!(root.is_absolute(), "VOSU_BUNDLED_TOOLS must be absolute");
-        visit(root, root, &mut entries);
-    }
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut source = String::from("const BUNDLED_TOOLS: &[(&str, &[u8])] = &[\n");
-    for (name, path) in entries {
-        source.push_str(&format!(
-            "({name:?}, include_bytes!({:?})),\n",
-            path.to_string_lossy()
-        ));
-    }
-    source.push_str("];\n");
-    fs::write(
-        Path::new(&env::var_os("OUT_DIR").unwrap()).join("bundled_tools.rs"),
-        source,
-    )
-    .unwrap();
 }

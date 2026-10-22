@@ -28,6 +28,8 @@ vosu serves game state, game files, installed overlays, and the dashboard over p
 | Update download | When an update is installed: at startup if `ENABLE_AUTOUPDATE` is on, or when you click **Update Vosu** | GitHub release download hosts | An HTTP GET for the platform archive, with the same User-Agent |
 | Overlay catalog | Each time you open **Available** or search on that page | `https://tosu.app/api.json`, operated by the tosu project | An HTTP GET with the User-Agent `vosu/<version> (+https://github.com/shiruviaa/vosu)` |
 | Overlay download | When you click **Install** or **Update** on an available overlay | The download link that the catalog lists for that overlay. As of 2026-10-10 every listed link starts at `osuck.link` and redirects to `files.osuck.link`. | An HTTP GET for the overlay archive, with the same User-Agent as the catalog request |
+| Official tool catalog | When you open **Tools**, refresh its catalog, or install/update a tool | GitHub release download hosts for `shiruviaa/vosu-tools` (or the developer's configured catalog URL) | An HTTP GET with User-Agent `vosu-tool-catalog`; installed versions are compared locally |
+| Official tool package | When you install or update a tool, including required dependencies | The HTTPS package URLs in the tool catalog | An HTTP GET with User-Agent `vosu-tool-catalog` |
 
 Only the request itself is sent. vosu does not include game data, settings, installed-overlay lists, or other identifiers; it compares the catalog with your installed overlays locally. Host names are resolved through your system's DNS resolver. These requests connect directly and ignore system proxy settings. Catalog and overlay downloads must use HTTPS and may not redirect to loopback, private, or reserved addresses.
 
@@ -43,6 +45,7 @@ Only the request itself is sent. vosu does not include game data, settings, inst
 
 - Configuration in `vosu.toml`, and overlay setting values under `settings/`.
 - Installed overlays in the overlay folder (`STATIC_FOLDER_PATH`).
+- Official and user tools under `tools/<id>/` in the data directory, tool trust/settings state under the config directory's `tools/`, and per-tool durable data and cache folders. Uninstalling an official tool requires choosing whether to keep or remove its data.
 - Caches: lazer memory offsets, the extracted offset-generator payload, and partial downloads.
 - Logs under `logs/` in the data directory. They are rotated, and the oldest files are removed once the folder exceeds 100 MiB.
 - While an update check or installation runs, a transaction record (`.vosu-update.json`) and staging files next to a self-updating executable.
@@ -62,7 +65,7 @@ Only the request itself is sent. vosu does not include game data, settings, inst
 
 - Package-managed Linux installs never check for or download updates.
 - On self-updating installs, `ENABLE_AUTOUPDATE = false` or `--update=false` stops vosu from installing updates. The startup check still runs and only reports when a new version is available. Block `api.github.com` for vosu in your firewall if you want no update traffic at all.
-- vosu contacts the catalog and overlay hosts only when you use the **Available** page or install or update an overlay.
+- vosu contacts overlay catalog hosts when you use **Available** or install/update an overlay. Official tool catalog requests happen when you use **Tools**, refresh its catalog, or install/update a tool; packages download only on install/update.
 
 ## Changes and contact
 

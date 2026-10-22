@@ -1471,6 +1471,14 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
   initializeDashboardStatus();
   refreshToolCount();
 
+  if (pageKey() === 'settings' || pageKey() === 'available') {
+    import('./dashboard-catalog.js').then(({ mountCatalogSources, mountCatalogOverlays }) => {
+      const options = { root: results, requestJson, notify, errorText, setBusy, confirmAction: confirmOverlay };
+      if (pageKey() === 'settings' && !requestedOverlay && !requestedTool) mountCatalogSources(options);
+      else if (pageKey() === 'available') mountCatalogOverlays(options);
+    }).catch((error) => notify(`Could not load catalog sources: ${errorText(error)}`, 'error', 5000));
+  }
+
   if (requestedOverlay) {
     loadCounterSettings(requestedOverlay, { inline: true });
   } else if (requestedTool) {

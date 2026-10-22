@@ -1,5 +1,5 @@
 //! Discovery, trust, credentials and lifetime ownership for out-of-process tools.
-pub(crate) mod bundled;
+mod catalog;
 mod cli;
 mod http;
 pub mod manifest;
@@ -31,6 +31,10 @@ use tokio_util::sync::CancellationToken;
 struct Saved {
     enabled: Option<bool>,
     trusted: bool,
+    #[serde(default)]
+    official: bool,
+    #[serde(default)]
+    catalog_source: Option<String>,
 }
 #[derive(Clone, Serialize)]
 struct LogLine {
@@ -110,6 +114,7 @@ struct CliSession {
     token: String,
     expires: Instant,
 }
+type OverlayRoot = Arc<dyn Fn() -> PathBuf + Send + Sync>;
 pub struct ToolHost {
     entries: Mutex<BTreeMap<String, Arc<Entry>>>,
     saved: Mutex<BTreeMap<String, Saved>>,
@@ -130,7 +135,10 @@ pub struct ToolHost {
     cancel: CancellationToken,
     watcher: Mutex<Option<tokio::task::JoinHandle<()>>>,
     context: Arc<dyn Fn() -> Value + Send + Sync>,
-    _bundle: Option<bundled::Bundle>,
+    catalog: Mutex<catalog::Catalog>,
+    catalog_jobs: Mutex<BTreeMap<String, catalog::Job>>,
+    catalog_operation: tokio::sync::Mutex<()>,
+    overlay_root: Mutex<Option<OverlayRoot>>,
 }
 pub fn secret() -> io::Result<String> {
     use std::fmt::Write as _;
@@ -177,7 +185,6 @@ pub fn development_roots(args: &[std::ffi::OsString]) -> io::Result<Vec<PathBuf>
 /// Tool roots ahead of the user root, in precedence order.
 pub struct ExtraRoots {
     pub dev: Vec<PathBuf>,
-    pub bundled: Option<bundled::Bundle>,
 }
 impl ToolHost {
     pub async fn new(
@@ -189,13 +196,10 @@ impl ToolHost {
         dashboard_url: String,
         context: Arc<dyn Fn() -> Value + Send + Sync>,
     ) -> io::Result<Arc<Self>> {
-        let ExtraRoots { dev, bundled } = extra;
+        let ExtraRoots { dev } = extra;
         let user = data.clone();
         fs::create_dir_all(&user)?;
         let mut roots = dev.into_iter().map(|p| (p, "dev")).collect::<Vec<_>>();
-        if let Some(bundle) = &bundled {
-            roots.push((bundle.root.clone(), "bundled"));
-        }
         roots.push((user, "user"));
         let saved = match fs::read(config.join("state.json")) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
@@ -225,7 +229,10 @@ impl ToolHost {
             cancel: CancellationToken::new(),
             watcher: Mutex::new(None),
             context,
-            _bundle: bundled,
+            catalog: Mutex::new(catalog::Catalog::default()),
+            catalog_jobs: Mutex::new(BTreeMap::new()),
+            catalog_operation: tokio::sync::Mutex::new(()),
+            overlay_root: Mutex::new(None),
         });
         host.rescan().await;
         Ok(host)
@@ -379,7 +386,8 @@ impl ToolHost {
         let cli = m
             .and_then(|m| m.cli.as_ref())
             .map(|cli| json!({"usage":format!("vosux {}",entry.id),"summary":cli.summary}));
-        json!({"cli":cli,"id":entry.id,"name":m.map_or(entry.id.as_str(), |m| &m.name),"version":m.map_or("", |m| &m.version),"description":m.map_or("", |m| &m.description),"author":m.map_or("", |m| &m.author),"homepage":m.and_then(|m| m.homepage.as_ref()),"icon_url":m.and_then(|m| m.icon.as_ref()).map(|_| format!("{}/tools/{}/_icon",self.overlay_url(),entry.id)),"source":entry.source,"path":entry.root,"trusted":self.trusted(entry),"enabled":self.enabled(entry),"kind":m.map(|m| match (m.ui.is_some(),m.service.is_some()) {(true,true)=>"hybrid",(true,false)=>"ui",(false,true)=>"service",_=>"cli"}),"startup":m.and_then(|m| m.service.as_ref()).map(|s| &s.startup),"status":status,"status_detail":detail,"ui_url":m.filter(|m| m.ui.is_some()).map(|_|format!("{}/tools/{}/",self.overlay_url(),entry.id)),"requires":requires,"required_by":required_by,"permissions":m.map(|m| &m.permissions),"api":m.map(|m| &m.api),"has_settings":entry.root.join("settings.json").is_file(),"data":{"data_dir":entry.data_dir,"cache_dir":entry.cache_dir,"data_bytes":directory_bytes(&entry.data_dir),"cache_bytes":directory_bytes(&entry.cache_dir)},"process":{"pid":state.pid,"started_at":state.started_at,"restarts":state.restarts}})
+        let update_available = self.update_available(&entry.id, m.map(|m| m.version.as_str()));
+        json!({"update_available":update_available,"cli":cli,"id":entry.id,"name":m.map_or(entry.id.as_str(), |m| &m.name),"version":m.map_or("", |m| &m.version),"description":m.map_or("", |m| &m.description),"author":m.map_or("", |m| &m.author),"homepage":m.and_then(|m| m.homepage.as_ref()),"icon_url":m.and_then(|m| m.icon.as_ref()).map(|_| format!("{}/tools/{}/_icon",self.overlay_url(),entry.id)),"source":entry.source,"path":entry.root,"trusted":self.trusted(entry),"enabled":self.enabled(entry),"kind":m.map(|m| match (m.ui.is_some(),m.service.is_some()) {(true,true)=>"hybrid",(true,false)=>"ui",(false,true)=>"service",_=>"cli"}),"startup":m.and_then(|m| m.service.as_ref()).map(|s| &s.startup),"status":status,"status_detail":detail,"ui_url":m.filter(|m| m.ui.is_some()).map(|_|format!("{}/tools/{}/",self.overlay_url(),entry.id)),"requires":requires,"required_by":required_by,"permissions":m.map(|m| &m.permissions),"api":m.map(|m| &m.api),"has_settings":entry.root.join("settings.json").is_file(),"data":{"data_dir":entry.data_dir,"cache_dir":entry.cache_dir,"data_bytes":directory_bytes(&entry.data_dir),"cache_bytes":directory_bytes(&entry.cache_dir)},"process":{"pid":state.pid,"started_at":state.started_at,"restarts":state.restarts}})
     }
     async fn start(self: &Arc<Self>, id: &str, manual: bool) -> Result<(), String> {
         let _gate = self.gate.lock().await;
@@ -547,6 +555,17 @@ impl ToolHost {
                         .to_string_lossy()
                         .into_owned()
                 });
+                let source = if *source == "user"
+                    && self
+                        .saved
+                        .lock()
+                        .get(&id)
+                        .is_some_and(|state| state.official)
+                {
+                    &"official"
+                } else {
+                    source
+                };
                 let mut error = parsed.as_ref().err().cloned();
                 if *source != "dev" && path.file_name().and_then(|v| v.to_str()) != Some(&id) {
                     error = Some("directory name must equal manifest id".into());
@@ -556,8 +575,8 @@ impl ToolHost {
                     if prior.source == "dev" && *source != "dev" {
                         continue;
                     }
-                    if prior.source == "bundled" && *source == "user" {
-                        error = Some(format!("user tool duplicates bundled id {id}"));
+                    if prior.source == "official" && *source == "user" {
+                        error = Some(format!("user tool duplicates official id {id}"));
                         key = format!("{id}:duplicate-user");
                     } else {
                         error = Some(format!("duplicate tool id {id}"));
@@ -609,6 +628,7 @@ impl ToolHost {
                 let old = self.entries.lock().get(&key).cloned();
                 if let Some(old) = &old
                     && old.root == path
+                    && old.source == *source
                     && old.fingerprint == fingerprint
                 {
                     found.insert(key, old.clone());
@@ -630,7 +650,12 @@ impl ToolHost {
                     manifest: parsed.ok(),
                     root: path,
                     source,
-                    data_dir: self.data.join("data").join(&id),
+                    data_dir: self
+                        .data
+                        .parent()
+                        .unwrap_or(&self.data)
+                        .join("tool-data")
+                        .join(&id),
                     cache_dir: self.cache.join(&id),
                     fingerprint,
                     state: Mutex::new(State {

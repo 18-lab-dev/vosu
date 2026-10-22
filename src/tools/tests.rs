@@ -18,21 +18,11 @@ fn put(root: &Path, id: &str, requires: &str) -> PathBuf {
     dir
 }
 async fn host(root: &Path, dev: Vec<PathBuf>) -> Arc<ToolHost> {
-    host_with_bundle(root, dev, None).await
-}
-async fn host_with_bundle(
-    root: &Path,
-    dev: Vec<PathBuf>,
-    bundle: Option<bundled::Bundle>,
-) -> Arc<ToolHost> {
     let host = ToolHost::new(
         root.join("config"),
         root.join("data"),
         root.join("cache"),
-        ExtraRoots {
-            dev,
-            bundled: bundle,
-        },
+        ExtraRoots { dev },
         "http://127.0.0.1:25150".into(),
         "http://127.0.0.1:25151".into(),
         Arc::new(|| json!({"client":null,"songs_dir":null,"beatmap":null})),
@@ -313,20 +303,9 @@ async fn supervisor_readiness_backoff_logs_and_stdin_shutdown() {
 }
 
 #[tokio::test]
-async fn user_bundle_duplicates_are_invalid_and_cycles_do_not_poison_dependents() {
+async fn cycles_do_not_poison_dependents() {
     let root = tempfile::tempdir().unwrap();
-    let collision = manifest("collision", "");
-    let bundle = bundled::materialize_files(
-        &root.path().join("cache/bundled"),
-        "test",
-        &[
-            ("collision/tool.toml", collision.as_bytes()),
-            ("collision/web/index.html", b"tool-ui"),
-        ],
-    )
-    .unwrap();
-    let host = host_with_bundle(root.path(), Vec::new(), Some(bundle)).await;
-    put(&host.data, "collision", "");
+    let host = host(root.path(), Vec::new()).await;
     put(&host.data, "cycle", "[[requires]]\nid='cycle'\nversion='*'");
     put(
         &host.data,
@@ -334,23 +313,6 @@ async fn user_bundle_duplicates_are_invalid_and_cycles_do_not_poison_dependents(
         "[[requires]]\nid='cycle'\nversion='*'",
     );
     host.rescan().await;
-    let copies = host
-        .entries
-        .lock()
-        .values()
-        .filter(|entry| entry.id == "collision")
-        .cloned()
-        .collect::<Vec<_>>();
-    assert_eq!(copies.len(), 2);
-    assert_eq!(host.entry("collision").unwrap().source, "bundled");
-    let duplicate = copies.iter().find(|entry| entry.source == "user").unwrap();
-    assert_eq!(host.status(duplicate).0, "invalid");
-    assert!(
-        host.status(duplicate)
-            .1
-            .unwrap()
-            .contains("duplicates bundled")
-    );
     host.saved
         .lock()
         .entry("consumer".into())
@@ -622,6 +584,8 @@ async fn cli_broker_auth_sessions_and_authority() {
             Saved {
                 enabled: Some(false),
                 trusted: true,
+                official: false,
+                catalog_source: None,
             },
         );
         let denied = host

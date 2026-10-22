@@ -64,6 +64,30 @@ impl ToolHost {
                 json!({"error":"native broker credential and loopback peer required"}),
             );
         }
+        if request.method() == Method::GET && path == "cli/catalog/sources" {
+            return match self.source_view() {
+                Ok(value) => response(StatusCode::OK, value),
+                Err(error) => response(StatusCode::BAD_REQUEST, json!({"error":error})),
+            };
+        }
+        if request.method() == Method::GET
+            && let Some(job) = path.strip_prefix("cli/catalog/jobs/")
+        {
+            return match self.catalog_job(job) {
+                Ok(value) => response(StatusCode::OK, value),
+                Err(error) => response(StatusCode::BAD_REQUEST, json!({"error":error})),
+            };
+        }
+        if request.method() == Method::POST
+            && let Some(target) = path.strip_prefix("cli/catalog/")
+            && let Some((id, action)) = target.split_once('/')
+            && matches!(action, "install" | "update" | "uninstall")
+        {
+            return match self.begin_catalog(id, action, body) {
+                Ok(value) => response(StatusCode::ACCEPTED, value),
+                Err(error) => response(StatusCode::BAD_REQUEST, json!({"error":error})),
+            };
+        }
         if path == "cli" && request.method() == Method::GET {
             let entries = self.entries.lock().values().cloned().collect::<Vec<_>>();
             let tools = entries.iter().map(|e| {
