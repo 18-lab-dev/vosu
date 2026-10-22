@@ -25,6 +25,7 @@ Add **tools** as vosu's first extension type, specified in the [tool protocol](.
   service tokens, CLI tokens can write their own tool API as well as declared
   dependencies, keeping the service the single writer of shared tool data.
   The launcher revokes after child exit. Tools never receive the broker token.
+- [vosulay](https://github.com/shiruviaa/vosulay) is an optional official out-of-process tool, not an embedded overlay engine. It owns its rendering and manager and retains standalone mode, preserving [ADR 0008's boundary](0008-external-in-game-overlays.md). A voluntary status-0 service exit means `stopped` (`exited`), not a crash; even `always` tools wait for manual start or the next vosu launch.
 
 ### Write authority on a shared origin
 
@@ -36,7 +37,7 @@ This is still weaker than an opaque-origin sandbox. Any same-origin document hol
 
 ### Trust
 
-Only tools installed from the default `shiruviaa/vosu-tools` source are `official` and automatically trusted. Catalog sources are user-configurable and ordered; other catalog tools and manually installed tools are `user` and remain untrusted until approved on the dashboard. Integrity checks do not establish author trust. Overlays from these sources have no tool trust gate and retain the existing third-party JavaScript disclosure. Services run as the user's OS account: host permissions constrain only vosu APIs, not an OS sandbox.
+Only tools installed from the exact default source identities `shiruviaa/vosu-tools` and `shiruviaa/vosulay` are `official` and automatically trusted. Exact shorthand identity survives removal/re-addition; tagged and URL variants do not gain trust by resolving to the same repository. These sources use the ordinary source resolver, not privileged transport. The explicit identity allowlist avoids trust expansion through URL equivalence or redirects. Catalog sources are user-configurable and ordered; other catalog tools and manually installed tools are `user` and remain untrusted until approved on the dashboard. Integrity checks do not establish author trust. Overlays from these sources have no tool trust gate and retain the existing third-party JavaScript disclosure. Services run as the user's OS account: host permissions constrain only vosu APIs, not an OS sandbox.
 
 ## Rejected alternatives
 

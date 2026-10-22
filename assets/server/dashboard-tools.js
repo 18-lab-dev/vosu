@@ -126,7 +126,7 @@ export function mountTools({
         icon(tool),
         el('div', { className: 'tool-card__head' },
           el('p', { className: 'tool-card__index' },
-            el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : tool.source === 'shiruviaa/vosu-tools' ? 'Official' : 'User catalog' }),
+            el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : ['shiruviaa/vosu-tools', 'shiruviaa/vosulay'].includes(tool.source) ? 'Official' : 'User catalog' }),
             update ? el('span', { className: 'badge', text: 'Update available' }) : null),
           el('h2', {}, tool.name, el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
           el('p', { className: 'tool-card__author', text: `by ${tool.author} · ${tool.source}` })),
