@@ -66,8 +66,10 @@ internal static class AssemblyOffsets
                     root[entry.Name] = version;
                     break;
                 case TemplateEntryKind.GameBaseVtable:
-                    // Live vtable is optional for assembly-only generation.
-                    root[entry.Name] = null;
+                    // Match the live generator's first MethodTable word, not its
+                    // ASLR-dependent address. Rehosting uses the client's CoreCLR.
+                    Type gameType = ResolveRuntimeType(TemplateSchema.GameVtableTypeName, runtimeTypes);
+                    root[entry.Name] = System.Runtime.InteropServices.Marshal.ReadInt64(gameType.TypeHandle.Value);
                     break;
                 case TemplateEntryKind.ClrType:
                     root[entry.Name] = ResolveTypeFields(entry, runtimeTypes);
@@ -118,6 +120,19 @@ internal static class AssemblyOffsets
     {
         if (runtimeTypes.TryGetValue(typeName, out Type? exact))
             return exact;
+
+        // CLRMD names constructed generics using angle brackets. Resolve the same
+        // names for offline measurement rather than measuring an open generic.
+        int bracket = typeName.IndexOf('<');
+        if (bracket > 0 && typeName.EndsWith('>'))
+        {
+            string argument = typeName[(bracket + 1)..^1];
+            Type argumentType = argument.EndsWith("[]", StringComparison.Ordinal)
+                ? ResolveRuntimeType(argument[..^2], runtimeTypes).MakeArrayType()
+                : ResolveRuntimeType(argument, runtimeTypes);
+            Type definition = runtimeTypes[typeName[..bracket] + "`1"];
+            return definition.MakeGenericType(argumentType);
+        }
 
         Type? generic = runtimeTypes.Values.FirstOrDefault(type =>
             type.FullName == typeName

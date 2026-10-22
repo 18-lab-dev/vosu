@@ -517,9 +517,16 @@ All calculation parameters are optional: `path`, `lazer`, `mode` (`0` osu, `1` t
 - `GET /files/beatmap/file`
 - `GET /Songs/{path}`
 - `GET /files/beatmap/{path}`
-- `GET /files/skin/{path}`; unavailable for lazer skins
+- `GET /files/skin/`; current skin metadata `{"client":"stable"|"lazer"|null,"name":string|null,"files":bool,"builtin":string|null}` without absolute paths
+- `GET /files/skin/{path}`; stable and imported lazer skin files (case-insensitive lazer filenames, including subfolders); unavailable/missing lazer files return 404. Built-in lazer skins have no files: metadata reports `files:false` with `builtin` equal to `argon`, `argon-pro`, `triangles`, `legacy`, or `retro`.
 
 File routes enforce root containment and support validated single HTTP byte ranges for media.
+Lazer skins use content-addressed storage, not an export folder. Consequently v2
+`folders.skin` / `directPath.skinFolder` retain their existing compatibility
+semantics rather than exposing the files store as a fictional skin folder.
+Tools should use `/files/skin/` metadata and `/files/skin/{path}` instead; the
+permission-filtered tool context exposes the same availability and built-in identity
+while keeping `skin.folder:null` for lazer.
 
 ### Pages, counters, reports, and updates
 

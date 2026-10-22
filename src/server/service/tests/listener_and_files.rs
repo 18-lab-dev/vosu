@@ -579,28 +579,35 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
         }
     }
 
-    #[tokio::test]
-    async fn production_lazer_skin_keeps_explicit_rejection() {
-        let selected = BeatmapFiles {
-            lazer: true,
-            ready: true,
+    #[test]
+    fn lazer_skin_files_are_case_insensitive_confined_and_report_builtins() {
+        let root = tempfile::tempdir().unwrap();
+        let hash = "a".repeat(64);
+        let relative = format!("a/aa/{hash}");
+        std::fs::create_dir_all(root.path().join("a/aa")).unwrap();
+        std::fs::write(root.path().join(&relative), b"[General]\nName: fixture").unwrap();
+        let mut selected = BeatmapFiles {
+            lazer: true, ready: true, skin_client: Some("lazer"),
+            skin_name: Some("Fixture".into()), songs_root: Some(root.path().to_owned()),
+            skin: Some(Arc::new(crate::model::memory::CurrentSkin {
+                name: "Fixture".into(), builtin: None,
+                files: [("skin.ini".into(), relative)].into(),
+            })),
             ..BeatmapFiles::default()
         };
-        let error = resolve_file_endpoint(
-            Endpoint::SkinFile,
-            &selected,
-            "/files/skin/cursor.png",
-            "/files/skin/cursor.png",
-        )
-        .unwrap_err();
-        assert!(matches!(error, FileRouteError::LazerSkinUnavailable));
-        let response = file_route_error_response(error);
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        assert_eq!(
-            serde_json::from_slice::<Value>(&body).unwrap(),
-            json!({"error": "This endpoint is unavailable for the lazer client."})
-        );
+        for name in ["SKIN.INI", "skin%2Eini"] {
+            let path = format!("/files/skin/{name}");
+            let ResourceOutcome::File(file) = resolve_file_endpoint(Endpoint::SkinFile, &selected, &path, &path).unwrap() else { panic!("skin file not served") };
+            assert_eq!(file.length, 23);
+        }
+        for name in ["../skin.ini", "%2e%2e/skin.ini", "/skin.ini", "%2Fskin.ini", "missing.png", "a/../../skin.ini", "C:%5cskin.ini"] {
+            let path = format!("/files/skin/{name}");
+            assert!(matches!(resolve_file_endpoint(Endpoint::SkinFile, &selected, &path, &path).unwrap(), ResourceOutcome::Missing(MissingKind::NotFound)), "{name}");
+        }
+        assert_eq!(skin_metadata(&selected), json!({"client":"lazer","name":"Fixture","files":true,"builtin":null}));
+        selected.skin = Some(Arc::new(crate::model::memory::CurrentSkin { name: "Argon".into(), builtin: Some("argon".into()), files: Default::default() }));
+        assert_eq!(skin_metadata(&selected)["builtin"], "argon");
+        assert_eq!(skin_metadata(&selected)["files"], false);
+        assert!(matches!(resolve_file_endpoint(Endpoint::SkinFile, &selected, "/files/skin/skin.ini", "/files/skin/skin.ini").unwrap(), ResourceOutcome::Missing(MissingKind::NotFound)));
+        assert_eq!(skin_metadata(&BeatmapFiles::default()), json!({"client":null,"name":null,"files":false,"builtin":null}));
     }

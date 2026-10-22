@@ -463,6 +463,7 @@ impl MemoryReader for LazerMemory {
                 game_time: 0,
                 menu_mods: self.menu_mods.clone(),
                 skin_folder: String::new(),
+                current_skin: self.read_current_skin().ok(),
                 memory_songs_folder: Path::new(&batched.base_path)
                     .join("files")
                     .to_string_lossy()
@@ -560,6 +561,7 @@ impl MemoryReader for LazerMemory {
             game_time: 0,
             menu_mods: self.menu_mods.clone(),
             skin_folder: String::new(),
+            current_skin: self.read_current_skin().ok(),
             memory_songs_folder: files,
         }))
     }

@@ -608,6 +608,7 @@ impl StableMemory {
             game_time: game_time_value.ptr(0) as i64,
             menu_mods: mods(menu_bits.ptr(0) as i64),
             skin_folder: skin,
+            current_skin: None,
             memory_songs_folder: songs,
         }))
     }

@@ -65,6 +65,7 @@ fn raw_global() -> Global {
         game_time: 0,
         menu_mods: mods("nomod"),
         skin_folder: String::new(),
+        current_skin: None,
         memory_songs_folder: String::new(),
     }
 }

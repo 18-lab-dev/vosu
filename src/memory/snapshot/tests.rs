@@ -29,6 +29,7 @@ fn global() -> Global {
         game_time: 10,
         menu_mods: mods("menu"),
         skin_folder: "skin".into(),
+        current_skin: None,
         memory_songs_folder: "Songs".into(),
     }
 }

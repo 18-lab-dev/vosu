@@ -351,6 +351,7 @@ fn regular(input: &Input) -> RegularState {
             menu_mods,
             game_folder: string(global, "gameFolder"),
             skin_folder: string(global, "skinFolder"),
+            current_skin: None,
             songs_folder: string(global, "songsFolder"),
             memory_songs_folder: String::new(),
         },
