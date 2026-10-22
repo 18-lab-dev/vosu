@@ -123,10 +123,10 @@ impl Document<'_> {
             "settings": With(|out: &mut Vec<u8>| write_settings(out, state, self.source)),
             "profile": With(|out: &mut Vec<u8>| write_profile(out, state.user.profile.as_ref())),
             "beatmap": With(|out: &mut Vec<u8>| {
-                write_beatmap(out, state, parsed, current_mode, precise.play_time)
+                write_beatmap(out, state, parsed, current_mode, precise.play_time, self.source, current_mods)
             }),
             "play": With(|out: &mut Vec<u8>| {
-                write_play(out, &state.gameplay, state.beatmap.attributes.as_ref(), current_mods, precise, self.snapshot.runtime_settings().enable_mania_key_hit_errors, self.snapshot.runtime_settings().enable_hit_offsets)
+                write_play(out, state, current_mods, precise, self.snapshot.runtime_settings().enable_mania_key_hit_errors, self.snapshot.runtime_settings().enable_hit_offsets, play_source(state, self.status, self.source, current_mods))
             }),
             "keys": With(|out: &mut Vec<u8>| {
                 crate::api::precise::write_keys(out, &precise.key_overlay, &precise.keypresses)
@@ -255,7 +255,11 @@ fn write_settings(out: &mut Vec<u8>, state: &RegularState, source: ClientType) -
     let score_meter = top("scoreMeter");
     let score_meter_type = setting_i64(child(score_meter, "type"));
     let mania = top("mania");
+    let visual = build_visual(s);
     let scroll_direction = setting_i64(child(mania, "scrollDirection"));
+    let lazer_speed = child(mania, "scrollSpeed")
+        .and_then(Value::as_f64)
+        .filter(|speed| source == ClientType::Lazer && speed.is_finite() && *speed > 0.0);
     let sort = setting_i64(top("sortType"));
     let group = setting_i64(top("groupType"));
     let progress_bar = setting_i64(top("progressBarType"));
@@ -339,6 +343,10 @@ fn write_settings(out: &mut Vec<u8>, state: &RegularState, source: ClientType) -
                 "number": scroll_direction,
                 "name"?: (!scroll_name.is_empty()).then_some(scroll_name),
             },
+            "scrollSpeedValue"?: lazer_speed,
+            "scrollTime"?: lazer_speed.map(|value| 11485.0 / value),
+            "timingBasedNoteColouring"?: child(mania, "timingBasedNoteColouring").and_then(Value::as_bool),
+            "perBeatmapScrollSpeed"?: child(mania, "perBeatmapScrollSpeed").and_then(Value::as_f64),
         },
         "sort": NumberNameWire(Some(sort), if lazer { lazer_sort_name(sort) } else { sort_name(sort) }),
         "group": NumberNameWire(
@@ -391,6 +399,7 @@ fn write_settings(out: &mut Vec<u8>, state: &RegularState, source: ClientType) -
             },
             "quickRetry": setting_str(child(keybinds, "quickRetry")),
         },
+        "visual"?: visual.as_ref().map(Serde),
     });
     Ok(())
 }
@@ -445,6 +454,8 @@ fn write_beatmap(
     parsed: Option<&ParsedBeatmap>,
     current_mode: Option<i64>,
     live_time: f64,
+    source: ClientType,
+    mods: &CalculateMods,
 ) -> io::Result<()> {
     let mode = Some(state.beatmap.mode.unwrap_or(0));
     let ranked_status = state.menu.ranked_status;
@@ -455,6 +466,9 @@ fn write_beatmap(
         "isConvert": mode == Some(0) && mode != current_mode,
         "time": {
             "live": live_time,
+            "rate": state.global.render.and_then(|r| r.clock).map(|c| c.rate)
+                .or_else(|| (source != ClientType::Lazer).then_some(mods.rate)),
+            "running": state.global.render.and_then(|r| r.clock).map(|c| c.running),
             "firstObject": state.beatmap.first_object_time.unwrap_or(0),
             "lastObject": parsed.map_or(0.0, |p| p.times.full),
             "mp3Length"?: menu.mp3_length,
@@ -573,18 +587,21 @@ fn write_detailed(
 /// Mirrors `build_play` with borrowed hit-error slices.
 fn write_play(
     out: &mut Vec<u8>,
-    gameplay: &GameplayState,
-    attrs: Option<&crate::calculation::progressive::ProgressiveAttributes>,
+    state: &RegularState,
     mods: &CalculateMods,
     precise: &crate::state::PreciseState,
     enable_key_hits: bool,
     enable_hit_offsets: bool,
+    source: Option<PlaySource>,
 ) -> io::Result<()> {
+    let gameplay = &state.gameplay;
+    let attrs = state.beatmap.attributes.as_ref();
     let precise_hits = &precise.hit_errors;
     let a = attrs.copied().unwrap_or_default();
     let s: &Statistics = &gameplay.statistics;
     let empty = crate::model::states::KeyHitErrors::default();
     wire_object!(out {
+        "source": Serde(&source),
         "failed": gameplay.failed,
         "playerName": gameplay.player_name,
         "mode": NumberNameWire(Some(gameplay.mode), ruleset_name(gameplay.mode)),

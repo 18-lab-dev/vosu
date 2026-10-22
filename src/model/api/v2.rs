@@ -49,6 +49,8 @@ pub struct Session {
 pub struct BeatmapTime {
     #[serde(serialize_with = "serialize_js_number")]
     pub live: f64,
+    pub rate: Option<f64>,
+    pub running: Option<bool>,
     #[serde(rename = "firstObject")]
     pub first_object: i64,
     #[serde(rename = "lastObject", serialize_with = "serialize_js_number")]
@@ -319,8 +321,20 @@ pub struct Pp {
     pub max_achievable: f64,
     pub detailed: DetailedPp,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlaySource {
+    Player,
+    Replay,
+    Spectator,
+    Watching,
+    Autoplay,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Play<V = Vec<f64>> {
+    #[serde(default)]
+    pub source: Option<PlaySource>,
     pub failed: bool,
     #[serde(rename = "playerName")]
     pub player_name: String,

@@ -329,6 +329,8 @@ impl OffsetGroup10 {
 pub struct OffsetGroup11 {
     #[serde(rename = "<Source>k__BackingField")]
     pub source_k_backing_field: usize,
+    #[serde(default, rename = "<IsRunning>k__BackingField")]
+    pub running: usize,
     #[serde(flatten)]
     pub extras: IndexMap<String, Value>,
 }

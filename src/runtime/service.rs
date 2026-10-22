@@ -50,7 +50,8 @@ impl RuntimeBeatmap {
         json!({"client": if stable { "stable" } else { "lazer" }, "songs_dir":root,
             "osu_dir":osu_dir,"skin":{"name":skin.map(|s| s.name.as_str()).unwrap_or(&regular.global.skin_folder),
                 "folder":skin_folder,"files":if stable { skin_folder.as_ref().is_some_and(|p| p.is_dir()) } else { skin.is_some_and(|s| !s.files.is_empty()) },
-                "builtin":skin.and_then(|s| s.builtin.as_deref())},"beatmap":beatmap})
+                "builtin":skin.and_then(|s| s.builtin.as_deref()),
+                "base":if stable { Some("legacy") } else { skin.and_then(|s| s.base.as_deref()) }},"beatmap":beatmap})
     }
 }
 

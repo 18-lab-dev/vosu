@@ -202,6 +202,28 @@ fn strip_vosu_extensions(value: &mut Value) {
             object.shift_remove("keyHitErrors");
             object.shift_remove("releaseHitErrors");
             object.shift_remove("catcher");
+            // Additive renderer-state fields are vosu-owned, not source-oracle
+            // material. Keep the pinned upstream fixtures unchanged.
+            if object.contains_key("playerName") && object.contains_key("mods") {
+                object.shift_remove("source");
+            }
+            if object.contains_key("firstObject") && object.contains_key("live") {
+                object.shift_remove("rate");
+                object.shift_remove("running");
+            }
+            if object.contains_key("interfaceVisible") {
+                object.shift_remove("visual");
+            }
+            if object.contains_key("scrollSpeed") {
+                for field in [
+                    "scrollSpeedValue",
+                    "scrollTime",
+                    "timingBasedNoteColouring",
+                    "perBeatmapScrollSpeed",
+                ] {
+                    object.shift_remove(field);
+                }
+            }
             for value in object.values_mut() {
                 strip_vosu_extensions(value);
             }
@@ -352,6 +374,7 @@ fn regular(input: &Input) -> RegularState {
             game_folder: string(global, "gameFolder"),
             skin_folder: string(global, "skinFolder"),
             current_skin: None,
+            render: None,
             songs_folder: string(global, "songsFolder"),
             memory_songs_folder: String::new(),
         },

@@ -109,7 +109,9 @@ impl LazerMemory {
         if self.ptr(add(current, 0x20)?)? != skin {
             return Err(corrupt("current skin", skin, "skin changed during capture"));
         }
+        let base = builtin.or_else(|| self.skin_base(manager, skin).ok().flatten());
         let result = Arc::new(CurrentSkin {
+            base: base.map(str::to_owned),
             name,
             builtin: builtin.map(str::to_owned),
             files,

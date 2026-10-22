@@ -1688,3 +1688,25 @@ fn catch_position_tracks_play_time_without_new_judgements() {
     }
     assert_eq!(reader.catcher(-1.0).unwrap(), ReadStatus::NotReady);
 }
+
+#[test]
+fn current_map_mania_speed_reports_availability_without_stale_values() {
+    let mut bytes = vec![0; 0x400];
+    put_u32(&mut bytes, 0x101, 0x200);
+    put_i32(&mut bytes, 0x200, 18);
+    let mut reader = StableMemory::new(handle(0, bytes), fixture_patterns());
+    reader.mania_speed_address = 0x100;
+    let mut settings: Settings = [
+        ("mania.scrollSpeed".into(), json!(9.0)),
+        ("mania.usePerBeatmapSpeedScale".into(), json!(true)),
+    ]
+    .into();
+    reader.apply_mania_speed(&mut settings);
+    assert_eq!(settings["mania.perBeatmapScrollSpeed"], 18.0);
+    settings.insert("mania.usePerBeatmapSpeedScale".into(), json!(false));
+    reader.apply_mania_speed(&mut settings);
+    assert_eq!(settings["mania.perBeatmapScrollSpeed"], Value::Null);
+    reader.read_mania_scroll_speed = false;
+    reader.apply_mania_speed(&mut settings);
+    assert_eq!(settings["mania.perBeatmapScrollSpeed"], Value::Null);
+}

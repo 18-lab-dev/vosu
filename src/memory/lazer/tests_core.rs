@@ -662,9 +662,12 @@ fn config_dictionary_updates_settings_and_runtime_flags() {
     );
     memory.ptr(local + 0x20, local_store);
     memory.ptr(local_store + 0x10, local_entries);
-    let local_keys = [
-        34, 58, 30, 40, 39, 12, 88, 6, 7, 22, 23, 2, 3, 4, 10, 19, 20, 56, 54,
-    ];
+    let local_keys = offsets
+        .local_config_keys
+        .as_ref()
+        .unwrap()
+        .fields()
+        .map(|(key, _)| key);
     memory.i32(local_store + 0x38, local_keys.len() as i32);
     for (index, key) in local_keys.into_iter().enumerate() {
         let entry = local_entries + 0x10 + index * 0x18;
@@ -676,6 +679,9 @@ fn config_dictionary_updates_settings_and_runtime_flags() {
     memory.i32(0x10100 + 0x40, 1);
     memory.put(0x10500 + 0x40, [1]);
     memory.f64(0x10700 + 0x40, 0.425);
+    memory.put(0x11300 + 0x40, [1]); // BeatmapColours, distinct from skin/hitsounds.
+    memory.put(0x11400 + 0x40, [1]); // HitLighting.
+    memory.put(0x11600 + 0x40, 0.75f32.to_le_bytes()); // ScalingPositionX is float, not double.
     memory.ptr(
         base + offsets.osu_game_osu_game.framework_config_k_backing_field,
         framework,
@@ -703,12 +709,20 @@ fn config_dictionary_updates_settings_and_runtime_flags() {
     );
     memory.ptr(dict + 0x10, 0);
     memory.i32(dict + 0x38, 0);
-    let mut reader = reader(Arc::new(memory));
+    let memory = Arc::new(memory);
+    let mut sequential = reader(memory.clone());
+    sequential.set_resolved_state(base, 0);
+    let expected = sequential.read_osu_config_sequential().unwrap();
+    let mut reader = reader(memory);
     reader.set_resolved_state(base, 0);
     let values = reader.read_osu_config().unwrap();
     assert_eq!(reader.scoring_display_mode, 1);
     assert!(reader.leaderboard_visible);
     assert_eq!(values["background.dim"], 42.5);
+    assert_eq!(values, expected);
+    assert_eq!(values["visual.beatmapColours"], true);
+    assert_eq!(values["visual.hitLighting"], true);
+    assert_eq!(values["visual.positionX"], 0.75);
 }
 
 #[test]

@@ -15,29 +15,8 @@ const STRING_LENGTH: usize = 8;
 const STRING_CHARS: usize = 12;
 const MAX_STRING_UNITS: i32 = 4095;
 
-/// Local config keys and value widths, in [`LazerMemory::read_osu_config_sequential`] order.
-/// `BackgroundStoryboard` (10) also feeds `background.video`; one read serves both.
-const LOCAL_FIELDS: [(i32, usize); 19] = [
-    (34, 4),
-    (58, 4),
-    (30, 4),
-    (40, 4),
-    (39, 4),
-    (12, 1),
-    (88, 1),
-    (6, 8),
-    (7, 8),
-    (22, 8),
-    (23, 8),
-    (2, 4),
-    (3, 4),
-    (4, 1),
-    (10, 1),
-    (19, 1),
-    (20, 1),
-    (56, 1),
-    (54, 1),
-];
+/// Local keys are generated enum literals, in sequential decoder read order.
+const LOCAL_FIELD_COUNT: usize = 26;
 /// Framework config keys, offsets within the bindable value, and widths. The window sizes
 /// read width and height together as one eight-byte span at +4.
 const FRAMEWORK_FIELDS: [(i32, usize, usize); 7] = [
@@ -50,7 +29,7 @@ const FRAMEWORK_FIELDS: [(i32, usize, usize); 7] = [
     (21, 0, 8),
 ];
 const MANIA_FIELDS: [(i32, usize); 2] = [(0, 8), (1, 4)];
-const VALUE_SLOTS: usize = LOCAL_FIELDS.len() + FRAMEWORK_FIELDS.len() + MANIA_FIELDS.len();
+const VALUE_SLOTS: usize = LOCAL_FIELD_COUNT + FRAMEWORK_FIELDS.len() + MANIA_FIELDS.len();
 
 /// Settings plus the decoder state the sequential path assigns while reading them.
 struct BatchedConfig {
@@ -86,7 +65,7 @@ fn store_addresses(
     keys: impl Iterator<Item = i32>,
     out: &mut [usize],
 ) -> Option<()> {
-    let mut wanted = [0i32; LOCAL_FIELDS.len()];
+    let mut wanted = [0i32; LOCAL_FIELD_COUNT];
     let mut count = 0;
     for key in keys {
         wanted[count] = key;
@@ -138,6 +117,7 @@ impl LazerMemory {
             return None;
         }
         let o = &self.offsets;
+        let local_fields = o.local_config_keys.as_ref()?.fields();
         let local = self.root(GameRoot::LocalConfig).ok()?;
         let framework = self.root(GameRoot::FrameworkConfig).ok()?;
         let cache = self.root(GameRoot::RulesetConfigCache).ok()?;
@@ -210,13 +190,13 @@ impl LazerMemory {
             self.process.read_many(&mut requests[..count]).ok()?;
         }
         let skin_name = le_pointer(&skin_name)?;
-        let mut local_addresses = [0; LOCAL_FIELDS.len()];
+        let mut local_addresses = [0; LOCAL_FIELD_COUNT];
         store_addresses(
             local_bytes,
-            LOCAL_FIELDS.iter().map(|field| field.0),
+            local_fields.iter().map(|field| field.0),
             &mut local_addresses,
         )?;
-        let mut framework_addresses = [0; LOCAL_FIELDS.len()];
+        let mut framework_addresses = [0; LOCAL_FIELD_COUNT];
         store_addresses(
             framework_bytes,
             FRAMEWORK_FIELDS.iter().map(|field| field.0),
@@ -240,11 +220,11 @@ impl LazerMemory {
         let mut requested = [(0usize, 0usize); VALUE_SLOTS];
         for (slot, (address, field)) in requested
             .iter_mut()
-            .zip(local_addresses.iter().zip(LOCAL_FIELDS))
+            .zip(local_addresses.iter().zip(local_fields))
         {
             *slot = (*address, field.1);
         }
-        for (slot, (address, field)) in requested[LOCAL_FIELDS.len()..]
+        for (slot, (address, field)) in requested[LOCAL_FIELD_COUNT..]
             .iter_mut()
             .zip(framework_addresses.iter().zip(FRAMEWORK_FIELDS))
         {
@@ -254,7 +234,7 @@ impl LazerMemory {
             }
             *slot = (add(*address, field.1).ok()?, field.2);
         }
-        let mut request_count = LOCAL_FIELDS.len() + FRAMEWORK_FIELDS.len();
+        let mut request_count = LOCAL_FIELD_COUNT + FRAMEWORK_FIELDS.len();
         if let Some(addresses) = mania_addresses {
             for (address, field) in addresses.into_iter().zip(MANIA_FIELDS) {
                 requested[request_count] = (address, field.1);
@@ -294,7 +274,7 @@ impl LazerMemory {
             }
         };
 
-        let (local, rest) = values.split_at(LOCAL_FIELDS.len());
+        let (local, rest) = values.split_at(LOCAL_FIELD_COUNT);
         let (framework, mania) = rest.split_at(FRAMEWORK_FIELDS.len());
         let flag = |bytes: &[u8; 8]| bytes[0] == 1;
         let mut out = IndexMap::with_capacity(32);
@@ -339,6 +319,23 @@ impl LazerMemory {
             "skin.ignoreBeatmapSkins".into(),
             Value::from(!flag(&local[18])),
         );
+        out.insert(
+            "visual.beatmapColours".into(),
+            Value::from(flag(&local[19])),
+        );
+        out.insert("visual.hitLighting".into(), Value::from(flag(&local[20])));
+        out.insert("visual.scalingMode".into(), Value::from(le_i32(&local[21])));
+        for (i, name) in [
+            (22, "positionX"),
+            (23, "positionY"),
+            (24, "sizeX"),
+            (25, "sizeY"),
+        ] {
+            out.insert(
+                format!("visual.{name}"),
+                Value::from(f32::from_le_bytes(local[i][..4].try_into().unwrap()) as f64),
+            );
+        }
         out.insert(
             "resolution.fullscreen".into(),
             Value::from(le_i32(&framework[0]) == 2),
@@ -487,7 +484,7 @@ impl LazerMemory {
                 .read_exact(add(entries, 0x10).ok()?, scratch)
                 .ok()?;
         }
-        let mut addresses = [0; LOCAL_FIELDS.len()];
+        let mut addresses = [0; LOCAL_FIELD_COUNT];
         store_addresses(scratch, fields.iter().map(|field| field.0), &mut addresses)?;
         Some(std::array::from_fn(|index| addresses[index]))
     }
@@ -496,6 +493,11 @@ impl LazerMemory {
         let mut out = IndexMap::new();
         let local = self.root(GameRoot::LocalConfig)?;
         let values = self.config_store(local)?;
+        let k = self
+            .offsets
+            .local_config_keys
+            .as_ref()
+            .ok_or_else(|| corrupt("local config enum", 0, "unmeasured enum keys"))?;
         let address = |map: &IndexMap<i32, usize>, key: i32, context: &'static str| {
             map.get(&key)
                 .copied()
@@ -520,34 +522,52 @@ impl LazerMemory {
                     == 1,
             )
         };
-        out.insert("client.branch".into(), Value::from(i32v(self, 34)?));
-        self.scoring_display_mode = i32v(self, 58)?;
-        out.insert("leaderboardType".into(), Value::from(i32v(self, 30)?));
-        out.insert("sortType".into(), Value::from(i32v(self, 40)?));
-        out.insert("groupType".into(), Value::from(i32v(self, 39)?));
-        self.leaderboard_visible = boolv(self, 12)?;
-        self.replay_settings_overlay = boolv(self, 88)?;
+        out.insert(
+            "client.branch".into(),
+            Value::from(i32v(self, k.release_stream)?),
+        );
+        self.scoring_display_mode = i32v(self, k.score_display_mode)?;
+        out.insert(
+            "leaderboardType".into(),
+            Value::from(i32v(self, k.beatmap_leaderboard_sort_mode)?),
+        );
+        out.insert(
+            "sortType".into(),
+            Value::from(i32v(self, k.song_select_sorting_mode)?),
+        );
+        out.insert(
+            "groupType".into(),
+            Value::from(i32v(self, k.song_select_group_mode)?),
+        );
+        self.leaderboard_visible = boolv(self, k.gameplay_leaderboard)?;
+        self.replay_settings_overlay = boolv(self, k.replay_settings_overlay)?;
         for (key, name, mul) in [
-            (6, "background.dim", 100.0),
-            (7, "background.blur", 100.0),
-            (22, "audio.offset.universal", 1.0),
-            (23, "audio.volume.masterInactive", 100.0),
+            (k.dim_level, "background.dim", 100.0),
+            (k.blur_level, "background.blur", 100.0),
+            (k.audio_offset, "audio.offset.universal", 1.0),
+            (k.volume_inactive, "audio.volume.masterInactive", 100.0),
         ] {
             out.insert(name.into(), Value::from(js_fixed2(f64v(self, key)? * mul)));
         }
-        for (key, name) in [(2, "cursor.menuSize"), (3, "cursor.size")] {
+        for (key, name) in [
+            (k.menu_cursor_size, "cursor.menuSize"),
+            (k.gameplay_cursor_size, "cursor.size"),
+        ] {
             out.insert(name.into(), Value::from(js_fixed2(f32v(self, key)? as f64)));
         }
         for (key, name) in [
-            (4, "cursor.autoSize"),
-            (10, "background.storyboard"),
-            (19, "mouse.disableButtons"),
-            (20, "mouse.disableWheel"),
+            (k.auto_cursor_size, "cursor.autoSize"),
+            (k.show_storyboard, "background.storyboard"),
+            (k.mouse_disable_buttons, "mouse.disableButtons"),
+            (k.mouse_disable_wheel, "mouse.disableWheel"),
         ] {
             out.insert(name.into(), Value::from(boolv(self, key)?));
         }
-        out.insert("background.video".into(), Value::from(boolv(self, 10)?));
-        let beatmap_hitsounds = boolv(self, 56)?;
+        out.insert(
+            "background.video".into(),
+            Value::from(boolv(self, k.show_storyboard)?),
+        );
+        let beatmap_hitsounds = boolv(self, k.beatmap_hitsounds)?;
         out.insert(
             "audio.ignoreBeatmapSounds".into(),
             Value::from(!beatmap_hitsounds),
@@ -558,8 +578,31 @@ impl LazerMemory {
         );
         out.insert(
             "skin.ignoreBeatmapSkins".into(),
-            Value::from(!boolv(self, 54)?),
+            Value::from(!boolv(self, k.beatmap_skins)?),
         );
+        out.insert(
+            "visual.beatmapColours".into(),
+            Value::from(boolv(self, k.beatmap_colours)?),
+        );
+        out.insert(
+            "visual.hitLighting".into(),
+            Value::from(boolv(self, k.hit_lighting)?),
+        );
+        out.insert(
+            "visual.scalingMode".into(),
+            Value::from(i32v(self, k.scaling)?),
+        );
+        for (key, name) in [
+            (k.scaling_position_x, "positionX"),
+            (k.scaling_position_y, "positionY"),
+            (k.scaling_size_x, "sizeX"),
+            (k.scaling_size_y, "sizeY"),
+        ] {
+            out.insert(
+                format!("visual.{name}"),
+                Value::from(f32v(self, key)? as f64),
+            );
+        }
         let framework = self.root(GameRoot::FrameworkConfig)?;
         let fv = self.config_store(framework)?;
         let fa = |key| address(&fv, key, "framework config");

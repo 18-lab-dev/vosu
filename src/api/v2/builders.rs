@@ -6,6 +6,35 @@ use serde_json::value::RawValue;
 
 use crate::calculation::beatmap::StrainGraph;
 
+pub(super) fn play_source(
+    state: &RegularState,
+    status: i64,
+    source: ClientType,
+    mods: &CalculateMods,
+) -> Option<PlaySource> {
+    if status != 2 {
+        return None;
+    }
+    if state.global.render.is_some_and(|r| r.spectating) || state.global.is_multi_spectating {
+        return Some(PlaySource::Spectator);
+    }
+    if state.global.is_watching_replay {
+        return Some(if source == ClientType::Lazer {
+            PlaySource::Replay
+        } else {
+            PlaySource::Watching
+        });
+    }
+    if mods
+        .array
+        .iter()
+        .any(|m| matches!(m.acronym.as_str(), "AT" | "CN"))
+    {
+        return Some(PlaySource::Autoplay);
+    }
+    Some(PlaySource::Player)
+}
+
 pub(super) fn select_mods(state: &RegularState, status: i64) -> &CalculateMods {
     match status {
         2 => &state.gameplay.mods,
@@ -103,6 +132,28 @@ pub(super) fn string_value(s: &SettingsObject, p: &[&str]) -> String {
     get(s, p).and_then(Value::as_str).unwrap_or("").to_owned()
 }
 
+pub(super) fn build_visual(s: &SettingsObject) -> Option<Visual> {
+    let fields = get(s, &["visual"])?.as_object()?;
+    if fields.values().all(Value::is_null) {
+        return None;
+    }
+    let flag = |key| fields.get(key).and_then(Value::as_bool);
+    let number = |key| fields.get(key).and_then(Value::as_f64);
+    Some(Visual {
+        snaking_in_sliders: flag("snakingInSliders"),
+        snaking_out_sliders: flag("snakingOutSliders"),
+        hit_lighting: flag("hitLighting"),
+        beatmap_colours: flag("beatmapColours"),
+        hit_animations: flag("hitAnimations"),
+        rate_adjusted_hit_animation: flag("rateAdjustedHitAnimation"),
+        scaling_mode: fields.get("scalingMode").and_then(Value::as_i64),
+        position_x: number("positionX"),
+        position_y: number("positionY"),
+        size_x: number("sizeX"),
+        size_y: number("sizeY"),
+    })
+}
+
 pub(super) fn build_settings(state: &RegularState, source: ClientType) -> Settings {
     let s = &state.settings.values;
     let leaderboard_type = i64_value(s, &["leaderboardType"]);
@@ -110,7 +161,11 @@ pub(super) fn build_settings(state: &RegularState, source: ClientType) -> Settin
     let scroll_direction = i64_value(s, &["mania", "scrollDirection"]);
     let sort = i64_value(s, &["sortType"]);
     let group = i64_value(s, &["groupType"]);
+    let speed = get(s, &["mania", "scrollSpeed"])
+        .and_then(Value::as_f64)
+        .filter(|speed| source == ClientType::Lazer && speed.is_finite() && *speed > 0.0);
     Settings {
+        visual: build_visual(s),
         interface_visible: state.global.show_interface,
         replay_ui_visible: !state.global.is_replay_ui_hidden,
         chat_visibility_status: number_name(
@@ -179,6 +234,12 @@ pub(super) fn build_settings(state: &RegularState, source: ClientType) -> Settin
                 name: (!mania_scroll_name(scroll_direction).is_empty())
                     .then(|| mania_scroll_name(scroll_direction).to_owned()),
             },
+            scroll_speed_value: speed,
+            scroll_time: speed.map(|value| 11485.0 / value),
+            timing_based_note_colouring: get(s, &["mania", "timingBasedNoteColouring"])
+                .and_then(Value::as_bool),
+            per_beatmap_scroll_speed: get(s, &["mania", "perBeatmapScrollSpeed"])
+                .and_then(Value::as_f64),
         },
         sort: number_name(
             Some(sort),
@@ -316,6 +377,8 @@ pub(super) fn build_beatmap(
     parsed: Option<&ParsedBeatmap>,
     current_mode: Option<i64>,
     live_time: f64,
+    source: ClientType,
+    mods: &CalculateMods,
 ) -> Beatmap {
     let mode = Some(state.beatmap.mode.unwrap_or(0));
     let ranked_status = state.menu.ranked_status;
@@ -325,6 +388,13 @@ pub(super) fn build_beatmap(
         is_convert: mode == Some(0) && mode != current_mode,
         time: BeatmapTime {
             live: live_time,
+            rate: state
+                .global
+                .render
+                .and_then(|r| r.clock)
+                .map(|c| c.rate)
+                .or_else(|| (source != ClientType::Lazer).then_some(mods.rate)),
+            running: state.global.render.and_then(|r| r.clock).map(|c| c.running),
             first_object: state.beatmap.first_object_time.unwrap_or(0),
             last_object: parsed.map_or(0.0, |p| p.times.full),
             mp3_length: state.menu.mp3_length,
@@ -455,6 +525,7 @@ pub(super) fn build_play<'a, V: From<&'a [f64]>>(
     let a = attrs.copied().unwrap_or_default();
     let s = &gameplay.statistics;
     Play {
+        source: None,
         key_hit_errors: enable_key_hits.then(|| {
             precise_hits
                 .key

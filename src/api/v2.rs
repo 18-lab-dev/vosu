@@ -34,7 +34,7 @@ fn build_internal<'a, V: From<&'a [f64]>>(
     let current_mode = select_mode(state, status);
     let parsed = state.beatmap.parsed.as_deref();
 
-    Ok(Response {
+    let mut response = Response {
         game: Game {
             focused: cfg!(target_os = "windows").then(|| snapshot.manager().game_focused()),
             paused: state.global.paused,
@@ -53,7 +53,14 @@ fn build_internal<'a, V: From<&'a [f64]>>(
         ranked_play: state.ranked_play.info.clone(),
         settings: build_settings(state, source),
         profile: build_profile(state.user.profile.as_ref()),
-        beatmap: build_beatmap(state, parsed, current_mode, focused.precise.play_time),
+        beatmap: build_beatmap(
+            state,
+            parsed,
+            current_mode,
+            focused.precise.play_time,
+            source,
+            current_mods,
+        ),
         play: build_play(
             &state.gameplay,
             state.beatmap.attributes.as_ref(),
@@ -116,7 +123,9 @@ fn build_internal<'a, V: From<&'a [f64]>>(
                 })
                 .collect(),
         }),
-    })
+    };
+    response.play.source = play_source(state, status, source, current_mods);
+    Ok(response)
 }
 
 pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {

@@ -326,6 +326,7 @@ impl StateBundle {
                 self.global
                     .current_skin
                     .clone_from(&raw_global.current_skin);
+                self.global.render = raw_global.render;
                 if !regular_global_is_stale {
                     self.global.status = raw_global.status;
                     self.global.play_time = raw_global.play_time;

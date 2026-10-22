@@ -7,6 +7,14 @@ use serde_json::Value;
 pub struct OffsetGroup59 {
     #[serde(rename = "CurrentSkin")]
     pub current_skin: usize,
+    #[serde(default, rename = "<DefaultClassicSkin>k__BackingField")]
+    pub legacy_skin: usize,
+    #[serde(default, rename = "<argonSkin>k__BackingField")]
+    pub argon_skin: usize,
+    #[serde(default, rename = "<trianglesSkin>k__BackingField")]
+    pub triangles_skin: usize,
+    #[serde(default, rename = "<retroSkin>k__BackingField")]
+    pub retro_skin: usize,
     #[serde(flatten)]
     pub extras: IndexMap<String, Value>,
 }

@@ -6,6 +6,7 @@ fn skin_metadata(selected: &BeatmapFiles) -> Value {
         "files": if selected.lazer { skin.is_some_and(|s| !s.files.is_empty()) }
             else { selected.skin_root.as_ref().is_some_and(|p| p.is_dir()) },
         "builtin": skin.and_then(|s| s.builtin.as_deref()),
+        "base": if selected.lazer { skin.and_then(|s| s.base.as_deref()) } else { selected.skin_client.map(|_| "legacy") },
     })
 }
 

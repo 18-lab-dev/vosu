@@ -589,10 +589,8 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
         let mut selected = BeatmapFiles {
             lazer: true, ready: true, skin_client: Some("lazer"),
             skin_name: Some("Fixture".into()), songs_root: Some(root.path().to_owned()),
-            skin: Some(Arc::new(crate::model::memory::CurrentSkin {
-                name: "Fixture".into(), builtin: None,
-                files: [("skin.ini".into(), relative)].into(),
-            })),
+            skin: Some(Arc::new(crate::model::memory::CurrentSkin { base: None, name: "Fixture".into(), builtin: None,
+            files: [("skin.ini".into(), relative)].into(), })),
             ..BeatmapFiles::default()
         };
         for name in ["SKIN.INI", "skin%2Eini"] {
@@ -604,10 +602,11 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             let path = format!("/files/skin/{name}");
             assert!(matches!(resolve_file_endpoint(Endpoint::SkinFile, &selected, &path, &path).unwrap(), ResourceOutcome::Missing(MissingKind::NotFound)), "{name}");
         }
-        assert_eq!(skin_metadata(&selected), json!({"client":"lazer","name":"Fixture","files":true,"builtin":null}));
-        selected.skin = Some(Arc::new(crate::model::memory::CurrentSkin { name: "Argon".into(), builtin: Some("argon".into()), files: Default::default() }));
+        assert_eq!(skin_metadata(&selected), json!({"client":"lazer","name":"Fixture","files":true,"builtin":null,"base":null}));
+        selected.skin = Some(Arc::new(crate::model::memory::CurrentSkin { base: Some("argon".into()), name: "Argon".into(), builtin: Some("argon".into()), files: Default::default() }));
         assert_eq!(skin_metadata(&selected)["builtin"], "argon");
+        assert_eq!(skin_metadata(&selected)["base"], "argon");
         assert_eq!(skin_metadata(&selected)["files"], false);
         assert!(matches!(resolve_file_endpoint(Endpoint::SkinFile, &selected, "/files/skin/skin.ini", "/files/skin/skin.ini").unwrap(), ResourceOutcome::Missing(MissingKind::NotFound)));
-        assert_eq!(skin_metadata(&BeatmapFiles::default()), json!({"client":null,"name":null,"files":false,"builtin":null}));
+        assert_eq!(skin_metadata(&BeatmapFiles::default()), json!({"client":null,"name":null,"files":false,"builtin":null,"base":null}));
     }

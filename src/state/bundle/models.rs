@@ -99,9 +99,16 @@ impl Default for SettingsState {
             "mania".into(),
             json!({
                 "speedBPMScale": false, "usePerBeatmapSpeedScale": false,
-                "scrollSpeed": 0, "scrollDirection": 1
+                "scrollSpeed": 0, "scrollDirection": 1,
+                "timingBasedNoteColouring": null, "perBeatmapScrollSpeed": null
             }),
         );
+        values.insert("visual".into(), json!({
+            "snakingInSliders": null, "snakingOutSliders": null,
+            "hitLighting": null, "beatmapColours": null,
+            "hitAnimations": null, "rateAdjustedHitAnimation": null,
+            "scalingMode": null, "positionX": null, "positionY": null, "sizeX": null, "sizeY": null
+        }));
         values.insert(
             "skin".into(),
             json!({
@@ -180,6 +187,7 @@ pub struct GlobalState {
     pub game_folder: String,
     pub skin_folder: String,
     pub current_skin: Option<std::sync::Arc<crate::model::memory::CurrentSkin>>,
+    pub render: Option<crate::model::memory::ClientRenderState>,
     pub songs_folder: String,
     pub memory_songs_folder: String,
 }
@@ -201,6 +209,7 @@ impl Default for GlobalState {
             game_folder: String::new(),
             skin_folder: String::new(),
             current_skin: None,
+            render: None,
             songs_folder: String::new(),
             memory_songs_folder: String::new(),
         }

@@ -194,6 +194,7 @@ impl StateCalculationBackend for MismatchedCalculation {
 
 fn raw_global(status: GameState, time: i64) -> RawGlobal {
     RawGlobal {
+        render: None,
         is_watching_replay: false,
         is_replay_ui_hidden: false,
         is_multi_spectating: false,

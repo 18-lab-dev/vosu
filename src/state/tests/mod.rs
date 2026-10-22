@@ -54,6 +54,7 @@ fn context(source: ClientType) -> ReadContext {
 
 fn raw_global() -> Global {
     Global {
+        render: None,
         is_watching_replay: false,
         is_replay_ui_hidden: false,
         is_multi_spectating: false,

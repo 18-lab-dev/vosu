@@ -287,7 +287,21 @@ pub struct ReleaseCorrection {
 pub struct CurrentSkin {
     pub name: String,
     pub builtin: Option<String>,
+    #[serde(default)]
+    pub base: Option<String>,
     pub files: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackClock {
+    pub rate: f64,
+    pub running: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ClientRenderState {
+    pub spectating: bool,
+    pub clock: Option<PlaybackClock>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -317,6 +331,8 @@ pub struct Global {
     pub skin_folder: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_skin: Option<std::sync::Arc<CurrentSkin>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render: Option<ClientRenderState>,
     #[serde(rename = "memorySongsFolder")]
     pub memory_songs_folder: String,
 }
