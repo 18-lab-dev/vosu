@@ -16,6 +16,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Let tools own their look: the browser bridge exposes the dashboard's colour mode as `vosu.colorScheme` and no longer sets `data-theme` on tool pages; `/tools/_host/v1/theme.css` stays available as an optional resource.
 - Add an optional manifest `banner` (3:1) beside `icon`, served at `/tools/<id>/_banner` and reported as ToolView `banner_url`; catalog tool and overlay entries may carry HTTPS `icon_url` and `banner_url`. Serve icons and banners in every tool status, sandboxed against script.
 - Add `GET /tools/<id>/_settings` and the bridge's `vosu.settings()` so tool UIs read their effective settings. `password` settings are write-only from the dashboard (never returned; blank keeps, Clear removes) and never included in that route; only the tool's service reads them through the host API.
+- Make the bridge's `vosu.subscribe()` survive vosu restarts and network drops: it reconnects with capped, jittered exponential backoff, re-sends the subscription, keeps a single socket, stops on unsubscribe, and reports `"connecting"`/`"open"`/`"closed"` through an optional `onStatus` callback.
 
 ### Official catalog
 

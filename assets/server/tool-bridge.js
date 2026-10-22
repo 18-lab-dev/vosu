@@ -46,12 +46,77 @@ export const vosu = Object.freeze({
     if (!response.ok) throw new Error(`Tool settings unavailable (HTTP ${response.status})`);
     return (await response.json()).values;
   },
-  subscribe(fields, onFrame) {
+  // Live `/websocket/v2/subscribe` frames that survive vosu restarts and
+  // network drops: one socket at a time, the subscription re-sent on every
+  // reconnect, capped exponential backoff with jitter between attempts.
+  // `onStatus` (optional) receives "connecting" | "open" | "closed".
+  // Returns an unsubscribe function that stops reconnecting.
+  subscribe(fields, onFrame, onStatus) {
     const url = new URL('/websocket/v2/subscribe', location.origin);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(url);
-    socket.addEventListener('open', () => socket.send(JSON.stringify(fields)));
-    socket.addEventListener('message', event => onFrame(JSON.parse(event.data)));
-    return () => socket.close();
+    const request = JSON.stringify(fields);
+    let socket = null;
+    let timer = 0;
+    let attempt = 0;
+    let stopped = false;
+    let state = null;
+    const report = (next) => {
+      if (next === state) return;
+      state = next;
+      if (onStatus) queueMicrotask(() => onStatus(next));
+    };
+    const connect = () => {
+      timer = 0;
+      if (stopped || socket) return;
+      report('connecting');
+      const current = new WebSocket(url);
+      let openedAt = 0;
+      socket = current;
+      current.addEventListener('open', () => {
+        if (socket !== current) return;
+        openedAt = Date.now();
+        current.send(request);
+        report('open');
+      });
+      current.addEventListener('message', (event) => {
+        if (socket !== current) return;
+        let frame;
+        try { frame = JSON.parse(event.data); } catch { return; }
+        onFrame(frame);
+      });
+      // Every failed or dropped connection ends in `close`, also after `error`.
+      current.addEventListener('close', () => {
+        if (socket !== current) return;
+        socket = null;
+        if (stopped) return;
+        report('closed');
+        // Only a connection that stayed up resets the backoff, so a server
+        // that rejects the subscription (its error frame reaches onFrame) is
+        // retried ever more slowly rather than in a tight loop.
+        if (openedAt && Date.now() - openedAt >= 10_000) attempt = 0;
+        const ceiling = Math.min(30_000, 500 * 2 ** attempt);
+        attempt += 1;
+        timer = setTimeout(connect, ceiling / 2 + Math.random() * (ceiling / 2));
+      });
+    };
+    // Coming back online retries at once instead of waiting out the backoff.
+    const online = () => {
+      if (stopped || socket) return;
+      clearTimeout(timer);
+      attempt = 0;
+      connect();
+    };
+    addEventListener('online', online);
+    connect();
+    return () => {
+      if (stopped) return;
+      stopped = true;
+      clearTimeout(timer);
+      removeEventListener('online', online);
+      const current = socket;
+      socket = null;
+      current?.close();
+      report('closed');
+    };
   },
 });
