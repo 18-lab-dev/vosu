@@ -139,9 +139,11 @@ vosu.colorScheme;            // "dark" | "light": the dashboard's mode at launch
 vosu.canWrite;               // true when this tab holds a UI session
 vosu.dashboardUrl;           // dashboard origin, for "Settings" links
 await vosu.fetch("v1/profile");          // relative to /tools/<id>/api/, adds the session header
-vosu.subscribe(fields, onFrame);         // /websocket/v2/subscribe helper
+const stop = vosu.subscribe(fields, onFrame, onStatus);  // /websocket/v2/subscribe, reconnecting; stop() ends it
 await vosu.settings();                   // GET /tools/<id>/_settings → values (no password settings)
 ```
+
+`vosu.subscribe(fields, onFrame, onStatus?)` keeps one WebSocket to `/websocket/v2/subscribe` and sends `fields` (JSON-pointer selectors such as `"/beatmap"`) each time it connects. When vosu restarts or the connection drops, it reconnects with exponential backoff: 0.5 s doubling to a 30 s ceiling, each delay randomized between half and all of its step. The step resets only after a connection stayed open for 10 s, so a rejected subscription (its error frame is passed to `onFrame`) is retried ever more slowly; the browser's `online` event retries immediately. It never holds two sockets for one subscription. `onFrame` receives each parsed frame; frames that are not JSON are skipped. The optional `onStatus(state)` is called with `"connecting"`, `"open"`, or `"closed"` whenever the state changes, so a UI can show connection state; each new connection starts with a full snapshot, so no state is lost. The returned function closes the socket and stops reconnecting (reporting `"closed"`). Tools should not wrap it in their own reconnect loop. Older bridges ignore `onStatus` and do not reconnect.
 
 `vosu.colorScheme` is a hint, read once when the bridge loads: the launch fragment's `theme=` value when present, otherwise `prefers-color-scheme`. The bridge sets no attributes or styles on the page. Tools that support both modes should follow it and declare a matching CSS `color-scheme` so native controls (select popups, scrollbars, date and number pickers) stay legible. Older bridges lack the property; tools can fall back with `vosu.colorScheme ?? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")`.
 
