@@ -39,6 +39,7 @@ description = "…"                # optional, one paragraph
 author = "18-LAB"                # optional
 homepage = "https://…"           # optional, http(s)
 icon = "web/icon.svg"            # optional, path inside the tool directory (svg/png)
+banner = "art/banner.webp"       # optional, path inside the tool directory (png/jpg/jpeg/webp/svg)
 
 [ui]                             # optional: browser UI
 root = "web"                     # static directory, served at /tools/<id>/
@@ -68,6 +69,7 @@ host = ["context", "songs:write"]  # see "Host API" below
 `settings.json` in the tool directory, when present, uses exactly the overlay `settings.json` schema and is rendered by the dashboard's existing settings editor. Profiles do not apply to tools.
 Editors supporting JSON Schema for TOML (Taplo / Even Better TOML) can put `#:schema https://raw.githubusercontent.com/shiruviaa/vosu/main/docs/tools/tool.schema.json` on the first line. A local manifest can instead use `#:schema ../../docs/tools/tool.schema.json`, adjusted relative to that manifest. The schema validates structure; vosu additionally checks filesystem confinement, dependencies, and semantic versions.
 
+`icon` and `banner` give a tool its identity on the dashboard. The icon is square (SVG, or PNG at least 256×256) and is shown at 40–64 px. The banner is 3:1 (recommended 1200×400) and spans the full card width, cropped with `object-fit: cover`, so keep important content centred. Both are served from the tool directory on the overlay origin as `/tools/<id>/_icon` and `/tools/<id>/_banner` while the tool is usable; ToolView reports them as `icon_url` and `banner_url`. A missing or unreadable icon falls back to the name's initials, and a missing banner leaves the card without one.
 
 Prefix matching is segment-aware: `/v1/beatmap` matches `/v1/beatmap` and `/v1/beatmap/…`, never `/v1/beatmaps`. Access is method-aware: GET/HEAD/WebSocket upgrades matching `read` are open even when the same prefix is also in `write`. Other methods require a matching `write` prefix and authenticated write authority. GET/HEAD on write-only prefixes also require that authority; unlisted routes return 404.
 
@@ -101,7 +103,7 @@ The `/tools` path prefix is reserved on the overlay listener: overlays cannot be
 | --- | --- |
 | `GET /tools` | 302 to the dashboard Tools page |
 | `/tools/<id>/api/<rest>` | Proxied to the service as `/<rest>` with query string, method, body (≤ 1 MiB), and WebSocket upgrades on `read` routes. Hop-by-hop headers, cookies, and `X-Vosu-*` request headers are stripped and re-set by vosu. On-demand services are started and the request held until ready. 503 when the tool is disabled, untrusted, failed, or blocked. |
-| `/tools/<id>/<path>` | Static file from `[ui].root` (root-confined, traversal-safe); `/tools/<id>/` serves `entry`. 404 for service-only tools. |
+| `/tools/<id>/<path>` | Static file from `[ui].root` (root-confined, traversal-safe); `/tools/<id>/` serves `entry`. `/tools/<id>/_icon` and `/tools/<id>/_banner` serve the manifest art. 404 for service-only tools. |
 | `/tools/_host/v1/*` | Host API and browser bridge (below) |
 
 Access rules for `/tools/<id>/api/*`:
@@ -124,17 +126,20 @@ Base `VOSU_URL/tools/_host/v1`, authenticated with `X-Vosu-Tool-Token`. Public o
 
 ## Browser bridge (for UIs)
 
-UIs load `<script type="module">` from `/tools/_host/v1/bridge.js` and may link `/tools/_host/v1/theme.css` (the dashboard design tokens; `:root[data-theme="dark"|"light"]`).
+UIs load `<script type="module">` from `/tools/_host/v1/bridge.js`. Tools own their look: vosu does not theme tool pages. `/tools/_host/v1/theme.css` remains available as an optional resource holding the dashboard's design tokens and fonts (`:root[data-theme="dark"|"light"]`, following the system preference when the attribute is absent); a tool that links it sets `data-theme` itself.
 
 ```js
 import { vosu } from "/tools/_host/v1/bridge.js";
-await vosu.ready;            // exchanges a launch code from the URL fragment, applies data-theme
+await vosu.ready;            // exchanges a launch code from the URL fragment
 vosu.tool;                   // { id, name, version }
+vosu.colorScheme;            // "dark" | "light": the dashboard's mode at launch, else the system preference
 vosu.canWrite;               // true when this tab holds a UI session
 vosu.dashboardUrl;           // dashboard origin, for "Settings" links
 await vosu.fetch("v1/profile");          // relative to /tools/<id>/api/, adds the session header
 vosu.subscribe(fields, onFrame);         // /websocket/v2/subscribe helper
 ```
+
+`vosu.colorScheme` is a hint, read once when the bridge loads: the launch fragment's `theme=` value when present, otherwise `prefers-color-scheme`. The bridge sets no attributes or styles on the page. Tools that support both modes should follow it and declare a matching CSS `color-scheme` so native controls (select popups, scrollbars, date and number pickers) stay legible. Older bridges lack the property; tools can fall back with `vosu.colorScheme ?? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")`.
 
 Launch: the dashboard's **Open** calls `POST /api/tools/<id>/launch` (dashboard origin, CSRF) and opens the returned URL `<overlay origin>/tools/<id>/#vosu-launch=<code>&theme=<dark|light>` in a new tab without an opener. The code is single-use and expires after 60 seconds; the bridge exchanges it via `POST /tools/_host/v1/session` `{"tool","code"}` → `{"session"}`, keeps the session only in the page's JavaScript memory, and strips the fragment. Never persist it to `sessionStorage`, `localStorage`, IndexedDB, or cookies: those are shared with every overlay that later loads in the same tab. Sessions last until vosu restarts. A UI opened without a launch code, or reloaded, is read-only until opened from the dashboard again. Tool UIs must not open same-origin pages without `noopener` or embed overlays in frames, because such documents can script the tool page and use its session.
 
@@ -156,7 +161,8 @@ All POSTs require dashboard provenance and `X-Vosu-CSRF`, like other management 
 ```json
 {
   "id": "skill-tracker", "name": "Skill Tracker", "version": "0.1.0",
-  "description": "…", "author": "18-LAB", "homepage": null, "icon_url": "http://127.0.0.1:24050/tools/skill-tracker/icon.svg",
+  "description": "…", "author": "18-LAB", "homepage": null,
+  "icon_url": "http://127.0.0.1:24050/tools/skill-tracker/_icon", "banner_url": "http://127.0.0.1:24050/tools/skill-tracker/_banner",
   "source": "official", "update_available": false, "path": "…/tools/skill-tracker", "trusted": true, "enabled": true,
   "kind": "hybrid", "startup": "always",
   "status": "running", "status_detail": null,
@@ -183,6 +189,8 @@ Settings / **Catalog sources** manages an ordered list of enabled or disabled so
 The sibling `catalog-sources-v2.json` migration marker records migration or an explicit Settings edit, preventing a deliberately restored two-entry list from being migrated again on the next launch.
 
 `GET /api/tools/catalog/sources` returns `{"sources":[{"source","enabled","url","status","last_error","fetched_at"}]}`. CSRF-protected `POST` to the same endpoint replaces the list with `{"sources":[{"source":"owner/repo","enabled":true}]}`. `GET /api/tools/catalog` fetches all enabled sources, returning merged `tools`, `overlays`, source fetch results, and `shadowed` entries. Earlier sources win each tool/overlay id; later entries are displayed as shadowed and cannot be installed. Entries carry `source`; tool views also include `installed`, `managed`, `installed_version`, `supported`, and `update_available`. Catalogs may contain tools, overlays, or both; dependencies resolve across enabled sources.
+
+Catalog tool and overlay entries may carry optional `icon_url` and `banner_url`, absolute HTTPS URLs to the same art the manifest's `icon` and `banner` describe, so Available cards show it before installation. vosu validates them like package URLs (a non-HTTPS or credentialed URL rejects the catalog) and passes them through unchanged; the dashboard loads them without a referrer and falls back to initials, or no banner, when they fail. First-party packaging publishes them as release assets named `vosu-tool-<id>-icon.<ext>` and `vosu-tool-<id>-banner.<ext>`.
 
 Only tools from the exact default source identities `shiruviaa/vosu-tools` and `shiruviaa/vosulay` are installed as `official` and trusted automatically. Trust follows the exact source string, not its position or resolved URL: removing and re-adding either identical shorthand retains official status. These entries resolve through the same repository resolver as user sources. Tagged, differently cased, and HTTPS URL spellings are not aliases for trust, even when they resolve to the same repository. This deliberately narrow allowlist avoids URL/redirect-based trust expansion and does not pretend a user-editable entry has authenticated creation provenance. All other catalog tools (including those from `shiruviaa/vosu-overlays`) are `user` and remain untrusted until approved, just like manual installations. Size/digest verification establishes package integrity, not author trust. Catalog-installed tools cannot overwrite development tools or manually installed directories.
 

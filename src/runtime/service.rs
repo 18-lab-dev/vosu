@@ -203,6 +203,27 @@ impl RuntimePages {
         .map_err(|error| error.to_string())
     }
 
+    /// Declared preview colour scheme of each local overlay, read from its
+    /// files off the async runtime.
+    async fn preview_schemes(
+        &self,
+        local: &[crate::counters::Counter],
+    ) -> Vec<super::preview_scheme::PreviewScheme> {
+        let root = self.counters.current_root();
+        let folders = local
+            .iter()
+            .map(|counter| counter.folder_name.clone())
+            .collect::<Vec<_>>();
+        tokio::task::spawn_blocking(move || {
+            folders
+                .iter()
+                .map(|folder| super::preview_scheme::overlay_preview_scheme(&root.join(folder)))
+                .collect()
+        })
+        .await
+        .unwrap_or_default()
+    }
+
     async fn annotate_updates(&self, local: &mut [crate::counters::Counter]) {
         let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
         if let Ok(remote) = self.catalog.fetch(&installed, &self.shutdown).await {
@@ -226,7 +247,8 @@ impl PageDataProvider for RuntimePages {
                 DynamicPage::Dashboard => {
                     let mut local = local;
                     self.annotate_updates(&mut local).await;
-                    let html = render_local_counters(&local, None, &authority);
+                    let schemes = self.preview_schemes(&local).await;
+                    let html = render_local_counters(&local, &schemes, None, &authority);
                     (
                         if html.is_empty() {
                             r#"<div class="empty-state"><h2>No local overlays yet</h2><p>Install an overlay from the catalog, or copy an overlay folder into the overlays directory on this computer; vosu picks it up without a restart.</p><div class="counter-actions"><a class="button button-primary" href="/available">Browse available overlays</a><button class="button" type="button" data-action="open-overlays-root">Open overlays folder</button></div></div>"#.to_owned()
@@ -305,7 +327,8 @@ impl PageDataProvider for RuntimePages {
             } else {
                 let mut local = local;
                 self.annotate_updates(&mut local).await;
-                render_local_counters(&local, Some(&query), &authority)
+                let schemes = self.preview_schemes(&local).await;
+                render_local_counters(&local, &schemes, Some(&query), &authority)
             };
             Ok(Bytes::from(if html.is_empty() {
                 empty_counter_search()

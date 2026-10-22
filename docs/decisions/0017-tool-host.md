@@ -26,6 +26,7 @@ Add **tools** as vosu's first extension type, specified in the [tool protocol](.
   dependencies, keeping the service the single writer of shared tool data.
   The launcher revokes after child exit. Tools never receive the broker token.
 - [vosulay](https://github.com/shiruviaa/vosulay) is an optional official out-of-process tool, not an embedded overlay engine. It owns its rendering and manager and retains standalone mode, preserving [ADR 0008's boundary](0008-external-in-game-overlays.md). A voluntary status-0 service exit means `stopped` (`exited`), not a crash; even `always` tools wait for manual start or the next vosu launch.
+- Tools own their visual identity. The bridge reports the dashboard's colour mode as `vosu.colorScheme` but sets no attributes or styles on tool pages; `/tools/_host/v1/theme.css` is an optional resource, not a required look. Manifests may declare an `icon` and a 3:1 `banner`, and catalogs may carry HTTPS `icon_url`/`banner_url`, so tools are recognizable on the dashboard before and after installation. Making the dashboard style the default for tools was rejected after first user testing: every tool looked like the dashboard and was hard to tell apart.
 
 ### Write authority on a shared origin
 

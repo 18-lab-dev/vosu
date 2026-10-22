@@ -94,6 +94,7 @@ mod cli;
 mod config;
 mod lifecycle;
 mod offset_generator;
+mod preview_scheme;
 mod projection;
 mod render;
 mod service;

@@ -8,6 +8,37 @@ function button(label, run, disabled = false) {
   const element = node('button', label, 'button'); element.type = 'button'; element.disabled = disabled;
   element.addEventListener('click', run); return element;
 }
+function httpUrl(value) {
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch (_error) { return null; }
+}
+function image(source, onError) {
+  // Eager: a lazy image that failed later would drop its banner mid-scroll.
+  const element = document.createElement('img');
+  element.alt = ''; element.decoding = 'async'; element.referrerPolicy = 'no-referrer';
+  element.addEventListener('error', onError, { once: true });
+  element.src = source;
+  return element;
+}
+// Card art shared by tool and catalog cards (manifest `icon`/`banner`, catalog
+// `icon_url`/`banner_url`). A missing or broken icon falls back to the
+// initials tile; a missing or broken banner leaves the card without one.
+export function cardIcon(name, url) {
+  const frame = node('div', undefined, 'tool-card__icon'); frame.setAttribute('aria-hidden', 'true');
+  const initials = () => frame.replaceChildren(String(name || '?').trim().slice(0, 2));
+  const source = httpUrl(url);
+  if (source) frame.append(image(source, initials)); else initials();
+  return frame;
+}
+export function cardBanner(url) {
+  const source = httpUrl(url);
+  if (!source) return null;
+  const frame = node('div', undefined, 'tool-card__banner'); frame.setAttribute('aria-hidden', 'true');
+  frame.append(image(source, () => frame.remove()));
+  return frame;
+}
 export function mountCatalogSources({ root, requestJson, notify, errorText, setBusy }) {
   const section = node('section', undefined, 'tools-catalog'); section.id = 'catalog-sources';
   const heading = node('h2', 'Catalog sources');
@@ -59,10 +90,11 @@ export function mountCatalogSources({ root, requestJson, notify, errorText, setB
 
 export function mountCatalogOverlays({ root, requestJson, notify, errorText, setBusy, confirmAction }) {
   const section = node('section', undefined, 'tools-catalog'); section.id = 'source-overlays';
-  const heading = node('h2', 'Catalog source overlays');
+  const heading = node('h2', 'Catalog source overlays'); heading.id = 'source-overlays-title';
+  section.setAttribute('aria-labelledby', heading.id);
   const disclosure = node('p', 'Third-party JavaScript runs on the overlay origin and can read the local overlay API. Install only overlays and sources you trust. The community catalog above remains independent.', 'field-help');
-  const status = node('p', 'Fetching catalog sources…', 'field-help'); status.setAttribute('role', 'status');
-  const cards = node('div', undefined, 'tools-root');
+  const status = node('p', 'Fetching catalog sources…', 'tools-loading'); status.setAttribute('role', 'status');
+  const cards = node('div', undefined, 'tools-root tools-root--overlays');
   async function install(overlay, action, control) {
     const requirements = overlay.requires_tools || [];
     if (requirements.length && !await confirmAction('Install required tools too?', requirements.map((r) => `${r.id} ${r.version}`).join('\n') + '\nCatalog tools run with your OS account’s access. Tools from non-official sources remain untrusted until approved.', 'Install tools and overlay')) return;
@@ -87,14 +119,17 @@ export function mountCatalogOverlays({ root, requestJson, notify, errorText, set
       status.textContent = `${payload.overlays.length} overlays · ${payload.sources.map((source) => `${source.source}: ${source.status}${source.last_error ? ` (${source.last_error})` : ''}`).join(' · ')}`;
       cards.replaceChildren(...overlays.map((overlay) => {
         const card = node('article', undefined, 'tool-card');
-        const monogram = node('div', overlay.name.slice(0, 2), 'tool-card__icon'); monogram.setAttribute('aria-hidden', 'true');
+        const banner = cardBanner(overlay.banner_url);
+        const top = node('div', undefined, 'tool-card__top');
         const head = node('div', undefined, 'tool-card__head');
         const badges = node('p', undefined, 'tool-card__index');
         badges.append(node('span', overlay.shadowed ? 'Shadowed' : 'Catalog overlay', 'badge'));
         if (overlay.update_available) badges.append(node('span', 'Update available', 'badge'));
         const title = node('h2', overlay.name); title.append(node('span', `v${overlay.version}`, 'tool-card__version'));
         head.append(badges, title, node('p', `by ${overlay.author} · ${overlay.source}`, 'tool-card__author'));
-        card.append(monogram, head, node('p', overlay.description, 'tool-card__description'));
+        top.append(cardIcon(overlay.name, overlay.icon_url), head);
+        if (banner) card.append(banner);
+        card.append(top, node('p', overlay.description, 'tool-card__description'));
         const actions = node('div', undefined, 'tool-card__actions');
         if (overlay.shadowed) actions.append(node('span', 'An earlier source provides this id.', 'field-help'));
         else if (!overlay.installed || overlay.update_available && overlay.managed) {
@@ -107,5 +142,7 @@ export function mountCatalogOverlays({ root, requestJson, notify, errorText, set
     } catch (error) { status.textContent = `Catalog sources unavailable: ${errorText(error)}`; }
   }
   const refresh = button('Refresh source overlays', load);
-  section.append(heading, disclosure, refresh, status, cards); root.after(section); load();
+  // Same header as the Tools page's Available section: title left, refresh right.
+  const header = node('header', undefined, 'tools-catalog__header'); header.append(heading, refresh);
+  section.append(header, disclosure, status, cards); root.after(section); load();
 }

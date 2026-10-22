@@ -1,3 +1,4 @@
+use super::preview_scheme::PreviewScheme;
 use super::*;
 
 pub(super) fn local_overlay(counter: &crate::counters::Counter) -> LocalOverlay {
@@ -137,14 +138,18 @@ pub(super) fn matches_catalog_query(
     })
 }
 
+/// `schemes[i]` is the declared preview colour scheme of `counters[i]`; a
+/// missing entry keeps the light default.
 pub(super) fn render_local_counters(
     counters: &[crate::counters::Counter],
+    schemes: &[PreviewScheme],
     query: Option<&str>,
     authority: &str,
 ) -> String {
     counters
         .iter()
-        .filter(|counter| {
+        .enumerate()
+        .filter(|(_, counter)| {
             query.is_none_or(|query| {
                 matches_catalog_query(
                     &counter.name,
@@ -154,7 +159,7 @@ pub(super) fn render_local_counters(
                 )
             })
         })
-        .map(|counter| {
+        .map(|(index, counter)| {
             let duplicate_name = counters
                 .iter()
                 .filter(|other| other.name.eq_ignore_ascii_case(&counter.name))
@@ -174,6 +179,7 @@ pub(super) fn render_local_counters(
                     resolution: &counter.resolution,
                     compatible: counter.compatiblewith.as_deref().unwrap_or_default(),
                     show_folder: duplicate_name,
+                    preview_scheme: schemes.get(index).copied().unwrap_or_default(),
                     ..CounterCard::default()
                 },
                 authority,
@@ -235,6 +241,8 @@ pub(super) fn render_catalog_counters(
                     compatible: counter.compatiblewith.as_deref().unwrap_or_default(),
                     show_folder: false,
                     usecase: counter.usecase.as_ref(),
+                    // Catalog cards show images, not live frames.
+                    preview_scheme: PreviewScheme::Light,
                 },
                 authority,
             )
@@ -280,6 +288,8 @@ pub(super) struct CounterCard<'a> {
     pub(super) show_folder: bool,
     /// Catalog use cases such as `ingame` or `obs-overlay`.
     pub(super) usecase: Option<&'a serde_json::Value>,
+    /// Colour scheme the installed overlay declares; its preview frame matches it.
+    pub(super) preview_scheme: PreviewScheme,
 }
 
 const PIN_ICON: &str = r#"<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 3h6l-1 6 3 3v2h-4v6l-1 1-1-1v-6H7v-2l3-3z"/></svg>"#;
@@ -589,7 +599,7 @@ fn render_installed_card(
     format!(
         concat!(
             r#"<article class="counter-card{status}" data-overlay-id="{folder}"{identity}>"#,
-            r#"<div class="counter-card__preview"><div {stage}><iframe src="{src}" loading="lazy" width="{width}" height="{height}" scrolling="no" tabindex="-1" title="{name} overlay preview"></iframe></div><button class="preview-expand" type="button" data-action="expand-preview" aria-label="Enlarge {name} preview" title="Enlarge preview"><span>Enlarge</span></button></div>"#,
+            r#"<div class="counter-card__preview"><div {stage}><iframe src="{src}"{scheme} loading="lazy" width="{width}" height="{height}" scrolling="no" tabindex="-1" title="{name} overlay preview"></iframe></div><button class="preview-expand" type="button" data-action="expand-preview" aria-label="Enlarge {name} preview" title="Enlarge preview"><span>Enlarge</span></button></div>"#,
             r#"<div class="counter-card__body"><div class="counter-card__identity"><h2 title="{name}">{name}</h2>"#,
             r#"<p class="counter-card__meta">{version}{author}<button class="meta-copy" type="button" data-action="copy-metadata" data-copy-label="Resolution" data-copy-value="{resolution}" title="Copy resolution">{resolution}</button></p>"#,
             r#"{folder_line}<div class="counter-card__chips">{update}<span class="badge connected-chip" hidden></span></div></div>{actions}</div>"#,
@@ -601,6 +611,10 @@ fn render_installed_card(
         identity = identity,
         stage = stage,
         src = &absolute_url,
+        scheme = match card.preview_scheme {
+            PreviewScheme::Light => "",
+            PreviewScheme::Dark => r#" data-color-scheme="dark""#,
+        },
         width = width,
         height = height,
         name = name,

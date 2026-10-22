@@ -57,13 +57,16 @@ fn default_sources() -> Vec<Source> {
         })
         .collect()
 }
-fn validate_overlay(overlay: &Overlay) -> Result<(), String> {
+pub(super) fn validate_overlay(overlay: &Overlay) -> Result<(), String> {
     if !manifest::valid_id(&overlay.id) || crate::counters::validate_component(&overlay.id).is_err()
     {
         return Err("invalid overlay id".into());
     }
     semver::Version::parse(&overlay.version).map_err(|e| e.to_string())?;
     validate_url(&overlay.package.url)?;
+    for url in overlay.icon_url.iter().chain(&overlay.banner_url) {
+        validate_url(url)?;
+    }
     let package = &overlay.package;
     if package.size == 0
         || package.size > MAX_PACKAGE

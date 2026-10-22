@@ -16,6 +16,7 @@ pub struct Manifest {
     pub author: String,
     pub homepage: Option<String>,
     pub icon: Option<String>,
+    pub banner: Option<String>,
     pub ui: Option<Ui>,
     pub service: Option<Service>,
     pub cli: Option<Cli>,
@@ -130,6 +131,15 @@ impl Manifest {
                 ))
         {
             return Err("icon must be a relative svg/png path".into());
+        }
+        if let Some(banner) = &self.banner
+            && (!relative(banner)
+                || !matches!(
+                    Path::new(banner).extension().and_then(|v| v.to_str()),
+                    Some("png" | "jpg" | "jpeg" | "webp" | "svg")
+                ))
+        {
+            return Err("banner must be a relative png/jpg/jpeg/webp/svg path".into());
         }
         if let Some(ui) = &self.ui
             && (!relative(&ui.root) || !relative(&ui.entry))
@@ -301,5 +311,30 @@ mod cli_tests {
         ] {
             assert!(Manifest::parse(&base.replace(from, to)).is_err(), "{to}");
         }
+    }
+
+    #[test]
+    fn art_paths_are_confined_images() {
+        let base = "manifest_version=1\nid='demo'\nname='Demo'\nversion='1.0.0'\n[cli]\ncommand=['bin/demo']\n";
+        let with = |art: &str| Manifest::parse(&format!("{art}\n{base}"));
+        let manifest = with("icon='art/icon.svg'\nbanner='art/banner.webp'").unwrap();
+        assert_eq!(manifest.banner.as_deref(), Some("art/banner.webp"));
+        for banner in [
+            "art/banner.png",
+            "banner.jpg",
+            "banner.jpeg",
+            "art/banner.svg",
+        ] {
+            assert!(with(&format!("banner='{banner}'")).is_ok(), "{banner}");
+        }
+        for banner in ["../banner.png", "/banner.png", "banner.gif", "banner"] {
+            assert!(
+                with(&format!("banner='{banner}'"))
+                    .unwrap_err()
+                    .contains("banner"),
+                "{banner}"
+            );
+        }
+        assert!(with("icon='icon.webp'").unwrap_err().contains("icon"));
     }
 }

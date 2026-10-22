@@ -1,6 +1,8 @@
 // Tools page: renders `GET /api/tools` and drives the lifecycle, launch,
 // data, log, and trust actions of the dashboard API in docs/tools/protocol.md.
 
+import { cardBanner, cardIcon } from './dashboard-catalog.js';
+
 const STATUS_LABELS = {
   stopped: 'Stopped',
   starting: 'Starting',
@@ -12,7 +14,8 @@ const STATUS_LABELS = {
   invalid: 'Invalid',
 };
 const SOURCE_LABELS = { dev: 'Dev', official: 'Official', user: 'User' };
-const KIND_LABELS = { ui: 'UI', service: 'Service', hybrid: 'UI + service', cli: 'CLI' };
+// One chip per interface a tool provides, in this order.
+const INTERFACE_LABELS = { ui: 'UI', service: 'Service', cli: 'CLI' };
 const STARTUP_LABELS = { always: 'With vosu', 'on-demand': 'On demand' };
 const BUSY_LABELS = {
   start: 'Starting…',
@@ -75,6 +78,24 @@ function hasService(view) {
   return view.kind === 'service' || view.kind === 'hybrid';
 }
 
+// Installed views carry `kind` and `cli`; catalog entries list `interfaces`.
+function interfacesOf(view) {
+  if (Array.isArray(view.interfaces)) return view.interfaces;
+  return [
+    (view.kind === 'ui' || view.kind === 'hybrid') && 'ui',
+    hasService(view) && 'service',
+    view.cli && 'cli',
+  ].filter(Boolean);
+}
+
+function interfaceChips(view) {
+  return Object.keys(INTERFACE_LABELS).filter((key) => interfacesOf(view).includes(key)).map((key) => el('span', {
+    className: 'badge',
+    text: INTERFACE_LABELS[key],
+    attrs: { 'data-interface': key, title: `Provides a ${key === 'ui' ? 'browser UI' : key === 'cli' ? 'command-line interface' : 'background service'}` },
+  }));
+}
+
 export function mountTools({
   root,
   results,
@@ -105,6 +126,10 @@ export function mountTools({
   const banner = el('p', { className: 'tools-loading', text: 'Reading the tool registry…', attrs: { role: 'status' } });
   root.setAttribute('aria-busy', 'true');
   root.replaceChildren(banner);
+  // Installed and Available share one numbered heading style, so the page
+  // reads as two sheets of the same drawing.
+  root.before(el('header', { className: 'tools-catalog__header tools-installed__header' },
+    el('h2', { text: '01 / Installed', attrs: { id: 'tools-installed-title' } })));
 
   const api = (id, suffix = '') => `/api/tools/${encodeURIComponent(id)}${suffix}`;
   const availableCards = el('div', { className: 'tools-root' });
@@ -123,13 +148,16 @@ export function mountTools({
       const installed = state.tools.find((entry) => entry.id === tool.id);
       const update = installed && tool.update_available;
       const card = el('article', { className: 'tool-card' },
-        icon(tool),
-        el('div', { className: 'tool-card__head' },
-          el('p', { className: 'tool-card__index' },
-            el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : ['shiruviaa/vosu-tools', 'shiruviaa/vosulay'].includes(tool.source) ? 'Official' : 'User catalog' }),
-            update ? el('span', { className: 'badge', text: 'Update available' }) : null),
-          el('h2', {}, tool.name, el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
-          el('p', { className: 'tool-card__author', text: `by ${tool.author} · ${tool.source}` })),
+        cardBanner(tool.banner_url),
+        el('div', { className: 'tool-card__top' },
+          cardIcon(tool.name || tool.id, tool.icon_url),
+          el('div', { className: 'tool-card__head' },
+            el('p', { className: 'tool-card__index' },
+              el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : ['shiruviaa/vosu-tools', 'shiruviaa/vosulay'].includes(tool.source) ? 'Official' : 'User catalog' }),
+              ...interfaceChips(tool),
+              update ? el('span', { className: 'badge', text: 'Update available' }) : null),
+            el('h2', {}, tool.name, el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
+            el('p', { className: 'tool-card__author', text: `by ${tool.author} · ${tool.source}` }))),
         el('p', { className: 'tool-card__description', text: tool.description }));
       const actions = el('div', { className: 'tool-card__actions' });
       const add = (label, action, removeData) => {
@@ -209,20 +237,6 @@ export function mountTools({
     return tokens.every((token) => text.includes(token));
   }
 
-  function icon(view) {
-    const frame = el('div', { className: 'tool-card__icon', attrs: { 'aria-hidden': 'true' } });
-    const monogram = () => frame.replaceChildren(String(view.name || view.id || '?').trim().slice(0, 2));
-    const source = absoluteHttpUrl(view.icon_url);
-    if (!source) {
-      monogram();
-      return frame;
-    }
-    const image = el('img', { attrs: { src: source, alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer' } });
-    image.addEventListener('error', monogram, { once: true });
-    frame.append(image);
-    return frame;
-  }
-
   function fact(label, value, wide = false) {
     return el('div', { className: wide ? 'tool-facts__wide' : undefined }, el('dt', { text: label }), el('dd', {}, value));
   }
@@ -273,7 +287,7 @@ export function mountTools({
     const source = String(view.source ?? '');
     const index = el('p', { className: 'tool-card__index' },
       el('span', { className: 'badge', text: SOURCE_LABELS[source] ?? source, attrs: { 'data-source': source, title: 'Where vosu found this tool' } }),
-      view.kind ? el('span', { className: 'badge', text: KIND_LABELS[view.kind] ?? view.kind, attrs: { title: 'What this tool provides' } }) : null);
+      ...interfaceChips(view));
     const title = el('h2', { attrs: { id: `tool-title-${view.id}` } }, name,
       view.version ? el('span', { className: 'tool-card__version', text: `v${view.version}` }) : null);
     const byline = el('p', { className: 'tool-card__author' });
@@ -283,7 +297,10 @@ export function mountTools({
       if (view.author) byline.append(' · ');
       byline.append(el('a', { text: 'Homepage', attrs: { href: homepage, target: '_blank', rel: 'noopener noreferrer', 'aria-label': `${name} homepage` } }));
     }
-    card.append(icon(view), el('div', { className: 'tool-card__head' }, index, title, byline.childNodes.length ? byline : null));
+    const banner = cardBanner(view.banner_url);
+    if (banner) card.append(banner);
+    card.append(el('div', { className: 'tool-card__top' }, cardIcon(name, view.icon_url),
+      el('div', { className: 'tool-card__head' }, index, title, byline.childNodes.length ? byline : null)));
     if (view.description) card.append(el('p', { className: 'tool-card__description', text: view.description }));
     if (view.cli) {
       card.append(el('p', { className: 'tool-card__description' },

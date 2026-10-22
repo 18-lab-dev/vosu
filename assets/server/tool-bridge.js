@@ -5,12 +5,14 @@ const tool = metadata.find(tool => tool.id === id) || {id, name: id, version: ''
 // that later loads in this tab, so a reload deliberately drops write access
 // until the tool is opened from the dashboard again.
 let session = null;
+const fragment = new URLSearchParams(location.hash.slice(1));
+// The dashboard's colour mode when it opened this tab, else the system
+// preference. Tools own their look: the bridge only reports the hint.
+const hint = fragment.get('theme');
+const colorScheme = hint === 'dark' || hint === 'light'
+  ? hint : matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 
 const ready = (async () => {
-  const fragment = new URLSearchParams(location.hash.slice(1));
-  const theme = fragment.get('theme');
-  document.documentElement.dataset.theme = ['dark', 'light'].includes(theme)
-    ? theme : matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   const code = fragment.get('vosu-launch');
   if (code) {
     history.replaceState(null, '', location.pathname + location.search);
@@ -24,7 +26,7 @@ const ready = (async () => {
 })();
 
 export const vosu = Object.freeze({
-  ready, tool, dashboardUrl,
+  ready, tool, dashboardUrl, colorScheme,
   get canWrite() { return Boolean(session); },
   async fetch(path, options = {}) {
     await ready;
