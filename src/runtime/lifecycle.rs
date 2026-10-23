@@ -194,8 +194,7 @@ impl ProductionRuntime {
             Arc::new(move || context_beatmap.tool_context()),
         )
         .await?;
-        let tool_counters = counters.clone();
-        tools.set_overlay_root(Arc::new(move || tool_counters.current_root()));
+        tools.set_counters(Arc::clone(&counters));
         *self.tools.get_mut() = Some(tools.clone());
         let providers = RouteProviders {
             authorization: Arc::new(crate::server::origins::OriginAuthorizer {

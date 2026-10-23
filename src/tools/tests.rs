@@ -44,6 +44,94 @@ fn request(method: Method, path: &str) -> Request {
 }
 
 #[tokio::test]
+async fn overlays_route_needs_a_token_and_the_context_permission() {
+    let root = tempfile::tempdir().unwrap();
+    let reader = put(
+        &root.path().join("dev"),
+        "reader",
+        "[permissions]\nhost=['context']",
+    );
+    let plain = put(&root.path().join("dev"), "plain", "");
+    let host = host(root.path(), vec![reader, plain]).await;
+    for (tool, token) in [("reader", "reader-cli-token"), ("plain", "plain-cli-token")] {
+        host.cli_sessions.lock().insert(
+            format!("{tool}-cli"),
+            CliSession {
+                tool: tool.into(),
+                token: token.into(),
+                expires: Instant::now() + Duration::from_secs(60),
+            },
+        );
+    }
+    let get = |token: Option<&'static str>| {
+        let mut req = request(Method::GET, "/tools/_host/v1/overlays");
+        if let Some(token) = token {
+            req.headers_mut()
+                .insert("x-vosu-tool-token", token.parse().unwrap());
+        }
+        host.overlay(req, Bytes::new())
+    };
+    assert_eq!(get(None).await.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        get(Some("plain-cli-token")).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    // Before the daemon wires its overlay catalog in.
+    assert_eq!(
+        get(Some("reader-cli-token")).await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+
+    let static_root = root.path().join("static");
+    fs::create_dir_all(static_root.join("hud")).unwrap();
+    fs::write(
+        static_root.join("hud/metadata.txt"),
+        "Name: HUD\nAuthor: 18-LAB\nVersion: 1.0.2\nResolution: 640x120\n",
+    )
+    .unwrap();
+    fs::write(static_root.join("hud/index.html"), "hud").unwrap();
+    fs::write(
+        static_root.join("hud/settings.json"),
+        r#"[{"uniqueID":"color","type":"color","value":"secret-ish"}]"#,
+    )
+    .unwrap();
+    host.set_counters(Arc::new(
+        crate::counters::ReloadableCounterService::production(
+            static_root.clone(),
+            root.path().join("settings"),
+            root.path().join("counter-cache"),
+        ),
+    ));
+    let response = get(Some("reader-cli-token")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut listing = value(response).await;
+    let folder = listing["overlays"][0]["folder"].take();
+    let folder = PathBuf::from(folder.as_str().unwrap());
+    assert!(folder.is_absolute() && folder.join("index.html").is_file());
+    assert!(!folder.to_string_lossy().starts_with(r"\\?\"));
+    assert_eq!(
+        listing,
+        json!({"overlays":[{
+            "id":"hud","name":"HUD","nickname":null,"alias":null,"author":"18-LAB",
+            "version":"1.0.2","folder":null,"width":640,"height":120,
+        }]})
+    );
+    assert_eq!(
+        get(Some("plain-cli-token")).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    // Read-only.
+    let mut post = request(Method::POST, "/tools/_host/v1/overlays");
+    post.headers_mut()
+        .insert("x-vosu-tool-token", "reader-cli-token".parse().unwrap());
+    assert_eq!(
+        host.overlay(post, Bytes::new()).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    host.shutdown().await;
+}
+
+#[tokio::test]
 async fn theme_serves_shared_tokens_and_components_and_the_reference_page() {
     let root = tempfile::tempdir().unwrap();
     let host = host(root.path(), Vec::new()).await;

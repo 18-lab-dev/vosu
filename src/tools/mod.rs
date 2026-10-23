@@ -114,7 +114,6 @@ struct CliSession {
     token: String,
     expires: Instant,
 }
-type OverlayRoot = Arc<dyn Fn() -> PathBuf + Send + Sync>;
 pub struct ToolHost {
     entries: Mutex<BTreeMap<String, Arc<Entry>>>,
     saved: Mutex<BTreeMap<String, Saved>>,
@@ -138,7 +137,8 @@ pub struct ToolHost {
     catalog: Mutex<catalog::Catalog>,
     catalog_jobs: Mutex<BTreeMap<String, catalog::Job>>,
     catalog_operation: tokio::sync::Mutex<()>,
-    overlay_root: Mutex<Option<OverlayRoot>>,
+    /// Installed overlays: the catalog install root and `GET /tools/_host/v1/overlays`.
+    counters: Mutex<Option<Arc<crate::counters::ReloadableCounterService>>>,
 }
 pub fn secret() -> io::Result<String> {
     use std::fmt::Write as _;
@@ -232,7 +232,7 @@ impl ToolHost {
             catalog: Mutex::new(catalog::Catalog::default()),
             catalog_jobs: Mutex::new(BTreeMap::new()),
             catalog_operation: tokio::sync::Mutex::new(()),
-            overlay_root: Mutex::new(None),
+            counters: Mutex::new(None),
         });
         host.rescan().await;
         Ok(host)
