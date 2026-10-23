@@ -89,8 +89,8 @@ struct InstalledOverlay {
     version: String,
 }
 impl ToolHost {
-    pub fn set_overlay_root(&self, root: OverlayRoot) {
-        *self.overlay_root.lock() = Some(root);
+    pub fn set_counters(&self, counters: Arc<crate::counters::ReloadableCounterService>) {
+        *self.counters.lock() = Some(counters);
     }
     fn sources_path(&self) -> PathBuf {
         self.config.join("catalog-sources.json")
@@ -212,10 +212,10 @@ impl ToolHost {
         }
     }
     fn overlay_directory(&self) -> Result<PathBuf, String> {
-        self.overlay_root
+        self.counters
             .lock()
             .as_ref()
-            .map(|root| root())
+            .map(|counters| counters.current_root())
             .ok_or_else(|| "overlay root is unavailable".into())
     }
     pub(super) fn overlay_views(&self, overlays: &[Overlay]) -> Result<Vec<Value>, String> {

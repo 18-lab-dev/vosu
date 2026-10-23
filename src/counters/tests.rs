@@ -715,3 +715,146 @@ async fn shutdown_cancels_and_joins_active_installs() {
         Err(CounterError::ShuttingDown)
     ));
 }
+
+fn write_overlay(dir: &Path, metadata: Option<&str>, index: bool) {
+    std::fs::create_dir_all(dir).unwrap();
+    if let Some(metadata) = metadata {
+        std::fs::write(dir.join("metadata.txt"), metadata).unwrap();
+    }
+    if index {
+        std::fs::write(dir.join("index.html"), "<p>overlay</p>").unwrap();
+    }
+}
+
+fn canonical(path: &Path) -> String {
+    service::display_path(&std::fs::canonicalize(path).unwrap())
+        .into_os_string()
+        .into_string()
+        .unwrap()
+}
+
+#[test]
+fn local_overlays_list_loadable_folders_with_metadata_and_names() {
+    let (root, service, _, _) = fixture();
+    let static_root = root.path().join("static");
+    write_overlay(
+        &static_root.join("beta"),
+        Some("Name: Beta HUD\nAuthor: sxlvia\nVersion: 2.1\nResolution: 400 x 100 ## px\n"),
+        true,
+    );
+    write_overlay(&static_root.join("alpha"), None, true);
+    write_overlay(&static_root.join("pack/inner"), None, true);
+    write_overlay(
+        &static_root.join("anyres"),
+        Some("Name: Zed\nAuthor:\nResolution: Any\n"),
+        true,
+    );
+    write_overlay(
+        &static_root.join("tall"),
+        Some("Name: Tall\nResolution: 300x-1\n"),
+        true,
+    );
+    // Listed by the catalog, but there is no page to load.
+    write_overlay(&static_root.join("ghost"), Some("Name: Ghost\n"), false);
+    let service = ReloadableCounterService::from_service(service);
+    service.set_name("alpha", Some("Zulu"), Some("al")).unwrap();
+    service.set_name("tall", None, Some("tl")).unwrap();
+    assert!(
+        service
+            .discover()
+            .unwrap()
+            .iter()
+            .any(|counter| counter.folder_name == "ghost")
+    );
+
+    let overlays = service.local_overlays().unwrap();
+    let ids = overlays.iter().map(|o| o.id.as_str()).collect::<Vec<_>>();
+    // Sorted by display name: nickname, else name, case-insensitively.
+    assert_eq!(ids, ["beta", "pack/inner", "tall", "anyres", "alpha"]);
+    assert_eq!(
+        overlays[0],
+        LocalOverlay {
+            id: "beta".into(),
+            name: "Beta HUD".into(),
+            nickname: None,
+            alias: None,
+            author: Some("sxlvia".into()),
+            version: Some("2.1".into()),
+            folder: canonical(&static_root.join("beta")),
+            width: Some(400),
+            height: Some(100),
+        }
+    );
+    assert_eq!(
+        overlays[1],
+        LocalOverlay {
+            id: "pack/inner".into(),
+            name: "inner".into(),
+            nickname: None,
+            alias: None,
+            author: None,
+            version: None,
+            folder: canonical(&static_root.join("pack/inner")),
+            width: None,
+            height: None,
+        }
+    );
+    assert_eq!((overlays[2].width, overlays[2].height), (Some(300), None));
+    assert_eq!(overlays[2].alias.as_deref(), Some("tl"));
+    assert_eq!(overlays[3].author, None);
+    assert_eq!((overlays[3].width, overlays[3].height), (None, None));
+    assert_eq!(overlays[4].name, "alpha");
+    assert_eq!(overlays[4].nickname.as_deref(), Some("Zulu"));
+    assert_eq!(overlays[4].alias.as_deref(), Some("al"));
+    assert_eq!(overlays[4].author, None);
+    assert_eq!(overlays[4].version, None);
+    assert!(
+        std::path::Path::new(&overlays[4].folder)
+            .join("index.html")
+            .is_file()
+    );
+    // Settings never reach the listing.
+    assert!(
+        !serde_json::to_string(&overlays)
+            .unwrap()
+            .contains("settings")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn local_overlays_follow_the_catalog_symlink_rules() {
+    use std::os::unix::fs::symlink;
+
+    let (root, service, _, _) = fixture();
+    let static_root = root.path().join("static");
+    let mounted = tempfile::tempdir().unwrap();
+    let escaped = tempfile::tempdir().unwrap();
+    write_overlay(mounted.path(), Some("Name: Mounted\n"), true);
+    write_overlay(escaped.path(), Some("Name: Escaped\n"), true);
+    // A top-level directory symlink is a mount; nested ones are not followed.
+    symlink(mounted.path(), static_root.join("mounted")).unwrap();
+    write_overlay(&static_root.join("plain"), None, true);
+    symlink(escaped.path(), static_root.join("plain/escape")).unwrap();
+    // A symlinked index.html is not a page either.
+    std::fs::create_dir(static_root.join("linked-index")).unwrap();
+    symlink(
+        escaped.path().join("index.html"),
+        static_root.join("linked-index/index.html"),
+    )
+    .unwrap();
+    let service = ReloadableCounterService::from_service(service);
+
+    let overlays = service.local_overlays().unwrap();
+    let listed = overlays
+        .iter()
+        .map(|o| (o.id.as_str(), o.folder.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        listed,
+        [
+            ("mounted", canonical(mounted.path())),
+            ("plain", canonical(&static_root.join("plain"))),
+        ]
+    );
+}

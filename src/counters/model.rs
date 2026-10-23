@@ -83,6 +83,25 @@ pub struct DownloadRequest {
     pub update: bool,
 }
 
+/// An installed overlay a tool can load from disk (`GET /tools/_host/v1/overlays`).
+/// Read-only identity: never settings values.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LocalOverlay {
+    /// Folder path relative to the static root, as `/api/counters` names it.
+    pub id: String,
+    /// metadata.txt `Name`, else the folder name.
+    pub name: String,
+    pub nickname: Option<String>,
+    pub alias: Option<String>,
+    pub author: Option<String>,
+    pub version: Option<String>,
+    /// Absolute canonical directory holding `index.html`.
+    pub folder: String,
+    /// metadata.txt `Resolution: WxH`, when both are positive.
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum LifecycleReply {

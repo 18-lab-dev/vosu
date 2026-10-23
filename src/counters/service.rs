@@ -173,6 +173,15 @@ impl Drop for ActiveInstall {
     }
 }
 
+/// One catalog scan entry and the files behind it.
+struct Discovered {
+    counter: Counter,
+    /// Described by a `metadata.txt` (otherwise its fields are defaults).
+    metadata: bool,
+    /// Has an `index.html` to load.
+    index: bool,
+}
+
 /// Lock-free facade for the counter tree selected by the current configuration.
 ///
 /// Each operation captures one complete `CounterService` generation. A reload
@@ -261,6 +270,68 @@ impl ReloadableCounterService {
             tracing::warn!(%error, "Could not prune overlay names");
         }
         Ok(counters)
+    }
+
+    /// Installed overlays that can be loaded from disk: the catalog scan's
+    /// entries with an `index.html`, with their dashboard names, sorted by
+    /// display name (nickname, else name). Read-only: unlike
+    /// [`Self::discover`] it never prunes stored names.
+    pub fn local_overlays(&self) -> Result<Vec<super::LocalOverlay>, CounterError> {
+        let service = self.current.load_full();
+        let names = self.names.snapshot();
+        let mut overlays = service
+            .scan()?
+            .into_iter()
+            .filter(|found| found.index)
+            .filter_map(
+                |Discovered {
+                     counter, metadata, ..
+                 }| {
+                    // A folder removed since the scan, or one whose path is not
+                    // UTF-8, cannot be handed to a tool as a path string. The
+                    // Windows verbatim prefix is dropped as on the dashboard.
+                    let folder = display_path(
+                        &fs::canonicalize(service.static_root.join(&counter.folder_name)).ok()?,
+                    )
+                    .into_os_string()
+                    .into_string()
+                    .ok()?;
+                    let name = names.get(&counter.folder_name);
+                    let dimension = |index: usize| {
+                        counter
+                            .resolution
+                            .get(index)
+                            .and_then(Value::as_i64)
+                            .and_then(|value| u32::try_from(value).ok())
+                            .filter(|value| *value > 0)
+                    };
+                    let present =
+                        |value: String| (metadata && !value.trim().is_empty()).then_some(value);
+                    Some(super::LocalOverlay {
+                        width: metadata.then(|| dimension(0)).flatten(),
+                        height: metadata.then(|| dimension(1)).flatten(),
+                        nickname: name.and_then(|name| name.nickname.clone()),
+                        alias: name.and_then(|name| name.alias.clone()),
+                        author: present(counter.author),
+                        version: present(counter.version),
+                        id: counter.folder_name,
+                        name: counter.name,
+                        folder,
+                    })
+                },
+            )
+            .collect::<Vec<_>>();
+        overlays.sort_by_cached_key(|overlay| {
+            (
+                overlay
+                    .nickname
+                    .as_deref()
+                    .unwrap_or(&overlay.name)
+                    .to_lowercase(),
+                overlay.id.clone(),
+            )
+        });
+        Ok(overlays)
     }
 
     pub async fn download(&self, request: &DownloadRequest) -> Result<(), CounterError> {
@@ -409,6 +480,18 @@ impl CounterService {
     }
 
     pub fn discover(&self) -> Result<Vec<Counter>, CounterError> {
+        Ok(self
+            .scan()?
+            .into_iter()
+            .map(|found| found.counter)
+            .collect())
+    }
+
+    /// The overlay catalog scan behind [`Self::discover`], recording which
+    /// file each entry came from: metadata-only folders are listed (and
+    /// served) like any overlay, but only folders with an `index.html` can
+    /// be loaded as a page.
+    fn scan(&self) -> Result<Vec<Discovered>, CounterError> {
         let metadata = recursive_named_files(&self.static_root, "metadata.txt", true)?;
         let indexes = recursive_named_files(&self.static_root, "index.html", true)?;
         let metadata_dirs: std::collections::HashSet<_> = metadata
@@ -416,11 +499,20 @@ impl CounterService {
             .filter_map(|path| path.parent())
             .map(Path::to_path_buf)
             .collect();
-        let mut counters = Vec::new();
+        let index_dirs: std::collections::HashSet<_> = indexes
+            .iter()
+            .filter_map(|path| path.parent())
+            .map(Path::to_path_buf)
+            .collect();
+        let mut found = Vec::new();
         for path in metadata {
             let counter = parse_metadata(&self.static_root, &path, &self.settings)?;
             if !counter.name.is_empty() {
-                counters.push(counter);
+                found.push(Discovered {
+                    counter,
+                    metadata: true,
+                    index: path.parent().is_some_and(|dir| index_dirs.contains(dir)),
+                });
             }
         }
         for path in indexes {
@@ -430,27 +522,31 @@ impl CounterService {
             }
             let folder_name = relative_folder(&self.static_root, directory)?;
             let settings = load_discovered_settings(&self.settings, &folder_name)?;
-            counters.push(Counter {
-                downloaded: false,
-                updatable: false,
-                folder_name,
-                name: directory
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default()
-                    .to_owned(),
-                version: "1.0".into(),
-                author: "local".into(),
-                resolution: vec![Value::from(-2), Value::from("400")],
-                authorlinks: Vec::new(),
-                settings,
-                usecase: None,
-                compatiblewith: None,
-                assets: None,
-                download_link: None,
+            found.push(Discovered {
+                counter: Counter {
+                    downloaded: false,
+                    updatable: false,
+                    folder_name,
+                    name: directory
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or_default()
+                        .to_owned(),
+                    version: "1.0".into(),
+                    author: "local".into(),
+                    resolution: vec![Value::from(-2), Value::from("400")],
+                    authorlinks: Vec::new(),
+                    settings,
+                    usecase: None,
+                    compatiblewith: None,
+                    assets: None,
+                    download_link: None,
+                },
+                metadata: false,
+                index: true,
             });
         }
-        Ok(counters)
+        Ok(found)
     }
 
     pub fn parse_download_request(
@@ -951,7 +1047,7 @@ fn metadata_is_link(metadata: &fs::Metadata) -> bool {
 /// The canonical path without Windows' verbatim prefix (`\\?\C:\…` → `C:\…`,
 /// `\\?\UNC\server\share\…` → `\\server\share\…`), which users never type and the
 /// dashboard would otherwise show.
-fn display_path(path: &Path) -> PathBuf {
+pub(super) fn display_path(path: &Path) -> PathBuf {
     use std::path::{Component, Prefix};
     let mut components = path.components();
     let Some(Component::Prefix(prefix)) = components.next() else {

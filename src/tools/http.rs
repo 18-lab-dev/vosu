@@ -324,7 +324,9 @@ impl ToolHost {
             if host == "cli" || host.starts_with("cli/") {
                 return self.cli_api(host, request, &body).await;
             }
-            return self.host_api(host, &request, &body);
+            return self
+                .host_api(host, request.method(), request.headers(), &body)
+                .await;
         }
         let (id, tail) = path.split_once('/').unwrap_or((&path, ""));
         let Ok(entry) = self.entry(id) else {
@@ -435,8 +437,17 @@ impl ToolHost {
             _ => error(StatusCode::NOT_FOUND, "not found"),
         }
     }
-    fn host_api(&self, action: &str, request: &Request, body: &[u8]) -> Response {
-        if request.method() == Method::GET && action == "bridge.js" {
+    // Takes the request's parts, not `&Request`: the body type is not `Sync`,
+    // so holding a request reference across the overlay listing's await
+    // would make the future `!Send`.
+    async fn host_api(
+        &self,
+        action: &str,
+        method: &Method,
+        headers: &HeaderMap,
+        body: &[u8],
+    ) -> Response {
+        if method == Method::GET && action == "bridge.js" {
             let entries = self
                 .entries
                 .lock()
@@ -459,7 +470,7 @@ impl ToolHost {
             )
                 .into_response();
         }
-        if request.method() == Method::GET && action == "theme.css" {
+        if method == Method::GET && action == "theme.css" {
             // One source for the dashboard and tools: the dashboard's tokens,
             // then the shared components (docs/tools/design.md).
             const THEME: &str = concat!(
@@ -469,14 +480,14 @@ impl ToolHost {
             );
             return ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], THEME).into_response();
         }
-        if request.method() == Method::GET && action == "design" {
+        if method == Method::GET && action == "design" {
             return (
                 [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
                 include_str!("../../assets/server/design.html"),
             )
                 .into_response();
         }
-        if request.method() == Method::POST && action == "session" {
+        if method == Method::POST && action == "session" {
             let Ok(value) = serde_json::from_slice::<Value>(body) else {
                 return error(StatusCode::BAD_REQUEST, "invalid JSON");
             };
@@ -498,14 +509,20 @@ impl ToolHost {
             self.sessions.lock().insert(session.clone(), tool.into());
             return json_response(StatusCode::OK, json!({"session":session}));
         }
-        if request.method() != Method::GET {
+        if method != Method::GET {
             return error(StatusCode::NOT_FOUND, "not found");
         }
-        let owner = text_header(request.headers(), "x-vosu-tool-token")
+        let owner = text_header(headers, "x-vosu-tool-token")
             .and_then(|token| self.token_owner(&token, true));
         let Some(entry) = owner else {
             return error(StatusCode::UNAUTHORIZED, "invalid tool token");
         };
+        // `context` discloses filesystem paths, so it also covers the
+        // installed overlays' folders.
+        let context = entry
+            .manifest
+            .as_ref()
+            .is_some_and(|m| m.permissions.host.iter().any(|p| p == "context"));
         match action {
             "self" => json_response(
                 StatusCode::OK,
@@ -515,15 +532,18 @@ impl ToolHost {
                 Ok(values) => json_response(StatusCode::OK, json!(values)),
                 Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
             },
-            "context"
-                if entry
-                    .manifest
-                    .as_ref()
-                    .is_some_and(|m| m.permissions.host.iter().any(|p| p == "context")) =>
-            {
-                json_response(StatusCode::OK, (self.context)())
+            "context" if context => json_response(StatusCode::OK, (self.context)()),
+            "overlays" if context => {
+                let Some(counters) = self.counters.lock().clone() else {
+                    return error(StatusCode::SERVICE_UNAVAILABLE, "overlays are unavailable");
+                };
+                match tokio::task::spawn_blocking(move || counters.local_overlays()).await {
+                    Ok(Ok(overlays)) => json_response(StatusCode::OK, json!({"overlays":overlays})),
+                    Ok(Err(e)) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+                    Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+                }
             }
-            "context" => error(StatusCode::FORBIDDEN, "context permission required"),
+            "context" | "overlays" => error(StatusCode::FORBIDDEN, "context permission required"),
             _ => error(StatusCode::NOT_FOUND, "not found"),
         }
     }
