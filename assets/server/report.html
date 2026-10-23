@@ -81,21 +81,24 @@
       border-bottom: 1px solid var(--rule-strong);
     }
 
-    /* The vosu mark (assets/branding/vosu-mark.svg). */
+    /* The vosu signal V (assets/branding/vosu-mark.svg). */
     .report-mark {
       flex: 0 0 auto;
-      width: 3rem;
-      height: 3rem;
+      width: 3.25rem;
+      height: auto;
+      overflow: visible;
     }
 
-    .report-mark circle {
+    .report-mark path {
       fill: none;
-      stroke: var(--fg);
+      stroke: var(--accent);
       stroke-width: 12;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
 
-    .report-mark .v {
-      fill: var(--accent);
+    .report-mark .node {
+      fill: var(--note);
     }
 
     .report-header h1,
@@ -327,10 +330,10 @@
 </head>
 <body>
   <header class="report-header">
-    <svg class="report-mark" viewBox="16 16 88 88" role="img" aria-label="vosu">
-      <mask id="report-mark-gap"><rect x="16" y="16" width="88" height="88" fill="#fff"></rect><polygon points="16,16 29.5,16 39,36.9 48.5,16 62,16 42,60 36,60" stroke="#000" stroke-width="12" stroke-linejoin="round"></polygon></mask>
-      <circle cx="70" cy="70" r="28" mask="url(#report-mark-gap)"></circle>
-      <polygon class="v" points="16,16 29.5,16 39,36.9 48.5,16 62,16 42,60 36,60"></polygon>
+    <svg class="report-mark" viewBox="8 24 112 84" role="img" aria-label="vosu">
+      <mask id="report-mark-gap"><rect x="8" y="24" width="112" height="84" fill="#fff"></rect><circle cx="64" cy="94" r="10"></circle></mask>
+      <path d="M18 36 H32 L64 94 L96 36 H110" mask="url(#report-mark-gap)"></path>
+      <circle class="node" cx="64" cy="94" r="5.5"></circle>
     </svg>
     <div>
       <span class="report-kicker">vosu · 18-LAB</span>
