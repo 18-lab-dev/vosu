@@ -9,7 +9,88 @@ pub(super) fn local_overlay(counter: &crate::counters::Counter) -> LocalOverlay 
     }
 }
 
-const SEARCH_FORM: &str = r#"<form class="search-form" role="search"><label class="visually-hidden" for="counter-search">Search overlays</label><div class="search-control"><input id="counter-search" class="search-bar" type="search" autocomplete="off" placeholder="Search name, author, or client" aria-controls="counter-results"><kbd aria-hidden="true">/</kbd></div></form>"#;
+/// Per-page chrome rendered on the server, so the first paint already shows
+/// the right heading, current tab and search hint.
+struct PageChrome {
+    /// `data-page` of the current navigation tab.
+    key: &'static str,
+    title: &'static str,
+    /// Search placeholder and label; `None` renders no search field.
+    search: Option<&'static str>,
+}
+
+fn page_chrome(page: DynamicPage) -> PageChrome {
+    let (key, title, search) = match page {
+        DynamicPage::Dashboard => ("installed", "Overlays", Some("Search overlays")),
+        DynamicPage::Available => (
+            "available",
+            "Available overlays",
+            Some("Search available overlays"),
+        ),
+        DynamicPage::Tools => ("tools", "Tools", Some("Search tools")),
+        DynamicPage::Settings => ("settings", "Settings", Some("Search settings")),
+        DynamicPage::OverlaySettings => ("installed", "Overlay settings", None),
+        DynamicPage::ToolSettings => ("tools", "Tool settings", None),
+    };
+    PageChrome { key, title, search }
+}
+
+fn search_form(placeholder: &str) -> String {
+    format!(
+        r#"<form class="search-form" role="search"><div class="search-control"><input id="counter-search" class="search-bar" type="search" autocomplete="off" placeholder="{placeholder}" aria-label="{placeholder}" aria-controls="counter-results"><kbd aria-hidden="true">/</kbd></div></form>"#
+    )
+}
+
+/// Shown when the overlays folder holds no overlays at all; the client
+/// renders the same markup after deleting the last card.
+pub(super) const INSTALLED_EMPTY_STATE: &str = r#"<div class="empty-state"><h2>No overlays yet</h2><p>Install one, or copy an overlay folder into the overlays folder.</p><div class="counter-actions"><a class="button button-primary" href="/available">Browse available overlays</a><button class="button" type="button" data-action="open-overlays-root">Open overlays folder</button></div></div>"#;
+
+/// The overlays folder itself could not be listed. Distinct from the empty
+/// state so a read failure never looks like the overlays are gone.
+pub(super) fn render_overlays_unreadable(root: &std::path::Path, error: &str) -> String {
+    format!(
+        r#"<div class="empty-state" role="alert"><h2>Couldn't read the overlays folder</h2><p><code>{}</code></p><p>{}</p><div class="counter-actions"><a class="button button-primary" href="/">Retry</a><button class="button" type="button" data-action="open-overlays-root">Open overlays folder</button></div></div>"#,
+        escape_html(&root.display().to_string()),
+        escape_html(error),
+    )
+}
+
+/// Overlay folders whose files failed to parse, as error cards beside the
+/// readable overlays: the folder, the parse error, Open folder and Delete.
+pub(super) fn render_broken_overlays(
+    broken: &[crate::counters::BrokenOverlay],
+    names: &std::collections::BTreeMap<String, crate::counters::OverlayName>,
+    query: Option<&str>,
+) -> String {
+    broken
+        .iter()
+        .filter(|overlay| {
+            query.is_none_or(|query| matches_catalog_query(&overlay.name, "", &[], query))
+        })
+        .map(|overlay| {
+            let title = names
+                .get(&overlay.folder_name)
+                .and_then(|name| name.nickname.as_deref())
+                .unwrap_or(&overlay.name);
+            let path = overlay_path(&overlay.folder_name);
+            let id = escape_html(&format!("broken-{}", path.trim_matches('/')));
+            format!(
+                concat!(
+                    r#"<article class="counter-card is-broken" data-overlay-id="{folder}" data-counter-name="{name}" data-counter-title="{title}" data-counter-nickname="" data-counter-alias="" data-counter-author="" data-counter-version="" data-counter-compatible="" aria-labelledby="{id}-title">"#,
+                    r#"<div class="counter-card__broken" role="alert" id="{id}-error"><strong>Couldn't read this overlay</strong><code>{error}</code></div>"#,
+                    r#"<div class="counter-card__body"><div class="counter-card__identity"><h2 id="{id}-title" title="{title}">{title}</h2><p class="counter-card__meta"><span>{folder}</span></p></div>"#,
+                    r#"<div class="counter-actions"><button class="button" type="button" data-action="open-counter" data-folder="{folder}">Open folder</button>"#,
+                    r#"<button class="button button-danger" type="button" data-action="delete-counter" data-folder="{folder}">Delete</button></div></div></article>"#,
+                ),
+                folder = escape_html(&overlay.folder_name),
+                name = escape_html(&overlay.name),
+                title = escape_html(title),
+                id = id,
+                error = escape_html(&overlay.error),
+            )
+        })
+        .collect()
+}
 
 /// Third-party disclosure for the Available page. It sits outside the results
 /// section so catalog searches, which replace only the results, keep it.
@@ -21,13 +102,14 @@ pub(super) const CATALOG_NOTICE: &str = concat!(
 
 pub(super) fn render_homepage(
     template: EmbeddedResponse,
+    page: DynamicPage,
     local_count: Option<usize>,
     available_count: Option<usize>,
-    search: bool,
     notice: &str,
     list: &str,
     update_version: Option<&str>,
 ) -> EmbeddedResponse {
+    let chrome = page_chrome(page);
     let local_count = local_count
         .map(|count| count.to_string())
         .unwrap_or_default();
@@ -35,12 +117,25 @@ pub(super) fn render_homepage(
         .map(|count| count.to_string())
         .unwrap_or_default();
     let current_version = current_version().to_string();
+    let search = chrome.search.map(search_form).unwrap_or_default();
+    let current = |key: &str| {
+        if chrome.key == key {
+            r#" aria-current="page""#
+        } else {
+            ""
+        }
+    };
     let body = substitute_placeholders(&String::from_utf8_lossy(&template.body), |key| {
         Some(match key {
             "LOCAL_AMOUNT" => &local_count,
             "AVAILABLE_AMOUNT" => &available_count,
-            "SEARCH" if search => SEARCH_FORM,
-            "SEARCH" => "",
+            "PAGE_KEY" => chrome.key,
+            "PAGE_TITLE" => chrome.title,
+            "CURRENT_INSTALLED" => current("installed"),
+            "CURRENT_AVAILABLE" => current("available"),
+            "CURRENT_TOOLS" => current("tools"),
+            "CURRENT_SETTINGS" => current("settings"),
+            "SEARCH" => &search,
             "NOTICE" => notice,
             "LIST" => list,
             "UPDATE_HIDDEN" if update_version.is_some() => "",
@@ -131,7 +226,8 @@ pub(super) fn matches_catalog_query(
         .iter()
         .map(|value| normalize_catalog_text(value))
         .collect::<Vec<_>>();
-    tokens.into_iter().any(|token| {
+    // Every word must match somewhere, like Tools and Settings search.
+    tokens.into_iter().all(|token| {
         name.contains(token)
             || author.contains(token)
             || (token != "vosu" && compatible.iter().any(|value| value.contains(token)))
@@ -154,13 +250,17 @@ pub(super) fn render_local_counters(
         .filter(|(_, counter)| {
             query.is_none_or(|query| {
                 let compatible = counter.compatiblewith.as_deref().unwrap_or_default();
-                matches_catalog_query(&counter.name, &counter.author, compatible, query)
-                    || names
-                        .get(&counter.folder_name)
-                        .and_then(|name| name.nickname.as_deref())
-                        .is_some_and(|nickname| {
-                            matches_catalog_query(nickname, &counter.author, compatible, query)
-                        })
+                // Name and nickname are one field, as on the client.
+                let nickname = names
+                    .get(&counter.folder_name)
+                    .and_then(|name| name.nickname.as_deref())
+                    .unwrap_or_default();
+                matches_catalog_query(
+                    &format!("{} {nickname}", counter.name),
+                    &counter.author,
+                    compatible,
+                    query,
+                )
             })
         })
         .map(|(index, counter)| {
@@ -410,18 +510,18 @@ fn render_catalog_card(card: &CounterCard<'_>, status: &str, identity: &str) -> 
     let download = escape_html(card.download_link.unwrap_or_default());
     let update = if card.updatable && card.download_link.is_some() {
         format!(
-            r#"<button class="button badge-warning" type="button" data-action="update-counter" data-download-url="{download}" data-install-name="{install_name}">Update available</button>"#
+            r#"<button class="button button-update" type="button" data-action="update-counter" data-download-url="{download}" data-install-name="{install_name}" aria-label="Update {name}">Update</button>"#
         )
     } else {
         String::new()
     };
     let primary = if !card.downloaded && card.download_link.is_some() {
         format!(
-            r#"<button class="button button-primary" type="button" data-action="download-counter" data-download-url="{download}" data-install-name="{install_name}">Install</button>"#
+            r#"<button class="button button-primary" type="button" data-action="download-counter" data-download-url="{download}" data-install-name="{install_name}" aria-label="Install {name}">Install</button>"#
         )
     } else if card.downloaded {
         format!(
-            r#"<button class="button" type="button" data-action="open-counter" data-folder="{install_name}">Open folder</button>"#
+            r#"<button class="button" type="button" data-action="open-counter" data-folder="{install_name}" aria-label="Open {name} folder">Open folder</button>"#
         )
     } else {
         r#"<button class="button" type="button" disabled>Unavailable</button>"#.to_owned()
@@ -483,13 +583,17 @@ fn render_catalog_card(card: &CounterCard<'_>, status: &str, identity: &str) -> 
             escape_html(&card.compatible.join(", ")),
         ));
     }
-    let mut tags = String::new();
-    if card.downloaded {
+    // One Available list holds catalog-source and community overlays; the
+    // badge names where each comes from.
+    let mut tags = String::from(r#"<span class="badge" data-source="community">Community</span>"#);
+    if card.updatable && card.download_link.is_some() {
+        tags.push_str(r#"<span class="badge badge-warning">Update available</span>"#);
+    } else if card.downloaded {
         tags.push_str(r#"<span class="badge">Installed</span>"#);
     }
     format!(
         concat!(
-            r#"<article class="counter-card catalog-card{status}"{identity}>{gallery}"#,
+            r#"<article class="counter-card catalog-card{status}"{identity} aria-label="{name}">{gallery}"#,
             r#"<div class="catalog-card__main"><div class="counter-card__title-row"><h2 title="{name}">{name}</h2><span class="counter-card__version">v{version}</span></div>"#,
             r#"<p class="counter-card__meta">{author}{links}</p>"#,
             r#"<p class="catalog-card__facts">{facts}</p>"#,
@@ -530,7 +634,12 @@ fn render_installed_card(
     let name = escape_html(card.nickname.unwrap_or(card.name));
     let folder = escape_html(card.folder);
     let path = overlay_path(card.folder);
-    let absolute_url = escape_html(&format!("http://{authority}{path}"));
+    // Preview frames mark themselves so their own sockets are not counted as
+    // connected browser sources.
+    let preview_url = escape_html(&format!(
+        "http://{authority}{path}?{}",
+        crate::server::pages::OVERLAY_PREVIEW_QUERY
+    ));
     // Browser sources may use the alias, which redirects to the folder.
     let shown_path = card.alias.map_or_else(
         || format!("/{}/", card.folder),
@@ -548,20 +657,28 @@ fn render_installed_card(
         String::new()
     };
     // Encoded folder paths are unique, whitespace-free element IDs.
-    let menu = escape_html(&format!("card-menu-{}", path.trim_matches('/')));
+    let element = path.trim_matches('/').to_owned();
+    let menu = escape_html(&format!("card-menu-{element}"));
+    let title_id = escape_html(&format!("card-title-{element}"));
+    // One stop each for pin, settings and the menu; the resolution copy,
+    // enlarged preview and open-in-browser actions live in the menu so a
+    // long grid stays quick to tab through.
     let actions = format!(
         concat!(
             r#"<div class="counter-actions">"#,
             r#"<button class="pin-toggle" type="button" data-action="toggle-pin" aria-pressed="false" aria-label="Pin {name}" title="Pin">{icon}</button>"#,
             "{settings}",
             r#"<button class="icon-button card-menu-toggle" type="button" popovertarget="{menu}" aria-label="More actions for {name}" title="More actions">⋯</button>"#,
-            r#"<div class="card-menu" id="{menu}" popover>"#,
-            r#"<button type="button" data-action="open-counter" data-folder="{folder}">Open folder</button>"#,
-            r#"<button type="button" data-action="rename-counter" data-folder="{folder}">Nickname and URL…</button>"#,
-            r#"<button class="card-menu__pin" type="button" data-action="pin-earlier">Move pin earlier</button>"#,
-            r#"<button class="card-menu__pin" type="button" data-action="pin-later">Move pin later</button>"#,
+            r#"<div class="card-menu" id="{menu}" popover role="menu" aria-label="Actions for {name}">"#,
+            r#"<button type="button" role="menuitem" data-action="expand-preview">Enlarge preview</button>"#,
+            r#"<button type="button" role="menuitem" data-action="open-url" data-url="{url}">Open in browser</button>"#,
+            r#"<button type="button" role="menuitem" data-action="copy-metadata" data-copy-label="Resolution" data-copy-value="{resolution}">Copy resolution</button>"#,
+            r#"<button type="button" role="menuitem" data-action="open-counter" data-folder="{folder}">Open folder</button>"#,
+            r#"<button type="button" role="menuitem" data-action="rename-counter" data-folder="{folder}">Nickname and URL…</button>"#,
+            r#"<button class="card-menu__pin" type="button" role="menuitem" data-action="pin-earlier">Move pin earlier</button>"#,
+            r#"<button class="card-menu__pin" type="button" role="menuitem" data-action="pin-later">Move pin later</button>"#,
             r#"<hr>"#,
-            r#"<button class="card-menu__danger" type="button" data-action="delete-counter" data-folder="{folder}">Delete</button>"#,
+            r#"<button class="card-menu__danger" type="button" role="menuitem" data-action="delete-counter" data-folder="{folder}">Delete</button>"#,
             "</div></div>",
         ),
         name = name,
@@ -569,6 +686,8 @@ fn render_installed_card(
         settings = settings,
         menu = menu,
         folder = folder,
+        url = copy_url,
+        resolution = escape_html(&resolution_text(card.resolution)),
     );
 
     let x = card
@@ -623,7 +742,7 @@ fn render_installed_card(
     };
     let update = if card.updatable && card.download_link.is_some() {
         format!(
-            r#"<button class="badge badge-warning" type="button" data-action="update-counter" data-download-url="{}" data-install-name="{folder}">Update available</button>"#,
+            r#"<span class="badge badge-warning">Update available</span><button class="button button-update" type="button" data-action="update-counter" data-download-url="{}" data-install-name="{folder}" aria-label="Update {name}">Update</button>"#,
             escape_html(card.download_link.unwrap_or_default())
         )
     } else {
@@ -631,19 +750,20 @@ fn render_installed_card(
     };
     format!(
         concat!(
-            r#"<article class="counter-card{status}" data-overlay-id="{folder}"{identity}>"#,
-            r#"<div class="counter-card__preview"><div {stage}><iframe src="{src}"{scheme} loading="lazy" width="{width}" height="{height}" scrolling="no" tabindex="-1" title="{name} overlay preview"></iframe></div><button class="preview-expand" type="button" data-action="expand-preview" aria-label="Enlarge {name} preview" title="Enlarge preview"><span>Enlarge</span></button></div>"#,
-            r#"<div class="counter-card__body"><div class="counter-card__identity"><h2 title="{name}">{name}</h2>"#,
-            r#"<p class="counter-card__meta">{version}{author}<button class="meta-copy" type="button" data-action="copy-metadata" data-copy-label="Resolution" data-copy-value="{resolution}" title="Copy resolution">{resolution}</button></p>"#,
+            r#"<article class="counter-card{status}" data-overlay-id="{folder}"{identity} aria-labelledby="{title_id}">"#,
+            r#"<div class="counter-card__preview"><div {stage}><iframe src="{src}"{scheme} loading="lazy" width="{width}" height="{height}" scrolling="no" tabindex="-1" title="{name} overlay preview"></iframe></div><button class="preview-expand" type="button" data-action="expand-preview" tabindex="-1" aria-label="Enlarge {name} preview"><span aria-hidden="true">Enlarge</span></button></div>"#,
+            r#"<div class="counter-card__body"><div class="counter-card__identity"><h2 id="{title_id}" title="{name}">{name}</h2>"#,
+            r#"<p class="counter-card__meta">{version}{author}<span class="counter-card__size">{resolution}</span></p>"#,
             r#"{folder_line}<div class="counter-card__chips">{update}<span class="badge connected-chip" hidden></span></div></div>{actions}</div>"#,
-            r#"<button class="counter-card__url" type="button" data-action="copy-metadata" data-copy-label="URL" data-copy-value="{url}" title="{url} (click to copy, Shift-click to open)"><code>{shown}</code><span class="counter-card__url-action">Copy URL</span></button>"#,
+            r#"<button class="counter-card__url" type="button" data-action="copy-metadata" data-copy-label="URL" data-copy-value="{url}" title="{url}" aria-label="Copy URL {url}"><code>{shown}</code><span class="counter-card__url-action" aria-hidden="true">Copy URL</span></button>"#,
             "</article>",
         ),
+        title_id = title_id,
         status = status,
         folder = folder,
         identity = identity,
         stage = stage,
-        src = &absolute_url,
+        src = &preview_url,
         scheme = match card.preview_scheme {
             PreviewScheme::Light => "",
             PreviewScheme::Dark => r#" data-color-scheme="dark""#,
@@ -676,43 +796,60 @@ fn render_installed_card(
 }
 
 pub(super) fn empty_counter_search() -> String {
-    r#"<div class="empty-state"><h2>No matching overlays</h2><p>Try a shorter name, a different author, or another compatible client.</p></div>"#.to_owned()
+    r#"<div class="empty-state"><h2>No matching overlays</h2><p>Try fewer words, an author, or a client such as tosu.</p></div>"#.to_owned()
 }
 
+/// Boolean settings are switches; the row's description is linked rather
+/// than wrapped into the label, so the accessible name stays the title.
 pub(super) fn settings_switch(id: &str, checked: bool) -> String {
+    let id = escape_html(id);
     format!(
-        r#"<input class="settings-control" id="setting-{}" data-id="{}" type="checkbox" {}>"#,
-        escape_html(id),
-        escape_html(id),
-        if checked { "checked" } else { "" },
+        r#"<input class="settings-control v-toggle" id="setting-{id}" data-id="{id}" type="checkbox" role="switch" aria-describedby="setting-{id}-description"{}>"#,
+        if checked { " checked" } else { "" },
     )
 }
 
-pub(super) fn settings_text(id: &str, value: &str, _class: &str) -> String {
+pub(super) fn settings_text(id: &str, value: &str, class: &str) -> String {
+    let id = escape_html(id);
     format!(
-        r#"<input class="settings-control" id="setting-{}" data-id="{}" type="text" value="{}">"#,
-        escape_html(id),
-        escape_html(id),
+        r#"<input class="settings-control{class}" id="setting-{id}" data-id="{id}" type="text" value="{}" spellcheck="false" aria-describedby="setting-{id}-description">"#,
         escape_html(value),
     )
 }
 
 /// Numeric control whose bounds mirror the server-side save validation, so the
-/// browser rejects out-of-range values before they are sent.
-pub(super) fn settings_number(id: &str, value: f64, min: f64, max: f64, step: &str) -> String {
-    format!(
-        r#"<input class="settings-control" id="setting-{}" data-id="{}" type="number" value="{}" min="{}" max="{}" step="{step}" required>"#,
-        escape_html(id),
-        escape_html(id),
+/// browser rejects out-of-range values before they are sent. A unit sits
+/// inside the field's right edge, so every field in a column keeps one width.
+pub(super) fn settings_number(
+    id: &str,
+    value: f64,
+    min: f64,
+    max: f64,
+    step: &str,
+    unit: Option<&str>,
+) -> String {
+    let id = escape_html(id);
+    let input = format!(
+        r#"<input class="settings-control" id="setting-{id}" data-id="{id}" type="number" value="{}" min="{}" max="{}" step="{step}" required aria-describedby="setting-{id}-description">"#,
         format_number(value),
         format_number(min),
         format_number(max),
-    )
+    );
+    match unit {
+        Some(unit) => format!(
+            r#"<span class="settings-unit-field">{input}<span class="settings-unit" aria-hidden="true">{}</span></span>"#,
+            escape_html(unit)
+        ),
+        None => input,
+    }
 }
 
-pub(super) fn settings_item(name: &str, description: &str, inputs: &str) -> String {
+/// `id` is the control's `data-id`: the title labels `setting-{id}` and the
+/// description is its `aria-describedby` target.
+pub(super) fn settings_item(id: &str, name: &str, description: &str, inputs: &str) -> String {
+    let id = escape_html(id);
     format!(
-        r#"<label class="settings-item"><span class="settings-item__copy"><span class="settings-item__name">{}</span><span class="settings-item__description">{}</span></span><span class="settings-item__control">{inputs}</span></label>"#,
+        r#"<div class="settings-item"><span class="settings-item__copy"><label class="settings-item__name" for="setting-{id}">{}</label><span class="settings-item__description" id="setting-{id}-description">{}</span></span><span class="settings-item__control">{inputs}</span></div>"#,
         escape_html(name),
         escape_html(description),
     )
@@ -732,8 +869,12 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
     if externally_managed {
         update_switch.insert_str(update_switch.len() - 1, " disabled");
     }
+    let switch = |id: &str, name: &str, description: &str, checked: bool| {
+        settings_item(id, name, description, &settings_switch(id, checked))
+    };
     let general_items = [
         settings_item(
+            "ENABLE_AUTOUPDATE",
             "Automatic updates",
             if externally_managed {
                 "Updates are managed by your Linux package manager; automatic updates are disabled."
@@ -742,85 +883,89 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
             },
             &update_switch,
         ),
-        settings_item(
+        switch(
+            "OPEN_DASHBOARD_ON_STARTUP",
             "Open dashboard at startup",
             "Open this local dashboard in the default browser after vosu starts.",
-            &settings_switch(
-                "OPEN_DASHBOARD_ON_STARTUP",
-                config.open_dashboard_on_startup,
-            ),
+            config.open_dashboard_on_startup,
         ),
         #[cfg(target_os = "linux")]
-        settings_item(
+        switch(
+            "START_AT_LOGIN",
             "Start at login",
             "Run vosu as a systemd user service when you log in.",
-            &settings_switch("START_AT_LOGIN", config.start_at_login),
+            config.start_at_login,
         ),
     ];
     let general = settings_group("General", &general_items);
+    let interval = |id: &str, name: &str, description: &str, value: f64, min: f64| {
+        settings_item(
+            id,
+            name,
+            description,
+            &settings_number(
+                id,
+                value,
+                min,
+                ConfigDocument::MAX_INTERVAL_MS,
+                "any",
+                Some("ms"),
+            ),
+        )
+    };
     let data = settings_group(
         "Game data",
         &[
-            settings_item(
+            switch(
+                "CALCULATE_PP",
                 "Calculate performance points",
                 "Compute live performance points. Disable this when overlays do not need PP data.",
-                &settings_switch("CALCULATE_PP", config.calculate_pp),
+                config.calculate_pp,
             ),
-            settings_item(
+            switch(
+                "READ_MANIA_SCROLL_SPEED",
                 "Read mania scroll speed",
                 "Expose the current mania scroll speed from game memory.",
-                &settings_switch("READ_MANIA_SCROLL_SPEED", config.read_mania_scroll_speed),
+                config.read_mania_scroll_speed,
             ),
-            settings_item(
+            switch(
+                "ENABLE_KEY_OVERLAY",
                 "Read key overlay data",
                 "Expose live K1, K2, M1, and M2 input state to overlays.",
-                &settings_switch("ENABLE_KEY_OVERLAY", config.enable_key_overlay),
+                config.enable_key_overlay,
             ),
-            settings_item(
+            switch(
+                "ENABLE_MANIA_KEY_HIT_ERRORS",
                 "Per-key mania hit errors",
                 "Expose opt-in press and release timing arrays for known mania columns.",
-                &settings_switch(
-                    "ENABLE_MANIA_KEY_HIT_ERRORS",
-                    config.enable_mania_key_hit_errors,
-                ),
+                config.enable_mania_key_hit_errors,
             ),
-            settings_item(
+            switch(
+                "ENABLE_HIT_OFFSETS",
                 "Standard hit offsets",
                 "Expose cursor offsets and timing errors for standard circle and slider-head hits.",
-                &settings_switch("ENABLE_HIT_OFFSETS", config.enable_hit_offsets),
+                config.enable_hit_offsets,
             ),
-            settings_item(
+            interval(
+                "POLL_RATE",
                 "Common poll interval",
                 "Milliseconds between reads of general game data.",
-                &settings_number(
-                    "POLL_RATE",
-                    config.poll_rate,
-                    100.0,
-                    ConfigDocument::MAX_INTERVAL_MS,
-                    "any",
-                ),
+                config.poll_rate,
+                100.0,
             ),
-            settings_item(
+            interval(
+                "PRECISE_DATA_POLL_RATE",
                 "Precise poll interval",
                 "Milliseconds between reads of precise key and hit-error data.",
-                &settings_number(
-                    "PRECISE_DATA_POLL_RATE",
-                    config.precise_data_poll_rate,
-                    1.0,
-                    ConfigDocument::MAX_INTERVAL_MS,
-                    "any",
-                ),
+                config.precise_data_poll_rate,
+                1.0,
             ),
-            settings_item(
+            interval(
+                "V2_SUBSCRIPTION_DEBOUNCE",
                 "V2 subscription debounce",
                 "Wait at least this long between updates sent to overlays that request selected V2 fields.",
-                &settings_number(
-                    "V2_SUBSCRIPTION_DEBOUNCE",
-                    config.v2_subscription_debounce,
-                    1.0,
-                    ConfigDocument::MAX_INTERVAL_MS,
-                    "any",
-                ),
+                config.v2_subscription_debounce,
+                1.0,
             ),
         ],
     );
@@ -828,30 +973,46 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         "Server",
         &[
             settings_item(
+                "SERVER_IP",
                 "Listener address",
                 "IP address where the vosu HTTP server listens.",
-                &settings_text("SERVER_IP", &config.server_ip, ""),
+                &settings_text("SERVER_IP", &config.server_ip, " settings-control--mono"),
             ),
             settings_item(
+                "SERVER_PORT",
                 "Listener port",
                 "Port for the vosu HTTP server, from 1 through 65535. Ports below 1024 usually require administrator rights.",
-                &settings_number("SERVER_PORT", config.server_port, 1.0, 65_535.0, "1"),
+                &settings_number("SERVER_PORT", config.server_port, 1.0, 65_535.0, "1", None),
             ),
             settings_item(
+                "DASHBOARD_IP",
                 "Dashboard address",
                 "Trusted dashboard listener. Loopback-only by default, independently of the overlay listener.",
-                &settings_text("DASHBOARD_IP", &config.dashboard_ip, ""),
+                &settings_text(
+                    "DASHBOARD_IP",
+                    &config.dashboard_ip,
+                    " settings-control--mono",
+                ),
             ),
             settings_item(
+                "DASHBOARD_PORT",
                 "Dashboard port",
                 "Separate port for trusted management pages. Overlays keep their original port and browser storage.",
-                &settings_number("DASHBOARD_PORT", config.dashboard_port, 1.0, 65_535.0, "1"),
+                &settings_number(
+                    "DASHBOARD_PORT",
+                    config.dashboard_port,
+                    1.0,
+                    65_535.0,
+                    "1",
+                    None,
+                ),
             ),
             settings_item(
+                "ALLOWED_IPS",
                 "Allowed IP addresses",
                 "One IP address or CIDR range per line. Prefer CIDR, such as 100.64.0.0/10 for Tailscale, over legacy wildcard octets that may include public addresses (100.*.*.* is broader than Tailscale). The literal legacy hostname/raw-header token absolute comes from tosu defaults; it is not a wildcard or a peer-policy bypass.",
                 &format!(
-                    r#"<textarea class="settings-control allowlist-editor" id="setting-ALLOWED_IPS" data-id="ALLOWED_IPS" wrap="off" rows="5" spellcheck="false" aria-describedby="allowlist-warning">{}</textarea><span id="allowlist-warning" class="allowlist-warning" role="status"></span>"#,
+                    r#"<textarea class="settings-control allowlist-editor" id="setting-ALLOWED_IPS" data-id="ALLOWED_IPS" wrap="off" rows="5" spellcheck="false" aria-describedby="setting-ALLOWED_IPS-description allowlist-warning">{}</textarea><span id="allowlist-warning" class="allowlist-warning" role="status"></span>"#,
                     escape_html(
                         &config
                             .allowed_ips
@@ -868,25 +1029,44 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
     let advanced = settings_group(
         "Advanced",
         &[
-            settings_item(
+            switch(
+                "DEBUG_LOG",
                 "Debug logging",
                 "Write verbose diagnostics. Enable this only while troubleshooting.",
-                &settings_switch("DEBUG_LOG", config.debug_log),
+                config.debug_log,
             ),
-            settings_item(
+            switch(
+                "SHOW_MP_COMMANDS",
                 "Show multiplayer commands",
                 "Expose Bancho multiplayer commands in tournament chat data.",
-                &settings_switch("SHOW_MP_COMMANDS", config.show_mp_commands),
+                config.show_mp_commands,
             ),
             settings_item(
+                "STATIC_FOLDER_PATH",
                 "Overlays directory",
-                "Directory vosu scans for local overlays.",
-                &settings_text("STATIC_FOLDER_PATH", &config.static_folder_path, ""),
+                "Directory vosu scans for local overlays. Changes need Apply.",
+                &settings_text(
+                    "STATIC_FOLDER_PATH",
+                    &config.static_folder_path,
+                    " settings-control--mono",
+                ),
             ),
         ],
     );
+    // The affiliation notice and version live here instead of a page footer.
+    let about = format!(
+        concat!(
+            r#"<fieldset class="settings-group settings-group--about"><legend>About</legend>"#,
+            r#"<div class="settings-item settings-item--static"><span class="settings-item__copy"><span class="settings-item__name">Version</span></span><span class="settings-item__control settings-item__value">vosu {version}</span></div>"#,
+            r#"<div class="settings-item settings-item--static"><span class="settings-item__copy"><span class="settings-item__name">Source</span></span><span class="settings-item__control settings-item__value"><a href="https://github.com/shiruviaa/vosu" target="_blank" rel="noopener noreferrer">github.com/shiruviaa/vosu</a></span></div>"#,
+            r#"<div class="settings-item settings-item--static"><span class="settings-item__copy"><span class="settings-item__name">Affiliation</span></span><span class="settings-item__control settings-item__value">Not affiliated with ppy or the tosu project.</span></div>"#,
+            r#"<div class="settings-item settings-item--static"><span class="settings-item__copy"><span class="settings-item__name">Made by</span></span><span class="settings-item__control settings-item__value">18-LAB</span></div>"#,
+            "</fieldset>",
+        ),
+        version = escape_html(&current_version().to_string()),
+    );
     format!(
-        r#"<form class="settings" id="runtime-settings"><header class="settings-header"><div><h2>Runtime configuration</h2><p>Network changes need Apply, then Keep within 30 seconds.</p></div><span class="settings-status" role="status" aria-live="polite">All changes saved</span></header>{general}{data}{server}{advanced}<p class="settings-empty" hidden>No settings match your search.</p></form>"#
+        r#"<form class="settings" id="runtime-settings"><header class="settings-header"><span class="settings-status" role="status">All changes saved</span></header>{general}{data}{server}{advanced}{about}<p class="settings-empty" hidden>No settings match your search.</p></form>"#
     )
 }
 

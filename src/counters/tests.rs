@@ -95,10 +95,25 @@ fn oversized_metadata_is_rejected_before_parsing() {
     let counter = root.path().join("static/counter");
     std::fs::create_dir(&counter).unwrap();
     std::fs::write(counter.join("metadata.txt"), vec![b'x'; 64 * 1024 + 1]).unwrap();
-    assert!(matches!(
-        service.discover(),
-        Err(CounterError::Io(error)) if error.kind() == io::ErrorKind::InvalidData
-    ));
+    // The folder is reported as broken; it never hides other overlays.
+    let readable = root.path().join("static/readable");
+    std::fs::create_dir(&readable).unwrap();
+    std::fs::write(readable.join("index.html"), "").unwrap();
+    let (counters, broken) = service.discover_all().unwrap();
+    assert_eq!(counters.len(), 1);
+    assert_eq!(counters[0].folder_name, "readable");
+    assert_eq!(broken.len(), 1);
+    assert_eq!(broken[0].folder_name, "counter");
+    assert!(
+        broken[0].error.starts_with("metadata.txt: "),
+        "{}",
+        broken[0].error
+    );
+    assert!(
+        broken[0].error.contains("metadata file exceeds limit"),
+        "{}",
+        broken[0].error
+    );
 }
 
 #[test]
@@ -600,7 +615,15 @@ fn discovery_rejects_symlinked_settings_file() {
     let outside = root.path().join("outside-settings.json");
     std::fs::write(&outside, "[]").unwrap();
     symlink(outside, counter.join("settings.json")).unwrap();
-    assert!(matches!(service.discover(), Err(CounterError::Symlink)));
+    // Rejected, and listed as a broken overlay rather than failing the scan.
+    assert!(service.discover().unwrap().is_empty());
+    let (_, broken) = service.discover_all().unwrap();
+    assert_eq!(broken.len(), 1);
+    assert_eq!(broken[0].folder_name, "counter");
+    assert_eq!(
+        broken[0].error,
+        format!("settings: {}", CounterError::Symlink)
+    );
 }
 
 struct CancellingDownloader {

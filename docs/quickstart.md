@@ -21,7 +21,8 @@ client type, published game version, and configured common/precise polling inter
 Instances without a published state show “resolving offsets” or “starting reader”,
 according to the existing lifecycle's offset readiness, rather than “not detected”.
 Published instances show “reading”; this is the reader lifecycle, not a separate health probe. Dashboard
-previews count too; these are socket counts, not unique OBS sources or people.
+previews are not counted: their frames carry `?vosu-preview=1`, and sockets whose Referer has it are
+left out. These are socket counts, not unique OBS sources or people.
 
 The command socket's `l` identity is decoded using the command protocol, including
 `/@vosu-profile/<profile>/<overlay>` identities. Other sockets can be counted when

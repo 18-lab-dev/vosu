@@ -12,7 +12,7 @@ use serde_json::Value;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use super::model::{Counter, CounterSetting, DownloadRequest, SettingInput};
+use super::model::{BrokenOverlay, Counter, CounterSetting, DownloadRequest, SettingInput};
 use super::settings::{SettingsError, SettingsStore, validate_component};
 
 const USER_AGENT: &str = concat!(
@@ -260,16 +260,24 @@ impl ReloadableCounterService {
         self.pending.lock().await.get(name).copied()
     }
 
-    /// Lists overlays and drops names of folders that no longer exist.
+    /// Lists readable overlays and drops names of folders that no longer exist.
     pub fn discover(&self) -> Result<Vec<Counter>, CounterError> {
-        let counters = self.current.load_full().discover()?;
-        if let Err(error) = self
-            .names
-            .retain_folders(counters.iter().map(|counter| counter.folder_name.as_str()))
-        {
+        Ok(self.discover_all()?.0)
+    }
+
+    /// Readable overlays plus the folders that failed to parse. Names of
+    /// broken folders are kept: fixing the file restores the overlay as it was.
+    pub fn discover_all(&self) -> Result<(Vec<Counter>, Vec<BrokenOverlay>), CounterError> {
+        let (counters, broken) = self.current.load_full().discover_all()?;
+        if let Err(error) = self.names.retain_folders(
+            counters
+                .iter()
+                .map(|counter| counter.folder_name.as_str())
+                .chain(broken.iter().map(|overlay| overlay.folder_name.as_str())),
+        ) {
             tracing::warn!(%error, "Could not prune overlay names");
         }
-        Ok(counters)
+        Ok((counters, broken))
     }
 
     /// Installed overlays that can be loaded from disk: the catalog scan's
@@ -281,6 +289,7 @@ impl ReloadableCounterService {
         let names = self.names.snapshot();
         let mut overlays = service
             .scan()?
+            .0
             .into_iter()
             .filter(|found| found.index)
             .filter_map(
@@ -479,19 +488,33 @@ impl CounterService {
         &self.settings
     }
 
+    /// Readable overlays only; [`Self::discover_all`] also reports the
+    /// folders whose files could not be read.
     pub fn discover(&self) -> Result<Vec<Counter>, CounterError> {
         Ok(self
             .scan()?
+            .0
             .into_iter()
             .map(|found| found.counter)
             .collect())
+    }
+
+    /// Readable overlays and, separately, overlay folders whose metadata or
+    /// settings failed to parse. One broken folder never hides the others;
+    /// only a failure to walk the overlays folder itself is an error.
+    pub fn discover_all(&self) -> Result<(Vec<Counter>, Vec<BrokenOverlay>), CounterError> {
+        let (found, broken) = self.scan()?;
+        Ok((
+            found.into_iter().map(|found| found.counter).collect(),
+            broken,
+        ))
     }
 
     /// The overlay catalog scan behind [`Self::discover`], recording which
     /// file each entry came from: metadata-only folders are listed (and
     /// served) like any overlay, but only folders with an `index.html` can
     /// be loaded as a page.
-    fn scan(&self) -> Result<Vec<Discovered>, CounterError> {
+    fn scan(&self) -> Result<(Vec<Discovered>, Vec<BrokenOverlay>), CounterError> {
         let metadata = recursive_named_files(&self.static_root, "metadata.txt", true)?;
         let indexes = recursive_named_files(&self.static_root, "index.html", true)?;
         let metadata_dirs: std::collections::HashSet<_> = metadata
@@ -505,14 +528,35 @@ impl CounterService {
             .map(Path::to_path_buf)
             .collect();
         let mut found = Vec::new();
+        let mut broken = Vec::new();
+        // Settings errors already name their file; other errors are reported
+        // against the file being read.
+        let mut record =
+            |directory: &Path, file: &str, error: CounterError| -> Result<(), CounterError> {
+                let folder_name = relative_folder(&self.static_root, directory)?;
+                broken.push(BrokenOverlay {
+                    name: directory
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| folder_name.clone()),
+                    folder_name,
+                    error: match error {
+                        CounterError::Settings(error) => error.to_string(),
+                        error => format!("{file}: {error}"),
+                    },
+                });
+                Ok(())
+            };
         for path in metadata {
-            let counter = parse_metadata(&self.static_root, &path, &self.settings)?;
-            if !counter.name.is_empty() {
-                found.push(Discovered {
+            let directory = path.parent().expect("metadata has parent");
+            match parse_metadata(&self.static_root, &path, &self.settings) {
+                Ok(counter) if !counter.name.is_empty() => found.push(Discovered {
                     counter,
                     metadata: true,
-                    index: path.parent().is_some_and(|dir| index_dirs.contains(dir)),
-                });
+                    index: index_dirs.contains(directory),
+                }),
+                Ok(_) => {}
+                Err(error) => record(directory, "metadata.txt", error)?,
             }
         }
         for path in indexes {
@@ -521,7 +565,13 @@ impl CounterService {
                 continue;
             }
             let folder_name = relative_folder(&self.static_root, directory)?;
-            let settings = load_discovered_settings(&self.settings, &folder_name)?;
+            let settings = match load_discovered_settings(&self.settings, &folder_name) {
+                Ok(settings) => settings,
+                Err(error) => {
+                    record(directory, "settings", error)?;
+                    continue;
+                }
+            };
             found.push(Discovered {
                 counter: Counter {
                     downloaded: false,
@@ -546,7 +596,7 @@ impl CounterService {
                 index: true,
             });
         }
-        Ok(found)
+        Ok((found, broken))
     }
 
     pub fn parse_download_request(

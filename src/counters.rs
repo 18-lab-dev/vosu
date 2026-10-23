@@ -8,8 +8,8 @@ mod settings;
 mod tests;
 
 pub use model::{
-    CompactValues, Counter, CounterSetting, DownloadRequest, LifecycleReply, LocalOverlay,
-    SettingInput, SettingType,
+    BrokenOverlay, CompactValues, Counter, CounterSetting, DownloadRequest, LifecycleReply,
+    LocalOverlay, SettingInput, SettingType,
 };
 pub use names::{OverlayName, OverlayNames};
 pub use service::{

@@ -85,33 +85,51 @@ fn non_focused_instance_generation_invalidates_manager_revision() {
 fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     let page = render_homepage(
         PageService.dashboard_template(),
+        DynamicPage::Dashboard,
         Some(2),
         None,
-        true,
         "",
         r#"<article class="counter-card">counter</article>"#,
         None,
     );
     let html = String::from_utf8(page.body.to_vec()).unwrap();
-    for placeholder in [
-        "{{LOCAL_AMOUNT}}",
-        "{{AVAILABLE_AMOUNT}}",
-        "{{SEARCH}}",
-        "{{LIST}}",
-        "{{NOTICE}}",
-        "{{UPDATE_HIDDEN}}",
-        "{{CURRENT_VERSION}}",
-        "{{NEW_VERSION}}",
-    ] {
-        assert!(!html.contains(placeholder));
-    }
+    assert!(!html.contains("{{"), "every placeholder is substituted");
     assert!(html.contains(r#"data-count="installed">2</span>"#));
+    // The first paint already carries the page's title, tab and search.
+    assert!(html.contains(r#"<body data-page="installed">"#));
+    assert!(html.contains(r#"<h1 id="page-title" tabindex="-1">Overlays</h1>"#));
+    assert!(html.contains(r#"data-page="installed" href="/" aria-current="page""#));
+    assert!(html.contains(r#"placeholder="Search overlays""#));
+
+    let tools = render_homepage(
+        PageService.dashboard_template(),
+        DynamicPage::Tools,
+        None,
+        None,
+        "",
+        "",
+        None,
+    );
+    let tools = String::from_utf8(tools.body.to_vec()).unwrap();
+    assert!(tools.contains(r#"data-page="tools" href="/tools" aria-current="page""#));
+    assert!(!tools.contains(r#"href="/" aria-current"#));
+    let overlay_settings = render_homepage(
+        PageService.dashboard_template(),
+        DynamicPage::OverlaySettings,
+        None,
+        None,
+        "",
+        "",
+        None,
+    );
+    let overlay_settings = String::from_utf8(overlay_settings.body.to_vec()).unwrap();
+    assert!(!overlay_settings.contains("search-bar"));
 
     let hostile = render_homepage(
         PageService.dashboard_template(),
+        DynamicPage::Dashboard,
         Some(1),
         None,
-        true,
         "",
         "<p>{{CURRENT_VERSION}} {{LIST}} {{UNKNOWN</p>",
         None,
@@ -123,21 +141,22 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     );
     assert!(html.contains("search-bar"));
     assert!(html.contains(r#"class="counter-card""#));
+    assert!(html.contains(r#"data-action="show-update" hidden"#));
 
     let updated = render_homepage(
         PageService.dashboard_template(),
+        DynamicPage::Dashboard,
         Some(0),
         Some(0),
-        true,
         "",
         "",
         Some("99.0.0"),
     );
     let updated = String::from_utf8(updated.body.to_vec()).unwrap();
     assert!(updated.contains(r#"id="update-notice""#));
-    assert!(!updated.contains(r#"class="update-notice" hidden"#));
+    assert!(!updated.contains(r#"data-action="show-update" hidden"#));
     assert!(!updated.contains("{{NEW_VERSION}}"));
-    assert!(updated.contains("99.0.0"));
+    assert!(updated.contains("99.0.0 available"));
 
     let settings = render_runtime_settings(&Config::default());
     for binding in [
@@ -168,17 +187,23 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     #[cfg(target_os = "linux")]
     {
         assert!(settings.contains("Run vosu as a systemd user service when you log in."));
-        assert!(settings.contains(r#"data-id="START_AT_LOGIN" type="checkbox" >"#));
+        assert!(settings.contains(
+            r#"data-id="START_AT_LOGIN" type="checkbox" role="switch" aria-describedby="setting-START_AT_LOGIN-description">"#
+        ));
         let enabled = render_runtime_settings(&Config {
             start_at_login: true,
             ..Config::default()
         });
-        assert!(enabled.contains(r#"data-id="START_AT_LOGIN" type="checkbox" checked>"#));
+        assert!(enabled.contains(
+            r#"data-id="START_AT_LOGIN" type="checkbox" role="switch" aria-describedby="setting-START_AT_LOGIN-description" checked>"#
+        ));
     }
     #[cfg(windows)]
     assert!(!settings.contains("START_AT_LOGIN"));
     if crate::desktop::externally_managed() {
-        assert!(settings.contains(r#"data-id="ENABLE_AUTOUPDATE" type="checkbox" checked disabled>"#));
+        assert!(settings.contains(
+            r#"data-id="ENABLE_AUTOUPDATE" type="checkbox" role="switch" aria-describedby="setting-ENABLE_AUTOUPDATE-description" checked disabled>"#
+        ));
         assert!(settings.contains("Updates are managed by your Linux package manager"));
     }
     assert!(settings.contains("V2 subscription debounce"));
@@ -238,9 +263,58 @@ async fn dynamic_pages_keep_discovered_installed_count_when_catalog_fetch_fails(
         .unwrap();
     let unavailable = String::from_utf8(unavailable.body.to_vec()).unwrap();
     assert!(unavailable.contains(r#"data-count="installed">2</span>"#));
-    assert!(unavailable.contains("<h2>Catalog unavailable</h2>"));
+    assert!(unavailable.contains("<h2>Couldn't reach the community catalog</h2>"));
     // The third-party disclosure must not depend on a reachable catalog.
     assert!(unavailable.contains(r#"class="catalog-notice""#));
+
+    counters.shutdown().await;
+    config.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn one_unreadable_overlay_is_an_error_card_not_an_empty_page() {
+    let root = tempfile::tempdir().unwrap();
+    let static_root = root.path().join("static");
+    let good = static_root.join("good");
+    std::fs::create_dir_all(&good).unwrap();
+    std::fs::write(good.join("index.html"), "").unwrap();
+    let bad = static_root.join("bad <one>");
+    std::fs::create_dir_all(&bad).unwrap();
+    std::fs::write(bad.join("metadata.txt"), vec![b'x'; 64 * 1024 + 1]).unwrap();
+
+    let counters = Arc::new(ReloadableCounterService::production(
+        static_root,
+        root.path().join("settings"),
+        root.path().join("cache"),
+    ));
+    let config = Arc::new(
+        ConfigStore::initialize(root.path().join("vosu.toml"))
+            .await
+            .unwrap(),
+    );
+    let shutdown = CancellationToken::new();
+    shutdown.cancel();
+    let pages = RuntimePages {
+        pages: PageService,
+        counters: Arc::clone(&counters),
+        catalog: CatalogService::production("test"),
+        config: Arc::clone(&config),
+        shutdown,
+        update_version: None,
+    };
+    let dashboard = pages
+        .render(DynamicPage::Dashboard, None)
+        .await
+        .unwrap();
+    let dashboard = String::from_utf8(dashboard.body.to_vec()).unwrap();
+    // The readable overlay is listed; the broken folder is an error card
+    // naming the file, with the actions that fix it. The count is the cards.
+    assert!(dashboard.contains(r#"data-count="installed">2</span>"#));
+    assert!(dashboard.contains(r#"data-overlay-id="good""#));
+    assert!(dashboard.contains(r#"<article class="counter-card is-broken" data-overlay-id="bad &lt;one&gt;""#));
+    assert!(dashboard.contains("<code>metadata.txt: "));
+    assert!(dashboard.contains(r#"data-action="delete-counter" data-folder="bad &lt;one&gt;""#));
+    assert!(!dashboard.contains("No overlays yet"));
 
     counters.shutdown().await;
     config.shutdown().await.unwrap();
@@ -285,6 +359,50 @@ async fn settings_save_persists_browser_numeric_strings_for_runtime_consumers() 
     assert_eq!(current.v2_subscription_debounce, 1.125);
     assert_eq!(current.server_port, 24_890.0);
     reloaded.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn settings_reject_a_missing_overlays_folder_and_revert_pending_network_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Arc::new(
+        ConfigStore::initialize(root.path().join("vosu.toml"))
+            .await
+            .unwrap(),
+    );
+    let service = RuntimeConfig::new(Arc::clone(&store));
+
+    // A typo in an absolute overlays folder is rejected, not created empty.
+    let missing = root.path().join("no such folder");
+    let error = service
+        .save(serde_json::json!({"STATIC_FOLDER_PATH": missing.to_str().unwrap()}))
+        .await
+        .unwrap_err();
+    assert_eq!(error, format!("Overlays folder not found: {}", missing.display()));
+    service
+        .save(serde_json::json!({"STATIC_FOLDER_PATH": root.path().to_str().unwrap()}))
+        .await
+        .unwrap();
+    assert_eq!(store.current().static_folder_path, root.path().to_str().unwrap());
+
+    // "Revert now" restores the previous listeners at once.
+    let before = listen_target(&store.current()).unwrap();
+    service
+        .save(serde_json::json!({"SERVER_PORT": 24_890, "_network_action": "apply"}))
+        .await
+        .unwrap();
+    assert_eq!(store.current().server_port, 24_890.0);
+    service
+        .save(serde_json::json!({"_network_action": "revert"}))
+        .await
+        .unwrap();
+    assert_eq!(listen_target(&store.current()).unwrap(), before);
+    assert_eq!(
+        service.save(serde_json::json!({"_network_action": "revert"})).await.unwrap_err(),
+        "No pending network change"
+    );
+
+    drop(service);
+    store.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -414,7 +532,8 @@ fn counter_cards_preview_at_native_resolution_from_encoded_relative_paths() {
         },
         "localhost:24050",
     );
-    assert!(fixed.contains(r#"src="http://localhost:24050/accuracy%20by%20sxlvia/""#));
+    // Preview frames carry the marker that keeps them out of the connected count.
+    assert!(fixed.contains(r#"src="http://localhost:24050/accuracy%20by%20sxlvia/?vosu-preview=1""#));
     assert!(fixed.contains(r#"data-preview-width="640" data-preview-height="480""#));
     assert!(fixed.contains(r#"width="640" height="480" scrolling="no""#));
     assert!(fixed.contains(r#"data-copy-value="http://localhost:24050/accuracy%20by%20sxlvia/""#));
@@ -428,7 +547,7 @@ fn counter_cards_preview_at_native_resolution_from_encoded_relative_paths() {
         },
         "127.0.0.1:24050",
     );
-    assert!(nested.contains(r#"src="http://127.0.0.1:24050/parent/50%25%20%231%3F/""#));
+    assert!(nested.contains(r#"src="http://127.0.0.1:24050/parent/50%25%20%231%3F/?vosu-preview=1""#));
 
     let any = render_counter_card(
         &CounterCard {
@@ -464,9 +583,10 @@ fn installed_updates_use_catalog_metadata_and_actual_folder_target() {
     let remote = crate::server::catalog::merge_local(remote, &installed);
     annotate_installed_updates(&mut local, &remote);
     let html = render_local_counters(&local, &[], &Default::default(), None, "localhost:24050");
-    assert!(html.contains("Update available</button>"));
-    assert!(html.contains(r#"class="badge badge-warning""#));
-    assert!(html.contains(r#"data-action="update-counter""#));
+    // A status badge plus a real Update button, not a badge-styled button.
+    assert!(html.contains(r#"<span class="badge badge-warning">Update available</span>"#));
+    assert!(html.contains(r#"class="button button-update" type="button" data-action="update-counter""#));
+    assert!(html.contains(r#"aria-label="Update OffsetSuggester""#));
     assert!(html.contains(r#"data-install-name="custom-folder""#));
     assert!(html.contains(r#"data-download-url="https://example.test/counter.zip""#));
 }
@@ -485,7 +605,7 @@ fn card_meta_omits_empty_or_unknown_author_segments() {
             assert!(!meta.contains("unknown"), "{meta}");
             assert!(!meta.contains("by "), "{meta}");
             if !external {
-                assert!(meta.starts_with("<span>v1.0</span><button"), "{meta}");
+                assert!(meta.starts_with(r#"<span>v1.0</span><span class="counter-card__size">180 × 80</span>"#), "{meta}");
             }
         }
     }
@@ -508,13 +628,18 @@ fn installed_counter_cards_emit_escaped_identity_pin_and_management_menu() {
     assert!(card.starts_with(
         r#"<article class="counter-card" data-overlay-id="folder&lt;&amp;&quot;""#
     ));
-    assert!(card.contains(r#"<h2 title="Counter">Counter</h2>"#));
+    assert!(card.contains(r#"title="Counter">Counter</h2>"#));
+    assert!(card.contains(r#"aria-labelledby="card-title-"#));
     assert!(card.contains(r#"data-action="toggle-pin" aria-pressed="false""#));
     let header_actions = &card[..card.find(r#"<div class="card-menu""#).unwrap()];
     assert!(header_actions.contains(r#"data-action="counter-settings""#));
     assert!(!header_actions.contains(r#"data-action="delete-counter""#));
     let menu = &card[card.find(r#"<div class="card-menu""#).unwrap()..];
-    assert!(menu.starts_with(r#"<div class="card-menu" id="card-menu-folder%3C&amp;%22" popover>"#));
+    assert!(menu.starts_with(r#"<div class="card-menu" id="card-menu-folder%3C&amp;%22" popover role="menu""#));
+    // Enlarge and Copy resolution are menu items, not extra Tab stops.
+    assert!(menu.contains(r#"data-action="expand-preview">Enlarge preview</button>"#));
+    assert!(menu.contains(r#"data-action="copy-metadata" data-copy-label="Resolution""#));
+    assert!(card.contains(r#"class="preview-expand" type="button" data-action="expand-preview" tabindex="-1""#));
     let delete = menu.find(r#"data-action="delete-counter""#).unwrap();
     for earlier in ["open-counter", "pin-earlier", "pin-later"] {
         assert!(menu.find(&format!(r#"data-action="{earlier}""#)).unwrap() < delete);
@@ -553,7 +678,7 @@ fn duplicate_installed_titles_show_their_folder() {
     // Only the overlay that declares a dark scheme gets a dark preview frame;
     // the others keep the light default.
     assert_eq!(html.matches(r#"data-color-scheme="dark""#).count(), 1);
-    assert!(html.contains(r#"<iframe src="http://localhost:24050/accuracy/" data-color-scheme="dark""#));
+    assert!(html.contains(r#"<iframe src="http://localhost:24050/accuracy/?vosu-preview=1" data-color-scheme="dark""#));
 }
 
 #[test]
@@ -568,11 +693,11 @@ fn nicknames_and_aliases_rename_cards_but_keep_the_folder_frame() {
         crate::counters::OverlayName { nickname: Some("Acc <main>".into()), alias: Some("acc".into()) },
     )]);
     let html = render_local_counters(std::slice::from_ref(&counter), &[], &names, None, "localhost:24050");
-    assert!(html.contains(r#"<h2 title="Acc &lt;main&gt;">Acc &lt;main&gt;</h2>"#));
+    assert!(html.contains(r#"title="Acc &lt;main&gt;">Acc &lt;main&gt;</h2>"#));
     assert!(html.contains(r#"data-counter-name="accuracy" data-counter-title="Acc &lt;main&gt;""#));
     assert!(html.contains(r#"data-counter-alias="acc""#));
     // The frame loads the real folder; the copied browser-source URL is the alias.
-    assert!(html.contains(r#"<iframe src="http://localhost:24050/accuracy%20by%20sxlvia/""#));
+    assert!(html.contains(r#"<iframe src="http://localhost:24050/accuracy%20by%20sxlvia/?vosu-preview=1""#));
     assert!(html.contains(r#"data-copy-value="http://localhost:24050/acc/""#));
     assert!(html.contains("<code>/acc/</code>"));
     assert!(html.contains(r#"data-action="rename-counter""#));
@@ -657,7 +782,14 @@ fn production_catalog_query_matches_source_token_rules() {
     assert_eq!(normalize_catalog_query("!HD SC"), "hd sc");
     assert_eq!(normalize_catalog_query("HD SC"), "hd sc");
     assert_eq!(normalize_catalog_query("  my  overlay! "), "my overlay");
+    // Every word must match somewhere, as on the Tools and Settings pages.
     assert!(matches_catalog_query(
+        "HD Counter",
+        "Author",
+        &["streamcompanion".into()],
+        &normalize_catalog_query("HD SC")
+    ));
+    assert!(!matches_catalog_query(
         "Counter",
         "Author",
         &["streamcompanion".into()],

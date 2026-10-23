@@ -49,6 +49,8 @@ pub enum Endpoint {
     CounterDetails,
     /// Dashboard-only nickname/alias update for one installed overlay.
     CounterNames,
+    /// Dashboard-only catalog update annotations for installed overlays.
+    CounterUpdates,
     DashboardStatus,
     CounterSettings,
     ApiKeys,
@@ -456,6 +458,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                 Endpoint::DashboardStatus
                     | Endpoint::CounterDetails
                     | Endpoint::CounterNames
+                    | Endpoint::CounterUpdates
                     | Endpoint::ToolManagement
             )
         {
@@ -786,6 +789,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/websocket/commands" if get => Some(WsCommands),
         "/api/dashboard/status" if get => Some(DashboardStatus),
         _ if get && path.starts_with("/api/counters/details/") => Some(CounterDetails),
+        "/api/counters/updates" if get => Some(CounterUpdates),
         _ if get && path.starts_with("/api/counters/search/") => Some(CounterSearch),
         "/api/counters/open-root" if post => Some(CounterOpenRoot),
         _ if post && path.starts_with("/api/counters/download/") => Some(CounterDownload),

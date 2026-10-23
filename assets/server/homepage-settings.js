@@ -1,8 +1,95 @@
 let actionId = 0;
 
-export function createActionDialog(title) {
+// A modal opened over another one keeps a clear backdrop, so stacked dialogs
+// do not darken the page further with every level.
+export function showModal(dialog) {
+  if (document.querySelector('dialog[open]')) dialog.dataset.stacked = '';
+  else delete dialog.dataset.stacked;
+  dialog.showModal();
+}
+
+// Esc, a backdrop click and Cancel/✕ all go through requestClose(). A dialog
+// holding unsaved input asks before discarding it; an `explicit` dialog (a
+// key shown once) closes only through its own buttons.
+export function guardDialog(dialog, { isDirty = () => false, explicit = false } = {}) {
+  let bar = null;
+  function hideBar() {
+    bar?.remove();
+    bar = null;
+  }
+  function askDiscard() {
+    if (bar) {
+      bar.querySelector('[data-keep]')?.focus();
+      return;
+    }
+    bar = document.createElement('div');
+    bar.className = 'discard-bar';
+    const message = document.createElement('p');
+    message.setAttribute('role', 'alert');
+    message.textContent = 'Discard unsaved changes?';
+    const keep = document.createElement('button');
+    keep.type = 'button';
+    keep.className = 'button';
+    keep.dataset.keep = '';
+    keep.textContent = 'Keep editing';
+    keep.addEventListener('click', hideBar);
+    const discard = document.createElement('button');
+    discard.type = 'button';
+    discard.className = 'button button-danger';
+    discard.textContent = 'Discard';
+    discard.addEventListener('click', () => {
+      hideBar();
+      dialog.close();
+    });
+    bar.append(message, keep, discard);
+    (dialog.querySelector('.dialog-frame') ?? dialog).append(bar);
+    keep.focus();
+  }
+  function requestClose() {
+    if (explicit) return;
+    if (isDirty()) askDiscard();
+    else dialog.close();
+  }
+  dialog.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    // An open menu inside the dialog closes first, natively.
+    if (dialog.querySelector(':popover-open')) return;
+    event.preventDefault();
+    if (bar) hideBar();
+    else requestClose();
+  });
+  // Fallback for close requests that are not an Escape keydown.
+  dialog.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    requestClose();
+  });
+  dialog.addEventListener('click', (event) => {
+    if (event.target !== dialog) return;
+    const bounds = dialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right
+      || event.clientY < bounds.top || event.clientY > bounds.bottom) requestClose();
+  });
+  dialog.addEventListener('close', hideBar);
+  return requestClose;
+}
+
+function closeButton(label, run) {
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'v-btn v-btn--ghost v-btn--icon';
+  close.textContent = '✕';
+  close.setAttribute('aria-label', label);
+  close.addEventListener('click', run);
+  return close;
+}
+
+// `dismiss`: 'light' closes freely, 'guarded' asks before discarding when
+// `isDirty()` is true, 'explicit' closes only through the dialog's buttons.
+export function createActionDialog(title, { dismiss = 'light', isDirty } = {}) {
   const dialog = document.createElement('dialog');
   dialog.className = 'dashboard-dialog action-dialog';
+  const frame = document.createElement('div');
+  frame.className = 'dialog-frame';
   const header = document.createElement('header');
   header.className = 'dialog-header';
   const heading = document.createElement('h2');
@@ -12,11 +99,17 @@ export function createActionDialog(title) {
   header.append(heading);
   const body = document.createElement('div');
   body.className = 'dialog-body';
-  dialog.append(header, body);
+  frame.append(header, body);
+  dialog.append(frame);
+  const requestClose = guardDialog(dialog, {
+    explicit: dismiss === 'explicit',
+    isDirty: dismiss === 'guarded' ? isDirty : undefined,
+  });
+  if (dismiss !== 'explicit') header.append(closeButton('Close', requestClose));
   dialog.addEventListener('close', () => dialog.remove(), { once: true });
   document.body.append(dialog);
-  dialog.showModal();
-  return { dialog, body };
+  showModal(dialog);
+  return { dialog, body, requestClose };
 }
 
 export function createOverflow(label, text = '⋯') {
@@ -31,15 +124,19 @@ export function createOverflow(label, text = '⋯') {
   menu.className = 'card-menu';
   menu.id = `action-menu-${++actionId}`;
   menu.setAttribute('popover', 'auto');
+  menu.setAttribute('role', 'menu');
   toggle.setAttribute('popovertarget', menu.id);
   wrapper.append(toggle, menu);
   return { wrapper, menu };
 }
 
+// Above this many settings a search field helps; below it is noise.
+const SEARCH_THRESHOLD = 8;
+
 export function createSettingsEditor({
   results, requestJson, notify, setBusy, errorText, absoluteHttpUrl,
 }) {
-  const state = { dialogRequest: 0, navigationObserver: null };
+  const state = { dialogRequest: 0, navigationObserver: null, dirty: false, fieldId: 0 };
 
   function choiceControl(values, value, labels = values) {
     const select = document.createElement('select');
@@ -51,23 +148,29 @@ export function createSettingsEditor({
 
   const dialog = document.querySelector('#dashboard-dialog');
   const dialogTitle = document.querySelector('#dialog-title');
-  const dialogDescription = document.querySelector('#dialog-description');
   const dialogBody = document.querySelector('#dialog-body');
-  dialog?.addEventListener('close', () => state.navigationObserver?.disconnect());
+  const requestDialogClose = dialog ? guardDialog(dialog, { isDirty: () => state.dirty }) : () => {};
+  dialog?.addEventListener('close', () => {
+    state.navigationObserver?.disconnect();
+    state.dirty = false;
+  });
+  // An inline settings page with unsaved edits asks before navigating away.
+  window.addEventListener('beforeunload', (event) => {
+    if (state.dirty && !dialog?.open) event.preventDefault();
+  });
 
   function cloneValue(value) {
     if (typeof structuredClone === 'function') return structuredClone(value);
     return JSON.parse(JSON.stringify(value));
   }
 
-  function openDialog(title, description = '') {
+  function openDialog(title) {
     if (!dialog || !dialogBody) return null;
     const requestId = ++state.dialogRequest;
+    state.dirty = false;
     dialogTitle.textContent = title;
-    dialogDescription.textContent = description;
-    dialogDescription.hidden = !description;
     dialogBody.replaceChildren();
-    if (!dialog.open) dialog.showModal();
+    if (!dialog.open) showModal(dialog);
     return { container: dialogBody, requestId };
   }
 
@@ -75,24 +178,19 @@ export function createSettingsEditor({
     return requestId === null || (state.dialogRequest === requestId && Boolean(dialog?.open));
   }
 
-  function closeDialog() {
+  // Closes without asking: used after a successful save.
+  function forceCloseDialog() {
     state.dialogRequest += 1;
+    state.dirty = false;
     if (dialog?.open) dialog.close();
   }
 
-  function fieldLabel(text, control, description = '') {
+  function fieldLabel(text, control) {
     const label = document.createElement('label');
     label.className = 'field-label';
     const name = document.createElement('span');
     name.textContent = text;
-    label.appendChild(name);
-    if (description) {
-      const help = document.createElement('span');
-      help.className = 'setting-description';
-      help.textContent = description;
-      label.appendChild(help);
-    }
-    label.appendChild(control);
+    label.append(name, control);
     return label;
   }
 
@@ -100,8 +198,11 @@ export function createSettingsEditor({
     const input = document.createElement('input');
     input.type = type;
     input.className = 'setting-value';
-    if (type === 'checkbox') input.checked = Boolean(value);
-    else if (value !== undefined && value !== null) input.value = String(value);
+    if (type === 'checkbox') {
+      input.checked = Boolean(value);
+      input.classList.add('v-toggle');
+      input.setAttribute('role', 'switch');
+    } else if (value !== undefined && value !== null) input.value = String(value);
     return input;
   }
 
@@ -133,7 +234,6 @@ export function createSettingsEditor({
     } else if (type === 'options') {
       const values = Array.isArray(option.values) ? option.values.filter((item) => item !== '').map(String) : [];
       control = choiceControl(values, value ?? option.value ?? values[0] ?? '');
-      control.setAttribute('aria-label', String(option.title || option.name));
     } else {
       control = makeInput('text', value ?? option.value ?? '');
     }
@@ -160,11 +260,20 @@ export function createSettingsEditor({
     remove.type = 'button';
     remove.className = 'button button-danger';
     remove.textContent = 'Remove command';
-    remove.addEventListener('click', () => row.remove());
+    remove.addEventListener('click', () => {
+      // Keep focus in the list instead of dropping it to the page.
+      const next = row.nextElementSibling ?? row.previousElementSibling;
+      row.remove();
+      state.dirty = true;
+      (next?.querySelector('input, select, button') ?? list.parentElement?.querySelector('.command-add'))?.focus();
+    });
     row.append(fields, remove);
     list.appendChild(row);
   }
 
+  // One row per setting, like the runtime Settings page: title and
+  // description on the left, the control on the right. Wide controls
+  // (text areas, command lists) stack under their title.
   // `secret` is defined only for hosts that withhold password values (tools):
   // true when one is in effect, false when none is.
   function renderSettingField(setting, configuredValue, secret) {
@@ -177,28 +286,50 @@ export function createSettingsEditor({
       return heading;
     }
 
-    const fieldset = document.createElement('fieldset');
-    fieldset.className = 'counter-setting';
-    fieldset.dataset.settingId = id;
-    fieldset.dataset.settingType = kind;
-    const legend = document.createElement('legend');
-    legend.textContent = String(setting.title || id);
-    fieldset.appendChild(legend);
+    const fieldId = `setting-field-${++state.fieldId}`;
+    const row = document.createElement('div');
+    row.className = 'counter-setting settings-item';
+    row.dataset.settingId = id;
+    row.dataset.settingType = kind;
+    const copy = document.createElement('span');
+    copy.className = 'settings-item__copy';
+    const grouped = kind === 'commands' || kind === 'button';
+    const name = document.createElement(grouped ? 'span' : 'label');
+    name.className = 'settings-item__name';
+    name.id = `${fieldId}-name`;
+    name.textContent = String(setting.title || id);
+    if (!grouped) name.htmlFor = fieldId;
+    copy.append(name);
+    let describedBy = '';
     if (setting.description) {
-      const description = document.createElement('p');
-      description.className = 'setting-description';
+      const description = document.createElement('span');
+      description.className = 'settings-item__description setting-description';
+      description.id = `${fieldId}-description`;
       description.textContent = String(setting.description);
-      fieldset.appendChild(description);
+      copy.append(description);
+      describedBy = description.id;
     }
+    const slot = document.createElement('span');
+    slot.className = 'settings-item__control';
+    row.append(copy, slot);
+    const finish = (control) => {
+      control.id = fieldId;
+      if (describedBy) control.setAttribute('aria-describedby', describedBy);
+      slot.append(control);
+      return row;
+    };
 
     const value = configuredValue === undefined ? setting.value : configuredValue;
     if (kind === 'commands') {
+      row.classList.add('settings-item--stacked');
+      row.setAttribute('role', 'group');
+      row.setAttribute('aria-labelledby', name.id);
       const list = document.createElement('div');
       list.className = 'command-list';
       mergeCommandValues(setting, value).forEach((command) => appendCommandRow(list, setting, command));
       const add = document.createElement('button');
       add.type = 'button';
-      add.className = 'button';
+      add.className = 'button command-add';
       add.textContent = 'Add command';
       add.addEventListener('click', () => {
         const seed = {};
@@ -206,60 +337,66 @@ export function createSettingsEditor({
           if (option?.name) seed[option.name] = cloneValue(option.value ?? '');
         });
         appendCommandRow(list, setting, seed);
+        state.dirty = true;
         list.lastElementChild?.querySelector('input, select')?.focus();
       });
-      fieldset.append(list, add);
-      return fieldset;
+      slot.append(list, add);
+      return row;
     }
 
-    let control;
-    if (kind === 'checkbox') {
-      control = makeInput('checkbox', value);
-    } else if (kind === 'number') {
-      control = makeInput('number', value);
+    if (kind === 'checkbox') return finish(makeInput('checkbox', value));
+    if (kind === 'number') {
+      const control = makeInput('number', value);
       control.step = 'any';
-    } else if (kind === 'color') {
-      control = makeInput('color', value || '#f45cad');
-    } else if (kind === 'password') {
-      control = makeInput('password', secret === undefined ? value : '');
+      return finish(control);
+    }
+    if (kind === 'color') return finish(makeInput('color', value || '#f45cad'));
+    if (kind === 'password') {
+      const control = makeInput('password', secret === undefined ? value : '');
       control.autocomplete = 'off';
-      if (secret === true) {
-        // The stored secret is never sent here: blank keeps it, Clear removes it.
-        control.placeholder = 'Saved — leave blank to keep';
-        const clear = document.createElement('button');
-        clear.type = 'button';
-        clear.className = 'button setting-secret-clear';
-        clear.textContent = 'Clear';
-        clear.addEventListener('click', () => {
-          const clearing = fieldset.dataset.clearSecret !== 'true';
-          fieldset.dataset.clearSecret = String(clearing);
-          control.value = '';
-          control.placeholder = clearing ? 'Will be cleared on save' : 'Saved — leave blank to keep';
-          clear.textContent = clearing ? 'Keep' : 'Clear';
-          clear.setAttribute('aria-pressed', String(clearing));
-        });
-        control.addEventListener('input', () => {
-          if (control.value && fieldset.dataset.clearSecret === 'true') clear.click();
-        });
-        control.setAttribute('aria-label', String(setting.title || id));
-        const row = document.createElement('div');
-        row.className = 'setting-secret';
-        row.append(control, clear);
-        fieldset.appendChild(row);
-        return fieldset;
-      }
-    } else if (kind === 'textarea') {
-      control = document.createElement('textarea');
+      if (secret !== true) return finish(control);
+      // The stored secret is never sent here: blank keeps it, Clear removes it.
+      control.placeholder = 'Saved — leave blank to keep';
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.className = 'button setting-secret-clear';
+      clear.textContent = 'Clear';
+      clear.addEventListener('click', () => {
+        const clearing = row.dataset.clearSecret !== 'true';
+        row.dataset.clearSecret = String(clearing);
+        control.value = '';
+        control.placeholder = clearing ? 'Will be cleared on save' : 'Saved — leave blank to keep';
+        clear.textContent = clearing ? 'Keep' : 'Clear';
+        clear.setAttribute('aria-pressed', String(clearing));
+        state.dirty = true;
+      });
+      control.addEventListener('input', () => {
+        if (control.value && row.dataset.clearSecret === 'true') clear.click();
+      });
+      const secretRow = document.createElement('span');
+      secretRow.className = 'setting-secret';
+      finish(control);
+      secretRow.append(control, clear);
+      slot.append(secretRow);
+      return row;
+    }
+    if (kind === 'textarea') {
+      row.classList.add('settings-item--stacked');
+      const control = document.createElement('textarea');
       control.className = 'setting-value';
       control.value = value === undefined || value === null ? '' : String(value);
-    } else if (kind === 'options') {
+      return finish(control);
+    }
+    if (kind === 'options') {
       const options = Array.isArray(setting.options) ? setting.options.filter((item) => item !== '').map(String) : [];
-      control = choiceControl(options, value ?? options[0] ?? '');
-    } else if (kind === 'button') {
+      return finish(choiceControl(options, value ?? options[0] ?? ''));
+    }
+    if (kind === 'button') {
       const href = absoluteHttpUrl(value);
       const link = document.createElement(href ? 'a' : 'span');
-      link.className = 'button button-cyan';
-      link.textContent = String(setting.title || 'Open link');
+      link.className = 'button';
+      link.textContent = 'Open';
+      link.setAttribute('aria-labelledby', name.id);
       if (href) {
         link.href = href;
         link.target = '_blank';
@@ -267,19 +404,15 @@ export function createSettingsEditor({
       } else {
         link.setAttribute('aria-disabled', 'true');
       }
-      fieldset._settingValue = cloneValue(value);
-      fieldset.appendChild(link);
-      return fieldset;
-    } else {
-      control = makeInput('text', value);
+      row._settingValue = cloneValue(value);
+      slot.append(link);
+      return row;
     }
-    control.setAttribute('aria-label', String(setting.title || id));
-    fieldset.appendChild(control);
-    return fieldset;
+    return finish(makeInput('text', value));
   }
 
-  function collectCommandRows(fieldset) {
-    return Array.from(fieldset.querySelectorAll('.command-row')).map((row) => {
+  function collectCommandRows(field) {
+    return Array.from(field.querySelectorAll('.command-row')).map((row) => {
       const command = {};
       row.querySelectorAll('[data-command-name]').forEach((control) => {
         const name = control.dataset.commandName;
@@ -294,12 +427,12 @@ export function createSettingsEditor({
 
   function collectCounterSettings(form, schema) {
     const payload = [];
-    form.querySelectorAll('.counter-setting[data-setting-id]').forEach((fieldset) => {
-      const id = fieldset.dataset.settingId;
-      const kind = fieldset.dataset.settingType;
+    form.querySelectorAll('.counter-setting[data-setting-id]').forEach((field) => {
+      const id = field.dataset.settingId;
+      const kind = field.dataset.settingType;
       let value;
       if (kind === 'commands') {
-        value = collectCommandRows(fieldset);
+        value = collectCommandRows(field);
         const setting = schema.find((candidate) => candidate.uniqueID === id);
         const key = setting?.uniqueCheck;
         if (key) {
@@ -312,13 +445,13 @@ export function createSettingsEditor({
           });
         }
       } else if (kind === 'button') {
-        value = cloneValue(fieldset._settingValue);
+        value = cloneValue(field._settingValue);
       } else {
-        const control = fieldset.querySelector('.setting-value');
+        const control = field.querySelector('.setting-value');
         if (!control) return;
         if (kind === 'checkbox') value = control.checked;
         else if (kind === 'number' && control.value !== '') value = Number(control.value);
-        else if (kind === 'password' && fieldset.dataset.clearSecret === 'true' && !control.value) value = null;
+        else if (kind === 'password' && field.dataset.clearSecret === 'true' && !control.value) value = null;
         else value = control.value;
       }
       payload.push({ uniqueID: id, value });
@@ -330,18 +463,23 @@ export function createSettingsEditor({
     return new Promise((resolve) => {
       const deleting = action === 'delete';
       const titles = { create: 'Create empty profile', copy: 'Copy profile', rename: 'Rename profile', delete: 'Delete profile' };
-      const { dialog: prompt, body } = createActionDialog(titles[action]);
+      const input = makeInput('text', action === 'rename' ? profile : '');
+      const initial = input.value;
+      const { dialog: prompt, body } = createActionDialog(titles[action], {
+        dismiss: deleting ? 'light' : 'guarded',
+        isDirty: () => input.value !== initial,
+      });
       const form = document.createElement('form');
       form.className = 'dialog-form';
-      const input = makeInput('text', action === 'rename' ? profile : '');
       input.required = true;
       input.maxLength = 48;
       input.pattern = '[A-Za-z0-9_-]+';
+      input.title = 'Letters, numbers, hyphens and underscores';
       if (deleting) {
         const text = document.createElement('p');
         text.textContent = `Delete profile “${profile}”? This cannot be undone.`;
         form.append(text);
-      } else form.append(fieldLabel('Profile name', input, 'Letters, numbers, hyphens and underscores; up to 48 characters.'));
+      } else form.append(fieldLabel('Profile name', input));
       const actions = document.createElement('div');
       actions.className = 'dialog-actions';
       const cancel = document.createElement('button');
@@ -362,20 +500,29 @@ export function createSettingsEditor({
   }
 
   function profileBar(folder, inline, profile, registry) {
-    const profiles = document.createElement('section');
+    const profiles = document.createElement('div');
     profiles.className = 'settings-profiles';
     const selector = choiceControl(registry.profiles, profile,
       // The reserved profile is literally named `default`; suffixing it again would read "default (default)".
       registry.profiles.map((name) => name === registry.active && name !== 'default' ? `${name} (default)` : name));
     selector.className = 'settings-control';
-    selector.setAttribute('aria-label', 'Settings profile');
-    selector.title = 'Settings profile; "(default)" marks the profile unpinned overlays use';
-    profiles.appendChild(selector);
-    selector.addEventListener('change', () => loadCounterSettings(folder, { inline, profile: selector.value }));
-    const { wrapper: management, menu } = createOverflow('Profile actions', '☰');
-    for (const [label, action] of [['Create empty', 'create'], ['Copy profile', 'copy'], ['Rename', 'rename'], ['Delete', 'delete'], ['Set as default', 'activate']]) {
+    selector.id = `settings-profile-${++state.fieldId}`;
+    const label = document.createElement('label');
+    label.htmlFor = selector.id;
+    label.textContent = 'Profile';
+    profiles.append(label, selector);
+    selector.addEventListener('change', async () => {
+      if (state.dirty && !window.confirm('Discard unsaved changes and switch profile?')) {
+        selector.value = profile;
+        return;
+      }
+      loadCounterSettings(folder, { inline, profile: selector.value });
+    });
+    const { wrapper: management, menu } = createOverflow('Profile actions');
+    for (const [label, action] of [['Create empty', 'create'], ['Copy profile', 'copy'], ['Rename', 'rename'], ['Set as default', 'activate'], ['Delete', 'delete']]) {
       const button = document.createElement('button');
       button.type = 'button';
+      button.setAttribute('role', 'menuitem');
       if (action === 'delete') button.className = 'card-menu__danger';
       button.textContent = label;
       button.disabled = (profile === 'default' && ['rename', 'delete'].includes(action)) || (action === 'activate' && profile === registry.active);
@@ -399,7 +546,7 @@ export function createSettingsEditor({
           await requestJson('/api/counters/profiles', { method: 'POST', body: JSON.stringify(body) });
           await loadCounterSettings(folder, { inline, profile: selected });
         } catch (error) {
-          notify(`Could not manage profile: ${errorText(error)}`, 'error', 5000);
+          notify(`Could not manage profile: ${errorText(error)}`, 'error');
         } finally { setBusy(button, false); }
       });
       menu.appendChild(button);
@@ -408,7 +555,7 @@ export function createSettingsEditor({
     return profiles;
   }
 
-  // `target` is an overlay ({ kind: 'overlay', id: folder }) or a tool
+  // `target` is an overlay ({ kind: 'overlay', id: folder, name }) or a tool
   // ({ kind: 'tool', id, name }). Tools share the schema and value shapes but
   // have no profiles (docs/tools/protocol.md).
   function renderCounterSettings(
@@ -421,36 +568,41 @@ export function createSettingsEditor({
     const folder = target.id;
     const isTool = target.kind === 'tool';
     const noun = isTool ? 'tool' : 'overlay';
+    const title = target.name || folder;
     container.replaceChildren();
     state.navigationObserver?.disconnect();
+    state.dirty = false;
     if (inline) {
       container.classList.add('inline-counter-settings');
-      const header = document.createElement('header');
+      // The page heading names the overlay or tool; a back link replaces
+      // the second heading and introduction this page used to carry.
+      const heading = document.querySelector('#page-title');
+      if (heading) heading.textContent = `${title} settings`;
+      document.title = `${title} settings · vosu`;
       const back = document.createElement('a');
       back.className = 'settings-back';
       back.href = isTool ? '/tools' : '/';
-      back.textContent = isTool ? '← All tools' : '← Installed overlays';
-      const title = document.createElement('h2');
-      title.textContent = isTool ? `${target.name || folder} settings` : `Overlay settings: ${folder}`;
-      const text = document.createElement('p');
-      text.textContent = isTool
-        ? 'These values are stored by vosu for this tool. Its service reads them through the host API.'
-        : 'These values are stored by vosu for this overlay.';
-      header.append(back, title, text);
-      container.appendChild(header);
+      back.textContent = isTool ? '← Tools' : '← Overlays';
+      container.appendChild(back);
     }
 
     if (!isTool) container.appendChild(profileBar(folder, inline, profile, registry));
 
     const form = document.createElement('form');
-    form.className = 'dialog-form';
+    form.className = 'dialog-form settings-editor';
+    form.addEventListener('input', () => { state.dirty = true; });
+    form.addEventListener('change', () => { state.dirty = true; });
     const list = document.createElement('div');
     list.className = 'counter-settings-list';
     const search = makeInput('search', '');
-    search.placeholder = 'Search title, description or ID';
+    search.placeholder = 'Search settings';
+    search.setAttribute('aria-label', 'Search settings');
+    search.className = 'settings-control';
     search.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') event.preventDefault();
     });
+    // Searching is not an edit.
+    search.addEventListener('input', (event) => event.stopPropagation());
     const navigation = document.createElement('nav');
     navigation.className = 'settings-navigation';
     navigation.setAttribute('aria-label', 'Settings sections');
@@ -464,7 +616,7 @@ export function createSettingsEditor({
       const field = renderSettingField(setting, configured, secrets?.[setting.uniqueID]);
       list.appendChild(field);
       if (String(setting.type).toLowerCase() === 'header') {
-        field.id = `settings-section-${groups.length}`;
+        field.id = `settings-section-${groups.length}-${state.fieldId}`;
         const link = document.createElement('a');
         link.href = `#${field.id}`;
         link.textContent = setting.title || setting.uniqueID;
@@ -483,12 +635,13 @@ export function createSettingsEditor({
       }
     });
     navigation.hidden = navigation.childElementCount === 0;
+    const settingCount = schema.filter((setting) => String(setting.type).toLowerCase() !== 'header').length;
     search.addEventListener('input', () => {
-      const term = search.value.trim().toLocaleLowerCase();
+      const words = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
       for (const section of groups) {
-        let visible = !term;
+        let visible = words.length === 0;
         for (const entry of section.fields) {
-          entry.field.hidden = !entry.text.includes(term);
+          entry.field.hidden = !words.every((word) => entry.text.includes(word));
           visible ||= !entry.field.hidden;
         }
         if (section.heading) section.heading.hidden = !visible;
@@ -498,11 +651,11 @@ export function createSettingsEditor({
     if (!schema.length) {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
-      const title = document.createElement('h2');
-      title.textContent = 'No settings exposed';
+      const heading = document.createElement('h2');
+      heading.textContent = 'No settings';
       const text = document.createElement('p');
-      text.textContent = `This ${noun} does not define user-editable settings.`;
-      empty.append(title, text);
+      text.textContent = `This ${noun} has no editable settings.`;
+      empty.append(heading, text);
       list.appendChild(empty);
     }
 
@@ -513,19 +666,20 @@ export function createSettingsEditor({
       cancel.type = 'button';
       cancel.className = 'button';
       cancel.textContent = 'Cancel';
-      cancel.addEventListener('click', closeDialog);
+      cancel.addEventListener('click', requestDialogClose);
       actions.appendChild(cancel);
     }
     const save = document.createElement('button');
     save.type = 'submit';
     save.className = 'button button-primary';
-    save.textContent = `Save ${noun} settings`;
-    save.disabled = !schema.some((setting) => setting.type !== 'header');
+    save.textContent = 'Save';
+    save.disabled = settingCount === 0;
     actions.appendChild(save);
     const layout = document.createElement('div');
     layout.className = 'settings-layout';
     layout.append(navigation, list);
-    form.append(fieldLabel('Search settings', search), layout, actions);
+    if (settingCount > SEARCH_THRESHOLD) form.append(search);
+    form.append(layout, actions);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (!isCurrentDialogRequest(dialogRequestId)) return;
@@ -541,11 +695,12 @@ export function createSettingsEditor({
           body: JSON.stringify(payload),
         });
         if (!isCurrentDialogRequest(dialogRequestId)) return;
-        notify(`Saved settings for ${isTool ? target.name || folder : folder}.`, 'success');
-        if (!inline) closeDialog();
+        state.dirty = false;
+        notify(`Saved ${title} settings.`, 'success');
+        if (!inline) forceCloseDialog();
       } catch (error) {
         if (!isCurrentDialogRequest(dialogRequestId)) return;
-        notify(`Could not save ${noun} settings: ${errorText(error)}`, 'error', 5000);
+        notify(`Could not save ${noun} settings: ${errorText(error)}`, 'error');
       } finally {
         setBusy(save, false);
       }
@@ -574,6 +729,7 @@ export function createSettingsEditor({
       search.addEventListener('input', updateActiveSection);
       updateActiveSection();
     }
+    if (!inline) (form.querySelector('input, select, textarea, button') ?? save).focus();
   }
 
   function settingsPayload(payload) {
@@ -583,20 +739,33 @@ export function createSettingsEditor({
     return { schema, values: object(payload.values) ?? {}, secrets: object(payload.secrets) ?? undefined };
   }
 
-  function showLoadError(container, requestId, error) {
+  // Shown once, where the settings would be: inline pages keep their way
+  // back, dialogs keep their close button.
+  function showLoadError(container, requestId, error, inline) {
     if (!isCurrentDialogRequest(requestId)) return;
     container.replaceChildren();
-    const message = document.createElement('p');
+    const message = document.createElement('div');
+    message.className = 'empty-state';
     message.setAttribute('role', 'alert');
-    message.textContent = `Could not load settings: ${errorText(error)}`;
+    const heading = document.createElement('h2');
+    heading.textContent = "Couldn't load these settings";
+    const text = document.createElement('p');
+    text.textContent = errorText(error);
+    message.append(heading, text);
+    if (inline) {
+      const back = document.createElement('a');
+      back.className = 'button';
+      back.href = window.location.search.includes('tool=') ? '/tools' : '/';
+      back.textContent = window.location.search.includes('tool=') ? 'Back to Tools' : 'Back to Overlays';
+      message.append(back);
+    }
     container.appendChild(message);
-    notify(message.textContent, 'error', 5000);
   }
 
-  function loadingTarget(inline, title, description, text) {
+  function loadingTarget(inline, title, text) {
     const target = inline
       ? (results ? { container: results, requestId: null } : null)
-      : openDialog(title, description);
+      : openDialog(title);
     if (!target) return null;
     const loading = document.createElement('p');
     loading.className = 'tools-loading';
@@ -606,7 +775,7 @@ export function createSettingsEditor({
   }
 
   async function loadCounterSettings(folder, { inline = false, profile = null, name = '' } = {}) {
-    const target = loadingTarget(inline, `Settings: ${name || folder}`, 'Edit values provided by this overlay.', 'Loading overlay settings…');
+    const target = loadingTarget(inline, `${name || folder} settings`, 'Loading settings…');
     if (!target) return;
     const { container, requestId } = target;
     try {
@@ -616,14 +785,14 @@ export function createSettingsEditor({
       const payload = await requestJson(`/api/counters/settings/${encodeURIComponent(folder)}?profile=${encodeURIComponent(selected)}`);
       if (!isCurrentDialogRequest(requestId)) return;
       const { schema, values } = settingsPayload(payload);
-      renderCounterSettings(container, { kind: 'overlay', id: folder }, schema, values, { inline, dialogRequestId: requestId, profile: selected, registry });
+      renderCounterSettings(container, { kind: 'overlay', id: folder, name: name || folder }, schema, values, { inline, dialogRequestId: requestId, profile: selected, registry });
     } catch (error) {
-      showLoadError(container, requestId, error);
+      showLoadError(container, requestId, error, inline);
     }
   }
 
   async function loadToolSettings(id, { inline = false, name = '' } = {}) {
-    const target = loadingTarget(inline, `Settings: ${name || id}`, 'Edit values provided by this tool.', 'Loading tool settings…');
+    const target = loadingTarget(inline, `${name || id} settings`, 'Loading settings…');
     if (!target) return;
     const { container, requestId } = target;
     const base = `/api/tools/${encodeURIComponent(id)}`;
@@ -636,12 +805,11 @@ export function createSettingsEditor({
       if (!isCurrentDialogRequest(requestId)) return;
       const { schema, values, secrets } = settingsPayload(payload);
       const title = typeof view.name === 'string' && view.name ? view.name : id;
-      if (inline) document.title = `${title} settings · vosu`;
       renderCounterSettings(container, { kind: 'tool', id, name: title }, schema, values, { inline, dialogRequestId: requestId, secrets });
     } catch (error) {
-      showLoadError(container, requestId, error);
+      showLoadError(container, requestId, error, inline);
     }
   }
 
-  return { closeDialog, loadCounterSettings, loadToolSettings };
+  return { closeDialog: requestDialogClose, loadCounterSettings, loadToolSettings };
 }

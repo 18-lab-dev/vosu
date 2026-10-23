@@ -12,7 +12,13 @@ use url::Url;
 
 use crate::assets::ServerAssets;
 
-pub const PAGE_NOT_FOUND: &[u8] = b"<html>page not found</html>";
+/// Self-contained (no stylesheet request) so it renders on either listener;
+/// `/` on the overlay listener redirects to the dashboard.
+pub const PAGE_NOT_FOUND: &[u8] = br#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark light"><title>Not found - vosu</title></head><body style="margin:3rem 1.5rem;font:15px/1.5 system-ui,sans-serif"><h1 style="margin:0 0 .5rem;font-size:1.25rem">Page not found</h1><p style="margin:0"><a href="/">Open the vosu dashboard</a></p></body></html>"#;
+
+/// Query the dashboard adds to its overlay preview frames. Sockets opened by
+/// such a page are not counted as connected browser sources.
+pub const OVERLAY_PREVIEW_QUERY: &str = "vosu-preview=1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CacheMetadata {
@@ -52,7 +58,10 @@ impl EmbeddedResponse {
 pub enum DynamicPage {
     Dashboard,
     Settings,
-    EmptySettings,
+    /// `/settings?overlay=…`: one overlay's settings, rendered by the client.
+    OverlaySettings,
+    /// `/settings?tool=…`: one tool's settings, rendered by the client.
+    ToolSettings,
     Available,
     Tools,
 }
@@ -192,7 +201,7 @@ impl PageService {
         match path {
             "/" => PageLookup::Dynamic(DynamicPage::Dashboard),
             "/settings" if settings_overlay_query_present => {
-                PageLookup::Dynamic(DynamicPage::EmptySettings)
+                PageLookup::Dynamic(DynamicPage::OverlaySettings)
             }
             "/settings" => PageLookup::Dynamic(DynamicPage::Settings),
             "/available" => PageLookup::Dynamic(DynamicPage::Available),
@@ -351,7 +360,7 @@ mod tests {
         );
         assert_eq!(
             pages.lookup_get("/settings", true),
-            PageLookup::Dynamic(DynamicPage::EmptySettings)
+            PageLookup::Dynamic(DynamicPage::OverlaySettings)
         );
         assert_eq!(
             pages.lookup_get("/local-overlays", false),
