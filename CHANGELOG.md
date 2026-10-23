@@ -49,6 +49,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - The enlarged preview scales small overlays up to fill the dialog; the connected chip no longer counts the dashboard's own previews (their pages tag the WebSockets they open, since browsers send no Referer on a handshake); every search matches all of its words; the Available page lists catalog-source overlays (official first, with a source badge) above the community catalog in the same card and filters both; the update notice can be put off with "Later" and stays one click away in the status strip; pages that don't exist show a styled 404 page with a link back to the dashboard on both listeners, while scripts and API clients still get the plain `Not Found` body.
 - An invalid `settings.schema.toml` error names the file and the setting at fault. Switching or managing a settings profile and removing a command row ask before discarding unsaved edits. Installed cards offer Update once (no repeated badge), and the version the update offers is named as soon as the catalog arrives.
 
+### Brand
+
+- vosu is now an 18-LAB product. A new mark (osu!'s hit circle in ink with an accent V before it), lowercase Barlow Condensed wordmark with the 18-LAB endorsement, light and dark README banners and a 1280×640 social preview replace the rose-and-cyan signal V across the dashboard header, diagnostics report, favicon, Windows executable and tray icon, Linux tray and packages. 16 and 24 px icons are pixel-fitted. Rules are in [branding](docs/branding.md).
+- Linux packages install `hicolor` icons from 16 to 512 px plus the scalable icon, and the tray offers 16–64 px pixmaps instead of one scaled 64 px image. The rasters are committed (rendered by `scripts/render-brand.py`), so packaging no longer needs ImageMagick. Packages name 18-LAB as vendor.
+
 ## 1.1.0 — 2026-10-17
 
 ### Dashboard origin

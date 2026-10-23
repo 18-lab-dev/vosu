@@ -33,9 +33,10 @@ def package_names(version):
     return [f'vosu_{version}_amd64.deb', f'vosu-{version}-1.x86_64.rpm', f'vosu-{version}-1-x86_64.pkg.tar.zst']
 
 
+ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512]
 FILES = {'usr/bin/vosu', 'usr/bin/vosux', 'usr/share/applications/vosu.desktop',
-         'usr/share/icons/hicolor/scalable/apps/vosu.svg',
-         'usr/share/icons/hicolor/256x256/apps/vosu.png', 'usr/share/licenses/vosu/LICENSE'}
+         'usr/share/icons/hicolor/scalable/apps/vosu.svg', 'usr/share/licenses/vosu/LICENSE',
+         *(f'usr/share/icons/hicolor/{size}x{size}/apps/vosu.png' for size in ICON_SIZES)}
 
 
 def tar_entries(command):
@@ -92,7 +93,6 @@ def build(args):
         stage = Path(temporary)
         shutil.copyfile(args.binary, stage / 'vosu')
         (stage / 'vosu').chmod(0o755)
-        run('convert', 'assets/branding/vosu-app-icon.png', '-resize', '256x256', str(stage / 'vosu.png'))
         environment = dict(os.environ, VERSION=version, STAGE=str(stage))
         for packager, name in zip(['deb', 'rpm', 'archlinux'], package_names(version)):
             run(args.nfpm, 'package', '--config', 'packaging/linux/nfpm.yaml', '--packager', packager, '--target', str(args.output / name), env=environment)

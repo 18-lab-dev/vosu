@@ -57,6 +57,15 @@ class LauncherPackageTests(unittest.TestCase):
         self.assertIn("  - src: vosu\n    dst: /usr/bin/vosux\n    type: symlink", config)
         self.assertIn("usr/bin/vosux", linux.FILES)
 
+    def test_packages_install_every_rendered_icon(self):
+        config = (REPOSITORY / "packaging/linux/nfpm.yaml").read_text()
+        for size in linux.ICON_SIZES:
+            source = f"assets/branding/icons/vosu-{size}.png"
+            destination = f"usr/share/icons/hicolor/{size}x{size}/apps/vosu.png"
+            self.assertIn(f"  - src: {source}\n    dst: /{destination}\n", config)
+            self.assertIn(destination, linux.FILES)
+            self.assertTrue((REPOSITORY / source).is_file(), source)
+
 
 class ReleaseLicenseTests(unittest.TestCase):
     def setUp(self):

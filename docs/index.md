@@ -15,6 +15,7 @@ Set up a checkout with [CONTRIBUTING.md](../CONTRIBUTING.md), then start with th
 - [Tool protocol v1](tools/protocol.md)
 - [Authoring and testing tools](tools/authoring.md)
 - [18-LAB design system for tool UIs](tools/design.md)
+- [vosu branding: mark, lockup, files and rendering](branding.md)
 - [Runtime, configuration, and compatibility workflows](workflows/index.md)
 - [Operations and release runbook](operations/runbook.md)
 - [Testing and verification](testing/verification.md)

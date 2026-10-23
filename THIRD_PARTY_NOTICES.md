@@ -31,6 +31,8 @@ The dashboard and tool UIs embed WOFF2 Latin subsets taken unmodified from [Font
 
 The files are `assets/server/*-latin-*-normal.woff2`. Their copyright notices and the full license text are in [`assets/server/fonts-OFL.txt`](assets/server/fonts-OFL.txt), which `scripts/assemble-release-license.py` appends to the release `LICENSE` because the fonts ship inside the executable. The fonts are not sold by themselves.
 
+The brand artwork in `assets/branding/` (logos, banners, social preview) contains no font files: its text is outlines of these same Barlow Condensed, Barlow and IBM Plex Mono fonts, drawn from the files above (see [branding](docs/branding.md)). The artwork itself is first-party and licensed as described in the "Branding assets" section of [`LICENSE`](LICENSE).
+
 ## Native live-calculation sources
 
 The production `vosu-pp` calculator uses a Rust facade and MIT source forks. Its source-authority map and retained license texts are in [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). Recovered authoring records contradict the replacement's clean-room characterization; this notice does not certify implementation independence.

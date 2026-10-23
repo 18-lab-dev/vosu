@@ -19,8 +19,11 @@ getcap /usr/bin/vosu
 # disposable container's capability so the unprivileged smoke can execute.
 setcap -r /usr/bin/vosu || true
 /usr/bin/vosu --help
-for file in /usr/bin/vosu /usr/share/applications/vosu.desktop /usr/share/icons/hicolor/scalable/apps/vosu.svg /usr/share/icons/hicolor/256x256/apps/vosu.png /usr/share/licenses/vosu/LICENSE; do
+for file in /usr/bin/vosu /usr/share/applications/vosu.desktop /usr/share/icons/hicolor/scalable/apps/vosu.svg /usr/share/licenses/vosu/LICENSE; do
     test -f "$file"
+done
+for size in 16 22 24 32 48 64 128 256 512; do
+    test -f "/usr/share/icons/hicolor/${size}x${size}/apps/vosu.png"
 done
 # Do not start the daemon as container root. One Debian smoke exercises serving
 # with disposable XDG directories and an unrelated listener, without a browser.

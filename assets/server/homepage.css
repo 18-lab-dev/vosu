@@ -202,27 +202,22 @@ kbd {
   color: var(--fg);
 }
 
+/* The vosu mark (assets/branding/vosu-mark.svg): the circle in ink, the V in
+   the mode's accent. */
 .brand-mark {
   align-self: center;
-  width: 1.75rem;
-  height: auto;
-  overflow: visible;
+  width: 1.625rem;
+  height: 1.625rem;
+}
+
+.brand-mark__circle {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 12;
 }
 
 .brand-mark__v {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 12;
-  stroke-linecap: square;
-  stroke-linejoin: miter;
-}
-
-.brand-mark__gap {
-  fill: var(--bg);
-}
-
-.brand-mark__node {
-  fill: var(--signal);
+  fill: var(--accent);
 }
 
 .brand-name {

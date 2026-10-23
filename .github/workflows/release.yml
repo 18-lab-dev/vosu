@@ -31,7 +31,7 @@ jobs:
       - name: Install Linux native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes clang libbpf-dev libelf-dev pkg-config zlib1g-dev imagemagick rpm libarchive-tools
+          sudo apt-get install --yes clang libbpf-dev libelf-dev pkg-config zlib1g-dev rpm libarchive-tools
           echo "C_INCLUDE_PATH=/usr/include/x86_64-linux-gnu" >> "$GITHUB_ENV"
 
       - name: Check retained calculator notices in LICENSE

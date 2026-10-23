@@ -21,7 +21,7 @@ license=('MIT OR Apache-2.0' 'CC-BY-4.0')
 depends=('glibc' 'libelf' 'zlib' 'libcap' 'icu' 'hicolor-icon-theme')
 # Arch's rust and rustup packages conflict and both provide cargo. The .NET 8
 # SDK builds the offset generator that release builds embed.
-makedepends=('git' 'cargo' 'clang' 'libbpf' 'pkgconf' 'dotnet-sdk-8.0' 'python' 'imagemagick')
+makedepends=('git' 'cargo' 'clang' 'libbpf' 'pkgconf' 'dotnet-sdk-8.0' 'python')
 provides=("${_pkgbase}")
 conflicts=("${_pkgbase}")
 # makepkg's LTO flags would reach the clang invocation that compiles the eBPF
@@ -60,7 +60,6 @@ build() {
     # Release builds refuse to compile without the embedded offset generator.
     python scripts/prepare-offset-generator.py --rid linux-x64
     cargo build --frozen --release --no-default-features --features linux-process-events
-    magick assets/branding/vosu-app-icon.png -resize 256x256 "$srcdir/vosu.png"
 }
 
 package() {
@@ -71,8 +70,11 @@ package() {
         "${pkgdir}/usr/share/applications/vosu.desktop"
     install -Dm644 assets/branding/vosu-app-icon.svg \
         "${pkgdir}/usr/share/icons/hicolor/scalable/apps/vosu.svg"
-    install -Dm644 "$srcdir/vosu.png" \
-        "${pkgdir}/usr/share/icons/hicolor/256x256/apps/vosu.png"
+    local size
+    for size in 16 22 24 32 48 64 128 256 512; do
+        install -Dm644 "assets/branding/icons/vosu-${size}.png" \
+            "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/vosu.png"
+    done
     install -Dm644 -t "${pkgdir}/usr/share/licenses/${pkgname}/" \
         LICENSE LICENSE-MIT LICENSE-APACHE THIRD_PARTY_NOTICES.md
 }

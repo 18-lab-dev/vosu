@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="assets/branding/vosu-banner.svg" alt="Vosu — Native osu! telemetry, counters, and compatible APIs in Rust." width="100%">
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="assets/branding/vosu-banner-light.svg">
+  <img src="assets/branding/vosu-banner.svg" alt="vosu by 18-LAB — Native osu! telemetry, counters, and compatible APIs in Rust." width="100%">
+</picture>
 
 <p>
   <a href="rust-toolchain.toml"><img alt="Rust 1.96.1" src="https://img.shields.io/badge/Rust-1.96.1-000000?style=flat-square"></a>
@@ -807,4 +810,4 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and pull-reques
 
 Project-authored code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, where the respective contributors have licensing authority. vosu began as a Rust port of [tosu](https://github.com/tosuapp/tosu); tosu's copyright holder has permitted its tosu-derived code to be distributed under the same MIT OR Apache-2.0 terms, with tosu credited. The release archive retains the root [`LICENSE`](LICENSE) member. Bundled assets, dependencies, and provenance-pinned material remain under their applicable terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). The first-party notice is `Copyright (c) 2026 sxlvia`. The root release license includes the six retained calculator MIT texts. The [provenance audit](docs/provenance-audit.md) records source matches, the relicensing permission, and the calculator questions that remain open.
 
-The vosu logo and icons are © 2026 sxlvia under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the terms are in the "Branding assets" section of [`LICENSE`](LICENSE). Showing them while using or talking about vosu (streams, videos, screenshots) needs no credit.
+vosu is an 18-LAB product. The vosu logo and icons are © 2026 sxlvia under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the terms are in the "Branding assets" section of [`LICENSE`](LICENSE), and the usage rules are in [branding](docs/branding.md). Showing them while using or talking about vosu (streams, videos, screenshots) needs no credit.

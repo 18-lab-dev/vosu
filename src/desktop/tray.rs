@@ -143,8 +143,8 @@ mod platform {
 
     pub(super) fn start(actions: Actions, stop: CancellationToken) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let icon = match embedded_icon() {
-                Ok(icon) => vec![icon],
+            let icon = match embedded_icons() {
+                Ok(icons) => icons,
                 Err(error) => {
                     tracing::debug!(%error, "Tray pixmap unavailable; using theme icon");
                     Vec::new()
@@ -167,80 +167,62 @@ mod platform {
         })
     }
 
-    fn embedded_icon() -> Result<ksni::Icon, Box<dyn std::error::Error>> {
-        let mut decoder = png::Decoder::new(Cursor::new(include_bytes!(
-            "../../assets/branding/vosu-app-icon.png"
-        )));
+    /// Pre-rendered tray sizes (scripts/render-brand.py); the host picks the closest, so
+    /// panels at 16–24 px get the pixel-fitted art instead of a scaled-down master.
+    const ICONS: [&[u8]; 6] = [
+        include_bytes!("../../assets/branding/icons/vosu-16.png"),
+        include_bytes!("../../assets/branding/icons/vosu-22.png"),
+        include_bytes!("../../assets/branding/icons/vosu-24.png"),
+        include_bytes!("../../assets/branding/icons/vosu-32.png"),
+        include_bytes!("../../assets/branding/icons/vosu-48.png"),
+        include_bytes!("../../assets/branding/icons/vosu-64.png"),
+    ];
+
+    fn embedded_icons() -> Result<Vec<ksni::Icon>, Box<dyn std::error::Error>> {
+        ICONS.into_iter().map(decode_icon).collect()
+    }
+
+    fn decode_icon(png: &[u8]) -> Result<ksni::Icon, Box<dyn std::error::Error>> {
+        let mut decoder = png::Decoder::new(Cursor::new(png));
         decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
         let mut reader = decoder.read_info()?;
         let mut bytes = vec![0; reader.output_buffer_size().ok_or("PNG too large")?];
         let info = reader.next_frame(&mut bytes)?;
-        let channels = match info.color_type {
-            png::ColorType::Rgba => 4,
-            png::ColorType::Rgb => 3,
-            _ => return Err("Expected RGB branding icon".into()),
-        };
-        let data = downscale_argb(
-            &bytes[..info.buffer_size()],
-            info.width as usize,
-            info.height as usize,
-            channels,
-        );
+        if info.color_type != png::ColorType::Rgba {
+            return Err("Expected RGBA branding icon".into());
+        }
         Ok(ksni::Icon {
-            width: 64,
-            height: 64,
-            data,
+            width: i32::try_from(info.width)?,
+            height: i32::try_from(info.height)?,
+            data: rgba_to_argb(&bytes[..info.buffer_size()]),
         })
     }
 
     // StatusNotifierItem uses network byte order ARGB, not native-endian u32s.
-    fn downscale_argb(bytes: &[u8], width: usize, height: usize, channels: usize) -> Vec<u8> {
-        let mut data = Vec::with_capacity(64 * 64 * 4);
-        for y in 0..64 {
-            for x in 0..64 {
-                let x0 = x * width / 64;
-                let y0 = y * height / 64;
-                let x1 = ((x + 1) * width / 64).max(x0 + 1).min(width);
-                let y1 = ((y + 1) * height / 64).max(y0 + 1).min(height);
-                let mut sums = [0_u64; 4];
-                let mut count = 0;
-                for sy in y0..y1 {
-                    for sx in x0..x1 {
-                        let pixel = &bytes[(sy * width + sx) * channels..];
-                        sums[0] += if channels == 4 {
-                            u64::from(pixel[3])
-                        } else {
-                            255
-                        };
-                        for c in 0..3 {
-                            sums[c + 1] += u64::from(pixel[c]);
-                        }
-                        count += 1;
-                    }
-                }
-                data.extend(sums.map(|sum| (sum / count) as u8));
-            }
-        }
-        data
+    fn rgba_to_argb(rgba: &[u8]) -> Vec<u8> {
+        rgba.chunks_exact(4)
+            .flat_map(|pixel| [pixel[3], pixel[0], pixel[1], pixel[2]])
+            .collect()
     }
 
     #[cfg(test)]
     mod tests {
         use super::*;
         #[test]
-        fn embedded_pixmap_has_sni_shape() {
-            let icon = embedded_icon().unwrap();
+        fn embedded_pixmaps_have_sni_shape() {
+            let icons = embedded_icons().unwrap();
+            let sizes: Vec<_> = icons.iter().map(|icon| (icon.width, icon.height)).collect();
             assert_eq!(
-                (icon.width, icon.height, icon.data.len()),
-                (64, 64, 64 * 64 * 4)
+                sizes,
+                [(16, 16), (22, 22), (24, 24), (32, 32), (48, 48), (64, 64)]
             );
+            for icon in &icons {
+                assert_eq!(icon.data.len(), (icon.width * icon.height * 4) as usize);
+            }
         }
         #[test]
         fn rgba_is_network_order_argb() {
-            assert_eq!(
-                &downscale_argb(&[10, 20, 30, 40], 1, 1, 4)[..4],
-                &[40, 10, 20, 30]
-            );
+            assert_eq!(rgba_to_argb(&[10, 20, 30, 40]), [40, 10, 20, 30]);
         }
         #[test]
         fn menu_actions_are_bounded_and_cancel() {
