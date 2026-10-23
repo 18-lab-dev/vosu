@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#111214">
-  <title>vosu dashboard</title>
+  <title>{{PAGE_TITLE}} · vosu</title>
   <link rel="icon" href="/favicon.ico" sizes="any">
   <script src="/assets/theme-init.js"></script>
   <link rel="preload" href="/assets/barlow-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -17,7 +17,7 @@
   <link rel="stylesheet" href="/assets/homepage-controls.css">
   <script src="/assets/homepage.js" type="module"></script>
 </head>
-<body>
+<body data-page="{{PAGE_KEY}}">
   <a class="skip-link" href="#main-content">Skip to dashboard content</a>
 
   <header class="site-header">
@@ -33,22 +33,22 @@
       </a>
 
       <nav class="page-tabs" aria-label="Dashboard pages">
-        <a class="nav-link" data-page="installed" href="/">
+        <a class="nav-link" data-page="installed" href="/"{{CURRENT_INSTALLED}}>
           <span class="nav-index" aria-hidden="true">01</span>
           <span class="nav-label">Overlays</span>
           <span class="nav-count" data-count="installed">{{LOCAL_AMOUNT}}</span>
         </a>
-        <a class="nav-link" data-page="available" href="/available">
+        <a class="nav-link" data-page="available" href="/available"{{CURRENT_AVAILABLE}}>
           <span class="nav-index" aria-hidden="true">02</span>
           <span class="nav-label">Available</span>
           <span class="nav-count" data-count="available">{{AVAILABLE_AMOUNT}}</span>
         </a>
-        <a class="nav-link" data-page="tools" href="/tools">
+        <a class="nav-link" data-page="tools" href="/tools"{{CURRENT_TOOLS}}>
           <span class="nav-index" aria-hidden="true">03</span>
           <span class="nav-label">Tools</span>
           <span class="nav-count" data-count="tools"></span>
         </a>
-        <a class="nav-link" data-page="settings" href="/settings">
+        <a class="nav-link" data-page="settings" href="/settings"{{CURRENT_SETTINGS}}>
           <span class="nav-index" aria-hidden="true">04</span>
           <span class="nav-label">Settings</span>
         </a>
@@ -67,7 +67,7 @@
     <div class="status-strip" role="group" aria-label="vosu status">
       <p class="status-cell status-cell--link">
         <span class="status-key status-key--name">osu!</span>
-        <span id="attachment-status" class="status-value attachment-status" data-state="pending" aria-live="polite">Checking attachment…</span>
+        <span id="attachment-status" class="status-value attachment-status" data-state="pending">Checking attachment…</span>
       </p>
       <p class="status-cell" data-status-cell="client" hidden>
         <span class="status-key">Client</span>
@@ -80,52 +80,37 @@
       <p class="status-cell status-cell--version">
         <span class="status-key status-key--name">vosu</span>
         <span class="status-value">{{CURRENT_VERSION}}</span>
+        <button class="status-update" type="button" data-action="show-update" {{UPDATE_HIDDEN}}>{{NEW_VERSION}} available</button>
       </p>
     </div>
   </header>
 
-  <section id="update-notice" class="update-notice" {{UPDATE_HIDDEN}} aria-labelledby="update-title">
-    <p class="update-notice__label">Update</p>
-    <div class="update-notice__copy">
-      <h2 id="update-title">Version {{NEW_VERSION}} is ready</h2>
-      <p>This daemon is running {{CURRENT_VERSION}}. Start the built-in updater when you are ready.</p>
+  <div id="update-notice" class="update-notice" role="region" aria-label="vosu update" data-version="{{NEW_VERSION}}" {{UPDATE_HIDDEN}}>
+    <p class="update-notice__copy"><strong>vosu {{NEW_VERSION}}</strong> is available. This dashboard is running {{CURRENT_VERSION}}.</p>
+    <div class="update-notice__actions">
+      <button class="button button-primary" type="button" data-action="app-update">Update vosu</button>
+      <button class="button" type="button" data-action="dismiss-update">Later</button>
     </div>
-    <button class="button button-primary" type="button" data-action="app-update">Update vosu</button>
-  </section>
+  </div>
 
   <main id="main-content" class="dashboard-main" tabindex="-1">
     <header class="page-head">
-      <p class="sheet-label" aria-hidden="true">
-        <span class="sheet-no" id="page-number"></span>
-        <span class="sheet-rule"></span>
-        <span id="page-kicker"></span>
-      </p>
-      <h1 id="page-title">Dashboard</h1>
+      <h1 id="page-title" tabindex="-1">{{PAGE_TITLE}}</h1>
       {{SEARCH}}
     </header>
 
     {{NOTICE}}
 
-    <section id="counter-results" class="results" aria-live="polite" aria-busy="false">
+    <section id="counter-results" class="results" aria-labelledby="page-title" aria-busy="false">
       {{LIST}}
     </section>
   </main>
 
-  <footer class="title-block" aria-label="About this dashboard">
-    <p class="title-cell"><span class="title-key">Drawn by</span><span class="title-value">18-LAB</span></p>
-    <p class="title-cell"><span class="title-key">Project</span><span class="title-value">vosu {{CURRENT_VERSION}}</span></p>
-    <p class="title-cell"><span class="title-key">Mode</span><span class="title-value title-value--mode"></span></p>
-    <p class="title-cell title-cell--wide"><span class="title-key">Notice</span><span class="title-value">Not affiliated with ppy or the tosu project.</span></p>
-  </footer>
-
   <dialog id="dashboard-dialog" class="dashboard-dialog" aria-labelledby="dialog-title">
     <div class="dialog-frame">
       <header class="dialog-header">
-        <div>
-          <h2 id="dialog-title"></h2>
-          <p id="dialog-description"></p>
-        </div>
-        <button class="icon-button" type="button" data-action="close-dialog" aria-label="Close dialog">✕</button>
+        <h2 id="dialog-title"></h2>
+        <button class="v-btn v-btn--ghost v-btn--icon" type="button" data-action="close-dialog" aria-label="Close">✕</button>
       </header>
       <div id="dialog-body" class="dialog-body"></div>
     </div>
@@ -134,17 +119,15 @@
   <dialog id="preview-dialog" class="dashboard-dialog preview-dialog" aria-labelledby="preview-dialog-title">
     <div class="dialog-frame">
       <header class="dialog-header">
-        <div>
-          <h2 id="preview-dialog-title"></h2>
-          <p id="preview-dialog-description"></p>
-        </div>
-        <button class="button" type="button" data-action="close-preview" aria-label="Close preview">Close</button>
+        <h2 id="preview-dialog-title"></h2>
+        <span id="preview-dialog-description" class="dialog-header__meta"></span>
+        <button class="v-btn v-btn--ghost v-btn--icon" type="button" data-action="close-preview" aria-label="Close preview">✕</button>
       </header>
       <div class="preview-dialog__frame"></div>
     </div>
   </dialog>
 
-  <dialog id="confirm-dialog" class="dashboard-dialog" aria-labelledby="confirm-title">
+  <dialog id="confirm-dialog" class="dashboard-dialog confirm-dialog" aria-labelledby="confirm-title">
     <form method="dialog" class="dialog-frame">
       <header class="dialog-header"><h2 id="confirm-title"></h2></header>
       <div class="dialog-body"><p class="confirm-description"></p></div>
@@ -155,9 +138,14 @@
     </form>
   </dialog>
 
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+  <!-- The only live regions: short summaries, never whole lists. -->
+  <p id="page-status" class="visually-hidden" role="status"></p>
+  <p id="page-alert" class="visually-hidden" role="alert"></p>
+
+  <div id="toast" class="toast" hidden>
     <span class="toast__message"></span>
     <button class="button toast__action" type="button" hidden></button>
+    <button class="v-btn v-btn--ghost v-btn--icon toast__close" type="button" aria-label="Dismiss">✕</button>
   </div>
 </body>
 </html>

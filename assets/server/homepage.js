@@ -1,4 +1,5 @@
-import { createSettingsEditor, createActionDialog, createOverflow } from './homepage-settings.js';
+import { createSettingsEditor, createActionDialog, createOverflow, showModal } from './homepage-settings.js';
+import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.js';
 
 (() => {
   'use strict';
@@ -12,6 +13,10 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
   const toast = document.querySelector('#toast');
   const toastMessage = toast?.querySelector('.toast__message');
   const toastAction = toast?.querySelector('.toast__action');
+  const toastClose = toast?.querySelector('.toast__close');
+  const pageStatus = document.querySelector('#page-status');
+  const pageAlert = document.querySelector('#page-alert');
+  const pageTitle = document.querySelector('#page-title');
 
   const PINNED_KEY = 'vosu.pinned-overlays.v1';
   const THEME_KEY = 'vosu.theme.v1';
@@ -31,6 +36,9 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     pinnedIds: [],
     pending: new Set(),
     toastTimer: 0,
+    toastDelay: 0,
+    announceTimer: 0,
+    updates: new Map(),
   };
 
   function storageGet(key) {
@@ -146,28 +154,58 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     return payload;
   }
 
-  // A zero delay keeps the toast until the user acts on or replaces it.
+  // Screen readers hear short summaries here, never whole lists. Clearing
+  // first makes a repeated message announce again.
+  function announce(message, urgent = false) {
+    const region = urgent ? pageAlert : pageStatus;
+    if (!region) return;
+    region.textContent = '';
+    window.setTimeout(() => { region.textContent = message; }, 60);
+  }
+
+  // Typing in a search field announces the result count once it settles.
+  function announceSoon(message) {
+    window.clearTimeout(state.announceTimer);
+    state.announceTimer = window.setTimeout(() => announce(message), 700);
+  }
+
+  function hideToast() {
+    window.clearTimeout(state.toastTimer);
+    if (toast) toast.hidden = true;
+  }
+
+  function scheduleToastHide() {
+    window.clearTimeout(state.toastTimer);
+    if (state.toastDelay > 0 && toast && !toast.matches(':hover, :focus-within')) {
+      state.toastTimer = window.setTimeout(hideToast, state.toastDelay);
+    }
+  }
+
+  // Errors stay until dismissed; other messages fade after `delay`, paused
+  // while the toast is hovered or focused. A zero delay keeps any toast.
   function notify(message, tone = 'info', delay = 3200, action = null) {
     if (!toast || !toastMessage || !toastAction) return;
-    window.clearTimeout(state.toastTimer);
-    state.toastTimer = 0;
     toastMessage.textContent = message;
     toast.dataset.tone = tone;
     toastAction.hidden = !action;
     toastAction.textContent = action?.label ?? '';
     toastAction.onclick = action
       ? () => {
-        toast.hidden = true;
+        hideToast();
         action.run();
       }
       : null;
     toast.hidden = false;
-    if (delay > 0) {
-      state.toastTimer = window.setTimeout(() => {
-        toast.hidden = true;
-      }, delay);
-    }
+    announce(message, tone === 'error');
+    state.toastDelay = tone === 'error' ? 0 : delay;
+    scheduleToastHide();
   }
+
+  toast?.addEventListener('mouseenter', () => window.clearTimeout(state.toastTimer));
+  toast?.addEventListener('mouseleave', scheduleToastHide);
+  toast?.addEventListener('focusin', () => window.clearTimeout(state.toastTimer));
+  toast?.addEventListener('focusout', scheduleToastHide);
+  toastClose?.addEventListener('click', hideToast);
 
   function setBusy(control, busy, busyLabel = 'Working…') {
     if (!(control instanceof HTMLElement)) return;
@@ -197,41 +235,8 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     return 'installed';
   }
 
-  // Overlay and tool settings live under /settings but belong to the sheet
-  // they were opened from.
-  function sheetKey() {
-    if (requestedOverlay) return 'installed';
-    if (requestedTool) return 'tools';
-    return pageKey();
-  }
-
-  function configurePageChrome() {
-    const pages = {
-      installed: ['01', 'Overlays / installed', 'Installed overlays', 'Search installed overlays'],
-      available: ['02', 'Overlays / catalog', 'Available overlays', 'Search the overlay catalog'],
-      tools: ['03', 'Tools', 'Tools', 'Search tools'],
-      settings: ['04', 'Settings / runtime', 'Settings', 'Search settings'],
-    };
-    const current = sheetKey();
-    document.querySelectorAll('.nav-link[data-page]').forEach((link) => {
-      if (link.dataset.page === current) link.setAttribute('aria-current', 'page');
-      else link.removeAttribute('aria-current');
-    });
-    let [number, kicker, heading, search] = pages[current];
-    if (requestedOverlay) [kicker, heading] = ['Overlays / settings', 'Overlay settings'];
-    if (requestedTool) [kicker, heading] = ['Tools / settings', 'Tool settings'];
-    const title = document.querySelector('#page-title');
-    if (title) title.textContent = heading;
-    const numberLabel = document.querySelector('#page-number');
-    if (numberLabel) numberLabel.textContent = number;
-    const kickerLabel = document.querySelector('#page-kicker');
-    if (kickerLabel) kickerLabel.textContent = kicker;
-    document.title = `${heading} · vosu`;
-    if (searchInput) {
-      searchInput.placeholder = search;
-      searchInput.setAttribute('aria-label', search);
-    }
-  }
+  // The server renders the page heading, current tab and search hint; only
+  // inline overlay and tool settings refine the heading once loaded.
 
   function countFromBadge(kind) {
     const badge = document.querySelector(`[data-count="${kind}"]`);
@@ -286,8 +291,9 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       - Number.parseFloat(style.paddingTop)
       - Number.parseFloat(style.paddingBottom);
     if (!(availableWidth > 0) || !(availableHeight > 0)) return;
-    // Never magnify a preview: its declared pixel dimensions remain meaningful.
-    const scale = Math.min(1, availableWidth / width, availableHeight / height);
+    // Cards never magnify a preview (its declared pixel size stays
+    // meaningful); the enlarged view may, up to its stage's maxScale.
+    const scale = Math.min(Number(stage.dataset.maxScale) || 1, availableWidth / width, availableHeight / height);
     let chip = container.querySelector('.preview-scale');
     if (!chip) {
       chip = document.createElement('span');
@@ -341,13 +347,14 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     return Array.from(results?.querySelectorAll(':scope > .counter-card[data-overlay-id]') ?? []);
   }
 
+  // Same markup as the server's empty state (render.rs INSTALLED_EMPTY_STATE).
   function createInstalledEmptyState() {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
     const heading = document.createElement('h2');
-    heading.textContent = 'No local overlays yet';
+    heading.textContent = 'No overlays yet';
     const text = document.createElement('p');
-    text.textContent = 'Install an overlay from the catalog, or copy an overlay folder into the overlays directory on this computer; vosu picks it up without a restart.';
+    text.textContent = 'Install one, or copy an overlay folder into the overlays folder.';
     const actions = document.createElement('div');
     actions.className = 'counter-actions';
     const link = document.createElement('a');
@@ -514,6 +521,8 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     return tokens;
   }
 
+  // Every word must match (name and nickname, author, or a client), like
+  // the server's catalog search and the Tools and Settings filters.
   function cardMatches(card, tokens) {
     if (tokens.length === 0) return true;
     const name = normalizeSearchText(`${card.dataset.counterName ?? ''} ${card.dataset.counterNickname ?? ''}`);
@@ -522,7 +531,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       .split(',')
       .filter(Boolean)
       .map(normalizeSearchText);
-    return tokens.some((token) => name.includes(token)
+    return tokens.every((token) => name.includes(token)
       || author.includes(token)
       || (token !== 'vosu' && compatible.some((value) => value.includes(token))));
   }
@@ -531,7 +540,8 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
   // live preview iframe on each keystroke.
   function filterInstalled() {
     if (!results) return;
-    const tokens = queryTokens(searchInput?.value ?? '');
+    const query = searchInput?.value ?? '';
+    const tokens = queryTokens(query);
     const cards = installedCards();
     let visible = 0;
     cards.forEach((card) => {
@@ -547,24 +557,30 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       const heading = document.createElement('h2');
       heading.textContent = 'No matching overlays';
       const hint = document.createElement('p');
-      hint.textContent = 'Try a shorter name, a different author, or another compatible client.';
+      hint.textContent = 'Try fewer words, an author, or a client such as tosu.';
       empty.append(heading, hint);
       results.append(empty);
     } else if (!showEmpty) {
       empty?.remove();
     }
+    state.roving?.refresh();
+    if (tokens.length) announceSoon(`${visible} of ${cards.length} overlays match`);
   }
 
-  function confirmOverlay(title, description, action) {
+  // `danger` marks irreversible actions with the danger button; Cancel keeps
+  // the initial focus either way.
+  function confirmOverlay(title, description, action, { danger = false } = {}) {
     const dialog = document.querySelector('#confirm-dialog');
     if (!dialog || dialog.open) return Promise.resolve(false);
     dialog.querySelector('h2').textContent = title;
     dialog.querySelector('p').textContent = description;
-    dialog.querySelector('[value="confirm"]').textContent = action;
+    const confirm = dialog.querySelector('[value="confirm"]');
+    confirm.textContent = action;
+    confirm.className = `button ${danger ? 'button-danger button-danger--solid' : 'button-primary'}`;
     dialog.returnValue = '';
     return new Promise((resolve) => {
       dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
-      dialog.showModal();
+      showModal(dialog);
     });
   }
 
@@ -572,7 +588,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     const downloadUrl = button.dataset.downloadUrl;
     const installName = button.dataset.installName;
     if (!downloadUrl || !installName || state.pending.has(installName)) return;
-    if (update && !await confirmOverlay(`Update ${installName}?`, 'Replace this overlay with the latest release?', 'Update')) return;
+    if (update && !await confirmOverlay(`Update ${installName}?`, 'Replace this overlay’s files with the latest release? Its settings are kept.', 'Update', { danger: true })) return;
 
     state.pending.add(installName);
     setBusy(button, true, update ? 'Updating…' : 'Installing…');
@@ -604,8 +620,12 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     } catch (_error) {
       // A disappearing or unreadable file must not prevent deletion.
     }
-    if (!await confirmOverlay(`Delete ${folder}?`, description, 'Delete')) return;
+    if (!await confirmOverlay(`Delete ${card?.dataset.counterTitle ?? folder}?`, description, 'Delete', { danger: true })) return;
     setBusy(button, true, 'Deleting…');
+    // Focus moves to the neighbouring card, not to the page body.
+    const visible = installedCards().filter((candidate) => !candidate.hidden);
+    const position = visible.indexOf(card);
+    const neighbour = visible[position + 1] ?? visible[position - 1] ?? null;
     try {
       await requestJson(`/api/counters/delete/${encodeURIComponent(folder)}`, { method: 'POST' });
       removePin(folder);
@@ -613,15 +633,23 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       setCount('installed', Math.max(0, (countFromBadge('installed') ?? 1) - 1));
       if (results && installedCards().length === 0) {
         results.replaceChildren(createInstalledEmptyState());
+        pageTitle?.focus();
       } else {
         filterInstalled();
+        if (neighbour?.isConnected) {
+          state.roving?.setCurrent(neighbour);
+          (neighbour.querySelector('.card-menu-toggle') ?? neighbour.querySelector('button'))?.focus();
+        } else pageTitle?.focus();
       }
-      notify(`${folder} was deleted.`, 'success');
+      notify(`${card?.dataset.counterTitle ?? folder} was deleted.`, 'success');
     } catch (error) {
-      notify(`Could not delete ${folder}: ${errorText(error)}`, 'error', 5000);
+      notify(`Could not delete ${folder}: ${errorText(error)}`, 'error');
       setBusy(button, false);
     }
   }
+
+  // Mirrors the server's alias rule (src/counters/names.rs).
+  const ALIAS_PATTERN = /^[a-z0-9_-]{1,48}$/;
 
   // Nickname (dashboard display name) and URL alias (`/acc/` redirecting to
   // the folder) for one installed overlay; the folder stays its identity.
@@ -629,62 +657,76 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     const card = button.closest('.counter-card');
     const folder = button.dataset.folder;
     if (!card || !folder) return;
-    const { dialog, body } = createActionDialog(`Nickname and URL: ${card.dataset.counterTitle ?? folder}`);
-    const form = document.createElement('form');
-    form.className = 'dialog-form rename-form';
-    const field = (label, input, help) => {
-      const wrapper = document.createElement('label');
-      wrapper.className = 'field-label';
-      const title = document.createElement('span');
-      title.textContent = label;
-      const hint = document.createElement('span');
-      hint.className = 'field-help';
-      hint.textContent = help;
-      wrapper.append(title, input, hint);
-      return { wrapper, hint };
-    };
     const nickname = document.createElement('input');
     nickname.type = 'text';
+    nickname.className = 'settings-control';
     nickname.maxLength = 64;
     nickname.autocomplete = 'off';
     nickname.value = card.dataset.counterNickname ?? '';
     nickname.placeholder = card.dataset.counterName ?? folder;
     const alias = document.createElement('input');
     alias.type = 'text';
+    alias.className = 'settings-control settings-control--mono';
     alias.maxLength = 48;
     alias.autocomplete = 'off';
     alias.spellcheck = false;
     alias.value = card.dataset.counterAlias ?? '';
     alias.placeholder = 'acc';
-    const nicknameField = field('Nickname', nickname, 'Shown on this dashboard instead of the overlay name. Leave blank to use the name.');
-    const aliasField = field('URL alias', alias, '');
+    const initial = [nickname.value, alias.value];
+    const { dialog, body, requestClose } = createActionDialog(`Nickname and URL: ${card.dataset.counterTitle ?? folder}`, {
+      dismiss: 'guarded',
+      isDirty: () => nickname.value !== initial[0] || alias.value !== initial[1],
+    });
+    const form = document.createElement('form');
+    form.className = 'dialog-form rename-form';
+    const field = (label, input) => {
+      const wrapper = document.createElement('label');
+      wrapper.className = 'field-label';
+      const title = document.createElement('span');
+      title.textContent = label;
+      wrapper.append(title, input);
+      return wrapper;
+    };
+    const hint = document.createElement('p');
+    hint.className = 'field-help';
+    hint.id = `alias-hint-${Date.now()}`;
+    const error = document.createElement('p');
+    error.className = 'field-error';
+    error.id = `${hint.id}-error`;
+    error.setAttribute('role', 'alert');
+    alias.setAttribute('aria-describedby', `${hint.id} ${error.id}`);
     const overlayOrigin = new URL(card.querySelector('.preview-stage iframe')?.src ?? window.location.origin).origin;
+    const aliasValue = () => alias.value.trim().replace(/^\/+|\/+$/g, '').toLowerCase();
     const describeAlias = () => {
-      const value = alias.value.trim().toLowerCase();
-      aliasField.hint.textContent = value
-        ? `${overlayOrigin}/${value}/ opens /${folder}/. Lowercase letters, digits, - and _.`
-        : `Optional short browser-source URL. Without one, use ${overlayOrigin}/${folder}/.`;
+      const value = aliasValue();
+      const valid = !value || ALIAS_PATTERN.test(value);
+      if (valid) alias.removeAttribute('aria-invalid');
+      else alias.setAttribute('aria-invalid', 'true');
+      error.textContent = valid ? '' : 'Use 1–48 lowercase letters, digits, - or _.';
+      // Only a valid alias gets a preview URL.
+      hint.textContent = value && valid ? `${overlayOrigin}/${value}/` : `${overlayOrigin}/${folder}/`;
     };
     alias.addEventListener('input', describeAlias);
     describeAlias();
-    const status = document.createElement('p');
-    status.className = 'field-help';
-    status.setAttribute('role', 'status');
     const actions = document.createElement('div');
     actions.className = 'dialog-actions';
     const cancel = document.createElement('button');
     cancel.type = 'button';
     cancel.className = 'button';
     cancel.textContent = 'Cancel';
-    cancel.addEventListener('click', () => dialog.close());
+    cancel.addEventListener('click', requestClose);
     const save = document.createElement('button');
     save.type = 'submit';
     save.className = 'button button-primary';
     save.textContent = 'Save';
     actions.append(cancel, save);
-    form.append(nicknameField.wrapper, aliasField.wrapper, status, actions);
+    form.append(field('Nickname', nickname), field('URL alias', alias), hint, error, actions);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
+      if (alias.hasAttribute('aria-invalid')) {
+        alias.focus();
+        return;
+      }
       setBusy(save, true, 'Saving…');
       try {
         const saved = await requestJson(`/api/counters/names/${encodeURIComponent(folder)}`, {
@@ -694,8 +736,11 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
         applyCounterNames(card, folder, saved);
         notify(`Saved the name and URL of ${card.dataset.counterTitle}.`, 'success');
         dialog.close();
-      } catch (error) {
-        status.textContent = errorText(error);
+      } catch (failure) {
+        // Server-side checks (reserved paths, collisions) concern the alias.
+        error.textContent = errorText(failure);
+        alias.setAttribute('aria-invalid', 'true');
+        alias.focus();
         setBusy(save, false);
       }
     });
@@ -726,11 +771,17 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     const url = card.querySelector('.counter-card__url');
     const frame = card.querySelector('.preview-stage iframe');
     if (url && frame) {
+      // The preview frame's address carries the preview marker; browser
+      // sources use the plain folder URL.
       const base = new URL(frame.src);
+      base.search = '';
       const value = saved.alias ? `${base.origin}/${saved.alias}/` : base.href;
       url.dataset.copyValue = value;
-      url.title = `${value} (click to copy, Shift-click to open)`;
+      url.title = value;
+      url.setAttribute('aria-label', `Copy URL ${value}`);
       url.querySelector('code').textContent = saved.alias ? `/${saved.alias}/` : `/${folder}/`;
+      const open = card.querySelector('[data-action="open-url"]');
+      if (open) open.dataset.url = value;
     }
     card.querySelector('[data-action="toggle-pin"]')?.setAttribute('aria-label', `Pin ${title}`);
   }
@@ -769,6 +820,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       await requestJson('/api/runUpdates', { method: 'POST' });
       notify('vosu finished updating.', 'success');
       document.querySelector('#update-notice')?.remove();
+      document.querySelector('.status-update')?.remove();
     } catch (error) {
       notify(`vosu could not update: ${errorText(error)}`, 'error', 5000);
       setBusy(button, false);
@@ -794,7 +846,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
         document.execCommand('copy');
         temporary.remove();
       }
-      notify(`${label} copied.`, 'success', 1800);
+      notify(`${label} copied.`, 'success', 2600);
     } catch (error) {
       notify(`Could not copy ${label.toLowerCase()}: ${errorText(error)}`, 'error');
     }
@@ -811,6 +863,17 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     copyMetadata(button);
   }
 
+  // Search replaces the server-rendered catalog cards; catalog-source cards
+  // are placed back above them, filtered by the same words.
+  function afterResultsChange(query) {
+    state.placeSourceOverlays?.(queryTokens(query));
+    state.roving?.refresh();
+    if (query) {
+      const count = results?.querySelectorAll(':scope > .counter-card').length ?? 0;
+      announceSoon(`${count} ${count === 1 ? 'overlay matches' : 'overlays match'} “${query}”`);
+    }
+  }
+
   function restoreSearchResults() {
     if (!results) return;
     window.clearTimeout(state.searchTimer);
@@ -821,6 +884,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     results.innerHTML = state.originalResults;
     results.setAttribute('aria-busy', 'false');
     searchInput?.removeAttribute('aria-busy');
+    afterResultsChange('');
   }
 
   async function runSearch(query, requestId) {
@@ -846,6 +910,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
         || searchInput.value.trim() !== query
       ) return;
       results.innerHTML = html;
+      afterResultsChange(query);
     } catch (error) {
       if (
         state.searchRequest === requestId
@@ -920,24 +985,44 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     });
   }
 
-  // A sheet index beside the runtime form; groups are numbered by CSS
-  // counters, so the index repeats the same numbers.
+  // The section index is a left rail (before the form in DOM and Tab order)
+  // and marks the section being read.
   function initializeSettingsIndex() {
     const form = document.querySelector('#runtime-settings');
     if (!form || !results) return;
     const index = document.createElement('nav');
     index.className = 'settings-index';
     index.setAttribute('aria-label', 'Settings sections');
-    form.querySelectorAll(':scope > .settings-group').forEach((group, position) => {
+    const groups = [...form.querySelectorAll(':scope > .settings-group')];
+    const links = new Map();
+    groups.forEach((group, position) => {
       group.id ||= `settings-group-${position + 1}`;
       const link = document.createElement('a');
       link.href = `#${group.id}`;
-      const number = document.createElement('span');
-      number.textContent = String(position + 1).padStart(2, '0');
-      link.append(number, group.querySelector('legend')?.textContent ?? '');
+      link.textContent = group.dataset.title ?? group.querySelector('legend')?.textContent ?? '';
       index.append(link);
+      links.set(group, link);
     });
-    if (index.childElementCount) results.append(index);
+    if (!index.childElementCount) return;
+    form.before(index);
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const header = document.querySelector('.site-header');
+      const top = (header && getComputedStyle(header).position === 'sticky' ? header.getBoundingClientRect().bottom : 0) + 32;
+      const visible = groups.filter((group) => !group.hidden);
+      // At the end of the page the last sections cannot reach the top.
+      const atEnd = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
+      const current = atEnd
+        ? visible.at(-1)
+        : visible.filter((group) => group.getBoundingClientRect().top <= top).at(-1) ?? visible[0];
+      for (const [group, link] of links) {
+        if (group === current) link.setAttribute('aria-current', 'location');
+        else link.removeAttribute('aria-current');
+      }
+    };
+    window.addEventListener('scroll', () => { frame ||= window.requestAnimationFrame(update); }, { passive: true });
+    update();
   }
 
   function controlValue(control) {
@@ -950,25 +1035,45 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     if (!runtime) return;
     const section = document.createElement('fieldset');
     section.className = 'settings-group';
-    section.innerHTML = '<legend>API keys</legend>';
+    section.dataset.title = 'API keys';
+    const legend = document.createElement('legend');
+    legend.textContent = 'API keys';
+    section.append(legend);
     const status = document.createElement('p');
+    status.className = 'field-help';
     status.setAttribute('role', 'status');
     const list = document.createElement('div');
+    list.className = 'api-key-list';
     const post = (payload) => requestJson('/api/keys', { method: 'POST', body: JSON.stringify(payload) });
-    function row(title, description, control, label = false) {
-      const item = document.createElement(label ? 'label' : 'div');
+    const SCOPES = { 'settings:write': 'Write settings', 'profiles:manage': 'Manage profiles' };
+    const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    const when = (value) => {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? String(value) : dateFormat.format(date);
+    };
+    let rowId = 0;
+    function row(title, description, control) {
+      const item = document.createElement('div');
       item.className = 'settings-item';
       const copy = document.createElement('span'); copy.className = 'settings-item__copy';
       const name = document.createElement('span'); name.className = 'settings-item__name'; name.textContent = title;
-      const detail = document.createElement('span'); detail.className = 'settings-item__description'; detail.textContent = description;
-      copy.append(name, detail);
+      copy.append(name);
+      if (description) {
+        const detail = document.createElement('span');
+        detail.className = 'settings-item__description';
+        detail.id = `api-key-detail-${++rowId}`;
+        detail.textContent = description;
+        copy.append(detail);
+        const target = control instanceof HTMLButtonElement ? control : control.querySelector?.('button');
+        target?.setAttribute('aria-describedby', detail.id);
+      }
       const controls = document.createElement('span'); controls.className = 'settings-item__control'; controls.append(control);
       item.append(copy, controls);
       return item;
     }
-    function button(text, run, primary = false) {
+    function button(text, run, className = 'button') {
       const control = document.createElement('button');
-      control.type = 'button'; control.className = primary ? 'button button-primary' : 'button'; control.textContent = text;
+      control.type = 'button'; control.className = className; control.textContent = text;
       control.addEventListener('click', async () => {
         setBusy(control, true);
         try { await run(); } catch (error) { status.textContent = errorText(error); }
@@ -976,46 +1081,70 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       });
       return control;
     }
-    function keyDialog(title, submitText, run, { name, description } = {}) {
-      const { dialog, body } = createActionDialog(title);
-      const form = document.createElement('form'); form.className = 'dialog-form';
+    // The key is shown once: only Done closes this dialog, never Esc or a
+    // stray click outside it.
+    function showKey(key) {
+      const shown = createActionDialog('API key created', { dismiss: 'explicit' });
+      const warning = document.createElement('p'); warning.textContent = "Copy this key now. It won't be shown again.";
+      const value = document.createElement('input');
+      value.className = 'settings-control settings-control--mono api-key-value'; value.readOnly = true; value.value = key;
+      value.setAttribute('aria-label', 'New API key');
+      const copied = document.createElement('p'); copied.className = 'field-help'; copied.setAttribute('role', 'status');
+      const actions = document.createElement('div'); actions.className = 'dialog-actions';
+      const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'button'; copy.textContent = 'Copy key';
+      copy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(value.value);
+          copied.textContent = 'Key copied.';
+        } catch (error) {
+          value.select();
+          copied.textContent = `Could not copy: ${errorText(error)}. The key is selected; copy it with Ctrl+C.`;
+        }
+      });
+      const done = document.createElement('button'); done.type = 'button'; done.className = 'button button-primary'; done.textContent = 'Done';
+      done.addEventListener('click', () => shown.dialog.close());
+      actions.append(copy, done);
+      shown.body.append(warning, value, copied, actions);
+      value.focus(); value.select();
+    }
+    function keyDialog(title, submitText, run, { name, description, danger = false } = {}) {
       const input = document.createElement('input');
       input.className = 'settings-control'; input.name = 'name'; input.required = true; input.maxLength = 64; input.autocomplete = 'off'; input.value = name ?? '';
-      if (name !== null) form.append(row('Name', 'A label to recognize this key.', input, true));
+      const form = document.createElement('form'); form.className = 'dialog-form';
+      const isDirty = () => input.value !== (name ?? '') || form.querySelector('[name="scope"]:checked') !== null;
+      const { dialog, body, requestClose } = createActionDialog(title, { dismiss: name === null ? 'light' : 'guarded', isDirty });
+      if (name !== null) {
+        const label = document.createElement('label'); label.className = 'field-label';
+        const text = document.createElement('span'); text.textContent = 'Name';
+        label.append(text, input); form.append(label);
+      }
       if (description) {
         const text = document.createElement('p'); text.textContent = description; form.append(text);
       }
       if (name === undefined) {
-        for (const [scope, title, text] of [
-          ['settings:write', 'Write settings', 'Save overlay settings and command-socket settings.'],
-          ['profiles:manage', 'Manage profiles', 'Create, copy, rename, set the default and delete profiles.'],
-        ]) {
+        const scopes = document.createElement('fieldset'); scopes.className = 'scope-choices';
+        const caption = document.createElement('legend'); caption.textContent = 'Permissions (fixed once created)';
+        scopes.append(caption);
+        for (const [scope, label] of Object.entries(SCOPES)) {
+          const choice = document.createElement('label'); choice.className = 'v-check';
           const toggle = document.createElement('input'); toggle.type = 'checkbox'; toggle.name = 'scope'; toggle.value = scope;
-          form.append(row(title, text, toggle, true));
+          choice.append(toggle, label);
+          scopes.append(choice);
         }
-        const note = document.createElement('p'); note.className = 'field-help'; note.textContent = 'Permissions are fixed when the key is created.'; form.append(note);
+        form.append(scopes);
       }
-      const error = document.createElement('p'); error.setAttribute('role', 'alert');
+      const error = document.createElement('p'); error.className = 'field-error'; error.setAttribute('role', 'alert');
       const actions = document.createElement('div'); actions.className = 'dialog-actions';
-      const cancel = button('Cancel', () => dialog.close());
-      const submit = document.createElement('button'); submit.type = 'submit'; submit.className = 'button button-primary'; submit.textContent = submitText;
+      const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'button'; cancel.textContent = 'Cancel';
+      cancel.addEventListener('click', requestClose);
+      const submit = document.createElement('button'); submit.type = 'submit'; submit.className = danger ? 'button button-danger button-danger--solid' : 'button button-primary'; submit.textContent = submitText;
       actions.append(cancel, submit); form.append(error, actions); body.append(form);
       form.addEventListener('submit', async (event) => {
         event.preventDefault(); setBusy(submit, true);
         try {
           const result = await run(input.value, [...form.querySelectorAll('[name="scope"]:checked')].map((control) => control.value));
           dialog.close(); await refresh();
-          if (result?.key) {
-            const shown = createActionDialog('API key created');
-            const warning = document.createElement('p'); warning.textContent = "Copy this key now. It won't be shown again. Keep it secret.";
-            const value = document.createElement('input'); value.className = 'settings-control'; value.readOnly = true; value.value = result.key;
-            value.setAttribute('aria-label', 'New API key (shown once)');
-            const actions = document.createElement('div'); actions.className = 'dialog-actions';
-            actions.append(button('Copy key', async () => {
-              await navigator.clipboard.writeText(value.value); status.textContent = 'Key copied.';
-            }), button('Done', () => shown.dialog.close(), true));
-            shown.body.append(warning, value, actions); value.focus(); value.select();
-          }
+          if (result?.key) showKey(result.key);
         } catch (failure) { error.textContent = errorText(failure); }
         finally { setBusy(submit, false); }
       });
@@ -1026,25 +1155,29 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       list.replaceChildren();
       for (const entry of keys) {
         const { wrapper, menu } = createOverflow(`Actions for ${entry.name}`);
-        menu.append(button('Rename', () => {
-          menu.hidePopover();
-          keyDialog('Rename API key', 'Save name', (name) => post({ action: 'rename', id: entry.id, name }), { name: entry.name });
-        }), button('Revoke', () => {
-          menu.hidePopover();
-          keyDialog('Revoke API key', 'Revoke key', () => post({ action: 'revoke', id: entry.id }), {
-            name: null, description: `Revoke “${entry.name}”? Software using this key will immediately lose write access, including open sockets.`,
-          });
-        }));
-        menu.querySelectorAll('button').forEach((control) => { control.className = ''; });
-        list.append(row(entry.name, `${entry.scopes.join(', ')} · ${entry.display}… · Created ${entry.created} · Last used ${entry.last_used || 'Never'}`, wrapper));
+        const item = (label, run, className = '') => {
+          const control = document.createElement('button');
+          control.type = 'button'; control.setAttribute('role', 'menuitem'); control.textContent = label;
+          if (className) control.className = className;
+          control.addEventListener('click', () => { menu.hidePopover(); run(); });
+          return control;
+        };
+        menu.append(item('Rename', () => keyDialog('Rename API key', 'Save', (name) => post({ action: 'rename', id: entry.id, name }), { name: entry.name })),
+          item('Revoke', () => keyDialog('Revoke API key', 'Revoke key', () => post({ action: 'revoke', id: entry.id }), {
+            name: null, danger: true, description: `Revoke “${entry.name}”? Software using this key loses write access immediately, including open sockets.`,
+          }), 'card-menu__danger'));
+        const scopes = entry.scopes.map((scope) => SCOPES[scope] ?? scope).join(', ');
+        list.append(row(entry.name, `${scopes} · ${entry.display}… · created ${when(entry.created)} · last used ${entry.last_used ? when(entry.last_used) : 'never'}`, wrapper));
       }
     }
     section.append(row('API access', 'Give trusted software only the access it needs. Remote connections still require ALLOWED_IPS. Use TLS outside loopback.',
       button('Create API key', () => keyDialog('Create API key', 'Create key', (name, scopes) => {
         if (!scopes.length) throw new Error('Select at least one permission.');
         return post({ action: 'create', name, scopes });
-      }), true)), list, status);
-    runtime.querySelector('.settings-empty')?.before(section);
+      }), 'button button-primary')), list, status);
+    // Before About, which stays last.
+    runtime.querySelector('.settings-group--about')?.before(section);
+    if (!section.isConnected) runtime.querySelector('.settings-empty')?.before(section);
     if (!section.isConnected) runtime.append(section);
     try { await refresh(); } catch (error) { status.textContent = errorText(error); }
   }
@@ -1097,10 +1230,13 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
         for (const card of installedCards()) {
           const chip = card.querySelector('.connected-chip');
           if (!chip) continue;
+          // The server leaves out this dashboard's own preview frames.
           const count = status.connections?.[card.dataset.overlayId];
-          chip.hidden = !Number.isInteger(count) || count < 1;
-          chip.textContent = chip.hidden ? '' : `● ${count} connected`;
-          chip.title = 'Identified WebSocket connections, including dashboard previews; not unique users. Unidentified sockets cannot be counted.';
+          const hidden = !Number.isInteger(count) || count < 1;
+          const text = hidden ? '' : `${count} connected`;
+          if (chip.hidden !== hidden) chip.hidden = hidden;
+          if (chip.textContent !== text) chip.textContent = text;
+          chip.title = 'Identified WebSocket connections, not unique users';
         }
       } catch (_error) {
         showAttachment('error', 'Attachment status unavailable');
@@ -1149,6 +1285,8 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       && value >> BigInt(bits - length) === network >> BigInt(bits - length));
   }
 
+  const UPDATE_DISMISSED_KEY = 'vosu.update-dismissed.v1';
+
   function initializePresentation() {
     const banner = document.querySelector('.catalog-notice');
     if (banner) {
@@ -1158,22 +1296,18 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       const dismiss = document.createElement('button');
       dismiss.type = 'button'; dismiss.className = 'button'; dismiss.textContent = "Don't show again";
       function show(visible) { banner.hidden = !visible; banner.open = visible; about.hidden = visible; }
-      dismiss.addEventListener('click', () => { storageSet(key, '1'); show(false); });
-      about.addEventListener('click', () => show(true));
+      dismiss.addEventListener('click', () => { storageSet(key, '1'); show(false); about.focus(); });
+      about.addEventListener('click', () => { show(true); banner.querySelector('summary')?.focus(); });
       // Dismissed, the notice leaves only this link, tucked under the search
       // field in the page head so the listing keeps the usual head-to-grid gap.
       banner.append(dismiss);
       (document.querySelector('.page-head') ?? banner.parentElement).append(about);
       show(storageGet(key) !== '1');
     }
-    for (const id of ['POLL_RATE', 'PRECISE_DATA_POLL_RATE', 'V2_SUBSCRIPTION_DEBOUNCE']) {
-      const input = document.querySelector(`[data-id="${id}"]`);
-      if (!input) continue;
-      const suffix = document.createElement('span');
-      suffix.className = 'settings-unit';
-      suffix.textContent = 'ms';
-      input.after(suffix);
-    }
+    // "Later" hides the update notice for this version only; the status
+    // strip keeps a way back to it.
+    const notice = document.querySelector('#update-notice');
+    if (notice && !notice.hidden && storageGet(UPDATE_DISMISSED_KEY) === notice.dataset.version) notice.hidden = true;
     const allowlist = document.querySelector('[data-id="ALLOWED_IPS"]');
     const warning = document.querySelector('#allowlist-warning');
     function updateWarning() {
@@ -1185,6 +1319,52 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     }
     allowlist?.addEventListener('input', updateWarning);
     updateWarning();
+  }
+
+  function showUpdateNotice() {
+    const notice = document.querySelector('#update-notice');
+    if (!notice) return;
+    storageSet(UPDATE_DISMISSED_KEY, '');
+    notice.hidden = false;
+    notice.querySelector('[data-action="app-update"]')?.focus();
+  }
+
+  function dismissUpdateNotice() {
+    const notice = document.querySelector('#update-notice');
+    if (!notice) return;
+    storageSet(UPDATE_DISMISSED_KEY, notice.dataset.version ?? '');
+    notice.hidden = true;
+    document.querySelector('.status-update')?.focus();
+  }
+
+  // Overlays render without waiting for the catalog; update annotations
+  // arrive afterwards and are added to the matching cards.
+  async function refreshCounterUpdates() {
+    if (pageKey() !== 'installed' || !results || requestedOverlay) return;
+    try {
+      const { updates } = await requestJson('/api/counters/updates');
+      for (const { folder, download_url: url } of Array.isArray(updates) ? updates : []) state.updates.set(folder, url);
+      for (const card of installedCards()) {
+        const url = state.updates.get(card.dataset.overlayId);
+        if (!url || card.querySelector('[data-action="update-counter"]')) continue;
+        card.classList.add('is-updatable');
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-warning';
+        badge.textContent = 'Update available';
+        const update = document.createElement('button');
+        update.type = 'button';
+        update.className = 'button button-update';
+        update.dataset.action = 'update-counter';
+        update.dataset.downloadUrl = url;
+        update.dataset.installName = card.dataset.overlayId;
+        update.setAttribute('aria-label', `Update ${card.dataset.counterTitle ?? card.dataset.overlayId}`);
+        update.textContent = 'Update';
+        card.querySelector('.counter-card__chips')?.prepend(badge, update);
+      }
+      state.roving?.refresh();
+    } catch (_error) {
+      // The catalog host is optional: installed overlays keep working.
+    }
   }
 
   function initializeRuntimeSettings() {
@@ -1211,56 +1391,146 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       }
     }
 
+    // Feedback sits beside the control that changed: a brief "Saved" mark,
+    // or an error message under the field that the field describes.
+    function rowFeedback(control, { error = '', saved = false } = {}) {
+      const item = control.closest('.settings-item');
+      if (!item) return;
+      const errorId = `${control.id || control.dataset.id}-error`;
+      const described = new Set((control.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean));
+      let message = item.querySelector('.settings-item__error');
+      if (error) {
+        if (!message) {
+          message = document.createElement('span');
+          message.className = 'settings-item__error';
+          message.id = errorId;
+          item.querySelector('.settings-item__copy')?.append(message);
+        }
+        message.textContent = error;
+        described.add(errorId);
+        control.setAttribute('aria-invalid', 'true');
+        item.classList.add('has-error');
+      } else {
+        message?.remove();
+        described.delete(errorId);
+        control.removeAttribute('aria-invalid');
+        item.classList.remove('has-error');
+      }
+      if (described.size) control.setAttribute('aria-describedby', [...described].join(' '));
+      if (saved) {
+        let mark = item.querySelector('.settings-item__saved');
+        if (!mark) {
+          mark = document.createElement('span');
+          mark.className = 'settings-item__saved';
+          mark.setAttribute('aria-hidden', 'true');
+          mark.textContent = 'Saved';
+          item.querySelector('.settings-item__control')?.prepend(mark);
+        }
+        mark.classList.remove('is-shown');
+        void mark.offsetWidth;
+        mark.classList.add('is-shown');
+      }
+    }
+
     async function saveSetting(control) {
       const item = control.closest('.settings-item');
       const name = item?.querySelector('.settings-item__name')?.textContent ?? control.dataset.id;
-      const controls = [control];
-      const settings = Object.fromEntries(controls.map((field) => [field.dataset.id, controlValue(field)]));
+      const settings = { [control.dataset.id]: controlValue(control) };
       // Validate locally first: the server rejects these too, but a blank or
       // out-of-range field must never look saved.
-      const invalid = controls.find((field) => field.type === 'number'
-        && (field.value.trim() === '' || !field.checkValidity()));
-      if (invalid) {
-        const invalidItem = invalid.closest('.settings-item');
-        const invalidName = invalidItem?.querySelector('.settings-item__name')?.textContent ?? invalid.dataset.id;
-        const reason = invalid.value.trim() === '' ? 'enter a number' : invalid.validationMessage;
-        invalidItem?.classList.add('has-error');
-        setStatus(`${invalidName} was not saved: ${reason}`, 'error');
-        return;
+      if (control.type === 'number' && (control.value.trim() === '' || !control.checkValidity())) {
+        const reason = control.value.trim() === '' ? 'Enter a number.' : control.validationMessage;
+        rowFeedback(control, { error: reason });
+        setSavedStatus();
+        announce(`${name} was not saved. ${reason}`, true);
+        return false;
       }
-      controls.forEach((field) => field.closest('.settings-item')?.classList.remove('has-error'));
       setStatus('Saving…');
       try {
         await requestJson('/api/settingsSave', { method: 'POST', body: JSON.stringify(settings) });
       } catch (error) {
         if (control === startAtLogin) control.checked = savedStartAtLogin;
-        item?.classList.add('has-error');
-        setStatus(`${name} was not saved`, 'error');
-        notify(`Could not save ${name}: ${errorText(error)}`, 'error', 5000);
-        return;
+        rowFeedback(control, { error: errorText(error) });
+        setSavedStatus();
+        announce(`${name} was not saved. ${errorText(error)}`, true);
+        return false;
       }
       if (control === startAtLogin) savedStartAtLogin = control.checked;
+      rowFeedback(control, { saved: true });
       setSavedStatus();
+      announce(`${name} saved`);
+      return true;
+    }
+
+    // The overlays folder changes which overlays exist, so it waits for an
+    // explicit Apply instead of saving on blur.
+    const folder = form.querySelector('[data-id="STATIC_FOLDER_PATH"]');
+    if (folder) {
+      let savedFolder = folder.value;
+      const applyFolder = document.createElement('button');
+      applyFolder.type = 'button';
+      applyFolder.className = 'button button-primary';
+      applyFolder.textContent = 'Apply';
+      applyFolder.hidden = true;
+      folder.after(applyFolder);
+      folder.addEventListener('input', () => { applyFolder.hidden = folder.value === savedFolder; });
+      folder.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !applyFolder.hidden) { event.preventDefault(); applyFolder.click(); }
+      });
+      applyFolder.addEventListener('click', async () => {
+        setBusy(applyFolder, true, 'Applying…');
+        const saved = await saveSetting(folder);
+        setBusy(applyFolder, false);
+        if (!saved) return;
+        savedFolder = folder.value;
+        applyFolder.hidden = true;
+        folder.focus();
+      });
     }
 
     const apply = document.createElement('button');
     apply.type = 'button';
     apply.className = 'button button-primary';
     apply.textContent = 'Apply network settings';
-    const networkStatus = document.createElement('p');
-    networkStatus.setAttribute('role', 'status');
-    const keep = document.createElement('button');
-    keep.type = 'button';
-    keep.className = 'button button-primary';
-    keep.textContent = 'Keep network settings';
-    keep.hidden = true;
+    const networkNote = document.createElement('p');
+    networkNote.className = 'field-help';
+    networkNote.textContent = 'Network changes need Apply, then Keep within 30 seconds.';
     // Apply sits with the fields it commits instead of after unrelated groups.
     const networkActions = document.createElement('div');
     networkActions.className = 'network-actions';
-    networkActions.append(apply, keep, networkStatus);
+    networkActions.append(apply, networkNote);
     const networkGroup = networkControls[0]?.closest('.settings-group');
     if (networkGroup) networkGroup.append(networkActions);
     else form.append(networkActions);
+
+    // A pending change gets a bar pinned under the site header: visible
+    // wherever the page lands, with Keep focused and the time left.
+    const pending = document.createElement('div');
+    pending.className = 'network-pending';
+    pending.setAttribute('role', 'region');
+    pending.setAttribute('aria-label', 'Pending network change');
+    pending.hidden = true;
+    const pendingText = document.createElement('p');
+    const pendingTitle = document.createElement('strong');
+    const countdown = document.createElement('span');
+    countdown.className = 'network-pending__count';
+    pendingText.append(pendingTitle, ' ', countdown);
+    const keep = document.createElement('button');
+    keep.type = 'button';
+    keep.className = 'button button-primary';
+    keep.textContent = 'Keep';
+    const revert = document.createElement('button');
+    revert.type = 'button';
+    revert.className = 'button';
+    revert.textContent = 'Revert now';
+    const dismissPending = document.createElement('button');
+    dismissPending.type = 'button';
+    dismissPending.className = 'button';
+    dismissPending.textContent = 'Dismiss';
+    dismissPending.hidden = true;
+    pending.append(pendingText, keep, revert, dismissPending);
+    (document.querySelector('.site-header') ?? document.body).append(pending);
+
     const params = new URLSearchParams(location.search);
     const requestedDeadline = Number(params.get('network-deadline'));
     const now = Date.now();
@@ -1270,23 +1540,58 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     let newOrigin = location.origin;
     let navigating = false;
     let timer;
+    let announcedLate = false;
+
+    function cleanUrl() {
+      params.delete('network-deadline');
+      params.delete('network-reverted');
+      history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}`);
+    }
+    // After a rollback the old address shows why the change is gone; the
+    // message stays until dismissed.
+    function showReverted() {
+      pending.hidden = false;
+      pending.dataset.tone = 'info';
+      pendingTitle.textContent = 'Network settings reverted.';
+      countdown.textContent = `The dashboard is back on ${location.host}.`;
+      keep.hidden = true;
+      revert.hidden = true;
+      dismissPending.hidden = false;
+      announce(`Network settings reverted. The dashboard is back on ${location.host}.`, true);
+      dismissPending.focus();
+    }
+    dismissPending.addEventListener('click', () => {
+      pending.hidden = true;
+      pageTitle?.focus();
+    });
     function finishNetwork() {
       deadline = 0;
       clearInterval(timer);
-      keep.hidden = true;
+      pending.hidden = true;
       apply.disabled = false;
-      params.delete('network-deadline');
-      history.replaceState(null, '', `${location.pathname}${params.size ? `?${params}` : ''}`);
+      cleanUrl();
+    }
+    function goToOldOrigin() {
+      navigating = true;
+      const target = new URL(`${oldOrigin}${location.pathname}`);
+      target.searchParams.set('network-reverted', '1');
+      navigateDashboard(target.href);
     }
     async function tickNetwork() {
       if (!deadline || navigating) return;
       const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-      networkStatus.textContent = `Keep these network settings? Automatically reverting in ${seconds} s.`;
+      // The countdown text is not a live region; screen readers hear the
+      // start and a single 10-second warning instead of every second.
+      countdown.textContent = `Reverting in ${seconds} s.`;
+      if (seconds <= 10 && seconds > 0 && !announcedLate) {
+        announcedLate = true;
+        announce(`${seconds} seconds left to keep the network settings.`, true);
+      }
       if (seconds === 0) {
         navigating = true;
         // Rollback runs in vosu even when this page has been closed.
         await new Promise((resolve) => setTimeout(resolve, 1500));
-        navigateDashboard(`${oldOrigin}${location.pathname}`);
+        goToOldOrigin();
       } else if (newOrigin !== location.origin) {
         try {
           // Readable, JSON discovery proves this is vosu, not an unrelated listener.
@@ -1307,19 +1612,53 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     }
     function startNetworkTimer() {
       apply.disabled = true;
-      keep.hidden = newOrigin !== location.origin;
+      const here = newOrigin === location.origin;
+      pending.hidden = false;
+      delete pending.dataset.tone;
+      keep.hidden = !here;
+      revert.hidden = false;
+      dismissPending.hidden = true;
+      pendingTitle.textContent = here ? 'Keep the new network settings?' : `Opening ${new URL(newOrigin).host}…`;
       timer = setInterval(tickNetwork, 1000);
       tickNetwork();
+      const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      announce(here
+        ? `Network settings applied. Keep them within ${seconds} seconds or they revert.`
+        : 'Network settings applied. Opening the new dashboard address.', true);
+      (here ? keep : revert).focus();
     }
     if (deadline) startNetworkTimer();
+    else if (params.get('network-reverted') === '1') {
+      cleanUrl();
+      showReverted();
+    }
     keep.addEventListener('click', async () => {
       keep.disabled = true;
       try {
         await requestJson('/api/settingsSave', { method: 'POST', body: JSON.stringify({ _network_action: 'confirm' }) });
         finishNetwork();
-        networkStatus.textContent = 'Network settings kept.';
-      } catch (error) { networkStatus.textContent = errorText(error); }
+        notify('Network settings kept.', 'success');
+        apply.focus();
+      } catch (error) { notify(errorText(error), 'error'); }
       finally { keep.disabled = false; }
+    });
+    revert.addEventListener('click', async () => {
+      setBusy(revert, true, 'Reverting…');
+      clearInterval(timer);
+      navigating = true;
+      try {
+        await requestJson('/api/settingsSave', { method: 'POST', body: JSON.stringify({ _network_action: 'revert' }) });
+      } catch (_error) {
+        // The listener serving this page may already be gone; the server
+        // timer still reverts at the deadline.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      if (oldOrigin === location.origin) {
+        finishNetwork();
+        setBusy(revert, false);
+        navigating = false;
+        showReverted();
+      } else goToOldOrigin();
     });
     apply.addEventListener('click', async () => {
       const invalid = networkControls.find((field) => !field.checkValidity() || !field.value.trim());
@@ -1332,13 +1671,14 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       oldOrigin = location.origin;
       apply.disabled = true;
       deadline = Date.now() + 30000;
+      announcedLate = false;
       try {
         await requestJson('/api/settingsSave', { method: 'POST', body: JSON.stringify({ ...values, _network_action: 'apply' }) });
         startNetworkTimer();
       } catch (error) {
         apply.disabled = false;
         deadline = 0;
-        networkStatus.textContent = errorText(error);
+        notify(errorText(error), 'error');
       }
     });
 
@@ -1346,8 +1686,11 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     // immediately for checkboxes; saves are serialized so they apply in order.
     form.addEventListener('change', (event) => {
       const control = event.target.closest('[data-id]');
-      if (!control || control.disabled) return;
-      if (networkKeys.has(control.dataset.id)) { networkStatus.textContent = 'Network changes are not saved until Apply.'; return; }
+      if (!control || control.disabled || control === folder) return;
+      if (networkKeys.has(control.dataset.id)) {
+        networkNote.textContent = 'Not saved yet: Apply, then Keep within 30 seconds.';
+        return;
+      }
       queue = queue.then(() => saveSetting(control));
     });
     form.addEventListener('submit', (event) => {
@@ -1380,10 +1723,86 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     menu.style.left = `${left}px`;
   }
 
-  function closeCardMenus() {
-    document.querySelectorAll('.card-menu').forEach((menu) => {
-      if (menu.matches(':popover-open')) menu.hidePopover();
+  // A scroll (including one a click causes at high zoom) moves an open menu
+  // with its toggle instead of closing it.
+  function positionOpenMenus() {
+    document.querySelectorAll('.card-menu:popover-open').forEach(positionCardMenu);
+  }
+
+  function menuItems(menu) {
+    return [...menu.querySelectorAll('button:not(:disabled), a[href]')].filter((item) => item.offsetParent !== null);
+  }
+
+  // Card grids are a single Tab stop: arrow keys move between cards,
+  // Home/End jump, and Tab from a card enters that card's own controls.
+  function rovingGrid(container, selector) {
+    if (!container) return null;
+    let current = null;
+    let frame = 0;
+    const all = () => [...container.querySelectorAll(selector)];
+    const visible = () => all().filter((item) => !item.hidden && item.getClientRects().length > 0);
+    const focusables = (item) => item.querySelectorAll('a[href], button, input, select, textarea, iframe, [tabindex]');
+    function apply() {
+      frame = 0;
+      const items = visible();
+      if (!items.includes(current)) current = items[0] ?? null;
+      for (const item of all()) {
+        const active = item === current;
+        item.tabIndex = active ? 0 : -1;
+        for (const element of focusables(item)) {
+          if (element.dataset.rovingTabindex === undefined) element.dataset.rovingTabindex = element.getAttribute('tabindex') ?? '';
+          const original = element.dataset.rovingTabindex;
+          if (!active) element.setAttribute('tabindex', '-1');
+          else if (original === '') element.removeAttribute('tabindex');
+          else element.setAttribute('tabindex', original);
+        }
+      }
+    }
+    function refresh() {
+      frame ||= window.requestAnimationFrame(apply);
+    }
+    function setCurrent(item) {
+      current = item;
+      apply();
+    }
+    container.addEventListener('focusin', (event) => {
+      const item = event.target.closest(selector);
+      if (item && item !== current && container.contains(item)) setCurrent(item);
     });
+    container.addEventListener('keydown', (event) => {
+      if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      const item = event.target.closest(selector);
+      // Text fields and menus keep their own arrow keys.
+      if (!item || event.target.closest('input, select, textarea, .card-menu')) return;
+      const items = visible();
+      const index = items.indexOf(item);
+      let next = null;
+      if (event.key === 'ArrowRight') next = items[index + 1];
+      else if (event.key === 'ArrowLeft') next = items[index - 1];
+      else if (event.key === 'Home') next = items[0];
+      else if (event.key === 'End') next = items.at(-1);
+      else {
+        const box = item.getBoundingClientRect();
+        const down = event.key === 'ArrowDown';
+        let best = null;
+        let bestScore = Infinity;
+        for (const candidate of items) {
+          const rect = candidate.getBoundingClientRect();
+          if (down ? rect.top <= box.top + 2 : rect.top >= box.top - 2) continue;
+          const score = Math.abs(rect.top - box.top) * 10000 + Math.abs(rect.left - box.left);
+          if (score < bestScore) { best = candidate; bestScore = score; }
+        }
+        next = best;
+      }
+      if (!next) return;
+      event.preventDefault();
+      setCurrent(next);
+      next.focus();
+    });
+    new MutationObserver(refresh).observe(container, { childList: true, subtree: true });
+    apply();
+    return { refresh, setCurrent };
   }
 
   const previewDialog = document.querySelector('#preview-dialog');
@@ -1394,7 +1813,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     previewDialog.querySelector('#preview-dialog-title').textContent = title;
     previewDialog.querySelector('#preview-dialog-description').textContent = description;
     previewFrame.replaceChildren(content);
-    if (!previewDialog.open) previewDialog.showModal();
+    if (!previewDialog.open) showModal(previewDialog);
   }
 
   // The enlarged view is a second live instance of the overlay, scaled to fill
@@ -1415,7 +1834,7 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     frame.setAttribute('scrolling', 'no');
     if (sourceFrame.dataset.colorScheme) frame.dataset.colorScheme = sourceFrame.dataset.colorScheme;
     stage.append(frame);
-    const resolution = card.querySelector('.meta-copy')?.textContent ?? '';
+    const resolution = card.querySelector('.counter-card__size')?.textContent ?? '';
     openPreviewDialog(card.dataset.counterTitle ?? card.dataset.counterName ?? '', resolution, stage);
     fitPreview(stage);
     previewObserver?.observe(previewFrame);
@@ -1481,12 +1900,9 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     }
   }
 
+  // Dialogs handle their own closing (homepage-settings.js guardDialog): a
+  // click outside one never closes another dialog's unsaved form.
   document.addEventListener('click', (event) => {
-    if (event.target instanceof HTMLDialogElement) {
-      const bounds = event.target.getBoundingClientRect();
-      if (event.clientX < bounds.left || event.clientX > bounds.right
-        || event.clientY < bounds.top || event.clientY > bounds.bottom) event.target.close();
-    }
     const control = event.target.closest('[data-action]');
     if (!control) return;
     const action = control.dataset.action;
@@ -1515,8 +1931,10 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       deleteCounter(control);
     } else if (action === 'open-counter') {
       openFolder(control);
+    } else if (action === 'open-url') {
+      const url = absoluteHttpUrl(control.dataset.url);
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
     } else if (action === 'rename-counter') {
-      control.closest('.card-menu')?.hidePopover?.();
       renameCounter(control);
     } else if (action === 'open-overlays-root') {
       openOverlaysRoot(control);
@@ -1524,6 +1942,10 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
       loadCounterSettings(control.dataset.folder, { name: control.closest('.counter-card')?.dataset.counterTitle });
     } else if (action === 'app-update') {
       runAppUpdate(control);
+    } else if (action === 'show-update') {
+      showUpdateNotice();
+    } else if (action === 'dismiss-update') {
+      dismissUpdateNotice();
     } else if (action === 'copy-metadata') {
       activateMetadata(control, event);
     } else if (action === 'expand-preview') {
@@ -1540,12 +1962,25 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
   });
 
   document.addEventListener('toggle', (event) => {
-    if (event.target instanceof HTMLElement
-      && event.target.classList.contains('card-menu')
-      && event.newState === 'open') positionCardMenu(event.target);
+    if (!(event.target instanceof HTMLElement) || !event.target.classList.contains('card-menu')) return;
+    if (event.newState === 'open') {
+      positionCardMenu(event.target);
+      menuItems(event.target)[0]?.focus();
+    }
   }, true);
-  window.addEventListener('resize', closeCardMenus);
-  window.addEventListener('scroll', closeCardMenus, { passive: true });
+  document.addEventListener('keydown', (event) => {
+    const menu = event.target instanceof Element ? event.target.closest('.card-menu') : null;
+    if (!menu || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = menuItems(menu);
+    const index = items.indexOf(event.target);
+    const next = event.key === 'Home' ? items[0]
+      : event.key === 'End' ? items.at(-1)
+        : items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length];
+    event.preventDefault();
+    next?.focus();
+  });
+  window.addEventListener('resize', positionOpenMenus);
+  window.addEventListener('scroll', positionOpenMenus, { passive: true });
 
   searchForm?.addEventListener('submit', (event) => event.preventDefault());
   searchInput?.addEventListener('input', scheduleSearch);
@@ -1577,25 +2012,42 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
     if (event.key === THEME_KEY) applyTheme(storedTheme() ?? (lightQuery?.matches ? 'light' : 'dark'));
   });
 
-  configurePageChrome();
+  // Sticky elements under the header (settings status, section rails) use
+  // its live height, which grows when the status strip wraps or a network
+  // change is pending; an unpinned header contributes nothing.
+  const siteHeader = document.querySelector('.site-header');
+  if (siteHeader && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => {
+      const pinned = getComputedStyle(siteHeader).position === 'sticky';
+      document.documentElement.style.setProperty('--header-h', `${pinned ? siteHeader.offsetHeight : 0}px`);
+    }).observe(siteHeader);
+  }
+
   initializeCounts();
   initializePins({ sanitize: pageKey() === 'installed' && !window.location.search });
   if (pageKey() === 'installed' && searchInput?.value) filterInstalled();
   observePreviews();
   initializeRuntimeSettings();
   initializeApiKeys();
+  if (pageKey() === 'settings' && !requestedOverlay && !requestedTool) {
+    mountCatalogSources({ root: document.querySelector('#runtime-settings'), requestJson, notify, errorText, setBusy });
+  }
   initializeSettingsIndex();
   initializePresentation();
   initializePinDrag();
   initializeDashboardStatus();
   refreshToolCount();
+  if ((pageKey() === 'installed' || pageKey() === 'available') && !requestedOverlay) {
+    state.roving = rovingGrid(results, ':scope > .counter-card');
+  }
+  refreshCounterUpdates();
 
-  if (pageKey() === 'settings' || pageKey() === 'available') {
-    import('./dashboard-catalog.js').then(({ mountCatalogSources, mountCatalogOverlays }) => {
-      const options = { root: results, requestJson, notify, errorText, setBusy, confirmAction: confirmOverlay };
-      if (pageKey() === 'settings' && !requestedOverlay && !requestedTool) mountCatalogSources(options);
-      else if (pageKey() === 'available') mountCatalogOverlays(options);
-    }).catch((error) => notify(`Could not load catalog sources: ${errorText(error)}`, 'error', 5000));
+  if (pageKey() === 'available') {
+    state.placeSourceOverlays = mountCatalogOverlays({
+      root: results, requestJson, notify, errorText, setBusy, confirmAction: confirmOverlay,
+      setCount: (value) => setCount('available', value),
+      initialTokens: queryTokens(searchInput?.value ?? ''),
+    });
   }
 
   if (requestedOverlay) {
@@ -1617,8 +2069,10 @@ import { createSettingsEditor, createActionDialog, createOverflow } from './home
         absoluteHttpUrl,
         confirmAction: confirmOverlay,
         createActionDialog,
-        createOverflow,
+        showModal,
         currentTheme,
+        announce: announceSoon,
+        rovingGrid,
         setCount: (value) => setCount('tools', value),
         // Same dialog as an overlay card's Settings button.
         openToolSettings: (id, name) => loadToolSettings(id, { name }),

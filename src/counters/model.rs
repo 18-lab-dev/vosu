@@ -83,6 +83,18 @@ pub struct DownloadRequest {
     pub update: bool,
 }
 
+/// An overlay folder the scan found but could not read (malformed metadata
+/// or settings). The dashboard shows it as an error card so it can be fixed
+/// or deleted; other overlays list normally.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct BrokenOverlay {
+    /// Folder path relative to the static root.
+    pub folder_name: String,
+    /// The folder's own name.
+    pub name: String,
+    pub error: String,
+}
+
 /// An installed overlay a tool can load from disk (`GET /tools/_host/v1/overlays`).
 /// Read-only identity: never settings values.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

@@ -1,75 +1,86 @@
-/* Forms, settings sheets, dialogs, toasts, and the Tools page. */
+/* Forms, settings, dialogs, toasts, and the Tools page, sized like the
+   shared components in system.css. */
 
 /* ------------------------------------------------------------- inputs */
 
 /* Field borders use --muted, not a decorative rule colour, so every control
-   boundary keeps 3:1 contrast in both modes. */
-.settings-control,
-.field-label input,
-.field-label textarea,
-.field-label select,
-.command-field input,
-.command-field select,
-.counter-setting > textarea.setting-value,
-.counter-setting > select.setting-value,
-.counter-setting > input.setting-value:not([type="checkbox"]),
-.setting-secret > input.setting-value,
+   boundary keeps 3:1 contrast in both modes. Checkboxes are excluded: they
+   are switches (.v-toggle) or .v-check boxes with their own focus ring. */
+.settings-control:not([type="checkbox"]),
+.setting-value:not([type="checkbox"], [type="color"]),
+.field-label :is(input:not([type="checkbox"]), textarea, select),
+.command-field :is(input:not([type="checkbox"]), select),
 .action-dialog input:not([type="checkbox"]) {
   width: 100%;
-  min-height: 2.4rem;
-  padding: 0.5rem 0.7rem;
+  min-height: var(--control-h);
+  padding: 0.25rem 0.625rem;
   color: var(--fg);
-  /* Labels use mono caps; their controls must not inherit them. */
-  font-family: var(--font-body);
-  font-size: var(--step-0);
+  font: 400 0.875rem / 1.3 var(--font-body);
   letter-spacing: normal;
   text-transform: none;
   background: var(--bg-sunken);
   border: var(--hair) solid var(--muted);
-  border-radius: 0;
+  border-radius: var(--radius);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.settings-control:not(:disabled):hover,
-.field-label :is(input, textarea, select):not(:disabled):hover,
-.command-field :is(input, select):not(:disabled):hover,
-.counter-setting > .setting-value:not(:disabled):hover,
-.setting-secret > .setting-value:not(:disabled):hover {
+.settings-control:not([type="checkbox"], :disabled):hover,
+.setting-value:not([type="checkbox"], :disabled):hover,
+.field-label :is(input, textarea, select):not([type="checkbox"], :disabled):hover,
+.command-field :is(input, select):not([type="checkbox"], :disabled):hover {
   border-color: var(--fg-dim);
 }
 
-.settings-control:focus,
-.field-label :is(input, textarea, select):focus,
-.command-field :is(input, select):focus,
-.counter-setting > .setting-value:focus,
-.setting-secret > .setting-value:focus,
-.action-dialog input:focus {
+.settings-control:not([type="checkbox"]):focus,
+.setting-value:not([type="checkbox"]):focus,
+.field-label :is(input, textarea, select):not([type="checkbox"]):focus,
+.command-field :is(input, select):not([type="checkbox"]):focus,
+.action-dialog input:not([type="checkbox"]):focus {
   border-color: var(--accent);
   outline: none;
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+/* Every checkbox, switch or plain box, shows the shared focus ring. */
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
 .settings-control:disabled,
+.setting-value:disabled,
 .field-label :is(input, textarea, select):disabled,
-.command-field :is(input, select):disabled,
-.counter-setting > .setting-value:disabled {
+.command-field :is(input, select):disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
 
+/* Numbers, addresses, paths and secrets read in the mono face. */
 input[type="number"],
+.settings-control--mono,
 .allowlist-editor,
-.counter-setting > input[type="password"],
-.setting-secret > input[type="password"] {
+input[type="password"].setting-value {
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
-/* Help text inside a mono-caps field label reads as a sentence. */
-.field-label .field-help {
-  font-family: var(--font-body);
+.field-help {
+  margin: 0;
+  color: var(--muted);
   font-size: var(--step--1);
-  letter-spacing: normal;
-  text-transform: none;
+  overflow-wrap: anywhere;
+}
+
+.field-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--step--1);
+  overflow-wrap: anywhere;
+}
+
+.field-error:empty {
+  display: none;
 }
 
 .rename-form {
@@ -77,82 +88,70 @@ input[type="number"],
   gap: var(--space-4);
 }
 
-.rename-form [role="status"]:not(:empty) {
-  color: var(--danger);
-  font-family: var(--font-mono);
-}
-
 textarea.settings-control,
-.field-label textarea,
-.counter-setting > textarea.setting-value {
+textarea.setting-value,
+.field-label textarea {
   min-height: 5rem;
   resize: vertical;
 }
 
-input[type="checkbox"].settings-control,
-.field-label input[type="checkbox"],
-.command-field input[type="checkbox"],
-.counter-setting > input[type="checkbox"].setting-value,
-.action-dialog input[type="checkbox"] {
-  width: 1.25rem;
-  height: 1.25rem;
-  min-height: 1.25rem;
+.field-label input[type="checkbox"]:not(.v-toggle),
+.command-field input[type="checkbox"]:not(.v-toggle) {
+  width: 1rem;
+  height: 1rem;
   margin: 0;
-  padding: 0;
-  accent-color: var(--accent);
   cursor: pointer;
 }
 
-input[type="checkbox"].settings-control {
-  margin-left: auto;
-}
-
-.counter-setting > input[type="color"].setting-value {
+.setting-value[type="color"] {
   width: 4rem;
-  padding: 0.2rem;
+  height: var(--control-h);
+  padding: 0.15rem;
+  background: var(--bg-sunken);
+  border: var(--hair) solid var(--muted);
+  border-radius: var(--radius);
   cursor: pointer;
 }
 
 /* ------------------------------------------------------------- runtime settings */
 
-/* The runtime form and its sheet index sit side by side on wide screens. */
+/* The section index is a sticky left rail, first in the DOM and in Tab
+   order, beside the form. Sticky offsets follow the pinned header's live
+   height (--header-h, set by homepage.js). */
 .results:has(> .settings) {
   display: grid;
-  grid-template-columns: minmax(0, 56rem) minmax(10rem, 15rem);
-  gap: var(--space-7);
+  grid-template-columns: minmax(9rem, 12rem) minmax(0, 56rem);
+  gap: var(--space-6);
   align-items: start;
 }
 
 .settings-index {
   position: sticky;
-  top: 8rem;
+  top: calc(var(--header-h, 0px) + var(--space-4));
   display: grid;
   border-left: var(--hair) solid var(--rule-strong);
 }
 
 .settings-index a {
-  display: flex;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
+  display: block;
+  padding: 0.35rem var(--space-3);
   color: var(--fg-dim);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.08em;
   text-decoration: none;
-  text-transform: uppercase;
-}
-
-.settings-index a span {
-  color: var(--accent);
 }
 
 .settings-index a:hover {
   color: var(--fg);
+  background: var(--hover);
+}
+
+.settings-index a[aria-current] {
+  color: var(--fg);
+  font-weight: 600;
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .settings-group {
-  scroll-margin-top: 8rem;
+  scroll-margin-top: calc(var(--header-h, 0px) + var(--space-6));
 }
 
 @media (max-width: 64rem) {
@@ -170,12 +169,7 @@ input[type="checkbox"].settings-control {
    column beside empty space. */
 @media (min-width: 90rem) {
   .results:has(> .settings) {
-    grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr);
-    gap: var(--space-6);
-  }
-
-  .results:has(> .settings) > .settings-index {
-    order: -1;
+    grid-template-columns: minmax(9rem, 12rem) minmax(0, 1fr);
   }
 
   #runtime-settings.settings {
@@ -198,7 +192,7 @@ input[type="checkbox"].settings-control {
   }
 
   /* Half-width groups: fields take at most 45% so the copy keeps a readable measure. */
-  #runtime-settings .settings-item:not(:has(.settings-item__control > input[type="checkbox"]:only-child)) {
+  #runtime-settings .settings-item:not(:has(.settings-item__control > input[type="checkbox"]:only-child), .settings-item--stacked) {
     grid-template-columns: minmax(0, 1fr) minmax(7rem, 45%);
   }
 }
@@ -213,60 +207,45 @@ input[type="checkbox"].settings-control {
   display: grid;
   gap: var(--space-5);
   width: min(100%, 56rem);
-  counter-reset: group;
 }
 
+/* The save summary stays in view under the header while scrolling; each
+   row also reports its own result. */
 .settings-header {
+  position: sticky;
+  top: var(--header-h, 0px);
+  z-index: 5;
   display: flex;
-  gap: var(--space-4);
-  align-items: start;
-  justify-content: space-between;
-  padding-bottom: var(--space-4);
-  border-bottom: var(--hair) solid var(--rule-strong);
+  justify-content: flex-end;
+  padding-block: var(--space-2);
+  background: var(--bg);
 }
 
-.settings-header h2,
 .inline-counter-settings h2 {
   margin: 0;
-  font-size: var(--step-2);
-  line-height: 1;
-}
-
-/* Static section titles take caps; titles carrying an overlay or tool name
-   keep its spelling. */
-.settings-header h2 {
-  text-transform: none;
-}
-
-.settings-header p,
-.inline-counter-settings > header p {
-  max-width: 62ch;
-  margin: var(--space-2) 0 0;
-  color: var(--fg-dim);
-  font-size: var(--step--1);
-  line-height: 1.55;
+  font-size: var(--step-1);
+  line-height: 1.2;
 }
 
 .settings-group {
   position: relative;
   min-width: 0;
   margin: 0;
-  padding: var(--space-2) var(--space-5) var(--space-3);
+  padding: var(--space-1) var(--space-4) var(--space-2);
   background: var(--bg-raised);
   border: var(--hair) solid var(--rule-strong);
-  counter-increment: group;
+  border-radius: var(--radius);
 }
 
 .settings-group legend {
   padding: 0 var(--space-2);
   color: var(--fg);
-  font-size: var(--step--2);
+  font-size: 0.9375rem;
+  font-weight: 600;
 }
 
-.settings-group legend::before {
-  margin-right: var(--space-2);
-  color: var(--accent);
-  content: counter(group, decimal-leading-zero) " /";
+.settings-group > .settings-item__description {
+  margin: var(--space-1) 0 var(--space-2);
 }
 
 .settings-item {
@@ -277,26 +256,68 @@ input[type="checkbox"].settings-control {
   padding-block: var(--space-3);
 }
 
-/* A checkbox needs no field-width column: the copy takes the rest. */
-.settings-item:has(.settings-item__control > input[type="checkbox"]:only-child) {
+/* A switch needs no field-width column: the copy takes the rest. */
+.settings-item:has(.settings-item__control > input[type="checkbox"]:only-child),
+.settings-item:has(.settings-item__control > .settings-item__saved + input[type="checkbox"]:last-child) {
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/* Lists and long text take the full width under their label. */
+.settings-item--stacked {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.settings-item--stacked .settings-item__control {
+  justify-content: stretch;
+}
+
+.settings-item--stacked .settings-item__control > * {
+  flex: 1 1 100%;
 }
 
 .settings-item + .settings-item {
   border-top: var(--hair) solid var(--rule);
 }
 
-.settings-item.has-error .settings-control {
+.settings-item.has-error :is(.settings-control, .setting-value):not([type="checkbox"]) {
   border-color: var(--danger);
   box-shadow: inset 0 0 0 1px var(--danger);
 }
 
-.settings-item.has-error .settings-item__name::after {
-  margin-left: var(--space-2);
+/* Per-row feedback beside the control that was saved or rejected. */
+.settings-item__error {
+  display: block;
+  margin-top: var(--space-1);
   color: var(--danger);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  content: "NOT SAVED";
+  font-size: var(--step--1);
+  overflow-wrap: anywhere;
+}
+
+.settings-item__saved {
+  flex: none;
+  margin-right: var(--space-2);
+  color: var(--ok);
+  font-size: var(--step--1);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-item__saved.is-shown {
+  animation: settings-saved 2.4s var(--ease-draft);
+}
+
+@keyframes settings-saved {
+  0% { opacity: 0; }
+  10%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.settings-item__value {
+  min-width: 0;
+  color: var(--fg-dim);
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .settings-item__copy {
@@ -311,7 +332,8 @@ input[type="checkbox"].settings-control {
   min-width: 0;
 }
 
-.settings-item__control > .allowlist-warning {
+.settings-item__control > .allowlist-warning,
+.settings-item__control > .field-help {
   flex-basis: 100%;
 }
 
@@ -329,21 +351,28 @@ input[type="checkbox"].settings-control {
   overflow-wrap: anywhere;
 }
 
-.settings-item__control:has(> .settings-unit) {
-  display: flex;
-  align-items: center;
-}
-
-.settings-item__control:has(> .settings-unit) .settings-control {
-  flex: 1;
+/* The unit sits inside the field, so fields with and without a unit share
+   one right edge. */
+.settings-unit-field {
+  position: relative;
+  display: block;
+  flex: 1 1 100%;
   min-width: 0;
 }
 
+.settings-unit-field > .settings-control {
+  padding-right: 2.75rem;
+}
+
 .settings-unit {
-  margin-left: var(--space-2);
+  position: absolute;
+  top: 50%;
+  right: 0.625rem;
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: var(--step--2);
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
 .allowlist-editor {
@@ -368,16 +397,13 @@ input[type="checkbox"].settings-control {
   padding: 0.2rem 0.6rem;
   color: var(--muted);
   font-size: var(--step--2);
+  background: var(--bg-raised);
   border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
 }
 
 .settings-status[data-tone="success"] {
   color: var(--fg-dim);
-}
-
-.settings-status[data-tone="success"]::before {
-  color: var(--accent);
-  content: "■ ";
 }
 
 .settings-status[data-tone="error"] {
@@ -401,21 +427,134 @@ input[type="checkbox"].settings-control {
   border-top: var(--hair) solid var(--rule-strong);
 }
 
-.network-actions [role="status"] {
-  margin: 0;
-  color: var(--fg-dim);
-  font-size: var(--step--1);
-}
-
 .settings-group [role="status"]:empty,
 .action-dialog [role="alert"]:empty {
   display: none;
 }
 
-.field-help {
+/* A pending network change: pinned with the header (it lives inside it),
+   Keep focused, the time left beside the question. */
+.network-pending {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  width: 100%;
+  max-width: var(--max);
+  margin-inline: auto;
+  padding: var(--space-2) var(--gutter);
+  background: var(--bg-raised);
+  border-top: 3px solid var(--caution);
+}
+
+.network-pending p {
+  flex: 1 1 18rem;
+  margin: 0;
+}
+
+.network-pending__count {
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* On phones the header scrolls away, so the bar docks to the bottom. */
+@media (max-width: 52rem), (max-height: 30rem) {
+  .network-pending {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    box-shadow: var(--shadow);
+  }
+}
+
+/* Catalog sources: one row per source, inside the runtime form. */
+.catalog-source-list {
+  display: grid;
+  gap: var(--space-2);
+  margin-block: var(--space-2);
+}
+
+.catalog-source-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  padding: var(--space-2) 0;
+  border-top: var(--hair) solid var(--rule);
+}
+
+.catalog-source-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.catalog-source-row__state {
+  grid-column: 2 / -1;
   margin: 0;
   color: var(--muted);
   font-size: var(--step--1);
+  overflow-wrap: anywhere;
+}
+
+.catalog-source-row__state:empty {
+  display: none;
+}
+
+.catalog-sources .network-actions {
+  border-top-color: var(--rule);
+}
+
+@media (max-width: 42rem) {
+  .catalog-source-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .catalog-source-row__actions,
+  .catalog-source-row__state {
+    grid-column: 1 / -1;
+  }
+}
+
+/* A failed catalog: one line with Retry; per-source errors in Details. */
+.catalog-failures {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--step--1);
+  overflow-wrap: anywhere;
+}
+
+.catalog-failures p {
+  margin: 0;
+}
+
+.catalog-failures details {
+  color: var(--fg-dim);
+}
+
+.catalog-failures summary {
+  min-height: 1.5rem;
+  cursor: pointer;
+}
+
+.catalog-failures ul {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-4);
+}
+
+.catalog-sources-status:empty,
+.catalog-sources__failures:empty {
+  display: none;
+}
+
+.catalog-sources-status {
+  grid-column: 1 / -1;
+  margin-bottom: var(--space-3);
 }
 
 /* ------------------------------------------------------------- overlay and tool settings */
@@ -433,13 +572,14 @@ input[type="checkbox"].settings-control {
 }
 
 .settings-back {
+  display: inline-flex;
+  align-items: center;
   justify-self: start;
+  min-height: 1.5rem;
+  margin-bottom: var(--space-3);
   color: var(--fg-dim);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.08em;
+  font-size: var(--step--1);
   text-decoration: none;
-  text-transform: uppercase;
 }
 
 .settings-back:hover {
@@ -450,17 +590,15 @@ input[type="checkbox"].settings-control {
   display: flex;
   gap: var(--space-2);
   align-items: center;
-  margin-bottom: var(--space-4);
-  padding-bottom: var(--space-4);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
   border-bottom: var(--hair) solid var(--rule-strong);
 }
 
 .settings-profiles::before {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.08em;
-  content: "PROFILE";
+  color: var(--fg-dim);
+  font-size: var(--step--1);
+  content: "Profile";
 }
 
 .settings-profiles > select {
@@ -503,7 +641,7 @@ input[type="checkbox"].settings-control {
 
 .settings-navigation {
   position: sticky;
-  top: 5.5rem;
+  top: calc(var(--header-h, 0px) + var(--space-4));
   display: grid;
   flex: 0 0 11rem;
   width: 11rem;
@@ -522,7 +660,6 @@ input[type="checkbox"].settings-control {
   padding: 0.35rem var(--space-3);
   overflow: hidden;
   color: var(--fg-dim);
-  font-size: var(--step--1);
   line-height: 1.35;
   text-decoration: none;
   text-overflow: ellipsis;
@@ -531,11 +668,12 @@ input[type="checkbox"].settings-control {
 
 .settings-navigation a:hover {
   color: var(--fg);
-  background: var(--bg-raised);
+  background: var(--hover);
 }
 
 .settings-navigation a[aria-current] {
-  color: var(--accent);
+  color: var(--fg);
+  font-weight: 600;
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
@@ -548,18 +686,18 @@ input[type="checkbox"].settings-control {
   display: none;
 }
 
+/* Overlay and tool settings use the runtime Settings rows: label and
+   description left, control right, hairlines between rows. */
 .counter-settings-list {
   display: grid;
-  gap: var(--space-3);
 }
 
 .counter-settings-heading {
-  margin: var(--space-4) 0 0;
+  margin: var(--space-5) 0 0;
   padding-bottom: var(--space-2);
-  font-size: var(--step-1);
-  text-transform: none;
+  font-size: 0.9375rem;
   border-bottom: var(--hair) solid var(--rule-strong);
-  scroll-margin-top: 6rem;
+  scroll-margin-top: calc(var(--header-h, 0px) + var(--space-5));
 }
 
 .counter-settings-heading:first-child {
@@ -569,46 +707,20 @@ input[type="checkbox"].settings-control {
 .counter-setting {
   min-width: 0;
   margin: 0;
-  padding: var(--space-3) var(--space-4) var(--space-4);
-  background: var(--bg-raised);
-  border: var(--hair) solid var(--rule);
-  transition: border-color 0.15s;
-}
-
-.counter-setting:focus-within {
-  border-color: var(--rule-strong);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.counter-setting legend {
-  padding-inline: var(--space-1);
-  font-weight: 600;
 }
 
 .setting-description {
-  margin: 0 0 var(--space-3);
-  color: var(--fg-dim);
-  font-size: var(--step--1);
-  line-height: 1.5;
   white-space: pre-wrap;
 }
 
+/* Field labels are sentence case, like .v-field. */
 .field-label {
   display: grid;
   gap: var(--space-1);
   min-width: 0;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.field-label .setting-description {
-  margin: 0;
-  font-family: var(--font-body);
-  letter-spacing: 0;
-  text-transform: none;
+  color: var(--fg-dim);
+  font-size: 0.8125rem;
+  font-weight: 500;
 }
 
 .command-list {
@@ -638,11 +750,9 @@ input[type="checkbox"].settings-control {
   display: grid;
   gap: var(--space-1);
   min-width: 0;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  color: var(--fg-dim);
+  font-size: 0.8125rem;
+  font-weight: 500;
 }
 
 .command-row .button-danger {
@@ -664,12 +774,18 @@ input[type="checkbox"].settings-control {
   color: var(--fg);
   background: var(--bg-raised);
   border: var(--hair) solid var(--rule-strong);
-  border-radius: 0;
+  border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
 
 .dashboard-dialog::backdrop {
   background: var(--scrim);
+}
+
+/* A dialog opened over another keeps a clear backdrop, so stacked layers
+   do not darken the page further at every level. */
+dialog[data-stacked]::backdrop {
+  background: transparent;
 }
 
 .dialog-frame {
@@ -682,34 +798,33 @@ input[type="checkbox"].settings-control {
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
+/* The same head as .v-drawer: one bar with the title and a close button. */
 .dialog-header {
   display: flex;
-  gap: var(--space-4);
-  align-items: start;
-  justify-content: space-between;
-  padding: var(--space-4) var(--space-5);
+  gap: var(--space-2);
+  align-items: center;
+  min-height: var(--bar-h);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   border-bottom: var(--hair) solid var(--rule-strong);
-  box-shadow: inset 0 2px 0 var(--accent);
 }
 
 .dialog-header h2 {
+  flex: 1;
+  min-width: 0;
   margin: 0;
-  font-size: var(--step-1);
-  line-height: 1.1;
-  /* Dialog titles usually carry an overlay or tool name. */
-  text-transform: none;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.3;
   overflow-wrap: anywhere;
 }
 
-.dialog-header p {
-  margin: var(--space-1) 0 0;
-  color: var(--fg-dim);
-  font-size: var(--step--1);
+.dialog-header:has(.dialog-header__meta) h2 {
+  flex: 0 1 auto;
 }
 
 .dialog-body {
   min-height: 0;
-  padding: var(--space-5);
+  padding: var(--space-4);
   overflow: auto;
   overscroll-behavior: contain;
   scroll-padding-block-end: 4.5rem;
@@ -728,18 +843,39 @@ input[type="checkbox"].settings-control {
   z-index: 1;
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3);
+  gap: var(--space-2);
   align-items: center;
   justify-content: flex-end;
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-raised);
   border-top: var(--hair) solid var(--rule-strong);
 }
 
 .dashboard-dialog .dialog-actions {
   position: sticky;
-  bottom: calc(-1 * var(--space-5));
-  margin: 0 calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+  bottom: calc(-1 * var(--space-4));
+  margin: var(--space-4) calc(-1 * var(--space-4)) calc(-1 * var(--space-4));
+}
+
+.dialog-form > .dialog-actions {
+  margin-top: 0;
+}
+
+/* Unsaved input asks before a dialog closes. */
+.discard-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg-sunken);
+  border-top: 2px solid var(--caution);
+}
+
+.discard-bar p {
+  flex: 1 1 12rem;
+  margin: 0;
+  font-weight: 600;
 }
 
 #confirm-dialog .dialog-actions {
@@ -758,14 +894,6 @@ input[type="checkbox"].settings-control {
   overflow-wrap: anywhere;
 }
 
-.confirm-warning {
-  margin: var(--space-3) 0 0;
-  padding: var(--space-3) var(--space-4);
-  color: var(--fg);
-  background: var(--bg-sunken);
-  border-left: 3px solid var(--caution);
-}
-
 .action-dialog {
   width: min(94vw, 36rem);
 }
@@ -782,16 +910,17 @@ input[type="checkbox"].settings-control {
   bottom: var(--space-4);
   z-index: 90;
   max-width: min(30rem, calc(100vw - 2rem));
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   color: var(--fg);
   background: var(--bg-raised);
   border: var(--hair) solid var(--rule-strong);
   border-left: 3px solid var(--note);
+  border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
 
 .toast[data-tone="success"] {
-  border-left-color: var(--accent);
+  border-left-color: var(--ok);
 }
 
 .toast[data-tone="error"] {
@@ -802,11 +931,18 @@ input[type="checkbox"].settings-control {
 
 .toast:not([hidden]) {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-2);
   align-items: center;
 }
 
-.toast__action {
+.toast__message {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.toast__action,
+.toast__close {
   flex: none;
 }
 
@@ -826,6 +962,7 @@ input[type="checkbox"].settings-control {
   grid-column: 1 / -1;
   display: grid;
   gap: var(--space-3);
+  min-width: 0;
   padding-top: var(--space-5);
   border-top: var(--hair) solid var(--rule-strong);
 }
@@ -836,34 +973,17 @@ input[type="checkbox"].settings-control {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2) var(--space-4);
+  min-width: 0;
 }
 
 .tools-catalog__header h2 {
   margin: 0;
-  color: var(--muted);
-  font: 400 var(--step--2) / 1.4 var(--font-mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 1rem;
+  font-weight: 600;
 }
 
 .tools-installed__header {
   grid-column: 1 / -1;
-}
-
-.catalog-source-list { display: grid; gap: var(--space-3); }
-.catalog-source-row {
-  display: grid;
-  grid-template-columns: auto minmax(12rem, 1fr) auto;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border: var(--hair) solid var(--rule-strong);
-  border-radius: var(--radius);
-}
-.catalog-source-row .field-help { grid-column: 1 / -1; overflow-wrap: anywhere; }
-.catalog-source-row .setting-value { width: 100%; min-width: 0; }
-@media (max-width: 800px) {
-  .catalog-source-row { grid-template-columns: 1fr; }
 }
 
 .tools-root[aria-busy="true"] > .tools-loading {
@@ -875,6 +995,7 @@ input[type="checkbox"].settings-control {
   margin: 0;
   color: var(--muted);
   font-size: var(--step--1);
+  overflow-wrap: anywhere;
 }
 
 .tools-loading:empty {
@@ -1045,6 +1166,47 @@ input[type="checkbox"].settings-control {
   font-size: 0.85em;
 }
 
+/* Permission ids, routes, the command and the folder, for tool authors. */
+.tool-details__developer summary {
+  min-height: 1.5rem;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.tool-details__developer[open] summary {
+  margin-bottom: var(--space-2);
+}
+
+.tool-details__developer .v-facts code {
+  overflow-wrap: anywhere;
+}
+
+/* API keys: one row per key, permissions as plain choices. */
+.api-key-list {
+  display: grid;
+}
+
+.api-key-value {
+  font-size: 0.8125rem;
+}
+
+.scope-choices {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.scope-choices legend {
+  margin-bottom: var(--space-1);
+  padding: 0;
+  color: var(--fg-dim);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
 .tool-dependency[data-satisfied="false"] {
   color: var(--danger);
 }
@@ -1145,12 +1307,6 @@ input[type="checkbox"].settings-control {
   border-bottom: var(--hair) solid var(--rule);
 }
 
-.logs-toolbar label {
-  display: inline-flex;
-  gap: var(--space-2);
-  align-items: center;
-}
-
 .logs-toolbar [role="status"] {
   margin-left: auto;
   color: var(--muted);
@@ -1245,10 +1401,6 @@ input[type="checkbox"].settings-control {
     max-height: 8rem;
     background: var(--bg-raised);
     border: var(--hair) solid var(--rule-strong);
-  }
-
-  .tool-card {
-    --tool-pad-x: var(--space-4);
   }
 
   .tool-card__actions .settings-overflow {

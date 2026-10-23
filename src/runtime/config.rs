@@ -98,6 +98,23 @@ impl ConfigUpdateService for RuntimeConfig {
                 }
                 return Ok(());
             }
+            // "Revert now" from the pending-change bar, from either origin;
+            // the same rollback the 30-second timer would run.
+            if action == Some("revert") {
+                let mut pending = self.network.lock().await;
+                if pending.is_none() {
+                    return Err("No pending network change".into());
+                }
+                self.config
+                    .rollback_pending_network()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                *pending = None;
+                if let Some(origins) = &self.origins {
+                    *origins.previous_dashboard.write() = None;
+                }
+                return Ok(());
+            }
             let network_keys = [
                 "SERVER_IP",
                 "SERVER_PORT",
@@ -143,6 +160,18 @@ impl ConfigUpdateService for RuntimeConfig {
                 if matches!(key, "SERVER_PORT" | "DASHBOARD_PORT") && value.fract() != 0.0 {
                     return Err(format!("{key} must be a whole number"));
                 }
+            }
+            // A typo would otherwise create an empty folder and the Overlays
+            // page would look like every overlay was gone. Relative paths keep
+            // their legacy meaning (next to the executable) and are created.
+            if let Some(path) = object
+                .get("STATIC_FOLDER_PATH")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|path| std::path::Path::new(path).is_absolute())
+                && !std::path::Path::new(path).is_dir()
+            {
+                return Err(format!("Overlays folder not found: {path}"));
             }
             // Serialize service reconciliation with watcher delivery, so an older
             // notification cannot re-enable a service after a newer settings save.

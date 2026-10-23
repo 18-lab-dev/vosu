@@ -137,6 +137,9 @@ pub struct CatalogService {
     client: StreamingClient,
     endpoint: Arc<str>,
     user_agent: Arc<str>,
+    /// Last successfully decoded catalog, so pages that only annotate local
+    /// overlays never wait on the network.
+    last: Arc<std::sync::Mutex<Option<Arc<Vec<CatalogOverlay>>>>>,
 }
 
 impl CatalogService {
@@ -159,6 +162,7 @@ impl CatalogService {
             client,
             endpoint: endpoint.into(),
             user_agent: catalog_user_agent(version).into(),
+            last: Arc::default(),
         }
     }
 
@@ -181,7 +185,22 @@ impl CatalogService {
             .await
             .map_err(map_network_error)?;
         let remote = decode_response(response.status, response.body.as_ref())?;
+        *self
+            .last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(remote.clone()));
         Ok(merge_local(remote, local))
+    }
+
+    /// The last fetched catalog merged with `local`, without any network
+    /// request; `None` before the first successful fetch.
+    pub fn cached(&self, local: &[LocalOverlay]) -> Option<Vec<CatalogOverlay>> {
+        let remote = self
+            .last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()?;
+        Some(merge_local((*remote).clone(), local))
     }
 }
 

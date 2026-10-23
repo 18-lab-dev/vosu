@@ -1,22 +1,24 @@
 /*
- * vosu dashboard in the 18-LAB technical-schematic language: hairline rules,
- * square geometry, numbered sheets, mono labels. Colours, fonts and scales
- * come from tokens.css; this file adds no new palette values.
+ * vosu dashboard: a calm app shell in the 18-LAB system (tokens.css plus the
+ * shared components in system.css). Colours, fonts and scales come from
+ * tokens.css; this file adds no new palette values.
  */
 
 :root {
   /* Tracks the viewport height so a short laptop screen still shows more
      than one row of cards; tall screens keep the full frame. */
   --preview-height: clamp(9rem, 24svh, 13rem);
-  /* The drafting grid every overlay preview sits on, in both modes. */
+  /* A faint grid every overlay preview sits on, in both modes: enough to
+     show what the overlay leaves transparent without competing with it. */
   --preview-grid:
-    linear-gradient(var(--grid-major) 1px, transparent 1px) 0 0 / 40px 40px,
-    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(var(--grid-minor) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(90deg, var(--grid-minor) 1px, transparent 1px) 0 0 / 40px 40px,
     var(--bg-sunken);
   --grid-gap: var(--space-4);
   --max-columns: 4;
   --shadow: 0 18px 48px rgb(0 0 0 / 0.28);
   font-synthesis: none;
+  accent-color: var(--accent);
 }
 
 *,
@@ -25,13 +27,11 @@
   box-sizing: border-box;
 }
 
-/* Large monitors are read from further away, so the whole rem-based layout
-   grows slightly with the viewport; the floor keeps the reader's own default
-   size on laptops and phones. */
+/* The tool design system's scale: 16 px root, 14 px body text. */
 html {
   min-width: 20rem;
   min-height: 100%;
-  font-size: clamp(100%, 75% + 0.3vw, 112.5%);
+  font-size: 100%;
   background: var(--bg);
   -webkit-text-size-adjust: 100%;
 }
@@ -42,10 +42,9 @@ body {
   min-height: 100vh;
   margin: 0;
   color: var(--fg);
-  font: 400 var(--step-0) / 1.55 var(--font-body);
+  font: 400 0.875rem / 1.5 var(--font-body);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
-  transition: background-color 0.3s var(--ease-draft), color 0.3s var(--ease-draft);
 }
 
 button,
@@ -116,26 +115,19 @@ kbd {
   border: 0;
 }
 
-/* Mono caps: section labels, indices, status keys and other data labels. */
+/* Mono caps only for small data labels. */
 .nav-index,
 .nav-count,
 .brand-sub,
 .status-key,
 .status-strip,
-.sheet-label,
-.update-notice__label,
-.title-block,
 .badge,
 .fact-label,
-.tool-card__index,
-.tool-facts dt,
 .tool-status,
 .counter-card__url-action,
 .preview-scale,
 .gallery__count,
-.settings-group legend,
-.settings-status,
-.eyebrow {
+.settings-status {
   font-family: var(--font-mono);
   font-weight: 400;
   letter-spacing: 0.06em;
@@ -148,9 +140,7 @@ kbd {
 .button,
 .badge,
 .icon-button,
-.pin-toggle,
-.sheet-label,
-.title-block {
+.pin-toggle {
   user-select: none;
 }
 
@@ -183,23 +173,26 @@ kbd {
   border-bottom: var(--hair) solid var(--rule-strong);
 }
 
-
+/* One baseline for the wordmark, nav labels, the maker label and the
+   header buttons; the bar's height comes from the tabs, so the current
+   tab's underline sits on the header rule. */
 .shell-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2) var(--space-5);
-  align-items: center;
+  gap: 0 var(--space-5);
+  align-items: baseline;
   width: 100%;
   max-width: var(--max);
   min-height: 3rem;
   margin-inline: auto;
-  padding: var(--space-1) var(--gutter);
+  padding: 0 var(--gutter);
 }
 
 .brand {
   display: inline-flex;
   gap: var(--space-3);
-  align-items: center;
+  align-items: baseline;
+  align-self: center;
   color: var(--fg);
   text-decoration: none;
 }
@@ -209,7 +202,8 @@ kbd {
 }
 
 .brand-mark {
-  width: 1.9rem;
+  align-self: center;
+  width: 1.75rem;
   height: auto;
   overflow: visible;
 }
@@ -232,20 +226,21 @@ kbd {
 
 .brand-name {
   font-family: var(--font-display);
-  font-size: 1.5rem;
+  font-size: 1.375rem;
   font-weight: 600;
   line-height: 1;
   letter-spacing: 0.01em;
 }
 
+/* The divider is a shadow, so the label keeps its own baseline instead of
+   stretching to the brand's height. */
 .brand-sub {
-  align-self: stretch;
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
   padding-left: var(--space-3);
   color: var(--muted);
   font-size: var(--step--2);
-  border-left: var(--hair) solid var(--rule-strong);
+  line-height: 1;
+  box-shadow: calc(-1 * var(--hair)) 0 var(--rule-strong);
 }
 
 .page-tabs {
@@ -253,18 +248,20 @@ kbd {
   gap: var(--space-1);
 }
 
-/* Index, label and count share one baseline and one line box. */
+/* Index, label and count share one baseline and one line box; the padding
+   fills the bar so the underline meets the header rule. */
 .nav-link {
   display: inline-flex;
   gap: 0.45rem;
   align-items: baseline;
-  padding: 0.4rem 0.75rem;
+  padding: calc((3rem - 1.25 * 0.9375rem - 4px) / 2) 0.75rem;
   color: var(--fg-dim);
   font-family: var(--font-body);
   font-size: 0.9375rem;
   font-weight: 500;
   line-height: 1.25;
   text-decoration: none;
+  border-top: 2px solid transparent;
   border-bottom: 2px solid transparent;
   transition: color 0.2s, border-color 0.2s;
 }
@@ -299,7 +296,7 @@ kbd {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  align-items: center;
+  align-items: baseline;
   margin-left: auto;
 }
 
@@ -375,6 +372,26 @@ kbd {
   margin-left: auto;
 }
 
+/* The update is one chip in the strip; the notice under the header only
+   appears when the chip is pressed or until "Later". */
+.status-update {
+  min-height: 1.5rem;
+  padding: 0 var(--space-2);
+  color: var(--caution);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: none;
+  background: transparent;
+  border: var(--hair) solid var(--caution);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.status-update:hover {
+  color: var(--bg);
+  background: var(--caution);
+}
+
 .status-key {
   color: var(--muted);
 }
@@ -431,45 +448,31 @@ kbd {
 }
 
 .update-notice {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--space-2) var(--space-5);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
   align-items: center;
+  justify-content: space-between;
   width: calc(100% - 2 * var(--gutter));
   max-width: calc(var(--max) - 2 * var(--gutter));
-  margin: var(--space-5) auto 0;
-  padding: var(--space-4) var(--space-5);
+  margin: var(--space-4) auto 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   background: var(--bg-raised);
   border: var(--hair) solid var(--rule-strong);
   border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
 }
 
-.update-notice__label {
+.update-notice__copy {
+  min-width: 0;
   margin: 0;
-  color: var(--accent);
-  font-size: var(--step--2);
+  overflow-wrap: anywhere;
 }
 
-.update-notice h2 {
-  margin: 0;
-  font-size: var(--step-1);
-  text-transform: none;
-}
-
-.update-notice p {
-  margin: 0;
-}
-
-.update-notice__copy p {
-  margin-top: var(--space-1);
-  color: var(--fg-dim);
-  font-size: var(--step--1);
-}
-
-.eyebrow {
-  margin: 0;
-  color: var(--accent);
-  font-size: var(--step--2);
+.update-notice__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 /* ------------------------------------------------------------- sheet */
@@ -495,31 +498,14 @@ kbd {
   margin-bottom: var(--space-5);
 }
 
-.sheet-label {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: auto minmax(2rem, 1fr) auto;
-  gap: var(--space-3);
-  align-items: center;
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--step--2);
-}
-
-.sheet-no {
-  color: var(--accent);
-}
-
-.sheet-rule {
-  height: 1px;
-  background: var(--rule-strong);
+.page-head h1:focus {
+  outline: none;
 }
 
 .page-head h1 {
   margin: 0;
-  font-size: var(--step-3);
+  font-size: var(--step-2);
   line-height: 1.2;
-  text-transform: none;
 }
 
 .page-head:not(:has(.search-form)) {
@@ -534,17 +520,10 @@ kbd {
 .search-control {
   display: flex;
   align-items: center;
-  background: var(--bg-raised);
+  min-height: var(--control-h);
+  background: var(--bg-sunken);
   border: var(--hair) solid var(--muted);
-}
-
-.search-control::before {
-  padding-left: var(--space-3);
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  content: "FIND";
-  letter-spacing: 0.08em;
+  border-radius: var(--radius);
 }
 
 .search-control:focus-within {
@@ -555,7 +534,7 @@ kbd {
 .search-control input {
   width: 100%;
   min-width: 6rem;
-  padding: 0.6rem var(--space-3);
+  padding: 0.35rem var(--space-3);
   color: var(--fg);
   background: transparent;
   border: 0;
@@ -572,24 +551,33 @@ kbd {
   color: var(--muted);
   font-size: var(--step--2);
   border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
+}
+
+/* Touch screens have no "/" key to press. */
+@media (pointer: coarse) {
+  .search-control kbd {
+    display: none;
+  }
 }
 
 /* Sits above the catalog listing and shares its width, so it reads as the
    listing's preface rather than a page-wide alert. */
 .catalog-notice {
   margin: 0 0 var(--space-4);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-4);
   background: var(--bg-raised);
   border: var(--hair) solid var(--rule-strong);
   border-left: 3px solid var(--caution);
+  border-radius: var(--radius);
 }
 
 .catalog-notice summary {
+  display: flex;
+  align-items: center;
+  min-height: 1.75rem;
   color: var(--fg);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -610,13 +598,11 @@ kbd {
 .catalog-about {
   grid-column: -2 / -1;
   justify-self: end;
+  min-height: 1.5rem;
   margin: calc(var(--space-1) - var(--space-3)) 0 0;
   padding: 0;
   color: var(--fg-dim);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--step--1);
   text-decoration: underline;
   text-underline-offset: 0.2em;
   background: transparent;
@@ -640,7 +626,6 @@ kbd {
   grid-template-columns: repeat(auto-fill, minmax(max(min(100%, 21.5rem), calc((100% - (var(--max-columns) - 1) * var(--grid-gap)) / var(--max-columns))), 1fr));
   gap: var(--grid-gap);
   align-items: stretch;
-  counter-reset: card;
 }
 
 /* The catalog reads as a listing: one overlay per row, preview first. Wide
@@ -656,32 +641,17 @@ kbd {
   display: block;
 }
 
-/* Registration corners: the drafting crop marks that frame every card. */
-.counter-card::before,
-.tool-card::before,
-.empty-state::before {
-  position: absolute;
-  top: -1px;
-  left: -1px;
-  z-index: 3;
-  width: 10px;
-  height: 10px;
-  content: "";
-  pointer-events: none;
-  border-top: 1px solid var(--fg-dim);
-  border-left: 1px solid var(--fg-dim);
-}
-
-/* Installed overlay card: fixed preview frame, one identity row, and a
+/* Installed overlay card: fixed preview frame, one identity block, and a
    full-width URL bar, so every card has the same height. */
 .counter-card {
   position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  overflow: hidden;
   background: var(--bg-raised);
   border: var(--hair) solid var(--rule-strong);
-  counter-increment: card;
+  border-radius: var(--radius);
   transition: border-color 0.2s;
 }
 
@@ -706,20 +676,6 @@ kbd {
   overflow: hidden;
   border-bottom: var(--hair) solid var(--rule-strong);
   background: var(--preview-grid);
-}
-
-/* Sheet index in the preview's top-left corner. */
-.counter-card__preview::before {
-  position: absolute;
-  top: var(--space-2);
-  left: var(--space-3);
-  z-index: 2;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.08em;
-  content: counter(card, decimal-leading-zero);
-  pointer-events: none;
 }
 
 /* A transparent button over the whole preview opens the enlarged view; its
@@ -812,11 +768,13 @@ kbd {
   pointer-events: none;
 }
 
+/* Titles start at the same height in every card of a row; the chip line
+   below keeps its place even when empty. */
 .counter-card__body {
   flex: 1;
   display: flex;
   gap: var(--space-2);
-  align-items: center;
+  align-items: flex-start;
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
 }
 
@@ -829,8 +787,8 @@ kbd {
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  font-size: 1.3rem;
-  line-height: 1.1;
+  font-size: 1.0625rem;
+  line-height: var(--control-h);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -865,10 +823,12 @@ kbd {
   text-overflow: ellipsis;
 }
 
+/* The separator is decoration: the empty alternative text keeps screen
+   readers from announcing it. */
 .counter-card__meta > * + *::before {
   margin-inline: 0.45rem;
   color: var(--rule-strong);
-  content: "/";
+  content: "/" / "";
 }
 
 .counter-card__folder {
@@ -876,17 +836,8 @@ kbd {
   text-overflow: ellipsis;
 }
 
-.meta-copy {
-  padding: 0;
-  color: var(--muted);
-  font: inherit;
+.counter-card__size {
   font-variant-numeric: tabular-nums;
-  background: none;
-  cursor: copy;
-}
-
-.meta-copy:hover {
-  color: var(--accent);
 }
 
 .counter-card__url {
@@ -939,11 +890,38 @@ kbd {
   flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
+  min-height: 1.5rem;
   margin-top: var(--space-2);
 }
 
-.counter-card__chips:not(:has(> :not([hidden]))) {
-  display: none;
+/* A folder vosu could not read: the error replaces the preview, with the
+   two actions that fix it. */
+.counter-card.is-broken {
+  border-color: var(--danger);
+}
+
+.counter-card__broken {
+  display: grid;
+  gap: var(--space-2);
+  align-content: center;
+  height: var(--preview-height);
+  padding: var(--space-4);
+  overflow: auto;
+  color: var(--danger);
+  background: var(--bg-sunken);
+  border-bottom: var(--hair) solid var(--rule-strong);
+}
+
+.counter-card__broken code {
+  color: var(--fg-dim);
+  font-size: var(--step--1);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.counter-card.is-broken .counter-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 /* Catalog listing row: one preview image beside the overlay's details. The
@@ -964,7 +942,7 @@ kbd {
   aspect-ratio: 16 / 9;
   place-items: center;
   overflow: hidden;
-  background: var(--bg-sunken);
+  background: transparent;
   border-right: var(--hair) solid var(--rule-strong);
 }
 
@@ -976,10 +954,8 @@ kbd {
 
 .gallery--empty {
   color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--step--1);
+  background: var(--bg-sunken);
 }
 
 .gallery:has(.gallery__controls) {
@@ -1041,15 +1017,23 @@ kbd {
 }
 
 .catalog-card h2 {
-  font-size: clamp(1.35rem, 0.9rem + 2.4cqi, 2rem);
-  line-height: 1.05;
+  font-size: clamp(1.0625rem, 0.85rem + 1.2cqi, 1.375rem);
+  line-height: 1.2;
   white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .catalog-card .counter-card__meta {
   margin: 0;
-  font-size: clamp(0.75rem, 0.6rem + 0.8cqi, 0.9rem);
+  font-size: 0.75rem;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.catalog-card__description {
+  margin: 0;
+  color: var(--fg-dim);
+  overflow-wrap: anywhere;
 }
 
 .catalog-card__facts {
@@ -1058,7 +1042,7 @@ kbd {
   gap: var(--space-1) 1.5em;
   margin: var(--space-1) 0 0;
   color: var(--fg);
-  font-size: clamp(0.85rem, 0.65rem + 1cqi, 1.05rem);
+  font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
   line-height: 1.45;
 }
@@ -1089,7 +1073,7 @@ kbd {
 
 .counter-card__version {
   flex: none;
-  color: var(--accent);
+  color: var(--muted);
   font-family: var(--font-mono);
   font-size: 0.75rem;
 }
@@ -1123,22 +1107,18 @@ kbd {
   text-decoration: none;
   background: transparent;
   border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
 }
 
-.badge-cyan {
+.badge[data-source="official"] {
   color: var(--note);
   border-color: var(--note);
 }
 
+/* A status, never a control: Update is a separate button. */
 .badge-warning {
   color: var(--caution);
   border-color: var(--caution);
-  cursor: pointer;
-}
-
-.badge-warning:hover {
-  color: var(--bg);
-  background: var(--caution);
 }
 
 .connected-chip {
@@ -1159,6 +1139,14 @@ kbd {
 
 .dashboard-dialog.preview-dialog .dialog-frame {
   max-height: 94vh;
+}
+
+.dialog-header__meta {
+  margin-right: auto;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
 }
 
 .preview-dialog__frame {
@@ -1189,15 +1177,12 @@ kbd {
   }
 }
 
+/* Very wide screens: everything that shares the content width (bar, status
+   strip, update notice, main) widens together. */
 @media (min-width: 140rem) {
   :root {
     --max-columns: 5;
-  }
-
-  .dashboard-main,
-  .shell-bar,
-  .status-strip {
-    max-width: 150rem;
+    --max: 150rem;
   }
 }
 
@@ -1252,17 +1237,14 @@ kbd {
 }
 
 .button-primary,
-.button-primary:hover,
-.button-cyan,
-.button-cyan:hover {
+.button-primary:hover {
   color: var(--on-accent);
   font-weight: 600;
   background: var(--accent);
   border-color: var(--accent);
 }
 
-.button-primary:not(:disabled):hover,
-.button-cyan:not(:disabled):hover {
+.button-primary:not(:disabled):hover {
   background: color-mix(in srgb, var(--accent) 88%, var(--fg));
 }
 
@@ -1271,29 +1253,66 @@ kbd {
   border-color: var(--danger);
 }
 
-.button-danger:not(:disabled):hover {
+.button-danger:not(:disabled):hover,
+.button-danger--solid,
+.button-danger--solid:hover {
   color: var(--bg);
+  font-weight: 600;
   background: var(--danger);
   border-color: var(--danger);
 }
 
-.button.badge-warning {
+.button-danger--solid:not(:disabled):hover {
+  background: color-mix(in srgb, var(--danger) 88%, var(--fg));
+}
+
+/* Updating is the one secondary action that needs attention. */
+.button-update {
   color: var(--caution);
   border-color: var(--caution);
+}
+
+.button-update:not(:disabled):hover {
+  color: var(--bg);
+  background: var(--caution);
+  border-color: var(--caution);
+}
+
+.button--sm {
+  min-height: var(--control-h-sm);
+  padding: 0 0.6rem;
+  font-size: 0.8125rem;
+}
+
+/* An inline action inside a sentence, e.g. Retry after an error. */
+.link-button {
+  min-height: 1.5rem;
+  padding: 0 0.15rem;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  background: none;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--fg);
 }
 
 .icon-button,
 .pin-toggle {
   display: inline-grid;
   flex: none;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: var(--control-h);
+  height: var(--control-h);
   padding: 0;
   color: var(--fg-dim);
   font-size: 1rem;
   line-height: 1;
   background: transparent;
   border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
   cursor: pointer;
   place-items: center;
   transition: border-color 0.2s, color 0.2s, background 0.2s;
@@ -1343,6 +1362,7 @@ kbd {
   color: var(--fg);
   background: var(--bg-raised);
   border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
 
@@ -1352,12 +1372,14 @@ kbd {
 
 .card-menu button,
 .card-menu a {
-  padding: var(--space-2) var(--space-3);
+  min-height: var(--control-h);
+  padding: var(--space-1) var(--space-3);
   color: var(--fg);
-  font-size: var(--step--1);
+  font-size: 0.875rem;
   text-align: left;
   text-decoration: none;
   background: transparent;
+  border-radius: var(--radius);
   cursor: pointer;
 }
 
@@ -1365,8 +1387,8 @@ kbd {
 .card-menu button:focus-visible,
 .card-menu a:hover,
 .card-menu a:focus-visible {
-  background: var(--bg-sunken);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--hover);
+  outline-offset: -2px;
 }
 
 .card-menu button:disabled {
@@ -1414,97 +1436,34 @@ kbd {
 
 .empty-state,
 .no-results {
-  position: relative;
   grid-column: 1 / -1;
   display: grid;
   gap: var(--space-3);
   justify-items: start;
-  padding: clamp(2rem, 6vw, 4rem) clamp(1.25rem, 4vw, 3rem);
+  padding: clamp(1.5rem, 5vw, 3rem) clamp(1.25rem, 4vw, 2.5rem);
   color: var(--fg-dim);
-  background:
-    linear-gradient(var(--grid-minor) 1px, transparent 1px) 0 0 / 16px 16px,
-    linear-gradient(90deg, var(--grid-minor) 1px, transparent 1px) 0 0 / 16px 16px,
-    var(--bg-raised);
-  border: var(--hair) dashed var(--rule-strong);
+  background: var(--bg-raised);
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
 }
 
 .empty-state h2,
 .no-results h2 {
   margin: 0;
   color: var(--fg);
-  font-size: var(--step-2);
-  line-height: 1;
-  text-transform: none;
+  font-size: var(--step-1);
+  line-height: 1.2;
 }
 
 .empty-state p,
 .no-results p {
   max-width: 60ch;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
-.empty-state ul {
-  display: grid;
-  gap: var(--space-2);
-  max-width: 70ch;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.empty-state li {
-  display: grid;
-  grid-template-columns: 5.5rem minmax(0, 1fr);
-  gap: var(--space-3);
-  padding-top: var(--space-2);
-  border-top: var(--hair) solid var(--rule);
-}
-
-.empty-state li > span:first-child {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-/* ------------------------------------------------------------- footer */
-
-.title-block {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 2fr);
-  width: calc(100% - 2 * var(--gutter));
-  max-width: calc(var(--max) - 2 * var(--gutter));
-  margin: 0 auto var(--space-6);
-  font-size: var(--step--2);
-  border: var(--hair) solid var(--rule-strong);
-}
-
-.title-cell {
-  display: grid;
-  gap: var(--space-1);
-  min-width: 0;
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  border-right: var(--hair) solid var(--rule);
-}
-
-.title-cell:last-child {
-  border-right: 0;
-}
-
-.title-key {
-  color: var(--muted);
-}
-
-/* Values carry names (vosu, ppy, tosu) that keep their own spelling. */
-.title-value {
-  color: var(--fg-dim);
-  text-transform: none;
-}
-
-.title-value--mode::after {
-  content: var(--mode-label);
+.empty-state.catalog-unavailable {
+  border-left: 3px solid var(--danger);
 }
 
 /* ------------------------------------------------------------- narrow */
@@ -1512,15 +1471,6 @@ kbd {
 @media (max-width: 64rem) {
   .page-head {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .title-block {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .title-cell--wide {
-    grid-column: 1 / -1;
-    border-top: var(--hair) solid var(--rule);
   }
 }
 
@@ -1535,6 +1485,8 @@ kbd {
 @media (max-width: 52rem) {
   .shell-bar {
     gap: var(--space-2) var(--space-3);
+    align-items: center;
+    padding-block: var(--space-2);
   }
 
   /* Brand and tools share the first row; the page tabs then span their own
@@ -1546,6 +1498,8 @@ kbd {
     border: var(--hair) solid var(--rule-strong);
   }
 
+  /* The current tab keeps its underline and a filled background, so it is
+     not shown by colour alone. */
   .page-tabs .nav-link {
     flex: 1;
     flex-direction: column;
@@ -1553,7 +1507,11 @@ kbd {
     align-items: center;
     padding: 0.4rem 0.2rem;
     font-size: 0.95rem;
-    border: 0;
+    border-width: 0 0 2px;
+  }
+
+  .page-tabs .nav-link[aria-current="page"] {
+    background: var(--hover);
   }
 
   .page-tabs .nav-link + .nav-link {
@@ -1569,7 +1527,7 @@ kbd {
   }
 
   .status-cell {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
   }
 
   .status-cell--version {
@@ -1591,15 +1549,6 @@ kbd {
     padding-left: 0;
     border-left: 0;
   }
-
-  .update-notice {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-  }
-
-  .update-notice .button {
-    justify-self: start;
-  }
 }
 
 @media (max-width: 30rem) {
@@ -1611,14 +1560,5 @@ kbd {
      name still states the mode. */
   .mode-name {
     display: none;
-  }
-
-  .title-block {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .title-cell {
-    border-right: 0;
-    border-bottom: var(--hair) solid var(--rule);
   }
 }

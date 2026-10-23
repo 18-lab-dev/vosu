@@ -47,6 +47,10 @@ impl ProductionRouteDelegate {
             Endpoint::CounterDelete => self.counter_delete(&request),
             Endpoint::CounterDetails => self.counter_details(request).await,
             Endpoint::CounterNames => self.counter_names(&request, &body),
+            Endpoint::CounterUpdates => match self.services.page_data.counter_updates().await {
+                Ok(updates) => json_response(StatusCode::OK, updates),
+                Err(error) => json_response(StatusCode::BAD_GATEWAY, json!({"error": error})),
+            },
             Endpoint::DashboardStatus => {
                 let mut status = self.services.report_input.dashboard_status();
                 status["connections"] = json!(self.connections.counts());
@@ -406,14 +410,22 @@ impl ProductionRouteDelegate {
                 Endpoint::Root
                 | Endpoint::Settings
                 | Endpoint::Tools
-                | Endpoint::Available => self.services.pages.lookup_get(
-                    path,
-                    request
-                        .uri()
-                        .query()
-                        .and_then(|query| decoded_query_value(query, "overlay").or_else(|| decoded_query_value(query, "tool")))
-                        .is_some_and(|value| !value.is_empty()),
-                ),
+                | Endpoint::Available => {
+                    let query = request.uri().query();
+                    let named = |key| {
+                        query
+                            .and_then(|query| decoded_query_value(query, key))
+                            .is_some_and(|value| !value.is_empty())
+                    };
+                    let overlay = named("overlay");
+                    match self.services.pages.lookup_get(path, overlay || named("tool")) {
+                        // Overlay settings win when both are named, as on the client.
+                        PageLookup::Dynamic(DynamicPage::OverlaySettings) if !overlay => {
+                            PageLookup::Dynamic(DynamicPage::ToolSettings)
+                        }
+                        lookup => lookup,
+                    }
+                }
                 _ => unreachable!(),
             }
         };

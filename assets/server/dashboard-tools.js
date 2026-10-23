@@ -1,7 +1,7 @@
 // Tools page: renders `GET /api/tools` and drives the lifecycle, launch,
 // data, log, and trust actions of the dashboard API in docs/tools/protocol.md.
 
-import { cardBanner, cardIcon } from './dashboard-catalog.js';
+import { cardBanner, cardIcon, sourceFailures } from './dashboard-catalog.js';
 
 const STATUS_LABELS = {
   stopped: 'Stopped',
@@ -115,7 +115,10 @@ export function mountTools({
   absoluteHttpUrl,
   confirmAction,
   createActionDialog,
+  showModal = (dialog) => dialog.showModal(),
   currentTheme,
+  announce = () => {},
+  rovingGrid = () => null,
   setCount,
   openToolSettings,
 }) {
@@ -136,56 +139,73 @@ export function mountTools({
   const banner = el('p', { className: 'tools-loading', text: 'Reading the tool registry…', attrs: { role: 'status' } });
   root.setAttribute('aria-busy', 'true');
   root.replaceChildren(banner);
-  // Installed and Available share one numbered heading style, so the page
-  // reads as two sheets of the same drawing.
+  // Installed and Available share one plain heading style.
   root.before(el('header', { className: 'tools-catalog__header tools-installed__header' },
-    el('h2', { text: '01 / Installed', attrs: { id: 'tools-installed-title' } })));
+    el('h2', { text: 'Installed', attrs: { id: 'tools-installed-title' } })));
+  root.setAttribute('aria-labelledby', 'tools-installed-title');
 
   const api = (id, suffix = '') => `/api/tools/${encodeURIComponent(id)}${suffix}`;
-  const availableCards = el('div', { className: 'tools-root' });
-  const catalogStatus = el('p', { className: 'tools-loading', text: 'Fetching catalog sources…', attrs: { role: 'status' } });
+  const availableCards = el('div', { className: 'tools-root', attrs: { 'aria-labelledby': 'tools-available-title' } });
+  const catalogStatus = el('div', { className: 'tools-loading', text: 'Fetching catalog sources…' });
   const catalogRefresh = el('button', { className: 'button', text: 'Refresh catalog', attrs: { type: 'button' } });
   const available = el('section', { className: 'tools-catalog', attrs: { 'aria-labelledby': 'tools-available-title' } },
     el('header', { className: 'tools-catalog__header' },
-      el('h2', { text: '02 / Available', attrs: { id: 'tools-available-title' } }), catalogRefresh),
+      el('h2', { text: 'Available', attrs: { id: 'tools-available-title' } }), catalogRefresh),
     catalogStatus, availableCards);
   root.after(available);
   let catalogTools = [];
+  // One Tab stop per card grid; arrows move between cards.
+  const installedGrid = rovingGrid(root, ':scope > .tool-card');
+  const availableGrid = rovingGrid(availableCards, ':scope > .tool-card');
 
+  // The catalog entry of an installed tool, for Update and Uninstall.
+  function catalogEntry(id) {
+    return catalogTools.find((tool) => tool.id === id && !tool.shadowed) ?? null;
+  }
+
+  // Only tools that are not installed, or have an update, are offered here;
+  // installed tools are managed from their own card and its Details.
   function renderCatalog() {
-    availableCards.replaceChildren(...catalogTools.filter((tool) => matches(tool, tokensOf(state.query))).map((tool) => {
+    const offered = catalogTools.filter((tool) => {
       const installed = state.tools.find((entry) => entry.id === tool.id);
-      const update = installed && tool.update_available;
+      return !installed || (tool.managed && tool.update_available);
+    });
+    const shown = offered.filter((tool) => matches(tool, tokensOf(state.query)));
+    availableCards.replaceChildren(...shown.map((tool) => {
+      const installed = state.tools.find((entry) => entry.id === tool.id);
+      const update = Boolean(installed && tool.update_available);
       const official = ['shiruviaa/vosu-tools', 'shiruviaa/vosulay'].includes(tool.source);
-      const card = el('article', { className: 'tool-card' },
+      const titleId = `catalog-tool-${tool.id}`;
+      const card = el('article', { className: 'tool-card', attrs: { 'data-catalog-tool': tool.id, 'aria-labelledby': titleId } },
         cardBanner(tool.banner_url),
         el('div', { className: 'tool-card__top' },
           cardIcon(tool.name || tool.id, tool.icon_url),
           el('div', { className: 'tool-card__head' },
-            el('h2', { attrs: { title: `${tool.author} · ${tool.source}` } }, tool.name, el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
+            el('h2', { attrs: { id: titleId, title: `${tool.author} · ${tool.source}` } }, tool.name, el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
             el('p', { className: 'tool-card__status' },
               ...interfaceChips(tool),
               tool.shadowed || !official ? el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : 'User catalog' }) : null,
               update ? el('span', { className: 'badge badge-warning', text: 'Update available' }) : null))),
-        tool.description ? el('p', { className: 'tool-card__description', text: tool.description, attrs: { title: tool.description } }) : null);
+        tool.description ? el('p', { className: 'tool-card__description', text: tool.description }) : null);
+      if (list(tool.requires).length) card.append(el('p', { className: 'tool-card__description', text: `Requires ${tool.requires.map((r) => `${r.id} ${r.version}`).join(', ')}` }));
       const actions = el('div', { className: 'tool-card__actions' });
-      const add = (label, action, removeData) => {
-        const button = actionButton(label, action, { primary: action === 'install', disabled: tool.shadowed || !tool.supported || (installed && !tool.managed) });
-        button.addEventListener('click', () => catalogAction(button, tool, action, removeData));
-        actions.append(button);
-      };
       if (tool.shadowed) actions.append(el('span', { className: 'field-help', text: 'An earlier source provides this id.' }));
-      else if (!installed) add('Install', 'install');
-      else if (tool.managed) {
-        if (update) add('Update', 'update');
-        add('Uninstall…', 'uninstall');
-        if (!update) actions.append(el('span', { className: 'field-help', text: `Installed v${installed.version}` }));
-      } else actions.append(el('span', { className: 'field-help', text: `Using ${SOURCE_LABELS[installed.source]} tool` }));
+      else {
+        const action = update ? 'update' : 'install';
+        const button = actionButton(update ? 'Update' : 'Install', action, {
+          primary: true, disabled: !tool.supported, describe: `${update ? 'Update' : 'Install'} ${tool.name}`,
+        });
+        button.addEventListener('click', () => catalogAction(button, tool, action));
+        actions.append(button);
+      }
       if (!tool.supported) actions.append(el('span', { className: 'field-help', text: 'Not available for this platform' }));
-      if (list(tool.requires).length) card.append(el('p', { className: 'tool-card__description', text: `Requires: ${tool.requires.map((r) => `${r.id} ${r.version}`).join(', ')} (installed first)` }));
       card.append(actions);
       return card;
     }));
+    if (!shown.length && catalogTools.length) {
+      availableCards.append(el('p', { className: 'tools-loading', text: offered.length ? 'No matching tools.' : 'Every catalog tool is installed.' }));
+    }
+    availableGrid?.refresh();
   }
 
   async function fetchCatalog() {
@@ -195,26 +215,32 @@ export function mountTools({
       catalogTools = list(payload.tools);
       catalogTools.push(...list(payload.shadowed).filter((entry) => entry.kind === 'tool'));
       // Sources are only worth a line when one failed.
-      catalogStatus.textContent = list(payload.sources).filter((source) => source.last_error)
-        .map((source) => `${source.source}: ${source.last_error}`).join(' · ');
+      catalogStatus.replaceChildren(...[sourceFailures(list(payload.sources), fetchCatalog)].filter(Boolean));
       renderCatalog();
+      refreshOpenDetails();
     } catch (error) {
-      catalogStatus.textContent = `Catalog unavailable: ${errorText(error)}. Installed tools still work.`;
+      const failure = el('p', { className: 'catalog-failures', text: `Couldn't load the catalog: ${errorText(error)}. Installed tools still work. ` });
+      const retry = el('button', { className: 'link-button', text: 'Retry', attrs: { type: 'button' } });
+      retry.addEventListener('click', fetchCatalog);
+      failure.append(retry);
+      catalogStatus.replaceChildren(failure);
     } finally { setBusy(catalogRefresh, false); }
   }
   catalogRefresh.addEventListener('click', fetchCatalog);
 
   function chooseUninstall(button, tool) {
     const { dialog, body } = createActionDialog(`Uninstall ${tool.name}?`);
-    body.append(el('p', { text: 'Choose what happens to this tool’s saved data and cache.' }));
-    for (const [label, removeData] of [['Keep data', false], ['Remove data', true]]) {
-      const choice = el('button', { className: `button${removeData ? ' button-danger' : ' button-primary'}`, text: label, attrs: { type: 'button' } });
-      choice.addEventListener('click', () => { dialog.close(); catalogAction(button, tool, 'uninstall', removeData); });
-      body.append(choice);
-    }
+    body.append(el('p', { text: 'Keep or remove its saved data and cache?' }));
     const cancel = el('button', { className: 'button', text: 'Cancel', attrs: { type: 'button' } });
     cancel.addEventListener('click', () => dialog.close());
-    body.append(cancel); cancel.focus();
+    const actions = el('div', { className: 'dialog-actions' }, cancel);
+    for (const [label, removeData] of [['Uninstall, keep data', false], ['Uninstall, remove data', true]]) {
+      const choice = el('button', { className: `button ${removeData ? 'button-danger button-danger--solid' : 'button-danger'}`, text: label, attrs: { type: 'button' } });
+      choice.addEventListener('click', () => { dialog.close(); catalogAction(button, tool, 'uninstall', removeData); });
+      actions.append(choice);
+    }
+    body.append(actions);
+    cancel.focus();
   }
 
   async function catalogAction(button, tool, action, removeData) {
@@ -224,15 +250,16 @@ export function mountTools({
       const response = await requestJson(api(tool.id, `/${action}`), { method: 'POST', body: JSON.stringify({ remove_data: removeData }) });
       for (;;) {
         const job = await requestJson(`/api/tools/catalog/jobs/${encodeURIComponent(response.job_id)}`);
-        catalogStatus.textContent = `${tool.name}: ${job.phase}`;
+        if (button.isConnected) button.textContent = `${job.phase}…`;
         if (job.status === 'completed') break;
         if (job.status === 'failed') throw new Error(job.error || 'Installation failed');
         await new Promise((resolve) => window.setTimeout(resolve, 350));
       }
-      notify(`${tool.name}: ${action} completed.`, 'success');
+      const done = { install: 'installed', update: 'updated', uninstall: 'uninstalled' };
+      notify(`${tool.name} was ${done[action] ?? 'updated'}.`, 'success');
       await refresh();
       await fetchCatalog();
-    } catch (error) { notify(`${tool.name}: ${errorText(error)}`, 'error', 5000); }
+    } catch (error) { notify(`${tool.name}: ${errorText(error)}`, 'error'); }
     finally { setBusy(button, false); }
   }
 
@@ -273,9 +300,9 @@ export function mountTools({
     return value;
   }
 
-  function actionButton(label, action, { primary = false, danger = false, disabled = false, describe } = {}) {
+  function actionButton(label, action, { primary = false, danger = false, update = false, disabled = false, describe } = {}) {
     const button = el('button', {
-      className: `button${primary ? ' button-primary' : ''}${danger ? ' button-danger' : ''}`,
+      className: `button${primary ? ' button-primary' : ''}${danger ? ' button-danger' : ''}${update ? ' button-update' : ''}`,
       text: label,
       attrs: { type: 'button', 'data-tool-action': action, 'aria-label': describe },
     });
@@ -311,7 +338,10 @@ export function mountTools({
     if (!view.trusted && status !== 'invalid') {
       actions.append(actionButton('Trust…', 'trust', { primary: true, describe: `Trust ${name}` }));
     }
-    if (view.ui_url) {
+    // A disabled tool's next step is Enable; Open returns once it is usable.
+    const enable = !view.enabled && view.trusted && status !== 'invalid';
+    if (enable) actions.append(actionButton('Enable', 'enable', { primary: true, describe: `Enable ${name}` }));
+    if (view.ui_url && !enable) {
       actions.append(actionButton('Open', 'launch', {
         primary: view.trusted, disabled: !usable, describe: `Open ${name} in a new tab`,
       }));
@@ -322,8 +352,9 @@ export function mountTools({
         ? actionButton('Stop', 'stop', { describe: `Stop ${name}` })
         : actionButton('Start', 'start', { describe: `Start ${name}` }));
     }
-    if (!view.enabled && view.trusted && status !== 'invalid') {
-      actions.append(actionButton('Enable', 'enable', { primary: !view.ui_url, describe: `Enable ${name}` }));
+    const entry = catalogEntry(view.id);
+    if (entry?.managed && entry.update_available) {
+      actions.append(actionButton('Update', 'catalog-update', { update: true, describe: `Update ${name} to v${entry.version}` }));
     }
     if (view.has_settings) {
       actions.append(actionButton('Settings', 'settings', { describe: `Settings for ${name}` }));
@@ -357,14 +388,21 @@ export function mountTools({
     }, el('code', { text: dependency.id }), dependency.version ? ` ${dependency.version}` : '',
     el('span', { className: 'tool-dependency__state', text: dependency.satisfied ? 'OK' : 'Unmet' })), 'Nothing'));
     add('Required by', idList(requiredBy, (id) => el('li', {}, el('code', { text: id })), 'No tools'));
-    add('Permissions', idList(permissions, (permission) => el('li', {}, el('code', { text: permission })), 'None'));
+    if (homepage) add('Homepage', el('a', { text: new URL(homepage).host, attrs: { href: homepage, target: '_blank', rel: 'noopener noreferrer' } }));
+
+    // Permission ids, routes and the command line matter to tool authors,
+    // not to everyday use.
+    const developer = el('dl', { className: 'v-facts' });
+    const addDeveloper = (label, value) => developer.append(el('dt', { text: label }), el('dd', {}, value));
+    addDeveloper('Permissions', idList(permissions, (permission) => el('li', {}, el('code', { text: permission })), 'None'));
     if (apiRead.length || apiWrite.length) {
-      add('API routes', el('ul', {},
+      addDeveloper('API routes', el('ul', {},
         ...apiRead.map((route) => el('li', {}, 'read ', el('code', { text: route }))),
         ...apiWrite.map((route) => el('li', {}, 'write ', el('code', { text: route })))));
     }
-    if (view.cli) add('Command', el('code', { text: view.cli.usage }));
-    if (homepage) add('Homepage', el('a', { text: new URL(homepage).host, attrs: { href: homepage, target: '_blank', rel: 'noopener noreferrer' } }));
+    if (view.cli) addDeveloper('Command', el('code', { text: view.cli.usage }));
+    if (view.path) addDeveloper('Folder', el('code', { text: view.path }));
+    const developerDetails = el('details', { className: 'tool-details__developer' }, el('summary', { text: 'Developer details' }), developer);
 
     const actions = el('div', { className: 'v-row' });
     const usable = view.trusted && view.enabled && !['invalid', 'untrusted', 'disabled'].includes(status);
@@ -374,14 +412,29 @@ export function mountTools({
     actions.append(
       actionButton('Data', 'data', { describe: `Data folders for ${name}` }),
       actionButton('Logs', 'logs', { describe: `Logs for ${name}` }));
+    const entry = catalogEntry(view.id);
+    if (entry?.managed && entry.update_available) {
+      actions.append(actionButton('Update', 'catalog-update', { update: true, describe: `Update ${name} to v${entry.version}` }));
+    }
     if (status !== 'invalid' && view.trusted && view.enabled) {
       actions.append(actionButton('Disable', 'disable', { danger: true, describe: `Disable ${name}` }));
+    }
+    // Catalog-installed tools are uninstalled here, not from Available.
+    if (entry?.managed) {
+      actions.append(actionButton('Uninstall…', 'catalog-uninstall', { danger: true, describe: `Uninstall ${name}` }));
     }
     return [
       view.description ? el('p', { className: 'tool-details__description', text: view.description }) : null,
       facts,
+      developerDetails,
       actions,
     ].filter(Boolean);
+  }
+
+  function refreshOpenDetails() {
+    const open = state.details;
+    const current = open && state.tools.find((view) => view.id === open.id);
+    if (current && open.dialog.open) open.body.replaceChildren(...detailsContent(current));
   }
 
   // One drawer, refreshed by polling while it is open.
@@ -400,7 +453,7 @@ export function mountTools({
     }, { once: true });
     document.body.append(dialog);
     state.details = { dialog, body, id: view.id, signature: state.signatures.get(view.id) };
-    dialog.showModal();
+    showModal(dialog);
     close.focus();
   }
 
@@ -442,11 +495,12 @@ export function mountTools({
     if (showEmpty && !empty) {
       empty = el('div', { className: 'no-results' },
         el('h2', { text: 'No matching tools' }),
-        el('p', { text: 'Try a shorter name, an author, or a status such as running.' }));
+        el('p', { text: 'Try fewer words, an author, or a status such as running.' }));
       root.append(empty);
     } else if (!showEmpty) {
       empty?.remove();
     }
+    if (tokens.length) announce(`${visible} of ${state.tools.length} tools match`);
   }
 
   // Replaces only cards whose view changed, keeping keyboard focus on the
@@ -592,6 +646,7 @@ export function mountTools({
         `${action === 'disable' ? 'Disable' : 'Stop'} ${name}?`,
         `${dependents.join(', ')} ${dependents.length === 1 ? 'depends' : 'depend'} on ${name} and will be blocked until it runs again.`,
         action === 'disable' ? 'Disable' : 'Stop',
+        { danger: true },
       );
     }
     return true;
@@ -621,7 +676,7 @@ export function mountTools({
   function openData(view) {
     const name = view.name || view.id;
     const { dialog, body } = createActionDialog(`${name} data`);
-    const intro = el('p', { text: 'vosu keeps a durable data folder and an evictable cache folder for each tool. Disabling a tool keeps both.' });
+    // Folder paths and sizes only; what each folder is for is in the docs.
     const rows = el('dl', { className: 'tool-data' });
     const help = el('p', { className: 'field-help' });
     const openFolder = el('button', { className: 'button', text: 'Open data folder', attrs: { type: 'button' } });
@@ -638,9 +693,11 @@ export function mountTools({
         el('div', {}, el('dt', { text: 'Cache' }), el('dd', {}, el('code', { text: data.cache_dir ?? 'Unknown' })),
           el('dd', { className: 'tool-data__size', text: formatBytes(Number(data.cache_bytes)) })),
       );
-      // The protocol lets the dashboard clear a cache only while nothing uses it.
+      // The protocol lets the dashboard clear a cache only while nothing uses
+      // it, and an empty cache has nothing to clear.
       const busy = Boolean(current.process?.pid);
-      clear.disabled = busy;
+      const empty = Number(data.cache_bytes) === 0;
+      clear.disabled = busy || empty;
       help.textContent = busy ? `Stop ${name} to clear its cache.` : '';
       help.hidden = !busy;
     }
@@ -672,12 +729,12 @@ export function mountTools({
     openFolder.addEventListener('click', () => post(openFolder, 'open-data', 'Opened the data folder.'));
     clear.addEventListener('click', async () => {
       const size = formatBytes(Number(current.data?.cache_bytes));
-      if (!await confirmAction(`Clear the ${name} cache?`, `${current.data?.cache_dir ?? ''}\n${size} will be deleted. The tool rebuilds what it needs.`, 'Clear cache')) return;
+      if (!await confirmAction(`Clear the ${name} cache?`, `${current.data?.cache_dir ?? ''}\n${size} will be deleted.`, 'Clear cache', { danger: true })) return;
       post(clear, 'clear-cache', 'Cache cleared.');
     });
     close.addEventListener('click', () => dialog.close());
     paint();
-    body.append(intro, rows, help, status, el('div', { className: 'dialog-actions' }, openFolder, clear, close));
+    body.append(rows, help, status, el('div', { className: 'dialog-actions' }, openFolder, clear, close));
     close.focus();
     reload();
   }
@@ -687,7 +744,7 @@ export function mountTools({
     const titleId = `logs-title-${view.id}`;
     const dialog = el('dialog', { className: 'dashboard-dialog logs-drawer', attrs: { 'aria-labelledby': titleId } });
     const closeButton = el('button', { className: 'icon-button', text: '✕', attrs: { type: 'button', 'aria-label': 'Close logs' } });
-    const follow = el('input', { attrs: { type: 'checkbox', checked: true } });
+    const follow = el('input', { className: 'v-toggle', attrs: { type: 'checkbox', role: 'switch', checked: true } });
     const copy = el('button', { className: 'button', text: 'Copy', attrs: { type: 'button' } });
     const status = el('p', { attrs: { role: 'status' } });
     // A log region would read every new line aloud; users read it on demand.
@@ -699,10 +756,9 @@ export function mountTools({
     output.append(empty);
     dialog.append(el('div', { className: 'dialog-frame' },
       el('header', { className: 'dialog-header' },
-        el('div', {}, el('h2', { text: `${name} logs`, attrs: { id: titleId } }),
-          el('p', { text: `Newest ${MAX_LOG_LINES} lines from the tool's output and from vosu.` })),
+        el('h2', { text: `${name} logs`, attrs: { id: titleId } }),
         closeButton),
-      el('div', { className: 'logs-toolbar' }, el('label', {}, follow, 'Follow output'), copy, status),
+      el('div', { className: 'logs-toolbar' }, el('label', { className: 'v-check' }, follow, 'Follow output'), copy, status),
       output));
 
     let after = 0;
@@ -761,7 +817,7 @@ export function mountTools({
         .map((row) => [...row.children].map((cell) => cell.textContent).join('  ')).join('\n');
       try {
         await navigator.clipboard.writeText(text);
-        notify('Logs copied.', 'success', 1800);
+        notify('Logs copied.', 'success', 2600);
       } catch (error) {
         notify(`Could not copy logs: ${errorText(error)}`, 'error');
       }
@@ -773,7 +829,7 @@ export function mountTools({
       dialog.remove();
     }, { once: true });
     document.body.append(dialog);
-    dialog.showModal();
+    showModal(dialog);
     output.focus();
     poll();
   }
@@ -790,7 +846,10 @@ export function mountTools({
     else if (action === 'data') openData(view);
     else if (action === 'settings') openToolSettings(view.id, view.name || view.id);
     else if (action === 'logs') openLogs(view);
-    else lifecycle(button, view, action);
+    else if (action === 'catalog-update' || action === 'catalog-uninstall') {
+      const entry = catalogEntry(view.id);
+      if (entry) catalogAction(button, entry, action === 'catalog-update' ? 'update' : 'uninstall');
+    } else lifecycle(button, view, action);
   }
   root.addEventListener('click', handleAction);
 

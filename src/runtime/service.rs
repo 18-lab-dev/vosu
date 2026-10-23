@@ -208,8 +208,17 @@ pub(super) struct RuntimePages {
     pub(super) update_version: Option<String>,
 }
 
+/// One scan of the overlays folder: readable overlays and the folders that
+/// failed to parse.
+struct LocalScan {
+    counters: Vec<crate::counters::Counter>,
+    broken: Vec<crate::counters::BrokenOverlay>,
+}
+
 impl RuntimePages {
-    async fn local_counters(&self) -> Result<Vec<crate::counters::Counter>, String> {
+    /// `Err` only when the overlays folder itself cannot be walked; a broken
+    /// overlay is reported in [`LocalScan::broken`] instead.
+    async fn local_scan(&self) -> Result<LocalScan, String> {
         // Acquire before spawning so concurrent requests cannot grow the blocking
         // pool without bound. A cancelled request leaves its worker holding its slot.
         static DISCOVERY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
@@ -218,12 +227,14 @@ impl RuntimePages {
             .await
             .expect("discovery semaphore is never closed");
         let counters = Arc::clone(&self.counters);
-        tokio::task::spawn_blocking(move || {
+        let (counters, broken) = tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            counters.discover().unwrap_or_default()
+            counters.discover_all()
         })
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+        Ok(LocalScan { counters, broken })
     }
 
     /// Declared preview colour scheme of each local overlay, read from its
@@ -247,11 +258,29 @@ impl RuntimePages {
         .unwrap_or_default()
     }
 
-    async fn annotate_updates(&self, local: &mut [crate::counters::Counter]) {
+    /// Update annotations from the last fetched catalog only: local overlays
+    /// never wait on the catalog host. The page asks `/api/counters/updates`
+    /// for fresh annotations afterwards.
+    fn annotate_cached_updates(&self, local: &mut [crate::counters::Counter]) {
         let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
-        if let Ok(remote) = self.catalog.fetch(&installed, &self.shutdown).await {
+        if let Some(remote) = self.catalog.cached(&installed) {
             annotate_installed_updates(local, &remote);
         }
+    }
+
+    async fn installed_html(
+        &self,
+        scan: LocalScan,
+        query: Option<&str>,
+        authority: &str,
+    ) -> String {
+        let mut local = scan.counters;
+        self.annotate_cached_updates(&mut local);
+        let schemes = self.preview_schemes(&local).await;
+        let names = self.counters.names().snapshot();
+        let mut html = render_local_counters(&local, &schemes, &names, query, authority);
+        html.push_str(&render_broken_overlays(&scan.broken, &names, query));
+        html
     }
 }
 
@@ -264,32 +293,39 @@ impl PageDataProvider for RuntimePages {
         Box::pin(async move {
             let config = self.config.current();
             let authority = authority.unwrap_or_else(|| configured_authority(&config));
-            let local = self.local_counters().await?;
-            let local_count = Some(local.len());
+            let scan = self.local_scan().await;
+            let local_count = scan
+                .as_ref()
+                .ok()
+                .map(|scan| scan.counters.len() + scan.broken.len());
             let (list, available_count) = match page {
-                DynamicPage::Dashboard => {
-                    let mut local = local;
-                    self.annotate_updates(&mut local).await;
-                    let schemes = self.preview_schemes(&local).await;
-                    let names = self.counters.names().snapshot();
-                    let html = render_local_counters(&local, &schemes, &names, None, &authority);
-                    (
-                        if html.is_empty() {
-                            r#"<div class="empty-state"><h2>No local overlays yet</h2><p>Install one, or copy an overlay folder into the overlays folder.</p><div class="counter-actions"><a class="button button-primary" href="/available">Browse available overlays</a><button class="button" type="button" data-action="open-overlays-root">Open overlays folder</button></div></div>"#.to_owned()
-                        } else {
-                            html
-                        },
-                        None,
-                    )
-                }
+                DynamicPage::Dashboard => (
+                    match scan {
+                        Ok(scan) => {
+                            let html = self.installed_html(scan, None, &authority).await;
+                            if html.is_empty() {
+                                INSTALLED_EMPTY_STATE.to_owned()
+                            } else {
+                                html
+                            }
+                        }
+                        Err(error) => {
+                            render_overlays_unreadable(&self.counters.current_root(), &error)
+                        }
+                    },
+                    None,
+                ),
                 DynamicPage::Settings => (render_runtime_settings(&self.config.current()), None),
-                DynamicPage::EmptySettings => (String::new(), None),
+                DynamicPage::OverlaySettings | DynamicPage::ToolSettings => (String::new(), None),
                 DynamicPage::Tools => (
                     r#"<div id="tools-root" class="tools-root"></div>"#.to_owned(),
                     None,
                 ),
                 DynamicPage::Available => {
-                    let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
+                    // An unreadable overlays folder leaves the catalog browsable.
+                    let installed = scan
+                        .map(|scan| scan.counters.iter().map(local_overlay).collect::<Vec<_>>())
+                        .unwrap_or_default();
                     match self.catalog.fetch(&installed, &self.shutdown).await {
                         Ok(remote) => {
                             let count = remote.len();
@@ -305,19 +341,19 @@ impl PageDataProvider for RuntimePages {
                         }
                         Err(error) => (
                             format!(
-                                r#"<div class="empty-state" role="alert"><h2>Catalog unavailable</h2><p>{}</p></div>"#,
+                                r#"<div class="empty-state catalog-unavailable" role="alert"><h2>Couldn't reach the community catalog</h2><p>{}</p><a class="button" href="/available">Retry</a></div>"#,
                                 escape_html(&error.to_string())
                             ),
-                            Some(0),
+                            None,
                         ),
                     }
                 }
             };
             Ok(render_homepage(
                 self.pages.dashboard_template(),
+                page,
                 local_count,
                 available_count,
-                !matches!(page, DynamicPage::EmptySettings),
                 if matches!(page, DynamicPage::Available) {
                     CATALOG_NOTICE
                 } else {
@@ -339,9 +375,12 @@ impl PageDataProvider for RuntimePages {
         Box::pin(async move {
             let config = self.config.current();
             let authority = authority.unwrap_or_else(|| configured_authority(&config));
-            let local = self.local_counters().await?;
             let html = if external {
-                let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
+                let installed = self
+                    .local_scan()
+                    .await
+                    .map(|scan| scan.counters.iter().map(local_overlay).collect::<Vec<_>>())
+                    .unwrap_or_default();
                 let remote = self
                     .catalog
                     .fetch(&installed, &self.shutdown)
@@ -349,16 +388,38 @@ impl PageDataProvider for RuntimePages {
                     .map_err(|error| error.to_string())?;
                 render_catalog_counters(&remote, Some(&query), &authority)
             } else {
-                let mut local = local;
-                self.annotate_updates(&mut local).await;
-                let schemes = self.preview_schemes(&local).await;
-                let names = self.counters.names().snapshot();
-                render_local_counters(&local, &schemes, &names, Some(&query), &authority)
+                let scan = self.local_scan().await?;
+                self.installed_html(scan, Some(&query), &authority).await
             };
             Ok(Bytes::from(if html.is_empty() {
                 empty_counter_search()
             } else {
                 html
+            }))
+        })
+    }
+
+    fn counter_updates(
+        &self,
+    ) -> crate::server::routes::ProviderFuture<'_, Result<serde_json::Value, String>> {
+        Box::pin(async move {
+            let mut local = self.local_scan().await?.counters;
+            let installed = local.iter().map(local_overlay).collect::<Vec<_>>();
+            let remote = self
+                .catalog
+                .fetch(&installed, &self.shutdown)
+                .await
+                .map_err(|error| error.to_string())?;
+            annotate_installed_updates(&mut local, &remote);
+            Ok(json!({
+                "updates": local
+                    .iter()
+                    .filter(|counter| counter.updatable)
+                    .filter_map(|counter| Some(json!({
+                        "folder": counter.folder_name,
+                        "download_url": counter.download_link.as_deref()?,
+                    })))
+                    .collect::<Vec<_>>(),
             }))
         })
     }
