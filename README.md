@@ -527,6 +527,7 @@ Tools following the current map can subscribe to these additive fields through
 | `/settings/mania/timingBasedNoteColouring` | Optional lazer ruleset boolean. |
 | `/settings/mania/perBeatmapScrollSpeed` | Optional stable current-map speed when per-map speeds are enabled and its memory value is available (`READ_MANIA_SCROLL_SPEED` must be enabled). |
 | `/settings/visual` | Optional object with nullable `snakingInSliders`, `snakingOutSliders`, `hitLighting`, `beatmapColours`, `hitAnimations`, `rateAdjustedHitAnimation`. Lazer reads client/ruleset config; stable exposes its `SnakingSliders` and `HitLighting`. Ruleset-dependent animation toggles describe the selected ruleset, not a previously selected one. Beatmap skin permission remains the inverse of `/settings/skin/ignoreBeatmapSkins`. |
+| `/settings/visual/comboColourNormalisation` | Lazer's current `ComboColourNormalisationAmount` float (`0`–`1`, client default `0.2`), read using the client's generated configuration key. Stable reports null; an unavailable lazer value is null, never replaced with the default. |
 | `/settings/visual/scalingMode`, `/settings/visual/positionX`, `/settings/visual/positionY`, `/settings/visual/sizeX`, `/settings/visual/sizeY` | Optional lazer viewport scaling mode and normalized position/size settings; unknown values are null. Skin hit positions and column widths remain skin resources, not separate client configuration. |
 
 With a subscription active, regular and precise sampling use

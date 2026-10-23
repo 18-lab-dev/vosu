@@ -105,6 +105,8 @@ fn pinned_local_config_keys_are_measured_enum_values() {
         (k.beatmap_skins, k.beatmap_colours, k.hit_lighting),
         (56, 57, 75)
     );
+    assert_eq!(k.combo_colour_normalisation_amount, 87);
+    assert_eq!(k.fields().last(), Some(&(87, 4)));
     assert_ne!(
         k.beatmap_skins, 54,
         "54 is ScreenshotFormat in this pinned client"

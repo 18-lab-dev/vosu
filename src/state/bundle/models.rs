@@ -106,6 +106,7 @@ impl Default for SettingsState {
         values.insert("visual".into(), json!({
             "snakingInSliders": null, "snakingOutSliders": null,
             "hitLighting": null, "beatmapColours": null,
+            "comboColourNormalisation": null,
             "hitAnimations": null, "rateAdjustedHitAnimation": null,
             "scalingMode": null, "positionX": null, "positionY": null, "sizeX": null, "sizeY": null
         }));

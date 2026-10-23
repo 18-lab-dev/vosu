@@ -183,6 +183,7 @@ pub struct Visual {
     pub snaking_out_sliders: Option<bool>,
     pub hit_lighting: Option<bool>,
     pub beatmap_colours: Option<bool>,
+    pub combo_colour_normalisation: Option<f64>,
     pub hit_animations: Option<bool>,
     pub rate_adjusted_hit_animation: Option<bool>,
     pub scaling_mode: Option<i64>,
