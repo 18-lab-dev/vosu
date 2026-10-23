@@ -33,7 +33,8 @@
   box-sizing: border-box;
 }
 
-.v-app :is(button, input, select, textarea) {
+/* :where keeps this reset at (0,1,0) so component classes like .v-btn--primary win. */
+.v-app :where(button, input, select, textarea) {
   color: inherit;
   font: inherit;
 }
