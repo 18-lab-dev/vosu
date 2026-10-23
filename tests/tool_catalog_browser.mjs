@@ -44,9 +44,10 @@ try {
     await sources.getByRole('button', { name: 'Move source 3 up', exact: true }).click();
     if (await sources.getByLabel('Catalog source 2', { exact: true }).inputValue() !== 'owner/repo@v1.0.0') throw new Error('Source reorder failed');
     // Edited, unsaved sources show in the form's save summary.
-    await page.locator('.settings-header .settings-status', { hasText: 'Unsaved changes below' }).waitFor();
+    await page.locator('.page-head .settings-status', { hasText: 'Unsaved changes' }).waitFor();
     await sources.getByRole('button', { name: 'Remove owner/repo@v1.0.0', exact: true }).click();
-    await page.locator('.settings-header .settings-status', { hasText: 'All changes saved' }).waitFor();
+    // Back to the saved list: the save state is empty again.
+    await page.locator('.page-head .settings-status').waitFor({ state: 'hidden' });
     await sources.screenshot({ path: `${evidence}/sources-${theme}.png` });
 
     await page.goto('http://127.0.0.1:25151/available');

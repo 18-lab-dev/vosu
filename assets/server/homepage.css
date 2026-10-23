@@ -126,8 +126,7 @@ kbd {
 .tool-status,
 .counter-card__url-action,
 .preview-scale,
-.gallery__count,
-.settings-status {
+.gallery__count {
   font-family: var(--font-mono);
   font-weight: 400;
   letter-spacing: 0.06em;
@@ -516,6 +515,16 @@ body:has(#update-notice:not([hidden])) .status-update {
 
 .page-head:not(:has(.search-form)) {
   grid-template-columns: minmax(0, 1fr);
+}
+
+/* Settings: title, save state and search on one row. */
+.page-head:has(> .settings-status) {
+  grid-template-columns: minmax(0, 1fr) auto minmax(14rem, 26rem);
+}
+
+/* Fixed columns, so the search keeps its place while the state is empty. */
+.page-head:has(> .settings-status) > .search-form {
+  grid-column: 3;
 }
 
 .search-form {
@@ -1475,8 +1484,13 @@ body:has(#update-notice:not([hidden])) .status-update {
 /* ------------------------------------------------------------- narrow */
 
 @media (max-width: 64rem) {
-  .page-head {
+  .page-head,
+  .page-head:has(> .settings-status) {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-head:has(> .settings-status) > .search-form {
+    grid-column: auto;
   }
 }
 

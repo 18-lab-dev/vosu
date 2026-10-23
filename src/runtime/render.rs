@@ -129,6 +129,13 @@ pub(super) fn render_homepage(
         .unwrap_or_default();
     let current_version = current_version().to_string();
     let search = chrome.search.map(search_form).unwrap_or_default();
+    // Settings saves as you go: its save state shares the title row and is
+    // empty at rest (homepage.js fills it after a save or while edits wait).
+    let status = if page == DynamicPage::Settings {
+        r#"<p class="settings-status" hidden></p>"#
+    } else {
+        ""
+    };
     let current = |key: &str| {
         if chrome.key == key {
             r#" aria-current="page""#
@@ -146,6 +153,7 @@ pub(super) fn render_homepage(
             "CURRENT_AVAILABLE" => current("available"),
             "CURRENT_TOOLS" => current("tools"),
             "CURRENT_SETTINGS" => current("settings"),
+            "PAGE_STATUS" => status,
             "SEARCH" => &search,
             "NOTICE" => notice,
             "LIST" => list,
@@ -1077,7 +1085,7 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         version = escape_html(&current_version().to_string()),
     );
     format!(
-        r#"<form class="settings" id="runtime-settings"><header class="settings-header"><span class="settings-status" role="status">All changes saved</span></header>{general}{data}{server}{advanced}{about}<p class="settings-empty" hidden>No settings match your search.</p></form>"#
+        r#"<form class="settings" id="runtime-settings">{general}{data}{server}{advanced}{about}<p class="settings-empty" hidden>No settings match your search.</p></form>"#
     )
 }
 
