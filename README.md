@@ -536,6 +536,13 @@ users can configure a slower interval, and publication/backpressure stays
 latest-only. Missing but syntactically valid JSON Pointers are permitted and
 report per-pointer absence; they do not invalidate the whole subscription.
 
+Beatmap selection changes bypass the compatibility API's regular polling interval:
+the checksum and its current beatmap/audio/background paths are published together
+before selected-field subscribers are notified. Between selection changes, regular
+fields retain their configured API cadence. Separate requests are not a transaction: if the user changes
+selection again during a fetch, consumers should compare the downloaded map's MD5
+with their latest selected checksum.
+
 ### Current game files
 
 - `GET /backgroundImage`
