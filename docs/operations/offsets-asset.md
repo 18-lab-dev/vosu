@@ -130,6 +130,25 @@ No user session was attached. Native Windows execution, real skin switching,
 live per-map stable speed discovery and dynamic-mod track-rate changes remain
 unverified; Windows MSVC cross-checks are not substitutes for those observations.
 
+## Combo-colour normalisation extension (2026-10-23)
+
+The same owning generator, pinned AppImage assemblies and bundled runtime measured
+the additional `OsuSetting.ComboColourNormalisationAmount` enum literal (87).
+All prior measurements and the MethodTable signature are unchanged. The generated
+asset SHA-256 is
+`d75d393c114f8c076293b2457dda2bdb7cbbdb8b829c266946fd4649104a0773`.
+The template now includes this enum member; reproduce it with the current skin
+extension's `--assemblies-only` procedure above, using the committed asset as
+`--template`. Do not add a hand-measured numeric key to the reader.
+
+[Pinned OsuConfigManager.cs](https://github.com/ppy/osu/blob/aaa75b7c0a9f21d558ce84cd0ffac6c739bad8e7/osu.Game/Configuration/OsuConfigManager.cs)
+declares a `Bindable<float>`, range 0–1 and default 0.2. Both native reader paths
+preserve the actual float and expose it as
+`/settings/visual/comboColourNormalisation`; stable and unavailable values remain
+null. Offline coverage compares batched/sequential reads of 0.375 and DTO/direct
+serialization. No live client attachment or native Windows execution was performed.
+
+
 The commands below reproduce the explicitly historical `2026.726.0` asset.
 They document prior source, runtime, DAC, and generator inputs; they are not a
 recipe for the currently retained `2026.921.0` asset. Provenance for the current

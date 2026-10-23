@@ -16,7 +16,7 @@ const STRING_CHARS: usize = 12;
 const MAX_STRING_UNITS: i32 = 4095;
 
 /// Local keys are generated enum literals, in sequential decoder read order.
-const LOCAL_FIELD_COUNT: usize = 26;
+const LOCAL_FIELD_COUNT: usize = 27;
 /// Framework config keys, offsets within the bindable value, and widths. The window sizes
 /// read width and height together as one eight-byte span at +4.
 const FRAMEWORK_FIELDS: [(i32, usize, usize); 7] = [
@@ -324,6 +324,10 @@ impl LazerMemory {
             Value::from(flag(&local[19])),
         );
         out.insert("visual.hitLighting".into(), Value::from(flag(&local[20])));
+        out.insert(
+            "visual.comboColourNormalisation".into(),
+            Value::from(f32::from_le_bytes(local[26][..4].try_into().unwrap()) as f64),
+        );
         out.insert("visual.scalingMode".into(), Value::from(le_i32(&local[21])));
         for (i, name) in [
             (22, "positionX"),
@@ -587,6 +591,10 @@ impl LazerMemory {
         out.insert(
             "visual.hitLighting".into(),
             Value::from(boolv(self, k.hit_lighting)?),
+        );
+        out.insert(
+            "visual.comboColourNormalisation".into(),
+            Value::from(f32v(self, k.combo_colour_normalisation_amount)? as f64),
         );
         out.insert(
             "visual.scalingMode".into(),

@@ -90,6 +90,8 @@ fn song_select_encode_includes_clock_mod_settings_ruleset_and_visuals() {
     regular.settings.values.get_mut("mania").unwrap()["scrollSpeed"] = serde_json::json!(8.7);
     regular.settings.values.get_mut("visual").unwrap()["snakingInSliders"] = Value::Bool(false);
     regular.settings.values.get_mut("visual").unwrap()["hitLighting"] = Value::Bool(true);
+    regular.settings.values.get_mut("visual").unwrap()["comboColourNormalisation"] =
+        serde_json::json!(0.375);
     let mut precise = (*base.precise).clone();
     precise.status = 5;
     precise.play_time = 12345.0;
@@ -121,6 +123,10 @@ fn song_select_encode_includes_clock_mod_settings_ruleset_and_visuals() {
     assert_eq!(value["settings"]["visual"]["snakingInSliders"], false);
     assert_eq!(value["settings"]["visual"]["hitLighting"], true);
     assert_eq!(
+        value["settings"]["visual"]["comboColourNormalisation"],
+        0.375
+    );
+    assert_eq!(
         value["settings"]["visual"]["snakingOutSliders"],
         Value::Null
     );
@@ -138,4 +144,17 @@ fn unknown_running_is_not_invented_for_stable_and_lazer_errors() {
             assert_eq!(value["beatmap"]["time"]["rate"], 1.0);
         }
     }
+}
+
+#[test]
+fn stable_combo_colour_normalisation_remains_unknown() {
+    let base = StateBundle::new(ClientType::Stable, 1, Arc::new(NeverCalculate)).snapshot();
+    let mut state = (*base.regular).clone();
+    state.settings.values.get_mut("visual").unwrap()["hitLighting"] = Value::Bool(true);
+    let visual = build_settings(&state, ClientType::Stable).visual.unwrap();
+    assert_eq!(visual.combo_colour_normalisation, None);
+    assert_eq!(
+        serde_json::to_value(visual).unwrap()["comboColourNormalisation"],
+        Value::Null
+    );
 }

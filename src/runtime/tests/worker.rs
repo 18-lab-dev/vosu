@@ -153,6 +153,94 @@ fn subscriber_samples_reach_live_state_before_api_cadence() {
     assert!(Arc::ptr_eq(&queue.drain()[&7].api, &caught_up));
 }
 
+#[test]
+fn live_selection_promotes_file_and_checksum_before_api_cadence() {
+    use crate::server::service::CurrentBeatmapProvider;
+    use crate::server::v2_subscription::V2SubscriptionProvider;
+    use md5::{Digest, Md5};
+    let md5 = |bytes: &[u8]| Md5::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+
+    let root = tempfile::tempdir().unwrap();
+    let queue = Arc::new(StatePublicationQueue::default());
+    let sink = StatePublicationSink::new(7, 1, Arc::clone(&queue));
+    let providers = SnapshotProviders::new(
+        Arc::new(ManagerSnapshot::not_ready(0, ApiRuntimeSettings::default())),
+        Arc::new(ProductionSnapshotEncoder),
+    );
+    let files = RuntimeBeatmap {
+        snapshots: providers.snapshot_manager(),
+        counters: Arc::new(ReloadableCounterService::production(
+            root.path().join("static"), root.path().join("settings"), root.path().join("cache"),
+        )),
+    };
+    let manager = |revision, state| Arc::new(ManagerSnapshot::new(
+        revision, Some(7), false, ApiRuntimeSettings::default(),
+        [ManagerInstanceSnapshot::new(7, crate::instance::InstanceSettings {
+            tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None,
+        }, false, state)],
+    ));
+    let mut previous = None;
+    for (revision, bytes, delivery) in [
+        (1, b"osu file format v14\n[Metadata]\nTitle:Old\n".as_slice(), Delivery::All),
+        (2, b"osu file format v14\n[Metadata]\nTitle:New\n".as_slice(), Delivery::Live),
+    ] {
+        let hash = md5(bytes);
+        let relative = PathBuf::from(&hash[..1]).join(&hash[..2]).join(&hash);
+        let path = root.path().join(&relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+        let mut state = (*state_bundle(1, 10)).clone();
+        state.source = ClientType::Lazer;
+        let regular = Arc::make_mut(&mut state.regular);
+        regular.global.songs_folder = root.path().to_string_lossy().into_owned();
+        regular.menu.folder = Some(String::new());
+        regular.menu.filename = Some(relative.to_string_lossy().into_owned());
+        regular.menu.checksum = Some(hash.clone());
+        sink.publish(Arc::new(state), delivery).unwrap();
+        let publication = queue.drain().remove(&7).unwrap();
+        assert!(Arc::ptr_eq(&publication.api, &publication.live));
+        // Production publishes API before live, and only then wakes subscribers.
+        providers.publish_api(manager(revision, publication.api));
+        providers.publish_live(manager(revision, publication.live));
+        let subscription = V2SubscriptionProvider::capture(&providers).document().unwrap().unwrap();
+        assert_eq!(subscription["beatmap"]["checksum"], hash);
+        assert_eq!(files.tool_context()["beatmap"]["checksum"], hash);
+        let actual = files.current_beatmap_bytes().unwrap().unwrap();
+        assert_eq!(actual.as_ref(), bytes);
+        assert_eq!(md5(&actual), hash);
+        assert_eq!(providers.load().focused().unwrap().regular.menu.checksum.as_deref(), Some(hash.as_str()));
+        if let Some(old) = previous {
+            assert_ne!(old, hash);
+        }
+        previous = Some(hash);
+    }
+}
+
+#[test]
+fn selection_resource_changes_bypass_both_live_and_precise_api_cadences() {
+    let previous = state_bundle(1, 10);
+    for field in 0..6 {
+        let mut next = (*previous).clone();
+        let regular = Arc::make_mut(&mut next.regular);
+        match field {
+            0 => regular.menu.checksum = Some("new checksum".into()),
+            1 => regular.menu.filename = Some("new file".into()),
+            2 => regular.menu.folder = Some("new folder".into()),
+            3 => regular.menu.audio_filename = Some("new audio".into()),
+            4 => regular.menu.background_filename = Some("new background".into()),
+            5 => regular.global.songs_folder = "new songs root".into(),
+            _ => unreachable!(),
+        }
+        let next = Arc::new(next);
+        for delivery in [Delivery::Live, Delivery::Precise] {
+            assert!(Arc::ptr_eq(&api_state(Some(&previous), &next, delivery), &next));
+        }
+    }
+    let mut ordinary = (*previous).clone();
+    Arc::make_mut(&mut ordinary.regular).menu.title = Some("new title only".into());
+    assert!(Arc::ptr_eq(&api_state(Some(&previous), &Arc::new(ordinary), Delivery::Live), &previous));
+}
+
 #[tokio::test]
 async fn registry_add_remove_restart_and_complete_join() {
     let starts = Arc::new(Mutex::new(Vec::new()));

@@ -144,6 +144,7 @@ pub(super) fn build_visual(s: &SettingsObject) -> Option<Visual> {
         snaking_out_sliders: flag("snakingOutSliders"),
         hit_lighting: flag("hitLighting"),
         beatmap_colours: flag("beatmapColours"),
+        combo_colour_normalisation: number("comboColourNormalisation"),
         hit_animations: flag("hitAnimations"),
         rate_adjusted_hit_animation: flag("rateAdjustedHitAnimation"),
         scaling_mode: fields.get("scalingMode").and_then(Value::as_i64),

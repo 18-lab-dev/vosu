@@ -32,7 +32,7 @@ lazer-offsets-appimage-url = "https://github.com/ppy/osu/releases/download/2026.
 lazer-offsets-appimage-sha256 = "dced9463b501009c95dbed891abd2f0acc2efb84ee4336f5b1cc3b7c04a5fc7d"
 lazer-offsets-generation-runtime = "AppImage bundled Microsoft.NETCore.App 10.0.12"
 lazer-offsets-template-source = "tosuapp/tosu@2359305a63f2aaebb201bc8d2eee58177f52590e plus vosu pause/clock, mania/catch/standard spatial, skin resource/family, playback aggregate, nullable seed fields and versioned OsuSetting enum literals"
-lazer-offsets-sha256 = "5eb036c5366713a2d79015304016f213af41f84da96a476e5f67bfdf350a7d47"
+lazer-offsets-sha256 = "d75d393c114f8c076293b2457dda2bdb7cbbdb8b829c266946fd4649104a0773"
 # Historical 2026.726.0 reproduction inputs; not used for the current asset.
 lazer-offsets-runtime-pack = "Microsoft.NETCore.App.Runtime.linux-x64/8.0.29"
 lazer-offsets-runtime-source-revision = "18fd75c847399745c43b5970fec840ba71064e80"

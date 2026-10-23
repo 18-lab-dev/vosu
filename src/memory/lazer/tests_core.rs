@@ -682,6 +682,7 @@ fn config_dictionary_updates_settings_and_runtime_flags() {
     memory.put(0x11300 + 0x40, [1]); // BeatmapColours, distinct from skin/hitsounds.
     memory.put(0x11400 + 0x40, [1]); // HitLighting.
     memory.put(0x11600 + 0x40, 0.75f32.to_le_bytes()); // ScalingPositionX is float, not double.
+    memory.put(0x11a00 + 0x40, 0.375f32.to_le_bytes());
     memory.ptr(
         base + offsets.osu_game_osu_game.framework_config_k_backing_field,
         framework,
@@ -723,6 +724,7 @@ fn config_dictionary_updates_settings_and_runtime_flags() {
     assert_eq!(values["visual.beatmapColours"], true);
     assert_eq!(values["visual.hitLighting"], true);
     assert_eq!(values["visual.positionX"], 0.75);
+    assert_eq!(values["visual.comboColourNormalisation"], 0.375);
 }
 
 #[test]

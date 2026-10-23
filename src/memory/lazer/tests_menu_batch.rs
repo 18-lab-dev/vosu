@@ -201,6 +201,104 @@ fn reader_with(memory: Arc<dyn ProcessMemory>) -> LazerMemory {
     )
 }
 
+/// Changes the selected working beatmap while the old info's MD5 is being read.
+/// Both immutable infos remain readable, as they do during a client selection change.
+struct SwitchingSelection {
+    memory: SparseMemory,
+    switched: std::sync::atomic::AtomicBool,
+    trigger: usize,
+    bindable_value: usize,
+    next_working: usize,
+    scalar: bool,
+}
+
+impl ProcessMemory for SwitchingSelection {
+    fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+        self.memory.read_exact(address, dst)?;
+        if self.switched.load(Ordering::Relaxed)
+            && address <= self.bindable_value
+            && self.bindable_value + 8 <= address + dst.len()
+        {
+            let offset = self.bindable_value - address;
+            dst[offset..offset + 8].copy_from_slice(&self.next_working.to_le_bytes());
+        }
+        if address <= self.trigger && self.trigger < address + dst.len() {
+            self.switched.store(true, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        if self.scalar {
+            return Err(corrupt("selection fixture", 0, "batches disabled"));
+        }
+        for read in reads {
+            self.read_exact(read.address, read.dst)?;
+        }
+        Ok(())
+    }
+
+    fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
+        Ok(Vec::new())
+    }
+}
+
+#[test]
+fn selection_switch_during_menu_read_never_pairs_new_md5_with_old_file() {
+    let offsets = LazerOffsets::embedded().unwrap();
+    let new_md5 = "1123456789abcdef0123456789abcdef";
+    let new_file = "dd0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd";
+    for scalar in [false, true] {
+        let mut memory = SparseMemory::default();
+        memory.put(BASE, [0u8; 0x1000]);
+        memory.valid_base(BASE, &offsets);
+        put_beatmap(&mut memory, BASE, 0x20_0000);
+        put_beatmap(&mut memory, BASE, 0x40_0000);
+        // put_beatmap allocates bindable, ruleset, ruleset info, working, info, set.
+        memory.ptr(
+            BASE + offsets.osu_game_osu_game_base.beatmap_k_backing_field,
+            0x20_0000,
+        );
+        let info_offsets = &offsets.osu_game_beatmaps_beatmap_info;
+        memory.string_ptr(
+            0x40_4000 + info_offsets.md5_hash_k_backing_field,
+            0x60_0000,
+            new_md5,
+        );
+        memory.string_ptr(
+            0x40_4000 + info_offsets.hash_k_backing_field,
+            0x60_1000,
+            new_file,
+        );
+        let memory = Arc::new(SwitchingSelection {
+            memory,
+            switched: std::sync::atomic::AtomicBool::new(false),
+            trigger: 0x20_4000 + info_offsets.md5_hash_k_backing_field,
+            bindable_value: 0x20_0020,
+            next_working: 0x40_3000,
+            scalar,
+        });
+        let mut decoder = reader_with(memory.clone());
+        decoder.set_resolved_state(BASE, 0);
+        let ReadStatus::Ready(Menu::Full(first)) = decoder.menu("").unwrap() else {
+            panic!("full menu expected");
+        };
+        assert!(memory.switched.load(Ordering::Relaxed));
+        let expected = if first.checksum == MD5 {
+            FILE
+        } else {
+            assert_eq!(first.checksum, new_md5);
+            new_file
+        };
+        assert_eq!(first.filename, lazer_path(expected).unwrap());
+        let ReadStatus::Ready(Menu::Full(next)) = decoder.menu(MD5).unwrap() else {
+            panic!("new selection expected");
+        };
+        assert_eq!(next.checksum, new_md5);
+        assert_eq!(next.filename, lazer_path(new_file).unwrap());
+    }
+}
+
 #[test]
 fn batched_full_menu_matches_sequential_menu_under_every_read_failure() {
     let memory = fixture();

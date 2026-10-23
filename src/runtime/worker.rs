@@ -385,9 +385,11 @@ impl SnapshotPublisher<Arc<StateBundleSnapshot>> for StatePublicationSink {
 
 /// Selects the API-visible state for a publication.
 ///
-/// API consumers keep the regular component of the last API-cadence capture.
-/// A generation or reset-epoch change is promoted immediately so a regular
-/// transition and the precise reset it causes stay atomic for API readers.
+/// API consumers keep the regular component of the last API-cadence capture,
+/// except that selection changes are promoted before notifying live subscribers.
+/// This keeps current-file routes and API checksums on the subscription's selection.
+/// Generation and reset-epoch changes are also promoted immediately so regular
+/// transitions and their precise resets stay atomic.
 pub(super) fn api_state(
     previous: Option<&Arc<StateBundleSnapshot>>,
     live: &Arc<StateBundleSnapshot>,
@@ -397,6 +399,14 @@ pub(super) fn api_state(
         previous.source == live.source
             && previous.generation == live.generation
             && previous.reset_epoch == live.reset_epoch
+            && (Arc::ptr_eq(&previous.regular, &live.regular)
+                || (previous.regular.menu.checksum == live.regular.menu.checksum
+                    && previous.regular.menu.filename == live.regular.menu.filename
+                    && previous.regular.menu.folder == live.regular.menu.folder
+                    && previous.regular.menu.audio_filename == live.regular.menu.audio_filename
+                    && previous.regular.menu.background_filename
+                        == live.regular.menu.background_filename
+                    && previous.regular.global.songs_folder == live.regular.global.songs_folder))
     }) else {
         return Arc::clone(live);
     };

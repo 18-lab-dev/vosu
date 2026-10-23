@@ -31,11 +31,12 @@ pub struct LocalConfigKeys {
     pub scaling_position_y: i32,
     pub scaling_size_x: i32,
     pub scaling_size_y: i32,
+    pub combo_colour_normalisation_amount: i32,
 }
 
 impl LocalConfigKeys {
     /// Keys and bindable value widths in the local decoder's stable field order.
-    pub const fn fields(&self) -> [(i32, usize); 26] {
+    pub const fn fields(&self) -> [(i32, usize); 27] {
         [
             (self.release_stream, 4),
             (self.score_display_mode, 4),
@@ -63,6 +64,7 @@ impl LocalConfigKeys {
             (self.scaling_position_y, 4),
             (self.scaling_size_x, 4),
             (self.scaling_size_y, 4),
+            (self.combo_colour_normalisation_amount, 4),
         ]
     }
 }
