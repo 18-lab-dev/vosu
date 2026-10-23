@@ -32,6 +32,10 @@ pub enum SettingsError {
     TomlConversion(String),
     #[error("{0}")]
     Profile(String),
+    /// A schema file that cannot be used, named with the setting at fault,
+    /// e.g. "settings.schema.toml: setting 1: missing field `uniqueID`".
+    #[error("{file}: {message}")]
+    InvalidSchema { file: String, message: String },
 }
 
 #[derive(Clone, Debug)]
@@ -69,11 +73,6 @@ fn validate_profile(name: &str) -> Result<(), SettingsError> {
         return Err(SettingsError::Profile("invalid profile name".into()));
     }
     Ok(())
-}
-
-#[derive(Deserialize)]
-struct SchemaDocument {
-    settings: Vec<CounterSetting>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -564,7 +563,24 @@ fn read_toml(path: &Path) -> Result<toml::Value, SettingsError> {
 }
 
 fn read_schema_toml(path: &Path) -> Result<Vec<CounterSetting>, SettingsError> {
-    decode_schema_document(read_toml(path)?)
+    let invalid = |message: String| SettingsError::InvalidSchema {
+        file: path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        ),
+        message,
+    };
+    let document = match read_toml(path) {
+        Ok(document) => document,
+        Err(SettingsError::TomlParse(error)) => {
+            return Err(invalid(error.to_string().trim().to_owned()));
+        }
+        Err(error) => return Err(error),
+    };
+    decode_schema_document(document).map_err(|error| match error {
+        SettingsError::TomlConversion(message) => invalid(message),
+        error => error,
+    })
 }
 
 fn decode_schema_document(document: toml::Value) -> Result<Vec<CounterSetting>, SettingsError> {
@@ -574,11 +590,21 @@ fn decode_schema_document(document: toml::Value) -> Result<Vec<CounterSetting>, 
         ));
     }
     let json = toml_to_json(document, "settings schema")?;
-    serde_json::from_value::<SchemaDocument>(json)
-        .map(|document| document.settings)
-        .map_err(|error| {
-            SettingsError::TomlConversion(format!("invalid settings schema fields: {error}"))
+    let settings = json
+        .get("settings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    // One setting at a time, so an error names the setting (1-based).
+    settings
+        .into_iter()
+        .enumerate()
+        .map(|(index, setting)| {
+            serde_json::from_value::<CounterSetting>(setting).map_err(|error| {
+                SettingsError::TomlConversion(format!("setting {}: {error}", index + 1))
+            })
         })
+        .collect()
 }
 
 fn is_schema_shaped(document: &toml::Value) -> bool {

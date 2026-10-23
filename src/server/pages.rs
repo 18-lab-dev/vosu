@@ -12,9 +12,27 @@ use url::Url;
 
 use crate::assets::ServerAssets;
 
-/// Self-contained (no stylesheet request) so it renders on either listener;
-/// `/` on the overlay listener redirects to the dashboard.
-pub const PAGE_NOT_FOUND: &[u8] = br#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark light"><title>Not found - vosu</title></head><body style="margin:3rem 1.5rem;font:15px/1.5 system-ui,sans-serif"><h1 style="margin:0 0 .5rem;font-size:1.25rem">Page not found</h1><p style="margin:0"><a href="/">Open the vosu dashboard</a></p></body></html>"#;
+/// The 404 page a person sees, in the dashboard's design: both listeners
+/// serve `/assets/`, and `/` on the overlay listener redirects to the
+/// dashboard. The stored colour mode applies before first paint.
+pub const PAGE_NOT_FOUND: &[u8] = concat!(
+    r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark light"><title>Not found · vosu</title>"#,
+    r#"<script src="/assets/theme-init.js"></script><link rel="stylesheet" href="/assets/tokens.css"><link rel="stylesheet" href="/assets/system.css">"#,
+    r#"<style>body{display:grid;gap:var(--space-3);place-content:center;justify-items:start;min-height:100vh;margin:0;padding:var(--space-6);color:var(--fg);font:400 .875rem/1.5 var(--font-body);background:var(--bg)}h1{margin:0;font-size:1.375rem;font-weight:600}p{margin:0;color:var(--fg-dim)}</style></head>"#,
+    r#"<body><h1>Page not found</h1><p>Nothing is served at this address.</p><a class="v-btn v-btn--primary" href="/">Open the vosu dashboard</a></body></html>"#,
+)
+.as_bytes();
+
+/// A page a person opened: a GET that accepts HTML. Such a request gets
+/// [`PAGE_NOT_FOUND`] for a 404; scripts and API clients keep the plain
+/// `Not Found` body.
+pub fn wants_page(method: &axum::http::Method, headers: &axum::http::HeaderMap) -> bool {
+    method == axum::http::Method::GET
+        && headers
+            .get(axum::http::header::ACCEPT)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|accept| accept.contains("text/html"))
+}
 
 /// Query the dashboard adds to its overlay preview frames. Sockets opened by
 /// such a page are not counted as connected browser sources.

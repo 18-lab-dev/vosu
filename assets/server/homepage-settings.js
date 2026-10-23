@@ -499,6 +499,28 @@ export function createSettingsEditor({
     });
   }
 
+  // Actions that reload the editor (switching or managing profiles) ask
+  // first when it holds unsaved input, in the dashboard's own dialog.
+  function confirmDiscard() {
+    if (!state.dirty) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const { dialog: prompt, body } = createActionDialog('Discard unsaved changes?');
+      let discard = false;
+      const actions = document.createElement('div');
+      actions.className = 'dialog-actions';
+      const keep = document.createElement('button');
+      keep.type = 'button'; keep.className = 'button'; keep.textContent = 'Keep editing';
+      keep.addEventListener('click', () => prompt.close());
+      const confirm = document.createElement('button');
+      confirm.type = 'button'; confirm.className = 'button button-danger button-danger--solid'; confirm.textContent = 'Discard';
+      confirm.addEventListener('click', () => { discard = true; prompt.close(); });
+      actions.append(keep, confirm);
+      body.append(actions);
+      prompt.addEventListener('close', () => resolve(discard), { once: true });
+      keep.focus();
+    });
+  }
+
   function profileBar(folder, inline, profile, registry) {
     const profiles = document.createElement('div');
     profiles.className = 'settings-profiles';
@@ -512,7 +534,7 @@ export function createSettingsEditor({
     label.textContent = 'Profile';
     profiles.append(label, selector);
     selector.addEventListener('change', async () => {
-      if (state.dirty && !window.confirm('Discard unsaved changes and switch profile?')) {
+      if (!await confirmDiscard()) {
         selector.value = profile;
         return;
       }
@@ -528,6 +550,8 @@ export function createSettingsEditor({
       button.disabled = (profile === 'default' && ['rename', 'delete'].includes(action)) || (action === 'activate' && profile === registry.active);
       button.addEventListener('click', async () => {
         menu.hidePopover();
+        // Every profile action reloads the editor.
+        if (!await confirmDiscard()) return;
         const name = action === 'activate' ? profile : await profilePrompt(action, profile);
         if (name === null) return;
         setBusy(button, true);

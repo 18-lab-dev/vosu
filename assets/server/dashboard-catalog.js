@@ -92,8 +92,15 @@ export function mountCatalogSources({ root, requestJson, notify, errorText, setB
   const elements = new Map();
   const snapshot = () => JSON.stringify(sources.map(({ source, enabled }) => ({ source, enabled })));
   const dirty = () => snapshot() !== saved;
+  // The form's save summary reads this flag, so it never says "All changes
+  // saved" while sources are edited but not saved.
   function markDirty() {
-    status.textContent = dirty() ? 'Unsaved changes' : '';
+    const unsaved = dirty();
+    status.textContent = unsaved ? 'Unsaved changes' : '';
+    if (section.hasAttribute('data-unsaved') !== unsaved) {
+      section.toggleAttribute('data-unsaved', unsaved);
+      section.dispatchEvent(new CustomEvent('vosu:unsaved', { bubbles: true }));
+    }
   }
   // Unsaved source edits ask before the page is left.
   window.addEventListener('beforeunload', (event) => { if (dirty()) event.preventDefault(); });

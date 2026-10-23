@@ -588,7 +588,8 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
     const downloadUrl = button.dataset.downloadUrl;
     const installName = button.dataset.installName;
     if (!downloadUrl || !installName || state.pending.has(installName)) return;
-    if (update && !await confirmOverlay(`Update ${installName}?`, 'Replace this overlay’s files with the latest release? Its settings are kept.', 'Update', { danger: true })) return;
+    // Updating keeps settings, so it is not styled as destructive.
+    if (update && !await confirmOverlay(`Update ${installName}?`, 'Replace this overlay’s files with the latest release? Its settings are kept.', 'Update')) return;
 
     state.pending.add(installName);
     setBusy(button, true, update ? 'Updating…' : 'Installing…');
@@ -648,8 +649,19 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
     }
   }
 
-  // Mirrors the server's alias rule (src/counters/names.rs).
-  const ALIAS_PATTERN = /^[a-z0-9_-]{1,48}$/;
+  // Mirrors the server's alias rule (src/counters/names.rs `validate_alias`
+  // and `RESERVED`): pattern, reserved routes, overlay folders and other
+  // aliases, with the server's messages.
+  const ALIAS_PATTERN = /^[a-z0-9][a-z0-9_-]{0,47}$/;
+  const RESERVED_ALIASES = new Set(['api', 'assets', 'available', 'backgroundimage', 'favicon.ico', 'files', 'json', 'settings', 'songs', 'tokens', 'tools', 'websocket', 'ws']);
+  function aliasProblem(value, folder) {
+    if (!ALIAS_PATTERN.test(value)) return "URL alias must be 1-48 lowercase letters, digits, '-' or '_', starting with a letter or digit";
+    if (RESERVED_ALIASES.has(value)) return `/${value} is reserved by vosu`;
+    const cards = installedCards();
+    if (cards.some((card) => (card.dataset.overlayId ?? '').split('/')[0].toLowerCase() === value)) return `/${value} is already an overlay folder`;
+    if (cards.some((card) => card.dataset.overlayId !== folder && (card.dataset.counterAlias ?? '').toLowerCase() === value)) return `/${value} is already used by another overlay`;
+    return '';
+  }
 
   // Nickname (dashboard display name) and URL alias (`/acc/` redirecting to
   // the folder) for one installed overlay; the folder stays its identity.
@@ -699,12 +711,12 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
     const aliasValue = () => alias.value.trim().replace(/^\/+|\/+$/g, '').toLowerCase();
     const describeAlias = () => {
       const value = aliasValue();
-      const valid = !value || ALIAS_PATTERN.test(value);
-      if (valid) alias.removeAttribute('aria-invalid');
-      else alias.setAttribute('aria-invalid', 'true');
-      error.textContent = valid ? '' : 'Use 1–48 lowercase letters, digits, - or _.';
+      const problem = value ? aliasProblem(value, folder) : '';
+      if (problem) alias.setAttribute('aria-invalid', 'true');
+      else alias.removeAttribute('aria-invalid');
+      error.textContent = problem;
       // Only a valid alias gets a preview URL.
-      hint.textContent = value && valid ? `${overlayOrigin}/${value}/` : `${overlayOrigin}/${folder}/`;
+      hint.textContent = value && !problem ? `${overlayOrigin}/${value}/` : `${overlayOrigin}/${folder}/`;
     };
     alias.addEventListener('input', describeAlias);
     describeAlias();
@@ -1348,9 +1360,6 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
         const url = state.updates.get(card.dataset.overlayId);
         if (!url || card.querySelector('[data-action="update-counter"]')) continue;
         card.classList.add('is-updatable');
-        const badge = document.createElement('span');
-        badge.className = 'badge badge-warning';
-        badge.textContent = 'Update available';
         const update = document.createElement('button');
         update.type = 'button';
         update.className = 'button button-update';
@@ -1359,7 +1368,7 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
         update.dataset.installName = card.dataset.overlayId;
         update.setAttribute('aria-label', `Update ${card.dataset.counterTitle ?? card.dataset.overlayId}`);
         update.textContent = 'Update';
-        card.querySelector('.counter-card__chips')?.prepend(badge, update);
+        card.querySelector('.counter-card__chips')?.prepend(update);
       }
       state.roving?.refresh();
     } catch (_error) {
@@ -1386,10 +1395,16 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
     function setSavedStatus() {
       if (form.querySelector('.settings-item.has-error')) {
         setStatus('Some changes were not saved', 'error');
+      } else if (form.querySelector('[data-unsaved]')) {
+        // Sections saved with their own button (Catalog sources).
+        setStatus('Unsaved changes below', 'warn');
       } else {
         setStatus('All changes saved', 'success');
       }
     }
+    form.addEventListener('vosu:unsaved', () => {
+      if (status?.textContent !== 'Saving…') setSavedStatus();
+    });
 
     // Feedback sits beside the control that changed: a brief "Saved" mark,
     // or an error message under the field that the field describes.
@@ -1553,7 +1568,7 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
       pending.hidden = false;
       pending.dataset.tone = 'info';
       pendingTitle.textContent = 'Network settings reverted.';
-      countdown.textContent = `The dashboard is back on ${location.host}.`;
+      countdown.replaceChildren('The dashboard is back on ', Object.assign(document.createElement('code'), { textContent: location.host }), '.');
       keep.hidden = true;
       revert.hidden = true;
       dismissPending.hidden = false;
@@ -1582,7 +1597,7 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
       const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       // The countdown text is not a live region; screen readers hear the
       // start and a single 10-second warning instead of every second.
-      countdown.textContent = `Reverting in ${seconds} s.`;
+      countdown.replaceChildren('Reverting in ', Object.assign(document.createElement('span'), { className: 'network-pending__seconds', textContent: String(seconds) }), ' s.');
       if (seconds <= 10 && seconds > 0 && !announcedLate) {
         announcedLate = true;
         announce(`${seconds} seconds left to keep the network settings.`, true);
@@ -1735,17 +1750,27 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
 
   // Card grids are a single Tab stop: arrow keys move between cards,
   // Home/End jump, and Tab from a card enters that card's own controls.
+  // `selector` matches the grid's direct children (e.g. `.counter-card`).
   function rovingGrid(container, selector) {
     if (!container) return null;
     let current = null;
+    // Until the user moves within the grid, its Tab stop is the first card,
+    // also after cards are added before it (catalog-source overlays).
+    let chosen = false;
     let frame = 0;
-    const all = () => [...container.querySelectorAll(selector)];
+    const all = () => [...container.children].filter((item) => item.matches(selector));
     const visible = () => all().filter((item) => !item.hidden && item.getClientRects().length > 0);
+    // The grid item holding `node`: the ancestor that is a direct child of
+    // the container. (`closest()` cannot express "direct child of".)
+    const itemOf = (node) => {
+      while (node && node.parentElement !== container) node = node.parentElement;
+      return node?.matches(selector) ? node : null;
+    };
     const focusables = (item) => item.querySelectorAll('a[href], button, input, select, textarea, iframe, [tabindex]');
     function apply() {
       frame = 0;
       const items = visible();
-      if (!items.includes(current)) current = items[0] ?? null;
+      if (!chosen || !items.includes(current)) current = items[0] ?? null;
       for (const item of all()) {
         const active = item === current;
         item.tabIndex = active ? 0 : -1;
@@ -1763,16 +1788,17 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
     }
     function setCurrent(item) {
       current = item;
+      chosen = true;
       apply();
     }
     container.addEventListener('focusin', (event) => {
-      const item = event.target.closest(selector);
+      const item = itemOf(event.target);
       if (item && item !== current && container.contains(item)) setCurrent(item);
     });
     container.addEventListener('keydown', (event) => {
       if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
       if (event.altKey || event.ctrlKey || event.metaKey) return;
-      const item = event.target.closest(selector);
+      const item = itemOf(event.target);
       // Text fields and menus keep their own arrow keys.
       if (!item || event.target.closest('input, select, textarea, .card-menu')) return;
       const items = visible();
@@ -2038,7 +2064,7 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
   initializeDashboardStatus();
   refreshToolCount();
   if ((pageKey() === 'installed' || pageKey() === 'available') && !requestedOverlay) {
-    state.roving = rovingGrid(results, ':scope > .counter-card');
+    state.roving = rovingGrid(results, '.counter-card');
   }
   refreshCounterUpdates();
 
