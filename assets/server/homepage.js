@@ -1407,21 +1407,27 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
     }
 
     // Saves usually happen far below the title row, so while the page head
-    // is scrolled away the state pins under the site header, at the head's
-    // right edge.
+    // is scrolled away the state moves into the pinned site header, as a
+    // cell of the status strip; it never covers page content. Where the
+    // header is not pinned (phones, short screens) it stays in the head.
     const pageHead = status?.closest('.page-head');
-    if (pageHead && 'IntersectionObserver' in window) {
+    const strip = document.querySelector('.status-strip');
+    if (pageHead && strip && 'IntersectionObserver' in window) {
       const siteHeader = document.querySelector('.site-header');
-      const siteHeaderOffset = () => (siteHeader && getComputedStyle(siteHeader).position === 'sticky' ? siteHeader.offsetHeight : 0);
-      const place = (pinned) => {
-        status.classList.toggle('is-pinned', pinned);
-        status.style.right = pinned
-          ? `${document.documentElement.clientWidth - pageHead.getBoundingClientRect().right}px` : '';
+      const headerPinned = () => Boolean(siteHeader) && getComputedStyle(siteHeader).position === 'sticky';
+      let headOutOfView = false;
+      const place = () => {
+        const pinned = headOutOfView && headerPinned();
+        if (pinned === (status.parentElement === strip)) return;
+        status.classList.toggle('status-cell', pinned);
+        status.classList.toggle('status-cell--save', pinned);
+        if (pinned) strip.insertBefore(status, strip.querySelector('.status-cell--version'));
+        else pageHead.querySelector('#page-title')?.after(status);
       };
-      new IntersectionObserver(([entry]) => place(!entry.isIntersecting), {
-        rootMargin: `-${siteHeaderOffset()}px 0px 0px 0px`,
+      new IntersectionObserver(([entry]) => { headOutOfView = !entry.isIntersecting; place(); }, {
+        rootMargin: `-${headerPinned() ? siteHeader.offsetHeight : 0}px 0px 0px 0px`,
       }).observe(pageHead);
-      window.addEventListener('resize', () => { if (status.classList.contains('is-pinned')) place(true); }, { passive: true });
+      window.addEventListener('resize', place, { passive: true });
     }
 
     // Errors, then unsaved sections (Catalog sources, network fields).

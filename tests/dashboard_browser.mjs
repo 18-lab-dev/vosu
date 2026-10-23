@@ -206,21 +206,38 @@ for (const width of [1280, 1920]) {
   check(!settings.networkHint, `heads ${width}: the network hint copy must be gone`);
 }
 
-// Save state lifecycle on Settings.
-for (const reducedMotion of ['no-preference', 'reduce']) {
-  const { context, page } = await open('/settings', { reducedMotion });
+// Save state lifecycle on Settings. Where the site header is pinned, the
+// state stays in view (in the head row, or in the status strip once the head
+// is scrolled away); at every width it never overlaps a control.
+for (const [width, reducedMotion] of [[390, 'no-preference'], [1280, 'no-preference'], [1920, 'no-preference'], [1280, 'reduce']]) {
+  const { context, page } = await open('/settings', { width, reducedMotion });
   const state = () => page.evaluate(() => {
-    const status = document.querySelector('.page-head .settings-status');
-    // In view below the pinned site header even after the save scrolled the page.
+    const status = document.querySelector('.settings-status');
     const box = status.getBoundingClientRect();
-    const header = document.querySelector('.site-header').getBoundingClientRect();
-    const inView = !status.hidden && box.top >= header.bottom - 0.5 && box.bottom <= innerHeight;
-    return { shown: !status.hidden, text: status.textContent, fading: status.classList.contains('is-fading'), inView };
+    const header = document.querySelector('.site-header');
+    const pinnedHeader = getComputedStyle(header).position === 'sticky';
+    const inPage = status.closest('.page-head') !== null;
+    const inView = !status.hidden && box.bottom <= innerHeight && box.top >= 0
+      && (inPage ? box.top >= header.getBoundingClientRect().bottom - 0.5 : true);
+    // Page content scrolled under the pinned header is hidden by the header
+    // itself, so only its part below the header counts. Containers of the
+    // state (the main landmark, the strip) are not covered by it.
+    const headerBottom = pinnedHeader ? header.getBoundingClientRect().bottom : -Infinity;
+    const overlaps = status.hidden ? [] : [...document.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex], .status-cell')]
+      .filter((element) => element !== status && !status.contains(element) && !element.contains(status) && element.getClientRects().length)
+      .filter((element) => {
+        const other = element.getBoundingClientRect();
+        const top = header.contains(element) ? other.top : Math.max(other.top, headerBottom);
+        return other.width > 0 && other.bottom - top > 0 && box.left < other.right - 0.5 && other.left < box.right - 0.5
+          && box.top < other.bottom - 0.5 && top < box.bottom - 0.5;
+      })
+      .map((element) => element.dataset.id || element.className || element.tagName);
+    return { shown: !status.hidden, text: status.textContent, fading: status.classList.contains('is-fading'), place: inPage ? 'head' : 'strip', pinnedHeader, inView, overlaps };
   });
   const debug = page.locator('[data-id="DEBUG_LOG"]');
   const steps = {};
   await debug.click();
-  await page.waitForFunction(() => document.querySelector('.page-head .settings-status')?.textContent === 'Saved', null, { timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => document.querySelector('.settings-status')?.textContent === 'Saved', null, { timeout: 5000 }).catch(() => {});
   steps.afterSave = await state();
   if (reducedMotion === 'no-preference') {
     await page.waitForTimeout(2150);
@@ -233,17 +250,24 @@ for (const reducedMotion of ['no-preference', 'reduce']) {
   const port = page.locator('[data-id="SERVER_PORT"]');
   const original = await port.inputValue();
   await port.fill('25999');
+  // Scrolling to the field moves the state on the next intersection callback.
+  await page.waitForTimeout(300);
   steps.networkEdited = await state();
+  await page.screenshot({ path: `${evidence}/save-state-unsaved-${width}-${reducedMotion}.png` });
   await page.waitForTimeout(3000);
   steps.networkLater = await state();
   await port.fill(original);
   steps.networkRestored = await state();
-  report.saveState.push({ reducedMotion, ...steps });
-  const label = `save state (${reducedMotion})`;
-  check(steps.afterSave.shown && steps.afterSave.text === 'Saved' && steps.afterSave.inView, `${label}: "Saved" must show, in view, after a save ${JSON.stringify(steps.afterSave)}`);
+  report.saveState.push({ width, reducedMotion, ...steps });
+  const label = `save state (${width}, ${reducedMotion})`;
+  check(steps.afterSave.shown && steps.afterSave.text === 'Saved', `${label}: "Saved" must show after a save ${JSON.stringify(steps.afterSave)}`);
+  for (const [name, step] of Object.entries(steps)) {
+    check(step.overlaps.length === 0, `${label}: ${name} overlaps ${JSON.stringify(step.overlaps)}`);
+    if (step.shown && step.pinnedHeader) check(step.inView, `${label}: ${name} must be in view ${JSON.stringify(step)}`);
+  }
   if (steps.fading) check(steps.fading.shown && steps.fading.fading, `${label}: "Saved" must fade after about 2 s ${JSON.stringify(steps.fading)}`);
   check(!steps.later.shown, `${label}: "Saved" must disappear ${JSON.stringify(steps.later)}`);
-  check(steps.networkEdited.text === 'Unsaved changes' && steps.networkEdited.inView && steps.networkLater.shown, `${label}: an edited network field must keep "Unsaved changes" ${JSON.stringify(steps)}`);
+  check(steps.networkEdited.text === 'Unsaved changes' && steps.networkLater.shown, `${label}: an edited network field must keep "Unsaved changes" ${JSON.stringify(steps)}`);
   check(!steps.networkRestored.shown, `${label}: restoring the field must clear the state ${JSON.stringify(steps.networkRestored)}`);
   await context.close();
 }

@@ -391,17 +391,19 @@ textarea.setting-value,
   transition: opacity 0.4s var(--ease-draft);
 }
 
-/* Scrolled past the title row: a small tag under the site header. */
-.settings-status.is-pinned {
-  position: fixed;
-  top: calc(var(--header-h, 0px) + var(--space-3));
-  z-index: 6;
-  padding: 0 var(--space-3);
-  line-height: var(--control-h-sm);
-  background: var(--bg-raised);
-  border: var(--hair) solid var(--rule-strong);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+/* Scrolled past the title row: a cell of the pinned status strip, before
+   the version, in the strip's size but still sentence case. */
+.status-strip > .settings-status {
+  margin-left: auto;
+  font-family: var(--font-body);
+  font-size: var(--step--2);
+  line-height: inherit;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.status-strip > .settings-status + .status-cell--version {
+  margin-left: 0;
 }
 
 .settings-status.is-fading {
@@ -410,12 +412,10 @@ textarea.setting-value,
 
 .settings-status[data-tone="error"] {
   color: var(--danger);
-  border-color: var(--danger);
 }
 
 .settings-status[data-tone="warn"] {
   color: var(--caution);
-  border-color: var(--caution);
 }
 
 .settings-empty {
