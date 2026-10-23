@@ -121,7 +121,7 @@ Invalid inputs take `aria-invalid="true"`.
 
 | Class | Use |
 | --- | --- |
-| `.v-help` | Help hover for an ambiguous label: `<span class="v-help" tabindex="0" role="img" aria-label="Seconds between window starts." data-tip="Seconds between window starts."></span>`; `data-tip-pos="left"` near the right edge. |
+| `.v-help` | Help hover for an ambiguous label: `<span class="v-help" tabindex="0" role="img" aria-label="Seconds between window starts." data-tip="Seconds between window starts."></span>`; `data-tip-pos="left"` near the right edge, `data-tip-pos="right"` near the left edge. |
 | `.v-empty` | One short centred line: `<p class="v-empty">No replays yet.</p>`. |
 | `.v-toast` | `role="status"` message at the bottom right; `data-tone="ok"` or `"error"`. |
 | `.v-drawer`, `.v-drawer__head`, `.v-drawer__body` | Side panel `<dialog>` opened with `showModal()`, for details and secondary settings. |

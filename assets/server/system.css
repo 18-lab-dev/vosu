@@ -718,7 +718,8 @@
 /* Help hover, only for genuinely ambiguous labels:
    <span class="v-help" tabindex="0" role="img" aria-label="…" data-tip="…"></span>
    The tip shows on hover and keyboard focus; aria-label carries it to
-   assistive technology. Add data-tip-pos="left" near the right edge. */
+   assistive technology. Add data-tip-pos="left" near the right edge and
+   data-tip-pos="right" near the left edge. */
 .v-help {
   position: relative;
   display: inline-grid;
@@ -770,6 +771,11 @@
 .v-help[data-tip-pos="left"]::after {
   right: 0;
   left: auto;
+  transform: none;
+}
+
+.v-help[data-tip-pos="right"]::after {
+  left: 0;
   transform: none;
 }
 
