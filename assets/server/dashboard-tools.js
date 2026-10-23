@@ -155,12 +155,21 @@ export function mountTools({
   root.after(available);
   let catalogTools = [];
   // One Tab stop per card grid; arrows move between cards.
-  const installedGrid = rovingGrid(root, ':scope > .tool-card');
-  const availableGrid = rovingGrid(availableCards, ':scope > .tool-card');
+  const installedGrid = rovingGrid(root, '.tool-card');
+  const availableGrid = rovingGrid(availableCards, '.tool-card');
 
-  // The catalog entry of an installed tool, for Update and Uninstall.
+  // The catalog entry of an installed tool, for the version an update offers.
   function catalogEntry(id) {
     return catalogTools.find((tool) => tool.id === id && !tool.shadowed) ?? null;
+  }
+
+  // `/api/tools` says whether a tool was installed from a catalog
+  // (`managed`) and whether the last fetched catalog has a newer version,
+  // so Update and Uninstall work even while the source is unreachable.
+  function updateButton(view, name) {
+    if (!view.managed || !view.update_available) return null;
+    const version = catalogEntry(view.id)?.version;
+    return actionButton('Update', 'catalog-update', { update: true, describe: `Update ${name}${version ? ` to v${version}` : ''}` });
   }
 
   // Only tools that are not installed, or have an update, are offered here;
@@ -181,11 +190,10 @@ export function mountTools({
         el('div', { className: 'tool-card__top' },
           cardIcon(tool.name || tool.id, tool.icon_url),
           el('div', { className: 'tool-card__head' },
-            el('h2', { attrs: { id: titleId, title: `${tool.author} · ${tool.source}` } }, tool.name, el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
+            el('h2', { attrs: { id: titleId, title: `${tool.name} · ${tool.author} · ${tool.source}` } }, el('span', { className: 'tool-card__name', text: tool.name }), el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
             el('p', { className: 'tool-card__status' },
               ...interfaceChips(tool),
-              tool.shadowed || !official ? el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : 'User catalog' }) : null,
-              update ? el('span', { className: 'badge badge-warning', text: 'Update available' }) : null))),
+              tool.shadowed || !official ? el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : 'User catalog' }) : null))),
         tool.description ? el('p', { className: 'tool-card__description', text: tool.description }) : null);
       if (list(tool.requires).length) card.append(el('p', { className: 'tool-card__description', text: `Requires ${tool.requires.map((r) => `${r.id} ${r.version}`).join(', ')}` }));
       const actions = el('div', { className: 'tool-card__actions' });
@@ -193,7 +201,7 @@ export function mountTools({
       else {
         const action = update ? 'update' : 'install';
         const button = actionButton(update ? 'Update' : 'Install', action, {
-          primary: true, disabled: !tool.supported, describe: `${update ? 'Update' : 'Install'} ${tool.name}`,
+          primary: !update, update, disabled: !tool.supported, describe: `${update ? 'Update' : 'Install'} ${tool.name}`,
         });
         button.addEventListener('click', () => catalogAction(button, tool, action));
         actions.append(button);
@@ -218,6 +226,9 @@ export function mountTools({
       catalogStatus.replaceChildren(...[sourceFailures(list(payload.sources), fetchCatalog)].filter(Boolean));
       renderCatalog();
       refreshOpenDetails();
+      // The fetch also refreshed vosu's update annotations for installed
+      // tools; re-read them so their cards gain or lose Update now.
+      refresh();
     } catch (error) {
       const failure = el('p', { className: 'catalog-failures', text: `Couldn't load the catalog: ${errorText(error)}. Installed tools still work. ` });
       const retry = el('button', { className: 'link-button', text: 'Retry', attrs: { type: 'button' } });
@@ -319,7 +330,8 @@ export function mountTools({
       className: 'tool-card',
       attrs: { 'data-tool-id': view.id, 'data-status': status, 'aria-labelledby': `tool-title-${view.id}` },
     });
-    const title = el('h2', { attrs: { id: `tool-title-${view.id}`, title: view.description || undefined } }, name,
+    // The name truncates on its own, so the version always stays visible.
+    const title = el('h2', { attrs: { id: `tool-title-${view.id}`, title: name } }, el('span', { className: 'tool-card__name', text: name }),
       view.version ? el('span', { className: 'tool-card__version', text: `v${view.version}` }) : null);
     const line = el('p', { className: 'tool-card__status' },
       el('span', { className: 'v-dot', attrs: { 'data-state': STATUS_DOTS[status] ?? 'idle' } }),
@@ -352,10 +364,8 @@ export function mountTools({
         ? actionButton('Stop', 'stop', { describe: `Stop ${name}` })
         : actionButton('Start', 'start', { describe: `Start ${name}` }));
     }
-    const entry = catalogEntry(view.id);
-    if (entry?.managed && entry.update_available) {
-      actions.append(actionButton('Update', 'catalog-update', { update: true, describe: `Update ${name} to v${entry.version}` }));
-    }
+    const update = updateButton(view, name);
+    if (update) actions.append(update);
     if (view.has_settings) {
       actions.append(actionButton('Settings', 'settings', { describe: `Settings for ${name}` }));
     }
@@ -412,15 +422,13 @@ export function mountTools({
     actions.append(
       actionButton('Data', 'data', { describe: `Data folders for ${name}` }),
       actionButton('Logs', 'logs', { describe: `Logs for ${name}` }));
-    const entry = catalogEntry(view.id);
-    if (entry?.managed && entry.update_available) {
-      actions.append(actionButton('Update', 'catalog-update', { update: true, describe: `Update ${name} to v${entry.version}` }));
-    }
+    const update = updateButton(view, name);
+    if (update) actions.append(update);
     if (status !== 'invalid' && view.trusted && view.enabled) {
       actions.append(actionButton('Disable', 'disable', { danger: true, describe: `Disable ${name}` }));
     }
     // Catalog-installed tools are uninstalled here, not from Available.
-    if (entry?.managed) {
+    if (view.managed) {
       actions.append(actionButton('Uninstall…', 'catalog-uninstall', { danger: true, describe: `Uninstall ${name}` }));
     }
     return [
@@ -518,7 +526,8 @@ export function mountTools({
     let previous = null;
     for (const view of state.tools) {
       seen.add(view.id);
-      const signature = JSON.stringify(view);
+      // The Update button names the catalog version, which arrives separately.
+      const signature = JSON.stringify([view, catalogEntry(view.id)?.version ?? null]);
       let card = state.cards.get(view.id);
       if (!card || (state.signatures.get(view.id) !== signature && !state.pending.has(view.id))) {
         const next = renderCard(view);
@@ -847,8 +856,10 @@ export function mountTools({
     else if (action === 'settings') openToolSettings(view.id, view.name || view.id);
     else if (action === 'logs') openLogs(view);
     else if (action === 'catalog-update' || action === 'catalog-uninstall') {
-      const entry = catalogEntry(view.id);
-      if (entry) catalogAction(button, entry, action === 'catalog-update' ? 'update' : 'uninstall');
+      // The catalog entry may be missing while its source is offline; the
+      // job needs only the id.
+      const tool = catalogEntry(view.id) ?? { id: view.id, name: view.name || view.id };
+      catalogAction(button, tool, action === 'catalog-update' ? 'update' : 'uninstall');
     } else lifecycle(button, view, action);
   }
   root.addEventListener('click', handleAction);

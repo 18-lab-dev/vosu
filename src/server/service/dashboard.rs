@@ -30,19 +30,10 @@ impl Drop for OverlayConnection {
 }
 
 fn socket_overlay(request: &Request<Body>) -> Option<String> {
-    let referer = request
-        .headers()
-        .get(header::REFERER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| url::Url::parse(value).ok());
-    // The dashboard's own preview frames are not browser sources.
-    if referer.as_ref().is_some_and(|url| {
-        url.query().is_some_and(|query| {
-            query
-                .split('&')
-                .any(|pair| pair == super::pages::OVERLAY_PREVIEW_QUERY)
-        })
-    }) {
+    // The dashboard's own preview frames are not browser sources: their
+    // pages mark every socket they open with `vosu-preview=1`
+    // (`PREVIEW_SOCKET_SCRIPT`), since a WebSocket handshake has no Referer.
+    if is_preview_request(request) {
         return None;
     }
     if let Some(raw) = request.uri().query().and_then(|query| decoded_query_value(query, "l")) {
@@ -51,8 +42,10 @@ fn socket_overlay(request: &Request<Body>) -> Option<String> {
         if valid_overlay_component(overlay) { return Some(overlay.to_owned()); }
     }
     // WebSocket Origin contains no path. It cannot distinguish overlays on one origin.
-    // A Referer is useful only when it names a concrete local overlay path.
-    let url = referer?;
+    // A Referer (sent by non-browser clients) is useful only when it names a
+    // concrete local overlay path.
+    let referer = request.headers().get(header::REFERER)?.to_str().ok()?;
+    let url = url::Url::parse(referer).ok()?;
     let host = request.headers().get(header::HOST)?.to_str().ok()?;
     if url[url::Position::BeforeHost..url::Position::AfterPort] != *host { return None; }
     let encoded = url.path().trim_start_matches('/').split('/').next()?;
@@ -79,11 +72,11 @@ mod dashboard_tests {
         assert_eq!(socket_overlay(&origin), Some("counter".into()));
         origin.headers_mut().insert(header::REFERER, "http://untrusted.test/counter/".parse().unwrap());
         assert_eq!(socket_overlay(&origin), None);
-        origin.headers_mut().insert(header::REFERER, "http://127.0.0.1:24050/counter/?vosu-preview=1".parse().unwrap());
-        assert_eq!(socket_overlay(&origin), None, "dashboard previews are not browser sources");
-        let mut command = request("/websocket/commands?l=counter");
-        command.headers_mut().insert(header::REFERER, "http://127.0.0.1:24050/counter/?a=1&vosu-preview=1".parse().unwrap());
-        assert_eq!(socket_overlay(&command), None);
+        let mut preview = request("/websocket/v2?vosu-preview=1");
+        preview.headers_mut().insert(header::REFERER, "http://127.0.0.1:24050/counter/index.html".parse().unwrap());
+        assert_eq!(socket_overlay(&preview), None, "dashboard previews are not browser sources");
+        assert_eq!(socket_overlay(&request("/websocket/commands?l=counter&vosu-preview=1")), None);
+        assert_eq!(socket_overlay(&request("/websocket/commands?l=counter&vosu-preview=0")), Some("counter".into()));
     }
 
     #[test]

@@ -488,7 +488,13 @@ impl ProductionRouteDelegate {
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
         if let Some(encoded_html_path) = counter_html_path {
-            counter_resource_response(outcome, range, &self.profile_html_path(&encoded_html_path, &request)).await
+            counter_resource_response(
+                outcome,
+                range,
+                &self.profile_html_path(&encoded_html_path, &request),
+                is_preview_request(&request),
+            )
+            .await
         } else {
             resource_response(outcome, range).await
         }
@@ -518,7 +524,13 @@ impl ProductionRouteDelegate {
                     .and_then(|value| value.to_str().ok())
                     .map(str::to_owned);
                 match outcome {
-                    Ok(value) => counter_resource_response(value, range, &self.profile_html_path(&index_path, &request)).await,
+                    Ok(value) => counter_resource_response(
+                        value,
+                        range,
+                        &self.profile_html_path(&index_path, &request),
+                        is_preview_request(&request),
+                    )
+                    .await,
                     Err(_) => not_found(),
                 }
             }
@@ -610,7 +622,21 @@ impl RouteDelegate for ProductionRouteDelegate {
         request: Request<Body>,
         body: Bytes,
     ) -> ProviderFuture<'_, Response> {
-        Box::pin(async move { self.dispatch(endpoint, request, body).await })
+        let wants_page = crate::server::pages::wants_page(request.method(), request.headers());
+        Box::pin(async move {
+            let response = self.dispatch(endpoint, request, body).await;
+            // A missing overlay file or page opened in a browser gets the
+            // styled 404 page instead of the plain body scripts receive.
+            let plain = response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .is_some_and(|value| value.as_bytes().starts_with(b"text/plain"));
+            if wants_page && response.status() == StatusCode::NOT_FOUND && plain {
+                embedded_response(EmbeddedResponse::not_found())
+            } else {
+                response
+            }
+        })
     }
 }
 

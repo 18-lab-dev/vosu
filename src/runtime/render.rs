@@ -74,11 +74,21 @@ pub(super) fn render_broken_overlays(
                 .unwrap_or(&overlay.name);
             let path = overlay_path(&overlay.folder_name);
             let id = escape_html(&format!("broken-{}", path.trim_matches('/')));
+            // The folder is named once: as the title, or under a different
+            // title (nickname or nested folder).
+            let folder_line = if title == overlay.folder_name {
+                String::new()
+            } else {
+                format!(
+                    r#"<p class="counter-card__meta"><span>{}</span></p>"#,
+                    escape_html(&overlay.folder_name)
+                )
+            };
             format!(
                 concat!(
                     r#"<article class="counter-card is-broken" data-overlay-id="{folder}" data-counter-name="{name}" data-counter-title="{title}" data-counter-nickname="" data-counter-alias="" data-counter-author="" data-counter-version="" data-counter-compatible="" aria-labelledby="{id}-title">"#,
                     r#"<div class="counter-card__broken" role="alert" id="{id}-error"><strong>Couldn't read this overlay</strong><code>{error}</code></div>"#,
-                    r#"<div class="counter-card__body"><div class="counter-card__identity"><h2 id="{id}-title" title="{title}">{title}</h2><p class="counter-card__meta"><span>{folder}</span></p></div>"#,
+                    r#"<div class="counter-card__body"><div class="counter-card__identity"><h2 id="{id}-title" title="{title}">{title}</h2>{folder_line}</div>"#,
                     r#"<div class="counter-actions"><button class="button" type="button" data-action="open-counter" data-folder="{folder}">Open folder</button>"#,
                     r#"<button class="button button-danger" type="button" data-action="delete-counter" data-folder="{folder}">Delete</button></div></div></article>"#,
                 ),
@@ -87,6 +97,7 @@ pub(super) fn render_broken_overlays(
                 title = escape_html(title),
                 id = id,
                 error = escape_html(&overlay.error),
+                folder_line = folder_line,
             )
         })
         .collect()
@@ -742,7 +753,7 @@ fn render_installed_card(
     };
     let update = if card.updatable && card.download_link.is_some() {
         format!(
-            r#"<span class="badge badge-warning">Update available</span><button class="button button-update" type="button" data-action="update-counter" data-download-url="{}" data-install-name="{folder}" aria-label="Update {name}">Update</button>"#,
+            r#"<button class="button button-update" type="button" data-action="update-counter" data-download-url="{}" data-install-name="{folder}" aria-label="Update {name}">Update</button>"#,
             escape_html(card.download_link.unwrap_or_default())
         )
     } else {

@@ -188,11 +188,12 @@ kbd {
   padding: 0 var(--gutter);
 }
 
+/* Aligned by its wordmark's baseline with the tab labels (the shell bar
+   aligns items on their baselines); only the mark is centred. */
 .brand {
   display: inline-flex;
   gap: var(--space-3);
   align-items: baseline;
-  align-self: center;
   color: var(--fg);
   text-decoration: none;
 }
@@ -346,6 +347,7 @@ kbd {
 .status-strip {
   display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
   width: 100%;
   max-width: var(--max);
   margin-inline: auto;
@@ -372,10 +374,15 @@ kbd {
   margin-left: auto;
 }
 
-/* The update is one chip in the strip; the notice under the header only
-   appears when the chip is pressed or until "Later". */
+/* The update is one chip in the strip, hidden while the notice under the
+   header shows. A 24 px target whose text keeps the strip's baseline: the
+   negative block margins give back its height beyond one line, so its cell
+   is no taller than its neighbours. */
 .status-update {
+  display: inline-flex;
+  align-items: center;
   min-height: 1.5rem;
+  margin-block: calc((1.5rem - 1lh) / -2);
   padding: 0 var(--space-2);
   color: var(--caution);
   font: inherit;
@@ -385,6 +392,10 @@ kbd {
   border: var(--hair) solid var(--caution);
   border-radius: var(--radius);
   cursor: pointer;
+}
+
+body:has(#update-notice:not([hidden])) .status-update {
+  display: none;
 }
 
 .status-update:hover {

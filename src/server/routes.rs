@@ -443,7 +443,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         return cors(not_found());
     }
     let Some(endpoint) = classify(&method, &path) else {
-        return cors(not_found());
+        return cors(not_found_for(&request));
     };
     if let Some((origins, dashboard)) = providers.authorization.origins() {
         if method == Method::GET && path == "/api/dashboard" {
@@ -462,7 +462,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                     | Endpoint::ToolManagement
             )
         {
-            return not_found();
+            return not_found_for(&request);
         }
         if !dashboard
             && matches!(
@@ -496,7 +496,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                     | Endpoint::SkinFile
             )
         {
-            return not_found();
+            return not_found_for(&request);
         }
     }
     let keys = providers.delegate.api_keys();
@@ -934,7 +934,21 @@ fn parse_mods(value: &str) -> Result<ModsInput, String> {
 fn not_found() -> Response {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
+        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
         .body(Body::from("Not Found"))
+        .unwrap()
+}
+
+/// An unknown route: the styled 404 page for a person, the plain body for
+/// scripts and API clients (see [`super::pages::wants_page`]).
+fn not_found_for(request: &Request<Body>) -> Response {
+    if !super::pages::wants_page(request.method(), request.headers()) {
+        return not_found();
+    }
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .body(Body::from(Bytes::from_static(super::pages::PAGE_NOT_FOUND)))
         .unwrap()
 }
 fn not_ready() -> Response {

@@ -583,8 +583,8 @@ fn installed_updates_use_catalog_metadata_and_actual_folder_target() {
     let remote = crate::server::catalog::merge_local(remote, &installed);
     annotate_installed_updates(&mut local, &remote);
     let html = render_local_counters(&local, &[], &Default::default(), None, "localhost:24050");
-    // A status badge plus a real Update button, not a badge-styled button.
-    assert!(html.contains(r#"<span class="badge badge-warning">Update available</span>"#));
+    // A real Update button, not a badge-styled one, and no badge repeating it.
+    assert!(!html.contains("badge-warning"));
     assert!(html.contains(r#"class="button button-update" type="button" data-action="update-counter""#));
     assert!(html.contains(r#"aria-label="Update OffsetSuggester""#));
     assert!(html.contains(r#"data-install-name="custom-folder""#));

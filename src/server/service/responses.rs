@@ -150,18 +150,22 @@ async fn resource_response(outcome: ResourceOutcome, range: Option<String>) -> R
     resource_response_with_counter_path(outcome, range, None).await
 }
 
+/// `preview`: the dashboard asked for this page as a card preview
+/// (`?vosu-preview=1`); its WebSockets are then marked so the connected
+/// count leaves them out.
 async fn counter_resource_response(
     outcome: ResourceOutcome,
     range: Option<String>,
     encoded_html_path: &str,
+    preview: bool,
 ) -> Response {
-    resource_response_with_counter_path(outcome, range, Some(encoded_html_path)).await
+    resource_response_with_counter_path(outcome, range, Some((encoded_html_path, preview))).await
 }
 
 async fn resource_response_with_counter_path(
     outcome: ResourceOutcome,
     range: Option<String>,
-    encoded_html_path: Option<&str>,
+    counter_page: Option<(&str, bool)>,
 ) -> Response {
     match outcome {
         ResourceOutcome::Missing(MissingKind::NotReady) => json_response(
@@ -191,13 +195,34 @@ async fn resource_response_with_counter_path(
                         .expect("valid range response");
                 }
             };
-            let suffix = if plan.status == StatusCode::OK.as_u16()
-                && plan.content_type == "text/html; charset=utf-8"
-            {
-                encoded_html_path.and_then(counter_path_script)
+            let html = plan.status == StatusCode::OK.as_u16()
+                && plan.content_type == "text/html; charset=utf-8";
+            let suffix = if html {
+                counter_page.and_then(|(path, _)| counter_path_script(path))
             } else {
                 None
             };
+            // A preview page is small and must run the socket marker before
+            // any overlay script, so it is read whole and the marker goes
+            // right after `<head>`.
+            if html
+                && counter_page.is_some_and(|(_, preview)| preview)
+                && target.length <= PREVIEW_HTML_LIMIT
+            {
+                let mut source = Vec::with_capacity(usize::try_from(target.length).unwrap_or(0));
+                let mut file = tokio::fs::File::from_std(target.file);
+                if file.read_to_end(&mut source).await.is_err() {
+                    return internal_error("failed to read file");
+                }
+                let mut page = with_preview_socket_marker(&source);
+                page.extend_from_slice(suffix.as_deref().unwrap_or_default());
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, plan.content_type)
+                    .header(header::CONTENT_LENGTH, page.len())
+                    .body(Body::from(page))
+                    .expect("valid preview response");
+            }
             let content_length = if let Some(suffix) = suffix.as_ref() {
                 let Ok(suffix_length) = u64::try_from(suffix.len()) else {
                     return internal_error("counter metadata length exceeds response limits");
@@ -236,6 +261,51 @@ async fn resource_response_with_counter_path(
     }
 }
 
+/// Larger preview pages are served unmarked rather than buffered.
+const PREVIEW_HTML_LIMIT: u64 = 2 * 1024 * 1024;
+
+/// Browsers send no Referer on a WebSocket handshake, so a dashboard preview
+/// marks its own sockets: every WebSocket the preview page opens to this
+/// server carries `vosu-preview=1`, which the connected count skips. The
+/// marker is appended without re-encoding the overlay's own query (`l=`),
+/// and only preview pages get it; the URLs users copy are unchanged.
+const PREVIEW_SOCKET_SCRIPT: &str = concat!(
+    r#"<script>(()=>{const W=window.WebSocket;if(!W)return;"#,
+    r#"const local=new Set([location.hostname,"localhost","127.0.0.1","[::1]"]);"#,
+    r#"window.WebSocket=class extends W{constructor(url,protocols){"#,
+    r#"const target=new URL(url,location.href);"#,
+    r#"if(target.port===location.port&&local.has(target.hostname))"#,
+    r#"target.search=(target.search?target.search+"&":"?")+"vosu-preview=1";"#,
+    r#"super(target.href,protocols)}}})();</script>"#,
+);
+
+/// Inserts [`PREVIEW_SOCKET_SCRIPT`] after the `<head>` start tag, else
+/// after `<html>` or the doctype, else first, so it runs before any of the
+/// overlay's scripts.
+fn with_preview_socket_marker(source: &[u8]) -> Vec<u8> {
+    let lower = source.to_ascii_lowercase();
+    // End of the first start tag `name` (`<head`, not `<header`).
+    let after_tag = |name: &[u8]| {
+        let start = lower.windows(name.len()).enumerate().find_map(|(index, window)| {
+            (window == name
+                && lower
+                    .get(index + name.len())
+                    .is_some_and(|&next| next == b'>' || next == b'/' || next.is_ascii_whitespace()))
+            .then_some(index)
+        })?;
+        let end = lower[start..].iter().position(|&byte| byte == b'>')?;
+        Some(start + end + 1)
+    };
+    let at = after_tag(b"<head")
+        .or_else(|| after_tag(b"<html"))
+        .or_else(|| after_tag(b"<!doctype"))
+        .unwrap_or(0);
+    let mut page = Vec::with_capacity(source.len() + PREVIEW_SOCKET_SCRIPT.len());
+    page.extend_from_slice(&source[..at]);
+    page.extend_from_slice(PREVIEW_SOCKET_SCRIPT.as_bytes());
+    page.extend_from_slice(&source[at..]);
+    page
+}
 
 fn counter_path_script(encoded_html_path: &str) -> Option<Bytes> {
     let (encoded_html_path, profile) = encoded_html_path.split_once("?vosuProfile=")
@@ -403,6 +473,16 @@ fn counter_search_source(query: Option<&str>) -> Option<bool> {
         Some("available") => Some(true),
         Some(_) => None,
     }
+}
+
+/// A dashboard card preview (`?vosu-preview=1`): the preview page itself,
+/// or a WebSocket its marker script opened.
+fn is_preview_request(request: &Request<Body>) -> bool {
+    request.uri().query().is_some_and(|query| {
+        query
+            .split('&')
+            .any(|pair| pair == crate::server::pages::OVERLAY_PREVIEW_QUERY)
+    })
 }
 
 /// Search failures are dominated by catalog fetches, so they surface as 502

@@ -538,7 +538,7 @@
         .unwrap();
 
         let response =
-            counter_resource_response(outcome, None, "nested%20counter/index.html").await;
+            counter_resource_response(outcome, None, "nested%20counter/index.html", false).await;
         assert_eq!(response.status(), StatusCode::OK);
         let declared_length = response.headers()[header::CONTENT_LENGTH]
             .to_str()
@@ -552,6 +552,35 @@
         assert!(body.starts_with(original));
         let appended = std::str::from_utf8(&body[original.len()..]).unwrap();
         assert!(appended.contains(r#"window.COUNTER_PATH="nested counter""#));
+        assert!(!body.windows(12).any(|window| window == b"vosu-preview"), "only previews are marked");
+    }
+
+    #[tokio::test]
+    async fn preview_pages_mark_their_sockets_before_any_overlay_script() {
+        let directory = tempfile::tempdir().unwrap();
+        let page = "<!doctype html><html><head><title>t</title><script>new WebSocket('ws://x')</script></head><body><header>h</header></body></html>";
+        std::fs::write(directory.path().join("index.html"), page).unwrap();
+        let outcome = resolve_exact(
+            Some(directory.path()),
+            Some(Path::new("index.html")),
+            MissingKind::NotFound,
+        )
+        .unwrap();
+        let response = counter_resource_response(outcome, None, "counter/index.html", true).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let declared = response.headers()[header::CONTENT_LENGTH].to_str().unwrap().parse::<usize>().unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(declared, body.len());
+        let body = std::str::from_utf8(&body).unwrap();
+        // The marker is the first script, right after <head>, and the
+        // logical path is still appended.
+        assert!(body.starts_with(&format!("<!doctype html><html><head>{PREVIEW_SOCKET_SCRIPT}<title>")));
+        assert!(body.ends_with(r#"<script>window.COUNTER_PATH="counter";</script>"#));
+        // `<header>` is not mistaken for `<head>`.
+        assert_eq!(
+            String::from_utf8(with_preview_socket_marker(b"<body><header>x</header>")).unwrap(),
+            format!("{PREVIEW_SOCKET_SCRIPT}<body><header>x</header>")
+        );
     }
 
     #[tokio::test]
@@ -571,6 +600,7 @@
             outcome,
             None,
             "evil%3C%2Fscript%3E%26%E2%80%A8%E2%80%A9/index.html",
+            false,
         )
         .await;
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -597,7 +627,7 @@
         .unwrap();
 
         let response =
-            counter_resource_response(outcome, Some("bytes=1-3".into()), "counter/index.html")
+            counter_resource_response(outcome, Some("bytes=1-3".into()), "counter/index.html", true)
                 .await;
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(response.headers()[header::CONTENT_LENGTH], "3");
