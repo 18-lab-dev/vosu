@@ -13,6 +13,15 @@ const STATUS_LABELS = {
   disabled: 'Disabled',
   invalid: 'Invalid',
 };
+// system.css .v-dot states for each tool status.
+const STATUS_DOTS = {
+  running: 'ok',
+  starting: 'busy',
+  failed: 'error',
+  invalid: 'error',
+  blocked: 'warn',
+  untrusted: 'warn',
+};
 const SOURCE_LABELS = { dev: 'Dev', official: 'Official', user: 'User' };
 // One chip per interface a tool provides, in this order.
 const INTERFACE_LABELS = { ui: 'UI', service: 'Service', cli: 'CLI' };
@@ -139,7 +148,6 @@ export function mountTools({
   const available = el('section', { className: 'tools-catalog', attrs: { 'aria-labelledby': 'tools-available-title' } },
     el('header', { className: 'tools-catalog__header' },
       el('h2', { text: '02 / Available', attrs: { id: 'tools-available-title' } }), catalogRefresh),
-    el('p', { className: 'field-help', text: 'Tools from your catalog sources. Packages are verified before use; only the default official source is trusted automatically. Other tools require explicit approval.' }),
     catalogStatus, availableCards);
   root.after(available);
   let catalogTools = [];
@@ -148,18 +156,18 @@ export function mountTools({
     availableCards.replaceChildren(...catalogTools.filter((tool) => matches(tool, tokensOf(state.query))).map((tool) => {
       const installed = state.tools.find((entry) => entry.id === tool.id);
       const update = installed && tool.update_available;
+      const official = ['shiruviaa/vosu-tools', 'shiruviaa/vosulay'].includes(tool.source);
       const card = el('article', { className: 'tool-card' },
         cardBanner(tool.banner_url),
         el('div', { className: 'tool-card__top' },
           cardIcon(tool.name || tool.id, tool.icon_url),
           el('div', { className: 'tool-card__head' },
-            el('p', { className: 'tool-card__index' },
-              el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : ['shiruviaa/vosu-tools', 'shiruviaa/vosulay'].includes(tool.source) ? 'Official' : 'User catalog' }),
+            el('h2', { attrs: { title: `${tool.author} · ${tool.source}` } }, tool.name, el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
+            el('p', { className: 'tool-card__status' },
               ...interfaceChips(tool),
-              update ? el('span', { className: 'badge', text: 'Update available' }) : null),
-            el('h2', {}, tool.name, el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
-            el('p', { className: 'tool-card__author', text: `by ${tool.author} · ${tool.source}` }))),
-        el('p', { className: 'tool-card__description', text: tool.description }));
+              tool.shadowed || !official ? el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : 'User catalog' }) : null,
+              update ? el('span', { className: 'badge badge-warning', text: 'Update available' }) : null))),
+        tool.description ? el('p', { className: 'tool-card__description', text: tool.description, attrs: { title: tool.description } }) : null);
       const actions = el('div', { className: 'tool-card__actions' });
       const add = (label, action, removeData) => {
         const button = actionButton(label, action, { primary: action === 'install', disabled: tool.shadowed || !tool.supported || (installed && !tool.managed) });
@@ -186,7 +194,9 @@ export function mountTools({
       const payload = await requestJson('/api/tools/catalog');
       catalogTools = list(payload.tools);
       catalogTools.push(...list(payload.shadowed).filter((entry) => entry.kind === 'tool'));
-      catalogStatus.textContent = `${list(payload.tools).length} tools · ${list(payload.sources).map((source) => `${source.source}: ${source.status}${source.last_error ? ` (${source.last_error})` : ''}`).join(' · ')}`;
+      // Sources are only worth a line when one failed.
+      catalogStatus.textContent = list(payload.sources).filter((source) => source.last_error)
+        .map((source) => `${source.source}: ${source.last_error}`).join(' · ');
       renderCatalog();
     } catch (error) {
       catalogStatus.textContent = `Catalog unavailable: ${errorText(error)}. Installed tools still work.`;
@@ -238,10 +248,6 @@ export function mountTools({
     return tokens.every((token) => text.includes(token));
   }
 
-  function fact(label, value, wide = false) {
-    return el('div', { className: wide ? 'tool-facts__wide' : undefined }, el('dt', { text: label }), el('dd', {}, value));
-  }
-
   function idList(items, render, empty) {
     if (items.length === 0) return document.createTextNode(empty);
     return el('ul', {}, ...items.map(render));
@@ -277,6 +283,8 @@ export function mountTools({
     return button;
   }
 
+  // Cards carry identity, status and the primary actions; everything else
+  // (description, facts, routes, maintenance actions) lives in Details.
   function renderCard(view) {
     const name = view.name || view.id;
     const status = String(view.status ?? 'stopped');
@@ -284,56 +292,19 @@ export function mountTools({
       className: 'tool-card',
       attrs: { 'data-tool-id': view.id, 'data-status': status, 'aria-labelledby': `tool-title-${view.id}` },
     });
-
-    const source = String(view.source ?? '');
-    const index = el('p', { className: 'tool-card__index' },
-      el('span', { className: 'badge', text: SOURCE_LABELS[source] ?? source, attrs: { 'data-source': source, title: 'Where vosu found this tool' } }),
-      ...interfaceChips(view));
-    const title = el('h2', { attrs: { id: `tool-title-${view.id}` } }, name,
+    const title = el('h2', { attrs: { id: `tool-title-${view.id}`, title: view.description || undefined } }, name,
       view.version ? el('span', { className: 'tool-card__version', text: `v${view.version}` }) : null);
-    const byline = el('p', { className: 'tool-card__author' });
-    if (view.author) byline.append(`by ${view.author}`);
-    const homepage = absoluteHttpUrl(view.homepage);
-    if (homepage) {
-      if (view.author) byline.append(' · ');
-      byline.append(el('a', { text: 'Homepage', attrs: { href: homepage, target: '_blank', rel: 'noopener noreferrer', 'aria-label': `${name} homepage` } }));
+    const line = el('p', { className: 'tool-card__status' },
+      el('span', { className: 'v-dot', attrs: { 'data-state': STATUS_DOTS[status] ?? 'idle' } }),
+      el('span', { text: STATUS_LABELS[status] ?? status }),
+      ...interfaceChips(view));
+    if (view.source && view.source !== 'official') {
+      line.append(el('span', { className: 'badge', text: SOURCE_LABELS[view.source] ?? view.source, attrs: { 'data-source': view.source } }));
     }
     const banner = cardBanner(view.banner_url);
     if (banner) card.append(banner);
     card.append(el('div', { className: 'tool-card__top' }, cardIcon(name, view.icon_url),
-      el('div', { className: 'tool-card__head' }, index, title, byline.childNodes.length ? byline : null)));
-    if (view.description) card.append(el('p', { className: 'tool-card__description', text: view.description }));
-    if (view.cli) {
-      card.append(el('p', { className: 'tool-card__description' },
-        el('code', { text: view.cli.usage }),
-        view.cli.summary ? ` — ${view.cli.summary}` : null));
-    }
-
-    const requires = list(view.requires);
-    const requiredBy = list(view.required_by);
-    const permissions = list(view.permissions?.host);
-    const data = view.data ?? {};
-    const apiRead = list(view.api?.read);
-    const apiWrite = list(view.api?.write);
-    const facts = el('dl', { className: 'tool-facts' },
-      fact('Status', statusValue(view)),
-      fact('Startup', hasService(view) ? (STARTUP_LABELS[view.startup] ?? view.startup ?? '—') : 'No service'),
-      fact('Storage', `${formatBytes(Number(data.data_bytes))} data · ${formatBytes(Number(data.cache_bytes))} cache`),
-      fact('Requires', idList(requires, (dependency) => el('li', {
-        className: 'tool-dependency',
-        attrs: { 'data-satisfied': String(Boolean(dependency.satisfied)) },
-      }, el('code', { text: dependency.id }), dependency.version ? ` ${dependency.version}` : '',
-      el('span', { className: 'tool-dependency__state', text: dependency.satisfied ? 'OK' : 'Unmet' })), 'Nothing')),
-      fact('Required by', idList(requiredBy, (id) => el('li', {}, el('code', { text: id })), 'No tools')),
-      fact('Host permissions', idList(permissions, (permission) => el('li', {}, el('code', { text: permission })), 'None')),
-    );
-    if (apiRead.length || apiWrite.length) {
-      const routes = el('ul', {},
-        ...apiRead.map((route) => el('li', {}, 'read ', el('code', { text: route }))),
-        ...apiWrite.map((route) => el('li', {}, 'write ', el('code', { text: route }))));
-      facts.append(fact('API routes', routes, true));
-    }
-    card.append(facts);
+      el('div', { className: 'tool-card__head' }, title, line)));
 
     const actions = el('div', { className: 'tool-card__actions' });
     const usable = view.trusted && view.enabled && !['invalid', 'untrusted', 'disabled'].includes(status);
@@ -345,48 +316,101 @@ export function mountTools({
         primary: view.trusted, disabled: !usable, describe: `Open ${name} in a new tab`,
       }));
     }
+    if (hasService(view) && usable) {
+      const running = status === 'running' || status === 'starting';
+      actions.append(running
+        ? actionButton('Stop', 'stop', { describe: `Stop ${name}` })
+        : actionButton('Start', 'start', { describe: `Start ${name}` }));
+    }
+    if (!view.enabled && view.trusted && status !== 'invalid') {
+      actions.append(actionButton('Enable', 'enable', { primary: !view.ui_url, describe: `Enable ${name}` }));
+    }
     if (view.has_settings) {
       actions.append(actionButton('Settings', 'settings', { describe: `Settings for ${name}` }));
     }
-    if (hasService(view) && usable) {
-      const running = status === 'running' || status === 'starting';
-      if (running) {
-        actions.append(
-          actionButton('Stop', 'stop', { describe: `Stop ${name}` }),
-          actionButton('Restart', 'restart', { describe: `Restart ${name}` }),
-        );
-      } else {
-        actions.append(actionButton('Start', 'start', { describe: `Start ${name}` }));
-      }
-    }
-    if (status !== 'invalid' && view.trusted) {
-      actions.append(view.enabled
-        ? actionButton('Disable', 'disable', { describe: `Disable ${name}` })
-        : actionButton('Enable', 'enable', { primary: !view.ui_url, describe: `Enable ${name}` }));
-    }
-    actions.append(
-      actionButton('Data', 'data', { describe: `Data folders for ${name}` }),
-      actionButton('Logs', 'logs', { describe: `Logs for ${name}` }),
-    );
+    actions.append(actionButton('Details', 'details', { describe: `Details for ${name}` }));
     card.append(actions);
     return card;
   }
 
+  function detailsContent(view) {
+    const name = view.name || view.id;
+    const status = String(view.status ?? 'stopped');
+    const requires = list(view.requires);
+    const requiredBy = list(view.required_by);
+    const permissions = list(view.permissions?.host);
+    const data = view.data ?? {};
+    const apiRead = list(view.api?.read);
+    const apiWrite = list(view.api?.write);
+    const homepage = absoluteHttpUrl(view.homepage);
+    const facts = el('dl', { className: 'v-facts' });
+    const add = (label, value) => { if (value !== null && value !== undefined) facts.append(el('dt', { text: label }), el('dd', {}, value)); };
+    add('Status', statusValue(view));
+    add('Version', view.version ? `v${view.version}` : null);
+    add('Author', view.author || null);
+    add('Source', SOURCE_LABELS[view.source] ?? view.source ?? null);
+    add('Startup', hasService(view) ? (STARTUP_LABELS[view.startup] ?? view.startup ?? '—') : 'No service');
+    add('Storage', `${formatBytes(Number(data.data_bytes))} data · ${formatBytes(Number(data.cache_bytes))} cache`);
+    add('Requires', idList(requires, (dependency) => el('li', {
+      className: 'tool-dependency',
+      attrs: { 'data-satisfied': String(Boolean(dependency.satisfied)) },
+    }, el('code', { text: dependency.id }), dependency.version ? ` ${dependency.version}` : '',
+    el('span', { className: 'tool-dependency__state', text: dependency.satisfied ? 'OK' : 'Unmet' })), 'Nothing'));
+    add('Required by', idList(requiredBy, (id) => el('li', {}, el('code', { text: id })), 'No tools'));
+    add('Permissions', idList(permissions, (permission) => el('li', {}, el('code', { text: permission })), 'None'));
+    if (apiRead.length || apiWrite.length) {
+      add('API routes', el('ul', {},
+        ...apiRead.map((route) => el('li', {}, 'read ', el('code', { text: route }))),
+        ...apiWrite.map((route) => el('li', {}, 'write ', el('code', { text: route })))));
+    }
+    if (view.cli) add('Command', el('code', { text: view.cli.usage }));
+    if (homepage) add('Homepage', el('a', { text: new URL(homepage).host, attrs: { href: homepage, target: '_blank', rel: 'noopener noreferrer' } }));
+
+    const actions = el('div', { className: 'v-row' });
+    const usable = view.trusted && view.enabled && !['invalid', 'untrusted', 'disabled'].includes(status);
+    if (hasService(view) && usable && (status === 'running' || status === 'starting')) {
+      actions.append(actionButton('Restart', 'restart', { describe: `Restart ${name}` }));
+    }
+    actions.append(
+      actionButton('Data', 'data', { describe: `Data folders for ${name}` }),
+      actionButton('Logs', 'logs', { describe: `Logs for ${name}` }));
+    if (status !== 'invalid' && view.trusted && view.enabled) {
+      actions.append(actionButton('Disable', 'disable', { danger: true, describe: `Disable ${name}` }));
+    }
+    return [
+      view.description ? el('p', { className: 'tool-details__description', text: view.description }) : null,
+      facts,
+      actions,
+    ].filter(Boolean);
+  }
+
+  // One drawer, refreshed by polling while it is open.
+  function openDetails(view) {
+    state.details?.dialog.close();
+    const titleId = `tool-details-${view.id}`;
+    const dialog = el('dialog', { className: 'v-drawer tool-details', attrs: { 'aria-labelledby': titleId, 'data-tool-id': view.id } });
+    const close = el('button', { className: 'v-btn v-btn--ghost v-btn--icon', text: '✕', attrs: { type: 'button', 'aria-label': 'Close details' } });
+    const body = el('div', { className: 'v-drawer__body' }, ...detailsContent(view));
+    dialog.append(el('header', { className: 'v-drawer__head' }, el('h3', { text: view.name || view.id, attrs: { id: titleId } }), close), body);
+    close.addEventListener('click', () => dialog.close());
+    dialog.addEventListener('click', handleAction);
+    dialog.addEventListener('close', () => {
+      dialog.remove();
+      if (state.details?.dialog === dialog) state.details = null;
+    }, { once: true });
+    document.body.append(dialog);
+    state.details = { dialog, body, id: view.id, signature: state.signatures.get(view.id) };
+    dialog.showModal();
+    close.focus();
+  }
+
   function emptyState() {
-    const sources = el('ul', {},
-      el('li', {}, el('span', { text: 'Bundled' }), el('span', { text: 'Tools shipped with vosu appear here automatically.' })),
-      el('li', {}, el('span', { text: 'User' }), el('span', {
-        text: 'Copy a tool folder into the tools folder of vosu\'s data directory. vosu asks you to trust it before it runs.',
-      })),
-      el('li', {}, el('span', { text: 'Dev' }), el('span', {}, 'Start vosu with ', el('code', { text: '--tool <directory>' }),
-        ' to load a tool you are writing; it reloads as you save.')));
     return el('div', { className: 'empty-state' },
       el('h2', { text: 'No tools yet' }),
-      el('p', { text: 'Tools are apps that run beside your overlays, such as trainers, trackers, and calculators. vosu looks for them in three places:' }),
-      sources,
+      el('p', {}, 'Install one from Available, or run ', el('code', { text: 'vosu --tool <directory>' }), '.'),
       el('a', {
-        className: 'button button-primary',
-        text: 'Read the tool authoring guide',
+        className: 'button',
+        text: 'Authoring guide',
         attrs: { href: AUTHORING_DOCS, target: '_blank', rel: 'noopener noreferrer' },
       }));
   }
@@ -468,6 +492,12 @@ export function mountTools({
       state.signatures.delete(id);
     }
     applyFilter();
+    const open = state.details;
+    const current = open && state.tools.find((view) => view.id === open.id);
+    if (current && open.dialog.open && state.signatures.get(open.id) !== open.signature) {
+      open.signature = state.signatures.get(open.id);
+      open.body.replaceChildren(...detailsContent(current));
+    } else if (open && !current) open.dialog.close();
   }
 
   async function refresh() {
@@ -748,7 +778,7 @@ export function mountTools({
     poll();
   }
 
-  root.addEventListener('click', (event) => {
+  function handleAction(event) {
     const button = event.target.closest('[data-tool-action]');
     if (!button || button.disabled) return;
     const id = button.closest('[data-tool-id]')?.dataset.toolId;
@@ -756,11 +786,13 @@ export function mountTools({
     if (!view) return;
     const action = button.dataset.toolAction;
     if (action === 'launch') launch(button, view);
+    else if (action === 'details') openDetails(view);
     else if (action === 'data') openData(view);
     else if (action === 'settings') openToolSettings(view.id, view.name || view.id);
     else if (action === 'logs') openLogs(view);
     else lifecycle(button, view, action);
-  });
+  }
+  root.addEventListener('click', handleAction);
 
   refresh();
   fetchCatalog();

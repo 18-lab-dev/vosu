@@ -238,7 +238,7 @@ async fn dynamic_pages_keep_discovered_installed_count_when_catalog_fetch_fails(
         .unwrap();
     let unavailable = String::from_utf8(unavailable.body.to_vec()).unwrap();
     assert!(unavailable.contains(r#"data-count="installed">2</span>"#));
-    assert!(unavailable.contains("Error:"));
+    assert!(unavailable.contains("<h2>Catalog unavailable</h2>"));
     // The third-party disclosure must not depend on a reachable catalog.
     assert!(unavailable.contains(r#"class="catalog-notice""#));
 

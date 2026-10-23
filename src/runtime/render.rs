@@ -15,7 +15,7 @@ const SEARCH_FORM: &str = r#"<form class="search-form" role="search"><label clas
 /// section so catalog searches, which replace only the results, keep it.
 pub(super) const CATALOG_NOTICE: &str = concat!(
     r#"<details class="catalog-notice" open><summary>Community overlays · third-party code</summary>"#,
-    r#"<p>Install only overlays you trust. They run their authors' JavaScript on the overlay origin, separate from this dashboard. Catalog: <a href="https://tosu.app" target="_blank" rel="noopener noreferrer">tosu.app</a>; downloads: osuck.link. vosu does not review or endorse these overlays.</p>"#,
+    r#"<p>Third-party JavaScript from <a href="https://tosu.app" target="_blank" rel="noopener noreferrer">tosu.app</a> (downloads via osuck.link), not reviewed by vosu. Install only overlays you trust.</p>"#,
     "</details>",
 );
 
@@ -886,7 +886,7 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         ],
     );
     format!(
-        r#"<form class="settings" id="runtime-settings"><header class="settings-header"><div><h2>Runtime configuration</h2><p>Network addresses, ports, and allowed clients require Apply, then Keep within 30 seconds or the change reverts. Other fields save when they lose focus or a checkbox changes.</p></div><span class="settings-status" role="status" aria-live="polite">All changes saved</span></header>{general}{data}{server}{advanced}<p class="settings-empty" hidden>No settings match your search.</p></form>"#
+        r#"<form class="settings" id="runtime-settings"><header class="settings-header"><div><h2>Runtime configuration</h2><p>Network changes need Apply, then Keep within 30 seconds.</p></div><span class="settings-status" role="status" aria-live="polite">All changes saved</span></header>{general}{data}{server}{advanced}<p class="settings-empty" hidden>No settings match your search.</p></form>"#
     )
 }
 

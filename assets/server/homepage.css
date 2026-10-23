@@ -88,12 +88,15 @@ a:hover {
   display: none !important;
 }
 
+/* Headings are sentence case in the body face; the condensed face is kept
+   for the brand and numeric readouts. */
 h1,
 h2,
 h3 {
-  font-family: var(--font-display);
+  font-family: var(--font-body);
   font-weight: 600;
-  letter-spacing: -0.005em;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 code,
@@ -113,12 +116,10 @@ kbd {
   border: 0;
 }
 
-/* Mono caps: every label, index, and status key on the sheet. */
+/* Mono caps: section labels, indices, status keys and other data labels. */
 .nav-index,
 .nav-count,
 .brand-sub,
-.mode-toggle,
-.header-link,
 .status-key,
 .status-strip,
 .sheet-label,
@@ -136,9 +137,21 @@ kbd {
 .settings-status,
 .eyebrow {
   font-family: var(--font-mono);
-  font-weight: 500;
-  letter-spacing: 0.08em;
+  font-weight: 400;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+/* Chrome is not text to select. */
+.site-header,
+.page-tabs,
+.button,
+.badge,
+.icon-button,
+.pin-toggle,
+.sheet-label,
+.title-block {
+  user-select: none;
 }
 
 .skip-link {
@@ -170,17 +183,6 @@ kbd {
   border-bottom: var(--hair) solid var(--rule-strong);
 }
 
-/* Drafting ruler under the bar: minor ticks every 8px, major every 80px. */
-.site-header::after {
-  position: absolute;
-  inset: auto 0 -7px;
-  height: 6px;
-  content: "";
-  pointer-events: none;
-  background:
-    repeating-linear-gradient(to right, var(--rule-strong) 0 1px, transparent 1px 80px) top / 100% 6px no-repeat,
-    repeating-linear-gradient(to right, var(--rule) 0 1px, transparent 1px 8px) top / 100% 3px no-repeat;
-}
 
 .shell-bar {
   display: flex;
@@ -189,9 +191,9 @@ kbd {
   align-items: center;
   width: 100%;
   max-width: var(--max);
-  min-height: 3.5rem;
+  min-height: 3rem;
   margin-inline: auto;
-  padding: var(--space-2) var(--gutter);
+  padding: var(--space-1) var(--gutter);
 }
 
 .brand {
@@ -230,8 +232,8 @@ kbd {
 
 .brand-name {
   font-family: var(--font-display);
-  font-size: 1.75rem;
-  font-weight: 700;
+  font-size: 1.5rem;
+  font-weight: 600;
   line-height: 1;
   letter-spacing: 0.01em;
 }
@@ -251,54 +253,42 @@ kbd {
   gap: var(--space-1);
 }
 
+/* Index, label and count share one baseline and one line box. */
 .nav-link {
   display: inline-flex;
-  gap: var(--space-2);
+  gap: 0.45rem;
   align-items: baseline;
-  padding: 0.45rem 0.7rem;
+  padding: 0.4rem 0.75rem;
   color: var(--fg-dim);
-  font-family: var(--font-display);
-  font-size: 1.1rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  line-height: 1.25;
   text-decoration: none;
-  text-transform: uppercase;
-  border: var(--hair) solid transparent;
+  border-bottom: 2px solid transparent;
   transition: color 0.2s, border-color 0.2s;
 }
 
-.nav-index {
+.nav-index,
+.nav-count {
   color: var(--muted);
-  font-size: var(--step--2);
+  font-size: 0.75rem;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 .nav-link:hover {
   color: var(--fg);
-  border-color: var(--rule-strong);
 }
 
 .nav-link[aria-current="page"] {
   color: var(--fg);
-  border-color: var(--rule-strong);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  border-bottom-color: var(--accent);
 }
 
 .nav-link[aria-current="page"] .nav-index {
   color: var(--accent);
-}
-
-.nav-count {
-  color: var(--muted);
-  font-size: var(--step--2);
-  font-variant-numeric: tabular-nums;
-}
-
-.nav-count::before {
-  content: "[";
-}
-
-.nav-count::after {
-  content: "]";
 }
 
 .nav-count:empty {
@@ -318,21 +308,23 @@ kbd {
   display: inline-flex;
   gap: var(--space-2);
   align-items: center;
-  min-height: 2rem;
+  min-height: var(--control-h);
   padding: 0 0.7rem;
   color: var(--fg-dim);
-  font-size: var(--step--2);
+  font-size: 0.8125rem;
+  font-weight: 500;
   text-decoration: none;
   background: none;
-  border: var(--hair) solid var(--rule-strong);
+  border: var(--hair) solid transparent;
+  border-radius: var(--radius);
   cursor: pointer;
-  transition: border-color 0.2s, color 0.2s;
+  transition: background 0.15s, color 0.15s;
 }
 
 .mode-toggle:hover,
 .header-link:hover {
   color: var(--fg);
-  border-color: var(--accent);
+  background: var(--hover);
 }
 
 .mode-name::after {
@@ -461,7 +453,7 @@ kbd {
 .update-notice h2 {
   margin: 0;
   font-size: var(--step-1);
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .update-notice p {
@@ -526,8 +518,8 @@ kbd {
 .page-head h1 {
   margin: 0;
   font-size: var(--step-3);
-  line-height: 0.95;
-  text-transform: uppercase;
+  line-height: 1.2;
+  text-transform: none;
 }
 
 .page-head:not(:has(.search-form)) {
@@ -1219,67 +1211,40 @@ kbd {
   align-items: center;
 }
 
-/* Buttons carry the 18-LAB chamfer: two clipped layers draw a hairline frame
-   with a 45° notch, so the element itself keeps a rectangular focus ring. */
+/* Buttons match system.css .v-btn: sentence case, one hairline frame, a
+   filled accent only for the primary action. */
 .button {
-  position: relative;
   display: inline-flex;
   gap: var(--space-2);
   align-items: center;
   justify-content: center;
-  min-height: 2.25rem;
-  padding: 0.35rem 1rem 0.35rem 0.85rem;
+  min-height: var(--control-h);
+  padding: 0 0.85rem;
   color: var(--fg);
-  font-family: var(--font-display);
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: 0.05em;
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 500;
   line-height: 1.1;
+  white-space: nowrap;
   text-decoration: none;
-  text-transform: uppercase;
-  background: transparent;
-  border: 0;
+  background: var(--bg-sunken);
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
   cursor: pointer;
-  isolation: isolate;
-}
-
-.button::before,
-.button::after {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  content: "";
-  clip-path: polygon(0 0, calc(100% - var(--notch)) 0, 100% var(--notch), 100% 100%, 0 100%);
-}
-
-.button::before {
-  background: var(--muted);
-  transition: background 0.2s;
-}
-
-.button::after {
-  inset: 1px;
-  background: var(--bg-raised);
-  clip-path: polygon(0 0, calc(100% - var(--notch) + 0.5px) 0, 100% calc(var(--notch) - 0.5px), 100% 100%, 0 100%);
-  transition: background 0.2s;
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .button:hover {
   color: var(--fg);
-}
-
-.button:hover::before {
-  background: var(--accent);
+  background: var(--hover);
+  border-color: var(--muted);
 }
 
 .button:disabled,
 .button[aria-disabled="true"] {
   cursor: not-allowed;
   opacity: 0.5;
-}
-
-.button:disabled:hover::before {
-  background: var(--muted);
 }
 
 .button[aria-busy="true"] {
@@ -1291,48 +1256,30 @@ kbd {
 .button-cyan,
 .button-cyan:hover {
   color: var(--on-accent);
-}
-
-.button-primary::before,
-.button-primary::after,
-.button-cyan::before,
-.button-cyan::after {
+  font-weight: 600;
   background: var(--accent);
+  border-color: var(--accent);
 }
 
-.button-primary:hover::after,
-.button-cyan:hover::after {
-  background: color-mix(in srgb, var(--accent) 86%, var(--fg));
-}
-
-.button-primary:disabled:hover::before {
-  background: var(--accent);
+.button-primary:not(:disabled):hover,
+.button-cyan:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 88%, var(--fg));
 }
 
 .button-danger {
   color: var(--danger);
+  border-color: var(--danger);
 }
 
-.button-danger::before,
-.button-danger:hover::before,
-.button-danger:disabled:hover::before {
-  background: var(--danger);
-}
-
-.button-danger:hover {
+.button-danger:not(:disabled):hover {
   color: var(--bg);
-}
-
-.button-danger:hover::after {
   background: var(--danger);
+  border-color: var(--danger);
 }
 
 .button.badge-warning {
   color: var(--caution);
-}
-
-.button.badge-warning::before {
-  background: var(--caution);
+  border-color: var(--caution);
 }
 
 .icon-button,
@@ -1487,7 +1434,7 @@ kbd {
   color: var(--fg);
   font-size: var(--step-2);
   line-height: 1;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .empty-state p,

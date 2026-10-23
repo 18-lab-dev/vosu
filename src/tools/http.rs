@@ -460,16 +460,21 @@ impl ToolHost {
                 .into_response();
         }
         if request.method() == Method::GET && action == "theme.css" {
-            return crate::assets::ServerAssets::get("tokens.css").map_or_else(
-                || error(StatusCode::NOT_FOUND, "theme unavailable"),
-                |asset| {
-                    (
-                        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-                        asset.data.into_owned(),
-                    )
-                        .into_response()
-                },
+            // One source for the dashboard and tools: the dashboard's tokens,
+            // then the shared components (docs/tools/design.md).
+            const THEME: &str = concat!(
+                include_str!("../../assets/server/tokens.css"),
+                "\n",
+                include_str!("../../assets/server/system.css"),
             );
+            return ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], THEME).into_response();
+        }
+        if request.method() == Method::GET && action == "design" {
+            return (
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                include_str!("../../assets/server/design.html"),
+            )
+                .into_response();
         }
         if request.method() == Method::POST && action == "session" {
             let Ok(value) = serde_json::from_slice::<Value>(body) else {

@@ -7,10 +7,12 @@ const tool = metadata.find(tool => tool.id === id) || {id, name: id, version: ''
 let session = null;
 const fragment = new URLSearchParams(location.hash.slice(1));
 // The dashboard's colour mode when it opened this tab, else the system
-// preference. Tools own their look: the bridge only reports the hint.
+// preference. The bridge applies it as data-theme so the shared theme.css
+// renders in that mode; a tool may still switch it afterwards.
 const hint = fragment.get('theme');
 const colorScheme = hint === 'dark' || hint === 'light'
   ? hint : matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+document.documentElement.dataset.theme = colorScheme;
 
 const ready = (async () => {
   const code = fragment.get('vosu-launch');
