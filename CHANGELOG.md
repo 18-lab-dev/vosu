@@ -51,7 +51,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ### Brand
 
-- vosu is now an 18-LAB product. A new mark (osu!'s hit circle in ink with an accent V before it), lowercase Barlow Condensed wordmark with the 18-LAB endorsement, light and dark README banners and a 1280×640 social preview replace the rose-and-cyan signal V across the dashboard header, diagnostics report, favicon, Windows executable and tray icon, Linux tray and packages. 16 and 24 px icons are pixel-fitted. Rules are in [branding](docs/branding.md).
+- vosu is now an 18-LAB product. The signal V keeps its shape in 18-LAB colours (amber or blueprint line, signal-coloured node) with the 1.x monoline wordmark and an 18-LAB endorsement; light and dark README banners and a 1280×640 social preview are new. The mark is used across the dashboard header, diagnostics report, favicon, Windows executable and tray icon, Linux tray and packages, with pixel-fitted 16 and 24 px versions. Rules are in [branding](docs/branding.md).
 - Linux packages install `hicolor` icons from 16 to 512 px plus the scalable icon, and the tray offers 16–64 px pixmaps instead of one scaled 64 px image. The rasters are committed (rendered by `scripts/render-brand.py`), so packaging no longer needs ImageMagick. Packages name 18-LAB as vendor.
 
 ## 1.1.0 — 2026-10-17

@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="vosu-icon-title vosu-icon-desc">
 <title id="vosu-icon-title">vosu app icon</title>
-<desc id="vosu-icon-desc">The osu! hit circle with an accent V in front of it, the V standing before the circle as in v + osu, on a graphite tile.</desc>
-<!-- Pixel-fitted 24 px master: strokes and ring edges on whole pixels. -->
+<desc id="vosu-icon-desc">The signal V: a telemetry line dips into a V with a signal node at its vertex, on a graphite tile.</desc>
+<!-- Pixel-fitted 24 px master. -->
 <rect width="24" height="24" rx="3" fill="#111214"/>
-<mask id="vosu-gap"><rect x="-1" y="-1" width="200" height="200" fill="#fff"/><polygon points="3,3 6,3 8,8 10,3 13,3 9,13 7,13" fill="#000" stroke="#000" stroke-width="3" stroke-linejoin="round"/></mask><circle cx="14" cy="14" r="5.5" fill="none" stroke="#ebe8e1" stroke-width="3" mask="url(#vosu-gap)"/><polygon points="3,3 6,3 8,8 10,3 13,3 9,13 7,13" fill="#ff963f"/>
+<mask id="vosu-gap"><rect x="-200" y="-200" width="600" height="600" fill="#fff"/><circle cx="12" cy="18" r="4"/></mask><path d="M3 8 H6.5 L12 18 L17.5 8 H21" fill="none" stroke="#ff963f" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" mask="url(#vosu-gap)"/><circle cx="12" cy="18" r="2.1" fill="#7fa6cf"/>
 </svg>

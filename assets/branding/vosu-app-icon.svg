@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 120 120" role="img" aria-labelledby="vosu-icon-title vosu-icon-desc">
 <title id="vosu-icon-title">vosu app icon</title>
-<desc id="vosu-icon-desc">The osu! hit circle with an accent V in front of it, the V standing before the circle as in v + osu, on a graphite tile.</desc>
-<!-- 18-LAB product icon, master. Mark on the 120-unit grid, scaled 0.8 on the tile. -->
+<desc id="vosu-icon-desc">The signal V: a telemetry line dips into a V with a signal node at its vertex, on a graphite tile.</desc>
+<!-- 18-LAB colours on the pre-1.2 artwork; 120-unit tile. -->
 <rect width="120" height="120" rx="14.4" fill="#111214"/>
-<g transform="translate(60 60) scale(0.8) translate(-60 -60)"><mask id="vosu-gap"><rect x="-1" y="-1" width="200" height="200" fill="#fff"/><polygon points="16,16 29.5,16 39,36.9 48.5,16 62,16 42,60 36,60" fill="#000" stroke="#000" stroke-width="12" stroke-linejoin="round"/></mask><circle cx="70" cy="70" r="28" fill="none" stroke="#ebe8e1" stroke-width="12" mask="url(#vosu-gap)"/><polygon points="16,16 29.5,16 39,36.9 48.5,16 62,16 42,60 36,60" fill="#ff963f"/></g>
+<g transform="translate(60 58.59) scale(0.7266) translate(-64 -67)"><mask id="vosu-gap"><rect x="-200" y="-200" width="600" height="600" fill="#fff"/><circle cx="64" cy="94" r="10"/></mask><path d="M18 36 H32 L64 94 L96 36 H110" fill="none" stroke="#ff963f" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" mask="url(#vosu-gap)"/><circle cx="64" cy="94" r="5.5" fill="#7fa6cf"/></g>
 </svg>

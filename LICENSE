@@ -245,8 +245,9 @@ covers the files in assets/branding/ (marks, logos, banners, social preview
 and rendered icons), assets/icon.ico, assets/server/favicon.ico, the brand
 marks drawn in the dashboard and report pages (assets/server/homepage.html and
 assets/server/report.html), and the copies built into vosu's program, tray
-icon and packages. The wordmarks are outlines of Barlow Condensed, which keeps
-its own SIL Open Font License (see the font notices below). The 18-LAB name
+icon and packages. The 18-LAB logotype and the banner text are outlines of
+Barlow Condensed, Barlow and IBM Plex Mono, which keep their own SIL Open Font
+License (see the font notices below). The 18-LAB name
 and mark in this artwork identify vosu's organisation; as CC BY 4.0 section
 2(b)(2) states, the license grants no trademark rights.
 
