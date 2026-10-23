@@ -5,6 +5,10 @@
 //    is reachable by keyboard: arrows between cards, Tab into a card.
 // 3. The dashboard's own previews are not counted as connected sources,
 //    while the same overlay opened directly is.
+// 4. Every page's head (title, search) sits at the same place, and Settings'
+//    save state is empty at rest, shows "Saved" after a save and then
+//    disappears (at once with reduced motion), and keeps "Unsaved changes"
+//    while a network field waits for Apply.
 import fs from 'node:fs';
 
 const [modulePath, evidence] = process.argv.slice(2);
@@ -14,7 +18,7 @@ fs.mkdirSync(evidence, { recursive: true });
 const OVERLAY = 'http://127.0.0.1:25150';
 const DASHBOARD = 'http://127.0.0.1:25151';
 const TOLERANCE = 0.5;
-const report = { baselines: [], keyboard: [], previews: {} };
+const report = { baselines: [], keyboard: [], previews: {}, heads: [], saveState: [] };
 const failures = [];
 const check = (condition, message) => { if (!condition) failures.push(message); };
 
@@ -24,8 +28,8 @@ const browser = await chromium.launch({
   args: ['--host-resolver-rules=MAP tools.invalid 127.0.0.1'],
 });
 
-async function open(path, { theme = 'dark', width = 1280, height = 900 } = {}) {
-  const context = await browser.newContext({ viewport: { width, height } });
+async function open(path, { theme = 'dark', width = 1280, height = 900, reducedMotion = 'no-preference' } = {}) {
+  const context = await browser.newContext({ viewport: { width, height }, reducedMotion });
   await context.addInitScript((value) => { try { localStorage.setItem('vosu.theme.v1', value); } catch (_) { /* opaque */ } }, theme);
   const page = await context.newPage();
   page.on('pageerror', (error) => failures.push(`${path}: page error ${error.message}`));
@@ -168,6 +172,79 @@ async function walkGrid(name, page, gridSelector, cardSelector) {
   report.previews.connectionsWithSource = withSource;
   check(withSource['overlay-0'] === 1, `previews: a directly opened overlay must count once ${JSON.stringify(withSource)}`);
   await page.screenshot({ path: `${evidence}/overlays-previews.png` });
+  await context.close();
+}
+
+// Page heads: every page puts its title and search at the same place, and
+// Settings starts its content as close under the head as the others.
+for (const width of [1280, 1920]) {
+  const heads = [];
+  for (const path of ['/', '/available', '/tools', '/settings']) {
+    const { context, page } = await open(path, { width });
+    heads.push({ path, ...await page.evaluate(() => {
+      const box = (selector) => document.querySelector(selector)?.getBoundingClientRect();
+      const head = box('.page-head');
+      return {
+        titleTop: Math.round(box('#page-title').top * 100) / 100,
+        searchTop: Math.round(box('.search-form').top * 100) / 100,
+        headHeight: Math.round(head.height * 100) / 100,
+        headBottom: Math.round(head.bottom * 100) / 100,
+        gapBelow: Math.round((document.querySelector('.page-head').nextElementSibling.getBoundingClientRect().top - head.bottom) * 100) / 100,
+        statusShown: Boolean(document.querySelector('.page-head .settings-status:not([hidden])')),
+        networkHint: document.body.innerText.includes('Network changes need Apply'),
+      };
+    }) });
+    await context.close();
+  }
+  report.heads.push({ width, heads });
+  for (const key of ['titleTop', 'searchTop', 'headHeight', 'gapBelow']) {
+    const values = heads.map((head) => head[key]);
+    check(Math.max(...values) - Math.min(...values) <= TOLERANCE, `heads ${width}: ${key} differs ${JSON.stringify(values)}`);
+  }
+  const settings = heads.find((head) => head.path === '/settings');
+  check(!settings.statusShown, `heads ${width}: the save state must be empty at rest`);
+  check(!settings.networkHint, `heads ${width}: the network hint copy must be gone`);
+}
+
+// Save state lifecycle on Settings.
+for (const reducedMotion of ['no-preference', 'reduce']) {
+  const { context, page } = await open('/settings', { reducedMotion });
+  const state = () => page.evaluate(() => {
+    const status = document.querySelector('.page-head .settings-status');
+    // In view below the pinned site header even after the save scrolled the page.
+    const box = status.getBoundingClientRect();
+    const header = document.querySelector('.site-header').getBoundingClientRect();
+    const inView = !status.hidden && box.top >= header.bottom - 0.5 && box.bottom <= innerHeight;
+    return { shown: !status.hidden, text: status.textContent, fading: status.classList.contains('is-fading'), inView };
+  });
+  const debug = page.locator('[data-id="DEBUG_LOG"]');
+  const steps = {};
+  await debug.click();
+  await page.waitForFunction(() => document.querySelector('.page-head .settings-status')?.textContent === 'Saved', null, { timeout: 5000 }).catch(() => {});
+  steps.afterSave = await state();
+  if (reducedMotion === 'no-preference') {
+    await page.waitForTimeout(2150);
+    steps.fading = await state();
+  }
+  await page.waitForTimeout(reducedMotion === 'reduce' ? 2300 : 600);
+  steps.later = await state();
+  await debug.click();
+  await page.waitForTimeout(3000);
+  const port = page.locator('[data-id="SERVER_PORT"]');
+  const original = await port.inputValue();
+  await port.fill('25999');
+  steps.networkEdited = await state();
+  await page.waitForTimeout(3000);
+  steps.networkLater = await state();
+  await port.fill(original);
+  steps.networkRestored = await state();
+  report.saveState.push({ reducedMotion, ...steps });
+  const label = `save state (${reducedMotion})`;
+  check(steps.afterSave.shown && steps.afterSave.text === 'Saved' && steps.afterSave.inView, `${label}: "Saved" must show, in view, after a save ${JSON.stringify(steps.afterSave)}`);
+  if (steps.fading) check(steps.fading.shown && steps.fading.fading, `${label}: "Saved" must fade after about 2 s ${JSON.stringify(steps.fading)}`);
+  check(!steps.later.shown, `${label}: "Saved" must disappear ${JSON.stringify(steps.later)}`);
+  check(steps.networkEdited.text === 'Unsaved changes' && steps.networkEdited.inView && steps.networkLater.shown, `${label}: an edited network field must keep "Unsaved changes" ${JSON.stringify(steps)}`);
+  check(!steps.networkRestored.shown, `${label}: restoring the field must clear the state ${JSON.stringify(steps.networkRestored)}`);
   await context.close();
 }
 

@@ -118,9 +118,8 @@ textarea.setting-value,
 /* The section index is a sticky left rail, first in the DOM and in Tab
    order, beside the form, which fills the rest so it ends where the search
    field does. Sticky offsets follow the pinned header's live height
-   (--header-h, set by homepage.js) and the save band under it. */
+   (--header-h, set by homepage.js). */
 .results:has(> .settings) {
-  --settings-band: 2.75rem;
   display: grid;
   grid-template-columns: minmax(9rem, 12rem) minmax(0, 1fr);
   gap: var(--space-6);
@@ -153,7 +152,7 @@ textarea.setting-value,
 }
 
 .settings-group {
-  scroll-margin-top: calc(var(--header-h, 0px) + var(--settings-band, 0px) + var(--space-3));
+  scroll-margin-top: calc(var(--header-h, 0px) + var(--space-3));
 }
 
 @media (max-width: 64rem) {
@@ -181,7 +180,6 @@ textarea.setting-value,
     column-gap: var(--space-5);
   }
 
-  #runtime-settings > .settings-header,
   #runtime-settings > .settings-empty {
     column-span: all;
     margin-bottom: var(--space-5);
@@ -209,20 +207,6 @@ textarea.setting-value,
   display: grid;
   gap: var(--space-5);
   width: 100%;
-}
-
-/* The save summary stays in view under the header while scrolling, in a
-   band of fixed height that the section jumps clear; each row also reports
-   its own result. */
-.settings-header {
-  position: sticky;
-  top: var(--header-h, 0px);
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  height: var(--settings-band, 2.75rem);
-  background: var(--bg);
 }
 
 .inline-counter-settings h2 {
@@ -396,18 +380,32 @@ textarea.setting-value,
   display: none;
 }
 
+/* The save state shares the page title row: empty at rest, a brief
+   "Saved" that fades, or unsaved edits and errors until they resolve. */
 .settings-status {
-  flex: none;
-  padding: 0.2rem 0.6rem;
-  color: var(--muted);
-  font-size: var(--step--2);
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: var(--step--1);
+  line-height: var(--control-h);
+  white-space: nowrap;
+  transition: opacity 0.4s var(--ease-draft);
+}
+
+/* Scrolled past the title row: a small tag under the site header. */
+.settings-status.is-pinned {
+  position: fixed;
+  top: calc(var(--header-h, 0px) + var(--space-3));
+  z-index: 6;
+  padding: 0 var(--space-3);
+  line-height: var(--control-h-sm);
   background: var(--bg-raised);
   border: var(--hair) solid var(--rule-strong);
   border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
 
-.settings-status[data-tone="success"] {
-  color: var(--fg-dim);
+.settings-status.is-fading {
+  opacity: 0;
 }
 
 .settings-status[data-tone="error"] {
@@ -1389,10 +1387,6 @@ dialog[data-stacked]::backdrop {
 
   .settings-group {
     padding-inline: var(--space-3);
-  }
-
-  .settings-header {
-    flex-direction: column;
   }
 
   .command-fields {

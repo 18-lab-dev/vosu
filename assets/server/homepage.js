@@ -1379,31 +1379,67 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
   function initializeRuntimeSettings() {
     const form = document.querySelector('#runtime-settings');
     if (!form) return;
-    const status = form.querySelector('.settings-status');
+    const status = document.querySelector('.page-head .settings-status');
     const networkKeys = new Set(['SERVER_IP', 'SERVER_PORT', 'DASHBOARD_IP', 'DASHBOARD_PORT', 'ALLOWED_IPS']);
     const networkControls = [...form.querySelectorAll('[data-id]')].filter((field) => networkKeys.has(field.dataset.id));
     const startAtLogin = form.querySelector('[data-id="START_AT_LOGIN"]');
     let savedStartAtLogin = startAtLogin?.checked;
     let queue = Promise.resolve();
 
-    function setStatus(text, tone = '') {
+    // The save state is empty at rest. "Saved" (and "Network settings
+    // kept") show for a moment and fade; unsaved edits and errors stay
+    // until they are resolved. Screen readers hear saves through announce().
+    let fadeTimer = 0;
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    function setStatus(text, tone = '', { fade = false } = {}) {
       if (!status) return;
+      clearTimeout(fadeTimer);
+      status.classList.remove('is-fading');
       status.textContent = text;
       status.dataset.tone = tone;
+      status.hidden = !text;
+      if (!fade) return;
+      fadeTimer = setTimeout(() => {
+        if (reducedMotion?.matches) { setStatus(''); return; }
+        status.classList.add('is-fading');
+        fadeTimer = setTimeout(() => setStatus(''), 400);
+      }, 2000);
     }
 
+    // Saves usually happen far below the title row, so while the page head
+    // is scrolled away the state pins under the site header, at the head's
+    // right edge.
+    const pageHead = status?.closest('.page-head');
+    if (pageHead && 'IntersectionObserver' in window) {
+      const siteHeader = document.querySelector('.site-header');
+      const siteHeaderOffset = () => (siteHeader && getComputedStyle(siteHeader).position === 'sticky' ? siteHeader.offsetHeight : 0);
+      const place = (pinned) => {
+        status.classList.toggle('is-pinned', pinned);
+        status.style.right = pinned
+          ? `${document.documentElement.clientWidth - pageHead.getBoundingClientRect().right}px` : '';
+      };
+      new IntersectionObserver(([entry]) => place(!entry.isIntersecting), {
+        rootMargin: `-${siteHeaderOffset()}px 0px 0px 0px`,
+      }).observe(pageHead);
+      window.addEventListener('resize', () => { if (status.classList.contains('is-pinned')) place(true); }, { passive: true });
+    }
+
+    // Errors, then unsaved sections (Catalog sources, network fields).
+    function pendingStatus() {
+      if (form.querySelector('.settings-item.has-error')) return ['Some changes were not saved', 'error'];
+      if (form.querySelector('[data-unsaved]')) return ['Unsaved changes', 'warn'];
+      return null;
+    }
     function setSavedStatus() {
-      if (form.querySelector('.settings-item.has-error')) {
-        setStatus('Some changes were not saved', 'error');
-      } else if (form.querySelector('[data-unsaved]')) {
-        // Sections saved with their own button (Catalog sources).
-        setStatus('Unsaved changes below', 'warn');
-      } else {
-        setStatus('All changes saved', 'success');
-      }
+      const pending = pendingStatus();
+      if (pending) setStatus(...pending);
+      else setStatus('Saved', 'success', { fade: true });
     }
     form.addEventListener('vosu:unsaved', () => {
-      if (status?.textContent !== 'Saving…') setSavedStatus();
+      if (status?.textContent === 'Saving…') return;
+      const pending = pendingStatus();
+      if (pending) setStatus(...pending);
+      else if (status?.dataset.tone === 'warn') setStatus('');
     });
 
     // Feedback sits beside the control that changed: a brief "Saved" mark,
@@ -1507,16 +1543,25 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
     apply.type = 'button';
     apply.className = 'button button-primary';
     apply.textContent = 'Apply network settings';
-    const networkNote = document.createElement('p');
-    networkNote.className = 'field-help';
-    networkNote.textContent = 'Network changes need Apply, then Keep within 30 seconds.';
     // Apply sits with the fields it commits instead of after unrelated groups.
     const networkActions = document.createElement('div');
     networkActions.className = 'network-actions';
-    networkActions.append(apply, networkNote);
+    networkActions.append(apply);
     const networkGroup = networkControls[0]?.closest('.settings-group');
     if (networkGroup) networkGroup.append(networkActions);
     else form.append(networkActions);
+    // Edited network fields wait for Apply; until then the save state says
+    // there are unsaved changes, like an edited catalog source.
+    const networkSnapshot = () => JSON.stringify(networkControls.map((field) => controlValue(field)));
+    let appliedNetwork = networkSnapshot();
+    function markNetworkDirty() {
+      const holder = networkGroup ?? networkActions;
+      const unsaved = networkSnapshot() !== appliedNetwork;
+      if (unsaved === holder.hasAttribute('data-unsaved')) return;
+      holder.toggleAttribute('data-unsaved', unsaved);
+      holder.dispatchEvent(new CustomEvent('vosu:unsaved', { bubbles: true }));
+    }
+    networkControls.forEach((field) => field.addEventListener('input', markNetworkDirty));
 
     // A pending change gets a bar pinned under the site header: visible
     // wherever the page lands, with Keep focused and the time left.
@@ -1652,7 +1697,8 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
       try {
         await requestJson('/api/settingsSave', { method: 'POST', body: JSON.stringify({ _network_action: 'confirm' }) });
         finishNetwork();
-        notify('Network settings kept.', 'success');
+        setStatus('Network settings kept', 'success', { fade: true });
+        announce('Network settings kept.');
         apply.focus();
       } catch (error) { notify(errorText(error), 'error'); }
       finally { keep.disabled = false; }
@@ -1689,6 +1735,8 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
       announcedLate = false;
       try {
         await requestJson('/api/settingsSave', { method: 'POST', body: JSON.stringify({ ...values, _network_action: 'apply' }) });
+        appliedNetwork = networkSnapshot();
+        markNetworkDirty();
         startNetworkTimer();
       } catch (error) {
         apply.disabled = false;
@@ -1702,10 +1750,8 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
     form.addEventListener('change', (event) => {
       const control = event.target.closest('[data-id]');
       if (!control || control.disabled || control === folder) return;
-      if (networkKeys.has(control.dataset.id)) {
-        networkNote.textContent = 'Not saved yet: Apply, then Keep within 30 seconds.';
-        return;
-      }
+      // Network fields wait for Apply (see markNetworkDirty).
+      if (networkKeys.has(control.dataset.id)) return;
       queue = queue.then(() => saveSetting(control));
     });
     form.addEventListener('submit', (event) => {
