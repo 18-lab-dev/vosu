@@ -241,10 +241,14 @@ SOFTWARE.
 ===== Branding assets =====
 
 The vosu logo, wordmark and app icons are Copyright (c) 2026 sxlvia. This
-covers the files in assets/branding/, assets/icon.ico,
-assets/server/favicon.ico, the brand marks drawn in the dashboard and report
-pages (assets/server/homepage.html and assets/server/report.html), and the
-copies built into vosu's program, tray icon and packages.
+covers the files in assets/branding/ (marks, logos, banners, social preview
+and rendered icons), assets/icon.ico, assets/server/favicon.ico, the brand
+marks drawn in the dashboard and report pages (assets/server/homepage.html and
+assets/server/report.html), and the copies built into vosu's program, tray
+icon and packages. The wordmarks are outlines of Barlow Condensed, which keeps
+its own SIL Open Font License (see the font notices below). The 18-LAB name
+and mark in this artwork identify vosu's organisation; as CC BY 4.0 section
+2(b)(2) states, the license grants no trademark rights.
 
 They are licensed under the Creative Commons Attribution 4.0 International
 License (CC BY 4.0): https://creativecommons.org/licenses/by/4.0/

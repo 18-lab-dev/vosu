@@ -48,6 +48,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Keyboard and screen readers: every checkbox and switch shows a focus ring; cards have one Tab stop per action (pin, menu, URL) with arrow keys between cards; Enlarge, Open in browser and Copy resolution are menu items; focus moves to a sensible place after deleting or reordering; only short summaries are announced; errors stay until dismissed. Destructive confirmations use a danger button, and dialogs with unsaved input ask before discarding it.
 - The enlarged preview scales small overlays up to fill the dialog; the connected chip no longer counts the dashboard's own previews; every search matches all of its words; the Available page lists catalog-source overlays (official first, with a source badge) above the community catalog in the same card and filters both; the update notice can be put off with "Later" and stays one click away in the status strip; the 404 page links back to the dashboard.
 
+### Brand
+
+- vosu is now an 18-LAB product. A new mark (osu!'s hit circle in ink with an accent V before it), lowercase Barlow Condensed wordmark with the 18-LAB endorsement, light and dark README banners and a 1280×640 social preview replace the rose-and-cyan signal V across the dashboard header, diagnostics report, favicon, Windows executable and tray icon, Linux tray and packages. 16 and 24 px icons are pixel-fitted. Rules are in [branding](docs/branding.md).
+- Linux packages install `hicolor` icons from 16 to 512 px plus the scalable icon, and the tray offers 16–64 px pixmaps instead of one scaled 64 px image. The rasters are committed (rendered by `scripts/render-brand.py`), so packaging no longer needs ImageMagick. Packages name 18-LAB as vendor.
+
 ## 1.1.0 — 2026-10-17
 
 ### Dashboard origin

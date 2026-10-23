@@ -4,6 +4,7 @@ platform: linux
 version: ${VERSION}
 release: '1'
 maintainer: sxlvia <qt715@proton.me>
+vendor: 18-LAB
 homepage: https://github.com/shiruviaa/vosu
 license: MIT OR Apache-2.0
 description: Native osu! telemetry daemon with a local dashboard
@@ -22,9 +23,25 @@ contents:
     dst: /usr/share/applications/vosu.desktop
   - src: assets/branding/vosu-app-icon.svg
     dst: /usr/share/icons/hicolor/scalable/apps/vosu.svg
-  - src: ${STAGE}/vosu.png
+  # Rendered by scripts/render-brand.py; 16-24 px come from the pixel-fitted masters.
+  - src: assets/branding/icons/vosu-16.png
+    dst: /usr/share/icons/hicolor/16x16/apps/vosu.png
+  - src: assets/branding/icons/vosu-22.png
+    dst: /usr/share/icons/hicolor/22x22/apps/vosu.png
+  - src: assets/branding/icons/vosu-24.png
+    dst: /usr/share/icons/hicolor/24x24/apps/vosu.png
+  - src: assets/branding/icons/vosu-32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/vosu.png
+  - src: assets/branding/icons/vosu-48.png
+    dst: /usr/share/icons/hicolor/48x48/apps/vosu.png
+  - src: assets/branding/icons/vosu-64.png
+    dst: /usr/share/icons/hicolor/64x64/apps/vosu.png
+  - src: assets/branding/icons/vosu-128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/vosu.png
+  - src: assets/branding/icons/vosu-256.png
     dst: /usr/share/icons/hicolor/256x256/apps/vosu.png
-    expand: true
+  - src: assets/branding/icons/vosu-512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/vosu.png
   - src: LICENSE
     dst: /usr/share/licenses/vosu/LICENSE
   - src: LICENSE
