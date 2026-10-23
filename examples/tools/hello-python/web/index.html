@@ -1,30 +1,31 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Hello Python · vosu</title>
 <link rel="stylesheet" href="/tools/_host/v1/theme.css">
-<style>
-body { margin: 2rem; background: var(--bg); color: var(--fg); font-family: var(--font-body); }
-main { max-width: 40rem; border-top: 1px solid var(--rule); padding-top: 1rem; }
-h1 { font-family: var(--font-display); }
-small, output { font-family: var(--font-mono); }
-button { background: var(--accent); color: var(--on-accent); border: 0; padding: .8rem; cursor: pointer; }
-button:disabled { opacity: .5; cursor: default; }
-</style>
-<main>
-<small>01 / REFERENCE TOOL</small>
-<h1>Hello Python</h1>
-<p>Count: <output id="count">—</output></p>
-<button id="increment" disabled>Increment</button>
-<button id="refresh">Refresh</button>
-<p id="status" role="status"></p>
+<body class="v-app">
+<header class="v-bar">
+  <span class="v-bar__title">Hello Python</span>
+  <span class="v-dot" id="session-dot"></span><span class="v-muted" id="status" role="status"></span>
+</header>
+<main class="v-main" style="align-content: start; justify-items: start">
+  <section class="v-panel">
+    <div class="v-panel__head"><span class="v-label">Counter</span></div>
+    <div class="v-panel__body">
+      <div class="v-stat"><span class="v-stat__label">Count</span><output class="v-stat__value" id="count">—</output></div>
+      <div class="v-toolbar">
+        <button class="v-btn v-btn--primary" id="increment" type="button" disabled>Increment</button>
+        <button class="v-btn" id="refresh" type="button">Refresh</button>
+      </div>
+    </div>
+  </section>
 </main>
 <script type="module">
+// The bridge applies the dashboard's colour mode; theme.css supplies the rest.
 import { vosu } from '/tools/_host/v1/bridge.js';
-// theme.css is optional; this example uses its tokens and picks the mode itself.
-document.documentElement.dataset.theme = vosu.colorScheme;
 const status = document.querySelector('#status');
+const dot = document.querySelector('#session-dot');
 const count = document.querySelector('#count');
 const increment = document.querySelector('#increment');
 async function request(path, options) {
@@ -35,15 +36,17 @@ async function request(path, options) {
 }
 async function act(path, options) {
   try { await request(path, options); }
-  catch (error) { status.textContent = error.message; }
+  catch (error) { status.textContent = error.message; dot.dataset.state = 'error'; }
 }
 try {
   await vosu.ready;
   increment.disabled = !vosu.canWrite;
-  status.textContent = vosu.canWrite ? 'UI session active.' : 'Read-only. Open from the dashboard to increment.';
+  status.textContent = vosu.canWrite ? 'Session' : 'Read-only';
+  dot.dataset.state = vosu.canWrite ? 'ok' : 'warn';
   await act('v1/count');
   increment.onclick = () => act('v1/increment', { method: 'POST' });
   document.querySelector('#refresh').onclick = () => act('v1/count');
-} catch (error) { status.textContent = error.message; }
+} catch (error) { status.textContent = error.message; dot.dataset.state = 'error'; }
 </script>
+</body>
 </html>

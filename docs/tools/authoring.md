@@ -53,9 +53,9 @@ List read-only path prefixes in `[api].read`: only GET, HEAD, and WebSocket upgr
 
 Import `vosu` from `/tools/_host/v1/bridge.js`. Await `vosu.ready` before fetching. Use `vosu.fetch("v1/count")`, which supplies the current UI session header; disable write controls when `vosu.canWrite` is false and point users at the dashboard's **Open**. The launch code is single-use and removed from the URL by the bridge. The session exists only in page memory: a reload is read-only by design. Never copy it into `sessionStorage`, `localStorage`, IndexedDB, or cookies (overlays share that storage), never open same-origin pages without `noopener`, and never frame overlays from a tool UI; any of those hands write access to overlay code. Never send the service token to browser code.
 
-### Look and colour mode
+### Look and layout
 
-A tool's UI is its own: vosu does not restyle it, and nothing requires it to look like the dashboard. Read `vosu.colorScheme` (`"dark"` or `"light"`: the dashboard's mode when the user pressed **Open**, otherwise the system preference) to choose your palette, and set the CSS `color-scheme` property to the same value so native select popups, scrollbars, and pickers stay legible against your colours. A select that sets only `color` and `background` while `color-scheme` stays at the default can open a light popup with light text. `/tools/_host/v1/theme.css`, the dashboard's tokens and fonts, is optional; if you link it, set `data-theme` on `<html>` to `vosu.colorScheme` yourself.
+Build the UI from the shared 18-LAB system: link `/tools/_host/v1/theme.css` and use its `v-` classes, so every tool matches the dashboard and each other. The bridge sets `data-theme` from the dashboard's mode, and the theme sets `color-scheme`, so native popups and scrollbars stay legible without tool code. Follow the [design system guide](design.md): labels only (descriptions belong in `settings.json`), a slim top bar instead of a header, no page scrolling at common desktop sizes, a help hover only for ambiguous labels, and muted audio by default. The reference page `/tools/_host/v1/design` shows every component in both modes.
 
 ### Settings, jobs, and live data
 

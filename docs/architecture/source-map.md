@@ -60,9 +60,11 @@ JSON/beatmap evidence are data, not source-size exceptions or splitting targets.
   locks remain maintained inputs.
 - The dashboard loads `homepage.js` as an ES module, after the classic
   `theme-init.js`, which applies the stored colour mode before first paint. `tokens.css` is the single
-  source of design tokens and `@font-face` rules; tool UIs receive the same file
-  as `/tools/_host/v1/theme.css`, so it holds only `:root` and font rules with
-  absolute `/assets/` URLs. `homepage-settings.js` owns the overlay and tool
+  source of design tokens and `@font-face` rules (custom properties and font
+  rules only, with absolute `/assets/` URLs); `system.css` holds the shared
+  `v-` components. Tool UIs receive both, concatenated, as
+  `/tools/_host/v1/theme.css`, and `design.html` is the reference page at
+  `/tools/_host/v1/design` ([design guide](../tools/design.md)). `homepage-settings.js` owns the overlay and tool
   settings editor; `dashboard-tools.js` owns the Tools page and loads only
   there; `homepage-controls.css` follows the base stylesheet and preserves
   settings/dialog/responsive cascade order.

@@ -1,14 +1,15 @@
 /*
- * 18-LAB design tokens for vosu: the dashboard and tool UIs share this file.
- * The dashboard links it from /assets/tokens.css; tools link the same bytes at
- * /tools/_host/v1/theme.css. It therefore holds only @font-face and :root
+ * 18-LAB design tokens for vosu, the single source for the dashboard and
+ * every tool UI. The dashboard links it from /assets/tokens.css; tools get
+ * the same bytes, followed by the shared components in system.css, at
+ * /tools/_host/v1/theme.css. It holds only @font-face and custom-property
  * rules, and font URLs are absolute so they resolve from either path. Both
  * vosu listeners serve /assets/.
  *
  * Two modes, one system: WORKSTATION (graphite + amber, the default) and
- * DRAFTING (paper + blueprint). Select one with
- * :root[data-theme="dark" | "light"]; without the attribute the operating
- * system's colour-scheme preference decides.
+ * DRAFTING (paper + blueprint). Select one with data-theme="dark" | "light"
+ * on <html> (or on any element, for a region in the other mode); without the
+ * attribute the operating system's colour-scheme preference decides.
  *
  * Fonts: Barlow, Barlow Condensed (c) 2017 The Barlow Project Authors;
  * IBM Plex Mono (c) 2017 IBM Corp. SIL Open Font License 1.1, see
@@ -82,7 +83,7 @@
 /* WORKSTATION. Each mode borrows the other's accent as its quiet secondary
    "signal" colour, which keeps the two reading as one system. */
 :root,
-:root[data-theme="dark"] {
+[data-theme="dark"] {
   color-scheme: dark;
   --bg: #111214;
   --bg-raised: #17191c;
@@ -101,12 +102,16 @@
   --grid-minor: rgb(235 232 225 / 0.028);
   --grid-major: rgb(235 232 225 / 0.06);
   --scrim: rgb(5 6 7 / 0.78);
-  --mode-label: "WORKSTATION";
+  --hover: rgb(235 232 225 / 0.07);
+  --selected: rgb(255 150 63 / 0.12);
+  --ok: #6fbf8e;
+  --shadow: 0 12px 32px rgb(0 0 0 / 0.32);
+  --mode-label: "Workstation";
 }
 
 /* DRAFTING. --muted and --caution are darker than the 18-LAB prototype's so
    small text keeps 4.5:1 contrast on every light surface. */
-:root[data-theme="light"] {
+[data-theme="light"] {
   color-scheme: light;
   --bg: #f2f1ec;
   --bg-raised: #f8f7f3;
@@ -125,7 +130,11 @@
   --grid-minor: rgb(23 95 173 / 0.05);
   --grid-major: rgb(23 95 173 / 0.1);
   --scrim: rgb(19 32 48 / 0.45);
-  --mode-label: "DRAFTING";
+  --hover: rgb(23 95 173 / 0.06);
+  --selected: rgb(23 95 173 / 0.1);
+  --ok: #2f7d4f;
+  --shadow: 0 12px 32px rgb(19 32 48 / 0.14);
+  --mode-label: "Drafting";
 }
 
 @media (prefers-color-scheme: light) {
@@ -148,22 +157,29 @@
     --grid-minor: rgb(23 95 173 / 0.05);
     --grid-major: rgb(23 95 173 / 0.1);
     --scrim: rgb(19 32 48 / 0.45);
-    --mode-label: "DRAFTING";
+    --hover: rgb(23 95 173 / 0.06);
+    --selected: rgb(23 95 173 / 0.1);
+    --ok: #2f7d4f;
+    --shadow: 0 12px 32px rgb(19 32 48 / 0.14);
+    --mode-label: "Drafting";
   }
 }
 
 :root {
+  /* Barlow carries the interface; Barlow Condensed is kept for the brand and
+     large numeric readouts; Plex Mono for data, indices and code. */
   --font-display: "Barlow Condensed", "Bahnschrift", "DIN Condensed", sans-serif;
   --font-body: "Barlow", "Bahnschrift", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", "Cascadia Code", monospace;
 
-  /* Type scale. Labels are mono caps at --step--2; body text is --step-0. */
+  /* Type scale. Section labels are mono caps at --step--2; body text is
+     --step-0. Headings are sentence case at --step-1/--step-2, weight 600. */
   --step--2: 0.6875rem;
   --step--1: 0.8125rem;
   --step-0: 1rem;
-  --step-1: 1.25rem;
-  --step-2: 1.75rem;
-  --step-3: clamp(2.25rem, 1.6rem + 2.6vw, 3.75rem);
+  --step-1: 1.125rem;
+  --step-2: 1.375rem;
+  --step-3: 1.625rem;
 
   /* Spacing scale on a 4px base. */
   --space-1: 0.25rem;
@@ -175,9 +191,14 @@
   --space-7: 3rem;
   --space-8: 4rem;
 
+  /* Controls and chrome, shared by the dashboard and system.css. */
+  --control-h: 2rem;
+  --control-h-sm: 1.625rem;
+  --bar-h: 2.5rem;
+  --radius: 2px;
+
   --gutter: clamp(1rem, 0.5rem + 2vw, 2.5rem);
   --max: 1440px;
   --hair: 1px;
-  --notch: 8px;
   --ease-draft: cubic-bezier(0.65, 0, 0.2, 1);
 }

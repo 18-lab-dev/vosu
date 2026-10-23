@@ -92,7 +92,7 @@ export function mountCatalogOverlays({ root, requestJson, notify, errorText, set
   const section = node('section', undefined, 'tools-catalog'); section.id = 'source-overlays';
   const heading = node('h2', 'Catalog source overlays'); heading.id = 'source-overlays-title';
   section.setAttribute('aria-labelledby', heading.id);
-  const disclosure = node('p', 'Third-party JavaScript runs on the overlay origin and can read the local overlay API. Install only overlays and sources you trust. The community catalog above remains independent.', 'field-help');
+  const disclosure = node('p', 'Third-party code: install only overlays and sources you trust.', 'field-help');
   const status = node('p', 'Fetching catalog sources…', 'tools-loading'); status.setAttribute('role', 'status');
   const cards = node('div', undefined, 'tools-root tools-root--overlays');
   async function install(overlay, action, control) {
@@ -116,20 +116,23 @@ export function mountCatalogOverlays({ root, requestJson, notify, errorText, set
     try {
       const payload = await requestJson('/api/tools/catalog');
       const overlays = [...payload.overlays, ...payload.shadowed.filter((entry) => entry.kind === 'overlay')];
-      status.textContent = `${payload.overlays.length} overlays · ${payload.sources.map((source) => `${source.source}: ${source.status}${source.last_error ? ` (${source.last_error})` : ''}`).join(' · ')}`;
+      // Sources are only worth a line when one failed.
+      status.textContent = payload.sources.filter((source) => source.last_error).map((source) => `${source.source}: ${source.last_error}`).join(' · ');
       cards.replaceChildren(...overlays.map((overlay) => {
         const card = node('article', undefined, 'tool-card');
         const banner = cardBanner(overlay.banner_url);
         const top = node('div', undefined, 'tool-card__top');
         const head = node('div', undefined, 'tool-card__head');
-        const badges = node('p', undefined, 'tool-card__index');
-        badges.append(node('span', overlay.shadowed ? 'Shadowed' : 'Catalog overlay', 'badge'));
-        if (overlay.update_available) badges.append(node('span', 'Update available', 'badge'));
         const title = node('h2', overlay.name); title.append(node('span', `v${overlay.version}`, 'tool-card__version'));
-        head.append(badges, title, node('p', `by ${overlay.author} · ${overlay.source}`, 'tool-card__author'));
+        title.title = `${overlay.author} · ${overlay.source}`;
+        const badges = node('p', undefined, 'tool-card__status');
+        if (overlay.shadowed) badges.append(node('span', 'Shadowed', 'badge'));
+        if (overlay.update_available) badges.append(node('span', 'Update available', 'badge badge-warning'));
+        head.append(title, badges);
         top.append(cardIcon(overlay.name, overlay.icon_url), head);
         if (banner) card.append(banner);
-        card.append(top, node('p', overlay.description, 'tool-card__description'));
+        card.append(top);
+        if (overlay.description) { const description = node('p', overlay.description, 'tool-card__description'); description.title = overlay.description; card.append(description); }
         const actions = node('div', undefined, 'tool-card__actions');
         if (overlay.shadowed) actions.append(node('span', 'An earlier source provides this id.', 'field-help'));
         else if (!overlay.installed || overlay.update_available && overlay.managed) {

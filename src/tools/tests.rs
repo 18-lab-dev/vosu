@@ -44,6 +44,44 @@ fn request(method: Method, path: &str) -> Request {
 }
 
 #[tokio::test]
+async fn theme_serves_shared_tokens_and_components_and_the_reference_page() {
+    let root = tempfile::tempdir().unwrap();
+    let host = host(root.path(), Vec::new()).await;
+    let get = |path: &'static str| host.overlay(request(Method::GET, path), Bytes::new());
+    let theme = get("/tools/_host/v1/theme.css").await;
+    assert_eq!(theme.status(), StatusCode::OK);
+    assert_eq!(theme.headers()["content-type"], "text/css; charset=utf-8");
+    let css =
+        String::from_utf8(to_bytes(theme.into_body(), 1 << 20).await.unwrap().to_vec()).unwrap();
+    // One source: the dashboard's token file comes first, unchanged.
+    assert!(css.starts_with(include_str!("../../assets/server/tokens.css")));
+    for class in [
+        ".v-app",
+        ".v-bar",
+        ".v-panel",
+        ".v-btn--primary",
+        ".v-select",
+        ".v-file",
+        ".v-help",
+        ".v-drawer",
+    ] {
+        assert!(css.contains(class), "{class}");
+    }
+    let design = get("/tools/_host/v1/design").await;
+    assert_eq!(design.status(), StatusCode::OK);
+    assert_eq!(design.headers()["content-type"], "text/html; charset=utf-8");
+    let html = String::from_utf8(
+        to_bytes(design.into_body(), 1 << 20)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(html.contains(r#"href="/tools/_host/v1/theme.css""#));
+    host.shutdown().await;
+}
+
+#[tokio::test]
 async fn art_is_served_in_every_status_and_sandboxed() {
     let root = tempfile::tempdir().unwrap();
     let dir = put(&root.path().join("data"), "artful", "");

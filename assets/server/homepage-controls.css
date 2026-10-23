@@ -181,7 +181,7 @@ input[type="checkbox"].settings-control {
   #runtime-settings.settings {
     display: block;
     width: 100%;
-    columns: 2 30rem;
+    columns: 2 24rem;
     column-gap: var(--space-5);
   }
 
@@ -196,11 +196,16 @@ input[type="checkbox"].settings-control {
     margin-bottom: var(--space-5);
     break-inside: avoid;
   }
+
+  /* Half-width groups: fields take at most 45% so the copy keeps a readable measure. */
+  #runtime-settings .settings-item:not(:has(.settings-item__control > input[type="checkbox"]:only-child)) {
+    grid-template-columns: minmax(0, 1fr) minmax(7rem, 45%);
+  }
 }
 
 @media (min-width: 150rem) {
   #runtime-settings.settings {
-    columns: 3 30rem;
+    columns: 3 24rem;
   }
 }
 
@@ -230,7 +235,7 @@ input[type="checkbox"].settings-control {
 /* Static section titles take caps; titles carrying an overlay or tool name
    keep its spelling. */
 .settings-header h2 {
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .settings-header p,
@@ -270,6 +275,11 @@ input[type="checkbox"].settings-control {
   gap: var(--space-4);
   align-items: center;
   padding-block: var(--space-3);
+}
+
+/* A checkbox needs no field-width column: the copy takes the rest. */
+.settings-item:has(.settings-item__control > input[type="checkbox"]:only-child) {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .settings-item + .settings-item {
@@ -547,7 +557,7 @@ input[type="checkbox"].settings-control {
   margin: var(--space-4) 0 0;
   padding-bottom: var(--space-2);
   font-size: var(--step-1);
-  text-transform: uppercase;
+  text-transform: none;
   border-bottom: var(--hair) solid var(--rule-strong);
   scroll-margin-top: 6rem;
 }
@@ -802,22 +812,21 @@ input[type="checkbox"].settings-control {
 
 /* ------------------------------------------------------------- tools */
 
-/* Cards in a row share its height; each card pins its actions to the bottom
-   edge so the buttons line up across the row. */
+/* Compact cards: banner strip, identity row, status line, actions. Cards in
+   a row share its height and pin their actions to the bottom edge. */
 .tools-root {
   grid-column: 1 / -1;
   display: grid;
-  gap: var(--grid-gap);
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 34rem), 1fr));
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr));
   align-items: stretch;
-  counter-reset: tool;
 }
 
 .tools-catalog {
   grid-column: 1 / -1;
   display: grid;
-  gap: var(--space-4);
-  padding-top: var(--space-6);
+  gap: var(--space-3);
+  padding-top: var(--space-5);
   border-top: var(--hair) solid var(--rule-strong);
 }
 
@@ -831,8 +840,9 @@ input[type="checkbox"].settings-control {
 
 .tools-catalog__header h2 {
   margin: 0;
-  font-family: var(--font-mono);
-  font-size: var(--step--1);
+  color: var(--muted);
+  font: 400 var(--step--2) / 1.4 var(--font-mono);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -840,19 +850,15 @@ input[type="checkbox"].settings-control {
   grid-column: 1 / -1;
 }
 
-/* Catalog overlay cards reuse the tool card; their sheet index reads O-nn. */
-.tools-root--overlays .tool-card__index::before {
-  content: "O-" counter(tool, decimal-leading-zero);
-}
-
-.catalog-source-list { display: grid; gap: var(--space-4); }
+.catalog-source-list { display: grid; gap: var(--space-3); }
 .catalog-source-row {
   display: grid;
   grid-template-columns: auto minmax(12rem, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--muted);
+  padding: var(--space-3);
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
 }
 .catalog-source-row .field-help { grid-column: 1 / -1; overflow-wrap: anywhere; }
 .catalog-source-row .setting-value { width: 100%; min-width: 0; }
@@ -868,24 +874,25 @@ input[type="checkbox"].settings-control {
   grid-column: 1 / -1;
   margin: 0;
   color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--step--2);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--step--1);
+}
+
+.tools-loading:empty {
+  display: none;
 }
 
 .tool-card {
-  --tool-pad-y: var(--space-4);
-  --tool-pad-x: var(--space-5);
+  --tool-pad: var(--space-3);
   position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   min-width: 0;
-  padding: var(--tool-pad-y) var(--tool-pad-x);
+  padding: var(--tool-pad);
+  overflow: hidden;
   background: var(--bg-raised);
   border: var(--hair) solid var(--rule-strong);
-  counter-increment: tool;
+  border-radius: var(--radius);
   transition: border-color 0.2s;
 }
 
@@ -893,39 +900,14 @@ input[type="checkbox"].settings-control {
   border-color: var(--muted);
 }
 
-/* Status stripe along the left edge, drawn above the banner. */
-.tool-card::after {
-  position: absolute;
-  inset: 0 auto 0 0;
-  z-index: 2;
-  width: 3px;
-  content: "";
-  pointer-events: none;
-  background: var(--tool-stripe, transparent);
-}
-
-.tool-card[data-status="failed"],
-.tool-card[data-status="invalid"] {
-  --tool-stripe: var(--danger);
-}
-
-.tool-card[data-status="untrusted"],
-.tool-card[data-status="blocked"] {
-  --tool-stripe: var(--caution);
-}
-
-.tool-card[data-status="running"] {
-  --tool-stripe: var(--accent);
-}
-
-/* Manifest `banner` / catalog `banner_url`: 3:1 art across the card top,
+/* Manifest `banner` / catalog `banner_url`: a short strip of the 3:1 art,
    cropped to fill. Cards without one start with the identity row. */
 .tool-card__banner {
-  aspect-ratio: 3 / 1;
-  margin: calc(-1 * var(--tool-pad-y)) calc(-1 * var(--tool-pad-x)) 0;
+  height: 4.5rem;
+  margin: calc(-1 * var(--tool-pad)) calc(-1 * var(--tool-pad)) 0;
   overflow: hidden;
   background: var(--bg-sunken);
-  border-bottom: var(--hair) solid var(--rule-strong);
+  border-bottom: var(--hair) solid var(--rule);
 }
 
 .tool-card__banner img {
@@ -938,95 +920,82 @@ input[type="checkbox"].settings-control {
 .tool-card__top {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--space-3) var(--space-4);
-  align-items: start;
+  gap: var(--space-3);
+  align-items: center;
 }
 
 .tool-card__icon {
   position: relative;
   display: grid;
-  width: 3.25rem;
-  height: 3.25rem;
+  width: 2.5rem;
+  height: 2.5rem;
   overflow: hidden;
   color: var(--accent);
-  font-family: var(--font-display);
-  font-size: 1.4rem;
-  font-weight: 700;
+  font: 600 1.05rem / 1 var(--font-body);
   text-transform: uppercase;
   background: var(--bg-sunken);
   border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
   place-items: center;
-}
-
-/* Below a banner the icon rises into it, so art and identity read as one. */
-.tool-card__banner + .tool-card__top .tool-card__icon {
-  width: 4rem;
-  height: 4rem;
-  margin-top: calc(-1 * var(--space-6));
-  background: var(--bg-raised);
-  border-color: var(--muted);
 }
 
 .tool-card__icon img {
   width: 100%;
   height: 100%;
-  padding: 0.35rem;
+  padding: 0.25rem;
   object-fit: contain;
 }
 
 .tool-card__head {
   display: grid;
-  gap: var(--space-1);
+  gap: 0.2rem;
   min-width: 0;
-}
-
-.tool-card__index {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  align-items: center;
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--step--2);
-}
-
-.tool-card__index::before {
-  color: var(--accent);
-  content: "T-" counter(tool, decimal-leading-zero);
 }
 
 .tool-card h2 {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0 var(--space-3);
+  gap: 0 var(--space-2);
   align-items: baseline;
+  min-width: 0;
   margin: 0;
-  font-size: var(--step-2);
-  line-height: 1;
-  /* Names are identities ("osu! Trainer"); caps would rewrite them. */
-  text-transform: none;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  font-size: 1.0625rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .tool-card__version {
-  color: var(--accent);
+  color: var(--muted);
   font-family: var(--font-mono);
-  font-size: var(--step--1);
+  font-size: var(--step--2);
   font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
 }
 
-.tool-card__author {
+.tool-card__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  align-items: center;
   margin: 0;
   color: var(--fg-dim);
   font-size: var(--step--1);
 }
 
+.tool-card__status .badge {
+  min-height: 1.15rem;
+  padding: 0 0.3rem;
+  font-size: 0.625rem;
+}
+
+/* One line; the full text is in the title tooltip and in Details. */
 .tool-card__description {
-  max-width: 72ch;
   margin: 0;
+  overflow: hidden;
   color: var(--fg-dim);
+  font-size: var(--step--1);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .badge[data-source="dev"] {
@@ -1039,6 +1008,7 @@ input[type="checkbox"].settings-control {
   border-color: var(--caution);
 }
 
+/* Status inside the Details drawer. */
 .tool-status {
   display: inline-flex;
   gap: var(--space-2);
@@ -1047,32 +1017,9 @@ input[type="checkbox"].settings-control {
   font-size: var(--step--2);
 }
 
-.tool-status::before {
-  width: 0.55rem;
-  height: 0.55rem;
-  content: "";
-  border: 1px solid var(--muted);
-}
-
-.tool-status[data-status="running"]::before {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.tool-status[data-status="starting"]::before {
-  border-color: var(--note);
-  background: linear-gradient(90deg, var(--note) 50%, transparent 50%);
-}
-
 .tool-status[data-status="failed"],
 .tool-status[data-status="invalid"] {
   color: var(--danger);
-}
-
-.tool-status[data-status="failed"]::before,
-.tool-status[data-status="invalid"]::before {
-  border-color: var(--danger);
-  background: var(--danger);
 }
 
 .tool-status[data-status="untrusted"],
@@ -1080,47 +1027,12 @@ input[type="checkbox"].settings-control {
   color: var(--caution);
 }
 
-.tool-status[data-status="untrusted"]::before,
-.tool-status[data-status="blocked"]::before {
-  border-color: var(--caution);
-}
-
-.tool-status[data-status="stopped"],
-.tool-status[data-status="disabled"] {
+.tool-details__description {
+  margin: 0;
   color: var(--fg-dim);
 }
 
-.tool-facts {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr));
-  margin: 0;
-  border-top: var(--hair) solid var(--rule);
-}
-
-.tool-facts > div {
-  min-width: 0;
-  padding: var(--space-2) var(--space-3) var(--space-2) 0;
-  border-bottom: var(--hair) solid var(--rule);
-}
-
-.tool-facts > .tool-facts__wide {
-  grid-column: 1 / -1;
-}
-
-.tool-facts dt {
-  margin-bottom: var(--space-1);
-  color: var(--muted);
-  font-size: var(--step--2);
-}
-
-.tool-facts dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-  font-size: var(--step--1);
-}
-
-.tool-facts ul {
+.tool-details .v-facts ul {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-3);
@@ -1129,8 +1041,8 @@ input[type="checkbox"].settings-control {
   list-style: none;
 }
 
-.tool-facts code {
-  font-size: 0.8em;
+.tool-details .v-facts code {
+  font-size: 0.85em;
 }
 
 .tool-dependency[data-satisfied="false"] {

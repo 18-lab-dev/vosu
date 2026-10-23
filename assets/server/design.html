@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>18-LAB system · vosu</title>
+<link rel="stylesheet" href="/tools/_host/v1/theme.css">
+<style>
+  /* Reference page layout only; everything inside .ref-sheet is system.css. */
+  body { margin: 0; color: var(--fg); font: 400 0.875rem/1.45 var(--font-body); background: var(--bg); }
+  .ref-top { position: sticky; top: 0; z-index: 10; display: flex; gap: 0.75rem; align-items: center; height: var(--bar-h); padding: 0 0.75rem; background: var(--bg-raised); border-top: 2px solid var(--accent); border-bottom: 1px solid var(--rule-strong); }
+  .ref-top strong { font-size: 0.9375rem; }
+  .ref-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 34rem), 1fr)); }
+  .ref-sheet { display: grid; gap: 0.75rem; align-content: start; min-width: 0; padding: 0.75rem; color: var(--fg); background: var(--bg); }
+  .ref-sheet > h2 { margin: 0.25rem 0 0; font: 400 var(--step--2)/1.4 var(--font-mono); color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
+  .ref-app { height: 17rem; border: 1px solid var(--rule-strong); }
+  .ref-app.v-app { height: 17rem; }
+  .ref-code { color: var(--muted); font: 400 var(--step--2)/1.5 var(--font-mono); }
+</style>
+</head>
+<body>
+<header class="ref-top">
+  <strong>18-LAB system</strong>
+  <span class="v-muted">Components from /tools/_host/v1/theme.css · docs/tools/design.md</span>
+</header>
+<main class="ref-columns" id="columns"></main>
+
+<template id="sheet">
+  <section class="ref-sheet">
+    <h2 data-mode-name></h2>
+
+    <h2>App shell · .v-app .v-bar .v-main .v-split .v-panel .v-scroll</h2>
+    <div class="v-app ref-app">
+      <header class="v-bar">
+        <span class="v-bar__title">Mania ratings</span>
+        <span class="v-dot" data-state="ok"></span><span class="v-muted">Live</span>
+        <span class="v-bar__spacer"></span>
+        <div class="v-seg" role="group" aria-label="Rate"><button type="button" aria-pressed="false">0.9×</button><button type="button" aria-pressed="true">1.0×</button><button type="button" aria-pressed="false">1.1×</button></div>
+        <button class="v-btn v-btn--ghost v-btn--icon" type="button" aria-label="Settings">⚙</button>
+      </header>
+      <div class="v-main v-split">
+        <section class="v-panel">
+          <div class="v-panel__head"><span class="v-label"><b>01</b> / Library</span><button class="v-btn v-btn--sm" type="button">Refresh</button></div>
+          <div class="v-panel__body v-scroll">
+            <input class="v-input" type="search" placeholder="Search maps" aria-label="Search maps">
+            <table class="v-table">
+              <thead><tr><th>Map</th><th class="v-num">MSD</th></tr></thead>
+              <tbody>
+                <tr aria-selected="true"><td>shangri-la moonlight</td><td class="v-num">26.20</td></tr>
+                <tr><td>Rice Fusion</td><td class="v-num">18.04</td></tr>
+                <tr><td>Sanzu no Kawa</td><td class="v-num">22.71</td></tr>
+                <tr><td>Jack Collection Vol.2</td><td class="v-num">24.13</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section class="v-panel">
+          <div class="v-panel__head"><span class="v-label"><b>02</b> / Ratings</span></div>
+          <div class="v-panel__body v-scroll">
+            <div class="v-grid" style="--v-min: 7rem">
+              <div class="v-stat"><span class="v-stat__label">Etterna</span><span class="v-stat__value">26.20</span></div>
+              <div class="v-stat"><span class="v-stat__label">Quaver</span><span class="v-stat__value">34.61</span></div>
+              <div class="v-stat"><span class="v-stat__label">Stars</span><span class="v-stat__value">5.63<span class="v-stat__unit">★</span></span></div>
+            </div>
+            <div class="v-stack">
+              <div class="v-field--inline v-field"><span>Stream</span><span class="v-mono">16.66</span></div>
+              <div class="v-meter" style="--v-value: 0.55"></div>
+              <div class="v-field--inline v-field"><span>Stamina</span><span class="v-mono">25.65</span></div>
+              <div class="v-meter" style="--v-value: 0.85"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <h2>Buttons · .v-btn --primary --ghost --danger --icon --sm</h2>
+    <div class="v-row">
+      <button class="v-btn v-btn--primary" type="button">Generate map</button>
+      <button class="v-btn" type="button">Secondary</button>
+      <button class="v-btn v-btn--ghost" type="button">Ghost</button>
+      <button class="v-btn v-btn--danger" type="button">Delete</button>
+      <button class="v-btn v-btn--icon" type="button" aria-label="Play">▶</button>
+      <button class="v-btn" type="button" aria-pressed="true">Pressed</button>
+      <button class="v-btn v-btn--sm" type="button">Small</button>
+      <button class="v-btn" type="button" disabled>Disabled</button>
+    </div>
+
+    <h2>Fields · .v-field .v-input .v-select .v-textarea .v-file</h2>
+    <div class="v-grid" style="--v-min: 11rem">
+      <label class="v-field"><span>Name</span><input class="v-input" value="Practice copy"></label>
+      <label class="v-field"><span>Rate</span><input class="v-input" type="number" value="1.25" step="0.05"></label>
+      <label class="v-field"><span>System</span><select class="v-select"><option>Etterna · local MSD</option><option>Quaver</option><option>osu!mania stars</option></select></label>
+      <div class="v-field"><span>Replay</span><label class="v-btn v-file"><input type="file" accept=".osr" data-file-label>Choose .osr</label></div>
+    </div>
+    <label class="v-field"><span>Notes</span><textarea class="v-textarea" rows="2">One line per section.</textarea></label>
+
+    <h2>Choice · .v-check .v-toggle .v-seg .v-tabs .v-range</h2>
+    <div class="v-row">
+      <label class="v-check"><input type="checkbox" checked>Hide owned</label>
+      <label class="v-check"><input type="radio" name="r" checked>Stable</label>
+      <label class="v-check"><input type="radio" name="r">Lazer</label>
+      <label class="v-check"><input class="v-toggle" type="checkbox" role="switch" checked>Muted</label>
+      <div class="v-seg" role="group" aria-label="Ruleset"><button type="button" aria-pressed="true">osu!</button><button type="button" aria-pressed="false">taiko</button><button type="button" aria-pressed="false">catch</button><button type="button" aria-pressed="false">mania</button></div>
+    </div>
+    <div class="v-tabs" role="tablist" aria-label="Views">
+      <button type="button" role="tab" aria-selected="true">Overview</button>
+      <button type="button" role="tab" aria-selected="false">Timeline</button>
+      <button type="button" role="tab" aria-selected="false">Sections</button>
+    </div>
+    <input class="v-range" type="range" min="0" max="100" value="40" aria-label="Volume">
+
+    <h2>Status · .v-dot .v-badge .v-help .v-empty</h2>
+    <div class="v-row">
+      <span class="v-dot" data-state="ok"></span>Running
+      <span class="v-dot" data-state="busy"></span>Working
+      <span class="v-dot" data-state="warn"></span>Blocked
+      <span class="v-dot" data-state="error"></span>Failed
+      <span class="v-dot"></span>Stopped
+    </div>
+    <div class="v-row">
+      <span class="v-badge">v1.2.0</span>
+      <span class="v-badge v-badge--accent">Live</span>
+      <span class="v-badge v-badge--ok">Ready</span>
+      <span class="v-badge v-badge--warn">Update</span>
+      <span class="v-badge v-badge--error">Error</span>
+      <span>Hop <span class="v-help" tabindex="0" role="img" aria-label="Seconds between window starts." data-tip="Seconds between window starts."></span></span>
+    </div>
+    <div class="v-panel"><p class="v-empty">No replays yet.</p></div>
+
+    <h2>Overlays · .v-toast .v-drawer .v-facts</h2>
+    <div class="v-row">
+      <button class="v-btn" type="button" data-demo="toast">Show toast</button>
+      <button class="v-btn" type="button" data-demo="drawer">Open drawer</button>
+    </div>
+    <div class="v-toast" role="status" data-tone="ok" style="position: static; justify-self: start">Saved map.</div>
+    <dialog class="v-drawer">
+      <header class="v-drawer__head"><h3>Details</h3><button class="v-btn v-btn--ghost v-btn--icon" type="button" data-demo="close" aria-label="Close">✕</button></header>
+      <div class="v-drawer__body">
+        <dl class="v-facts"><dt>Status</dt><dd><span class="v-dot" data-state="ok"></span> Running</dd><dt>Storage</dt><dd>924 KiB data · 0 B cache</dd><dt>Routes</dt><dd><code>/v1/beatmap</code></dd></dl>
+      </div>
+    </dialog>
+  </section>
+</template>
+
+<script type="module">
+  const template = document.querySelector('#sheet');
+  const columns = document.querySelector('#columns');
+  for (const [mode, name] of [['dark', 'Workstation · dark'], ['light', 'Drafting · light']]) {
+    const sheet = template.content.firstElementChild.cloneNode(true);
+    sheet.dataset.theme = mode;
+    sheet.querySelector('[data-mode-name]').textContent = name;
+    sheet.querySelectorAll('input[type="radio"]').forEach((radio) => { radio.name = `ruleset-${mode}`; });
+    columns.append(sheet);
+  }
+  document.addEventListener('click', (event) => {
+    const target = event.target.closest('button');
+    if (!target) return;
+    const sheet = target.closest('.ref-sheet');
+    if (target.parentElement?.matches('.v-seg')) {
+      target.parentElement.querySelectorAll('button').forEach((button) => button.setAttribute('aria-pressed', String(button === target)));
+    }
+    if (target.getAttribute('role') === 'tab') {
+      target.parentElement.querySelectorAll('[role="tab"]').forEach((tab) => tab.setAttribute('aria-selected', String(tab === target)));
+    }
+    if (target.dataset.demo === 'drawer') sheet.querySelector('.v-drawer').showModal();
+    if (target.dataset.demo === 'close') target.closest('dialog').close();
+    if (target.dataset.demo === 'toast') {
+      const toast = Object.assign(document.createElement('div'), { className: 'v-toast', textContent: 'Saved map.' });
+      toast.setAttribute('role', 'status');
+      toast.dataset.tone = 'ok';
+      sheet.append(toast);
+      setTimeout(() => toast.remove(), 2500);
+    }
+  });
+  document.addEventListener('change', (event) => {
+    const input = event.target;
+    if (input.matches('[data-file-label]') && input.files?.[0]) input.parentElement.lastChild.textContent = input.files[0].name;
+  });
+</script>
+</body>
+</html>

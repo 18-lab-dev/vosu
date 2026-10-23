@@ -275,7 +275,7 @@ impl PageDataProvider for RuntimePages {
                     let html = render_local_counters(&local, &schemes, &names, None, &authority);
                     (
                         if html.is_empty() {
-                            r#"<div class="empty-state"><h2>No local overlays yet</h2><p>Install an overlay from the catalog, or copy an overlay folder into the overlays directory on this computer; vosu picks it up without a restart.</p><div class="counter-actions"><a class="button button-primary" href="/available">Browse available overlays</a><button class="button" type="button" data-action="open-overlays-root">Open overlays folder</button></div></div>"#.to_owned()
+                            r#"<div class="empty-state"><h2>No local overlays yet</h2><p>Install one, or copy an overlay folder into the overlays folder.</p><div class="counter-actions"><a class="button button-primary" href="/available">Browse available overlays</a><button class="button" type="button" data-action="open-overlays-root">Open overlays folder</button></div></div>"#.to_owned()
                         } else {
                             html
                         },
@@ -296,7 +296,7 @@ impl PageDataProvider for RuntimePages {
                             let html = render_catalog_counters(&remote, None, &authority);
                             (
                                 if html.is_empty() {
-                                    r#"<div class="empty-state"><h2>Everything is installed</h2><p>This vosu instance already has every overlay currently listed in the catalog.</p><a class="button" href="/">View installed overlays</a></div>"#.to_owned()
+                                    r#"<div class="empty-state"><h2>Everything is installed</h2><a class="button" href="/">View installed overlays</a></div>"#.to_owned()
                                 } else {
                                     html
                                 },
@@ -305,7 +305,7 @@ impl PageDataProvider for RuntimePages {
                         }
                         Err(error) => (
                             format!(
-                                r#"<div class="empty-state" role="alert"><h2>Catalog unavailable</h2><p>Error: {}</p><p>Installed overlays keep working. Reload this page to try the catalog again.</p></div>"#,
+                                r#"<div class="empty-state" role="alert"><h2>Catalog unavailable</h2><p>{}</p></div>"#,
                                 escape_html(&error.to_string())
                             ),
                             Some(0),
