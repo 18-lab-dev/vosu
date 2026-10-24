@@ -71,11 +71,17 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
 STATIC_FOLDER_PATH = {json.dumps(str(static))}
 ''')
         tools = []
-        for tool_id in ['fixture', 'fixture-two']:
+        for tool_id in ['fixture', 'fixture-two', 'ui-only', 'backend', 'backend-idle']:
             tool = root / 'tools' / tool_id
             shutil.copytree(ROOT / 'tests/fixtures/tool-host', tool)
             manifest = tool / 'tool.toml'
-            manifest.write_text(manifest.read_text().replace('id = "fixture"', f'id = "{tool_id}"'))
+            text = manifest.read_text().replace('id = "fixture"', f'id = "{tool_id}"')
+            text = text.replace('name = "Tool host fixture"', f'name = "{tool_id}"')
+            if tool_id == 'ui-only':
+                text = text.split('[service]')[0]
+            elif tool_id.startswith('backend'):
+                text = text.replace('[service]', '[service]\nrole = "backend"')
+            manifest.write_text(text)
             tools += ['--tool', str(tool)]
         # A catalog source with two overlays, so the Available page has
         # source cards beside the (unreachable) community catalog. This needs

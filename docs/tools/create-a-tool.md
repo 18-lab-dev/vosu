@@ -94,7 +94,7 @@ EOF
 
 Leave vosu in the foreground; Ctrl+C stops it and its service. Open <http://127.0.0.1:25851/tools> in a browser. Under **Hello Python**, choose **Open**.
 
-**Check:** the Tools page lists a running UI tool and the new tab says “Your first tool.” The daemon prints both listener URLs. If these ports are occupied, stop this tutorial instance and change both numbers consistently.
+**Check:** the Tools page lists a ready UI tool and the new tab says “Your first tool.” The daemon prints both listener URLs. If these ports are occupied, stop this tutorial instance and change both numbers consistently.
 
 For a Linux test with a private loopback and no outside network access, launch the last command inside a private network namespace:
 

@@ -18,7 +18,7 @@ fs.mkdirSync(evidence, { recursive: true });
 const OVERLAY = 'http://127.0.0.1:25150';
 const DASHBOARD = 'http://127.0.0.1:25151';
 const TOLERANCE = 0.5;
-const report = { baselines: [], keyboard: [], previews: {}, heads: [], saveState: [] };
+const report = { baselines: [], keyboard: [], previews: {}, heads: [], saveState: [], toolStatuses: [] };
 const failures = [];
 const check = (condition, message) => { if (!condition) failures.push(message); };
 
@@ -150,6 +150,56 @@ async function walkGrid(name, page, gridSelector, cardSelector) {
   await walkGrid('Tools installed', page, '#tools-root', '.tool-card');
   await page.waitForSelector('.tools-catalog .tools-root > .tool-card', { timeout: 15000 }).catch(() => {});
   await walkGrid('Tools available', page, '.tools-catalog .tools-root', '.tool-card');
+  await context.close();
+}
+
+// Card status describes availability, while the API and Details retain process state.
+for (const theme of ['dark', 'light']) {
+  const { context, page } = await open('/tools', { theme, width: 1920, height: 1080 });
+  await page.waitForSelector('#tools-root > .tool-card');
+  const card = (id) => page.locator(`#tools-root > [data-tool-id="${id}"]`);
+  const label = (id) => card(id).locator('.tool-card__status > span').nth(1);
+  for (const [id, expected] of [['ui-only', 'Ready'], ['backend', theme === 'dark' ? 'Ready' : 'Working'], ['backend-idle', 'Ready'], ['fixture', 'Stopped']]) {
+    check(await label(id).textContent() === expected, `${theme}: ${id} must show ${expected}`);
+  }
+  const response = await context.request.get(`${OVERLAY}/tools/backend/api/v1/read`);
+  check(response.ok(), `${theme}: backend request must succeed`);
+  await page.waitForFunction(() => document.querySelector('#tools-root > [data-tool-id="backend"] .tool-card__status')?.textContent.includes('Working'));
+  const views = await page.evaluate(async () => (await fetch('/api/tools').then((r) => r.json())).tools);
+  check(views.find((v) => v.id === 'ui-only').status === 'running', `${theme}: UI API status must remain running`);
+  check(views.find((v) => v.id === 'backend').status === 'running', `${theme}: backend API status must remain running`);
+  check(await card('backend').locator('[data-tool-action="start"]').count() === 0, `${theme}: backend must not expose Start`);
+  report.toolStatuses.push({ theme, labels: await Promise.all(['ui-only', 'backend', 'backend-idle', 'fixture'].map(async (id) => [id, await label(id).textContent()])) });
+  await page.screenshot({ path: `${evidence}/tool-statuses-${theme}-1920.png` });
+  await page.setViewportSize({ width: 1440, height: 1080 });
+  await page.screenshot({ path: `${evidence}/tool-statuses-${theme}-1440.png` });
+  await card('backend').locator('[data-tool-action="details"]').click();
+  check(await page.locator('dialog.tool-details .tool-status').textContent() === 'Running', `${theme}: Details must retain process status`);
+  await context.close();
+}
+
+// Cover every raw lifecycle/error label without changing the host status contract.
+{
+  const { context, page } = await open('/tools');
+  const base = await page.evaluate(async () => (await fetch('/api/tools').then((r) => r.json())).tools[0]);
+  const statuses = ['stopped', 'starting', 'running', 'failed', 'blocked', 'untrusted', 'disabled', 'invalid'];
+  const tools = [null, 'backend', 'background'].flatMap((role, index) => statuses.map((status) => ({
+    ...base, id: `status-${index}-${status}`, name: `${role ?? 'ui'} ${status}`,
+    status, service_role: role, interfaces: role === 'background' ? ['service'] : ['ui'],
+    trusted: status !== 'untrusted', enabled: status !== 'disabled',
+  })));
+  await page.route('**/api/tools', (route) => route.fulfill({ json: { tools } }));
+  await page.reload();
+  for (const view of tools) {
+    const normal = ['stopped', 'starting', 'running'].includes(view.status);
+    const expected = view.service_role !== 'background' && normal
+      ? (view.service_role === 'backend' && view.status !== 'stopped' ? 'Working' : 'Ready')
+      : view.status[0].toUpperCase() + view.status.slice(1);
+    const card = page.locator(`#tools-root > [data-tool-id="${view.id}"]`);
+    await card.waitFor();
+    check(await card.locator('.tool-card__status > span').nth(1).textContent() === expected, `${view.id}: expected ${expected}`);
+    check(await card.getAttribute('data-status') === view.status, `${view.id}: raw status changed`);
+  }
   await context.close();
 }
 
