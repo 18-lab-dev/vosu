@@ -29,6 +29,7 @@ enum Invocation {
     List(bool),
     Sources,
     Open(String),
+    Autostart(String, Option<bool>),
     Catalog {
         id: String,
         action: String,
@@ -77,6 +78,22 @@ fn parse(args: Vec<OsString>) -> Result<Invocation, String> {
                     action: option.trim_start_matches("--").into(),
                     remove_data,
                 });
+            }
+            Some("--autostart") => {
+                let id = args
+                    .next()
+                    .and_then(|s| s.into_string().ok())
+                    .ok_or("--autostart requires a tool id")?;
+                let value = match args.next().as_deref().and_then(|s| s.to_str()) {
+                    Some("on") => Some(true),
+                    Some("off") => Some(false),
+                    Some("default") => None,
+                    _ => return Err("usage: vosux --autostart <id> on|off|default".into()),
+                };
+                if list || json || args.next().is_some() || !crate::tools::manifest::valid_id(&id) {
+                    return Err("usage: vosux --autostart <id> on|off|default".into());
+                }
+                return Ok(Invocation::Autostart(id, value));
             }
             Some("--open") => {
                 let id = args
@@ -198,7 +215,7 @@ pub fn run(args: Vec<OsString>) -> i32 {
         let invocation = parse(args).map_err(|e| (2, e))?;
         if invocation == Invocation::Help {
             println!(
-                "Usage: vosux [--list [--json] | --sources | --open <tool> | --install <id> | --update <id> | --uninstall <id> (--keep-data|--remove-data) | <tool> [ARGS...]]\n       vosu x [OPTIONS] <tool> [ARGS...]\nOptions apply only before the tool id; tool arguments are passed verbatim."
+                "Usage: vosux [--list [--json] | --sources | --open <tool> | --autostart <id> on|off|default | --install <id> | --update <id> | --uninstall <id> (--keep-data|--remove-data) | <tool> [ARGS...]]\n       vosu x [OPTIONS] <tool> [ARGS...]\nOptions apply only before the tool id; tool arguments are passed verbatim."
             );
             return Ok(0);
         }
@@ -246,6 +263,16 @@ async fn execute(invocation: Invocation) -> Result<i32, Failure> {
     };
     match invocation {
         Invocation::Help => unreachable!(),
+        Invocation::Autostart(id, autostart) => {
+            connection
+                .request_body(
+                    reqwest::Method::PUT,
+                    &format!("/{id}/autostart"),
+                    &serde_json::json!({"autostart":autostart}),
+                )
+                .await?;
+            Ok(0)
+        }
         Invocation::Sources => {
             let value = connection
                 .request(reqwest::Method::GET, "/catalog/sources")

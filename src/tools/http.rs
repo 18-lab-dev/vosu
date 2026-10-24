@@ -195,6 +195,18 @@ impl ToolHost {
                 _ => Err("unknown tool action".into()),
             };
         }
+        if action == "autostart" && request.method() == Method::PUT {
+            return self.set_autostart(&entry, &body).await;
+        }
+        if matches!(action, "start" | "stop" | "restart")
+            && entry
+                .manifest
+                .as_ref()
+                .and_then(|m| m.service.as_ref())
+                .is_none_or(|s| s.role != "background")
+        {
+            return Err("service controls require a background service".into());
+        }
         if request.method() != Method::POST {
             return Err("method not allowed".into());
         }

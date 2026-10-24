@@ -49,6 +49,7 @@ entry = "index.html"             # default "index.html"
 command = ["bin/vosu-skill-tracker"]  # argv; relative paths containing a separator resolve inside the tool directory.
                                  # Bare names (e.g. "python") resolve through PATH. On Windows extensionless executable paths gain ".exe".
 startup = "always"               # "always" (start with vosu) | "on-demand" (default; first request, stop after 10 idle minutes)
+role = "background"              # "background" (default) | "backend" (requires on-demand)
 
 [cli]                            # optional: terminal process; same command resolution as service
 command = ["bin/vosu-skill-tracker", "cli"]
@@ -72,6 +73,10 @@ Editors supporting JSON Schema for TOML (Taplo / Even Better TOML) can put `#:sc
 `icon` and `banner` give a tool its identity on the dashboard. The icon is square (SVG, or PNG at least 256×256) and is shown at 40–64 px. The banner is 3:1 (recommended 1200×400) and spans the full card width, cropped with `object-fit: cover`, so keep important content centred. Both are served from the tool directory on the overlay origin as `/tools/<id>/_icon` and `/tools/<id>/_banner` in every tool status, including disabled, untrusted, and failed tools, with a sandboxing `Content-Security-Policy` so an SVG opened directly cannot run script; ToolView reports them as `icon_url` and `banner_url`. A missing or unreadable icon falls back to the name's initials, and a missing banner leaves the card without one.
 
 Prefix matching is segment-aware: `/v1/beatmap` matches `/v1/beatmap` and `/v1/beatmap/…`, never `/v1/beatmaps`. Access is method-aware: GET/HEAD/WebSocket upgrades matching `read` are open even when the same prefix is also in `write`. Other methods require a matching `write` prefix and authenticated write authority. GET/HEAD on write-only prefixes also require that authority; unlisted routes return 404.
+
+`background` services provide useful independent background work or APIs and expose SERVICE plus Start/Stop/Restart. `backend` services are implementation details of their UI or CLI: no SERVICE badge or service controls; requests still start them on demand, with the same dependency and idle-stop rules. Tool cards derive UI / SERVICE / CLI badges from `interfaces`, not `kind`.
+
+For background services, **Start with vosu** in Details and the Settings dialog overrides the author's `startup`. The host persists `autostart: true|false|null` (`null` follows the manifest). Effective startup is true only for background services with override true, or no override and `startup = "always"`. Enabled, trusted services start dependencies first after the daemon listeners bind; service readiness never delays overlay serving. Changing the override applies at the next vosu launch and does not start or stop a running service.
 
 ## Process contract
 
@@ -178,9 +183,12 @@ All POSTs require dashboard provenance and `X-Vosu-CSRF`, like other management 
 | `GET /api/tools/<id>` | `ToolView` |
 | `GET /api/tools/<id>/logs?after=<seq>` | `{"lines": [{"seq","ts","stream": "stdout"\|"stderr"\|"host","text"}]}` (bounded, newest 1000) |
 | `POST /api/tools/<id>/{enable,disable,start,stop,restart,trust,launch,open-data,clear-cache}` | Lifecycle and data actions; `launch` returns `{"url"}` |
+| `PUT /api/tools/<id>/autostart` | `{"autostart":true\|false\|null}` → updated `ToolView`; background services only (400 otherwise), dashboard provenance and CSRF required |
 | `GET`/`POST /api/tools/<id>/settings` | Same request/response shapes as `/api/counters/settings/<name>` without profiles, except `password` settings: GET returns them as `""` (also in the schema's default) plus `"secrets": {"<id>": true\|false}` telling whether a value is in effect; POST keeps the stored value for `""` or an omitted field and clears it for `null` |
 
 `ToolView`:
+
+Alongside the legacy `kind`, every view includes `service_role` (`"background"`, `"backend"` or null), `interfaces` (ordered subset of `["ui","service","cli"]`; `service` only for background services), persisted `autostart` (boolean or null), and effective `starts_with_vosu` (boolean). Start/stop/restart mutations reject backend services with 400. Backend logs remain available.
 
 ```json
 {
@@ -227,6 +235,8 @@ The dashboard's Available page includes source overlays alongside the unchanged 
 `vosux --install <id>`, `--update <id>`, and `--uninstall <id> (--keep-data|--remove-data)` use broker-authenticated overlay endpoints `POST /tools/_host/v1/cli/catalog/<id>/<action>` and `GET /tools/_host/v1/cli/catalog/jobs/<job_id>`, with the same bodies/results. No dashboard credential is disclosed.
 
 `vosux --sources` lists configured sources through broker-authenticated `GET /tools/_host/v1/cli/catalog/sources`. Install/update/uninstall CLI options remain tool-only.
+
+`vosux --autostart <id> on|off|default` saves the same override through broker-authenticated `PUT /tools/_host/v1/cli/<id>/autostart`, with `{"autostart":true|false|null}`. It accepts only background services.
 
 ### Catalog and package format
 

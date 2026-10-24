@@ -103,6 +103,20 @@ impl ToolHost {
             self.cli_sessions.lock().remove(session);
             return response(StatusCode::OK, json!({"result":"success"}));
         }
+        if request.method() == Method::PUT
+            && let Some(id) = path
+                .strip_prefix("cli/")
+                .and_then(|p| p.strip_suffix("/autostart"))
+        {
+            let result = match self.entry(id) {
+                Ok(entry) => self.set_autostart(&entry, body).await,
+                Err(error) => Err(error),
+            };
+            return match result {
+                Ok(value) => response(StatusCode::OK, value),
+                Err(error) => response(StatusCode::BAD_REQUEST, json!({"error":error})),
+            };
+        }
         if request.method() != Method::POST {
             return response(StatusCode::NOT_FOUND, json!({"error":"not found"}));
         }
