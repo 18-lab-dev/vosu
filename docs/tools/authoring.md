@@ -1,22 +1,18 @@
 ---
-type: Guide
-title: "Authoring vosu tools"
-description: "Develop, test, and distribute a tool in Rust, Python, or any language."
+type: Reference
+title: "Tool authoring reference"
+description: "Language, manifest, UI, lifecycle, and testing reference for tool authors."
 ---
 
-# Authoring vosu tools
+# Tool authoring reference
 
-Tools are local applications supervised by vosu, with an optional UI and HTTP service. Start with the [protocol v1 contract](protocol.md); it defines every environment variable, API, and lifecycle rule. Tools run with your OS permissions, not inside a sandbox. Install only tools you trust.
+New to tools? Follow [Create a tool](create-a-tool.md) from an empty directory through a published catalog. This page is the companion reference; the [protocol v1 contract](protocol.md) defines environment variables, APIs, lifecycle, and the [package format](protocol.md#catalog-and-package-format). Tools run with your OS permissions, not inside a sandbox. Install only tools you trust.
 
-## Run the Python example
+## Development launch and command resolution
 
-From the repository root, with Python 3.11+ available as `python` on PATH:
+Use `vosu --tool <directory>` to trust a development checkout for that run. Use [isolated paths and spare ports](create-a-tool.md#3-run-an-isolated-vosu) when another vosu is running.
 
-```sh
-vosu --tool examples/tools/hello-python
-```
-
-Use an isolated vosu configuration and unused listener ports if another vosu is running. Open **Tools** in the dashboard, then **Open** beside Hello Python. The count read route works in a read-only tab; increment requires opening from the dashboard to obtain a UI session. The reference [manifest](../../examples/tools/hello-python/tool.toml), [service](../../examples/tools/hello-python/main.py), and [UI](../../examples/tools/hello-python/web/index.html) have no third-party dependencies. The service requests effective settings from `GET /tools/_host/v1/settings` on each count read. If the host is unavailable it reports a real 502 rather than inventing settings.
+The dependency-free [Hello Python example](../../examples/tools/hello-python/) includes a counter, settings, selected-map context, live subscriptions, an optional read dependency, CLI, art, and packaging. It requires Python 3.11+ as `python` on PATH. Reads work in a direct tab; increment requires the dashboard's **Open** action. Effective settings are fetched on each count read; host failures produce 502, not invented settings.
 
 The host uses the tool directory as its working directory. `command = ["python", "main.py"]` works on Windows as well as Linux when `python` resolves through PATH. Bare executable names resolve through PATH; relative executable paths containing `/` or `\` resolve against the tool directory. Windows adds `.exe` to extensionless executable paths. There is no shell expansion, so use an argv array, not `"python main.py"`. If Linux only has `python3`, change the first argument accordingly.
 
@@ -65,16 +61,16 @@ Version API paths under `/v1/`. Errors use `{"error":"message"}` with a suitable
 
 ## Development and distribution
 
-Run `vosu --tool <directory>` against a checkout; this explicitly trusts it for that run and overrides an installed tool of the same id. Manifest and settings edits are watched; rebuilding a development service restarts it. For a Rust first-party crate, build its named binary with `cargo build --locked -p vosu-tool-<id>` and use `vosu --tool crates/vosu-tool-<id>`. See the protocol for the host's Cargo development binary resolution rule.
+Run `vosu --tool <directory>` against a checkout; this explicitly trusts it for that run and overrides an installed tool of the same id. Manifest and settings edits are watched; rebuilding a development service restarts it. For example, from a separate vosu-tools checkout, build `cargo build --locked -p vosu-mania-ratings` and use `vosu --tool tools/mania-ratings`. See the protocol for the host's Cargo development binary resolution rule.
 
 For any language, implement the same contract: loopback port 0, one flushed `vosu-tool-ready <port>` line, token-authenticated `/healthz` and every other request, exit within five seconds after stdin EOF. Keep stdout available for logs after the handshake and never print secrets. Use the supplied data directory for durable state and cache directory for disposable computations.
 
-Distribute user tools as a directory under `<vosu data directory>/tools/<id>/`; approve the tool in the dashboard before enabling it. Include its interpreter/runtime requirements, license, static assets and manifest. First-party release tools are instead built and staged, then embedded in the vosu executable. At runtime vosu materializes them in a versioned cache directory; packages and updater ZIPs remain single-executable deployments with no adjacent `tools/` payload. See the [release runbook](../operations/runbook.md#updates-and-releases).
+Distribute a tool as a directory under `<vosu data directory>/tools/<id>/`, or publish a ZIP and catalog following [Create a tool](create-a-tool.md#12-package-and-publish). Include runtime requirements, license texts, static assets, and the manifest. Third-party catalog tools require approval before enabling; installing a package does not sandbox it. vosu embeds no tools: official tools also install from catalogs. The daemon's own release/updater packages remain single-executable deployments; see the [release runbook](../operations/runbook.md#updates-and-releases).
 
 ## Test a tool
 
 1. Parse its manifest against the schema and check id, paths, required dependencies, and unknown fields.
-2. Start with a fake host on a temporary loopback port and fresh data/cache directories. Set all six launch variables from the protocol; capture stdout and keep stdin piped.
+2. Start with a fake host on a temporary loopback port and fresh data/cache directories. Set every launch variable from the protocol; capture stdout and keep stdin piped.
 3. Check the readiness line and authenticated `/healthz`; missing or incorrect tokens must return 401.
 4. Exercise reads, writes, error paths, cancellation and live reconnects. Test host settings with defaults and changed values.
 5. Close stdin and require clean exit within five seconds, including while clients are connected.
