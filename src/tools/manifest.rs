@@ -49,9 +49,14 @@ pub struct Service {
     pub command: Vec<String>,
     #[serde(default = "startup")]
     pub startup: String,
+    #[serde(default = "service_role")]
+    pub role: String,
 }
 fn startup() -> String {
     "on-demand".into()
+}
+fn service_role() -> String {
+    "background".into()
 }
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -155,6 +160,12 @@ impl Manifest {
             }
             if !matches!(service.startup.as_str(), "always" | "on-demand") {
                 return Err("service.startup must be always or on-demand".into());
+            }
+            if !matches!(service.role.as_str(), "background" | "backend") {
+                return Err("service.role must be background or backend".into());
+            }
+            if service.role == "backend" && service.startup != "on-demand" {
+                return Err("backend services require service.startup = on-demand".into());
             }
             if !relative(&service.command[0]) {
                 return Err(

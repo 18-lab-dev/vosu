@@ -60,6 +60,8 @@ Create `$TOOL/web/index.html`:
 
 The schema line gives supporting editors completion; vosu also checks semantic versions, IDs, paths, and dependencies. No service is required for a UI-only tool. See the [manifest reference](protocol.md#manifest-tooltoml).
 
+A native process used only by your UI or CLI can declare `[service] role = "backend"` with `startup = "on-demand"`. It remains supervised but does not appear as a separate SERVICE interface. Background services (the default role) expose service controls and **Start with vosu**; see [service roles and startup](protocol.md#manifest-tooltoml).
+
 **Check:** `python -c 'import os,tomllib; print(tomllib.load(open(os.environ["TOOL"]+"/tool.toml","rb"))["id"])'` prints `hello-python`.
 
 ## 3. Run an isolated vosu

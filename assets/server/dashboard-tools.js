@@ -2,6 +2,7 @@
 // data, log, and trust actions of the dashboard API in docs/tools/protocol.md.
 
 import { cardBanner, cardIcon, sourceFailures } from './dashboard-catalog.js';
+import { toolAutostartControl } from './homepage-settings.js';
 
 const STATUS_LABELS = {
   stopped: 'Stopped',
@@ -25,7 +26,6 @@ const STATUS_DOTS = {
 const SOURCE_LABELS = { dev: 'Dev', official: 'Official', user: 'User' };
 // One chip per interface a tool provides, in this order.
 const INTERFACE_LABELS = { ui: 'UI', service: 'Service', cli: 'CLI' };
-const STARTUP_LABELS = { always: 'With vosu', 'on-demand': 'On demand' };
 const BUSY_LABELS = {
   start: 'Starting…',
   stop: 'Stopping…',
@@ -84,7 +84,7 @@ function list(values) {
 }
 
 function hasService(view) {
-  return view.kind === 'service' || view.kind === 'hybrid';
+  return view.service_role === 'background';
 }
 
 // Installed views carry `kind` and `cli`; catalog entries list `interfaces`.
@@ -390,7 +390,7 @@ export function mountTools({
     add('Version', view.version ? `v${view.version}` : null);
     add('Author', view.author || null);
     add('Source', SOURCE_LABELS[view.source] ?? view.source ?? null);
-    add('Startup', hasService(view) ? (STARTUP_LABELS[view.startup] ?? view.startup ?? '—') : 'No service');
+    if (hasService(view)) add('Startup', view.starts_with_vosu ? 'With vosu' : 'On demand');
     add('Storage', `${formatBytes(Number(data.data_bytes))} data · ${formatBytes(Number(data.cache_bytes))} cache`);
     add('Requires', idList(requires, (dependency) => el('li', {
       className: 'tool-dependency',
@@ -433,6 +433,7 @@ export function mountTools({
     }
     return [
       view.description ? el('p', { className: 'tool-details__description', text: view.description }) : null,
+      toolAutostartControl(view, { requestJson, notify, errorText, onChange: refresh }),
       facts,
       developerDetails,
       actions,

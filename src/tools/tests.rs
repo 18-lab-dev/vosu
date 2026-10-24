@@ -43,6 +43,128 @@ fn request(method: Method, path: &str) -> Request {
         .unwrap()
 }
 
+#[test]
+fn service_roles_validate_defaults_and_backend_startup() {
+    let base = manifest("roles", "[service]\ncommand=['test']");
+    assert_eq!(
+        Manifest::parse(&base).unwrap().service.unwrap().role,
+        "background"
+    );
+    for (suffix, valid) in [
+        ("\nrole='backend'", true),
+        ("\nrole='backend'\nstartup='always'", false),
+        ("\nrole='background'\nstartup='always'", true),
+        ("\nrole='unknown'", false),
+    ] {
+        assert_eq!(
+            Manifest::parse(&format!("{base}{suffix}")).is_ok(),
+            valid,
+            "{suffix}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn autostart_precedence_persistence_backend_rejection_and_dependency_order() {
+    let root = tempfile::tempdir().unwrap();
+    let dev = root.path().join("dev");
+    let always = put(
+        &dev,
+        "always",
+        "[service]\ncommand=['test']\nstartup='always'",
+    );
+    let demand = put(
+        &dev,
+        "demand",
+        "[service]\ncommand=['test']\n[[requires]]\nid='always'\nversion='^1'",
+    );
+    let backend = put(
+        &dev,
+        "backend",
+        "[service]\ncommand=['test']\nrole='backend'",
+    );
+    let roots = vec![always, demand, backend];
+    // No activation: assert launch intent without spawning fixture processes.
+    let make = || {
+        ToolHost::new(
+            root.path().join("config"),
+            root.path().join("data"),
+            root.path().join("cache"),
+            ExtraRoots { dev: roots.clone() },
+            "http://127.0.0.1:25150".into(),
+            "http://127.0.0.1:25151".into(),
+            Arc::new(|| json!({})),
+        )
+    };
+    let host = make().await.unwrap();
+    for (id, default) in [("always", true), ("demand", false)] {
+        let entry = host.entry(id).unwrap();
+        assert_eq!(host.view(&entry)["starts_with_vosu"], default);
+        for (autostart, expected) in [
+            (json!(true), true),
+            (json!(false), false),
+            (Value::Null, default),
+        ] {
+            let response = host
+                .dashboard(
+                    request(Method::PUT, &format!("/api/tools/{id}/autostart")),
+                    Bytes::from(json!({"autostart":autostart}).to_string()),
+                )
+                .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let view = value(response).await;
+            assert_eq!(view["autostart"], autostart);
+            assert_eq!(view["starts_with_vosu"], expected);
+            let reloaded = make().await.unwrap();
+            assert_eq!(
+                reloaded.view(&reloaded.entry(id).unwrap())["autostart"],
+                autostart
+            );
+            assert_eq!(reloaded.entry(id).unwrap().state.lock().desired, expected);
+            reloaded.shutdown().await;
+        }
+    }
+    for body in [
+        r#"{"autostart":true}"#,
+        r#"{"autostart":false}"#,
+        r#"{"autostart":null}"#,
+    ] {
+        assert_eq!(
+            host.dashboard(
+                request(Method::PUT, "/api/tools/backend/autostart"),
+                Bytes::from_static(body.as_bytes())
+            )
+            .await
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    for action in ["start", "stop", "restart"] {
+        assert_eq!(
+            host.dashboard(
+                request(Method::POST, &format!("/api/tools/backend/{action}")),
+                Bytes::new()
+            )
+            .await
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let view = host.view(&host.entry("backend").unwrap());
+    assert_eq!(view["interfaces"], json!(["ui"]));
+    assert_eq!(view["service_role"], "backend");
+    let mut order = Vec::new();
+    host.visit(
+        "demand",
+        &mut HashSet::new(),
+        &mut HashSet::new(),
+        &mut order,
+    )
+    .unwrap();
+    assert_eq!(order, ["always", "demand"]);
+    host.shutdown().await;
+}
+
 #[tokio::test]
 async fn overlays_route_needs_a_token_and_the_context_permission() {
     let root = tempfile::tempdir().unwrap();
@@ -991,6 +1113,7 @@ async fn cli_broker_auth_sessions_and_authority() {
                 trusted: true,
                 official: false,
                 catalog_source: None,
+                autostart: None,
             },
         );
         let denied = host

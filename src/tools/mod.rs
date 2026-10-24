@@ -35,6 +35,8 @@ struct Saved {
     official: bool,
     #[serde(default)]
     catalog_source: Option<String>,
+    #[serde(default)]
+    autostart: Option<bool>,
 }
 #[derive(Clone, Serialize)]
 struct LogLine {
@@ -347,6 +349,46 @@ impl ToolHost {
         let state = entry.state.lock();
         (state.status.clone(), state.detail.clone())
     }
+    fn starts_with_vosu(&self, id: &str, manifest: &Manifest) -> bool {
+        manifest.service.as_ref().is_some_and(|service| {
+            service.role == "background"
+                && self
+                    .saved
+                    .lock()
+                    .get(id)
+                    .and_then(|s| s.autostart)
+                    .unwrap_or(service.startup == "always")
+        })
+    }
+    async fn set_autostart(&self, entry: &Entry, body: &[u8]) -> Result<Value, String> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {
+            autostart: Value,
+        }
+        let input: Input = serde_json::from_slice(body).map_err(|e| e.to_string())?;
+        let autostart = match input.autostart {
+            Value::Null => None,
+            Value::Bool(value) => Some(value),
+            _ => return Err("autostart must be true, false or null".into()),
+        };
+        if entry
+            .manifest
+            .as_ref()
+            .and_then(|m| m.service.as_ref())
+            .is_none_or(|s| s.role != "background")
+        {
+            return Err("autostart requires a background service".into());
+        }
+        let _gate = self.gate.lock().await;
+        let mut saved = self.saved.lock();
+        let mut next = saved.clone();
+        next.entry(entry.id.clone()).or_default().autostart = autostart;
+        atomic_json(&self.config.join("state.json"), &next).map_err(|e| e.to_string())?;
+        *saved = next;
+        drop(saved);
+        Ok(self.view(entry))
+    }
     fn view(&self, entry: &Entry) -> Value {
         let (status, detail) = self.status(entry);
         let m = entry.manifest.as_ref();
@@ -391,12 +433,30 @@ impl ToolHost {
                 .lock()
                 .get(&entry.id)
                 .is_some_and(|saved| saved.official || saved.catalog_source.is_some());
+        let service = m.and_then(|m| m.service.as_ref());
+        let interfaces = [
+            m.is_some_and(|m| m.ui.is_some()).then_some("ui"),
+            service
+                .filter(|s| s.role == "background")
+                .map(|_| "service"),
+            m.is_some_and(|m| m.cli.is_some()).then_some("cli"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        let autostart = self.saved.lock().get(&entry.id).and_then(|s| s.autostart);
+        let starts_with_vosu = m.is_some_and(|m| self.starts_with_vosu(&entry.id, m));
         let state = entry.state.lock();
         let cli = m
             .and_then(|m| m.cli.as_ref())
             .map(|cli| json!({"usage":format!("vosux {}",entry.id),"summary":cli.summary}));
         let update_available = self.update_available(&entry.id, m.map(|m| m.version.as_str()));
-        json!({"update_available":update_available,"managed":managed,"cli":cli,"id":entry.id,"name":m.map_or(entry.id.as_str(), |m| &m.name),"version":m.map_or("", |m| &m.version),"description":m.map_or("", |m| &m.description),"author":m.map_or("", |m| &m.author),"homepage":m.and_then(|m| m.homepage.as_ref()),"icon_url":m.and_then(|m| m.icon.as_ref()).map(|_| format!("{}/tools/{}/_icon",self.overlay_url(),entry.id)),"banner_url":m.and_then(|m| m.banner.as_ref()).map(|_| format!("{}/tools/{}/_banner",self.overlay_url(),entry.id)),"source":entry.source,"path":entry.root,"trusted":self.trusted(entry),"enabled":self.enabled(entry),"kind":m.map(|m| match (m.ui.is_some(),m.service.is_some()) {(true,true)=>"hybrid",(true,false)=>"ui",(false,true)=>"service",_=>"cli"}),"startup":m.and_then(|m| m.service.as_ref()).map(|s| &s.startup),"status":status,"status_detail":detail,"ui_url":m.filter(|m| m.ui.is_some()).map(|_|format!("{}/tools/{}/",self.overlay_url(),entry.id)),"requires":requires,"required_by":required_by,"permissions":m.map(|m| &m.permissions),"api":m.map(|m| &m.api),"has_settings":entry.root.join("settings.json").is_file(),"data":{"data_dir":entry.data_dir,"cache_dir":entry.cache_dir,"data_bytes":directory_bytes(&entry.data_dir),"cache_bytes":directory_bytes(&entry.cache_dir)},"process":{"pid":state.pid,"started_at":state.started_at,"restarts":state.restarts}})
+        let mut view = json!({"update_available":update_available,"managed":managed,"cli":cli,"id":entry.id,"name":m.map_or(entry.id.as_str(), |m| &m.name),"version":m.map_or("", |m| &m.version),"description":m.map_or("", |m| &m.description),"author":m.map_or("", |m| &m.author),"homepage":m.and_then(|m| m.homepage.as_ref()),"icon_url":m.and_then(|m| m.icon.as_ref()).map(|_| format!("{}/tools/{}/_icon",self.overlay_url(),entry.id)),"banner_url":m.and_then(|m| m.banner.as_ref()).map(|_| format!("{}/tools/{}/_banner",self.overlay_url(),entry.id)),"source":entry.source,"path":entry.root,"trusted":self.trusted(entry),"enabled":self.enabled(entry),"kind":m.map(|m| match (m.ui.is_some(),m.service.is_some()) {(true,true)=>"hybrid",(true,false)=>"ui",(false,true)=>"service",_=>"cli"}),"startup":service.map(|s| &s.startup),"status":status,"status_detail":detail,"ui_url":m.filter(|m| m.ui.is_some()).map(|_|format!("{}/tools/{}/",self.overlay_url(),entry.id)),"requires":requires,"required_by":required_by,"permissions":m.map(|m| &m.permissions),"api":m.map(|m| &m.api),"has_settings":entry.root.join("settings.json").is_file(),"data":{"data_dir":entry.data_dir,"cache_dir":entry.cache_dir,"data_bytes":directory_bytes(&entry.data_dir),"cache_bytes":directory_bytes(&entry.cache_dir)},"process":{"pid":state.pid,"started_at":state.started_at,"restarts":state.restarts}});
+        view["service_role"] = json!(service.map(|s| &s.role));
+        view["interfaces"] = json!(interfaces);
+        view["autostart"] = json!(autostart);
+        view["starts_with_vosu"] = json!(starts_with_vosu);
+        view
     }
     async fn start(self: &Arc<Self>, id: &str, manual: bool) -> Result<(), String> {
         let _gate = self.gate.lock().await;
@@ -647,11 +707,7 @@ impl ToolHost {
                     continue;
                 }
                 let desired = old.as_ref().map_or_else(
-                    || {
-                        parsed.as_ref().is_ok_and(|m| {
-                            m.service.as_ref().is_some_and(|s| s.startup == "always")
-                        })
-                    },
+                    || parsed.as_ref().is_ok_and(|m| self.starts_with_vosu(&id, m)),
                     |entry| entry.state.lock().desired,
                 );
                 if let Some(old) = &old {
@@ -764,13 +820,11 @@ impl ToolHost {
                 if desired && self.status(&entry).0 == "stopped" {
                     let _ = self.start(&entry.id, false).await;
                 }
-                let idle = entry
-                    .manifest
-                    .as_ref()
-                    .and_then(|m| m.service.as_ref())
-                    .is_some_and(|s| s.startup == "on-demand")
-                    && entry.active.load(Ordering::Acquire) == 0
-                    && entry.state.lock().last_used.elapsed() >= Duration::from_secs(600);
+                let idle =
+                    entry.manifest.as_ref().is_some_and(|m| {
+                        m.service.is_some() && !self.starts_with_vosu(&entry.id, m)
+                    }) && entry.active.load(Ordering::Acquire) == 0
+                        && entry.state.lock().last_used.elapsed() >= Duration::from_secs(600);
                 if idle {
                     self.stop_serialized(&entry, true).await;
                 }

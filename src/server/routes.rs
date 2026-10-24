@@ -599,11 +599,14 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         }
         Ok(None) => {}
     }
-    let mutation = if method == Method::POST || websocket_upgrade || endpoint == Endpoint::ApiKeys {
-        MutationAuthorization::from_headers(request.headers())
-    } else {
-        MutationAuthorization::default()
-    };
+    let tool_put = method == Method::PUT && endpoint == Endpoint::ToolManagement;
+    let mutation =
+        if method == Method::POST || tool_put || websocket_upgrade || endpoint == Endpoint::ApiKeys
+        {
+            MutationAuthorization::from_headers(request.headers())
+        } else {
+            MutationAuthorization::default()
+        };
     let trusted_management = providers
         .authorization
         .origins()
@@ -614,6 +617,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         && endpoint != Endpoint::ToolOverlay
         && grant.is_none()
         && broker_grant.is_none())
+        || tool_put
         || endpoint == Endpoint::ApiKeys)
         && !trusted_management
     {
@@ -669,7 +673,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
         },
         endpoint => {
             let (parts, body) = request.into_parts();
-            let body = if method == Method::POST || endpoint == Endpoint::ToolOverlay {
+            let body = if method == Method::POST || tool_put || endpoint == Endpoint::ToolOverlay {
                 match to_bytes(body, MAX_POST_BODY).await {
                     Ok(body) => body,
                     Err(_) => {
@@ -778,6 +782,14 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/tools" if get => Some(Tools),
         "/tools" => None,
         _ if path.starts_with("/tools/") => Some(ToolOverlay),
+        _ if method == Method::PUT
+            && path
+                .strip_prefix("/api/tools/")
+                .and_then(|p| p.strip_suffix("/autostart"))
+                .is_some_and(crate::tools::manifest::valid_id) =>
+        {
+            Some(ToolManagement)
+        }
         _ if (get || post) && (path == "/api/tools" || path.starts_with("/api/tools/")) => {
             Some(ToolManagement)
         }
