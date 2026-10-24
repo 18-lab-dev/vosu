@@ -14,6 +14,11 @@
     <div class="v-panel__head"><span class="v-label">Counter</span></div>
     <div class="v-panel__body">
       <div class="v-stat"><span class="v-stat__label">Count</span><output class="v-stat__value" id="count">—</output></div>
+      <p class="v-label" id="label">Practice clicks</p>
+      <p>Selected file: <output id="file">—</output></p>
+      <p>Live checksum: <output id="checksum">—</output></p>
+      <p>Score: <output id="score">—</output></p>
+      <p>Ratings: <output id="ratings">—</output></p>
       <div class="v-toolbar">
         <button class="v-btn v-btn--primary" id="increment" type="button" disabled>Increment</button>
         <button class="v-btn" id="refresh" type="button">Refresh</button>
@@ -33,6 +38,7 @@ async function request(path, options) {
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
   count.textContent = body.count;
+  if (body.settings) document.querySelector('#label').textContent = body.settings.label;
 }
 async function act(path, options) {
   try { await request(path, options); }
@@ -40,12 +46,43 @@ async function act(path, options) {
 }
 try {
   await vosu.ready;
-  increment.disabled = !vosu.canWrite;
   status.textContent = vosu.canWrite ? 'Session' : 'Read-only';
   dot.dataset.state = vosu.canWrite ? 'ok' : 'warn';
   await act('v1/count');
+  async function context() {
+    const response = await vosu.fetch('v1/context');
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error);
+    document.querySelector('#file').textContent = body.file || 'No selected beatmap';
+    const ratings = await vosu.fetch('v1/ratings');
+    const result = await ratings.json();
+    document.querySelector('#ratings').textContent = !ratings.ok ? result.error :
+      result.available ? 'Available' : `Optional tool unavailable (${result.status})`;
+  }
+  await context();
+  const fields = ['/beatmap/checksum', '/play/score'];
+  const values = new Map();
+  const stop = vosu.subscribe(fields, frame => {
+    if (frame[0] === 2) {
+      status.textContent = frame[2];
+      return;
+    }
+    if (frame[0] === 0) values.clear();
+    for (const [id, value] of frame[2]) values.set(id, value);
+    for (const id of frame[3] || []) values.delete(id);
+    document.querySelector('#checksum').textContent = values.get(0) || 'No selected beatmap';
+    document.querySelector('#score').textContent = values.get(1) ?? '—';
+    if (frame[0] === 0 || frame[2].some(([id]) => id === 0) || (frame[3] || []).includes(0)) {
+      context().catch(error => { status.textContent = error.message; });
+    }
+  });
+  window.addEventListener('pagehide', stop, { once: true });
   increment.onclick = () => act('v1/increment', { method: 'POST' });
-  document.querySelector('#refresh').onclick = () => act('v1/count');
+  document.querySelector('#refresh').onclick = async () => {
+    await act('v1/count');
+    try { await context(); } catch (error) { status.textContent = error.message; }
+  };
+  increment.disabled = !vosu.canWrite;
 } catch (error) { status.textContent = error.message; dot.dataset.state = 'error'; }
 </script>
 </body>

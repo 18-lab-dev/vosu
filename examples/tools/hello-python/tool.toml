@@ -1,10 +1,12 @@
-#:schema ../../../docs/tools/tool.schema.json
+#:schema https://raw.githubusercontent.com/shiruviaa/vosu/main/docs/tools/tool.schema.json
 manifest_version = 1
 id = "hello-python"
 name = "Hello Python"
 version = "0.1.0"
-description = "Dependency-free example with a read-only counter and a session-protected increment."
+description = "Dependency-free counter with a live UI and CLI. Requires Python 3.11+ on PATH."
 author = "18-LAB"
+icon = "web/icon.svg"
+banner = "web/banner.svg"
 
 [ui]
 root = "web"
@@ -14,5 +16,12 @@ command = ["python", "main.py"]
 startup = "on-demand"
 
 [api]
-read = ["/v1/count"]
+read = ["/v1/count", "/v1/context", "/v1/ratings"]
 write = ["/v1/increment"]
+
+[permissions]
+host = ["context"]
+
+[cli]
+command = ["python", "main.py"]
+summary = "Read the Hello Python counter"

@@ -12,8 +12,9 @@ Set up a checkout with [CONTRIBUTING.md](../CONTRIBUTING.md), then start with th
 
 - [Architecture and source ownership](architecture/index.md)
 - [Decision records](decisions/index.md)
+- [Create a tool: from empty folder to published catalog](tools/create-a-tool.md)
 - [Tool protocol v1](tools/protocol.md)
-- [Authoring and testing tools](tools/authoring.md)
+- [Tool authoring and testing reference](tools/authoring.md)
 - [18-LAB design system for tool UIs](tools/design.md)
 - [vosu branding: mark, lockup, files and rendering](branding.md)
 - [Runtime, configuration, and compatibility workflows](workflows/index.md)

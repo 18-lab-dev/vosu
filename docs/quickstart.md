@@ -12,6 +12,10 @@ tags: [vosu, rust, documentation, onboarding]
 
 To set up a checkout, build, run, and run the checks, follow [CONTRIBUTING.md](../CONTRIBUTING.md). This page maps the maintainer documentation.
 
+To build an out-of-process extension, follow [Create a tool](tools/create-a-tool.md):
+an isolated development daemon, UI and service, live data, CLI, and publishing.
+Keep the [authoring reference](tools/authoring.md) and [protocol](tools/protocol.md) nearby.
+
 ## Dashboard connection and attachment indicators
 
 Installed cards show a connected chip only while at least one live WebSocket can

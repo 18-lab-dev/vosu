@@ -228,6 +228,78 @@ The dashboard's Available page includes source overlays alongside the unchanged 
 
 `vosux --sources` lists configured sources through broker-authenticated `GET /tools/_host/v1/cli/catalog/sources`. Install/update/uninstall CLI options remain tool-only.
 
+### Catalog and package format
+
+This is the consumer contract for third-party publishers as well as official tooling.
+For an end-to-end publishing example, see [Create a tool](create-a-tool.md#12-package-and-publish).
+
+```json
+{
+  "catalog_version": 1,
+  "name": "Example tools",
+  "published": "2026-10-24T00:00:00Z",
+  "tools": [{
+    "id": "hello-python",
+    "name": "Hello Python",
+    "version": "0.1.0",
+    "description": "A dependency-free counter. Requires Python 3.11+ on PATH.",
+    "author": "Your name",
+    "protocol": 1,
+    "interfaces": ["ui", "service", "cli"],
+    "requires": [],
+    "packages": {
+      "any": {
+        "url": "https://example.org/releases/v0.1.0/vosu-tool-hello-python-0.1.0-any.zip",
+        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "size": 12345
+      }
+    }
+  }]
+}
+```
+
+The digest and size above illustrate the fields; publishers must compute them from
+the actual ZIP bytes. `catalog_version`, `published`, and each tool's `id`, `name`,
+`version`, `description`, `author`, `protocol`, `interfaces`, and `packages` are
+required. `name` on the catalog, `tools`, `overlays`, and tool `requires` default to
+empty when omitted. `homepage`, `icon_url`, and `banner_url` on a tool are optional.
+Protocol is `1`; interfaces must be a nonempty list drawn from `ui`, `service`,
+`cli`. IDs must be valid and unique, versions semver, and dependency version
+requirements valid semver requirements. `requires` mirrors the manifest's required
+dependencies (not optional read integrations), as `{"id","version"}` entries
+in the same order and with the same version-requirement strings, so installation
+can resolve them across enabled sources. Dependency cycles, missing
+dependencies, and incompatible versions fail installation.
+
+Package keys are `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, or `any`
+for platform-independent code. A matching native package takes precedence over
+`any`; no matching package means unsupported. `any` does not install interpreters:
+state Python or other runtime requirements in the description and release notes.
+Each package needs an absolute HTTPS `url` without embedded credentials, a
+64-character hexadecimal SHA-256 of the compressed ZIP, and its exact positive
+byte `size` (at most 512 MiB). Artwork URLs use the same HTTPS/credential rules.
+Downloads also reject private/reserved destinations and unsafe redirects.
+
+Each tool ZIP has **`tool.toml` at the archive root**, not inside an enclosing
+directory. Include the files it references, runtime code, `settings.json` when
+used, and redistributable license texts. The manifest id and version must equal
+the catalog entry. The conventional filename is
+`vosu-tool-<id>-<version>-<target>.zip`; the host uses the URL, not that spelling.
+Extraction allows only regular files/directories, confined relative paths, at
+most 10,000 entries and 512 MiB expanded; absolute paths, traversal and symlinks
+are rejected. Unix files directly under `bin/` receive executable permissions.
+Installation stages beside `<vosu data directory>/tools/<id>/`, then atomically
+replaces it; durable tool data is outside that package directory.
+
+An overlay entry instead requires `id`, `name`, `version`, `description`, `author`,
+and one `package` object with the same URL/digest/size fields. It may include
+`homepage`, `resolution: [width,height]`, `preview`, `icon_url`, `banner_url`,
+and `requires_tools: [{"id","version"}]`. Its ZIP has `index.html` at the root.
+Overlays install into the static folder; settings values survive package updates.
+First-party build/licensing/artwork policy and platform-catalog merging are
+documented in [vosu-tools packaging](https://github.com/shiruviaa/vosu-tools/blob/main/docs/catalog.md);
+those publisher-specific build conventions are not additional host requirements.
+
 
 ## Conventions for tool APIs
 

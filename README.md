@@ -229,8 +229,9 @@ Open a tool from the dashboard to grant its UI a write session; opening the same
 Install from the terminal with `vosux --install <id>`, update with `vosux --update <id>`, and uninstall with `vosux --uninstall <id> --keep-data` or `--remove-data`. The `vosu x` form accepts the same options. **Settings / Catalog sources** lets you add, remove, disable, and reorder `owner/repo[@tag]` references or HTTPS `catalog.json` URLs. Defaults are `shiruviaa/vosu-tools`, `shiruviaa/vosulay`, and `shiruviaa/vosu-overlays`; all are removable. Only an untouched saved two-source default list gains vosulay automatically; customized lists stay unchanged. Earlier sources win duplicate ids; later entries are shown as shadowed. `vosux --sources` lists the configured sources.
 
 Catalogs may provide both tools and overlays. Only tools from the exact default source identities `shiruviaa/vosu-tools` and `shiruviaa/vosulay` are automatically trusted, including identical shorthand re-added by a user; tagged or HTTPS variants and all other sources remain `user` and need dashboard approval. The overlay **Available** page lists source overlays beside the existing community catalog, preserves its third-party disclosure, and offers to install required tools. Overlay updates preserve settings values; removal uses the existing overlay delete action. See the [catalog source contract](docs/tools/protocol.md#catalog-sources-and-installation) for configuration and APIs.
-See the [authoring guide](docs/tools/authoring.md) and
-[protocol contract](docs/tools/protocol.md), or run the dependency-free
+Start with [Create a tool](docs/tools/create-a-tool.md) for a guided path from an
+empty directory to a published catalog. Keep the [authoring reference](docs/tools/authoring.md)
+and [protocol contract](docs/tools/protocol.md) nearby, or inspect the dependency-free
 [Python example](examples/tools/hello-python/).
 
 Run installed tools from a terminal with `vosu x --list` (or `--list --json`),
