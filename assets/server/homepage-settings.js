@@ -191,6 +191,7 @@ export function createSettingsEditor({
   dialog?.addEventListener('close', () => {
     state.navigationObserver?.disconnect();
     state.dirty = false;
+    dialog.querySelector('[data-tool-startup]')?.remove();
   });
   // An inline settings page with unsaved edits asks before navigating away.
   window.addEventListener('beforeunload', (event) => {
@@ -207,6 +208,7 @@ export function createSettingsEditor({
     const requestId = ++state.dialogRequest;
     state.dirty = false;
     dialogTitle.textContent = title;
+    dialog.querySelector('[data-tool-startup]')?.remove();
     dialogBody.replaceChildren();
     if (!dialog.open) showModal(dialog);
     return { container: dialogBody, requestId };
@@ -869,7 +871,11 @@ export function createSettingsEditor({
       const title = typeof view.name === 'string' && view.name ? view.name : id;
       renderCounterSettings(container, { kind: 'tool', id, name: title }, schema, values, { inline, dialogRequestId: requestId, secrets });
       const startup = toolAutostartControl(view, { requestJson, notify, errorText });
-      if (startup) container.prepend(startup);
+      if (startup) {
+        startup.dataset.toolStartup = '';
+        if (inline) container.prepend(startup);
+        else dialogTitle.after(startup);
+      }
     } catch (error) {
       showLoadError(container, requestId, error, inline);
     }

@@ -535,6 +535,25 @@ mod tests {
         }
     }
     #[test]
+    fn autostart_options() {
+        for (value, expected) in [("on", Some(true)), ("off", Some(false)), ("default", None)] {
+            assert_eq!(
+                parse(args(&["--autostart", "server-pp", value])).unwrap(),
+                Invocation::Autostart("server-pp".into(), expected)
+            );
+        }
+        for values in [
+            vec!["--autostart"],
+            vec!["--autostart", "server-pp"],
+            vec!["--autostart", "../bad", "on"],
+            vec!["--autostart", "server-pp", "yes"],
+            vec!["--autostart", "server-pp", "on", "extra"],
+            vec!["--json", "--autostart", "server-pp", "on"],
+        ] {
+            assert!(parse(args(&values)).is_err(), "{values:?}");
+        }
+    }
+    #[test]
     fn catalog_options() {
         assert_eq!(parse(args(&["--sources"])).unwrap(), Invocation::Sources);
         assert!(parse(args(&["--sources", "extra"])).is_err());
