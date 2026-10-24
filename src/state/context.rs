@@ -209,23 +209,56 @@ pub trait SnapshotPublisher<P>: Send + Sync + 'static {
     fn publish(&self, publication: P, delivery: Delivery) -> Result<(), StateWorkerError>;
 }
 
+/// Reader work requested by established selected-field subscriptions.
+/// Gameplay-only demand is dormant outside actual play (including replay/spectate).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SubscriptionDemand {
+    pub regular: bool,
+    pub precise: bool,
+    pub gameplay_regular: bool,
+    pub gameplay_precise: bool,
+}
+
+impl SubscriptionDemand {
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            regular: self.regular || other.regular,
+            precise: self.precise || other.precise,
+            gameplay_regular: self.gameplay_regular || other.gameplay_regular,
+            gameplay_precise: self.gameplay_precise || other.gameplay_precise,
+        }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self == Self::default()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SubscriptionPolling {
+    pub interval: Duration,
+    pub demand: SubscriptionDemand,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct PollIntervals {
     pub regular: Duration,
     pub precise: Duration,
-    /// Selected-field sampling interval while a live subscriber exists.
-    pub subscription: Option<Duration>,
+    /// Fast-field demand only; slow subscriptions do not change reader cadence.
+    pub subscription: Option<SubscriptionPolling>,
 }
 
 impl PollIntervals {
-    pub(super) fn regular_delay(&self) -> Duration {
+    pub(super) fn regular_delay(&self, playing: bool) -> Duration {
         self.subscription
-            .map_or(self.regular, |subscription| subscription.min(self.regular))
+            .filter(|s| s.demand.regular || (playing && s.demand.gameplay_regular))
+            .map_or(self.regular, |s| s.interval.min(self.regular))
     }
 
-    pub(super) fn precise_delay(&self) -> Duration {
+    pub(super) fn precise_delay(&self, playing: bool) -> Duration {
         self.subscription
-            .map_or(self.precise, |subscription| subscription.min(self.precise))
+            .filter(|s| s.demand.precise || (playing && s.demand.gameplay_precise))
+            .map_or(self.precise, |s| s.interval.min(self.precise))
     }
 }
 
@@ -234,8 +267,8 @@ pub enum PollIntervalUpdates {
     Direct(watch::Receiver<PollIntervals>),
     Config {
         config: watch::Receiver<Arc<crate::config::Config>>,
-        /// Whether any selected-field subscriber is active.
-        demand: watch::Receiver<bool>,
+        /// Union of the producing lanes requested by established selections.
+        demand: watch::Receiver<SubscriptionDemand>,
     },
 }
 
@@ -266,8 +299,10 @@ impl PollIntervalUpdates {
                 PollIntervals {
                     regular: duration_from_millis_saturating(value.poll_rate),
                     precise: duration_from_millis_saturating(value.precise_data_poll_rate),
-                    subscription: subscribed
-                        .then(|| duration_from_millis_saturating(value.v2_subscription_debounce)),
+                    subscription: (!subscribed.is_empty()).then(|| SubscriptionPolling {
+                        interval: duration_from_millis_saturating(value.v2_subscription_debounce),
+                        demand: subscribed,
+                    }),
                 }
             }
         }

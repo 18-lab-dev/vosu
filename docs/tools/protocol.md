@@ -133,6 +133,16 @@ mods are available through the public [v2 renderer fields](../../README.md#rende
 no service token is needed to subscribe. A valid pointer to a missing optional
 field reports per-pointer absence rather than rejecting the subscription.
 
+Subscriptions request native sampling by selected field, not by connection count.
+`/client`, `/folders/skin`, `/settings/mode` and `/beatmap/checksum` leave configured
+reader intervals unchanged. Fast gameplay selectors accelerate only their producing
+lane while playing; `/beatmap/time/live` can accelerate the precise song-select
+clock. Parent selectors inherit descendant demand (`/settings` includes bass
+density), so follow narrow leaves when tracking ruleset or file identity. Frame
+debounce and latest-only backpressure are unchanged; see the
+[sampling table](../../README.md#renderer-state-v2).
+
+
 `songs:write` is advisory: it declares that the service writes into the osu! songs directory and is shown at approval. Host permissions limit what vosu APIs return; they do not sandbox the process, which runs with the user's OS rights. Approving a user tool is an explicit trust decision.
 
 ## Browser bridge (for UIs)

@@ -432,7 +432,7 @@ impl ProductionStateSupervisor {
     pub fn start(
         lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
         config: watch::Receiver<Arc<crate::config::Config>>,
-        subscription_demand: watch::Receiver<bool>,
+        subscription_demand: watch::Receiver<crate::state::SubscriptionDemand>,
         snapshots: Arc<SnapshotProviders>,
         logger: Logger,
     ) -> Self {
@@ -502,7 +502,7 @@ impl ManagerView {
 pub(super) async fn run_state_supervisor(
     mut lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
     mut config: watch::Receiver<Arc<crate::config::Config>>,
-    subscription_demand: watch::Receiver<bool>,
+    subscription_demand: watch::Receiver<crate::state::SubscriptionDemand>,
     snapshots: Arc<SnapshotProviders>,
     logger: Logger,
     cancel: CancellationToken,
@@ -657,7 +657,7 @@ where
 pub(super) async fn run_instance_state_worker(
     entry: InstanceGeneration,
     config: watch::Receiver<Arc<crate::config::Config>>,
-    subscription_demand: watch::Receiver<bool>,
+    subscription_demand: watch::Receiver<crate::state::SubscriptionDemand>,
     publications: Arc<StatePublicationQueue>,
     logger: Logger,
     cancel: CancellationToken,
@@ -705,7 +705,7 @@ pub(super) enum PreparedReaders {
 pub(super) async fn create_state_worker(
     entry: &InstanceGeneration,
     config: watch::Receiver<Arc<crate::config::Config>>,
-    subscription_demand: watch::Receiver<bool>,
+    subscription_demand: watch::Receiver<crate::state::SubscriptionDemand>,
     publisher: Arc<StatePublicationSink>,
     synchronization: Arc<Mutex<ReaderSynchronization>>,
 ) -> Result<Option<StateWorkerHandle>, StateWorkerError> {

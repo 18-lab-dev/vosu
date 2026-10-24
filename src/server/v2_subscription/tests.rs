@@ -583,22 +583,121 @@ async fn demand_tracks_established_selections_only() {
     let (connection, _receiver) = hub.connect();
     tokio::task::yield_now().await;
     assert!(
-        !*demand.borrow(),
+        demand.borrow().is_empty(),
         "a connection without a selection is not demand"
     );
 
-    connection.subscribe(vec!["/a".into()]).unwrap();
-    demand.wait_for(|active| *active).await.unwrap();
+    connection.subscribe(vec!["/keys".into()]).unwrap();
+    demand
+        .wait_for(|active| active.gameplay_precise)
+        .await
+        .unwrap();
 
     connection.close(1000);
-    demand.wait_for(|active| !*active).await.unwrap();
+    demand.wait_for(|active| active.is_empty()).await.unwrap();
 
     let (second, _second_receiver) = hub.connect();
-    second.subscribe(vec!["/a".into()]).unwrap();
-    demand.wait_for(|active| *active).await.unwrap();
+    second.subscribe(vec!["/play/score".into()]).unwrap();
+    demand
+        .wait_for(|active| active.gameplay_regular)
+        .await
+        .unwrap();
     hub.shutdown();
     runner.await.unwrap();
-    assert!(!*demand.borrow(), "a stopped hub releases demand");
+    assert!(demand.borrow().is_empty(), "a stopped hub releases demand");
+}
+
+#[test]
+fn selector_demand_follows_producing_lanes_and_parent_subtrees() {
+    use crate::state::SubscriptionDemand;
+    let selected = |paths: &[&str]| {
+        compile_pointers(paths.iter().map(|s| (*s).into()).collect())
+            .unwrap()
+            .demand
+    };
+    assert!(
+        selected(&[
+            "/client",
+            "/folders/skin",
+            "/settings/mode",
+            "/beatmap/checksum",
+            "/settings/visual",
+            "/beatmap/title",
+            "/directPath/beatmapFile",
+            "/unknown"
+        ])
+        .is_empty()
+    );
+    assert_eq!(
+        selected(&["/keys", "/play/hitOffsets"]),
+        SubscriptionDemand {
+            gameplay_precise: true,
+            ..Default::default()
+        }
+    );
+    assert_eq!(
+        selected(&["/play/score", "/play/combo/current"]),
+        SubscriptionDemand {
+            gameplay_regular: true,
+            ..Default::default()
+        }
+    );
+    assert_eq!(
+        selected(&["/beatmap/time/live"]),
+        SubscriptionDemand {
+            precise: true,
+            ..Default::default()
+        }
+    );
+    assert_eq!(
+        selected(&["/settings/bassDensity"]),
+        SubscriptionDemand {
+            regular: true,
+            ..Default::default()
+        }
+    );
+    assert_eq!(
+        selected(&["/play"]),
+        SubscriptionDemand {
+            gameplay_regular: true,
+            gameplay_precise: true,
+            ..Default::default()
+        }
+    );
+    assert_eq!(
+        selected(&["/settings"]),
+        SubscriptionDemand {
+            regular: true,
+            gameplay_regular: true,
+            ..Default::default()
+        }
+    );
+    let all = selected(&[""]);
+    assert!(all.regular && all.precise && all.gameplay_regular && all.gameplay_precise);
+}
+
+#[test]
+fn slow_selections_do_not_request_work_and_fast_clients_union_and_release_lanes() {
+    let provider = FakeProvider::new(1, Some(json!({})));
+    let hub = V2SubscriptionHub::new(provider, Duration::ZERO);
+    let demand = hub.demand();
+    let (slow, _slow_rx) = hub.connect();
+    slow.subscribe(vec!["/settings/mode".into(), "/beatmap/checksum".into()])
+        .unwrap();
+    hub.refresh_demand();
+    assert!(demand.borrow().is_empty());
+    let (precise, _precise_rx) = hub.connect();
+    precise.subscribe(vec!["/keys".into()]).unwrap();
+    let (regular, _regular_rx) = hub.connect();
+    regular.subscribe(vec!["/play/score".into()]).unwrap();
+    hub.refresh_demand();
+    assert!(demand.borrow().gameplay_precise && demand.borrow().gameplay_regular);
+    precise.close(1000);
+    hub.refresh_demand();
+    assert!(!demand.borrow().gameplay_precise && demand.borrow().gameplay_regular);
+    regular.close(1000);
+    hub.refresh_demand();
+    assert!(demand.borrow().is_empty());
 }
 
 #[tokio::test]
@@ -1190,4 +1289,21 @@ async fn subscription_during_dispatch_is_delivered_without_another_publication()
     hub.shutdown();
     runner.await.unwrap();
     assert_eq!(text(delivered.unwrap().unwrap()), json!([0, 1, [[0, 1]]]));
+}
+
+#[test]
+fn precise_status_and_gameplay_track_state_use_their_actual_producing_lanes() {
+    let status = compile_pointers(vec!["/state/number".into()])
+        .unwrap()
+        .demand;
+    assert!(status.precise);
+    assert!(!status.regular && !status.gameplay_regular);
+    let track = compile_pointers(vec![
+        "/beatmap/time/rate".into(),
+        "/beatmap/time/running".into(),
+    ])
+    .unwrap()
+    .demand;
+    assert!(track.gameplay_regular);
+    assert!(!track.regular && !track.precise && !track.gameplay_precise);
 }
