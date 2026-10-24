@@ -4,6 +4,7 @@ pub struct ProductionRouteDelegate {
     api_keys: Option<Arc<super::api_keys::ApiKeys>>,
     connections: OverlayConnections,
     tools: Option<Arc<crate::tools::ToolHost>>,
+    skin_index: Arc<Mutex<files::SkinIndexCache>>,
 }
 
 impl ProductionRouteDelegate {
@@ -13,7 +14,7 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), tools: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), tools: None, skin_index: Arc::new(Mutex::new(files::SkinIndexCache::default())) }
     }
     pub fn with_api_keys(mut self, keys: Arc<super::api_keys::ApiKeys>) -> Self {
         self.api_keys = Some(keys);
@@ -467,7 +468,12 @@ impl ProductionRouteDelegate {
         let current = self.services.beatmap.files();
         let path = request.uri().path();
         if endpoint == Endpoint::SkinFile && path == "/files/skin/" {
-            return json_response(StatusCode::OK, skin_metadata(&current));
+            let root = if current.lazer { current.songs_root.as_deref() } else { current.skin_root.as_deref() };
+            let index = self.skin_index.lock().unwrap_or_else(PoisonError::into_inner)
+                .get(root, current.skin.as_ref(), current.skin_name.as_deref(), current.lazer, true);
+            let bytes = serde_json::to_vec(&skin_metadata(&current, &index)).expect("skin index serializes");
+            let validators = files::representation_validators(&bytes, index.modified());
+            return conditional_response(response(StatusCode::OK, JSON, Bytes::from(bytes)), &validators, request.headers(), request.method() == Method::HEAD);
         }
         let counter_html_path = (endpoint == Endpoint::CounterStatic).then(|| {
             let relative = path.trim_start_matches('/');
@@ -478,9 +484,19 @@ impl ProductionRouteDelegate {
             }
         });
         let target = request.uri().to_string();
-        let outcome = match resolve_file_endpoint(endpoint, &current, path, &target) {
+        let resolved = if endpoint == Endpoint::SkinFile && !current.lazer {
+            let mut index = self.skin_index.lock().unwrap_or_else(PoisonError::into_inner);
+            resolve_file_endpoint(endpoint, &current, path, &target, &mut index)
+        } else {
+            resolve_file_endpoint(endpoint, &current, path, &target, &mut files::SkinIndexCache::default())
+        };
+        let outcome = match resolved {
             Ok(outcome) => outcome,
-            Err(error) => return file_route_error_response(error),
+            Err(error) => {
+                let mut response = file_route_error_response(error);
+                if request.method() == Method::HEAD { *response.body_mut() = Body::empty(); }
+                return response;
+            }
         };
         let range = request
             .headers()
@@ -496,7 +512,11 @@ impl ProductionRouteDelegate {
             )
             .await
         } else {
-            resource_response(outcome, range).await
+            if matches!(endpoint, Endpoint::SkinFile | Endpoint::BeatmapPath | Endpoint::BeatmapFile | Endpoint::BeatmapAudio | Endpoint::BeatmapBackground) {
+                game_resource_response(outcome, range, current.lazer, request.headers(), request.method() == Method::HEAD).await
+            } else {
+                resource_response(outcome, range).await
+            }
         }
     }
 

@@ -101,23 +101,29 @@ const OVERLAYS_STATIC: &str = r##"<!doctype html>
 </html>"##;
 
 #[cfg(target_os = "linux")]
-fn directory_entries(directory: &fs::File) -> io::Result<Vec<(String, bool)>> {
+pub(super) fn visit_entries(
+    directory: &fs::File,
+    mut visit: impl FnMut(String, bool) -> bool,
+) -> io::Result<()> {
     use std::os::fd::AsRawFd;
 
-    fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))?
-        .map(|entry| {
-            let entry = entry?;
-            let file_type = entry.file_type()?;
-            Ok((
-                entry.file_name().to_string_lossy().into_owned(),
-                file_type.is_dir(),
-            ))
-        })
-        .collect()
+    for entry in fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))? {
+        let entry = entry?;
+        if !visit(
+            entry.file_name().to_string_lossy().into_owned(),
+            entry.file_type()?.is_dir(),
+        ) {
+            break;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
-fn directory_entries(directory: &fs::File) -> io::Result<Vec<(String, bool)>> {
+pub(super) fn visit_entries(
+    directory: &fs::File,
+    mut visit: impl FnMut(String, bool) -> bool,
+) -> io::Result<()> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::{ERROR_NO_MORE_FILES, GetLastError, HANDLE};
     use windows_sys::Win32::Storage::FileSystem::{
@@ -126,11 +132,10 @@ fn directory_entries(directory: &fs::File) -> io::Result<Vec<(String, bool)>> {
     };
 
     let handle = directory.as_raw_handle() as HANDLE;
-    let mut entries = Vec::new();
     let mut restart = true;
     loop {
         // u64 backing guarantees the alignment required by FILE_ID_BOTH_DIR_INFO.
-        let mut storage = vec![0u64; 8192 / std::mem::size_of::<u64>()];
+        let mut storage = [0u64; 8192 / std::mem::size_of::<u64>()];
         let class = if restart {
             FileIdBothDirectoryRestartInfo
         } else {
@@ -186,8 +191,11 @@ fn directory_entries(directory: &fs::File) -> io::Result<Vec<(String, bool)>> {
                 )
             };
             let name = String::from_utf16_lossy(name);
-            if name != "." && name != ".." {
-                entries.push((name, info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0));
+            if name != "."
+                && name != ".."
+                && !visit(name, info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0)
+            {
+                return Ok(());
             }
             if info.NextEntryOffset == 0 {
                 break;
@@ -202,7 +210,25 @@ fn directory_entries(directory: &fs::File) -> io::Result<Vec<(String, bool)>> {
             offset += next;
         }
     }
+    Ok(())
+}
+
+pub(super) fn directory_entries_bounded(
+    directory: &fs::File,
+    limit: usize,
+) -> io::Result<Vec<(String, bool)>> {
+    let mut entries = Vec::new();
+    if limit != 0 {
+        visit_entries(directory, |name, is_dir| {
+            entries.push((name, is_dir));
+            entries.len() < limit
+        })?;
+    }
     Ok(entries)
+}
+
+fn directory_entries(directory: &fs::File) -> io::Result<Vec<(String, bool)>> {
+    directory_entries_bounded(directory, usize::MAX)
 }
 
 pub fn build_directory_index(directory: &fs::File, request_target: &str) -> io::Result<String> {

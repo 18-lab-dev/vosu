@@ -3135,6 +3135,7 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "getrandom 0.4.3",
+ "httpdate",
  "indexmap",
  "ksni",
  "libbpf-cargo",

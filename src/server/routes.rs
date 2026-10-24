@@ -758,6 +758,7 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
 pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
     use Endpoint::*;
     let get = method == Method::GET;
+    let file_read = get || method == Method::HEAD;
     let post = method == Method::POST;
     match path {
         "/json" if get => Some(State(StateRoute::V1)),
@@ -772,9 +773,9 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         "/api/runUpdates" if post => Some(RunUpdates),
         "/api/generateReport" if post => Some(GenerateReport),
         "/backgroundImage" if get => Some(BackgroundImage),
-        "/files/beatmap/background" if get => Some(BeatmapBackground),
-        "/files/beatmap/audio" if get => Some(BeatmapAudio),
-        "/files/beatmap/file" if get => Some(BeatmapFile),
+        "/files/beatmap/background" if file_read => Some(BeatmapBackground),
+        "/files/beatmap/audio" if file_read => Some(BeatmapAudio),
+        "/files/beatmap/file" if file_read => Some(BeatmapFile),
         "/favicon.ico" if get => Some(Favicon),
         "/" if get => Some(Root),
         "/settings" if get => Some(Settings),
@@ -810,8 +811,8 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
         _ if post && path.starts_with("/api/counters/names/") => Some(CounterNames),
         _ if (get || post) && path.starts_with("/api/counters/settings/") => Some(CounterSettings),
         _ if get && path.starts_with("/Songs/") => Some(SongsFile),
-        _ if get && path.starts_with("/files/beatmap/") => Some(BeatmapPath),
-        _ if get && path.starts_with("/files/skin/") => Some(SkinFile),
+        _ if file_read && path.starts_with("/files/beatmap/") => Some(BeatmapPath),
+        _ if file_read && path.starts_with("/files/skin/") => Some(SkinFile),
         _ if get && path.starts_with("/assets/") => Some(Asset),
         _ if path == "/websocket"
             || path.starts_with("/websocket/")

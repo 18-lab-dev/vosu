@@ -9,6 +9,11 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 mod directory;
+mod skin;
+mod validators;
+
+pub use skin::{SkinFileIndex, SkinIndexCache};
+pub use validators::{FileValidators, representation_validators};
 
 pub use directory::{build_directory_index, encode_path_segment, html_escape};
 
@@ -44,6 +49,8 @@ pub struct FileTarget {
     pub length: u64,
     pub content_type: &'static str,
     pub range_eligible: bool,
+    pub modified: Option<std::time::SystemTime>,
+    pub identity: PathBuf,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -390,11 +397,15 @@ fn resolve_child(
         return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
     }
 
+    let mut identity = child.root;
+    identity.push(child.relative);
     Ok(ResourceOutcome::File(FileTarget {
         file: opened.file,
         length: opened.metadata.len(),
         content_type: content_type(Path::new(decoded_request)),
         range_eligible: media_range_eligible(Path::new(decoded_request)),
+        modified: opened.metadata.modified().ok(),
+        identity,
     }))
 }
 /// Decode and resolve an encoded splat capture in one step. Malformed encoding is

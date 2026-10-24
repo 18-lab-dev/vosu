@@ -1,13 +1,25 @@
-fn skin_metadata(selected: &BeatmapFiles) -> Value {
+#[derive(serde::Serialize)]
+struct SkinMetadata<'a> {
+    client: Option<&'static str>,
+    name: &'a Option<String>,
+    files: bool,
+    builtin: Option<&'a str>,
+    base: Option<&'a str>,
+    #[serde(flatten)]
+    index: &'a files::SkinFileIndex,
+}
+
+fn skin_metadata<'a>(selected: &'a BeatmapFiles, index: &'a files::SkinFileIndex) -> SkinMetadata<'a> {
     let skin = selected.skin.as_deref();
-    json!({
-        "client": selected.skin_client,
-        "name": selected.skin_name,
-        "files": if selected.lazer { skin.is_some_and(|s| !s.files.is_empty()) }
+    SkinMetadata {
+        client: selected.skin_client,
+        name: &selected.skin_name,
+        files: if selected.lazer { skin.is_some_and(|s| !s.files.is_empty()) }
             else { selected.skin_root.as_ref().is_some_and(|p| p.is_dir()) },
-        "builtin": skin.and_then(|s| s.builtin.as_deref()),
-        "base": if selected.lazer { skin.and_then(|s| s.base.as_deref()) } else { selected.skin_client.map(|_| "legacy") },
-    })
+        builtin: skin.and_then(|s| s.builtin.as_deref()),
+        base: if selected.lazer { skin.and_then(|s| s.base.as_deref()) } else { selected.skin_client.map(|_| "legacy") },
+        index,
+    }
 }
 
 #[derive(Debug)]
@@ -32,6 +44,7 @@ fn resolve_file_endpoint(
     selected: &BeatmapFiles,
     path: &str,
     target: &str,
+    skin_index: &mut files::SkinIndexCache,
 ) -> Result<ResourceOutcome, FileRouteError> {
     let outcome = match endpoint {
         Endpoint::BackgroundImage | Endpoint::BeatmapBackground => resolve_exact(
@@ -76,11 +89,9 @@ fn resolve_file_endpoint(
             }
             outcome
         }
-        Endpoint::SkinFile => files::resolve_encoded_resource(
-            selected.skin_root.as_deref(),
-            path.strip_prefix("/files/skin/").unwrap_or_default(),
-            target,
-            selected_missing(selected),
+        Endpoint::SkinFile => skin_index.resolve_folder(
+            selected.skin_root.as_deref(), selected.skin_name.as_deref(),
+            path.strip_prefix("/files/skin/").unwrap_or_default(), target, selected_missing(selected),
         )?,
         Endpoint::CounterStatic => {
             let relative = path.trim_start_matches('/');
@@ -144,6 +155,57 @@ fn resolve_exact(
             Ok(ResourceOutcome::Missing(MissingKind::NotFound))
         }
     }
+}
+
+fn conditional_response(mut response: Response, validators: &files::FileValidators, headers: &axum::http::HeaderMap, head: bool) -> Response {
+    use axum::body::HttpBody as _;
+    if validators.not_modified(headers) {
+        response = Response::builder().status(StatusCode::NOT_MODIFIED).body(Body::empty()).expect("304 response");
+    } else if head {
+        if !response.headers().contains_key(header::CONTENT_LENGTH)
+            && let Some(length) = response.body().size_hint().exact()
+        {
+            response.headers_mut().insert(header::CONTENT_LENGTH, length.into());
+        }
+        *response.body_mut() = Body::empty();
+    }
+    validators.apply(response.headers_mut());
+    response
+}
+
+async fn game_resource_response(outcome: ResourceOutcome, range: Option<String>, lazer: bool, headers: &axum::http::HeaderMap, head: bool) -> Response {
+    let validators = match &outcome {
+        ResourceOutcome::File(file) => Some(files::FileValidators::for_file(file, lazer)),
+        _ => None,
+    };
+    if let Some(validators) = &validators
+        && validators.not_modified(headers)
+    {
+        return conditional_response(Response::new(Body::empty()), validators, headers, head);
+    }
+    if head && let ResourceOutcome::File(file) = &outcome {
+        let plan = files::plan_file_response(file, None).expect("a full response has no invalid range");
+        let mut response = Response::builder().status(plan.status)
+            .header(header::CONTENT_TYPE, plan.content_type)
+            .header(header::CONTENT_LENGTH, plan.content_length)
+            .body(Body::empty()).expect("HEAD response");
+        if let Some(ranges) = plan.accept_ranges {
+            response.headers_mut().insert(header::ACCEPT_RANGES, ranges.parse().expect("static range unit"));
+        }
+        return conditional_response(response, validators.as_ref().expect("file validators"), headers, true);
+    }
+    let range = (!head).then_some(range).flatten();
+    let mut response = resource_response(outcome, range).await;
+    if let Some(validators) = &validators {
+        response = conditional_response(response, validators, headers, head);
+    } else if head {
+        use axum::body::HttpBody as _;
+        if let Some(length) = response.body().size_hint().exact() {
+            response.headers_mut().insert(header::CONTENT_LENGTH, length.into());
+        }
+        *response.body_mut() = Body::empty();
+    }
+    response
 }
 
 async fn resource_response(outcome: ResourceOutcome, range: Option<String>) -> Response {

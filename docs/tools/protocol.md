@@ -113,8 +113,17 @@ The `/tools` path prefix is reserved on the overlay listener: overlays cannot be
 | `/tools/<id>/<path>` | Static file from `[ui].root` (root-confined, traversal-safe); `/tools/<id>/` serves `entry`. `/tools/<id>/_icon` and `/tools/<id>/_banner` serve the manifest art in any status. 404 for service-only tools. |
 | `GET /tools/<id>/_settings` | `{"values": {"<setting id>": value}}`: effective `settings.json` values with defaults applied, for the tool's UI. Read-only and open like other tool reads (overlays can read it too), so `password` settings are never included. 503 while the tool is unavailable. |
 | `/tools/_host/v1/*` | Host API and browser bridge (below) |
-| `GET /files/skin/` | Public current-skin metadata: `{"client":"stable"\|"lazer"\|null,"name":string\|null,"files":bool,"builtin":string\|null,"base":string\|null}`. `base` is the rendering family (`argon`, `argon-pro`, `triangles`, `legacy`, `retro`) for built-in and imported skins; null means unknown. Stable uses `legacy`. Same overlay peer policy/CORS as other file reads; never exposes absolute paths. Re-read before an operation because the selected skin can change. |
-| `GET /files/skin/<path>` | Current stable or imported lazer skin file. Lazer filename lookup is case-insensitive, accepts relative subfolders, and resolves into its content-addressed files store with root confinement. Missing or unavailable lazer files return 404. Built-in lazer skins report `files:false` and `builtin` (`argon`, `argon-pro`, `triangles`, `legacy`, `retro`); use your own defaults. |
+| `GET` / `HEAD /files/skin/` | Current-skin metadata retains `client`, `name`, `files:boolean`, `builtin`, `base` and adds `entries:[{path,size,modified?,hash?}]`, `truncated:boolean`. Relative paths use `/`; stable entries have mtime milliseconds (`modified`), lazer entries have store `hash` instead. Built-ins have no entries. At most 20,000 files / 40,000 visited directory entries; incomplete enumeration sets `truncated:true`. Cached by skin identity/root, validated against filesystem changes on metadata reads. Same overlay peer policy/CORS; no absolute paths. |
+| `GET` / `HEAD /files/skin/<path>` | Current stable/imported lazer skin file, case-insensitive on both clients and confined to its selected root. Exact stable paths win; complete-index case collisions choose the lexicographically smallest path. Truncated/new paths fall back to exact-then-lexical component lookup. Missing/unavailable lazer files return 404. Built-ins report `files:false` and `builtin` (`argon`, `argon-pro`, `triangles`, `legacy`, `retro`); use your own defaults. |
+| `GET` / `HEAD /files/beatmap/*` | Existing current beatmap/background/audio and relative file reads, with unchanged readiness, range, peer and CORS behaviour. |
+
+Skin/beatmap file responses provide strong `ETag`, representable `Last-Modified`
+and `Cache-Control: no-cache`. Lazer ETags are store hashes; stable ETags hash path,
+size and high-resolution mtime. Matching `If-None-Match` returns bodyless 304
+(weak comparison, lists and `*` supported) and takes precedence over
+`If-Modified-Since`. HEAD has full-file headers and no body; it ignores Range.
+The skin metadata report also has a content-derived ETag. A truncated index must
+not be treated as an exhaustive absence check; retain file probes as a fallback.
 
 Access rules for `/tools/<id>/api/*`:
 

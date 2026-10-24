@@ -16,7 +16,7 @@ use axum::{
         ConnectInfo,
         ws::{CloseFrame, Message, Utf8Bytes, WebSocket},
     },
-    http::{Request, StatusCode, header},
+    http::{Method, Request, StatusCode, header},
     response::Response,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -200,4 +200,5 @@ mod tests {
     include!("service/tests/providers_and_transport.rs");
     include!("service/tests/update_lifecycle.rs");
     include!("service/tests/listener_and_files.rs");
+    include!("service/tests/skin_file_index.rs");
 }
