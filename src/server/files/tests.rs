@@ -425,6 +425,8 @@ fn response_plan_contains_handler_ready_headers() {
         length: 100,
         content_type: content_type(Path::new("audio.mp3")),
         range_eligible: true,
+        modified: None,
+        identity: PathBuf::from("audio.mp3"),
     };
     let full = plan_file_response(&target, None).unwrap();
     assert_eq!(full.accept_ranges, Some("bytes"));
@@ -441,6 +443,8 @@ fn response_plan_contains_handler_ready_headers() {
         length: 10,
         content_type: "text/plain; charset=utf-8",
         range_eligible: false,
+        modified: None,
+        identity: PathBuf::from("data.txt"),
     };
     assert_eq!(
         plan_file_response(&non_media, None).unwrap().accept_ranges,

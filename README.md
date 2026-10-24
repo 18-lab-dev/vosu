@@ -576,10 +576,31 @@ with their latest selected checksum.
 - `GET /files/beatmap/file`
 - `GET /Songs/{path}`
 - `GET /files/beatmap/{path}`
-- `GET /files/skin/`; current skin metadata `{"client":"stable"|"lazer"|null,"name":string|null,"files":bool,"builtin":string|null,"base":string|null}` without absolute paths. `base` identifies the rendering family (`argon`, `argon-pro`, `triangles`, `legacy`, `retro`) for built-in **and imported** skins; unknown families are null. Stable skins use `legacy`.
-- `GET /files/skin/{path}`; stable and imported lazer skin files (case-insensitive lazer filenames, including subfolders); unavailable/missing lazer files return 404. Built-in lazer skins have no files: metadata reports `files:false` with `builtin` equal to `argon`, `argon-pro`, `triangles`, `legacy`, or `retro`.
+- `GET /files/skin/`; current skin metadata `{"client":"stable"|"lazer"|null,"name":string|null,"files":bool,"builtin":string|null,"base":string|null,"entries":[{"path":string,"size":number,"modified"?:number,"hash"?:string}],"truncated":bool}` without absolute paths. The existing `files` boolean is unchanged. Stable entries carry `modified` (mtime in milliseconds since Unix epoch); lazer entries carry the content-store `hash` instead. `base` identifies the rendering family (`argon`, `argon-pro`, `triangles`, `legacy`, `retro`) for built-in **and imported** skins; unknown families are null. Stable skins use `legacy`.
+- `GET /files/skin/{path}`; stable and imported lazer skin files, with case-insensitive relative filename/subfolder lookup on both clients. Exact stable paths win; otherwise the complete index selects the lexicographically smallest matching path. Missing/unavailable lazer files return 404. Built-in lazer skins have no files: `files:false`, `entries:[]`, and `builtin` equal to `argon`, `argon-pro`, `triangles`, `legacy`, or `retro`.
 
 File routes enforce root containment and support validated single HTTP byte ranges for media.
+
+The skin index contains at most 20,000 files and visits at most 40,000 directory
+entries. `truncated:true` means it is incomplete (including inaccessible entries
+or directory aliases/cycles); consumers must retain probing as a fallback. Paths
+use `/` separators and are relative to `/files/skin/`. Indexes are cached by skin
+identity/root; metadata requests validate cached file and directory timestamps,
+so edits/additions/removals are reflected without switching skins. Exact file
+reads remain available beyond the listing cap. Unindexed/new files are resolved
+component-by-component, preferring exact component names then lexical case-folded
+matches. Every final open still enforces the existing root/symlink confinement.
+
+`/files/skin/`, skin files and `/files/beatmap/*` files support `HEAD`, strong
+`ETag`, and `Cache-Control: no-cache` (store and revalidate, not `no-store`).
+File `Last-Modified` uses the opened file's mtime where representable as an HTTP
+date. Lazer ETags use the store hash; stable ETags hash path, size and high-resolution
+mtime without reading file contents. `If-None-Match` (including weak comparisons,
+lists and `*`) takes precedence over `If-Modified-Since`; a matching condition
+returns bodyless 304. HEAD returns the normal full-file headers with no body and
+ignores Range; GET retains existing single-range behaviour. Skin metadata has a
+content-derived ETag and may also be revalidated. Peer policy/CORS are unchanged.
+
 Lazer skins use content-addressed storage, not an export folder. Consequently v2
 `folders.skin` / `directPath.skinFolder` retain their existing compatibility
 semantics rather than exposing the files store as a fictional skin folder.

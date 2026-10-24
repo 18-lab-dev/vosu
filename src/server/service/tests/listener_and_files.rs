@@ -496,12 +496,10 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             ..BeatmapFiles::default()
         };
 
-        let ResourceOutcome::File(mut target) = resolve_file_endpoint(
-            Endpoint::BeatmapPath,
-            &selected,
-            "/files/beatmap/set/map.osu",
-            "/files/beatmap/set/map.osu",
-        )
+        let ResourceOutcome::File(mut target) = resolve_file_endpoint(Endpoint::BeatmapPath,
+        &selected,
+        "/files/beatmap/set/map.osu",
+        "/files/beatmap/set/map.osu", &mut files::SkinIndexCache::default())
         .unwrap() else {
             panic!("generic beatmap path must resolve below Songs");
         };
@@ -525,6 +523,7 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
                 &selected,
                 "/files/beatmap/file",
                 "/files/beatmap/file",
+                &mut files::SkinIndexCache::default(),
             ),
             Ok(ResourceOutcome::Missing(MissingKind::NotFound))
         ));
@@ -546,6 +545,7 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
                 &selected,
                 "/files/beatmap/file",
                 "/files/beatmap/file",
+                &mut files::SkinIndexCache::default(),
             ),
             Ok(ResourceOutcome::Missing(MissingKind::NotFound))
         ));
@@ -562,7 +562,7 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             (Endpoint::SongsFile, "/Songs/set/map.osu"),
             (Endpoint::BeatmapPath, "/files/beatmap/set/map.osu"),
         ] {
-            let outcome = resolve_file_endpoint(endpoint, &selected, path, path).unwrap();
+            let outcome = resolve_file_endpoint(endpoint, &selected, path, path, &mut files::SkinIndexCache::default()).unwrap();
             assert!(matches!(
                 outcome,
                 ResourceOutcome::Missing(MissingKind::NotReady)
@@ -595,18 +595,18 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
         };
         for name in ["SKIN.INI", "skin%2Eini"] {
             let path = format!("/files/skin/{name}");
-            let ResourceOutcome::File(file) = resolve_file_endpoint(Endpoint::SkinFile, &selected, &path, &path).unwrap() else { panic!("skin file not served") };
+            let ResourceOutcome::File(file) = resolve_file_endpoint(Endpoint::SkinFile, &selected, &path, &path, &mut files::SkinIndexCache::default()).unwrap() else { panic!("skin file not served") };
             assert_eq!(file.length, 23);
         }
         for name in ["../skin.ini", "%2e%2e/skin.ini", "/skin.ini", "%2Fskin.ini", "missing.png", "a/../../skin.ini", "C:%5cskin.ini"] {
             let path = format!("/files/skin/{name}");
-            assert!(matches!(resolve_file_endpoint(Endpoint::SkinFile, &selected, &path, &path).unwrap(), ResourceOutcome::Missing(MissingKind::NotFound)), "{name}");
+            assert!(matches!(resolve_file_endpoint(Endpoint::SkinFile, &selected, &path, &path, &mut files::SkinIndexCache::default()).unwrap(), ResourceOutcome::Missing(MissingKind::NotFound)), "{name}");
         }
-        assert_eq!(skin_metadata(&selected), json!({"client":"lazer","name":"Fixture","files":true,"builtin":null,"base":null}));
+        assert_eq!(skin_report_value(&selected, &files::SkinFileIndex::default()), json!({"client":"lazer","name":"Fixture","files":true,"builtin":null,"base":null,"entries":[],"truncated":false}));
         selected.skin = Some(Arc::new(crate::model::memory::CurrentSkin { base: Some("argon".into()), name: "Argon".into(), builtin: Some("argon".into()), files: Default::default() }));
-        assert_eq!(skin_metadata(&selected)["builtin"], "argon");
-        assert_eq!(skin_metadata(&selected)["base"], "argon");
-        assert_eq!(skin_metadata(&selected)["files"], false);
-        assert!(matches!(resolve_file_endpoint(Endpoint::SkinFile, &selected, "/files/skin/skin.ini", "/files/skin/skin.ini").unwrap(), ResourceOutcome::Missing(MissingKind::NotFound)));
-        assert_eq!(skin_metadata(&BeatmapFiles::default()), json!({"client":null,"name":null,"files":false,"builtin":null,"base":null}));
+        assert_eq!(skin_report_value(&selected, &files::SkinFileIndex::default())["builtin"], "argon");
+        assert_eq!(skin_report_value(&selected, &files::SkinFileIndex::default())["base"], "argon");
+        assert_eq!(skin_report_value(&selected, &files::SkinFileIndex::default())["files"], false);
+        assert!(matches!(resolve_file_endpoint(Endpoint::SkinFile, &selected, "/files/skin/skin.ini", "/files/skin/skin.ini", &mut files::SkinIndexCache::default()).unwrap(), ResourceOutcome::Missing(MissingKind::NotFound)));
+        assert_eq!(skin_report_value(&BeatmapFiles::default(), &files::SkinFileIndex::default()), json!({"client":null,"name":null,"files":false,"builtin":null,"base":null,"entries":[],"truncated":false}));
     }
