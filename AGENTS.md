@@ -56,7 +56,7 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 - `src/updater/`: release selection, verified staging, replacement, rollback, and recovery.
 - `src/calculation.rs` and `crates/vosu-pp/`: stable and lazer performance calculation; the latter is a Rust facade over provenance-pinned MIT source forks. The remaining source-provenance questions are recorded in `docs/provenance-audit.md`.
 - `src/runtime/`, `src/app.rs`, `src/logging/`, `src/report/`: daemon orchestration and operational services.
-- `src/tools/`: tool host — manifest validation, discovery and official catalog installation, supervision, `/tools/` proxy and access rules, host API, launch sessions, dashboard tool APIs. The contract is [docs/tools/protocol.md](docs/tools/protocol.md) (ADR 0017); change both together. The SDK and official tools live in [vosu-tools](https://github.com/shiruviaa/vosu-tools).
+- `src/tools/`: tool host — manifest validation, discovery and official catalog installation, supervision, `/tools/` proxy and access rules, host API, launch sessions, dashboard tool APIs. The contract is [docs/tools/protocol.md](docs/tools/protocol.md) (ADR 0017); change both together. The SDK and official tools live in [vosu-tools](https://github.com/18-lab-dev/vosu-tools).
 - `crates/vosu-test-harness/`: integration-test support only. `tests/` holds compatibility, native, daemon smoke, and performance contracts. `crates/vosu-release-smoke/` exercises an externally packaged executable without depending on the daemon crate. `benches/hot_paths.rs` holds Criterion benchmarks.
 - `tools/live-parity/`: deterministic live capture, attestation, comparison, and diff tooling. `tools/oracle/` holds calculator provenance/evidence tooling.
 

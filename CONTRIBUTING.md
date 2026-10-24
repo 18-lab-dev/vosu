@@ -45,7 +45,7 @@ needs only Rust and a native C toolchain; no Node.js, Electron, or .NET.
 4. Clone, build, and run:
 
    ```sh
-   git clone https://github.com/shiruviaa/vosu.git
+   git clone https://github.com/18-lab-dev/vosu.git
    cd vosu
    cargo build --locked
    cargo run --locked

@@ -38,7 +38,7 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 
 ### Portable archive
 
-The current release is **1.1.0**. Download `vosu-linux-v1.1.0.zip` or `vosu-windows-v1.1.0.zip` from the [v1.1.0 release](https://github.com/shiruviaa/vosu/releases/tag/v1.1.0), then:
+The current release is **1.2.0**. Download `vosu-linux-v1.2.0.zip` or `vosu-windows-v1.2.0.zip` from the [v1.2.0 release](https://github.com/18-lab-dev/vosu/releases/tag/v1.2.0), then:
 
 1. Extract the complete archive into a writable directory. Its root contains `vosu` or `vosu.exe`, plus `LICENSE`.
 2. On Linux, restore the executable bit if your archive tool removed it: `chmod +x vosu`.
@@ -50,15 +50,15 @@ Do not run the Windows executable directly from an archive or a OneDrive-control
 ### Linux packages
 
 Download the package for your distribution from the matching
-[GitHub release](https://github.com/shiruviaa/vosu/releases):
+[GitHub release](https://github.com/18-lab-dev/vosu/releases):
 
 ```sh
 # Debian 12+ / Ubuntu 22.04+
-sudo apt install ./vosu_1.1.0_amd64.deb
+sudo apt install ./vosu_1.2.0_amd64.deb
 # Fedora
-sudo dnf install ./vosu-1.1.0-1.x86_64.rpm
+sudo dnf install ./vosu-1.2.0-1.x86_64.rpm
 # Arch Linux
-sudo pacman -U vosu-1.1.0-1-x86_64.pkg.tar.zst
+sudo pacman -U vosu-1.2.0-1-x86_64.pkg.tar.zst
 ```
 
 Arch users can build the source `vosu-git` package from the AUR once it is
@@ -108,7 +108,7 @@ repository's immutable releases don't accept files added afterwards. Verify its
 downloads with GitHub's release attestation instead:
 
 ```sh
-gh release verify-asset v1.0.2 vosu-linux-v1.0.2.zip --repo shiruviaa/vosu
+gh release verify-asset v1.0.2 vosu-linux-v1.0.2.zip --repo 18-lab-dev/vosu
 ```
 
 ### Manual per-user installation
@@ -138,7 +138,7 @@ For a later manual upgrade, stop vosu, replace the executable and `LICENSE` with
 
 ### Automatic updates
 
-`ENABLE_AUTOUPDATE=true` follows stable `shiruviaa/vosu` releases. The updater verifies the selected platform archive against its published SHA-256 digest, stages exactly one root executable, and uses a crash-recoverable helper and rollback flow.
+`ENABLE_AUTOUPDATE=true` follows stable `18-lab-dev/vosu` releases. The updater verifies the selected platform archive against its published SHA-256 digest, stages exactly one root executable, and uses a crash-recoverable helper and rollback flow.
 
 `POST /api/runUpdates` starts the same update path from the same-origin dashboard. Set `ENABLE_AUTOUPDATE=false` or launch with `--update=false` to stop startup installation; `--update=true` enables it for one launch. Release builds still check GitHub for the latest release at every start so the dashboard can offer the update. The [privacy policy](PRIVACY.md) lists that and every other network request.
 
@@ -220,17 +220,17 @@ release build cannot be reused accidentally.
 
 ## Tools
 
-The dashboard's **Tools** page manages installed applications and lists tools from your catalog sources in **Available**, with install, update, and uninstall actions. Official [18-LAB tools and their SDK](https://github.com/shiruviaa/vosu-tools) live separately; vosu embeds none. Packages are downloaded over HTTPS, checked against catalog SHA-256 and size, and installed atomically, dependencies first. Updating restarts a running service.
+The dashboard's **Tools** page manages installed applications and lists tools from your catalog sources in **Available**, with install, update, and uninstall actions. Official [18-LAB tools and their SDK](https://github.com/18-lab-dev/vosu-tools) live separately; vosu embeds none. Packages are downloaded over HTTPS, checked against catalog SHA-256 and size, and installed atomically, dependencies first. Updating restarts a running service.
 
-[vosulay](https://github.com/shiruviaa/vosulay) is available as an optional official tool for in-game overlays, supervised as a separate process and managed from Tools. Rendering and game integration stay outside the vosu daemon, and standalone vosulay remains supported. Exiting its tray normally stops the service without automatic restart (including `always` tools); start it again from the dashboard or vosux, or on the next vosu launch.
+[vosulay](https://github.com/18-lab-dev/vosulay) is available as an optional official tool for in-game overlays, supervised as a separate process and managed from Tools. Rendering and game integration stay outside the vosu daemon, and standalone vosulay remains supported. Exiting its tray normally stops the service without automatic restart (including `always` tools); start it again from the dashboard or vosux, or on the next vosu launch.
 
 Open a tool from the dashboard to grant its UI a write session; opening the same URL directly is read-only. Review a third-party tool's author and requested permissions before trusting it: tools run with your OS permissions and are not sandboxed. User tools go under `<vosu data directory>/tools/<id>/` and require dashboard approval. Developers can use `vosu --tool <directory>` for a trusted development override.
 
 Cards show each public interface: UI, SERVICE and CLI. UI/CLI-only native backends start on demand and stop after ten idle minutes; they have no separate service controls. Background services expose Start/Stop/Restart and **Start with vosu** in Details and Settings. The toggle overrides the author's default for your installation; **Use default** restores it. From a terminal use `vosux --autostart <id> on|off|default`. Only enabled, trusted background services start at launch, dependencies first, without delaying overlay serving.
 
-Install from the terminal with `vosux --install <id>`, update with `vosux --update <id>`, and uninstall with `vosux --uninstall <id> --keep-data` or `--remove-data`. The `vosu x` form accepts the same options. **Settings / Catalog sources** lets you add, remove, disable, and reorder `owner/repo[@tag]` references or HTTPS `catalog.json` URLs. Defaults are `shiruviaa/vosu-tools`, `shiruviaa/vosulay`, and `shiruviaa/vosu-overlays`; all are removable. Only an untouched saved two-source default list gains vosulay automatically; customized lists stay unchanged. Earlier sources win duplicate ids; later entries are shown as shadowed. `vosux --sources` lists the configured sources.
+Install from the terminal with `vosux --install <id>`, update with `vosux --update <id>`, and uninstall with `vosux --uninstall <id> --keep-data` or `--remove-data`. The `vosu x` form accepts the same options. **Settings / Catalog sources** lets you add, remove, disable, and reorder `owner/repo[@tag]` references or HTTPS `catalog.json` URLs. Defaults are exactly `18-lab-dev/vosu-tools` and `18-lab-dev/vosulay`; both are removable. On startup, exact former official identities in saved lists and installed-package state migrate to these identities. Untouched old default lists lose the unavailable private overlay source; customized lists retain their other sources, order, and enabled flags. Overlays continue to come from the existing tosu community catalog. Earlier sources win duplicate ids; later entries are shown as shadowed. `vosux --sources` lists the configured sources.
 
-Catalogs may provide both tools and overlays. Only tools from the exact default source identities `shiruviaa/vosu-tools` and `shiruviaa/vosulay` are automatically trusted, including identical shorthand re-added by a user; tagged or HTTPS variants and all other sources remain `user` and need dashboard approval. The overlay **Available** page lists source overlays beside the existing community catalog, preserves its third-party disclosure, and offers to install required tools. Overlay updates preserve settings values; removal uses the existing overlay delete action. See the [catalog source contract](docs/tools/protocol.md#catalog-sources-and-installation) for configuration and APIs.
+Catalogs may provide both tools and overlays. Only tools from the exact default source identities `18-lab-dev/vosu-tools` and `18-lab-dev/vosulay` are automatically trusted, including identical shorthand re-added by a user; tagged or HTTPS variants and all other sources remain `user` and need dashboard approval. The overlay **Available** page lists source overlays beside the existing community catalog, preserves its third-party disclosure, and offers to install required tools. Overlay updates preserve settings values; removal uses the existing overlay delete action. See the [catalog source contract](docs/tools/protocol.md#catalog-sources-and-installation) for configuration and APIs.
 Start with [Create a tool](docs/tools/create-a-tool.md) for a guided path from an
 empty directory to a published catalog. Keep the [authoring reference](docs/tools/authoring.md)
 and [protocol contract](docs/tools/protocol.md) nearby, or inspect the dependency-free
@@ -850,6 +850,6 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup, checks, and pull-reques
 
 ## License
 
-Project-authored code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, where the respective contributors have licensing authority. vosu began as a Rust port of [tosu](https://github.com/tosuapp/tosu); tosu's copyright holder has permitted its tosu-derived code to be distributed under the same MIT OR Apache-2.0 terms, with tosu credited. The release archive retains the root [`LICENSE`](LICENSE) member. Bundled assets, dependencies, and provenance-pinned material remain under their applicable terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). The first-party notice is `Copyright (c) 2026 sxlvia`. The root release license includes the six retained calculator MIT texts. The [provenance audit](docs/provenance-audit.md) records source matches, the relicensing permission, and the calculator questions that remain open.
+Project-authored code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, where the respective contributors have licensing authority. vosu began as a Rust port of [tosu](https://github.com/tosuapp/tosu); tosu's copyright holder has permitted its tosu-derived code to be distributed under the same MIT OR Apache-2.0 terms, with tosu credited. The release archive retains the root [`LICENSE`](LICENSE) member. Bundled assets, dependencies, and provenance-pinned material remain under their applicable terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [`crates/vosu-pp/THIRD_PARTY_LICENSES.txt`](crates/vosu-pp/THIRD_PARTY_LICENSES.txt). The root release license includes the six retained calculator MIT texts. The [provenance audit](docs/provenance-audit.md) records source matches, the relicensing permission, and the calculator questions that remain open.
 
 vosu is an 18-LAB product. The vosu logo and icons are © 2026 sxlvia under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the terms are in the "Branding assets" section of [`LICENSE`](LICENSE), and the usage rules are in [branding](docs/branding.md). Showing them while using or talking about vosu (streams, videos, screenshots) needs no credit.

@@ -93,7 +93,7 @@ impl MockNetwork {
             catalog: format!("{base}/api.json"),
             counter_zip: format!("{base}/downloads/example-counter.zip?token=a%26b"),
             counter_redirect: format!("{base}/redirect-counter"),
-            release_latest: format!("{base}/repos/shiruviaa/vosu/releases/latest"),
+            release_latest: format!("{base}/repos/18-lab-dev/vosu/releases/latest"),
             offsets_base: format!("{base}/offsets"),
         };
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -234,7 +234,7 @@ async fn handle_request(
             )
             .body(Body::empty())
             .expect("valid redirect response"),
-        "/repos/shiruviaa/vosu/releases/latest" => json(
+        "/repos/18-lab-dev/vosu/releases/latest" => json(
             StatusCode::OK,
             r#"{"tag_name":"v0.1.0","draft":false,"prerelease":false,"assets":[]}"#,
         ),

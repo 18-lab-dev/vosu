@@ -276,12 +276,15 @@ fn only_exact_official_source_identities_grant_automatic_trust() {
     }
     for source in [
         "another/tools",
-        "shiruviaa/vosu-tools@v1.0.0",
-        "https://github.com/shiruviaa/vosu-tools/releases/latest/download/catalog.json",
-        "shiruviaa/vosu-overlays",
-        "shiruviaa/vosulay@v1.4.0",
-        "https://github.com/shiruviaa/vosulay/releases/latest/download/catalog.json",
-        "Shiruviaa/vosulay",
+        "18-lab-dev/vosu-tools@v1.0.0",
+        "https://github.com/18-lab-dev/vosu-tools/releases/latest/download/catalog.json",
+        "18-lab-dev/vosu-overlays",
+        "18-lab-dev/vosulay@v1.5.0",
+        "https://github.com/18-lab-dev/vosulay/releases/latest/download/catalog.json",
+        "18-Lab-Dev/vosulay",
+        // Historical identities are migration inputs, not live trust aliases.
+        "shiruviaa/vosu-tools",
+        "shiruviaa/vosulay",
     ] {
         record_source(&mut state, source);
         assert!(!state.official && !state.trusted, "{source}");

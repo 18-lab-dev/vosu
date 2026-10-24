@@ -10,7 +10,7 @@ A vosu **tool** is a local application hosted beside your overlays. It can be a 
 
 ## 1. Prepare
 
-You need vosu 1.2.0, Python 3.11+ available as `python`, a browser, and a vosu source checkout for the maintained example. No pip packages, JavaScript build, or running osu! client are needed. The commands below use a Linux POSIX shell; the example itself also runs on Windows with Python on PATH. For a native Rust variant, use [vosu-tool-sdk](authoring.md#rust-with-vosu-tool-sdk) from [vosu-tools](https://github.com/shiruviaa/vosu-tools); the host contract is identical.
+You need vosu 1.2.0, Python 3.11+ available as `python`, a browser, and a vosu source checkout for the maintained example. No pip packages, JavaScript build, or running osu! client are needed. The commands below use a Linux POSIX shell; the example itself also runs on Windows with Python on PATH. For a native Rust variant, use [vosu-tool-sdk](authoring.md#rust-with-vosu-tool-sdk) from [vosu-tools](https://github.com/18-lab-dev/vosu-tools); the host contract is identical.
 
 From the vosu repository root:
 
@@ -33,7 +33,7 @@ mkdir -p "$TOOL/web"
 Create `$TOOL/tool.toml`:
 
 ```toml
-#:schema https://raw.githubusercontent.com/shiruviaa/vosu/main/docs/tools/tool.schema.json
+#:schema https://raw.githubusercontent.com/18-lab-dev/vosu/main/docs/tools/tool.schema.json
 manifest_version = 1
 id = "hello-python"
 name = "Hello Python"
@@ -373,7 +373,7 @@ python -m zipfile -l "$LAB/dist/vosu-tool-hello-python-0.1.0-any.zip"
 
 Replace `YOUR-ACCOUNT/YOUR-REPO` with **your** publishing repository before generating the catalog. Keep the example's license when redistributing its code; add your own copyright/license for your changes. Before sharing, give your actual project a unique id/name/author/description and change the example's hardcoded own-service path in `main.py` to match its new id. The package helper reads the manifest metadata. Describe **Python 3.11+ on PATH** in the release notes and catalog description: target `any` means platform-independent code, not a bundled interpreter.
 
-**Check:** output contains a ZIP and `catalog.json`; ZIP members include root `tool.toml`, `main.py`, `settings.json`, `LICENSE`, and `web/…`, not an enclosing `hello-python/` directory. `catalog.json` records target `any`, exact ZIP byte size, and SHA-256 computed after writing. The helper intentionally packages only runtime files, not itself, caches, or your data. The [normative catalog/package format](protocol.md#catalog-and-package-format) belongs to vosu; [vosu-tools packaging](https://github.com/shiruviaa/vosu-tools/blob/main/docs/catalog.md) describes the larger first-party build pipeline.
+**Check:** output contains a ZIP and `catalog.json`; ZIP members include root `tool.toml`, `main.py`, `settings.json`, `LICENSE`, and `web/…`, not an enclosing `hello-python/` directory. `catalog.json` records target `any`, exact ZIP byte size, and SHA-256 computed after writing. The helper intentionally packages only runtime files, not itself, caches, or your data. The [normative catalog/package format](protocol.md#catalog-and-package-format) belongs to vosu; [vosu-tools packaging](https://github.com/18-lab-dev/vosu-tools/blob/main/docs/catalog.md) describes the larger first-party build pipeline.
 
 Publish only when you intend to distribute:
 

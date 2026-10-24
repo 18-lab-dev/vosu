@@ -16,7 +16,7 @@ pub const CATALOG_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 pub const CATALOG_MAX_REDIRECTS: usize = 5;
 
 pub fn catalog_user_agent(version: &str) -> String {
-    format!("vosu/{version} (+https://github.com/shiruviaa/vosu)")
+    format!("vosu/{version} (+https://github.com/18-lab-dev/vosu)")
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]

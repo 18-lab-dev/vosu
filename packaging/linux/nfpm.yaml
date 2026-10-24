@@ -5,7 +5,7 @@ version: ${VERSION}
 release: '1'
 maintainer: sxlvia <qt715@proton.me>
 vendor: 18-LAB
-homepage: https://github.com/shiruviaa/vosu
+homepage: https://github.com/18-lab-dev/vosu
 license: MIT OR Apache-2.0
 description: Native osu! telemetry daemon with a local dashboard
 section: games

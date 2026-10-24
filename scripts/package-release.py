@@ -118,7 +118,7 @@ def verify_release_set(args: argparse.Namespace) -> None:
     print("\n".join(sorted(set(expected) | packages)))
 
 
-REPOSITORY_URL = "https://github.com/shiruviaa/vosu"
+REPOSITORY_URL = "https://github.com/18-lab-dev/vosu"
 MARKDOWN_LINK = re.compile(r"(!?\[[^\]\n]*\]\()([^)\s]+)(\))")
 
 

@@ -23,7 +23,7 @@ use crate::net::streaming::{NetworkError, StreamingClient};
 
 pub const USER_AGENT: &str = concat!("vosu/", env!("CARGO_PKG_VERSION"));
 pub const INSTALL_RECORD_NAME: &str = ".vosu-update.json";
-pub const LATEST_RELEASE_API: &str = "https://api.github.com/repos/shiruviaa/vosu/releases/latest";
+pub const LATEST_RELEASE_API: &str = "https://api.github.com/repos/18-lab-dev/vosu/releases/latest";
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg(windows)]
 pub const RELEASE_PLATFORM: &str = "windows";

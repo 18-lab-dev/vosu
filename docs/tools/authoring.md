@@ -18,7 +18,7 @@ The host uses the tool directory as its working directory. `command = ["python",
 
 ## Rust with vosu-tool-sdk
 
-The SDK now lives in [vosu-tools](https://github.com/shiruviaa/vosu-tools), under `crates/vosu-tool-sdk`; add it as a dependency from that repository, alongside `axum` and Tokio. The SDK reads the launch environment, checks the token on every route, binds loopback port 0, emits readiness, adds `/healthz`, and shuts down on stdin EOF:
+The SDK now lives in [vosu-tools](https://github.com/18-lab-dev/vosu-tools), under `crates/vosu-tool-sdk`; add it as a dependency from that repository, alongside `axum` and Tokio. The SDK reads the launch environment, checks the token on every route, binds loopback port 0, emits readiness, adds `/healthz`, and shuts down on stdin EOF:
 
 ```rust
 use axum::{routing::get, Router};
@@ -43,7 +43,7 @@ Use `[service] role = "backend"` with `startup = "on-demand"` when the process e
 
 Give the tool an identity on the Tools page with `icon` (square SVG, or PNG at least 256×256, shown at 40–64 px) and `banner` (3:1 PNG, JPEG, WebP, or SVG, recommended 1200×400, cropped to the card width, so keep the subject centred). Both are paths inside the tool directory. Catalogs repeat them as HTTPS `icon_url`/`banner_url` so the Available section can show them before installation.
 
-Put `#:schema https://raw.githubusercontent.com/shiruviaa/vosu/main/docs/tools/tool.schema.json` at the top of `tool.toml` for Taplo / Even Better TOML validation. Offline checkouts can use a relative path to [tool.schema.json](tool.schema.json). vosu also validates semantic versions, path confinement, and dependency cycles at runtime.
+Put `#:schema https://raw.githubusercontent.com/18-lab-dev/vosu/main/docs/tools/tool.schema.json` at the top of `tool.toml` for Taplo / Even Better TOML validation. Offline checkouts can use a relative path to [tool.schema.json](tool.schema.json). vosu also validates semantic versions, path confinement, and dependency cycles at runtime.
 
 ### Read versus write
 
@@ -78,7 +78,7 @@ Distribute a tool as a directory under `<vosu data directory>/tools/<id>/`, or p
 5. Close stdin and require clean exit within five seconds, including while clients are connected.
 6. Through an isolated vosu, verify read-only UI access, dashboard launch/session writes, dependency permissions, and disable/restart behavior.
 
-Run `cargo test --locked -p vosu tools::` for the host manifest, discovery, catalog, supervision, and protocol tests. Release archive tests remain `python scripts/test_package_release.py`. SDK and official package tests live in [vosu-tools](https://github.com/shiruviaa/vosu-tools).
+Run `cargo test --locked -p vosu tools::` for the host manifest, discovery, catalog, supervision, and protocol tests. Release archive tests remain `python scripts/test_package_release.py`. SDK and official package tests live in [vosu-tools](https://github.com/18-lab-dev/vosu-tools).
 
 ## Add a vosux command
 

@@ -1077,7 +1077,7 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
         concat!(
             r#"<fieldset class="settings-group settings-group--about"><legend>About</legend>"#,
             r#"<div class="settings-item settings-item--static"><span class="settings-item__copy"><span class="settings-item__name">Version</span></span><span class="settings-item__control settings-item__value">vosu {version}</span></div>"#,
-            r#"<div class="settings-item settings-item--static"><span class="settings-item__copy"><span class="settings-item__name">Source</span></span><span class="settings-item__control settings-item__value"><a href="https://github.com/shiruviaa/vosu" target="_blank" rel="noopener noreferrer">github.com/shiruviaa/vosu</a></span></div>"#,
+            r#"<div class="settings-item settings-item--static"><span class="settings-item__copy"><span class="settings-item__name">Source</span></span><span class="settings-item__control settings-item__value"><a href="https://github.com/18-lab-dev/vosu" target="_blank" rel="noopener noreferrer">github.com/18-lab-dev/vosu</a></span></div>"#,
             r#"<div class="settings-item settings-item--static"><span class="settings-item__copy"><span class="settings-item__name">Affiliation</span></span><span class="settings-item__control settings-item__value">Not affiliated with ppy or the tosu project.</span></div>"#,
             r#"<div class="settings-item settings-item--static"><span class="settings-item__copy"><span class="settings-item__name">Made by</span></span><span class="settings-item__control settings-item__value">18-LAB</span></div>"#,
             "</fieldset>",

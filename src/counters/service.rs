@@ -18,7 +18,7 @@ use super::settings::{SettingsError, SettingsStore, validate_component};
 const USER_AGENT: &str = concat!(
     "vosu/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/shiruviaa/vosu)"
+    " (+https://github.com/18-lab-dev/vosu)"
 );
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 

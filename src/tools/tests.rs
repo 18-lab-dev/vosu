@@ -707,13 +707,12 @@ async fn voluntary_exit_before_readiness_is_not_a_crash() {
 }
 
 #[tokio::test]
-async fn catalog_defaults_and_only_untouched_legacy_sources_migrate() {
+async fn catalog_defaults_and_customized_sources_stay_under_user_control() {
     let root = tempfile::tempdir().unwrap();
     let host = host(root.path(), Vec::new()).await;
     let expected = json!([
-        {"source":"shiruviaa/vosu-tools","enabled":true},
-        {"source":"shiruviaa/vosulay","enabled":true},
-        {"source":"shiruviaa/vosu-overlays","enabled":true}
+        {"source":"18-lab-dev/vosu-tools","enabled":true},
+        {"source":"18-lab-dev/vosulay","enabled":true}
     ]);
     let identities = |view: Value| {
         view["sources"]
@@ -725,31 +724,19 @@ async fn catalog_defaults_and_only_untouched_legacy_sources_migrate() {
     };
     assert_eq!(json!(identities(host.source_view().unwrap())), expected);
     let path = host.config.join("catalog-sources.json");
-    let legacy = json!([
-        {"source":"shiruviaa/vosu-tools","enabled":true},
-        {"source":"shiruviaa/vosu-overlays","enabled":true}
-    ]);
-    atomic_json(&path, &legacy).unwrap();
-    assert_eq!(json!(identities(host.source_view().unwrap())), expected);
-    assert_eq!(
-        serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),
-        expected
-    );
-    fs::remove_file(host.config.join("catalog-sources-v2.json")).unwrap();
     for customized in [
         json!([]),
-        json!([{"source":"shiruviaa/vosu-tools","enabled":true}]),
+        json!([{"source":"18-lab-dev/vosu-tools","enabled":true}]),
         json!([
-            {"source":"shiruviaa/vosu-tools","enabled":false},
-            {"source":"shiruviaa/vosu-overlays","enabled":true}
+            {"source":"18-lab-dev/vosu-tools","enabled":false},
+            {"source":"18-lab-dev/vosulay","enabled":true}
         ]),
         json!([
-            {"source":"shiruviaa/vosu-overlays","enabled":true},
-            {"source":"shiruviaa/vosu-tools","enabled":true}
+            {"source":"18-lab-dev/vosulay","enabled":true},
+            {"source":"18-lab-dev/vosu-tools","enabled":true}
         ]),
         json!([
-            {"source":"shiruviaa/vosu-tools","enabled":true},
-            {"source":"shiruviaa/vosu-overlays","enabled":true},
+            {"source":"18-lab-dev/vosu-tools","enabled":true},
             {"source":"owner/custom","enabled":true}
         ]),
     ] {
@@ -758,15 +745,149 @@ async fn catalog_defaults_and_only_untouched_legacy_sources_migrate() {
         assert_eq!(json!(identities(host.source_view().unwrap())), customized);
         assert_eq!(fs::read(&path).unwrap(), before);
     }
-    // Removing vosulay through Settings may recreate the old two-entry list,
-    // but it is now an explicit edit and must remain removed on subsequent reads.
+    let removed = json!([{"source":"18-lab-dev/vosu-tools","enabled":true}]);
     let edited = host
-        .save_sources(&serde_json::to_vec(&json!({"sources": legacy})).unwrap())
+        .save_sources(&serde_json::to_vec(&json!({"sources": removed})).unwrap())
         .await
         .unwrap();
-    assert_eq!(json!(identities(edited)), legacy);
-    assert_eq!(json!(identities(host.source_view().unwrap())), legacy);
+    assert_eq!(json!(identities(edited)), removed);
+    assert_eq!(json!(identities(host.source_view().unwrap())), removed);
     host.shutdown().await;
+}
+
+#[tokio::test]
+async fn organization_defaults_migrate_at_startup_without_expanding_identity_trust() {
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config");
+    fs::create_dir_all(&config).unwrap();
+    // Former organization spellings below are migration inputs and near-miss fixtures.
+    let sources = json!([
+        {"source":"owner/custom","enabled":true},
+        {"source":"shiruviaa/vosulay","enabled":false},
+        {"source":"shiruviaa/vosu-tools","enabled":true},
+        {"source":"shiruviaa/vosu-overlays","enabled":false},
+        {"source":"shiruviaa/vosu-tools@v1","enabled":true},
+        {"source":"https://github.com/shiruviaa/vosulay/releases/latest/download/catalog.json","enabled":true},
+        {"source":"Shiruviaa/vosulay","enabled":true}
+    ]);
+    atomic_json(&config.join("catalog-sources.json"), &sources).unwrap();
+    // The earlier two-to-three-source migration marker must not inhibit renaming.
+    atomic_json(&config.join("catalog-sources-v2.json"), &true).unwrap();
+    let mut states = BTreeMap::new();
+    for (id, source) in [
+        ("official-tools", "shiruviaa/vosu-tools"),
+        ("official-vosulay", "shiruviaa/vosulay"),
+        ("overlay-tool", "shiruviaa/vosu-overlays"),
+        ("custom", "owner/custom"),
+        ("tagged", "shiruviaa/vosu-tools@v1"),
+        ("approved-overlay-tool", "shiruviaa/vosu-overlays"),
+    ] {
+        let state = Saved {
+            catalog_source: Some(source.into()),
+            trusted: id == "approved-overlay-tool",
+            ..Saved::default()
+        };
+        states.insert(id, state);
+    }
+    atomic_json(&config.join("state.json"), &states).unwrap();
+    atomic_json(
+        &config.join("overlay-catalog-state.json"),
+        &json!({"overlay":{"source":"shiruviaa/vosu-overlays","version":"1.0.0"}}),
+    )
+    .unwrap();
+    let first = host(root.path(), Vec::new()).await;
+    {
+        let saved = first.saved.lock();
+        for id in ["official-tools", "official-vosulay"] {
+            assert!(saved[id].official && saved[id].trusted);
+            assert!(
+                saved[id]
+                    .catalog_source
+                    .as_deref()
+                    .unwrap()
+                    .starts_with("18-lab-dev/")
+            );
+        }
+        for id in ["overlay-tool", "custom", "tagged"] {
+            assert!(!saved[id].official && !saved[id].trusted);
+        }
+        assert_eq!(
+            saved["custom"].catalog_source.as_deref(),
+            Some("owner/custom")
+        );
+        assert_eq!(
+            saved["tagged"].catalog_source.as_deref(),
+            Some("shiruviaa/vosu-tools@v1")
+        );
+        assert!(saved["approved-overlay-tool"].trusted);
+        assert!(!saved["approved-overlay-tool"].official);
+        assert_eq!(
+            saved["approved-overlay-tool"].catalog_source.as_deref(),
+            Some("shiruviaa/vosu-overlays")
+        );
+    }
+    let migrated: Value =
+        serde_json::from_slice(&fs::read(config.join("catalog-sources.json")).unwrap()).unwrap();
+    assert_eq!(migrated[0], sources[0]);
+    for (index, source) in [
+        (1, "18-lab-dev/vosulay"),
+        (2, "18-lab-dev/vosu-tools"),
+        (3, "shiruviaa/vosu-overlays"),
+    ] {
+        assert_eq!(migrated[index]["source"], source);
+        assert_eq!(migrated[index]["enabled"], sources[index]["enabled"]);
+    }
+    for index in 4..7 {
+        assert_eq!(migrated[index], sources[index]);
+    }
+    let overlay: Value =
+        serde_json::from_slice(&fs::read(config.join("overlay-catalog-state.json")).unwrap())
+            .unwrap();
+    assert_eq!(overlay["overlay"]["source"], "shiruviaa/vosu-overlays");
+    first.shutdown().await;
+    let paths = [
+        "catalog-sources.json",
+        "state.json",
+        "overlay-catalog-state.json",
+    ];
+    let before = paths.map(|name| fs::read(config.join(name)).unwrap());
+    let second = host(root.path(), Vec::new()).await;
+    for (name, bytes) in paths.iter().zip(before) {
+        assert_eq!(fs::read(config.join(name)).unwrap(), bytes);
+    }
+    second.shutdown().await;
+}
+
+#[tokio::test]
+async fn former_default_lists_migrate_without_readding_explicitly_removed_sources() {
+    for (include_vosulay, edited) in [(false, false), (true, false), (false, true), (true, true)] {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config");
+        fs::create_dir_all(&config).unwrap();
+        // Former organization identities are persisted migration fixtures.
+        let mut sources = vec![json!({"source":"shiruviaa/vosu-tools","enabled":true})];
+        if include_vosulay {
+            sources.push(json!({"source":"shiruviaa/vosulay","enabled":true}));
+        }
+        sources.push(json!({"source":"shiruviaa/vosu-overlays","enabled":true}));
+        atomic_json(&config.join("catalog-sources.json"), &sources).unwrap();
+        if edited {
+            atomic_json(&config.join("catalog-sources-v2.json"), &true).unwrap();
+        }
+        let current = host(root.path(), Vec::new()).await;
+        let migrated: Value =
+            serde_json::from_slice(&fs::read(config.join("catalog-sources.json")).unwrap())
+                .unwrap();
+        let mut expected = vec![json!({"source":"18-lab-dev/vosu-tools","enabled":true})];
+        if !edited || include_vosulay {
+            expected.push(json!({"source":"18-lab-dev/vosulay","enabled":true}));
+        }
+        if edited && !include_vosulay {
+            expected.push(json!({"source":"shiruviaa/vosu-overlays","enabled":true}));
+        }
+        assert_eq!(migrated, json!(expected));
+        current.shutdown().await;
+    }
 }
 
 #[tokio::test]

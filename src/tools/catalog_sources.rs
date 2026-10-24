@@ -49,7 +49,7 @@ fn resolve(source: &str) -> Result<String, String> {
     Ok(url.into())
 }
 fn default_sources() -> Vec<Source> {
-    [OFFICIAL_SOURCE, VOSULAY_SOURCE, "shiruviaa/vosu-overlays"]
+    [OFFICIAL_SOURCE, VOSULAY_SOURCE]
         .into_iter()
         .map(|source| Source {
             source: source.into(),
@@ -98,24 +98,51 @@ impl ToolHost {
     fn sources_migration_path(&self) -> PathBuf {
         self.config.join("catalog-sources-v2.json")
     }
+    pub(in crate::tools) fn migrate_catalog_state(&self) -> Result<(), String> {
+        self.load_sources()?;
+        self.overlay_state()?;
+        Ok(())
+    }
     fn load_sources(&self) -> Result<Vec<Source>, String> {
         match fs::read(self.sources_path()) {
             Ok(bytes) => {
-                let sources: Vec<Source> =
+                let mut sources: Vec<Source> =
                     serde_json::from_slice(&bytes).map_err(|e| format!("catalog sources: {e}"))?;
-                let legacy = [OFFICIAL_SOURCE, "shiruviaa/vosu-overlays"].map(|source| Source {
-                    source: source.into(),
-                    enabled: true,
-                });
-                if sources == legacy && !self.sources_migration_path().exists() {
+                // Former organization defaults are migration inputs only.
+                // A v2 marker distinguishes an explicitly edited two-source list.
+                let legacy_two = ["shiruviaa/vosu-tools", "shiruviaa/vosu-overlays"];
+                let legacy_three = [
+                    "shiruviaa/vosu-tools",
+                    "shiruviaa/vosulay",
+                    "shiruviaa/vosu-overlays",
+                ];
+                let is_default = |identities: &[&str]| {
+                    sources.len() == identities.len()
+                        && sources
+                            .iter()
+                            .zip(identities)
+                            .all(|(source, identity)| source.enabled && source.source == *identity)
+                };
+                if is_default(&legacy_three)
+                    || is_default(&legacy_two) && !self.sources_migration_path().exists()
+                {
                     let sources = default_sources();
                     atomic_json(&self.sources_path(), &sources).map_err(|e| e.to_string())?;
                     atomic_json(&self.sources_migration_path(), &true)
                         .map_err(|e| e.to_string())?;
-                    Ok(sources)
-                } else {
-                    Ok(sources)
+                    return Ok(sources);
                 }
+                let mut changed = false;
+                for source in &mut sources {
+                    if let Some(current) = migrated_source(&source.source) {
+                        source.source = current.into();
+                        changed = true;
+                    }
+                }
+                if changed {
+                    atomic_json(&self.sources_path(), &sources).map_err(|e| e.to_string())?;
+                }
+                Ok(sources)
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(default_sources()),
             Err(error) => Err(error.to_string()),
@@ -206,7 +233,22 @@ impl ToolHost {
     }
     fn overlay_state(&self) -> Result<BTreeMap<String, InstalledOverlay>, String> {
         match fs::read(self.config.join("overlay-catalog-state.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+            Ok(bytes) => {
+                let mut state: BTreeMap<String, InstalledOverlay> =
+                    serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+                let mut changed = false;
+                for overlay in state.values_mut() {
+                    if let Some(source) = migrated_source(&overlay.source) {
+                        overlay.source = source.into();
+                        changed = true;
+                    }
+                }
+                if changed {
+                    atomic_json(&self.config.join("overlay-catalog-state.json"), &state)
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(state)
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(BTreeMap::new()),
             Err(error) => Err(error.to_string()),
         }

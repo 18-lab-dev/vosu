@@ -2,7 +2,7 @@
 
 This file inventories third-party material retained in the vosu repository. vosu is a Rust implementation targeting API and behavioral compatibility with upstream tosu. It is an attribution aid, not a replacement for applicable license texts. Project-authored repository code and documentation are dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option, where the respective contributors have licensing authority; the release archive retains the root [`LICENSE`](LICENSE) member. Exact Rust package versions and checksums are authoritative in `Cargo.lock`.
 
-First-party notice: `Copyright (c) 2026 sxlvia`, as confirmed by the maintainer for vosu work begun in 2026. The notice is repeated in `LICENSE-MIT`, the combined root `LICENSE`, and the matching calculator copies. It applies to project-authored material over which the respective contributors have licensing authority; it does not claim ownership of upstream work or resolve the source-provenance questions below.
+First-party notice: `Copyright (c) 2026 18-LAB`. The notice is repeated in `LICENSE-MIT`, the combined root `LICENSE`, and the matching calculator copies. It applies to project-authored material over which the respective contributors have licensing authority; it does not claim ownership of upstream work or resolve the source-provenance questions below. Branding and artwork retain their separate sxlvia attribution.
 
 ## tosu compatibility and retained provenance
 

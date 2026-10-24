@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/shiruviaa/vosu/main/docs/tools/tool.schema.json",
+  "$id": "https://raw.githubusercontent.com/18-lab-dev/vosu/main/docs/tools/tool.schema.json",
   "title": "vosu tool manifest (protocol v1)",
   "type": "object",
   "additionalProperties": false,

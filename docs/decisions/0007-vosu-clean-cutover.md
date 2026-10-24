@@ -23,7 +23,7 @@ Adopt **vosu** as the sole current product identity and make a clean cutover acr
 
 - use `vosu` for the package, crates, executable, API terminology, logs and metadata;
 - use flat typed TOML in `vosu.toml` with the current uppercase binding names, and `vosu` platform data roots for configuration and state;
-- publish `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip` from `shiruviaa/vosu`;
+- publish `vosu-linux-<tag>.zip` and `vosu-windows-<tag>.zip` from `18-lab-dev/vosu`;
 - use the upstream tosu catalog service at <https://tosu.app/api.json>; vosu does not operate a website;
 - reject former executable, archive, environment-variable, updater, and package names rather than accepting aliases.
 

@@ -36,7 +36,7 @@ const BUSY_LABELS = {
   'open-data': 'Opening…',
   'clear-cache': 'Clearing…',
 };
-const AUTHORING_DOCS = 'https://github.com/shiruviaa/vosu/blob/main/docs/tools/protocol.md';
+const AUTHORING_DOCS = 'https://github.com/18-lab-dev/vosu/blob/main/docs/tools/protocol.md';
 const POLL_MS = 3000;
 const LOG_POLL_MS = 2000;
 // Matches the host's bounded buffer, so the drawer never holds more than vosu.
@@ -192,7 +192,7 @@ export function mountTools({
     availableCards.replaceChildren(...shown.map((tool) => {
       const installed = state.tools.find((entry) => entry.id === tool.id);
       const update = Boolean(installed && tool.update_available);
-      const official = ['shiruviaa/vosu-tools', 'shiruviaa/vosulay'].includes(tool.source);
+      const official = ['18-lab-dev/vosu-tools', '18-lab-dev/vosulay'].includes(tool.source);
       const titleId = `catalog-tool-${tool.id}`;
       const card = el('article', { className: 'tool-card', attrs: { 'data-catalog-tool': tool.id, 'aria-labelledby': titleId } },
         cardBanner(tool.banner_url),

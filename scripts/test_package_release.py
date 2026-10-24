@@ -142,7 +142,7 @@ class DistributionReleaseTests(unittest.TestCase):
             "[mail](mailto:a@b.c) and ![icon](assets/i.svg).\n\n"
             "## 1.2.2 — 2025-12-01\n\n- older [entry](OLD.md)\n"
         )
-        base = "https://github.com/shiruviaa/vosu/blob/v1.2.3"
+        base = "https://github.com/18-lab-dev/vosu/blob/v1.2.3"
         notes = release.release_notes("v1.2.3", changelog, signed=False)
         self.assertIn(f"[privacy]({base}/PRIVACY.md)", notes)
         self.assertIn(f"[ADR]({base}/docs/decisions/0001-x.md#why)", notes)

@@ -6,9 +6,9 @@ Free code signing provided by [SignPath.io](https://about.signpath.io), certific
 
 ## Team roles
 
-The vosu team is the owners of the [shiruviaa](https://github.com/shiruviaa) GitHub organization, which owns the [source repository](https://github.com/shiruviaa/vosu) and the SignPath project.
+The vosu team is the owners of the [18-LAB](https://github.com/18-lab-dev) GitHub organization, which owns the [source repository](https://github.com/18-lab-dev/vosu) and the SignPath project.
 
-- **Committers and reviewers:** [K4zoku](https://github.com/K4zoku), [qt715](https://github.com/qt715) ([organization members](https://github.com/orgs/shiruviaa/people))
+- **Committers and reviewers:** [K4zoku](https://github.com/K4zoku), [qt715](https://github.com/qt715) ([organization members](https://github.com/orgs/18-lab-dev/people))
 - **Approvers:** [K4zoku](https://github.com/K4zoku), [qt715](https://github.com/qt715)
 
 Committers may change the source without additional review. A change proposed by anyone else, such as a pull request from a contributor, is merged only after a committer reviews it. Reviews pay particular attention to build scripts, `.github/workflows/`, and dependency changes, because they decide what a signed binary contains.
@@ -17,7 +17,7 @@ Every team member must use multi-factor authentication for GitHub and SignPath.
 
 ## What is signed
 
-Only `vosu.exe`, the Windows executable inside `vosu-windows-<tag>.zip` on the [GitHub releases](https://github.com/shiruviaa/vosu/releases) page, is signed with the SignPath Foundation certificate. It is built from this repository's own source.
+Only `vosu.exe`, the Windows executable inside `vosu-windows-<tag>.zip` on the [GitHub releases](https://github.com/18-lab-dev/vosu/releases) page, is signed with the SignPath Foundation certificate. It is built from this repository's own source.
 
 `vosu.exe` embeds the lazer offset-generator payload. The release workflow builds that payload from `tools/lazer-offset-generator` and `tools/lazer-offset-target` together with the self-contained Microsoft .NET runtime and ClrMD packages listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Those upstream files are packaged inside the executable and are not signed separately.
 
@@ -38,4 +38,4 @@ See the [privacy policy](PRIVACY.md). It lists every network request vosu makes,
 
 ## Reporting
 
-Report a signed file that you believe violates this policy by opening an issue at <https://github.com/shiruviaa/vosu/issues>, or report it to SignPath Foundation at <support@signpath.io>.
+Report a signed file that you believe violates this policy by opening an issue at <https://github.com/18-lab-dev/vosu/issues>, or report it to SignPath Foundation at <support@signpath.io>.

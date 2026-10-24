@@ -203,11 +203,28 @@ impl ToolHost {
         fs::create_dir_all(&user)?;
         let mut roots = dev.into_iter().map(|p| (p, "dev")).collect::<Vec<_>>();
         roots.push((user, "user"));
-        let saved = match fs::read(config.join("state.json")) {
+        let mut saved: BTreeMap<String, Saved> = match fs::read(config.join("state.json")) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
             Err(e) => return Err(e),
         };
+        let mut migrated = false;
+        for state in saved.values_mut() {
+            if let Some(source) = state
+                .catalog_source
+                .as_deref()
+                .and_then(catalog::migrated_source)
+            {
+                // Renaming the same catalog must preserve explicit user approval.
+                let trusted = state.trusted;
+                catalog::record_source(state, source);
+                state.trusted |= trusted;
+                migrated = true;
+            }
+        }
+        if migrated {
+            atomic_json(&config.join("state.json"), &saved)?;
+        }
         let host = Arc::new(Self {
             entries: Mutex::new(BTreeMap::new()),
             saved: Mutex::new(saved),
@@ -236,6 +253,7 @@ impl ToolHost {
             catalog_operation: tokio::sync::Mutex::new(()),
             counters: Mutex::new(None),
         });
+        host.migrate_catalog_state().map_err(io::Error::other)?;
         host.rescan().await;
         Ok(host)
     }

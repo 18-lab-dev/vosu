@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective 2026-10-10. This policy covers the vosu daemon and its built-in dashboard as published from [shiruviaa/vosu](https://github.com/shiruviaa/vosu): the portable archives, Linux packages, and builds from this source.
+Effective 2026-10-10. This policy covers the vosu daemon and its built-in dashboard as published from [18-lab-dev/vosu](https://github.com/18-lab-dev/vosu): the portable archives, Linux packages, and builds from this source.
 
 vosu runs on your computer. It has no accounts, telemetry, analytics, advertising, or crash reporting, and the vosu maintainers run no servers that receive data from it. vosu still makes network requests to third-party services in the cases listed below, and every such service sees the usual connection metadata, including your IP address.
 
@@ -24,11 +24,11 @@ vosu serves game state, game files, installed overlays, and the dashboard over p
 
 | Purpose | When | Destination | What is sent |
 | --- | --- | --- | --- |
-| Update check | On every start of a self-updating install (a portable archive or another user-writable install directory), whether or not `ENABLE_AUTOUPDATE` is on. Package-managed installs and debug builds never check. | `api.github.com` (GitHub) | An HTTP GET for the latest `shiruviaa/vosu` release, with the User-Agent `vosu/<version>` |
+| Update check | On every start of a self-updating install (a portable archive or another user-writable install directory), whether or not `ENABLE_AUTOUPDATE` is on. Package-managed installs and debug builds never check. | `api.github.com` (GitHub) | An HTTP GET for the latest `18-lab-dev/vosu` release, with the User-Agent `vosu/<version>` |
 | Update download | When an update is installed: at startup if `ENABLE_AUTOUPDATE` is on, or when you click **Update Vosu** | GitHub release download hosts | An HTTP GET for the platform archive, with the same User-Agent |
-| Overlay catalog | Each time you open **Available** or search on that page | `https://tosu.app/api.json`, operated by the tosu project | An HTTP GET with the User-Agent `vosu/<version> (+https://github.com/shiruviaa/vosu)` |
+| Overlay catalog | Each time you open **Available** or search on that page | `https://tosu.app/api.json`, operated by the tosu project | An HTTP GET with the User-Agent `vosu/<version> (+https://github.com/18-lab-dev/vosu)` |
 | Overlay download | When you click **Install** or **Update** on an available overlay | The download link that the catalog lists for that overlay. As of 2026-10-10 every listed link starts at `osuck.link` and redirects to `files.osuck.link`. | An HTTP GET for the overlay archive, with the same User-Agent as the catalog request |
-| Catalog sources | When you open **Tools** or source overlays, refresh the catalog, or install/update a package | GitHub release download hosts for defaults `shiruviaa/vosu-tools`, `shiruviaa/vosulay`, and `shiruviaa/vosu-overlays`, plus configured source URLs | An HTTP GET with User-Agent `vosu-tool-catalog`; installed versions are compared locally |
+| Catalog sources | When you open **Tools** or source overlays, refresh the catalog, or install/update a package | GitHub release download hosts for defaults `18-lab-dev/vosu-tools` and `18-lab-dev/vosulay`, plus configured source URLs | An HTTP GET with User-Agent `vosu-tool-catalog`; installed versions are compared locally |
 | Official tool package | When you install or update a tool, including required dependencies | The HTTPS package URLs in the tool catalog | An HTTP GET with User-Agent `vosu-tool-catalog` |
 
 Only the request itself is sent. vosu does not include game data, settings, installed-overlay lists, or other identifiers; it compares the catalog with your installed overlays locally. Host names are resolved through your system's DNS resolver. These requests connect directly and ignore system proxy settings. Catalog and overlay downloads must use HTTPS and may not redirect to loopback, private, or reserved addresses.
@@ -69,4 +69,4 @@ Only the request itself is sent. vosu does not include game data, settings, inst
 
 ## Changes and contact
 
-Changes to this policy are recorded in this file's history in the repository. For questions, open an issue at <https://github.com/shiruviaa/vosu/issues>.
+Changes to this policy are recorded in this file's history in the repository. For questions, open an issue at <https://github.com/18-lab-dev/vosu/issues>.

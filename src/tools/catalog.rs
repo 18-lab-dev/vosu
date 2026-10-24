@@ -3,15 +3,24 @@ use crate::net::{Deadlines, DownloadLimits, StreamingClient, ZipLimits};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 
-const OFFICIAL_SOURCE: &str = "shiruviaa/vosu-tools";
-const VOSULAY_SOURCE: &str = "shiruviaa/vosulay";
+const OFFICIAL_SOURCE: &str = "18-lab-dev/vosu-tools";
+const VOSULAY_SOURCE: &str = "18-lab-dev/vosulay";
+
+/// Historical default identities are migration inputs only, never trust aliases.
+pub(super) fn migrated_source(source: &str) -> Option<&'static str> {
+    match source {
+        "shiruviaa/vosu-tools" => Some(OFFICIAL_SOURCE),
+        "shiruviaa/vosulay" => Some(VOSULAY_SOURCE),
+        _ => None,
+    }
+}
 
 fn official_source(source: &str) -> bool {
     matches!(source, OFFICIAL_SOURCE | VOSULAY_SOURCE)
 }
 const MAX_PACKAGE: u64 = 512 * 1024 * 1024;
 
-fn record_source(state: &mut Saved, source: &str) {
+pub(super) fn record_source(state: &mut Saved, source: &str) {
     if state.catalog_source.as_deref() != Some(source) {
         state.trusted = false;
     }

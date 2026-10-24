@@ -1,4 +1,4 @@
-#:schema https://raw.githubusercontent.com/shiruviaa/vosu/main/docs/tools/tool.schema.json
+#:schema https://raw.githubusercontent.com/18-lab-dev/vosu/main/docs/tools/tool.schema.json
 manifest_version = 1
 id = "hello-python"
 name = "Hello Python"

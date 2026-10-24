@@ -31,7 +31,7 @@ flowchart LR
     Config[vosu.toml and local files] -->|watch and reload| Vosu
     Vosu -->|HTTP JSON, files, pages| Client[overlay or API client]
     Vosu -->|WebSocket state and commands| Client
-    Vosu -->|release HTTPS only| Remote[shiruviaa/vosu releases]
+    Vosu -->|release HTTPS only| Remote[18-lab-dev/vosu releases]
     Vosu -->|logs, cache, settings, downloads| Disk[vosu platform application roots]
     Parity[tools/live-parity] -. captures and compares .-> Vosu
     Parity -. compares against pinned upstream daemon .-> Reference[upstream tosu parity reference]

@@ -12,7 +12,7 @@ pkgver=0
 pkgrel=1
 pkgdesc="Native osu! telemetry daemon with a local dashboard"
 arch=('x86_64')
-url="https://github.com/shiruviaa/vosu"
+url="https://github.com/18-lab-dev/vosu"
 license=('MIT OR Apache-2.0' 'CC-BY-4.0')
 # libcap provides the setcap binary that `vosu --setup` runs from the install
 # hook; namcap cannot see that and reports it as possibly unneeded. The embedded

@@ -61,7 +61,7 @@ $expectedFields = @{
     ProductVersion = $expectedVersion
     ProductName = "vosu"
     CompanyName = ""
-    LegalCopyright = 'Copyright (c) 2026 sxlvia'
+    LegalCopyright = 'Copyright (c) 2026 18-LAB'
     FileDescription = "vosu Rust daemon"
 }
 foreach ($field in $expectedFields.Keys) {

@@ -209,7 +209,7 @@ fn embed_windows_resource() {
         .set_language(0x0409)
         .set("ProductName", "vosu")
         .set("CompanyName", "")
-        .set("LegalCopyright", "Copyright (c) 2026 sxlvia")
+        .set("LegalCopyright", "Copyright (c) 2026 18-LAB")
         .set("FileDescription", "vosu Rust daemon")
         .set("FileVersion", &text_version)
         .set("ProductVersion", &text_version)
