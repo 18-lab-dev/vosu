@@ -87,6 +87,15 @@ function hasService(view) {
   return view.service_role === 'background';
 }
 
+
+function cardStatus(view) {
+  const status = String(view.status ?? 'stopped');
+  if (!hasService(view) && view.enabled && view.trusted && ['stopped', 'starting', 'running'].includes(status)) {
+    const working = view.service_role === 'backend' && status !== 'stopped';
+    return { label: working ? 'Working' : 'Ready', dot: working ? 'busy' : 'ok' };
+  }
+  return { label: STATUS_LABELS[status] ?? status, dot: STATUS_DOTS[status] ?? 'idle' };
+}
 // Installed views carry `kind` and `cli`; catalog entries list `interfaces`.
 function interfacesOf(view) {
   if (Array.isArray(view.interfaces)) return view.interfaces;
@@ -281,7 +290,7 @@ export function mountTools({
   function matches(view, tokens) {
     if (tokens.length === 0) return true;
     const text = [
-      view.name, view.id, view.author, view.description, view.source, view.kind, view.status,
+      view.name, view.id, view.author, view.description, view.source, view.kind, view.status, cardStatus(view).label,
     ].map((value) => String(value ?? '').toLocaleLowerCase()).join(' ');
     return tokens.every((token) => text.includes(token));
   }
@@ -326,6 +335,7 @@ export function mountTools({
   function renderCard(view) {
     const name = view.name || view.id;
     const status = String(view.status ?? 'stopped');
+    const displayStatus = cardStatus(view);
     const card = el('article', {
       className: 'tool-card',
       attrs: { 'data-tool-id': view.id, 'data-status': status, 'aria-labelledby': `tool-title-${view.id}` },
@@ -334,8 +344,8 @@ export function mountTools({
     const title = el('h2', { attrs: { id: `tool-title-${view.id}`, title: name } }, el('span', { className: 'tool-card__name', text: name }),
       view.version ? el('span', { className: 'tool-card__version', text: `v${view.version}` }) : null);
     const line = el('p', { className: 'tool-card__status' },
-      el('span', { className: 'v-dot', attrs: { 'data-state': STATUS_DOTS[status] ?? 'idle' } }),
-      el('span', { text: STATUS_LABELS[status] ?? status }),
+      el('span', { className: 'v-dot', attrs: { 'data-state': displayStatus.dot } }),
+      el('span', { text: displayStatus.label }),
       ...interfaceChips(view));
     if (view.source && view.source !== 'official') {
       line.append(el('span', { className: 'badge', text: SOURCE_LABELS[view.source] ?? view.source, attrs: { 'data-source': view.source } }));

@@ -76,6 +76,8 @@ Prefix matching is segment-aware: `/v1/beatmap` matches `/v1/beatmap` and `/v1/b
 
 `background` services provide useful independent background work or APIs and expose SERVICE plus Start/Stop/Restart. `backend` services are implementation details of their UI or CLI: no SERVICE badge or service controls; requests still start them on demand, with the same dependency and idle-stop rules. Tool cards derive UI / SERVICE / CLI badges from `interfaces`, not `kind`.
 
+On dashboard cards, usable tools without a background service show **Ready**, or **Working** while their backend starts or runs. Background services keep **Stopped**, **Starting** and **Running**. Failed, blocked, untrusted, disabled and invalid states are unchanged for all tools. This is card presentation only: API `status` values and the process status in Details stay unchanged.
+
 For background services, **Start with vosu** in Details and the Settings dialog overrides the author's `startup`. The host persists `autostart: true|false|null` (`null` follows the manifest). Effective startup is true only for background services with override true, or no override and `startup = "always"`. Enabled, trusted services start dependencies first after the daemon listeners bind; service readiness never delays overlay serving. Changing the override applies at the next vosu launch and does not start or stop a running service.
 
 ## Process contract
