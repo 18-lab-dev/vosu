@@ -658,3 +658,42 @@ python scripts/prepare-offset-generator.py --rid win-x64
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench hot_paths
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench memory_reader_bench
 ```
+
+## Selected-field reader cadence (2026-10-23)
+
+Reproduce the Linux-only offline measurement, alone in an optimized test binary:
+
+```sh
+python scripts/prepare-offset-generator.py --rid linux-x64
+cargo test --release --locked --lib subscription_cadence_cpu_and_wakeups -- --ignored --nocapture --test-threads=1
+```
+
+The fixture establishes real subscriptions through `V2SubscriptionHub`, feeds its
+aggregated demand through `PollIntervalUpdates::Config`, and runs the real worker
+threads/reducer scheduling with the existing synthetic reader/transition harness.
+No process discovery or live-client attachment occurs. Each case warms up for
+250 ms, then measures five seconds. Captures count purposeful reader wakeups;
+`CLOCK_PROCESS_CPUTIME_ID` measures process CPU, expressed as percent of one core.
+Configured regular/precise intervals are 150/10 ms and debounce is 1 ms.
+
+| Established selection | Regular captures/s | Precise captures/s | CPU seconds | CPU % |
+| --- | ---: | ---: | ---: | ---: |
+| None | 6.598 | 98.776 | 0.026204 | 0.524 |
+| `/settings/mode`, `/client`, `/folders/skin`, `/beatmap/checksum` | 6.599 | 99.591 | 0.029537 | 0.591 |
+| `/keys`, play context | 6.598 | 967.241 | 0.088958 | 1.778 |
+| Empty pointer (whole document) | 923.627 | 963.020 | 0.150711 | 3.014 |
+
+The slow subscription leaves both readers at baseline, while the precise-only
+subscription accelerates only its producing lane. Whole-document selection still
+requests both lanes and serves as a control equivalent to the former all-lanes
+high-rate demand; it is **not** a measurement of a historical binary. Unit tests
+also cover gameplay demand becoming dormant outside play, parent selectors,
+multiple clients, lane release on disconnect, and the independent status/audio
+clock lanes.
+
+These are one local run's synthetic scheduling/snapshot costs, not native client
+memory-reading, live pp, full-daemon, or rendering benchmarks. The small CPU
+difference between no subscriber and slow selection is not evidence of a meaningful
+regression; the reader rates show no cadence increase. No live-game CPU improvement
+or guaranteed 1 kHz delivery is claimed.
+

@@ -274,7 +274,9 @@ where
                     produced_sequence,
                     sync,
                 ));
-                let delay = precise_intervals.current().precise_delay();
+                let delay = precise_intervals
+                    .current()
+                    .precise_delay(context.status == 2);
                 if !precise_clock.sleep(delay) {
                     break;
                 }
@@ -356,7 +358,7 @@ where
                         ),
                         plan: current_capture.clone(),
                     };
-                    let delay = intervals.current().regular_delay();
+                    let delay = intervals.current().regular_delay(context.status == 2);
                     if permit_tx.send(RegularPermit::Committed(delay, request)).is_err() {
                         if reducer_clock.is_cancelled() {
                             return Ok(());

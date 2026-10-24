@@ -395,7 +395,7 @@ At startup, malformed canonical TOML leaves every source file untouched. During 
 | `ENABLE_HIT_OFFSETS` | `false` | Opt in to osu!standard cursor-offset and timing triples in vosu v2 and precise payloads. |
 | `POLL_RATE` | `150` | Regular state interval in milliseconds; range `100`–`60000`. |
 | `PRECISE_DATA_POLL_RATE` | `10` | Precise state interval in milliseconds; range `1`–`60000`. |
-| `V2_SUBSCRIPTION_DEBOUNCE` | `1` | Selected-field sampling interval and minimum interval between its WebSocket frames, in milliseconds; range `1`–`60000`, fractional values supported. |
+| `V2_SUBSCRIPTION_DEBOUNCE` | `1` | Fast selected-field reader interval and minimum interval between subscription frames, in milliseconds; range `1`–`60000`, fractional values supported. Slow selectors do not accelerate readers. |
 | `SHOW_MP_COMMANDS` | `false` | Include multiplayer commands where supported. |
 | `READ_MANIA_SCROLL_SPEED` | `true` | Read mania scroll speed. |
 | `SERVER_IP` | `127.0.0.1` | Overlay/data listener hostname or address (unchanged overlay origin). |
@@ -533,11 +533,29 @@ Tools following the current map can subscribe to these additive fields through
 | `/settings/visual/comboColourNormalisation` | Lazer's current `ComboColourNormalisationAmount` float (`0`–`1`, client default `0.2`), read using the client's generated configuration key. Stable reports null; an unavailable lazer value is null, never replaced with the default. |
 | `/settings/visual/scalingMode`, `/settings/visual/positionX`, `/settings/visual/positionY`, `/settings/visual/sizeX`, `/settings/visual/sizeY` | Optional lazer viewport scaling mode and normalized position/size settings; unknown values are null. Skin hit positions and column widths remain skin resources, not separate client configuration. |
 
-With a subscription active, regular and precise sampling use
-`V2_SUBSCRIPTION_DEBOUNCE` (default 1 ms), including song select. This permits
-30 Hz or faster updates at the default but is not a guaranteed frame rate:
-users can configure a slower interval, and publication/backpressure stays
-latest-only. Missing but syntactically valid JSON Pointers are permitted and
+Selected-field sampling follows the requested fields' producing reader, rather
+than merely the presence of a subscriber:
+
+| Selection | Additional reader demand |
+| --- | --- |
+| Client, folders, settings values (including `/settings/mode`), beatmap checksum/metadata and file paths | None; configured polling continues unchanged. |
+| `/keys`, hit-error arrays, key errors, hit offsets and catcher state | Precise reader, only during play (including replay/spectate). |
+| Score, accuracy, HP, hits, combo, mods, rank, pp, leaderboard and live gameplay map statistics | Regular reader, only during play. Unstable rate needs both lanes. |
+| `/state`, `/beatmap/time/live` | Precise reader, also outside play for status transitions and the song-select audio clock. |
+| `/session/playTime`, `/settings/bassDensity`, `/room` | Regular reader, also outside play. |
+
+Parent pointers inherit their descendants' demand: `/play` selects both gameplay
+lanes; `/settings` includes bass density; `/beatmap` includes the live clock; the
+empty pointer selects the whole document and both lanes. Select narrow leaves
+when following identity or settings only. Multiple clients' demands are unioned
+and released when those clients disconnect.
+
+Only a demanded, currently active lane uses the smaller of its configured
+interval and `V2_SUBSCRIPTION_DEBOUNCE` (default 1 ms). Other lanes retain
+`POLL_RATE` / `PRECISE_DATA_POLL_RATE`; gameplay-only demand goes dormant outside
+play. Debounce still limits frames for every subscription, including slow ones.
+This permits fast updates but is not a guaranteed frame rate. Publication and
+backpressure stay latest-only. Missing but syntactically valid JSON Pointers are permitted and
 report per-pointer absence; they do not invalidate the whole subscription.
 
 Beatmap selection changes bypass the compatibility API's regular polling interval:
@@ -779,7 +797,7 @@ Command control queues and the shared relay mailbox each hold at most 16 frames/
 
 Filtered compatibility streams share identical ordered filter plans only within a broadcast pass. The shared cache retains at most 64 variants and 1 MiB of payload bytes; exceeding either limit does not reject a filter, but encodes it without retaining it for reuse. Projection preserves requested ordering and the existing wire schemas.
 
-The selected-field endpoint expects one text message within five seconds: a JSON array of 1–256 non-overlapping RFC 6901 JSON Pointers into the `/json/v2` document. A subscription such as `["/keys","/beatmap/mode","/state/number"]` receives compact initial `[0, revision, [[index, value], ...]]` and update `[1, revision, [[changedIndex, value], ...], [removedIndex, ...]]` frames. Invalid filters receive `[2, code, message]`. The selection is immutable: any later text message, including an application-level `["ping", nonce]`, receives `[2, 5, "subscription already established"]` and closes the connection with code `1008`. Keepalive uses WebSocket control frames only; vosu answers each Ping with a Pong. While at least one selection is established, vosu samples game state every `V2_SUBSCRIPTION_DEBOUNCE` milliseconds (never slower than `POLL_RATE`/`PRECISE_DATA_POLL_RATE`), so selected fields can change before the HTTP and compatibility WebSocket payloads, which keep their `POLL_RATE`/`PRECISE_DATA_POLL_RATE` cadence. A beatmap change or retry still reaches every API immediately. Frames are sent only when a selected value changes, at most once per `V2_SUBSCRIPTION_DEBOUNCE` per client, and always carry the latest snapshot. Faster sampling costs CPU: each sample reruns memory reads and live pp calculation.
+The selected-field endpoint expects one text message within five seconds: a JSON array of 1–256 non-overlapping RFC 6901 JSON Pointers into the `/json/v2` document. A subscription such as `["/keys","/beatmap/mode","/state/number"]` receives compact initial `[0, revision, [[index, value], ...]]` and update `[1, revision, [[changedIndex, value], ...], [removedIndex, ...]]` frames. Invalid filters receive `[2, code, message]`. The selection is immutable: any later text message, including an application-level `["ping", nonce]`, receives `[2, 5, "subscription already established"]` and closes the connection with code `1008`. Keepalive uses WebSocket control frames only; vosu answers each Ping with a Pong. Reader sampling follows the [selected fields' producing lanes and activity](#renderer-state-v2): slow identity/settings/metadata selectors do not accelerate reads, gameplay-only fields accelerate only during play, and the live song-select clock can request precise sampling outside play. Only demanded active lanes use the smaller of their configured interval and `V2_SUBSCRIPTION_DEBOUNCE`; HTTP and compatibility WebSocket payloads retain their API cadence, except selection changes and resets are promoted immediately. Frames are sent only when a selected value changes, at most once per `V2_SUBSCRIPTION_DEBOUNCE` per client, and always carry the latest snapshot. Faster sampling costs CPU only in the requested lanes; a precise-only selection does not accelerate regular memory reads or live pp calculation.
 
 Selected-field delivery is latest-only, not an append-only event log: a newer pending snapshot replaces an older unsent one. Consumers must use the received values as current state and cannot assume every intermediate revision or input transition will be delivered.
 

@@ -547,7 +547,14 @@ async fn subscriber_demand_samples_faster_but_keeps_api_cadence() {
     let (interval_tx, interval_rx) = watch::channel(PollIntervals {
         regular: regular_interval,
         precise: Duration::from_secs(30),
-        subscription: Some(Duration::from_millis(1)),
+        subscription: Some(SubscriptionPolling {
+            interval: Duration::from_millis(1),
+            demand: SubscriptionDemand {
+                regular: true,
+                precise: true,
+                ..Default::default()
+            },
+        }),
     });
     let worker = spawn_state_worker_with_clock(
         TimedRegular {
@@ -620,4 +627,194 @@ async fn subscriber_demand_samples_faster_but_keeps_api_cadence() {
             .all(|delivery| *delivery == Delivery::Live),
         "precise samples inside one PRECISE_DATA_POLL_RATE interval are live-only"
     );
+}
+
+#[test]
+fn subscription_polling_tightens_only_requested_active_lanes() {
+    let regular = Duration::from_millis(150);
+    let precise = Duration::from_millis(10);
+    let fast = Duration::from_millis(1);
+    for playing in [false, true] {
+        for regular_requested in [false, true] {
+            for precise_requested in [false, true] {
+                let intervals = PollIntervals {
+                    regular,
+                    precise,
+                    subscription: Some(SubscriptionPolling {
+                        interval: fast,
+                        demand: SubscriptionDemand {
+                            gameplay_regular: regular_requested,
+                            gameplay_precise: precise_requested,
+                            ..Default::default()
+                        },
+                    }),
+                };
+                assert_eq!(
+                    intervals.regular_delay(playing),
+                    if playing && regular_requested {
+                        fast
+                    } else {
+                        regular
+                    }
+                );
+                assert_eq!(
+                    intervals.precise_delay(playing),
+                    if playing && precise_requested {
+                        fast
+                    } else {
+                        precise
+                    }
+                );
+            }
+        }
+    }
+    let menu_clock = PollIntervals {
+        regular,
+        precise,
+        subscription: Some(SubscriptionPolling {
+            interval: fast,
+            demand: SubscriptionDemand {
+                precise: true,
+                ..Default::default()
+            },
+        }),
+    };
+    assert_eq!(menu_clock.precise_delay(false), fast);
+    assert_eq!(menu_clock.regular_delay(false), regular);
+    let slower = PollIntervals {
+        subscription: Some(SubscriptionPolling {
+            interval: Duration::from_secs(1),
+            demand: SubscriptionDemand {
+                regular: true,
+                precise: true,
+                ..Default::default()
+            },
+        }),
+        ..menu_clock
+    };
+    assert_eq!(slower.precise_delay(true), precise);
+    assert_eq!(slower.regular_delay(true), regular);
+}
+
+/// Real worker-thread scheduling with the same offline reader/transition harness
+/// as the cadence tests. CPU is this process's consumed CPU, not wall-clock wait.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "five-second CPU/wakeup samples; run alone in a release test binary"]
+async fn subscription_cadence_cpu_and_wakeups() {
+    use crate::server::v2_subscription::{
+        V2SubscriptionHub, V2SubscriptionProvider, V2SubscriptionSnapshot,
+    };
+    #[derive(Clone)]
+    struct FixtureDocument(watch::Receiver<u64>);
+    impl V2SubscriptionSnapshot for FixtureDocument {
+        fn revision(&self) -> u64 {
+            *self.0.borrow()
+        }
+        fn document(&self) -> Result<Option<serde_json::Value>, crate::api::ApiError> {
+            Ok(Some(serde_json::json!({
+                "client": "lazer", "settings": {"mode": {"number": 0}},
+                "folders": {"skin": null}, "beatmap": {"checksum": "fixture"}, "keys": {"all": []}
+            })))
+        }
+    }
+    impl V2SubscriptionProvider for FixtureDocument {
+        fn subscribe(&self) -> watch::Receiver<u64> {
+            self.0.clone()
+        }
+        fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot> {
+            Arc::new(self.clone())
+        }
+    }
+    fn cpu_seconds() -> f64 {
+        let mut time = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: time is valid writable storage and the process CPU clock is
+        // independent of any user's application or device.
+        assert_eq!(
+            unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut time) },
+            0
+        );
+        time.tv_sec as f64 + time.tv_nsec as f64 / 1_000_000_000.0
+    }
+    for (name, paths) in [
+        ("none", vec![]),
+        (
+            "slow",
+            vec![
+                "/settings/mode",
+                "/client",
+                "/folders/skin",
+                "/beatmap/checksum",
+            ],
+        ),
+        ("precise-play", vec!["/keys"]),
+        ("whole-document", vec![""]),
+    ] {
+        let captures = Arc::new(Mutex::new(Vec::new()));
+        let precise = Arc::new(Mutex::new(Vec::new()));
+        let (_events, events) = watch::channel(1);
+        let hub =
+            V2SubscriptionHub::new(Arc::new(FixtureDocument(events)), Duration::from_millis(1));
+        let runner = tokio::spawn({
+            let hub = hub.clone();
+            async move { hub.run().await }
+        });
+        let connection = if paths.is_empty() {
+            None
+        } else {
+            let (connection, mut receiver) = hub.connect();
+            connection
+                .subscribe(paths.into_iter().map(str::to_owned).collect())
+                .unwrap();
+            receiver.recv().await.expect("initial subscription frame");
+            connection.write_completed();
+            Some((connection, receiver))
+        };
+        let (_config, config) = watch::channel(Arc::new(crate::config::Config::default()));
+        let intervals = PollIntervalUpdates::Config {
+            config,
+            demand: hub.demand(),
+        };
+        let worker = spawn_state_worker_with_clock(
+            TimedRegular {
+                captures: Arc::clone(&captures),
+            },
+            FakePrecise {
+                captures: Arc::clone(&precise),
+                corrupt_first_mode: false,
+            },
+            RecordingTransition {
+                context: context(ClientType::Lazer),
+                regular: Arc::new(AtomicUsize::new(0)),
+                precise_sequences: Arc::new(Mutex::new(Vec::new())),
+            },
+            Arc::new(DeliveryRecorder(Arc::new(Mutex::new(Vec::new())))),
+            context(ClientType::Lazer),
+            RegularCapturePlan::default(),
+            intervals,
+            Arc::new(Mutex::new(ReaderSynchronization::default())),
+            Arc::new(SystemWorkerClock::default()),
+        );
+        sleep(Duration::from_millis(250)).await;
+        let before = (lock(&captures).len(), lock(&precise).len());
+        let cpu_start = cpu_seconds();
+        let start = std::time::Instant::now();
+        sleep(Duration::from_secs(5)).await;
+        let elapsed = start.elapsed().as_secs_f64();
+        let cpu = cpu_seconds() - cpu_start;
+        let after = (lock(&captures).len(), lock(&precise).len());
+        worker.shutdown().await.unwrap();
+        drop(connection);
+        hub.shutdown();
+        runner.await.unwrap();
+        println!(
+            "cadence={name} seconds={elapsed:.6} regular_hz={:.3} precise_hz={:.3} cpu_seconds={cpu:.6} cpu_percent={:.3}",
+            (after.0 - before.0) as f64 / elapsed,
+            (after.1 - before.1) as f64 / elapsed,
+            cpu / elapsed * 100.0
+        );
+    }
 }

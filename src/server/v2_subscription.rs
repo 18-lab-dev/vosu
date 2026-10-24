@@ -217,6 +217,7 @@ impl SubscriptionRequestError {
 #[derive(Clone, Debug, Eq)]
 struct Plan {
     pointers: Vec<Vec<String>>,
+    demand: crate::state::SubscriptionDemand,
 }
 
 impl PartialEq for Plan {
@@ -249,7 +250,76 @@ fn compile_pointers(pointers: Vec<String>) -> Result<Plan, SubscriptionRequestEr
         }
         compiled.push(tokens);
     }
-    Ok(Plan { pointers: compiled })
+    let demand = compiled.iter().fold(
+        crate::state::SubscriptionDemand::default(),
+        |demand, pointer| demand.union(pointer_demand(pointer)),
+    );
+    Ok(Plan {
+        pointers: compiled,
+        demand,
+    })
+}
+
+/// Match a selected subtree to fields that actually need faster native sampling.
+/// Slow settings, identity, folders and beatmap metadata deliberately have no entry.
+fn pointer_demand(pointer: &[String]) -> crate::state::SubscriptionDemand {
+    use crate::state::SubscriptionDemand;
+    let overlaps = |field: &[&str]| pointer.iter().zip(field).all(|(left, right)| left == right);
+    let precise = overlaps(&["beatmap", "time", "live"]) || overlaps(&["state"]);
+    let regular = [
+        ["session", "playTime"].as_slice(),
+        &["settings", "bassDensity"],
+        &["room"],
+    ]
+    .iter()
+    .any(|field| overlaps(field));
+    let gameplay_precise = [
+        ["keys"].as_slice(),
+        &["play", "hitErrorArray"],
+        &["play", "pressHitErrors"],
+        &["play", "releaseHitErrors"],
+        &["play", "keyHitErrors"],
+        &["play", "hitOffsets"],
+        &["play", "catcher"],
+        &["play", "unstableRate"],
+    ]
+    .iter()
+    .any(|field| overlaps(field));
+    let gameplay_regular = [
+        ["play", "source"].as_slice(),
+        &["play", "failed"],
+        &["play", "playerName"],
+        &["play", "mode"],
+        &["play", "score"],
+        &["play", "accuracy"],
+        &["play", "healthBar"],
+        &["play", "hits"],
+        &["play", "combo"],
+        &["play", "mods"],
+        &["play", "rank"],
+        &["play", "pp"],
+        &["play", "unstableRate"],
+        &["leaderboard"],
+        &["rankedPlay"],
+        &["tourney"],
+        &["performance", "accuracy"],
+        &["beatmap", "isKiai"],
+        &["beatmap", "isBreak"],
+        &["beatmap", "stats", "stars", "live"],
+        &["beatmap", "time", "rate"],
+        &["beatmap", "time", "running"],
+        &["settings", "interfaceVisible"],
+        &["settings", "replayUIVisible"],
+        &["paused"],
+    ]
+    .iter()
+    .any(|field| overlaps(field));
+    SubscriptionDemand {
+        regular,
+        precise,
+        gameplay_regular,
+        gameplay_precise,
+    }
 }
 
 fn decode_pointer(pointer: &str) -> Option<Vec<String>> {
@@ -623,8 +693,8 @@ struct HubInner {
     /// Set by the first `wake` since the run loop last armed `wake`; later wakes in the same
     /// window are already covered by that notification.
     wake_pending: AtomicBool,
-    /// Whether any open client has an established selection.
-    demand: watch::Sender<bool>,
+    /// Union of producing lanes requested by open clients' established selections.
+    demand: watch::Sender<crate::state::SubscriptionDemand>,
     shutdown: CancellationToken,
     #[cfg(test)]
     extractions: AtomicU64,
@@ -659,7 +729,7 @@ impl V2SubscriptionHub {
             wake: Notify::new(),
             epoch: Instant::now(),
             wake_pending: AtomicBool::new(false),
-            demand: watch::Sender::new(false),
+            demand: watch::Sender::new(crate::state::SubscriptionDemand::default()),
             shutdown: CancellationToken::new(),
             #[cfg(test)]
             extractions: AtomicU64::new(0),
@@ -704,9 +774,9 @@ impl V2SubscriptionHub {
         )
     }
 
-    /// Whether any client has an established selection; state workers sample
-    /// at the subscription interval while it is true.
-    pub fn demand(&self) -> watch::Receiver<bool> {
+    /// Producing lanes requested by established selections. Slow selectors leave
+    /// this empty; gameplay-only lane demand is applied only while playing.
+    pub fn demand(&self) -> watch::Receiver<crate::state::SubscriptionDemand> {
         self.0.demand.subscribe()
     }
 
@@ -851,13 +921,25 @@ impl V2SubscriptionHub {
                 } => {},
             }
         }
-        self.0.demand.send_replace(false);
+        self.0
+            .demand
+            .send_replace(crate::state::SubscriptionDemand::default());
     }
 
     fn refresh_demand(&self) {
-        let subscribed = self.0.clients.load().values().any(|client| {
-            client.state.load(Ordering::Acquire) != CLOSED && lock(&client.subscription).is_some()
-        });
+        let subscribed = self.0.clients.load().values().fold(
+            crate::state::SubscriptionDemand::default(),
+            |demand, client| {
+                if client.state.load(Ordering::Acquire) == CLOSED {
+                    return demand;
+                }
+                lock(&client.subscription)
+                    .as_ref()
+                    .map_or(demand, |subscription| {
+                        demand.union(subscription.plan.demand)
+                    })
+            },
+        );
         self.0.demand.send_if_modified(|current| {
             let changed = *current != subscribed;
             *current = subscribed;
