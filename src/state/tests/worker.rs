@@ -696,6 +696,43 @@ fn subscription_polling_tightens_only_requested_active_lanes() {
     assert_eq!(slower.regular_delay(true), regular);
 }
 
+#[test]
+fn gameplay_demand_survives_menu_play_menu_transitions() {
+    let intervals = PollIntervals {
+        regular: Duration::from_millis(150),
+        precise: Duration::from_millis(10),
+        subscription: Some(SubscriptionPolling {
+            interval: Duration::from_millis(1),
+            demand: SubscriptionDemand {
+                gameplay_regular: true,
+                gameplay_precise: true,
+                ..Default::default()
+            },
+        }),
+    };
+    for playing in [false, true, false] {
+        assert_eq!(
+            intervals.regular_delay(playing),
+            if playing {
+                Duration::from_millis(1)
+            } else {
+                intervals.regular
+            }
+        );
+        assert_eq!(
+            intervals.precise_delay(playing),
+            if playing {
+                Duration::from_millis(1)
+            } else {
+                intervals.precise
+            }
+        );
+        let demand = intervals.subscription.unwrap().demand;
+        assert!(demand.gameplay_regular && demand.gameplay_precise);
+        assert!(!demand.regular && !demand.precise);
+    }
+}
+
 /// Real worker-thread scheduling with the same offline reader/transition harness
 /// as the cadence tests. CPU is this process's consumed CPU, not wall-clock wait.
 #[cfg(target_os = "linux")]

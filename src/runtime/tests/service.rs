@@ -10,7 +10,7 @@ async fn dashboard_attachment_status_uses_existing_roster_and_published_version(
     };
     assert_eq!(provider.dashboard_status()["instances"], serde_json::json!([]));
     let mut state = (*state_bundle(3, 0)).clone();
-    Arc::make_mut(&mut state.regular).settings.values.insert("client".into(), serde_json::json!({"version": "2026.1005.0"}));
+    Arc::make_mut(&mut Arc::make_mut(&mut state.regular).settings.values).insert("client".into(), serde_json::json!({"version": "2026.1005.0"}));
     snapshots.publish(Arc::new(ManagerSnapshot::new(1, Some(42), false, ApiRuntimeSettings::default(), [
         ManagerInstanceSnapshot::new(42, crate::instance::InstanceSettings { tournament_spectator: false, tournament_ipc_id: None, devserver_endpoint: None }, false, Arc::new(state))
     ])));

@@ -135,7 +135,7 @@ pub(crate) fn populated_regular(base: &RegularState, number: f64, text: &str) ->
     global.skin_folder = format!("skins{}{text}", std::path::MAIN_SEPARATOR);
     global.songs_folder = text.to_owned();
 
-    let settings = &mut regular.settings.values;
+    let settings = Arc::make_mut(&mut regular.settings.values);
     settings.insert("leaderboardType".into(), json!(1));
     settings.insert("progressBarType".into(), json!(2.75));
     settings.insert("sortType".into(), json!(3));

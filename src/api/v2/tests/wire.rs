@@ -51,7 +51,7 @@ fn direct_encoding_matches_dto_for_sparse_variants() {
     let runtime = ApiRuntimeSettings::default();
     let snapshot = snapshot_with(ClientType::Stable, None, runtime, |regular, precise| {
         let mut regular = populated_regular(regular, 1.5, "x");
-        regular.settings.values.clear();
+        Arc::make_mut(&mut regular.settings.values).clear();
         regular.menu = Default::default();
         regular.room.info = None;
         regular.beatmap.attributes = None;
@@ -86,7 +86,7 @@ fn direct_encoding_matches_dto_for_large_settings_maps() {
     let runtime = ApiRuntimeSettings::default();
     let snapshot = snapshot_with(ClientType::Stable, None, runtime, |regular, precise| {
         let mut regular = populated_regular(regular, 4.5, "z");
-        let values = &mut regular.settings.values;
+        let values = Arc::make_mut(&mut regular.settings.values);
         let mut tablet = serde_json::Map::new();
         for index in 0..40 {
             values.insert(format!("unused{index}"), Value::from(index));

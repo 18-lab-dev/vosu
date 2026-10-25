@@ -211,12 +211,6 @@ and 2 s measurement itself, which take precedence over these options; the
 | `memory_reader_bench` (lazer precise capture) | 10.64 µs | 8.789 µs | 1.21× | 10.44–10.97 | 8.687–8.959 |
 | `filtered_projection/v2_identical/100` | 6.179 ms | 19.90 µs | 311× | 6.151–6.434 ms | 19.84–19.96 µs |
 | `filtered_projection/v2_unique/100` | 6.950 ms | 31.71 µs | 219× | 6.796–7.194 ms | 31.61–31.72 µs |
-| `v2_subscription/distinct_plans/1000` | 409.1 µs | 85.58 µs | 4.78× | 409.0–435.8 | 85.27–86.55 |
-| `v2_subscription/shared_plan/1000` | 209.2 µs | 61.28 µs | 3.41× | 208.4–209.2 | 59.84–61.41 |
-| `serializers_cold/v1` | 4.450 µs | 2.647 µs | 1.68× | 4.437–5.939 | 2.639–2.818 |
-| `serializers_cold/v2` | 10.54 µs | 3.953 µs | 2.67× | 10.41–10.69 | 3.907–4.158 |
-| `serializers_cold/v2_precise` | 3.914 µs | 2.718 µs | 1.44× | 3.881–3.990 | 2.690–2.954 |
-| `serializers_cold/stream_companion` | 6.527 µs | 3.230 µs | 2.02× | 6.501–6.539 | 3.162–3.250 |
 | `http_v2/cold_connection` | 45.38 µs | 48.20 µs | 0.94× | 43.85–46.49 | 45.24–54.50 |
 | `http_v2/keep_alive` | 5.575 µs | 5.710 µs | 0.98× | 5.540–5.618 | 5.634–5.735 |
 | `http_v2/dispatch_only` | 364.3 ns | 381.4 ns | 0.96× | 354.9–374.4 | 380.3–382.1 |
@@ -294,6 +288,103 @@ cargo bench --locked --no-default-features --package vosu --target x86_64-pc-win
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench autoresearch_filtered_projection -- '^filtered_projection/v2_(identical|unique)/100$'
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench autoresearch_http_v2
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench memory_reader_bench
+```
+
+## Performance regression fixes for 1.2.0 (paired)
+
+Measured on the Linux host on 2026-10-24 with Rust 1.96.1, locked
+dependencies, default release features and independent build/ Criterion
+directories under `~/.cache/vosu-agents/PerfRegressions/`. The baseline is
+`c791512`; the optimized source is the staged `perf/1.2.0-regressions` tree
+based on `f170957`. Its signed commit failed with a GPG signing timeout and
+was not retried or bypassed. `evidence/environment.json` records the exact
+staged-patch SHA-256 used for this run.
+
+Three alternating baseline/optimized rounds used only `serializers_cold`
+and `v2_subscription`, pinned with `taskset -c 15`. **No CPU/IRQ isolation
+or pkexec was used.** These are not the isolated BenchVosu results:
+background host activity was not excluded. Criterion used 2 s warm-up,
+20 s measurement, 60 samples and `--noplot`. Values below are medians of
+three arithmetic means; parentheses span those means, in µs. Raw logs,
+per-round Criterion results, `summary.json` and `table.txt` are in the
+cache's `evidence/` directory. These synthetic results are not live-client
+or whole-daemon measurements.
+
+| Benchmark | 1.1.0 µs (range) | Optimized µs (range) | Change |
+| --- | ---: | ---: | ---: |
+| `serializers_cold/stream_companion` | 4.167 (4.100–4.891) | 1.576 (1.569–1.613) | -62.2% |
+| `serializers_cold/v1` | 3.563 (3.498–3.777) | 1.374 (1.359–1.464) | -61.4% |
+| `serializers_cold/v2` | 5.050 (4.948–5.052) | 2.798 (2.788–2.865) | -44.6% |
+| `serializers_cold/v2_precise` | 3.478 (3.384–3.490) | 1.137 (1.125–1.145) | -67.3% |
+| `v2_subscription/distinct_plans/1` | 7.498 (7.367–7.760) | 7.472 (7.434–7.510) | -0.3% |
+| `v2_subscription/distinct_plans/100` | 14.503 (14.339–14.549) | 14.398 (14.306–14.436) | -0.7% |
+| `v2_subscription/distinct_plans/1000` | 80.893 (80.178–86.994) | 81.514 (81.233–82.830) | +0.8% |
+| `v2_subscription/shared_plan/1` | 8.573 (7.481–8.615) | 7.448 (7.399–7.870) | -13.1% |
+| `v2_subscription/shared_plan/100` | 12.771 (12.626–14.618) | 12.600 (12.575–12.642) | -1.3% |
+| `v2_subscription/shared_plan/1000` | 58.090 (57.957–58.213) | 57.772 (57.759–57.886) | -0.5% |
+
+The former non-overlapping subscription regressions are gone: the largest
+remaining increase is 0.8%, with overlapping three-round ranges.
+Subscriptions update per-lane reference counts when established/released;
+publications no longer scan or lock selections to calculate demand.
+Gameplay/menu lane activation, parent-subtree inheritance, pending-frame
+demand and multi-client release retain their existing semantics.
+
+Cold serializers take ownership of each fresh snapshot in the timed
+`iter_batched` closure, so its destruction is timed even though construction
+is not. Since `c791512`, the default settings graph gained a visual object
+with twelve owned keys/nulls plus two optional mania keys/nulls. The v1,
+precise and StreamCompanion encoder implementations did not change in the
+API/model/state diff; all nevertheless paid this larger graph's teardown.
+Settings now share an immutable `Arc<SettingsObject>` and one lazy default
+graph, and settings application copies on actual changes only. This
+removes per-snapshot default graph teardown and avoids deep cloning an
+unchanged graph. All four cold serializers are faster than the baseline;
+v2 additionally skips lazer-only speed lookup/conversion on stable.
+
+Attribution used a separate `f170957` source copy with diagnostic-only
+benchmarks, unpinned, one run each with the same Criterion durations/sample
+count. These are explanatory experiments, **not paired release claims**;
+their small differences include scheduling/layout noise and are not additive.
+`attribution-results.json` records arithmetic means for the graph/drop
+experiment: full settings destruction 2,295 ns; without visual 2,200 ns;
+without the two optional mania keys 2,466 ns; without either 2,174 ns.
+Removing visual/mania defaults preserved default v2 bytes (asserted outside
+timing). The standalone mania teardown effect is not resolved by this run;
+its negative apparent saving must not be treated as a speedup.
+Borrowing batched snapshots, so their destruction is outside timing, gave
+v1 926 ns, v2 3,470 ns, precise 571 ns and StreamCompanion 1,132 ns.
+
+A second experiment retained the entire graph, borrowed snapshots and
+disabled one v2 addition at a time through diagnostic-only flags. Each
+variant shared the same flag-check overhead; `v2-attribution-results.json`
+and `v2-attribution-*.log` retain its results:
+
+| Diagnostic v2 variant | Mean (ns) | Full minus variant (ns) |
+| --- | ---: | ---: |
+| Full | 3,449 | — |
+| Skip visual projection/null scan | 3,338 | 112 |
+| Skip lazer-only speed lookup/conversion | 3,377 | 72 |
+| Skip optional mania bool/f64 lookups | 3,393 | 56 |
+| Skip clock rate/running fields | 3,393 | 56 |
+| Skip play-source classification | 3,428 | 21 |
+
+Only the clock variant intentionally changed default payload bytes; those
+mandatory fields stay in production. Visual/optional-mania/source projection
+also stays: populated states require it. The stable speed lookup was
+unnecessary and is skipped in production. Added skin/render state does not
+own populated graphs in the default cold fixture, and tournament-source
+projection is not exercised by this fixture. Settings sharing removes the
+large common teardown rather than deleting any new renderer fields.
+
+Reproduce the paired command in each source tree, alternating sides three
+times and giving each side its own target and Criterion directory:
+
+```sh
+taskset -c 15 env CARGO_TARGET_DIR=<side-target> CRITERION_HOME=<side-criterion> \
+  cargo bench --locked --package vosu --bench hot_paths -- \
+  '^(serializers_cold/|v2_subscription/)' \
+  --warm-up-time 2 --measurement-time 20 --sample-size 60 --noplot
 ```
 
 ## Released tosu comparison

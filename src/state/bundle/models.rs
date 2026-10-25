@@ -53,11 +53,20 @@ impl From<&LeaderboardPlayer> for LeaderboardPlayerState {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsState {
-    pub values: SettingsObject,
+    pub values: Arc<SettingsObject>,
 }
 
 impl Default for SettingsState {
     fn default() -> Self {
+        Self {
+            values: Arc::clone(&DEFAULT_SETTINGS),
+        }
+    }
+}
+
+// Snapshots keep the immutable graph alive; only actual settings changes copy it.
+static DEFAULT_SETTINGS: std::sync::LazyLock<Arc<SettingsObject>> = std::sync::LazyLock::new(
+    || {
         let mut values = IndexMap::new();
         values.insert(
             "audio".into(),
@@ -130,46 +139,74 @@ impl Default for SettingsState {
         values.insert("sortType".into(), json!(0));
         values.insert("leaderboardType".into(), json!(0));
         values.insert("progressBarType".into(), json!(0));
-        Self { values }
-    }
-}
+        Arc::new(values)
+    },
+);
 
 impl SettingsState {
     pub(super) fn apply(&mut self, update: &SettingsObject) {
         for (path, value) in update {
-            set_nested(&mut self.values, path, value.clone());
+            if get_nested(&self.values, path)
+                .is_some_and(|current| !settings_value_matches(current, value))
+            {
+                set_nested(Arc::make_mut(&mut self.values), path, value);
+            }
         }
     }
 }
 
-fn set_nested(root: &mut SettingsObject, path: &str, value: Value) {
+fn get_nested<'a>(root: &'a SettingsObject, path: &str) -> Option<&'a Value> {
+    let mut parts = path.split('.');
+    let mut current = root.get(parts.next()?)?;
+    for component in parts {
+        current = current.as_object()?.get(component)?;
+    }
+    Some(current)
+}
+
+// `Value` equality ignores object key order, but replacing a settings object
+// must retain the incoming order just as a fresh capture did before sharing.
+fn settings_value_matches(current: &Value, update: &Value) -> bool {
+    match (current, update) {
+        (Value::Object(current), Value::Object(update)) => {
+            current.len() == update.len()
+                && current
+                    .iter()
+                    .zip(update)
+                    .all(|((key, value), (other_key, other))| {
+                        key == other_key && settings_value_matches(value, other)
+                    })
+        }
+        (Value::Array(current), Value::Array(update)) => {
+            current.len() == update.len()
+                && current
+                    .iter()
+                    .zip(update)
+                    .all(|(value, other)| settings_value_matches(value, other))
+        }
+        (Value::Number(current), Value::Number(update)) if current.is_f64() && update.is_f64() => {
+            current.as_f64().map(f64::to_bits) == update.as_f64().map(f64::to_bits)
+        }
+        _ => current == update,
+    }
+}
+
+fn set_nested(root: &mut SettingsObject, path: &str, value: &Value) {
     let mut parts = path.split('.');
     let Some(first) = parts.next() else { return };
-    let remaining = parts.collect::<Vec<_>>();
-    if remaining.is_empty() {
-        if root.contains_key(first) {
-            root.insert(first.to_owned(), value);
-        }
-        return;
-    }
     let Some(mut current) = root.get_mut(first) else {
         return;
     };
-    for component in &remaining[..remaining.len() - 1] {
+    for component in parts {
         let Some(next) = current
             .as_object_mut()
-            .and_then(|object| object.get_mut(*component))
+            .and_then(|object| object.get_mut(component))
         else {
             return;
         };
         current = next;
     }
-    if let Some(object) = current.as_object_mut() {
-        let leaf = remaining[remaining.len() - 1];
-        if object.contains_key(leaf) {
-            object.insert(leaf.to_owned(), value);
-        }
-    }
+    current.clone_from(value);
 }
 
 #[derive(Debug, Clone, PartialEq)]

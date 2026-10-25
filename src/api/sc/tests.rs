@@ -188,8 +188,7 @@ fn menu_and_play_select_exact_modes_mods_paths_and_precise_values() {
     menu.menu.map_id = Some(123);
     menu.menu.set_id = Some(456);
     menu.menu.mp3_length = Some(99_000.0);
-    menu.settings
-        .values
+    Arc::make_mut(&mut menu.settings.values)
         .insert("leaderboardType".to_owned(), serde_json::json!(4));
 
     let menu_result = build(&snapshot(menu, false)).expect("menu response");

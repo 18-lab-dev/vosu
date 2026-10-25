@@ -162,9 +162,13 @@ pub(super) fn build_settings(state: &RegularState, source: ClientType) -> Settin
     let scroll_direction = i64_value(s, &["mania", "scrollDirection"]);
     let sort = i64_value(s, &["sortType"]);
     let group = i64_value(s, &["groupType"]);
-    let speed = get(s, &["mania", "scrollSpeed"])
-        .and_then(Value::as_f64)
-        .filter(|speed| source == ClientType::Lazer && speed.is_finite() && *speed > 0.0);
+    let speed = if source == ClientType::Lazer {
+        get(s, &["mania", "scrollSpeed"])
+            .and_then(Value::as_f64)
+            .filter(|speed| speed.is_finite() && *speed > 0.0)
+    } else {
+        None
+    };
     Settings {
         visual: build_visual(s),
         interface_visible: state.global.show_interface,

@@ -678,6 +678,41 @@ impl Drop for Client {
     }
 }
 
+/// Counts established selections, not frames: pending and debounced clients still
+/// request reader work. Updated under the client's subscription lock.
+#[derive(Default)]
+struct DemandCounts {
+    lanes: [usize; 4],
+}
+
+impl DemandCounts {
+    fn change(&mut self, demand: crate::state::SubscriptionDemand, add: bool) {
+        for (count, selected) in self.lanes.iter_mut().zip([
+            demand.regular,
+            demand.precise,
+            demand.gameplay_regular,
+            demand.gameplay_precise,
+        ]) {
+            if selected {
+                if add {
+                    *count += 1;
+                } else {
+                    *count -= 1;
+                }
+            }
+        }
+    }
+
+    fn aggregate(&self) -> crate::state::SubscriptionDemand {
+        crate::state::SubscriptionDemand {
+            regular: self.lanes[0] != 0,
+            precise: self.lanes[1] != 0,
+            gameplay_regular: self.lanes[2] != 0,
+            gameplay_precise: self.lanes[3] != 0,
+        }
+    }
+}
+
 struct HubInner {
     provider: Arc<dyn V2SubscriptionProvider>,
     debounce: ArcSwap<Duration>,
@@ -695,6 +730,7 @@ struct HubInner {
     wake_pending: AtomicBool,
     /// Union of producing lanes requested by open clients' established selections.
     demand: watch::Sender<crate::state::SubscriptionDemand>,
+    demand_counts: Mutex<DemandCounts>,
     shutdown: CancellationToken,
     #[cfg(test)]
     extractions: AtomicU64,
@@ -730,6 +766,7 @@ impl V2SubscriptionHub {
             epoch: Instant::now(),
             wake_pending: AtomicBool::new(false),
             demand: watch::Sender::new(crate::state::SubscriptionDemand::default()),
+            demand_counts: Mutex::new(DemandCounts::default()),
             shutdown: CancellationToken::new(),
             #[cfg(test)]
             extractions: AtomicU64::new(0),
@@ -793,7 +830,7 @@ impl V2SubscriptionHub {
         };
         for client in clients.values() {
             client.close(code);
-            Self::release_client(client);
+            self.release_client(client);
         }
         self.prune_plans();
         *lock(&self.0.document) = None;
@@ -838,15 +875,30 @@ impl V2SubscriptionHub {
             removed
         };
         if let Some(client) = removed {
-            Self::release_client(&client);
+            self.release_client(&client);
         }
         self.prune_plans();
         self.clear_document_if_unused();
         self.wake();
     }
 
-    fn release_client(client: &Client) {
-        *lock(&client.subscription) = None;
+    fn release_client(&self, client: &Client) {
+        if let Some(subscription) = lock(&client.subscription).take() {
+            self.change_demand(subscription.plan.demand, false);
+        }
+    }
+
+    fn change_demand(&self, demand: crate::state::SubscriptionDemand, add: bool) {
+        let mut counts = lock(&self.0.demand_counts);
+        counts.change(demand, add);
+        let subscribed = counts.aggregate();
+        // Publish under the count lock so concurrent subscribe/close operations
+        // cannot publish an older aggregate after a newer one.
+        self.0.demand.send_if_modified(|current| {
+            let changed = *current != subscribed;
+            *current = subscribed;
+            changed
+        });
     }
 
     fn prune_plans(&self) {
@@ -910,7 +962,6 @@ impl V2SubscriptionHub {
             self.0.wake_pending.swap(false, Ordering::SeqCst);
             let source_revision = *publications.borrow_and_update();
             let deadline = self.dispatch(source_revision);
-            self.refresh_demand();
             tokio::select! {
                 _ = self.0.shutdown.cancelled() => break,
                 changed = publications.changed() => if changed.is_err() { break; },
@@ -924,27 +975,6 @@ impl V2SubscriptionHub {
         self.0
             .demand
             .send_replace(crate::state::SubscriptionDemand::default());
-    }
-
-    fn refresh_demand(&self) {
-        let subscribed = self.0.clients.load().values().fold(
-            crate::state::SubscriptionDemand::default(),
-            |demand, client| {
-                if client.state.load(Ordering::Acquire) == CLOSED {
-                    return demand;
-                }
-                lock(&client.subscription)
-                    .as_ref()
-                    .map_or(demand, |subscription| {
-                        demand.union(subscription.plan.demand)
-                    })
-            },
-        );
-        self.0.demand.send_if_modified(|current| {
-            let changed = *current != subscribed;
-            *current = subscribed;
-            changed
-        });
     }
 
     fn dispatch(&self, source_revision: u64) -> Option<Instant> {
@@ -1216,6 +1246,7 @@ impl V2SubscriptionConnection {
             return Err(SubscriptionRequestError::AlreadySubscribed);
         }
         let plan = self.hub.intern_plan(compile_pointers(pointers)?);
+        self.hub.change_demand(plan.demand, true);
         *slot = Some(Subscription {
             plan,
             baseline: None,

@@ -3,6 +3,85 @@ mod pause;
 use super::*;
 
 #[test]
+fn settings_snapshots_share_defaults_and_copy_only_changed_values() {
+    let initial = SettingsState::default();
+    let mut settings = initial.clone();
+    assert!(Arc::ptr_eq(
+        &initial.values,
+        &SettingsState::default().values
+    ));
+    assert!(Arc::ptr_eq(&initial.values, &settings.values));
+
+    let unchanged = [
+        ("mania.scrollDirection".into(), json!(1)),
+        ("visual.hitLighting".into(), Value::Null),
+        ("missing".into(), json!(1)),
+        ("mania.missing".into(), json!(1)),
+        ("mania.scrollSpeed.missing".into(), json!(1)),
+    ]
+    .into_iter()
+    .collect();
+    settings.apply(&unchanged);
+    assert!(Arc::ptr_eq(&initial.values, &settings.values));
+
+    let update = [
+        ("mania.scrollDirection".into(), json!(0)),
+        ("visual.hitLighting".into(), json!(true)),
+        ("groupType".into(), json!(7)),
+    ]
+    .into_iter()
+    .collect();
+    settings.apply(&update);
+    assert!(!Arc::ptr_eq(&initial.values, &settings.values));
+    assert_eq!(initial.values["mania"]["scrollDirection"], 1);
+    assert_eq!(initial.values["visual"]["hitLighting"], Value::Null);
+    assert_eq!(settings.values["mania"]["scrollDirection"], 0);
+    assert_eq!(settings.values["visual"]["hitLighting"], true);
+    assert_eq!(settings.values["groupType"], 7);
+    let published = settings.clone();
+    settings.apply(&update);
+    assert!(Arc::ptr_eq(&published.values, &settings.values));
+
+    settings.apply(&[("mania".into(), Value::Null)].into_iter().collect());
+    assert_eq!(settings.values["mania"], Value::Null);
+    assert_eq!(published.values["mania"]["scrollDirection"], 0);
+    assert_eq!(*SettingsState::default().values, *initial.values);
+}
+
+#[test]
+fn settings_updates_preserve_nested_object_order_and_number_representation() {
+    let mut settings = SettingsState::default();
+    let original: Value =
+        serde_json::from_str(r#"{"first":{"a":1,"b":2},"array":[{"x":1,"y":2}],"zero":0.0}"#)
+            .unwrap();
+    settings.apply(&[("mania".into(), original)].into_iter().collect());
+    let published = settings.clone();
+    let replacement = r#"{"zero":-0.0,"array":[{"y":2,"x":1}],"first":{"b":2,"a":1}}"#;
+    settings.apply(
+        &[("mania".into(), serde_json::from_str(replacement).unwrap())]
+            .into_iter()
+            .collect(),
+    );
+    assert!(!Arc::ptr_eq(&published.values, &settings.values));
+    assert_eq!(
+        serde_json::to_string(&settings.values["mania"]).unwrap(),
+        replacement
+    );
+
+    let published = settings.clone();
+    settings.apply(
+        &[("mania.zero".into(), serde_json::json!(0.0))]
+            .into_iter()
+            .collect(),
+    );
+    assert!(!Arc::ptr_eq(&published.values, &settings.values));
+    assert_eq!(
+        settings.values["mania"]["zero"].as_f64().unwrap().to_bits(),
+        0.0_f64.to_bits()
+    );
+}
+
+#[test]
 fn state_defaults_and_retry_retention_match_source_contract() {
     let settings = SettingsState::default();
     assert_eq!(settings.values["mania"]["scrollDirection"], 1);

@@ -294,7 +294,7 @@ fn regular(input: &Input) -> RegularState {
     let mut settings_values = SettingsState::default().values;
     if let Some(object) = services.settings.as_object() {
         for (key, value) in object {
-            settings_values.insert(key.clone(), value.clone());
+            Arc::make_mut(&mut settings_values).insert(key.clone(), value.clone());
         }
     }
 

@@ -58,7 +58,7 @@ fn direct_encoding_matches_dto_for_sparse_variants() {
         ApiRuntimeSettings::default(),
         |regular, precise| {
             let mut regular = populated_regular(regular, 1.5, "x");
-            regular.settings.values.clear();
+            Arc::make_mut(&mut regular.settings.values).clear();
             regular.menu = Default::default();
             regular.beatmap.attributes = None;
             regular.beatmap.parsed = None;

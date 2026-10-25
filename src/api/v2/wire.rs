@@ -257,9 +257,13 @@ fn write_settings(out: &mut Vec<u8>, state: &RegularState, source: ClientType) -
     let mania = top("mania");
     let visual = build_visual(s);
     let scroll_direction = setting_i64(child(mania, "scrollDirection"));
-    let lazer_speed = child(mania, "scrollSpeed")
-        .and_then(Value::as_f64)
-        .filter(|speed| source == ClientType::Lazer && speed.is_finite() && *speed > 0.0);
+    let lazer_speed = if source == ClientType::Lazer {
+        child(mania, "scrollSpeed")
+            .and_then(Value::as_f64)
+            .filter(|speed| speed.is_finite() && *speed > 0.0)
+    } else {
+        None
+    };
     let sort = setting_i64(top("sortType"));
     let group = setting_i64(top("groupType"));
     let progress_bar = setting_i64(top("progressBarType"));
