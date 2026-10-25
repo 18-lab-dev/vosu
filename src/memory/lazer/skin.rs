@@ -216,7 +216,13 @@ mod tests {
             skin.builtin, None,
             "an imported skin named Argon is not builtin"
         );
-        assert_eq!(skin.files["skin.ini"], format!("a/aa/{}", "a".repeat(64)));
+        assert_eq!(
+            skin.files["skin.ini"],
+            std::path::Path::new("a")
+                .join("aa")
+                .join("a".repeat(64))
+                .to_string_lossy()
+        );
         assert!(Arc::ptr_eq(&skin, &decoder.read_current_skin().unwrap()));
     }
 

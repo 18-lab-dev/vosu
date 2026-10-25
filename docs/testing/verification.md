@@ -93,6 +93,11 @@ Criterion benchmarks cover scanner/snapshot reads, beatmap parsing/calculation/c
 
 Keep unit tests for distinct consumer-visible behavior: boundaries, precedence, errors, state transitions, security, numerical results, and concurrency or resource bounds. Do not add tests that only repeat constants/help text, construct and read back fields, prove standard-library clone/ownership behavior, or echo arguments through mocks. When committed source-oracle fixtures already cover a wire contract, add a focused unit test only for an uncovered case; do not duplicate the same default or not-ready payload. Preserve provenance-pinned upstream tests through their owning workflow rather than culling them as first-party tests.
 
+Filesystem fixtures must use names legal on both Windows and Linux. Build
+expected native paths one component at a time with `Path::join`; reserve
+literal `/` separators for URL or wire-format assertions. HTML-escaping tests
+that create real directories can use `&`, rather than Windows-invalid `<`/`>`.
+
 When a change crosses [runtime boundaries](../architecture/overview.md), run the narrowest affected contract first and then the platform/live gate appropriate to the observable behavior. Do not substitute a compile-only check for behavior verification.
 
 ## Release preparation checks — 2026-10-08

@@ -51,7 +51,7 @@ fn tool_context_exposes_only_selected_instance_game_and_skin_paths() {
         assert_eq!(context["skin"]["name"], "Selected Skin");
         if source == ClientType::Stable {
             assert_eq!(context["osu_dir"], serde_json::json!(game));
-            assert_eq!(context["skin"]["folder"], serde_json::json!(game.join("Skins/Selected Skin")));
+            assert_eq!(context["skin"]["folder"], serde_json::json!(game.join("Skins").join("Selected Skin")));
         } else {
             assert!(context["osu_dir"].is_null());
             assert!(context["skin"]["folder"].is_null());
@@ -278,7 +278,7 @@ async fn one_unreadable_overlay_is_an_error_card_not_an_empty_page() {
     let good = static_root.join("good");
     std::fs::create_dir_all(&good).unwrap();
     std::fs::write(good.join("index.html"), "").unwrap();
-    let bad = static_root.join("bad <one>");
+    let bad = static_root.join("bad &one");
     std::fs::create_dir_all(&bad).unwrap();
     std::fs::write(bad.join("metadata.txt"), vec![b'x'; 64 * 1024 + 1]).unwrap();
 
@@ -311,9 +311,9 @@ async fn one_unreadable_overlay_is_an_error_card_not_an_empty_page() {
     // naming the file, with the actions that fix it. The count is the cards.
     assert!(dashboard.contains(r#"data-count="installed">2</span>"#));
     assert!(dashboard.contains(r#"data-overlay-id="good""#));
-    assert!(dashboard.contains(r#"<article class="counter-card is-broken" data-overlay-id="bad &lt;one&gt;""#));
+    assert!(dashboard.contains(r#"<article class="counter-card is-broken" data-overlay-id="bad &amp;one""#));
     assert!(dashboard.contains("<code>metadata.txt: "));
-    assert!(dashboard.contains(r#"data-action="delete-counter" data-folder="bad &lt;one&gt;""#));
+    assert!(dashboard.contains(r#"data-action="delete-counter" data-folder="bad &amp;one""#));
     assert!(!dashboard.contains("No overlays yet"));
 
     counters.shutdown().await;
