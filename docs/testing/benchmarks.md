@@ -70,120 +70,139 @@ do not attribute changes to that separate configuration-plan experiment.
 
 ## vosu hot paths
 
-Measured on **2026-10-10**. Both runs measured the released `v1.0.0` commit
-`57b322bae580198d0c0fae7360615348b85a47e8` with Rust 1.96.1, locked
-dependencies, and Criterion defaults (100 samples, 3 s warm-up, 5 s
-measurement). Values are arithmetic means and 95% confidence intervals from
-Criterion's `new/estimates.json`. Linux and hosted Windows timings come from
-different machines and are not comparable with each other.
+Current Linux host and native Windows guest results follow. Each platform
+compares versions on the same machine; absolute timings across the platforms
+are not comparable. Ranges span invocation means, not confidence intervals.
 
 ### Linux
 
-- Ryzen 9 9950X3D, CachyOS Linux `7.2.9-1-cachyos-bore`, performance governor,
-  no CPU pinning or isolation. Clean checkout of the release commit. One-minute
-  host load was 6.35 at the start and 5.56 at the end; the idle Windows VM was
-  running on the same host.
-- Commands are those under [Reproduce](#reproduce), with a fresh `CRITERION_HOME`.
-  All 25 hot-path cases completed successfully.
+- Measured **2026-10-25**, final 1.2.0 source `77080cd`, Ryzen 9 9950X3D
+  **host**, kernel `7.2.10-1-cachyos-bore`, Rust 1.96.1, performance governor,
+  boost enabled, default release features and locked dependencies; VM off.
+- Three invocations per case, pinned to CPU 15 (frequency CCD), **taskset
+  only, no CPU/IRQ isolation**. Values are medians and min–max ranges of
+  three Criterion arithmetic means, not confidence intervals. Criterion:
+  60 samples, 2 s warm-up, 20 s measurement.
+- Full paired comparison, loads and caveats:
+  [Performance changes for 1.2.0](#performance-changes-for-120-paired).
 
-| Benchmark ID | Mean / iteration | 95% confidence interval |
+| Benchmark ID | Median mean / iteration | Range of means |
 | --- | ---: | ---: |
-| `batch_scan/three_patterns_2mib` | 55.880 µs | 55.244–56.538 µs |
-| `linux_process_memory/current_process_64_bytes` | 323.225 ns | 320.984–326.511 ns |
-| `map_calculation/full_difficulty_performance` | 12.235 µs | 12.199–12.273 µs |
-| `map_calculation/gradual_all_objects` | 10.311 µs | 10.277–10.349 µs |
-| `map_calculation/parse` | 1.565 µs | 1.558–1.571 µs |
-| `map_calculation/unchanged_cache_key` | 10.284 ns | 10.254–10.317 ns |
-| `publication/unfiltered_clients/1` | 2.052 ms | 2.046–2.058 ms |
-| `publication/unfiltered_clients/100` | 2.055 ms | 2.047–2.063 ms |
-| `publication/unfiltered_clients/1000` | 2.155 ms | 2.140–2.170 ms |
-| `raw_snapshot_reads/lazer_regular_fields` | 5.998 µs | 5.930–6.058 µs |
-| `raw_snapshot_reads/stable_regular_fields` | 207.013 ns | 206.329–207.740 ns |
-| `serialization_cache/stream_companion_bytes_clone` | 12.951 ns | 12.896–13.033 ns |
-| `serialization_cache/v1_bytes_clone` | 13.108 ns | 13.039–13.192 ns |
-| `serialization_cache/v2_bytes_clone` | 12.906 ns | 12.873–12.947 ns |
-| `serialization_cache/v2_precise_bytes_clone` | 13.051 ns | 12.999–13.107 ns |
-| `serializers_cold/stream_companion` | 7.037 µs | 6.136–8.727 µs |
-| `serializers_cold/v1` | 5.048 µs | 4.907–5.195 µs |
-| `serializers_cold/v2` | 11.471 µs | 10.168–13.911 µs |
-| `serializers_cold/v2_precise` | 3.851 µs | 3.747–3.961 µs |
-| `v2_subscription/distinct_plans/1` | 7.899 µs | 7.871–7.930 µs |
-| `v2_subscription/distinct_plans/100` | 43.196 µs | 43.060–43.335 µs |
-| `v2_subscription/distinct_plans/1000` | 442.293 µs | 439.052–445.461 µs |
-| `v2_subscription/shared_plan/1` | 7.899 µs | 7.869–7.929 µs |
-| `v2_subscription/shared_plan/100` | 26.987 µs | 26.902–27.079 µs |
-| `v2_subscription/shared_plan/1000` | 231.969 µs | 228.720–236.355 µs |
+| `batch_scan/three_patterns_2mib` | 47.752 µs | 47.254–47.972 µs |
+| `linux_process_memory/current_process_64_bytes` | 249.187 ns | 247.137–249.667 ns |
+| `map_calculation/full_difficulty_performance` | 11.936 µs | 11.849–12.216 µs |
+| `map_calculation/gradual_all_objects` | 10.025 µs | 9.946–10.235 µs |
+| `map_calculation/parse` | 1.553 µs | 1.539–1.584 µs |
+| `map_calculation/unchanged_cache_key` | 10.140 ns | 10.130–10.352 ns |
+| `publication/unfiltered_clients/1` | 2.0070 ms | 2.0066–2.0072 ms |
+| `publication/unfiltered_clients/100` | 2.0109 ms | 2.0087–2.0143 ms |
+| `publication/unfiltered_clients/1000` | 2.0492 ms | 2.0443–2.0521 ms |
+| `raw_snapshot_reads/lazer_regular_fields` | 10.725 µs | 10.536–10.900 µs |
+| `raw_snapshot_reads/stable_regular_fields` | 80.965 ns | 80.018–83.753 ns |
+| `serialization_cache/stream_companion_bytes_clone` | 12.645 ns | 12.643–13.404 ns |
+| `serialization_cache/v1_bytes_clone` | 12.659 ns | 12.643–12.869 ns |
+| `serialization_cache/v2_bytes_clone` | 12.644 ns | 12.642–13.452 ns |
+| `serialization_cache/v2_precise_bytes_clone` | 12.648 ns | 12.647–13.401 ns |
+| `serializers_cold/stream_companion` | 1.661 µs | 1.621–1.663 µs |
+| `serializers_cold/v1` | 1.439 µs | 1.435–1.464 µs |
+| `serializers_cold/v2` | 2.892 µs | 2.839–3.040 µs |
+| `serializers_cold/v2_precise` | 1.168 µs | 1.158–1.172 µs |
+| `v2_subscription/distinct_plans/1` | 7.473 µs | 7.469–7.508 µs |
+| `v2_subscription/distinct_plans/100` | 14.314 µs | 14.243–14.700 µs |
+| `v2_subscription/distinct_plans/1000` | 82.628 µs | 81.678–84.289 µs |
+| `v2_subscription/shared_plan/1` | 7.462 µs | 7.431–7.534 µs |
+| `v2_subscription/shared_plan/100` | 12.622 µs | 12.614–12.717 µs |
+| `v2_subscription/shared_plan/1000` | 57.901 µs | 57.856–60.150 µs |
 
-- **`linux_process_memory/current_process_64_bytes`** was measured with the
-  historical before-and-after pidfd generation checks. Current code performs
-  one post-read check; the recorded timing has not been rerun for that change.
-- Cold-serializer intervals are wide, especially StreamCompanion and v2;
-  confirm differences in them with isolated reruns.
+### Native Windows hot paths
 
-### Hosted Windows
+Measured on **2026-10-25**, baseline `c791512` and 1.2.0 `774fd0f`
+(production-code-identical to `77080cd`, including `a44183b`).
+Windows 11 IoT Enterprise LTSC Evaluation guest, Ryzen 9 9950X3D,
+4 cores / 8 logical processors, 32 GiB RAM; Rust 1.96.1, native MSVC,
+locked dependencies and `--no-default-features`. Three paired rounds
+alternated baseline→candidate, candidate→baseline, baseline→candidate.
+All six hot-path and six deterministic-reader invocations exited 0.
 
-The [`Windows benchmarks`](../../.github/workflows/benchmarks-windows.yml) workflow
-ran on `windows-latest` (run `38101226442`): Windows Server 2025 Datacenter,
-runner image `win25-vs2026` `20260925.250.1`, AMD EPYC 7763 with one core / two
-logical processors, 8 GiB memory, native MSVC. Both targets exited 0; all 29
-hot-path cases completed, including the five `windows_process_memory` cases.
-Shared hosted runners add noise, and the uploaded artifact expires after 14 days.
+Each process was launched with `start "" /b /wait /affinity 4` (logical CPU 2).
+The launch command is the hot-path pinning evidence: the immediate
+child-affinity snapshots did not independently observe those short-lived
+launcher children. Each source had an independent release target and each
+source/round a fresh Criterion home. Criterion used the Windows workflow
+defaults: 100 samples, 3 s warm-up and 5 s measurement, not the Linux
+2 s / 20 s / 60-sample protocol. Values are medians of three arithmetic
+means; parentheses span them, not their individual 95% confidence intervals.
 
-| Benchmark ID | Mean / iteration | 95% confidence interval |
+| Native Windows benchmark | 1.1.0 median mean (range) | 1.2.0 median mean (range) | Change |
+| --- | ---: | ---: | ---: |
+| `batch_scan/three_patterns_2mib` | 193.705 µs (192.551–195.794) | 192.302 µs (174.802–194.273) | -0.7% |
+| `map_calculation/full_difficulty_performance` | 16.198 µs (15.404–16.238) | 16.109 µs (15.593–16.149) | -0.6% |
+| `map_calculation/gradual_all_objects` | 12.879 µs (12.730–13.115) | 12.767 µs (12.763–12.777) | -0.9% |
+| `map_calculation/parse` | 2.111 µs (2.085–2.155) | 2.161 µs (2.157–2.185) | +2.4% |
+| `map_calculation/unchanged_cache_key` | 15.677 ns (15.556–15.691) | 15.682 ns (15.539–15.736) | +0.0% |
+| `publication/unfiltered_clients/1` | 17.343 ms (17.305–17.396) | 17.450 ms (17.402–17.467) | +0.6% |
+| `publication/unfiltered_clients/100` | 17.488 ms (17.474–17.517) | 17.373 ms (17.366–17.421) | -0.7% |
+| `publication/unfiltered_clients/1000` | 17.369 ms (17.272–17.489) | 17.478 ms (17.436–17.502) | +0.6% |
+| `raw_snapshot_reads/lazer_regular_fields` | 10.911 µs (10.892–10.915) | 10.936 µs (10.915–10.952) | +0.2% |
+| `raw_snapshot_reads/stable_regular_fields` | 109.812 ns (109.608–112.775) | 111.277 ns (109.040–112.168) | +1.3% |
+| `serialization_cache/stream_companion_bytes_clone` | 13.949 ns (13.793–14.085) | 13.922 ns (13.817–14.102) | -0.2% |
+| `serialization_cache/v1_bytes_clone` | 13.984 ns (13.803–14.673) | 13.686 ns (13.672–13.910) | -2.1% |
+| `serialization_cache/v2_bytes_clone` | 13.879 ns (13.829–13.881) | 13.845 ns (13.784–14.153) | -0.2% |
+| `serialization_cache/v2_precise_bytes_clone` | 13.996 ns (13.796–14.012) | 13.833 ns (13.817–14.178) | -1.2% |
+| `serializers_cold/stream_companion` | 2.556 µs (2.555–2.574) | 1.275 µs (1.250–1.281) | -50.1% |
+| `serializers_cold/v1` | 2.402 µs (2.308–2.426) | 1.031 µs (1.027–1.077) | -57.1% |
+| `serializers_cold/v2` | 3.579 µs (3.573–3.635) | 2.403 µs (2.392–2.575) | -32.9% |
+| `serializers_cold/v2_precise` | 2.093 µs (2.018–2.099) | 0.773 µs (0.768–0.776) | -63.1% |
+| `v2_subscription/distinct_plans/1` | 10.049 µs (9.855–10.141) | 10.191 µs (10.090–10.502) | +1.4% |
+| `v2_subscription/distinct_plans/100` | 18.097 µs (17.883–18.396) | 18.228 µs (18.051–18.263) | +0.7% |
+| `v2_subscription/distinct_plans/1000` | 102.654 µs (100.972–102.741) | 103.223 µs (102.743–103.979) | +0.6% |
+| `v2_subscription/shared_plan/1` | 10.178 µs (10.155–10.280) | 10.249 µs (10.182–10.305) | +0.7% |
+| `v2_subscription/shared_plan/100` | 16.203 µs (16.054–16.313) | 16.171 µs (16.101–16.346) | -0.2% |
+| `v2_subscription/shared_plan/1000` | 67.641 µs (67.379–67.741) | 67.739 µs (67.726–67.886) | +0.1% |
+| `windows_process_memory/read_exact_64_bytes` | 391.438 ns (389.747–399.585) | 390.705 ns (390.237–394.285) | -0.2% |
+| `windows_process_memory/read_many_contiguous_8x8_bytes` | 424.115 ns (422.765–429.345) | 425.731 ns (424.527–427.908) | +0.4% |
+| `windows_process_memory/read_many_gapped_8x8_bytes` | 427.901 ns (427.541–429.693) | 426.667 ns (425.294–430.284) | -0.3% |
+| `windows_process_memory/read_many_single_64_bytes` | 391.900 ns (391.197–393.262) | 390.587 ns (389.327–392.228) | -0.3% |
+| `windows_process_memory/read_many_wide_8x8_bytes` | 1.027 µs (1.023–1.028) | 1.036 µs (1.029–1.042) | +0.9% |
+
+All 29 IDs exist on both sides. Cold serializers are 32.9–63.1% faster,
+with disjoint ranges; the other hot-path changes span -2.1% to +2.4%.
+The deterministic synthetic reader below is not a live Windows lazer run:
+live lazer was **not measured** because the client crashed in this VM environment.
+
+| Deterministic reader | 1.1.0 median (range), ns | 1.2.0 median (range), ns |
 | --- | ---: | ---: |
-| `batch_scan/three_patterns_2mib` | 334.575 µs | 328.828–341.114 µs |
-| `map_calculation/full_difficulty_performance` | 35.928 µs | 35.016–36.960 µs |
-| `map_calculation/gradual_all_objects` | 28.963 µs | 28.173–29.889 µs |
-| `map_calculation/parse` | 5.190 µs | 5.049–5.352 µs |
-| `map_calculation/unchanged_cache_key` | 21.580 ns | 21.006–22.260 ns |
-| `publication/unfiltered_clients/1` | 13.790 ms | 13.332–14.225 ms |
-| `publication/unfiltered_clients/100` | 14.027 ms | 13.618–14.425 ms |
-| `publication/unfiltered_clients/1000` | 14.193 ms | 13.815–14.565 ms |
-| `raw_snapshot_reads/lazer_regular_fields` | 12.997 µs | 12.720–13.329 µs |
-| `raw_snapshot_reads/stable_regular_fields` | 826.833 ns | 807.058–849.349 ns |
-| `serialization_cache/stream_companion_bytes_clone` | 20.804 ns | 19.121–23.119 ns |
-| `serialization_cache/v1_bytes_clone` | 18.739 ns | 18.613–18.884 ns |
-| `serialization_cache/v2_bytes_clone` | 18.718 ns | 18.576–18.883 ns |
-| `serialization_cache/v2_precise_bytes_clone` | 18.871 ns | 18.724–19.041 ns |
-| `serializers_cold/stream_companion` | 22.272 µs | 21.504–23.163 µs |
-| `serializers_cold/v1` | 13.098 µs | 12.605–13.787 µs |
-| `serializers_cold/v2` | 46.428 µs | 44.031–49.110 µs |
-| `serializers_cold/v2_precise` | 9.901 µs | 7.835–13.861 µs |
-| `v2_subscription/distinct_plans/1` | 24.712 µs | 23.841–25.867 µs |
-| `v2_subscription/distinct_plans/100` | 136.162 µs | 132.872–139.805 µs |
-| `v2_subscription/distinct_plans/1000` | 1.427 ms | 1.361–1.496 ms |
-| `v2_subscription/shared_plan/1` | 32.855 µs | 31.394–34.589 µs |
-| `v2_subscription/shared_plan/100` | 53.584 µs | 52.139–55.301 µs |
-| `v2_subscription/shared_plan/1000` | 378.174 µs | 371.335–385.717 µs |
-| `windows_process_memory/read_exact_64_bytes` | 486.939 ns | 477.184–498.445 ns |
-| `windows_process_memory/read_many_contiguous_8x8_bytes` | 541.494 ns | 533.365–550.998 ns |
-| `windows_process_memory/read_many_gapped_8x8_bytes` | 569.688 ns | 554.376–586.886 ns |
-| `windows_process_memory/read_many_single_64_bytes` | 480.538 ns | 469.901–493.419 ns |
-| `windows_process_memory/read_many_wide_8x8_bytes` | 1.284 µs | 1.259–1.314 µs |
+| Native self-process lazer precise | 19793.80 (19620.30–19795.30) | 19638.10 (19593.80–19642.30) |
+| Stable idle decoder | 341.76 (337.98–342.97) | 335.10 (335.07–339.18) |
+| Stable key-overlay decoder | 296.33 (293.03–297.56) | 297.54 (296.54–300.32) |
 
-Memory reader on the hosted runner: lazer precise capture 48,561.60 ns,
-stable idle 1,264.90 ns, stable key overlay 632.37 ns per cycle, with the same
-read counts as Linux.
+Reader values summarize three invocations, each reporting the median of
+nine sample means. Counts match both sides: lazer 24 exact + 2 batch calls /
+912 requested bytes; stable key-overlay 5 exact + 2 batch calls / 258 bytes.
+Raw rounds, individual Criterion intervals, binary/source provenance and
+`table.txt` / `summary.json` are retained under
+`~/.local/share/vosu-1.2.0-evidence/Windows/benchmarks/`.
 
 ## Deterministic memory reader
 
-Measured on **2026-10-12** at `9c47ccbe6d0a70da4b723bf7f5c30b89489251a9` on the
-Linux host described under [vosu hot paths](#vosu-hot-paths), with the Linux
-release features. Values are the median and range of seven invocations, each
-reporting the median of nine sample means. Lazer: 2,000 warm-up cycles,
-1,000 per sample; stable: 20,000 warm-up cycles, 20,000 per sample.
+Measured **2026-10-25** at final 1.2.0 source `77080cd`, on the Linux host
+and pinned core described in [the paired run](#performance-changes-for-120-paired),
+with default release features. Values are the median and range of three
+invocations, each reporting the median of nine sample means. Lazer:
+2,000 warm-up cycles, 1,000 per sample; stable: 20,000 warm-up cycles,
+20,000 per sample. This harness is not Criterion.
 
 | Workload | Time / cycle |
 | --- | ---: |
-| Native self-process lazer precise capture, 18 keys | 10.400 µs (10.247–10.525) |
-| Stable idle decoder | 237.55 ns (233.13–247.80) |
-| Stable key-overlay decoder | 232.90 ns (231.24–238.97) |
+| Native self-process lazer precise capture, 18 keys | 8.842 µs (8.680–8.952) |
+| Stable idle decoder | 278.41 ns (271.19–282.35) |
+| Stable key-overlay decoder | 234.41 ns (233.06–242.16) |
 
 Counting fixtures: lazer 24 exact + 2 batch reads / 912 requested bytes per
 cycle; stable key-overlay 5 exact + 2 batch reads / 258 bytes. These are API
-counts, not syscall or allocation measurements. The lazer capture is also the
-vosu side of the [precise-reader fixture](#precise-reader-fixture), which
-records the same run.
+counts, not syscall or allocation measurements. The separate
+[precise-reader fixture](#precise-reader-fixture) comparison retains its
+previous run and was not rerun here.
 
 ## Performance changes for 1.1.0 (paired)
 
@@ -290,121 +309,146 @@ cargo bench --locked --no-default-features --package vosu --target x86_64-pc-win
 cargo bench --locked --no-default-features --package vosu --target x86_64-pc-windows-msvc --bench memory_reader_bench
 ```
 
-## Performance regression fixes for 1.2.0 (paired)
+## Performance changes for 1.2.0 (paired)
 
-Measured on the Linux host on 2026-10-24 with Rust 1.96.1, locked
-dependencies, default release features and independent build/ Criterion
-directories under `~/.cache/vosu-agents/PerfRegressions/`. The baseline is
-`c791512`; the optimized source is the staged `perf/1.2.0-regressions` tree
-based on `f170957`. Its signed commit failed with a GPG signing timeout and
-was not retried or bypassed. `evidence/environment.json` records the exact
-staged-patch SHA-256 used for this run.
+Measured **2026-10-25**, 1.1.0 release `c791512` from `git archive` versus
+final 1.2.0 `77080cd` (production-code-identical to Windows-tested `774fd0f`,
+including regression fix `a44183b`). This is the **Ryzen 9 9950X3D host**,
+not the Linux guest used in the 1.1.0 paired section; absolute numbers
+are not comparable with that earlier section.
+Kernel `7.2.10-1-cachyos-bore`, Rust 1.96.1 (`31fca3adb`), performance
+governor, boost enabled, default release features, `--locked`; VM off.
 
-Three alternating baseline/optimized rounds used only `serializers_cold`
-and `v2_subscription`, pinned with `taskset -c 15`. **No CPU/IRQ isolation
-or pkexec was used.** These are not the isolated BenchVosu results:
-background host activity was not excluded. Criterion used 2 s warm-up,
-20 s measurement, 60 samples and `--noplot`. Values below are medians of
-three arithmetic means; parentheses span those means, in µs. Raw logs,
-per-round Criterion results, `summary.json` and `table.txt` are in the
-cache's `evidence/` directory. These synthetic results are not live-client
-or whole-daemon measurements.
+Both targets alternated 1.1.0→1.2.0 for three rounds per side, all processes
+pinned with `taskset -c 15` on the frequency CCD (32 MiB L3, CPUs
+8–15/24–31), not the 96 MiB V-cache CCD. **No pkexec, CPU/IRQ isolation,
+cpuset restrictions or boot `isolcpus` were used.** Sibling 31 was unused
+by us but other system work could run on either CPU. Conclusions depend
+on the paired alternation, not absolute stability. This supersedes the
+earlier partial regression-fix measurements.
 
-| Benchmark | 1.1.0 µs (range) | Optimized µs (range) | Change |
-| --- | ---: | ---: | ---: |
-| `serializers_cold/stream_companion` | 4.167 (4.100–4.891) | 1.576 (1.569–1.613) | -62.2% |
-| `serializers_cold/v1` | 3.563 (3.498–3.777) | 1.374 (1.359–1.464) | -61.4% |
-| `serializers_cold/v2` | 5.050 (4.948–5.052) | 2.798 (2.788–2.865) | -44.6% |
-| `serializers_cold/v2_precise` | 3.478 (3.384–3.490) | 1.137 (1.125–1.145) | -67.3% |
-| `v2_subscription/distinct_plans/1` | 7.498 (7.367–7.760) | 7.472 (7.434–7.510) | -0.3% |
-| `v2_subscription/distinct_plans/100` | 14.503 (14.339–14.549) | 14.398 (14.306–14.436) | -0.7% |
-| `v2_subscription/distinct_plans/1000` | 80.893 (80.178–86.994) | 81.514 (81.233–82.830) | +0.8% |
-| `v2_subscription/shared_plan/1` | 8.573 (7.481–8.615) | 7.448 (7.399–7.870) | -13.1% |
-| `v2_subscription/shared_plan/100` | 12.771 (12.626–14.618) | 12.600 (12.575–12.642) | -1.3% |
-| `v2_subscription/shared_plan/1000` | 58.090 (57.957–58.213) | 57.772 (57.759–57.886) | -0.5% |
+The runner waited for the **one-minute** host load to fall below 1.0
+before each side's round; five/fifteen-minute loads could remain higher.
+Recorded 1 / 5 / 15 minute start/end loads:
 
-The former non-overlapping subscription regressions are gone: the largest
-remaining increase is 0.8%, with overlapping three-round ranges.
-Subscriptions update per-lane reference counts when established/released;
-publications no longer scan or lock selections to calculate demand.
-Gameplay/menu lane activation, parent-subtree inheritance, pending-frame
-demand and multi-client release retain their existing semantics.
+| Round | Version | Start load | End load |
+| --- | --- | --- | --- |
+| 1 | 1.1.0 | 0.69 / 2.89 / 6.58 | 1.66 / 1.99 / 4.36 |
+| 1 | 1.2.0 | 0.77 / 2.27 / 3.89 | 2.46 / 2.59 / 3.29 |
+| 2 | 1.1.0 | 0.98 / 2.03 / 3.02 | 1.53 / 1.73 / 2.46 |
+| 2 | 1.2.0 | 0.67 / 1.44 / 2.31 | 2.07 / 1.55 / 1.93 |
+| 3 | 1.1.0 | 0.86 / 1.29 / 1.81 | 1.31 / 1.43 / 1.68 |
+| 3 | 1.2.0 | 0.85 / 1.31 / 1.63 | 1.63 / 1.56 / 1.62 |
 
-Cold serializers take ownership of each fresh snapshot in the timed
-`iter_batched` closure, so its destruction is timed even though construction
-is not. Since `c791512`, the default settings graph gained a visual object
-with twelve owned keys/nulls plus two optional mania keys/nulls. The v1,
-precise and StreamCompanion encoder implementations did not change in the
-API/model/state diff; all nevertheless paid this larger graph's teardown.
-Settings now share an immutable `Arc<SettingsObject>` and one lazy default
-graph, and settings application copies on actual changes only. This
-removes per-snapshot default graph teardown and avoids deep cloning an
-unchanged graph. All four cold serializers are faster than the baseline;
-v2 additionally skips lazer-only speed lookup/conversion on stable.
-
-Attribution used a separate `f170957` source copy with diagnostic-only
-benchmarks, unpinned, one run each with the same Criterion durations/sample
-count. These are explanatory experiments, **not paired release claims**;
-their small differences include scheduling/layout noise and are not additive.
-`attribution-results.json` records arithmetic means for the graph/drop
-experiment: full settings destruction 2,295 ns; without visual 2,200 ns;
-without the two optional mania keys 2,466 ns; without either 2,174 ns.
-Removing visual/mania defaults preserved default v2 bytes (asserted outside
-timing). The standalone mania teardown effect is not resolved by this run;
-its negative apparent saving must not be treated as a speedup.
-Borrowing batched snapshots, so their destruction is outside timing, gave
-v1 926 ns, v2 3,470 ns, precise 571 ns and StreamCompanion 1,132 ns.
-
-A second experiment retained the entire graph, borrowed snapshots and
-disabled one v2 addition at a time through diagnostic-only flags. Each
-variant shared the same flag-check overhead; `v2-attribution-results.json`
-and `v2-attribution-*.log` retain its results:
-
-| Diagnostic v2 variant | Mean (ns) | Full minus variant (ns) |
-| --- | ---: | ---: |
-| Full | 3,449 | — |
-| Skip visual projection/null scan | 3,338 | 112 |
-| Skip lazer-only speed lookup/conversion | 3,377 | 72 |
-| Skip optional mania bool/f64 lookups | 3,393 | 56 |
-| Skip clock rate/running fields | 3,393 | 56 |
-| Skip play-source classification | 3,428 | 21 |
-
-Only the clock variant intentionally changed default payload bytes; those
-mandatory fields stay in production. Visual/optional-mania/source projection
-also stays: populated states require it. The stable speed lookup was
-unnecessary and is skipped in production. Added skin/render state does not
-own populated graphs in the default cold fixture, and tournament-source
-projection is not exercised by this fixture. Settings sharing removes the
-large common teardown rather than deleting any new renderer fields.
-
-Reproduce the paired command in each source tree, alternating sides three
-times and giving each side its own target and Criterion directory:
+Both sources prepared their offset generator normally over the network.
+Each side used an independent target and Criterion home under
+`~/.cache/vosu-agents/BenchVosu/`: `target-110` / `target-120-final` and
+`criterion-110-final` / `criterion-120-final`. Builds completed before
+timing; no shared artifacts or cross-source Criterion baselines were used.
 
 ```sh
-taskset -c 15 env CARGO_TARGET_DIR=<side-target> CRITERION_HOME=<side-criterion> \
-  cargo bench --locked --package vosu --bench hot_paths -- \
-  '^(serializers_cold/|v2_subscription/)' \
-  --warm-up-time 2 --measurement-time 20 --sample-size 60 --noplot
+python scripts/prepare-offset-generator.py --rid linux-x64
+# Set CARGO_TARGET_DIR and CRITERION_HOME to the corresponding side first.
+taskset -c 15 cargo bench --locked --package vosu --bench hot_paths -- --warm-up-time 2 --measurement-time 20 --sample-size 60 --noplot
+taskset -c 15 cargo bench --locked --package vosu --bench memory_reader_bench
 ```
+
+Criterion settings match the earlier 1.1.0 paired run: 2 s warm-up,
+20 s measurement, 60 samples. Values are medians of three arithmetic
+means from `new/estimates.json`; ranges span those means, not confidence
+intervals. Deterministic-reader rows instead summarize three invocation
+medians of nine sample means. Change is `(1.2.0 / 1.1.0 − 1) × 100%`;
+positive is slower.
+
+| Benchmark | 1.1.0 | 1.2.0 | Change | 1.1.0 range | 1.2.0 range |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `batch_scan/three_patterns_2mib` | 46.498 µs | 47.752 µs | +2.70% | 45.814–49.307 µs | 47.254–47.972 µs |
+| `linux_process_memory/current_process_64_bytes` | 254.575 ns | 249.187 ns | -2.12% | 245.844–255.168 ns | 247.137–249.667 ns |
+| `map_calculation/full_difficulty_performance` | 12.197 µs | 11.936 µs | -2.14% | 11.865–12.566 µs | 11.849–12.216 µs |
+| `map_calculation/gradual_all_objects` | 10.162 µs | 10.025 µs | -1.35% | 9.986–10.591 µs | 9.946–10.235 µs |
+| `map_calculation/parse` | 1.609 µs | 1.553 µs | -3.50% | 1.559–1.624 µs | 1.539–1.584 µs |
+| `map_calculation/unchanged_cache_key` | 10.079 ns | 10.140 ns | +0.61% | 10.074–10.197 ns | 10.130–10.352 ns |
+| Lazer precise capture | 9.382 µs | 8.842 µs | -5.76% | 8.651–9.446 µs | 8.680–8.952 µs |
+| Stable idle decoder | 308.350 ns | 278.410 ns | -9.71% | 280.660–310.750 ns | 271.190–282.350 ns |
+| Stable key-overlay decoder | 247.480 ns | 234.410 ns | -5.28% | 234.750–250.320 ns | 233.060–242.160 ns |
+| `publication/unfiltered_clients/1` | 2.0057 ms | 2.0070 ms | +0.07% | 2.0055–2.0063 ms | 2.0066–2.0072 ms |
+| `publication/unfiltered_clients/100` | 2.0105 ms | 2.0109 ms | +0.02% | 2.0094–2.0117 ms | 2.0087–2.0143 ms |
+| `publication/unfiltered_clients/1000` | 2.0460 ms | 2.0492 ms | +0.15% | 2.0414–2.0476 ms | 2.0443–2.0521 ms |
+| `raw_snapshot_reads/lazer_regular_fields` | 9.885 µs | 10.725 µs | +8.50% | 9.871–9.890 µs | 10.536–10.900 µs |
+| `raw_snapshot_reads/stable_regular_fields` | 81.707 ns | 80.965 ns | -0.91% | 77.419–83.869 ns | 80.018–83.753 ns |
+| `serialization_cache/stream_companion_bytes_clone` | 13.081 ns | 12.645 ns | -3.34% | 12.780–13.536 ns | 12.643–13.404 ns |
+| `serialization_cache/v1_bytes_clone` | 12.791 ns | 12.659 ns | -1.03% | 12.742–12.871 ns | 12.643–12.869 ns |
+| `serialization_cache/v2_bytes_clone` | 13.086 ns | 12.644 ns | -3.38% | 12.789–13.492 ns | 12.642–13.452 ns |
+| `serialization_cache/v2_precise_bytes_clone` | 13.080 ns | 12.648 ns | -3.30% | 12.780–13.576 ns | 12.647–13.401 ns |
+| `serializers_cold/stream_companion` | 4.405 µs | 1.661 µs | -62.28% | 4.264–4.556 µs | 1.621–1.663 µs |
+| `serializers_cold/v1` | 3.976 µs | 1.439 µs | -63.79% | 3.910–3.990 µs | 1.435–1.464 µs |
+| `serializers_cold/v2` | 5.367 µs | 2.892 µs | -46.11% | 5.228–5.416 µs | 2.839–3.040 µs |
+| `serializers_cold/v2_precise` | 3.599 µs | 1.168 µs | -67.56% | 3.399–3.602 µs | 1.158–1.172 µs |
+| `v2_subscription/distinct_plans/1` | 7.676 µs | 7.473 µs | -2.64% | 7.504–8.039 µs | 7.469–7.508 µs |
+| `v2_subscription/distinct_plans/100` | 14.698 µs | 14.314 µs | -2.61% | 14.408–15.273 µs | 14.243–14.700 µs |
+| `v2_subscription/distinct_plans/1000` | 81.320 µs | 82.628 µs | +1.61% | 80.978–84.454 µs | 81.678–84.289 µs |
+| `v2_subscription/shared_plan/1` | 7.785 µs | 7.462 µs | -4.15% | 7.326–8.053 µs | 7.431–7.534 µs |
+| `v2_subscription/shared_plan/100` | 12.922 µs | 12.622 µs | -2.33% | 12.690–13.592 µs | 12.614–12.717 µs |
+| `v2_subscription/shared_plan/1000` | 58.176 µs | 57.901 µs | -0.47% | 57.575–62.336 µs | 57.856–60.150 µs |
+
+Both targets have identical benchmark sources on these commits: all
+25 Criterion IDs and three reader metrics exist on both sides. There are
+no one-sided IDs. Selected-field scheduling is not a separate ID in these
+targets; no unmeasured new path is represented as a speedup. The full suite
+includes all cold-serializer and subscription cases affected by `a44183b`.
+
+Cold serializers are **46.11–67.56% faster**, with disjoint ranges.
+Their owned `iter_batched` closures include snapshot destruction, not
+construction. `a44183b` shares the immutable default settings graph and
+copies on actual changes, removing per-snapshot graph teardown; it also
+skips stable's unnecessary lazer-only speed lookup. Thus these are not
+pure encoder-only timings. Subscription changes now span -4.15% to +1.61%,
+all with overlapping ranges: per-lane reference counts avoid the former
+full per-client demand scan on each publication.
+
+**One remaining >5% regression:** the zero-filled raw lazer fixture is
+**+8.50%**, with disjoint ranges, 9.871–9.890 µs versus 10.536–10.900 µs.
+The populated deterministic reader's apparent 5.28–9.71% gains have
+overlapping ranges; do not claim resolved improvements from those medians.
+Quick profiles (120 GDB-interrupted stacks per version, approximately
+50 ms apart, separately symbolized optimized binaries) locate the cost in
+invalid-root recovery: `resolve_game_base_by_scan`, fixture
+`copy_from_slice` and AVX2 `memchr` scanning. Fixture-copy libc frames
+accounted for 62/120 samples on each side; the AVX2 finder had 50/120
+baseline versus 53/120 candidate samples. An untimed single-iteration
+Criterion test-mode trace counted **six scan calls on both sides**.
+Thus the regressing workload is repeated failed-root scan/copy work,
+not populated live capture or an increased scan count. The quick profile
+does **not** establish the precise cause of the extra 0.840 µs; binary
+layout or background interference remains an **[INFERENCE]**, not a
+demonstrated explanation. No code was changed to hide this result.
+Raw `profile-*-raw-lazer.log`, `profile-summary.json` and
+`scan-trace-*.log` are retained with the paired evidence.
+
+Raw per-round Criterion JSON/stdout, deterministic-reader stdout,
+environment/load records, `summary.json` and full `table.txt` are under
+`/tmp/vosu-r4-evidence/Bench120-final/`. This run is taskset-only and does
+not reuse the earlier isolated run's raw results.
 
 ## Released tosu comparison
 
 These runs compare vosu with released tosu **4.26.2** (tag
 `03202868c73c38938b65cce3f39b3c50e49b0fe4`, commit
 `b21b4526d8db9ce124f5a8bf475ef5421837f5b7`), the latest GitHub release when
-measured. The live-client runs used the vosu 1.1.0 release commit `c791512` on
-**2026-10-17**; the hot paths used vosu `v1.0.0` on **2026-10-11**, and the
-precise-reader fixture used vosu `9c47ccbe6d0a70da4b723bf7f5c30b89489251a9` on
-**2026-10-12**.
+measured. Current Windows stable live-client results compare vosu 1.1.0
+`c791512` and 1.2.0 `774fd0f` on **2026-10-25**. Linux live-client results
+retain `c791512` on **2026-10-17**; the separate tosu hot-path comparison
+retains vosu `v1.0.0` on **2026-10-11**, and the precise-reader fixture retains
+`9c47ccbe6d0a70da4b723bf7f5c30b89489251a9` on **2026-10-12**.
 
 ### Live-client runs
 
-vosu was built from `c791512` with Rust 1.96.1 and each platform's release
-features: Windows `vosu.exe` (SHA-256 `ba897fdc5120f85b…`) natively with MSVC
-and `--no-default-features`, Linux `vosu` (`dfe8537b790ca96e…`) in the Linux
-guest with default features. tosu ran from its published `v4.26.2` assets
-(`tosu.exe` `0b365384f2454245…`, Linux `tosu` `fa22300bcdc88c3b…`). Each run used
-fresh per-run copies with matched settings:
+The retained Linux guest results used `c791512` with Rust 1.96.1, default
+release features (`vosu` SHA-256 `dfe8537b790ca96e…`) and published tosu
+`v4.26.2` (`fa22300bcdc88c3b…`). The current Windows native MSVC binaries
+use `--no-default-features`: 1.1.0 SHA-256 `69a49ebe3fcc680a…`, 1.2.0
+`81550909c8072543…`, and published tosu `0b365384f2454245…`.
+Runs used fresh per-run copies with matched settings:
 `POLL_RATE` 150, `PRECISE_DATA_POLL_RATE` 10, PP calculation and key overlay
 on, loopback-only listeners, automatic updates off, tosu's in-game overlay off,
 and a warmed vosu lazer offsets cache. vosu's opt-in `ENABLE_HIT_OFFSETS` and
@@ -417,11 +461,11 @@ The host is a Ryzen 9 9950X3D with the RTX 5090 passed through to one guest at
 a time:
 
 - **Windows guest:** Windows 11 IoT Enterprise LTSC 26100, 8 logical
-  processors. Lazer ran from the user's installation and profile, signed out,
-  in a maximized window (it opened windowed and did not switch to borderless).
-  Stable ran from the user's installation, whose `Songs` and `Skins` links were
-  pointed at a local folder for the run and then restored; its databases and
-  per-user configuration were verified unchanged afterward.
+  processors. Current stable `b20260924.1` (SHA-256 `3adc2d001aacced5…`)
+  played the 6,001-circle map in Autoplay, AT only, 1× speed. Live lazer
+  was **not measured for 1.2.0**: both the current and older task-copied
+  clients crashed in this VM environment, including OpenGL/Direct3D11
+  trials. Synthetic self-process lazer fixtures do not close that gap.
 - **Linux guest:** Arch Linux, `linux-zen` 7.1.4, 8 vCPUs pinned to the V-cache
   CCD, 24 GiB, glibc 2.43. Clients ran on a headless labwc (Vulkan on the RTX
   5090) through its Xwayland. Lazer used the release AppImage with the profile
@@ -487,26 +531,32 @@ bundle.
 
 #### Live readers
 
-With no daemon running, each reader attached directly to the playing client,
-alternating vosu and tosu for five invocations each. An invocation runs
-100 warm-up cycles, then nine samples of 1000 (vosu) or 100 (tosu) cycles, and
-reports the median sample mean. vosu used `examples/live_reader_bench.rs`,
-which calls the daemon's regular and precise capture adapters after the
-production reducer has chosen its capture plan. tosu used its production
-`Process`, pattern resolution and instance initialization with polling
-disabled. The table shows the median of the five invocation medians and their
-range; setup is excluded from the cycle times.
+With no daemon running, each reader attached directly to the playing client.
+On Windows stable, five triples alternated 1.1.0→1.2.0→tosu and the reverse
+order against the same game. These live readers were not CPU-pinned.
+Linux retains five alternating vosu/tosu invocations per client.
+Each invocation runs 100 warm-up cycles, then nine samples of 1,000 (vosu)
+or 100 (tosu) cycles, and reports the median sample mean. vosu uses
+`examples/live_reader_bench.rs` and the production capture adapters; tosu
+uses production initialization with polling disabled. Values are medians
+of five invocation medians with their range, excluding setup. All 15 current
+Windows invocations exited 0, with zero read errors or not-ready counts.
 
 | Client | Product | Regular cycle | Precise cycle | Errors | Setup |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Windows lazer | vosu | 148.0 µs (145.1–149.8) | 30.0 µs (29.8–31.0) | 0 | 71 ms |
-| Windows lazer | tosu | 737.0 µs (729.2–741.5) | 151.2 µs (150.2–152.5) | 0 | 1521 ms |
-| Windows stable | vosu | 132.7 µs (131.7–135.3) | 23.9 µs (23.8–24.3) | 0 | 85 ms |
-| Windows stable | tosu | 456.2 µs (448.6–472.9) | 40.7 µs (40.6–42.0) | 0 | 589 ms |
+| Windows stable | vosu 1.1.0 | 152.285 µs (150.958–165.797) | 27.906 µs (26.974–29.275) | 0 | excluded |
+| Windows stable | vosu 1.2.0 | 157.412 µs (155.088–164.594) | 27.729 µs (27.553–28.283) | 0 | excluded |
+| Windows stable | tosu 4.26.2 | 566.976 µs (517.107–589.800) | 46.774 µs (42.512–49.436) | 0 | excluded |
 | Linux lazer | vosu | 20.2 µs (17.8–21.3) | 9.1 µs (8.5–10.2) | 0 | 61 ms |
 | Linux lazer | tosu | 147.1 µs (138.1–183.1) | 32.8 µs (31.8–39.8) | 0 | 3972 ms |
 | Linux stable (Wine) | vosu | 33.7 µs (31.8–36.3) | 8.5 µs (7.6–9.4) | 0 | 22 ms |
 | Linux stable (Wine) | tosu | 189.6 µs (182.2–232.7) | 13.9 µs (11.8–16.9) | 0 | 286 ms |
+
+Windows 1.2.0 changes are +3.37% regular and -0.64% precise versus 1.1.0,
+with overlapping invocation ranges; no statistically significant change is
+established. Windows lazer has no current live result. Windows reader evidence:
+`~/.local/share/vosu-1.2.0-evidence/Windows/live-campaign/reader-summary.json`,
+`reader-results/` and `staged.json`.
 
 - On Linux lazer, tosu's ranked-play read returned the production not-ready
   sentinel on every regular cycle (counted, not an error). The cycle continued
@@ -595,14 +645,42 @@ root because processes with file capabilities are not dumpable.
 
 | Client | Mode | vosu alone CPU | vosu CPU | tosu CPU | vosu RSS | tosu RSS | vosu private | tosu private | `/json/v2` latency vosu / tosu |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Windows lazer | background | 1.67% | 1.67% | 2.78% | 41.7 MB | 88.8 MB | 7.1 MB | 78.6 MB | 9.90 / 10.45 ms |
-| Windows lazer | consumer | 1.49% | 1.70% | 2.64% | 42.2 MB | 91.2 MB | 7.9 MB | 82.7 MB | 0.30 / 0.68 ms |
-| Windows stable | background | 1.49% | 1.53% | 1.63% | 49.7 MB | 148.9 MB | 14.7 MB | 131.5 MB | 4.83 / 8.00 ms |
-| Windows stable | consumer | 1.70% | 1.81% | 3.19% | 50.9 MB | 152.7 MB | 16.0 MB | 135.7 MB | 0.36 / 3.43 ms |
 | Linux lazer | background | 0.89% | 0.84% | 1.42% | 29.8 MB | 266.2 MB | 25.9 MB | 256.1 MB | 0.77 / 3.25 ms |
 | Linux lazer | consumer | 0.96% | 0.96% | 2.53% | 31.0 MB | 276.1 MB | 27.2 MB | 266.1 MB | 0.25 / 2.61 ms |
 | Linux stable (Wine) | background | 1.00% | 0.96% | 1.04% | 39.7 MB | 266.6 MB | 35.8 MB | 257.7 MB | 0.80 / 4.42 ms |
 | Linux stable (Wine) | consumer | 1.11% | 1.07% | 2.27% | 40.5 MB | 274.7 MB | 36.6 MB | 265.8 MB | 0.29 / 3.06 ms |
+
+Current **Windows stable** whole-daemon results (2026-10-25) replace the
+earlier Windows rows. The psutil 7.0.0 collector excludes the game process
+and uses three complete windows per invocation: 30 s warm-up, 45 s measurement.
+It validates playing state, client/map/mode/mod/rate identity, advancing clock
+and nondecreasing score. Background mode makes only boundary requests;
+consumer mode requests `/json/v2` at 10 Hz keep-alive. Rows are medians across
+the three window values, with min–max ranges. RSS and private commit are
+window means in **MiB**, not the older table's MB. These campaigns are not
+claimed CPU-pinned. CPU is percent of one core.
+
+| Stable live campaign | Product | CPU, % one core | RSS, MiB | Private commit, MiB | API latency, ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1.1 alone, background | vosu 1.1 | 1.91 (1.77–1.91) | 48.69 (48.24–48.80) | 13.94 (13.52–14.05) | 20.066 (2.755–23.961) |
+| 1.2 alone, background | vosu 1.2 | 1.56 (1.32–1.63) | 49.11 (49.02–49.13) | 14.42 (14.14–14.43) | 15.786 (2.932–22.638) |
+| 1.1 alone, consumer | vosu 1.1 | 2.22 (1.84–2.43) | 49.19 (48.88–49.50) | 14.58 (14.42–14.89) | 0.469 (0.449–0.508) |
+| 1.2 alone, consumer | vosu 1.2 | 2.15 (2.01–2.29) | 49.16 (48.96–49.76) | 14.59 (14.49–15.29) | 0.451 (0.438–0.462) |
+| 1.1 + tosu, background | vosu 1.1 | 1.60 (1.25–2.53) | 49.76 (49.35–49.85) | 15.18 (15.13–15.45) | 8.812 (4.939–10.788) |
+| 1.1 + tosu, background | tosu 4.26.2 | 1.87 (1.74–2.22) | 145.76 (144.95–146.35) | 129.94 (129.25–130.84) | 7.515 (7.139–8.260) |
+| 1.2 + tosu, background | vosu 1.2 | 1.46 (1.35–1.94) | 48.03 (48.00–48.11) | 13.24 (13.18–13.31) | 7.994 (7.458–8.574) |
+| 1.2 + tosu, background | tosu 4.26.2 | 1.84 (1.39–2.33) | 143.16 (142.77–143.62) | 126.01 (124.98–126.60) | 5.465 (5.385–16.826) |
+
+These eight product rows come from six accepted invocations; concurrent
+tosu consumer campaigns are not included. Background API latency has too
+few boundary samples to stand in for sustained-consumer latency.
+An original 1.2+tosu campaign crossed the map end and was excluded in full;
+its next retry failed preflight because AT was deselected. After reselecting
+AT, `06c` passed all three complete windows; rejected values are not used.
+Windows lazer remains unmeasured because of the environment crash.
+Raw accepted/rejected evidence, frozen configurations and identities are in
+`~/.local/share/vosu-1.2.0-evidence/Windows/live-campaign/`
+(`daemon-results/`, `daemon-summary.json`, `daemon-table.txt`).
 
 **Hit-offsets cost.** A separate vosu-alone run on Linux lazer set
 `ENABLE_HIT_OFFSETS = true` in the run's `vosu.toml` before warm-up, on a fresh
@@ -735,12 +813,14 @@ full parity, timer deadline guarantees, or reduced CPU usage.
 
 ## Native Windows coverage
 
-The [hosted Windows results](#hosted-windows) come from the manual
-[`Windows benchmarks`](../../.github/workflows/benchmarks-windows.yml) workflow,
-which runs both targets on `windows-latest` with Rust 1.96.1 and native MSVC, including
-all five `windows_process_memory` cases. It uploads logs, exit codes, revision,
-runner details and Criterion samples as `windows-benchmarks-<commit>` (14 days).
-Hosted timings are not directly comparable with the local Linux results.
+The [native Windows results](#native-windows-hot-paths) above were measured
+locally in the Windows guest. The manual
+[`Windows benchmarks`](../../.github/workflows/benchmarks-windows.yml) workflow
+can reproduce both targets on `windows-latest` with Rust 1.96.1 and native
+MSVC, including all five `windows_process_memory` cases. It uploads logs,
+exit codes, revision, runner details and Criterion samples as
+`windows-benchmarks-<commit>` (14 days). Hosted or local Windows timings are
+not directly comparable with Linux results.
 
 Reproduce in PowerShell:
 
