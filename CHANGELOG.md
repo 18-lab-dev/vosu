@@ -63,6 +63,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - vosu is now an 18-LAB product. The signal V keeps its shape in 18-LAB colours (amber or blueprint line, signal-coloured node) with the 1.x monoline wordmark and an 18-LAB endorsement; light and dark README banners and a 1280×640 social preview are new. The mark is used across the dashboard header, diagnostics report, favicon, Windows executable and tray icon, Linux tray and packages, with pixel-fitted 16 and 24 px versions. Rules are in [branding](docs/branding.md).
 - Linux packages install `hicolor` icons from 16 to 512 px plus the scalable icon, and the tray offers 16–64 px pixmaps instead of one scaled 64 px image. The rasters are committed (rendered by `scripts/render-brand.py`), so packaging no longer needs ImageMagick. Packages name 18-LAB as vendor.
 
+### Known limitations
+
+- Live osu!lazer on Windows was not exercised for this release: lazer itself would not start on the Windows test machine (a native crash before vosu was involved). Windows lazer support passed its native tests against recorded memory, but reading a running lazer client, lazer's current-skin files, the tools' lazer features and vosulay inside lazer were verified only on Linux.
+
 <!-- Released entries below retain former organization spellings as historical release records. -->
 
 ## 1.1.0 — 2026-10-17
