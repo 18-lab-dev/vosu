@@ -406,24 +406,54 @@ pure encoder-only timings. Subscription changes now span -4.15% to +1.61%,
 all with overlapping ranges: per-lane reference counts avoid the former
 full per-client demand scan on each publication.
 
-**One remaining >5% regression:** the zero-filled raw lazer fixture is
-**+8.50%**, with disjoint ranges, 9.871–9.890 µs versus 10.536–10.900 µs.
-The populated deterministic reader's apparent 5.28–9.71% gains have
-overlapping ranges; do not claim resolved improvements from those medians.
-Quick profiles (120 GDB-interrupted stacks per version, approximately
-50 ms apart, separately symbolized optimized binaries) locate the cost in
-invalid-root recovery: `resolve_game_base_by_scan`, fixture
-`copy_from_slice` and AVX2 `memchr` scanning. Fixture-copy libc frames
-accounted for 62/120 samples on each side; the AVX2 finder had 50/120
-baseline versus 53/120 candidate samples. An untimed single-iteration
-Criterion test-mode trace counted **six scan calls on both sides**.
-Thus the regressing workload is repeated failed-root scan/copy work,
-not populated live capture or an increased scan count. The quick profile
-does **not** establish the precise cause of the extra 0.840 µs; binary
-layout or background interference remains an **[INFERENCE]**, not a
-demonstrated explanation. No code was changed to hide this result.
-Raw `profile-*-raw-lazer.log`, `profile-summary.json` and
-`scan-trace-*.log` are retained with the paired evidence.
+**Raw lazer fixture: binary placement, not added reader work.** The release
+table retains the observed **+8.50%** (9.871–9.890 µs versus
+10.536–10.900 µs); it was not hidden by changing the fixture. This
+zero-filled case repeatedly fails root validation before reaching skin or
+renderer reads. Existing profiles locate its work in fixture copying and
+AVX2 signature scanning; the untimed trace counted six scans on both sides.
+
+Follow-up attribution on 2026-10-25 ran only
+`raw_snapshot_reads/lazer_regular_fields`, with independent worktrees,
+target/ Criterion directories, three alternating rounds, `taskset -c 15`,
+2 s warm-up, 20 s measurement and 60 samples. No VM or CPU/IRQ isolation
+was used. Values are median arithmetic means and their three-round ranges:
+
+| Revision / change | Mean (µs) | Range (µs) |
+| --- | ---: | ---: |
+| `c791512` — 1.1.0 | 9.919 | 9.894–10.177 |
+| `9eb9196` — current skin | 9.844 | 9.830–10.457 |
+| `771668e` — renderer state | 9.861 | 9.838–10.375 |
+| `8fb8a6a` — atomic selection publication | 9.948 | 9.794–10.135 |
+| `b13a910` — combo-colour normalisation | 9.839 | 9.814–9.867 |
+| `77080cd` — release source | 10.754 | 10.421–10.921 |
+
+None of the four reader-feature commits adds the step: their medians are
+within 0.8% of 1.1.0. Local bisection identifies **`a44183b`**, the unrelated
+subscription/settings optimization, after `f170957`. A fresh three-round
+pair measured `f170957` at 10.031 µs (9.897–10.424), versus `a44183b` at
+10.612 µs (10.480–11.000), **+5.79%**. Reader, process-scanner and benchmark
+sources are unchanged across that commit.
+
+The AVX2 finder's first 1,820 hot instruction bytes are identical, but its
+entry moves from cache-line offset 0 in `f170957` to 32 in `a44183b` and
+`77080cd`. The requested independent control builds used
+`RUSTFLAGS="-C llvm-args=-align-all-functions=6"` **for measurement only**.
+Both finder entries then align to 64 bytes: `b13a910` measured 9.884 µs
+(9.876–9.908), and `77080cd` 9.863 µs (9.799–9.911), **-0.21%**, with
+overlapping ranges. The gap collapses when placement is controlled.
+This attributes the synthetic failed-root difference to code placement,
+not a product reader regression or the cost of reading new fields.
+No production flags, padding, reader code or fixture bytes were changed;
+this does not claim that new fields are free in populated live captures.
+
+Artifacts are under `~/.cache/vosu-agents/PerfRegressions/raw-lazer/`:
+`summary.json`, `placement-results.json`, `finder-layout.json`, and raw
+per-round logs/ Criterion JSON. The original six-revision run's third round
+resumed after a runner interruption; timestamps are retained. The bounded
+placement controls recorded load rather than waiting indefinitely for a
+quiet host. The populated deterministic reader's apparent 5.28–9.71% gains
+still have overlapping ranges; do not claim resolved improvements.
 
 Raw per-round Criterion JSON/stdout, deterministic-reader stdout,
 environment/load records, `summary.json` and full `table.txt` are under
