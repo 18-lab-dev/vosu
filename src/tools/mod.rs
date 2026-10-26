@@ -1,5 +1,6 @@
 //! Discovery, trust, credentials and lifetime ownership for out-of-process tools.
 mod catalog;
+mod catalog_art;
 mod cli;
 mod http;
 pub mod manifest;
@@ -139,6 +140,8 @@ pub struct ToolHost {
     catalog: Mutex<catalog::Catalog>,
     catalog_jobs: Mutex<BTreeMap<String, catalog::Job>>,
     catalog_operation: tokio::sync::Mutex<()>,
+    /// Card art fetched for the dashboard, keyed by the loaded catalog.
+    art: Mutex<catalog_art::ArtCache>,
     /// Installed overlays: the catalog install root and `GET /tools/_host/v1/overlays`.
     counters: Mutex<Option<Arc<crate::counters::ReloadableCounterService>>>,
 }
@@ -251,6 +254,7 @@ impl ToolHost {
             catalog: Mutex::new(catalog::Catalog::default()),
             catalog_jobs: Mutex::new(BTreeMap::new()),
             catalog_operation: tokio::sync::Mutex::new(()),
+            art: Mutex::new(catalog_art::ArtCache::default()),
             counters: Mutex::new(None),
         });
         host.migrate_catalog_state().map_err(io::Error::other)?;

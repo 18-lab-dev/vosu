@@ -23,18 +23,29 @@ function image(source, onError) {
   element.src = source;
   return element;
 }
+// Catalog art (`icon_url`, `banner_url`, `preview`) loads through vosu: release
+// downloads often arrive as application/octet-stream, which browsers will not
+// render as SVG. vosu fetches only URLs the loaded catalog lists, exactly as
+// written there, and serves them with an image type.
+export function catalogArt(value) {
+  return httpUrl(value) ? `/api/tools/catalog/art?url=${encodeURIComponent(String(value))}` : null;
+}
+// The proxied path or an absolute http(s) URL (an installed tool's own art).
+function artSource(value) {
+  return typeof value === 'string' && value.startsWith('/api/tools/catalog/art?') ? value : httpUrl(value);
+}
 // Card art shared by tool and catalog cards (manifest `icon`/`banner`, catalog
 // `icon_url`/`banner_url`). A missing or broken icon falls back to the
 // initials tile; a missing or broken banner leaves the card without one.
 export function cardIcon(name, url) {
   const frame = node('div', undefined, 'tool-card__icon'); frame.setAttribute('aria-hidden', 'true');
   const initials = () => frame.replaceChildren(String(name || '?').trim().slice(0, 2));
-  const source = httpUrl(url);
+  const source = artSource(url);
   if (source) frame.append(image(source, initials)); else initials();
   return frame;
 }
 export function cardBanner(url) {
-  const source = httpUrl(url);
+  const source = artSource(url);
   if (!source) return null;
   const frame = node('div', undefined, 'tool-card__banner'); frame.setAttribute('aria-hidden', 'true');
   frame.append(image(source, () => frame.remove()));
@@ -253,7 +264,7 @@ export function mountCatalogOverlays({ root, requestJson, notify, errorText, set
     article.dataset.counterAuthor = overlay.author ?? '';
     article.setAttribute('aria-label', overlay.name);
     const gallery = node('div', undefined, 'gallery');
-    const art = httpUrl(overlay.preview) ?? httpUrl(overlay.banner_url);
+    const art = catalogArt(overlay.preview) ?? catalogArt(overlay.banner_url);
     if (art) {
       const slide = image(art, () => { gallery.className = 'gallery gallery--empty'; gallery.replaceChildren(node('span', 'No preview provided')); });
       slide.className = 'gallery__slide';

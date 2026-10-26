@@ -1,7 +1,7 @@
 // Tools page: renders `GET /api/tools` and drives the lifecycle, launch,
 // data, log, and trust actions of the dashboard API in docs/tools/protocol.md.
 
-import { cardBanner, cardIcon, sourceFailures } from './dashboard-catalog.js';
+import { cardBanner, cardIcon, catalogArt, sourceFailures } from './dashboard-catalog.js';
 import { toolAutostartControl } from './homepage-settings.js';
 
 const STATUS_LABELS = {
@@ -195,9 +195,9 @@ export function mountTools({
       const official = ['18-lab-dev/vosu-tools', '18-lab-dev/vosulay'].includes(tool.source);
       const titleId = `catalog-tool-${tool.id}`;
       const card = el('article', { className: 'tool-card', attrs: { 'data-catalog-tool': tool.id, 'aria-labelledby': titleId } },
-        cardBanner(tool.banner_url),
+        cardBanner(catalogArt(tool.banner_url)),
         el('div', { className: 'tool-card__top' },
-          cardIcon(tool.name || tool.id, tool.icon_url),
+          cardIcon(tool.name || tool.id, catalogArt(tool.icon_url)),
           el('div', { className: 'tool-card__head' },
             el('h2', { attrs: { id: titleId, title: `${tool.name} · ${tool.author} · ${tool.source}` } }, el('span', { className: 'tool-card__name', text: tool.name }), el('span', { className: 'tool-card__version', text: `v${tool.version}` })),
             el('p', { className: 'tool-card__status' },
