@@ -2,7 +2,7 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
-## 1.2.1 — Unreleased
+## 1.2.1 — 2026-10-26
 
 ### Dashboard
 
