@@ -1,6 +1,11 @@
 use super::*;
 
 /// Helper-side swap and candidate supervision.
+///
+/// After authorizing a live owner's record, poll every 5 ms until its durable
+/// handoff arrives. Missing records remain retryable while that owner lives;
+/// truncated JSON and Windows sharing/delete-pending errors get a bounded
+/// two-second retry window, reset only by a successfully loaded record.
 pub fn run_helper<P: UpdatePlatform>(
     record_path: &Path,
     token: &str,
@@ -8,11 +13,11 @@ pub fn run_helper<P: UpdatePlatform>(
 ) -> Result<(), UpdateError> {
     let current = platform.current_identity()?;
     let mut last_candidate: Option<InstallRecord> = None;
-    let mut eof_retry_deadline = None;
+    let mut record_retry_deadline = None;
     let mut record = loop {
         let candidate = match load_record(record_path) {
             Ok(candidate) => {
-                eof_retry_deadline = None;
+                record_retry_deadline = None;
                 candidate
             }
             Err(UpdateError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {
@@ -25,14 +30,14 @@ pub fn run_helper<P: UpdatePlatform>(
                 std::thread::sleep(Duration::from_millis(5));
                 continue;
             }
-            Err(UpdateError::Json(error)) if error.is_eof() => {
+            Err(error) if retryable_handoff_record_error(&error) => {
                 let Some(candidate) = last_candidate.as_ref() else {
-                    return Err(UpdateError::Json(error));
+                    return Err(error);
                 };
-                let deadline = *eof_retry_deadline
+                let deadline = *record_retry_deadline
                     .get_or_insert_with(|| Instant::now() + Duration::from_secs(2));
                 if Instant::now() >= deadline {
-                    return Err(UpdateError::Json(error));
+                    return Err(error);
                 }
                 if !platform.identity_is_alive(&candidate.owner)? {
                     return Err(UpdateError::HelperHandoff);
@@ -87,6 +92,18 @@ pub fn run_helper<P: UpdatePlatform>(
     supervise_candidate_or_rollback(&mut record, record_path, platform)?;
     // The ready child cleans up after this helper exits.
     Ok(())
+}
+
+fn retryable_handoff_record_error(error: &UpdateError) -> bool {
+    match error {
+        UpdateError::Json(error) => error.is_eof(),
+        // ERROR_ACCESS_DENIED includes a record marked for deletion while a
+        // scanner still owns a handle. Sharing/lock violations are not mapped
+        // to WouldBlock by std, so compare the native codes explicitly.
+        #[cfg(windows)]
+        UpdateError::Io(error) => matches!(error.raw_os_error(), Some(5 | 32 | 33 | 303)),
+        _ => false,
+    }
 }
 /// Ready-child cleanup. It waits for the exact helper identity, then retries
 /// token-authorized removal for ten seconds to accommodate Windows scanners
