@@ -8,6 +8,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 - Show catalog card art from release downloads. Available tool cards and catalog overlay cards showed initials and no banner or preview because release downloads (GitHub included) serve SVG art as `application/octet-stream`, which browsers do not render. The dashboard now loads catalog art through `GET /api/tools/catalog/art`: vosu fetches only URLs the loaded catalog lists, with the catalog download rules (HTTPS, public destinations, at most 5 redirects, 1 MiB), types it from its content (SVG, PNG, WebP, or JPEG), caches it in memory per catalog revision, and serves it as a sandboxed, inert document, so an SVG opened directly can run nothing on the dashboard origin. See the [tool protocol](docs/tools/protocol.md).
 
+### Tools
+
+- Install valid packages whose compressed data happens to contain ZIP end-record bytes. vosu treated every `PK\x05\x06` in a file as a possible end of central directory, so a 221-entry tool package was refused with "unsafe ZIP entry: entry limit exceeded" because bytes inside a deflated binary read as 31,185 entries. Only the end record that ends exactly at the end of the file now decides the entry count, as in the ZIP specification; the opened archive must list that many entries. Data after the archive and a second end record inside the archive comment are still refused, ZIP64 records must sit right before that end record, and a ZIP64 record inside entry data stays capped. Tool packages, overlay downloads, and update archives share the same check.
+
 ## 1.2.0 — 2026-10-25
 
 ### Tools

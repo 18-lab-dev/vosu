@@ -441,7 +441,7 @@ The **Available** page lists community overlays from the upstream tosu catalog a
 
 A failed install names the download host when the host caused it: an error status, timeout, connection or redirect failure, or a response that is not a ZIP archive (some hosts answer rate limits with an HTTP 200 text page).
 
-Production counter downloads require HTTPS. Redirects are bounded; HTTPS-to-HTTP downgrades and loopback, private, or reserved destinations are rejected. ZIP paths, symlinks, entry counts, and expanded size are checked before same-filesystem replacement.
+Production counter downloads require HTTPS. Redirects are bounded; HTTPS-to-HTTP downgrades and loopback, private, or reserved destinations are rejected. ZIP paths, symlinks, entry counts, and expanded size are checked before same-filesystem replacement. The entry count comes from the archive's own end record, the one that ends exactly at the end of the file, so end-record bytes that happen to occur inside compressed data no longer reject a valid archive; data after the archive, a second end record inside the archive comment, and a central directory that does not match its end record are refused. Tool packages, overlay downloads, and update archives share these rules.
 
 ## HTTP API
 

@@ -533,27 +533,260 @@ fn zip64_with_correct_locator_offset_passes_preflight() {
     .unwrap();
 }
 
+/// A classic EOCD record (no comment) claiming `entries`.
+fn end_record(entries: u16, comment_length: u16) -> [u8; 22] {
+    let mut record = [0u8; 22];
+    record[..4].copy_from_slice(b"PK\x05\x06");
+    record[8..10].copy_from_slice(&entries.to_le_bytes());
+    record[10..12].copy_from_slice(&entries.to_le_bytes());
+    record[20..22].copy_from_slice(&comment_length.to_le_bytes());
+    record
+}
+
+/// A ZIP whose entries are stored as written, so `payload` bytes appear
+/// verbatim inside the file, as they can inside deflated data.
+fn stored_zip(entries: &[(&str, &[u8])], comment: &[u8]) -> tempfile::NamedTempFile {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    {
+        let mut writer = zip::ZipWriter::new(file.reopen().unwrap());
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, body) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(body).unwrap();
+        }
+        writer
+            .set_raw_comment(comment.to_vec().into_boxed_slice())
+            .unwrap();
+        writer.finish().unwrap();
+    }
+    file
+}
+
+/// Rewrites a classic archive's end as ZIP64: a ZIP64 record and locator
+/// before an EOCD record whose fields defer to them.
+fn to_zip64(bytes: &mut Vec<u8>, total: Option<u64>) {
+    let end = bytes.len() - 22;
+    assert_eq!(&bytes[end..end + 4], b"PK\x05\x06");
+    let count = u16::from_le_bytes([bytes[end + 10], bytes[end + 11]]) as u64;
+    let size = u32::from_le_bytes(bytes[end + 12..end + 16].try_into().unwrap()) as u64;
+    let offset = u32::from_le_bytes(bytes[end + 16..end + 20].try_into().unwrap()) as u64;
+    bytes.truncate(end);
+    let record_offset = bytes.len() as u64;
+    let mut record = vec![0u8; 56];
+    record[..4].copy_from_slice(b"PK\x06\x06");
+    record[4..12].copy_from_slice(&44u64.to_le_bytes());
+    record[12..14].copy_from_slice(&45u16.to_le_bytes());
+    record[14..16].copy_from_slice(&45u16.to_le_bytes());
+    record[24..32].copy_from_slice(&total.unwrap_or(count).to_le_bytes());
+    record[32..40].copy_from_slice(&total.unwrap_or(count).to_le_bytes());
+    record[40..48].copy_from_slice(&size.to_le_bytes());
+    record[48..56].copy_from_slice(&offset.to_le_bytes());
+    bytes.extend_from_slice(&record);
+    let mut locator = [0u8; 20];
+    locator[..4].copy_from_slice(b"PK\x06\x07");
+    locator[8..16].copy_from_slice(&record_offset.to_le_bytes());
+    locator[16..20].copy_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&locator);
+    let mut eocd = end_record(u16::MAX, 0);
+    eocd[12..20].copy_from_slice(&[0xff; 8]);
+    bytes.extend_from_slice(&eocd);
+}
+
+fn limits(max_entries: usize) -> ZipLimits {
+    ZipLimits {
+        max_entries,
+        max_expanded_bytes: 64 * 1024 * 1024,
+    }
+}
+
 #[test]
-fn preflight_checks_fallback_eocd_candidates_and_accepts_classic_65535() {
-    let zip = make_zip(&[("a", b"x", None)]);
-    let mut bytes = std::fs::read(zip.path()).unwrap();
-    let real = bytes
-        .windows(4)
-        .rposition(|window| window == b"PK\x05\x06")
-        .unwrap();
-    bytes[real + 8..real + 12].copy_from_slice(&100u16.to_le_bytes().repeat(2));
-    let mut fake = [0u8; 22];
-    fake[..4].copy_from_slice(b"PK\x05\x06");
-    fake[8..12].copy_from_slice(&1u16.to_le_bytes().repeat(2));
-    // Keep the rejected fallback outside the conventional EOCD tail.
-    bytes.resize(bytes.len() + 70_000, 0);
-    bytes.extend_from_slice(&fake);
-    std::fs::write(zip.path(), bytes).unwrap();
+fn end_record_bytes_inside_entry_data_do_not_decide_the_entry_count() {
+    // The shape of a real tool package refused by vosu 1.2.0: a binary whose
+    // compressed bytes contain `PK\x05\x06` reading as 31,185 entries with
+    // a comment that would end inside the file, far before its real end.
+    let mut binary = vec![0x5a; 40_000];
+    binary.extend_from_slice(&end_record(31_185, 40_000));
+    binary.extend(std::iter::repeat_n(0xa5, 800_000));
+    let mut entries = vec![("tool.toml".to_owned(), b"id = 'demo'".to_vec())];
+    entries.push(("bin/demo".into(), binary));
+    for index in 0..219 {
+        entries.push((format!("web/assets/{index}.js"), vec![b'x'; 10]));
+    }
+    let entries: Vec<_> = entries
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_slice()))
+        .collect();
+    let zip = stored_zip(&entries, b"");
+    assert_eq!(
+        preflight_zip_entries(
+            &mut zip.reopen().unwrap(),
+            10_000,
+            &CancellationToken::new()
+        )
+        .unwrap(),
+        221
+    );
+    let root = tempfile::tempdir().unwrap();
+    extract_zip_atomic(
+        zip.path(),
+        &root.path().join("tool"),
+        limits(10_000),
+        &CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read(root.path().join("tool/tool.toml")).unwrap(),
+        b"id = 'demo'"
+    );
+    assert_eq!(
+        std::fs::read_dir(root.path().join("tool/web/assets"))
+            .unwrap()
+            .count(),
+        219
+    );
+
+    // Over the limit is still over the limit when the count is the real one.
     assert!(matches!(
-        preflight_zip_entries(&mut zip.reopen().unwrap(), 10, &CancellationToken::new()),
+        extract_zip_atomic(zip.path(), &root.path().join("small"), limits(220), &CancellationToken::new()),
         Err(NetworkError::UnsafeZip(message)) if message == "entry limit exceeded"
     ));
+}
 
+#[test]
+fn a_zip64_record_inside_entry_data_is_still_capped() {
+    // The decoder falls back to earlier records when it rejects the real one;
+    // only a ZIP64 count could make that fallback reserve without bound.
+    let mut payload = vec![0u8; 56];
+    payload[..4].copy_from_slice(b"PK\x06\x06");
+    payload[4..12].copy_from_slice(&44u64.to_le_bytes());
+    payload[32..40].copy_from_slice(&100_001u64.to_le_bytes());
+    let mut locator = [0u8; 20];
+    locator[..4].copy_from_slice(b"PK\x06\x07");
+    payload.extend_from_slice(&locator);
+    let mut eocd = end_record(u16::MAX, 0);
+    eocd[12..20].copy_from_slice(&[0xff; 8]);
+    payload.extend_from_slice(&eocd);
+    payload.extend_from_slice(b"trailing entry data");
+    let zip = stored_zip(&[("payload", &payload)], b"");
+    // Point the locator at the record where the writer placed the data.
+    let mut bytes = std::fs::read(zip.path()).unwrap();
+    let record = bytes.windows(4).position(|w| w == b"PK\x06\x06").unwrap();
+    let locator = record + 56;
+    bytes[locator + 8..locator + 16].copy_from_slice(&(record as u64).to_le_bytes());
+    std::fs::write(zip.path(), bytes).unwrap();
+    assert!(matches!(
+        preflight_zip_entries(&mut zip.reopen().unwrap(), 100_000, &CancellationToken::new()),
+        Err(NetworkError::UnsafeZip(message)) if message == "entry limit exceeded"
+    ));
+}
+
+#[test]
+fn another_end_record_in_the_archive_comment_is_refused() {
+    // Both records end exactly at the end of the file, and both agree that
+    // there is one entry: still ambiguous.
+    let mut comment = b"release notes ".to_vec();
+    comment.extend_from_slice(&end_record(1, 0));
+    let ambiguous = stored_zip(&[("a", b"x")], &comment);
+    for (file, why) in [
+        (&ambiguous, "agreeing"),
+        (&stored_zip(&[("a", b"x")], &end_record(9, 3)), "dangling"),
+    ] {
+        assert!(
+            matches!(
+                preflight_zip_entries(&mut file.reopen().unwrap(), 10, &CancellationToken::new()),
+                Err(NetworkError::UnsafeZip(message)) if message == "ZIP comment contains another end record"
+            ),
+            "{why}"
+        );
+    }
+    // A plain comment is fine.
+    let commented = stored_zip(&[("a", b"x")], b"built by 18-LAB");
+    assert_eq!(
+        preflight_zip_entries(
+            &mut commented.reopen().unwrap(),
+            10,
+            &CancellationToken::new()
+        )
+        .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn data_after_the_archive_is_refused() {
+    let zip = make_zip(&[("a", b"x", None)]);
+    let mut bytes = std::fs::read(zip.path()).unwrap();
+    bytes.extend_from_slice(b"appended after the archive");
+    std::fs::write(zip.path(), &bytes).unwrap();
+    assert!(matches!(
+        preflight_zip_entries(&mut zip.reopen().unwrap(), 10, &CancellationToken::new()),
+        Err(NetworkError::UnsafeZip(message)) if message == "no ZIP end record at the end of the file"
+    ));
+    std::fs::write(zip.path(), vec![0u8; 64]).unwrap();
+    assert!(matches!(
+        preflight_zip_entries(&mut zip.reopen().unwrap(), 10, &CancellationToken::new()),
+        Err(NetworkError::NotZip)
+    ));
+}
+
+#[test]
+fn zip64_archives_are_read_from_their_zip64_record() {
+    let zip = make_zip(&[("a", b"123", None), ("b/c", b"4", None)]);
+    let mut bytes = std::fs::read(zip.path()).unwrap();
+    to_zip64(&mut bytes, None);
+    std::fs::write(zip.path(), &bytes).unwrap();
+    assert_eq!(
+        preflight_zip_entries(&mut zip.reopen().unwrap(), 10, &CancellationToken::new()).unwrap(),
+        2
+    );
+    let root = tempfile::tempdir().unwrap();
+    extract_zip_atomic(
+        zip.path(),
+        &root.path().join("out"),
+        limits(10),
+        &CancellationToken::new(),
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(root.path().join("out/b/c")).unwrap(), b"4");
+    assert!(matches!(
+        extract_zip_atomic(zip.path(), &root.path().join("small"), limits(1), &CancellationToken::new()),
+        Err(NetworkError::UnsafeZip(message)) if message == "entry limit exceeded"
+    ));
+    // A ZIP64 count the directory does not hold: the decoder reads fewer
+    // entries than the record promises (or fails), and the archive is refused.
+    let zip = make_zip(&[("a", b"123", None), ("b/c", b"4", None)]);
+    let mut bytes = std::fs::read(zip.path()).unwrap();
+    to_zip64(&mut bytes, Some(3));
+    std::fs::write(zip.path(), &bytes).unwrap();
+    assert!(
+        extract_zip_atomic(
+            zip.path(),
+            &root.path().join("lying"),
+            limits(10),
+            &CancellationToken::new()
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn opened_archive_must_match_its_end_record() {
+    let zip = make_zip(&[("a", b"x", None)]);
+    assert!(matches!(
+        super::open_preflighted_zip(zip.reopen().unwrap(), 2),
+        Err(NetworkError::UnsafeZip(message)) if message == "ZIP central directory does not match its end record"
+    ));
+    assert_eq!(
+        super::open_preflighted_zip(zip.reopen().unwrap(), 1)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn classic_65535_entry_count_passes_preflight() {
     let classic = tempfile::NamedTempFile::new().unwrap();
     let mut eocd = [0u8; 22];
     eocd[..4].copy_from_slice(b"PK\x05\x06");

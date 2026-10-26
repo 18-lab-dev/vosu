@@ -1,4 +1,5 @@
 use super::*;
+pub(super) use crate::net::streaming::{open_preflighted_zip, preflight_zip_entries};
 
 /// Download, verify and extract the one expected root executable. The caller
 /// may then spawn `helper_path`, wait for its exact identity, and call
@@ -183,8 +184,8 @@ pub(super) fn validate_archive_shape(
     cancel: &CancellationToken,
 ) -> Result<(), UpdateError> {
     let mut file = File::open(archive)?;
-    preflight_zip_entries(&mut file, MAX_ARCHIVE_ENTRIES, cancel)?;
-    let mut zip = zip::ZipArchive::new(file)?;
+    let entries = preflight_zip_entries(&mut file, MAX_ARCHIVE_ENTRIES, cancel)?;
+    let mut zip = open_preflighted_zip(file, entries)?;
     let expected = target
         .file_name()
         .ok_or_else(|| UpdateError::Metadata("target has no file name".into()))?;
@@ -256,8 +257,8 @@ pub(super) fn extract_staged_binary_with_limit(
 ) -> Result<(), UpdateError> {
     remove_any(staging)?;
     let mut file = File::open(archive)?;
-    preflight_zip_entries(&mut file, MAX_ARCHIVE_ENTRIES, cancel)?;
-    let mut zip = zip::ZipArchive::new(file)?;
+    let entries = preflight_zip_entries(&mut file, MAX_ARCHIVE_ENTRIES, cancel)?;
+    let mut zip = open_preflighted_zip(file, entries)?;
     let expected = target
         .file_name()
         .ok_or_else(|| UpdateError::Metadata("target has no file name".into()))?;
@@ -368,96 +369,4 @@ pub(super) fn os_name_bytes(name: &std::ffi::OsStr) -> Result<Vec<u8>, UpdateErr
             .map(|value| value.as_bytes().to_vec())
             .ok_or_else(|| UpdateError::Metadata("Windows executable name is not Unicode".into()))
     }
-}
-
-pub(super) fn preflight_zip_entries(
-    file: &mut File,
-    maximum: usize,
-    cancel: &CancellationToken,
-) -> Result<(), UpdateError> {
-    let length = file.metadata()?.len();
-    if length < 22 {
-        return Err(UpdateError::Metadata("missing ZIP end record".into()));
-    }
-    const CHUNK: usize = 1024 * 1024;
-    let mut offset = 0u64;
-    let mut overlap = Vec::new();
-    let mut chunk = vec![0u8; CHUNK];
-    let mut found = false;
-    let mut candidates = 0usize;
-    while offset < length {
-        if cancel.is_cancelled() {
-            return Err(NetworkError::Cancelled.into());
-        }
-        file.seek(SeekFrom::Start(offset))?;
-        let count = file.read(&mut chunk)?;
-        if count == 0 {
-            break;
-        }
-        let overlap_len = overlap.len();
-        let mut scan = overlap;
-        scan.extend_from_slice(&chunk[..count]);
-        let base = offset.saturating_sub(overlap_len as u64);
-        for index in 0..scan.len().saturating_sub(3) {
-            if &scan[index..index + 4] != b"PK\x05\x06" {
-                continue;
-            }
-            if let Some(entries) = zip_candidate_entries(file, base + index as u64, length)? {
-                candidates += 1;
-                if candidates > MAX_ARCHIVE_ENTRIES {
-                    return Err(UpdateError::Metadata("too many ZIP end records".into()));
-                }
-                found = true;
-                if entries > maximum as u64 {
-                    return Err(UpdateError::Metadata("archive has too many entries".into()));
-                }
-            }
-        }
-        overlap = scan[scan.len().saturating_sub(3)..].to_vec();
-        offset += count as u64;
-    }
-    if !found {
-        return Err(UpdateError::Metadata("missing ZIP end record".into()));
-    }
-    file.seek(SeekFrom::Start(0))?;
-    Ok(())
-}
-
-pub(super) fn zip_candidate_entries(
-    file: &mut File,
-    position: u64,
-    length: u64,
-) -> Result<Option<u64>, UpdateError> {
-    if position.checked_add(22).is_none_or(|end| end > length) {
-        return Ok(None);
-    }
-    file.seek(SeekFrom::Start(position))?;
-    let mut end = [0u8; 22];
-    file.read_exact(&mut end)?;
-    if &end[..4] != b"PK\x05\x06" {
-        return Ok(None);
-    }
-    let comment = u16::from_le_bytes([end[20], end[21]]) as u64;
-    if position.checked_add(22 + comment) != Some(length) {
-        return Ok(None);
-    }
-    if position >= 20 {
-        file.seek(SeekFrom::Start(position - 20))?;
-        let mut locator = [0u8; 20];
-        file.read_exact(&mut locator)?;
-        if &locator[..4] == b"PK\x06\x07" {
-            let offset = u64::from_le_bytes(locator[8..16].try_into().unwrap());
-            if offset.checked_add(56).is_none_or(|end| end > length) {
-                return Err(UpdateError::Metadata("invalid ZIP64 end record".into()));
-            }
-            file.seek(SeekFrom::Start(offset))?;
-            let mut record = [0u8; 56];
-            file.read_exact(&mut record)?;
-            if &record[..4] != b"PK\x06\x06" {
-                return Err(UpdateError::Metadata("invalid ZIP64 end record".into()));
-            }
-            return Ok(Some(u64::from_le_bytes(record[32..40].try_into().unwrap())));
-        }
-    }
-    Ok(Some(u16::from_le_bytes([end[10], end[11]]) as u64))
 }
