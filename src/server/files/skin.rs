@@ -1,6 +1,7 @@
 use super::*;
 use crate::model::memory::CurrentSkin;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,13 +23,28 @@ pub struct SkinEntry {
 struct Stamp {
     size: u64,
     modified: Option<SystemTime>,
+    children: Option<[u8; 32]>,
 }
 impl Stamp {
     fn of(meta: &fs::Metadata) -> Self {
         Self {
             size: meta.len(),
             modified: meta.modified().ok(),
+            children: None,
         }
+    }
+    fn matches(&self, metadata: &fs::Metadata, file: &fs::File) -> bool {
+        let mut current = Self::of(metadata);
+        if self.children.is_some() {
+            let Ok(mut entries) = directory::directory_entries_bounded(file, MAX_SCAN + 1) else {
+                return false;
+            };
+            if entries.len() > MAX_SCAN {
+                return false;
+            }
+            current.children = Some(directory_signature(&mut entries));
+        }
+        current == *self
     }
 }
 
@@ -61,7 +77,7 @@ impl SkinFileIndex {
                 .all(|(path, stamp)| {
                     safe_child(root, path)
                         .and_then(|child| secure_open(&child))
-                        .is_ok_and(|opened| Stamp::of(&opened.metadata) == *stamp)
+                        .is_ok_and(|opened| stamp.matches(&opened.metadata, &opened.file))
                 })
     }
     fn parent_unchanged(&self, root: &Path, requested: &str) -> bool {
@@ -75,7 +91,7 @@ impl SkinFileIndex {
                     let (path, stamp) = &self.stamps[index];
                     safe_child(root, path)
                         .and_then(|child| secure_open(&child))
-                        .is_ok_and(|opened| Stamp::of(&opened.metadata) == *stamp)
+                        .is_ok_and(|opened| stamp.matches(&opened.metadata, &opened.file))
                 })
             {
                 return false;
@@ -235,6 +251,17 @@ fn case_path(root: &Path, requested: &str) -> Result<Option<String>, SafePathErr
     Ok(Some(relative))
 }
 
+fn directory_signature(entries: &mut [(String, bool)]) -> [u8; 32] {
+    entries.sort_unstable();
+    let mut digest = Sha256::new();
+    for (name, directory) in entries {
+        digest.update((name.len() as u64).to_le_bytes());
+        digest.update(name.as_bytes());
+        digest.update([u8::from(*directory)]);
+    }
+    digest.finalize().into()
+}
+
 fn folder_index(root: Option<&Path>) -> SkinFileIndex {
     let mut index = SkinFileIndex::default();
     let Some(root) = root else {
@@ -265,20 +292,22 @@ fn folder_index(root: Option<&Path>) -> SkinFileIndex {
             index.truncated = true;
             continue;
         }
-        index
-            .directories
-            .entry(relative.to_lowercase())
-            .or_default()
-            .push(index.stamps.len());
-        index
-            .stamps
-            .push((relative.clone(), Stamp::of(&opened.metadata)));
-        let Ok(entries) =
+        let Ok(mut entries) =
             directory::directory_entries_bounded(&opened.file, MAX_SCAN - scanned + 1)
         else {
             index.truncated = true;
             continue;
         };
+        // Directory timestamps do not prove membership (notably on NTFS).
+        // Capture names/types even when the directory's own stamp is unchanged.
+        let mut stamp = Stamp::of(&opened.metadata);
+        stamp.children = Some(directory_signature(&mut entries));
+        index
+            .directories
+            .entry(relative.to_lowercase())
+            .or_default()
+            .push(index.stamps.len());
+        index.stamps.push((relative.clone(), stamp));
         for (name, _) in entries {
             scanned += 1;
             if scanned > MAX_SCAN || index.entries.len() >= MAX_ENTRIES {

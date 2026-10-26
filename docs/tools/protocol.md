@@ -124,6 +124,9 @@ size and high-resolution mtime. Matching `If-None-Match` returns bodyless 304
 `If-Modified-Since`. HEAD has full-file headers and no body; it ignores Range.
 The skin metadata report also has a content-derived ETag. A truncated index must
 not be treated as an exhaustive absence check; retain file probes as a fallback.
+Cache validation compares bounded directory membership (names and entry types)
+as well as file size/mtime; directory timestamps alone are not authoritative.
+This also applies to the parent chain used for case-insensitive filename lookup.
 
 Access rules for `/tools/<id>/api/*`:
 

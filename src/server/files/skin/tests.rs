@@ -1,5 +1,115 @@
 use super::*;
 
+// Make metadata-only comparisons equal regardless of the filesystem's clock,
+// directory-size convention, or deferred NTFS timestamp updates. Membership
+// signatures must still detect additions and removals.
+fn mask_directory_stamp_changes(cache: &mut SkinIndexCache, root: &Path) {
+    let cached = cache.current.as_mut().unwrap();
+    let index = Arc::get_mut(&mut cached.index).unwrap();
+    for &offset in index.directories.values().flatten() {
+        let (path, stamp) = &mut index.stamps[offset];
+        let metadata = fs::metadata(root.join(path)).unwrap();
+        stamp.size = metadata.len();
+        stamp.modified = metadata.modified().ok();
+    }
+}
+
+#[test]
+fn directory_membership_invalidates_when_all_directory_metadata_matches() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("mania")).unwrap();
+    fs::write(root.path().join("mania/note.png"), b"note").unwrap();
+    let mut cache = SkinIndexCache::default();
+    drop(cache.get(Some(root.path()), None, None, false, true));
+    fs::write(root.path().join("mania/new.png"), b"new").unwrap();
+    mask_directory_stamp_changes(&mut cache, root.path());
+    assert_eq!(
+        cache
+            .get(Some(root.path()), None, None, false, true)
+            .entries
+            .len(),
+        2
+    );
+    fs::remove_file(root.path().join("mania/new.png")).unwrap();
+    mask_directory_stamp_changes(&mut cache, root.path());
+    assert_eq!(
+        cache
+            .get(Some(root.path()), None, None, false, true)
+            .entries
+            .len(),
+        1
+    );
+    fs::write(root.path().join("mania/added.png"), b"added").unwrap();
+    mask_directory_stamp_changes(&mut cache, root.path());
+    assert!(matches!(
+        cache
+            .resolve_folder(
+                Some(root.path()),
+                None,
+                "MANIA/ADDED.PNG",
+                "",
+                MissingKind::NotFound
+            )
+            .unwrap(),
+        ResourceOutcome::File(_)
+    ));
+    fs::create_dir(root.path().join("new-folder")).unwrap();
+    fs::write(root.path().join("new-folder/new.png"), b"new folder").unwrap();
+    mask_directory_stamp_changes(&mut cache, root.path());
+    assert_eq!(
+        cache
+            .get(Some(root.path()), None, None, false, true)
+            .entries
+            .len(),
+        3
+    );
+}
+
+#[test]
+#[ignore = "filesystem cost sample; run alone with --nocapture"]
+fn skin_index_cost_for_1500_files() {
+    use std::time::Instant;
+    let root = tempfile::tempdir().unwrap();
+    for i in 0..1500 {
+        fs::write(root.path().join(format!("note-{i:04}.png")), b"asset").unwrap();
+    }
+    let mut cache = SkinIndexCache::default();
+    let start = Instant::now();
+    let first = cache.get(Some(root.path()), None, None, false, true);
+    let cold = start.elapsed();
+    assert_eq!(first.entries.len(), 1500);
+    let start = Instant::now();
+    for _ in 0..30 {
+        assert!(Arc::ptr_eq(
+            &first,
+            &cache.get(Some(root.path()), None, None, false, true)
+        ));
+    }
+    let validated = start.elapsed() / 30;
+    let start = Instant::now();
+    for _ in 0..30 {
+        assert!(matches!(
+            cache
+                .resolve_folder(
+                    Some(root.path()),
+                    None,
+                    "absent.png",
+                    "",
+                    MissingKind::NotFound
+                )
+                .unwrap(),
+            ResourceOutcome::Missing(_)
+        ));
+    }
+    let negative = start.elapsed() / 30;
+    println!(
+        "skin_index_1500 cold_us={} validated_report_us={} absent_lookup_us={}",
+        cold.as_micros(),
+        validated.as_micros(),
+        negative.as_micros()
+    );
+}
+
 #[test]
 fn folder_listing_is_relative_cached_and_invalidates_files_directories_and_identity() {
     let root = tempfile::tempdir().unwrap();

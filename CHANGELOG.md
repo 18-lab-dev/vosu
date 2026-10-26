@@ -11,6 +11,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
 ### Tools
 
 - Install valid packages whose compressed data happens to contain ZIP end-record bytes. vosu treated every `PK\x05\x06` in a file as a possible end of central directory, so a 221-entry tool package was refused with "unsafe ZIP entry: entry limit exceeded" because bytes inside a deflated binary read as 31,185 entries. Only the end record that ends exactly at the end of the file now decides the entry count, as in the ZIP specification; the opened archive must list that many entries. Data after the archive and a second end record inside the archive comment are still refused, ZIP64 records must sit right before that end record, and a ZIP64 record inside entry data stays capped. Tool packages, overlay downloads, and update archives share the same check.
+- Refresh skin file listings and case-insensitive lookups when directory contents change even if directory timestamps do not advance, including deferred NTFS updates on Windows. Cache validation now checks bounded directory membership signatures as well as existing file sizes and modification times.
 
 ## 1.2.0 — 2026-10-25
 
