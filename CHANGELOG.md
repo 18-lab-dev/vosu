@@ -2,6 +2,12 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## 1.2.1 — Unreleased
+
+### Dashboard
+
+- Show catalog card art from release downloads. Available tool cards and catalog overlay cards showed initials and no banner or preview because release downloads (GitHub included) serve SVG art as `application/octet-stream`, which browsers do not render. The dashboard now loads catalog art through `GET /api/tools/catalog/art`: vosu fetches only URLs the loaded catalog lists, with the catalog download rules (HTTPS, public destinations, at most 5 redirects, 1 MiB), types it from its content (SVG, PNG, WebP, or JPEG), caches it in memory per catalog revision, and serves it as a sandboxed, inert document, so an SVG opened directly can run nothing on the dashboard origin. See the [tool protocol](docs/tools/protocol.md).
+
 ## 1.2.0 — 2026-10-25
 
 ### Tools

@@ -220,7 +220,7 @@ impl Catalog {
         Ok(order)
     }
 }
-fn client(max_bytes: u64) -> StreamingClient {
+pub(super) fn client(max_bytes: u64) -> StreamingClient {
     #[cfg(feature = "test-harness")]
     if let Some(socket) = harness_socket() {
         struct Resolver(std::net::IpAddr);

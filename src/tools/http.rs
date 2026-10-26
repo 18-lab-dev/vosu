@@ -109,6 +109,9 @@ impl ToolHost {
         (!write).then(|| "overlay".into())
     }
     pub async fn dashboard(self: &Arc<Self>, request: Request, body: Bytes) -> Response {
+        if request.method() == Method::GET && request.uri().path() == "/api/tools/catalog/art" {
+            return self.catalog_art(request.uri().query()).await;
+        }
         match self.dashboard_result(request, body).await {
             Ok(value) => json_response(StatusCode::OK, value),
             Err(message) => error(StatusCode::BAD_REQUEST, message),
