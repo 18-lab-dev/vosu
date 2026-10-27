@@ -38,6 +38,70 @@ pub trait SnapshotEncoder: Send + Sync + 'static {
 #[derive(Default)]
 pub struct ProductionSnapshotEncoder;
 
+impl ProductionSnapshotEncoder {
+    /// Builds only the subtrees selected by decoded RFC 6901 pointers. Values at
+    /// those pointers match the complete V2 document, including JS number rules.
+    pub fn subscription_document(
+        snapshot: &CombinedSnapshot,
+        pointers: &[&[String]],
+    ) -> Result<serde_json::Value, ApiError> {
+        if pointers.iter().any(|pointer| pointer.is_empty()) {
+            return serde_json::from_slice(&crate::api::v2::encode(snapshot)?)
+                .map_err(|error| ApiError::serialization(error.to_string()));
+        }
+        let mut selection = Selected::default();
+        for pointer in pointers {
+            selection.add_pointer(pointer);
+        }
+        let response = crate::api::v2::subscription_response(snapshot)?;
+        let selected = serialize_selected(&response, &selection)?;
+        subscription_json(selected)
+    }
+}
+
+/// Preserve serde_json's insertion order, rather than the legacy filter API's
+/// JavaScript property ordering. Normalize only numbers the selection can observe.
+fn subscription_json(value: ProjectionValue) -> Result<serde_json::Value, ApiError> {
+    use serde_json::Value;
+    Ok(match value {
+        ProjectionValue::Null | ProjectionValue::NonFiniteNumber => Value::Null,
+        ProjectionValue::Bool(value) => Value::Bool(value),
+        ProjectionValue::Number(mut number) => {
+            if let Some(value) = number.as_f64().filter(|_| number.is_f64()) {
+                number = crate::calculation::js_json_number(value).parse().map_err(
+                    |error: serde_json::Error| ApiError::serialization(error.to_string()),
+                )?;
+            }
+            Value::Number(number)
+        }
+        ProjectionValue::String(value) => Value::String(value),
+        ProjectionValue::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(subscription_json)
+                .collect::<Result<_, _>>()?,
+        ),
+        // Only descendants were selected; the array itself is unobservable.
+        // Numeric-key objects resolve the same pointers without allocating null
+        // placeholders for an entire history to expose a few indexed samples.
+        ProjectionValue::SparseArray { elements, .. } => Value::Object(
+            elements
+                .into_iter()
+                .map(|(index, value)| Ok((index.to_string(), subscription_json(value)?)))
+                .collect::<Result<_, ApiError>>()?,
+        ),
+        ProjectionValue::Object(entries) => Value::Object(
+            entries
+                .into_iter()
+                .map(|(key, value)| Ok((key.into_owned(), subscription_json(value)?)))
+                .collect::<Result<_, ApiError>>()?,
+        ),
+        ProjectionValue::Utf16CodeUnit(_) => {
+            unreachable!("UTF-16 property projections are not produced by serialize_selected")
+        }
+    })
+}
+
 impl SnapshotEncoder for ProductionSnapshotEncoder {
     fn encode(
         &self,
@@ -333,6 +397,18 @@ impl<'a> Selected<'a> {
         selected
     }
 
+    fn add_pointer(&mut self, pointer: &'a [String]) {
+        let Some((key, rest)) = pointer.split_first() else {
+            return;
+        };
+        let selection = self.entry(key);
+        if rest.is_empty() {
+            *selection = Selection::Full;
+        } else if let Selection::Partial(selected) = selection {
+            selected.add_pointer(rest);
+        }
+    }
+
     fn add(&mut self, filters: &'a [Filter]) {
         for filter in filters {
             match filter {
@@ -378,7 +454,6 @@ impl<'a> Selected<'a> {
 }
 
 /// `serialize_accounted` without a budget.
-#[cfg(test)]
 pub(super) fn serialize_selected<T: Serialize + ?Sized>(
     value: &T,
     selected: &Selected<'_>,
@@ -1925,8 +2000,8 @@ impl V2SubscriptionSnapshot for V2SubscriptionSnapshotView {
         self.snapshot.manager().revision()
     }
 
-    fn document(&self) -> Result<Option<serde_json::Value>, ApiError> {
-        match crate::api::v2::document(&self.snapshot) {
+    fn document(&self, pointers: &[&[String]]) -> Result<Option<serde_json::Value>, ApiError> {
+        match ProductionSnapshotEncoder::subscription_document(&self.snapshot, pointers) {
             Ok(document) => Ok(Some(document)),
             Err(ApiError::NotReady) => Ok(None),
             Err(error) => Err(error),

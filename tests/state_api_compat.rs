@@ -765,11 +765,12 @@ impl V2SubscriptionSnapshot for ParitySnapshot {
         self.snapshot.manager().revision()
     }
 
-    fn document(&self) -> Result<Option<Value>, ApiError> {
-        match api::v2::encode(&self.snapshot) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map(Some)
-                .map_err(|error| ApiError::serialization(error.to_string())),
+    fn document(&self, pointers: &[&[String]]) -> Result<Option<Value>, ApiError> {
+        match vosu::runtime::ProductionSnapshotEncoder::subscription_document(
+            &self.snapshot,
+            pointers,
+        ) {
+            Ok(value) => Ok(Some(value)),
             Err(ApiError::NotReady) => Ok(None),
             Err(error) => Err(error),
         }

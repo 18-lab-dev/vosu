@@ -748,7 +748,10 @@ async fn subscription_cadence_cpu_and_wakeups() {
         fn revision(&self) -> u64 {
             *self.0.borrow()
         }
-        fn document(&self) -> Result<Option<serde_json::Value>, crate::api::ApiError> {
+        fn document(
+            &self,
+            _pointers: &[&[String]],
+        ) -> Result<Option<serde_json::Value>, crate::api::ApiError> {
             Ok(Some(serde_json::json!({
                 "client": "lazer", "settings": {"mode": {"number": 0}},
                 "folders": {"skin": null}, "beatmap": {"checksum": "fixture"}, "keys": {"all": []}

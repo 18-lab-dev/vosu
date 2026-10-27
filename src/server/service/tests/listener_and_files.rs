@@ -11,7 +11,7 @@
             *self.events.borrow()
         }
 
-        fn document(&self) -> Result<Option<Value>, ApiError> {
+        fn document(&self, _pointers: &[&[String]]) -> Result<Option<Value>, ApiError> {
             if self.fail.load(Ordering::Acquire) {
                 Err(ApiError::Serialization("injected transport failure".into()))
             } else {

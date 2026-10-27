@@ -202,7 +202,7 @@ fn live_selection_promotes_file_and_checksum_before_api_cadence() {
         // Production publishes API before live, and only then wakes subscribers.
         providers.publish_api(manager(revision, publication.api));
         providers.publish_live(manager(revision, publication.live));
-        let subscription = V2SubscriptionProvider::capture(&providers).document().unwrap().unwrap();
+        let subscription = V2SubscriptionProvider::capture(&providers).document(&[&[]]).unwrap().unwrap();
         assert_eq!(subscription["beatmap"]["checksum"], hash);
         assert_eq!(files.tool_context()["beatmap"]["checksum"], hash);
         let actual = files.current_beatmap_bytes().unwrap().unwrap();

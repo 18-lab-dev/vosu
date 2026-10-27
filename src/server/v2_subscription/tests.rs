@@ -328,7 +328,7 @@ impl V2SubscriptionSnapshot for FakeSnapshot {
     fn revision(&self) -> u64 {
         self.revision
     }
-    fn document(&self) -> Result<Option<Value>, ApiError> {
+    fn document(&self, _pointers: &[&[String]]) -> Result<Option<Value>, ApiError> {
         self.builds.fetch_add(1, Ordering::Relaxed);
         self.document.clone()
     }
@@ -388,7 +388,7 @@ impl V2SubscriptionSnapshot for BlockingSnapshot {
         1
     }
 
-    fn document(&self) -> Result<Option<Value>, ApiError> {
+    fn document(&self, _pointers: &[&[String]]) -> Result<Option<Value>, ApiError> {
         self.entered.wait();
         self.release.wait();
         Ok(Some(json!({"a": 1})))
@@ -1355,4 +1355,71 @@ fn precise_status_and_gameplay_track_state_use_their_actual_producing_lanes() {
     .demand;
     assert!(track.gameplay_regular);
     assert!(!track.regular && !track.precise && !track.gameplay_precise);
+}
+
+#[tokio::test]
+async fn selection_added_during_projection_is_delivered_from_a_refreshed_union() {
+    struct Projected {
+        entered: Arc<Barrier>,
+        release: Arc<Barrier>,
+        first: AtomicBool,
+        event: watch::Sender<u64>,
+    }
+    impl V2SubscriptionSnapshot for Arc<Projected> {
+        fn revision(&self) -> u64 {
+            1
+        }
+        fn document(&self, pointers: &[&[String]]) -> Result<Option<Value>, ApiError> {
+            if self.first.swap(false, Ordering::SeqCst) {
+                self.entered.wait();
+                self.release.wait();
+            }
+            let full = json!({"a": 1, "b": 2});
+            let mut selected = serde_json::Map::new();
+            for pointer in pointers {
+                if let [field] = *pointer {
+                    selected.insert(field.clone(), full[field].clone());
+                }
+            }
+            Ok(Some(Value::Object(selected)))
+        }
+    }
+    impl V2SubscriptionProvider for Arc<Projected> {
+        fn subscribe(&self) -> watch::Receiver<u64> {
+            self.event.subscribe()
+        }
+        fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot> {
+            Arc::new(self.clone())
+        }
+    }
+    let provider = Arc::new(Projected {
+        entered: Arc::new(Barrier::new(2)),
+        release: Arc::new(Barrier::new(2)),
+        first: AtomicBool::new(true),
+        event: watch::channel(1).0,
+    });
+    let hub = V2SubscriptionHub::new(Arc::new(provider.clone()), Duration::ZERO);
+    let (first, mut first_rx) = hub.connect();
+    first.subscribe(vec!["/a".into()]).unwrap();
+    let (second, mut second_rx) = hub.connect();
+    let dispatch = std::thread::spawn({
+        let hub = hub.clone();
+        move || {
+            hub.dispatch(1);
+        }
+    });
+    provider.entered.wait();
+    second.subscribe(vec!["/b".into()]).unwrap();
+    provider.release.wait();
+    dispatch.join().unwrap();
+    assert_eq!(text(first_rx.try_recv().unwrap()), json!([0, 1, [[0, 1]]]));
+    assert!(second_rx.try_recv().is_none());
+    first.write_completed();
+    hub.dispatch(1);
+    assert_eq!(text(second_rx.try_recv().unwrap()), json!([0, 1, [[0, 2]]]));
+    assert!(first_rx.try_recv().is_none());
+    first.cleanup();
+    second.cleanup();
+    assert!(lock(&hub.0.document).is_none());
+    assert!(lock(&hub.0.plans).is_empty());
 }

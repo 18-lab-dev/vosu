@@ -103,7 +103,7 @@ mod tests {
             *self.events.borrow()
         }
 
-        fn document(&self) -> Result<Option<Value>, ApiError> {
+        fn document(&self, _pointers: &[&[String]]) -> Result<Option<Value>, ApiError> {
             Ok(None)
         }
     }

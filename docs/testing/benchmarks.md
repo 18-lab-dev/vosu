@@ -898,3 +898,139 @@ difference between no subscriber and slow selection is not evidence of a meaning
 regression; the reader rates show no cadence increase. No live-game CPU improvement
 or guaranteed 1 kHz delivery is claimed.
 
+## Selected-field projection cost
+
+Reproduce the maintained synthetic regression cases with:
+
+```sh
+cargo bench --locked --package vosu --bench hot_paths -- v2_subscription_document
+```
+
+The cases cover keys/time, complete histories, individual history indices, and
+whole-document selection, with empty and 7,500-entry histories. Whole-document
+iterations use fresh snapshots so their schema-encoding cache cannot hide work.
+
+A separate **2026-10-27** Linux process-CPU experiment used the same optimized
+1.2.1-derived binary, switching only between its former full-document projection
+algorithm and selection-pruned projection. The unchanged recorded state contained
+7,488 combined, 5,042 press, and 2,446 release errors. Twelve clients shared three
+plans: keys/time/context, visualizer settings/context, and a deliberately expensive
+complete combined-history selector. Publications were requested every 1 ms.
+Three alternating-order rounds measured three seconds per case, pinned to CPU 15,
+with private HOME/XDG directories. Values below are medians; CPU is percent of one
+core, measured from the child process's own user+system time.
+
+| Histories | Full-document CPU % | Selected CPU % | Full µs/document | Selected µs/document |
+| --- | ---: | ---: | ---: | ---: |
+| Recorded | 70.347 | 42.915 | 719.709 | 440.719 |
+| Empty control | 4.046 | 2.895 | 40.987 | 29.483 |
+
+This removes **39.0%** of process CPU in the recorded-history case (**38.8%** per
+document), despite the intentional full-history consumer. Every run sent exactly
+12 initial frames and no updates; both algorithms sent 103,516 total bytes with
+recorded histories and 4,744 with empty histories. Thus the saving is publication
+work even when clients' selected values do not change, not reduced delivery.
+Differential tests compare actual WebSocket initial/update/not-ready/error/close
+frames, including overlay selectors, and randomized pointer unions byte-for-byte.
+
+The whole-document copy/normalization path already existed in 1.1.0. These results
+do **not** establish a 1.2-only regression, explain renderer frame drops, or measure
+whole-daemon/native-game improvement. Recorded payloads and standalone collector
+source remain local investigation evidence, not repository fixtures.
+
+## Controlled Windows overlay comparison (2026-10-27)
+
+Published vosu 1.1.0, 1.2.0, and 1.2.1 were compared with identical isolated
+overlay copies, settings, ports, and a deterministic osu!stable mania Autoplay
+map. The real pages were the user's beatmap renderer overlay and the EZ2ON Key
+Visualizer. The renderer retained its 360 fps setting; the visualizer retained
+its 60 fps setting. Runs used a separate profile and private daemon HOME/data
+directories, not the user's running applications or configuration.
+
+The virtual display advertised 2560x1440 at 180 Hz after applying the installed
+Looking Glass IDD's supported refresh setting. This did **not** establish an
+180 Hz presentation path: a separate five-second DWM probe measured 118.6 waits/s
+(p50/p95/p99 8.539/9.151/9.726 ms), and simple Chrome animation probes varied with
+the capture/consumer state. Browser page results therefore describe the
+**observed producer cadence**, not a successful 180 fps presentation test.
+
+Two 30-second Chrome 156 page windows per vosu version measured the following
+daemon CPU and renderer animation cadence. CPU uses the daemon process's own
+user+system time; the raw-endpoint collectors below were not connected during
+these page/CPU windows.
+
+| vosu | CPU %, two windows | Renderer rAF/s, two windows | Renderer rAF p50/p95/p99, ms, second window |
+| --- | --- | --- | --- |
+| 1.1.0 | 14.91 / 15.27 | 127.63 / 127.61 | 7.69 / 8.44 / 8.68 |
+| 1.2.0 | 14.25 / 14.05 | 127.55 / 127.52 | 7.80 / 8.57 / 8.68 |
+| 1.2.1 | 13.45 / 13.25 | 128.02 / 128.17 | 7.72 / 8.20 / 8.61 |
+
+The visualizer drew 1,799–1,800 distinct timestamps per window, consistent with
+its retained 60 fps setting rather than a 180 fps overlay. Its second-window
+draw-gap p95/p99 was 23.60/23.80 ms on 1.1.0, 23.70/24.30 ms on 1.2.0, and
+23.40/23.70 ms on 1.2.1. No page errors or main-thread long tasks were recorded.
+
+On the actual pages' own sockets, selected-field delivery during those second
+windows comprised 3,697 / 3,749 / 3,775 messages, respectively, approximately
+467 / 484 / 482 kB per page. The visualizer's interarrival p50/p95/p99 was
+7.80/8.80/15.60 ms, 7.80/8.70/15.50 ms, and 7.80/8.50/15.40 ms. The renderer
+received its selected stream in a worker, plus a filtered regular V2 socket.
+Main-thread visualizer JSON parsing consumed 15.4 / 13.9 / 14.7 ms over 30 seconds;
+renderer-worker parsing consumed 20.68 / 19.40 / 20.01 ms. These pages did not
+receive the much larger complete precise histories described below.
+
+Separate matched 60–90 second Autoplay phases added raw V2 and precise clients:
+
+| vosu | V2 messages/s | V2 interarrival p50/p95/p99, ms | Precise messages/s | Precise interarrival p50/p95/p99, ms |
+| --- | ---: | --- | ---: | --- |
+| 1.1.0 | 14.43 | 101.28 / 104.18 / 108.47 | 87.44 | 15.55 / 16.35 / 16.85 |
+| 1.2.0 | 15.50 | 101.11 / 103.54 / 104.61 | 91.46 | 15.52 / 16.31 / 16.85 |
+| 1.2.1 | 14.26 | 101.25 / 103.65 / 108.43 | 100.91 | 15.46 / 16.21 / 16.74 |
+
+Complete precise traffic was 21.01 / 21.31 / 23.79 MB per 30 seconds. Message
+counts include short extra intervals and must not be mistaken for a uniform
+polling period. These observations show no worsened 1.2.x producer cadence or
+page CPU/parse bottleneck in this controlled stable workload; they do not
+invalidate the reported Linux stutter or identify its presentation-layer cause.
+
+The same fixed vosu 1.2.1 backend also fed published vosulay 1.4.0 and 1.5.0,
+with the same two overlays in the same mania-bound profile, normal non-editing
+mode, and a 180 fps native cap. Both native versions were run from NTFS with
+private caches to avoid changing Chromium's application-path sandbox conditions.
+Each table row covers one 30-second page capture during the same 20–50 second
+Autoplay phase; combo advanced from approximately 450 to 1,230.
+
+| Native host | Runtime CPU, % of one core | Renderer distinct drawing timestamps/s | Visualizer drawing timestamps/s | Positive rAF gaps p50/p95/p99, ms |
+| --- | ---: | ---: | ---: | --- |
+| vosulay 1.4.0 standalone | 64.14 | 153.80 | 60.00 | 5.60 / 11.10 / 11.20 |
+| vosulay 1.5.0 standalone | 67.31 | 153.27 | 60.00 | 5.60 / 11.10 / 11.20 |
+| vosulay 1.5.0 protocol tool-mode supervisor | 78.43 | 153.90 | 59.97 | 5.60 / 11.10 / 11.20 |
+
+The tool-mode control used the published executable with its normal protocol,
+token, private data/cache directories, and a stdin/stdout supervisor. It did not
+exercise catalog installation or the full vosu ToolHost lifecycle.
+
+Runtime CPU includes the native host and its Chromium children, excluding vosu
+and the game. These individual CPU windows are not a statistically established
+version or tool-mode regression: an additional 1.4.0 run measured 72.17%.
+Native rAF observation produced approximately as many repeated zero-gap
+timestamps as advancing timestamps. The table excludes repeated timestamps;
+counting callbacks as delivered frames would approximately double the rate.
+Instrumented draw counts likewise deduplicate GPU/canvas calls at the same rAF
+timestamp and are not swapchain presents.
+
+Renderer distinct-draw gap p50/p95/p99 was 7.50/8.30/8.70 ms on the NTFS 1.4.0
+run, versus 7.60/8.60/9.00 ms on standalone 1.5.0. Visualizer draw gaps were
+15.70/22.40/23.50 ms versus 15.90/22.30/23.60 ms. No page errors or main-thread
+long tasks were recorded in these windows. This comparison does not demonstrate
+a 1.5.0 producer-pacing regression or an accidental in-game 30 fps editor cap.
+
+Actual game/present pacing remains unmeasured. PresentMon 2.3 and 2.6 initially
+reported access denied; an explicitly authorized, temporary highest-privilege
+interactive task subsequently completed without producing a game CSV. That task
+was deleted. Native tracing retained startup/bridge logs but did not provide
+per-frame delivered timestamps. Neither rAF observations nor the game's visible
+fps counter are substituted for that missing evidence. In particular, these
+Windows stable results cannot establish Linux lazer or Helium presentation
+quality, and no frame-drop improvement is claimed for the projection optimization.
+

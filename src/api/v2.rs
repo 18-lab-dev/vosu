@@ -18,6 +18,14 @@ pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
     build_internal(snapshot, true)
 }
 
+/// The subscription projector borrows histories and uses the already encoded graph.
+/// Unselected histories must not be copied at the precise reader's cadence.
+pub(crate) fn subscription_response(
+    snapshot: &CombinedSnapshot,
+) -> Result<Response<&[f64]>, ApiError> {
+    build_internal(snapshot, false)
+}
+
 fn build_internal<'a, V: From<&'a [f64]>>(
     snapshot: &'a CombinedSnapshot,
     include_graph_data: bool,
@@ -145,6 +153,7 @@ pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn document(snapshot: &CombinedSnapshot) -> Result<Value, ApiError> {
     let mut document = serde_json::to_value(build(snapshot)?)
         .map_err(|error| ApiError::serialization(error.to_string()))?;
@@ -152,6 +161,7 @@ pub(crate) fn document(snapshot: &CombinedSnapshot) -> Result<Value, ApiError> {
     Ok(document)
 }
 
+#[cfg(test)]
 fn normalize_javascript_numbers(value: &mut Value) -> Result<(), ApiError> {
     match value {
         Value::Number(number) if number.is_f64() => {

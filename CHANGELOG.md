@@ -2,6 +2,12 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased
+
+### Performance
+
+- Project selected-field subscriptions from only the requested subtrees, borrowing hit-error histories instead of copying and normalizing the whole V2 document on every precise publication. Initial/update frames, JSON Pointer semantics, full-document selections, and error handling are unchanged.
+
 ## 1.2.1 — 2026-10-26
 
 ### Dashboard

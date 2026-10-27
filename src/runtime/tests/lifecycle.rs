@@ -76,7 +76,7 @@ fn precise_publication_wakes_native_subscription_without_waking_regular_stream()
     assert!(!regular_rx.has_changed().unwrap());
     assert!(precise_rx.has_changed().unwrap());
     let native = V2SubscriptionProvider::capture(&providers)
-        .document()
+        .document(&[&[]])
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -106,7 +106,7 @@ fn v2_subscription_capture_keeps_not_ready_revision_and_missing_document() {
     );
     let snapshot = V2SubscriptionProvider::capture(&providers);
     assert_eq!(snapshot.revision(), 17);
-    assert_eq!(snapshot.document().unwrap(), None);
+    assert_eq!(snapshot.document(&[&[]]).unwrap(), None);
 }
 #[tokio::test]
 async fn signal_completion_cancels_the_shared_runtime_token() {

@@ -172,12 +172,27 @@ fn precise_state() -> PreciseState {
 }
 
 fn api_snapshot() -> CombinedSnapshot {
+    api_snapshot_with_history(0)
+}
+
+fn api_snapshot_with_history(history: usize) -> CombinedSnapshot {
+    let mut precise = precise_state();
+    let errors: Vec<_> = (0..history)
+        .map(|index| (index % 41) as f64 - 20.0)
+        .collect();
+    let split = history * 2 / 3;
+    precise.hit_errors = Arc::new(HitErrorArray {
+        press: errors[..split].to_vec(),
+        release: errors[split..].to_vec(),
+        all: errors,
+        ..Default::default()
+    });
     let state = Arc::new(StateBundleSnapshot {
         source: ClientType::Stable,
         generation: 1,
         reset_epoch: 0,
         regular: Arc::new(regular_state()),
-        precise: Arc::new(precise_state()),
+        precise: Arc::new(precise),
     });
     let instance = ManagerInstanceSnapshot::new(
         7,
@@ -495,7 +510,7 @@ impl V2SubscriptionSnapshot for SubscriptionSnapshot {
         self.revision
     }
 
-    fn document(&self) -> Result<Option<serde_json::Value>, ApiError> {
+    fn document(&self, _pointers: &[&[String]]) -> Result<Option<serde_json::Value>, ApiError> {
         self.document_builds.fetch_add(1, Ordering::Relaxed);
         let clients: Vec<_> = (0..SUBSCRIPTION_PLAN_VALUES)
             .map(|index| serde_json::Value::from(index as u64))
@@ -753,6 +768,76 @@ fn bench_linux_process_memory(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_subscription_documents(c: &mut Criterion) {
+    use vosu::runtime::ProductionSnapshotEncoder;
+    let mut group = c.benchmark_group("v2_subscription_document");
+    for history in [0, 7_500] {
+        let snapshot = api_snapshot_with_history(history);
+        let plans = [
+            (
+                "keys_time",
+                vec![
+                    vec!["keys", "all"],
+                    vec!["beatmap", "time", "live"],
+                    vec!["state"],
+                ],
+            ),
+            (
+                "whole_history",
+                vec![
+                    vec!["play", "pressHitErrors"],
+                    vec!["play", "releaseHitErrors"],
+                ],
+            ),
+            (
+                "indexed_history",
+                (0..32).map(|_| vec!["play", "hitErrorArray"]).collect(),
+            ),
+        ];
+        for (name, paths) in plans {
+            let pointers: Vec<Vec<String>> = paths
+                .into_iter()
+                .enumerate()
+                .map(|(index, tokens)| {
+                    let mut tokens: Vec<_> = tokens.into_iter().map(str::to_owned).collect();
+                    if name == "indexed_history" {
+                        tokens.push(index.to_string());
+                    }
+                    tokens
+                })
+                .collect();
+            let pointers: Vec<_> = pointers.iter().map(Vec::as_slice).collect();
+            group.bench_function(BenchmarkId::new(name, history), |b| {
+                b.iter(|| {
+                    black_box(
+                        ProductionSnapshotEncoder::subscription_document(
+                            black_box(&snapshot),
+                            black_box(&pointers),
+                        )
+                        .unwrap(),
+                    )
+                })
+            });
+        }
+        group.bench_function(BenchmarkId::new("whole_document", history), |b| {
+            b.iter_batched(
+                || api_snapshot_with_history(history),
+                |snapshot| {
+                    black_box(
+                        ProductionSnapshotEncoder::subscription_document(
+                            black_box(&snapshot),
+                            &[&[]],
+                        )
+                        .unwrap(),
+                    )
+                },
+                BatchSize::PerIteration,
+            );
+        });
+    }
+    group.finish();
+}
+
 fn hot_paths(c: &mut Criterion) {
     bench_batch_scan(c);
     bench_snapshot_reads(c);
@@ -764,6 +849,7 @@ fn hot_paths(c: &mut Criterion) {
     bench_serializers(c);
     bench_publication(c);
     bench_v2_subscription(c);
+    bench_subscription_documents(c);
 }
 
 criterion_group!(benches, hot_paths);

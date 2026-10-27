@@ -44,7 +44,9 @@ const ALREADY_SUBSCRIBED_MESSAGE: &str = "subscription already established";
 /// One immutable source snapshot captured at a live publication point.
 pub trait V2SubscriptionSnapshot: Send + Sync {
     fn revision(&self) -> u64;
-    fn document(&self) -> Result<Option<Value>, ApiError>;
+    /// May omit unselected subtrees, but every requested pointer must resolve exactly
+    /// as in the complete V2 document. An empty pointer requests that complete document.
+    fn document(&self, pointers: &[&[String]]) -> Result<Option<Value>, ApiError>;
 }
 
 /// Supplies live publication notifications and atomic snapshots.
@@ -713,12 +715,27 @@ impl DemandCounts {
     }
 }
 
+struct CapturedDocument {
+    revision: u64,
+    // Weak references pin allocation identities without retaining closed subscriptions.
+    plans: Vec<Weak<Plan>>,
+    document: Option<Value>,
+}
+
+impl CapturedDocument {
+    fn includes(&self, plan: &Arc<Plan>) -> bool {
+        self.plans
+            .iter()
+            .any(|included| included.as_ptr() == Arc::as_ptr(plan))
+    }
+}
+
 struct HubInner {
     provider: Arc<dyn V2SubscriptionProvider>,
     debounce: ArcSwap<Duration>,
     clients: ArcSwap<HashMap<u64, Arc<Client>>>,
     plans: Mutex<Vec<Weak<Plan>>>,
-    document: Mutex<Option<(u64, Arc<Option<Value>>)>>,
+    document: Mutex<Option<Arc<CapturedDocument>>>,
     writes: Mutex<()>,
     accepting: AtomicBool,
     next_id: AtomicU64,
@@ -984,7 +1001,7 @@ impl V2SubscriptionHub {
         let mut next_deadline: Option<Instant> = None;
         // Captured at the first eligible client, so a pass that can deliver nothing builds no
         // document. A cell, so values borrowed from the document outlive later clients.
-        let source: OnceCell<(u64, Arc<Option<Value>>)> = OnceCell::new();
+        let source: OnceCell<Arc<CapturedDocument>> = OnceCell::new();
         // Memo entries pin their plan, so its address cannot be reused by a plan interned
         // while this dispatch runs.
         let mut extracted: FxHashMap<usize, (Arc<Plan>, Extraction)> = FxHashMap::default();
@@ -1032,7 +1049,7 @@ impl V2SubscriptionHub {
                     continue;
                 }
             }
-            let (revision, document) = match source.get() {
+            let captured = match source.get() {
                 Some(captured) => captured,
                 None => {
                     // `subscribe` takes the document lock before a subscription lock; release
@@ -1047,11 +1064,16 @@ impl V2SubscriptionHub {
                     source.get_or_init(|| captured)
                 }
             };
-            let revision = *revision;
-            let document = document.as_ref().as_ref();
+            let revision = captured.revision;
+            let document = captured.document.as_ref();
             let Some(Subscription { plan, baseline }) = guard.as_mut() else {
                 continue;
             };
+            // A selection established during this projection may not be in its union.
+            // subscribe already woke the runner; let that pass deliver its initial frame.
+            if !captured.includes(plan) {
+                continue;
+            }
             let previous = baseline.as_deref();
             // Only this subscription holds a plan whose count is one, so no other client in
             // this dispatch can reuse its extraction or frame; skip the memo maps. A stale count
@@ -1159,28 +1181,42 @@ impl V2SubscriptionHub {
         next_deadline
     }
 
-    /// The document for `source_revision`, built at most once per revision; `None` when it
-    /// failed to serialize.
-    fn capture_source(&self, source_revision: u64) -> Option<(u64, Arc<Option<Value>>)> {
-        let cached = lock(&self.0.document)
-            .as_ref()
-            .filter(|(revision, _)| *revision == source_revision)
-            .map(|(revision, document)| (*revision, Arc::clone(document)));
-        if cached.is_some() {
-            return cached;
+    /// Captures once per revision and established selection set. A new plan also
+    /// refreshes the projection when the source revision has not changed.
+    fn capture_source(&self, source_revision: u64) -> Option<Arc<CapturedDocument>> {
+        let cached = lock(&self.0.document);
+        let plans: Vec<_> = lock(&self.0.plans)
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        if let Some(document) = cached.as_ref().filter(|document| {
+            document.revision == source_revision && plans.iter().all(|plan| document.includes(plan))
+        }) {
+            return Some(Arc::clone(document));
         }
+        // Never hold a registry lock while calling the provider.
+        drop(cached);
+        let pointers: Vec<_> = plans
+            .iter()
+            .flat_map(|plan| plan.pointers.iter().map(Vec::as_slice))
+            .collect();
         let snapshot = self.0.provider.capture();
         let revision = snapshot.revision();
-        let document = match snapshot.document() {
-            Ok(document) => Arc::new(document),
-            Err(ApiError::NotReady) => Arc::new(None),
+        let document = match snapshot.document(&pointers) {
+            Ok(document) => document,
+            Err(ApiError::NotReady) => None,
             Err(ApiError::Serialization(_)) => {
                 *lock(&self.0.document) = None;
                 return None;
             }
         };
-        *lock(&self.0.document) = Some((revision, Arc::clone(&document)));
-        Some((revision, document))
+        let captured = Arc::new(CapturedDocument {
+            revision,
+            plans: plans.iter().map(Arc::downgrade).collect(),
+            document,
+        });
+        *lock(&self.0.document) = Some(Arc::clone(&captured));
+        Some(captured)
     }
 
     /// Ends every subscribed client after the source document failed to serialize.
