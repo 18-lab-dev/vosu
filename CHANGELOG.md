@@ -4,6 +4,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased
 
+### Tools
+
+- Offer catalog-declared tool renames (`replaces`) as same-source updates on the Tools page and through `vosux --update <old-id>`. Preserve durable data, settings, trust, enabled and autostart choices; refuse existing targets and cross-source migrations, and recover interrupted migrations before discovering tools. Installed replacements satisfy dependencies on former IDs without retaining old hosted routes. Catalog-only metadata keeps packages installable on vosu 1.2.0/1.2.1, where installation remains separate and state is not migrated.
+
 ### Performance
 
 - Project selected-field subscriptions from only the requested subtrees, borrowing hit-error histories instead of copying and normalizing the whole V2 document on every precise publication. Initial/update frames, JSON Pointer semantics, full-document selections, and error handling are unchanged.

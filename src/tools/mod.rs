@@ -5,6 +5,7 @@ mod cli;
 mod http;
 pub mod manifest;
 mod process;
+mod replaces;
 #[cfg(test)]
 mod tests;
 
@@ -38,6 +39,9 @@ struct Saved {
     catalog_source: Option<String>,
     #[serde(default)]
     autostart: Option<bool>,
+    /// Catalog-authorized dependency identities, retained even while offline.
+    #[serde(default)]
+    replaces: Vec<String>,
 }
 #[derive(Clone, Serialize)]
 struct LogLine {
@@ -258,6 +262,7 @@ impl ToolHost {
             counters: Mutex::new(None),
         });
         host.migrate_catalog_state().map_err(io::Error::other)?;
+        host.recover_replacement().map_err(io::Error::other)?;
         host.rescan().await;
         Ok(host)
     }
@@ -300,6 +305,25 @@ impl ToolHost {
             .cloned()
             .ok_or_else(|| "unknown tool".into())
     }
+    fn provides(&self, entry: &Entry, id: &str) -> bool {
+        entry.id == id
+            || (entry.source != "dev"
+                && self.saved.lock().get(&entry.id).is_some_and(|state| {
+                    state.catalog_source.is_some() && state.replaces.iter().any(|old| old == id)
+                }))
+    }
+    fn dependency(&self, id: &str) -> Result<Arc<Entry>, String> {
+        if let Ok(entry) = self.entry(id) {
+            return Ok(entry);
+        }
+        let entries = self.entries.lock();
+        let mut matches = entries.values().filter(|entry| self.provides(entry, id));
+        let entry = matches.next().cloned().ok_or("unknown tool")?;
+        if matches.next().is_some() {
+            return Err(format!("ambiguous replacement for {id}"));
+        }
+        Ok(entry)
+    }
     fn settings(&self, entry: &Entry) -> Result<serde_json::Map<String, Value>, String> {
         let mut values = serde_json::Map::new();
         for setting in &entry.schema {
@@ -329,7 +353,7 @@ impl ToolHost {
     fn blocked(&self, entry: &Entry) -> Option<String> {
         let manifest = entry.manifest.as_ref()?;
         for dep in &manifest.requires {
-            let Ok(other) = self.entry(&dep.id) else {
+            let Ok(other) = self.dependency(&dep.id) else {
                 return Some(format!("missing dependency {}", dep.id));
             };
             let Some(m) = &other.manifest else {
@@ -420,7 +444,7 @@ impl ToolHost {
                     .iter()
                     .map(|dep| {
                         let satisfied = self
-                            .entry(&dep.id)
+                            .dependency(&dep.id)
                             .ok()
                             .and_then(|e| {
                                 e.manifest.as_ref().map(|m| {
@@ -442,7 +466,7 @@ impl ToolHost {
             .filter(|e| {
                 e.manifest
                     .as_ref()
-                    .is_some_and(|m| m.requires.iter().any(|d| d.id == entry.id))
+                    .is_some_and(|m| m.requires.iter().any(|d| self.provides(entry, &d.id)))
             })
             .map(|e| e.id.clone())
             .collect::<Vec<_>>();
@@ -478,6 +502,7 @@ impl ToolHost {
         view["interfaces"] = json!(interfaces);
         view["autostart"] = json!(autostart);
         view["starts_with_vosu"] = json!(starts_with_vosu);
+        view["update_target"] = json!(self.update_target(&entry.id));
         view
     }
     async fn start(self: &Arc<Self>, id: &str, manual: bool) -> Result<(), String> {
@@ -571,7 +596,8 @@ impl ToolHost {
         let entry = self.entry(id)?;
         let m = entry.manifest.as_ref().ok_or("invalid manifest")?;
         for dep in &m.requires {
-            self.visit(&dep.id, active, done, order)?;
+            let dependency = self.dependency(&dep.id)?;
+            self.visit(&dependency.id, active, done, order)?;
         }
         active.remove(id);
         done.insert(id.into());
@@ -621,6 +647,10 @@ impl ToolHost {
     }
     async fn rescan(self: &Arc<Self>) {
         let _gate = self.gate.lock().await;
+        if let Err(error) = self.recover_replacement() {
+            tracing::error!(%error, "tool discovery paused until replacement recovery succeeds");
+            return;
+        }
         let mut found = BTreeMap::<String, Arc<Entry>>::new();
         for (root, source) in &self.roots {
             let paths = if *source == "dev" {

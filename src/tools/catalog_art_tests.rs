@@ -176,6 +176,7 @@ mod routes {
             protocol: 1,
             interfaces: vec!["ui".into()],
             requires: Vec::new(),
+            replaces: Vec::new(),
             packages: BTreeMap::from([(
                 "any".into(),
                 Package {

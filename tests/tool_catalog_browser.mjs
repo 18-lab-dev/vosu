@@ -2,13 +2,35 @@
 // Runs while `fixture` 1.0.0 is installed from the first source and 2.0.0
 // is published.
 import { mkdir } from 'node:fs/promises';
-const [modulePath, evidence] = process.argv.slice(2);
+const [modulePath, evidence, mode = 'normal'] = process.argv.slice(2);
 if (!modulePath || !evidence) throw new Error('Usage: node tool_catalog_browser.mjs <playwright index.mjs> <evidence directory>');
 const { chromium } = await import(modulePath);
 await mkdir(evidence, { recursive: true });
 const browser = await chromium.launch({ headless: true, executablePath: process.env.VOSU_CHROMIUM || undefined });
 try {
-  for (const theme of ['dark', 'light']) {
+  if (mode === 'rename') {
+    for (const theme of ['dark', 'light']) {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 1080 }, colorScheme: theme });
+      const page = await context.newPage();
+      const errors = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      await page.addInitScript((theme) => localStorage.setItem('vosu.theme.v1', theme), theme);
+      await page.goto('http://127.0.0.1:25151/tools');
+      const installed = page.locator('#tools-root .tool-card[data-tool-id="old"]');
+      const update = installed.getByRole('button', { name: 'Update Tool host fixture to Catalog service fixture v1.0.0; preserves data and settings', exact: true });
+      await update.waitFor({ timeout: 15000 });
+      if (await update.textContent() !== 'Update to Catalog service fixture') throw new Error('Replacement button does not name the new tool');
+      const available = page.locator('[data-catalog-tool="new"]');
+      await available.getByRole('button', { name: 'Update Catalog service fixture', exact: true }).waitFor();
+      await available.getByText('Replaces old; keeps data and settings.', { exact: true }).waitFor();
+      if (await available.getByRole('button', { name: /^Install/ }).count()) throw new Error('Rename incorrectly offered as a separate install');
+      await page.screenshot({ path: `${evidence}/tools-rename-${theme}.png`, fullPage: true });
+      if (errors.length) throw new Error(errors.join('\n'));
+      console.log(`${theme}: same-source rename named on installed card, offered as Update (not Install), migration disclosure visible`);
+      await context.close();
+    }
+  }
+  for (const theme of mode === 'rename' ? [] : ['dark', 'light']) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1080 }, colorScheme: theme });
     const page = await context.newPage();
     const errors = [];

@@ -1235,6 +1235,7 @@ async fn cli_broker_auth_sessions_and_authority() {
                 official: false,
                 catalog_source: None,
                 autostart: None,
+                replaces: Vec::new(),
             },
         );
         let denied = host

@@ -194,6 +194,45 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
                     assert cli.returncode == 0, cli.stdout + cli.stderr
                     evidence.append('vosux via vosu x: ' + cli.stdout.strip())
                 assert not data_dir.exists()
+                # A catalog-only rename migrates state without changing the
+                # strict manifest accepted by older hosts.
+                base_catalog = {'catalog_version': 1, 'published': '2026-10-27T00:00:00Z'}
+                old = tool('old', '1.0.0')
+                (packages / 'first/catalog.json').write_text(json.dumps({**base_catalog, 'tools': [old]}))
+                action('/api/tools/old/install')
+                assert curl('/api/tools/old/trust', dashboard=True, method='POST', headers=headers, data={})[0] == 200
+                assert curl('/api/tools/old/disable', dashboard=True, method='POST', headers=headers, data={})[0] == 200
+                assert curl('/api/tools/old/autostart', dashboard=True, method='PUT', headers=headers, data={'autostart': False})[0] == 200
+                _, response = curl('/api/tools/old', dashboard=True)
+                old_view = json.loads(response)
+                old_data = Path(old_view['data']['data_dir'])
+                old_data.mkdir(parents=True, exist_ok=True)
+                (old_data / 'retained').write_bytes(b'unchanged\0data')
+                old_settings = config / 'tools/settings/old.json'
+                old_settings.parent.mkdir(parents=True, exist_ok=True)
+                old_settings.write_text('{"text":"private setting","number":42}\n')
+                replacement = {**tool('new', '1.0.0'), 'replaces': ['old']}
+                (packages / 'first/catalog.json').write_text(json.dumps({**base_catalog, 'tools': [replacement]}))
+                status, response = curl('/api/tools/catalog', dashboard=True)
+                renamed_catalog = json.loads(response)
+                offered = next(entry for entry in renamed_catalog['tools'] if entry['id'] == 'new')
+                assert status == 200 and offered['replacement_of'] == 'old'
+                _, response = curl('/api/tools/old', dashboard=True)
+                if args.playwright_module:
+                    subprocess.run(['node', str(ROOT / 'tests/tool_catalog_browser.mjs'), str(args.playwright_module.resolve()), str(args.evidence.resolve()), 'rename'], check=True, env=environment)
+                assert json.loads(response)['update_available'] and json.loads(response)['update_target'] == 'new'
+                for attempt in range(2):
+                    cli = subprocess.run([str(binary), 'x', '--update', 'old'], cwd=root, env=environment, text=True, capture_output=True, timeout=45)
+                    assert cli.returncode == 0, cli.stdout + cli.stderr
+                _, response = curl('/api/tools/new', dashboard=True)
+                renamed = json.loads(response)
+                assert renamed['trusted'] and not renamed['enabled'] and renamed['autostart'] is False
+                assert (Path(renamed['data']['data_dir']) / 'retained').read_bytes() == b'unchanged\0data'
+                assert (config / 'tools/settings/new.json').read_text() == '{"text":"private setting","number":42}\n'
+                assert curl('/api/tools/old', dashboard=True)[0] != 200
+                assert not old_data.exists() and not old_settings.exists()
+                assert not (config / 'tools/tool-replacement.json').exists()
+                evidence.append('Same-source old → new offered as update; vosux applies it twice idempotently; data/settings/trust/enabled/autostart migrated intact; old id removed')
                 daemon.send_signal(signal.SIGTERM)
                 assert daemon.wait(timeout=15) == 0
             finally:

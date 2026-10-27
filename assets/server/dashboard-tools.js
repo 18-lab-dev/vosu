@@ -169,7 +169,7 @@ export function mountTools({
 
   // The catalog entry of an installed tool, for the version an update offers.
   function catalogEntry(id) {
-    return catalogTools.find((tool) => tool.id === id && !tool.shadowed) ?? null;
+    return catalogTools.find((tool) => (tool.id === id || tool.replacement_of === id) && !tool.shadowed) ?? null;
   }
 
   // `/api/tools` says whether a tool was installed from a catalog
@@ -177,8 +177,13 @@ export function mountTools({
   // so Update and Uninstall work even while the source is unreachable.
   function updateButton(view, name) {
     if (!view.managed || !view.update_available) return null;
-    const version = catalogEntry(view.id)?.version;
-    return actionButton('Update', 'catalog-update', { update: true, describe: `Update ${name}${version ? ` to v${version}` : ''}` });
+    const target = catalogEntry(view.id);
+    const renamed = target && target.id !== view.id;
+    const label = renamed ? `Update to ${target.name || target.id}` : 'Update';
+    const describe = renamed
+      ? `Update ${name} to ${target.name || target.id}${target.version ? ` v${target.version}` : ''}; preserves data and settings`
+      : `Update ${name}${target?.version ? ` to v${target.version}` : ''}`;
+    return actionButton(label, 'catalog-update', { update: true, describe });
   }
 
   // Only tools that are not installed, or have an update, are offered here;
@@ -191,7 +196,7 @@ export function mountTools({
     const shown = offered.filter((tool) => matches(tool, tokensOf(state.query)));
     availableCards.replaceChildren(...shown.map((tool) => {
       const installed = state.tools.find((entry) => entry.id === tool.id);
-      const update = Boolean(installed && tool.update_available);
+      const update = Boolean(tool.replacement_of || (installed && tool.update_available));
       const official = ['18-lab-dev/vosu-tools', '18-lab-dev/vosulay'].includes(tool.source);
       const titleId = `catalog-tool-${tool.id}`;
       const card = el('article', { className: 'tool-card', attrs: { 'data-catalog-tool': tool.id, 'aria-labelledby': titleId } },
@@ -205,6 +210,7 @@ export function mountTools({
               tool.shadowed || !official ? el('span', { className: 'badge', text: tool.shadowed ? 'Shadowed' : 'User catalog' }) : null))),
         tool.description ? el('p', { className: 'tool-card__description', text: tool.description }) : null);
       if (list(tool.requires).length) card.append(el('p', { className: 'tool-card__description', text: `Requires ${tool.requires.map((r) => `${r.id} ${r.version}`).join(', ')}` }));
+      if (tool.replacement_of) card.append(el('p', { className: 'tool-card__description', text: `Replaces ${tool.replacement_of}; keeps data and settings.`, attrs: { title: `Moves data, settings, trust, enabled and autostart choices from ${tool.replacement_of} to ${tool.id}.` } }));
       const actions = el('div', { className: 'tool-card__actions' });
       if (tool.shadowed) actions.append(el('span', { className: 'field-help', text: 'An earlier source provides this id.' }));
       else {
@@ -267,7 +273,8 @@ export function mountTools({
     if (action === 'uninstall' && removeData === undefined) { chooseUninstall(button, tool); return; }
     setBusy(button, true, 'Queued…');
     try {
-      const response = await requestJson(api(tool.id, `/${action}`), { method: 'POST', body: JSON.stringify({ remove_data: removeData }) });
+      const id = action === 'update' ? (tool.replacement_of || tool.id) : tool.id;
+      const response = await requestJson(api(id, `/${action}`), { method: 'POST', body: JSON.stringify({ remove_data: removeData }) });
       for (;;) {
         const job = await requestJson(`/api/tools/catalog/jobs/${encodeURIComponent(response.job_id)}`);
         if (button.isConnected) button.textContent = `${job.phase}…`;
@@ -869,7 +876,7 @@ export function mountTools({
     else if (action === 'catalog-update' || action === 'catalog-uninstall') {
       // The catalog entry may be missing while its source is offline; the
       // job needs only the id.
-      const tool = catalogEntry(view.id) ?? { id: view.id, name: view.name || view.id };
+      const tool = (action === 'catalog-update' ? catalogEntry(view.id) : null) ?? { id: view.id, name: view.name || view.id };
       catalogAction(button, tool, action === 'catalog-update' ? 'update' : 'uninstall');
     } else lifecycle(button, view, action);
   }

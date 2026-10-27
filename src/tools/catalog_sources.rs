@@ -305,7 +305,7 @@ impl ToolHost {
             .ok_or("unknown catalog overlay")?;
         for requirement in &overlay.requires_tools {
             let satisfied = self
-                .entry(&requirement.id)
+                .dependency(&requirement.id)
                 .ok()
                 .and_then(|entry| entry.manifest.as_ref().map(|m| m.version.clone()))
                 .is_some_and(|version| {
@@ -326,7 +326,9 @@ impl ToolHost {
                     .lock()
                     .tools
                     .iter()
-                    .find(|tool| tool.id == requirement.id)
+                    .find(|tool| {
+                        tool.id == requirement.id || tool.replaces.contains(&requirement.id)
+                    })
                     .cloned()
                     .ok_or("required tool is missing from enabled sources")?;
                 if !semver::VersionReq::parse(&requirement.version)
@@ -337,12 +339,12 @@ impl ToolHost {
                 {
                     return Err("catalog tool does not satisfy overlay requirement".into());
                 }
-                let action = if self.entry(&requirement.id).is_ok() {
+                let action = if self.dependency(&requirement.id).is_ok() {
                     "update"
                 } else {
                     "install"
                 };
-                self.install_catalog(&requirement.id, action, job).await?;
+                self.install_catalog(&available.id, action, job).await?;
             }
         }
         let _operation = self.catalog_operation.lock().await;

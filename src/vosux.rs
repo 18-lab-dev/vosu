@@ -315,7 +315,14 @@ async fn execute(invocation: Invocation) -> Result<i32, Failure> {
                     .await?;
                 match state["status"].as_str() {
                     Some("completed") => {
-                        println!("{action} {id}: completed");
+                        let target = state["tool"].as_str().unwrap_or(&id);
+                        if action == "update" && target != id {
+                            println!(
+                                "update {id}: completed (replaced by {target}; data and settings preserved)"
+                            );
+                        } else {
+                            println!("{action} {id}: completed");
+                        }
                         return Ok(0);
                     }
                     Some("failed") => {

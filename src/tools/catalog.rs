@@ -59,6 +59,8 @@ pub(super) struct Tool {
     pub interfaces: Vec<String>,
     #[serde(default)]
     pub requires: Vec<Requirement>,
+    #[serde(default)]
+    pub replaces: Vec<String>,
     pub packages: BTreeMap<String, Package>,
     #[serde(skip_deserializing, default)]
     pub source: String,
@@ -126,9 +128,15 @@ impl Catalog {
             return Err("unsupported catalog version".into());
         }
         let mut ids = HashSet::new();
+        let mut replaced = HashSet::new();
         for tool in &self.tools {
             if !manifest::valid_id(&tool.id) || !ids.insert(&tool.id) {
                 return Err("invalid or duplicate catalog id".into());
+            }
+            for id in &tool.replaces {
+                if !manifest::valid_id(id) || id == &tool.id || !replaced.insert(id) {
+                    return Err("invalid, duplicate or ambiguous catalog replacement".into());
+                }
             }
             semver::Version::parse(&tool.version).map_err(|e| e.to_string())?;
             if tool.protocol != 1
@@ -167,6 +175,9 @@ impl Catalog {
                 }
             }
         }
+        if ids.iter().any(|id| replaced.contains(id)) {
+            return Err("catalog replacement id is also a current tool id".into());
+        }
         Ok(())
     }
     fn order(&self, id: &str) -> Result<Vec<Tool>, String> {
@@ -192,7 +203,7 @@ impl Catalog {
                 let dependency = catalog
                     .tools
                     .iter()
-                    .find(|t| t.id == dep.id)
+                    .find(|t| t.id == dep.id || t.replaces.contains(&dep.id))
                     .ok_or_else(|| format!("missing catalog dependency: {}", dep.id))?;
                 if !semver::VersionReq::parse(&dep.version)
                     .map_err(|e| e.to_string())?
@@ -202,7 +213,7 @@ impl Catalog {
                 {
                     return Err(format!("unsatisfied catalog dependency: {}", dep.id));
                 }
-                visit(catalog, &dep.id, stack, done, order)?;
+                visit(catalog, &dependency.id, stack, done, order)?;
             }
             stack.remove(id);
             done.insert(id.into());
@@ -351,12 +362,17 @@ impl ToolHost {
             .iter()
             .map(|tool| {
                 let installed = self.entry(&tool.id).ok();
+                let replacement_of = tool
+                    .replaces
+                    .iter()
+                    .find(|old| self.update_target(old).as_deref() == Some(tool.id.as_str()));
                 let version = installed
                     .as_ref()
                     .and_then(|e| e.manifest.as_ref())
                     .map(|m| m.version.clone());
                 let mut value = serde_json::to_value(tool).unwrap();
                 value["installed"] = json!(installed.is_some());
+                value["replacement_of"] = json!(replacement_of);
                 value["managed"] = json!(
                     installed
                         .as_ref()
@@ -385,6 +401,9 @@ impl ToolHost {
         )
     }
     pub(super) fn update_available(&self, id: &str, version: Option<&str>) -> bool {
+        if self.update_target(id).is_some() {
+            return true;
+        }
         let Some(version) = version.and_then(|v| semver::Version::parse(v).ok()) else {
             return false;
         };
@@ -487,15 +506,24 @@ impl ToolHost {
         job: &str,
     ) -> Result<(), String> {
         let _operation = self.catalog_operation.lock().await;
+        {
+            let _gate = self.gate.lock().await;
+            self.recover_replacement()?;
+        }
+        self.rescan().await;
         self.phase(job, "catalog");
         self.catalog_view().await?;
-        let installed = self.entry(id).ok();
+        let installed = if action == "update" {
+            self.dependency(id).ok()
+        } else {
+            self.entry(id).ok()
+        };
         if installed.as_ref().is_some_and(|entry| {
             entry.source == "dev"
                 || self
                     .saved
                     .lock()
-                    .get(id)
+                    .get(&entry.id)
                     .is_none_or(|state| state.catalog_source.is_none())
         }) {
             return Err("cannot replace a development or manually installed tool".into());
@@ -506,8 +534,32 @@ impl ToolHost {
         if action == "update" && installed.is_none() {
             return Err("tool is not installed; use install".into());
         }
-        let order = self.catalog.lock().order(id)?;
+        let replacement = installed
+            .as_ref()
+            .map(|entry| self.replacement_for(&entry.id))
+            .transpose()?
+            .flatten();
+        let target_id = replacement
+            .map(|tool| tool.id)
+            .or_else(|| installed.as_ref().map(|entry| entry.id.clone()))
+            .unwrap_or_else(|| id.into());
+        let order = self.catalog.lock().order(&target_id)?;
         for tool in order {
+            let old = tool
+                .replaces
+                .iter()
+                .filter(|id| self.entry(id).is_ok())
+                .cloned()
+                .collect::<Vec<_>>();
+            if old.len() > 1 {
+                return Err(
+                    "multiple replaced tools are installed; cannot merge their data".into(),
+                );
+            }
+            let old = old.first();
+            if let Some(old) = old {
+                self.prepare_replacement(old, &tool, false)?;
+            }
             if let Ok(entry) = self.entry(&tool.id) {
                 if entry.source == "dev"
                     || self
@@ -546,14 +598,18 @@ impl ToolHost {
             verify_package(&archive, &package)?;
             self.phase(job, &format!("installing {}", tool.id));
             let _gate = self.gate.lock().await;
-            let prior = self.entry(&tool.id).ok();
+            let prior = self.entry(old.unwrap_or(&tool.id)).ok();
             let running = prior
                 .as_ref()
                 .is_some_and(|e| e.state.lock().task.is_some());
             if let Some(entry) = &prior {
                 self.stop(entry).await;
             }
-            let destination = self.data.join(&tool.id);
+            let destination = if old.is_some() {
+                self.replacement_stage()
+            } else {
+                self.data.join(&tool.id)
+            };
             let cancel = self.cancel.clone();
             let tool_copy = tool.clone();
             let result = tokio::task::spawn_blocking(move || {
@@ -563,16 +619,31 @@ impl ToolHost {
             .map_err(|e| e.to_string())?;
             if let Err(error) = result {
                 drop(_gate);
-                if running {
-                    let _ = self.start(&tool.id, true).await;
+                if running && let Some(prior) = &prior {
+                    let _ = self.start(&prior.id, true).await;
                 }
                 return Err(error);
             }
-            {
+            if let Some(old) = old {
+                self.prepare_replacement(old, &tool, true)?;
+                self.recover_replacement()?;
+            } else {
                 let mut saved = self.saved.lock();
-                let state = saved.entry(tool.id.clone()).or_default();
+                let mut next = saved.clone();
+                let state = next.entry(tool.id.clone()).or_default();
                 record_source(state, &tool.source);
-                atomic_json(&self.config.join("state.json"), &*saved).map_err(|e| e.to_string())?;
+                for id in &tool.replaces {
+                    if !state.replaces.contains(id) {
+                        state.replaces.push(id.clone());
+                    }
+                }
+                atomic_json(&self.config.join("state.json"), &next).map_err(|e| e.to_string())?;
+                *saved = next;
+            }
+            if tool.id == target_id
+                && let Some(state) = self.catalog_jobs.lock().get_mut(job)
+            {
+                state.tool = tool.id.clone();
             }
             drop(_gate);
             self.rescan().await;
@@ -582,7 +653,7 @@ impl ToolHost {
         }
         Ok(())
     }
-    async fn uninstall_catalog(
+    pub(super) async fn uninstall_catalog(
         self: &Arc<Self>,
         id: &str,
         remove_data: bool,
@@ -603,7 +674,7 @@ impl ToolHost {
             e.id != id
                 && e.manifest
                     .as_ref()
-                    .is_some_and(|m| m.requires.iter().any(|r| r.id == id))
+                    .is_some_and(|m| m.requires.iter().any(|r| self.provides(&entry, &r.id)))
         }) {
             return Err("another installed tool requires this tool".into());
         }

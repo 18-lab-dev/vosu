@@ -95,7 +95,7 @@ impl ToolHost {
                     || owner
                         .manifest
                         .as_ref()
-                        .is_some_and(|m| m.requires.iter().any(|d| d.id == target.id))
+                        .is_some_and(|m| m.requires.iter().any(|d| self.provides(target, &d.id)))
             };
             if let Some(owner) = self.cli_owner(&token) {
                 return (declared(&owner) || !write).then(|| format!("cli:{}", owner.id));

@@ -14,6 +14,7 @@ fn tool(id: &str, version: &str) -> Tool {
         protocol: 1,
         interfaces: vec!["ui".into()],
         requires: Vec::new(),
+        replaces: Vec::new(),
         packages: BTreeMap::from([(
             "any".into(),
             Package {
@@ -339,4 +340,46 @@ async fn durable_data_cannot_collide_with_any_package_id() {
         "durable"
     );
     host.shutdown().await;
+}
+
+#[test]
+fn replacement_catalog_validation_and_dependency_order() {
+    let mut replacement = tool("new", "1.0.0");
+    replacement.replaces = vec!["old".into()];
+    let mut consumer = tool("consumer", "1.0.0");
+    consumer.requires = vec![Requirement {
+        id: "old".into(),
+        version: "^1".into(),
+    }];
+    let valid = catalog(vec![consumer, replacement.clone()]);
+    valid.validate().unwrap();
+    assert_eq!(
+        valid
+            .order("consumer")
+            .unwrap()
+            .iter()
+            .map(|t| t.id.as_str())
+            .collect::<Vec<_>>(),
+        ["new", "consumer"]
+    );
+    for ids in [
+        vec!["../escape"],
+        vec!["new"],
+        vec!["old", "old"],
+        vec!["_host"],
+    ] {
+        let mut invalid = replacement.clone();
+        invalid.replaces = ids.into_iter().map(String::from).collect();
+        assert!(catalog(vec![invalid]).validate().is_err());
+    }
+    assert!(
+        catalog(vec![replacement.clone(), tool("old", "1.0.0")])
+            .validate()
+            .is_err()
+    );
+    let mut ambiguous = replacement.clone();
+    ambiguous.id = "another".into();
+    assert!(catalog(vec![replacement, ambiguous]).validate().is_err());
+    // Catalog-only metadata: strict old manifests remain installable.
+    assert!(Manifest::parse("manifest_version=1\nid='new'\nname='New'\nversion='1.0.0'\nreplaces=['old']\n[ui]\nroot='web'\n").is_err());
 }
