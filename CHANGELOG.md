@@ -4,6 +4,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## 1.2.2 - 2026-10-27
 
+### Configuration
+
+- Keep Windows config and settings filenames continuously readable during saves on hard-link-capable filesystems. Merge the original file's ACLs, creation time and alternate streams through a private link before publishing with a single native rename, rather than exposing `ReplaceFileW`'s transient missing-name window. Retain bounded sharing/access-denied retries and the existing fallback on filesystems without hard links; clean inactive private staging links at startup.
+
 ### Tools
 
 - Offer catalog-declared tool renames (`replaces`) as same-source updates on the Tools page and through `vosux --update <old-id>`. Preserve durable data, settings, trust, enabled and autostart choices; refuse existing targets and cross-source migrations, and recover interrupted migrations before discovering tools. Installed replacements satisfy dependencies on former IDs without retaining old hosted routes. Catalog-only metadata keeps packages installable on vosu 1.2.0/1.2.1, where installation remains separate and state is not migrated.

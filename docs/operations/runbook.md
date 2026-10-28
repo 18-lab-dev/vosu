@@ -45,6 +45,8 @@ Network changes in the dashboard require **Apply network settings**, then **Keep
 
 Startup precedence is `vosu.toml > vosu.env > tosu.env > defaults`. The two `.env` files are migration inputs only: vosu writes canonical TOML atomically first and removes readable legacy files only after successful replacement. A malformed TOML file leaves the prior runtime configuration active during watch reload; at startup, malformed input leaves all sources untouched.
 
+On Windows filesystems with hard links (including NTFS), concurrent readers of config/settings see the old or new file throughout saves: metadata is merged privately and the public name is replaced by a single rename. Existing ACLs, creation time and alternate streams are preserved. Readers that deny share-delete can delay a save; access-denied/sharing failures are retried for at most two seconds. FAT/exFAT and remote filesystems without hard links retain the older replacement path, which can briefly hide the filename from concurrent readers. At startup vosu performs a bounded cleanup of inactive `.vosu-atomic-*` staging directories under its program directory; live leases, unrelated names/layouts and directory symlinks are not removed.
+
 The dashboard’s installed cards persist pin state in browser local storage, keep pinned cards first, and reorder pins with **Move pin earlier/later** in each card's **⋯** menu. Shift-click a counter URL to open it in a new window, or press `/` outside an editable control to focus search. If catalog retrieval fails, the Available page can show an error while retaining the locally discovered installed count.
 
 ## Platform access

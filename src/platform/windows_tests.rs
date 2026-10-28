@@ -69,7 +69,7 @@ fn concurrent_readers_never_observe_missing_file() {
             for _ in 0..32 {
                 let temp = root.path().join("pending");
                 let mut file = fs::File::create(&temp)?;
-                write!(file, "generation={generation:04}\n")?;
+                writeln!(file, "generation={generation:04}")?;
                 file.sync_all()?;
                 drop(file);
                 atomic_replace(&temp, &target)?;
@@ -123,4 +123,189 @@ fn reader_without_share_delete_is_retried_until_released() {
         .unwrap();
     writer.join().unwrap();
     assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+}
+
+#[test]
+fn replacement_preserves_target_metadata_and_cleans_staging() {
+    use std::os::windows::fs::MetadataExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::Security::{
+        DACL_SECURITY_INFORMATION, GetFileSecurityW, PROTECTED_DACL_SECURITY_INFORMATION,
+        SetFileSecurityW,
+    };
+    use windows_sys::Win32::Storage::FileSystem::SetFileTime;
+
+    fn dacl(path: &Path) -> Vec<u32> {
+        let path = wide(path);
+        let mut needed = 0;
+        // SAFETY: first call queries the required buffer size only.
+        unsafe {
+            GetFileSecurityW(
+                path.as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            )
+        };
+        assert!(needed > 0);
+        let mut descriptor = vec![0_u32; (needed as usize).div_ceil(4)];
+        // SAFETY: the aligned buffer has at least `needed` writable bytes.
+        assert_ne!(
+            unsafe {
+                GetFileSecurityW(
+                    path.as_ptr(),
+                    DACL_SECURITY_INFORMATION,
+                    descriptor.as_mut_ptr().cast(),
+                    needed,
+                    &mut needed,
+                )
+            },
+            0
+        );
+        descriptor
+    }
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("vosu.toml");
+    let temp = root.path().join("pending");
+    fs::write(&target, "old").unwrap();
+    fs::write(&temp, "new").unwrap();
+    fs::write(root.path().join("vosu.toml:retained"), "old stream").unwrap();
+    fs::write(root.path().join("vosu.toml:collision"), "old collision").unwrap();
+    fs::write(root.path().join("pending:collision"), "new collision").unwrap();
+    let file = OpenOptions::new().write(true).open(&target).unwrap();
+    let creation = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0x01d0_0000,
+    };
+    // SAFETY: the file handle is live and the FILETIME input is initialized.
+    assert_ne!(
+        unsafe {
+            SetFileTime(
+                file.as_raw_handle(),
+                &creation,
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        },
+        0
+    );
+    drop(file);
+    let mut descriptor = dacl(&target);
+    // Protect the existing DACL from inheritance, distinguishing it from the
+    // replacement's inherited defaults without excluding this test's account.
+    // SAFETY: descriptor is a live self-relative security descriptor from Windows.
+    assert_ne!(
+        unsafe {
+            SetFileSecurityW(
+                wide(&target).as_ptr(),
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                descriptor.as_mut_ptr().cast(),
+            )
+        },
+        0
+    );
+    let before = dacl(&target);
+    assert_ne!(before, dacl(&temp));
+    let before_created = fs::metadata(&target).unwrap().creation_time();
+    atomic_replace(&temp, &target).unwrap();
+    assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+    assert_eq!(
+        fs::metadata(&target).unwrap().creation_time(),
+        before_created
+    );
+    assert_eq!(dacl(&target), before);
+    assert_eq!(
+        fs::read_to_string(root.path().join("vosu.toml:retained")).unwrap(),
+        "old stream"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("vosu.toml:collision")).unwrap(),
+        "new collision"
+    );
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn missing_target_unsupported_links_and_link_failure_leave_no_staging() {
+    for mode in 0..3 {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("vosu.toml");
+        let temp = root.path().join("pending");
+        if mode != 0 {
+            fs::write(&target, "old").unwrap();
+        }
+        fs::write(&temp, "new").unwrap();
+        let result = atomic_replace_with_link(&temp, &target, |_, _| {
+            if mode == 0 {
+                panic!("a missing target must not need a hard link");
+            }
+            Err(io::Error::from_raw_os_error(
+                if mode == 1 { ERROR_NOT_SUPPORTED } else { 87 } as i32,
+            ))
+        });
+        if mode == 2 {
+            assert_eq!(result.unwrap_err().raw_os_error(), Some(87));
+            assert_eq!(fs::read_to_string(&target).unwrap(), "old");
+            assert_eq!(fs::read_to_string(&temp).unwrap(), "new");
+        } else {
+            result.unwrap();
+            assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+        }
+        assert!(fs::read_dir(root.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(STAGE_PREFIX)
+        }));
+    }
+}
+
+#[test]
+fn sharing_timeout_preserves_target_and_leaves_no_link() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("vosu.toml");
+    let temp = root.path().join("pending");
+    fs::write(&target, "old").unwrap();
+    fs::write(&temp, "new").unwrap();
+    let reader = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&target)
+        .unwrap();
+    let started = Instant::now();
+    assert!(atomic_replace(&temp, &target).is_err());
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert_eq!(fs::read_to_string(&target).unwrap(), "old");
+    assert_eq!(fs::read_to_string(&temp).unwrap(), "new");
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+    drop(reader);
+}
+
+#[test]
+fn startup_sweep_removes_only_inactive_owned_staging() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("vosu.toml");
+    fs::write(&target, "original").unwrap();
+    let active = Stage::new(root.path()).unwrap();
+    fs::hard_link(&target, active.replacement()).unwrap();
+    let stale = root.path().join(format!("{STAGE_PREFIX}stale"));
+    fs::create_dir(&stale).unwrap();
+    fs::write(stale.join("lease"), "").unwrap();
+    fs::hard_link(&target, stale.join("replacement")).unwrap();
+    let unknown = root.path().join(format!("{STAGE_PREFIX}not-ours"));
+    fs::create_dir(&unknown).unwrap();
+    fs::write(unknown.join("user-file"), "retain").unwrap();
+    cleanup_stale_replacements(root.path());
+    assert!(!stale.exists());
+    assert!(active.replacement().exists());
+    assert_eq!(
+        fs::read_to_string(unknown.join("user-file")).unwrap(),
+        "retain"
+    );
+    assert_eq!(fs::read_to_string(&target).unwrap(), "original");
+    drop(active);
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
 }

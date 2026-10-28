@@ -69,6 +69,8 @@ impl Paths {
         for directory in [&config, &data, &cache] {
             std::fs::create_dir_all(directory)?;
         }
+        #[cfg(windows)]
+        windows::cleanup_stale_replacements(&config);
 
         Ok(Self {
             program,
