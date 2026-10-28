@@ -406,8 +406,18 @@ fn private_metadata_merge_leaves_original_visible_until_publication() {
     replace_file(&wide(&temp), &wide(&candidate)).expect("merge metadata on private link");
     assert_eq!(fs::read_to_string(&target).unwrap(), "old");
     assert_eq!(fs::read_to_string(&candidate).unwrap(), "new");
+    let mut old_reader = File::open(&target).unwrap();
+    publish_file(
+        &candidate,
+        &target,
+        &wide(&target),
+        Instant::now() + Duration::from_secs(2),
+    )
+    .expect("publish merged candidate while old handles remain open");
+    let mut old_contents = String::new();
+    old_reader.read_to_string(&mut old_contents).unwrap();
+    assert_eq!(old_contents, "old");
     drop(guard);
-    move_file(&wide(&candidate), &wide(&target)).expect("publish merged candidate");
     stage.finish(Ok(())).unwrap();
     assert_eq!(fs::read_to_string(&target).unwrap(), "new");
 }

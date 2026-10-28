@@ -5,16 +5,19 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::OpenOptionsExt;
+use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_CALL_NOT_IMPLEMENTED, ERROR_FILE_NOT_FOUND, ERROR_INVALID_FUNCTION,
-    ERROR_NOT_SUPPORTED, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION,
+    ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED, ERROR_PATH_NOT_FOUND, ERROR_SHARING_VIOLATION,
+    GENERIC_WRITE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, MOVEFILE_REPLACE_EXISTING,
-    MOVEFILE_WRITE_THROUGH, MoveFileExW, ReplaceFileW,
+    DELETE, FILE_FLAG_WRITE_THROUGH, FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FileRenameInfoEx, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    MoveFileExW, ReplaceFileW, SetFileInformationByHandle,
 };
 
 const STAGE_PREFIX: &str = ".vosu-atomic-";
@@ -130,13 +133,20 @@ fn atomic_replace_with_link(
         // and other metadata, but can temporarily remove its replaced name.
         // Merge on a private hard link, not the public config/settings name.
         retry(deadline, || replace_file(&temp_wide, &replacement_wide))?;
-        // The private link now names the new file, so its cleanup no longer
-        // depends on excluding readers of the original. Windows can refuse
-        // overwriting a target while our own delete-access handle remains open.
-        drop(delete_guard.take());
-        // The candidate already has the target's metadata. A same-volume native
-        // rename publishes it without ReplaceFileW's public-name deletion gap.
-        retry(deadline, || move_file(&replacement_wide, &target_wide))
+        // POSIX rename keeps old open handles usable and directs new opens to
+        // the replacement. Legacy MoveFileExW can starve on continuous readers.
+        match publish_file(&replacement, target, &target_wide, deadline) {
+            Err(error)
+                if unsupported_links(&error)
+                    || error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) =>
+            {
+                // Downlevel/remote filesystems may support hard links but not
+                // FileRenameInfoEx. Keep the existing bounded native rename.
+                drop(delete_guard.take());
+                retry(deadline, || move_file(&replacement_wide, &target_wide))
+            }
+            result => result,
+        }
     })();
     stage.finish(result)
 }
@@ -151,7 +161,7 @@ fn unsupported_links(error: &io::Error) -> bool {
 fn replace_file(temp: &[u16], target: &[u16]) -> io::Result<()> {
     // SAFETY: both slices contain live NUL-terminated UTF-16 paths. Optional
     // pointers are null. REPLACEFILE_WRITE_THROUGH is unsupported by Windows;
-    // the final MoveFileExW supplies the durable namespace publication.
+    // the final handle-based rename flushes the merged file before and after publication.
     let result = unsafe {
         ReplaceFileW(
             target.as_ptr(),
@@ -183,6 +193,70 @@ fn move_file(temp: &[u16], target: &[u16]) -> io::Result<()> {
     } else {
         Ok(())
     }
+}
+
+fn publish_file(
+    candidate: &Path,
+    target: &Path,
+    target_wide: &[u16],
+    deadline: Instant,
+) -> io::Result<()> {
+    let file = retry(deadline, || {
+        OpenOptions::new()
+            .write(true)
+            .access_mode(DELETE | GENERIC_WRITE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_WRITE_THROUGH)
+            .open(candidate)
+    })?;
+    // Metadata and streams were merged after the caller synced its contents.
+    file.sync_all()?;
+    let absolute;
+    let name = if target.is_absolute() {
+        target_wide
+    } else {
+        absolute = wide(&std::path::absolute(target)?);
+        &absolute
+    };
+    let name_bytes = (name.len() - 1) * std::mem::size_of::<u16>();
+    let size = std::mem::size_of::<FILE_RENAME_INFO>() + name_bytes;
+    let size_u32 = u32::try_from(size).map_err(|_| io::Error::other("rename path is too long"))?;
+    // FILE_RENAME_INFO has a variable-length trailing UTF-16 name. u64 storage
+    // supplies the native alignment without an unaligned struct reference.
+    let mut buffer = vec![0_u64; size.div_ceil(std::mem::size_of::<u64>())];
+    let information = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS, documented at
+    // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
+    // SAFETY: the aligned allocation covers the header plus the complete name;
+    // `name` includes its terminator, but FileNameLength excludes that terminator.
+    unsafe {
+        (*information).Anonymous.Flags = 0x1 | 0x2;
+        (*information).RootDirectory = std::ptr::null_mut();
+        (*information).FileNameLength = name_bytes as u32;
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            std::ptr::addr_of_mut!((*information).FileName).cast::<u16>(),
+            name.len() - 1,
+        );
+    }
+    retry(deadline, || {
+        // SAFETY: the live file has delete access and the buffer is initialized
+        // for FileRenameInfoEx. Windows does not retain either pointer.
+        let renamed = unsafe {
+            SetFileInformationByHandle(
+                file.as_raw_handle(),
+                FileRenameInfoEx,
+                information.cast(),
+                size_u32,
+            )
+        };
+        if renamed == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    })?;
+    file.sync_all()
 }
 
 fn legacy_replace(temp: &[u16], target: &[u16], deadline: Instant) -> io::Result<()> {
