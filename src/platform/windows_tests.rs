@@ -263,6 +263,28 @@ fn replacement_preserves_target_metadata_and_cleans_staging() {
     }
     let before = dacl(&target);
     assert_ne!(before, dacl(&temp));
+    // ReplaceFileW itself can normalize inheritance/protection control bits.
+    // Compare the complete resulting security descriptor with that primitive,
+    // rather than masking flags or requiring behavior the old path never had.
+    let reference = root.path().join("reference");
+    let reference_new = root.path().join("reference-new");
+    fs::write(&reference, "old").unwrap();
+    fs::write(&reference_new, "new").unwrap();
+    // SAFETY: descriptor still contains the initialized owner-only DACL above.
+    assert_ne!(
+        unsafe {
+            SetFileSecurityW(
+                wide(&reference).as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                descriptor.as_mut_ptr().cast(),
+            )
+        },
+        0
+    );
+    assert_eq!(dacl(&reference), before);
+    replace_file(&wide(&reference_new), &wide(&reference)).unwrap();
+    let expected_dacl = dacl(&reference);
+    fs::remove_file(&reference).unwrap();
     let before_created = fs::metadata(&target).unwrap().creation_time();
     atomic_replace(&temp, &target).unwrap();
     assert_eq!(fs::read_to_string(&target).unwrap(), "new");
@@ -270,7 +292,7 @@ fn replacement_preserves_target_metadata_and_cleans_staging() {
         fs::metadata(&target).unwrap().creation_time(),
         before_created
     );
-    assert_eq!(dacl(&target), before);
+    assert_eq!(dacl(&target), expected_dacl);
     assert_eq!(
         fs::read_to_string(root.path().join("vosu.toml:retained")).unwrap(),
         "old stream"
