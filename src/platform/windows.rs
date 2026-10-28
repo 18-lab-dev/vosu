@@ -276,6 +276,7 @@ fn legacy_replace(temp: &[u16], target: &[u16], deadline: Instant) -> io::Result
 #[cfg_attr(test, track_caller)]
 fn retry<T>(deadline: Instant, mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     let mut delay = Duration::from_millis(10);
+    let mut cooperative_attempts = 0;
     loop {
         match operation() {
             Err(error)
@@ -284,8 +285,17 @@ fn retry<T>(deadline: Instant, mut operation: impl FnMut() -> io::Result<T>) -> 
                     Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION)
                 ) && Instant::now() < deadline =>
             {
-                thread::sleep(delay.min(deadline.saturating_duration_since(Instant::now())));
-                delay = (delay * 2).min(Duration::from_millis(250));
+                // Brief readers can reopen on the same coarse timer boundary
+                // as this writer. A bounded cooperative burst lets them drain
+                // without extending the deadline or busy-waiting on long locks.
+                if cooperative_attempts < 32 {
+                    cooperative_attempts += 1;
+                    thread::yield_now();
+                } else {
+                    cooperative_attempts = 0;
+                    thread::sleep(delay.min(deadline.saturating_duration_since(Instant::now())));
+                    delay = (delay * 2).min(Duration::from_millis(250));
+                }
             }
             result => {
                 #[cfg(test)]
