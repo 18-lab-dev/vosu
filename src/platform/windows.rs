@@ -273,6 +273,7 @@ fn legacy_replace(temp: &[u16], target: &[u16], deadline: Instant) -> io::Result
     })
 }
 
+#[cfg_attr(test, track_caller)]
 fn retry<T>(deadline: Instant, mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     let mut delay = Duration::from_millis(10);
     loop {
@@ -286,7 +287,16 @@ fn retry<T>(deadline: Instant, mut operation: impl FnMut() -> io::Result<T>) -> 
                 thread::sleep(delay.min(deadline.saturating_duration_since(Instant::now())));
                 delay = (delay * 2).min(Duration::from_millis(250));
             }
-            result => return result,
+            result => {
+                #[cfg(test)]
+                if let Err(error) = &result {
+                    eprintln!(
+                        "atomic replacement operation at {}: {error}",
+                        std::panic::Location::caller()
+                    );
+                }
+                return result;
+            }
         }
     }
 }
