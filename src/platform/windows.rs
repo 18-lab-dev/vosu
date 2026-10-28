@@ -92,19 +92,21 @@ fn atomic_replace_with_link(
     // Acquire delete access before creating a second link. Existing readers
     // without share-delete must drain first; new ones cannot open until this
     // guard closes. Thus even a failed merge can unlink its private alias.
-    let _delete_guard = match retry(deadline, || {
-        OpenOptions::new()
-            .read(true)
-            .access_mode(DELETE)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-            .open(target)
-    }) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return legacy_replace(&temp_wide, &target_wide, deadline);
-        }
-        Err(error) => return Err(error),
-    };
+    let mut delete_guard = Some(
+        match retry(deadline, || {
+            OpenOptions::new()
+                .read(true)
+                .access_mode(DELETE)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                .open(target)
+        }) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return legacy_replace(&temp_wide, &target_wide, deadline);
+            }
+            Err(error) => return Err(error),
+        },
+    );
     let stage = Stage::new(
         target
             .parent()
@@ -118,6 +120,7 @@ fn atomic_replace_with_link(
                 // FAT/exFAT and some remote filesystems have no hard links.
                 // Retain their existing ReplaceFileW semantics, including its
                 // documented weaker concurrent-reader visibility guarantee.
+                drop(delete_guard.take());
                 return legacy_replace(&temp_wide, &target_wide, deadline);
             }
             return Err(error);
@@ -127,6 +130,10 @@ fn atomic_replace_with_link(
         // and other metadata, but can temporarily remove its replaced name.
         // Merge on a private hard link, not the public config/settings name.
         retry(deadline, || replace_file(&temp_wide, &replacement_wide))?;
+        // The private link now names the new file, so its cleanup no longer
+        // depends on excluding readers of the original. Windows can refuse
+        // overwriting a target while our own delete-access handle remains open.
+        drop(delete_guard.take());
         // The candidate already has the target's metadata. A same-volume native
         // rename publishes it without ReplaceFileW's public-name deletion gap.
         retry(deadline, || move_file(&replacement_wide, &target_wide))

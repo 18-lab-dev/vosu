@@ -131,19 +131,22 @@ fn replacement_preserves_target_metadata_and_cleans_staging() {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::FILETIME;
     use windows_sys::Win32::Security::{
-        DACL_SECURITY_INFORMATION, GetFileSecurityW, PROTECTED_DACL_SECURITY_INFORMATION,
-        SetFileSecurityW,
+        ACL, ACL_REVISION, AddAccessAllowedAce, DACL_SECURITY_INFORMATION, GetFileSecurityW,
+        GetLengthSid, GetSecurityDescriptorOwner, InitializeAcl, InitializeSecurityDescriptor,
+        OWNER_SECURITY_INFORMATION, SECURITY_DESCRIPTOR, SetFileSecurityW,
+        SetSecurityDescriptorDacl,
     };
-    use windows_sys::Win32::Storage::FileSystem::SetFileTime;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ALL_ACCESS, SetFileTime};
+    const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
 
-    fn dacl(path: &Path) -> Vec<u32> {
+    fn security(path: &Path, information: u32) -> Vec<u32> {
         let path = wide(path);
         let mut needed = 0;
         // SAFETY: first call queries the required buffer size only.
         unsafe {
             GetFileSecurityW(
                 path.as_ptr(),
-                DACL_SECURITY_INFORMATION,
+                information,
                 std::ptr::null_mut(),
                 0,
                 &mut needed,
@@ -156,7 +159,7 @@ fn replacement_preserves_target_metadata_and_cleans_staging() {
             unsafe {
                 GetFileSecurityW(
                     path.as_ptr(),
-                    DACL_SECURITY_INFORMATION,
+                    information,
                     descriptor.as_mut_ptr().cast(),
                     needed,
                     &mut needed,
@@ -165,6 +168,9 @@ fn replacement_preserves_target_metadata_and_cleans_staging() {
             0
         );
         descriptor
+    }
+    fn dacl(path: &Path) -> Vec<u32> {
+        security(path, DACL_SECURITY_INFORMATION)
     }
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join("vosu.toml");
@@ -192,20 +198,69 @@ fn replacement_preserves_target_metadata_and_cleans_staging() {
         0
     );
     drop(file);
-    let mut descriptor = dacl(&target);
-    // Protect the existing DACL from inheritance, distinguishing it from the
-    // replacement's inherited defaults without excluding this test's account.
-    // SAFETY: descriptor is a live self-relative security descriptor from Windows.
+    let mut original_security = security(&target, OWNER_SECURITY_INFORMATION);
+    let mut owner = std::ptr::null_mut();
+    let mut defaulted = 0;
+    // SAFETY: Windows returned this self-relative descriptor; its owner SID
+    // remains live in `original_security` until all ACL operations finish.
     assert_ne!(
         unsafe {
-            SetFileSecurityW(
-                wide(&target).as_ptr(),
-                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                descriptor.as_mut_ptr().cast(),
+            GetSecurityDescriptorOwner(
+                original_security.as_mut_ptr().cast(),
+                &mut owner,
+                &mut defaulted,
             )
         },
         0
     );
+    let sid_bytes = unsafe { GetLengthSid(owner) } as usize;
+    let acl_bytes = std::mem::size_of::<ACL>() + 8 + sid_bytes;
+    let mut acl = vec![0_u32; acl_bytes.div_ceil(4)];
+    let mut descriptor = std::mem::MaybeUninit::<SECURITY_DESCRIPTOR>::uninit();
+    // An actual owner-only DACL must differ from inherited defaults. Merely
+    // requesting protected inheritance through SetFileSecurityW is insufficient
+    // on some Windows volumes and would not exercise metadata preservation.
+    // SAFETY: buffers are aligned and sized for the initialized ACL/descriptor;
+    // `owner` is the valid SID extracted above.
+    unsafe {
+        assert_ne!(
+            InitializeAcl(acl.as_mut_ptr().cast(), acl_bytes as u32, ACL_REVISION),
+            0
+        );
+        assert_ne!(
+            AddAccessAllowedAce(
+                acl.as_mut_ptr().cast(),
+                ACL_REVISION,
+                FILE_ALL_ACCESS,
+                owner
+            ),
+            0
+        );
+        assert_ne!(
+            InitializeSecurityDescriptor(
+                descriptor.as_mut_ptr().cast(),
+                SECURITY_DESCRIPTOR_REVISION
+            ),
+            0
+        );
+        assert_ne!(
+            SetSecurityDescriptorDacl(
+                descriptor.as_mut_ptr().cast(),
+                1,
+                acl.as_mut_ptr().cast(),
+                0
+            ),
+            0
+        );
+        assert_ne!(
+            SetFileSecurityW(
+                wide(&target).as_ptr(),
+                DACL_SECURITY_INFORMATION,
+                descriptor.as_mut_ptr().cast()
+            ),
+            0
+        );
+    }
     let before = dacl(&target);
     assert_ne!(before, dacl(&temp));
     let before_created = fs::metadata(&target).unwrap().creation_time();
@@ -308,4 +363,29 @@ fn startup_sweep_removes_only_inactive_owned_staging() {
     assert_eq!(fs::read_to_string(&target).unwrap(), "original");
     drop(active);
     assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
+}
+
+#[test]
+fn private_metadata_merge_leaves_original_visible_until_publication() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("vosu.toml");
+    let temp = root.path().join("pending");
+    fs::write(&target, "old").unwrap();
+    fs::write(&temp, "new").unwrap();
+    let guard = OpenOptions::new()
+        .read(true)
+        .access_mode(DELETE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .open(&target)
+        .unwrap();
+    let stage = Stage::new(root.path()).unwrap();
+    let candidate = stage.replacement();
+    fs::hard_link(&target, &candidate).unwrap();
+    replace_file(&wide(&temp), &wide(&candidate)).expect("merge metadata on private link");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "old");
+    assert_eq!(fs::read_to_string(&candidate).unwrap(), "new");
+    drop(guard);
+    move_file(&wide(&candidate), &wide(&target)).expect("publish merged candidate");
+    stage.finish(Ok(())).unwrap();
+    assert_eq!(fs::read_to_string(&target).unwrap(), "new");
 }
