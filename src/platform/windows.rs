@@ -75,3 +75,7 @@ pub(super) fn atomic_replace(temp: &Path, target: &Path) -> io::Result<()> {
 fn wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain(Some(0)).collect()
 }
+
+#[cfg(test)]
+#[path = "windows_tests.rs"]
+mod tests;
