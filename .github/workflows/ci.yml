@@ -68,9 +68,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes clang libbpf-dev libelf-dev
       - name: Install pinned cargo-xwin
-        uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
         with:
-          tool: cargo-xwin@0.23.0
+          # 0.23.0 cannot unpack the current Win11SDK_10.0.26100 manifest
+          # ("unable to find x86_64 headers") once no cached SDK exists.
+          tool: cargo-xwin@0.23.1
           fallback: none
       - name: Restore Cargo downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -94,7 +96,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .xwin-cache
-          key: xwin-Linux-0.23.0-vs17-x86_64-desktop-v1
+          key: xwin-Linux-0.23.1-vs17-x86_64-desktop-v1
       - name: Prepare MSVC SDK
         run: cargo xwin cache xwin
       - name: Save prepared SDK before validation
