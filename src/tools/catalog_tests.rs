@@ -267,7 +267,7 @@ async fn source_update_badge_and_uninstall_choices() {
 #[test]
 fn only_exact_official_source_identities_grant_automatic_trust() {
     let mut state = Saved::default();
-    for source in [OFFICIAL_SOURCE, VOSULAY_SOURCE] {
+    for source in [OFFICIAL_SOURCE, VOSULAY_SOURCE, OVERLAYS_SOURCE] {
         record_source(&mut state, source);
         assert!(state.official && state.trusted);
         // Removing and re-adding the identical source does not change identity.
@@ -279,7 +279,9 @@ fn only_exact_official_source_identities_grant_automatic_trust() {
         "another/tools",
         "18-lab-dev/vosu-tools@v1.0.0",
         "https://github.com/18-lab-dev/vosu-tools/releases/latest/download/catalog.json",
-        "18-lab-dev/vosu-overlays",
+        "18-lab-dev/vosu-overlays@v0.4.0",
+        "https://github.com/18-lab-dev/vosu-overlays/releases/latest/download/catalog.json",
+        "shiruviaa/vosu-overlays",
         "18-lab-dev/vosulay@v1.5.0",
         "https://github.com/18-lab-dev/vosulay/releases/latest/download/catalog.json",
         "18-Lab-Dev/vosulay",

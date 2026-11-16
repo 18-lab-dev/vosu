@@ -712,7 +712,8 @@ async fn catalog_defaults_and_customized_sources_stay_under_user_control() {
     let host = host(root.path(), Vec::new()).await;
     let expected = json!([
         {"source":"18-lab-dev/vosu-tools","enabled":true},
-        {"source":"18-lab-dev/vosulay","enabled":true}
+        {"source":"18-lab-dev/vosulay","enabled":true},
+        {"source":"18-lab-dev/vosu-overlays","enabled":true}
     ]);
     let identities = |view: Value| {
         view["sources"]
@@ -881,12 +882,63 @@ async fn former_default_lists_migrate_without_readding_explicitly_removed_source
         let mut expected = vec![json!({"source":"18-lab-dev/vosu-tools","enabled":true})];
         if !edited || include_vosulay {
             expected.push(json!({"source":"18-lab-dev/vosulay","enabled":true}));
-        }
-        if edited && !include_vosulay {
+            expected.push(json!({"source":"18-lab-dev/vosu-overlays","enabled":true}));
+        } else {
             expected.push(json!({"source":"shiruviaa/vosu-overlays","enabled":true}));
         }
         assert_eq!(migrated, json!(expected));
         current.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn the_previous_default_list_gains_the_official_overlay_source_once() {
+    let previous = json!([
+        {"source":"18-lab-dev/vosu-tools","enabled":true},
+        {"source":"18-lab-dev/vosulay","enabled":true}
+    ]);
+    let current = json!([
+        {"source":"18-lab-dev/vosu-tools","enabled":true},
+        {"source":"18-lab-dev/vosulay","enabled":true},
+        {"source":"18-lab-dev/vosu-overlays","enabled":true}
+    ]);
+    let read = |config: &std::path::Path| -> Value {
+        serde_json::from_slice(&fs::read(config.join("catalog-sources.json")).unwrap()).unwrap()
+    };
+    // A saved 1.2 default list (v2 marker present, as 1.2 writes it) gains the source at startup.
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config");
+    fs::create_dir_all(&config).unwrap();
+    atomic_json(&config.join("catalog-sources.json"), &previous).unwrap();
+    atomic_json(&config.join("catalog-sources-v2.json"), &true).unwrap();
+    let first = host(root.path(), Vec::new()).await;
+    assert_eq!(read(&config), current);
+    first.shutdown().await;
+    // Removing it afterwards is an explicit edit and stays removed across restarts.
+    let second = host(root.path(), Vec::new()).await;
+    second
+        .save_sources(&serde_json::to_vec(&json!({"sources": previous})).unwrap())
+        .await
+        .unwrap();
+    second.shutdown().await;
+    let third = host(root.path(), Vec::new()).await;
+    assert_eq!(read(&config), previous);
+    third.shutdown().await;
+    // Customized lists, a disabled default included, are left alone.
+    for customized in [
+        json!([
+            {"source":"18-lab-dev/vosu-tools","enabled":true},
+            {"source":"18-lab-dev/vosulay","enabled":false}
+        ]),
+        json!([{"source":"18-lab-dev/vosu-tools","enabled":true}]),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config");
+        fs::create_dir_all(&config).unwrap();
+        atomic_json(&config.join("catalog-sources.json"), &customized).unwrap();
+        let host = host(root.path(), Vec::new()).await;
+        assert_eq!(read(&config), customized);
+        host.shutdown().await;
     }
 }
 

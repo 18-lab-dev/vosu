@@ -49,7 +49,7 @@ fn resolve(source: &str) -> Result<String, String> {
     Ok(url.into())
 }
 fn default_sources() -> Vec<Source> {
-    [OFFICIAL_SOURCE, VOSULAY_SOURCE]
+    [OFFICIAL_SOURCE, VOSULAY_SOURCE, OVERLAYS_SOURCE]
         .into_iter()
         .map(|source| Source {
             source: source.into(),
@@ -98,6 +98,11 @@ impl ToolHost {
     fn sources_migration_path(&self) -> PathBuf {
         self.config.join("catalog-sources-v2.json")
     }
+    /// Marks a list that already had its chance to gain the official overlay source, so removing it
+    /// later is respected.
+    fn overlays_migration_path(&self) -> PathBuf {
+        self.config.join("catalog-sources-v3.json")
+    }
     pub(in crate::tools) fn migrate_catalog_state(&self) -> Result<(), String> {
         self.load_sources()?;
         self.overlay_state()?;
@@ -130,6 +135,8 @@ impl ToolHost {
                     atomic_json(&self.sources_path(), &sources).map_err(|e| e.to_string())?;
                     atomic_json(&self.sources_migration_path(), &true)
                         .map_err(|e| e.to_string())?;
+                    atomic_json(&self.overlays_migration_path(), &true)
+                        .map_err(|e| e.to_string())?;
                     return Ok(sources);
                 }
                 let mut changed = false;
@@ -139,8 +146,26 @@ impl ToolHost {
                         changed = true;
                     }
                 }
+                // The 1.2 default list, untouched, gains the official overlay source once.
+                let previous_default = [OFFICIAL_SOURCE, VOSULAY_SOURCE];
+                let untouched = sources.len() == previous_default.len()
+                    && sources
+                        .iter()
+                        .zip(previous_default)
+                        .all(|(source, identity)| source.enabled && source.source == identity);
+                if untouched && !self.overlays_migration_path().exists() {
+                    sources.push(Source {
+                        source: OVERLAYS_SOURCE.into(),
+                        enabled: true,
+                    });
+                    changed = true;
+                }
                 if changed {
                     atomic_json(&self.sources_path(), &sources).map_err(|e| e.to_string())?;
+                }
+                if !self.overlays_migration_path().exists() {
+                    atomic_json(&self.overlays_migration_path(), &true)
+                        .map_err(|e| e.to_string())?;
                 }
                 Ok(sources)
             }
@@ -178,6 +203,7 @@ impl ToolHost {
         let _operation = self.catalog_operation.lock().await;
         // An explicit edit must never be mistaken for untouched legacy defaults.
         atomic_json(&self.sources_migration_path(), &true).map_err(|e| e.to_string())?;
+        atomic_json(&self.overlays_migration_path(), &true).map_err(|e| e.to_string())?;
         atomic_json(&self.sources_path(), &input.sources).map_err(|e| e.to_string())?;
         *self.catalog.lock() = Catalog::default();
         self.source_view()

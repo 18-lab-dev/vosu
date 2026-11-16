@@ -94,7 +94,7 @@ export function mountCatalogSources({ root, requestJson, notify, errorText, setB
   section.id = 'catalog-sources';
   section.dataset.title = 'Catalog sources';
   section.append(node('legend', 'Catalog sources'));
-  const intro = node('p', 'Earlier sources win duplicate ids. Tools from 18-lab-dev/vosu-tools and 18-lab-dev/vosulay are trusted automatically; all others need approval.', 'settings-item__description catalog-sources__intro');
+  const intro = node('p', 'Earlier sources win duplicate ids. Tools from 18-lab-dev/vosu-tools, 18-lab-dev/vosulay and 18-lab-dev/vosu-overlays are trusted automatically; all others need approval.', 'settings-item__description catalog-sources__intro');
   const rows = node('div', undefined, 'catalog-source-list');
   const status = node('p', '', 'field-help'); status.setAttribute('role', 'status');
   const failures = node('div', undefined, 'catalog-sources__failures');
@@ -225,7 +225,7 @@ export function mountCatalogSources({ root, requestJson, notify, errorText, setB
   load().catch((error) => { status.textContent = errorText(error); });
 }
 
-const OFFICIAL_SOURCES = new Set(['18-lab-dev/vosu-tools', '18-lab-dev/vosulay']);
+const OFFICIAL_SOURCES = new Set(['18-lab-dev/vosu-tools', '18-lab-dev/vosulay', '18-lab-dev/vosu-overlays']);
 
 // Catalog-source overlays join the Available list as the same card as the
 // community catalog's, official sources first, above the community cards.

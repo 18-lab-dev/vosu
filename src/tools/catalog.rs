@@ -5,6 +5,7 @@ use std::io::Read;
 
 const OFFICIAL_SOURCE: &str = "18-lab-dev/vosu-tools";
 const VOSULAY_SOURCE: &str = "18-lab-dev/vosulay";
+pub(super) const OVERLAYS_SOURCE: &str = "18-lab-dev/vosu-overlays";
 
 /// Historical default identities are migration inputs only, never trust aliases.
 pub(super) fn migrated_source(source: &str) -> Option<&'static str> {
@@ -16,7 +17,7 @@ pub(super) fn migrated_source(source: &str) -> Option<&'static str> {
 }
 
 fn official_source(source: &str) -> bool {
-    matches!(source, OFFICIAL_SOURCE | VOSULAY_SOURCE)
+    matches!(source, OFFICIAL_SOURCE | VOSULAY_SOURCE | OVERLAYS_SOURCE)
 }
 const MAX_PACKAGE: u64 = 512 * 1024 * 1024;
 

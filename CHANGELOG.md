@@ -2,6 +2,12 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased
+
+### Tools
+
+- Add 18-LAB's official overlays, `18-lab-dev/vosu-overlays`, as a default catalog source after vosu-tools and vosulay; their overlays install from **Available** with an Official badge. A saved list that is exactly the previous two defaults gains the source once at startup; customized lists are unchanged, and removing the source in **Settings / Catalog sources** is remembered.
+
 ## 1.2.2 - 2026-10-27
 
 ### Configuration
