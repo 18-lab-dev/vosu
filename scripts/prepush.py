@@ -228,9 +228,16 @@ def run_native(sha, log_dir, evidence_dir, start_vm):
         if code != 0:
             return failed_all(f"windows-vm start failed: {err or out}")
 
-    code, out, err = vm("doctor")
-    if code != 0 or '"computer"' not in out:
-        return failed_all(f"windows-vm doctor did not report an authenticated session: {out}\n{err}")
+    # A freshly started guest boots for a while before SSH accepts logins, so
+    # poll doctor until it authenticates rather than failing on the first try.
+    deadline = time.monotonic() + (300 if not running else 0)
+    while True:
+        code, out, err = vm("doctor")
+        if code == 0 and '"computer"' in out:
+            break
+        if time.monotonic() >= deadline:
+            return failed_all(f"windows-vm doctor did not report an authenticated session: {out}\n{err}")
+        time.sleep(10)
 
     bundle_path = evidence_dir / f"vosu-{sha12}.bundle"
     # `git bundle` requires a named ref, not a bare commit id; prepush.py
