@@ -12,6 +12,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 - Coalesce configuration-file watcher events into one pending reload signal instead of an unbounded queue; the store still rereads the file after every burst of changes.
 
+### Server
+
+- On Windows, refuse served-file requests in which a later path segment starts with a drive prefix (for example `folder\C:Windows`). Such a segment replaced the root-relative path with a drive-relative one. The post-open containment check already refused to serve the file, but the different error revealed whether the path existed outside the root. A native Windows property test found the case.
+
 ## 1.2.3 - 2026-11-19
 
 ### Lazer

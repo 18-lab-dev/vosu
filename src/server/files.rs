@@ -119,7 +119,19 @@ pub fn safe_child(root: &Path, decoded_request: &str) -> Result<SafeChild, SafeP
     let mut relative = PathBuf::new();
     for component in request.components() {
         match component {
-            Component::Normal(value) => relative.push(value),
+            Component::Normal(value) => {
+                // On Windows a later segment such as `C:` parses as a drive prefix when
+                // pushed on its own, which would replace `relative` with a drive-relative
+                // path outside the root; accept only segments that stay a single Normal.
+                let mut parts = Path::new(value).components();
+                if !matches!(
+                    (parts.next(), parts.next()),
+                    (Some(Component::Normal(_)), None)
+                ) {
+                    return Err(SafePathError::InvalidComponent);
+                }
+                relative.push(value);
+            }
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                 return Err(SafePathError::InvalidComponent);

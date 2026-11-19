@@ -34,6 +34,23 @@ fn decoding_is_exactly_once_and_path_safe() {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn drive_prefixed_later_segments_cannot_replace_the_relative_path() {
+    let root = tempfile::tempdir().unwrap();
+    for hostile in [r"folder\C:Windows", r"¡\a:", r"x\c:secret.txt"] {
+        assert!(
+            matches!(
+                safe_child(root.path(), hostile),
+                Err(SafePathError::InvalidComponent)
+            ),
+            "{hostile}"
+        );
+    }
+    let child = safe_child(root.path(), r"folder\name:stream").unwrap();
+    assert_eq!(child.relative, Path::new(r"folder\name:stream"));
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn symlinks_cannot_escape_and_open_handle_survives_path_swap() {
