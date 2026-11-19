@@ -148,6 +148,28 @@ preserve the actual float and expose it as
 null. Offline coverage compares batched/sequential reads of 0.375 and DTO/direct
 serialization. No live client attachment or native Windows execution was performed.
 
+## Upstream field renames (2026-11-19)
+
+Template keys are vosu schema identifiers, not a promise that the client still
+uses that member name. Every template field must resolve, so an upstream rename
+used to stop offset generation for that client entirely. osu! 2026.1117.0
+([ppy/osu#39098](https://github.com/ppy/osu/pull/39098)) turned the private
+`SkinManager.retroSkin` property into public `RetroSkin`, so
+`<retroSkin>k__BackingField` no longer existed and every lazer instance of that
+version failed with `could not resolve field`.
+
+The generator's `TemplateSchema.RenamedFields` maps a template key to the
+client's newer names. Both resolvers (`--assemblies-only` and ClrMD) accept the
+template name or a listed rename, write the offset under the template key, and
+fail if more than one name resolves. Keep the key: renaming it would invalidate
+every cached offset file and the embedded asset, and older clients still use the
+old name. Add a table entry with the upstream change instead.
+
+On 2026-11-19 the rebuilt generator measured the 2026.1117.0 Linux client's
+on-disk assemblies (retro 48; `CurrentSkin` moved 80 → 88, argon 128, triangles
+136) and still measured the 2026.726.0 client's `<retroSkin>` at 136. The
+retained `2026.921.0` asset is unchanged.
+
 
 The commands below reproduce the explicitly historical `2026.726.0` asset.
 They document prior source, runtime, DAC, and generator inputs; they are not a

@@ -24,6 +24,38 @@ internal sealed record TemplateSchema(
     public const string GameBaseTypeName = "osu.Game.OsuGameBase";
     public const string GameVtableTypeName = "osu.Desktop.OsuGameDesktop";
 
+    // Template keys are vosu's schema identifiers, so an upstream field rename keeps its key
+    // and lists the client's new name here. Renaming the key instead would invalidate every
+    // cached offset file and the embedded asset, and older clients still use the old name.
+    private static readonly Dictionary<(string Type, string Field), string[]> RenamedFields = new()
+    {
+        // ppy/osu#39098 (2026.1117.0) turned the private `retroSkin` property into public `RetroSkin`.
+        [("osu.Game.Skinning.SkinManager", "<retroSkin>k__BackingField")] = ["<RetroSkin>k__BackingField"],
+    };
+
+    /// <summary>
+    /// Every field name a client may use for <paramref name="templateField"/>, the template key first.
+    /// Exactly one of them must resolve on a given client.
+    /// </summary>
+    public static IReadOnlyList<string> FieldNames(string typeName, string templateField) =>
+        RenamedFields.TryGetValue((typeName, templateField), out string[]? renamed)
+            ? [templateField, .. renamed]
+            : [templateField];
+
+    public static GeneratorException UnresolvedField(string typeName, string templateField, string where)
+    {
+        IReadOnlyList<string> names = FieldNames(typeName, templateField);
+        string alternatives = names.Count == 1
+            ? string.Empty
+            : $" (also tried {string.Join(", ", names.Skip(1).Select(name => $"'{name}'"))})";
+        return new GeneratorException(
+            $"could not resolve field '{typeName}.{templateField}'{alternatives}{where}");
+    }
+
+    public static GeneratorException AmbiguousRename(string typeName, IEnumerable<string> found) =>
+        new($"renamed field names {string.Join(", ", found.Select(name => $"'{typeName}.{name}'"))} " +
+            "all resolve; cannot tell which one the template key measures");
+
     public static TemplateSchema Load(string path)
     {
         byte[] json;

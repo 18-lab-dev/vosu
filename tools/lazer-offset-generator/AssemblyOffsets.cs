@@ -105,9 +105,7 @@ internal static class AssemblyOffsets
                 fields[fieldName] = Convert.ToInt32(literal.GetRawConstantValue());
                 continue;
             }
-            FieldInfo field = FindField(declared, fieldName)
-                ?? throw new GeneratorException(
-                    $"could not resolve field '{entry.Name}.{fieldName}'");
+            FieldInfo field = FindTemplateField(declared, entry.Name, fieldName);
             int offset = MeasureFieldOffset(declared, concrete, field);
             if (offset <= 0)
             {
@@ -179,6 +177,20 @@ internal static class AssemblyOffsets
                         && concrete.BaseType.IsGenericType
                         && concrete.BaseType.GetGenericTypeDefinition() == declared));
         }
+    }
+
+    private static FieldInfo FindTemplateField(Type declared, string typeName, string templateField)
+    {
+        var found = TemplateSchema.FieldNames(typeName, templateField)
+            .Select(name => (Name: name, Field: FindField(declared, name)))
+            .Where(static match => match.Field is not null)
+            .ToArray();
+        return found.Length switch
+        {
+            1 => found[0].Field!,
+            0 => throw TemplateSchema.UnresolvedField(typeName, templateField, string.Empty),
+            _ => throw TemplateSchema.AmbiguousRename(typeName, found.Select(static match => match.Name)),
+        };
     }
 
     private static FieldInfo? FindField(Type declared, string fieldName)

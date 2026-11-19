@@ -193,7 +193,7 @@ internal static partial class Program
                         fields.Add(
                             fieldName,
                             type.IsEnum ? type.AsEnum().GetEnumValue<int>(fieldName)
-                                : ResolveObjectFieldOffset(type, entry.Name, fieldName, target.DataReader.PointerSize));
+                                : ResolveTemplateFieldOffset(type, entry.Name, fieldName, target.DataReader.PointerSize));
                     }
 
                     resolvedTypes.Add(entry.Name, new ResolvedType(type, fields));
@@ -345,7 +345,25 @@ internal static partial class Program
         return matches[0].Type;
     }
 
-    private static int ResolveObjectFieldOffset(
+    private static int ResolveTemplateFieldOffset(
+        ClrType type,
+        string typeName,
+        string templateField,
+        int pointerSize)
+    {
+        var found = TemplateSchema.FieldNames(typeName, templateField)
+            .Select(name => (Name: name, Offset: TryResolveObjectFieldOffset(type, typeName, name, pointerSize)))
+            .Where(static match => match.Offset is not null)
+            .ToArray();
+        return found.Length switch
+        {
+            1 => found[0].Offset!.Value,
+            0 => throw TemplateSchema.UnresolvedField(typeName, templateField, " in the type or its base types"),
+            _ => throw TemplateSchema.AmbiguousRename(typeName, found.Select(static match => match.Name)),
+        };
+    }
+
+    private static int? TryResolveObjectFieldOffset(
         ClrType type,
         string typeName,
         string fieldName,
@@ -426,8 +444,7 @@ internal static partial class Program
             }
         }
 
-        throw new GeneratorException(
-            $"could not resolve field '{typeName}.{fieldName}' in the type or its base types");
+        return null;
     }
 
     private static string ResolveOsuVersion(IReadOnlyList<ClrModule> modules, ClrModule gameModule)

@@ -4,6 +4,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased
 
+### Lazer
+
+- Restore automatic offset generation for osu!lazer 2026.1117.0, which renamed `SkinManager`'s retro skin property and made offset generation for that client fail. The generator now accepts recorded upstream renames for a template field while still measuring older clients under the original name.
+
 ### Tools
 
 - Add 18-LAB's official overlays, `18-lab-dev/vosu-overlays`, as a default catalog source after vosu-tools and vosulay; their overlays install from **Available** with an Official badge. A saved list that is exactly the previous two defaults gains the source once at startup; customized lists are unchanged, and removing the source in **Settings / Catalog sources** is remembered.
