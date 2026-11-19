@@ -108,27 +108,35 @@ def push_ci_branch(sha, branch, cwd=ROOT):
     sh(["git", "push", "origin", f"{sha}:refs/heads/{branch}"], cwd=cwd)
 
 
+def origin_repo(cwd=ROOT):
+    """`owner/name` of the origin remote that land.py pushes to."""
+    url = sh(["git", "remote", "get-url", "origin"], cwd=cwd)
+    match = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$", url)
+    if not match:
+        raise GateRefused(f"origin {url!r} is not a GitHub repository")
+    return match.group(1)
+
+
 def find_ci_run(sha, timeout, interval, cwd=ROOT):
+    # gh picks a repository from the remotes on its own (it prefers `upstream`),
+    # so name origin explicitly: CI must be read where the ci/ branch was pushed.
+    repo = origin_repo(cwd)
     deadline = time.monotonic() + timeout
     while True:
         out = sh(
-            ["gh", "run", "list", "--workflow", "ci.yml", "--commit", sha, "--json", "databaseId,status,conclusion", "--limit", "5"],
+            ["gh", "run", "list", "-R", repo, "--workflow", "ci.yml", "--commit", sha, "--json", "databaseId,status,conclusion", "--limit", "5"],
             cwd=cwd,
-            check=False,
         )
-        try:
-            runs = json.loads(out) if out else []
-        except json.JSONDecodeError:
-            runs = []
+        runs = json.loads(out) if out else []
         if runs:
             return runs[0]["databaseId"]
         if time.monotonic() >= deadline:
-            raise GateRefused(f"no CI run for commit {sha} appeared on ci.yml within {timeout}s")
+            raise GateRefused(f"no CI run for commit {sha} appeared on ci.yml in {repo} within {timeout}s")
         time.sleep(interval)
 
 
 def watch_run(run_id, cwd=ROOT):
-    completed = RUN(["gh", "run", "watch", str(run_id), "--exit-status"], cwd=cwd)
+    completed = RUN(["gh", "run", "watch", "-R", origin_repo(cwd), str(run_id), "--exit-status"], cwd=cwd)
     if completed.returncode != 0:
         raise GateRefused(f"CI run {run_id} did not succeed (exit {completed.returncode})")
 

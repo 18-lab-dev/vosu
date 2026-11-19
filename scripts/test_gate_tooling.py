@@ -280,6 +280,34 @@ class LandRefusalTest(unittest.TestCase):
             self.assertNotIn(" push ", " " + args_text + " ")
             self.assertNotRegex(args_text, r"\bgh\b")
 
+    def _fake_gh(self, gh_result):
+        calls = []
+        original = self.land.RUN
+
+        def fake_run(cmd, *args, **kwargs):
+            if cmd[0] == "gh":
+                calls.append(cmd)
+                return gh_result
+            return original(cmd, *args, **kwargs)
+
+        self.land.RUN = fake_run
+        self.addCleanup(setattr, self.land, "RUN", original)
+        return calls
+
+    def test_ci_run_is_read_from_origin_even_with_an_upstream_remote(self):
+        self._git("remote", "set-url", "origin", "https://github.com/acme/real.git")
+        self._git("remote", "add", "upstream", "https://github.com/someone/fork.git")
+        calls = self._fake_gh(FakeCompleted(stdout='[{"databaseId": 7, "status": "queued", "conclusion": ""}]'))
+        self.assertEqual(self.land.find_ci_run(self.sha, timeout=0, interval=0, cwd=self.repo), 7)
+        self.assertIn(["-R", "acme/real"], [cmd[3:5] for cmd in calls])
+
+    def test_gh_failure_is_refused_immediately_instead_of_polling(self):
+        self._git("remote", "set-url", "origin", "https://github.com/acme/real.git")
+        calls = self._fake_gh(FakeCompleted(returncode=1, stderr="HTTP 404: Not Found"))
+        with self.assertRaisesRegex(self.land.GateRefused, "404"):
+            self.land.find_ci_run(self.sha, timeout=3600, interval=3600, cwd=self.repo)
+        self.assertEqual(len(calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
