@@ -270,5 +270,6 @@ mod tests {
 
     include!("updater/tests_release.rs");
     include!("updater/tests_transaction.rs");
+    include!("updater/tests_prop.rs");
     include!("updater/tests_platform.rs");
 }

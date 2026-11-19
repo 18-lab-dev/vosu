@@ -7,8 +7,7 @@
 - Preserve user state only through the narrowly scoped, one-time migration from existing **tosu** data and configuration locations. After migration, read and write only the **vosu** locations; migration code must remain idempotent and removable after the supported migration window.
 - Branded public routes, payload names, and updater/release identifiers were intentionally included in the breaking rename. Third-party protocol names such as gosuMemory and streamCompanion remain unchanged. Upstream tosu identifiers may appear only in parity and provenance records.
 - Do not blanket-replace vendored, generated, provenance-pinned, checksum-covered, upstream, or historical evidence. Change those artifacts only through their owning workflow; retain an old spelling only when it is an upstream identifier, historical fact, migration input, or compatibility fixture, and document the reason close to the allowlist or assertion.
-- A branding change is complete only when case-sensitive and case-insensitive scans find no unexplained old-brand occurrences in live source, package metadata, lockfile package names, commands, configuration, CI, packaging, release paths, tests, or current documentation.
-- This operational map describes the post-cutover tree. Any old spelling not explicitly identified as migration, upstream, parity, provenance, or history is a defect.
+- `python scripts/check-brand.py` enforces the cutover: every old-brand occurrence in a tracked file needs a `scripts/brand-allowlist.txt` entry with a category (upstream, migration, parity, provenance, history, third-party-catalog, fixture), a maximum count that only ratchets down, and a reason. An occurrence that fits none of those categories is a defect; fix it rather than allowlisting it.
 - This repository ships the native Rust daemon, not the former Electron/asdf-overlay application. Do not add Node, Electron, .NET, or C# runtime requirements to the daemon.
 - Read [README.md](README.md) for the user-facing contract and [CONTRIBUTING.md](CONTRIBUTING.md) for the human setup path. Use the [architecture overview](docs/architecture/overview.md), [decision records](docs/decisions/index.md), and [benchmarks](docs/testing/benchmarks.md) for detail; keep this file operational.
 
@@ -59,6 +58,16 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 - `src/tools/`: tool host — manifest validation, discovery and official catalog installation, supervision, `/tools/` proxy and access rules, host API, launch sessions, dashboard tool APIs. The contract is [docs/tools/protocol.md](docs/tools/protocol.md) (ADR 0017); change both together. The SDK and official tools live in [vosu-tools](https://github.com/18-lab-dev/vosu-tools).
 - `crates/vosu-test-harness/`: integration-test support only. `tests/` holds compatibility, native, daemon smoke, and performance contracts. `crates/vosu-release-smoke/` exercises an externally packaged executable without depending on the daemon crate. `benches/hot_paths.rs` holds Criterion benchmarks.
 - `tools/live-parity/`: deterministic live capture, attestation, comparison, and diff tooling. `tools/oracle/` holds calculator provenance/evidence tooling.
+- Module dependencies between top-level `src/` modules are recorded in `scripts/module-boundaries.txt` and enforced by `python scripts/check-module-boundaries.py`. A new edge is a deliberate change made together with the [source map](docs/architecture/source-map.md) or architecture update. Code files stay at or below 1,000 lines; `python scripts/check-file-length.py` enforces this, and its baseline of older long files only shrinks.
+
+## Rules enforced by lints and checks
+
+Most rules below are enforced mechanically ([ADR 0018](docs/decisions/0018-enforce-rules-with-checks.md)). When a check fails, fix the cause it names. When you correct a mistake that a check could catch, add or extend the check instead of adding prose here.
+
+- Lint exceptions are `#[expect(lint, reason = "...")]` with the real reason; `#[allow]` is rejected (`clippy::allow_attributes`). Every `unsafe` block needs a `// SAFETY:` comment stating the invariant (`clippy::undocumented_unsafe_blocks`).
+- `clippy.toml` disallows direct file writes (`std::fs::write`, `File::create`, and their tokio equivalents), unbounded channels, and `std::thread::sleep`, with messages naming the replacement. Production exceptions need a per-site `#[expect(clippy::disallowed_methods, reason = "...")]`. Test code is exempt at the crate level.
+- Blocking work in async code goes through `tokio::task::spawn_blocking`; the sleep rule exists because blocking waits on async workers have shipped before.
+- Property tests are named `prop_*`, use `crate::proptest_support::vosu_proptest_config()`, and run with a fixed seed. `VOSU_PROPTEST_RANDOM=1 PROPTEST_CASES=<n>` explores with a random seed, which the nightly workflow does.
 
 ## Verification by change
 
@@ -69,16 +78,33 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 - Process discovery or memory reading: affected unit tests and, on each affected native OS, `cargo test --locked --test process_memory -- --nocapture`.
 - Updater/release behavior: `cargo test --locked --test updater_compat`, native `cargo test --locked --test updater_native -- --nocapture`, and `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture` when packaging/startup changes.
 - Calculator/state semantics: affected `vosu-pp` tests and `cargo test --locked --test performance_invariants`, plus `state_api_compat`/`server_compat` when observable schemas or state timing can change.
+- ZIP preflight, updater crash recovery, API-state selection, served-path validation, and JSON Pointer parsing: also `cargo test --workspace --lib --all-features --locked prop_`.
+- Lazer offset generation or `tools/lazer-offset-*`: `python scripts/lazer-offset-canary.py [--tag <release>-lazer]` (needs the .NET 8 SDK) against the newest or the named lazer release; the nightly workflow runs it daily.
+- Dashboard, tool host, or catalog UI (`assets/server/`, `src/server/`, `src/tools/`, `src/runtime/render*`): `python tests/tool_host_smoke.py --binary target/debug/vosu` and `python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module <playwright index.mjs>` against a `cargo build --locked --features test-harness` binary; CI's `dashboard` job runs both.
 - Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](docs/testing/benchmarks.md). The guide holds only each benchmark's latest result: replace the old section rather than appending a dated one; Git history keeps earlier results.
 - Before merging a Rust change, run the applicable native smoke path and the CI checks above; platform-specific code requires evidence from that platform.
 
-## Local CI and push gate
+## Local CI and landing
 
-- Before pushing, read `.github/workflows/ci.yml` and run every applicable CI command locally against the final source being pushed. Use the pinned Rust toolchain and `--locked`; do not rely on hosted CI to discover failures after a push.
-- Include change classification, maintained-document links, the release `LICENSE` appendix check (`scripts/assemble-release-license.py`), the asset digest check (`scripts/check-asset-hashes.py`), the release-packaging script tests (`scripts/test_package_release.py`), formatting, Linux workspace Clippy/tests, Windows MSVC cross-Clippy, and native Windows Clippy/tests whenever the workflow classifies the changes as native. Keep Linux-only header environment settings out of Windows cross-builds.
-- Also run the full workspace test suite, including doctests (`cargo test --workspace --all-features --locked`), and affected tool suites and native smoke paths. A compile-only check or a narrowed test selection does not replace a required gate.
-- Record the exact verified source/commit and each command's result. Existing evidence can cover unchanged bytes only when their identity is established; a historical pass from a different source generation is not a current pass.
-- Push only after every required local check passes. A failed, interrupted, unavailable, or unexecuted check blocks the push. Fix the cause and rerun the affected gate; do not bypass hooks, weaken tests, silently skip platform checks, or push a partially verified tree.
+`main` requires the `CI required` status check, and no actor can bypass it. GitHub rejects a push of a commit that has not passed CI. Land every change this way:
+
+```sh
+python scripts/prepush.py [--start-vm] [--playwright-module <path>/playwright/index.mjs]
+python scripts/land.py [--topic <name>]
+```
+
+- `prepush.py` refuses a dirty tree. It runs every applicable `ci.yml` check against `HEAD`:
+  - formatting, Linux Clippy and the full workspace tests including doctests;
+  - the repository check scripts and every `scripts/test_*.py` suite;
+  - actionlint when workflows changed;
+  - Windows MSVC cross-Clippy;
+  - the dashboard smokes when UI paths changed;
+  - native Windows Clippy, tests, and doctests in the VM through `scripts/native-ci.ps1`.
+
+  It writes `target/prepush/<sha>.json`. `--start-vm` starts the Windows VM only if it is stopped; report that lifecycle action.
+- `land.py` accepts the evidence only when every step passed, or was not applicable, for exactly `HEAD`, and `HEAD` fast-forwards `origin/main`. It then pushes `ci/<topic>`, waits for hosted CI on that commit, fast-forwards `main`, and deletes the branch.
+- `--skip` is for local iteration only; `land.py` refuses evidence with a skipped or failed required step. Fix the cause and rerun. Do not weaken tests or bypass the gate.
+- When `ci.yml` gains a check, add it to `prepush.py` or `native-ci.ps1` in the same change. `scripts/test_gate_tooling.py` fails until the local gate covers it.
 
 ## Compatibility and security invariants
 

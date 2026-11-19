@@ -2,7 +2,7 @@ name: Rust CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'ci/**']
   pull_request:
   workflow_dispatch:
 
@@ -21,6 +21,7 @@ jobs:
     outputs:
       code: ${{ steps.changes.outputs.code }}
       native: ${{ steps.changes.outputs.native }}
+      ui: ${{ steps.changes.outputs.ui }}
       week: ${{ steps.week.outputs.week }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -30,12 +31,18 @@ jobs:
         run: python scripts/ci-changes.py
       - name: Check maintained documentation links
         run: python scripts/check-doc-links.py
+      - name: Check maintained-file length ratchet
+        run: python scripts/check-file-length.py
+      - name: Check for unexplained old-brand occurrences
+        run: python scripts/check-brand.py
+      - name: Check module dependency boundaries
+        run: python scripts/check-module-boundaries.py
       - name: Check retained calculator notices in LICENSE
         run: python scripts/assemble-release-license.py
       - name: Check embedded asset digests
         run: python scripts/check-asset-hashes.py
-      - name: Test release packaging scripts
-        run: python -m unittest discover -s scripts -p test_package_release.py
+      - name: Test repository scripts
+        run: python -m unittest discover -s scripts -p 'test_*.py'
       - id: week
         run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
 
@@ -119,6 +126,58 @@ jobs:
       - name: Lint Windows MSVC targets and features
         run: cargo xwin clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
 
+  dashboard:
+    name: Dashboard smoke
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.96.1
+          targets: x86_64-unknown-linux-gnu
+      - name: Install Linux native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang libbpf-dev libelf-dev
+      - name: Restore Cargo downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-downloads-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-downloads-${{ runner.os }}-
+      - name: Restore Rust artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          key: rust-${{ runner.os }}-1.96.1-dashboard-${{ needs.changes.outputs.week }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: rust-${{ runner.os }}-1.96.1-dashboard-
+      - name: Build debug daemon
+        env:
+          C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
+        run: cargo build --locked --features test-harness
+      - name: Install pinned Node toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Install pinned Playwright and Chromium
+        working-directory: tests
+        run: |
+          npm install --no-save playwright@1.61.1
+          npx --yes playwright@1.61.1 install --with-deps chromium
+      - name: Tool host HTTP boundary smoke
+        run: python tests/tool_host_smoke.py --binary target/debug/vosu
+      - name: Dashboard browser smoke
+        run: python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module "$PWD/tests/node_modules/playwright/index.mjs"
+
   windows-native:
     name: Windows MSVC native verification
     needs: changes
@@ -158,7 +217,7 @@ jobs:
   required:
     name: CI required
     if: always()
-    needs: [changes, validation, windows-native]
+    needs: [changes, validation, windows-native, dashboard]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -167,9 +226,12 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           VALIDATION: ${{ needs.validation.result }}
           NATIVE: ${{ needs.windows-native.result }}
+          DASHBOARD: ${{ needs.dashboard.result }}
           CODE: ${{ needs.changes.outputs.code }}
           NEED_NATIVE: ${{ needs.changes.outputs.native }}
+          NEED_UI: ${{ needs.changes.outputs.ui }}
         run: |
           test "$CHANGES" = success
           if [ "$CODE" = true ]; then test "$VALIDATION" = success; fi
           if [ "$NEED_NATIVE" = true ]; then test "$NATIVE" = success; fi
+          if [ "$NEED_UI" = true ]; then test "$DASHBOARD" = success; fi

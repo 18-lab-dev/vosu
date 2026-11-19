@@ -449,7 +449,6 @@ pub(super) struct RuntimeUpdater {
     pub(super) shutdown: CancellationToken,
     pub(super) client: crate::net::streaming::StreamingClient,
     pub(super) release_api: String,
-    pub(super) platform: NativePlatform,
 }
 impl RuntimeUpdater {
     pub(super) fn production(
@@ -463,7 +462,6 @@ impl RuntimeUpdater {
             shutdown,
             client: crate::net::streaming::StreamingClient::production(),
             release_api: LATEST_RELEASE_API.to_owned(),
-            platform: NativePlatform,
         }
     }
 }
@@ -498,7 +496,6 @@ pub fn test_updater_handoff(
         shutdown,
         client,
         release_api,
-        platform: NativePlatform,
     }))
 }
 
@@ -519,7 +516,7 @@ impl UpdaterHandoff for RuntimeUpdater {
                 &current_version(),
                 platform_name,
                 &self.release_api,
-                &self.platform,
+                &NativePlatform,
                 &client,
                 &cancel,
             )
@@ -531,7 +528,10 @@ impl UpdaterHandoff for RuntimeUpdater {
                 | UpdateCheck::SuppressedForced => Ok(UpdateRouteResult::Latest),
                 UpdateCheck::NoFiles => Ok(UpdateRouteResult::NoFiles),
                 UpdateCheck::Prepared(prepared) => {
-                    prepared.spawn_helper().map_err(|error| error.to_string())?;
+                    tokio::task::spawn_blocking(move || prepared.spawn_helper())
+                        .await
+                        .map_err(|error| error.to_string())?
+                        .map_err(|error| error.to_string())?;
                     let shutdown = self.shutdown.clone();
                     Ok(UpdateRouteResult::Updated(
                         crate::server::service::DeferredUpdateTrigger::new(move || {

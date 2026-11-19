@@ -23,3 +23,4 @@ description: "Files and subdirectories in Decisions."
 - [User-managed API keys](0015-user-managed-api-keys.md) - Persistent scoped credentials alongside per-start file tokens, with immediate revocation and peer-policy enforcement.
 - [Separate the dashboard origin without moving overlays](0016-separate-dashboard-origin.md) - Supersedes ADR 0013's shared-origin boundary; independent listener, dashboard CSRF, unchanged overlay storage, and recoverable network Apply.
 - [Host tools on the overlay listener under a reserved `/tools` prefix](0017-tool-host.md) - Out-of-process tools with manifests, supervision, inter-tool dependencies, read/write API split, and dashboard-minted UI sessions.
+- [Enforce repository rules with checks, not prose](0018-enforce-rules-with-checks.md) - Accepted decision to turn agent-facing rules into lints, ratchet scripts, a recorded local gate, a required CI check on main, property tests, and a nightly canary.

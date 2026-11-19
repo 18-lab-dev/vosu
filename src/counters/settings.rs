@@ -875,6 +875,9 @@ fn persist_noclobber(temp: tempfile::NamedTempFile, path: &Path) -> Result<bool,
         .encode_wide()
         .chain(Some(0))
         .collect::<Vec<_>>();
+    // SAFETY: `temp_wide` and `path_wide` are NUL-terminated UTF-16 strings
+    // held alive for the call, the only precondition `MoveFileExW`
+    // documents for its pointer arguments.
     let moved = unsafe {
         MoveFileExW(
             temp_wide.as_ptr(),

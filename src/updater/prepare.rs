@@ -174,6 +174,10 @@ pub(super) fn wait_for_helper_ack(
         if child.try_wait()?.is_some() || Instant::now() >= deadline {
             return Err(UpdateError::HelperHandoff);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "callers run spawn_helper on spawn_blocking; this wait is bounded by the 15-second deadline and the helper's exit"
+        )]
         std::thread::sleep(Duration::from_millis(5));
     }
 }

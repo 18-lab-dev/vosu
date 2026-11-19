@@ -24,7 +24,7 @@ use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
 use crate::calculation::{calculate_grade, to_legacy_hits};
 use crate::model::memory::{LazerSpectatorEntry, Score};
-use crate::model::states::{CalculateMods, MultiplayerTeamType, Statistics};
+use crate::model::states::{CalculateMods, MultiplayerTeamType};
 use crate::state::{GameplayState, LeaderboardPlayerState, PreciseState, RegularState};
 
 pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
@@ -322,60 +322,40 @@ fn mods(value: &CalculateMods) -> SelectedMods {
 }
 
 fn leaderboard_player_state(player: &LeaderboardPlayerState) -> LeaderboardPlayer {
-    leaderboard_fields(
-        &player.name,
-        player.score,
-        player.combo,
-        player.max_combo,
-        &player.mods,
-        &player.statistics,
-        player.team,
-        player.position,
-        player.is_passing,
-    )
+    LeaderboardPlayer {
+        name: player.name.clone(),
+        score: player.score,
+        combo: player.combo,
+        max_combo: player.max_combo,
+        mods: player.mods.name.clone(),
+        h300: player.statistics.great,
+        geki: player.statistics.perfect,
+        h100: player.statistics.ok,
+        katu: player.statistics.good,
+        h50: player.statistics.meh,
+        h0: player.statistics.miss,
+        team: player.team,
+        position: player.position,
+        is_passing: i64::from(player.is_passing),
+    }
 }
 
 fn leaderboard_player(player: &crate::model::states::LeaderboardPlayer) -> LeaderboardPlayer {
-    leaderboard_fields(
-        &player.name,
-        player.score,
-        player.combo,
-        player.max_combo,
-        &player.mods,
-        &player.statistics,
-        player.team,
-        player.position,
-        player.is_passing,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn leaderboard_fields(
-    name: &str,
-    score: f64,
-    combo: i64,
-    max_combo: i64,
-    mods_value: &CalculateMods,
-    statistics: &Statistics,
-    team: i64,
-    position: i64,
-    is_passing: bool,
-) -> LeaderboardPlayer {
     LeaderboardPlayer {
-        name: name.to_owned(),
-        score,
-        combo,
-        max_combo,
-        mods: mods_value.name.clone(),
-        h300: statistics.great,
-        geki: statistics.perfect,
-        h100: statistics.ok,
-        katu: statistics.good,
-        h50: statistics.meh,
-        h0: statistics.miss,
-        team,
-        position,
-        is_passing: i64::from(is_passing),
+        name: player.name.clone(),
+        score: player.score,
+        combo: player.combo,
+        max_combo: player.max_combo,
+        mods: player.mods.name.clone(),
+        h300: player.statistics.great,
+        geki: player.statistics.perfect,
+        h100: player.statistics.ok,
+        katu: player.statistics.good,
+        h50: player.statistics.meh,
+        h0: player.statistics.miss,
+        team: player.team,
+        position: player.position,
+        is_passing: i64::from(player.is_passing),
     }
 }
 

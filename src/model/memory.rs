@@ -417,8 +417,10 @@ pub struct MenuChecksum {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
-// Keep both tagged wire payloads inline; boxing would alter the public model API.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "keep both tagged wire payloads inline; boxing would alter the public model API"
+)]
 pub enum Menu {
     #[serde(rename = "update")]
     Full(MenuFull),

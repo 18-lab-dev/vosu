@@ -676,6 +676,10 @@ fn run_initial_target_helper() -> io::Result<()> {
     if unsafe { libc::prctl(libc::PR_SET_NAME, name.as_ptr() as libc::c_ulong, 0, 0, 0) } != 0 {
         return Err(io::Error::last_os_error());
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this helper process only stays alive as a named discovery target for the benchmark"
+    )]
     std::thread::sleep(Duration::from_secs(10));
     Ok(())
 }
@@ -689,6 +693,10 @@ fn run_rename_helper() -> io::Result<()> {
     if unsafe { libc::prctl(libc::PR_SET_NAME, name.as_ptr() as libc::c_ulong, 0, 0, 0) } != 0 {
         return Err(io::Error::last_os_error());
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this helper process only stays alive as a named discovery target for the benchmark"
+    )]
     std::thread::sleep(Duration::from_secs(10));
     Ok(())
 }

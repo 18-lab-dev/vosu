@@ -768,8 +768,7 @@ impl MemoryReader for LazerMemory {
             vec![],
         )))
     }
-    // Direct comparisons intentionally treat NaN as neither below nor above the valid range.
-    #[allow(clippy::manual_range_contains)]
+    #[expect(clippy::manual_range_contains, reason = "NaN passes both bounds")]
     fn ranked_play(&mut self) -> MemoryRead<RankedPlay> {
         let room = self.multiplayer_room()?;
         if room == 0 {

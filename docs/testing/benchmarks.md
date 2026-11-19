@@ -835,7 +835,7 @@ The corrected daemon holds a balanced 1 ms Windows multimedia timer-resolution
 request while each instance worker clock exists. Reproduce using the pinned
 artifacts, 150 ms regular polling, 25 ms HTTP capture interval, and the complete
 menu → play → pause → result → close procedure in the
-[verification guide](verification.md#session-clock-and-cadence-remediation).
+[verification history](verification-history.md#session-clock-and-cadence-remediation).
 The evidence is `remediation-7c0j_0ys/clock/stable-minimum-skew-report.json`
 under the retained verification directory named there. This capture still
 fails one-to-one HTTP reference coverage; cadence measurements do not establish

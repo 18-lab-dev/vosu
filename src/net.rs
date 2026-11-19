@@ -5,7 +5,7 @@ pub mod streaming;
 pub use streaming::{
     AddressResolver, Deadlines, DestinationPolicy, DownloadLimits, NetworkError, NetworkResponse,
     ResolverFuture, SleepFuture, StreamingClient, SystemResolver, TimeSource, TokioTime, ZipLimits,
-    extract_zip_atomic, is_global_unicast,
+    extract_zip_atomic, is_global_unicast, normalize_ip,
 };
 
 pub use streaming::AddressResolver as Resolver;

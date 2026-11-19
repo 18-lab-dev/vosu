@@ -249,6 +249,9 @@ fn move_directory(source: &Path, destination: &Path) -> io::Result<()> {
         .encode_wide()
         .chain(Some(0))
         .collect();
+    // SAFETY: `source` and `destination` are NUL-terminated UTF-16 strings
+    // held alive for the call, the only precondition `MoveFileExW`
+    // documents for its pointer arguments.
     let result = unsafe {
         MoveFileExW(
             source.as_ptr(),
@@ -315,6 +318,9 @@ fn install_staging(staging: &Path, destination: &Path, parent: &Path) -> io::Res
     let destination_c = CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
         io::Error::new(io::ErrorKind::InvalidInput, "destination path contains NUL")
     })?;
+    // SAFETY: `renameat2` is a direct syscall; `staging_c` and
+    // `destination_c` are NUL-terminated C strings held alive for the call,
+    // and `AT_FDCWD` is a documented sentinel rather than a real descriptor.
     let result = unsafe {
         libc::syscall(
             libc::SYS_renameat2,
@@ -505,6 +511,10 @@ pub fn extract_zip_atomic_validated(
         if let Some(directory) = output.parent() {
             std::fs::create_dir_all(directory)?;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "entries are written into a private staging directory that is published by one same-filesystem replacement after every check passes"
+        )]
         let mut target = std::fs::File::create(&output)?;
         let mut copied = 0u64;
         loop {

@@ -8,7 +8,7 @@
 `tools/live-parity/` compares vosu with a pinned upstream reference while a
 real osu! client is driven from menu to active play, pause, result, and exit.
 Clean strict captures for Windows stable, Windows lazer, and native Linux lazer
-are recorded for 1.0 in [verification](../testing/verification.md). Each
+are recorded for 1.0 in [verification history](../testing/verification-history.md). Each
 capture needs a graphical session, a pinned reference build, and a prepared
 client profile on a shared VM. Many recorded attempts failed on capture
 acquisition or attestation rather than on vosu payloads. Requiring a capture

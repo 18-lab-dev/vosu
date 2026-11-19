@@ -31,6 +31,9 @@ thread_local! {
     static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
 }
 
+// SAFETY: every method below forwards unchanged to `std::alloc::System`, a
+// valid `GlobalAlloc` implementation; this wrapper only adds allocation
+// counting around the delegated calls.
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         TRACK_ALLOCATIONS.with(|enabled| {
@@ -38,6 +41,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
                 ALLOCATIONS.with(|count| count.set(count.get() + 1));
             }
         });
+        // SAFETY: forwards `layout` unchanged to `System::alloc`.
         unsafe { System.alloc(layout) }
     }
 
@@ -47,6 +51,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
                 ALLOCATIONS.with(|count| count.set(count.get() + 1));
             }
         });
+        // SAFETY: forwards `layout` unchanged to `System::alloc_zeroed`.
         unsafe { System.alloc_zeroed(layout) }
     }
 
@@ -56,10 +61,14 @@ unsafe impl GlobalAlloc for TrackingAllocator {
                 ALLOCATIONS.with(|count| count.set(count.get() + 1));
             }
         });
+        // SAFETY: forwards `ptr`, `layout`, and `new_size` unchanged to
+        // `System::realloc`, which has the same safety contract as this
+        // method.
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: forwards `ptr` and `layout` unchanged to `System::dealloc`.
         unsafe { System.dealloc(ptr, layout) }
     }
 }

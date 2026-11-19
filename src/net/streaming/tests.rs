@@ -885,3 +885,6 @@ fn zip_install_is_atomic_and_preserves_old_on_cancellation() {
     assert_eq!(std::fs::read(target.join("nested/new")).unwrap(), b"new");
     assert!(!target.join("old").exists());
 }
+
+#[path = "tests_prop.rs"]
+mod tests_prop;

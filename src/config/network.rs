@@ -70,7 +70,7 @@ fn overlapping_hosts(a: &str, b: &str) -> bool {
             .trim_matches(['[', ']'])
             .parse::<std::net::IpAddr>()
             .ok()
-            .map(crate::server::auth::normalize_ip)
+            .map(crate::net::normalize_ip)
     };
     match (ip(a), ip(b)) {
         (Some(a), Some(b)) => a == b || a.is_unspecified() || b.is_unspecified(),

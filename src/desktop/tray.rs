@@ -281,7 +281,10 @@ mod platform {
         let result = std::thread::Builder::new()
             .name("vosu-tray".into())
             .spawn(move || {
-                // All HWND/HICON/menu ownership remains on this dedicated thread.
+                // SAFETY: `run` is `unsafe fn` only because it owns Win32
+                // handles for its lifetime; those handles are used only on
+                // this dedicated thread, and window state outlives the
+                // window and is reclaimed after `DestroyWindow` returns.
                 unsafe {
                     run(actions, stop);
                 }

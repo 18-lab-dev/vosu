@@ -36,6 +36,17 @@ Start with the owning boundary below rather than searching the whole tree. The [
 Maintained code files stay at or below 1,000 physical lines, including tests,
 benchmarks, dashboard styles/scripts, and maintainer tools. Lockfiles and pinned
 JSON/beatmap evidence are data, not source-size exceptions or splitting targets.
+`python scripts/check-file-length.py` enforces this in CI. Files that were already
+over the limit are listed in `scripts/file-length-baseline.txt`; an entry may
+only shrink or be removed (`--update` refuses to raise or add one).
+
+Dependencies between the crate's top-level modules are recorded in
+`scripts/module-boundaries.txt` and checked by
+`python scripts/check-module-boundaries.py`. Adding an edge is a deliberate change:
+record it in the same change that explains the new dependency here or in the
+[architecture overview](overview.md). `calculation -> state` is intended:
+`calculation/state_backend.rs` implements the state reducer's calculation
+backend trait.
 
 - `src/instance/runtime.rs` owns the discovery loop and lifecycle publication;
   `src/instance.rs` retains instance identity, manager state, and the public types.

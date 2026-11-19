@@ -275,8 +275,10 @@ pub(super) fn required_non_null(
         Ok(value)
     }
 }
-// Direct comparisons intentionally treat NaN as in range, matching the scanner's prior behavior.
-#[allow(clippy::manual_range_contains)]
+#[expect(
+    clippy::manual_range_contains,
+    reason = "direct comparisons intentionally treat NaN as in range, matching the scanner's prior behavior"
+)]
 pub(super) fn hit_error_out_of_range(value: f64) -> bool {
     value < -10_000.0 || value > 10_000.0
 }

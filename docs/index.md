@@ -10,6 +10,7 @@ Set up a checkout with [CONTRIBUTING.md](../CONTRIBUTING.md), then start with th
 
 ## Current contracts
 
+- [Feature map: user-facing names, owners, and checks](features.md)
 - [Architecture and source ownership](architecture/index.md)
 - [Decision records](decisions/index.md)
 - [Create a tool: from empty folder to published catalog](tools/create-a-tool.md)
@@ -28,3 +29,4 @@ Set up a checkout with [CONTRIBUTING.md](../CONTRIBUTING.md), then start with th
 ## Historical evidence
 
 - [Linux process-event experiment](linux-process-events-experiment.md): dated polling, CN_PROC, and eBPF measurements and lifecycle checks.
+- [Verification history](testing/verification-history.md): dated release gates, native runs, and live-parity captures.

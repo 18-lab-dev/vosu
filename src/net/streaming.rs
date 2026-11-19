@@ -599,7 +599,9 @@ impl Drop for PartialDirectory {
     }
 }
 
-fn normalize_ip(address: IpAddr) -> IpAddr {
+/// Normalize IPv4-mapped IPv6 without treating arbitrary IPv4-compatible IPv6
+/// addresses as IPv4.
+pub fn normalize_ip(address: IpAddr) -> IpAddr {
     match address {
         IpAddr::V6(value) => value
             .to_ipv4_mapped()

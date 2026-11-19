@@ -77,8 +77,7 @@ impl Origins {
         let state = listeners[usize::from(dashboard)].borrow();
         state.effective.as_ref().is_some_and(|effective| {
             effective.address.ip().is_unspecified()
-                || super::auth::normalize_ip(effective.address.ip())
-                    == super::auth::normalize_ip(ip)
+                || crate::net::normalize_ip(effective.address.ip()) == crate::net::normalize_ip(ip)
         })
     }
     // Only accept the effective configured hostname or a loopback alias, never arbitrary Host.
@@ -116,7 +115,7 @@ impl Origins {
                     .trim_matches(['[', ']'])
                     .parse::<std::net::IpAddr>()
                     .is_ok_and(|host| {
-                        super::auth::normalize_ip(host) == super::auth::normalize_ip(local)
+                        crate::net::normalize_ip(host) == crate::net::normalize_ip(local)
                     })
         });
         if incoming.username().is_empty()

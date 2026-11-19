@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 reqwest = { version = "=0.13.4", default-features = false, features = ["rustls", "json"] }
 serde_json = "=1.0.150"

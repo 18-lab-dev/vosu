@@ -8,7 +8,7 @@ use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
 use crate::calculation::default_calculated_mods;
 use crate::model::memory::{LazerSpectator, User};
 use crate::model::states::{
-    HitErrorArray, KeyOverlayButton as StateKey, KeypressButton as StateKeypress,
+    HitErrorArray, KeyOverlayButton as StateKey, KeypressButton as StateKeypress, Statistics,
     TourneyManagerChatItem,
 };
 use crate::state::{

@@ -1,3 +1,8 @@
+#![expect(
+    clippy::disallowed_methods,
+    reason = "test fixtures write scratch files and sleep"
+)]
+
 use std::{
     fs,
     net::{Ipv4Addr, SocketAddrV4, TcpListener},
@@ -65,12 +70,17 @@ fn configure_process(command: &mut Command) {
 
 #[cfg(unix)]
 fn request_graceful_shutdown(child: &Child) {
+    // SAFETY: `libc::kill` with a valid pid and signal number has no memory
+    // safety preconditions; `child` is this test's own spawned process.
     let result = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
     assert_eq!(result, 0, "send release daemon SIGINT");
 }
 
 #[cfg(windows)]
 fn request_graceful_shutdown(child: &Child) {
+    // SAFETY: `GenerateConsoleCtrlEvent` with a valid process group id has no
+    // memory safety preconditions; `child` is this test's own spawned
+    // process, started in its own process group via `CREATE_NEW_PROCESS_GROUP`.
     let result = unsafe {
         windows_sys::Win32::System::Console::GenerateConsoleCtrlEvent(
             windows_sys::Win32::System::Console::CTRL_BREAK_EVENT,

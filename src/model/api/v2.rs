@@ -739,8 +739,10 @@ pub struct ErrorResponse {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
-// Keep the established untagged wire representation inline; boxing would alter the public API.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "keep the established untagged wire representation inline; boxing would alter the public API"
+)]
 pub enum Answer {
     Ready(Response),
     Error(ErrorResponse),

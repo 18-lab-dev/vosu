@@ -1,8 +1,9 @@
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
 // Keep benchmark and correctness fixture bytes identical; no second decoder or graph.
-#[allow(dead_code)]
 #[path = "../benches/autoresearch_regular_reader.rs"]
 mod benchmark;
+// Keeps the shared bench entry reachable here, so it is neither dead code nor an exception.
+const _: fn() = benchmark::benches;
 
 #[test]
 fn native_regular_capture_decodes_all_selected_states() {

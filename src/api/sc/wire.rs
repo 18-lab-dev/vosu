@@ -244,7 +244,7 @@ fn write_document(
     let key = |index: usize| keys.get(index);
     let key_overlay_enabled = snapshot.runtime_settings().enable_key_overlay;
     // Too many members for one macro expansion; written in three groups.
-    wire_object!(@open first);
+    wire_object!(@open out first);
     wire_object!(@members out first {
         "osuIsRunning": 1_i64,
         "chatIsEnabled": i64::from(global.chat_status > 0),

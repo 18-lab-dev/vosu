@@ -132,7 +132,7 @@ impl Drop for StateWorkerHandle {
     }
 }
 
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "public worker API keeps each runtime dependency explicit"
 )]
@@ -165,7 +165,7 @@ where
     )
 }
 
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "public worker API keeps the injectable clock and runtime dependencies explicit"
 )]

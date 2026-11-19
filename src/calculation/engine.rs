@@ -17,11 +17,9 @@ use rosu_pp::{
 use serde::{Deserialize, Serialize, de::DeserializeSeed};
 use thiserror::Error;
 
-#[allow(unused_imports)]
 pub use vosu_pp::{
-    DifficultyConfig as LiveDifficultyConfig, Error as LiveError, GradualDifficulty, HitResult,
-    LiveLazerEngine, LiveScoreState, ModValue, ParsedBeatmap as LiveBeatmap, Ruleset, ScoreTotals,
-    StructuredMod, hit_window,
+    DifficultyConfig as LiveDifficultyConfig, LiveLazerEngine, LiveScoreState, Ruleset,
+    StructuredMod,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

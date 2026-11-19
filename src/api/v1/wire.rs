@@ -141,7 +141,7 @@ fn write_document(
     };
 
     // Too many members for one macro expansion; written in groups.
-    wire_object!(@open first);
+    wire_object!(@open out first);
     wire_object!(@members out first {
         "client": match source {
             ClientType::Stable => "stable",
@@ -156,7 +156,7 @@ fn write_document(
             },
         },
         "menu": With(|out: &mut Vec<u8>| {
-            wire_object!(@open first);
+            wire_object!(@open out first);
             wire_object!(@members out first {
                 "mainMenu": {
                     "bassDensity": regular.bass_density.density,

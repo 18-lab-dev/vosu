@@ -222,7 +222,15 @@ pub(super) fn stage(payload: &Path, assembly: &Path, work: &Path) -> io::Result<
             client_name.to_owned(),
             client_deps["libraries"][client_name].clone(),
         );
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "rewritten runtime manifests belong to a disposable staged runtime, not user state"
+        )]
         fs::write(destination.join(deps_name), serde_json::to_vec(&deps)?)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "rewritten runtime manifests belong to a disposable staged runtime, not user state"
+        )]
         fs::write(destination.join(config_name), serde_json::to_vec(&config)?)?;
     }
     Ok(staged)

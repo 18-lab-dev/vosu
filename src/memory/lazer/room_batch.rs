@@ -80,8 +80,10 @@ impl RankedState {
 
 impl LazerMemory {
     /// [`MemoryReader::ranked_play`] for a non-null room.
-    // Direct comparisons intentionally treat NaN as neither below nor above the valid range.
-    #[allow(clippy::manual_range_contains)]
+    #[expect(
+        clippy::manual_range_contains,
+        reason = "direct comparisons intentionally treat NaN as neither below nor above the valid range"
+    )]
     pub(super) fn ranked_play_batched(&self, room: usize) -> Option<ReadStatus<RankedPlay>> {
         if self.process.pointer_size() != 8 {
             return None;

@@ -38,6 +38,10 @@ impl CommandRunner for SystemCommandRunner {
                     };
                 }
                 Ok(None) if Instant::now() < deadline => {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "every caller runs reconciliation on spawn_blocking; polls systemctl until a ten-second deadline"
+                    )]
                     std::thread::sleep(Duration::from_millis(25));
                 }
                 result => {

@@ -1,0 +1,2 @@
+# Upstream fork pinned for provenance: vosu's first-party clippy.toml rules
+# (disallowed methods) do not apply here. This file stops clippy's upward search.

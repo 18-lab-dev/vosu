@@ -50,6 +50,8 @@ pub fn executable(root: &Path, command: &str, dev: bool) -> PathBuf {
 #[cfg(windows)]
 struct Job(windows_sys::Win32::Foundation::HANDLE);
 #[cfg(windows)]
+// SAFETY: `HANDLE` is an opaque kernel object reference; Windows documents
+// handles as safe to use from any thread.
 unsafe impl Send for Job {}
 #[cfg(windows)]
 impl Job {
@@ -89,6 +91,8 @@ impl Job {
 #[cfg(windows)]
 impl Drop for Job {
     fn drop(&mut self) {
+        // SAFETY: `self.0` is a job handle created by `CreateJobObjectW` in
+        // `assign` and closed exactly once here, on drop.
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(self.0);
         }

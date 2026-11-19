@@ -1,3 +1,8 @@
+#![expect(
+    clippy::disallowed_methods,
+    reason = "test fixtures write scratch files and sleep"
+)]
+
 #[path = "updater_native/handoff.rs"]
 mod handoff;
 use std::{

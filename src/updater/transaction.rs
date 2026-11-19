@@ -170,8 +170,10 @@ pub struct PreparedUpdate<'a, P: UpdatePlatform> {
     pub release: ValidatedRelease,
 }
 
-// Keep the prepared transaction inline so callers retain the established public API.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "keep the prepared transaction inline so callers retain the established public API"
+)]
 pub enum UpdateCheck<'a, P: UpdatePlatform> {
     Latest(Version),
     /// A newer stable release exists, but startup policy disabled installation.
@@ -336,6 +338,9 @@ pub(super) fn publish_create_record(create_path: &Path, record_path: &Path) -> i
     };
     let create = wide(create_path);
     let record = wide(record_path);
+    // SAFETY: `create` and `record` are NUL-terminated UTF-16 strings held
+    // alive for the call, the only precondition `MoveFileExW` documents for
+    // its pointer arguments.
     let result = unsafe { MoveFileExW(create.as_ptr(), record.as_ptr(), MOVEFILE_WRITE_THROUGH) };
     if result == 0 {
         Err(io::Error::last_os_error())

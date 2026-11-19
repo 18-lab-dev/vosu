@@ -2,6 +2,16 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased
+
+### Updater
+
+- Keep the daemon responsive while handing off an update. Waiting for the update helper's acknowledgement (up to 15 seconds) and the post-update cleanup that waits for the helper to exit (up to 10 seconds each for exit and lock retries) now run on Tokio's blocking pool instead of an async worker thread, so HTTP, WebSocket, and polling tasks keep running during **Update vosu**, startup updates, and the first launch after an update.
+
+### Configuration
+
+- Coalesce configuration-file watcher events into one pending reload signal instead of an unbounded queue; the store still rereads the file after every burst of changes.
+
 ## 1.2.3 - 2026-11-19
 
 ### Lazer

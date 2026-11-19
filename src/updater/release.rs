@@ -95,8 +95,10 @@ pub(super) fn decode_digest(value: &str) -> Result<[u8; 32], UpdateError> {
 /// development/test builds publish the package version without touching the
 /// network, while production always checks the authoritative release and only
 /// prepares it when the effective `--update`/configuration decision is true.
-// This public entry point keeps its explicit startup-policy and update inputs for API stability.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "this public entry point keeps its explicit startup-policy and update inputs for API stability"
+)]
 pub async fn check_startup_and_prepare<'a, P: UpdatePlatform>(
     enabled: bool,
     program_dir: &Path,
@@ -111,8 +113,8 @@ pub async fn check_startup_and_prepare<'a, P: UpdatePlatform>(
     if !startup_uses_remote_release() {
         return Ok(UpdateCheck::Latest(current.clone()));
     }
-    check_release_and_prepare(
-        enabled,
+    check_release_and_prepare(ReleaseCheckRequest {
+        prepare_available: enabled,
         program_dir,
         target,
         current,
@@ -121,15 +123,17 @@ pub async fn check_startup_and_prepare<'a, P: UpdatePlatform>(
         platform,
         client,
         cancel,
-    )
+    })
     .await
 }
 
 /// Explicit update requests always consult the authoritative release endpoint,
 /// including in development builds where a local harness may exercise the
 /// route. Startup callers should use [`check_startup_and_prepare`] instead.
-// This public entry point keeps its explicit update inputs for API stability.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "this public entry point keeps its explicit update inputs for API stability"
+)]
 pub async fn check_latest_and_prepare<'a, P: UpdatePlatform>(
     program_dir: &Path,
     target: &Path,
@@ -140,8 +144,8 @@ pub async fn check_latest_and_prepare<'a, P: UpdatePlatform>(
     client: &StreamingClient,
     cancel: &CancellationToken,
 ) -> Result<UpdateCheck<'a, P>, UpdateError> {
-    check_release_and_prepare(
-        true,
+    check_release_and_prepare(ReleaseCheckRequest {
+        prepare_available: true,
         program_dir,
         target,
         current,
@@ -150,23 +154,39 @@ pub async fn check_latest_and_prepare<'a, P: UpdatePlatform>(
         platform,
         client,
         cancel,
-    )
+    })
     .await
 }
 
-// Keep policy forwarding explicit and aligned with the two public entry points.
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn check_release_and_prepare<'a, P: UpdatePlatform>(
-    prepare_available: bool,
-    program_dir: &Path,
-    target: &Path,
-    current: &Version,
-    platform_name: &str,
-    release_api: &str,
-    platform: &'a P,
-    client: &StreamingClient,
-    cancel: &CancellationToken,
+/// Grouped inputs for [`check_release_and_prepare`]; keeps policy forwarding
+/// explicit and aligned with the two public entry points without a long
+/// positional parameter list.
+pub(super) struct ReleaseCheckRequest<'a, 'b, P: UpdatePlatform> {
+    pub(super) prepare_available: bool,
+    pub(super) program_dir: &'b Path,
+    pub(super) target: &'b Path,
+    pub(super) current: &'b Version,
+    pub(super) platform_name: &'b str,
+    pub(super) release_api: &'b str,
+    pub(super) platform: &'a P,
+    pub(super) client: &'b StreamingClient,
+    pub(super) cancel: &'b CancellationToken,
+}
+
+pub(super) async fn check_release_and_prepare<'a, 'b, P: UpdatePlatform>(
+    request: ReleaseCheckRequest<'a, 'b, P>,
 ) -> Result<UpdateCheck<'a, P>, UpdateError> {
+    let ReleaseCheckRequest {
+        prepare_available,
+        program_dir,
+        target,
+        current,
+        platform_name,
+        release_api,
+        platform,
+        client,
+        cancel,
+    } = request;
     if is_forced_version(current) {
         return Ok(UpdateCheck::SuppressedForced);
     }

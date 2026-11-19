@@ -27,6 +27,10 @@ pub fn run_helper<P: UpdatePlatform>(
                 if !platform.identity_is_alive(&candidate.owner)? {
                     return Err(UpdateError::HelperHandoff);
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the helper is a separate synchronous process polling for its owner's durable handoff while that owner lives"
+                )]
                 std::thread::sleep(Duration::from_millis(5));
                 continue;
             }
@@ -42,6 +46,10 @@ pub fn run_helper<P: UpdatePlatform>(
                 if !platform.identity_is_alive(&candidate.owner)? {
                     return Err(UpdateError::HelperHandoff);
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the helper is a separate synchronous process; this retry is bounded by the two-second record retry deadline"
+                )]
                 std::thread::sleep(Duration::from_millis(5));
                 continue;
             }
@@ -58,6 +66,10 @@ pub fn run_helper<P: UpdatePlatform>(
             Some(_) => return Err(UpdateError::ReadinessAuthorization),
             None if platform.identity_is_alive(&candidate.owner)? => {
                 last_candidate = Some(candidate);
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the helper is a separate synchronous process polling for its owner's durable handoff while that owner lives"
+                )]
                 std::thread::sleep(Duration::from_millis(5));
             }
             None => return Err(UpdateError::HelperHandoff),
@@ -140,6 +152,10 @@ pub fn finish_ready_cleanup<P: UpdatePlatform>(
                         io::ErrorKind::PermissionDenied | io::ErrorKind::WouldBlock
                     ) =>
             {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "synchronous ready-child cleanup retrying scanner and executable locks until a ten-second deadline"
+                )]
                 std::thread::sleep(Duration::from_millis(50));
             }
             Err(error) => return Err(error),
@@ -263,7 +279,11 @@ pub(super) fn launch_and_wait_ready<P: UpdatePlatform>(
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(20))
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the synchronous helper polls a nonblocking readiness listener until the candidate's deadline"
+                )]
+                std::thread::sleep(Duration::from_millis(20));
             }
             Err(error) => {
                 kill_and_reap(&mut child);

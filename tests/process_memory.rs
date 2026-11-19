@@ -1,3 +1,8 @@
+#![expect(
+    clippy::disallowed_methods,
+    reason = "test fixtures write scratch files and sleep"
+)]
+
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 

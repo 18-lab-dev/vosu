@@ -1,7 +1,8 @@
 // Share the frozen benchmark fixture/filter list so tests guard the actual search boundary.
-#[allow(dead_code)]
 #[path = "../benches/autoresearch_filtered_projection.rs"]
 mod benchmark;
+// Keeps the shared bench entry reachable here, so it is neither dead code nor an exception.
+const _: fn() = benchmark::benches;
 use benchmark::*;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;

@@ -188,6 +188,10 @@ pub(super) fn wait_for_exit<P: UpdatePlatform>(
         if !platform.identity_is_alive(identity)? {
             return Ok(true);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "synchronous updater process polling a process identity until the caller's timeout"
+        )]
         std::thread::sleep(Duration::from_millis(25));
     }
     Ok(!platform.identity_is_alive(identity)?)
@@ -230,18 +234,32 @@ pub(super) fn secure_random_128() -> io::Result<[u8; 16]> {
     use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
     type RtlGenRandom = unsafe extern "system" fn(*mut core::ffi::c_void, u32) -> u8;
     let library_name: Vec<u16> = "advapi32.dll\0".encode_utf16().collect();
+    // SAFETY: `library_name` is a NUL-terminated UTF-16 string, the only
+    // precondition `LoadLibraryW` documents for its pointer argument.
     let library = unsafe { LoadLibraryW(library_name.as_ptr()) };
     if library.is_null() {
         return Err(io::Error::last_os_error());
     }
+    // SAFETY: `library` was just returned non-null by `LoadLibraryW` above
+    // and has not been freed yet; the C-string literal is NUL-terminated
+    // and lives for `'static`.
     let address = unsafe { GetProcAddress(library, c"SystemFunction036".as_ptr().cast()) };
     let Some(address) = address else {
+        // SAFETY: `library` was returned by `LoadLibraryW` above and is
+        // freed exactly once on this error path.
         unsafe { FreeLibrary(library) };
         return Err(io::Error::last_os_error());
     };
+    // SAFETY: `GetProcAddress` resolved `"SystemFunction036"` (RtlGenRandom)
+    // in advapi32.dll, which the Windows ABI documents as exporting exactly
+    // this `extern "system" fn(*mut c_void, u32) -> u8` signature.
     let function: RtlGenRandom = unsafe { std::mem::transmute(address) };
     let mut value = [0u8; 16];
+    // SAFETY: `value` is a valid, writable buffer of `value.len()` bytes for
+    // the duration of this call.
     let ok = unsafe { function(value.as_mut_ptr().cast(), value.len() as u32) };
+    // SAFETY: `library` was returned by `LoadLibraryW` above and is freed
+    // exactly once on this success path.
     unsafe { FreeLibrary(library) };
     if ok == 0 {
         Err(io::Error::last_os_error())
@@ -271,6 +289,8 @@ pub(super) fn process_start_identity(pid: u32) -> io::Result<u64> {
     use windows_sys::Win32::System::Threading::{
         GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
     };
+    // SAFETY: `OpenProcess` with a plain pid and query-only access right has
+    // no memory-safety preconditions beyond the pid being a plausible value.
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if handle.is_null() {
         return Err(io::Error::last_os_error());
@@ -291,7 +311,11 @@ pub(super) fn process_start_identity(pid: u32) -> io::Result<u64> {
         dwLowDateTime: 0,
         dwHighDateTime: 0,
     };
+    // SAFETY: `handle` was returned non-null by `OpenProcess` above and all
+    // four `FILETIME` outputs are valid, writable local variables.
     let ok = unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
+    // SAFETY: `handle` was returned by `OpenProcess` above and is closed
+    // exactly once here.
     unsafe { CloseHandle(handle) };
     if ok == 0 {
         Err(io::Error::last_os_error())
@@ -302,6 +326,9 @@ pub(super) fn process_start_identity(pid: u32) -> io::Result<u64> {
 
 #[cfg(target_os = "linux")]
 pub(super) fn terminate_process(identity: &ProcessIdentity, timeout: Duration) -> io::Result<()> {
+    // SAFETY: `pidfd_open` is a direct syscall with a plain pid and no
+    // pointer arguments; its result is converted to a fd only after the
+    // negative-value error check below.
     let fd = unsafe {
         libc::syscall(libc::SYS_pidfd_open, identity.pid as libc::pid_t, 0) as libc::c_int
     };
@@ -311,10 +338,14 @@ pub(super) fn terminate_process(identity: &ProcessIdentity, timeout: Duration) -
     match process_start_identity(identity.pid) {
         Ok(start) if start == identity.start => {}
         Err(error) if process_missing_error(&error) => {
+            // SAFETY: `fd` was returned by the successful `pidfd_open` call
+            // above and is closed exactly once on this path.
             unsafe { libc::close(fd) };
             return Ok(());
         }
         _ => {
+            // SAFETY: `fd` was returned by the successful `pidfd_open` call
+            // above and is closed exactly once on this path.
             unsafe { libc::close(fd) };
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -322,6 +353,9 @@ pub(super) fn terminate_process(identity: &ProcessIdentity, timeout: Duration) -
             ));
         }
     }
+    // SAFETY: `pidfd_send_signal` is a direct syscall; `fd` is the pidfd
+    // opened above, a null `siginfo_t` pointer is documented as valid for
+    // this syscall, and `0` leaves the flags unset.
     let sent = unsafe {
         libc::syscall(
             libc::SYS_pidfd_send_signal,
@@ -333,6 +367,8 @@ pub(super) fn terminate_process(identity: &ProcessIdentity, timeout: Duration) -
     };
     if sent < 0 {
         let error = io::Error::last_os_error();
+        // SAFETY: `fd` was returned by the successful `pidfd_open` call
+        // above and is closed exactly once on this path.
         unsafe { libc::close(fd) };
         return Err(error);
     }
@@ -342,7 +378,11 @@ pub(super) fn terminate_process(identity: &ProcessIdentity, timeout: Duration) -
         revents: 0,
     };
     let millis = timeout.as_millis().min(i32::MAX as u128) as i32;
+    // SAFETY: `pollfd` is a valid, singly-owned local variable and `fd`
+    // remains open until the `close` call below.
     let waited = unsafe { libc::poll(&mut pollfd, 1, millis) };
+    // SAFETY: `fd` was returned by the successful `pidfd_open` call above
+    // and is closed exactly once here, after the last use.
     unsafe { libc::close(fd) };
     if waited > 0 {
         Ok(())
@@ -362,6 +402,8 @@ pub(super) fn terminate_process(identity: &ProcessIdentity, timeout: Duration) -
         GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
         PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
     };
+    // SAFETY: `OpenProcess` with a plain pid and these access rights has no
+    // memory-safety preconditions beyond the pid being a plausible value.
     let handle = unsafe {
         OpenProcess(
             PROCESS_TERMINATE | PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
@@ -388,23 +430,35 @@ pub(super) fn terminate_process(identity: &ProcessIdentity, timeout: Duration) -
         dwLowDateTime: 0,
         dwHighDateTime: 0,
     };
+    // SAFETY: `handle` was returned non-null by `OpenProcess` above and all
+    // four `FILETIME` outputs are valid, writable local variables.
     let times =
         unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
     let start = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
     if times == 0 || start != identity.start {
+        // SAFETY: `handle` was returned by `OpenProcess` above and is closed
+        // exactly once on this path.
         unsafe { CloseHandle(handle) };
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "process identity changed",
         ));
     }
+    // SAFETY: `handle` was returned non-null by `OpenProcess` above and
+    // `75` is a plain exit-code argument.
     if unsafe { TerminateProcess(handle, 75) } == 0 {
         let error = io::Error::last_os_error();
+        // SAFETY: `handle` was returned by `OpenProcess` above and is closed
+        // exactly once on this path.
         unsafe { CloseHandle(handle) };
         return Err(error);
     }
+    // SAFETY: `handle` was returned non-null by `OpenProcess` above and
+    // remains open until the `CloseHandle` call below.
     let waited =
         unsafe { WaitForSingleObject(handle, timeout.as_millis().min(u32::MAX as u128) as u32) };
+    // SAFETY: `handle` was returned by `OpenProcess` above and is closed
+    // exactly once here, after the last use.
     unsafe { CloseHandle(handle) };
     if waited == WAIT_OBJECT_0 {
         Ok(())
@@ -445,6 +499,9 @@ pub(super) fn atomic_swap(target: &Path, staged: &Path, backup: &Path) -> io::Re
     let target = wide(target);
     let staged = wide(staged);
     let backup = wide(backup);
+    // SAFETY: `target`, `staged`, and `backup` are NUL-terminated UTF-16
+    // strings held alive for the call; passing null for the backup-name and
+    // reserved output parameters is documented as valid for `ReplaceFileW`.
     let ok = unsafe {
         ReplaceFileW(
             target.as_ptr(),
@@ -475,6 +532,9 @@ pub(super) fn restore_backup(target: &Path, backup: &Path) -> io::Result<()> {
     };
     let target = wide(target);
     let backup = wide(backup);
+    // SAFETY: `backup` and `target` are NUL-terminated UTF-16 strings held
+    // alive for the call, the only precondition `MoveFileExW` documents for
+    // its pointer arguments.
     let ok = unsafe {
         MoveFileExW(
             backup.as_ptr(),

@@ -10,111 +10,6 @@ use tokio::sync::watch;
 use super::*;
 
 #[test]
-fn pointer_syntax_and_boundaries_follow_rfc6901() {
-    assert_eq!(decode_pointer(""), Some(vec![]));
-    assert_eq!(decode_pointer("/"), Some(vec![String::new()]));
-    assert_eq!(
-        decode_pointer("/日本語/~0/~1"),
-        Some(vec!["日本語".into(), "~".into(), "/".into()])
-    );
-    assert!(decode_pointer("x").is_none());
-    assert!(decode_pointer("/~").is_none());
-    assert!(decode_pointer("/~2").is_none());
-
-    assert!(compile_pointers(vec!["/a".into()]).is_ok());
-    assert!(compile_pointers((0..256).map(|id| format!("/{id}")).collect()).is_ok());
-    assert_eq!(
-        compile_pointers(Vec::new()),
-        Err(SubscriptionRequestError::InvalidRequest)
-    );
-    assert_eq!(
-        compile_pointers((0..257).map(|id| format!("/{id}")).collect()),
-        Err(SubscriptionRequestError::InvalidRequest)
-    );
-    assert!(compile_pointers(vec![format!("/{}", "a".repeat(511))]).is_ok());
-    assert_eq!(
-        compile_pointers(vec![format!("/{}", "a".repeat(512))]),
-        Err(SubscriptionRequestError::InvalidRequest)
-    );
-    assert!(compile_pointers(vec![format!("/{}", vec!["a"; 32].join("/"))]).is_ok());
-    assert_eq!(
-        compile_pointers(vec![format!("/{}", vec!["a"; 33].join("/"))]),
-        Err(SubscriptionRequestError::InvalidRequest)
-    );
-}
-
-#[test]
-fn decoded_duplicates_and_ancestor_overlaps_are_rejected() {
-    for pointers in [
-        vec!["/a".into(), "/a".into()],
-        vec!["/a~1b".into(), "/a~1b/c".into()],
-        vec!["".into(), "/a".into()],
-        vec!["/a/b".into(), "/a".into()],
-    ] {
-        assert_eq!(
-            compile_pointers(pointers),
-            Err(SubscriptionRequestError::InvalidPointer)
-        );
-    }
-}
-
-#[test]
-fn traversal_distinguishes_object_keys_array_indices_null_and_absence() {
-    let document = json!({"": 1, "0": "object", "array": [null, "one"], "01": 4, "-": 5});
-    assert_eq!(traverse(&document, &[String::new()]), Some(&json!(1)));
-    assert_eq!(traverse(&document, &["0".into()]), Some(&json!("object")));
-    assert_eq!(traverse(&document, &["01".into()]), Some(&json!(4)));
-    assert_eq!(traverse(&document, &["-".into()]), Some(&json!(5)));
-    assert_eq!(
-        traverse(&document, &["array".into(), "0".into()]),
-        Some(&Value::Null)
-    );
-    assert_eq!(
-        traverse(&document, &["array".into(), "1".into()]),
-        Some(&json!("one"))
-    );
-    assert_eq!(traverse(&document, &["array".into(), "01".into()]), None);
-    assert_eq!(traverse(&document, &["array".into(), "-".into()]), None);
-    assert_eq!(parse_array_index("184467440737095516160000"), None);
-}
-
-#[test]
-fn object_lookup_agrees_below_and_above_the_linear_search_size() {
-    for size in 0..=LINEAR_KEY_SEARCH_MAX + 4 {
-        let mut object = serde_json::Map::new();
-        for id in 0..size {
-            // Same-length keys and a shared prefix make every miss reach the byte comparison.
-            let key = if id == 0 {
-                String::new()
-            } else {
-                format!("k{id:02}")
-            };
-            object.insert(key, json!({"id": id}));
-        }
-        let document = Value::Object(object);
-        for id in 0..size {
-            let key = if id == 0 {
-                String::new()
-            } else {
-                format!("k{id:02}")
-            };
-            assert_eq!(
-                traverse(&document, &[key.clone(), "id".into()]),
-                Some(&json!(id)),
-                "size {size} key {key:?}"
-            );
-        }
-        for missing in ["k99", "k0", "K01", "k01 ", "id"] {
-            assert_eq!(
-                traverse(&document, &[missing.into()]),
-                None,
-                "size {size} {missing:?}"
-            );
-        }
-    }
-}
-
-#[test]
 fn request_shape_and_frozen_compact_frames_are_exact() {
     assert_eq!(
         parse_subscription_request(br#"["/a","/b"]"#),
@@ -1423,3 +1318,6 @@ async fn selection_added_during_projection_is_delivered_from_a_refreshed_union()
     assert!(lock(&hub.0.document).is_none());
     assert!(lock(&hub.0.plans).is_empty());
 }
+
+#[path = "tests_pointer.rs"]
+mod pointer;

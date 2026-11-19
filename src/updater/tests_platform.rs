@@ -144,6 +144,9 @@
         fn reap_candidate(&self) {
             let pid = self.spawned_pid.load(Ordering::SeqCst) as libc::pid_t;
             if pid != 0 {
+                // SAFETY: `kill`/`waitpid` with a plain pid and a null
+                // `wstatus` have no memory-safety preconditions; `pid` is
+                // this test fixture's own spawned child.
                 unsafe {
                     libc::kill(pid, libc::SIGKILL);
                     libc::waitpid(pid, std::ptr::null_mut(), 0);

@@ -249,40 +249,40 @@ impl<F: Fn(&mut Vec<u8>) -> io::Result<()>> Wire for With<F> {
 /// `"key": value` writes a [`Wire`] value; `"key": { ... }` writes a nested
 /// object; `"key"?: option` omits the member when `None`, like
 /// `skip_serializing_if = "Option::is_none"`. Separators are literals
-/// combined with the key, and the first-member flag is a local constant the
-/// optimizer folds wherever no optional member precedes. The enclosing
-/// function must return `io::Result`.
+/// combined with the key, and the first-member marker is the output
+/// buffer's length captured before any member is written: later writes only
+/// grow the buffer, so comparing the current length against the marker
+/// tells whether a separator is needed, with no mutable flag to track.
+/// The enclosing function must return `io::Result`.
 ///
 /// Expansion recurses once per member, so objects longer than the recursion
-/// limit allows are written in groups: `wire_object!(@open first)`, then
+/// limit allows are written in groups: `wire_object!(@open out first)`, then
 /// `wire_object!(@members out first { ... })` per group, then
 /// `wire_object!(@close out first)`.
 macro_rules! wire_object {
     ($out:ident { $($body:tt)* }) => {{
-        $crate::api::json::wire_object!(@open first);
+        $crate::api::json::wire_object!(@open $out first);
         $crate::api::json::wire_object!(@field $out first; $($body)*);
         $crate::api::json::wire_object!(@close $out first);
     }};
-    (@open $first:ident) => {
-        #[allow(unused_assignments, unused_mut)]
-        let mut $first = true;
+    (@open $out:ident $first:ident) => {
+        let $first = $out.len();
     };
     (@members $out:ident $first:ident { $($body:tt)* }) => {
         $crate::api::json::wire_object!(@field $out $first; $($body)*);
     };
     (@close $out:ident $first:ident) => {
-        if $first {
+        if $out.len() == $first {
             $out.push(b'{');
         }
         $out.push(b'}');
     };
     (@key $out:ident $first:ident $key:literal) => {
-        $out.extend_from_slice(if $first {
+        $out.extend_from_slice(if $out.len() == $first {
             concat!("{\"", $key, "\":").as_bytes()
         } else {
             concat!(",\"", $key, "\":").as_bytes()
         });
-        $first = false;
     };
     (@field $out:ident $first:ident;) => {};
     (@field $out:ident $first:ident; $key:literal : { $($inner:tt)* } $(, $($rest:tt)*)?) => {

@@ -136,6 +136,7 @@ mod tests {
 
     include!("runtime/tests/cli.rs");
     include!("runtime/tests/worker.rs");
+    include!("runtime/tests/prop_worker.rs");
     include!("runtime/tests/projection.rs");
     include!("runtime/tests/service.rs");
     include!("runtime/tests/lifecycle.rs");

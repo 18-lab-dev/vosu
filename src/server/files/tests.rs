@@ -486,3 +486,6 @@ fn windows_final_path_check_rejects_junction_escape_and_prefix_collision() {
         Path::new(r"D:\outside\counter")
     ));
 }
+
+#[path = "tests_prop.rs"]
+mod tests_prop;

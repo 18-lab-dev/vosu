@@ -154,8 +154,8 @@ fn replacement_preserves_target_metadata_and_cleans_staging() {
         };
         assert!(needed > 0);
         let mut descriptor = vec![0_u32; (needed as usize).div_ceil(4)];
-        // SAFETY: the aligned buffer has at least `needed` writable bytes.
         assert_ne!(
+            // SAFETY: the aligned buffer has at least `needed` writable bytes.
             unsafe {
                 GetFileSecurityW(
                     path.as_ptr(),
@@ -185,8 +185,8 @@ fn replacement_preserves_target_metadata_and_cleans_staging() {
         dwLowDateTime: 0,
         dwHighDateTime: 0x01d0_0000,
     };
-    // SAFETY: the file handle is live and the FILETIME input is initialized.
     assert_ne!(
+        // SAFETY: the file handle is live and the FILETIME input is initialized.
         unsafe {
             SetFileTime(
                 file.as_raw_handle(),
@@ -201,9 +201,9 @@ fn replacement_preserves_target_metadata_and_cleans_staging() {
     let mut original_security = security(&target, OWNER_SECURITY_INFORMATION);
     let mut owner = std::ptr::null_mut();
     let mut defaulted = 0;
-    // SAFETY: Windows returned this self-relative descriptor; its owner SID
-    // remains live in `original_security` until all ACL operations finish.
     assert_ne!(
+        // SAFETY: Windows returned this self-relative descriptor; its owner SID
+        // remains live in `original_security` until all ACL operations finish.
         unsafe {
             GetSecurityDescriptorOwner(
                 original_security.as_mut_ptr().cast(),
@@ -213,6 +213,8 @@ fn replacement_preserves_target_metadata_and_cleans_staging() {
         },
         0
     );
+    // SAFETY: `owner` is the SID pointer `GetSecurityDescriptorOwner` wrote
+    // above and whose descriptor is kept live in `original_security`.
     let sid_bytes = unsafe { GetLengthSid(owner) } as usize;
     let acl_bytes = std::mem::size_of::<ACL>() + 8 + sid_bytes;
     let mut acl = vec![0_u32; acl_bytes.div_ceil(4)];
@@ -270,8 +272,8 @@ fn replacement_preserves_target_metadata_and_cleans_staging() {
     let reference_new = root.path().join("reference-new");
     fs::write(&reference, "old").unwrap();
     fs::write(&reference_new, "new").unwrap();
-    // SAFETY: descriptor still contains the initialized owner-only DACL above.
     assert_ne!(
+        // SAFETY: descriptor still contains the initialized owner-only DACL above.
         unsafe {
             SetFileSecurityW(
                 wide(&reference).as_ptr(),

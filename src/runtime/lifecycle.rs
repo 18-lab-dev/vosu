@@ -333,12 +333,15 @@ impl ProductionRuntime {
         // `self`, so any signal/cleanup failure is followed by the normal
         // guaranteed shutdown path rather than stranding local resources.
         if let Some(readiness) = self.startup_readiness.take() {
-            readiness
-                .signal_ready()
-                .map_err(|error| io::Error::other(error.to_string()))?;
-            readiness
-                .finish_cleanup(&NativePlatform)
-                .map_err(|error| io::Error::other(error.to_string()))?;
+            // Cleanup waits for the helper to exit and retries scanner locks for
+            // up to ten seconds each; keep that off the async workers.
+            tokio::task::spawn_blocking(move || {
+                readiness.signal_ready()?;
+                readiness.finish_cleanup(&NativePlatform)
+            })
+            .await
+            .map_err(io::Error::other)?
+            .map_err(|error| io::Error::other(error.to_string()))?;
         }
         self.logger.info("Searching for %osu!% process...");
         Ok(())
@@ -400,12 +403,18 @@ impl RuntimeHooks for ProductionRuntime {
                 }
             };
             match check {
-                UpdateCheck::Prepared(prepared) => match prepared.spawn_helper() {
-                    Ok(_) => self.update_handed_off.store(true, Ordering::Release),
-                    Err(error) => self.logger.warn(format!(
-                        "Failed to hand off startup update; continuing ordinary startup: {error}"
-                    )),
-                },
+                UpdateCheck::Prepared(prepared) => {
+                    let handoff = tokio::task::spawn_blocking(move || prepared.spawn_helper())
+                        .await
+                        .map_err(|error| error.to_string())
+                        .and_then(|result| result.map_err(|error| error.to_string()));
+                    match handoff {
+                        Ok(_) => self.update_handed_off.store(true, Ordering::Release),
+                        Err(error) => self.logger.warn(format!(
+                            "Failed to hand off startup update; continuing ordinary startup: {error}"
+                        )),
+                    }
+                }
                 UpdateCheck::Available(version) => {
                     self.logger.warn(format!(
                         "Update available: v{} => v{version}",

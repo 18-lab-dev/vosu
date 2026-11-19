@@ -1,0 +1,9 @@
+disallowed-methods = [
+    { path = "std::fs::write", reason = "configuration, settings, and state writes must be same-directory atomic replacements: write a temporary file next to the target, then publish it with crate::platform::atomic_replace. Scratch or staging files outside user state need #[expect(clippy::disallowed_methods, reason = \"...\")]" },
+    { path = "std::fs::File::create", reason = "configuration, settings, and state writes must be same-directory atomic replacements: write a temporary file next to the target, then publish it with crate::platform::atomic_replace. Scratch or staging files outside user state need #[expect(clippy::disallowed_methods, reason = \"...\")]" },
+    { path = "tokio::fs::write", reason = "configuration, settings, and state writes must be same-directory atomic replacements: write a temporary file next to the target, then publish it with crate::platform::atomic_replace. Scratch or staging files outside user state need #[expect(clippy::disallowed_methods, reason = \"...\")]" },
+    { path = "tokio::fs::File::create", reason = "configuration, settings, and state writes must be same-directory atomic replacements: write a temporary file next to the target, then publish it with crate::platform::atomic_replace. Scratch or staging files outside user state need #[expect(clippy::disallowed_methods, reason = \"...\")]" },
+    { path = "tokio::sync::mpsc::unbounded_channel", reason = "unbounded queue: use tokio::sync::mpsc::channel(capacity), or tokio::sync::watch for latest-only state (ADR 0002)" },
+    { path = "std::sync::mpsc::channel", reason = "unbounded queue: use std::sync::mpsc::sync_channel(capacity), or a latest-only slot" },
+    { path = "std::thread::sleep", reason = "blocking sleep: in async code use tokio::time::sleep; a synchronous retry loop must be bounded by a deadline and state why it blocks in #[expect(clippy::disallowed_methods, reason = \"...\")]" },
+]

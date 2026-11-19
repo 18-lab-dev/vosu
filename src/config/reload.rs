@@ -9,20 +9,36 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::{broadcast, mpsc, watch};
 
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn run_store(
-    path: PathBuf,
-    current: Arc<ArcSwap<Config>>,
-    changed: broadcast::Sender<ConfigChanged>,
-    snapshots: watch::Sender<Arc<Config>>,
-    mut commands: mpsc::UnboundedReceiver<StoreCommand>,
-    mut watch_events: mpsc::UnboundedReceiver<()>,
-    _watcher: RecommendedWatcher,
-    before_publish: Arc<RwLock<Vec<BeforePublishHook>>>,
-    publish_lock: Arc<Mutex<()>>,
-    options: ConfigStoreOptions,
-    mut current_hash: [u8; 32],
-) -> io::Result<()> {
+/// Grouped inputs for [`run_store`]; keeps the worker's startup state
+/// explicit without a long positional parameter list.
+pub(super) struct RunStoreArgs {
+    pub(super) path: PathBuf,
+    pub(super) current: Arc<ArcSwap<Config>>,
+    pub(super) changed: broadcast::Sender<ConfigChanged>,
+    pub(super) snapshots: watch::Sender<Arc<Config>>,
+    pub(super) commands: mpsc::UnboundedReceiver<StoreCommand>,
+    pub(super) watch_events: mpsc::Receiver<()>,
+    pub(super) watcher: RecommendedWatcher,
+    pub(super) before_publish: Arc<RwLock<Vec<BeforePublishHook>>>,
+    pub(super) publish_lock: Arc<Mutex<()>>,
+    pub(super) options: ConfigStoreOptions,
+    pub(super) current_hash: [u8; 32],
+}
+
+pub(super) async fn run_store(args: RunStoreArgs) -> io::Result<()> {
+    let RunStoreArgs {
+        path,
+        current,
+        changed,
+        snapshots,
+        mut commands,
+        mut watch_events,
+        watcher: _watcher,
+        before_publish,
+        publish_lock,
+        options,
+        mut current_hash,
+    } = args;
     let mut save_deadline = None;
     loop {
         tokio::select! {

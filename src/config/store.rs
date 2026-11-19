@@ -77,8 +77,13 @@ impl ConfigStore {
         let initial_arc = current.load_full();
         let (changed, _) = broadcast::channel(32);
         let (snapshots, _) = watch::channel(initial_arc);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "commands carry no payload to accumulate: Save is sent once per accepted change, Flush and Shutdown by awaited callers, and the worker persists the current snapshot, so queue depth tracks concurrent writers"
+        )]
         let (commands, command_rx) = mpsc::unbounded_channel();
-        let (watch_events, watch_rx) = mpsc::unbounded_channel();
+        // One pending signal is enough: the worker rereads the file after taking it.
+        let (watch_events, watch_rx) = mpsc::channel(1);
         let before_publish = Arc::new(RwLock::new(Vec::new()));
         let publish_lock = Arc::new(Mutex::new(()));
         let watched_path = path.clone();
@@ -91,7 +96,7 @@ impl ConfigStore {
                     return;
                 }
                 if event.paths.is_empty() || event.paths.iter().any(|path| path == &watched_path) {
-                    let _ = watch_events.send(());
+                    let _ = watch_events.try_send(());
                 }
             },
             notify::Config::default(),
@@ -113,19 +118,19 @@ impl ConfigStore {
         // filesystem and synchronous reload hooks must not occupy a Tokio worker.
         let runtime = tokio::runtime::Handle::current();
         let worker = tokio::task::spawn_blocking(move || {
-            runtime.block_on(run_store(
-                worker_path,
-                worker_current,
-                worker_changed,
-                worker_snapshots,
-                command_rx,
-                watch_rx,
+            runtime.block_on(run_store(super::reload::RunStoreArgs {
+                path: worker_path,
+                current: worker_current,
+                changed: worker_changed,
+                snapshots: worker_snapshots,
+                commands: command_rx,
+                watch_events: watch_rx,
                 watcher,
-                worker_before_publish,
-                worker_publish_lock,
+                before_publish: worker_before_publish,
+                publish_lock: worker_publish_lock,
                 options,
-                hash_bytes(&initial.bytes),
-            ))
+                current_hash: hash_bytes(&initial.bytes),
+            }))
         });
 
         Ok(Self {

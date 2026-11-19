@@ -771,9 +771,9 @@ async fn subscription_cadence_cpu_and_wakeups() {
             tv_sec: 0,
             tv_nsec: 0,
         };
-        // SAFETY: time is valid writable storage and the process CPU clock is
-        // independent of any user's application or device.
         assert_eq!(
+            // SAFETY: time is valid writable storage and the process CPU clock is
+            // independent of any user's application or device.
             unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut time) },
             0
         );

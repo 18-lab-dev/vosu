@@ -132,6 +132,9 @@ pub mod fixture {
     }
     impl Drop for Image {
         fn drop(&mut self) {
+            // SAFETY: `self.base` is the `SIZE`-byte anonymous mapping created
+            // by `Image::new` and not unmapped anywhere else; `self` is
+            // dropped only once.
             unsafe {
                 libc::munmap(self.base as *mut _, SIZE);
             }

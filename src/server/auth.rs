@@ -7,6 +7,8 @@ use axum::http::{HeaderMap, header};
 use std::net::{IpAddr, Ipv4Addr};
 use url::Url;
 
+use crate::net::normalize_ip;
+
 /// Captured once at HTTP dispatch and retained for the lifetime of a socket.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct MutationAuthorization(pub bool);
@@ -218,22 +220,6 @@ impl AuthorizationPolicy {
             .chain(std::iter::once(self.server_host.as_str()))
             .map(str::trim)
             .filter(|token| !token.is_empty())
-    }
-}
-
-/// Normalize IPv4-mapped IPv6 without treating arbitrary IPv4-compatible IPv6
-/// addresses as IPv4.
-pub fn normalize_ip(address: IpAddr) -> IpAddr {
-    let IpAddr::V6(v6) = address else {
-        return address;
-    };
-    let octets = v6.octets();
-    if octets[..10] == [0; 10] && octets[10..12] == [0xff, 0xff] {
-        IpAddr::V4(Ipv4Addr::new(
-            octets[12], octets[13], octets[14], octets[15],
-        ))
-    } else {
-        IpAddr::V6(v6)
     }
 }
 

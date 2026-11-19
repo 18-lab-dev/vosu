@@ -293,6 +293,10 @@ fn retry<T>(deadline: Instant, mut operation: impl FnMut() -> io::Result<T>) -> 
                     thread::yield_now();
                 } else {
                     cooperative_attempts = 0;
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "synchronous same-directory replacement backing off from another process's lock until the deadline"
+                    )]
                     thread::sleep(delay.min(deadline.saturating_duration_since(Instant::now())));
                     delay = (delay * 2).min(Duration::from_millis(250));
                 }

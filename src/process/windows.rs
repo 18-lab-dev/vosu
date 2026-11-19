@@ -43,7 +43,12 @@ pub struct OwnedHandle {
     close: unsafe extern "system" fn(HANDLE) -> i32,
 }
 
+// SAFETY: `HANDLE` is an opaque kernel object reference; Windows documents
+// handles as safe to use from any thread, and `close` is a plain function
+// pointer with no thread-affine state.
 unsafe impl Send for OwnedHandle {}
+// SAFETY: see the `Send` impl above; nothing in `OwnedHandle` is accessed
+// through `&self` in a way that requires exclusive access.
 unsafe impl Sync for OwnedHandle {}
 
 impl OwnedHandle {
@@ -274,9 +279,13 @@ fn system_process_name_units<'a>(
 
 pub fn enumerate_threads(pid: Option<u32>) -> Result<Vec<ThreadEntry>, MemoryError> {
     let snapshot = Snapshot::create(TH32CS_SNAPTHREAD, 0)?;
+    // SAFETY: `THREADENTRY32` is a C struct of plain integer fields; zero is
+    // a valid bit pattern that `dwSize` below overwrites before use.
     let mut raw: THREADENTRY32 = unsafe { std::mem::zeroed() };
     raw.dwSize = size_of::<THREADENTRY32>() as u32;
     let mut entries = Vec::new();
+    // SAFETY: `snapshot` holds a valid toolhelp snapshot handle and `raw`
+    // was just sized via `dwSize` above.
     let mut ok = unsafe { Thread32First(snapshot.0.raw(), &mut raw) };
     while ok != 0 {
         if pid.is_none_or(|owner| owner == raw.th32OwnerProcessID) {
@@ -286,6 +295,8 @@ pub fn enumerate_threads(pid: Option<u32>) -> Result<Vec<ThreadEntry>, MemoryErr
                 base_priority: raw.tpBasePri,
             });
         }
+        // SAFETY: same preconditions as `Thread32First` above; `raw` is
+        // reused in place across iterations as the API requires.
         ok = unsafe { Thread32Next(snapshot.0.raw(), &mut raw) };
     }
     finish_enumeration("Thread32Next")?;
@@ -294,9 +305,14 @@ pub fn enumerate_threads(pid: Option<u32>) -> Result<Vec<ThreadEntry>, MemoryErr
 
 pub fn enumerate_modules(pid: u32) -> Result<Vec<ModuleEntry>, MemoryError> {
     let snapshot = Snapshot::create(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)?;
+    // SAFETY: `MODULEENTRY32W` is a C struct of plain integer and array
+    // fields; zero is a valid bit pattern that `dwSize` below overwrites
+    // before use.
     let mut raw: MODULEENTRY32W = unsafe { std::mem::zeroed() };
     raw.dwSize = size_of::<MODULEENTRY32W>() as u32;
     let mut entries = Vec::new();
+    // SAFETY: `snapshot` holds a valid toolhelp snapshot handle and `raw`
+    // was just sized via `dwSize` above.
     let mut ok = unsafe { Module32FirstW(snapshot.0.raw(), &mut raw) };
     while ok != 0 {
         entries.push(ModuleEntry {
@@ -306,6 +322,8 @@ pub fn enumerate_modules(pid: u32) -> Result<Vec<ModuleEntry>, MemoryError> {
             name: wide_array(&raw.szModule),
             path: wide_array(&raw.szExePath),
         });
+        // SAFETY: same preconditions as `Module32FirstW` above; `raw` is
+        // reused in place across iterations as the API requires.
         ok = unsafe { Module32NextW(snapshot.0.raw(), &mut raw) };
     }
     finish_enumeration("Module32NextW")?;
@@ -460,6 +478,9 @@ impl WindowsProcessMemory {
         let ntdll = Ntdll::load()?;
         let descriptor = match bitness {
             ProcessBitness::X64 => {
+                // SAFETY: `ProcessBasicInformation64` is a C struct of plain
+                // integer/pointer-sized fields; zero is a valid bit pattern
+                // that the `NtQueryInformationProcess` call below overwrites.
                 let mut pbi: ProcessBasicInformation64 = unsafe { std::mem::zeroed() };
                 let mut returned = 0;
                 // SAFETY: function signature matches ntdll and pbi is a correctly sized output buffer.
@@ -481,6 +502,8 @@ impl WindowsProcessMemory {
                 let mut peb = 0usize;
                 let mut returned = 0;
                 // ProcessWow64Information returns the 32-bit PEB address.
+                // SAFETY: function signature matches ntdll and `peb` is a
+                // correctly sized output buffer for `ProcessWow64Information`.
                 let status = unsafe {
                     (ntdll.query_process)(
                         self.handle.raw(),
@@ -559,6 +582,7 @@ impl ProcessMemory for WindowsProcessMemory {
         let mut regions = Vec::new();
         let mut address = 0usize;
         loop {
+            // SAFETY: MEMORY_BASIC_INFORMATION is plain integers and pointers, so all-zero is valid.
             let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
             // SAFETY: info is a correctly sized writable output buffer.
             let returned = unsafe {
@@ -725,7 +749,9 @@ impl Ntdll {
         }
 
         const NTDLL: &[u16] = &[110, 116, 100, 108, 108, 46, 100, 108, 108, 0];
-        // GetModuleHandle deliberately does not load a new library.
+        // SAFETY: `NTDLL` is a NUL-terminated UTF-16 string, the only
+        // precondition `GetModuleHandleW` documents for its pointer
+        // argument; GetModuleHandle deliberately does not load a new library.
         let module = unsafe { GetModuleHandleW(NTDLL.as_ptr()) };
         if module.is_null() {
             return Err(last_error("GetModuleHandleW(ntdll.dll)"));
@@ -774,6 +800,9 @@ impl TimerResolutionGuard {
             };
         };
         let (mut minimum, mut maximum, mut current) = (0, 0, 0);
+        // SAFETY: `minimum`, `maximum`, and `current` are valid, writable
+        // local `u32`s; `query` was resolved from ntdll and matches its
+        // documented `NtQueryTimerResolution` signature.
         let status = unsafe { query(&mut minimum, &mut maximum, &mut current) };
         if status < 0 {
             warn("NtQueryTimerResolution failed; retaining the default timer policy");
@@ -783,6 +812,9 @@ impl TimerResolutionGuard {
             };
         }
         let mut actual = current;
+        // SAFETY: `actual` is a valid, writable local `u32`; `set` was
+        // resolved from ntdll and matches its documented
+        // `NtSetTimerResolution` signature.
         let status = unsafe { set(minimum, 1, &mut actual) };
         if status < 0 {
             warn("NtSetTimerResolution failed; retaining the default timer policy");
@@ -802,6 +834,10 @@ impl Drop for TimerResolutionGuard {
     fn drop(&mut self) {
         if let Some(set) = self.set {
             let mut actual = 0;
+            // SAFETY: `actual` is a valid, writable local `u32`; `set` was
+            // resolved from ntdll and matches its documented
+            // `NtSetTimerResolution` signature; restoring on drop is best
+            // effort and its result is intentionally discarded.
             unsafe {
                 set(self.requested, 0, &mut actual);
             }
@@ -813,8 +849,12 @@ fn resolve_optional<T: Copy>(
     module: windows_sys::Win32::Foundation::HMODULE,
     name: &CStr,
 ) -> Option<T> {
+    // SAFETY: `module` is a valid module handle from `GetModuleHandleW`
+    // above and `name` is a NUL-terminated C string, the only precondition
+    // `GetProcAddress` documents for its pointer arguments.
     let address = unsafe { GetProcAddress(module, name.as_ptr().cast()) }?;
-    // Function pointers and FARPROC have the same representation on Windows.
+    // SAFETY: function pointers and `FARPROC` have the same representation
+    // on Windows, and every caller resolves `T` for the symbol it names.
     Some(unsafe { std::mem::transmute_copy(&address) })
 }
 
@@ -847,6 +887,7 @@ fn backend(operation: &'static str, message: &str) -> MemoryError {
 }
 
 fn finish_enumeration(operation: &'static str) -> Result<(), MemoryError> {
+    // SAFETY: `GetLastError` has no memory-safety preconditions.
     let error = unsafe { GetLastError() };
     if error == ERROR_NO_MORE_FILES {
         Ok(())
@@ -858,6 +899,7 @@ fn finish_enumeration(operation: &'static str) -> Result<(), MemoryError> {
 fn last_error(operation: &'static str) -> MemoryError {
     backend(
         operation,
+        // SAFETY: `GetLastError` has no memory-safety preconditions.
         &format!("Windows error {}", unsafe { GetLastError() }),
     )
 }

@@ -339,6 +339,10 @@ impl crate::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGenerator {
             let generated = work.path().join("offsets.json");
             let asset = crate::assets::DaemonAssets::get("offsets.json")
                 .ok_or_else(|| io::Error::other("embedded offsets template is missing"))?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the template is generator input in a disposable work directory; the generated offsets are validated before atomic installation"
+            )]
             fs::write(&template, asset.data.as_ref())?;
             let mut cmd = generator_command(&staged.join(GENERATOR));
             cmd.args(["--assemblies-only", "--assembly-dir"])

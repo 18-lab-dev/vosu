@@ -122,6 +122,10 @@ fn embed_generator_bundle() {
         );
     }
     source.push_str("}\n");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "build scripts write generated sources into Cargo's OUT_DIR, which Cargo owns and rebuilds"
+    )]
     std::fs::write(output, source).expect("failed to write generated daemon asset bindings");
 }
 

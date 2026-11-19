@@ -1,0 +1,56 @@
+# Allowlist for scripts/check-brand.py.
+# Format: <path-or-glob> <max-count> <category> <reason>
+# Category is one of: upstream, migration, parity, provenance, history, third-party-catalog, fixture
+# (AGENTS.md: "retain an old spelling only when it is an upstream identifier, historical
+# fact, migration input, or compatibility fixture, and document the reason").
+.gitignore 1 migration ignores a local legacy tosu.env migration input left over from pre-rename installs
+Cargo.toml 2 provenance records the pinned upstream tosuapp/tosu offsets template source revision
+AGENTS.md 2 history states the rename policy: tosu appears only as a migration source and in parity/provenance records
+CONTRIBUTING.md 1 history states that the former name tosu appears only in migration, upstream, and history context
+scripts/check-brand.py 3 fixture the check must spell the old brand to detect it
+scripts/test_repo_checks.py 9 fixture brand-check tests plant old-brand occurrences to prove detection
+README.md 31 history documents the rename, migration precedence, and upstream tosu compatibility target for users
+CHANGELOG.md 33 history pre-rename release notes and the rename itself are historical record, not current branding
+LICENSE 9 history retains the upstream copyright holder credit and relicensing permission text
+LICENSE-MIT 1 history retains the upstream copyright holder credit
+PRIVACY.md 6 upstream discloses the network request to the tosu-operated overlay catalog service
+CODE_SIGNING_POLICY.md 1 upstream notes that community overlays are installed from the tosu catalog
+THIRD_PARTY_NOTICES.md 30 third-party-catalog inventories upstream tosu attribution, relicensing permission, and catalog provenance
+docs/architecture/overview.md 5 history explains the rename's architectural history and the upstream compatibility target
+docs/decisions/0007-vosu-clean-cutover.md 12 history ADR rationale for the clean cutover away from the tosu name
+docs/decisions/0013-counters-share-dashboard-origin.md 1 upstream references the upstream tosu counter origin behavior being matched
+docs/decisions/0014-overlay-settings-profiles.md 2 upstream references the upstream tosu overlay catalog this ADR integrates with
+docs/operations/runbook.md 2 upstream documents operational handling of the upstream tosu catalog dependency
+docs/provenance-audit.md 38 provenance records source-provenance findings for tosu-derived code
+docs/quickstart.md 1 upstream names the upstream tosu compatibility target for new users
+docs/features.md 1 third-party-catalog names the upstream tosu.app community overlay catalog behind the Available page
+docs/security.md 2 upstream describes the upstream tosu catalog network dependency
+docs/testing/benchmarks.md 73 history records historical released-tosu comparison measurements
+docs/testing/verification.md 5 upstream tosu.env migration precedence and the pinned upstream reference release used by live parity
+docs/testing/verification-history.md 8 history dated parity captures against the pinned upstream tosu reference build
+docs/tools/protocol.md 1 upstream references the upstream tosu tool/counter ecosystem this protocol is compatible with
+docs/workflows/compatibility-and-calculation.md 1 upstream references the upstream tosu compatibility target
+docs/workflows/runtime-and-config.md 3 upstream references legacy tosu.env migration handling
+crates/vosu-pp/rosu-pp-api/** 25 provenance pinned upstream rosu-pp-api fork; retains upstream doc comments and tests verbatim
+crates/vosu-pp/src/source_map.rs 1 upstream facade doc comment maps vosu source to its upstream tosu source path
+crates/vosu-pp/THIRD_PARTY_LICENSES.txt 2 third-party-catalog third-party license catalog crediting the upstream tosu-derived calculator wrapper
+crates/vosu-release-smoke/tests/release_smoke.rs 3 migration release smoke test exercises the one-time tosu.env migration fixture
+assets/branding/vosu-social-preview.svg 2 upstream social-preview copy describing tosu-compatible APIs as the product's upstream compatibility target
+assets/server/homepage.js 1 upstream dashboard search-empty-state copy names tosu as an example compatible client
+src/calculation.rs 2 upstream doc comment mapping calculation helpers to their upstream tosu source paths
+src/config/migration.rs 11 migration one-time legacy tosu.env migration implementation
+src/config/tests.rs 27 migration tests covering the one-time legacy tosu.env migration precedence
+src/memory/snapshot.rs 4 upstream doc comment mapping memory snapshot control flow to upstream tosu source paths
+src/platform.rs 3 migration one-time migration of the legacy per-platform tosu config/data/cache roots
+src/runtime/render.rs 5 upstream rendered settings page copy naming the upstream tosu.app catalog host and tosu project
+src/server/catalog.rs 6 upstream overlay catalog client for the upstream tosu.app catalog endpoint
+src/server/commands.rs 1 parity counter-command compatibility test named for tosu-style counter frame paths
+src/server/files.rs 1 upstream doc comment describing upstream tosu file-range compatibility behavior
+src/updater/tests_release.rs 2 migration updater test fixture rejecting the former tosu release asset name
+tests/config_compat.rs 2 migration compatibility test covering the legacy tosu.env migration input
+tests/daemon_smoke.rs 6 migration daemon smoke test covering the legacy tosu config-root migration
+tests/state_api_compat.rs 2 parity source-oracle revision document uses the upstream tosu field name as parity evidence
+tests/updater_compat.rs 2 migration updater compatibility test fixture rejecting the former tosu release asset name
+tests/fixtures/oracle/inventory.json 1 provenance pinned oracle inventory fixture recording the upstream tosu revision
+tools/oracle/** 63 provenance pinned calculator oracle tooling, reference fork, and input fixtures recording the upstream tosu revision and Creator metadata
+tools/live-parity/** 15 parity live-parity tooling builds and runs the pinned upstream tosu source for comparison captures

@@ -103,10 +103,22 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 python scripts/check-doc-links.py
+python scripts/check-file-length.py
+python scripts/check-brand.py
+python scripts/check-module-boundaries.py
 python scripts/assemble-release-license.py
 python scripts/check-asset-hashes.py
-python -m unittest discover -s scripts -p test_package_release.py
+python -m unittest discover -s scripts -p 'test_*.py'
 ```
+
+Clippy enforces the repository's rules, not only style. A suppression must be
+`#[expect(lint, reason = "...")]`; every `unsafe` block needs a `// SAFETY:`
+comment; `clippy.toml` rejects direct file writes, unbounded channels, and
+blocking sleeps with a message naming the replacement. The ratchet scripts
+(`check-file-length.py`, `check-brand.py`, `check-module-boundaries.py`) fail on
+files over 1,000 lines, old-brand mentions without an allowlist reason, and new
+module dependencies; each error says how to fix it. See
+[ADR 0018](docs/decisions/0018-enforce-rules-with-checks.md).
 
 For a narrower loop, [Testing and verification](docs/testing/verification.md#fast-selection-by-change)
 maps each kind of change to its test targets. Changes to process discovery,

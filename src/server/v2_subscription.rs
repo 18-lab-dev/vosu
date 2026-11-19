@@ -1235,7 +1235,7 @@ impl V2SubscriptionHub {
     fn encode_frame(
         &self,
         arena: &mut FrameArena,
-        #[cfg_attr(not(test), allow(unused_variables))] plan: &Arc<Plan>,
+        #[cfg_attr(not(test), expect(unused_variables, reason = "test hook"))] plan: &Arc<Plan>,
         revision: u64,
         baseline: Option<&[Option<Value>]>,
         current: &[impl Selected],

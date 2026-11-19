@@ -248,8 +248,10 @@ pub struct ProductionServices {
 }
 
 impl ProductionServices {
-    // This public constructor intentionally exposes each required service dependency.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "this public constructor intentionally exposes each required service dependency"
+    )]
     pub fn with_native_report_probe(
         pages: PageService,
         page_data: Arc<dyn PageDataProvider>,
