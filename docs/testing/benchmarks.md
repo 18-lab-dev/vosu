@@ -460,6 +460,127 @@ environment/load records, `summary.json` and full `table.txt` are under
 `/tmp/vosu-r4-evidence/Bench120-final/`. This run is taskset-only and does
 not reuse the earlier isolated run's raw results.
 
+## M0 build-time goal (section 8 / D9)
+
+Measured **2026-11-22**, pre-M0 baseline `3a91ff9` (via `ovnfs new --rev
+3a91ff9` from `/home/user/gh/vecosystem/vosu`) versus M0 crate-split `cd81696`
+(`m0/split`). Ryzen 9 9950X3D **host**, kernel `7.3.5-2-cachyos-bore`, Rust
+1.96.1, performance governor, boost enabled, default features, `--locked`;
+both sides built with an independent `CARGO_TARGET_DIR` (so neither reuses
+the other's incremental artifacts) and warmed with one untimed
+`cargo build --locked --workspace --all-features` before timing. All
+`cargo check`/`build`/`test --no-run` invocations ran under
+`taskset --cpu-list 0-7,16-23` (the V-cache CCD; the Windows VM's QEMU
+workers are confined to 8-15/24-31) and only while
+`pgrep -f scripts/prepush.py` was empty on the shared host.
+
+```sh
+python scripts/measure-build.py --runs 5 --json
+```
+
+`scripts/measure-build.py` appends a comment line to each probe file, times
+`cargo check --locked`, `cargo build --locked`, and
+`cargo test --locked -p <crate> --lib --no-run`, reverts, and repeats for 5
+runs; it does not take a baseline-path argument, so the baseline run used a
+copy of the script placed inside the `ovnfs` checkout (`ROOT` resolves from
+`__file__`). `vosu-osu-reader` and `vosu-osu-state` do not exist before M0,
+so the baseline measured only `api-fixed`, `server-routes`, and
+`dashboard-render`; the script reports this with a `Skipping …` line rather
+than failing. Values are medians and min-max ranges of 5 runs per command;
+one run in both `api-fixed` series hit a much larger outlier
+(`src/api/fixed.rs` only, reproduced in both the baseline and candidate 5-run
+sets) — medians are unaffected and are what the verdict below uses.
+
+| Probe (crate) | Command | Pre-M0 `3a91ff9` median (range) | M0 `cd81696` median (range) | D9/section 8 budget | Verdict |
+| --- | --- | ---: | ---: | ---: | --- |
+| `api-fixed` (`vosu`, root) | `cargo check` | 1.669 s (1.648–15.818 s) | 0.964 s (0.960–6.419 s) | n/a (root-crate probe, cumulative compare) | -42% |
+| `api-fixed` (`vosu`, root) | `cargo build` | 2.852 s (2.842–16.651 s) | 1.962 s (1.921–12.593 s) | n/a | -31% |
+| `api-fixed` (`vosu`, root) | `cargo test -p vosu --lib --no-run` | 3.858 s (3.821–28.213 s) | 2.461 s (2.425–16.391 s) | n/a | -36% |
+| `server-routes` (`vosu`, root) | `cargo check` | 1.664 s (1.646–1.708 s) | 0.969 s (0.953–1.051 s) | n/a | -42% |
+| `server-routes` (`vosu`, root) | `cargo build` | 2.842 s (2.801–3.195 s) | 2.000 s (1.926–2.097 s) | n/a | -30% |
+| `server-routes` (`vosu`, root) | `cargo test -p vosu --lib --no-run` | 3.844 s (3.838–3.882 s) | 2.467 s (2.442–2.930 s) | n/a | -36% |
+| `dashboard-render` (`vosu`, root) | `cargo check` | 1.655 s (1.633–1.710 s) | 0.967 s (0.956–0.978 s) | n/a | -42% |
+| `dashboard-render` (`vosu`, root) | `cargo build` | 2.854 s (2.840–2.870 s) | 1.927 s (1.909–1.970 s) | n/a | -32% |
+| `dashboard-render` (`vosu`, root) | `cargo test -p vosu --lib --no-run` | 3.828 s (3.794–3.841 s) | 2.477 s (2.432–2.493 s) | n/a | -35% |
+| `osu-reader-lazer` (`vosu-osu-reader`, leaf) | `cargo check` | n/a (crate did not exist) | 1.306 s (1.296–1.314 s) | ≤ 2.0 s | met |
+| `osu-reader-lazer` (`vosu-osu-reader`, leaf) | `cargo build` | n/a | 2.309 s (2.281–2.329 s) | ≤ 2.5 s (general leaf goal) | met |
+| `osu-reader-lazer` (`vosu-osu-reader`, leaf) | `cargo test -p vosu-osu-reader --lib --no-run` | n/a | 0.613 s (0.599–1.091 s) | ≤ 3.0 s | met |
+| `osu-state-reducer` (`vosu-osu-state`, leaf) | `cargo check` | n/a | 1.031 s (1.020–1.334 s) | ≤ 1.0 s | **miss, +3%** |
+| `osu-state-reducer` (`vosu-osu-state`, leaf) | `cargo build` | n/a | 2.019 s (1.999–2.310 s) | ≤ 2.5 s | met |
+| `osu-state-reducer` (`vosu-osu-state`, leaf) | `cargo test -p vosu-osu-state --lib --no-run` | n/a | 0.435 s (0.429–4.694 s) | ≤ 3.0 s | met |
+
+Observations: the root-package probes (`api-fixed`, `server-routes`,
+`dashboard-render` — all three stay in `vosu` until later milestones) are
+30-42% faster after M0 purely because the root crate shrank once
+`vosu-sys`/`vosu-net`/`vosu-core`/the osu! crates were extracted; there is no
+explicit D9 budget for them yet (that applies once section 3's mapping
+moves them), so this is recorded as the cumulative-cost reference point
+section 8 asks for, not a pass/fail line. The new leaf crates meet their
+budget except `vosu-osu-state`'s `cargo check`, whose 1.031 s median is
+3% over the ≤1.0 s leaf goal (every one of its 5 runs was ≥ 1.020 s, so this
+is not a single-run outlier); `vosu-osu-reader`'s own, stricter `cargo
+check` goal (≤ 2.0 s) is met with a wide margin (1.306 s). The broader D9
+items — full `prepush.py` wall-clock, native Windows Clippy/test/doctest,
+clean local/hosted CI builds, and the `cargo test -p <crate>` /
+workspace-`--all-features` feature-unification rebuild — were not run in
+this session: they need the native Windows gate, and the Windows VM was in
+use by a concurrent `prepush.py`/`land.py` run on this host for an unrelated
+change during this measurement.
+
+## Performance changes for M0 (paired, D17)
+
+Measured **2026-11-22**, pre-M0 baseline `3a91ff9` versus M0 crate-split
+`cd81696`, same machine and `cargo bench` setup as the section above: Ryzen 9
+9950X3D host, kernel `7.3.5-2-cachyos-bore`, Rust 1.96.1, performance
+governor, boost enabled, default release features, `--locked`; independent
+`CARGO_TARGET_DIR`/`CRITERION_HOME` per side, `taskset --cpu-list 0-7,16-23`,
+only while `pgrep -f scripts/prepush.py` was empty. This is D17's M0 gate:
+the reader bench (`raw_snapshot_reads`), the serializer benches
+(`serializers_cold`, `serialization_cache`), and the publication bench
+(`publication`) from `benches/hot_paths.rs`, which becomes the cumulative
+baseline for every later milestone's performance gate.
+
+```sh
+python scripts/prepare-offset-generator.py --rid linux-x64
+# Set CARGO_TARGET_DIR and CRITERION_HOME to the corresponding side first.
+taskset --cpu-list 0-7,16-23 cargo bench --locked --package vosu --bench hot_paths -- '^(raw_snapshot_reads|serializers_cold|serialization_cache|publication)/'
+```
+
+One Criterion invocation per side (100 samples, default 3 s warm-up / 5 s
+measurement); values are Criterion's own `[low mean high]` 95% confidence
+interval. Change is `(M0 mean / pre-M0 mean − 1) × 100%`; positive is
+slower. Verdict uses D17's bar: no regression above 10% of the median,
+judged by non-overlapping confidence intervals.
+
+| Benchmark ID | Pre-M0 `3a91ff9` (95% CI) | M0 `cd81696` (95% CI) | Change | CIs overlap |
+| --- | ---: | ---: | ---: | :---: |
+| `raw_snapshot_reads/stable_regular_fields` | 115.21 ns (115.00–115.44 ns) | 89.672 ns (89.485–89.857 ns) | -22.17% | no |
+| `raw_snapshot_reads/lazer_regular_fields` | 9.8338 µs (9.8040–9.8597 µs) | 10.197 µs (10.188–10.205 µs) | +3.69% | no |
+| `serializers_cold/v1` | 1.0435 µs (1.0420–1.0454 µs) | 1.0333 µs (1.0323–1.0343 µs) | -0.98% | no |
+| `serializers_cold/v2` | 2.9079 µs (2.8054–2.9904 µs) | 2.2825 µs (2.2799–2.2850 µs) | -21.51% | no |
+| `serializers_cold/v2_precise` | 793.63 ns (792.84–794.47 ns) | 797.31 ns (795.94–798.73 ns) | +0.46% | no |
+| `serializers_cold/stream_companion` | 1.2158 µs (1.2145–1.2172 µs) | 1.2126 µs (1.2113–1.2139 µs) | -0.26% | no |
+| `serialization_cache/v1_bytes_clone` | 15.925 ns (15.912–15.937 ns) | 15.965 ns (15.949–15.983 ns) | +0.25% | no |
+| `serialization_cache/v2_bytes_clone` | 15.939 ns (15.924–15.956 ns) | 15.936 ns (15.915–15.967 ns) | -0.02% | yes |
+| `serialization_cache/v2_precise_bytes_clone` | 15.972 ns (15.961–15.984 ns) | 15.958 ns (15.943–15.974 ns) | -0.09% | yes |
+| `serialization_cache/stream_companion_bytes_clone` | 16.638 ns (16.520–16.763 ns) | 15.979 ns (15.962–15.997 ns) | -3.96% | no |
+| `publication/unfiltered_clients/1` | 2.0532 ms (2.0513–2.0548 ms) | 2.0519 ms (2.0488–2.0547 ms) | -0.06% | yes |
+| `publication/unfiltered_clients/100` | 2.0565 ms (2.0533–2.0595 ms) | 2.0528 ms (2.0486–2.0567 ms) | -0.18% | yes |
+| `publication/unfiltered_clients/1000` | 2.0712 ms (2.0656–2.0769 ms) | 2.0987 ms (2.0922–2.1052 ms) | +1.33% | no |
+
+Verdict: **D17 met** — every change stays far inside the 10%-of-median bar
+(largest is `raw_snapshot_reads/lazer_regular_fields` at +3.69%), so there is
+no regression to call out. Two results are larger, reproducible
+improvements rather than noise: `raw_snapshot_reads/stable_regular_fields`
+(-22%) and `serializers_cold/v2` (-21%) both repeated the same direction and
+magnitude on a second, isolated rerun of just those two IDs on each commit
+(stable: ~115.2–115.8 ns baseline vs ~90–96 ns M0; `v2`: ~2.9–3.3 µs baseline
+vs ~2.3 µs M0). M0 makes no behavior or algorithm change to either path, so
+the likely cause is compiler codegen differing with the crate boundary
+(smaller per-crate codegen units change inlining/register allocation
+decisions for the `vosu` binary that links the split crates), not a real
+regression risk; it is recorded as an observation, not attributed further.
+
 ## Released tosu comparison
 
 These runs compare vosu with released tosu **4.26.2** (tag
