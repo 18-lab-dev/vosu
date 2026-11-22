@@ -492,13 +492,23 @@ game, not any real supported or planned integration.
 - `packages` is a map from target to `{"url","sha256","size"}`, identical
   field rules to 1.x `Package`: absolute HTTPS URL without embedded
   credentials, 64-character hex SHA-256 of the compressed ZIP, exact positive
-  byte size, at most 512 MiB (`MAX_PACKAGE`, unchanged from 1.x). Plugin
+  byte size, at most the configured package limit (below). Plugin
   entries use real target triples (`x86_64-unknown-linux-gnu`,
   `x86_64-pc-windows-msvc`; a matching native package takes precedence, no
   matching package means unsupported on that host). Tool and overlay entries,
   being web-only, use exactly the key `"any"`. This replaces 1.x's single
   `package` object on overlay entries with the same `packages: {"any": …}`
   shape tools already use, so every web-only entry kind shares one schema.
+
+  The package limit is the `MAX_PACKAGE_MIB` setting in `vosu.toml`, also on
+  the dashboard's Settings page under Advanced: default 512, range 64–4096.
+  It bounds both a package's compressed `size` and its expanded size, as
+  1.x's fixed `MAX_PACKAGE` did; the 10,000-entry archive limit stays fixed.
+  Like every setting, it changes only through a dashboard-origin save. The
+  limit protects the disk against oversized or archive-bomb packages, so the
+  ceiling is not removable. A catalog entry whose `size` exceeds the current
+  limit is shown as "too large to install; raise the package limit in
+  Settings" instead of failing after the download starts.
 - `icon_url`, `banner_url`, and `preview` follow 1.x's art rules unchanged:
   absolute HTTPS, no embedded credentials, validated like package URLs,
   fetched through the dashboard's `/api/catalog/art?url=` proxy for the same
@@ -888,13 +898,6 @@ whole gate, and 2.0 is not published (ADR 0022).
 
 ## Open questions
 
-- **Untrusted-source warning copy.** The exact warning text above is this
-  spec's proposal, since no other owner currently specifies catalog-source
-  dashboard copy; it may need a design/localization pass before shipping.
-- **512 MiB package cap for plugins.** This spec keeps 1.x's `MAX_PACKAGE`
-  unchanged for plugin packages. Game plugins are expected to stay far below
-  it (they are thin memory readers), but a plugin bundling large static assets
-  could need a higher cap; revisit if ecosystem data shows otherwise.
 - **`overlay.toml` as a new file.** Introducing a manifest file for overlays
   is a deliberate new surface beyond what ADR 0022/0023 state explicitly; it
   is needed so the resolver can plan an overlay's dependencies without

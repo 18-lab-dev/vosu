@@ -253,7 +253,7 @@ carry the same values while subscribed, at different cadences.
 | `hitErrors`, `pressHitErrors`, `releaseHitErrors` (precise, tourney-nested) | `vosu.osu.tourney.clients[].play.hitErrors` | The precise document's top-level `tourney[]` becomes part of `vosu.osu.tourney.clients[]`; there is no separate precise document in 2.0 (ADR 0021). |
 | `leaderboard[]` | `vosu.osu.leaderboard[]` | |
 | `performance.accuracy`, `.graph` | `vosu.osu.performance.accuracy`/`.graph` | |
-| `resultsScreen` | `vosu.osu.result` | Distinct from `vosu.status.status == "results"`, which only marks the coarse status. |
+| `resultsScreen` | `vosu.osu.result` | Distinct from `vosu.status.status == "results"`, which only marks the coarse status. There is deliberately no common cross-game result summary until a second game plugin needs one; adding it then takes its own ADR. |
 | `folders.*`, `files.*`, `directPath.*` | removed; use [resource references](#resource-references) under `vosu.chart.resources` and `vosu.skin.tree` | ADR 0021: no "current file" lookups in the 2.0 surface. Unchanged in the upstream adapter. |
 | `settings.*` | `vosu.osu.settings.*` | `interfaceVisible`, `replayUIVisible`, `bassDensity` keep their [sampling-lane](#sampling-lanes) roles; `skin` sub-object is replaced by [`vosu.osu.skin`](#skin-vosu-skin-and-vosu-osu-skin) plus the common `vosu.skin.name`. |
 | `room` | `vosu.osu.room` | |
@@ -428,13 +428,6 @@ contract; requirement syntax itself is specified in `docs/v2/catalog-v2.md`).
   "best-to-worst" bar ADR 0020 describes, and inventing a cross-game id
   vocabulary risks the "normalized judgements" alternative ADR 0020 already
   rejected.
-- **`vosu.osu.result` versus a generic `vosu.status == "results"` payload.**
-  The results screen is entirely osu!-specific today (score id, pp, mods).
-  If a future common namespace wanted a minimal cross-game "last result"
-  summary (final score/accuracy/rank), it would need its own ADR; this spec
-  does not add one, since ADR 0020 lists only `status`/`chart`/`play`/`skin`
-  as common namespaces. Recommendation: defer until a second game plugin
-  exists and a concrete overlay need appears.
 - **`vosu.chart.keyCount` for non-lane games.** The field is `null` for any
   ruleset without a fixed lane count (including non-mania osu! rulesets).
   Whether a future game plugin with a different "lane-like" concept (e.g. a
