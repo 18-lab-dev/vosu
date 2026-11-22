@@ -185,7 +185,7 @@ process-event backends and install their capabilities. Setup requests
 operating-system authentication when needed; do not run the ordinary daemon as
 root.
 
-The daemon also accepts repeatable `--tool <directory>` arguments to load trusted development tools directly from a checkout. Manifests and settings reload live; rebuilding a development service restarts it. See the [tool protocol](docs/tools/protocol.md) for Cargo binary fallback and official/user installation.
+The daemon also accepts repeatable `--tool <directory>` arguments to load trusted development tools directly from a checkout. Manifests and settings reload live; rebuilding a development service restarts it. See the [tool protocol](docs/tools/protocol.md) for Cargo binary fallback and official/user installation. The analogous `--plugin <directory>` repeatable argument loads an in-process development plugin (`docs/v2/plugin-abi.md`) from a directory holding its own `manifest.toml` and compiled library; like `--tool`, it is a debug-build-only trust override and is refused outright in a release build.
 
 Offset resolution is automatic. For each discovered osu!lazer process, vosu first
 checks a valid cache entry for that exact process version, then the matching
