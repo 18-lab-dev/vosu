@@ -21,8 +21,12 @@ unstable-sync-reads = []
 bundled = []
 
 [dependencies]
-ciborium = "=0.2.2"
-serde = { version = "=1.0.228", features = ["derive"] }
+# Caret, not `=` like every other workspace crate's dependency pins: this is
+# the one crate here published to crates.io (D11), so locking a third-party
+# plugin's whole dependency graph to our exact serde/ciborium patch would be
+# a publishable-SDK regression, not just an internal consistency choice.
+ciborium = "0.2.2"
+serde = { version = "1.0.228", features = ["derive"] }
 
 [dev-dependencies]
 proptest = "1.12"
