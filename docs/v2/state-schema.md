@@ -19,6 +19,27 @@ manifest shapes that declare `provides`/`requires`/`optional` with these ids
 are specified in `docs/v2/catalog-v2.md` (CatalogV2Spec); this document only
 defines what the ids address.
 
+## Naming
+
+Schema keys are always camelCase and never contain a dot; nesting is
+expressed by JSON object structure, not by a dotted key (`vosu.chart.resources`
+is keyed `file`/`audio`/`background`/`set`, never `"chart.file"`).
+The dotted forms (`chart.file`, `chart.audio`, `chart.background`,
+`chart.set`, `skin`) name those same core resource kinds only inside
+`resource:` capability ids; a plugin's own kind is `<plugin-id>.<kind>` with
+`<kind>` one segment, same grammar.
+
+A `field:<namespace>.<path>` capability id's `<path>` is the dotted form of
+the same keys an ABI `STATE_SUBSCRIBE`/API v1 subscription addresses with an
+RFC 6901 JSON Pointer relative to the namespace root (`docs/v2/plugin-abi.md`,
+`docs/v2/api-v1.md`): `field:vosu.osu.play.pp.current` is pointer
+`/play/pp/current` inside `vosu.osu`.
+
+A `field:` requirement's version is always the owning namespace's schema
+version — this document's `schemas/*.schema.json` `version` key, every one at
+`1.0.0` for this freeze — never a value a plugin or catalog entry picks
+independently (`docs/v2/catalog-v2.md`).
+
 ## Namespaces
 
 | Namespace | Schema | Owner | Filled by game plugins |
@@ -57,8 +78,25 @@ empty string, or empty array standing in for "unknown".
 Required. Identifies the attached client exactly as the shared naming
 contract defines its fields (`game`, `variant`, `name`, `version`, `pid`,
 `session`, `focused`, `plugin.{id,version}`); see `schemas/vosu.client.schema.json`
-for types and `pid`/`session` constraints. Core fills this namespace from the
-plugin's attach handshake; plugins do not publish it directly.
+for types and `pid`/`session` constraints. Core fills `session`, `pid`,
+`focused`, and `plugin` directly; it has no other source for `game`,
+`variant`, `name`, and `version`, so the game plugin fills those four by
+sending `VOSU_OP_SESSION_IDENTIFY {session handle, game, variant, name,
+version}` once at attach (`docs/v2/plugin-abi.md`). A plugin never publishes
+the other four leaves itself.
+
+## Focus
+
+Exactly one session is focused whenever at least one session is attached.
+Core selects the session whose process owns the foreground window; if no
+attached process does, the most recently focused session stays focused.
+Initially — before any process has held the foreground window — the first
+session by ADR 0001's deterministic order within the earliest-attached game
+plugin is focused. Core recomputes this on every relevant OS focus change and
+sends `FOCUS_CHANGED` (`docs/v2/plugin-abi.md`) to each affected session's
+owning plugin; the attach handshake no longer carries an initial `focused`
+value. `GET /api/v1/sessions/active` (`docs/v2/api-v1.md`) always addresses
+the currently focused session under this algorithm.
 
 ## Common layer: `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`
 
@@ -72,6 +110,10 @@ rather than probing live state.
 One field, `status`, an enum of `menu`, `selection`, `play`, `pause`,
 `results`, or `null`. Core does not infer status from other fields; a plugin
 whose client has a state with no exact match uses the nearest listed value.
+A plugin that fills no part of this namespace omits `vosu.status` entirely
+(see "Namespaces" above); `null` means only that a namespace-declaring plugin
+has not yet determined the session's status, e.g. the first moment after
+attach.
 
 ### `vosu.chart`
 
@@ -79,11 +121,14 @@ Chart (beatmap, in osu! terms) metadata: `title`, `artist`, `difficultyName`,
 `charter`, `length` (ms, unaffected by rate), `bpm` (a representative tempo,
 unaffected by rate), `keyCount` (null for charts/rulesets without a fixed lane
 count), and `resources` — an object of [resource references](#resource-references)
-keyed by kind. Declared common kinds are `chart.file`, `chart.audio`,
-`chart.background` (resource references) and `chart.set` (a tree reference);
-plugins may add further kinds in their own namespace (`<plugin-id>.<kind>`),
-also inside this object, per ADR 0021. A kind the current chart has no file
-for is omitted from `resources`, never present with a reference to nothing.
+with exactly four bare, camelCase keys: `file`, `audio`, `background`
+(resource references) and `set` (a tree reference). The dotted forms
+`chart.file`, `chart.audio`, `chart.background`, `chart.set` name these same
+core resource kinds only inside `resource:` capability ids (naming contract);
+a plugin's own resource kinds never appear inside `vosu.chart.resources` —
+they live in that plugin's own namespace, as `<plugin-id>.<kind>` capability
+ids (ADR 0021). A kind the current chart has no file for is omitted from
+`resources`, never present with a reference to nothing.
 
 ### `vosu.play`
 
@@ -239,17 +284,22 @@ Per ADR 0021, state never carries a raw filesystem path. It carries
 references that resolve through API v1:
 
 - A **resource reference** is `{"url", "type"}`: `url` is
-  `/api/v1/resources/{id}`; `type` is the response's MIME type from the
-  route's allowlist.
+  `/api/v1/resources/{id}`; `type` is the response's MIME type, which core
+  assigns from the resolved file's extension against the allowlist
+  `docs/v2/api-v1.md` owns.
 - A **tree reference** is `{"url"}`: `url` is `/api/v1/trees/{id}/`, which
-  lists the indexed folder; `GET`/`HEAD` on a path under it resolves one file.
+  lists the indexed folder; `GET`/`HEAD` on a path under it resolves one file,
+  typed the same way.
 
 Both shapes are defined once, in `schemas/common-defs.schema.json#/$defs/resourceRef`
 and `#/$defs/treeRef`, and `$ref`'d from every namespace schema that carries
-one: `vosu.chart.resources.{chart.file,chart.audio,chart.background}` and
-`vosu.chart.resources["chart.set"]` (a tree), and `vosu.skin.tree`. A plugin
-that defines its own resource kinds (`resource:<plugin-id>.<kind>`, per the
-naming contract) places them in its own namespace using the same two shapes.
+one: `vosu.chart.resources.{file,audio,background}` (resource references),
+`vosu.chart.resources.set` (a tree), and `vosu.skin.tree`. Schema keys are
+always bare and camelCase; the dotted forms (`chart.file`, `chart.set`, …)
+name the same kinds only inside `resource:` capability ids. A plugin that
+defines its own resource kinds (`resource:<plugin-id>.<kind>`, per the naming
+contract) places them in its own namespace using the same two shapes, never
+inside a core namespace's `resources` object.
 
 ## Sampling lanes
 
@@ -299,6 +349,15 @@ is `regular`/`gameplay`; `vosu.osu.play.unstableRate` is `both`/`gameplay`. The
 common `vosu.play.progress` and `.rate` inherit their source fields' lanes
 (`precise`/`always` and `regular`/`gameplay` respectively), since they are
 derived from the same underlying reads.
+
+`x-sampling-lane` is consumed by core's subscription compiler only: it is
+metadata for the two per-session lane flags core computes and gates on
+`vosu.status.status` (`docs/v2/plugin-abi.md`'s per-session `regular`/`precise`
+demand), not a contract a plugin itself implements or interprets. Plugins keep
+publishing to the lane their own code already samples at; they never read
+this annotation. A one-shot HTTP read of state (as opposed to a WebSocket
+subscription) creates no demand at any lane and returns the latest already-
+published value (`docs/v2/api-v1.md`).
 
 ## Common-layer coverage: what the osu! plugin fills
 

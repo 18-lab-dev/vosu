@@ -41,25 +41,21 @@
     },
     "resources": {
       "type": "object",
-      "description": "Resource references for this chart's files (ADR 0021). A kind the current chart has no file for is omitted, never a reference to nothing.",
-      "additionalProperties": {
-        "$ref": "common-defs.schema.json#/$defs/resourceRef"
-      },
-      "propertyNames": {
-        "pattern": "^(chart\\.(file|audio|background)|[a-z0-9][a-z0-9-]{0,31}(\\.[a-z0-9][a-z0-9-]{0,31}){1,3}\\.[a-z0-9][a-z0-9-]{0,31})$"
-      },
+      "description": "Resource references for this chart's files (ADR 0021), keyed by bare core resource kind (`file`, `audio`, `background`, `set`). The dotted forms `chart.file`, `chart.audio`, `chart.background`, `chart.set` name the same kinds only inside `resource:` capability ids (naming contract); schema keys never contain dots. A plugin's own resource kinds never appear here: they live in that plugin's own namespace (ADR 0021), as `<plugin-id>.<kind>` capability ids. A kind the current chart has no file for is omitted, never a reference to nothing.",
+      "additionalProperties": false,
+      "required": ["file", "audio", "background", "set"],
       "properties": {
-        "chart.file": { "$ref": "common-defs.schema.json#/$defs/resourceRef" },
-        "chart.audio": { "$ref": "common-defs.schema.json#/$defs/resourceRef" },
-        "chart.background": { "$ref": "common-defs.schema.json#/$defs/resourceRef" },
-        "chart.set": { "$ref": "common-defs.schema.json#/$defs/treeRef" }
+        "file": { "$ref": "common-defs.schema.json#/$defs/resourceRef" },
+        "audio": { "$ref": "common-defs.schema.json#/$defs/resourceRef" },
+        "background": { "$ref": "common-defs.schema.json#/$defs/resourceRef" },
+        "set": { "$ref": "common-defs.schema.json#/$defs/treeRef" }
       },
       "examples": [
         {
-          "chart.file": { "url": "/api/v1/resources/9f2c...", "type": "application/octet-stream" },
-          "chart.audio": { "url": "/api/v1/resources/1ab4...", "type": "audio/mpeg" },
-          "chart.background": { "url": "/api/v1/resources/caa0...", "type": "image/jpeg" },
-          "chart.set": { "url": "/api/v1/trees/77dd.../" }
+          "file": { "url": "/api/v1/resources/9f2c...", "type": "text/plain; charset=utf-8" },
+          "audio": { "url": "/api/v1/resources/1ab4...", "type": "audio/mpeg" },
+          "background": { "url": "/api/v1/resources/caa0...", "type": "image/jpeg" },
+          "set": { "url": "/api/v1/trees/77dd.../" }
         }
       ]
     }

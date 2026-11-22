@@ -3,7 +3,7 @@
   "$id": "https://vosu.dev/schemas/v2/vosu.client.schema.json",
   "version": "1.0.0",
   "title": "vosu.client",
-  "description": "Identifies the attached client of one session. Required: every published session carries a complete vosu.client namespace, filled by core from the game plugin's attach handshake. Capability id: field:vosu.client(.<path>).",
+  "description": "Identifies the attached client of one session. Required: every published session carries a complete vosu.client namespace. Core fills `session`, `pid`, `focused` and `plugin` directly; the game plugin fills `game`, `variant`, `name` and `version` by sending `VOSU_OP_SESSION_IDENTIFY` (docs/v2/plugin-abi.md). Capability id: field:vosu.client(.<path>).",
   "type": "object",
   "required": ["game", "variant", "name", "version", "pid", "session", "focused", "plugin"],
   "additionalProperties": false,
@@ -41,7 +41,7 @@
     },
     "focused": {
       "type": "boolean",
-      "description": "Whether this session is the one `/api/v1/sessions/active` currently addresses."
+      "description": "Whether this session is the one `/api/v1/sessions/active` currently addresses. Core recomputes this for every session on each focus change and sends `FOCUS_CHANGED` (plugin-abi.md) to the owning plugin; see docs/v2/state-schema.md#focus for the selection algorithm."
     },
     "plugin": {
       "type": "object",

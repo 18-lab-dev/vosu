@@ -11,7 +11,7 @@
     "status": {
       "type": ["string", "null"],
       "enum": ["menu", "selection", "play", "pause", "results", null],
-      "description": "Coarse status common to rhythm games. `null` only if the plugin's manifest does not declare `field:vosu.status` for this field. A game whose client has no equivalent to one state maps to the nearest listed value rather than inventing a new one.",
+      "description": "Coarse status common to rhythm games. A game plugin that fills no fields of this namespace at all omits `vosu.status` entirely (state-schema.md); `null` here means only that an attached, namespace-declaring plugin has not yet determined this session's status (e.g. the first moment after attach, before its first read). A game whose client has no equivalent to one listed value maps to the nearest one rather than inventing a new value.",
       "x-sampling-lane": { "lane": "precise", "activity": "always" }
     }
   }
