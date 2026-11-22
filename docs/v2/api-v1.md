@@ -59,8 +59,7 @@ or-later aggregate task (`docs/v2/implementation-plan.md`) lands, matching
 (`src/instance.rs:603-618`, `src/runtime/worker.rs:867-875`) — nothing
 else in 2.0 sets it at this freeze (if two `--tournament` processes somehow
 attach at once, 2.0 keeps whichever is identified first, which need not be
-1.x's lowest-PID choice — an edge of an edge 1.x itself does not define
-deterministically either). Otherwise, exactly
+1.x's lowest-PID choice; an edge of an edge). Otherwise, exactly
 one identified session is focused whenever at least one exists: the session
 whose process owns the OS foreground window, or, when no identified session's
 process does, whichever session was most recently focused. The first focus
