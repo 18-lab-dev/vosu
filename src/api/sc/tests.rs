@@ -3,14 +3,14 @@ mod wire;
 use std::sync::Arc;
 
 use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
-use crate::calculation::beatmap::{EventStatus, GraphSeries, StrainGraph};
-use crate::calculation::progressive::{PerformanceAttributes, ProgressiveAttributes};
 use crate::instance::InstanceSettings;
 use crate::state::{
     BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
     MenuState, PreciseState, RankedPlayState, RegularState, ResultScreenState, SettingsState,
     StateBundleSnapshot, TourneyManagerState, UserState,
 };
+use vosu_osu_calc::beatmap::{EventStatus, GraphSeries, StrainGraph};
+use vosu_osu_calc::progressive::{PerformanceAttributes, ProgressiveAttributes};
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::memory::User;
 use vosu_osu_model::states::{

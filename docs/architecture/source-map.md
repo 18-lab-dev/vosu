@@ -21,7 +21,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | State reduction | `src/state/` | Capture scheduling, stale-sample rejection, retention, gameplay state |
 | Public APIs | `src/api/`, `src/model/api/` | v1, stream companion, v2, precise schemas and serialization |
 | Server and transport | `src/server/`, `crates/vosu-net/` | Exact routes, auth, files, pages, WebSockets, commands, and hardened outbound streaming |
-| Calculation | `src/calculation/`, `crates/vosu-pp/`, `crates/vosu-pp/rosu-map-api/`, `crates/vosu-pp/rosu-pp-api/` | Beatmaps, progressive state, live pp, legacy endpoint calculation, and provenance-pinned calculator APIs |
+| Calculation | `crates/vosu-osu-calc/`, `crates/vosu-pp/`, `crates/vosu-pp/rosu-map-api/`, `crates/vosu-pp/rosu-pp-api/` | Beatmaps, progressive state, live pp, legacy endpoint calculation, and provenance-pinned calculator APIs |
 | Configuration and counters | `src/config/`, `src/counters/` | Canonical `vosu.toml`, one-time legacy dotenv migration, settings, discovery and downloads |
 | Hosted tools | `src/tools/`, `assets/server/tool-bridge.js` | Manifest/discovery, official catalog installation, trust/settings persistence, child supervision, authenticated HTTP/WebSocket proxy and browser bridge; SDK in [vosu-tools](https://github.com/18-lab-dev/vosu-tools) |
 | Updating | `src/updater/` | Release selection, digest verification, staging, replacement, rollback |
@@ -48,9 +48,9 @@ record it in the same change that explains the new dependency here or in the
 [architecture overview](overview.md). `memory`, `calculation`, and `state`
 no longer cycle: the JS-compatible rounding/mods/grade helpers
 (`crates/vosu-osu-model/src/root/{helpers,mods,scores}.rs`) and the state reducer's
-calculation backend (`src/state/state_backend.rs`) live under `model` and
-`state` respectively, not `calculation`, so readers depend only on the
-model and `state -> calculation` (not the reverse) is the only edge left.
+calculation backend (`src/state/state_backend.rs`) live under `vosu-osu-model` and
+`state` respectively, not `vosu-osu-calc`, so readers depend only on the
+model and `state -> vosu-osu-calc` (not the reverse) is the only edge left.
 `server` and `tools` no longer cycle either: `server::routes::RouteExtension`
 (implemented by `tools::ToolHost`) covers the reserved `/tools` overlay prefix
 and the dashboard tool management routes, and `server::ids::valid_id`
@@ -91,7 +91,7 @@ so `tools -> server` is the only edge left.
 
 ## Workspace boundaries
 
-`Cargo.toml` defines one workspace with the production `vosu` package, the `vosu-sys` crate (native process/platform/process-event boundary, M0 crate split), the `vosu-net` crate (hardened outbound HTTPS streaming and archive extraction, M0 crate split), the `vosu-osu-model` crate (osu! value types and calculation root helpers, M0 crate split), the `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, the integration-only `vosu-test-harness`, the dependency-isolated `vosu-release-smoke` package, and the dev-only `vosu-proptest` package (`vosu_proptest_config()`, shared by every `prop_*` test). The smoke package launches an external packaged executable and does not depend on the daemon crate. Release profiles retain thin LTO, one codegen unit, stripped symbols, and abort-on-panic; `test-harness` is rejected by `build.rs` in release builds.
+`Cargo.toml` defines one workspace with the production `vosu` package, the `vosu-sys` crate (native process/platform/process-event boundary, M0 crate split), the `vosu-net` crate (hardened outbound HTTPS streaming and archive extraction, M0 crate split), the `vosu-osu-model` crate (osu! value types and calculation root helpers, M0 crate split), the `vosu-osu-calc` crate (beatmap parsing, progressive state, and legacy/live calculation engines over `vosu-pp`, M0 crate split), the `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, the integration-only `vosu-test-harness`, the dependency-isolated `vosu-release-smoke` package, and the dev-only `vosu-proptest` package (`vosu_proptest_config()`, shared by every `prop_*` test). The smoke package launches an external packaged executable and does not depend on the daemon crate. Release profiles retain thin LTO, one codegen unit, stripped symbols, and abort-on-panic; `test-harness` is rejected by `build.rs` in release builds.
 
 ## Evidence hierarchy
 

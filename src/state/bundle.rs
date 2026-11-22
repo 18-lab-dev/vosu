@@ -13,11 +13,11 @@ use super::{
     PreciseTransition, ReadContext, RegularCapturePlan, RegularTransition, SnapshotTransition,
     StateWorkerError, TransitionFuture,
 };
-use crate::calculation::beatmap::{
+use crate::memory::snapshot::{RawPreciseSnapshot, RawRegularSnapshot};
+use vosu_osu_calc::beatmap::{
     EventStatus, ManiaJudgementEvent, ManiaJudgementKind, ParsedBeatmap, StrainGraph,
 };
-use crate::calculation::progressive::{ProgressiveAttributes, ResultPerformance};
-use crate::memory::snapshot::{RawPreciseSnapshot, RawRegularSnapshot};
+use vosu_osu_calc::progressive::{ProgressiveAttributes, ResultPerformance};
 use vosu_osu_model::enums::{ClientType, GameState};
 use vosu_osu_model::memory::{
     LazerRoom as RawLazerRoom, LazerSpectator, Menu as RawMenu, MenuFull,

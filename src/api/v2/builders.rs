@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use serde_json::value::RawValue;
 
-use crate::calculation::beatmap::StrainGraph;
+use vosu_osu_calc::beatmap::StrainGraph;
 
 pub(super) fn play_source(
     state: &RegularState,
@@ -506,7 +506,7 @@ pub(super) fn hit_window(parsed: Option<&ParsedBeatmap>) -> HitWindow {
 }
 
 pub(super) fn detailed(
-    a: crate::calculation::progressive::PerformanceAttributes,
+    a: vosu_osu_calc::progressive::PerformanceAttributes,
     total: f64,
 ) -> DetailedPpAttributes {
     DetailedPpAttributes {
@@ -520,7 +520,7 @@ pub(super) fn detailed(
 }
 pub(super) fn build_play<'a, V: From<&'a [f64]>>(
     gameplay: &GameplayState,
-    attrs: Option<&crate::calculation::progressive::ProgressiveAttributes>,
+    attrs: Option<&vosu_osu_calc::progressive::ProgressiveAttributes>,
     mods: &CalculateMods,
     precise_hits: &'a HitErrorArray,
     enable_key_hits: bool,

@@ -46,8 +46,8 @@ fn build_with<'a, V: From<&'a [f64]>>(
     let result = &regular.result_screen;
     let legacy_hits = to_legacy_hits(gameplay.mode as i32, &gameplay.statistics);
 
-    let default_original = crate::calculation::beatmap::DifficultyValues::default();
-    let default_converted = crate::calculation::beatmap::DifficultyValues::default();
+    let default_original = vosu_osu_calc::beatmap::DifficultyValues::default();
+    let default_converted = vosu_osu_calc::beatmap::DifficultyValues::default();
     let (original, converted, counts, full_stars, max_combo, times, bpm) = if let Some(map) = parsed
     {
         (

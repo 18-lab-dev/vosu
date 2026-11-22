@@ -3182,9 +3182,6 @@ dependencies = [
  "png",
  "proptest",
  "reqwest",
- "rosu-map",
- "rosu-mods",
- "rosu-pp",
  "rust-embed",
  "rustc-hash",
  "semver",
@@ -3204,6 +3201,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "vosu-net",
+ "vosu-osu-calc",
  "vosu-osu-model",
  "vosu-pp",
  "vosu-proptest",
@@ -3235,6 +3233,21 @@ dependencies = [
  "vosu-sys",
  "windows-sys 0.61.2",
  "zip",
+]
+
+[[package]]
+name = "vosu-osu-calc"
+version = "0.1.0"
+dependencies = [
+ "md-5",
+ "rosu-map",
+ "rosu-mods",
+ "rosu-pp",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "vosu-osu-model",
+ "vosu-pp",
 ]
 
 [[package]]

@@ -175,10 +175,10 @@ fn performance_request(query: &PpQuery) -> Result<LegacyPerformanceRequest, Stri
     }
     let mode = match query.mode {
         None => None,
-        Some(0) => Some(crate::calculation::engine::Ruleset::Osu),
-        Some(1) => Some(crate::calculation::engine::Ruleset::Taiko),
-        Some(2) => Some(crate::calculation::engine::Ruleset::Catch),
-        Some(3) => Some(crate::calculation::engine::Ruleset::Mania),
+        Some(0) => Some(vosu_osu_calc::engine::Ruleset::Osu),
+        Some(1) => Some(vosu_osu_calc::engine::Ruleset::Taiko),
+        Some(2) => Some(vosu_osu_calc::engine::Ruleset::Catch),
+        Some(3) => Some(vosu_osu_calc::engine::Ruleset::Mania),
         Some(_) => return Err("mode must be 0, 1, 2, or 3".into()),
     };
     let mods = parse_legacy_mods(query.mods.as_ref())?;
@@ -232,7 +232,7 @@ fn parse_legacy_mods(input: Option<&super::routes::ModsInput>) -> Result<LegacyM
             let mods = compact
                 .as_bytes()
                 .chunks_exact(2)
-                .map(|pair| crate::calculation::engine::StructuredMod {
+                .map(|pair| vosu_osu_calc::engine::StructuredMod {
                     acronym: String::from_utf8_lossy(pair).to_ascii_uppercase(),
                     settings: Default::default(),
                 })

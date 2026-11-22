@@ -10,14 +10,14 @@ use tokio::sync::watch;
 use vosu::api::{
     ApiRuntimeSettings, ApiSchema, CombinedSnapshot, ManagerSnapshot, SnapshotManager,
 };
-use vosu::calculation::beatmap::{
-    BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
-    Ruleset, ScoringMode,
-};
 use vosu::memory::lazer_offsets::LazerOffsets;
 use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns};
 use vosu::server::websocket::{
     Filter, Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub,
+};
+use vosu_osu_calc::beatmap::{
+    BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
+    Ruleset, ScoringMode,
 };
 use vosu_sys::process::{
     MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,

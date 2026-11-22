@@ -94,7 +94,7 @@ Important limitations:
 
 **Safe direction.** Add internal measured paths that reuse already-computed difficulty attributes, current context, score totals, or a prepared live map across strains, accuracy points, and progressive construction. Keep ownership bounded to the existing current-map cache and prefer `Arc` handoff over a second deep map copy.
 
-**Invariant/risk.** Live state calculation and [`LegacyRosuEngine`](../../src/calculation/engine.rs) are separate compatibility contracts and must remain separate. Preserve exact calculator revisions, ruleset/mod/scoring/clock-rate cache dimensions, source identity invalidation, and result bytes/numerics.
+**Invariant/risk.** Live state calculation and [`LegacyRosuEngine`](../../crates/vosu-osu-calc/src/engine.rs) are separate compatibility contracts and must remain separate. Preserve exact calculator revisions, ruleset/mod/scoring/clock-rate cache dimensions, source identity invalidation, and result bytes/numerics.
 
 **Validation experiment.** Count difficulty, conversion, strain, and performance invocations for map load. Benchmark representative large maps for every supported ruleset and representative mods, recording CPU, allocation bytes, and peak RSS. Require bit-for-bit result equality before and after reuse.
 
@@ -154,7 +154,7 @@ Distinct plans also share work beneath the document root. Each plan walks only w
 
 **Classification:** P1, **Hypothesis** (unmeasured concurrency amplification).
 
-**Source and mechanism.** [`LegacyCalculateProvider::calculate`](../../src/server/service/providers.rs) invokes synchronous [`LegacyRosuEngine::calculate`](../../src/calculation/engine.rs) from an async request path. The current-map branch also reaches [`RuntimeBeatmap::current_beatmap_bytes`](../../src/runtime/service.rs), which uses synchronous `read_to_end`. Concurrent requests independently perform I/O, parsing/conversion, and calculation and can occupy Tokio workers or create excessive blocking work.
+**Source and mechanism.** [`LegacyCalculateProvider::calculate`](../../src/server/service/providers.rs) invokes synchronous [`LegacyRosuEngine::calculate`](../../crates/vosu-osu-calc/src/engine.rs) from an async request path. The current-map branch also reaches [`RuntimeBeatmap::current_beatmap_bytes`](../../src/runtime/service.rs), which uses synchronous `read_to_end`. Concurrent requests independently perform I/O, parsing/conversion, and calculation and can occupy Tokio workers or create excessive blocking work.
 
 **Safe direction.** Put the synchronous stage behind `spawn_blocking` **and a bounded admission semaphore/queue**; make current-map I/O async or include it in the admitted blocking stage. Define overload behavior explicitly rather than spawning an unbounded blocking job per request.
 
@@ -188,7 +188,7 @@ Lower-priority, cold/control-plane candidates should stay behind the roadmap abo
 
 - **Immutable atomic snapshots and encoding caches.** [`SnapshotManager`](../../src/api/snapshot.rs) publishes coherent `Arc` snapshots, and unfiltered HTTP/WebSocket consumers share cached `Bytes`. A `Bytes` clone is refcount work, not a payload copy. Do not replace this with mutable independently loaded schema pieces.
 - **Bounded worker and client flow.** [`spawn_state_worker_with_clock`](../../src/state/worker.rs) uses one-slot regular backpressure and a latest-only precise slot; [`WebSocketHub`](../../src/server/websocket.rs) uses a one-frame state slot, a bounded control channel, and generation acknowledgements. Keep these bounds even if adjacent unbounded queues are corrected.
-- **Calculator separation and cache identity.** [`LiveStateCalculationBackend`](../../src/state/state_backend.rs) is already offloaded and serialized; parsed maps/graphs are shared with `Arc`, and [`BeatmapCache`](../../src/calculation/beatmap/cache.rs) validates source identity, checksum, mode, mods, scoring, and rate. Do not merge it with the legacy endpoint or weaken invalidation to obtain a cache hit.
+- **Calculator separation and cache identity.** [`LiveStateCalculationBackend`](../../src/state/state_backend.rs) is already offloaded and serialized; parsed maps/graphs are shared with `Arc`, and [`BeatmapCache`](../../crates/vosu-osu-calc/src/beatmap/cache.rs) validates source identity, checksum, mode, mods, scoring, and rate. Do not merge it with the legacy endpoint or weaken invalidation to obtain a cache hit.
 - **Native read and platform boundaries.** [`ProcessMemory`](../../crates/vosu-sys/src/process.rs) requires complete-or-error reads; Linux and Windows backends intentionally differ. Keep pointer/length checks, generation validation, and decoding above native syscalls.
 - **Security and reliability checks.** Authorization and request limits, [`resolve_resource`](../../src/server/files.rs) containment/secure-open behavior, catalog redirect/TLS limits, and updater archive/transaction checks are not optimization targets.
 - **Streaming file responses and updater extraction.** [`file_response`](../../src/server/service/responses.rs) uses bounded range planning and streaming; [`extract_zip_atomic`](../../crates/vosu-net/src/streaming/archive.rs) enforces limits and atomic replacement. No evidence supports replacing them.

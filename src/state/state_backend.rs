@@ -2,19 +2,19 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::calculation::beatmap::{
+use crate::state::{
+    BeatmapCalculationUpdate, CalculationPhase, StateCalculationBackend, StateCalculationFuture,
+    StateCalculationRequest, StateCalculationResult, StateWorkerError,
+};
+use vosu_osu_calc::beatmap::{
     AppliedMod, BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, DifficultyAttributes,
     DifficultyValues, EngineOutput, EngineRequest, ModSet, ParsedBeatmap, PeakStrains,
     PerformanceAttributes, Ruleset as BeatmapRuleset, ScoreData, ScoringMode,
 };
-use crate::calculation::progressive::{
+use vosu_osu_calc::progressive::{
     CalculationOutcome, ClientScoring, GameplayCacheKey, GameplayCalculator, GameplayFrame,
     GameplayGate, HitStatistics, LiveGradualProgression, LiveProgressiveBeatmap, ResultCalculator,
     ResultFrame, Ruleset,
-};
-use crate::state::{
-    BeatmapCalculationUpdate, CalculationPhase, StateCalculationBackend, StateCalculationFuture,
-    StateCalculationRequest, StateCalculationResult, StateWorkerError,
 };
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::states::{CalculateMods, Mod, Statistics};

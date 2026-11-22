@@ -45,17 +45,17 @@ pub(super) struct SourceObjectTimes {
     pub(super) last_visible: f64,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum ManiaJudgementKind {
+pub enum ManiaJudgementKind {
     Press,
     Release,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ManiaJudgementEvent {
-    pub(crate) target: i64,
-    pub(crate) lane: u8,
-    pub(crate) object_index: usize,
-    pub(crate) kind: ManiaJudgementKind,
+pub struct ManiaJudgementEvent {
+    pub target: i64,
+    pub lane: u8,
+    pub object_index: usize,
+    pub kind: ManiaJudgementKind,
 }
 
 fn sample_info_valid(value: &str) -> bool {

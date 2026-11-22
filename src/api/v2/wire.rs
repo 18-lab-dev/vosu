@@ -574,7 +574,7 @@ fn write_stats(
 
 fn write_detailed(
     out: &mut Vec<u8>,
-    a: crate::calculation::progressive::PerformanceAttributes,
+    a: vosu_osu_calc::progressive::PerformanceAttributes,
     total: f64,
 ) -> io::Result<()> {
     wire_object!(out {

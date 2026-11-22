@@ -94,7 +94,7 @@ fn write_document(
     let result = &regular.result_screen;
     let legacy_hits = to_legacy_hits(gameplay.mode as i32, &gameplay.statistics);
 
-    let default_difficulty = crate::calculation::beatmap::DifficultyValues::default();
+    let default_difficulty = vosu_osu_calc::beatmap::DifficultyValues::default();
     let (original, converted, counts, full_stars, max_combo, times, bpm) = if let Some(map) = parsed
     {
         (

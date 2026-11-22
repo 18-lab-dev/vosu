@@ -10,7 +10,6 @@
 pub mod api;
 pub mod app;
 pub mod assets;
-pub mod calculation;
 pub mod config;
 pub mod counters;
 pub mod desktop;

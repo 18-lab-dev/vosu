@@ -1,10 +1,10 @@
 use super::*;
-use crate::calculation::beatmap::{
+use md5::{Digest, Md5};
+use std::fmt::Write as _;
+use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
     Ruleset, ScoringMode,
 };
-use md5::{Digest, Md5};
-use std::fmt::Write as _;
 use vosu_osu_model::memory::{StableReplayFrame, StableReplayFrameBatch};
 
 struct MetadataTestEngine;

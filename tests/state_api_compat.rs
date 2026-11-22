@@ -8,10 +8,6 @@ use std::{
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::watch;
-use vosu::calculation::beatmap::{
-    BeatmapCache, BeatmapEngine, BeatmapInput, EngineOutput, EngineRequest, ModSet, Ruleset,
-    ScoringMode,
-};
 use vosu::server::v2_subscription::{
     V2SubscriptionHub, V2SubscriptionOutbound, V2SubscriptionProvider, V2SubscriptionSnapshot,
 };
@@ -26,6 +22,10 @@ use vosu::{
         MenuState, PreciseState, RankedPlayState, RegularState, ResultScreenState, SettingsState,
         StateBundleSnapshot, TourneyManagerState, TourneyUserState, UserState,
     },
+};
+use vosu_osu_calc::beatmap::{
+    BeatmapCache, BeatmapEngine, BeatmapInput, EngineOutput, EngineRequest, ModSet, Ruleset,
+    ScoringMode,
 };
 use vosu_osu_model::{
     enums::ClientType,
@@ -244,12 +244,12 @@ impl BeatmapEngine for ZeroEngine {
     fn calculate(
         &self,
         _request: EngineRequest<'_>,
-    ) -> Result<EngineOutput, vosu::calculation::beatmap::BeatmapError> {
+    ) -> Result<EngineOutput, vosu_osu_calc::beatmap::BeatmapError> {
         Ok(EngineOutput::default())
     }
 }
 
-fn parsed_beatmap(input: &Input) -> Option<Arc<vosu::calculation::beatmap::ParsedBeatmap>> {
+fn parsed_beatmap(input: &Input) -> Option<Arc<vosu_osu_calc::beatmap::ParsedBeatmap>> {
     let bpm = input.services.beatmap_pp.get("commonBPM")?.as_f64()?;
     if bpm == 0.0 {
         return None;
@@ -397,7 +397,7 @@ fn regular(input: &Input) -> RegularState {
             parsed,
             graph: Arc::default(),
             graph_mp3_length: None,
-            event_status: vosu::calculation::beatmap::EventStatus {
+            event_status: vosu_osu_calc::beatmap::EventStatus {
                 bpm: realtime_bpm,
                 kiai: false,
                 break_time: false,

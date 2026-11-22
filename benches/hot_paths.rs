@@ -9,11 +9,6 @@ use tokio::sync::watch;
 use vosu::api::{
     ApiError, ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
 };
-use vosu::calculation::beatmap::{
-    BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
-    Ruleset as BeatmapRuleset, ScoringMode,
-};
-use vosu::calculation::engine::{LiveDifficultyConfig, LiveLazerEngine, LiveScoreState};
 use vosu::instance::InstanceSettings;
 use vosu::memory::lazer_offsets::LazerOffsets;
 use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns};
@@ -24,6 +19,11 @@ use vosu::server::websocket::{
     Filter, Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub,
 };
 use vosu::state::{PreciseState, RegularState, StateBundleSnapshot};
+use vosu_osu_calc::beatmap::{
+    BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
+    Ruleset as BeatmapRuleset, ScoringMode,
+};
+use vosu_osu_calc::engine::{LiveDifficultyConfig, LiveLazerEngine, LiveScoreState};
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::states::{HitErrorArray, KeypressButton};
 use vosu_sys::process::{

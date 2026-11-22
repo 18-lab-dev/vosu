@@ -1,4 +1,3 @@
-api -> calculation
 api -> instance
 api -> model
 api -> state
@@ -25,13 +24,11 @@ runtime -> tools
 runtime -> updater
 server -> api
 server -> assets
-server -> calculation
 server -> counters
 server -> desktop
 server -> logging
 server -> report
 server -> state
-state -> calculation
 state -> memory
 tools -> counters
 tools -> server

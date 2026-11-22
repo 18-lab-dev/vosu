@@ -1,0 +1,24 @@
+[package]
+name = "vosu-osu-calc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+md-5 = "0.11.0"
+rosu-map = "=0.2.1"
+rosu-mods = "=0.4.0"
+rosu-pp = "=4.0.1"
+serde = { version = "=1.0.228", features = ["derive", "rc"] }
+serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
+thiserror = "2.0.18"
+vosu-osu-model = { path = "../vosu-osu-model" }
+vosu-pp = { path = "../vosu-pp" }

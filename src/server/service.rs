@@ -24,11 +24,12 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::{io::ReaderStream, sync::CancellationToken};
 
+use vosu_osu_calc::engine::{
+    HitResultPriority, LegacyMods, LegacyPerformanceRequest, LegacyRosuEngine,
+};
+
 use crate::{
     api::{self, ApiError, SnapshotManager},
-    calculation::engine::{
-        HitResultPriority, LegacyMods, LegacyPerformanceRequest, LegacyRosuEngine,
-    },
     counters::{
         CounterError, CounterService, CounterSetting, ReloadableCounterService, SettingInput,
     },

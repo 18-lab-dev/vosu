@@ -141,7 +141,7 @@ fn borrowed_encoding_preserves_populated_graph_and_hit_arrays() {
     let graph = Arc::make_mut(&mut state.beatmap.graph);
     graph.primary = vec![1.25, 2.5];
     graph.x_axis = vec![0.0, 400.0];
-    graph.series = vec![crate::calculation::beatmap::GraphSeries {
+    graph.series = vec![vosu_osu_calc::beatmap::GraphSeries {
         name: "aim".into(),
         data: vec![3.5, 4.75],
     }];

@@ -38,7 +38,7 @@ crates/vosu-release-smoke/tests/release_smoke.rs 3 migration release smoke test 
 crates/vosu-sys/src/platform.rs 3 migration one-time migration of the legacy per-platform tosu config/data/cache roots
 assets/branding/vosu-social-preview.svg 2 upstream social-preview copy describing tosu-compatible APIs as the product's upstream compatibility target
 assets/server/homepage.js 1 upstream dashboard search-empty-state copy names tosu as an example compatible client
-src/calculation.rs 2 upstream doc comment mapping calculation helpers to their upstream tosu source paths
+crates/vosu-osu-calc/src/lib.rs 2 upstream doc comment mapping calculation helpers to their upstream tosu source paths
 src/config/migration.rs 11 migration one-time legacy tosu.env migration implementation
 src/config/tests.rs 27 migration tests covering the one-time legacy tosu.env migration precedence
 src/memory/snapshot.rs 4 upstream doc comment mapping memory snapshot control flow to upstream tosu source paths

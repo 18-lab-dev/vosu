@@ -6,7 +6,7 @@ mod timing;
 
 pub use cache::BeatmapCache;
 pub use model::*;
-pub(crate) use objects::{ManiaJudgementEvent, ManiaJudgementKind};
+pub use objects::{ManiaJudgementEvent, ManiaJudgementKind};
 
 #[cfg(test)]
 mod tests {

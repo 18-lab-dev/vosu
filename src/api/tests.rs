@@ -339,8 +339,8 @@ fn encode_schema(schema: ApiSchema, snapshot: &CombinedSnapshot) -> Result<Bytes
 
 #[test]
 fn mania_beatmap_combo_preserves_hold_ticks_in_every_regular_api() {
-    use crate::calculation::beatmap::{BeatmapCache, BeatmapInput, ModSet, Ruleset, ScoringMode};
     use crate::state::state_backend::LiveBeatmapEngine;
+    use vosu_osu_calc::beatmap::{BeatmapCache, BeatmapInput, ModSet, Ruleset, ScoringMode};
 
     let content = concat!(
         "osu file format v14\n[General]\nMode:3\n",

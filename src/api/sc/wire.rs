@@ -10,7 +10,7 @@ use std::io::{self, Write};
 
 use super::*;
 use crate::api::json::{Serde, Wire, With, wire_object, write_js_number, write_str_content};
-use crate::calculation::beatmap::ParsedBeatmap;
+use vosu_osu_calc::beatmap::ParsedBeatmap;
 
 /// Encodes the unfiltered streamCompanion document exactly as
 /// `build` serializes through [`JsFormatter`](crate::api::json::JsFormatter).

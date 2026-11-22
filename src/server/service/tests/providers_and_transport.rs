@@ -144,7 +144,7 @@
         let request = performance_request(&query).unwrap();
         assert_eq!(
             request.mode,
-            Some(crate::calculation::engine::Ruleset::Mania)
+            Some(vosu_osu_calc::engine::Ruleset::Mania)
         );
         assert_eq!(request.lazer, Some(true));
         assert_eq!(request.clock_rate, Some(1.25));

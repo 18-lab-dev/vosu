@@ -6,9 +6,9 @@ use serde_json::Value;
 
 use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
-use crate::calculation::beatmap::ParsedBeatmap;
 use crate::model::api::v2::*;
 use crate::state::{GameplayState, RegularState};
+use vosu_osu_calc::beatmap::ParsedBeatmap;
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::memory::{LazerSpectatorEntry, User};
 use vosu_osu_model::states::{CalculateMods, HitErrorArray, LeaderboardPlayer, SettingsObject};
