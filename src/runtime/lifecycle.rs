@@ -13,7 +13,7 @@ pub struct ProductionRuntime {
     startup_readiness: Option<StartupReadiness>,
     authorizer: Arc<ReloadableAuthorizer>,
     update_handed_off: AtomicBool,
-    available_update: Option<String>,
+    update_notice: Option<UpdateNotice>,
     counters: AsyncMutex<Option<Arc<ReloadableCounterService>>>,
     tools: AsyncMutex<Option<Arc<crate::tools::ToolHost>>>,
     dev_tools: Vec<PathBuf>,
@@ -144,7 +144,7 @@ impl ProductionRuntime {
                 catalog: CatalogService::production(&current_version().to_string()),
                 config: Arc::clone(&self.config),
                 shutdown: self.shutdown_token.clone(),
-                update_version: self.available_update.clone(),
+                update: self.update_notice.clone(),
             }),
             Arc::clone(&counters),
             beatmap.clone(),
@@ -420,7 +420,16 @@ impl RuntimeHooks for ProductionRuntime {
                         "Update available: v{} => v{version}",
                         current_version()
                     ));
-                    self.available_update = Some(version.to_string());
+                    self.update_notice = Some(UpdateNotice::Minor(version.to_string()));
+                }
+                UpdateCheck::MajorAvailable(release) => {
+                    self.logger.warn(format!(
+                        "Major update available: v{} => v{} (requires dashboard confirmation): {}",
+                        current_version(),
+                        release.version,
+                        release.release_url
+                    ));
+                    self.update_notice = Some(UpdateNotice::Major(release));
                 }
                 UpdateCheck::Latest(version) => {
                     self.logger
@@ -838,7 +847,7 @@ pub async fn run_cli() -> io::Result<()> {
             &current.server_ip,
         )),
         update_handed_off: AtomicBool::new(false),
-        available_update: None,
+        update_notice: None,
         counters: AsyncMutex::new(None),
         tools: AsyncMutex::new(None),
         dev_tools: crate::tools::development_roots(args.raw())?,

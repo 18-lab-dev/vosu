@@ -16,9 +16,10 @@ use semver::Version;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use vosu::updater::{
-    EncodedOsString, INSTALL_RECORD_NAME, InstallPhase, InstallRecord, ProcessIdentity,
-    RecoveryAction, ReleaseDecision, StartupIntent, TransactionGuard, UpdateError, UpdatePlatform,
-    classify_recovery, load_record, parse_latest_release, parse_startup_update_args,
+    EncodedOsString, INSTALL_RECORD_NAME, InstallPhase, InstallRecord, MajorRelease,
+    ProcessIdentity, RecoveryAction, ReleaseDecision, StartupIntent, TransactionGuard, UpdateError,
+    UpdatePlatform, classify_recovery, load_record, parse_latest_release,
+    parse_startup_update_args,
 };
 
 fn release(tag: &str, draft: bool, prerelease: bool, assets: serde_json::Value) -> Vec<u8> {
@@ -26,6 +27,23 @@ fn release(tag: &str, draft: bool, prerelease: bool, assets: serde_json::Value) 
         "tag_name": tag,
         "draft": draft,
         "prerelease": prerelease,
+        "assets": assets,
+    }))
+    .unwrap()
+}
+
+fn release_with_html_url(
+    tag: &str,
+    draft: bool,
+    prerelease: bool,
+    assets: serde_json::Value,
+    html_url: &str,
+) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "tag_name": tag,
+        "draft": draft,
+        "prerelease": prerelease,
+        "html_url": html_url,
         "assets": assets,
     }))
     .unwrap()
@@ -52,7 +70,8 @@ fn latest_release_matrix_requires_stable_newer_exact_asset_and_sha256() {
             asset("vosu-windows-v0.2.0.zip", Some(&good_digest)),
         ]),
     );
-    let ReleaseDecision::Update(update) = parse_latest_release(&good, &current, "linux").unwrap()
+    let ReleaseDecision::Update(update) =
+        parse_latest_release(&good, &current, "linux", false).unwrap()
     else {
         panic!("new release")
     };
@@ -65,8 +84,13 @@ fn latest_release_matrix_requires_stable_newer_exact_asset_and_sha256() {
         ("v0.0.9", Version::parse("0.0.9").unwrap()),
     ] {
         assert_eq!(
-            parse_latest_release(&release(tag, false, false, json_empty()), &current, "linux")
-                .unwrap(),
+            parse_latest_release(
+                &release(tag, false, false, json_empty()),
+                &current,
+                "linux",
+                false
+            )
+            .unwrap(),
             ReleaseDecision::Latest(expected)
         );
     }
@@ -74,7 +98,8 @@ fn latest_release_matrix_requires_stable_newer_exact_asset_and_sha256() {
         parse_latest_release(
             &release("v0.2.0", true, false, json_empty()),
             &current,
-            "linux"
+            "linux",
+            false
         )
         .unwrap(),
         ReleaseDecision::Latest(current.clone())
@@ -83,7 +108,8 @@ fn latest_release_matrix_requires_stable_newer_exact_asset_and_sha256() {
         parse_latest_release(
             &release("v0.2.0", false, true, json_empty()),
             &current,
-            "linux"
+            "linux",
+            false
         )
         .unwrap(),
         ReleaseDecision::Latest(current.clone())
@@ -92,7 +118,8 @@ fn latest_release_matrix_requires_stable_newer_exact_asset_and_sha256() {
         parse_latest_release(
             &release("v0.2.0-beta.1", false, false, json_empty()),
             &current,
-            "linux"
+            "linux",
+            false
         )
         .unwrap(),
         ReleaseDecision::Latest(current.clone())
@@ -106,7 +133,8 @@ fn latest_release_matrix_requires_stable_newer_exact_asset_and_sha256() {
                 serde_json::json!([asset("vosu-linux-v0.2.0.zip.sig", Some(&good_digest))])
             ),
             &current,
-            "linux"
+            "linux",
+            false
         )
         .unwrap(),
         ReleaseDecision::NoFiles
@@ -121,7 +149,8 @@ fn latest_release_matrix_requires_stable_newer_exact_asset_and_sha256() {
                 serde_json::json!([asset("tosu-linux-v0.2.0.zip", Some(&good_digest))])
             ),
             &current,
-            "linux"
+            "linux",
+            false
         )
         .unwrap(),
         ReleaseDecision::NoFiles
@@ -137,7 +166,7 @@ fn latest_release_matrix_requires_stable_newer_exact_asset_and_sha256() {
         ]),
     );
     assert!(matches!(
-        parse_latest_release(&duplicate, &current, "linux"),
+        parse_latest_release(&duplicate, &current, "linux", false),
         Err(UpdateError::Metadata(_))
     ));
     for digest in [
@@ -153,7 +182,7 @@ fn latest_release_matrix_requires_stable_newer_exact_asset_and_sha256() {
             serde_json::json!([asset("vosu-linux-v0.2.0.zip", digest)]),
         );
         assert!(matches!(
-            parse_latest_release(&invalid, &current, "linux"),
+            parse_latest_release(&invalid, &current, "linux", false),
             Err(UpdateError::Metadata(_))
         ));
     }
@@ -161,9 +190,65 @@ fn latest_release_matrix_requires_stable_newer_exact_asset_and_sha256() {
         parse_latest_release(
             &release("vv0.2.0", false, false, json_empty()),
             &current,
-            "linux"
+            "linux",
+            false
         ),
         Err(UpdateError::Metadata(_))
+    ));
+}
+
+#[test]
+fn major_version_release_needs_consent_startup_never_supplies_and_asset_unvalidated_without_it() {
+    let current = Version::parse("1.2.3").unwrap();
+    let good_digest = format!("sha256:{}", "ab".repeat(32));
+    let release_url = "https://github.com/18-lab-dev/vosu/releases/tag/v2.0.0";
+    let major = release_with_html_url(
+        "v2.0.0",
+        false,
+        false,
+        serde_json::json!([asset("vosu-linux-v2.0.0.zip", Some(&good_digest))]),
+        release_url,
+    );
+    // Without consent, a release asset that would otherwise validate is never
+    // even looked at: the decision is report-only.
+    assert_eq!(
+        parse_latest_release(&major, &current, "linux", false).unwrap(),
+        ReleaseDecision::MajorAvailable(MajorRelease {
+            version: Version::parse("2.0.0").unwrap(),
+            release_url: release_url.to_owned(),
+        })
+    );
+    // A broken or missing asset would not stop the major-available report,
+    // because the asset is never consulted until consent is given.
+    let major_without_asset =
+        release_with_html_url("v2.0.0", false, false, json_empty(), release_url);
+    assert_eq!(
+        parse_latest_release(&major_without_asset, &current, "linux", false).unwrap(),
+        ReleaseDecision::MajorAvailable(MajorRelease {
+            version: Version::parse("2.0.0").unwrap(),
+            release_url: release_url.to_owned(),
+        })
+    );
+    // With consent, the same release validates and installs exactly like an
+    // ordinary same-major update.
+    let ReleaseDecision::Update(update) =
+        parse_latest_release(&major, &current, "linux", true).unwrap()
+    else {
+        panic!("consented major release must validate for install")
+    };
+    assert_eq!(update.version, Version::parse("2.0.0").unwrap());
+    assert_eq!(update.asset_name, "vosu-linux-v2.0.0.zip");
+
+    // Same-major releases are unaffected by the consent flag either way.
+    let minor = release(
+        "v1.3.0",
+        false,
+        false,
+        serde_json::json!([asset("vosu-linux-v1.3.0.zip", Some(&good_digest))]),
+    );
+    assert!(matches!(
+        parse_latest_release(&minor, &current, "linux", false).unwrap(),
+        ReleaseDecision::Update(_)
     ));
 }
 
@@ -178,7 +263,8 @@ fn forced_build_and_internal_startup_roles_are_unambiguous_and_token_bound() {
         parse_latest_release(
             &release("v9.0.0", false, false, json_empty()),
             &forced,
-            "linux"
+            "linux",
+            false
         )
         .unwrap(),
         ReleaseDecision::SuppressedForced

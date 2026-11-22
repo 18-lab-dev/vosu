@@ -294,12 +294,23 @@ pub enum UpdateRouteResult {
     Latest,
     NoFiles,
     Updated(DeferredUpdateTrigger),
+    /// A newer stable release exists whose major version is greater than the
+    /// running build's; the caller did not supply consent, so nothing was
+    /// installed.
+    MajorAvailable { version: String, release_url: String },
 }
 
 /// Single-flight update operation. Implementations prepare and spawn the helper
 /// but defer daemon shutdown through `DeferredUpdateTrigger` until the terminal
 /// response body has been consumed (or dropped on disconnect).
 pub trait UpdaterHandoff: Send + Sync {
-    fn run_update(&self) -> ProviderFuture<'_, Result<UpdateRouteResult, String>>;
+    /// `major_consent` must be `true` for the caller to accept installing a
+    /// release whose major version exceeds the running build's; otherwise
+    /// such a release is reported as `UpdateRouteResult::MajorAvailable`
+    /// instead of being installed.
+    fn run_update(
+        &self,
+        major_consent: bool,
+    ) -> ProviderFuture<'_, Result<UpdateRouteResult, String>>;
 }
 

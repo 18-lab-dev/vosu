@@ -1,6 +1,6 @@
 1465 assets/server/homepage-controls.css
-1587 assets/server/homepage.css
-2161 assets/server/homepage.js
+1559 assets/server/homepage.css
+2146 assets/server/homepage.js
 1019 src/api/v2/tests.rs
 1256 src/counters/service.rs
 1115 src/memory/lazer/reader.rs
@@ -12,7 +12,6 @@
 1211 src/process/linux.rs
 1201 src/process/linux/tests.rs
 2093 src/runtime/projection.rs
-1099 src/runtime/render.rs
 1085 src/runtime/tests/projection.rs
 1041 src/runtime/tests/service.rs
 1005 src/server/routes.rs

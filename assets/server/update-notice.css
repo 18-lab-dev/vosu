@@ -1,0 +1,47 @@
+/* The dashboard's vosu update banner; a major release adds a consent step. */
+
+.update-notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  align-items: center;
+  justify-content: space-between;
+  width: calc(100% - 2 * var(--gutter));
+  max-width: calc(var(--max) - 2 * var(--gutter));
+  margin: var(--space-4) auto 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background: var(--bg-raised);
+  border: var(--hair) solid var(--rule-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.update-notice__copy {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.update-notice[data-major="true"] {
+  border-left-color: var(--danger);
+}
+
+.update-notice__major {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.update-notice__consent {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.9em;
+}
+
+.update-notice__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

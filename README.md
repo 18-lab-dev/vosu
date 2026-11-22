@@ -144,6 +144,8 @@ For a later manual upgrade, stop vosu, replace the executable and `LICENSE` with
 
 If the current user cannot write the executable's directory, vosu treats the install as externally managed on both Linux and Windows. Startup skips update checking and recovery, **Automatic updates** is disabled with an explanation, and `POST /api/runUpdates` returns the usual updater-error HTTP 200 JSON response: `{"error":"vosu is managed by your package manager; update it there"}`. Update these installs through their package manager instead.
 
+A newer stable release whose major version is greater than the running build's (for example 1.x running against a published 2.0.0) is never installed automatically, by startup or by an ordinary `POST /api/runUpdates` request: it is only reported, as `{"status":"majorAvailable","version":"2.0.0","releaseUrl":"..."}`, with the version and a link to its release page. The dashboard shows it distinctly and only installs it after you tick a confirmation box; `POST /api/runUpdates` then needs `{"consent":true}` in its JSON body, otherwise it refuses with the same `majorAvailable` response instead of installing. Same-major updates are unaffected and need no consent field.
+
 ### Uninstall
 
 Quit vosu from its tray icon first. On Linux, turn off **Settings → General → Start at login** if you enabled it; otherwise run `systemctl --user disable vosu.service` and delete `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/vosu.service`.
@@ -615,7 +617,7 @@ while keeping `skin.folder:null` for lazer.
 - `GET /`, `/settings`, `/available`, `/favicon.ico` (favicon responses add `X-Vosu-Identity: vosu` for bounded second-launch discovery without changing page bodies)
 - `GET /assets/{path}` and the fallback counter-static route
 - `POST /api/settingsSave` rejects the whole save when a submitted interval or port is not a finite number or is out of range: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` 1–60000, `V2_SUBSCRIPTION_DEBOUNCE` 1–60000 (milliseconds), and both `SERVER_PORT` and `DASHBOARD_PORT` whole numbers 1–65535. Network fields require `_network_action: "apply"` and then `_network_action: "confirm"` from the new origin before the 30-second server timeout.
-- `POST /api/runUpdates` returns an HTTP 200 JSON `error` for externally managed installs instead of attempting replacement.
+- `POST /api/runUpdates` returns an HTTP 200 JSON `error` for externally managed installs instead of attempting replacement. A release whose major version exceeds the running build's returns `{"status":"majorAvailable","version":"...","releaseUrl":"..."}` and installs nothing unless the request body is `{"consent":true}`.
 - `POST /api/generateReport`
 - `GET /api/counters/search/{query}[?source=installed|available]` returns card HTML for installed counters by default or for the catalog with `source=available`; any other `source` returns 400. The query keeps letters, digits, and whitespace, and a card matches when any word matches its name, author, or compatible clients. Lookup failures return 502 with an escaped `Error:` body.
 - `POST /api/counters/download/{url}?name=<counter>&update=<value>`

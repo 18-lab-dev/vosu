@@ -205,7 +205,7 @@ pub(super) struct RuntimePages {
     pub(super) catalog: CatalogService,
     pub(super) config: Arc<ConfigStore>,
     pub(super) shutdown: CancellationToken,
-    pub(super) update_version: Option<String>,
+    pub(super) update: Option<UpdateNotice>,
 }
 
 /// One scan of the overlays folder: readable overlays and the folders that
@@ -360,7 +360,7 @@ impl PageDataProvider for RuntimePages {
                     ""
                 },
                 &list,
-                self.update_version.as_deref(),
+                self.update.as_ref(),
             ))
         })
     }

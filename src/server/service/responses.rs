@@ -440,6 +440,13 @@ fn update_response(
         Ok(UpdateRouteResult::NoFiles) => {
             json_response(StatusCode::OK, json!({ "status": "noFiles" }))
         }
+        Ok(UpdateRouteResult::MajorAvailable {
+            version,
+            release_url,
+        }) => json_response(
+            StatusCode::OK,
+            json!({ "status": "majorAvailable", "version": version, "releaseUrl": release_url }),
+        ),
         Err(error) => json_response(StatusCode::OK, json!({ "error": error })),
     }
 }

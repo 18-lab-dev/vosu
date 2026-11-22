@@ -12,33 +12,35 @@
     fn validates_release_versions_assets_and_digest() {
         let current = Version::new(0, 1, 0);
         assert_eq!(
-            parse_latest_release(&release("v0.1.0", "", ""), &current, "linux").unwrap(),
+            parse_latest_release(&release("v0.1.0", "", ""), &current, "linux", false).unwrap(),
             ReleaseDecision::Latest(current.clone())
         );
         assert_eq!(
-            parse_latest_release(&release("v0.0.9", "", ""), &current, "linux").unwrap(),
+            parse_latest_release(&release("v0.0.9", "", ""), &current, "linux", false).unwrap(),
             ReleaseDecision::Latest(Version::new(0, 0, 9))
         );
         let good = asset("vosu-linux-v0.2.0.zip", &format!("sha256:{HASH}"));
         assert!(matches!(
-            parse_latest_release(&release("v0.2.0", "", &good), &current, "linux").unwrap(),
+            parse_latest_release(&release("v0.2.0", "", &good), &current, "linux", false).unwrap(),
             ReleaseDecision::Update(_)
         ));
         assert_eq!(
-            parse_latest_release(&release("v0.2.0", "", ""), &current, "linux").unwrap(),
+            parse_latest_release(&release("v0.2.0", "", ""), &current, "linux", false).unwrap(),
             ReleaseDecision::NoFiles
         );
         // The former tosu asset name is retained only as a cutover rejection fixture.
         let legacy = asset("tosu-linux-v0.2.0.zip", &format!("sha256:{HASH}"));
         assert_eq!(
-            parse_latest_release(&release("v0.2.0", "", &legacy), &current, "linux").unwrap(),
+            parse_latest_release(&release("v0.2.0", "", &legacy), &current, "linux", false)
+                .unwrap(),
             ReleaseDecision::NoFiles
         );
         assert!(
             parse_latest_release(
                 &release("v0.2.0", "", &format!("{good},{good}")),
                 &current,
-                "linux"
+                "linux",
+                false
             )
             .is_err()
         );
@@ -46,29 +48,84 @@
             parse_latest_release(
                 &release("v0.2.0", "", &asset("vosu-linux-v0.2.0.zip", "sha256:no")),
                 &current,
-                "linux"
+                "linux",
+                false
             )
             .is_err()
         );
         assert_eq!(
-            parse_latest_release(&release("v0.2.0-beta.1", "", ""), &current, "linux").unwrap(),
+            parse_latest_release(&release("v0.2.0-beta.1", "", ""), &current, "linux", false)
+                .unwrap(),
             ReleaseDecision::Latest(current.clone())
         );
         assert_eq!(
             parse_latest_release(
                 &release("v0.2.0", "\"prerelease\":true,", ""),
                 &current,
-                "linux"
+                "linux",
+                false
             )
             .unwrap(),
             ReleaseDecision::Latest(current.clone())
         );
         let forced = Version::parse("0.1.0-forced").unwrap();
         assert_eq!(
-            parse_latest_release(&release("v0.2.0", "", &good), &forced, "linux").unwrap(),
+            parse_latest_release(&release("v0.2.0", "", &good), &forced, "linux", false).unwrap(),
             ReleaseDecision::SuppressedForced
         );
-        assert!(parse_latest_release(br#"{"tag_name":7}"#, &current, "linux").is_err());
+        assert!(parse_latest_release(br#"{"tag_name":7}"#, &current, "linux", false).is_err());
+    }
+
+    #[test]
+    fn major_release_is_reported_not_validated_without_consent_and_installable_with_it() {
+        let current = Version::new(1, 2, 3);
+        let good = asset("vosu-linux-v2.0.0.zip", &format!("sha256:{HASH}"));
+        // No asset at all: a report-only decision still succeeds without
+        // consulting the asset list.
+        let no_asset = release_with_html_url(
+            "v2.0.0",
+            "",
+            "",
+            "https://github.com/18-lab-dev/vosu/releases/tag/v2.0.0",
+        );
+        assert_eq!(
+            parse_latest_release(&no_asset, &current, "linux", false).unwrap(),
+            ReleaseDecision::MajorAvailable(MajorRelease {
+                version: Version::new(2, 0, 0),
+                release_url: "https://github.com/18-lab-dev/vosu/releases/tag/v2.0.0".into(),
+            })
+        );
+        let with_asset = release_with_html_url(
+            "v2.0.0",
+            "",
+            &good,
+            "https://github.com/18-lab-dev/vosu/releases/tag/v2.0.0",
+        );
+        assert_eq!(
+            parse_latest_release(&with_asset, &current, "linux", false).unwrap(),
+            ReleaseDecision::MajorAvailable(MajorRelease {
+                version: Version::new(2, 0, 0),
+                release_url: "https://github.com/18-lab-dev/vosu/releases/tag/v2.0.0".into(),
+            }),
+            "major release is never validated against its asset without consent"
+        );
+        assert!(matches!(
+            parse_latest_release(&with_asset, &current, "linux", true).unwrap(),
+            ReleaseDecision::Update(_)
+        ));
+        // A same-major release is unaffected by the consent flag.
+        let minor = release("v1.3.0", "", &asset("vosu-linux-v1.3.0.zip", &format!("sha256:{HASH}")));
+        assert!(matches!(
+            parse_latest_release(&minor, &current, "linux", false).unwrap(),
+            ReleaseDecision::Update(_)
+        ));
+    }
+
+    fn release_with_html_url(tag: &str, flags: &str, assets: &str, html_url: &str) -> Vec<u8> {
+        format!(
+            r#"{{"tag_name":"{tag}",{flags}"html_url":"{html_url}","assets":[{assets}]}}"#
+        )
+        .into_bytes()
     }
 
     #[test]

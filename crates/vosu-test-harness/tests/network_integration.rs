@@ -61,7 +61,7 @@ fn deadlines() -> Deadlines {
 }
 
 async fn run_updates(State(updater): State<Arc<dyn UpdaterHandoff>>) -> Response {
-    match updater.run_update().await {
+    match updater.run_update(false).await {
         Ok(UpdateRouteResult::Latest) => {
             Json(serde_json::json!({"status":"latest"})).into_response()
         }
@@ -71,6 +71,13 @@ async fn run_updates(State(updater): State<Arc<dyn UpdaterHandoff>>) -> Response
         Ok(UpdateRouteResult::Updated(_)) => {
             Json(serde_json::json!({"status":"updated"})).into_response()
         }
+        Ok(UpdateRouteResult::MajorAvailable {
+            version,
+            release_url,
+        }) => Json(
+            serde_json::json!({"status":"majorAvailable","version":version,"releaseUrl":release_url}),
+        )
+        .into_response(),
         Err(error) => Json(serde_json::json!({"error":error})).into_response(),
     }
 }
@@ -408,6 +415,7 @@ struct PreparedUpdate {
 impl UpdaterHandoff for PreparedUpdate {
     fn run_update(
         &self,
+        _: bool,
     ) -> vosu::server::routes::ProviderFuture<'_, Result<UpdateRouteResult, String>> {
         let triggered = self.triggered.clone();
         Box::pin(async move {

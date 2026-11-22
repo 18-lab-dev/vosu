@@ -164,7 +164,7 @@ mod tests {
     }
 
     impl UpdaterHandoff for UnusedServices {
-        fn run_update(&self) -> ProviderFuture<'_, Result<UpdateRouteResult, String>> {
+        fn run_update(&self, _: bool) -> ProviderFuture<'_, Result<UpdateRouteResult, String>> {
             Box::pin(async { Ok(UpdateRouteResult::Latest) })
         }
     }
@@ -172,7 +172,7 @@ mod tests {
     struct UpdatedServices(CancellationToken);
 
     impl UpdaterHandoff for UpdatedServices {
-        fn run_update(&self) -> ProviderFuture<'_, Result<UpdateRouteResult, String>> {
+        fn run_update(&self, _: bool) -> ProviderFuture<'_, Result<UpdateRouteResult, String>> {
             let started = self.0.clone();
             Box::pin(async move {
                 Ok(UpdateRouteResult::Updated(DeferredUpdateTrigger::new(

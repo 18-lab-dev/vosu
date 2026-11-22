@@ -42,7 +42,8 @@ src/config/migration.rs 11 migration one-time legacy tosu.env migration implemen
 src/config/tests.rs 27 migration tests covering the one-time legacy tosu.env migration precedence
 src/memory/snapshot.rs 4 upstream doc comment mapping memory snapshot control flow to upstream tosu source paths
 src/platform.rs 3 migration one-time migration of the legacy per-platform tosu config/data/cache roots
-src/runtime/render.rs 5 upstream rendered settings page copy naming the upstream tosu.app catalog host and tosu project
+src/runtime/render.rs 3 upstream page copy naming the upstream tosu.app catalog host and its overlay clients
+src/runtime/render/settings.rs 2 upstream settings copy naming the upstream tosu project and its legacy allowlist default
 src/server/catalog.rs 6 upstream overlay catalog client for the upstream tosu.app catalog endpoint
 src/server/commands.rs 1 parity counter-command compatibility test named for tosu-style counter frame paths
 src/server/files.rs 1 upstream doc comment describing upstream tosu file-range compatibility behavior

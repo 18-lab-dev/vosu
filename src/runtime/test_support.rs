@@ -118,7 +118,7 @@ pub async fn start_test_production_composition(
             ),
             config: Arc::clone(&options.config),
             shutdown: CancellationToken::new(),
-            update_version: None,
+            update: None,
         }),
         Arc::clone(&counters),
         beatmap.clone(),

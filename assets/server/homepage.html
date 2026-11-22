@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="/assets/system.css">
   <link rel="stylesheet" href="/assets/homepage.css">
   <link rel="stylesheet" href="/assets/homepage-controls.css">
+  <link rel="stylesheet" href="/assets/update-notice.css">
   <script src="/assets/homepage.js" type="module"></script>
 </head>
 <body data-page="{{PAGE_KEY}}">
@@ -85,8 +86,12 @@
     </div>
   </header>
 
-  <div id="update-notice" class="update-notice" role="region" aria-label="vosu update" data-version="{{NEW_VERSION}}" {{UPDATE_HIDDEN}}>
-    <p class="update-notice__copy"><strong>vosu {{NEW_VERSION}}</strong> is available. This dashboard is running {{CURRENT_VERSION}}.</p>
+  <div id="update-notice" class="update-notice" role="region" aria-label="vosu update" data-version="{{NEW_VERSION}}" data-major="{{UPDATE_IS_MAJOR}}" {{UPDATE_HIDDEN}}>
+    <p class="update-notice__copy" {{MINOR_NOTICE_HIDDEN}}><strong>vosu {{NEW_VERSION}}</strong> is available. This dashboard is running {{CURRENT_VERSION}}.</p>
+    <div class="update-notice__major" {{MAJOR_NOTICE_HIDDEN}}>
+      <p class="update-notice__copy"><strong>vosu {{NEW_VERSION}} is available &mdash; this is a major update.</strong> <a href="{{RELEASE_URL}}" target="_blank" rel="noopener noreferrer">Read what changes</a> before updating. This dashboard is running {{CURRENT_VERSION}}.</p>
+      <label class="update-notice__consent"><input type="checkbox" data-role="major-update-consent"> I've read the release notes and want to install this major update</label>
+    </div>
     <div class="update-notice__actions">
       <button class="button button-primary" type="button" data-action="app-update">Update vosu</button>
       <button class="button" type="button" data-action="dismiss-update">Later</button>

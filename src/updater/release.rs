@@ -8,6 +8,8 @@ pub(super) struct GithubRelease {
     #[serde(default)]
     prerelease: bool,
     #[serde(default)]
+    html_url: String,
+    #[serde(default)]
     assets: Vec<GithubAsset>,
 }
 
@@ -22,11 +24,15 @@ pub(super) struct GithubAsset {
 ///
 /// Equality and downgrade both return `Latest`; only a strictly newer stable
 /// version is installable.  The historical `-forced` marker suppresses the
-/// automatic updater rather than being interpreted as semver.
+/// automatic updater rather than being interpreted as semver. A newer release
+/// whose major version exceeds `current`'s is never installable without
+/// `major_consent`: without it, it is reported as `MajorAvailable` instead of
+/// being validated against its release asset.
 pub fn parse_latest_release(
     json: &[u8],
     current: &Version,
     platform: &str,
+    major_consent: bool,
 ) -> Result<ReleaseDecision, UpdateError> {
     let release: GithubRelease = serde_json::from_slice(json)?;
     if current.to_string().contains("-forced") {
@@ -51,6 +57,12 @@ pub fn parse_latest_release(
     }
     if version <= *current {
         return Ok(ReleaseDecision::Latest(version));
+    }
+    if version.major > current.major && !major_consent {
+        return Ok(ReleaseDecision::MajorAvailable(MajorRelease {
+            version,
+            release_url: release.html_url,
+        }));
     }
 
     let expected = format!("vosu-{platform}-v{version}.zip");
@@ -115,6 +127,9 @@ pub async fn check_startup_and_prepare<'a, P: UpdatePlatform>(
     }
     check_release_and_prepare(ReleaseCheckRequest {
         prepare_available: enabled,
+        // Startup never has an interactive consent step; a major release is
+        // always just reported here, never installed.
+        major_consent: false,
         program_dir,
         target,
         current,
@@ -143,9 +158,11 @@ pub async fn check_latest_and_prepare<'a, P: UpdatePlatform>(
     platform: &'a P,
     client: &StreamingClient,
     cancel: &CancellationToken,
+    major_consent: bool,
 ) -> Result<UpdateCheck<'a, P>, UpdateError> {
     check_release_and_prepare(ReleaseCheckRequest {
         prepare_available: true,
+        major_consent,
         program_dir,
         target,
         current,
@@ -163,6 +180,9 @@ pub async fn check_latest_and_prepare<'a, P: UpdatePlatform>(
 /// positional parameter list.
 pub(super) struct ReleaseCheckRequest<'a, 'b, P: UpdatePlatform> {
     pub(super) prepare_available: bool,
+    /// Explicit consent to install a release whose major version exceeds
+    /// the running build's; startup never supplies it.
+    pub(super) major_consent: bool,
     pub(super) program_dir: &'b Path,
     pub(super) target: &'b Path,
     pub(super) current: &'b Version,
@@ -178,6 +198,7 @@ pub(super) async fn check_release_and_prepare<'a, 'b, P: UpdatePlatform>(
 ) -> Result<UpdateCheck<'a, P>, UpdateError> {
     let ReleaseCheckRequest {
         prepare_available,
+        major_consent,
         program_dir,
         target,
         current,
@@ -202,7 +223,7 @@ pub(super) async fn check_release_and_prepare<'a, 'b, P: UpdatePlatform>(
     }
     let body = fs::read(&metadata_path)?;
     fs::remove_file(&metadata_path)?;
-    match parse_latest_release(&body, current, platform_name)? {
+    match parse_latest_release(&body, current, platform_name, major_consent)? {
         ReleaseDecision::Latest(version) => {
             guard.cancel()?;
             Ok(UpdateCheck::Latest(version))
@@ -214,6 +235,10 @@ pub(super) async fn check_release_and_prepare<'a, 'b, P: UpdatePlatform>(
         ReleaseDecision::SuppressedForced => {
             guard.cancel()?;
             Ok(UpdateCheck::SuppressedForced)
+        }
+        ReleaseDecision::MajorAvailable(release) => {
+            guard.cancel()?;
+            Ok(UpdateCheck::MajorAvailable(release))
         }
         ReleaseDecision::Update(release) if prepare_available => Ok(UpdateCheck::Prepared(
             prepare_update(guard, release, client, cancel).await?,

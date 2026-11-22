@@ -68,6 +68,10 @@ pub enum UpdateError {
 pub enum ReleaseDecision {
     Latest(Version),
     Update(ValidatedRelease),
+    /// A newer stable release exists, but its semver major exceeds the
+    /// running build's. Never installed without explicit user consent,
+    /// regardless of the startup/update-request policy in effect.
+    MajorAvailable(MajorRelease),
     NoFiles,
     SuppressedForced,
 }
@@ -78,6 +82,14 @@ pub struct ValidatedRelease {
     pub archive_url: String,
     pub digest: [u8; 32],
     pub asset_name: String,
+}
+
+/// A stable release whose major version is greater than the running build's,
+/// reported so the dashboard can show it without installing it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MajorRelease {
+    pub version: Version,
+    pub release_url: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

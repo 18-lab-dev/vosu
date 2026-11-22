@@ -1,5 +1,6 @@
 import { createSettingsEditor, createActionDialog, createOverflow, showModal } from './homepage-settings.js';
 import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.js';
+import { createAppUpdater } from './dashboard-update.js';
 
 (() => {
   'use strict';
@@ -40,6 +41,7 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
     announceTimer: 0,
     updates: new Map(),
   };
+  const runAppUpdate = createAppUpdater({ pending: state.pending, requestJson, notify, errorText, setBusy });
 
   function storageGet(key) {
     try {
@@ -821,23 +823,6 @@ import { mountCatalogSources, mountCatalogOverlays } from './dashboard-catalog.j
       notify(`Could not open ${folder}: ${errorText(error)}`, 'error', 5000);
     } finally {
       setBusy(button, false);
-    }
-  }
-
-  async function runAppUpdate(button) {
-    if (state.pending.has('app-update')) return;
-    state.pending.add('app-update');
-    setBusy(button, true, 'Updating…');
-    try {
-      await requestJson('/api/runUpdates', { method: 'POST' });
-      notify('vosu finished updating.', 'success');
-      document.querySelector('#update-notice')?.remove();
-      document.querySelector('.status-update')?.remove();
-    } catch (error) {
-      notify(`vosu could not update: ${errorText(error)}`, 'error', 5000);
-      setBusy(button, false);
-    } finally {
-      state.pending.delete('app-update');
     }
   }
 

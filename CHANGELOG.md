@@ -7,6 +7,7 @@ All notable user-visible changes to vosu are documented here. Older sections are
 ### Updater
 
 - Keep the daemon responsive while handing off an update. Waiting for the update helper's acknowledgement (up to 15 seconds) and the post-update cleanup that waits for the helper to exit (up to 10 seconds each for exit and lock retries) now run on Tokio's blocking pool instead of an async worker thread, so HTTP, WebSocket, and polling tasks keep running during **Update vosu**, startup updates, and the first launch after an update.
+- Never install a newer stable release whose major version exceeds the running build's without explicit consent, at startup or from **Update vosu**. It is reported instead, with its version and release page link; the dashboard shows it distinctly and asks you to confirm you've read the release notes before `POST /api/runUpdates` will install it. Same-major updates are unaffected.
 
 ### Configuration
 

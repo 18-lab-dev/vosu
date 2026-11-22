@@ -178,6 +178,9 @@ pub enum UpdateCheck<'a, P: UpdatePlatform> {
     Latest(Version),
     /// A newer stable release exists, but startup policy disabled installation.
     Available(Version),
+    /// A newer stable release exists whose major version is greater than the
+    /// running build's; never installed without explicit consent.
+    MajorAvailable(MajorRelease),
     NoFiles,
     SuppressedForced,
     Prepared(PreparedUpdate<'a, P>),

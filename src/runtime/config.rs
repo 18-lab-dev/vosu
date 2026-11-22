@@ -502,6 +502,7 @@ pub fn test_updater_handoff(
 impl UpdaterHandoff for RuntimeUpdater {
     fn run_update(
         &self,
+        major_consent: bool,
     ) -> crate::server::routes::ProviderFuture<'_, Result<UpdateRouteResult, String>> {
         Box::pin(async move {
             if !crate::desktop::directory_writable(&self.program_dir) {
@@ -519,6 +520,7 @@ impl UpdaterHandoff for RuntimeUpdater {
                 &NativePlatform,
                 &client,
                 &cancel,
+                major_consent,
             )
             .await
             .map_err(|error| error.to_string())?
@@ -527,6 +529,10 @@ impl UpdaterHandoff for RuntimeUpdater {
                 | UpdateCheck::Available(_)
                 | UpdateCheck::SuppressedForced => Ok(UpdateRouteResult::Latest),
                 UpdateCheck::NoFiles => Ok(UpdateRouteResult::NoFiles),
+                UpdateCheck::MajorAvailable(release) => Ok(UpdateRouteResult::MajorAvailable {
+                    version: release.version.to_string(),
+                    release_url: release.release_url,
+                }),
                 UpdateCheck::Prepared(prepared) => {
                     tokio::task::spawn_blocking(move || prepared.spawn_helper())
                         .await

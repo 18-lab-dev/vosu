@@ -70,7 +70,7 @@ impl ProductionRouteDelegate {
                 }
             }
             Endpoint::SettingsSave => self.settings_save(request.headers(), body).await,
-            Endpoint::RunUpdates => self.run_updates(response_flush_barrier(&request)).await,
+            Endpoint::RunUpdates => self.run_updates(body, response_flush_barrier(&request)).await,
             Endpoint::GenerateReport => self.generate_report().await,
             Endpoint::Asset
             | Endpoint::Favicon
@@ -366,8 +366,24 @@ impl ProductionRouteDelegate {
         }
     }
 
-    async fn run_updates(&self, barrier: Option<Arc<ResponseFlushBarrier>>) -> Response {
-        update_response(self.services.updater.run_update().await, barrier)
+    async fn run_updates(&self, body: Bytes, barrier: Option<Arc<ResponseFlushBarrier>>) -> Response {
+        let consent = if body.is_empty() {
+            false
+        } else {
+            match serde_json::from_slice::<Value>(&body) {
+                Ok(value) => value
+                    .get("consent")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                Err(error) => {
+                    return json_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        json!({ "error": error.to_string() }),
+                    );
+                }
+            }
+        };
+        update_response(self.services.updater.run_update(consent).await, barrier)
     }
 
     async fn generate_report(&self) -> Response {

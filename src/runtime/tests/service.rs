@@ -150,7 +150,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
         Some(0),
         "",
         "",
-        Some("99.0.0"),
+        Some(&UpdateNotice::Minor("99.0.0".to_owned())),
     );
     let updated = String::from_utf8(updated.body.to_vec()).unwrap();
     assert!(updated.contains(r#"id="update-notice""#));
@@ -246,7 +246,7 @@ async fn dynamic_pages_keep_discovered_installed_count_when_catalog_fetch_fails(
         catalog: CatalogService::production("test"),
         config: Arc::clone(&config),
         shutdown,
-        update_version: None,
+        update: None,
     };
 
     let dashboard = pages
@@ -300,7 +300,7 @@ async fn one_unreadable_overlay_is_an_error_card_not_an_empty_page() {
         catalog: CatalogService::production("test"),
         config: Arc::clone(&config),
         shutdown,
-        update_version: None,
+        update: None,
     };
     let dashboard = pages
         .render(DynamicPage::Dashboard, None)
@@ -514,7 +514,7 @@ async fn updater_rejects_readonly_package_directory_before_network_access() {
         CancellationToken::new(),
     );
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
-    let result = updater.run_update().await;
+    let result = updater.run_update(false).await;
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(matches!(
         result,

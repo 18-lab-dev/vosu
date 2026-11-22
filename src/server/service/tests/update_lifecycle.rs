@@ -7,6 +7,17 @@
                 json!({ "status": "noFiles" }),
             ),
             (
+                Ok(UpdateRouteResult::MajorAvailable {
+                    version: "2.0.0".into(),
+                    release_url: "https://example.com/releases/v2.0.0".into(),
+                }),
+                json!({
+                    "status": "majorAvailable",
+                    "version": "2.0.0",
+                    "releaseUrl": "https://example.com/releases/v2.0.0",
+                }),
+            ),
+            (
                 Err("update already in progress".into()),
                 json!({ "error": "update already in progress" }),
             ),
@@ -293,3 +304,82 @@ Connection: close\r\n\r\n",
         relays.shutdown().await;
     }
 
+
+    #[tokio::test]
+    async fn run_updates_forwards_consent_field_and_refuses_major_release_without_it() {
+        struct ConsentCapturingUpdater;
+        impl UpdaterHandoff for ConsentCapturingUpdater {
+            fn run_update(
+                &self,
+                major_consent: bool,
+            ) -> ProviderFuture<'_, Result<UpdateRouteResult, String>> {
+                Box::pin(async move {
+                    if major_consent {
+                        Ok(UpdateRouteResult::Latest)
+                    } else {
+                        Ok(UpdateRouteResult::MajorAvailable {
+                            version: "2.0.0".into(),
+                            release_url: "https://example.com/releases/v2.0.0".into(),
+                        })
+                    }
+                })
+            }
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let counters = Arc::new(ReloadableCounterService::production(
+            root.path().join("static"),
+            root.path().join("settings"),
+            root.path().join("cache"),
+        ));
+        let (_, events) = tokio::sync::watch::channel(0);
+        let state = Arc::new(NoState { events });
+        let relays = Arc::new(WebSocketRelaySink::new());
+        let processor = Arc::new(CommandProcessor::new(Arc::new(CommandProviders), relays.clone()));
+        let unused = Arc::new(UnusedServices);
+        let updater = Arc::new(ConsentCapturingUpdater);
+        let delegate = ProductionRouteDelegate::new(ProductionServices::with_native_report_probe(
+            PageService,
+            unused.clone(),
+            counters,
+            Arc::new(Current::default()),
+            unused.clone(),
+            unused.clone(),
+            updater,
+            WebSocketEndpoints {
+                v1: WebSocketHub::new(websocket::Schema::V1, state.clone()),
+                sc: WebSocketHub::new(websocket::Schema::StreamCompanion, state.clone()),
+                v2: WebSocketHub::new(websocket::Schema::V2, state.clone()),
+                precise: WebSocketHub::new(websocket::Schema::V2Precise, state.clone()),
+                commands: WebSocketHub::new(websocket::Schema::V1, state.clone()),
+                subscriptions: V2SubscriptionHub::new(state, std::time::Duration::ZERO),
+                processor,
+                relays,
+            },
+        ));
+
+        for (body, expected_status) in [
+            (Bytes::new(), "majorAvailable"),
+            (Bytes::from_static(br#"{"consent":false}"#), "majorAvailable"),
+            (Bytes::from_static(br#"{"consent":true}"#), "latest"),
+        ] {
+            let response = delegate
+                .dispatch(
+                    Endpoint::RunUpdates,
+                    Request::builder()
+                        .uri("/api/runUpdates")
+                        .body(Body::empty())
+                        .unwrap(),
+                    body,
+                )
+                .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload: Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 16384)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(payload["status"], expected_status);
+        }
+    }
