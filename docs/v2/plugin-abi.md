@@ -138,11 +138,11 @@ A session is not exposed anywhere outside core — `/api/v1/sessions`, other plu
 
 `VOSU_OP_FOCUS_CHANGED` (host → plugin, CBOR, no reply): `{"handle": u64, "focused": bool}`.
 
-`SESSION_ATTACHED` carries no `focused` field; a plugin that needs it waits for the first `FOCUS_CHANGED` (sent once, promptly, after attach, even if focus does not change relative to the previous state).
+`SESSION_ATTACHED` carries no `focused` field; a plugin that needs it waits for the first `FOCUS_CHANGED` (sent once, promptly, after the session is identified, even if focus does not change relative to the previous state).
 
 **Delivery ordering.** Core sends a plugin instance `SESSION_ATTACHED` for a handle before any other message naming that handle to it — not only to the owning game plugin, but to any plugin a handle is about to be named to for any reason (a `STATE_SUBSCRIBE`/`STATE_UPDATE` targeting that session, an `ACTION_INVOKE`/`ACTION_CALL` carrying it, a `RESOURCE_RESOLVE` for a session-scoped root). A plugin that has no use for session lifecycle itself may simply ignore the fields it does not need.
 
-**Non-owning plugins and session events.** `SESSION_ATTACHED`, `SESSION_DETACHED`, and `FOCUS_CHANGED` for a given session go to that session's owning game plugin always, and additionally to any other plugin that subscribed to session events: `VOSU_OP_STATE_SUBSCRIBE` (§6.12) with a selector naming the reserved pseudo-namespace `vosu.sessions` and an empty pointer, exactly as `docs/v2/api-v1.md`'s session-events WebSocket reuses its field-subscription protocol for the same purpose. A subscribing plugin receives the three messages above instead of (not in addition to) a `STATE_UPDATE` for that pseudo-namespace, since they are already typed events; this is the one selector for which `STATE_SUBSCRIBE` changes a plugin's delivered opcode set rather than only its demand.
+**Non-owning plugins and session events.** `SESSION_ATTACHED`, `SESSION_DETACHED`, and `FOCUS_CHANGED` for a given session go to that session's owning game plugin always, and additionally to any other plugin that subscribed to session events: `VOSU_OP_STATE_SUBSCRIBE` (§6.12) with a selector naming the reserved pseudo-namespace `vosu.sessions` and an empty pointer, exactly as `docs/v2/api-v1.md`'s session-events WebSocket reuses its field-subscription protocol for the same purpose. Non-owning plugins learn of a session only once it is identified: their `SESSION_ATTACHED` is sent when the owning plugin's `SESSION_IDENTIFY` arrives, not at attach. A subscribing plugin receives the three messages above instead of (not in addition to) a `STATE_UPDATE` for that pseudo-namespace, since they are already typed events; this is the one selector for which `STATE_SUBSCRIBE` changes a plugin's delivered opcode set rather than only its demand.
 
 ### 6.3 Memory read plans
 
@@ -289,7 +289,7 @@ command_line_patterns = []
 root_slots = ["songs"]            # declared root-slot names only, no paths (§6.5); paths register at runtime via VOSU_OP_ROOT_DECLARE
 covers = ["field:vosu.play.combo", "field:vosu.chart.title"]  # common-namespace fields this game plugin fills (`docs/v2/catalog-v2.md` defines; §6.6 consumes it)
 
-[[resource_kinds]]                # upper bound on the MIME-type families a kind may resolve to (§6.5); api-v1.md owns the allowlist itself
+[[resource_kinds]]                # upper bound on the MIME-type families a kind may be typed as (§6.5); api-v1.md owns the allowlist itself
 kind = "file"                     # bare; one of the reserved core kinds (file/audio/background/set/skin), so this stays "resource:chart.file" — never prefixed with this plugin's own id
 tree = false
 families = ["chart-text"]

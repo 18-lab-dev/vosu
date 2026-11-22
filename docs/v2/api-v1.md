@@ -67,7 +67,7 @@ API v1 unless the plugin eventually identifies it.
 
 ### `GET /api/v1/sessions`
 
-Returns `{"sessions": [<summary>, ...]}`, every currently attached session, in
+Returns `{"sessions": [<summary>, ...]}`, every currently identified session, in
 no particular order. `Cache-Control: no-store`.
 
 ### `GET /api/v1/sessions/{id|active}`

@@ -226,14 +226,19 @@ cli = true                        # also exposed as `vosux <plugin-id> beatmap.i
   core namespace, or one under a namespace this plugin's own `provides`
   already lists, is a manifest validation error.
 - Coverage matching: a `covers` entry covers that field and every field
-  below it (the ancestor rule of "Capability coverage"). A reserved-name
-  `[[resource_kinds]]` entry (`file`, `audio`, `background`, `set`) covers
+  below it (the ancestor rule of "Capability coverage"), except
+  `field:vosu.chart.resources` and `field:vosu.skin.tree` and everything
+  below them, which only reserved-name `[[resource_kinds]]` entries cover: an
+  entry named `file`, `audio`, `background`, or `set` covers
   `field:vosu.chart.resources.<kind>`, and a `skin` entry covers
-  `field:vosu.skin.tree`. Both kinds of declaration count toward a common
-  namespace's presence (`docs/v2/state-schema.md`). The dashboard's "works
-  with" list for an overlay or tool is the set of game plugins (bundled,
-  installed, or catalogued) whose coverage includes every common-namespace
-  `field:` and core `resource:` id it requires.
+  `field:vosu.skin.tree`. A `covers` id that names one of those fields or a
+  descendant is a manifest validation error. Both kinds of declaration count
+  toward a common namespace's presence (`docs/v2/state-schema.md`). The
+  dashboard's "works with" list for an overlay or tool is the set of game
+  plugins (bundled, installed, or catalogued) whose coverage includes every
+  common-namespace `field:` and core `resource:` id it requires, and that
+  themselves provide every `game:` id and every `field:`/`resource:` id in
+  their own namespace that it requires.
 - Every `action:<plugin-id>.<name>` entry in `provides` has exactly one
   `[[actions]]` entry with that `name`, and vice versa; their `version`
   fields are equal. A `provides` action entry with no matching `[[actions]]`
@@ -471,10 +476,11 @@ game, not any real supported or planned integration.
   `provides` as `resource:<plugin-id>.<kind>`.
 - `covers` appears only on `plugins` entries and mirrors the manifest's
   `covers` verbatim: the common-namespace `field:` ids this plugin fills,
-  empty by default. It is not a `provides` entry and does not go through
-  "Capability coverage" above (core namespaces are always built-in
-  providers, below); it only tells core and the dashboard which parts of a
-  common namespace a particular game plugin actually fills.
+  empty by default. It is not a `provides` entry and takes no part in
+  resolver satisfaction (core namespaces are always built-in providers,
+  below), though it uses "Capability coverage"'s ancestor matching; it only
+  tells core and the dashboard which parts of a common namespace a particular
+  game plugin actually fills.
 - `runtime` appears only on `plugins` entries and mirrors the manifest's
   runtime request (`"in-process"` or `"process"`, `docs/v2/plugin-abi.md`)
   verbatim; the install plan (below) uses it.
