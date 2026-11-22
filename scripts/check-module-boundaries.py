@@ -45,6 +45,8 @@ STRING_LITERAL = re.compile(r'"(?:\\.|[^"\\\n])*"')
 CHAR_LITERAL = re.compile(r"'(?:\\.|[^'\\\n])'")
 CRATE_PATH = re.compile(r"crate::([A-Za-z_]\w*)")
 CRATE_GROUP = re.compile(r"crate::\{")
+PUB_USE_GROUP = re.compile(r"pub use ([A-Za-z_][\w:]*)::\{([^}]*)\}", re.S)
+PUB_USE_SINGLE = re.compile(r"pub use ([A-Za-z_][\w:]*)::([A-Za-z_]\w*)\s*;")
 
 
 def top_level_modules(lib_text):
@@ -149,19 +151,45 @@ def group_members(text):
                 yield content_start + offset + leading, name.group(0)
 
 
-def file_edges(relative_path, text, modules):
+def reexport_symbol_modules(lib_text, modules):
+    """Map a symbol this crate re-exports at its root to the top-level
+    module that defines it, by reading lib.rs's own `pub use path::{...}`/
+    `pub use path::name;` statements. `crate::symbol` reaches that module
+    through the re-export without ever spelling `crate::module::symbol`,
+    which `CRATE_PATH`'s bare name capture cannot trace back to a module
+    on its own."""
+    masked = mask(lib_text)
+    symbol_module = {}
+    for match in PUB_USE_GROUP.finditer(masked):
+        owner = match.group(1).split("::", 1)[0]
+        if owner not in modules:
+            continue
+        for _, item in split_top_level(match.group(2)):
+            name = re.match(r"\s*[A-Za-z_]\w*", item)
+            if name:
+                symbol_module[name.group(0).strip()] = owner
+    for match in PUB_USE_SINGLE.finditer(masked):
+        owner = match.group(1).split("::", 1)[0]
+        if owner in modules:
+            symbol_module[match.group(2)] = owner
+    return symbol_module
+
+
+def file_edges(relative_path, text, modules, symbol_module):
     source_module = owning_module(relative_path, modules)
     if source_module is None:
         return
     cleaned = strip_inline_test_blocks(mask(text))
     seen = {}
     for offset, name in group_members(cleaned):
-        if name in modules and name != source_module and name not in seen:
-            seen[name] = offset
+        target = name if name in modules else symbol_module.get(name)
+        if target is not None and target != source_module and target not in seen:
+            seen[target] = offset
     for match in CRATE_PATH.finditer(cleaned):
         name = match.group(1)
-        if name in modules and name != source_module and name not in seen:
-            seen[name] = match.start()
+        target = name if name in modules else symbol_module.get(name)
+        if target is not None and target != source_module and target not in seen:
+            seen[target] = match.start()
     for target, offset in seen.items():
         line = cleaned.count("\n", 0, offset) + 1
         yield source_module, target, relative_path, line
@@ -180,12 +208,13 @@ def read_crate_files(crate_root):
 def build_graph(src_files, lib_text):
     """Return (edges, modules). edges: dict[(src, dst)] -> (file, line) first seen."""
     modules = top_level_modules(lib_text)
+    symbol_module = reexport_symbol_modules(lib_text, modules)
     excluded = cfg_test_external_files(src_files)
     edges = {}
     for relative_path, text in sorted(src_files.items()):
         if is_test_path(relative_path) or relative_path in excluded:
             continue
-        for source, target, path, line in file_edges(relative_path, text, modules):
+        for source, target, path, line in file_edges(relative_path, text, modules, symbol_module):
             edges.setdefault((source, target), (path, line))
     return edges, modules
 

@@ -1,17 +1,30 @@
 # Dependencies between vosu-plugin-api's own top-level src/ modules,
 # enforced by scripts/check-module-boundaries.py.
+#
+# The checker's crate::X regex only resolves X when it is itself a module
+# name (crate::cbor::..., crate::{cbor, flags}); it cannot see an edge
+# created by importing a symbol re-exported at the crate root
+# (crate::vosu_status, crate::{vosu_plan_id, ...}). Several real edges
+# below are only visible that way; they are listed deliberately so the
+# graph stays accurate even where the checker itself cannot derive them.
 cbor -> validate
 message -> cbor
 message -> flags
 message -> flat
 message -> opcode
+message -> primitives
+message -> status
 message -> validate
 message -> value
 sdk -> cbor
+sdk -> envelope
+sdk -> limits
 sdk -> message
 sdk -> opcode
+sdk -> primitives
+sdk -> status
+sdk -> vtable
 vtable -> envelope
-vtable -> status
 validate -> flags
 validate -> flat
 validate -> limits

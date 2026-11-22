@@ -77,8 +77,8 @@ pub use status::vosu_status;
 pub use validate::{
     ValidationError, read_flat_header, validate_array_range, validate_bytes_range,
     validate_demand_changed, validate_flags, validate_frame_len, validate_publish_batch,
-    validate_publish_field, validate_read_plan_len, validate_read_plan_result,
-    validate_read_plan_submit, validate_stream_chunk_len,
+    validate_publish_field, validate_read_plan_len, validate_read_plan_ref_op_width,
+    validate_read_plan_result, validate_read_plan_submit, validate_stream_chunk_len,
 };
 pub use value::vosu_value_kind;
 pub use vtable::{VosuPluginEntryFn, vosu_host_services, vosu_plugin_vtable};

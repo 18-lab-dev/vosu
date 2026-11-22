@@ -52,6 +52,21 @@ pub enum ValidationError {
     InvalidEnumValue,
     /// A dependent stage's `ref_stage` does not precede its own index.
     DependentStageNotEarlier,
+    /// A dependent stage's `ref_op` does not name an op within the
+    /// referenced stage's own `op_count` (M3).
+    RefOpOutOfRange,
+    /// A dependent stage's `ref_op` names an op whose declared `length`
+    /// does not equal the session's pointer width (M3; checked only by
+    /// [`validate_read_plan_ref_op_width`], which needs that width as an
+    /// input this function does not have).
+    RefOpWrongWidth,
+    /// The read-plan submission's resulting `VOSU_OP_READ_PLAN_RESULT`
+    /// payload would exceed `VOSU_READ_PLAN_MAX_BYTES`, assuming every op
+    /// succeeds (the largest a well-formed result can be) — rejected
+    /// before any read executes (§6.3, M3).
+    ResultTooLarge,
+    /// A field the header documents as always `0` held a nonzero value.
+    ReservedNonZero,
     /// A `VOSU_OP_PUBLISH_BATCH` entry's `handle` differs from the batch's
     /// own `handle` (D4).
     BatchHandleMismatch,
@@ -238,11 +253,18 @@ pub fn validate_demand_changed(buffer: &[u8]) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Validates a `VOSU_OP_READ_PLAN_SUBMIT` payload end to end: the
-/// `VOSU_READ_PLAN_MAX_BYTES` cap, the root module name (if
-/// `VOSU_BASE_MODULE`), every stage's own base kind and (for a dependent
-/// stage) that `ref_stage` precedes it, and every stage's `ops` array
-/// bounds (`docs/v2/plugin-abi.md` §6.3).
+/// Validates a `VOSU_OP_READ_PLAN_SUBMIT` payload: the
+/// `VOSU_READ_PLAN_MAX_BYTES` cap on both this payload and its worst-case
+/// resulting `VOSU_OP_READ_PLAN_RESULT` (every op succeeding), the root
+/// module name (if `VOSU_BASE_MODULE`), every `reserved` field's
+/// documented-zero value, every stage's own base kind, (for a dependent
+/// stage) that `ref_stage` precedes it and `ref_op` names an op within
+/// that stage's own `op_count`, and every stage's `ops` array bounds
+/// (`docs/v2/plugin-abi.md` §6.3). This does *not* check that a dependent
+/// stage's `ref_op` reads exactly the session's pointer width: that needs
+/// the session's bitness, which this function has no way to know, so it
+/// is [`validate_read_plan_ref_op_width`]'s separate, additional check
+/// (M3) — call both to validate a submission end to end.
 pub fn validate_read_plan_submit(buffer: &[u8]) -> Result<(), ValidationError> {
     validate_read_plan_len(buffer.len())?;
     let header: vosu_read_plan_submit_header = read_flat_header(buffer)?;
@@ -258,7 +280,78 @@ pub fn validate_read_plan_submit(buffer: &[u8]) -> Result<(), ValidationError> {
         Ok(vosu_plan_base_kind::VOSU_BASE_ABSOLUTE) => {}
         Err(()) => return Err(ValidationError::InvalidEnumValue),
     }
+    if header.root.reserved != 0 {
+        return Err(ValidationError::ReservedNonZero);
+    }
 
+    let stages = validate_array_range::<vosu_stage_header>(
+        buffer.len(),
+        header.stages_offset,
+        header.stage_count,
+    )?;
+    let stage_size = size_of::<vosu_stage_header>();
+    let op_size = size_of::<vosu_plan_op>();
+    // Worst-case `VOSU_OP_READ_PLAN_RESULT` size if every op succeeds: the
+    // result header, plus one `vosu_read_result_flat` per op, plus that
+    // op's own `length` bytes — the largest a well-formed result can be
+    // (§6.3's "resulting response payload" cap, M3).
+    let mut result_size: usize = size_of::<vosu_read_plan_result_header>();
+    for stage_index in 0..header.stage_count as usize {
+        let stage: vosu_stage_header =
+            read_header_at(buffer, stages.start + stage_index * stage_size)?;
+        if stage.base.reserved != 0 {
+            return Err(ValidationError::ReservedNonZero);
+        }
+        match vosu_stage_base_kind::try_from(stage.base.kind) {
+            Ok(vosu_stage_base_kind::VOSU_STAGE_BASE_DEPENDENT) => {
+                if stage.base.ref_stage as usize >= stage_index {
+                    return Err(ValidationError::DependentStageNotEarlier);
+                }
+                let ref_stage: vosu_stage_header = read_header_at(
+                    buffer,
+                    stages.start + stage.base.ref_stage as usize * stage_size,
+                )?;
+                if stage.base.ref_op >= ref_stage.op_count {
+                    return Err(ValidationError::RefOpOutOfRange);
+                }
+            }
+            Ok(vosu_stage_base_kind::VOSU_STAGE_BASE_ROOT) => {}
+            Err(()) => return Err(ValidationError::InvalidEnumValue),
+        }
+        let ops =
+            validate_array_range::<vosu_plan_op>(buffer.len(), stage.ops_offset, stage.op_count)?;
+        debug_assert!(ops.len() == stage.op_count as usize * op_size);
+        for op_index in 0..stage.op_count as usize {
+            let op: vosu_plan_op = read_header_at(buffer, ops.start + op_index * op_size)?;
+            if op.reserved != 0 {
+                return Err(ValidationError::ReservedNonZero);
+            }
+            result_size = result_size
+                .checked_add(size_of::<vosu_read_result_flat>())
+                .and_then(|size| size.checked_add(op.length as usize))
+                .ok_or(ValidationError::Overflow)?;
+        }
+    }
+    if result_size > VOSU_READ_PLAN_MAX_BYTES as usize {
+        return Err(ValidationError::ResultTooLarge);
+    }
+    Ok(())
+}
+
+/// Validates that every dependent stage's `ref_op` names an op whose
+/// declared `length` equals `pointer_width` (4 for a `Bitness::X86`
+/// session, 8 for `Bitness::X64`, `docs/v2/plugin-abi.md` §6.2/§6.3) —
+/// additional to, and assuming the caller already ran,
+/// [`validate_read_plan_submit`]'s own structural checks (M3). This needs
+/// the submitting session's bitness, which only a host (not this crate's
+/// opcode-generic `Message::decode`) has, so it is a separate function a
+/// caller runs once it knows that bitness, rather than part of the
+/// generic decode path.
+pub fn validate_read_plan_ref_op_width(
+    buffer: &[u8],
+    pointer_width: u32,
+) -> Result<(), ValidationError> {
+    let header: vosu_read_plan_submit_header = read_flat_header(buffer)?;
     let stages = validate_array_range::<vosu_stage_header>(
         buffer.len(),
         header.stages_offset,
@@ -269,18 +362,23 @@ pub fn validate_read_plan_submit(buffer: &[u8]) -> Result<(), ValidationError> {
     for stage_index in 0..header.stage_count as usize {
         let stage: vosu_stage_header =
             read_header_at(buffer, stages.start + stage_index * stage_size)?;
-        match vosu_stage_base_kind::try_from(stage.base.kind) {
-            Ok(vosu_stage_base_kind::VOSU_STAGE_BASE_DEPENDENT) => {
-                if stage.base.ref_stage as usize >= stage_index {
-                    return Err(ValidationError::DependentStageNotEarlier);
-                }
-            }
-            Ok(vosu_stage_base_kind::VOSU_STAGE_BASE_ROOT) => {}
-            Err(()) => return Err(ValidationError::InvalidEnumValue),
+        if stage.base.kind != vosu_stage_base_kind::VOSU_STAGE_BASE_DEPENDENT as u32 {
+            continue;
         }
-        let ops =
-            validate_array_range::<vosu_plan_op>(buffer.len(), stage.ops_offset, stage.op_count)?;
-        debug_assert!(ops.len() == stage.op_count as usize * op_size);
+        let ref_stage: vosu_stage_header = read_header_at(
+            buffer,
+            stages.start + stage.base.ref_stage as usize * stage_size,
+        )?;
+        let ops = validate_array_range::<vosu_plan_op>(
+            buffer.len(),
+            ref_stage.ops_offset,
+            ref_stage.op_count,
+        )?;
+        let op: vosu_plan_op =
+            read_header_at(buffer, ops.start + stage.base.ref_op as usize * op_size)?;
+        if op.length != pointer_width {
+            return Err(ValidationError::RefOpWrongWidth);
+        }
     }
     Ok(())
 }
@@ -471,6 +569,94 @@ mod tests {
         assert_eq!(
             validate_read_plan_submit(&buf),
             Err(ValidationError::DependentStageNotEarlier)
+        );
+    }
+
+    /// Two stages: stage 0 (root, one op) and stage 1, dependent on stage
+    /// 0 with `ref_op` past stage 0's own `op_count` (M3).
+    fn two_stage_plan(stage0_op_count: u32, ref_op: u32, op_length: u32) -> Vec<u8> {
+        let mut buf = Vec::new();
+        push_u64(&mut buf, 1); // plan
+        push_u64(&mut buf, 1); // handle
+        push_u32(&mut buf, 0); // root.kind = VOSU_BASE_ABSOLUTE
+        push_u32(&mut buf, 0); // root.module_name_offset
+        push_u32(&mut buf, 0); // root.module_name_len
+        push_u32(&mut buf, 0); // root.reserved
+        push_u64(&mut buf, 0x1000); // root.address
+        push_i64(&mut buf, 0); // root.module_offset
+        push_u32(&mut buf, 56); // stages_offset
+        push_u32(&mut buf, 2); // stage_count
+        // stage 0: VOSU_STAGE_BASE_ROOT, stage0_op_count ops at offset 120
+        push_u32(&mut buf, 0); // base.kind = VOSU_STAGE_BASE_ROOT
+        push_u32(&mut buf, 0); // base.ref_stage
+        push_u32(&mut buf, 0); // base.ref_op
+        push_u32(&mut buf, 0); // base.reserved
+        push_i64(&mut buf, 0); // base.offset
+        push_u32(&mut buf, 120); // ops_offset
+        push_u32(&mut buf, stage0_op_count); // op_count
+        // stage 1: VOSU_STAGE_BASE_DEPENDENT on stage 0
+        push_u32(&mut buf, 1); // base.kind = VOSU_STAGE_BASE_DEPENDENT
+        push_u32(&mut buf, 0); // base.ref_stage
+        push_u32(&mut buf, ref_op); // base.ref_op
+        push_u32(&mut buf, 0); // base.reserved
+        push_i64(&mut buf, 0); // base.offset
+        push_u32(&mut buf, 120 + stage0_op_count * 16); // ops_offset (0 ops)
+        push_u32(&mut buf, 0); // op_count
+        // stage 0's ops
+        for _ in 0..stage0_op_count {
+            push_i64(&mut buf, 0); // offset
+            push_u32(&mut buf, op_length); // length
+            push_u32(&mut buf, 0); // reserved
+        }
+        buf
+    }
+
+    #[test]
+    fn read_plan_submit_rejects_ref_op_past_the_referenced_stages_op_count() {
+        let buf = two_stage_plan(1, 1, 4); // stage 0 has 1 op (index 0 only); ref_op 1 is out of range
+        assert_eq!(
+            validate_read_plan_submit(&buf),
+            Err(ValidationError::RefOpOutOfRange)
+        );
+    }
+
+    #[test]
+    fn read_plan_submit_accepts_ref_op_within_range() {
+        let buf = two_stage_plan(1, 0, 4); // ref_op 0 is the only (and valid) op in stage 0
+        assert!(validate_read_plan_submit(&buf).is_ok());
+    }
+
+    #[test]
+    fn read_plan_ref_op_width_rejects_a_mismatched_pointer_width() {
+        let buf = two_stage_plan(1, 0, 4); // stage 0's only op reads 4 bytes
+        assert_eq!(
+            validate_read_plan_ref_op_width(&buf, 8), // session is x64 (8 bytes)
+            Err(ValidationError::RefOpWrongWidth)
+        );
+        assert!(validate_read_plan_ref_op_width(&buf, 4).is_ok());
+    }
+
+    #[test]
+    fn read_plan_submit_rejects_a_worst_case_result_over_the_cap() {
+        // One op whose length alone, plus the fixed per-result/header
+        // overhead, exceeds VOSU_READ_PLAN_MAX_BYTES (64 KiB) — rejected
+        // before any read executes (§6.3, M3).
+        let buf = two_stage_plan(1, 0, VOSU_READ_PLAN_MAX_BYTES);
+        assert_eq!(
+            validate_read_plan_submit(&buf),
+            Err(ValidationError::ResultTooLarge)
+        );
+    }
+
+    #[test]
+    fn read_plan_submit_rejects_nonzero_reserved_fields() {
+        let mut buf = two_stage_plan(1, 0, 4);
+        // plan(8) + handle(8) + root.kind(4) + root.module_name_offset(4)
+        // + root.module_name_len(4) = 28: `root.reserved`'s byte offset.
+        buf[28..32].copy_from_slice(&1u32.to_le_bytes());
+        assert_eq!(
+            validate_read_plan_submit(&buf),
+            Err(ValidationError::ReservedNonZero)
         );
     }
 }

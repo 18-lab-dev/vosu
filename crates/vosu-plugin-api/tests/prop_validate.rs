@@ -3,11 +3,30 @@
 
 use proptest::prelude::*;
 use vosu_plugin_api::{
-    VOSU_FRAME_MAX_BYTES, VOSU_READ_PLAN_MAX_BYTES, VOSU_READ_PLAN_SYNC,
-    VOSU_STREAM_CHUNK_MAX_BYTES, ValidationError, validate_bytes_range, validate_flags,
-    validate_frame_len, validate_read_plan_len, validate_stream_chunk_len, vosu_opcode,
+    PlanBase, PlanOp, Stage, StageBase, VOSU_FRAME_MAX_BYTES, VOSU_READ_PLAN_MAX_BYTES,
+    VOSU_READ_PLAN_SYNC, VOSU_STREAM_CHUNK_MAX_BYTES, ValidationError, validate_bytes_range,
+    validate_flags, validate_frame_len, validate_read_plan_len, validate_read_plan_ref_op_width,
+    validate_read_plan_submit, validate_stream_chunk_len, vosu_opcode,
 };
 use vosu_proptest::vosu_proptest_config;
+
+/// Encodes a one-stage, one-op `VOSU_OP_READ_PLAN_SUBMIT` payload whose
+/// single op has the given `length`, for exercising the worst-case
+/// response-size cap (M3).
+fn single_op_submit_payload(length: u32) -> Vec<u8> {
+    let message = vosu_plugin_api::Message::ReadPlanSubmit(vosu_plugin_api::ReadPlanSubmit {
+        plan: 1,
+        handle: 1,
+        root: PlanBase::Absolute(0x1000),
+        stages: vec![Stage {
+            base: StageBase::Root,
+            base_offset: 0,
+            ops: vec![PlanOp { offset: 0, length }],
+        }],
+        sync: false,
+    });
+    message.encode_payload().expect("encode")
+}
 
 proptest! {
     #![proptest_config(vosu_proptest_config())]
@@ -85,6 +104,54 @@ proptest! {
             prop_assert!(result.is_ok());
         } else {
             prop_assert_eq!(result, Err(ValidationError::UnrecognizedFlags));
+        }
+    }
+
+    /// A read plan's worst-case response (header + one result struct +
+    /// its op's own `length`) is accepted exactly at
+    /// `VOSU_READ_PLAN_MAX_BYTES` and rejected one byte over (M3).
+    #[test]
+    fn prop_read_plan_submit_result_size_cap_is_exact(delta in 0u32..256) {
+        // 16: `vosu_read_plan_result_header`; 24: one `vosu_read_result_flat`.
+        let max_op_length = VOSU_READ_PLAN_MAX_BYTES - 16 - 24;
+        let ok_len = max_op_length.saturating_sub(delta);
+        let err_len = max_op_length + 1 + delta;
+        prop_assert!(validate_read_plan_submit(&single_op_submit_payload(ok_len)).is_ok());
+        prop_assert_eq!(
+            validate_read_plan_submit(&single_op_submit_payload(err_len)),
+            Err(ValidationError::ResultTooLarge)
+        );
+    }
+
+    /// `validate_read_plan_ref_op_width` accepts a dependent stage's
+    /// `ref_op` exactly when its op's declared `length` equals the given
+    /// pointer width, and rejects every other width (M3).
+    #[test]
+    fn prop_read_plan_ref_op_width_matches_exactly(op_length in 1u32..16, pointer_width in prop_oneof![Just(4u32), Just(8u32)]) {
+        let message = vosu_plugin_api::Message::ReadPlanSubmit(vosu_plugin_api::ReadPlanSubmit {
+            plan: 1,
+            handle: 1,
+            root: PlanBase::Absolute(0x1000),
+            stages: vec![
+                Stage {
+                    base: StageBase::Root,
+                    base_offset: 0,
+                    ops: vec![PlanOp { offset: 0, length: op_length }],
+                },
+                Stage {
+                    base: StageBase::Dependent { ref_stage: 0, ref_op: 0 },
+                    base_offset: 0,
+                    ops: vec![],
+                },
+            ],
+            sync: false,
+        });
+        let payload = message.encode_payload().expect("encode");
+        let result = validate_read_plan_ref_op_width(&payload, pointer_width);
+        if op_length == pointer_width {
+            prop_assert!(result.is_ok());
+        } else {
+            prop_assert_eq!(result, Err(ValidationError::RefOpWrongWidth));
         }
     }
 }
