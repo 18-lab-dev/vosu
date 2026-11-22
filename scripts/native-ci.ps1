@@ -55,6 +55,11 @@ New-Item -ItemType Directory -Force -Path $cargoTarget | Out-Null
 $env:CARGO_TARGET_DIR = $cargoTarget
 $env:CARGO_HOME = 'V:\agent-desktop\.cargo'
 $env:CARGO_INCREMENTAL = '0'
+# Matches ci.yml's windows-native job: full PDB debuginfo scales badly with
+# workspace crate count (M0 added ~8 crates and regressed the hosted job by
+# 186s); line tables keep panic backtraces readable. See
+# docs/testing/benchmarks.md for the measurement.
+$env:CARGO_PROFILE_DEV_DEBUG = 'line-tables-only'
 $tmp = Join-Path $WorkRoot 'tmp'
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $env:TEMP = $tmp

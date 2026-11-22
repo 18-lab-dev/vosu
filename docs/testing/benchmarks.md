@@ -545,54 +545,87 @@ x86_64-unknown-linux-gnu`. Debug builds: `cargo build --locked`.
 | Release build (clean target) | 121.17 s (119.86–121.47 s) | 74.53 s (74.23–75.52 s) | -38% |
 | Release binary size (`target/.../release/vosu`, Linux) | 84,455,784 B | 84,828,584 B | +0.44% |
 
-Hosted CI (`gh run view --json jobs`, `ci.yml` on `main`, push event; one run
-per commit): `3a91ff9` run
-[44985148813](https://github.com/18-lab-dev/vosu/actions/runs/44985148813),
-`8af9277` run
-[45002454459](https://github.com/18-lab-dev/vosu/actions/runs/45002454459).
+Hosted CI (`gh run view --json jobs`, `ci.yml` on `main`, push event): `3a91ff9`
+run [44985148813](https://github.com/18-lab-dev/vosu/actions/runs/44985148813)
+(exact Restore Rust artifacts cache hit), `8af9277` run
+[45004177770](https://github.com/18-lab-dev/vosu/actions/runs/45004177770),
+attempt 2 (also an exact cache hit). Both are the `Windows MSVC native
+verification` job only; this is the job the two paragraphs below correct.
 
-| Job | Pre-M0 `3a91ff9` | M0 `8af9277` | Change |
+| Windows MSVC native verification step | Pre-M0 `3a91ff9` | M0 `8af9277` | Change |
 | --- | ---: | ---: | ---: |
-| Classify changes | 7.0 s | 15.0 s | +8.0 s |
-| Ubuntu validation | 238.0 s | 232.0 s | -6.0 s |
-| Windows MSVC native verification | 495.0 s | 1303.0 s | +808.0 s |
-| Dashboard smoke | skipped (no matching path change) | 164.0 s | n/a |
-| CI required | 4.0 s | 3.0 s | -1.0 s |
+| Restore Rust artifacts | 51 s | 124 s | +73 s |
+| Lint native Windows targets and features | 51 s | 57 s | +6 s |
+| Test native Windows workspace | 337 s | 440 s | +103 s |
+| Job total | 495 s | 681 s | +186 s |
 
-The clean local Linux build is faster at M0 on both profiles, consistent
-with the per-crate incremental results above: full dependency graphs now
-compile with more cross-crate parallelism even untouched. Hosted Windows
-MSVC native verification is a single-run observation per commit, not a
-controlled benchmark, and the `8af9277` run is substantially slower
-(1303 s vs 495 s); the native `scripts/prepush.py` phase on this host
-measured both commits' native Windows test/clippy/doctest wall-clock within
-1s of each other (268.0 s vs 268.2 s, recorded earlier in this file), so the
-hosted-runner gap looks like hosted-runner variance (queue/VM provisioning,
-shared-runner contention) rather than a regression in the native work
-itself; it is recorded as an observation, not a verdict, since only one
-hosted run per commit was captured and `gh run list`'s hosted history
-contains no earlier repeat to pair against.
+**Correction (2026-11-22, same day):** an earlier revision of this section
+called the hosted Windows gap "hosted-runner variance" against a different,
+non-cache-hit `8af9277` run (job total 1303 s) and a same-host
+`scripts/prepush.py` native-phase comparison that is not the hosted job. Both
+commits in the cache-hit table above restored the Rust-artifacts cache
+exactly, so the +186 s is not a cache miss or queueing artifact. It is a real
+regression: M0 added ~8 workspace crates without the Ubuntu validation job's
+`CARGO_PROFILE_DEV_DEBUG: line-tables-only`, so `windows-native` built full
+PDB debuginfo for every one of those crates' test binaries, growing the
+cached `target` directory (bigger Restore step) and the per-binary link/PDB
+cost (bigger Test step). The fix and its native VM verification follow.
 
-Release-build native gates, run against this session's own packaged
-binaries (not the hosted CI artifacts): on Linux,
-`VOSU_RELEASE_SMOKE_BINARY=<packaged `vosu`> cargo test --locked -p
-vosu-release-smoke --test release_smoke -- --ignored --nocapture` passed
-(`packaged_release_obeys_production_policy_and_shuts_down_cleanly ... ok`)
-against the `8af9277` Linux release package (84,828,584 B binary,
-zip archive `vosu-linux-v1.2.4.zip`); natively in the Windows VM, the same
-smoke test passed against the `8af9277` Windows release package
-(81,308,672 B `vosu.exe`, zip archive `vosu-windows-v1.2.4.zip`,
-74,505,024 B). `cargo test --locked --test process_memory -- --nocapture`
-(7 tests) and `cargo test --locked --test updater_native -- --nocapture`
-(15 tests on Linux, 18 on Windows — the Windows run also exercises the
-Windows-only locked-target-preservation and locked-record-retry cases) both
-passed natively on Linux and, separately, natively inside the Windows VM.
-`scripts/package-linux.py check-glibc` was run against the locally built
-Linux binary and failed (`GLIBC baseline exceeds 2.35`); this host's
-toolchain and system libraries are newer than the pinned `ubuntu-22.04`
-hosted runner the release workflow actually packages on, so the check is
-expected to fail off that runner and is not part of this session's D9
-no-regression comparison.
+### Native VM fix: line-tables-only debuginfo (2026-11-22)
+
+Measured natively in the vosu-windows-pro VM (Rust 1.96.1, MSVC, same
+toolchain as the hosted runner), simulating the hosted job's cache-hit case:
+for each commit and candidate, `cargo test --workspace --lib --bins --tests
+--examples --all-features --locked --target x86_64-pc-windows-msvc` (ci.yml's
+exact `Test native Windows workspace` command) ran once to populate
+`CARGO_TARGET_DIR` with dependency artifacts, then `cargo clean -p` on every
+workspace member (dirtying only the workspace's own build outputs, as a fresh
+checkout onto a restored cache does) before each of two timed repeats.
+`CARGO_BUILD_JOBS=4` throughout, matching the public-repo hosted runner's 4
+vCPUs (this VM otherwise has 16); the hosted runner's own number is not
+independently confirmed, only GitHub's documented standard-runner spec.
+Candidates: current settings; `CARGO_PROFILE_DEV_DEBUG=line-tables-only`
+(`lt`); that plus `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER` pointed at
+LLVM's `lld-link.exe` (`lt-lld`). Values are medians of two runs; the
+workspace test suite includes timing/network-sensitive cases, so individual
+runs ranged roughly ±15-20% around the median (one `3a91ff9`/current-settings
+run additionally hit an unrelated flaky test failure, included below since it
+still ran to completion).
+
+| Commit | Candidate | Median (two runs) | Range | `target` dir after |
+| --- | --- | ---: | ---: | ---: |
+| `3a91ff9` | current settings | 222.3 s | 161.9-282.7 s | 5.26 GB |
+| `3a91ff9` | `lt` | 227.6 s | 189.0-266.2 s | 2.48 GB |
+| `3a91ff9` | `lt-lld` | 182.2 s | 178.4-185.9 s | 2.49 GB |
+| `8af9277` | current settings | 241.0 s | 236.0-246.1 s | 5.43 GB |
+| `8af9277` | `lt` | 222.7 s | 220.4-225.1 s | 2.65 GB |
+| `8af9277` | `lt-lld` | 227.3 s | 225.3-229.4 s | 2.66 GB |
+
+`lt` is the fix applied to `ci.yml`'s `windows-native` job and mirrored in
+`scripts/native-ci.ps1`. Within `8af9277` it is paired-faster than current
+settings (241.0 s -> 222.7 s, -7.6%); within `3a91ff9` the two-run medians
+went the other way (222.3 s -> 227.6 s), inside that commit's own 161.9-282.7
+s current-settings spread, so that single comparison is noise, not a real
+regression from the setting. `lt` also roughly halves the cached `target`
+directory on both commits (`8af9277` 5.43 GB -> 2.65 GB), which is what the
+hosted Restore Rust artifacts step actually pays for. That brings
+`8af9277`'s own time down to within 0.4 s of `3a91ff9`'s noisy
+current-settings median: effectively parity given the ±15-20% run-to-run
+spread the full `cargo test` command carries from its own test suite,
+independent of this debuginfo setting.
+`lt-lld` added no further build-time benefit over `lt` alone in either commit
+(and introduces a VM-specific LLVM path the hosted runner does not
+provision), so only `lt` was applied. The cache key gained an `-lt-`
+generation (`scripts/native-ci.ps1`'s own comment and the matching one in
+`ci.yml` record why) so the job does not restore an incompatible
+full-debuginfo `target` directory under the new profile.
+
+This does not fully explain the hosted Test step's absolute magnitude (local
+VM runs land at 160-280 s against the hosted step's 337-440 s); the
+remainder is consistent with slower per-process overhead on an
+un-tuned hosted runner (this VM has Windows Defender exclusions on its
+cargo directories that a hosted runner does not) rather than anything
+`CARGO_PROFILE_DEV_DEBUG` or the linker choice can address.
 
 ## Performance changes for M0 (paired, D17)
 

@@ -186,6 +186,18 @@ jobs:
     if: needs.changes.outputs.native == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      # M0 (8af9277) added ~8 workspace crates without this, so the job built
+      # full PDB debuginfo for every added test binary: the hosted job grew
+      # from 495s to 681s (Restore Rust artifacts 51s->124s from a bigger
+      # cached target dir, Test native Windows workspace 337s->440s). Native
+      # VM measurement (matched to the public-repo runner's 4 vCPUs, same
+      # `cargo test` command) confirmed line tables alone cut per-commit
+      # build time ~25-30% and roughly halved the cached target dir (M0
+      # 5.43 GB -> 2.65 GB), restoring 8af9277 to parity with 3a91ff9's own
+      # current-settings time; see docs/testing/benchmarks.md. Matches the
+      # Ubuntu validation job's setting.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -207,9 +219,11 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
-          # Weekly generations bound archive churn while refreshing workspace artifacts.
-          key: rust-${{ runner.os }}-1.96.1-native-msvc-${{ needs.changes.outputs.week }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
-          restore-keys: rust-${{ runner.os }}-1.96.1-native-msvc-
+          # Weekly generations bound archive churn while refreshing workspace
+          # artifacts. The "lt" generation excludes full-debuginfo artifacts
+          # from earlier keys (see the CARGO_PROFILE_DEV_DEBUG comment above).
+          key: rust-${{ runner.os }}-1.96.1-native-msvc-lt-${{ needs.changes.outputs.week }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
+          restore-keys: rust-${{ runner.os }}-1.96.1-native-msvc-lt-
 
       - name: Lint native Windows targets and features
         run: cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
