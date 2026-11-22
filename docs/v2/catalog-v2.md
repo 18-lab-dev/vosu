@@ -123,19 +123,31 @@ by the **longest registered namespace** — a core-owned namespace
 reserved `vosu.sessions`, below) or a bundled/installed/catalogued plugin id,
 across every enabled source — that is a prefix of the capability id's path;
 everything after that prefix is the field path, action name, or resource
-kind. A plugin id that extends another already-registered plugin id or any
-core-owned namespace (for example `a.b.c` when `a.b` is already bundled,
-installed, or catalogued, or a plugin id starting with the segment `vosu`)
-is rejected at install time and at catalog validation time, since it would
-make this parse ambiguous.
+kind. A plugin id that extends another already-registered plugin id (for
+example `a.b.c` when `a.b` is already bundled, installed, or catalogued) is
+rejected at install time and at catalog validation time, since it would make
+this parse ambiguous. A plugin id that equals or extends any core-owned
+namespace (`vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`,
+`vosu.skin`, `vosu.sessions`) is always rejected, from any source. Beyond
+that, a plugin id starting with the segment `vosu` is rejected only from a
+non-official source — the naming contract reserves the `vosu.` prefix to
+core and official plugins — and is accepted from an official source.
 
-Resource kinds are one segment, `[a-z0-9][a-z0-9-]{0,31}`. The bare names
-`file`, `audio`, `background`, `set`, and `skin` always mean the core kinds
-(`chart.file`, `chart.audio`, `chart.background`, `chart.set`, `skin`) and
-are reserved: a plugin's own `[[resource_kinds]]` entry (`docs/v2/plugin-abi.md`)
-must not use any of them as its bare `kind`. A plugin id must not start with
-the segment `chart` or `skin` either, so a `resource:` id is unambiguous:
-`resource:chart.background` is always the core kind,
+Resource kinds are one segment, `[a-z0-9][a-z0-9-]{0,31}`. The names `file`,
+`audio`, `background`, `set`, and `skin` are reserved for the core kinds
+(`chart.file`, `chart.audio`, `chart.background`, `chart.set`, `skin`). A
+plugin's `[[resource_kinds]]` entry (`docs/v2/plugin-abi.md`) may use one of
+these reserved names: doing so declares that this plugin fills the matching
+*core* kind for its matched sessions and bounds that core kind's MIME
+families for this plugin, exactly as `covers` declares common-field coverage
+(below) — it does not create a new capability and never appears in
+`provides`. A `[[resource_kinds]]` entry using any other name declares the
+plugin's *own* kind, published as `resource:<plugin-id>.<kind>` in `provides`;
+the reserved names are forbidden only there, as the name of a plugin's own
+kind, since that would collide with the matching core kind's meaning. A
+plugin id must not start with the segment `chart` or `skin` either, so a
+`resource:` id stays unambiguous: `resource:chart.background` is always the
+core kind,
 `resource:<plugin-id>.<kind>` is always that plugin's own kind. A bare kind
 name (as written in `[[resource_kinds]]`) carries no plugin-id prefix; the
 `resource:` capability id is the only place that prefix (or its absence, for
@@ -176,6 +188,7 @@ icon = "icon.svg"                 # optional, path inside the plugin directory
 banner = "banner.webp"            # optional
 host = ">=2.0.0, <3.0.0"          # required; semver requirement on the running vosu version
 replaces = []                     # optional, default []; see "replaces" below
+covers = ["field:vosu.play.combo", "field:vosu.chart.title"]  # optional, default []; common-namespace field: ids this plugin fills
 
 # [[provides]] / [[requires]] / [[optional]]: see "Capability fields" above.
 
@@ -203,6 +216,15 @@ cli = true                        # also exposed as `vosux <plugin-id> beatmap.i
   duplicate or ambiguous claim, and never naming another current plugin id
   from the same source. Tool and overlay `replaces` (below) keep the 1.x id
   grammar, since tool and overlay ids are unchanged from 1.x.
+- `covers` lists the common-namespace `field:` ids (core namespaces only —
+  `vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`) that
+  this plugin actually fills for its matched sessions. A plugin's own
+  namespace needs no `covers` entry: it is already covered by `provides`.
+  `docs/v2/plugin-abi.md` references this declaration to refuse publishing an
+  undeclared field, and `docs/v2/state-schema.md` references it for
+  namespace/field omission; neither redefines it. A `covers` id outside a
+  core namespace, or one under a namespace this plugin's own `provides`
+  already lists, is a manifest validation error.
 - Every `action:<plugin-id>.<name>` entry in `provides` has exactly one
   `[[actions]]` entry with that `name`, and vice versa; their `version`
   fields are equal. A `provides` action entry with no matching `[[actions]]`
@@ -339,6 +361,7 @@ plugin's whole-namespace `provides` entry per "Capability coverage" above.
       "tree": false,
       "families": ["chart-text"]
     }],
+    "covers": ["field:vosu.play.combo"],
     "replaces": [],
     "matcher": {
       "process_names": ["AcmeGame.exe", "acme-game"],
@@ -432,8 +455,17 @@ game, not any real supported or planned integration.
   never declare them.
 - `resource_kinds` appears only on `plugins` entries and mirrors the
   manifest's `[[resource_kinds]]` verbatim (`{"kind","tree","families"}`,
-  `docs/v2/plugin-abi.md`), empty when the plugin fills no kind of its own
-  (it may still fill a core kind, declared through coverage, not here).
+  `docs/v2/plugin-abi.md`), empty when the plugin declares none. A reserved
+  core name (`file`/`audio`/`background`/`set`/`skin`) here declares core-kind
+  coverage (see "Namespace and kind parsing" above), not a new `resource:`
+  capability; any other name is the plugin's own kind, published in
+  `provides` as `resource:<plugin-id>.<kind>`.
+- `covers` appears only on `plugins` entries and mirrors the manifest's
+  `covers` verbatim: the common-namespace `field:` ids this plugin fills,
+  empty by default. It is not a `provides` entry and does not go through
+  "Capability coverage" above (core namespaces are always built-in
+  providers, below); it only tells core and the dashboard which parts of a
+  common namespace a particular game plugin actually fills.
 - `runtime` appears only on `plugins` entries and mirrors the manifest's
   runtime request (`"in-process"` or `"process"`, `docs/v2/plugin-abi.md`)
   verbatim; the install plan (below) uses it.
@@ -498,10 +530,9 @@ reference count:
   `vosu.chart` schema version), and `resource:skin` (version = the
   `vosu.skin` schema version). No plugin may list any of these in its own
   `provides`; whether a given game plugin actually fills a given core kind
-  for a session is per-plugin declared coverage
-  (`[[resource_kinds]]`/common-field coverage, `docs/v2/plugin-abi.md`), the
-  same way common `vosu.play`/`vosu.chart` field coverage is declared, not a
-  separate capability negotiation;
+  or common `field:` for its matched sessions is declared, not negotiated as
+  a capability, via that plugin's own `[[resource_kinds]]` reserved-name
+  entries and `covers` list respectively (above);
 - every bundled plugin's `provides` ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)'s
   bundled set: the dashboard, overlay hosting, tool hosting, the osu!
   plugin, and the upstream adapters). Their exact `provides` lists live in
