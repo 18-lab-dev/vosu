@@ -13,7 +13,7 @@
     reason = "test fixtures copy and write scratch dev-plugin directories"
 )]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::time::Duration;
@@ -113,18 +113,23 @@ fn current_target_triple() -> &'static str {
 /// crate's `[lib] crate-type = ["rlib", "cdylib"]` means Cargo always
 /// builds *both* artifacts for it once it is built at all — so running
 /// this test under `--features test-harness` has already built the
-/// `cdylib` before this test binary starts. This test binary's own
+/// `cdylib` before this test binary starts. This looks directly in
+/// `deps/`, not the profile root one level up: Cargo's `uplift_to` only
+/// copies a dependency's cdylib to the profile directory when it is also a
+/// root unit built in Build mode, and under `cargo test` every root is a
+/// Test unit, so a dependency cdylib like this one is never uplifted —
+/// only ever written to `deps/`, under its plain (unhashed) filename, on
+/// every platform and target-dir layout. This test binary's own
 /// `current_exe()` already sits at
 /// `<target-dir>/[<target-triple>/]<profile>/deps/<this-binary>-<hash>`,
-/// so its grandparent is exactly the profile directory cargo copies every
-/// built `cdylib` into, on every platform and target-dir layout — no env
-/// var needed, and it can never point at a stale target dir.
+/// so its own parent directory is exactly that `deps/` directory — no env
+/// var needed, and it can never point at a stale target dir or a copy
+/// built without `test-harness`.
 fn testkit_cdylib_path() -> PathBuf {
     let exe = std::env::current_exe().expect("this test binary has a current_exe path");
-    let profile_dir = exe
+    let deps_dir = exe
         .parent()
-        .and_then(Path::parent)
-        .expect("current_exe sits two levels under <target-dir>/<profile>/deps/")
+        .expect("current_exe sits in <target-dir>/<profile>/deps/")
         .to_path_buf();
     let filename = if cfg!(target_os = "windows") {
         "vosu_plugin_testkit.dll"
@@ -133,7 +138,7 @@ fn testkit_cdylib_path() -> PathBuf {
     } else {
         "libvosu_plugin_testkit.so"
     };
-    let path = profile_dir.join(filename);
+    let path = deps_dir.join(filename);
     assert!(
         path.is_file(),
         "expected the testkit cdylib to already be built at {path:?}; \
@@ -185,6 +190,37 @@ fn development_plugin_dlopen_create_dispatch_destroy() {
         None,
     )
     .expect("creating the dlopen'd echo plugin instance");
+
+    dispatch_and_expect_echo(&instance, &rx);
+
+    instance
+        .destroy(DESTROY_GRACE)
+        .expect("destroying the dlopen'd echo plugin instance");
+}
+
+#[test]
+fn development_plugin_instance_outlives_a_dropped_loaded_plugin() {
+    let dir = development_plugin_dir();
+    let loaded = plugin::load_development(dir.path(), true)
+        .expect("loading the dev-plugin directory this test just wrote");
+    let (handler, rx) = recording_handler();
+    let instance = PluginInstance::create(
+        PluginInstanceId::new(5),
+        &loaded,
+        &init_bytes(),
+        handler,
+        None,
+    )
+    .expect("creating the dlopen'd echo plugin instance");
+
+    // Drop the `LoadedPlugin` (and the temp directory it was `dlopen`ed
+    // from) right away: the P0 finding had `PluginInstance` hold no
+    // reference to the library at all, so the next `dispatch`/`destroy`
+    // ran unmapped code the moment the loader value went out of scope.
+    // `PluginInstance` now clones `LoadedPlugin`'s `Arc<Library>`, so it
+    // must keep working regardless.
+    drop(loaded);
+    drop(dir);
 
     dispatch_and_expect_echo(&instance, &rx);
 
