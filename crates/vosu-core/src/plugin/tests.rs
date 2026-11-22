@@ -330,3 +330,176 @@ fn destroy_times_out_when_the_plugin_does_not_return_in_time() {
         Ok(()) => panic!("expected destroy to time out"),
     }
 }
+
+// --- Dispatch queue backpressure (§4: bounded, non-blocking `try_send`) --
+//
+// `docs/v2/plugin-abi.md` §4/§5 are silent on what a *host-internal* full
+// dispatch queue should do (the ABI's own error codes answer a plugin's
+// `send` calls, not the host's own `dispatch` scheduling); `AGENTS.md`'s
+// "no unbounded channels" rule and the general rule against ever blocking
+// a hot path indefinitely settle it here: `SerialWorker`/`WorkerPool` use
+// a bounded `std::sync::mpsc::sync_channel` and `try_send`
+// (`super::dispatch`), so a full queue fails the call immediately with
+// `HostError::DispatchQueueFull` rather than blocking the caller or
+// growing the queue without bound.
+
+/// A one-shot gate: `on_message` sets `started` and blocks on `proceed`
+/// until this test releases it, so the test can deterministically wait
+/// until the worker thread has pulled exactly one job out of its channel
+/// (and is blocked executing it) before filling the channel's buffer to
+/// its exact capacity — without this, a message could still be sitting in
+/// the buffer instead of "in flight", making the exact capacity racy.
+struct Gate {
+    started: Mutex<bool>,
+    started_cv: std::sync::Condvar,
+    proceed: Mutex<bool>,
+    proceed_cv: std::sync::Condvar,
+}
+
+impl Gate {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            started: Mutex::new(false),
+            started_cv: std::sync::Condvar::new(),
+            proceed: Mutex::new(false),
+            proceed_cv: std::sync::Condvar::new(),
+        })
+    }
+
+    fn wait_until_started(&self) {
+        let mut started = self.started.lock().unwrap();
+        while !*started {
+            let (guard, timeout) = self
+                .started_cv
+                .wait_timeout(started, Duration::from_secs(5))
+                .unwrap();
+            started = guard;
+            assert!(
+                !timeout.timed_out(),
+                "the worker thread should have started the first message within 5s"
+            );
+        }
+    }
+
+    fn release(&self) {
+        *self.proceed.lock().unwrap() = true;
+        self.proceed_cv.notify_all();
+    }
+}
+
+fn gate_registry() -> &'static Mutex<HashMap<String, Arc<Gate>>> {
+    static REGISTRY: std::sync::LazyLock<Mutex<HashMap<String, Arc<Gate>>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+    &REGISTRY
+}
+
+fn register_gate(plugin_id: &str) -> Arc<Gate> {
+    let gate = Gate::new();
+    gate_registry()
+        .lock()
+        .unwrap()
+        .insert(plugin_id.to_string(), Arc::clone(&gate));
+    gate
+}
+
+fn gate_for(plugin_id: &str) -> Arc<Gate> {
+    gate_registry()
+        .lock()
+        .unwrap()
+        .get(plugin_id)
+        .cloned()
+        .unwrap_or_else(|| panic!("no gate registered for {plugin_id:?}"))
+}
+
+mod blocking_plugin {
+    use super::{Gate, Init, Message, Plugin, PluginError, gate_for};
+    use std::sync::Arc;
+
+    pub struct BlockingPlugin {
+        gate: Arc<Gate>,
+    }
+    impl Plugin for BlockingPlugin {
+        fn create(
+            _host: vosu_plugin_api::VtableHostServices,
+            init: Init,
+        ) -> Result<Self, PluginError> {
+            Ok(Self {
+                gate: gate_for(&init.plugin_id),
+            })
+        }
+        fn on_message(
+            &mut self,
+            _message: Message,
+            _correlation_id: u64,
+        ) -> Result<(), PluginError> {
+            *self.gate.started.lock().unwrap() = true;
+            self.gate.started_cv.notify_all();
+            let mut proceed = self.gate.proceed.lock().unwrap();
+            while !*proceed {
+                proceed = self.gate.proceed_cv.wait(proceed).unwrap();
+            }
+            Ok(())
+        }
+    }
+    vosu_plugin_api::export_plugin!(bundled BlockingPlugin);
+}
+
+#[test]
+fn dispatch_queue_full_reports_backpressure_without_blocking() {
+    let gate = register_gate("acme.blocking");
+    let text = manifest("acme.blocking", "");
+    let loaded = registry::load_bundled(&[registry::BundledPlugin {
+        manifest: &text,
+        vtable: blocking_plugin::vosu_plugin_vtable,
+    }])
+    .unwrap();
+    let instance = PluginInstance::create(
+        PluginInstanceId::new(10),
+        &loaded[0],
+        &init_bytes("acme.blocking"),
+        Arc::new(NullHandler),
+        None,
+    )
+    .unwrap();
+
+    // One message is picked up by the worker thread and blocks there until
+    // released; wait for that to actually happen before relying on the
+    // channel buffer's exact remaining capacity.
+    let first_reply = instance.dispatch(focus_changed_message(0)).unwrap();
+    gate.wait_until_started();
+
+    // The buffer is now empty (the worker already pulled the one job it is
+    // blocked on): exactly `DEFAULT_QUEUE_CAPACITY` more must fit without
+    // blocking or failing.
+    let mut replies = vec![first_reply];
+    for i in 1..=DEFAULT_QUEUE_CAPACITY as u64 {
+        replies.push(
+            instance
+                .dispatch(focus_changed_message(i))
+                .unwrap_or_else(|error| {
+                    panic!("message {i} should still fit in the queue, got {error}")
+                }),
+        );
+    }
+
+    // The next one must be rejected immediately rather than block the
+    // caller or silently grow the queue past its bound.
+    let started = Instant::now();
+    match instance.dispatch(focus_changed_message(u64::MAX)) {
+        Err(HostError::DispatchQueueFull) => {}
+        Err(other) => panic!("expected DispatchQueueFull, got {other}"),
+        Ok(_) => panic!("expected the full queue to reject this dispatch"),
+    }
+    assert!(
+        started.elapsed() < Duration::from_millis(100),
+        "a full dispatch queue must report backpressure immediately, never block the caller"
+    );
+
+    // Let every queued job (and `destroy` below) run to completion instead
+    // of leaking a thread blocked forever.
+    gate.release();
+    for reply in replies {
+        reply.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+    instance.destroy(Duration::from_secs(5)).unwrap();
+}
