@@ -87,7 +87,7 @@ Every `dispatch`/`send` call returns a `vosu_status`. `VOSU_OK` means the messag
 
 | Status | Meaning |
 | --- | --- |
-| `VOSU_ERR_INVALID_ARGUMENT` | Malformed payload, an offset/length outside the buffer, a read plan over `VOSU_READ_PLAN_MAX_BYTES`, or a submission that would exceed an outstanding-request cap (64 asynchronous read plans §6.3, 64 scans §6.4, 64 cross-plugin action calls §6.12) |
+| `VOSU_ERR_INVALID_ARGUMENT` | Malformed payload, an offset/length outside the buffer, a read plan over `VOSU_READ_PLAN_MAX_BYTES`, or a submission that would exceed an outstanding-request cap (64 asynchronous read plans §6.3, 64 scans §6.4, 64 cross-plugin action calls §6.12, 64 timers §6.11) |
 | `VOSU_ERR_PERMISSION_DENIED` | An opcode this plugin's trust level cannot use (e.g. a read plan touching a session it did not match) |
 | `VOSU_ERR_NOT_READY` | The target session has no live process |
 | `VOSU_ERR_TARGET_GONE` | A session died between submission and execution |
@@ -237,7 +237,7 @@ A plugin declares its settings shape with `settings_schema` (§8), a path to a `
 
 ### 6.11 Timers
 
-A plugin requests periodic or one-shot callbacks instead of spawning its own OS timer thread, so the host can account for and suspend a plugin's scheduled work exactly as it does reads: `VOSU_OP_TIMER_SET` (plugin → host, CBOR): `{"timer": u64, "interval_ms": u32|null}` (`null` requests a one-shot fire after the host's minimum granularity). The host answers each due timer with `VOSU_OP_TIMER_FIRED` (host → plugin, CBOR, no reply): `{"timer": u64}`. `VOSU_OP_TIMER_CANCEL` (plugin → host, CBOR, no reply): `{"timer": u64}` stops a periodic timer; a cancelled one-shot timer that already fired is a no-op.
+A plugin requests periodic or one-shot callbacks instead of spawning its own OS timer thread, so the host can account for and suspend a plugin's scheduled work exactly as it does reads: `VOSU_OP_TIMER_SET` (plugin → host, CBOR): `{"timer": u64, "interval_ms": u32|null}` (`null` requests a one-shot fire after the host's minimum granularity). The host answers each due timer with `VOSU_OP_TIMER_FIRED` (host → plugin, CBOR, no reply): `{"timer": u64}`. `VOSU_OP_TIMER_CANCEL` (plugin → host, CBOR, no reply): `{"timer": u64}` stops a periodic timer; a cancelled one-shot timer that already fired is a no-op. A `TIMER_SET` for a new id past 64 outstanding timers for this instance is refused with `VOSU_ERR_INVALID_ARGUMENT` (§5), matching the outstanding-request cap on read plans, scans, and cross-plugin action calls; a fired one-shot's id no longer counts against this cap, and `TIMER_CANCEL` always frees it immediately.
 
 ### 6.12 Cross-plugin state reads and calls
 
