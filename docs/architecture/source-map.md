@@ -13,7 +13,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Area | Owner | Use it for |
 |---|---|---|
 | Startup and lifecycle | `src/runtime/` | CLI decisions, composition, workers, shutdown, runtime reload |
-| Core services | `crates/vosu-core/` | Config, logging, diagnostics report generation, self-update, desktop integration (session tray, executable ownership policy, opt-in Linux systemd user login service), and startup decisions/guards |
+| Core services | `crates/vosu-core/` | Config, logging, diagnostics report generation, self-update, desktop integration (session tray, executable ownership policy, opt-in Linux systemd user login service), startup decisions/guards, and the plugin host (`crates/vosu-core/src/plugin/`: the `BUNDLED`/`dlopen` registry, instance lifecycle, dispatch, and host vtable `send` routing — `docs/v2/plugin-abi.md` §1, §2, §4, §5, §7.1) |
 | Process instances | `src/instance/` | Candidate classification, focus, PID generations, tournament selection |
 | Plugin ABI v1 | `crates/vosu-plugin-api/` | `repr(C)` ABI v1 types mirroring `include/vosu_plugin.h` (constants, opcodes, flags, error codes, envelope, flat payload structs, host/plugin vtables), layout tests against `docs/v2/plugin-abi.md` §3, flat payload validation, CBOR codecs, and the `Plugin`/`ConcurrentPlugin` Rust SDK (`docs/v2/plugin-abi.md` §9) built on top of them |
 | Native access | `crates/vosu-sys/` | Linux/Windows process handles, memory reads, paths, OS behavior, and process-exit-event backends; all platform `unsafe` lives here |

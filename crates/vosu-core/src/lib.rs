@@ -15,5 +15,6 @@ pub mod app;
 pub mod config;
 pub mod desktop;
 pub mod logging;
+pub mod plugin;
 pub mod report;
 pub mod updater;

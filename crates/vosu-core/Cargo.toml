@@ -18,6 +18,7 @@ axum = { version = "=0.8.9", default-features = false }
 bytes = "=1.12.1"
 chrono = { version = "0.4.44", features = ["serde"] }
 futures-util = "0.3.32"
+libloading = "0.8.6"
 notify = "=8.2.0"
 open = "=5.4.0"
 semver = "=1.0.28"
@@ -32,6 +33,7 @@ tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 toml = "=1.1.2"
 tracing = "=0.1.44"
 vosu-net = { path = "../vosu-net" }
+vosu-plugin-api = { path = "../vosu-plugin-api" }
 vosu-sys = { path = "../vosu-sys" }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
@@ -45,5 +47,6 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Stor
 wmi = "=0.18.4"
 
 [dev-dependencies]
+ciborium = "0.2.2"
 proptest = "1.12"
 vosu-proptest = { path = "../vosu-proptest" }
