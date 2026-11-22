@@ -10,7 +10,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vosu_core::plugin::{self, PluginHostHandler, PluginInstance, PluginInstanceId};
+use vosu_core::plugin::{
+    self, DEFAULT_QUEUE_CAPACITY, PluginHostHandler, PluginInstance, PluginInstanceId, WorkerPool,
+};
 use vosu_plugin_api::{CborValue, Init, Message, encode, vosu_status};
 use vosu_sys::platform::Paths;
 
@@ -18,6 +20,12 @@ use vosu_sys::platform::Paths;
 /// 5-second wait in `src/tools/process.rs`: the same shutdown-grace
 /// precedent `docs/v2/plugin-abi.md` §4 cites for `destroy`.
 const PLUGIN_DESTROY_GRACE: Duration = Duration::from_secs(5);
+
+/// Worker count for the shared `concurrent_dispatch` pool every loaded
+/// instance that opts in shares (`docs/v2/plugin-abi.md` §4): a small
+/// fixed-size pool, not one thread per concurrent instance, since sharing
+/// it across instances is the whole point of `concurrent_dispatch`.
+const PLUGIN_CONCURRENT_WORKERS: usize = 4;
 
 /// Logs every plugin -> host message instead of acting on it: session
 /// lifecycle, state publication, and every other host service are later
@@ -55,6 +63,7 @@ fn bundled_data_dir(paths: &Paths, plugin_id: &str) -> PathBuf {
 pub(super) fn load_bundled(
     paths: &Paths,
     logger: &vosu_core::logging::Logger,
+    pool: &Arc<WorkerPool>,
 ) -> Vec<PluginInstance> {
     let loaded = match plugin::load_bundled(crate::plugins::BUNDLED) {
         Ok(loaded) => loaded,
@@ -84,7 +93,7 @@ pub(super) fn load_bundled(
             loaded,
             &init,
             Arc::new(LoggingHandler),
-            None,
+            Some(Arc::clone(pool)),
         ) {
             Ok(instance) => instances.push(instance),
             Err(error) => logger.warn(format!(
@@ -105,6 +114,7 @@ pub(super) fn load_development(
     dirs: Vec<PathBuf>,
     id_offset: u64,
     logger: &vosu_core::logging::Logger,
+    pool: &Arc<WorkerPool>,
 ) -> Vec<PluginInstance> {
     let debug_build = cfg!(debug_assertions);
     let mut instances = Vec::with_capacity(dirs.len());
@@ -135,7 +145,7 @@ pub(super) fn load_development(
             &loaded,
             &init,
             Arc::new(LoggingHandler),
-            None,
+            Some(Arc::clone(pool)),
         ) {
             Ok(instance) => instances.push(instance),
             Err(error) => logger.warn(format!(
@@ -155,9 +165,10 @@ pub(super) fn load_all(
     paths: &Paths,
     logger: &vosu_core::logging::Logger,
 ) -> Vec<PluginInstance> {
-    let mut instances = load_bundled(paths, logger);
+    let pool = WorkerPool::new(PLUGIN_CONCURRENT_WORKERS, DEFAULT_QUEUE_CAPACITY);
+    let mut instances = load_bundled(paths, logger, &pool);
     let offset = instances.len() as u64;
-    instances.extend(load_development(dev_dirs, offset, logger));
+    instances.extend(load_development(dev_dirs, offset, logger, &pool));
     instances
 }
 
