@@ -25,6 +25,7 @@ use arc_swap::ArcSwap;
 use bytes::Bytes;
 use serde::Serialize;
 use tokio::{
+    runtime::Handle,
     sync::{Mutex as AsyncMutex, broadcast, watch},
     task::JoinHandle,
 };
@@ -79,6 +80,10 @@ use vosu_core::{
     },
     config::{Config, ConfigChanged, ConfigDocument, ConfigStore},
     logging::{Logger, LoggerOptions, StdoutConsole},
+    plugin::{
+        PluginHost,
+        settings::{ConfigSettingsBridgeB2, PluginSettingsService, SettingsStorage},
+    },
     report::{ReportCounter, ReportInput, ReportInstance},
     updater::{
         LATEST_RELEASE_API, NativePlatform, RELEASE_PLATFORM, RecoveryAction, StartupDispatch,

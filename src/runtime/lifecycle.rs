@@ -17,7 +17,7 @@ pub struct ProductionRuntime {
     counters: AsyncMutex<Option<Arc<ReloadableCounterService>>>,
     tools: AsyncMutex<Option<Arc<crate::tools::ToolHost>>>,
     dev_tools: Vec<PathBuf>,
-    plugins: AsyncMutex<Vec<vosu_core::plugin::PluginInstance>>,
+    plugins: Arc<PluginHost>,
     listener: AsyncMutex<Option<ListenerOwner>>,
     dashboard_listener: AsyncMutex<Option<ListenerOwner>>,
     origins: Arc<crate::server::origins::Origins>,
@@ -38,14 +38,10 @@ impl ProductionRuntime {
         if let Some(tools) = self.tools.lock().await.take() {
             tools.shutdown().await;
         }
-        let plugins = std::mem::take(&mut *self.plugins.lock().await);
-        if !plugins.is_empty() {
-            tokio::task::spawn_blocking(move || super::dev_plugins::destroy_all(plugins))
-                .await
-                .map_err(|error| {
-                    io::Error::other(format!("plugin shutdown task failed: {error}"))
-                })?;
-        }
+        let plugins = Arc::clone(&self.plugins);
+        tokio::task::spawn_blocking(move || plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE))
+            .await
+            .map_err(|error| io::Error::other(format!("plugin shutdown task failed: {error}")))?;
         if let Some(mut tray) = self.tray.lock().await.take() {
             tray.shutdown().await;
         }
@@ -745,7 +741,7 @@ pub async fn run_cli() -> io::Result<()> {
             Some(readiness)
         }
     };
-    let config = ConfigStore::initialize(paths.config().join("vosu.toml")).await?;
+    let config = Arc::new(ConfigStore::initialize(paths.config().join("vosu.toml")).await?);
     if ordinary_role
         && let Ok(target) = dashboard_listen_target(&config.current())
         && let Some(url) = vosu_core::desktop::existing_dashboard(&target.host, target.port).await
@@ -849,15 +845,44 @@ pub async fn run_cli() -> io::Result<()> {
     let shutdown_token = CancellationToken::new();
     let signal_task = tokio::spawn(run_signal_cancellation(shutdown_token.clone()));
     let dev_plugin_dirs = vosu_core::plugin::development_roots(args.raw())?;
-    let plugins = {
+    // Resolved before the plugin host is built so no fallible step remains
+    // between loading plugins and `hooks` taking ownership of the host:
+    // every exit path once loading starts goes through an explicit
+    // `destroy_all`, not an early `?` return that skips it.
+    let dev_tools = crate::tools::development_roots(args.raw())?;
+    let origins = Arc::new(crate::server::origins::Origins::new(
+        vosu_core::desktop::dashboard_url(&current.server_ip, listen_target(&current)?.port),
+        vosu_core::desktop::dashboard_url(
+            &current.dashboard_ip,
+            dashboard_listen_target(&current)?.port,
+        ),
+    )?);
+    let settings_bridge = Arc::new(ConfigSettingsBridgeB2::new(Arc::clone(&config)));
+    let settings_storage: Arc<dyn SettingsStorage> = settings_bridge.clone();
+    let plugin_settings = Arc::new(PluginSettingsService::new(settings_storage));
+    let plugin_host = PluginHost::new(logger.clone(), plugin_settings, Handle::current());
+    plugin_host.watch_bridge_b2(&settings_bridge, &Handle::current());
+    {
+        let host = Arc::clone(&plugin_host);
         let logger = logger.clone();
         let paths = paths.clone();
-        tokio::task::spawn_blocking(move || dev_plugins::load_all(dev_plugin_dirs, &paths, &logger))
-            .await
-            .map_err(|error| io::Error::other(format!("plugin startup task failed: {error}")))?
-    };
+        if let Err(error) = tokio::task::spawn_blocking(move || {
+            dev_plugins::load_all(&host, dev_plugin_dirs, &paths, &logger)
+        })
+        .await
+        {
+            let host = Arc::clone(&plugin_host);
+            let _ = tokio::task::spawn_blocking(move || {
+                host.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE)
+            })
+            .await;
+            return Err(io::Error::other(format!(
+                "plugin startup task failed: {error}"
+            )));
+        }
+    }
     let hooks = ProductionRuntime {
-        config: Arc::new(config),
+        config,
         changes,
         logger,
         paths: paths.clone(),
@@ -873,17 +898,11 @@ pub async fn run_cli() -> io::Result<()> {
         update_notice: None,
         counters: AsyncMutex::new(None),
         tools: AsyncMutex::new(None),
-        dev_tools: crate::tools::development_roots(args.raw())?,
-        plugins: AsyncMutex::new(plugins),
+        dev_tools,
+        plugins: plugin_host,
         listener: AsyncMutex::new(None),
         dashboard_listener: AsyncMutex::new(None),
-        origins: Arc::new(crate::server::origins::Origins::new(
-            vosu_core::desktop::dashboard_url(&current.server_ip, listen_target(&current)?.port),
-            vosu_core::desktop::dashboard_url(
-                &current.dashboard_ip,
-                dashboard_listen_target(&current)?.port,
-            ),
-        )?),
+        origins,
         hubs: AsyncMutex::new(None),
         processor: AsyncMutex::new(None),
         supervisor: AsyncMutex::new(None),
