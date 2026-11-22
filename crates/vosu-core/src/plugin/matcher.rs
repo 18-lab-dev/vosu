@@ -279,6 +279,46 @@ impl fmt::Display for OverlapError {
 
 impl std::error::Error for OverlapError {}
 
+/// The combined kernel/CN_PROC pre-filter bound (§6.1, D18): `process_names`
+/// entries that fit its 15-byte `comm` field width, plus every `comm_hints`
+/// entry, across every enabled Linux game plugin.
+const PREFILTER_LIMIT: usize = 256;
+
+/// How many of `table`'s entries occupy the combined pre-filter (§6.1): a
+/// `process_names` entry that is itself short enough to match `comm`
+/// directly, plus every `comm_hints` entry.
+fn prefilter_entries(table: &MatchTable) -> usize {
+    table
+        .process_names
+        .iter()
+        .filter(|name| name.len() <= 15)
+        .count()
+        + table.comm_hints.len()
+}
+
+/// A plugin whose `comm_hints`/short `process_names` would push the
+/// combined Linux pre-filter past [`PREFILTER_LIMIT`] (§6.1, D18): refused
+/// at manifest validation, in enable order, never silently dropped or
+/// truncated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreFilterLimitError {
+    pub candidate: PluginId,
+    /// The combined total this registration would reach.
+    pub total: usize,
+}
+
+impl fmt::Display for PreFilterLimitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "installing {:?} would push the combined pre-filter to {} entries, over the {}-entry bound (§6.1, D18)",
+            self.candidate, self.total, PREFILTER_LIMIT
+        )
+    }
+}
+
+impl std::error::Error for PreFilterLimitError {}
+
 /// The result of matching one candidate process against every enabled
 /// plugin's matcher, in install order (D18's runtime rule).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -312,15 +352,31 @@ impl MatcherEngine {
     /// Compiles and installs `table` for `id`, appended after every
     /// already-registered plugin (install order). Refuses with
     /// [`OverlapError`] when `table` statically overlaps (D18) an
-    /// already-registered plugin's table; refuses with [`MatcherError`]
-    /// when `table` itself fails to compile. Neither failure installs the
-    /// plugin.
+    /// already-registered plugin's table; refuses with
+    /// [`PreFilterLimitError`] when installing it would push the combined
+    /// Linux pre-filter past [`PREFILTER_LIMIT`] (§6.1, D18); refuses with
+    /// [`MatcherError`] when `table` itself fails to compile. No failure
+    /// installs the plugin.
     pub fn register(&mut self, id: PluginId, table: MatchTable) -> Result<(), RegisterError> {
         for (existing_id, existing_table, _) in &self.entries {
             if overlaps(self.platform, existing_table, &table) {
                 return Err(RegisterError::Overlap(OverlapError {
                     existing: existing_id.clone(),
                     candidate: id,
+                }));
+            }
+        }
+        if self.platform == MatchPlatform::Linux {
+            let total: usize = self
+                .entries
+                .iter()
+                .map(|(_, existing_table, _)| prefilter_entries(existing_table))
+                .sum::<usize>()
+                + prefilter_entries(&table);
+            if total > PREFILTER_LIMIT {
+                return Err(RegisterError::PreFilterLimit(PreFilterLimitError {
+                    candidate: id,
+                    total,
                 }));
             }
         }
@@ -350,6 +406,7 @@ impl MatcherEngine {
 #[derive(Debug)]
 pub enum RegisterError {
     Overlap(OverlapError),
+    PreFilterLimit(PreFilterLimitError),
     Matcher(MatcherError),
 }
 
@@ -357,6 +414,7 @@ impl fmt::Display for RegisterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Overlap(e) => write!(f, "{e}"),
+            Self::PreFilterLimit(e) => write!(f, "{e}"),
             Self::Matcher(e) => write!(f, "{e}"),
         }
     }
@@ -564,5 +622,51 @@ mod tests {
         let outcome = engine.match_candidate(&candidate("unrelated", "/bin/unrelated", ""));
         assert_eq!(outcome.winner, None);
         assert!(outcome.shadowed.is_empty());
+    }
+
+    #[test]
+    fn register_refuses_when_combined_prefilter_total_exceeds_256() {
+        let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+        let hints: Vec<String> = (0..256).map(|i| format!("h{i}")).collect();
+        engine
+            .register(
+                "vosu.first".to_string(),
+                MatchTable {
+                    comm_hints: hints,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let err = engine
+            .register(
+                "vosu.second".to_string(),
+                MatchTable {
+                    comm_hints: vec!["extra".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            RegisterError::PreFilterLimit(PreFilterLimitError { candidate, total })
+                if candidate == "vosu.second" && total == 257
+        ));
+    }
+
+    #[test]
+    fn register_ignores_the_prefilter_limit_on_windows() {
+        // The pre-filter is Linux-only (§6.1): Windows registration never
+        // refuses on this ground, however many hints are declared.
+        let mut engine = MatcherEngine::new(MatchPlatform::Windows);
+        let hints: Vec<String> = (0..300).map(|i| format!("h{i}")).collect();
+        engine
+            .register(
+                "vosu.osu".to_string(),
+                MatchTable {
+                    comm_hints: hints,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
     }
 }
