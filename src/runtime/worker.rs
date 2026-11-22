@@ -592,8 +592,8 @@ pub(super) async fn run_state_supervisor(
     workers.shutdown().await;
 }
 
-/// Narrows `Config` to the fields `state` reads, so `state` does not depend
-/// on `config` (module-boundaries.txt: breaking the `state -> config` edge).
+/// Narrows `Config` to the fields `vosu-osu-state` reads, so that crate does
+/// not depend on `vosu-core` (`scripts/crate-boundaries.txt`: no such edge exists).
 fn reader_settings_from(config: &vosu_core::config::Config) -> vosu_osu_state::ReaderSettings {
     vosu_osu_state::ReaderSettings {
         calculate_pp: config.calculate_pp,

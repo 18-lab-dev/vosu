@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Enforce the recorded `crate::` dependency graph between src/ top-level modules.
+"""Enforce the recorded `crate::` dependency graph between each workspace
+crate's own top-level `src/` modules.
 
-Every edge in scripts/module-boundaries.txt must still be exercised by non-test
-code (a vanished edge is stale and must be removed), and no new edge may appear
-without a deliberate rules-file update alongside docs/architecture/source-map.md.
+Every edge in a crate's scripts/module-boundaries/<crate>.txt must still be
+exercised by non-test code (a vanished edge is stale and must be removed),
+and no new edge may appear without a deliberate rules-file update alongside
+docs/architecture/source-map.md. The rules file is also rejected if it is
+cyclic, so a cycle broken during M0 cannot silently return.
 """
 
 import argparse
@@ -13,9 +16,23 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src"
-LIB_RS = SRC / "lib.rs"
-RULES = ROOT / "scripts/module-boundaries.txt"
+RULES_DIR = ROOT / "scripts/module-boundaries"
+
+# Crates whose internal module graph is checked. `vosu-pp` and its vendored
+# `rosu-*-api` members, `vosu-test-harness`, and `vosu-release-smoke` keep
+# their pre-M0 unchanged role (docs/v2/implementation-plan.md section 2) and
+# are out of scope.
+CRATE_ROOTS = {
+    "vosu": ROOT,
+    "vosu-core": ROOT / "crates/vosu-core",
+    "vosu-net": ROOT / "crates/vosu-net",
+    "vosu-osu-calc": ROOT / "crates/vosu-osu-calc",
+    "vosu-osu-model": ROOT / "crates/vosu-osu-model",
+    "vosu-osu-reader": ROOT / "crates/vosu-osu-reader",
+    "vosu-osu-state": ROOT / "crates/vosu-osu-state",
+    "vosu-proptest": ROOT / "crates/vosu-proptest",
+    "vosu-sys": ROOT / "crates/vosu-sys",
+}
 
 MOD_DECL = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_]\w*)\s*;", re.MULTILINE)
 CFG_TEST_EXTERNAL_MOD = re.compile(r"#\[cfg\(test\)\]\s*mod\s+([A-Za-z_]\w*)\s*;")
@@ -29,10 +46,8 @@ CRATE_PATH = re.compile(r"crate::([A-Za-z_]\w*)")
 CRATE_GROUP = re.compile(r"crate::\{")
 
 
-def top_level_modules(lib_text=None):
-    """Top-level modules of the vosu crate: the `mod x;` declarations in lib.rs."""
-    if lib_text is None:
-        lib_text = LIB_RS.read_text(encoding="utf-8")
+def top_level_modules(lib_text):
+    """Top-level modules of a crate: the `mod x;` declarations in its lib.rs."""
     return sorted(set(MOD_DECL.findall(lib_text)))
 
 
@@ -151,17 +166,18 @@ def file_edges(relative_path, text, modules):
         yield source_module, target, relative_path, line
 
 
-def read_src_files():
+def read_crate_files(crate_root):
+    """Return (src_files, lib_text) for one crate's `src/` tree."""
+    src = crate_root / "src"
     files = {}
-    for path in sorted(SRC.rglob("*.rs")):
-        relative = path.relative_to(SRC).as_posix()
+    for path in sorted(src.rglob("*.rs")):
+        relative = path.relative_to(src).as_posix()
         files[relative] = path.read_text(encoding="utf-8")
-    return files
+    return files, (src / "lib.rs").read_text(encoding="utf-8")
 
 
-def build_graph(src_files=None, lib_text=None):
+def build_graph(src_files, lib_text):
     """Return (edges, modules). edges: dict[(src, dst)] -> (file, line) first seen."""
-    src_files = read_src_files() if src_files is None else src_files
     modules = top_level_modules(lib_text)
     excluded = cfg_test_external_files(src_files)
     edges = {}
@@ -227,15 +243,23 @@ def find_cycle(rules):
     return None
 
 
-def check(rules_path, src_files=None, lib_text=None):
+def _display(path):
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def check(rules_path, src_files, lib_text):
     edges, _modules = build_graph(src_files, lib_text)
     rules = load_rules(rules_path)
+    rules_display = _display(rules_path)
     errors = []
     for (source, target), (path, line) in sorted(edges.items()):
         if (source, target) not in rules:
             errors.append(
                 f"{path}:{line}: new module edge {source} -> {target} is not in "
-                "scripts/module-boundaries.txt; respect ownership in "
+                f"{rules_display}; respect ownership in "
                 "docs/architecture/source-map.md, or add the edge to the rules file "
                 "deliberately in the same change as the architecture doc update"
             )
@@ -250,7 +274,7 @@ def check(rules_path, src_files=None, lib_text=None):
     for source, target in sorted(rules):
         if (source, target) not in edges:
             errors.append(
-                f"scripts/module-boundaries.txt: {source} -> {target} is no longer used by "
+                f"{rules_display}: {source} -> {target} is no longer used by "
                 "any non-test source file; remove the stale rule"
             )
     return errors, edges
@@ -258,18 +282,36 @@ def check(rules_path, src_files=None, lib_text=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--update", action="store_true", help="rewrite the rules file to match the current graph")
+    parser.add_argument(
+        "--update", action="store_true", help="rewrite the rules file to match the current graph"
+    )
+    parser.add_argument("--crate", choices=sorted(CRATE_ROOTS), help="only check this crate")
     args = parser.parse_args()
+    crates = {args.crate: CRATE_ROOTS[args.crate]} if args.crate else CRATE_ROOTS
+
     if args.update:
-        edges, _modules = build_graph()
-        write_rules(RULES, edges.keys())
-        print(f"Recorded {len(edges)} module edges")
+        RULES_DIR.mkdir(parents=True, exist_ok=True)
+        for name, crate_root in sorted(crates.items()):
+            src_files, lib_text = read_crate_files(crate_root)
+            edges, _modules = build_graph(src_files, lib_text)
+            write_rules(RULES_DIR / f"{name}.txt", edges.keys())
+            print(f"{name}: recorded {len(edges)} module edges")
         return 0
-    errors, edges = check(RULES)
-    for error in errors:
+
+    total_errors = []
+    total_edges = 0
+    for name, crate_root in sorted(crates.items()):
+        src_files, lib_text = read_crate_files(crate_root)
+        errors, edges = check(RULES_DIR / f"{name}.txt", src_files, lib_text)
+        total_edges += len(edges)
+        total_errors.extend(f"{name}: {error}" for error in errors)
+    for error in total_errors:
         print(error, file=sys.stderr)
-    print(f"Checked {len(edges)} module edges; {len(errors)} errors")
-    return bool(errors)
+    print(
+        f"Checked {total_edges} module edges across {len(crates)} crates; "
+        f"{len(total_errors)} errors"
+    )
+    return bool(total_errors)
 
 
 if __name__ == "__main__":

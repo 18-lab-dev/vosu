@@ -13,9 +13,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::lazer_offsets::{LazerOffsets, LazerOffsetsError, validate_version};
 
-/// Reports a resolution-attempt warning, so `memory` does not depend on
-/// `crate::logging::Logger` (module-boundaries.txt: breaking the
-/// `memory -> logging` edge). This becomes `VOSU_OP_LOG_RECORD` in M1.
+/// Reports a resolution-attempt warning, so `vosu-osu-reader` does not depend
+/// on `vosu-core`'s `Logger` (`scripts/crate-boundaries.txt`: no
+/// `vosu-osu-reader -> vosu-core` edge). This becomes `VOSU_OP_LOG_RECORD` in M1.
 pub type LogWarn = Arc<dyn Fn(String) + Send + Sync>;
 
 pub const RETRY_DELAYS: [Duration; 5] = [
@@ -40,11 +40,11 @@ pub enum LazerLoadError {
 
 /// Narrow view of a process generation that lazer offset resolution needs:
 /// identity, liveness, cancellation, and the per-generation offsets cache.
-/// Defined here (not imported from `crate::instance`) so that `memory` does
-/// not depend on `instance` (module-boundaries.txt: breaking the
-/// `memory <-> instance` cycle); `crate::instance::Instance` implements it.
-/// `instance` keeps calling the loader until M1 hands the resolver lifecycle
-/// to the osu! plugin.
+/// Defined here (not imported from the root crate's `instance` module) so
+/// that `vosu-osu-reader` does not depend on the root crate
+/// (`scripts/crate-boundaries.txt`: no such edge exists); `instance::Instance`
+/// implements it. `instance` keeps calling the loader until M1 hands the
+/// resolver lifecycle to the osu! plugin.
 pub trait GenerationIdentity: Send + Sync + 'static {
     fn client(&self) -> vosu_osu_model::enums::ClientType;
     /// Stable identity of this generation, for log messages.

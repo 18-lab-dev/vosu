@@ -35,9 +35,12 @@ tree had drifted from several of them:
 3. Repository checks in CI's `changes` job:
    `scripts/check-file-length.py` (a ratchet whose baseline may only shrink),
    `scripts/check-brand.py` (old-brand occurrences need an allowlist entry with
-   a category and reason), and `scripts/check-module-boundaries.py` (module
-   dependency edges are recorded in `scripts/module-boundaries.txt`; a new edge
-   is a deliberate, reviewed change).
+   a category and reason), `scripts/check-module-boundaries.py` (each crate's
+   own module dependency edges are recorded in
+   `scripts/module-boundaries/<crate>.txt`; a new edge is a deliberate,
+   reviewed change), and `scripts/check-crate-boundaries.py` (the allowed
+   dependency edges between workspace crates are recorded in
+   `scripts/crate-boundaries.txt` and checked against `cargo metadata`).
 4. Landing: `scripts/prepush.py` runs the local Linux, Windows cross-lint, and
    native Windows gates against the exact commit and records evidence.
    `scripts/land.py` refuses incomplete evidence, pushes a `ci/<topic>` branch,

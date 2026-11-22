@@ -39,17 +39,20 @@ JSON/beatmap evidence are data, not source-size exceptions or splitting targets.
 over the limit are listed in `scripts/file-length-baseline.txt`; an entry may
 only shrink or be removed (`--update` refuses to raise or add one).
 
-Dependencies between the crate's top-level modules are recorded in
-`scripts/module-boundaries.txt` and checked by
-`python scripts/check-module-boundaries.py`. Adding an edge is a deliberate change:
-record it in the same change that explains the new dependency here or in the
+Dependencies between each crate's own top-level modules are recorded per
+crate in `scripts/module-boundaries/<crate>.txt` and checked by
+`python scripts/check-module-boundaries.py`; the allowed dependency edges
+between workspace crates are recorded in `scripts/crate-boundaries.txt` and
+checked by `python scripts/check-crate-boundaries.py` against `cargo
+metadata`. Adding either kind of edge is a deliberate change: record it in
+the same change that explains the new dependency here or in the
 [architecture overview](overview.md). `memory`, `calculation`, and `state`
 no longer cycle: the JS-compatible rounding/mods/grade helpers
 (`crates/vosu-osu-model/src/root/{helpers,mods,scores}.rs`) and the state reducer's
 calculation backend (`crates/vosu-osu-state/src/state_backend.rs`) live under
 `vosu-osu-model` and `vosu-osu-state` respectively, not `vosu-osu-calc`, so readers
-depend only on the model and `vosu-osu-state -> vosu-osu-calc` (a crate dependency,
-not a `scripts/module-boundaries.txt` edge, since `state` is no longer a top-level
+depend only on the model and `vosu-osu-state -> vosu-osu-calc` (a `scripts/crate-boundaries.txt`
+crate edge, not a `scripts/module-boundaries/<crate>.txt` module edge, since `state` is no longer a top-level
 module of the `vosu` package) is the only edge left.
 `server` and `tools` no longer cycle either: `server::routes::RouteExtension`
 (implemented by `tools::ToolHost`) covers the reserved `/tools` overlay prefix

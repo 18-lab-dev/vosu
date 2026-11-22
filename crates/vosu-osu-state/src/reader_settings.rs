@@ -1,10 +1,10 @@
 //! Narrow, `Copy` view of the configuration fields that capture scheduling
 //! and the reducer actually read.
 //!
-//! Defined here (not `crate::config::Config` itself) so that `state` does
-//! not depend on `config` (module-boundaries.txt: breaking the
-//! `state -> config` edge). `crate::runtime` builds a value from the live
-//! `Config` and forwards it on every change.
+//! Defined here (not `vosu_core::config::Config` itself) so that
+//! `vosu-osu-state` does not depend on `vosu-core`
+//! (`scripts/crate-boundaries.txt`: no such edge exists). The root crate's
+//! `runtime` builds a value from the live `Config` and forwards it on every change.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReaderSettings {

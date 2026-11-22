@@ -1,0 +1,4 @@
+app -> config
+logging -> config
+report -> config
+updater -> desktop

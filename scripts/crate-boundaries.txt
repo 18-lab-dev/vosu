@@ -1,0 +1,52 @@
+# Allowed workspace-crate dependency edges, enforced by
+# scripts/check-crate-boundaries.py against `cargo metadata`. Mirrors
+# docs/v2/implementation-plan.md section 2 "Target workspace layout" for the
+# crates M0 has extracted so far; a bare crate name with no edges still must
+# be listed so introducing a crate is a deliberate, reviewed change.
+#
+# Interim edges (section 2 "Allowed workspace dependencies" notes, kept only
+# until the named milestone):
+# - vosu-osu-reader -> vosu-sys: interim until M1 hands read-plan access to
+#   `vosu-plugin-api`/`PlanMemory` (section 2 table, `vosu-osu-reader` row).
+# - vosu-osu-state -> vosu-sys: same reason, undocumented in the section 2
+#   row for `vosu-osu-state` but required today for the same ProcessMemory
+#   read types (`MemoryRead`, `ReadStatus`, `MemoryError`) the reducer reads
+#   through; removed alongside the vosu-osu-reader edge above in M1.
+vosu-sys
+vosu-proptest
+vosu-osu-model
+vosu-pp
+vosu-release-smoke
+
+vosu-net -> vosu-sys
+vosu-net -> vosu-proptest
+
+vosu-core -> vosu-net
+vosu-core -> vosu-sys
+vosu-core -> vosu-proptest
+
+vosu-osu-calc -> vosu-osu-model
+vosu-osu-calc -> vosu-pp
+
+vosu-osu-reader -> vosu-osu-model
+vosu-osu-reader -> vosu-sys
+
+vosu-osu-state -> vosu-osu-reader
+vosu-osu-state -> vosu-osu-calc
+vosu-osu-state -> vosu-osu-model
+vosu-osu-state -> vosu-pp
+vosu-osu-state -> vosu-sys
+
+vosu-test-harness -> vosu
+vosu-test-harness -> vosu-core
+vosu-test-harness -> vosu-net
+
+vosu -> vosu-core
+vosu -> vosu-net
+vosu -> vosu-sys
+vosu -> vosu-osu-model
+vosu -> vosu-osu-calc
+vosu -> vosu-osu-reader
+vosu -> vosu-osu-state
+vosu -> vosu-pp
+vosu -> vosu-proptest

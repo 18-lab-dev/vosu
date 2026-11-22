@@ -4,9 +4,9 @@
 //! These helpers mirror the upstream tosu source paths
 //! `packages/tosu/src/utils/{calculators,osuMods,osuMods.types,hitResult,converters}.ts`.
 //! They live under `model`, not `calculation`, so that `memory` (readers) can
-//! depend on them without depending on `calculation` (module-boundaries.txt
-//! would otherwise record a `memory -> calculation` cycle through
-//! `calculation -> state -> memory`).
+//! depend on them without depending on `calculation` (the per-crate module
+//! boundary rules, `scripts/module-boundaries/<crate>.txt`, would otherwise
+//! record a `memory -> calculation` cycle through `calculation -> state -> memory`).
 
 #[path = "root/helpers.rs"]
 mod helpers;
