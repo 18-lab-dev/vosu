@@ -270,24 +270,28 @@ fn resolve_stage_base(
 /// Executes one stage's independent ops against `memory`, batching every
 /// address-resolved op into a single [`ProcessMemory::read_many`] call and
 /// falling back to per-op `read_exact` only if that call itself fails
-/// (P1: one syscall per stage, not one per op).
+/// (P1: one syscall per stage, not one per op); the fallback loop checks
+/// `deadline` before each of its own reads (F3), since a batch failure can
+/// fall back to hundreds of individually slow reads that a once-per-stage
+/// check would otherwise let run unbounded.
 fn execute_stage_ops(
     memory: &dyn ProcessMemory,
     stage_base: &Result<u64, ReadResult>,
     ops: &[PlanOp],
     budget: &mut ErrorBudget,
-) -> Vec<ReadResult> {
+    deadline: Instant,
+) -> Result<Vec<ReadResult>, ReadPlanError> {
     let base = match stage_base {
         Ok(base) => *base,
         Err(failure) => {
             let failure = strip_message(failure);
-            return ops
+            return Ok(ops
                 .iter()
                 .map(|op| {
                     budget.recover(op.length);
                     failure.clone()
                 })
-                .collect();
+                .collect());
         }
     };
 
@@ -333,6 +337,9 @@ fn execute_stage_ops(
                 .iter_mut()
                 .zip(participants.iter().zip(buffers.iter_mut()))
             {
+                if Instant::now() >= deadline {
+                    return Err(ReadPlanError::TimedOut);
+                }
                 *outcome = memory.read_exact(address, buffer);
             }
         }
@@ -351,12 +358,12 @@ fn execute_stage_ops(
         });
     }
 
-    results
+    Ok(results
         .into_iter()
         .map(|result| {
             result.expect("every op index is filled by either the address loop or the read loop")
         })
-        .collect()
+        .collect())
 }
 
 fn error_budget_slack(submit: &ReadPlanSubmit) -> usize {
@@ -414,7 +421,8 @@ pub fn execute(
             &stage_base,
             &stage.ops,
             &mut budget,
-        ));
+            deadline,
+        )?);
     }
 
     Ok(ReadPlanResult {
