@@ -1,13 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vosu.dev/schemas/v2/vosu.osu.schema.json",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "title": "vosu.osu",
   "description": "The official osu! plugin's namespace (ADR 0020): every osu!-specific datum 1.x exposed, restructured for clarity. See docs/v2/state-schema.md for the full 1.x-to-2.0 field mapping and the common-layer coverage this plugin declares.",
   "type": "object",
   "required": [
     "session", "profile", "beatmap", "play", "keys", "leaderboard",
-    "performance", "result", "settings", "skin", "rankedPlay", "room", "tourney"
+    "performance", "result", "settings", "skin", "rankedPlay", "room", "tourney",
+    "internal"
   ],
   "additionalProperties": false,
   "$defs": {
@@ -937,6 +938,53 @@
         { "type": "null" }
       ],
       "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+    },
+    "internal": {
+      "type": "object",
+      "x-visibility": "plugins",
+      "description": "Plugin-only subtree (D2); stripped from every API v1 projection, subscription frame, STATE_UPDATE to a non-owning plugin, and debug log for any consumer that does not `require` field:vosu.osu.internal. Disclosure control only, never confinement (docs/v2/plugin-abi.md §7.5). See docs/v2/state-schema.md's `internal` section for the full carve-out rationale.",
+      "required": ["paths"],
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "type": "object",
+          "description": "Per-variant install paths (D8); the variant not matching the session's own client is entirely null. A plugin importing a file uses the vosu.osu.beatmap.import action (M3), never a write through this path.",
+          "required": ["stable", "lazer"],
+          "additionalProperties": false,
+          "properties": {
+            "stable": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["game", "songs", "skins", "replays"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "game": { "type": ["string", "null"] },
+                    "songs": { "type": ["string", "null"] },
+                    "skins": { "type": ["string", "null"] },
+                    "replays": { "type": ["string", "null"] }
+                  }
+                },
+                { "type": "null" }
+              ]
+            },
+            "lazer": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["data", "files"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": { "type": ["string", "null"] },
+                    "files": { "type": ["string", "null"] }
+                  }
+                },
+                { "type": "null" }
+              ]
+            }
+          }
+        }
+      }
     }
   }
 }

@@ -120,7 +120,12 @@ keyed by namespace (`vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`,
 `vosu.skin`, the game plugin's own namespace, any other installed plugin's
 namespace), each value that namespace's own document. A pointer such as
 `/vosu.play/combo` selects one field; `/vosu.play` selects a whole namespace;
-`""` selects everything the session currently has.
+`""` selects everything the session currently has. A namespace's
+`"x-visibility": "plugins"` subtree ([`docs/v2/state-schema.md`](state-schema.md),
+D2 — only `vosu.osu.internal` in this freeze) is never present in this
+document for any API v1 consumer: core's projector strips it before this
+protocol, every HTTP state read below, every session-event frame, and every
+debug log ever see the document, regardless of what pointer is selected.
 
 Subscribing to `active` tracks the focused session rather than one fixed
 session: if focus moves to a different session while subscribed, the next

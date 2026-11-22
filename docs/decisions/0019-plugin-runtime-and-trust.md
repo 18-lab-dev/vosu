@@ -138,3 +138,34 @@ its own crate and the link step rather than the whole daemon.
   and no GPU or .NET work. Revisit when untrusted third-party plugins become
   common; the message-based ABI keeps that possible.
 - **Rewrite in Zig or C3:** see Context.
+
+## Amendments
+
+**2026-11-21** (A1, adversarial review of the implementation plan; full
+rationale in `docs/v2/implementation-plan.md` section 10):
+
+- **D3 Bundled-only HTTP surfaces.** "Native code runs only in plugins" and
+  "plugins never serve HTTP" ([ADR 0021](0021-api-v1-and-upstream-adapters.md))
+  stand, but the dashboard, overlay hosting, tool hosting, and the upstream
+  adapters — all bundled plugins whose job is serving routes — additionally
+  use a second, HTTP-only in-process crate interface (`vosu-surface`, never
+  exposed to an external or out-of-process plugin) for routes, WebSocket
+  feeds, and reads, specified in full in
+  [`docs/v2/plugin-abi.md`](../v2/plugin-abi.md) §7.5. The osu! plugin's
+  edge into it is interim bridge **B1** (M1→M4a).
+- **D9 Multi-crate plugins and core.** "One crate per bundled plugin" is
+  relaxed for the osu! plugin and for core: the osu! plugin spans five
+  crates (including `vosu-adapter-support` and `vosu-osu-model`, justified
+  by dependency direction) and core spans four crates, per
+  `docs/v2/implementation-plan.md` section 2's target layout. The build
+  budget (section 8 there) covers prepush wall-clock, native Windows
+  Clippy/test/doctest, clean and CI builds, and feature-unification
+  rebuilds, not only incremental edits.
+- **D10 Names.** The bundled adapter crates and plugin ids are
+  `vosu-adapter-upstream`/`vosu.adapter.upstream`,
+  `vosu-adapter-gosumemory`/`vosu.adapter.gosumemory`, and
+  `vosu-adapter-streamcompanion`/`vosu.adapter.streamcompanion` (replacing
+  this ADR's informal "tosu v2, gosumemory v1, and StreamCompanion adapters"
+  phrasing above, which named the adapters by the project each imitates,
+  not by their shipped crate/plugin id); the dashboard, overlay host, and
+  tool host are `vosu.dashboard`, `vosu.overlayhost`, `vosu.toolhost`.

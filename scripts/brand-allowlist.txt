@@ -20,11 +20,10 @@ docs/architecture/overview.md 5 history explains the rename's architectural hist
 docs/decisions/0007-vosu-clean-cutover.md 12 history ADR rationale for the clean cutover away from the tosu name
 docs/decisions/0013-counters-share-dashboard-origin.md 1 upstream references the upstream tosu counter origin behavior being matched
 docs/decisions/0014-overlay-settings-profiles.md 2 upstream references the upstream tosu overlay catalog this ADR integrates with
-docs/decisions/0019-plugin-runtime-and-trust.md 1 upstream names the bundled tosu v2 compatibility adapter
+docs/decisions/0019-plugin-runtime-and-trust.md 2 upstream names the bundled tosu v2 compatibility adapter, and the A1 amendment quotes that same phrasing to show what the new plugin ids replace
 docs/decisions/0020-game-agnostic-data-model.md 1 upstream contrasts 2.0 state with the upstream tosu-compatible schemas
-docs/decisions/0021-api-v1-and-upstream-adapters.md 10 upstream specifies the bug-for-bug tosu adapters, their pinned upstream revision, and the upstream /api/ingame page
+docs/decisions/0021-api-v1-and-upstream-adapters.md 11 upstream specifies the bug-for-bug tosu adapters, their pinned upstream revision, and the upstream /api/ingame page; the A1 amendment quotes the D20 decided text once more to scope it
 docs/v2/catalog-v2.md 1 migration names the legacy env file that the 1.x first-start migration reads
-docs/v2/plugin-abi.md 1 upstream names the bundled tosu v2 compatibility adapter
 docs/operations/runbook.md 2 upstream documents operational handling of the upstream tosu catalog dependency
 docs/provenance-audit.md 38 provenance records source-provenance findings for tosu-derived code
 docs/quickstart.md 1 upstream names the upstream tosu compatibility target for new users

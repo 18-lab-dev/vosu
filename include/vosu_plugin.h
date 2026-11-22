@@ -5,10 +5,10 @@
  * document; keep them in sync.
  *
  * Every pointer and `vosu_bytes` view in this header is borrowed for the
- * duration of the call that receives it. The four fixed-layout hot-path
+ * duration of the call that receives it. The five fixed-layout hot-path
  * opcodes (VOSU_OP_PUBLISH_FIELD, VOSU_OP_DEMAND_CHANGED,
- * VOSU_OP_READ_PLAN_SUBMIT, VOSU_OP_READ_PLAN_RESULT) go further: their
- * payload bytes contain no
+ * VOSU_OP_READ_PLAN_SUBMIT, VOSU_OP_READ_PLAN_RESULT, VOSU_OP_PUBLISH_BATCH)
+ * go further: their payload bytes contain no
  * pointers at all, not even call-scoped ones. Variable-length data inside
  * them is addressed by `{offset, len}` pairs relative to the start of the
  * payload buffer, so the exact same bytes are valid whether the call is a
@@ -101,7 +101,7 @@ typedef uint64_t vosu_resource_id; /* an open bounded byte stream, minted by the
  * Every call across the plugin/host boundary is one `vosu_message`:
  * plugin -> host via `vosu_host_services::send`, host -> plugin via
  * `vosu_plugin_vtable::dispatch`. `payload` is CBOR (RFC 8949) for every
- * opcode except the four hot-path families (1-4), whose payload bytes are
+ * opcode except the hot-path flat-layout opcodes (1, 2, 3, 4, 6), whose payload bytes are
  * the corresponding flat `*_header` struct from this file followed by its
  * trailing variable-length data, never parsed, never containing a pointer.
  * --------------------------------------------------------------------- */
@@ -110,15 +110,17 @@ typedef enum vosu_opcode {
     /* Hot path: fixed flat layout, no pointers in the payload. */
     VOSU_OP_PUBLISH_FIELD = 1,      /* plugin -> host */
     VOSU_OP_DEMAND_CHANGED = 2,     /* host -> plugin */
-    VOSU_OP_READ_PLAN_SUBMIT = 3,   /* plugin -> host */
+    VOSU_OP_READ_PLAN_SUBMIT = 3,   /* plugin -> host; VOSU_READ_FLAG_SYNC may be set in `vosu_message.flags` (D5) */
     VOSU_OP_READ_PLAN_RESULT = 4,   /* host -> plugin */
     VOSU_OP_READ_PLAN_CANCEL = 5,   /* plugin -> host, CBOR: abandon a submitted plan before its result arrives */
+    VOSU_OP_PUBLISH_BATCH = 6,      /* plugin -> host: atomic multi-field publish, see "vosu_publish_batch_header" below (D4) */
 
     /* Session lifecycle and focus. */
     VOSU_OP_SESSION_ATTACHED = 10,  /* host -> plugin, CBOR */
     VOSU_OP_SESSION_DETACHED = 11,  /* host -> plugin, CBOR */
     VOSU_OP_SESSION_IDENTIFY = 12,  /* plugin -> host, CBOR */
     VOSU_OP_FOCUS_CHANGED = 13,     /* host -> plugin, CBOR */
+    VOSU_OP_SESSION_DECLINE = 14,   /* plugin -> host, CBOR: {"handle"}; this plugin will never identify this session, so core detaches it and never re-offers this PID generation (D6) */
 
     /* Scanning. */
     VOSU_OP_SCAN_REQUEST = 20,      /* plugin -> host, CBOR */
@@ -164,7 +166,7 @@ typedef enum vosu_opcode {
 
 typedef struct vosu_message {
     uint32_t opcode;         /* a vosu_opcode value */
-    uint32_t flags;          /* opcode-specific; 0 unless the spec says otherwise */
+    uint32_t flags;          /* opcode-specific; 0 unless the spec says otherwise. A receiver rejects a message whose flags set any bit it does not recognize with VOSU_ERR_INVALID_ARGUMENT rather than ignoring it (D4). */
     uint64_t correlation_id; /* 0 for messages with no reply; see per-opcode notes */
     vosu_bytes payload;
 } vosu_message;
@@ -212,6 +214,26 @@ typedef struct vosu_field_publish_header {
     uint32_t data_offset; /* STRING/BYTES/CBOR/RESOURCE_REF/TREE_REF: trailing bytes */
     uint32_t data_len;
 } vosu_field_publish_header;
+
+/* ---------------------------------------------------------------------
+ * VOSU_OP_PUBLISH_BATCH: flat payload (D4).
+ *
+ * One handle, a count, and `entry_count` `vosu_field_publish_header`
+ * entries (each still carrying its own `ns`/`pointer`/`value_kind`/`data`
+ * offsets, relative to this same payload buffer, exactly as a standalone
+ * VOSU_OP_PUBLISH_FIELD payload does) plus their trailing variable-length
+ * data. The whole encoded payload is capped at VOSU_READ_PLAN_MAX_BYTES,
+ * rejected with VOSU_ERR_INVALID_ARGUMENT before any field is applied if it
+ * is larger. A batch is validated and committed as a whole: every entry is
+ * parsed first; if any entry is malformed, none is applied. Otherwise every
+ * entry in `entries` is applied as one commit — a single VOSU_OK answers
+ * the whole message, never a per-entry status, and core never holds a
+ * partially-applied batch as pending host state between entries. */
+typedef struct vosu_publish_batch_header {
+    uint64_t handle;
+    uint32_t entries_offset; /* vosu_field_publish_header[entry_count] */
+    uint32_t entry_count;
+} vosu_publish_batch_header;
 
 /* ---------------------------------------------------------------------
  * VOSU_OP_DEMAND_CHANGED: flat payload.
@@ -308,7 +330,21 @@ typedef struct vosu_stage_header {
  * whole dependent chain and answers with exactly one
  * VOSU_OP_READ_PLAN_RESULT, so a plan costs one round trip regardless of
  * `stage_count`. The same plan runs identically whether the plugin holds
- * direct, in-process access or is brokered through `vosu plugin-host`. */
+ * direct, in-process access or is brokered through `vosu plugin-host`.
+ *
+ * `vosu_message.flags` on this opcode may set VOSU_READ_FLAG_SYNC (D5): the
+ * host guarantees the matching VOSU_OP_READ_PLAN_RESULT is dispatched on
+ * this same submitting thread before `send` returns (directly, in-process;
+ * through a dedicated ring-reader thread that hands it to the blocked
+ * submitter, under `vosu plugin-host`), or the call returns
+ * VOSU_ERR_TIMED_OUT once a host-enforced deadline elapses. Submitting a
+ * synchronous plan from a thread the host itself dispatches on (the
+ * publisher thread, or any `dispatch` invocation) is refused with
+ * VOSU_ERR_INVALID_ARGUMENT, in both runtimes, rather than deadlocking.
+ * Every other flag bit on this opcode is unrecognized and rejected per
+ * `vosu_message::flags`'s rule above. */
+#define VOSU_READ_FLAG_SYNC (1u << 0)
+
 typedef struct vosu_read_plan_submit_header {
     uint64_t plan; /* caller-assigned; never reused for another plan within this plugin instance's lifetime */
     uint64_t handle;

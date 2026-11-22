@@ -86,3 +86,22 @@ only while someone subscribes to it.
 - **Game namespaces only:** rejected; no overlay could work across games.
 - **Normalized judgements and accuracy:** rejected; any mapping misstates at
   least one game's scoring.
+
+## Amendments
+
+**2026-11-21** (A1, adversarial review of the implementation plan; full
+rationale in `docs/v2/implementation-plan.md` section 10):
+
+- **D2 Plugin-only paths.** "Each namespace has one owner and a published
+  JSON Schema" above gains one narrow carve-out: a namespace schema may mark
+  a subtree `"x-visibility": "plugins"`, published and readable by plugins
+  exactly like any other field but stripped by core's projector from every
+  API v1 projection, subscription, encoding cache, session event,
+  `STATE_UPDATE`, and debug log for a consumer that does not `require` it.
+  Only `vosu.osu`'s top-level `internal` key (per-variant install paths,
+  `docs/v2/state-schema.md`) uses it in this freeze, and a schema may use it
+  only on `vosu.osu`'s top-level `/internal` key — nowhere else, at any
+  schema load. The carve-out is disclosure control, not confinement: an
+  out-of-process plugin already has the user's own filesystem access
+  ([ADR 0019](0019-plugin-runtime-and-trust.md):105-107), so this narrows
+  only what reaches the wire, not what a plugin process can see.

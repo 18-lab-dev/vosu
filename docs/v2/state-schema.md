@@ -3,8 +3,8 @@
 This document specifies the 2.0 state model decided by [ADR 0020](../decisions/0020-game-agnostic-data-model.md)
 and the resource reference shape decided by [ADR 0021](../decisions/0021-api-v1-and-upstream-adapters.md).
 It is binding for implementers of core, the official osu! plugin, and any
-third-party plugin or overlay that reads state. The phase 0 shared naming
-contract governs plugin ids, capability ids, and session semantics used
+third-party plugin or overlay that reads state. The [naming contract](naming.md)
+governs plugin ids, capability ids, and session semantics used
 throughout; this document does not repeat it.
 
 JSON Schemas for every namespace live in `docs/v2/schemas/`, one file per
@@ -14,7 +14,7 @@ file in isolation is valid JSON and a valid JSON Schema (draft 2020-12); fully
 resolving `$ref`s needs the whole directory, as with any multi-file schema.
 
 Capability ids for state are `field:<namespace>.<path>` (a leaf) or
-`field:<namespace>` (the whole namespace), per the naming contract. The
+`field:<namespace>` (the whole namespace), per the [naming contract](naming.md). The
 manifest shapes that declare `provides`/`requires`/`optional` with these ids
 are specified in `docs/v2/catalog-v2.md` (CatalogV2Spec); this document only
 defines what the ids address.
@@ -130,7 +130,7 @@ all), with up to four bare, camelCase keys: `file`, `audio`, `background`
 (resource references) and `set` (a tree reference), none required. The
 dotted forms `chart.file`, `chart.audio`, `chart.background`, `chart.set`
 name these same core resource kinds only inside `resource:` capability ids
-(naming contract); a plugin's own resource kinds never appear inside
+([naming contract](naming.md)); a plugin's own resource kinds never appear inside
 `vosu.chart.resources` — they live in that plugin's own namespace, as
 `<plugin-id>.<kind>` capability ids (ADR 0021). A kind the current chart has
 no file for is omitted from `resources`, never present with a reference to
@@ -287,10 +287,44 @@ storage has no filesystem folder; `vosu.osu.settings.client`/compatibility
 `folders.skin` keep their existing meaning in the upstream adapter only (ADR
 0021) — API v1 consumers use `vosu.skin.tree` instead.
 
+### `internal` (`vosu.osu.internal`)
+
+**Plugin-only; D2.** The sole `"x-visibility": "plugins"` subtree in this
+freeze (`docs/v2/plugin-abi.md` §6.6 defines the ABI-side behavior). Core's
+projector strips `internal` from every API v1 document, subscription frame,
+encoding cache, session event, `STATE_UPDATE` sent to a non-owning plugin,
+and debug log, for any consumer that does not `require` `field:vosu.osu.internal`
+or a path below it; the osu! plugin publishes it exactly like any other
+field. This is disclosure control, not confinement (`docs/v2/plugin-abi.md`
+§7.5): an out-of-process plugin already has the user's own filesystem
+access, and vosu-tools already finds these folders itself
+(`vosu-tools/tools/lazer-library/src/main.rs:52-58`); the carve-out only
+keeps a raw path off API v1, which must never serve one (below).
+
+`internal.paths` (D8) carries per-variant install paths, each leaf `null`
+when unknown or not applicable to the session's variant:
+
+| Path | Variant | Notes |
+| --- | --- | --- |
+| `internal.paths.stable.game` | stable | The stable client's install directory. |
+| `internal.paths.stable.songs` | stable | 1.x's `songs_dir` for a stable client. |
+| `internal.paths.stable.skins` | stable | |
+| `internal.paths.stable.replays` | stable | |
+| `internal.paths.lazer.data` | lazer | Lazer's data root (no songs/skins folders; see below). |
+| `internal.paths.lazer.files` | lazer | Lazer's content-addressed file store. |
+
+`internal.paths.stable` is `null` entirely on a lazer session and vice
+versa. A writer plugin or tool imports files through the
+`vosu.osu.beatmap.import` action (M3) rather than writing into `paths`
+directly; the install plan gains a field flagging a plugin that `requires`
+`field:vosu.osu.internal.paths`, labelled as a disclosure permission, not a
+sandbox escape (`docs/v2/catalog-v2.md`).
+
 ## Resource references
 
-Per ADR 0021, state never carries a raw filesystem path. It carries
-references that resolve through API v1:
+Per ADR 0021, state never carries a raw filesystem path to any consumer
+outside the subtree D2 reserves for it (`vosu.osu.internal`, above). Every
+other field carries references that resolve through API v1:
 
 - A **resource reference** is `{"url", "type"}`: `url` is
   `/api/v1/resources/{id}`; `type` is assigned once, at publish time, from

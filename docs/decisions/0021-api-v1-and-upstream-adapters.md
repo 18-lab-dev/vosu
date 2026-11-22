@@ -130,3 +130,41 @@ one-click vosulay install while the endpoint is in use.
   LGPL material that vosu removed.
 - **Dropping `/api/ingame`:** rejected; existing in-game setups would break
   without a migration path.
+
+## Amendments
+
+**2026-11-21** (A1, adversarial review of the implementation plan; full
+rationale in `docs/v2/implementation-plan.md` section 10):
+
+- **D2 Plugin-only paths.** "State carries references: … never a bare
+  path" above holds for every ordinary field, but one narrow,
+  schema-declared carve-out exists ([ADR 0020](0020-game-agnostic-data-model.md)'s
+  own amendment): `vosu.osu`'s `internal.paths` subtree, stripped from API
+  v1 by core's projector for any consumer that does not `require` it. The
+  streamCompanion adapter's upstream-only derived values
+  (`src/model/api/sc.rs:132-141`) are computed by that adapter itself from
+  `vosu-osu-calc` and the chart resource, not read back out of `internal`.
+- **D3 Bundled-only HTTP surfaces.** "Plugins never serve HTTP" stands for
+  every plugin that is not bundled; the dashboard, overlay hosting, tool
+  hosting, and these adapters additionally use the in-process-only
+  `vosu-surface` interface for routes, feeds, and reads
+  (`docs/v2/plugin-abi.md` §7.5, [ADR 0019](0019-plugin-runtime-and-trust.md)
+  amendment).
+- **D10 Names.** The three adapters above are named, as crates and plugin
+  ids, `vosu-adapter-upstream`/`vosu.adapter.upstream`,
+  `vosu-adapter-gosumemory`/`vosu.adapter.gosumemory`, and
+  `vosu-adapter-streamcompanion`/`vosu.adapter.streamcompanion` — not a
+  bundled `vosu.tools`/`vosu.overlays`-shaped id, which would block the
+  ecosystem's natural `vosu.tools.<name>` ids under the id-extension rule
+  (`docs/v2/catalog-v2.md`). "Adapter names are upstream identifiers and
+  need `upstream` entries in `scripts/brand-allowlist.txt`" above is
+  superseded for the plugin/crate names themselves: they now avoid the old
+  brand entirely, so only this ADR's own prose about the projects they
+  imitate still needs those allowlist entries.
+- **D20 1.x overlays using removed APIs.** "Overlays written for vosu use
+  API v1; overlays written for tosu run unchanged through the adapters"
+  above describes the upstream-compatible surfaces only; a 1.x-era *vosu*
+  overlay built from the quickstart used vosu's own
+  `/websocket/v2/subscribe` addition, which M4a removes — see
+  `docs/v2/catalog-v2.md`'s amended "User overlays" migration entry for the
+  resulting notice-and-attribution behavior.

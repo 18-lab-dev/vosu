@@ -25,19 +25,20 @@ redefining them, and owns the unified `manifest.toml` format every package
 kind uses (below), including its shared fields and `manifest_version`. Field
 semantics are defined in `docs/v2/state-schema.md`; action invocation (the
 HTTP route, session header, and authorization) is defined in
-`docs/v2/api-v1.md`. The shared naming contract (plugin ids, capability ids,
+`docs/v2/api-v1.md`. The shared [naming contract](naming.md) (plugin ids, capability ids,
 namespaces, sessions) is normative for every identifier in this document.
 
 ## Capability fields (plugin, tool, and overlay manifests)
 
 Every plugin, tool, and overlay manifest carries three optional array-of-tables
-fields, using capability ids from the naming contract (`field:…`, `resource:…`,
+fields, using capability ids from the [naming contract](naming.md) (`field:…`, `resource:…`,
 `action:…`, `game:…`):
 
 ```toml
 [[provides]]
 id = "field:vosu.osu"              # a bare namespace id covers the whole namespace
 version = "1.0.0"                  # the owning namespace's schema version, not the plugin's own release
+schema = "schemas/vosu.osu.schema.json"  # required for a whole-namespace `field:` entry naming the plugin's own namespace (D7); path inside this package
 
 [[requires]]
 id = "field:vosu.play.combo"
@@ -56,7 +57,19 @@ version = "^1.0.0"
     at `1.0.0`) — a field's shape, not the plugin release that happens to
     implement it, is what a requirer actually depends on. A plugin cannot
     publish a namespace at a version its own build doesn't match the
-    corresponding schema revision for.
+    corresponding schema revision for. A whole-namespace entry additionally
+    carries `schema = "<path>"` (D7), a path inside the plugin package to
+    that namespace's own `*.schema.json`: core consumes only a bounded
+    profile of it (at most 256 KiB, `$ref` depth at most 32, `$ref` only
+    within the schema itself or to core's `common-defs` by a fixed id,
+    `x-sampling-lane` annotations only) and never validates a publish
+    against a third-party schema at runtime; the schema's own top-level
+    namespace must equal this `provides` id. `catalog-v2.json` mirrors the
+    schema's `version` and its extracted lane table (below) so the resolver
+    and core's demand compiler — a hand-written lane walker over that
+    mirrored table, not a general JSON Schema evaluator — can plan without
+    downloading the package. A `field:` entry naming a leaf path rather than
+    a whole namespace carries no `schema` field.
   - For an `action:` id, `version` is the plugin's own chosen version for
     that action and must equal the matching `[[actions]]` entry's `version`
     (below).
@@ -131,7 +144,7 @@ this parse ambiguous. A plugin id that equals or extends any core-owned
 namespace (`vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`,
 `vosu.skin`, `vosu.sessions`) is always rejected, from any source. Beyond
 that, a plugin id starting with the segment `vosu` is rejected only from a
-non-official source — the naming contract reserves the `vosu.` prefix to
+non-official source — the [naming contract](naming.md) reserves the `vosu.` prefix to
 core and official plugins — and is accepted from an official source.
 
 Resource kinds are one segment, `[a-z0-9][a-z0-9-]{0,31}`. The names `file`,
@@ -371,7 +384,7 @@ coverage" above.
     "host": ">=2.0.0, <3.0.0",
     "runtime": "process",
     "provides": [
-      { "id": "field:acme.game", "version": "1.0.0" },
+      { "id": "field:acme.game", "version": "1.0.0", "schema_version": "1.0.0", "lanes": [{ "pointer": "/combo", "lane": "regular", "activity": "gameplay" }] },
       { "id": "game:acme-game", "version": "*" },
       { "id": "action:acme.game.song.import", "version": "1.0.0" }
     ],
@@ -396,7 +409,8 @@ coverage" above.
     "matcher": {
       "process_names": ["AcmeGame.exe", "acme-game"],
       "process_path_patterns": [],
-      "command_line_patterns": []
+      "command_line_patterns": [],
+      "comm_hints": []
     },
     "packages": {
       "x86_64-unknown-linux-gnu": {
@@ -475,6 +489,15 @@ game, not any real supported or planned integration.
   resolver uses the catalog copy to plan an install without downloading every
   candidate package, so catalog and package must agree — a published mismatch
   is a publisher defect, not something the resolver reconciles.
+- A `provides` entry for a whole namespace (carrying `schema` in the
+  manifest, D7) mirrors two further fields the manifest itself does not
+  carry, both derived from that namespace's own schema file at publish
+  time: `"schema_version"` (the schema's top-level `version`, equal to the
+  `provides` entry's own `version`) and `"lanes"`, the schema's extracted
+  `x-sampling-lane` table as `[{"pointer","lane","activity"}, ...]`, one
+  entry per annotated property, `pointer` an RFC 6901 pointer relative to
+  the namespace root. A `provides` entry for a leaf path carries neither
+  field.
 - `requires`/`optional` mirror the manifest fields above, `{"id","version"}`,
   in the same order, for the same reason 1.x mirrors `requires`
   (`docs/tools/protocol.md`): resolving without downloading every package.
@@ -502,9 +525,9 @@ game, not any real supported or planned integration.
   verbatim; the install plan (below) uses it.
 - `matcher` appears only on `plugins` entries that are game plugins and
   mirrors the manifest's `[match]` table verbatim as
-  `{"process_names", "process_path_patterns", "command_line_patterns"}`
+  `{"process_names", "process_path_patterns", "command_line_patterns", "comm_hints"}`
   (`docs/v2/plugin-abi.md` owns the matching semantics: regex dialect,
-  anchoring, and case rules). A non-game plugin omits it.
+  anchoring, case rules, and the `comm_hints` pre-filter, D18). A non-game plugin omits it.
 - `packages` is a map from target to `{"url","sha256","size"}`, with the same
   field rules as 1.x `Package` except the size limit (below): absolute HTTPS URL without embedded
   credentials, 64-character hex SHA-256 of the compressed ZIP, exact positive
@@ -655,8 +678,8 @@ resolves and returns a plan rather than installing immediately:
 {
   "plan_id": "…",
   "adds": [
-    {"id": "skill-tracker", "kind": "tool", "source": "…", "version": "0.1.0", "reason": "requested", "native": false, "trust": null, "runtime": null, "needs_approval": false},
-    {"id": "acme.game", "kind": "plugin", "source": "https://gitlab.example.com/acme/game-plugin", "version": "1.0.0", "reason": "dependency", "native": true, "trust": "user", "runtime": "process", "needs_approval": true}
+    {"id": "skill-tracker", "kind": "tool", "source": "…", "version": "0.1.0", "reason": "requested", "native": false, "trust": null, "runtime": null, "needs_approval": false, "requires_internal_paths": false},
+    {"id": "acme.game", "kind": "plugin", "source": "https://gitlab.example.com/acme/game-plugin", "version": "1.0.0", "reason": "dependency", "native": true, "trust": "user", "runtime": "process", "needs_approval": true, "requires_internal_paths": false}
   ],
   "errors": []
 }
@@ -678,6 +701,13 @@ add, matching 1.x's existing user-tool approval requirement, regardless of
 its requested `runtime`; confirming the plan when any add still needs
 approval is rejected until the caller also lists that add's id in
 `POST /api/catalog/plans/<plan_id>/confirm {"approve": ["acme.game", …]}`.
+`requires_internal_paths` (D8) is `true` only for a `kind: "plugin"` add
+whose resolved `requires`/`optional` names `field:vosu.osu.internal.paths`
+or an ancestor of it; it is a disclosure flag the install UI surfaces
+(the grant exposes the attached client's install paths to that plugin, per
+`docs/v2/state-schema.md`'s `vosu.osu.internal` carve-out), never a sandbox
+decision — it does not gate `needs_approval` or `trust` and carries no
+approval step of its own. `false` for every non-plugin entry.
 
 A plugin add whose `runtime` is `"in-process"` while its `trust` would be
 `"user"` is never silently downgraded to `"process"` or merely
@@ -900,9 +930,15 @@ On first 2.0 start, migration is one-time and idempotent (same pattern as
   `status: "disabled"`, `status_detail: "needs-2.0-update"`. Durable data and
   settings are kept untouched, so re-enabling after the author ships a v2
   `manifest.toml` needs no data migration of its own.
-- **User overlays**: unaffected and left enabled. Overlays never used the
-  removed host API, so service removal does not touch them; they keep working
-  unmanaged until a `kind = "overlay"` `manifest.toml`-bearing update appears.
+- **User overlays** (D20): left enabled; flagged when they use removed APIs.
+  Overlays never used the removed host API, so service removal does not
+  touch them directly, but an overlay built from the 1.x quickstart
+  (`vosu-overlay-quickstart/app.js:449`) subscribes to
+  `/websocket/v2/subscribe`, which M4a removes: once that happens, requests
+  to a removed route or field are attributed to the requesting overlay (M4a)
+  and the dashboard shows a notice with a link to the migration guide (M7);
+  the quickstart documents the port. They keep working unmanaged until a
+  `kind = "overlay"` `manifest.toml`-bearing update appears.
 
 ## Day-0 release check
 
