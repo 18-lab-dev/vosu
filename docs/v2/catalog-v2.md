@@ -975,7 +975,11 @@ for the quickstart repository (which is a template, not a catalog source and
 so carries no `catalog-v2.json`), pass requires only that its latest release
 tag parses as semver with major version `2`. The gate fails closed: a missing
 repository, a failed request, or any one of the four checks failing fails the
-whole gate, and 2.0 is not published (ADR 0022).
+whole gate, and 2.0 is not published (ADR 0022). The gate additionally fails
+closed if `tests/fixtures/upstream/DIVERGENCES.md` lists any entry that is
+not a security divergence (ADR 0021's "Upstream adapters" amendment, D6):
+a temporary pre-release exception, such as the stable tournament-manager
+aggregate's deferral, must be resolved before day-0, not merely documented.
 
 ## Open questions
 

@@ -934,9 +934,10 @@
               }
             }
           }
-        }
+        },
+        { "type": "null" }
       ],
-      "description": "D6: populated with real data on the lazer multi-spectating path (ipcState 11); 1.x's default empty object (scoreVisible: false, clients: [], and so on) otherwise. Never null. The stable tournament-manager aggregate is deferred to its own decision; the osu! plugin takes 1.x's no-manager-found branch unconditionally on stable.",
+      "description": "D6: `null` only on the lazer multi-spectating path (ipcState 11) before the first lobby read lands (matching 1.x, which omits the key entirely until then; the adapters drop the key when this value is null); populated with real data once that read lands; 1.x's default empty object (scoreVisible: false, clients: [], and so on) in every other case. The stable tournament-manager aggregate is deferred: until it lands (M4a or later, `docs/v2/implementation-plan.md`), the osu! plugin takes 1.x's no-manager-found branch unconditionally on stable, and the stable-tournament oracle case is a recorded temporary divergence, not a passing comparison.",
       "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
     },
     "internal": {

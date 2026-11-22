@@ -59,21 +59,33 @@ extern "C" {
  * unbounded buffer. */
 #define VOSU_READ_PLAN_MAX_BYTES (64u * 1024u)
 
-/* Upper bound on the encoded size of a VOSU_OP_PUBLISH_BATCH payload, in
- * bytes (header plus every entry plus its trailing data). Matches the 1 MiB
- * WebSocket/frame limit (docs/v2/api-v1.md "Listener placement, CORS, and
- * limits") rather than VOSU_READ_PLAN_MAX_BYTES: a batch carries whole
- * array/object values (VOSU_VALUE_CBOR), which are not bounded the way a
- * read plan's small fixed-width ops are, so it needs the larger of the
- * two existing size ceilings rather than a new one. A host rejects a
- * larger batch with VOSU_ERR_INVALID_ARGUMENT before applying any entry;
- * under `vosu plugin-host` (docs/v2/plugin-abi.md §7.2), `send` itself
- * rejects a frame this large the same way, before it ever reaches the
- * ring, since every ring's fixed capacity is required to hold at least
- * one largest legal frame (a VOSU_PUBLISH_BATCH payload at this cap, plus
- * its frame header) — a connection is never treated as unresponsive merely
- * because the frame it was asked to carry could never fit. */
-#define VOSU_PUBLISH_BATCH_MAX_BYTES (1024u * 1024u)
+/* Upper bound on the encoded payload size of any single vosu_message, in
+ * either direction, for any opcode (D4-adjacent, generalized at the second
+ * review): matches the 1 MiB WebSocket/frame limit
+ * (docs/v2/api-v1.md "Listener placement, CORS, and limits") rather than a
+ * new number, since both are the same "one message, one allocation" bound.
+ * It applies even to the CBOR opcodes, which have no per-field width limit
+ * the way a read plan's fixed-size ops do: a VOSU_OP_PUBLISH_FIELD carrying
+ * a VOSU_VALUE_CBOR array/object, a VOSU_OP_RESOURCE_RESOLVED answering
+ * TREE_LIST, a VOSU_OP_STREAM_CHUNK, and a host-authored
+ * VOSU_OP_STATE_UPDATE are all bounded by it the same way VOSU_OP_PUBLISH_BATCH
+ * is. A sender that cannot fit a logically atomic value under this bound
+ * (an oversized PUBLISH_FIELD array) is rejected with
+ * VOSU_ERR_INVALID_ARGUMENT rather than silently truncating it; a sender
+ * whose content is naturally splittable (a tree listing, which already
+ * carries `truncated: bool`; a STATE_UPDATE, which may send one namespace's
+ * changed leaves as more than one message) splits instead. A host rejects
+ * an oversize send with VOSU_ERR_INVALID_ARGUMENT before it ever reaches a
+ * `vosu plugin-host` ring, so every ring's fixed capacity only has to hold
+ * one frame at this cap plus its frame header — a connection is never
+ * treated as unresponsive merely because the frame it was asked to carry
+ * could never fit. */
+#define VOSU_FRAME_MAX_BYTES (1024u * 1024u)
+
+/* Upper bound on the encoded size of a VOSU_OP_PUBLISH_BATCH payload
+ * specifically; equal to VOSU_FRAME_MAX_BYTES, since a batch is one
+ * message like any other and needs no narrower cap of its own. */
+#define VOSU_PUBLISH_BATCH_MAX_BYTES VOSU_FRAME_MAX_BYTES
 
 /* ---------------------------------------------------------------------
  * Primitives
