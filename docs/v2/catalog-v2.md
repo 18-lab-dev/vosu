@@ -16,12 +16,16 @@ and alternatives are not repeated here. The 1.x tool protocol
 `src/tools/catalog.rs`, `src/tools/catalog_sources.rs` are the baseline this
 spec changes; differences from 1.x are called out explicitly.
 
-Plugin ABI fields (`runtime`, the process matcher schema, and everything else a
-plugin implements against the C ABI) are defined in `docs/v2/plugin-abi.md`;
-this spec references them by name without redefining them. Field and resource
-identity (`field:`, `resource:`, `action:`, `game:` capability ids, namespace
-grammar, `vosu.client` fields) follow the shared naming contract; this spec
-uses those ids and does not redefine the grammar.
+Plugin ABI runtime fields (`manifest_version`, `abi_version`, `runtime`,
+`concurrent_dispatch`, `settings_schema`, `[targets.*]`, `[match]`,
+`[resources]`), the process matcher's matching semantics, and everything else
+a plugin implements against the C ABI are defined in `docs/v2/plugin-abi.md`;
+this spec references them by name without redefining them, and owns every
+other `plugin.toml` field (below). Field semantics are defined in
+`docs/v2/state-schema.md`; action invocation (the HTTP route, session header,
+and authorization) is defined in `docs/v2/api-v1.md`. The shared naming
+contract (plugin ids, capability ids, namespaces, sessions) is normative for
+every identifier in this document.
 
 ## Capability fields (plugin, tool, and overlay manifests)
 
@@ -31,43 +35,169 @@ fields, using capability ids from the naming contract (`field:…`, `resource:�
 
 ```toml
 [[provides]]
-id = "field:vosu.osu.pp.current"   # capability id; a bare namespace covers the whole namespace
-version = "1.2.0"                  # exact semver: the version of this namespace/resource/action set
+id = "field:vosu.osu"              # a bare namespace id covers the whole namespace
+version = "1.0.0"                  # the owning namespace's schema version, not the plugin's own release
 
 [[requires]]
 id = "field:vosu.play.combo"
 version = "^1.0.0"                 # semver requirement the provider's `provides` version must satisfy
 
 [[optional]]
-id = "resource:vosu.osu.beatmap.background"
+id = "resource:chart.background"
 version = "^1.0.0"
 ```
 
 - **`provides`**: only a plugin manifest may declare it. A tool or overlay
-  manifest with a non-empty `provides` is invalid. Each entry's `version` is
-  the semver version of that capability as this plugin release implements it;
-  a plugin may provide several capabilities at different versions (e.g. its
-  `field:` namespace at `2.0.0` while an `action:` it also owns is at `1.0.0`).
+  manifest with a non-empty `provides` is invalid. A plugin may provide
+  several capabilities, each independently versioned:
+  - For a `field:` id, `version` must equal the owning namespace's current
+    schema version (`docs/v2/state-schema.md`; every namespace schema starts
+    at `1.0.0`) — a field's shape, not the plugin release that happens to
+    implement it, is what a requirer actually depends on. A plugin cannot
+    publish a namespace at a version its own build doesn't match the
+    corresponding schema revision for.
+  - For an `action:` id, `version` is the plugin's own chosen version for
+    that action and must equal the matching `[[actions]]` entry's `version`
+    (below).
+  - For a `resource:` id, `version` is the plugin's own chosen version for
+    that resource kind.
+  - For a `game:` id, `version` must be the literal string `"*"` (see
+    "Game capabilities" below); game support is a presence check, not a
+    version negotiation.
 - **`requires`** and **`optional`**: any manifest kind may declare them. An id
   must not appear in both lists of the same manifest. A plugin must not
   require or optionally depend on a capability id that falls under its own
-  `provides` namespace (no self-dependency); depending on a different plugin's
-  namespace, including a core-owned one such as `field:vosu.client`, is
-  ordinary and common (a game plugin requires `field:vosu.client` to read the
-  session it was matched against).
+  `provides` namespace (no self-dependency); depending on a different
+  plugin's namespace, or on a core-owned namespace such as `field:vosu.play`,
+  is ordinary and common. Core-owned namespaces and bundled plugins' own
+  capabilities are always resolvable without installing anything (see
+  "Built-in providers" below); a game plugin needs no `requires` entry at all
+  to have its session's `vosu.client` fields filled, since core fills those
+  itself from the attach handshake rather than from a plugin subscription.
 - `version` in `requires`/`optional` is a semver requirement string
-  (`semver::VersionReq` syntax, matching 1.x's `Requirement.version`).
+  (`semver::VersionReq` syntax, matching 1.x's `Requirement.version`), except
+  for a `game:` id, whose requirement must be the literal string `"*"`.
 - An id with an unrecognized capability prefix, or a malformed semver/semver
   requirement, is a manifest validation error (same rejection style as 1.x
   `Manifest::parse`/`Catalog::validate`).
-- A tool's or overlay's `requires`/`optional` list is also its permission
-  surface: the browser bridge (`vosu.invoke`, see below) may invoke only
-  `action:` ids present in that manifest's own `requires` or `optional`, after
-  they resolve to an installed provider. There is no separate "actions it
-  invokes" list; declaring the capability *is* declaring the intent to call
-  it. An overlay manifest with any `action:` id in `requires`/`optional` is
-  invalid: overlays are read-only ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md))
-  and may depend only on `field:`/`resource:` ids.
+- A tool's `requires`/`optional` list is also its permission surface: it may
+  invoke only `action:` ids present there, after they resolve to an installed
+  provider, through the route `docs/v2/api-v1.md` defines
+  (`POST /api/v1/sessions/{id|active}/actions/{plugin-id}.{name}`, authorized
+  by the dashboard-minted tool session that spec names). There is no separate
+  "actions it invokes" list; declaring the capability *is* declaring the
+  intent to call it. Overlays never invoke actions
+  ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)): an overlay
+  manifest with any `action:` id in `requires`/`optional` is invalid, and may
+  depend only on `field:`/`resource:` ids.
+
+### Capability coverage
+
+A provided id satisfies a required id when they are equal, or when the
+required id is the provided id plus one or more further dotted segments (the
+provided id is an ancestor path of the required one, in the same namespace):
+`field:vosu.osu` (a bare namespace) satisfies `field:vosu.osu.play.pp.current`,
+and `field:acme.game` satisfies `field:acme.game.combo`. The reverse never
+holds: a `provides` entry for a leaf path does not satisfy a `requires`/
+`optional` entry naming an ancestor of it, since the resolver cannot assume a
+plugin publishes everything beneath a path it only partially declared. The
+same rule applies to `resource:` and `action:` ids, though in practice those
+are published one capability per concrete kind/action rather than as a
+covering namespace.
+
+### Namespace and kind parsing
+
+Plugin ids are 2–4 dotted segments, so a `field:`/`action:`/`resource:` id's
+namespace boundary is ambiguous from the string alone. The resolver parses it
+by the **longest registered plugin id** (bundled, installed, or catalogued,
+across every enabled source) that is a prefix of the capability id's path;
+everything after that prefix is the field path, action name, or resource
+kind. A plugin id that extends another already-registered plugin id (for
+example `a.b.c` when `a.b` is already bundled, installed, or catalogued) is
+rejected at install time and at catalog validation time, since it would make
+this parse ambiguous.
+
+Resource kinds are one segment, `[a-z0-9][a-z0-9-]{0,31}`. Core-owned kinds
+are the reserved dotted names `chart.file`, `chart.audio`, `chart.background`,
+`chart.set`, and `skin`; a plugin id must not start with the segment `chart`
+or `skin`, so a `resource:` id is unambiguous: `resource:chart.background` is
+always the core kind, `resource:<plugin-id>.<kind>` is always that plugin's
+own kind. A bare kind name (e.g. in a `[[resource_kinds]]` declaration,
+`docs/v2/plugin-abi.md`) is written without any plugin-id prefix; the
+`resource:` capability id is the only place that prefix (or its absence, for
+a core kind) appears.
+
+### Game capabilities
+
+`game:<game-id>` ids use the grammar `^[a-z][a-z0-9-]{0,31}$` (matching the
+`game` field of `vosu.client`, `docs/v2/schemas/vosu.client.schema.json`).
+Every `provides`/`requires`/`optional` entry for a `game:` id uses the
+literal version `"*"`; a `game:` entry with any other version string is a
+validation error.
+
+## Plugin manifest v2 (`plugin.toml`, metadata fields)
+
+Runtime fields — `manifest_version`, `abi_version`, `runtime`,
+`concurrent_dispatch`, `settings_schema`, `[targets.*]`, `[match]`, and
+`[resources]` — are defined in `docs/v2/plugin-abi.md` and not repeated here.
+This section defines the remaining fields of the same `plugin.toml`: identity
+and display metadata, `provides`/`requires`/`optional` (above), and
+`[[actions]]`.
+
+```toml
+id = "vosu.osu"                   # naming-contract plugin id: dotted, 2-4 segments
+name = "osu!"                     # display name
+version = "2.0.0"                 # the plugin's own release version (distinct from any `provides` field: version)
+description = "…"                 # optional
+author = "18-LAB"                 # optional
+homepage = "https://…"            # optional
+icon = "icon.svg"                 # optional, path inside the plugin directory
+banner = "banner.webp"            # optional
+host = ">=2.0.0, <3.0.0"          # required; semver requirement on the running vosu version
+replaces = []                     # optional, default []; see "replaces" below
+
+# [[provides]] / [[requires]] / [[optional]]: see "Capability fields" above.
+
+[[actions]]
+name = "beatmap.import"           # dot-segments, each [a-z0-9][a-z0-9-]{0,31}; full id is action:<plugin-id>.<name>
+version = "1.0.0"                 # must equal the matching `provides` entry for action:<plugin-id>.<name>
+title = "Import beatmap"          # display name shown in install plans and tool permission prompts
+args_schema = "schemas/beatmap-import-args.schema.json"     # path inside the plugin package
+result_schema = "schemas/beatmap-import-result.schema.json" # path inside the plugin package
+session = "required"              # "required" | "optional" | "none": whether invocation needs a session
+cli = true                        # also exposed as `vosux <plugin-id> beatmap.import [json-args]`
+```
+
+- `id`, `name`, `version` are required; `description`, `author`, `homepage`,
+  `icon`, `banner` are optional, with the same meaning and validation as the
+  1.x tool manifest's identically-named fields (`docs/tools/protocol.md`).
+  `icon`/`banner` are paths inside the plugin directory, same file-type rules
+  as tools. `id` must not extend, or be extended by, another registered
+  plugin id (see "Namespace and kind parsing" above).
+- `host` is the same `semver::VersionReq` field `catalog-v2.json` mirrors per
+  entry (below); a plugin's own manifest and its catalog entry must agree.
+- `replaces` is a list of former plugin ids this plugin's current id
+  supersedes, validated with the **naming-contract plugin id grammar**
+  (dotted), not the 1.x tool/overlay id grammar: not the plugin's own id, no
+  duplicate or ambiguous claim, and never naming another current plugin id
+  from the same source. Tool and overlay `replaces` (below) keep the 1.x id
+  grammar, since tool and overlay ids are unchanged from 1.x.
+- Every `action:<plugin-id>.<name>` entry in `provides` has exactly one
+  `[[actions]]` entry with that `name`, and vice versa; their `version`
+  fields are equal. A `provides` action entry with no matching `[[actions]]`
+  entry, or an `[[actions]]` entry with no matching `provides` entry, is a
+  manifest validation error.
+- `session` controls the invocation route `docs/v2/api-v1.md` defines:
+  `"required"` means `{id|active}` must resolve to an attached session,
+  `"optional"` means the call is valid with or without one, `"none"` means
+  the action takes no session at all (a utility action a tool or another
+  plugin calls independent of any attached client).
+- `cli: true` (default `false`) additionally exposes the action as
+  `vosux <plugin-id> <name> [json-args]` through the native loopback broker
+  credential (`docs/v2/api-v1.md`'s broker-credential authorization applies
+  unchanged); this is how [ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)'s
+  "tool command lines become commands that plugins provide" is implemented.
+  `cli: false` exposes the action only to tools and other plugins.
 
 ## Tool manifest v2 (`tool.toml`, `manifest_version = 2`)
 
@@ -86,27 +216,32 @@ author = "…"                      # optional
 homepage = "https://…"            # optional
 icon = "web/icon.svg"             # optional, path inside the tool directory
 banner = "art/banner.webp"        # optional
+host = ">=2.0.0, <3.0.0"          # required; semver requirement on the running vosu version
 
 [ui]                              # required; a tool with no UI is an overlay or a plugin
 root = "web"
 entry = "index.html"              # default "index.html"
 
 [[requires]]
-id = "field:vosu.osu.pp.current"
+id = "field:acme.game"
 version = "^1.0.0"
 
 [[optional]]
-id = "action:vosu.osu.beatmap.import"
+id = "field:vosu.osu.play.pp.current"
 version = "^1.0.0"
 ```
 
 `settings.json`, `icon`/`banner` serving, and the overlay-origin static rules
 are unchanged from 1.x (`docs/tools/protocol.md`). `[[requires]]`/`[[optional]]`
 replace `[api].read`/`[api].write`/`[[requires]]` (1.x plugin-identified) and
-`[permissions].host`: a tool's dashboard-granted session now scopes strictly to
-the capability ids it declared, resolved to the providers the resolver chose,
-rather than to a fixed host-permission vocabulary. The install plan (below)
-shows these as the permissions a tool is requesting.
+`[permissions].host`: a tool's dashboard-granted session now scopes strictly
+to the capability ids it declared, resolved to the providers the resolver
+chose, rather than to a fixed host-permission vocabulary (`docs/v2/api-v1.md`
+defines the session header and route). The install plan (below) shows these
+as the permissions a tool is requesting. The example above requires a
+catalog-installed plugin's capability (triggering a dependency install, see
+"Install plan" below) and optionally reads a built-in capability that needs
+no install at all (see "Built-in providers" below).
 
 ## Overlay manifest v2 (`overlay.toml`, new in 2.0)
 
@@ -128,9 +263,10 @@ homepage = "https://…"            # optional
 icon = "icon.svg"                 # optional
 banner = "banner.webp"            # optional
 resolution = [400, 150]           # optional [width, height]
+host = ">=2.0.0, <3.0.0"          # required; semver requirement on the running vosu version
 
 [[requires]]
-id = "field:vosu.osu.pp.current"
+id = "field:acme.game.combo"
 version = "^1.0.0"
 
 [[optional]]
@@ -139,7 +275,9 @@ version = "^1.0.0"
 ```
 
 `requires`/`optional` may contain only `field:`/`resource:` ids (see above).
-`provides` is always empty and rejected if present.
+`provides` is always empty and rejected if present. The example above
+requires one leaf field of a catalog plugin's namespace, satisfied by that
+plugin's whole-namespace `provides` entry per "Capability coverage" above.
 
 ## `catalog-v2.json`
 
@@ -149,32 +287,46 @@ version = "^1.0.0"
   "name": "Example catalog",
   "published": "2026-11-21T00:00:00Z",
   "plugins": [{
-    "id": "vosu.osu",
-    "name": "osu! plugin",
-    "version": "2.0.0",
+    "id": "acme.game",
+    "name": "Acme game plugin",
+    "version": "1.0.0",
     "description": "…",
-    "author": "18-LAB",
+    "author": "Acme",
     "homepage": "https://…",
     "icon_url": "https://…",
     "banner_url": "https://…",
     "host": ">=2.0.0, <3.0.0",
+    "runtime": "process",
     "provides": [
-      { "id": "field:vosu.osu", "version": "2.0.0" },
-      { "id": "game:osu", "version": "2.0.0" },
-      { "id": "action:vosu.osu.beatmap.import", "version": "2.0.0" }
+      { "id": "field:acme.game", "version": "1.0.0" },
+      { "id": "game:acme-game", "version": "*" },
+      { "id": "action:acme.game.song.import", "version": "1.0.0" }
     ],
-    "requires": [{ "id": "field:vosu.client", "version": "^2.0.0" }],
+    "requires": [],
     "optional": [],
+    "actions": [{
+      "name": "song.import",
+      "version": "1.0.0",
+      "title": "Import song",
+      "args_schema": "schemas/song-import-args.schema.json",
+      "result_schema": "schemas/song-import-result.schema.json",
+      "session": "required",
+      "cli": true
+    }],
     "replaces": [],
-    "matcher": { "…": "opaque; schema owned by docs/v2/plugin-abi.md" },
+    "matcher": {
+      "process_names": ["AcmeGame.exe", "acme-game"],
+      "process_path_patterns": [],
+      "command_line_patterns": []
+    },
     "packages": {
       "x86_64-unknown-linux-gnu": {
-        "url": "https://example.org/releases/v2.0.0/vosu-plugin-osu-2.0.0-x86_64-unknown-linux-gnu.zip",
+        "url": "https://example.org/releases/v1.0.0/vosu-plugin-acme-game-1.0.0-x86_64-unknown-linux-gnu.zip",
         "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "size": 12345
       },
       "x86_64-pc-windows-msvc": {
-        "url": "https://example.org/releases/v2.0.0/vosu-plugin-osu-2.0.0-x86_64-pc-windows-msvc.zip",
+        "url": "https://example.org/releases/v1.0.0/vosu-plugin-acme-game-1.0.0-x86_64-pc-windows-msvc.zip",
         "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "size": 12345
       }
@@ -190,8 +342,8 @@ version = "^1.0.0"
     "icon_url": null,
     "banner_url": null,
     "host": ">=2.0.0, <3.0.0",
-    "requires": [{ "id": "field:vosu.osu.pp.current", "version": "^1.0.0" }],
-    "optional": [],
+    "requires": [{ "id": "field:acme.game", "version": "^1.0.0" }],
+    "optional": [{ "id": "field:vosu.osu.play.pp.current", "version": "^1.0.0" }],
     "replaces": [],
     "packages": {
       "any": {
@@ -213,8 +365,8 @@ version = "^1.0.0"
     "resolution": [400, 150],
     "preview": "https://…",
     "host": ">=2.0.0, <3.0.0",
-    "requires": [{ "id": "field:vosu.osu.pp.current", "version": "^1.0.0" }],
-    "optional": [],
+    "requires": [{ "id": "field:acme.game.combo", "version": "^1.0.0" }],
+    "optional": [{ "id": "field:vosu.play.combo", "version": "^1.0.0" }],
     "replaces": [],
     "packages": {
       "any": {
@@ -226,6 +378,9 @@ version = "^1.0.0"
   }]
 }
 ```
+
+`acme.game` above is a fictional illustrative plugin for a generic rhythm
+game, not any real supported or planned integration.
 
 - `catalog_version` is `2` (catalogs with any other value are rejected by the
   2.0 fetcher, same rejection style as 1.x).
@@ -241,12 +396,22 @@ version = "^1.0.0"
   resolver uses the catalog copy to plan an install without downloading every
   candidate package, so catalog and package must agree — a published mismatch
   is a publisher defect, not something the resolver reconciles.
-- `requires`/`optional` mirror the manifest fields above, `{"id","version"}",`
+- `requires`/`optional` mirror the manifest fields above, `{"id","version"}`,
   in the same order, for the same reason 1.x mirrors `requires`
   (`docs/tools/protocol.md`): resolving without downloading every package.
+- `actions` appears only on `plugins` entries and mirrors the manifest's
+  `[[actions]]` verbatim (`{"name","version","title","args_schema",
+  "result_schema","session","cli"}`), empty when the plugin declares none.
+  Tool and overlay entries carry no `actions` key: they only invoke actions,
+  never declare them.
+- `runtime` appears only on `plugins` entries and mirrors the manifest's
+  runtime request (`"in-process"` or `"process"`, `docs/v2/plugin-abi.md`)
+  verbatim; the install plan (below) uses it.
 - `matcher` appears only on `plugins` entries that are game plugins and
-  mirrors the manifest's process matcher verbatim; its schema is owned by
-  `docs/v2/plugin-abi.md`. A non-game plugin omits it.
+  mirrors the manifest's `[match]` table verbatim as
+  `{"process_names", "process_path_patterns", "command_line_patterns"}`
+  (`docs/v2/plugin-abi.md` owns the matching semantics: regex dialect,
+  anchoring, and case rules). A non-game plugin omits it.
 - `packages` is a map from target to `{"url","sha256","size"}`, identical
   field rules to 1.x `Package`: absolute HTTPS URL without embedded
   credentials, 64-character hex SHA-256 of the compressed ZIP, exact positive
@@ -262,32 +427,64 @@ version = "^1.0.0"
   fetched through the dashboard's `/api/catalog/art?url=` proxy for the same
   reason 1.x proxies them (redirect targets rarely set a renderable
   `Content-Type`).
-- `replaces: ["old-id", …]` (default `[]`) is accepted on every entry kind,
-  validated exactly as 1.x validates `Tool.replaces`: valid id grammar, not
-  the entry's own id, no duplicate or ambiguous claim across entries of the
-  *same* array in the *same* source, and never naming another current id in
-  that array. A plugin cannot replace a tool; replacement never crosses kind.
+- `replaces: ["old-id", …]` (default `[]`) is accepted on every entry kind. A
+  plugin entry's `replaces` is validated with the **plugin-id grammar**
+  (dotted); tool and overlay entries keep the 1.x tool-id grammar, exactly as
+  their manifests do (above). Within one array, in one source: not the
+  entry's own id, no duplicate or ambiguous claim, and never naming another
+  current id in that array. A plugin cannot replace a tool; replacement never
+  crosses kind.
 - ZIP layout, extraction limits, and conventional (non-authoritative) asset
   file names carry over from 1.x: `vosu-tool-<id>-<version>-<target>.zip` for
   tools, `vosu-overlay-<id>-<version>-any.zip` for overlays, and
   `vosu-plugin-<id>-<version>-<target>.zip` for plugins. A plugin ZIP has
-  `plugin.toml` (schema in `docs/v2/plugin-abi.md`) at the archive root; a
-  tool ZIP has `tool.toml`; an overlay ZIP has `overlay.toml` and
-  `index.html`, both at the archive root.
+  `plugin.toml` (schema split between this spec and `docs/v2/plugin-abi.md`)
+  at the archive root; a tool ZIP has `tool.toml`; an overlay ZIP has
+  `overlay.toml` and `index.html`, both at the archive root.
+
+## API placement
+
+Every `/api/catalog/*` route this spec defines — install, plan confirmation,
+sources list/replace, credential, trust, and private-network — is
+dashboard-listener only, like other 1.x management mutations
+(`docs/tools/protocol.md`), and requires dashboard-origin provenance plus
+`X-Vosu-CSRF` on every `POST`/`DELETE` ([ADR 0016](../decisions/0016-separate-dashboard-origin.md)).
+`<source>`, `<plan_id>`, and `<id>` path segments are percent-encoded, since a
+source string routinely contains `/` (`owner/repo`, or a full URL).
 
 ## Resolver algorithm
 
+### Built-in providers
+
+Before consulting catalogs, the resolver has a fixed **built-in provider
+set** that is never installed, never uninstalled, and never counted in any
+reference count:
+
+- core's own namespaces (`vosu.client`, `vosu.status`, `vosu.chart`,
+  `vosu.play`, `vosu.skin`), each at its schema's current version
+  (`docs/v2/state-schema.md`);
+- every bundled plugin's `provides` ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)'s
+  bundled set: the dashboard, overlay hosting, tool hosting, the osu!
+  plugin, and the upstream adapters). Their exact `provides` lists live in
+  their own manifests, compiled into `vosu`, never in any catalog.
+
+A requirement satisfied by a built-in provider needs no catalog lookup, no
+download, and contributes no entry to the install plan's `adds`; it simply
+resolves for free, with no `source`. Built-in providers are never a
+`replaces` target, an uninstall target, or an autoremove candidate: they
+exist whenever `vosu` itself does.
+
 ### Provider selection
 
-The resolver builds one map from capability id to candidate plugin providers
-across every enabled, successfully-fetched source's `plugins` entries (own
-source and source-fetch-order are part of each candidate). A candidate is
-eligible for a requirement when its `provides` version satisfies the
-requirement's `VersionReq` and its `host` is satisfied by the running vosu
-version.
+For a requirement the built-in set does not satisfy, the resolver builds one
+map from capability id to candidate plugin providers across every enabled,
+successfully-fetched source's `plugins` entries (own source and
+source-fetch-order are part of each candidate). A candidate is eligible for a
+requirement when its `provides` version satisfies the requirement's
+`VersionReq` and its `host` is satisfied by the running vosu version.
 
-Selection order among eligible candidates for one capability id is strict and
-needs no user choice:
+Selection order among eligible catalog candidates for one capability id is
+strict and needs no user choice:
 
 1. **Official first.** A candidate is official when the exact source string
    it came from equals one of the fixed official catalog source identities
@@ -312,9 +509,10 @@ one version, so solving works per plugin, not per capability id:
 1. Start the frontier at the requested items (the tool/overlay/plugin the
    user asked to install) plus every plugin already installed and kept.
 2. For each requirement (`requires`, and `optional` only when a satisfying
-   provider is already selected or trivially resolvable — an unmet `optional`
-   is dropped silently, never an error) of a frontier item, resolve its
-   capability id to a plugin via provider selection above.
+   provider is already built-in, already selected, or already installed — an
+   unmet `optional` is dropped silently, never an error, and never triggers a
+   new install) of a frontier item, resolve its capability id to the built-in
+   set first, then to a catalog plugin via provider selection above.
 3. If two different requirers need the same capability id with ranges that no
    single candidate version satisfies, resolution fails with a conflict naming
    both requirers, the capability id, and both ranges — fixing the version
@@ -340,32 +538,49 @@ resolves and returns a plan rather than installing immediately:
 {
   "plan_id": "…",
   "adds": [
-    {"id": "skill-tracker", "kind": "tool", "source": "…", "version": "0.1.0", "reason": "requested", "native": false, "trust": null, "needs_approval": false},
-    {"id": "vosu.osu", "kind": "plugin", "source": "18-lab-dev/vosu-tools", "version": "2.0.0", "reason": "dependency", "native": true, "trust": "official", "needs_approval": false}
+    {"id": "skill-tracker", "kind": "tool", "source": "…", "version": "0.1.0", "reason": "requested", "native": false, "trust": null, "runtime": null, "needs_approval": false},
+    {"id": "acme.game", "kind": "plugin", "source": "https://gitlab.example.com/acme/game-plugin", "version": "1.0.0", "reason": "dependency", "native": true, "trust": "user", "runtime": "process", "needs_approval": true}
   ],
   "errors": []
 }
 ```
 
+(The tool's `optional` requirement on `field:vosu.osu.play.pp.current` from
+its manifest example above resolves to the built-in osu! plugin and adds
+nothing to the plan.)
+
 `reason` is `"requested"` for the item the user asked for, `"dependency"` for
-everything the resolver added. `native` is `true` only for `kind: "plugin"`
+everything the resolver added; a requirement satisfied by a built-in provider
+never produces an add at all. `native` is `true` only for `kind: "plugin"`
 entries (tools and overlays never run native code in 2.0). `trust` mirrors
 ADR 0019's eligibility (`"official"`, `"trusted"` for a user-trusted source,
 or `"user"` otherwise; `null` for non-plugin entries, which carry no runtime
-trust decision). `needs_approval` is `true` for any `"user"`-trust plugin add,
-matching 1.x's existing user-tool approval requirement; confirming the plan
-when any add still needs approval is rejected until the caller also lists that
-add's id in `POST /api/catalog/plans/<plan_id>/confirm {"approve": ["vosu.osu", …]}`.
-A non-empty `errors` means resolution failed (conflict or cycle messages, see
-above); `adds` is then empty and the plan cannot be confirmed. Confirming
-returns `{"job_id"}`, polled exactly as 1.x catalog jobs are.
+trust decision). `runtime` mirrors the plugin's manifest request (`null` for
+non-plugin entries). `needs_approval` is `true` for any `"user"`-trust plugin
+add, matching 1.x's existing user-tool approval requirement, regardless of
+its requested `runtime`; confirming the plan when any add still needs
+approval is rejected until the caller also lists that add's id in
+`POST /api/catalog/plans/<plan_id>/confirm {"approve": ["acme.game", …]}`.
+
+A plugin add whose `runtime` is `"in-process"` while its `trust` would be
+`"user"` is never silently downgraded to `"process"` or merely
+approval-gated: it is a plan **error** instead (`"errors"` gains an entry
+such as `"acme.game requests in-process but <source> is not trusted"`), the
+item never reaches `adds`, and the plan cannot be confirmed — matching the
+host's own load-time refusal for an ineligible `in-process` request
+(`docs/v2/plugin-abi.md`). Any other non-empty `errors` means resolution
+failed (conflict or cycle messages, see above); `adds` is then empty and the
+plan cannot be confirmed. Confirming returns `{"job_id"}`, polled exactly as
+1.x catalog jobs are.
 
 ### Dependency-only autoremove
 
 Each installed plugin's origin is recorded as `installed_for: "requested"` (the
 user chose to install it directly, including when accepted from game
-detection below) or `"dependency"` (the resolver added it). This flag is the
-only persisted state; a plugin's current reference count is always recomputed
+detection below) or `"dependency"` (the resolver added it). Built-in
+providers carry no such record at all: they are never installed, so they are
+never counted or removed. This flag is the only persisted state for a
+catalog-installed plugin; its current reference count is always recomputed
 from the currently-installed set's manifests at resolution time (requires a
 fresh graph walk, not an incrementally-maintained counter, so it cannot drift
 out of sync with what is actually installed).
@@ -379,15 +594,15 @@ reference count; only an explicit uninstall of it removes it.
 
 ### Game detection
 
-Game plugins carry a process matcher (`docs/v2/plugin-abi.md` owns the
-matcher schema). Core scans running processes against the `matcher` field of
-every *installed* game plugin, plus the `matcher` field of every *catalog*
-game plugin from enabled sources that is not installed (surfaced in
-`catalog-v2.json` exactly for this, see above, so core never has to download
-a package to test a matcher). When a running process matches an
-uninstalled catalog game plugin, the dashboard offers "Add support for
-`<name>`"; accepting it runs the normal install plan flow above with
-`reason: "requested"`.
+Game plugins carry a process matcher (`docs/v2/plugin-abi.md` owns its
+matching semantics; the catalog mirrors its JSON shape, above). Core scans
+running processes against the `matcher` field of every *installed* game
+plugin, plus the `matcher` field of every *catalog* game plugin from enabled
+sources that is not installed (surfaced in `catalog-v2.json` exactly for
+this, see above, so core never has to download a package to test a
+matcher). When a running process matches an uninstalled catalog game plugin,
+the dashboard offers "Add support for `<name>`"; accepting it runs the
+normal install plan flow above with `reason: "requested"`.
 
 ## Sources and credentials
 
@@ -465,7 +680,7 @@ password = "…"
 `source` matches the configured source string verbatim (same matching rule as
 `record_source`'s exact-string comparisons). `kind` is `"token"` (GitHub,
 GitLab, Gitea-compatible) or `"basic"` (static HTTPS only). The dashboard API
-is write-only:
+(API placement above) is write-only:
 
 - `POST /api/catalog/sources/<source>/credential` body `{"kind":"token","token":"…"}`
   or `{"kind":"basic","username":"…","password":"…"}` → `204`. Replaces any
@@ -521,8 +736,8 @@ skip, since each toggle is a fresh grant):
 A `trusted` source's plugins are eligible for `runtime = "in-process"`,
 exactly as ADR 0019's eligibility table describes for "a source the user
 explicitly trusts". Untrusted-source plugins remain eligible only for
-`runtime = "process"`, after the same per-plugin approval 1.x already requires
-for user tools.
+`runtime = "process"`, after the same per-plugin approval 1.x already
+requires for user tools (the install plan's `needs_approval` above).
 
 ## 1.x coexistence
 
@@ -600,3 +815,8 @@ whole gate, and 2.0 is not published (ADR 0022).
   is needed so the resolver can plan an overlay's dependencies without
   parsing `metadata.txt` free text. Confirm this is in scope for 2.0 rather
   than a later overlay-ecosystem follow-up.
+- **`session: "none"` actions and the broker.** This spec defines `"none"` as
+  valid for `[[actions]].session`, but `docs/v2/api-v1.md`'s invoke route is
+  phrased per-session (`/sessions/{id|active}/actions/{plugin-id}.{name}`);
+  how a `"none"` action is addressed without a session segment needs a
+  decision from that spec, not this one.
