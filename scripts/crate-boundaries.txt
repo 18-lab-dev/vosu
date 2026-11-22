@@ -18,6 +18,7 @@ vosu-osu-model
 vosu-pp
 vosu-release-smoke
 vosu-plugin-api -> vosu-proptest
+vosu-plugin-testkit -> vosu-plugin-api
 
 vosu-net -> vosu-sys
 vosu-net -> vosu-proptest

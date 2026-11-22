@@ -1,0 +1,27 @@
+[package]
+name = "vosu-plugin-testkit"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "vosu_plugin_testkit"
+path = "src/lib.rs"
+# "rlib" lets the root crate's `BUNDLED` array call the serialized echo
+# plugin's bundled-form `vosu_plugin_vtable()` directly as a Rust function
+# pointer (D13); "cdylib" additionally builds the same crate as a loadable
+# shared library exporting `vosu_plugin_entry_v1`, which `tests/plugin_host.rs`
+# `dlopen`s to exercise the external-plugin path end to end.
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+test-harness = []
+
+[dependencies]
+vosu-plugin-api = { path = "../vosu-plugin-api" }
