@@ -229,3 +229,46 @@ fn host_services_default_methods_build_the_right_message() {
     assert_eq!(sent[2].0.opcode(), vosu_opcode::VOSU_OP_LOG_RECORD);
     assert_eq!(sent[3].0.opcode(), vosu_opcode::VOSU_OP_TIMER_CANCEL);
 }
+
+/// minor 6: a non-zero sub-millisecond interval is rejected before
+/// anything is sent, rather than silently truncated to `interval_ms: 0`.
+#[test]
+fn set_timer_rejects_a_sub_millisecond_nonzero_interval() {
+    let host = RecordingHost {
+        sent: RefCell::new(Vec::new()),
+    };
+    let status = host.set_timer(1, Some(std::time::Duration::from_micros(500)));
+    assert_eq!(status, vosu_plugin_api::vosu_status::VOSU_ERR_INVALID_ARGUMENT);
+    assert!(host.sent.into_inner().is_empty());
+}
+
+/// minor 6: an interval that does not fit in `u32` milliseconds saturates
+/// instead of wrapping.
+#[test]
+fn set_timer_saturates_an_overlong_interval() {
+    let host = RecordingHost {
+        sent: RefCell::new(Vec::new()),
+    };
+    let status = host.set_timer(1, Some(std::time::Duration::from_secs(u64::from(u32::MAX))));
+    assert_eq!(status, vosu_plugin_api::vosu_status::VOSU_OK);
+    let Message::TimerSet(timer_set) = &host.sent.into_inner()[0].0 else {
+        panic!("expected a TimerSet message");
+    };
+    assert_eq!(timer_set.interval_ms, Some(u32::MAX));
+}
+
+/// minor 6: a non-UTF-8 path is rejected rather than lossily substituted.
+#[cfg(unix)]
+#[test]
+fn declare_root_rejects_a_non_utf8_path() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let host = RecordingHost {
+        sent: RefCell::new(Vec::new()),
+    };
+    let path = std::path::Path::new(OsStr::from_bytes(b"/tmp/not-\xFF-utf8"));
+    let status = host.declare_root(None, "root", path);
+    assert_eq!(status, vosu_plugin_api::vosu_status::VOSU_ERR_INVALID_ARGUMENT);
+    assert!(host.sent.into_inner().is_empty());
+}

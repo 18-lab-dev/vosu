@@ -84,18 +84,25 @@ pub trait HostServices {
         )
     }
 
-    /// `VOSU_OP_ROOT_DECLARE` (§6.5).
+    /// `VOSU_OP_ROOT_DECLARE` (§6.5). `path` must be valid UTF-8 (the wire
+    /// field is a CBOR string): a non-UTF-8 path is rejected with
+    /// `VOSU_ERR_INVALID_ARGUMENT` rather than lossily substituted,
+    /// so the host never resolves a different path than the one on disk
+    /// (minor 6).
     fn declare_root(
         &self,
         handle: Option<vosu_session_id>,
         name: &str,
         path: &Path,
     ) -> vosu_status {
+        let Some(path) = path.to_str() else {
+            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        };
         self.send(
             &Message::RootDeclare(RootDeclare {
                 handle,
                 name: name.to_owned(),
-                path: path.to_string_lossy().into_owned(),
+                path: path.to_owned(),
             }),
             0,
         )
@@ -144,14 +151,15 @@ pub trait HostServices {
     }
 
     /// `VOSU_OP_TIMER_SET` (§6.11); `interval: None` requests a one-shot.
+    /// A non-zero `interval` below one millisecond is rejected with
+    /// `VOSU_ERR_INVALID_ARGUMENT` before anything is sent, rather than
+    /// truncated to `0` (minor 6).
     fn set_timer(&self, timer: vosu_timer_id, interval: Option<Duration>) -> vosu_status {
-        self.send(
-            &Message::TimerSet(TimerSet {
-                timer,
-                interval_ms: interval.map(saturating_millis),
-            }),
-            0,
-        )
+        let interval_ms = match interval.map(checked_millis).transpose() {
+            Ok(interval_ms) => interval_ms,
+            Err(()) => return vosu_status::VOSU_ERR_INVALID_ARGUMENT,
+        };
+        self.send(&Message::TimerSet(TimerSet { timer, interval_ms }), 0)
     }
 
     /// `VOSU_OP_READ_PLAN_SUBMIT` with `VOSU_READ_PLAN_SYNC` set (§6.3, D5),
@@ -224,15 +232,17 @@ pub trait HostServices {
     }
 }
 
-/// Converts `interval` to whole milliseconds for `VOSU_OP_TIMER_SET`,
-/// saturating at `u32::MAX` instead of silently wrapping, and rounding a
-/// non-zero sub-millisecond interval up to `1` rather than truncating it
-/// to `0` — `0` means "fire every tick" to the host, which §6.11 reserves
-/// for an actual one-shot/zero request, not a rounding artifact (minor 6).
-pub(crate) fn saturating_millis(interval: Duration) -> u32 {
+/// Converts `interval` to whole milliseconds for `VOSU_OP_TIMER_SET`
+/// (minor 6): `Ok(None)` for a one-shot, `Ok(Some(ms))` for a periodic
+/// timer saturating at `u32::MAX` instead of silently wrapping, or `Err`
+/// for a non-zero interval below one millisecond — §6.11's `interval_ms`
+/// is `u32|null` with no fractional-millisecond representation, so
+/// truncating such a value to `0` would silently turn it into "fire every
+/// tick" instead of reporting that this interval cannot be expressed.
+fn checked_millis(interval: Duration) -> Result<u32, ()> {
     let millis = interval.as_millis();
     if millis == 0 && !interval.is_zero() {
-        return 1;
+        return Err(());
     }
-    u32::try_from(millis).unwrap_or(u32::MAX)
+    Ok(u32::try_from(millis).unwrap_or(u32::MAX))
 }
