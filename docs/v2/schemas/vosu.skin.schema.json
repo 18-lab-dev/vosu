@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vosu.dev/schemas/v2/vosu.skin.schema.json",
+  "version": "1.0.0",
+  "title": "vosu.skin",
+  "description": "Best-effort, declared common namespace (ADR 0020): the client's current skin. Capability id: field:vosu.skin(.<path>).",
+  "type": "object",
+  "required": ["name", "tree"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": ["string", "null"],
+      "description": "Display name of the current skin, as the client names it."
+    },
+    "tree": {
+      "oneOf": [
+        { "$ref": "common-defs.schema.json#/$defs/treeRef" },
+        { "type": "null" }
+      ],
+      "description": "Indexed folder reference for the skin's files (ADR 0021), e.g. `resource:skin`. `null` when the plugin does not fill this field or the active skin has no browsable files (a built-in skin with no export folder)."
+    }
+  }
+}

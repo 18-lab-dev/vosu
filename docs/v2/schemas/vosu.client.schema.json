@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vosu.dev/schemas/v2/vosu.client.schema.json",
+  "version": "1.0.0",
+  "title": "vosu.client",
+  "description": "Identifies the attached client of one session. Required: every published session carries a complete vosu.client namespace, filled by core from the game plugin's attach handshake. Capability id: field:vosu.client(.<path>).",
+  "type": "object",
+  "required": ["game", "variant", "name", "version", "pid", "session", "focused", "plugin"],
+  "additionalProperties": false,
+  "properties": {
+    "game": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}$",
+      "description": "Game identifier, e.g. `osu`. Matches the `game:<game-id>` capability id this client satisfies.",
+      "examples": ["osu"]
+    },
+    "variant": {
+      "type": "string",
+      "description": "Client variant/fork, in the game's own terms, e.g. `stable` or `lazer`.",
+      "examples": ["stable", "lazer"]
+    },
+    "name": {
+      "type": "string",
+      "description": "Display name for the client, suitable to show a user.",
+      "examples": ["osu!(lazer)"]
+    },
+    "version": {
+      "type": "string",
+      "description": "The client's own version string, in its own format. Not a semver guarantee.",
+      "examples": ["2026.1107.0", "b20260924.1"]
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "OS process id of the attached client."
+    },
+    "session": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque session id, minted by core, stable for the attachment's lifetime."
+    },
+    "focused": {
+      "type": "boolean",
+      "description": "Whether this session is the one `/api/v1/sessions/active` currently addresses."
+    },
+    "plugin": {
+      "type": "object",
+      "required": ["id", "version"],
+      "additionalProperties": false,
+      "description": "The game plugin instance that published this session.",
+      "properties": {
+        "id": {
+          "$ref": "common-defs.schema.json#/$defs/pluginId"
+        },
+        "version": {
+          "$ref": "common-defs.schema.json#/$defs/semver"
+        }
+      }
+    }
+  }
+}

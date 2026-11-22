@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vosu.dev/schemas/v2/vosu.play.schema.json",
+  "version": "1.0.0",
+  "title": "vosu.play",
+  "description": "Best-effort, declared common namespace (ADR 0020): the current play's universal values. Fields are `null`, never a zero/empty placeholder, when the plugin's manifest does not declare them. Capability id: field:vosu.play(.<path>).",
+  "type": "object",
+  "required": ["score", "combo", "maxCombo", "accuracy", "accuracyKind", "health", "progress", "rate", "judgements"],
+  "additionalProperties": false,
+  "properties": {
+    "score": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Current score, in the game's own scale (not normalized across games).",
+      "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+    },
+    "combo": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Current combo.",
+      "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+    },
+    "maxCombo": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Highest combo reached so far this attempt.",
+      "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+    },
+    "accuracy": {
+      "type": ["number", "null"],
+      "description": "Current accuracy, 0-1, under the formula named by `accuracyKind`.",
+      "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+    },
+    "accuracyKind": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z][a-z0-9-]{0,31}$",
+      "description": "Identifies the game's own accuracy formula; core never normalizes accuracy across games. A game with more than one formula (e.g. per client variant) uses a distinct id for each.",
+      "examples": ["osu-standard", "osu-mania"]
+    },
+    "health": {
+      "type": ["number", "null"],
+      "description": "Current health/HP, 0-1. `null` for games/rulesets without a health resource.",
+      "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+    },
+    "progress": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Fraction of the chart elapsed, by play time over chart length. `null` outside an active chart (e.g. menus) or when length is unknown.",
+      "x-sampling-lane": { "lane": "precise", "activity": "always" }
+    },
+    "rate": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0,
+      "description": "Effective playback rate (tempo multiplier) applied by mods or client settings; `1.0` at normal speed.",
+      "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
+    },
+    "judgements": {
+      "type": ["array", "null"],
+      "description": "Game-declared judgement breakdown for the current attempt, best to miss by `ordinal`. `null` when the plugin does not fill this field; an empty array means the game declared no judgement kinds, which core treats like `null` for display.",
+      "items": { "$ref": "common-defs.schema.json#/$defs/judgement" },
+      "x-sampling-lane": { "lane": "regular", "activity": "gameplay" },
+      "examples": [
+        [
+          { "id": "perfect", "displayName": "Perfect", "ordinal": 0, "count": 120 },
+          { "id": "great", "displayName": "Great", "ordinal": 1, "count": 340 },
+          { "id": "miss", "displayName": "Miss", "ordinal": 5, "count": 2 }
+        ]
+      ]
+    }
+  }
+}

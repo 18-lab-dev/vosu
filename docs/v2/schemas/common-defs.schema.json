@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vosu.dev/schemas/v2/common-defs.schema.json",
+  "version": "1.0.0",
+  "title": "Shared definitions for vosu 2.0 state namespaces",
+  "description": "Not a namespace on its own; every other schema in this directory $refs these $defs by relative path. Loading this file alone is a syntax check only — $ref targets are not resolved across files.",
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$",
+      "description": "A semantic version, as carried by capability requirements in the catalog (docs/v2/catalog-v2.md)."
+    },
+    "pluginId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,31}(\\.[a-z0-9][a-z0-9-]{0,31}){1,3}$",
+      "description": "Dot-separated namespace/plugin id grammar from the shared naming contract: 2-4 segments, each [a-z0-9][a-z0-9-]{0,31}."
+    },
+    "resourceRef": {
+      "type": "object",
+      "description": "A reference to one file resource (ADR 0021). Core mints `url`; it never embeds a filesystem path.",
+      "required": ["url", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "`/api/v1/resources/{id}`, an opaque HMAC-derived id. Stable across restarts while the reference stays published."
+        },
+        "type": {
+          "type": "string",
+          "description": "MIME type from the resource-route allowlist (image/audio/video/chart-text), or `application/octet-stream`."
+        }
+      }
+    },
+    "treeRef": {
+      "type": "object",
+      "description": "A reference to an indexed folder resource (ADR 0021): a chart set folder or the current skin.",
+      "required": ["url"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "`/api/v1/trees/{id}/`. `GET` lists the index; `GET`/`HEAD /api/v1/trees/{id}/{path}` resolves one entry."
+        }
+      }
+    },
+    "judgement": {
+      "type": "object",
+      "description": "One entry of a game-declared judgement breakdown (ADR 0020). The list itself is ordered best to miss by `ordinal`.",
+      "required": ["id", "displayName", "ordinal", "count"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,31}$",
+          "description": "Stable identifier the game plugin assigns this judgement, e.g. `great`. Never reused for a different meaning within one namespace major version."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Human-readable label for the judgement, e.g. `300` or `Great`, as the game itself names it."
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "0 is the best judgement; larger values are progressively worse, with miss the highest ordinal the game declares."
+        },
+        "count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Judgements of this kind in the current attempt. `null` only if the plugin cannot fill this entry at all; an attempt with zero hits of this kind is `0`, never `null`."
+        }
+      }
+    },
+    "samplingLane": {
+      "type": "object",
+      "description": "Per-field sampling lane metadata (ADR 0020 Publication). Core's subscription compiler unions the lanes of every selected field to compute reader demand, as 1.x's V2SubscriptionHub/plan compiler (src/server/v2_subscription.rs) does for its fixed field set. A property with no `x-sampling-lane` annotation needs no extra demand: it is covered by the plugin's configured base polling at every state.",
+      "required": ["lane", "activity"],
+      "additionalProperties": false,
+      "properties": {
+        "lane": {
+          "enum": ["regular", "precise", "both"],
+          "description": "Which reader a subscription to this field wakes: the plugin's regular-cadence reader, its high-frequency precise reader, or both (a value derived from both, such as unstable rate)."
+        },
+        "activity": {
+          "enum": ["always", "gameplay"],
+          "description": "`always`: the lane runs at its demand-driven rate regardless of game status. `gameplay`: demand applies only while the session's `vosu.status.status` is `play` (including replay/spectate/autoplay sources); outside play the field is still published, at the lane's configured idle cadence."
+        }
+      }
+    }
+  }
+}

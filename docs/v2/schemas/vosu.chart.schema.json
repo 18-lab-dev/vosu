@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vosu.dev/schemas/v2/vosu.chart.schema.json",
+  "version": "1.0.0",
+  "title": "vosu.chart",
+  "description": "Best-effort, declared common namespace (ADR 0020): metadata for the chart (beatmap, in osu! terms) the session has selected or is playing. Capability id: field:vosu.chart(.<path>).",
+  "type": "object",
+  "required": ["title", "artist", "difficultyName", "charter", "length", "bpm", "keyCount", "resources"],
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "type": ["string", "null"],
+      "description": "Chart/song title, in the game's display script (not necessarily Latin)."
+    },
+    "artist": {
+      "type": ["string", "null"],
+      "description": "Song artist, in the game's display script."
+    },
+    "difficultyName": {
+      "type": ["string", "null"],
+      "description": "The selected difficulty's own name within its chart set, e.g. an osu! beatmap's `version`."
+    },
+    "charter": {
+      "type": ["string", "null"],
+      "description": "Credited chart author, e.g. an osu! beatmap's mapper."
+    },
+    "length": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Chart length in milliseconds, unaffected by the current playback rate."
+    },
+    "bpm": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "A representative BPM for the chart (its most common tempo), unaffected by the current playback rate. Full timing-point detail, where a game exposes it, lives in that game's own namespace."
+    },
+    "keyCount": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Lane/key count for charts with one, e.g. an osu!mania map's key count (including stable's key mods and dual-stage conversion); `null` for games or rulesets without a fixed lane count."
+    },
+    "resources": {
+      "type": "object",
+      "description": "Resource references for this chart's files (ADR 0021). A kind the current chart has no file for is omitted, never a reference to nothing.",
+      "additionalProperties": {
+        "$ref": "common-defs.schema.json#/$defs/resourceRef"
+      },
+      "propertyNames": {
+        "pattern": "^(chart\\.(file|audio|background)|[a-z0-9][a-z0-9-]{0,31}(\\.[a-z0-9][a-z0-9-]{0,31}){1,3}\\.[a-z0-9][a-z0-9-]{0,31})$"
+      },
+      "properties": {
+        "chart.file": { "$ref": "common-defs.schema.json#/$defs/resourceRef" },
+        "chart.audio": { "$ref": "common-defs.schema.json#/$defs/resourceRef" },
+        "chart.background": { "$ref": "common-defs.schema.json#/$defs/resourceRef" },
+        "chart.set": { "$ref": "common-defs.schema.json#/$defs/treeRef" }
+      },
+      "examples": [
+        {
+          "chart.file": { "url": "/api/v1/resources/9f2c...", "type": "application/octet-stream" },
+          "chart.audio": { "url": "/api/v1/resources/1ab4...", "type": "audio/mpeg" },
+          "chart.background": { "url": "/api/v1/resources/caa0...", "type": "image/jpeg" },
+          "chart.set": { "url": "/api/v1/trees/77dd.../" }
+        }
+      ]
+    }
+  }
+}

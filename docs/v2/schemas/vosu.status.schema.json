@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vosu.dev/schemas/v2/vosu.status.schema.json",
+  "version": "1.0.0",
+  "title": "vosu.status",
+  "description": "Best-effort, declared common namespace (ADR 0020): the session's coarse game status. Capability id: field:vosu.status(.<path>).",
+  "type": "object",
+  "required": ["status"],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": ["string", "null"],
+      "enum": ["menu", "selection", "play", "pause", "results", null],
+      "description": "Coarse status common to rhythm games. `null` only if the plugin's manifest does not declare `field:vosu.status` for this field. A game whose client has no equivalent to one state maps to the nearest listed value rather than inventing a new one.",
+      "x-sampling-lane": { "lane": "precise", "activity": "always" }
+    }
+  }
+}
