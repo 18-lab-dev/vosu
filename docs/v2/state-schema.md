@@ -27,7 +27,10 @@ is keyed `file`/`audio`/`background`/`set`, never `"chart.file"`).
 The dotted forms (`chart.file`, `chart.audio`, `chart.background`,
 `chart.set`, `skin`) name those same core resource kinds only inside
 `resource:` capability ids; a plugin's own kind is `<plugin-id>.<kind>` with
-`<kind>` one segment, same grammar.
+`<kind>` one segment, same grammar. `file`, `audio`, `background`, `set`, and
+`skin` are reserved bare kind names that always mean the core kinds above; no
+plugin's own `<kind>` segment may reuse one (CatalogV2Spec enforces this at
+validation).
 
 A `field:<namespace>.<path>` capability id's `<path>` is the dotted form of
 the same keys an ABI `STATE_SUBSCRIBE`/API v1 subscription addresses with an
@@ -73,6 +76,12 @@ never published as an all-null object. Within a declared namespace, each
 field the plugin does not individually fill is `null` (ADR 0020): never a zero,
 empty string, or empty array standing in for "unknown".
 
+`vosu.sessions` is reserved as a pseudo-namespace for session-lifecycle events
+delivered to subscribing plugins (`docs/v2/plugin-abi.md`'s `SESSION_ATTACHED`/
+`SESSION_IDENTIFY`/`SESSION_DETACHED`/`FOCUS_CHANGED`), not a published state
+namespace with a schema. No plugin id and no namespace schema may use
+`vosu.sessions` (CatalogV2Spec enforces this at validation).
+
 ## `vosu.client`
 
 Required. Identifies the attached client exactly as the shared naming
@@ -87,16 +96,12 @@ the other four leaves itself.
 
 ## Focus
 
-Exactly one session is focused whenever at least one session is attached.
-Core selects the session whose process owns the foreground window; if no
-attached process does, the most recently focused session stays focused.
-Initially — before any process has held the foreground window — the first
-session by ADR 0001's deterministic order within the earliest-attached game
-plugin is focused. Core recomputes this on every relevant OS focus change and
-sends `FOCUS_CHANGED` (`docs/v2/plugin-abi.md`) to each affected session's
-owning plugin; the attach handshake no longer carries an initial `focused`
-value. `GET /api/v1/sessions/active` (`docs/v2/api-v1.md`) always addresses
-the currently focused session under this algorithm.
+`vosu.client.focused` is governed by api-v1.md's Focus rule
+(`docs/v2/api-v1.md#focus-rule`): exactly one session is focused whenever at
+least one is attached, and core — not the schema — recomputes it on every
+relevant OS focus change and sends `FOCUS_CHANGED` (`docs/v2/plugin-abi.md`)
+to the affected session's owning plugin. The attach handshake no longer
+carries an initial `focused` value.
 
 ## Common layer: `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`
 
@@ -120,15 +125,16 @@ attach.
 Chart (beatmap, in osu! terms) metadata: `title`, `artist`, `difficultyName`,
 `charter`, `length` (ms, unaffected by rate), `bpm` (a representative tempo,
 unaffected by rate), `keyCount` (null for charts/rulesets without a fixed lane
-count), and `resources` — an object of [resource references](#resource-references)
-with exactly four bare, camelCase keys: `file`, `audio`, `background`
-(resource references) and `set` (a tree reference). The dotted forms
-`chart.file`, `chart.audio`, `chart.background`, `chart.set` name these same
-core resource kinds only inside `resource:` capability ids (naming contract);
-a plugin's own resource kinds never appear inside `vosu.chart.resources` —
-they live in that plugin's own namespace, as `<plugin-id>.<kind>` capability
-ids (ADR 0021). A kind the current chart has no file for is omitted from
-`resources`, never present with a reference to nothing.
+count), and `resources` — always an object of [resource references](#resource-references)
+(`{}` when no chart is selected), with up to four bare, camelCase keys: `file`,
+`audio`, `background` (resource references) and `set` (a tree reference), none
+required. The dotted forms `chart.file`, `chart.audio`, `chart.background`,
+`chart.set` name these same core resource kinds only inside `resource:`
+capability ids (naming contract); a plugin's own resource kinds never appear
+inside `vosu.chart.resources` — they live in that plugin's own namespace, as
+`<plugin-id>.<kind>` capability ids (ADR 0021). A kind the current chart has
+no file for is omitted from `resources`, never present with a reference to
+nothing.
 
 ### `vosu.play`
 
@@ -366,7 +372,7 @@ published value (`docs/v2/api-v1.md`).
 | `vosu.status.status` | always | |
 | `vosu.chart.title`, `.artist`, `.difficultyName`, `.charter`, `.length`, `.bpm` | always | |
 | `vosu.chart.keyCount` | mania only | `null` for every other ruleset. |
-| `vosu.chart.resources` | always when a chart is selected | Kinds with no file (e.g. no video) are omitted per kind, not nulled. |
+| `vosu.chart.resources` | always an object; populated when a chart is selected | Kinds with no file (e.g. no video) are omitted per kind, not nulled; `{}` when no chart is selected. |
 | `vosu.play.score`, `.combo`, `.maxCombo`, `.accuracy`, `.accuracyKind`, `.progress`, `.rate` | during play (including replay/spectate/autoplay) | `null` outside play. |
 | `vosu.play.health` | during play, all rulesets except where the client itself reports none | |
 | `vosu.play.judgements` | during play | Always the full six-entry breakdown; a ruleset without a judgement (e.g. catch's hit window table) still reports `count: 0` for it, matching 1.x's all-zero `HitWindow` convention for catch. |
