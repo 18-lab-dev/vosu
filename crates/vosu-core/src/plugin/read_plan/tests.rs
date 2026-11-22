@@ -2,6 +2,8 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use vosu_plugin_api::Message;
+
 use super::*;
 
 #[derive(Debug, Default)]
@@ -73,9 +75,12 @@ impl ProcessMemory for PermissionDeniedMemory {
 
     fn read_many(
         &self,
-        _reads: &mut [vosu_sys::process::ReadRequest<'_>],
+        reads: &mut [vosu_sys::process::ReadRequest<'_>],
     ) -> Result<(), MemoryError> {
-        unreachable!("not exercised")
+        for read in reads {
+            self.read_exact(read.address, read.dst)?;
+        }
+        Ok(())
     }
 
     fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
@@ -96,9 +101,12 @@ impl ProcessMemory for SlowMemory {
 
     fn read_many(
         &self,
-        _reads: &mut [vosu_sys::process::ReadRequest<'_>],
+        reads: &mut [vosu_sys::process::ReadRequest<'_>],
     ) -> Result<(), MemoryError> {
-        unreachable!("not exercised")
+        for read in reads {
+            self.read_exact(read.address, read.dst)?;
+        }
+        Ok(())
     }
 
     fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
@@ -417,16 +425,27 @@ fn address_overflow_is_reported_per_op_not_as_a_call_rejection() {
 
 #[test]
 fn execute_times_out_before_the_next_read() {
+    // The deadline is checked once per stage, not once per op: two
+    // single-op stages mean the first stage's slow read consumes the
+    // whole deadline, and the second stage's check (before any read of
+    // its own) is where the timeout is observed.
     let memory = SlowMemory;
     let submit = ReadPlanSubmit {
         plan: 8,
         handle: 1,
         root: PlanBase::Absolute(0),
-        stages: vec![Stage {
-            base: StageBase::Root,
-            base_offset: 0,
-            ops: vec![op(0, 1), op(0, 1)],
-        }],
+        stages: vec![
+            Stage {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops: vec![op(0, 1)],
+            },
+            Stage {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops: vec![op(0, 1)],
+            },
+        ],
         sync: false,
     };
 
@@ -548,11 +567,18 @@ fn dispatch_thread_scope_is_thread_local_and_times_out_on_the_caller() {
         plan: 12,
         handle: 1,
         root: PlanBase::Absolute(0),
-        stages: vec![Stage {
-            base: StageBase::Root,
-            base_offset: 0,
-            ops: vec![op(0, 1), op(0, 1)],
-        }],
+        stages: vec![
+            Stage {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops: vec![op(0, 1)],
+            },
+            Stage {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops: vec![op(0, 1)],
+            },
+        ],
         sync: true,
     };
     assert!(!on_dispatch_thread());
@@ -568,11 +594,11 @@ fn dispatch_thread_scope_is_thread_local_and_times_out_on_the_caller() {
 fn outstanding_plans_enforces_the_cap_and_cancel_finish_lifecycle() {
     let outstanding = OutstandingPlans::new();
     for plan in 0..MAX_OUTSTANDING_ASYNC_PLANS as u64 {
-        outstanding.begin(plan).unwrap();
+        outstanding.begin(plan, 1).unwrap();
     }
     assert_eq!(outstanding.len(), MAX_OUTSTANDING_ASYNC_PLANS);
     assert_eq!(
-        outstanding.begin(MAX_OUTSTANDING_ASYNC_PLANS as u64),
+        outstanding.begin(MAX_OUTSTANDING_ASYNC_PLANS as u64, 1),
         Err(OutstandingPlansError::CapExceeded)
     );
 
@@ -580,7 +606,7 @@ fn outstanding_plans_enforces_the_cap_and_cancel_finish_lifecycle() {
     assert_eq!(outstanding.len(), MAX_OUTSTANDING_ASYNC_PLANS - 1);
     // Room again after one finishes.
     outstanding
-        .begin(MAX_OUTSTANDING_ASYNC_PLANS as u64)
+        .begin(MAX_OUTSTANDING_ASYNC_PLANS as u64, 1)
         .unwrap();
 
     outstanding.cancel(1);
@@ -588,6 +614,68 @@ fn outstanding_plans_enforces_the_cap_and_cancel_finish_lifecycle() {
     // A plan id never admitted (already finished, or unknown) is a no-op.
     outstanding.cancel(999);
     assert_eq!(outstanding.finish(999), FinishOutcome::Deliver);
+}
+
+#[test]
+fn cancel_frees_the_slot_immediately_rather_than_waiting_for_finish() {
+    let outstanding = OutstandingPlans::new();
+    for plan in 0..MAX_OUTSTANDING_ASYNC_PLANS as u64 {
+        outstanding.begin(plan, 1).unwrap();
+    }
+    assert_eq!(outstanding.len(), MAX_OUTSTANDING_ASYNC_PLANS);
+
+    // Cancelling must free the slot right away, before `finish` ever runs
+    // for it (a plugin that cancels slow plans is not still refused).
+    outstanding.cancel(0);
+    assert_eq!(outstanding.len(), MAX_OUTSTANDING_ASYNC_PLANS - 1);
+    outstanding
+        .begin(MAX_OUTSTANDING_ASYNC_PLANS as u64, 1)
+        .unwrap();
+    assert_eq!(outstanding.len(), MAX_OUTSTANDING_ASYNC_PLANS);
+
+    // The cancelled id's late result is still reported Cancelled, not
+    // silently treated as never-admitted.
+    assert_eq!(outstanding.finish(0), FinishOutcome::Cancelled);
+}
+
+#[test]
+fn begin_refuses_an_id_already_outstanding() {
+    let outstanding = OutstandingPlans::new();
+    outstanding.begin(5, 1).unwrap();
+    assert_eq!(
+        outstanding.begin(5, 1),
+        Err(OutstandingPlansError::AlreadyOutstanding)
+    );
+    assert_eq!(
+        vosu_status::from(OutstandingPlansError::AlreadyOutstanding),
+        vosu_status::VOSU_ERR_INVALID_ARGUMENT
+    );
+    assert_eq!(outstanding.len(), 1);
+
+    // Still refused while cancelled-but-not-yet-finished: re-submitting a
+    // cancelled id's old id must not resurrect its stale result.
+    outstanding.cancel(5);
+    assert_eq!(
+        outstanding.begin(5, 1),
+        Err(OutstandingPlansError::AlreadyOutstanding)
+    );
+    outstanding.finish(5);
+    outstanding.begin(5, 1).unwrap();
+}
+
+#[test]
+fn cancel_session_cancels_only_that_sessions_plans() {
+    let outstanding = OutstandingPlans::new();
+    outstanding.begin(1, 10).unwrap();
+    outstanding.begin(2, 10).unwrap();
+    outstanding.begin(3, 20).unwrap();
+    assert_eq!(outstanding.len(), 3);
+
+    outstanding.cancel_session(10);
+    assert_eq!(outstanding.len(), 1);
+    assert_eq!(outstanding.finish(1), FinishOutcome::Cancelled);
+    assert_eq!(outstanding.finish(2), FinishOutcome::Cancelled);
+    assert_eq!(outstanding.finish(3), FinishOutcome::Deliver);
 }
 
 #[cfg(target_os = "linux")]
@@ -649,3 +737,173 @@ fn execute_reads_this_process_own_memory_through_the_native_backend() {
         vec![ReadResult::Ok(marker.to_le_bytes().to_vec())]
     );
 }
+
+#[test]
+fn target_gone_is_reported_before_any_read_when_the_process_is_already_dead() {
+    struct DeadMemory;
+    impl ProcessMemory for DeadMemory {
+        fn read_exact(&self, _address: usize, _dst: &mut [u8]) -> Result<(), MemoryError> {
+            panic!("must never read a dead target")
+        }
+        fn read_many(
+            &self,
+            _reads: &mut [vosu_sys::process::ReadRequest<'_>],
+        ) -> Result<(), MemoryError> {
+            panic!("must never read a dead target")
+        }
+        fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
+            Ok(Vec::new())
+        }
+        fn is_alive(&self) -> bool {
+            false
+        }
+    }
+
+    let submit = ReadPlanSubmit {
+        plan: 40,
+        handle: 1,
+        root: PlanBase::Absolute(0x1000),
+        stages: vec![Stage {
+            base: StageBase::Root,
+            base_offset: 0,
+            ops: vec![op(0, 4)],
+        }],
+        sync: false,
+    };
+
+    let error = execute(
+        &submit,
+        &DeadMemory,
+        ProcessBitness::X64,
+        &NoModules,
+        far_deadline(),
+    )
+    .unwrap_err();
+    assert_eq!(error, ReadPlanError::TargetGone);
+    assert_eq!(vosu_status::from(error), vosu_status::VOSU_ERR_TARGET_GONE);
+
+    let message = Message::ReadPlanSubmit(submit);
+    let flags = message.flags();
+    let payload = message.encode_payload().unwrap();
+    let error = execute_bytes(
+        &payload,
+        flags,
+        &DeadMemory,
+        ProcessBitness::X64,
+        &NoModules,
+        far_deadline(),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        ExecuteBytesError::Execute(ReadPlanError::TargetGone)
+    ));
+}
+
+#[test]
+fn a_blocked_dependent_stage_reports_every_op_message_less() {
+    // Stage 0's own read genuinely fails against an unmapped address, so
+    // it carries a message; stage 1's three ops are all blocked by that
+    // same failure and must each report it without repeating the message
+    // (`docs/v2/plugin-abi.md` §6.3: a copied dependent-chain failure
+    // "carries no message").
+    let memory = FakeMemory::default();
+    let submit = ReadPlanSubmit {
+        plan: 60,
+        handle: 1,
+        root: PlanBase::Absolute(0x9000),
+        stages: vec![
+            Stage {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops: vec![op(0, 8)],
+            },
+            Stage {
+                base: StageBase::Dependent {
+                    ref_stage: 0,
+                    ref_op: 0,
+                },
+                base_offset: 0,
+                ops: vec![op(0, 1), op(1, 1), op(2, 1)],
+            },
+        ],
+        sync: false,
+    };
+
+    let result = execute(
+        &submit,
+        &memory,
+        ProcessBitness::X64,
+        &NoModules,
+        far_deadline(),
+    )
+    .unwrap();
+
+    match &result.results[0] {
+        ReadResult::Error {
+            code: ReadErrorCode::ReadFailed,
+            message,
+        } => assert!(!message.is_empty(), "the genuine failure keeps its message"),
+        other => panic!("expected a ReadFailed error, got {other:?}"),
+    }
+    for blocked in &result.results[1..] {
+        match blocked {
+            ReadResult::Error {
+                code: ReadErrorCode::ReadFailed,
+                message,
+            } => assert!(message.is_empty(), "a copied failure must carry no message"),
+            other => panic!("expected a message-less ReadFailed error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn many_failing_ops_stay_within_the_read_plan_max_bytes_cap() {
+    const OP_COUNT: usize = 2500;
+    let memory = FakeMemory::default();
+    let submit = ReadPlanSubmit {
+        plan: 70,
+        handle: 1,
+        root: PlanBase::Absolute(0x9000),
+        stages: vec![Stage {
+            base: StageBase::Root,
+            base_offset: 0,
+            ops: (0..OP_COUNT as i64).map(|offset| op(offset, 1)).collect(),
+        }],
+        sync: false,
+    };
+    let message = Message::ReadPlanSubmit(submit);
+    let flags = message.flags();
+    let payload = message.encode_payload().unwrap();
+
+    let result_bytes = execute_bytes(
+        &payload,
+        flags,
+        &memory,
+        ProcessBitness::X64,
+        &NoModules,
+        far_deadline(),
+    )
+    .unwrap();
+
+    assert!(result_bytes.len() <= vosu_plugin_api::VOSU_READ_PLAN_MAX_BYTES as usize);
+    vosu_plugin_api::validate_read_plan_result(&result_bytes).unwrap();
+
+    let decoded = Message::decode(vosu_opcode::VOSU_OP_READ_PLAN_RESULT, 0, &result_bytes).unwrap();
+    let Message::ReadPlanResult(result) = decoded else {
+        panic!("expected a decoded ReadPlanResult");
+    };
+    assert_eq!(result.results.len(), OP_COUNT);
+    assert!(result.results.iter().all(|r| matches!(
+        r,
+        ReadResult::Error {
+            code: ReadErrorCode::ReadFailed,
+            ..
+        }
+    )));
+}
+
+/// See `tests::zero_alloc` for the D17 M1 zero-allocation proof (split
+/// into its own file so this module stays under the maintained-file line
+/// limit, `docs/architecture/source-map.md`).
+mod zero_alloc;

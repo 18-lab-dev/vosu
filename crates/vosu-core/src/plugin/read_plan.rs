@@ -8,27 +8,46 @@
 //! `PluginInstanceId`, the session registry, or `PluginHostHandler`. Wiring
 //! it into `PluginHostHandler::handle` — routing a decoded
 //! `Message::ReadPlanSubmit` here with the right session's `ProcessMemory`
-//! and `ProcessBitness`, tracking [`OutstandingPlans`] per instance,
-//! delivering a [`deliver_sync`] result back through `send`'s own return
-//! value, resolving `PlanBase::Module` against the session's real module
-//! list, and answering `VOSU_OP_READ_PLAN_CANCEL` — is later wiring, not
-//! this phase's scope.
+//! and `ProcessBitness`, delivering a [`deliver_sync`] result back through
+//! `send`'s own return value, resolving `PlanBase::Module` against the
+//! session's real module list, and answering `VOSU_OP_READ_PLAN_CANCEL`
+//! (now that [`OutstandingPlans`] frees a slot and tracks its owning
+//! session itself) — is later wiring, not this phase's scope.
+//!
+//! Two execution entry points exist:
+//! - [`execute`] operates on an already-decoded [`ReadPlanSubmit`] and
+//!   allocates freely; it exists for tests and callers that already hold
+//!   the typed form for other reasons.
+//! - [`execute_into`]/[`execute_bytes`] walk the raw, already-validated
+//!   flat submit buffer directly and write the `VOSU_OP_READ_PLAN_RESULT`
+//!   straight into a caller-provided, reusable `Vec<u8>` — no owned
+//!   `ReadPlanSubmit`/`Stage`/`PlanOp`/`String` intermediate form at all
+//!   (`docs/v2/plugin-abi.md` §3 picked the flat layout precisely so a read
+//!   plan costs "writing a small struct"; this is the path that actually
+//!   delivers that). Both entry points batch a stage's sibling reads into
+//!   one `ProcessMemory::read_many` call, falling back to per-op
+//!   `read_exact` only if that batch call itself fails, and check
+//!   `deadline` once per stage rather than before every individual read.
 //!
 //! `vosu_plugin_api::validate_read_plan_ref_op_width` needs the plan's raw
-//! encoded buffer, which `Message::decode` (run once, by the caller,
-//! before a [`ReadPlanSubmit`] ever reaches this module) already consumed;
-//! [`ref_op_width_ok`] re-derives the same bitness-aware check directly
-//! against the decoded [`Stage`]/[`PlanOp`] values instead.
+//! encoded buffer: [`execute_into`] (which has it) calls that function
+//! directly; [`execute`] (which only has the decoded form) re-derives the
+//! identical bitness-aware check via [`ref_op_width_ok`] instead.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::mem::size_of;
 use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
 use vosu_plugin_api::{
-    Message, MessageError, PlanBase, PlanOp, ReadErrorCode, ReadPlanResult, ReadPlanSubmit,
-    ReadResult, Stage, StageBase, vosu_opcode, vosu_plan_id, vosu_status,
+    MessageError, PlanBase, PlanOp, ReadErrorCode, ReadPlanResult, ReadPlanSubmit, ReadResult,
+    Stage, StageBase, VOSU_READ_PLAN_MAX_BYTES, read_flat_header, validate_flags,
+    validate_read_plan_ref_op_width, validate_read_plan_submit, vosu_opcode, vosu_plan_base_flat,
+    vosu_plan_base_kind, vosu_plan_id, vosu_plan_op, vosu_read_error_code,
+    vosu_read_plan_result_header, vosu_read_plan_submit_header, vosu_read_result_flat,
+    vosu_read_result_kind, vosu_stage_base_kind, vosu_stage_header, vosu_status,
 };
-use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory};
+use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory, ReadRequest};
 
 /// Per-instance bound on asynchronous (non-`VOSU_READ_PLAN_SYNC`) read
 /// plans outstanding at once (`docs/v2/plugin-abi.md` §5, §6.3): a
@@ -36,15 +55,17 @@ use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory};
 /// before any read executes.
 pub const MAX_OUTSTANDING_ASYNC_PLANS: usize = 64;
 
-/// Caps the byte length of an error message embedded in a
-/// [`ReadResult::Error`]. `vosu_plugin_api::validate_read_plan_submit`'s
-/// pre-read worst-case `VOSU_READ_PLAN_MAX_BYTES` bound
-/// (`crates/vosu-plugin-api/src/validate.rs`) assumes every op's reply is
-/// at most its declared `length` plus a fixed per-result header; it does
-/// not itself bound an error message's length, so a verbose
-/// `MemoryError::Display` is truncated here rather than left free to grow
-/// an otherwise within-bound result past that cap.
+/// Caps the byte length of a single error message embedded in a
+/// [`ReadResult::Error`], on top of the running total every message in one
+/// plan shares ([`ErrorBudget`]): `vosu_plugin_api::validate_read_plan_submit`'s
+/// pre-read worst-case `VOSU_READ_PLAN_MAX_BYTES` bound assumes every op's
+/// reply is at most its declared `length` plus a fixed per-result header,
+/// so a failed op's zero-length reply frees exactly that much room; a
+/// verbose `MemoryError::Display` is truncated to whichever is smaller.
 const MAX_ERROR_MESSAGE_BYTES: usize = 256;
+
+const RESULT_HEADER_SIZE: usize = size_of::<vosu_read_plan_result_header>();
+const RESULT_ENTRY_SIZE: usize = size_of::<vosu_read_result_flat>();
 
 /// Resolves a read plan's `PlanBase::Module` root to that module's loaded
 /// base address in the target process (`docs/v2/plugin-abi.md` §6.3: "a
@@ -59,9 +80,9 @@ pub trait ModuleResolver {
     fn resolve(&self, module: &str) -> Option<u64>;
 }
 
-/// Every way [`execute`] can reject a submission outright (no partial
-/// result; `docs/v2/plugin-abi.md` §5: "a non-`VOSU_OK` status means the
-/// call itself was rejected").
+/// Every way [`execute`]/[`execute_into`] can reject a submission outright
+/// (no partial result; `docs/v2/plugin-abi.md` §5: "a non-`VOSU_OK` status
+/// means the call itself was rejected").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadPlanError {
     /// A dependent stage's `ref_op` names an op whose declared `length`
@@ -70,6 +91,9 @@ pub enum ReadPlanError {
     RefOpWrongWidth,
     /// Execution exceeded its deadline (§5 `VOSU_ERR_TIMED_OUT`).
     TimedOut,
+    /// The target session's process was already dead before any read
+    /// executed (§5 `VOSU_ERR_TARGET_GONE`).
+    TargetGone,
 }
 
 impl From<ReadPlanError> for vosu_status {
@@ -77,18 +101,17 @@ impl From<ReadPlanError> for vosu_status {
         match error {
             ReadPlanError::RefOpWrongWidth => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
             ReadPlanError::TimedOut => vosu_status::VOSU_ERR_TIMED_OUT,
+            ReadPlanError::TargetGone => vosu_status::VOSU_ERR_TARGET_GONE,
         }
     }
 }
 
-/// Every way [`execute_bytes`] can fail, layering [`ReadPlanError`] over
-/// `Message`'s own decode/encode failures.
+/// Every way [`execute_bytes`]/[`execute_into`] can fail, layering
+/// [`ReadPlanError`] over `vosu_plugin_api`'s own validation/decode
+/// failures.
 #[derive(Debug)]
 pub enum ExecuteBytesError {
-    /// `payload`/`flags` did not decode as a `VOSU_OP_READ_PLAN_SUBMIT`, or
-    /// the produced `VOSU_OP_READ_PLAN_RESULT` failed to encode (the
-    /// latter should not happen for a well-formed submission; see
-    /// [`execute`]'s doc comment on `MAX_ERROR_MESSAGE_BYTES`).
+    /// `payload`/`flags` did not validate as a `VOSU_OP_READ_PLAN_SUBMIT`.
     Message(MessageError),
     Execute(ReadPlanError),
 }
@@ -103,7 +126,8 @@ impl From<ExecuteBytesError> for vosu_status {
 }
 
 /// Re-derives `vosu_plugin_api::validate_read_plan_ref_op_width`'s check
-/// against the decoded form: every dependent stage's `ref_op` must name an
+/// against the decoded form, for [`execute`] (which has no raw buffer to
+/// hand that function): every dependent stage's `ref_op` must name an
 /// earlier stage's op whose declared `length` equals `pointer_width`.
 /// `Message::decode` already bounds-checked every `ref_stage`/`ref_op`
 /// index through `vosu_plugin_api::validate_read_plan_submit`, so indexing
@@ -117,19 +141,49 @@ fn ref_op_width_ok(submit: &ReadPlanSubmit, pointer_width: u32) -> bool {
     })
 }
 
-fn truncate_message(mut message: String) -> String {
-    if message.len() > MAX_ERROR_MESSAGE_BYTES {
-        let mut end = MAX_ERROR_MESSAGE_BYTES;
-        while !message.is_char_boundary(end) {
-            end -= 1;
-        }
-        message.truncate(end);
-    }
-    message
+/// Tracks how many more error-message bytes a plan's result may still
+/// spend without pushing the encoded `VOSU_OP_READ_PLAN_RESULT` past
+/// `VOSU_READ_PLAN_MAX_BYTES` (`docs/v2/plugin-abi.md` §6.3). Seeded with
+/// the slack `validate_read_plan_submit`'s own worst-case accounting
+/// leaves (every op assumed to succeed at its full declared `length`);
+/// every op that does *not* end up `Ok` frees its `length` bytes back
+/// into the budget before that op's own message (if any) is charged
+/// against it, so the running total can never exceed the validated cap.
+struct ErrorBudget {
+    remaining: usize,
 }
 
-fn memory_error_to_result(error: MemoryError) -> ReadResult {
-    let code = match &error {
+impl ErrorBudget {
+    fn new(remaining: usize) -> Self {
+        Self { remaining }
+    }
+
+    /// Call once for every op that does not end up `Ok`: its `length`
+    /// bytes of data were never written, freeing that much room.
+    fn recover(&mut self, length: u32) {
+        self.remaining = self.remaining.saturating_add(length as usize);
+    }
+
+    /// Truncates `message` to whichever is smaller, [`MAX_ERROR_MESSAGE_BYTES`]
+    /// or the budget's own remaining room, and charges what it spends.
+    fn charge_message(&mut self, mut message: String) -> String {
+        let cap = self.remaining.min(MAX_ERROR_MESSAGE_BYTES);
+        if message.len() > cap {
+            let mut end = cap;
+            while end > 0 && !message.is_char_boundary(end) {
+                end -= 1;
+            }
+            message.truncate(end);
+        }
+        self.remaining = self.remaining.saturating_sub(message.len());
+        message
+    }
+}
+
+/// `ReadResult::Error`'s `code` for `error`; shared by every path that maps
+/// a [`MemoryError`] to a read result.
+fn error_code_for(error: &MemoryError) -> ReadErrorCode {
+    match error {
         MemoryError::Backend { .. } => ReadErrorCode::Backend,
         MemoryError::PermissionDenied { .. } => ReadErrorCode::PermissionDenied,
         MemoryError::Read { .. } => ReadErrorCode::ReadFailed,
@@ -138,10 +192,31 @@ fn memory_error_to_result(error: MemoryError) -> ReadResult {
         // (they decode the osu!-specific managed heap, a layer above the
         // raw read-plan boundary); mapped defensively rather than panicking.
         MemoryError::Corrupt { .. } | MemoryError::InvalidUtf16 { .. } => ReadErrorCode::Backend,
-    };
+    }
+}
+
+fn memory_error_to_result(error: MemoryError, budget: &mut ErrorBudget) -> ReadResult {
+    let code = error_code_for(&error);
     ReadResult::Error {
         code,
-        message: truncate_message(error.to_string()),
+        message: budget.charge_message(error.to_string()),
+    }
+}
+
+/// Strips a propagated failure's message to empty: a dependent stage's
+/// base resolution (or the plan's own root) fans one underlying failure
+/// out to every op it blocks, so only the first, genuinely new occurrence
+/// of a message is worth its budget — every copy distributed to the ops it
+/// blocks carries none.
+fn strip_message(result: &ReadResult) -> ReadResult {
+    match result {
+        ReadResult::Ok(bytes) => ReadResult::Ok(bytes.clone()),
+        ReadResult::NotReady => ReadResult::NotReady,
+        ReadResult::Unsupported => ReadResult::Unsupported,
+        ReadResult::Error { code, .. } => ReadResult::Error {
+            code: *code,
+            message: String::new(),
+        },
     }
 }
 
@@ -156,8 +231,7 @@ fn checked_add_signed(base: u64, offset: i64) -> Result<u64, ReadResult> {
 }
 
 /// Interprets `bytes` (already validated the same length as
-/// `bitness.pointer_size()` by [`ref_op_width_ok`]) as a little-endian
-/// pointer-width value.
+/// `bitness.pointer_size()`) as a little-endian pointer-width value.
 fn bytes_to_pointer(bytes: &[u8], bitness: ProcessBitness) -> u64 {
     match bitness {
         ProcessBitness::X86 => u64::from(u32::from_le_bytes(bytes.try_into().unwrap_or([0; 4]))),
@@ -193,34 +267,124 @@ fn resolve_stage_base(
     checked_add_signed(unresolved, stage.base_offset)
 }
 
-fn read_one(memory: &dyn ProcessMemory, base: u64, op: &PlanOp) -> ReadResult {
-    let address = match checked_add_signed(base, op.offset) {
-        Ok(address) => address,
-        Err(failure) => return failure,
+/// Executes one stage's independent ops against `memory`, batching every
+/// address-resolved op into a single [`ProcessMemory::read_many`] call and
+/// falling back to per-op `read_exact` only if that call itself fails
+/// (P1: one syscall per stage, not one per op).
+fn execute_stage_ops(
+    memory: &dyn ProcessMemory,
+    stage_base: &Result<u64, ReadResult>,
+    ops: &[PlanOp],
+    budget: &mut ErrorBudget,
+) -> Vec<ReadResult> {
+    let base = match stage_base {
+        Ok(base) => *base,
+        Err(failure) => {
+            let failure = strip_message(failure);
+            return ops
+                .iter()
+                .map(|op| {
+                    budget.recover(op.length);
+                    failure.clone()
+                })
+                .collect();
+        }
     };
-    let Ok(address) = usize::try_from(address) else {
-        return ReadResult::Error {
-            code: ReadErrorCode::AddressOverflow,
-            message: format!("address {address:#x} exceeds this platform's usize range"),
-        };
-    };
-    let mut buffer = vec![0u8; op.length as usize];
-    match memory.read_exact(address, &mut buffer) {
-        Ok(()) => ReadResult::Ok(buffer),
-        Err(error) => memory_error_to_result(error),
+
+    let mut results: Vec<Option<ReadResult>> = ops.iter().map(|_| None).collect();
+    let mut participants: Vec<(usize, usize)> = Vec::new();
+    let mut buffers: Vec<Vec<u8>> = Vec::new();
+
+    for (index, op) in ops.iter().enumerate() {
+        let address = checked_add_signed(base, op.offset).and_then(|address| {
+            usize::try_from(address).map_err(|_| ReadResult::Error {
+                code: ReadErrorCode::AddressOverflow,
+                message: format!("address {address:#x} exceeds this platform's usize range"),
+            })
+        });
+        match address {
+            Ok(address) => {
+                participants.push((index, address));
+                buffers.push(vec![0u8; op.length as usize]);
+            }
+            Err(failure) => {
+                budget.recover(op.length);
+                results[index] = Some(match failure {
+                    ReadResult::Error { code, message } => ReadResult::Error {
+                        code,
+                        message: budget.charge_message(message),
+                    },
+                    other => other,
+                });
+            }
+        }
     }
+
+    let mut outcomes: Vec<Result<(), MemoryError>> = participants.iter().map(|_| Ok(())).collect();
+    if !participants.is_empty() {
+        let mut requests: Vec<ReadRequest<'_>> = participants
+            .iter()
+            .zip(buffers.iter_mut())
+            .map(|(&(_, address), buffer)| ReadRequest::new(address, buffer))
+            .collect();
+        if memory.read_many(&mut requests).is_err() {
+            drop(requests);
+            for (outcome, (&(_, address), buffer)) in outcomes
+                .iter_mut()
+                .zip(participants.iter().zip(buffers.iter_mut()))
+            {
+                *outcome = memory.read_exact(address, buffer);
+            }
+        }
+    }
+
+    for ((index, _), (outcome, buffer)) in participants
+        .into_iter()
+        .zip(outcomes.into_iter().zip(buffers))
+    {
+        results[index] = Some(match outcome {
+            Ok(()) => ReadResult::Ok(buffer),
+            Err(error) => {
+                budget.recover(ops[index].length);
+                memory_error_to_result(error, budget)
+            }
+        });
+    }
+
+    results
+        .into_iter()
+        .map(|result| {
+            result.expect("every op index is filled by either the address loop or the read loop")
+        })
+        .collect()
+}
+
+fn error_budget_slack(submit: &ReadPlanSubmit) -> usize {
+    let op_count: usize = submit.stages.iter().map(|stage| stage.ops.len()).sum();
+    let sum_lengths: u64 = submit
+        .stages
+        .iter()
+        .flat_map(|stage| stage.ops.iter())
+        .map(|op| u64::from(op.length))
+        .sum();
+    let used = RESULT_HEADER_SIZE
+        + RESULT_ENTRY_SIZE * op_count
+        + usize::try_from(sum_lengths).unwrap_or(usize::MAX);
+    (VOSU_READ_PLAN_MAX_BYTES as usize).saturating_sub(used)
 }
 
 /// Executes `submit`'s whole dependent chain against `memory` in (stage,
-/// op) order, honoring `deadline` before every individual read, and
-/// returns the decoded `VOSU_OP_READ_PLAN_RESULT` (`docs/v2/plugin-abi.md`
-/// §6.3: "one submission is one round trip"). A per-read failure (an
-/// unresolved module, a dependent chain blocked on an earlier failure, or
-/// a [`MemoryError`]) is reported per read in the returned
+/// op) order, honoring `deadline` once per stage, and returns the decoded
+/// `VOSU_OP_READ_PLAN_RESULT` (`docs/v2/plugin-abi.md` §6.3: "one
+/// submission is one round trip"). A per-read failure (an unresolved
+/// module, a dependent chain blocked on an earlier failure, or a
+/// [`MemoryError`]) is reported per read in the returned
 /// [`ReadPlanResult`], never by rejecting the call; only
-/// [`ReadPlanError::RefOpWrongWidth`] (checked before any read) and
-/// [`ReadPlanError::TimedOut`] (checked before each read) reject the whole
-/// submission.
+/// [`ReadPlanError::TargetGone`] (checked once, up front),
+/// [`ReadPlanError::RefOpWrongWidth`] (checked before any read), and
+/// [`ReadPlanError::TimedOut`] (checked once per stage) reject the whole
+/// submission. Allocates freely; prefer [`execute_into`] on a measured hot
+/// path.
 pub fn execute(
     submit: &ReadPlanSubmit,
     memory: &dyn ProcessMemory,
@@ -228,28 +392,29 @@ pub fn execute(
     modules: &dyn ModuleResolver,
     deadline: Instant,
 ) -> Result<ReadPlanResult, ReadPlanError> {
+    if !memory.is_alive() {
+        return Err(ReadPlanError::TargetGone);
+    }
     let pointer_width = u32::try_from(bitness.pointer_size()).unwrap_or(u32::MAX);
     if !ref_op_width_ok(submit, pointer_width) {
         return Err(ReadPlanError::RefOpWrongWidth);
     }
 
+    let mut budget = ErrorBudget::new(error_budget_slack(submit));
     let root_base = resolve_root(&submit.root, modules);
     let mut per_stage: Vec<Vec<ReadResult>> = Vec::with_capacity(submit.stages.len());
 
     for stage in &submit.stages {
-        let stage_base = resolve_stage_base(stage, &per_stage, &root_base, bitness);
-        let mut ops = Vec::with_capacity(stage.ops.len());
-        for op in &stage.ops {
-            if Instant::now() >= deadline {
-                return Err(ReadPlanError::TimedOut);
-            }
-            let result = match &stage_base {
-                Ok(base) => read_one(memory, *base, op),
-                Err(failure) => failure.clone(),
-            };
-            ops.push(result);
+        if Instant::now() >= deadline {
+            return Err(ReadPlanError::TimedOut);
         }
-        per_stage.push(ops);
+        let stage_base = resolve_stage_base(stage, &per_stage, &root_base, bitness);
+        per_stage.push(execute_stage_ops(
+            memory,
+            &stage_base,
+            &stage.ops,
+            &mut budget,
+        ));
     }
 
     Ok(ReadPlanResult {
@@ -258,31 +423,8 @@ pub fn execute(
     })
 }
 
-/// Byte-oriented entry point: decodes `payload`/`flags` as a
-/// `VOSU_OP_READ_PLAN_SUBMIT`, executes it, and encodes the matching
-/// `VOSU_OP_READ_PLAN_RESULT` payload. `vosu_plugin_api::message::flat`'s
-/// own codec functions are private to that crate (only `Message`'s own
-/// `decode`/`encode_payload` are public), so this is the one route from
-/// raw bytes to a raw result this crate can reach.
-pub fn execute_bytes(
-    payload: &[u8],
-    flags: u32,
-    memory: &dyn ProcessMemory,
-    bitness: ProcessBitness,
-    modules: &dyn ModuleResolver,
-    deadline: Instant,
-) -> Result<Vec<u8>, ExecuteBytesError> {
-    let message = Message::decode(vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT, flags, payload)
-        .map_err(ExecuteBytesError::Message)?;
-    let Message::ReadPlanSubmit(submit) = message else {
-        unreachable!("VOSU_OP_READ_PLAN_SUBMIT always decodes to Message::ReadPlanSubmit")
-    };
-    let result =
-        execute(&submit, memory, bitness, modules, deadline).map_err(ExecuteBytesError::Execute)?;
-    Message::ReadPlanResult(result)
-        .encode_payload()
-        .map_err(ExecuteBytesError::Message)
-}
+mod raw;
+pub use raw::{execute_bytes, execute_into};
 
 thread_local! {
     /// Set for the duration of this instance's own serialized `dispatch`
@@ -299,22 +441,24 @@ thread_local! {
 /// RAII marker a dispatch worker enters for the duration of one `dispatch`
 /// call (or the state-bus publisher enters for the duration of one
 /// publication), so [`deliver_sync`] can refuse a `VOSU_READ_PLAN_SYNC`
-/// submission arriving on that same thread. Wiring this into
-/// `SerialWorker`/`WorkerPool`'s own job-running code is later wiring;
-/// this type only provides the marker.
+/// submission arriving on that same thread. Restores the thread-local's
+/// previous value on drop (rather than unconditionally clearing it), so a
+/// scope entered inside another scope leaves its enclosing scope's state
+/// intact once it exits. Wiring this into `SerialWorker`/`WorkerPool`'s own
+/// job-running code is later wiring; this type only provides the marker.
 #[must_use]
-pub struct DispatchThreadScope(());
+pub struct DispatchThreadScope(bool);
 
 impl DispatchThreadScope {
     pub fn enter() -> Self {
-        ON_DISPATCH_THREAD.with(|flag| flag.set(true));
-        Self(())
+        let previous = ON_DISPATCH_THREAD.with(|flag| flag.replace(true));
+        Self(previous)
     }
 }
 
 impl Drop for DispatchThreadScope {
     fn drop(&mut self) {
-        ON_DISPATCH_THREAD.with(|flag| flag.set(false));
+        ON_DISPATCH_THREAD.with(|flag| flag.set(self.0));
     }
 }
 
@@ -377,18 +521,17 @@ pub enum FinishOutcome {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PlanState {
-    Outstanding,
-    Cancelled,
-}
-
 /// Every way admitting a new asynchronous plan can be refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutstandingPlansError {
     /// This instance already has [`MAX_OUTSTANDING_ASYNC_PLANS`]
     /// asynchronous plans awaiting their result.
     CapExceeded,
+    /// `plan`'s id is already outstanding (or was cancelled and has not
+    /// yet `finish`ed): re-submitting the same id would otherwise let a
+    /// plugin keep any number of plans in flight under one id, bypassing
+    /// the cap entirely.
+    AlreadyOutstanding,
 }
 
 impl From<OutstandingPlansError> for vosu_status {
@@ -397,13 +540,24 @@ impl From<OutstandingPlansError> for vosu_status {
     }
 }
 
+#[derive(Debug, Default)]
+struct PlansState {
+    /// plan id -> the session handle it was submitted under.
+    outstanding: HashMap<vosu_plan_id, u64>,
+    /// Cancelled ids no longer count toward the cap (§6.3: a cancelled
+    /// slot "is freed the moment" `READ_PLAN_CANCEL` arrives) but are
+    /// still tracked here until `finish` so a late result can still be
+    /// reported [`FinishOutcome::Cancelled`].
+    cancelled: HashSet<vosu_plan_id>,
+}
+
 /// Tracks one plugin instance's asynchronous (non-`VOSU_READ_PLAN_SYNC`)
-/// read plans: the [`MAX_OUTSTANDING_ASYNC_PLANS`] cap (§5, §6.3), and
-/// `VOSU_OP_READ_PLAN_CANCEL`'s "discard the result instead of delivering
-/// it" rule.
+/// read plans: the [`MAX_OUTSTANDING_ASYNC_PLANS`] cap (§5, §6.3), which
+/// session handle each belongs to, and `VOSU_OP_READ_PLAN_CANCEL`'s
+/// "discard the result instead of delivering it" rule.
 #[derive(Debug, Default)]
 pub struct OutstandingPlans {
-    state: Mutex<HashMap<vosu_plan_id, PlanState>>,
+    state: Mutex<PlansState>,
 }
 
 impl OutstandingPlans {
@@ -412,44 +566,74 @@ impl OutstandingPlans {
         Self::default()
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<vosu_plan_id, PlanState>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, PlansState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Admits `plan` as outstanding, refusing a submission that would
-    /// exceed [`MAX_OUTSTANDING_ASYNC_PLANS`] before any read executes.
-    pub fn begin(&self, plan: vosu_plan_id) -> Result<(), OutstandingPlansError> {
+    /// Admits `plan` (submitted under `handle`'s session) as outstanding,
+    /// refusing a submission that would exceed
+    /// [`MAX_OUTSTANDING_ASYNC_PLANS`] or reuse an id that is already
+    /// outstanding, before any read executes.
+    pub fn begin(&self, plan: vosu_plan_id, handle: u64) -> Result<(), OutstandingPlansError> {
         let mut state = self.lock();
-        if state.len() >= MAX_OUTSTANDING_ASYNC_PLANS {
+        if state.outstanding.contains_key(&plan) || state.cancelled.contains(&plan) {
+            return Err(OutstandingPlansError::AlreadyOutstanding);
+        }
+        if state.outstanding.len() >= MAX_OUTSTANDING_ASYNC_PLANS {
             return Err(OutstandingPlansError::CapExceeded);
         }
-        state.insert(plan, PlanState::Outstanding);
+        state.outstanding.insert(plan, handle);
         Ok(())
     }
 
     /// `VOSU_OP_READ_PLAN_CANCEL`: the plugin no longer needs `plan`'s
-    /// result. A `plan` already finished (and so no longer tracked) is a
-    /// silent no-op — there is nothing left to discard.
+    /// result. Frees `plan`'s slot immediately (it stops counting against
+    /// the cap right away) while remembering it was cancelled, so
+    /// [`Self::finish`] still reports [`FinishOutcome::Cancelled`] once
+    /// the in-flight execution actually completes. A `plan` already
+    /// finished (and so no longer tracked) is a silent no-op.
     pub fn cancel(&self, plan: vosu_plan_id) {
-        if let Some(entry) = self.lock().get_mut(&plan) {
-            *entry = PlanState::Cancelled;
+        let mut state = self.lock();
+        if state.outstanding.remove(&plan).is_some() {
+            state.cancelled.insert(plan);
+        }
+    }
+
+    /// `SESSION_DETACHED` (A1): cancels every plan still outstanding under
+    /// `handle`, exactly as if the plugin had sent `READ_PLAN_CANCEL` for
+    /// each one.
+    pub fn cancel_session(&self, handle: u64) {
+        let mut state = self.lock();
+        let ids: Vec<vosu_plan_id> = state
+            .outstanding
+            .iter()
+            .filter(|&(_, owner)| *owner == handle)
+            .map(|(&id, _)| id)
+            .collect();
+        for id in ids {
+            state.outstanding.remove(&id);
+            state.cancelled.insert(id);
         }
     }
 
     /// Call once `plan`'s execution has actually finished: removes it from
-    /// the outstanding set and reports whether its result should still be
-    /// delivered or was cancelled meanwhile.
+    /// the outstanding/cancelled set and reports whether its result should
+    /// still be delivered or was cancelled meanwhile.
     pub fn finish(&self, plan: vosu_plan_id) -> FinishOutcome {
-        match self.lock().remove(&plan) {
-            Some(PlanState::Cancelled) => FinishOutcome::Cancelled,
-            Some(PlanState::Outstanding) | None => FinishOutcome::Deliver,
+        let mut state = self.lock();
+        if state.cancelled.remove(&plan) {
+            FinishOutcome::Cancelled
+        } else {
+            state.outstanding.remove(&plan);
+            FinishOutcome::Deliver
         }
     }
 
-    /// Current outstanding count, for tests and diagnostics.
+    /// Current outstanding count (cancelled ids excluded), for tests and
+    /// diagnostics.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.lock().len()
+        self.lock().outstanding.len()
     }
 
     #[must_use]
