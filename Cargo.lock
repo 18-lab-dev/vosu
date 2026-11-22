@@ -3213,6 +3213,8 @@ dependencies = [
  "vosu-osu-model",
  "vosu-osu-reader",
  "vosu-osu-state",
+ "vosu-plugin-api",
+ "vosu-plugin-testkit",
  "vosu-pp",
  "vosu-proptest",
  "vosu-sys",

@@ -95,6 +95,7 @@ use vosu_osu_state::{
 
 mod cli;
 mod config;
+mod dev_plugins;
 mod lifecycle;
 mod offset_generator;
 mod preview_scheme;

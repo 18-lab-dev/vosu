@@ -45,6 +45,8 @@ vosu-test-harness -> vosu-core
 vosu-test-harness -> vosu-net
 
 vosu -> vosu-core
+vosu -> vosu-plugin-api
+vosu -> vosu-plugin-testkit
 vosu -> vosu-net
 vosu -> vosu-sys
 vosu -> vosu-osu-model

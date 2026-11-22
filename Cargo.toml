@@ -75,7 +75,7 @@ lazer-offsets-satori-coreclr-sha256 = "dcc631eda8fdb34d06956697e9709b8d828306eb7
 [features]
 default = ["linux-process-events"]
 linux-process-events = ["vosu-sys/linux-process-events"]
-test-harness = ["vosu-net/test-harness", "vosu-osu-state/test-harness"]
+test-harness = ["vosu-net/test-harness", "vosu-osu-state/test-harness", "vosu-plugin-testkit", "vosu-plugin-testkit/test-harness"]
 [dependencies]
 arc-swap = "1.8.2"
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws", "query", "original-uri", "matched-path", "tracing"] }
@@ -104,6 +104,8 @@ tokio-tungstenite = "=0.29.0"
 toml = "=1.1.2"
 vosu-pp = { path = "crates/vosu-pp" }
 vosu-core = { path = "crates/vosu-core" }
+vosu-plugin-api = { path = "crates/vosu-plugin-api" }
+vosu-plugin-testkit = { path = "crates/vosu-plugin-testkit", optional = true }
 vosu-osu-calc = { path = "crates/vosu-osu-calc" }
 vosu-osu-model = { path = "crates/vosu-osu-model" }
 vosu-osu-reader = { path = "crates/vosu-osu-reader" }

@@ -17,6 +17,7 @@ pub struct ProductionRuntime {
     counters: AsyncMutex<Option<Arc<ReloadableCounterService>>>,
     tools: AsyncMutex<Option<Arc<crate::tools::ToolHost>>>,
     dev_tools: Vec<PathBuf>,
+    plugins: AsyncMutex<Vec<vosu_core::plugin::PluginInstance>>,
     listener: AsyncMutex<Option<ListenerOwner>>,
     dashboard_listener: AsyncMutex<Option<ListenerOwner>>,
     origins: Arc<crate::server::origins::Origins>,
@@ -36,6 +37,14 @@ impl ProductionRuntime {
         self.shutdown_token.cancel();
         if let Some(tools) = self.tools.lock().await.take() {
             tools.shutdown().await;
+        }
+        let plugins = std::mem::take(&mut *self.plugins.lock().await);
+        if !plugins.is_empty() {
+            tokio::task::spawn_blocking(move || super::dev_plugins::destroy_all(plugins))
+                .await
+                .map_err(|error| {
+                    io::Error::other(format!("plugin shutdown task failed: {error}"))
+                })?;
         }
         if let Some(mut tray) = self.tray.lock().await.take() {
             tray.shutdown().await;
@@ -839,6 +848,14 @@ pub async fn run_cli() -> io::Result<()> {
     let changes = config.subscribe();
     let shutdown_token = CancellationToken::new();
     let signal_task = tokio::spawn(run_signal_cancellation(shutdown_token.clone()));
+    let dev_plugin_dirs = vosu_core::plugin::development_roots(args.raw())?;
+    let plugins = {
+        let logger = logger.clone();
+        let paths = paths.clone();
+        tokio::task::spawn_blocking(move || dev_plugins::load_all(dev_plugin_dirs, &paths, &logger))
+            .await
+            .map_err(|error| io::Error::other(format!("plugin startup task failed: {error}")))?
+    };
     let hooks = ProductionRuntime {
         config: Arc::new(config),
         changes,
@@ -857,6 +874,7 @@ pub async fn run_cli() -> io::Result<()> {
         counters: AsyncMutex::new(None),
         tools: AsyncMutex::new(None),
         dev_tools: crate::tools::development_roots(args.raw())?,
+        plugins: AsyncMutex::new(plugins),
         listener: AsyncMutex::new(None),
         dashboard_listener: AsyncMutex::new(None),
         origins: Arc::new(crate::server::origins::Origins::new(

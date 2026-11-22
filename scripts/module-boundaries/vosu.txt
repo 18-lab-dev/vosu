@@ -4,6 +4,7 @@ runtime -> api
 runtime -> assets
 runtime -> counters
 runtime -> instance
+runtime -> plugins
 runtime -> server
 runtime -> tools
 server -> api
