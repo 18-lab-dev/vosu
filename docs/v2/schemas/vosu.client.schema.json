@@ -41,7 +41,7 @@
     },
     "focused": {
       "type": "boolean",
-      "description": "Whether this session is the one `/api/v1/sessions/active` currently addresses. Core recomputes this for every session on each focus change and sends `FOCUS_CHANGED` (plugin-abi.md) to the owning plugin; see docs/v2/api-v1.md's Focus rule for the selection algorithm."
+      "description": "Whether this session is the one `/api/v1/sessions/active` currently addresses. Core recomputes this on each focus change by docs/v2/api-v1.md's Focus rule; docs/v2/plugin-abi.md §6.2 defines which plugins are notified."
     },
     "plugin": {
       "type": "object",

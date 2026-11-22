@@ -225,6 +225,15 @@ cli = true                        # also exposed as `vosux <plugin-id> beatmap.i
   namespace/field omission; neither redefines it. A `covers` id outside a
   core namespace, or one under a namespace this plugin's own `provides`
   already lists, is a manifest validation error.
+- Coverage matching: a `covers` entry covers that field and every field
+  below it (the ancestor rule of "Capability coverage"). A reserved-name
+  `[[resource_kinds]]` entry (`file`, `audio`, `background`, `set`) covers
+  `field:vosu.chart.resources.<kind>`, and a `skin` entry covers
+  `field:vosu.skin.tree`. Both kinds of declaration count toward a common
+  namespace's presence (`docs/v2/state-schema.md`). The dashboard's "works
+  with" list for an overlay or tool is the set of game plugins (bundled,
+  installed, or catalogued) whose coverage includes every common-namespace
+  `field:` and core `resource:` id it requires.
 - Every `action:<plugin-id>.<name>` entry in `provides` has exactly one
   `[[actions]]` entry with that `name`, and vice versa; their `version`
   fields are equal. A `provides` action entry with no matching `[[actions]]`

@@ -46,11 +46,12 @@ segment above addresses it by.
 
 ### Focus rule
 
-Exactly one attached session is focused whenever at least one is attached:
-the session whose process owns the OS foreground window, or, when no
-attached process does, whichever session was most recently focused. The
-first focus decision after no session was focused (daemon start, or every
-session having ended before a new one attaches) picks the first session by
+The rule ranges over identified sessions only (see Visibility below). Exactly
+one identified session is focused whenever at least one exists: the session
+whose process owns the OS foreground window, or, when no identified session's
+process does, whichever session was most recently focused. The first focus
+decision after no session was focused (daemon start, or every session having
+ended before a new one is identified) picks the first session by
 [ADR 0001](../decisions/0001-single-daemon-multi-instance-lifecycle.md)'s
 deterministic ordering within the earliest-attached plugin. `vosu.client.focused`
 is `true` for exactly that one session's summary; `active` always addresses it.
@@ -288,8 +289,8 @@ implementation; this spec only fixes the observable 404/410 contract above.
 Resolving an id to actual bytes is lazy: core asks the plugin to resolve
 `{kind, key}` to a root+path or a stream only on that id's **first HTTP
 request**, never at publish time, and caches the resolution for the
-registry's lifetime of the id. Once the plugin closes a stream-backed
-resolution (`STREAM_CLOSE`, `docs/v2/plugin-abi.md`), core drops that cached
+registry's lifetime of the id. Once core closes a stream-backed
+resolution (`STREAM_CLOSE`, `docs/v2/plugin-abi.md`), it drops that cached
 resolution; the next request re-resolves from scratch rather than reusing a
 closed stream. Plugins resolve a key to either a declared root plus a
 relative path — opened with

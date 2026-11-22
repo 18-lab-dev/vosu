@@ -70,9 +70,10 @@ it, keyed by namespace id at the top level:
 
 `vosu.client` is always present for an attached session. The common
 namespaces (`vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`) are present
-whenever the providing game plugin declares any coverage for them at all; a
-namespace the plugin's manifest declares no fields for is omitted entirely,
-never published as an all-null object. Within a declared namespace, each
+whenever the providing game plugin's coverage (`covers` and reserved-name
+`[[resource_kinds]]` entries, as `docs/v2/catalog-v2.md` defines) includes any
+field in them; a namespace with no covered field is omitted entirely,
+never published as an all-null object. Within a present namespace, each
 field the plugin does not individually fill is `null` (ADR 0020): never a zero,
 empty string, or empty array standing in for "unknown".
 
@@ -97,11 +98,9 @@ the other four leaves itself.
 ## Focus
 
 `vosu.client.focused` is governed by api-v1.md's Focus rule
-(`docs/v2/api-v1.md#focus-rule`): exactly one session is focused whenever at
-least one is attached, and core — not the schema — recomputes it on every
-relevant OS focus change and sends `FOCUS_CHANGED` (`docs/v2/plugin-abi.md`)
-to the affected session's owning plugin. The attach handshake no longer
-carries an initial `focused` value.
+(`docs/v2/api-v1.md#focus-rule`); core, not the schema, recomputes it on every
+relevant OS focus change, and `docs/v2/plugin-abi.md` §6.2 defines which
+plugins are notified. The attach handshake carries no initial `focused` value.
 
 ## Common layer: `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`
 
