@@ -18,7 +18,7 @@ specs [plugin ABI](plugin-abi.md) with [`include/vosu_plugin.h`](../../include/v
 [state schema](state-schema.md) with [`schemas/`](schemas/),
 [API v1](api-v1.md), [catalog v2](catalog-v2.md), and
 [brokered reads](brokered-reads.md), plus the 1.x tree (`src/`, `crates/`,
-`tests/`, [`scripts/module-boundaries.txt`](../../scripts/module-boundaries.txt),
+`tests/`, `scripts/module-boundaries.txt` (per crate under `scripts/module-boundaries/` since M0),
 [architecture](../architecture/overview.md), [source map](../architecture/source-map.md)).
 `AGENTS.md` is binding for every step below.
 
@@ -96,7 +96,7 @@ dependencies" lists workspace crates only; it is recorded in a new
 | `crates/vosu-osu-model` | osu! value types and osu!-exact helpers shared by reader, calculator, and adapters: `src/model/{memory,states,enums}*` and the calculation root helpers (`src/calculation/root/{helpers,mods,scores}.rs`: JS-compatible rounding and number writing, mods, grades, legacy hits). | none |
 | `crates/vosu-osu-calc` | Live and legacy calculation: `src/calculation/{beatmap,progressive,engine}*` over `crates/vosu-pp` (ADR 0004 contracts unchanged). | `vosu-osu-model`, `vosu-pp` |
 | `crates/vosu-osu-reader` | Client decoding: `src/memory*` (stable, lazer, offsets, loader, snapshots), the pointer-width read layer now in `src/process.rs::ProcessHandle`, the embedded `assets/offsets.json` and generator bundle, `src/runtime/offset_generator*`, osu!-specific discovery inputs (client argv parser `StartupArgs`, Wine path resolution `resolve_osu_path`). | `vosu-osu-model`, `vosu-plugin-api`; interim `vosu-sys` until M1 |
-| `crates/vosu-osu-state` | Reducer, capture scheduling, gameplay state: `src/state*` plus the calculation backend (`src/calculation/state_backend*`). | `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model` |
+| `crates/vosu-osu-state` | Reducer, capture scheduling, gameplay state: `src/state*` plus the calculation backend (`src/calculation/state_backend*`). | `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`, `vosu-pp`; interim `vosu-sys` until M1 (the reducer reads the `MemoryRead`/`ReadStatus`/`MemoryError` types directly) |
 | `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, `SESSION_DECLINE` use, session identification, namespace projection (`vosu.osu`, common layer, the paths-only `internal` subtree, D2), roots and resource kinds, settings (D19), the `beatmap.import` action (D8). A `test-harness`-only `cdylib` build with a non-bundled test manifest runs it out of process in M5 (gap 13). | `vosu-plugin-api`, `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`; interim `vosu-surface` for bridge B1, M1→M4a |
 | `crates/vosu-adapter-support` | Shared upstream-wire machinery: `src/api/{json,fixed,wire_fixtures}.rs`, legacy filter parsing, JS-number JSON writer. | `vosu-osu-model` |
 | `crates/vosu-adapter-upstream` | Upstream v2 adapter: `/json/v2`, `/json/v2/precise`, `/websocket/v2`, `/websocket/v2/precise`, `/files/...`, `/Songs/{path}`, `/backgroundImage`, `/api/calculate/pp`, `/api/ingame` (api-v1.md "Route ownership"). | `vosu-surface`, `vosu-plugin-api`, `vosu-adapter-support`, `vosu-osu-model`, `vosu-osu-calc` |
@@ -363,6 +363,16 @@ example `src/runtime/test_support.rs`) need explicit `pub` or a
 `test-harness`-gated module; MSVC link time for one test binary per crate in
 the native Windows gate (measured under D9).
 
+Outcome: M0 landed on `main` from `3a91ff9` (the pre-M0 baseline) through
+`fda1625`; results are in the [benchmark guide](../testing/benchmarks.md).
+Every exit item passed except one D9 probe: a `vosu-osu-state` edit's
+`cargo check` measured 1.031 s against the 1.0 s goal. The owner accepted
+that miss, because most of the time is re-checking the root `vosu` crate,
+which shrinks as `api` and `server` move out in M1–M4. The
+native Windows CI regression the risk above predicted (full PDB debuginfo
+across the new test binaries) was fixed by building that job with
+line-table debuginfo.
+
 ### A1: ABI and spec amendments (on `v2/main`, documentation only)
 
 Scope: the adopted amendments in section 10, written into
@@ -378,7 +388,8 @@ overlap rule (D18); the catalog-v2.md wording for user overlays (D20); the
 `ConcurrentPlugin` SDK sketch (D22); `docs/v2/naming.md` (gap 8).
 
 Exit: `python scripts/check-doc-links.py`, `python scripts/check-brand.py`;
-the owner signs off the amended specs, which are frozen again.
+the owner signs off the amended specs, which are frozen again. Signed off
+2026-11-22.
 
 ### M1: plugin API, in-process host, osu! plugin behind the 1.x surfaces
 
@@ -1480,7 +1491,8 @@ Risks that need no further decision:
   [state schema](state-schema.md), [`schemas/`](schemas/), [API v1](api-v1.md),
   [catalog v2](catalog-v2.md), [brokered reads](brokered-reads.md), ADRs 0019–0023.
 - Structure and checks: `Cargo.toml`, `build.rs`, `src/lib.rs`, `src/main.rs`,
-  [`scripts/module-boundaries.txt`](../../scripts/module-boundaries.txt),
+  [`scripts/module-boundaries/`](../../scripts/module-boundaries/) (per crate since M0),
+  [`scripts/crate-boundaries.txt`](../../scripts/crate-boundaries.txt), `scripts/check-crate-boundaries.py`,
   `scripts/check-module-boundaries.py`, `scripts/check-file-length.py`,
   `scripts/file-length-baseline.txt`, `scripts/ci-changes.py`,
   `scripts/prepush.py`, `scripts/land.py`, `scripts/sign-release.py`,
