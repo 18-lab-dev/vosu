@@ -17,6 +17,7 @@ mod envelope;
 mod flags;
 mod flat;
 mod limits;
+mod manifest;
 mod message;
 mod opcode;
 mod primitives;
@@ -60,6 +61,7 @@ pub use limits::{
     VOSU_FRAME_MAX_BYTES, VOSU_PLUGIN_ABI_MAJOR, VOSU_PUBLISH_BATCH_MAX_BYTES,
     VOSU_READ_PLAN_MAX_BYTES, VOSU_STREAM_CHUNK_MAX_BYTES,
 };
+pub use manifest::{ManifestError, MatchTable, PluginManifest, ResourceKind, Runtime, Target};
 pub use message::flat::{
     DemandChanged, FieldSelector, PlanBase, PlanOp, PublishBatch, PublishField, PublishValue,
     ReadErrorCode, ReadPlanResult, ReadPlanSubmit, ReadResult, Stage, StageBase,

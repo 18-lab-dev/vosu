@@ -7,6 +7,7 @@
 # (crate::vosu_status, crate::{vosu_plan_id, ...}). Several real edges
 # below are only visible that way; they are listed deliberately so the
 # graph stays accurate even where the checker itself cannot derive them.
+manifest -> limits
 cbor -> validate
 message -> cbor
 message -> flags

@@ -3343,7 +3343,9 @@ version = "1.0.0-alpha.0"
 dependencies = [
  "ciborium",
  "proptest",
+ "semver",
  "serde",
+ "toml",
  "vosu-proptest",
 ]
 
