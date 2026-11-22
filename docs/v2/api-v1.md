@@ -223,10 +223,10 @@ Every API v1 error response is a JSON body:
 | 400 | `invalid_request` / `invalid_pointer` / `invalid_arguments` | malformed query, body, or pointer |
 | 401 | `unauthorized` | missing/invalid tool-session token or broker credential on an action route |
 | 403 | `forbidden` | peer/Origin policy; or a valid tool session whose action id is not in its resolved `requires`/`optional` |
-| 404 | `unknown_session` / `unknown_namespace` / `unknown_resource` / `unknown_tree` / `unknown_action` / `unknown_invocation` | id or path never valid for this server |
+| 404 | `unknown_session` / `unknown_namespace` / `unknown_resource` / `unknown_tree` / `unknown_action` / `unknown_job` | id or path never valid for this server |
 | 405 | `method_not_allowed` | wrong HTTP method on a route |
 | 410 | `unpublished_resource` / `unpublished_tree` | a structurally valid, correctly signed id no longer in the published registry |
-| 413 | `payload_too_large` | action-invocation body over the POST body limit |
+| 413 | `payload_too_large` | job creation/poll/cancel body over the POST body limit |
 | 500 | `serialization_failed` | internal encode failure |
 
 The 404/410 split on resource and tree ids follows directly from how ids are
@@ -328,40 +328,66 @@ bounded families, or outside this allowlist entirely, serves as
 ## Actions
 
 Tools invoke plugin actions. The capability id is `action:<plugin-id>.<name>`
-(`requires`/`optional`, catalog entries), but routes and `vosu.invoke`
-address the action by its bare `{plugin-id}.{name}` — the `action:` prefix
-exists only in capability ids. Overlays never invoke actions (authorization
-below). Each action declares, in its owning plugin's manifest (`[[actions]]`,
+(`requires`/`optional`, catalog entries), but routes and the bridge address
+the action by its bare `{plugin-id}.{name}` — the `action:` prefix exists
+only in capability ids. Overlays never invoke actions (authorization below).
+Each action declares, in its owning plugin's manifest (`[[actions]]`,
 `docs/v2/catalog-v2.md`), whether it needs a session: `required`, `optional`,
 or `none`.
 
-### Invoke
+Invoking an action starts a **job** — API v1's term for it; the ABI keeps its
+internal term "invocation" (`docs/v2/plugin-abi.md`).
+
+### Create a job
 
 - `POST /api/v1/sessions/{id|active}/actions/{plugin-id}.{name}` — for an
-  action declared `required` or `optional`; the action receives this
+  action declared `required` or `optional`; the job's `session` is this
   resolved session id.
 - `POST /api/v1/actions/{plugin-id}.{name}` — for an action declared `none`
-  or `optional`; the action receives no session (`session: null`).
+  or `optional`; the job's `session` is `null`.
 
 Calling an action at the route its own `session` declaration does not allow
 (`required` at the session-less route, `none` at a session route) is 404
 `unknown_action`: it is simply not registered there.
 
 Body: `{"arguments": {...}}`, matching the action's declared `args_schema`
-(`docs/v2/catalog-v2.md`). Core waits up to 250 ms for the action's result:
+(`docs/v2/catalog-v2.md`). An optional `wait=<ms>` query parameter (0–30000,
+default 250) bounds how long this request waits for the job:
 
-- Reaches any terminal state (`succeeded`, `failed`, or `cancelled`) within
-  that window: `200` with the same invocation object
-  `GET /api/v1/invocations/{id}` would return (`state` plus `result`, if
-  `succeeded`, or `error`, if `failed`).
-- Still `running` after 250 ms: `202 {"invocationId": "<opaque string>"}`
-  immediately, with the action continuing; use the invocation route below
-  for its eventual outcome.
+- `wait=0` starts the job and responds immediately, without waiting at all:
+  `202` with the job object (`state: "running"`) and
+  `Location: /api/v1/jobs/{id}`.
+- The job reaches any terminal state (`succeeded`, `failed`, or `cancelled`)
+  within `wait`: `200` with the job object.
+- Still `running` after `wait`: `202` with the job object
+  (`state: "running"`) and `Location: /api/v1/jobs/{id}`, as for `wait=0`;
+  use the job route below for its eventual outcome.
 
-The action's own ABI result maps onto this API outcome (and onto the
-invocation `state` below) as:
+### Job object
 
-| ABI result | API outcome |
+```json
+{
+  "id": "string",
+  "action": "{plugin-id}.{name}",
+  "session": "string|null",
+  "state": "running",
+  "revision": 0,
+  "progress": { "fraction": 0.42, "message": "string" },
+  "result": null,
+  "error": null
+}
+```
+
+`state` is `running`, `succeeded`, `failed`, or `cancelled`. `revision` is a
+`u64` that increases on every progress update or state change, so a
+long-polling client can detect a change without diffing the whole object.
+`progress` is `null` when the action reports none. `result` is populated only
+once `succeeded`; `error` (the same `{code, message}` shape as HTTP errors)
+only once `failed`.
+
+The action's own ABI result maps onto `state` as:
+
+| ABI result | `state` |
 | --- | --- |
 | success | `succeeded`, `result` = the action's value |
 | failure, `code: "cancelled"` | `cancelled`, no `error` |
@@ -372,37 +398,30 @@ a plugin action that exceeds its timeout is `failed` with
 `code: "timed_out"`; a plugin host that crashes or is killed mid-invocation
 is `failed` with `code: "plugin_crashed"`.
 
-### Progress, result, and cancellation: `/api/v1/invocations/{invocationId}`
+### `/api/v1/jobs/{id}`
 
-Invocation ids are server-wide, not nested under a session or its actions —
-the originating session (or `null`) is fixed at invoke time and does not
-change if that session later ends.
+Job ids are server-wide, not nested under a session or its actions — the
+originating session (or `null`) is fixed at job creation and does not change
+if that session later ends.
 
-- `GET /api/v1/invocations/{invocationId}` polls current status:
+- `GET /api/v1/jobs/{id}` returns the job immediately. With
+  `after=<revision>&wait=<ms ≤ 30000>` it long-polls instead: the response
+  waits until `revision` has advanced past `after`, the job reaches a
+  terminal state, or `wait` elapses, then returns `200` with the job object
+  either way — an elapsed `wait` with no change still returns the unchanged
+  job, never an error. Core holds at most 8 waiting requests per job and 256
+  in total; a request beyond those bounds returns immediately with the
+  current job instead of waiting.
+- `DELETE /api/v1/jobs/{id}` requests cancellation. It is idempotent and
+  advisory: the job may reach a terminal state before the request is
+  observed, in which case that state stands.
+- **Retention**: a terminal job stays readable for 5 minutes after it
+  terminates, in a bounded registry of 1024 jobs (the oldest terminal job is
+  evicted first once the registry is full); past that window, or once
+  evicted, `GET`/`DELETE` on its id is 404 `unknown_job`.
 
-  ```json
-  {
-    "state": "running",
-    "progress": { "fraction": 0.42, "message": "string" },
-    "result": null,
-    "error": null
-  }
-  ```
-
-  `state` is `running`, `succeeded`, `failed`, or `cancelled` (mapping above).
-  `progress` is `null` when the action reports none. `result` is populated
-  only once `succeeded`; `error` (the same `{code, message}` shape as HTTP
-  errors) only once `failed`.
-- `DELETE /api/v1/invocations/{invocationId}` requests cancellation. It is
-  idempotent and advisory: the action may finish before the request is
-  observed, in which case its final `succeeded`/`failed` state stands.
-- An invocation id expires once its action reaches a terminal state and has
-  been read once, or after an implementation-defined bound; a 404
-  `unknown_invocation` after that is expected, not an error condition to
-  guard against.
-
-Invoke, poll, and cancel requests are capped at the existing 1 MiB POST body
-limit.
+Job creation, polling, and cancellation requests are capped at the existing
+1 MiB POST body limit.
 
 ### Authorization
 
@@ -421,18 +440,26 @@ credential) never can:
   must be present in the owning tool's resolved `requires`/`optional`
   (`docs/v2/catalog-v2.md`'s permission-surface rule: declaring the
   capability *is* declaring the intent to call it) —
-  otherwise 403 `forbidden` even with a valid session. The bridge exposes
-  `vosu.invoke(actionId, args, { session })` to tool-UI JavaScript: it issues
-  `POST /api/v1/sessions/{session|active}/actions/{actionId}` when `session`
-  is given or defaulted to `"active"`, or `POST /api/v1/actions/{actionId}`
-  when `session: null` is passed, attaching that header automatically.
-  `docs/v2/catalog-v2.md` references this section for `vosu.invoke` rather
-  than restating it.
+  otherwise 403 `forbidden` even with a valid session. The bridge exposes two
+  calls, both attaching that header automatically: `vosu.invoke(actionId,
+  args, { session, onProgress, signal })` awaits the job to completion via
+  `GET /api/v1/jobs/{id}` long-polling and resolves with its `result` (or
+  rejects with its `error`), calling `onProgress(progress)` on each change
+  and sending `DELETE /api/v1/jobs/{id}` if the passed `signal` aborts;
+  `vosu.start(actionId, args, { session })` creates the job with `wait=0` and
+  returns a job handle `{id, done, onProgress(fn), cancel()}` for a caller
+  that wants it to run in the background — `done` is a promise settling the
+  same way `vosu.invoke` does, `onProgress` registers a callback, and
+  `cancel()` sends `DELETE`. `docs/v2/catalog-v2.md` references this section
+  for both calls rather than restating them.
 - **The CLI**, through the native loopback broker credential, for an action
   declared `cli = true` (`docs/v2/catalog-v2.md`): `vosux <plugin-id>
   <action> [json-args]` forwards to the same HTTP route under the broker's
-  own authority, bypassing the tool-session check. A session-scoped action is
-  invoked against `active` unless the CLI is given `--session <id>`.
+  own authority, bypassing the tool-session check, and by default waits for
+  the job and prints its progress (as `vosu.invoke` does); `--detach` instead
+  creates it with `wait=0`, prints the job id, and exits (as `vosu.start`
+  does). A session-scoped action is invoked against `active` unless the CLI
+  is given `--session <id>`.
 - **A plugin**, calling another plugin's action through the ABI
   (`docs/v2/plugin-abi.md`) entirely inside the host process; this never
   reaches the HTTP surface at all.
@@ -516,12 +543,6 @@ than reusing this URL for different content.
 
 ## Open questions
 
-- **Action progress transport.** This spec uses plain polling GET for
-  progress/result/cancellation. Pushing progress over the existing
-  subscription channel (as a synthetic per-invocation field) would avoid
-  polling latency for slow actions but adds a transient, non-schema-backed
-  document to the subscription model. Recommendation: ship polling for v1;
-  revisit only if a real action's UX needs sub-poll-interval progress.
 - **Resource type family ownership.** The fixed `image`/`audio`/`video`/
   `chart-text` allowlist here is a core list; a plugin's manifest only bounds
   which of these family tokens each of its resource/tree kinds may produce
@@ -530,10 +551,3 @@ than reusing this URL for different content.
   extension. If a future kind genuinely needs a type outside these four
   families, that is an ADR 0021 change, not something this spec can resolve
   unilaterally.
-- **Invocation id lifetime.** This spec fixes the observable behavior (404
-  once expired) but leaves the exact retention bound to the implementation,
-  mirroring how the resource registry's capacity is unspecified here.
-  Recommendation: tie it to a short grace window after a terminal state is
-  first read (invocation ids are no longer session-scoped, so they do not
-  share a session's lifetime), so a client that reads the result once cannot
-  leak invocations across a long-running daemon process.
