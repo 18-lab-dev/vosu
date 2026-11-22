@@ -50,14 +50,18 @@ impl HostContext {
     }
 }
 
-/// Builds the `vosu_host_services` every instance's `create` call receives.
-pub(crate) fn host_services_vtable() -> vosu_host_services {
-    vosu_host_services {
-        struct_size: core::mem::size_of::<vosu_host_services>() as u32,
-        abi_version: VOSU_PLUGIN_ABI_MAJOR,
-        send: Some(send_trampoline),
-    }
-}
+/// The `vosu_host_services` every instance's `create` call receives: a
+/// process-wide `static`, not a per-call local. `include/vosu_plugin.h`
+/// documents `host` as outliving every call made through it until
+/// `destroy` returns — for the instance's whole lifetime, not just
+/// `create`'s own stack frame. The table's contents never change (only
+/// `send`'s target, `host_ctx`, varies per instance), so one instance
+/// safely serves every plugin instance ever created in this process.
+pub(crate) static HOST_SERVICES: vosu_host_services = vosu_host_services {
+    struct_size: core::mem::size_of::<vosu_host_services>() as u32,
+    abi_version: VOSU_PLUGIN_ABI_MAJOR,
+    send: Some(send_trampoline),
+};
 
 unsafe extern "C" fn send_trampoline(host_ctx: *mut c_void, message: *const vosu_message) -> u32 {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

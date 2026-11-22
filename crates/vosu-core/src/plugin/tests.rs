@@ -3,11 +3,14 @@
 //! and the `destroy` grace timeout.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use vosu_plugin_api::{
-    ConcurrentPlugin, FocusChanged, Init, Message, Plugin, PluginError, vosu_status,
+    ConcurrentPlugin, FocusChanged, HostServices, Init, Message, Plugin, PluginError,
+    VtableHostServices, vosu_status,
 };
 
 use super::*;
@@ -20,6 +23,24 @@ impl PluginHostHandler for NullHandler {
         _message: Message,
         _correlation_id: u64,
     ) -> vosu_status {
+        vosu_status::VOSU_OK
+    }
+}
+
+/// Records every message a plugin's background work sends through its own
+/// `host_ctx`, so a test can assert on it from the calling thread even when
+/// the plugin sends from another thread, long after `create` returned.
+struct RecordingHandler {
+    tx: SyncSender<(PluginInstanceId, Message, u64)>,
+}
+impl PluginHostHandler for RecordingHandler {
+    fn handle(
+        &self,
+        instance: PluginInstanceId,
+        message: Message,
+        correlation_id: u64,
+    ) -> vosu_status {
+        let _ = self.tx.send((instance, message, correlation_id));
         vosu_status::VOSU_OK
     }
 }
@@ -278,6 +299,222 @@ fn concurrent_dispatch_runs_messages_in_overlapping_windows() {
     );
 }
 
+// --- `host`/`host_ctx` lifetime: send long after `create` (P0) ----------
+
+mod stack_churn_sender {
+    use super::{
+        FocusChanged, HostServices, Init, Message, Plugin, PluginError, VtableHostServices,
+    };
+
+    pub struct StackChurnSender {
+        host: VtableHostServices,
+    }
+    impl Plugin for StackChurnSender {
+        fn create(host: VtableHostServices, _init: Init) -> Result<Self, PluginError> {
+            Ok(Self { host })
+        }
+        fn on_message(
+            &mut self,
+            _message: Message,
+            _correlation_id: u64,
+        ) -> Result<(), PluginError> {
+            let host = self.host;
+            std::thread::spawn(move || {
+                // Disturbs whatever stack memory `create`'s own frame used
+                // to hold a (pre-fix) local host-services table, before
+                // this thread calls `host.send` through its copy of
+                // `VtableHostServices` -- "long after create", from
+                // another thread, rather than relying on luck the way the
+                // review noted the existing tests did.
+                super::churn_stack(400);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                let _ = host.send(
+                    &Message::FocusChanged(FocusChanged {
+                        handle: 0xC0FFEE,
+                        focused: true,
+                    }),
+                    99,
+                );
+            });
+            Ok(())
+        }
+    }
+    vosu_plugin_api::export_plugin!(bundled StackChurnSender);
+}
+
+#[inline(never)]
+fn churn_stack(depth: u32) -> u64 {
+    let buffer = [0x5Au8; 512];
+    let sum: u64 = buffer.iter().map(|&b| b as u64).sum();
+    if depth == 0 {
+        sum
+    } else {
+        sum.wrapping_add(churn_stack(depth - 1))
+    }
+}
+
+#[test]
+fn send_from_a_thread_long_after_create_reaches_the_live_host_table() {
+    let (tx, rx) = sync_channel(1);
+    let handler = Arc::new(RecordingHandler { tx });
+    let text = manifest("acme.churn", "");
+    let loaded = registry::load_bundled(&[registry::BundledPlugin {
+        manifest: &text,
+        vtable: stack_churn_sender::vosu_plugin_vtable,
+    }])
+    .unwrap();
+    let instance = PluginInstance::create(
+        PluginInstanceId::new(20),
+        &loaded[0],
+        &init_bytes("acme.churn"),
+        handler,
+        None,
+    )
+    .unwrap();
+
+    // Churn this thread's own stack between `create` and the dispatch that
+    // triggers the plugin's background `send`, on top of the plugin's own
+    // background thread doing the same before it sends.
+    for _ in 0..8 {
+        std::thread::spawn(|| churn_stack(400)).join().unwrap();
+    }
+
+    instance
+        .dispatch(focus_changed_message(0))
+        .unwrap()
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+
+    let (_, message, correlation_id) = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the plugin's background thread should have reached a live host table");
+    assert!(matches!(
+        message,
+        Message::FocusChanged(FocusChanged {
+            handle: 0xC0FFEE,
+            focused: true
+        })
+    ));
+    assert_eq!(correlation_id, 99);
+
+    instance.destroy(Duration::from_secs(5)).unwrap();
+}
+
+// --- Concurrent destroy drains in-flight jobs first (P1) -----------------
+
+struct ConcurrentDestroyState {
+    active: AtomicUsize,
+    violation: AtomicBool,
+}
+
+fn concurrent_destroy_registry() -> &'static Mutex<HashMap<String, Arc<ConcurrentDestroyState>>> {
+    static REGISTRY: std::sync::LazyLock<Mutex<HashMap<String, Arc<ConcurrentDestroyState>>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+    &REGISTRY
+}
+
+fn register_concurrent_destroy_state(plugin_id: &str) -> Arc<ConcurrentDestroyState> {
+    let state = Arc::new(ConcurrentDestroyState {
+        active: AtomicUsize::new(0),
+        violation: AtomicBool::new(false),
+    });
+    concurrent_destroy_registry()
+        .lock()
+        .unwrap()
+        .insert(plugin_id.to_string(), Arc::clone(&state));
+    state
+}
+
+fn concurrent_destroy_state_for(plugin_id: &str) -> Arc<ConcurrentDestroyState> {
+    concurrent_destroy_registry()
+        .lock()
+        .unwrap()
+        .get(plugin_id)
+        .cloned()
+        .unwrap_or_else(|| panic!("no concurrent-destroy state registered for {plugin_id:?}"))
+}
+
+mod concurrent_destroy_guard {
+    use super::{
+        ConcurrentDestroyState, ConcurrentPlugin, Init, Message, PluginError,
+        concurrent_destroy_state_for,
+    };
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+
+    pub struct ConcurrentDestroyGuard {
+        state: Arc<ConcurrentDestroyState>,
+    }
+    impl ConcurrentPlugin for ConcurrentDestroyGuard {
+        fn create(
+            _host: vosu_plugin_api::VtableHostServices,
+            init: Init,
+        ) -> Result<Self, PluginError> {
+            Ok(Self {
+                state: concurrent_destroy_state_for(&init.plugin_id),
+            })
+        }
+        fn on_message(&self, _message: Message, _correlation_id: u64) -> Result<(), PluginError> {
+            self.state.active.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            self.state.active.fetch_sub(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    impl Drop for ConcurrentDestroyGuard {
+        fn drop(&mut self) {
+            // If `destroy` ever runs (this struct drops) while a job is
+            // still active, the P1 bug (tearing the plugin down while a
+            // `concurrent_dispatch` job is still in flight) would have
+            // raced that job's own use of `self`.
+            if self.state.active.load(Ordering::SeqCst) != 0 {
+                self.state.violation.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+    vosu_plugin_api::export_plugin!(bundled concurrent ConcurrentDestroyGuard);
+}
+
+#[test]
+fn destroy_waits_for_in_flight_concurrent_jobs_before_tearing_down() {
+    let state = register_concurrent_destroy_state("acme.concurrent-destroy");
+    let text = manifest("acme.concurrent-destroy", "concurrent_dispatch=true\n");
+    let loaded = registry::load_bundled(&[registry::BundledPlugin {
+        manifest: &text,
+        vtable: concurrent_destroy_guard::vosu_plugin_vtable,
+    }])
+    .unwrap();
+    let pool = WorkerPool::new(4, 64);
+    let instance = PluginInstance::create(
+        PluginInstanceId::new(21),
+        &loaded[0],
+        &init_bytes("acme.concurrent-destroy"),
+        Arc::new(NullHandler),
+        Some(Arc::clone(&pool)),
+    )
+    .unwrap();
+
+    // Submit several jobs and call `destroy` without waiting for their
+    // replies first: before the P1 fix, `destroy` only shut down
+    // `Dispatch::Serial`, so these still-running `concurrent_dispatch`
+    // jobs raced the plugin's own teardown instead of being drained first.
+    let mut replies = Vec::new();
+    for _ in 0..4 {
+        replies.push(instance.dispatch(focus_changed_message(0)).unwrap());
+    }
+    instance.destroy(Duration::from_secs(5)).unwrap();
+
+    assert!(
+        !state.violation.load(Ordering::SeqCst),
+        "destroy tore the plugin down while a concurrent job was still running"
+    );
+    for reply in replies {
+        reply
+            .recv_timeout(Duration::from_secs(5))
+            .expect("every in-flight job should have finished before destroy returned");
+    }
+}
+
 // --- Destroy grace timeout (§4) ------------------------------------------
 
 mod slow_destroy {
@@ -329,6 +566,80 @@ fn destroy_times_out_when_the_plugin_does_not_return_in_time() {
         Err(other) => panic!("expected DestroyTimedOut, got {other}"),
         Ok(()) => panic!("expected destroy to time out"),
     }
+}
+
+mod slow_destroy_sends_late {
+    use super::{
+        FocusChanged, HostServices, Init, Message, Plugin, PluginError, VtableHostServices,
+    };
+
+    pub struct SlowDestroySendsLate {
+        host: VtableHostServices,
+    }
+    impl Plugin for SlowDestroySendsLate {
+        fn create(host: VtableHostServices, _init: Init) -> Result<Self, PluginError> {
+            Ok(Self { host })
+        }
+        fn on_message(
+            &mut self,
+            _message: Message,
+            _correlation_id: u64,
+        ) -> Result<(), PluginError> {
+            Ok(())
+        }
+    }
+    impl Drop for SlowDestroySendsLate {
+        fn drop(&mut self) {
+            // Outlives the short grace the matching test gives `destroy`:
+            // exercises `host_ctx` staying valid -- leaked, not freed --
+            // past the timeout (§4's accepted cost, the P1 fix), rather
+            // than this `send` touching memory `destroy`'s caller already
+            // freed the moment it saw `DestroyTimedOut`.
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let _ = self.host.send(
+                &Message::FocusChanged(FocusChanged {
+                    handle: 0xDEAD,
+                    focused: false,
+                }),
+                0,
+            );
+        }
+    }
+    vosu_plugin_api::export_plugin!(bundled SlowDestroySendsLate);
+}
+
+#[test]
+fn destroy_timeout_leaks_host_ctx_so_a_late_send_from_the_plugin_stays_valid() {
+    let (tx, rx) = sync_channel(1);
+    let handler = Arc::new(RecordingHandler { tx });
+    let text = manifest("acme.slow-late", "");
+    let loaded = registry::load_bundled(&[registry::BundledPlugin {
+        manifest: &text,
+        vtable: slow_destroy_sends_late::vosu_plugin_vtable,
+    }])
+    .unwrap();
+    let instance = PluginInstance::create(
+        PluginInstanceId::new(22),
+        &loaded[0],
+        &init_bytes("acme.slow-late"),
+        handler,
+        None,
+    )
+    .unwrap();
+
+    match instance.destroy(Duration::from_millis(10)) {
+        Err(HostError::DestroyTimedOut) => {}
+        Err(other) => panic!("expected DestroyTimedOut, got {other}"),
+        Ok(()) => panic!("expected destroy to time out"),
+    }
+
+    let (_, message, _) = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the plugin's late send should still reach a live host_ctx, not freed memory");
+    assert!(matches!(
+        message,
+        Message::FocusChanged(FocusChanged { handle: 0xDEAD, .. })
+    ));
 }
 
 // --- Dispatch queue backpressure (§4: bounded, non-blocking `try_send`) --

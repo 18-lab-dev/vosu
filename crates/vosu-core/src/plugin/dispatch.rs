@@ -3,8 +3,8 @@
 //! `concurrent_dispatch` worker pool (`docs/v2/plugin-abi.md` §4).
 
 use std::ffi::c_void;
-use std::sync::mpsc::{SyncSender, sync_channel};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
 use vosu_plugin_api::{vosu_bytes, vosu_message, vosu_plugin_vtable, vosu_status};
@@ -33,6 +33,59 @@ impl PluginCtx {
     /// this method instead forces the whole `PluginCtx` to be captured.
     pub(crate) fn raw(self) -> *mut c_void {
         self.0
+    }
+}
+
+/// Counts the jobs queued or running for one instance's shared
+/// `concurrent_dispatch` pool, so `PluginInstance::destroy` can wait for
+/// them to finish before calling the plugin's own `destroy`
+/// (`docs/v2/plugin-abi.md` §4): otherwise a pool job still holding this
+/// instance's vtable and `ctx` races the plugin's own teardown, which
+/// frees them. A serial instance does not need this: its own queue is
+/// fully drained by `SerialWorker::shutdown_within` instead.
+#[derive(Clone)]
+pub(crate) struct InFlightTracker(Arc<(Mutex<usize>, Condvar)>);
+
+impl InFlightTracker {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new((Mutex::new(0), Condvar::new())))
+    }
+
+    /// Marks one job in flight for the returned guard's whole lifetime.
+    /// Call this before the job is submitted, so a job still sitting in
+    /// the queue (not yet picked up by a pool worker) counts too.
+    pub(crate) fn enter(&self) -> InFlightGuard {
+        let mut count = self.0.0.lock().unwrap_or_else(PoisonError::into_inner);
+        *count += 1;
+        InFlightGuard(Arc::clone(&self.0))
+    }
+
+    /// Waits up to `timeout` for every entered guard to have dropped.
+    /// Returns `false` once `timeout` elapses with jobs still in flight,
+    /// so a hung job cannot block `destroy` past its grace period.
+    pub(crate) fn wait_until_zero(&self, timeout: std::time::Duration) -> bool {
+        let (lock, condvar) = &*self.0;
+        let count = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let (_count_guard, result) = condvar
+            .wait_timeout_while(count, timeout, |count| *count != 0)
+            .unwrap_or_else(PoisonError::into_inner);
+        !result.timed_out()
+    }
+}
+
+/// Decrements its [`InFlightTracker`] when dropped: held by a [`Job`] for
+/// as long as the job is queued or running, including a job dropped unrun
+/// (e.g. rejected by a full queue), so the count always matches reality.
+pub(crate) struct InFlightGuard(Arc<(Mutex<usize>, Condvar)>);
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        let (lock, condvar) = &*self.0;
+        let mut count = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        *count -= 1;
+        if *count == 0 {
+            condvar.notify_all();
+        }
     }
 }
 
@@ -90,6 +143,14 @@ pub(crate) struct Job {
     pub ctx: PluginCtx,
     pub message: OwnedMessage,
     pub reply: Option<SyncSender<vosu_status>>,
+    /// Held for this job's whole lifetime (queued and running); `None`
+    /// for a serial job, whose queue `SerialWorker::shutdown_within`
+    /// drains directly instead.
+    #[expect(
+        dead_code,
+        reason = "never read directly; only its Drop (decrementing the in-flight count once this job finishes or is dropped unrun) matters"
+    )]
+    pub in_flight: Option<InFlightGuard>,
 }
 
 fn run_job(job: Job) {
@@ -105,22 +166,30 @@ fn run_job(job: Job) {
 pub(crate) struct SerialWorker {
     tx: Option<SyncSender<Job>>,
     worker: Option<JoinHandle<()>>,
+    /// Signaled once the worker thread's `recv` loop exits (the queue is
+    /// closed and every already-queued job has run), so
+    /// `shutdown_within` can bound how long it waits for that without a
+    /// timed `JoinHandle::join`, which `std::thread` has no API for.
+    done_rx: Receiver<()>,
 }
 
 impl SerialWorker {
     pub(crate) fn spawn(name: String, queue_capacity: usize) -> Self {
         let (tx, rx) = sync_channel::<Job>(queue_capacity.max(1));
+        let (done_tx, done_rx) = sync_channel::<()>(1);
         let worker = std::thread::Builder::new()
             .name(name)
             .spawn(move || {
                 while let Ok(job) = rx.recv() {
                     run_job(job);
                 }
+                let _ = done_tx.send(());
             })
             .expect("spawning this instance's dispatch thread");
         Self {
             tx: Some(tx),
             worker: Some(worker),
+            done_rx,
         }
     }
 
@@ -132,12 +201,26 @@ impl SerialWorker {
             .map_err(|_| HostError::DispatchQueueFull)
     }
 
-    /// Closes the queue and joins the thread: every already-queued job
-    /// still runs to completion, no new one is accepted.
-    pub(crate) fn shutdown(&mut self) {
+    /// Closes the queue, then waits up to `timeout` for every
+    /// already-queued job to finish and the worker thread to exit (§4's
+    /// grace period bounds this drain too, not just the plugin's own
+    /// `destroy` call: one hung job in this instance's queue must not
+    /// delay another instance's shutdown past its own grace period).
+    /// Returns `false`, detaching the thread without joining it, if that
+    /// budget runs out before the thread signals it drained.
+    pub(crate) fn shutdown_within(&mut self, timeout: std::time::Duration) -> bool {
         self.tx.take();
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+        match self.done_rx.recv_timeout(timeout) {
+            Ok(()) => {
+                if let Some(worker) = self.worker.take() {
+                    let _ = worker.join();
+                }
+                true
+            }
+            Err(_) => {
+                self.worker.take();
+                false
+            }
         }
     }
 }

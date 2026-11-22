@@ -5,6 +5,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use libloading::{Library, Symbol};
 use vosu_plugin_api::{
@@ -27,16 +28,15 @@ pub struct BundledPlugin<'a> {
 pub struct LoadedPlugin {
     manifest: PluginManifest,
     vtable: vosu_plugin_vtable,
-    // Kept alive for the plugin's whole lifetime: unloading while an
-    // instance's `plugin_ctx` still points into the library would be
-    // immediate undefined behavior the next `dispatch`/`destroy` call
-    // makes. `None` for a bundled plugin, which is linked into this
-    // executable rather than `dlopen`ed.
-    #[expect(
-        dead_code,
-        reason = "held only to keep an external plugin's dlopen'd Library alive for this LoadedPlugin's lifetime; never read directly"
-    )]
-    library: Option<Library>,
+    // Shared, not just held: unloading while an instance's `plugin_ctx`
+    // still points into the library would be immediate undefined behavior
+    // the next `dispatch`/`destroy` call makes, and `LoadedPlugin` alone
+    // does not outlive the instances built from it (a caller is free to
+    // drop it right after `PluginInstance::create`). `PluginInstance`
+    // clones this `Arc` via `library_handle` so the library stays mapped
+    // for as long as either side needs it. `None` for a bundled plugin,
+    // which is linked into this executable rather than `dlopen`ed.
+    library: Option<Arc<Library>>,
 }
 
 impl LoadedPlugin {
@@ -46,6 +46,13 @@ impl LoadedPlugin {
 
     pub fn vtable(&self) -> vosu_plugin_vtable {
         self.vtable
+    }
+
+    /// Clones this plugin's `Arc<Library>` handle, so a `PluginInstance`
+    /// can co-own it for its whole lifetime, independent of how long this
+    /// `LoadedPlugin` itself stays alive. `None` for a bundled plugin.
+    pub(crate) fn library_handle(&self) -> Option<Arc<Library>> {
+        self.library.clone()
     }
 }
 
@@ -58,20 +65,25 @@ pub fn descriptor_minimum() -> usize {
     core::mem::size_of::<vosu_plugin_vtable>()
 }
 
-fn check_descriptor(vtable: &vosu_plugin_vtable) -> Result<(), HostError> {
-    if vtable.abi_version != VOSU_PLUGIN_ABI_MAJOR {
+fn check_header(struct_size: u32, abi_version: u32) -> Result<(), HostError> {
+    if abi_version != VOSU_PLUGIN_ABI_MAJOR {
         return Err(HostError::AbiMismatch {
             expected: VOSU_PLUGIN_ABI_MAJOR,
-            found: vtable.abi_version,
+            found: abi_version,
         });
     }
     let minimum = descriptor_minimum();
-    if (vtable.struct_size as usize) < minimum {
+    if (struct_size as usize) < minimum {
         return Err(HostError::DescriptorTooSmall {
             minimum,
-            found: vtable.struct_size as usize,
+            found: struct_size as usize,
         });
     }
+    Ok(())
+}
+
+fn check_descriptor(vtable: &vosu_plugin_vtable) -> Result<(), HostError> {
+    check_header(vtable.struct_size, vtable.abi_version)?;
     if vtable.create.is_none() || vtable.dispatch.is_none() || vtable.destroy.is_none() {
         return Err(HostError::MissingRequiredFunction);
     }
@@ -153,13 +165,28 @@ pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, H
         return Err(HostError::MissingEntry);
     }
     // SAFETY: a non-null entry point is documented to point at a live,
-    // fully initialized `vosu_plugin_vtable` for the library's lifetime.
+    // fully initialized `vosu_plugin_vtable` for the library's lifetime —
+    // but only up to the producer's own `struct_size`, which this host
+    // must not assume matches `size_of::<vosu_plugin_vtable>()` (§1: a
+    // reader never touches a field beyond `struct_size`). `struct_size`
+    // and `abi_version` are always the layout's first two `u32` fields, so
+    // reading them individually through `addr_of!` is sound even for an
+    // undersized descriptor; only once `check_header` confirms
+    // `struct_size` covers this host's whole `vosu_plugin_vtable` is the
+    // full-struct copy below safe to perform.
+    let struct_size = unsafe { std::ptr::addr_of!((*vtable_ptr).struct_size).read() };
+    // SAFETY: same reasoning as `struct_size` above.
+    let abi_version = unsafe { std::ptr::addr_of!((*vtable_ptr).abi_version).read() };
+    check_header(struct_size, abi_version)?;
+    // SAFETY: `check_header` just confirmed `struct_size >=
+    // size_of::<vosu_plugin_vtable>()`, so this copy never reads past the
+    // producer's real descriptor.
     let vtable = unsafe { *vtable_ptr };
     check_descriptor(&vtable)?;
     Ok(LoadedPlugin {
         manifest,
         vtable,
-        library: Some(library),
+        library: Some(Arc::new(library)),
     })
 }
 

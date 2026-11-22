@@ -5,21 +5,27 @@
 use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, sync_channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use libloading::Library;
 use vosu_plugin_api::{vosu_bytes, vosu_plugin_vtable, vosu_status};
 
-use super::dispatch::{Job, OwnedMessage, PluginCtx, SerialWorker, WorkerPool};
+use super::dispatch::{InFlightTracker, Job, OwnedMessage, PluginCtx, SerialWorker, WorkerPool};
 use super::error::HostError;
-use super::host_services::{
-    HostContext, PluginHostHandler, PluginInstanceId, host_services_vtable,
-};
+use super::host_services::{self, HostContext, PluginHostHandler, PluginInstanceId};
 use super::registry::LoadedPlugin;
 
 /// Bound for a serial instance's own dispatch queue (`AGENTS.md`: no
 /// unbounded channels); the shared `concurrent_dispatch` pool's queue is
 /// bounded separately by whoever builds its `WorkerPool`.
 pub const DEFAULT_QUEUE_CAPACITY: usize = 256;
+
+/// Grace period `Drop::drop` gives an instance that was never explicitly
+/// `destroy()`d (an early `?` return before cleanup ran, a `Vec` drop,
+/// ...): the same precedent `dev_plugins::PLUGIN_DESTROY_GRACE` cites, but
+/// defined here independently since there is no caller in a `Drop` to pick
+/// one.
+const DROP_DESTROY_GRACE: Duration = Duration::from_secs(5);
 
 enum Dispatch {
     /// One dedicated thread per instance (default, §4).
@@ -33,15 +39,25 @@ pub struct PluginInstance {
     id: PluginInstanceId,
     vtable: vosu_plugin_vtable,
     ctx: PluginCtx,
-    // Kept alive until `destroy` runs: the ABI documents `host`/`host_ctx`
-    // as outliving every call `create` can make through them for the
-    // instance's whole lifetime.
-    #[expect(
-        dead_code,
-        reason = "keeps the boxed HostContext's address valid for `create`'s host_ctx lifetime contract until destroy() drops it; never read directly"
-    )]
-    host_ctx: Box<HostContext>,
+    // `Some` until `destroy_inner` either runs the plugin's own `destroy`
+    // to completion or times out: the ABI documents `host`/`host_ctx` as
+    // outliving every call `create` can make through them for the
+    // instance's whole lifetime, so a timed-out teardown leaks this
+    // (`destroy_inner`'s `leak_on_timeout`) instead of freeing it while a
+    // stuck plugin thread may still read it.
+    host_ctx: Option<Box<HostContext>>,
+    // Co-owned, not just held: unloading the library while this
+    // instance's `plugin_ctx` still points into it would be immediate
+    // undefined behavior the next `dispatch`/`destroy` call makes. `None`
+    // for a bundled plugin, which is linked into this executable rather
+    // than `dlopen`ed. Leaked alongside `host_ctx` on a `destroy` timeout
+    // for the same reason.
+    library: Option<Arc<Library>>,
+    in_flight: InFlightTracker,
     dispatch: Dispatch,
+    /// Set once `destroy_inner` has run, whether from an explicit
+    /// `destroy()` call or from `Drop`, so `Drop` never runs it twice.
+    destroyed: bool,
 }
 
 impl PluginInstance {
@@ -57,20 +73,34 @@ impl PluginInstance {
     ) -> Result<Self, HostError> {
         let vtable = plugin.vtable();
         let create = vtable.create.ok_or(HostError::MissingRequiredFunction)?;
+        // Resolved and validated before the plugin's own `create` runs: a
+        // `concurrent_dispatch` plugin with no pool must never reach
+        // `create` at all. Checking this after `create` already succeeded
+        // would leak the `plugin_ctx` it just returned and free `host_ctx`
+        // out from under a plugin that may still be holding it
+        // (`include/vosu_plugin.h`'s `host`/`host_ctx` lifetime contract).
+        let concurrent_pool = if plugin.manifest().concurrent_dispatch {
+            Some(concurrent_pool.ok_or(HostError::ConcurrentPoolMissing)?)
+        } else {
+            None
+        };
         let mut host_ctx = Box::new(HostContext::new(id, handler));
-        let host_vtable = host_services_vtable();
         let init_bytes = vosu_bytes {
             data: init.as_ptr(),
             len: init.len() as u32,
         };
-        // SAFETY: `host_vtable` is a local value borrowed for this call;
-        // `host_ctx`'s address is borrowed for the instance's whole
-        // lifetime, the ABI's own contract on `create`'s `host_ctx`, which
-        // this instance keeps boxed and alive until `destroy`; `init_bytes`
-        // points at `init`, alive for the call.
+        // SAFETY: `host_services::HOST_SERVICES` is a process-wide
+        // `'static`, so `host` already satisfies the ABI's "outlives every
+        // call" contract on its own, rather than relying on a local this
+        // call borrows only for its own stack frame; `host_ctx`'s address
+        // is borrowed for the instance's whole lifetime, the ABI's own
+        // contract on `create`'s `host_ctx`, which this instance keeps
+        // boxed and alive until `destroy` (or leaks on a `destroy`
+        // timeout, never freeing it while still possibly in use);
+        // `init_bytes` points at `init`, alive for the call.
         let plugin_ctx = unsafe {
             create(
-                &host_vtable as *const _,
+                &host_services::HOST_SERVICES as *const _,
                 (host_ctx.as_mut() as *mut HostContext).cast::<c_void>(),
                 init_bytes,
             )
@@ -79,20 +109,22 @@ impl PluginInstance {
             return Err(HostError::CreateRejected);
         }
         let ctx = PluginCtx(plugin_ctx);
-        let dispatch = if plugin.manifest().concurrent_dispatch {
-            Dispatch::Concurrent(concurrent_pool.ok_or(HostError::ConcurrentPoolMissing)?)
-        } else {
-            Dispatch::Serial(SerialWorker::spawn(
+        let dispatch = match concurrent_pool {
+            Some(pool) => Dispatch::Concurrent(pool),
+            None => Dispatch::Serial(SerialWorker::spawn(
                 format!("vosu-plugin-{}", id.0),
                 DEFAULT_QUEUE_CAPACITY,
-            ))
+            )),
         };
         Ok(Self {
             id,
             vtable,
             ctx,
-            host_ctx,
+            host_ctx: Some(host_ctx),
+            library: plugin.library_handle(),
+            in_flight: InFlightTracker::new(),
             dispatch,
+            destroyed: false,
         })
     }
 
@@ -106,11 +138,19 @@ impl PluginInstance {
     /// caller does not need to observe completion.
     pub fn dispatch(&self, message: OwnedMessage) -> Result<Receiver<vosu_status>, HostError> {
         let (reply_tx, reply_rx) = sync_channel(1);
+        // Entered before the job is submitted, so a job still sitting in
+        // the pool's queue (not yet picked up by a worker) still counts as
+        // in flight for `destroy` to wait on.
+        let in_flight = match &self.dispatch {
+            Dispatch::Concurrent(_) => Some(self.in_flight.enter()),
+            Dispatch::Serial(_) => None,
+        };
         let job = Job {
             vtable: self.vtable,
             ctx: self.ctx,
             message,
             reply: Some(reply_tx),
+            in_flight,
         };
         match &self.dispatch {
             Dispatch::Serial(worker) => worker.submit(job)?,
@@ -119,13 +159,35 @@ impl PluginInstance {
         Ok(reply_rx)
     }
 
-    /// Stops accepting new dispatch work, then calls `destroy`, giving it
-    /// up to `grace` to return (§4). A timeout leaves the plugin's own
-    /// internal state running: the accepted cost of the in-process trust
-    /// grant.
+    /// Stops accepting new dispatch work, waits for every already queued
+    /// or running job to finish, then calls `destroy`, giving the whole
+    /// sequence up to `grace` (§4). A timeout leaves the plugin's own
+    /// internal state running, and leaks `host_ctx` and the library
+    /// reference rather than freeing them while a stuck plugin thread may
+    /// still use them: the accepted cost of the in-process trust grant.
     pub fn destroy(mut self, grace: Duration) -> Result<(), HostError> {
-        if let Dispatch::Serial(worker) = &mut self.dispatch {
-            worker.shutdown();
+        let result = self.destroy_inner(grace);
+        self.destroyed = true;
+        result
+    }
+
+    fn destroy_inner(&mut self, grace: Duration) -> Result<(), HostError> {
+        let deadline = Instant::now() + grace;
+        let drained = match &mut self.dispatch {
+            Dispatch::Serial(worker) => {
+                worker.shutdown_within(deadline.saturating_duration_since(Instant::now()))
+            }
+            Dispatch::Concurrent(_) => self
+                .in_flight
+                .wait_until_zero(deadline.saturating_duration_since(Instant::now())),
+        };
+        if !drained {
+            // A job for this instance is still queued or running past the
+            // grace period: calling the plugin's own `destroy` now would
+            // free state (and, for `--plugin <dir>`, unmap the library)
+            // that job may still be touching.
+            self.leak_on_timeout();
+            return Err(HostError::DestroyTimedOut);
         }
         let vtable = self.vtable;
         let ctx = self.ctx;
@@ -139,7 +201,7 @@ impl PluginInstance {
             }
             let _ = done_tx.send(());
         });
-        match done_rx.recv_timeout(grace) {
+        match done_rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
             Ok(()) => {
                 let _ = handle.join();
                 Ok(())
@@ -148,8 +210,42 @@ impl PluginInstance {
                 // The host proceeds without it (§4): detach the thread
                 // rather than block on a plugin that may never return.
                 drop(handle);
+                self.leak_on_timeout();
                 Err(HostError::DestroyTimedOut)
             }
         }
+    }
+
+    /// On a `destroy` timeout, leaks `host_ctx` and the library reference
+    /// instead of dropping them: the detached `destroy` thread (or a
+    /// job this instance gave up waiting for) may still be running past
+    /// the grace period and touch either through the ABI's `host`/
+    /// `host_ctx` pointers or the library's own code (`include/
+    /// vosu_plugin.h`'s lifetime contract; §4 already treats a stuck
+    /// in-process plugin as an accepted cost, and a stuck plugin's thread
+    /// dereferencing freed memory or calling into an unmapped library
+    /// would turn that accepted cost into undefined behavior instead).
+    fn leak_on_timeout(&mut self) {
+        if let Some(host_ctx) = self.host_ctx.take() {
+            std::mem::forget(host_ctx);
+        }
+        if let Some(library) = self.library.take() {
+            std::mem::forget(library);
+        }
+    }
+}
+
+impl Drop for PluginInstance {
+    fn drop(&mut self) {
+        if self.destroyed {
+            return;
+        }
+        self.destroyed = true;
+        // Best-effort: an instance dropped without an explicit `destroy()`
+        // call (an early `?` return before cleanup ran, a `Vec` drop, ...)
+        // must still not leave dispatch running forever or free `host_ctx`
+        // while the plugin may still touch it. There is no caller here to
+        // pick a grace period.
+        let _ = self.destroy_inner(DROP_DESTROY_GRACE);
     }
 }
