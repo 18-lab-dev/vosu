@@ -21,7 +21,7 @@ Define an object-safe `ProcessMemory` boundary for exact reads, batched reads, r
 
 Keep client-layout knowledge above this layer: stable readers, lazer readers, signature scanning, and snapshot builders consume the same process handle rather than issuing platform syscalls directly.
 
-The boundary lives in [`process.rs`](../../crates/vosu-sys/src/process.rs), with native implementations in [`process/windows.rs`](../../crates/vosu-sys/src/process/windows.rs) and [`process/linux.rs`](../../crates/vosu-sys/src/process/linux.rs). Higher-level consumers include [`memory/stable.rs`](../../src/memory/stable.rs), [`memory/lazer.rs`](../../src/memory/lazer.rs), and [`process/scanner.rs`](../../crates/vosu-sys/src/process/scanner.rs).
+The boundary lives in [`process.rs`](../../crates/vosu-sys/src/process.rs), with native implementations in [`process/windows.rs`](../../crates/vosu-sys/src/process/windows.rs) and [`process/linux.rs`](../../crates/vosu-sys/src/process/linux.rs). Higher-level consumers include [`memory/stable.rs`](../../crates/vosu-osu-reader/src/memory/stable.rs), [`memory/lazer.rs`](../../crates/vosu-osu-reader/src/memory/lazer.rs), and [`process/scanner.rs`](../../crates/vosu-osu-reader/src/process/scanner.rs).
 
 ## Consequences
 

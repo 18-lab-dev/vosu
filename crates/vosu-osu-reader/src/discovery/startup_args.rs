@@ -1,10 +1,9 @@
 //! Source-compatible parser for the osu! client's own startup argv.
 //!
-//! Lives next to discovery (not `crate::app`) because discovery is the only
-//! consumer within `instance`, and this becomes `vosu-osu-reader` input
-//! (module-boundaries.txt: breaking the `instance -> app` edge; `app`'s
-//! startup decisions and guards use the relocated type through
-//! `crate::instance::discovery`).
+//! Lives in `vosu-osu-reader` (not the root crate's `app` module) because
+//! `instance::discovery` is the only consumer today; `app`'s startup
+//! decisions and guards reach it through `crate::instance::StartupArgs`,
+//! which re-exports this type.
 
 use std::ffi::OsString;
 

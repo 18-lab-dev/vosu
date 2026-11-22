@@ -7,7 +7,7 @@ tags: [testing, validation, precise-input, stable, lazer]
 
 # Precise input validation
 
-This guide is the maintainer workflow for validating vosu's additive precise-input data on osu!stable and osu!lazer. The user-facing wire contract remains the [precise API description in the root README](../../README.md#http-api). The relevant implementations are [`src/api/precise.rs`](../../src/api/precise.rs), the [stable key-overlay reader](../../src/memory/stable/readers.rs), the [lazer key-overlay reader](../../src/memory/lazer/reader.rs), and the [validation harness](../../tools/input-validation/input_validation.py).
+This guide is the maintainer workflow for validating vosu's additive precise-input data on osu!stable and osu!lazer. The user-facing wire contract remains the [precise API description in the root README](../../README.md#http-api). The relevant implementations are [`src/api/precise.rs`](../../src/api/precise.rs), the [stable key-overlay reader](../../crates/vosu-osu-reader/src/memory/stable/readers.rs), the [lazer key-overlay reader](../../crates/vosu-osu-reader/src/memory/lazer/reader.rs), and the [validation harness](../../tools/input-validation/input_validation.py).
 
 The harness validates two different properties:
 

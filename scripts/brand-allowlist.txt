@@ -41,7 +41,7 @@ assets/server/homepage.js 1 upstream dashboard search-empty-state copy names tos
 crates/vosu-osu-calc/src/lib.rs 2 upstream doc comment mapping calculation helpers to their upstream tosu source paths
 src/config/migration.rs 11 migration one-time legacy tosu.env migration implementation
 src/config/tests.rs 27 migration tests covering the one-time legacy tosu.env migration precedence
-src/memory/snapshot.rs 4 upstream doc comment mapping memory snapshot control flow to upstream tosu source paths
+crates/vosu-osu-reader/src/memory/snapshot.rs 4 upstream doc comment mapping memory snapshot control flow to upstream tosu source paths
 crates/vosu-osu-model/src/root.rs 2 upstream doc comment mapping the moved calculation helpers to their upstream tosu source paths
 src/runtime/render.rs 3 upstream page copy naming the upstream tosu.app catalog host and its overlay clients
 src/runtime/render/settings.rs 2 upstream settings copy naming the upstream tosu project and its legacy allowlist default

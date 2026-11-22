@@ -3203,6 +3203,7 @@ dependencies = [
  "vosu-net",
  "vosu-osu-calc",
  "vosu-osu-model",
+ "vosu-osu-reader",
  "vosu-pp",
  "vosu-proptest",
  "vosu-sys",
@@ -3261,6 +3262,29 @@ dependencies = [
  "serde_json",
  "thiserror",
  "zmij",
+]
+
+[[package]]
+name = "vosu-osu-reader"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "bytes",
+ "chrono",
+ "indexmap",
+ "libc",
+ "md-5",
+ "memchr",
+ "parking_lot",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "vosu-osu-model",
+ "vosu-sys",
 ]
 
 [[package]]

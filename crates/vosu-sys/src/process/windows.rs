@@ -4,7 +4,7 @@ use std::{
     ffi::{CStr, c_void},
     fmt,
     mem::{offset_of, size_of},
-    sync::{Arc, OnceLock},
+    sync::OnceLock,
 };
 
 use windows_sys::{
@@ -33,7 +33,7 @@ use windows_sys::{
     },
 };
 
-use super::{MemoryError, MemoryRegion, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest};
+use super::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 mod read_impl;
 use read_impl::{read_exact_impl, read_many_impl};
 
@@ -328,12 +328,6 @@ pub fn enumerate_modules(pid: u32) -> Result<Vec<ModuleEntry>, MemoryError> {
     }
     finish_enumeration("Module32NextW")?;
     Ok(entries)
-}
-
-pub fn open_process(pid: u32) -> Result<ProcessHandle, MemoryError> {
-    let memory = WindowsProcessMemory::open(pid)?;
-    let bitness = memory.bitness()?;
-    Ok(ProcessHandle::new(Arc::new(memory), bitness))
 }
 
 pub fn process_bitness(pid: u32) -> Result<ProcessBitness, MemoryError> {

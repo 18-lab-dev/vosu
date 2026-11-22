@@ -6,14 +6,14 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 
-use crate::memory::ReaderSynchronization;
-#[cfg(test)]
-use crate::memory::snapshot::PreciseCaptureContext;
-use crate::memory::snapshot::{
-    InstanceEpoch, RawPreciseSnapshot, RawRegularSnapshot, RegularCaptureContext,
-};
 use vosu_osu_model::enums::{ClientType, GameState};
 use vosu_osu_model::states::{CalculateMods, TourneyManagerChatItem};
+use vosu_osu_reader::memory::ReaderSynchronization;
+#[cfg(test)]
+use vosu_osu_reader::memory::snapshot::PreciseCaptureContext;
+use vosu_osu_reader::memory::snapshot::{
+    InstanceEpoch, RawPreciseSnapshot, RawRegularSnapshot, RegularCaptureContext,
+};
 use vosu_sys::process::MemoryError;
 
 pub type TransitionFuture<'a, T> =

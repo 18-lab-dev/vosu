@@ -1,10 +1,10 @@
 use super::*;
-use crate::memory::snapshot::{
-    PreciseCaptureContext, RawPreciseSnapshotBuilder, RawRegularSnapshotBuilder,
-    RegularCaptureContext,
-};
 use vosu_osu_model::memory::{
     Global as RawGlobal, GlobalPrecise, HitErrors, ReleaseCorrection, TourneyUser,
+};
+use vosu_osu_reader::memory::snapshot::{
+    PreciseCaptureContext, RawPreciseSnapshotBuilder, RawRegularSnapshotBuilder,
+    RegularCaptureContext,
 };
 use vosu_sys::process::ReadStatus;
 

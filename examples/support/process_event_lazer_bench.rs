@@ -13,7 +13,7 @@ use bytes::Bytes;
 use serde_json::json;
 use tokio::time::{sleep, timeout_at};
 use vosu::instance::{InstanceRuntime, NativeProcessProvider, Pid, ProcessEventMode};
-use vosu::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
+use vosu_osu_reader::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
 
 const EVENT_TIMEOUT: Duration = Duration::from_secs(15);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(7);

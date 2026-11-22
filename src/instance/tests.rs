@@ -406,13 +406,13 @@ fn foreground_exact_match_and_unavailable_focus_fallback() {
 
 #[derive(Clone)]
 struct OfflineGenerator;
-impl crate::memory::lazer_loader::OffsetGenerator for OfflineGenerator {
+impl vosu_osu_reader::memory::lazer_loader::OffsetGenerator for OfflineGenerator {
     fn generate<'a>(
         &'a self,
         _: u32,
         _: &'a str,
         _: &'a tokio_util::sync::CancellationToken,
-    ) -> crate::memory::lazer_loader::GenerationFuture<'a> {
+    ) -> vosu_osu_reader::memory::lazer_loader::GenerationFuture<'a> {
         Box::pin(async { Err(std::io::Error::new(std::io::ErrorKind::NotFound, "offline")) })
     }
 }

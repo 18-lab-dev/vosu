@@ -6,12 +6,12 @@ use super::{
     PreciseSnapshotReader, ReadContext, RegularCaptureRequest, RegularSnapshotReader,
     StateWorkerError,
 };
-use crate::memory::snapshot::{
+use vosu_osu_model::enums::{ClientType, GameState};
+use vosu_osu_reader::memory::snapshot::{
     PreciseCaptureContext, RawPreciseSnapshot, RawPreciseSnapshotBuilder, RawRegularSnapshot,
     RawRegularSnapshotBuilder,
 };
-use crate::memory::{ReaderSynchronization, SynchronizedMemoryReader};
-use vosu_osu_model::enums::{ClientType, GameState};
+use vosu_osu_reader::memory::{ReaderSynchronization, SynchronizedMemoryReader};
 
 /// Production raw capture adapter. It preserves source ordering while retaining
 /// every MemoryRead status in the immutable snapshot.

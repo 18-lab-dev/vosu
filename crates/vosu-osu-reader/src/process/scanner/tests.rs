@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use super::*;
-use crate::process::{ProcessBitness, ProcessMemory, ReadRequest};
+use vosu_sys::process::{ProcessBitness, ProcessMemory, ReadRequest};
 
 struct TestRegion {
     region: MemoryRegion,

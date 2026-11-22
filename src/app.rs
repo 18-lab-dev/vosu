@@ -9,8 +9,7 @@ use std::{
 };
 
 use crate::config::{Config, ConfigChanged};
-pub use crate::instance::StartupArgs;
-use crate::instance::StartupValue;
+pub use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
 
 pub const ARCHIVE_WARNING: &str = "It appears you are running %vosu% from an archive. Please extract it to a folder before running.";
 pub const ONEDRIVE_WARNING: &str = "%vosu% cannot run from a OneDrive folder due to potential sync conflicts and performance issues.";

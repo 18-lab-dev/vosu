@@ -13,7 +13,6 @@ use super::{
     PreciseTransition, ReadContext, RegularCapturePlan, RegularTransition, SnapshotTransition,
     StateWorkerError, TransitionFuture,
 };
-use crate::memory::snapshot::{RawPreciseSnapshot, RawRegularSnapshot};
 use vosu_osu_calc::beatmap::{
     EventStatus, ManiaJudgementEvent, ManiaJudgementKind, ParsedBeatmap, StrainGraph,
 };
@@ -29,6 +28,7 @@ use vosu_osu_model::states::{
     SettingsObject, Statistics, TourneyManagerChatItem,
 };
 use vosu_osu_model::{calculate_grade, default_calculated_mods, safe_join};
+use vosu_osu_reader::memory::snapshot::{RawPreciseSnapshot, RawRegularSnapshot};
 use vosu_sys::process::{MemoryRead, ReadStatus};
 
 fn ready<T>(read: &MemoryRead<T>) -> Option<&T> {

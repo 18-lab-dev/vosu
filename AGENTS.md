@@ -50,7 +50,8 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 
 - `src/api/`: gosuMemory v1, streamCompanion, vosu v2, and precise payload projection/serialization.
 - `src/server/` and `crates/vosu-net/`: HTTP/WebSocket routing, files, commands, pages, connection handling, and hardened outbound streaming/archive extraction.
-- `src/state/`, `src/instance/`, `src/memory.rs`: process discovery, snapshots, and polling lifecycle.
+- `src/state/`, `src/instance/`: process discovery, snapshots, and polling lifecycle.
+- `crates/vosu-osu-reader/`: client decoding — stable/lazer memory readers and offsets, the pointer-width managed-heap read layer (`ProcessHandle`, AOB scanning) over `vosu-sys`'s object-safe syscall boundary, and osu!-specific discovery inputs (client argv parser `StartupArgs`, Wine data-path resolution `resolve_osu_path`).
 - `crates/vosu-sys/`: native process/platform boundary (process handles, memory reads, OS paths/capabilities) and process-exit-event backends (eBPF/CN_PROC/polling); all platform `unsafe` lives here.
 - `crates/vosu-osu-model/`: osu! memory/state/enum value types and the calculation root helpers (JS-compatible rounding/number writing, mods, grades, legacy hits) shared by the reader, calculator, and `src/model/api/` adapters.
 - `src/config/`, `src/counters/`: watched configuration, migration, settings, counter discovery/download/storage.

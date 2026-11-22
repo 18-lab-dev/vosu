@@ -15,7 +15,6 @@ pub mod counters;
 pub mod desktop;
 pub mod instance;
 pub mod logging;
-pub mod memory;
 pub mod model;
 pub mod report;
 pub mod runtime;

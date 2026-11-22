@@ -9,8 +9,8 @@ use super::{
     RegularCaptureRequest, RegularSnapshotReader, SnapshotPublisher, SnapshotTransition,
     StateWorkerError,
 };
-use crate::memory::ReaderSynchronization;
-use crate::memory::snapshot::{RawPreciseSnapshot, RegularCaptureContext};
+use vosu_osu_reader::memory::ReaderSynchronization;
+use vosu_osu_reader::memory::snapshot::{RawPreciseSnapshot, RegularCaptureContext};
 
 pub trait WorkerClock: Send + Sync + 'static {
     /// Returns false when cancellation interrupted the requested sleep.

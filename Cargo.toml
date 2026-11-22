@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-net", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
+members = [".", "crates/vosu-net", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
 resolver = "3"
 
 [workspace.package]
@@ -106,6 +106,7 @@ toml = "=1.1.2"
 vosu-pp = { path = "crates/vosu-pp" }
 vosu-osu-calc = { path = "crates/vosu-osu-calc" }
 vosu-osu-model = { path = "crates/vosu-osu-model" }
+vosu-osu-reader = { path = "crates/vosu-osu-reader" }
 vosu-net = { path = "crates/vosu-net" }
 vosu-sys = { path = "crates/vosu-sys" }
 tracing = "=0.1.44"

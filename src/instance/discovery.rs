@@ -8,16 +8,15 @@ use std::io;
 #[cfg(any(target_os = "linux", windows))]
 use std::path::Path;
 use std::path::PathBuf;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 use std::sync::Arc;
 #[cfg(windows)]
 use std::sync::{Mutex, OnceLock};
 
-pub mod startup_args;
-pub use startup_args::{StartupArgs, StartupValue};
-
 use vosu_osu_model::enums::ClientType;
-use vosu_sys::process::{MemoryError, ProcessBitness, ProcessHandle};
+use vosu_osu_reader::discovery::StartupArgs;
+use vosu_osu_reader::process::ProcessHandle;
+use vosu_sys::process::{MemoryError, ProcessBitness};
 
 use super::Pid;
 
@@ -202,7 +201,7 @@ pub struct NativeProcessProvider;
 
 #[cfg(target_os = "linux")]
 fn linux_descriptor(process: vosu_sys::process::LinuxProcessMetadata) -> ProcessDescriptor {
-    let root = vosu_sys::process::resolve_osu_path(process.pid).unwrap_or_else(|_| {
+    let root = vosu_osu_reader::discovery::resolve_osu_path(process.pid).unwrap_or_else(|_| {
         process
             .executable
             .parent()
@@ -425,7 +424,9 @@ impl ProcessProvider for NativeProcessProvider {
     }
 
     fn open(&self, pid: Pid) -> Result<ProcessHandle, MemoryError> {
-        vosu_sys::process::open_process(pid)
+        let memory = vosu_sys::process::WindowsProcessMemory::open(pid)?;
+        let bitness = memory.bitness()?;
+        Ok(ProcessHandle::new(Arc::new(memory), bitness))
     }
     fn foreground_pid(&self) -> Option<Pid> {
         vosu_sys::process::foreground_process_id()

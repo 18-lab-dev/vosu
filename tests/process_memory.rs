@@ -11,12 +11,14 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use vosu::assets::DaemonAssets;
-use vosu::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
-use vosu::memory::lazer_offsets::LazerOffsets;
-use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns};
+use vosu_osu_reader::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
+use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
+use vosu_osu_reader::memory::{
+    LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns,
+};
+use vosu_osu_reader::process::{Pattern, ProcessHandle};
 use vosu_sys::process::{
-    MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
-    ReadStatus,
+    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
 };
 
 #[derive(Default)]
@@ -635,11 +637,13 @@ fn linux_native_backend_opens_and_reads_this_process() {
 #[cfg(windows)]
 #[test]
 fn windows_native_backend_opens_and_reads_this_process() {
-    use vosu_sys::process::open_process;
+    use vosu_sys::process::WindowsProcessMemory;
     let marker = Box::new(0x9a7b_6c5d_4e3f_2011_u64);
     let address = (&*marker as *const u64) as usize;
     let pid = std::process::id();
-    let handle = open_process(pid).unwrap();
+    let memory = WindowsProcessMemory::open(pid).unwrap();
+    let bitness = memory.bitness().unwrap();
+    let handle = ProcessHandle::new(Arc::new(memory), bitness);
     assert_eq!(handle.process_id(), Some(pid));
     assert!(handle.is_alive());
     assert_eq!(handle.read_u64(address).unwrap(), *marker);

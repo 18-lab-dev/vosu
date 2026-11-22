@@ -18,14 +18,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use vosu::memory::lazer_offsets::LazerOffsets;
-use vosu::memory::{
+use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
+use vosu_osu_reader::memory::{
     LazerMemory, LazerPattern, MemoryReader, ReaderSynchronization, StableMemory, StablePatterns,
     SynchronizedMemoryReader,
 };
+use vosu_osu_reader::process::ProcessHandle;
 use vosu_sys::process::{
-    MemoryError, MemoryRegion, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
-    ReadStatus,
+    MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
 };
 
 const FIXTURE_SIZE: usize = 1024 * 1024;
@@ -475,8 +475,12 @@ fn main() {
     };
 
     #[cfg(target_os = "windows")]
-    let native_process = vosu_sys::process::open_process(std::process::id())
-        .expect("open benchmark process for native memory reads");
+    let native_process = {
+        let memory = vosu_sys::process::WindowsProcessMemory::open(std::process::id())
+            .expect("open benchmark process for native memory reads");
+        let bitness = memory.bitness().expect("read benchmark process bitness");
+        ProcessHandle::new(Arc::new(memory), bitness)
+    };
     #[cfg(not(target_os = "windows"))]
     let native_process = ProcessHandle::new(
         Arc::new(

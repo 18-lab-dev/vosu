@@ -18,13 +18,15 @@ use std::sync::{
 use std::time::Duration;
 
 use crate::logging::Logger;
-use crate::memory::lazer_loader::{
+use vosu_osu_model::enums::ClientType;
+use vosu_osu_reader::discovery::StartupArgs;
+use vosu_osu_reader::memory::lazer_loader::{
     GenerationIdentity, LazerLoadError, LazerOffsetLoader, OffsetGenerator, resolve_for_instance,
     resolve_for_instance_with_logger,
 };
-use crate::memory::lazer_offsets::LazerOffsets;
-use vosu_osu_model::enums::ClientType;
-use vosu_sys::process::{MemoryError, ProcessHandle};
+use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
+use vosu_osu_reader::process::ProcessHandle;
+use vosu_sys::process::MemoryError;
 pub type Pid = u32;
 type LazerResolverHandle = JoinHandle<Result<Arc<LazerOffsets>, LazerLoadError>>;
 
@@ -50,8 +52,8 @@ mod runtime;
 #[cfg(any(target_os = "linux", windows))]
 pub use discovery::NativeProcessProvider;
 pub use discovery::{
-    ClassifiedCandidate, DiscoveryPlatform, ProcessDescriptor, ProcessProvider, StartupArgs,
-    StartupValue, classify_candidates, should_skip,
+    ClassifiedCandidate, DiscoveryPlatform, ProcessDescriptor, ProcessProvider,
+    classify_candidates, should_skip,
 };
 
 #[derive(Debug, Clone, PartialEq)]

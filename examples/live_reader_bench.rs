@@ -8,25 +8,24 @@ use std::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use vosu::{
-    memory::{
-        LazerMemory, LazerPattern, ReaderSynchronization, StableMemory, StablePatterns,
-        SynchronizedMemoryReader,
-        lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator},
-        lazer_version,
-        snapshot::{RawPreciseSnapshot, RawRegularSnapshot, RegularCaptureContext},
-    },
-    state::{
-        PreciseSnapshotReader, ReadContext, RegularCapturePlan, RegularCaptureRequest,
-        RegularSnapshotReader, SnapshotTransition, SourcePreciseReader, SourceRegularReader,
-        StateBundle, state_backend::LiveStateCalculationBackend,
-    },
+use vosu::state::{
+    PreciseSnapshotReader, ReadContext, RegularCapturePlan, RegularCaptureRequest,
+    RegularSnapshotReader, SnapshotTransition, SourcePreciseReader, SourceRegularReader,
+    StateBundle, state_backend::LiveStateCalculationBackend,
 };
 use vosu_osu_model::{
     default_calculated_mods,
     enums::{ClientType, GameState},
 };
-use vosu_sys::process::{ProcessHandle, ReadStatus};
+use vosu_osu_reader::memory::{
+    LazerMemory, LazerPattern, ReaderSynchronization, StableMemory, StablePatterns,
+    SynchronizedMemoryReader,
+    lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator},
+    lazer_version,
+    snapshot::{RawPreciseSnapshot, RawRegularSnapshot, RegularCaptureContext},
+};
+use vosu_osu_reader::process::ProcessHandle;
+use vosu_sys::process::ReadStatus;
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 fn fail(message: impl Into<String>) -> Box<dyn Error> {
     io::Error::other(message.into()).into()
@@ -158,7 +157,9 @@ fn precise_failed(s: &RawPreciseSnapshot) -> bool {
 }
 #[cfg(windows)]
 fn open(pid: u32) -> Result<ProcessHandle> {
-    Ok(vosu_sys::process::open_process(pid)?)
+    let memory = vosu_sys::process::WindowsProcessMemory::open(pid)?;
+    let bitness = memory.bitness()?;
+    Ok(ProcessHandle::new(Arc::new(memory), bitness))
 }
 #[cfg(target_os = "linux")]
 fn open(pid: u32) -> Result<ProcessHandle> {
@@ -297,7 +298,7 @@ fn execute() -> Result<()> {
                 _ => return Err(fail("stable patterns not ready: PID may not be osu!stable")),
             };
             let mut reader = StableMemory::new(process.clone(), patterns);
-            let version = match vosu::memory::MemoryReader::settings(&mut reader)? {
+            let version = match vosu_osu_reader::memory::MemoryReader::settings(&mut reader)? {
                 ReadStatus::Ready(settings) => settings
                     .get("client.version")
                     .and_then(serde_json::Value::as_str)

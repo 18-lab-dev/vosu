@@ -1,4 +1,5 @@
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1024,38 +1025,14 @@ fn persistent_fallback_failure_zeroes_prior_direct_successes() {
 }
 
 #[test]
-fn resolves_override_wine_config_command_line_and_appimage_root() {
+fn root_for_resolves_an_appimage_mount_relative_to_the_target_proc_root() {
     let fixture = fixture();
     let executable = add_process(
         fixture.path(),
         30,
         2,
-        b"wine-preloader\0Z:\\\\games\\\\osu!\\\\osu!.exe\0",
+        b"osu!\0",
         "1000-2000 rw-p 0 00:00 0\n",
-    );
-    fs::remove_file(fixture.path().join("30/exe")).expect("replace executable link");
-    symlink("/usr/bin/wine-preloader", fixture.path().join("30/exe")).expect("wine exe link");
-
-    let override_env = [(
-        OsString::from("VOSU_OSU_PATH"),
-        OsString::from("/override/osu"),
-    )];
-    assert_eq!(
-        resolve_osu_path_at(fixture.path(), 30, &override_env).expect("override"),
-        Path::new("/override/osu"),
-    );
-
-    let data = fixture.path().join("data");
-    fs::create_dir_all(data.join("osuconfig")).expect("osuconfig");
-    fs::write(data.join("osuconfig/osupath"), b" /configured/osu \n").expect("osupath");
-    let config_env = [(OsString::from("XDG_DATA_HOME"), data.into_os_string())];
-    assert_eq!(
-        resolve_osu_path_at(fixture.path(), 30, &config_env).expect("wine config"),
-        Path::new("/configured/osu"),
-    );
-    assert_eq!(
-        resolve_osu_path_at(fixture.path(), 30, &[]).expect("wine command line"),
-        Path::new("/games/osu!"),
     );
 
     assert_eq!(

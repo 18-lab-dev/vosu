@@ -258,7 +258,7 @@ where
     resolve_for_instance_inner(loader, instance, None).await
 }
 
-pub(crate) async fn resolve_for_instance_with_logger<G, I>(
+pub async fn resolve_for_instance_with_logger<G, I>(
     loader: Arc<LazerOffsetLoader<G>>,
     instance: Arc<I>,
     warn: LogWarn,

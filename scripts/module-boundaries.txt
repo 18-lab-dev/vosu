@@ -2,11 +2,8 @@ api -> instance
 api -> model
 api -> state
 app -> config
-app -> instance
 instance -> logging
-instance -> memory
 logging -> config
-memory -> assets
 report -> config
 runtime -> api
 runtime -> app
@@ -16,7 +13,6 @@ runtime -> counters
 runtime -> desktop
 runtime -> instance
 runtime -> logging
-runtime -> memory
 runtime -> report
 runtime -> server
 runtime -> state
@@ -29,7 +25,6 @@ server -> desktop
 server -> logging
 server -> report
 server -> state
-state -> memory
 tools -> counters
 tools -> server
 updater -> desktop

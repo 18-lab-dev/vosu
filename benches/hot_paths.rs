@@ -10,8 +10,6 @@ use vosu::api::{
     ApiError, ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
 };
 use vosu::instance::InstanceSettings;
-use vosu::memory::lazer_offsets::LazerOffsets;
-use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns};
 use vosu::server::v2_subscription::{
     V2SubscriptionHub, V2SubscriptionOutbound, V2SubscriptionProvider, V2SubscriptionSnapshot,
 };
@@ -26,9 +24,12 @@ use vosu_osu_calc::beatmap::{
 use vosu_osu_calc::engine::{LiveDifficultyConfig, LiveLazerEngine, LiveScoreState};
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::states::{HitErrorArray, KeypressButton};
-use vosu_sys::process::{
-    MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
+use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
+use vosu_osu_reader::memory::{
+    LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns,
 };
+use vosu_osu_reader::process::{Pattern, ProcessHandle};
+use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 const MAP: &[u8] = br#"osu file format v14
 
@@ -648,8 +649,8 @@ struct BenchmarkPage([u8; 4096]);
 fn bench_windows_process_memory(c: &mut Criterion) {
     let backing = black_box(BenchmarkPage([0x5a_u8; 4096]));
     let address = black_box(backing.0.as_ptr() as usize);
-    let memory =
-        vosu_sys::process::open_process(std::process::id()).expect("open benchmark process");
+    let memory = vosu_sys::process::WindowsProcessMemory::open(std::process::id())
+        .expect("open benchmark process");
     let mut group = c.benchmark_group("windows_process_memory");
     group.throughput(Throughput::Bytes(64));
 

@@ -3,11 +3,11 @@
 2146 assets/server/homepage.js
 1019 src/api/v2/tests.rs
 1256 src/counters/service.rs
-1115 src/memory/lazer/reader.rs
-1027 src/memory/lazer/tests_behavior.rs
-1230 src/memory/lazer/tests_core.rs
-1059 src/memory/stable/batched.rs
-1712 src/memory/stable/tests.rs
+1115 crates/vosu-osu-reader/src/memory/lazer/reader.rs
+1027 crates/vosu-osu-reader/src/memory/lazer/tests_behavior.rs
+1230 crates/vosu-osu-reader/src/memory/lazer/tests_core.rs
+1059 crates/vosu-osu-reader/src/memory/stable/batched.rs
+1712 crates/vosu-osu-reader/src/memory/stable/tests.rs
 1045 crates/vosu-sys/src/platform/linux/capabilities.rs
 1211 crates/vosu-sys/src/process/linux.rs
 1201 crates/vosu-sys/src/process/linux/tests.rs

@@ -106,7 +106,7 @@ impl PreciseCaptureContext {
         )
     }
 
-    pub(crate) fn new_shared(
+    pub fn new_shared(
         source: ClientType,
         instance_generation: u64,
         reset_epoch: u64,
@@ -145,7 +145,7 @@ impl PreciseCaptureContext {
         self.mods.as_ref()
     }
 
-    pub(crate) fn shared_mods(&self) -> Arc<CalculateMods> {
+    pub fn shared_mods(&self) -> Arc<CalculateMods> {
         self.mods.clone()
     }
 

@@ -287,20 +287,20 @@ impl EmbeddedOffsetGenerator {
         Self { cache_root }
     }
 }
-impl crate::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGenerator {
+impl vosu_osu_reader::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGenerator {
     fn generate<'a>(
         &'a self,
         pid: u32,
         version: &'a str,
         cancel: &'a CancellationToken,
-    ) -> crate::memory::lazer_loader::GenerationFuture<'a> {
+    ) -> vosu_osu_reader::memory::lazer_loader::GenerationFuture<'a> {
         Box::pin(async move {
             if cancel.is_cancelled() {
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
             }
-            let root = crate::memory::lazer_version::process_executable_root(pid)
+            let root = vosu_osu_reader::memory::lazer_version::process_executable_root(pid)
                 .map_err(io::Error::other)?;
-            let discovered = crate::memory::lazer_version::discover_from_root(&root)
+            let discovered = vosu_osu_reader::memory::lazer_version::discover_from_root(&root)
                 .map_err(io::Error::other)?;
             if discovered != version {
                 return Err(io::Error::new(
@@ -369,7 +369,7 @@ impl crate::memory::lazer_loader::OffsetGenerator for EmbeddedOffsetGenerator {
                 )));
             }
             let bytes = merge_game_base_vtable(&fs::read(generated)?, &signature.stdout)?;
-            let after = crate::memory::lazer_version::discover_from_root(&root)
+            let after = vosu_osu_reader::memory::lazer_version::discover_from_root(&root)
                 .map_err(io::Error::other)?;
             if after != version {
                 return Err(io::Error::new(

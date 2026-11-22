@@ -31,6 +31,12 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use vosu_osu_model::default_calculated_mods;
 use vosu_osu_model::enums::{ClientType, GameState};
+use vosu_osu_reader::memory::{
+    ReaderSynchronization, SynchronizedMemoryReader,
+    lazer::{LazerMemory, LazerPattern},
+    lazer_loader::LazerOffsetLoader,
+    stable::{StableMemory, StablePatterns},
+};
 use vosu_sys::platform::{PathResolver, Paths};
 
 use crate::{
@@ -49,12 +55,6 @@ use crate::{
         InstanceGeneration, InstanceLifecycleSnapshot, InstanceRuntime, NativeProcessProvider,
     },
     logging::{Logger, LoggerOptions, StdoutConsole},
-    memory::{
-        ReaderSynchronization, SynchronizedMemoryReader,
-        lazer::{LazerMemory, LazerPattern},
-        lazer_loader::LazerOffsetLoader,
-        stable::{StableMemory, StablePatterns},
-    },
     report::{ReportCounter, ReportInput, ReportInstance},
     server::{
         auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},

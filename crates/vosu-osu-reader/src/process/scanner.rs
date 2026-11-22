@@ -2,8 +2,9 @@ use std::fmt;
 
 use memchr::{memchr_iter, memmem};
 use thiserror::Error;
+use vosu_sys::process::{MemoryError, MemoryRegion};
 
-use super::{MemoryError, MemoryRegion, ProcessHandle};
+use super::ProcessHandle;
 
 /// Number of new region bytes read per scanner window.
 pub const SCAN_CHUNK_SIZE: usize = 1024 * 1024;

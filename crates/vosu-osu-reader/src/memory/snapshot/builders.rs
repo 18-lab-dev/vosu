@@ -149,7 +149,7 @@ impl RawPreciseSnapshotBuilder {
         Self::new_shared(Arc::new(capture), produced_sequence, global)
     }
 
-    pub(crate) fn new_shared(
+    pub fn new_shared(
         capture: Arc<PreciseCaptureContext>,
         produced_sequence: u64,
         global: MemoryRead<GlobalPrecise>,

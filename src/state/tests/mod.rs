@@ -7,11 +7,6 @@ use tokio::sync::{Notify, watch};
 use tokio::time::{sleep, timeout};
 
 use super::*;
-use crate::memory::snapshot::{
-    PreciseCaptureContext, RawPreciseSnapshot, RawPreciseSnapshotBuilder, RawRegularSnapshot,
-    RawRegularSnapshotBuilder, RegularCaptureContext,
-};
-use crate::memory::{MemoryReader, ReaderSynchronization, SynchronizedMemoryReader};
 use vosu_osu_model::enums::{ClientType, GameState};
 use vosu_osu_model::memory::{
     AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerSpectator,
@@ -19,6 +14,11 @@ use vosu_osu_model::memory::{
     TourneyUser, User,
 };
 use vosu_osu_model::states::{CalculateMods, HitErrorArray, Statistics, TourneyManagerChatItem};
+use vosu_osu_reader::memory::snapshot::{
+    PreciseCaptureContext, RawPreciseSnapshot, RawPreciseSnapshotBuilder, RawRegularSnapshot,
+    RawRegularSnapshotBuilder, RegularCaptureContext,
+};
+use vosu_osu_reader::memory::{MemoryReader, ReaderSynchronization, SynchronizedMemoryReader};
 use vosu_sys::process::{MemoryRead, ReadStatus};
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

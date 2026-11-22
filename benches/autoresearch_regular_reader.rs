@@ -6,19 +6,19 @@ use criterion::{Criterion, criterion_group, criterion_main};
 pub mod fixture {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
-    use vosu::memory::lazer_offsets::LazerOffsets;
-    use vosu::memory::snapshot::{RawRegularSnapshot, RegularCaptureContext};
-    use vosu::memory::{
-        LazerMemory, LazerPattern, ReaderSynchronization, StableMemory, StablePatterns,
-    };
     use vosu::state::{
         RegularCapturePlan, RegularCaptureRequest, RegularSnapshotReader, SourceRegularReader,
     };
     use vosu_osu_model::enums::ClientType;
     use vosu_osu_model::memory::Menu;
+    use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
+    use vosu_osu_reader::memory::snapshot::{RawRegularSnapshot, RegularCaptureContext};
+    use vosu_osu_reader::memory::{
+        LazerMemory, LazerPattern, ReaderSynchronization, StableMemory, StablePatterns,
+    };
+    use vosu_osu_reader::process::ProcessHandle;
     use vosu_sys::process::{
-        MemoryError, MemoryRegion, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
-        ReadStatus,
+        MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
     };
 
     const SIZE: usize = 4 * 1024 * 1024;
