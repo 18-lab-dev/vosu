@@ -150,7 +150,7 @@ pub fn validate_array_range<T>(
 
 /// Reads a `Copy` flat header type out of untrusted bytes without relying
 /// on the buffer's own alignment.
-fn read_header_at<T: Copy>(buffer: &[u8], offset: usize) -> Result<T, ValidationError> {
+pub(crate) fn read_header_at<T: Copy>(buffer: &[u8], offset: usize) -> Result<T, ValidationError> {
     let size = size_of::<T>();
     let end = offset.checked_add(size).ok_or(ValidationError::Overflow)?;
     if end > buffer.len() {

@@ -16,6 +16,7 @@ mod envelope;
 mod flags;
 mod flat;
 mod limits;
+mod message;
 mod opcode;
 mod primitives;
 mod status;
@@ -57,6 +58,11 @@ pub use limits::{
     VOSU_FRAME_MAX_BYTES, VOSU_PLUGIN_ABI_MAJOR, VOSU_PUBLISH_BATCH_MAX_BYTES,
     VOSU_READ_PLAN_MAX_BYTES, VOSU_STREAM_CHUNK_MAX_BYTES,
 };
+pub use message::flat::{
+    DemandChanged, FieldSelector, PlanBase, PlanOp, PublishBatch, PublishField, PublishValue,
+    ReadErrorCode, ReadPlanResult, ReadPlanSubmit, ReadResult, Stage, StageBase,
+};
+pub use message::{HostServices, Message, MessageError};
 pub use opcode::vosu_opcode;
 pub use primitives::{
     vosu_invocation_id, vosu_plan_id, vosu_resource_id, vosu_session_id, vosu_timer_id,

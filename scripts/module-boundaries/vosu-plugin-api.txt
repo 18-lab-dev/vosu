@@ -1,6 +1,12 @@
 # Dependencies between vosu-plugin-api's own top-level src/ modules,
 # enforced by scripts/check-module-boundaries.py.
 cbor -> validate
+message -> cbor
+message -> flags
+message -> flat
+message -> opcode
+message -> validate
+message -> value
 vtable -> envelope
 vtable -> status
 validate -> flags
