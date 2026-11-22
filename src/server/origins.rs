@@ -39,7 +39,7 @@ impl Origins {
         let state = listeners.as_ref()?[usize::from(dashboard)].borrow();
         let effective = state.effective.as_ref()?;
         Some(
-            crate::desktop::dashboard_url(&effective.target.host, effective.address.port())
+            vosu_core::desktop::dashboard_url(&effective.target.host, effective.address.port())
                 .trim_end_matches('/')
                 .to_owned(),
         )

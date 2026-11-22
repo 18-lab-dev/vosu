@@ -170,12 +170,12 @@ mod platform {
     /// Pre-rendered tray sizes (scripts/render-brand.py); the host picks the closest, so
     /// panels at 16–24 px get the pixel-fitted art instead of a scaled-down master.
     const ICONS: [&[u8]; 6] = [
-        include_bytes!("../../assets/branding/icons/vosu-16.png"),
-        include_bytes!("../../assets/branding/icons/vosu-22.png"),
-        include_bytes!("../../assets/branding/icons/vosu-24.png"),
-        include_bytes!("../../assets/branding/icons/vosu-32.png"),
-        include_bytes!("../../assets/branding/icons/vosu-48.png"),
-        include_bytes!("../../assets/branding/icons/vosu-64.png"),
+        include_bytes!("../../../../assets/branding/icons/vosu-16.png"),
+        include_bytes!("../../../../assets/branding/icons/vosu-22.png"),
+        include_bytes!("../../../../assets/branding/icons/vosu-24.png"),
+        include_bytes!("../../../../assets/branding/icons/vosu-32.png"),
+        include_bytes!("../../../../assets/branding/icons/vosu-48.png"),
+        include_bytes!("../../../../assets/branding/icons/vosu-64.png"),
     ];
 
     fn embedded_icons() -> Result<Vec<ksni::Icon>, Box<dyn std::error::Error>> {

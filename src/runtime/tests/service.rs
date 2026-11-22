@@ -200,7 +200,7 @@ fn production_page_adapter_substitutes_template_and_renders_html_contracts() {
     }
     #[cfg(windows)]
     assert!(!settings.contains("START_AT_LOGIN"));
-    if crate::desktop::externally_managed() {
+    if vosu_core::desktop::externally_managed() {
         assert!(settings.contains(
             r#"data-id="ENABLE_AUTOUPDATE" type="checkbox" role="switch" aria-describedby="setting-ENABLE_AUTOUPDATE-description" checked disabled>"#
         ));
@@ -518,7 +518,7 @@ async fn updater_rejects_readonly_package_directory_before_network_access() {
     std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(matches!(
         result,
-        Err(error) if error == crate::desktop::MANAGED_UPDATE_ERROR
+        Err(error) if error == vosu_core::desktop::MANAGED_UPDATE_ERROR
     ));
 }
 #[test]
@@ -989,7 +989,7 @@ async fn network_confirmation_waits_for_the_new_effective_dashboard_target() {
 async fn failed_network_rollback_keeps_guard_and_retries_until_persisted() {
     use std::sync::atomic::{AtomicBool, Ordering};
     struct FailingReplace(Arc<AtomicBool>);
-    impl crate::config::AtomicReplace for FailingReplace {
+    impl vosu_core::config::AtomicReplace for FailingReplace {
         fn replace(&self, temp: &Path, target: &Path) -> io::Result<()> {
             if self.0.load(Ordering::SeqCst) {
                 Err(io::Error::other("injected persistence failure"))
@@ -1001,8 +1001,8 @@ async fn failed_network_rollback_keeps_guard_and_retries_until_persisted() {
     let root = tempfile::tempdir().unwrap();
     let fail = Arc::new(AtomicBool::new(false));
     let store = Arc::new(ConfigStore::initialize_with_options(root.path().join("vosu.toml"),
-        crate::config::ConfigStoreOptions { atomic_replace: Arc::new(FailingReplace(fail.clone())),
-            ..crate::config::ConfigStoreOptions::default() }).await.unwrap());
+        vosu_core::config::ConfigStoreOptions { atomic_replace: Arc::new(FailingReplace(fail.clone())),
+            ..vosu_core::config::ConfigStoreOptions::default() }).await.unwrap());
     let service = RuntimeConfig::new(store.clone());
     service.save(serde_json::json!({"SERVER_PORT":2405,"_network_action":"apply"})).await.unwrap();
     fail.store(true, Ordering::SeqCst);

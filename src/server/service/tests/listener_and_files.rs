@@ -230,8 +230,8 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             .await
             .unwrap();
         assert_eq!(
-            crate::desktop::existing_dashboard("127.0.0.1", listener.address().port()).await,
-            Some(crate::desktop::dashboard_url("127.0.0.1", listener.address().port())),
+            vosu_core::desktop::existing_dashboard("127.0.0.1", listener.address().port()).await,
+            Some(vosu_core::desktop::dashboard_url("127.0.0.1", listener.address().port())),
         );
 
         let mut client = tokio::net::TcpStream::connect(listener.address())

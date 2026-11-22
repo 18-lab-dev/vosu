@@ -18,7 +18,7 @@ fn minor_and_major_update_notices_render_distinctly() {
     assert!(minor.contains(r#"<div class="update-notice__major" hidden>"#));
     assert!(minor.contains("<strong>vosu 1.9.0</strong> is available"));
 
-    let major = dashboard_with(Some(&UpdateNotice::Major(crate::updater::MajorRelease {
+    let major = dashboard_with(Some(&UpdateNotice::Major(vosu_core::updater::MajorRelease {
         version: semver::Version::new(2, 0, 0),
         release_url: "https://github.com/18-lab-dev/vosu/releases/tag/v2.0.0".to_owned(),
     })));
@@ -32,7 +32,7 @@ fn minor_and_major_update_notices_render_distinctly() {
 
 #[test]
 fn major_update_release_url_is_escaped_into_its_attribute() {
-    let page = dashboard_with(Some(&UpdateNotice::Major(crate::updater::MajorRelease {
+    let page = dashboard_with(Some(&UpdateNotice::Major(vosu_core::updater::MajorRelease {
         version: semver::Version::new(2, 0, 0),
         release_url: r#"https://example.com/"><script>alert(1)</script>"#.to_owned(),
     })));

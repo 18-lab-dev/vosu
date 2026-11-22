@@ -49,7 +49,7 @@ struct State {
 pub struct ApiKeys {
     path: PathBuf,
     state: Mutex<State>,
-    logger: Option<crate::logging::Logger>,
+    logger: Option<vosu_core::logging::Logger>,
 }
 #[derive(Clone)]
 pub(crate) struct KeyGrant {
@@ -92,7 +92,7 @@ fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 impl ApiKeys {
-    pub fn load(path: PathBuf, logger: Option<crate::logging::Logger>) -> Self {
+    pub fn load(path: PathBuf, logger: Option<vosu_core::logging::Logger>) -> Self {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;

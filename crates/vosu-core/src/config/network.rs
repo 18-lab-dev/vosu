@@ -79,12 +79,12 @@ fn overlapping_hosts(a: &str, b: &str) -> bool {
 }
 impl ConfigStore {
     /// Claim only after updater handoff and live-owner checks have completed.
-    pub(crate) async fn claim_network_ownership(&self) -> io::Result<()> {
+    pub async fn claim_network_ownership(&self) -> io::Result<()> {
         self.network_owner
             .store(true, std::sync::atomic::Ordering::Release);
         self.rollback_pending_network().await
     }
-    pub(crate) async fn validate_network(&self, candidate: &Config) -> io::Result<()> {
+    pub async fn validate_network(&self, candidate: &Config) -> io::Result<()> {
         let path = journal_path(self.path());
         let state = tokio::task::spawn_blocking(move || load(&path))
             .await
@@ -109,7 +109,7 @@ impl ConfigStore {
         }
         Ok(())
     }
-    pub(crate) async fn stage_network(&self, candidate: &Config) -> io::Result<()> {
+    pub async fn stage_network(&self, candidate: &Config) -> io::Result<()> {
         let _guard = self.network_lock.lock().await;
         let path = journal_path(self.path());
         let config = self.current();
@@ -141,7 +141,7 @@ impl ConfigStore {
         .await
         .map_err(io::Error::other)?
     }
-    pub(crate) async fn confirm_network(&self) -> io::Result<()> {
+    pub async fn confirm_network(&self) -> io::Result<()> {
         let _guard = self.network_lock.lock().await;
         let path = journal_path(self.path());
         let replace = self.atomic_replace.clone();
@@ -153,7 +153,7 @@ impl ConfigStore {
         .await
         .map_err(io::Error::other)?
     }
-    pub(crate) async fn rollback_pending_network(&self) -> io::Result<()> {
+    pub async fn rollback_pending_network(&self) -> io::Result<()> {
         let _guard = self.network_lock.lock().await;
         let path = journal_path(self.path());
         let mut state = tokio::task::spawn_blocking({

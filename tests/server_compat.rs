@@ -31,7 +31,6 @@ use vosu::{
         CounterDownloader, CounterError, CounterOpener, CounterService, DownloadRequest,
         SettingInput,
     },
-    report::escape_html,
     server::{
         auth::{AuthorizationPolicy, RequestHeaders},
         catalog::decode_response,
@@ -57,6 +56,7 @@ use vosu::{
         },
     },
 };
+use vosu_core::report::escape_html;
 use vosu_net::streaming::{ZipLimits, extract_zip_atomic, is_global_unicast};
 use vosu_osu_model::{
     ModsInput as CalculationModsInput, calculate_accuracy, calculate_grade, calculate_mods,

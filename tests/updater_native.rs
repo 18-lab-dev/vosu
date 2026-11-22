@@ -21,7 +21,7 @@ use std::{
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
-use vosu::updater::{
+use vosu_core::updater::{
     EncodedOsString, INSTALL_RECORD_NAME, InstallPhase, InstallRecord, ProcessIdentity,
     RecoveryAction, StartupIntent, StartupReadiness, TransactionGuard, UpdateCut, UpdateError,
     UpdatePlatform, finish_ready_cleanup, load_record, parse_startup_update_args,
@@ -794,7 +794,7 @@ fn linux_swap_uses_native_hard_link_backup_and_atomic_rename() {
     let backup = root.path().join("backup");
     write_launchable(&target, b"old");
     write_launchable(&staged, b"new");
-    vosu::updater::NativePlatform
+    vosu_core::updater::NativePlatform
         .atomic_swap(&target, &staged, &backup)
         .unwrap();
     assert_eq!(fs::read(&target).unwrap(), b"new");
@@ -820,7 +820,7 @@ fn windows_locked_target_preserves_old_executable_until_lock_release() {
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .open(&target)
         .unwrap();
-    let platform = vosu::updater::NativePlatform;
+    let platform = vosu_core::updater::NativePlatform;
     assert!(platform.atomic_swap(&target, &staged, &backup).is_err());
     assert_eq!(fs::read(&target).unwrap(), b"old");
     drop(lock);

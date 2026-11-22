@@ -6,7 +6,7 @@
 use std::{fs, time::Duration};
 
 use tempfile::TempDir;
-use vosu::config::{BINDING_ORDER, ConfigDocument, ConfigStore};
+use vosu_core::config::{BINDING_ORDER, ConfigDocument, ConfigStore};
 
 const EXPECTED_DEFAULT: &str = concat!(
     "DEBUG_LOG = false\n",

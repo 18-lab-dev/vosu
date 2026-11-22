@@ -55,10 +55,10 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 - `crates/vosu-sys/`: native process/platform boundary (process handles, memory reads, OS paths/capabilities) and process-exit-event backends (eBPF/CN_PROC/polling); all platform `unsafe` lives here.
 - `crates/vosu-osu-model/`: osu! memory/state/enum value types and the calculation root helpers (JS-compatible rounding/number writing, mods, grades, legacy hits) shared by the reader, calculator, and `src/model/api/` adapters.
 - `crates/vosu-osu-state/`: reducer, capture scheduling, and gameplay state — serialized transition reducer, per-instance raw capture workers, and the calculation backend (`state_backend.rs`, `vosu-pp`'s `LiveBeatmapEngine`/`LiveStateCalculationBackend`).
-- `src/config/`, `src/counters/`: watched configuration, migration, settings, counter discovery/download/storage.
-- `src/updater/`: release selection, verified staging, replacement, rollback, and recovery.
+- `src/counters/`: watched configuration, migration, settings, counter discovery/download/storage.
+- `crates/vosu-core/`: config, logging, diagnostics report generation, self-update (release selection, verified staging, replacement, rollback, and recovery), desktop integration (session tray, executable ownership policy, Linux systemd user login service), and startup decisions/guards.
 - `crates/vosu-osu-calc/` and `crates/vosu-pp/`: stable and lazer performance calculation; the latter is a Rust facade over provenance-pinned MIT source forks. The remaining source-provenance questions are recorded in `docs/provenance-audit.md`.
-- `src/runtime/`, `src/app.rs`, `src/logging/`, `src/report/`: daemon orchestration and operational services.
+- `src/runtime/`: daemon orchestration and operational services composed over `vosu-core`.
 - `src/tools/`: tool host — manifest validation, discovery and official catalog installation, supervision, `/tools/` proxy and access rules, host API, launch sessions, dashboard tool APIs. The contract is [docs/tools/protocol.md](docs/tools/protocol.md) (ADR 0017); change both together. The SDK and official tools live in [vosu-tools](https://github.com/18-lab-dev/vosu-tools).
 - `crates/vosu-test-harness/`: integration-test support only. `tests/` holds compatibility, native, daemon smoke, and performance contracts. `crates/vosu-release-smoke/` exercises an externally packaged executable without depending on the daemon crate. `benches/hot_paths.rs` holds Criterion benchmarks.
 - `crates/vosu-proptest/`: shared `vosu_proptest_config()` used by every `prop_*` test across the workspace.

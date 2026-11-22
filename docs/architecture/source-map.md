@@ -12,8 +12,8 @@ Start with the owning boundary below rather than searching the whole tree. The [
 
 | Area | Owner | Use it for |
 |---|---|---|
-| Startup and lifecycle | `src/app.rs`, `src/runtime/` | CLI decisions, composition, workers, shutdown, runtime reload |
-| Desktop integration | `src/desktop/` | Session tray, executable ownership policy, opt-in Linux systemd user login service |
+| Startup and lifecycle | `src/runtime/` | CLI decisions, composition, workers, shutdown, runtime reload |
+| Core services | `crates/vosu-core/` | Config, logging, diagnostics report generation, self-update, desktop integration (session tray, executable ownership policy, opt-in Linux systemd user login service), and startup decisions/guards |
 | Process instances | `src/instance/` | Candidate classification, focus, PID generations, tournament selection |
 | Native access | `crates/vosu-sys/` | Linux/Windows process handles, memory reads, paths, OS behavior, and process-exit-event backends; all platform `unsafe` lives here |
 | osu! value types | `crates/vosu-osu-model/` | osu! memory/state/enum models and the calculation root helpers (JS-compatible rounding/number writing, mods, grades, legacy hits) shared by the reader, calculator, and adapters |
@@ -22,10 +22,8 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Public APIs | `src/api/`, `src/model/api/` | v1, stream companion, v2, precise schemas and serialization |
 | Server and transport | `src/server/`, `crates/vosu-net/` | Exact routes, auth, files, pages, WebSockets, commands, and hardened outbound streaming |
 | Calculation | `crates/vosu-osu-calc/`, `crates/vosu-pp/`, `crates/vosu-pp/rosu-map-api/`, `crates/vosu-pp/rosu-pp-api/` | Beatmaps, progressive state, live pp, legacy endpoint calculation, and provenance-pinned calculator APIs |
-| Configuration and counters | `src/config/`, `src/counters/` | Canonical `vosu.toml`, one-time legacy dotenv migration, settings, discovery and downloads |
+| Counters | `src/counters/` | Settings, discovery and downloads |
 | Hosted tools | `src/tools/`, `assets/server/tool-bridge.js` | Manifest/discovery, official catalog installation, trust/settings persistence, child supervision, authenticated HTTP/WebSocket proxy and browser bridge; SDK in [vosu-tools](https://github.com/18-lab-dev/vosu-tools) |
-| Updating | `src/updater/` | Release selection, digest verification, staging, replacement, rollback |
-| Reports and logging | `src/report/`, `src/logging/` | Report rendering, escaping, retention and operational diagnostics |
 | Integration evidence | `tools/live-parity/`, `tools/oracle/` | Pinned parity captures, calculator provenance and diffs |
 | Precise validation | `tools/input-validation/` | Map scanning, navigation, autoplay, edge accounting and capture artifacts |
 | Behavioral contracts | `tests/`, `crates/vosu-test-harness/`, `crates/vosu-release-smoke/` | Compatibility, native, daemon smoke, updater/state/performance, and external packaged-executable tests |

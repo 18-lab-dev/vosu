@@ -44,18 +44,11 @@ use crate::{
         ApiError, ApiRuntimeSettings, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot,
         ManagerSnapshot, SnapshotManager,
     },
-    app::{
-        App, EnvironmentSnapshot, HookFuture, RuntimeHooks, StartupArgs, StartupDecision,
-        StartupOutcome, StartupPlatform,
-    },
     assets::DaemonAssets,
-    config::{Config, ConfigChanged, ConfigDocument, ConfigStore},
     counters::ReloadableCounterService,
     instance::{
         InstanceGeneration, InstanceLifecycleSnapshot, InstanceRuntime, NativeProcessProvider,
     },
-    logging::{Logger, LoggerOptions, StdoutConsole},
-    report::{ReportCounter, ReportInput, ReportInstance},
     server::{
         auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},
         catalog::{CatalogOverlay, CatalogService, LocalOverlay},
@@ -78,12 +71,22 @@ use crate::{
             StateSnapshot as WebSocketStateSnapshot, WebSocketHub,
         },
     },
+};
+use vosu_core::{
+    app::{
+        App, EnvironmentSnapshot, HookFuture, RuntimeHooks, StartupDecision, StartupFlags,
+        StartupOutcome, StartupPlatform,
+    },
+    config::{Config, ConfigChanged, ConfigDocument, ConfigStore},
+    logging::{Logger, LoggerOptions, StdoutConsole},
+    report::{ReportCounter, ReportInput, ReportInstance},
     updater::{
         LATEST_RELEASE_API, NativePlatform, RELEASE_PLATFORM, RecoveryAction, StartupDispatch,
         StartupReadiness, UpdateCheck, check_latest_and_prepare, check_startup_and_prepare,
         current_version, dispatch_startup_role, recover_startup_update,
     },
 };
+use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
 use vosu_osu_state::{
     Delivery, PollIntervalUpdates, ReadContext, RegularCapturePlan, SnapshotPublisher,
     SourcePreciseReader, SourceRegularReader, StateBundle, StateBundleSnapshot, StateWorkerError,

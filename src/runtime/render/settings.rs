@@ -66,7 +66,7 @@ pub(super) fn settings_group(header: &str, items: &[String]) -> String {
 }
 
 pub(super) fn render_runtime_settings(config: &Config) -> String {
-    let externally_managed = crate::desktop::externally_managed();
+    let externally_managed = vosu_core::desktop::externally_managed();
     let mut update_switch = settings_switch("ENABLE_AUTOUPDATE", config.enable_auto_update);
     if externally_managed {
         update_switch.insert_str(update_switch.len() - 1, " disabled");

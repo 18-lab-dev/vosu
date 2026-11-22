@@ -56,7 +56,7 @@ impl ConfigUpdateService for RuntimeConfig {
                     .trim_matches(['[', ']'])
                     .parse::<std::net::IpAddr>()
                     .is_ok_and(|ip| ip.is_unspecified());
-                let expected = crate::desktop::dashboard_url(
+                let expected = vosu_core::desktop::dashboard_url(
                     &current.dashboard_ip,
                     current.dashboard_port as u16,
                 );
@@ -185,7 +185,7 @@ impl ConfigUpdateService for RuntimeConfig {
                 .and_then(|value| value.as_bool())
                 && enabled != self.config.current().start_at_login
             {
-                tokio::task::spawn_blocking(move || crate::desktop::login::reconcile(enabled))
+                tokio::task::spawn_blocking(move || vosu_core::desktop::login::reconcile(enabled))
                     .await
                     .map_err(|error| error.to_string())?
                     .map_err(|error| format!("Start at login: {error}"))?;
@@ -505,8 +505,8 @@ impl UpdaterHandoff for RuntimeUpdater {
         major_consent: bool,
     ) -> crate::server::routes::ProviderFuture<'_, Result<UpdateRouteResult, String>> {
         Box::pin(async move {
-            if !crate::desktop::directory_writable(&self.program_dir) {
-                return Err(crate::desktop::MANAGED_UPDATE_ERROR.to_owned());
+            if !vosu_core::desktop::directory_writable(&self.program_dir) {
+                return Err(vosu_core::desktop::MANAGED_UPDATE_ERROR.to_owned());
             }
             let client = self.client.clone();
             let cancel = self.shutdown.child_token();

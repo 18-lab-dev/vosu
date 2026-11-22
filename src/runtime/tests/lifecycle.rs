@@ -146,10 +146,10 @@ fn candidate_and_rollback_roles_skip_release_update_transactions() {
 #[test]
 fn quarantined_recovery_is_nonfatal() {
     assert!(recovery_error_is_nonfatal(
-        &crate::updater::UpdateError::Quarantined("unknown target".into())
+        &vosu_core::updater::UpdateError::Quarantined("unknown target".into())
     ));
     assert!(!recovery_error_is_nonfatal(
-        &crate::updater::UpdateError::LiveOwner
+        &vosu_core::updater::UpdateError::LiveOwner
     ));
 }
 

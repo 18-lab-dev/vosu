@@ -26,3 +26,6 @@ tokio-tungstenite = "0.29.0"
 vosu = { path = "../..", features = ["test-harness"] }
 vosu-net = { path = "../vosu-net", features = ["test-harness"] }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[dev-dependencies]
+vosu-core = { path = "../vosu-core" }

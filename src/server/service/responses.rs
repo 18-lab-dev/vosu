@@ -562,7 +562,7 @@ fn counter_search_response(result: Result<Bytes, String>) -> Response {
         Err(error) => response(
             StatusCode::BAD_GATEWAY,
             "text/html; charset=utf-8",
-            Bytes::from(format!("Error: {}", crate::report::escape_html(&error))),
+            Bytes::from(format!("Error: {}", vosu_core::report::escape_html(&error))),
         ),
     }
 }

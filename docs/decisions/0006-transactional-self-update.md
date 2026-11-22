@@ -21,7 +21,7 @@ Represent an update as a durable, create-new transaction record with explicit ph
 
 Download atomically into transaction work storage, verify the release digest, require the archive to contain only the expected root executable and `LICENSE`, reject links/directories/duplicates and expansion beyond the configured limit, and extract to staging. Transfer installation to a copied helper only after persisting its exact identity and receiving a token-bound durable acknowledgement. Install through platform atomic replacement with backup/recovery rather than overwriting the running binary in place.
 
-The transaction and recovery rules are in [`updater/transaction.rs`](../../src/updater/transaction.rs), input verification and handoff in [`updater/prepare.rs`](../../src/updater/prepare.rs), and native replacement operations in [`updater/platform.rs`](../../src/updater/platform.rs).
+The transaction and recovery rules are in [`updater/transaction.rs`](../../crates/vosu-core/src/updater/transaction.rs), input verification and handoff in [`updater/prepare.rs`](../../crates/vosu-core/src/updater/prepare.rs), and native replacement operations in [`updater/platform.rs`](../../crates/vosu-core/src/updater/platform.rs).
 
 ## Consequences
 

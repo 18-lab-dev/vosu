@@ -17,7 +17,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use crate::logging::Logger;
+use vosu_core::logging::Logger;
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_reader::discovery::StartupArgs;
 use vosu_osu_reader::memory::lazer_loader::{

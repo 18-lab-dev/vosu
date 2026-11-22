@@ -1,3 +1,4 @@
+use crate::config::{Config, ConfigChanged};
 use std::{
     collections::BTreeMap,
     ffi::{OsStr, OsString},
@@ -7,9 +8,6 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-
-use crate::config::{Config, ConfigChanged};
-pub use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
 
 pub const ARCHIVE_WARNING: &str = "It appears you are running %vosu% from an archive. Please extract it to a folder before running.";
 pub const ONEDRIVE_WARNING: &str = "%vosu% cannot run from a OneDrive folder due to potential sync conflicts and performance issues.";
@@ -77,6 +75,16 @@ pub enum StartupGuard {
     OneDrive,
 }
 
+/// The startup flags `App`/`StartupDecision` need: parsed from the osu!
+/// client's own argv (`vosu_osu_reader::discovery::StartupArgs`) by the root
+/// crate, which owns that osu!-specific parser. Core never depends on an
+/// osu! crate (docs/v2/implementation-plan.md section 2 "Layout rules").
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StartupFlags {
+    pub update: Option<bool>,
+    pub onedrive_bypass: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StartupDecision {
     Run { update: bool, onedrive_bypass: bool },
@@ -85,17 +93,14 @@ pub enum StartupDecision {
 
 impl StartupDecision {
     pub fn evaluate(
-        args: &StartupArgs,
+        flags: &StartupFlags,
         config: &Config,
         environment: &EnvironmentSnapshot,
         platform: StartupPlatform,
         program_path: &Path,
     ) -> Self {
-        let update = args
-            .get("update")
-            .and_then(StartupValue::as_boolean)
-            .unwrap_or(config.enable_auto_update);
-        let onedrive_bypass = args.get("onedrive").and_then(StartupValue::as_boolean) == Some(true);
+        let update = flags.update.unwrap_or(config.enable_auto_update);
+        let onedrive_bypass = flags.onedrive_bypass;
 
         if platform == StartupPlatform::Windows {
             if environment
@@ -154,7 +159,7 @@ pub enum StartupOutcome {
 }
 
 pub struct App<H> {
-    args: StartupArgs,
+    flags: StartupFlags,
     environment: EnvironmentSnapshot,
     program_path: PathBuf,
     platform: StartupPlatform,
@@ -164,7 +169,7 @@ pub struct App<H> {
 
 impl<H: RuntimeHooks> App<H> {
     pub fn new(
-        args: StartupArgs,
+        flags: StartupFlags,
         environment: EnvironmentSnapshot,
         program_path: PathBuf,
         platform: StartupPlatform,
@@ -172,7 +177,7 @@ impl<H: RuntimeHooks> App<H> {
         hooks: H,
     ) -> Self {
         Self {
-            args,
+            flags,
             environment,
             program_path,
             platform,
@@ -187,7 +192,7 @@ impl<H: RuntimeHooks> App<H> {
 
     pub async fn run(&mut self) -> io::Result<StartupOutcome> {
         let decision = StartupDecision::evaluate(
-            &self.args,
+            &self.flags,
             &self.config,
             &self.environment,
             self.platform,
@@ -254,10 +259,6 @@ mod tests {
         }
     }
 
-    fn args(items: &[&str]) -> StartupArgs {
-        StartupArgs::from_array(items.iter().map(OsString::from))
-    }
-
     fn environment(items: &[(&str, &str)]) -> EnvironmentSnapshot {
         EnvironmentSnapshot::from_lookup(|name| {
             items
@@ -268,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn effective_flags_require_actual_booleans() {
+    fn update_flag_falls_back_to_config_only_when_absent() {
         let mut config = Config {
             enable_auto_update: true,
             ..Config::default()
@@ -278,7 +279,10 @@ mod tests {
 
         assert_eq!(
             StartupDecision::evaluate(
-                &args(&["--update=false", "--onedrive=true"]),
+                &StartupFlags {
+                    update: Some(false),
+                    onedrive_bypass: true
+                },
                 &config,
                 &env,
                 StartupPlatform::Other,
@@ -291,7 +295,10 @@ mod tests {
         );
         assert_eq!(
             StartupDecision::evaluate(
-                &args(&["--update=1", "--onedrive=1"]),
+                &StartupFlags {
+                    update: Some(true),
+                    onedrive_bypass: false
+                },
                 &config,
                 &env,
                 StartupPlatform::Other,
@@ -305,7 +312,10 @@ mod tests {
         config.enable_auto_update = false;
         assert_eq!(
             StartupDecision::evaluate(
-                &args(&["--update=yes"]),
+                &StartupFlags {
+                    update: None,
+                    onedrive_bypass: false
+                },
                 &config,
                 &env,
                 StartupPlatform::Other,
@@ -357,7 +367,10 @@ mod tests {
     #[tokio::test]
     async fn windows_archive_guard_warns_before_update_and_runtime() {
         let mut app = App::new(
-            args(&["--update=true"]),
+            StartupFlags {
+                update: Some(true),
+                onedrive_bypass: false,
+            },
             environment(&[("TEMP", "C:/Temp")]),
             PathBuf::from("C:/Temp/unpacked/vosu.exe"),
             StartupPlatform::Windows,
@@ -376,7 +389,10 @@ mod tests {
         let env = environment(&[("OneDrive", "C:/Users/me/OneDrive")]);
         let path = PathBuf::from("C:/Users/me/OneDrive/vosu/vosu.exe");
         let mut blocked = App::new(
-            args(&["--update=true"]),
+            StartupFlags {
+                update: Some(true),
+                onedrive_bypass: false,
+            },
             env.clone(),
             path.clone(),
             StartupPlatform::Windows,
@@ -396,7 +412,10 @@ mod tests {
         );
 
         let mut bypassed = App::new(
-            args(&["--onedrive=true", "--update=false"]),
+            StartupFlags {
+                update: Some(false),
+                onedrive_bypass: true,
+            },
             env,
             path,
             StartupPlatform::Windows,

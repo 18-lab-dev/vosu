@@ -8,17 +8,11 @@
 )]
 
 pub mod api;
-pub mod app;
 pub mod assets;
-pub mod config;
 pub mod counters;
-pub mod desktop;
 pub mod instance;
-pub mod logging;
 pub mod model;
-pub mod report;
 pub mod runtime;
 pub mod server;
 pub mod tools;
-pub mod updater;
 pub mod vosux;

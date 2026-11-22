@@ -26,7 +26,7 @@ pub struct ProductionRuntime {
     supervisor: AsyncMutex<Option<ProductionStateSupervisor>>,
     instances: AsyncMutex<Option<InstanceRuntime<NativeProcessProvider, EmbeddedOffsetGenerator>>>,
     ordinary_role: bool,
-    tray: AsyncMutex<Option<crate::desktop::tray::TrayHandle>>,
+    tray: AsyncMutex<Option<vosu_core::desktop::tray::TrayHandle>>,
     #[cfg(target_os = "linux")]
     login_state: Arc<AsyncMutex<bool>>,
 }
@@ -251,7 +251,7 @@ impl ProductionRuntime {
         };
         self.logger.info(format!(
             "Overlays and API: {}",
-            crate::desktop::dashboard_url(
+            vosu_core::desktop::dashboard_url(
                 &effective_listener.target.host,
                 effective_listener.address.port()
             )
@@ -278,7 +278,7 @@ impl ProductionRuntime {
         tools.activate(Some(self.origins.clone()));
         self.logger.info(format!(
             "Dashboard: {}",
-            crate::desktop::dashboard_url(
+            vosu_core::desktop::dashboard_url(
                 &dashboard_effective.target.host,
                 dashboard_effective.address.port()
             )
@@ -313,7 +313,7 @@ impl ProductionRuntime {
         *self.instances.get_mut() = Some(instances);
         if self.ordinary_role {
             let origins = Arc::clone(&self.origins);
-            *self.tray.get_mut() = Some(crate::desktop::tray::start(
+            *self.tray.get_mut() = Some(vosu_core::desktop::tray::start(
                 Arc::new(move || format!("{}/", origins.dashboard())),
                 self.shutdown_token.clone(),
             ));
@@ -364,7 +364,7 @@ impl RuntimeHooks for ProductionRuntime {
             if !startup_role_allows_update_check(self.startup_readiness.as_ref()) {
                 return Ok(());
             }
-            if !crate::desktop::directory_writable(self.paths.program()) {
+            if !vosu_core::desktop::directory_writable(self.paths.program()) {
                 self.logger
                     .info("Updates are managed externally; update vosu with your package manager");
                 return Ok(());
@@ -387,8 +387,8 @@ impl RuntimeHooks for ProductionRuntime {
             let check = match check {
                 Ok(check) => check,
                 Err(
-                    crate::updater::UpdateError::AlreadyRunning
-                    | crate::updater::UpdateError::LiveOwner,
+                    vosu_core::updater::UpdateError::AlreadyRunning
+                    | vosu_core::updater::UpdateError::LiveOwner,
                 ) => {
                     return Err(io::Error::new(
                         io::ErrorKind::ResourceBusy,
@@ -453,13 +453,13 @@ impl RuntimeHooks for ProductionRuntime {
                 let current = self.config.current();
                 self.authorizer
                     .reload(&current.allowed_ips, &current.server_ip);
-                *self.origins.overlay.write() = crate::desktop::dashboard_url(
+                *self.origins.overlay.write() = vosu_core::desktop::dashboard_url(
                     &current.server_ip,
                     listen_target(&current)?.port,
                 )
                 .trim_end_matches('/')
                 .to_owned();
-                *self.origins.dashboard.write() = crate::desktop::dashboard_url(
+                *self.origins.dashboard.write() = vosu_core::desktop::dashboard_url(
                     &current.dashboard_ip,
                     dashboard_listen_target(&current)?.port,
                 )
@@ -489,7 +489,7 @@ impl RuntimeHooks for ProductionRuntime {
                                 let mut login_state = self.login_state.lock().await;
                                 let enabled = self.config.current().start_at_login;
                                 if enabled != *login_state {
-                                    match tokio::task::spawn_blocking(move || crate::desktop::login::reconcile(enabled)).await {
+                                    match tokio::task::spawn_blocking(move || vosu_core::desktop::login::reconcile(enabled)).await {
                                         Ok(Ok(())) => *login_state = enabled,
                                         Ok(Err(error)) => self.logger.warn(format!("Start at login could not be reconciled: {error}")),
                                         Err(error) => self.logger.warn(format!("Start at login task failed: {error}")),
@@ -527,7 +527,7 @@ impl RuntimeHooks for ProductionRuntime {
                                                     && let Some(address) = effective_address
                                                 {
                                                     self.logger.info(format!(
-                                                        "Overlays and API: {}", crate::desktop::dashboard_url(&effective.server_ip, address.port())
+                                                        "Overlays and API: {}", vosu_core::desktop::dashboard_url(&effective.server_ip, address.port())
                                                     ));
                                                 }
                                             }
@@ -551,7 +551,7 @@ impl RuntimeHooks for ProductionRuntime {
                                                 if let Some(bound) = listener.state().effective
                                                     && Some(bound.address) != previous_address
                                                 {
-                                                    self.logger.info(format!("Dashboard: {}", crate::desktop::dashboard_url(&bound.target.host, bound.address.port())));
+                                                    self.logger.info(format!("Dashboard: {}", vosu_core::desktop::dashboard_url(&bound.target.host, bound.address.port())));
                                                 }
                                             },
                                             Err(error) => self.logger.warn(format!("Failed to bind dashboard; retaining previous listener: {error}")),
@@ -683,8 +683,8 @@ pub fn is_startup_owner_conflict(error: &io::Error) -> bool {
         .is_some_and(|source| source.downcast_ref::<StartupOwnerConflict>().is_some())
 }
 
-pub(super) fn recovery_error_is_nonfatal(error: &crate::updater::UpdateError) -> bool {
-    matches!(error, crate::updater::UpdateError::Quarantined(_))
+pub(super) fn recovery_error_is_nonfatal(error: &vosu_core::updater::UpdateError) -> bool {
+    matches!(error, vosu_core::updater::UpdateError::Quarantined(_))
 }
 
 pub(super) async fn finish_runtime_run(
@@ -715,6 +715,10 @@ pub async fn run_cli() -> io::Result<()> {
         }
     }
     let args = StartupArgs::parse(raw_args.clone());
+    let startup_flags = StartupFlags {
+        update: args.get("update").and_then(StartupValue::as_boolean),
+        onedrive_bypass: args.get("onedrive").and_then(StartupValue::as_boolean) == Some(true),
+    };
     let environment = EnvironmentSnapshot::capture();
     let resolver = SnapshotPathResolver {
         executable: env::current_exe()?,
@@ -735,7 +739,7 @@ pub async fn run_cli() -> io::Result<()> {
     let config = ConfigStore::initialize(paths.config().join("vosu.toml")).await?;
     if ordinary_role
         && let Ok(target) = dashboard_listen_target(&config.current())
-        && let Some(url) = crate::desktop::existing_dashboard(&target.host, target.port).await
+        && let Some(url) = vosu_core::desktop::existing_dashboard(&target.host, target.port).await
     {
         println!("vosu is already running; opening {url}");
         if let Err(error) = open::that_detached(&url) {
@@ -746,10 +750,10 @@ pub async fn run_cli() -> io::Result<()> {
     }
     let mut recovery_warning = None;
     if ordinary_role
-        && crate::desktop::directory_writable(paths.program())
+        && vosu_core::desktop::directory_writable(paths.program())
         && matches!(
             StartupDecision::evaluate(
-                &args,
+                &startup_flags,
                 &config.current(),
                 &environment,
                 StartupPlatform::CURRENT,
@@ -765,8 +769,8 @@ pub async fn run_cli() -> io::Result<()> {
             }
             Ok(_) => {}
             Err(
-                crate::updater::UpdateError::AlreadyRunning
-                | crate::updater::UpdateError::LiveOwner,
+                vosu_core::updater::UpdateError::AlreadyRunning
+                | vosu_core::updater::UpdateError::LiveOwner,
             ) => {
                 config.shutdown().await?;
                 return Err(io::Error::new(
@@ -810,7 +814,9 @@ pub async fn run_cli() -> io::Result<()> {
     #[cfg(target_os = "linux")]
     if ordinary_role {
         let enabled = config.current().start_at_login;
-        match tokio::task::spawn_blocking(move || crate::desktop::login::reconcile(enabled)).await {
+        match tokio::task::spawn_blocking(move || vosu_core::desktop::login::reconcile(enabled))
+            .await
+        {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
                 logger.warn(format!("Start at login could not be reconciled: {error}"))
@@ -854,8 +860,8 @@ pub async fn run_cli() -> io::Result<()> {
         listener: AsyncMutex::new(None),
         dashboard_listener: AsyncMutex::new(None),
         origins: Arc::new(crate::server::origins::Origins::new(
-            crate::desktop::dashboard_url(&current.server_ip, listen_target(&current)?.port),
-            crate::desktop::dashboard_url(
+            vosu_core::desktop::dashboard_url(&current.server_ip, listen_target(&current)?.port),
+            vosu_core::desktop::dashboard_url(
                 &current.dashboard_ip,
                 dashboard_listen_target(&current)?.port,
             ),
@@ -871,7 +877,7 @@ pub async fn run_cli() -> io::Result<()> {
         login_state: Arc::new(AsyncMutex::new(current.start_at_login)),
     };
     let mut app = App::new(
-        args,
+        startup_flags,
         environment,
         paths.program().to_path_buf(),
         StartupPlatform::CURRENT,

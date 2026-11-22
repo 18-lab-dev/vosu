@@ -713,7 +713,7 @@ async fn discovery_publishes_effective_dashboard_origin_and_no_csrf_secret() {
         value,
         serde_json::json!({"origin":"http://127.0.0.1:24861"})
     );
-    *origins.dashboard.write() = crate::desktop::dashboard_url("0.0.0.0", 24862)
+    *origins.dashboard.write() = vosu_core::desktop::dashboard_url("0.0.0.0", 24862)
         .trim_end_matches('/')
         .to_owned();
     let response = dispatch(

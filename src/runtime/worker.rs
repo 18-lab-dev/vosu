@@ -71,7 +71,7 @@ pub struct ListenerOwner {
     pub(super) cancel: CancellationToken,
     pub(super) task: JoinHandle<()>,
     pub(super) broker: Option<Arc<crate::server::broker::BrokerToken>>,
-    pub(super) broker_logger: Option<crate::logging::Logger>,
+    pub(super) broker_logger: Option<vosu_core::logging::Logger>,
 }
 
 impl ListenerOwner {
@@ -85,7 +85,7 @@ impl ListenerOwner {
         providers: RouteProviders,
         target: ListenTarget,
         path: io::Result<Option<PathBuf>>,
-        logger: Option<crate::logging::Logger>,
+        logger: Option<vosu_core::logging::Logger>,
     ) -> io::Result<Self> {
         let broker = match path.and_then(|path| {
             path.map(crate::server::broker::BrokerToken::new)
@@ -431,7 +431,7 @@ pub struct ProductionStateSupervisor {
 impl ProductionStateSupervisor {
     pub fn start(
         lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
-        config: watch::Receiver<Arc<crate::config::Config>>,
+        config: watch::Receiver<Arc<vosu_core::config::Config>>,
         subscription_demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
         snapshots: Arc<SnapshotProviders>,
         logger: Logger,
@@ -487,7 +487,7 @@ impl ManagerView {
     fn manager(
         &mut self,
         lifecycle: &InstanceLifecycleSnapshot,
-        config: &crate::config::Config,
+        config: &vosu_core::config::Config,
     ) -> Option<Arc<ManagerSnapshot>> {
         build_manager_snapshot(
             &mut self.revisions,
@@ -501,7 +501,7 @@ impl ManagerView {
 
 pub(super) async fn run_state_supervisor(
     mut lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
-    mut config: watch::Receiver<Arc<crate::config::Config>>,
+    mut config: watch::Receiver<Arc<vosu_core::config::Config>>,
     subscription_demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
     snapshots: Arc<SnapshotProviders>,
     logger: Logger,
@@ -594,7 +594,7 @@ pub(super) async fn run_state_supervisor(
 
 /// Narrows `Config` to the fields `state` reads, so `state` does not depend
 /// on `config` (module-boundaries.txt: breaking the `state -> config` edge).
-fn reader_settings_from(config: &crate::config::Config) -> vosu_osu_state::ReaderSettings {
+fn reader_settings_from(config: &vosu_core::config::Config) -> vosu_osu_state::ReaderSettings {
     vosu_osu_state::ReaderSettings {
         calculate_pp: config.calculate_pp,
         enable_key_overlay: config.enable_key_overlay,
@@ -873,7 +873,7 @@ where
 pub(super) fn build_manager_snapshot(
     revisions: &mut SemanticRevision,
     lifecycle: &InstanceLifecycleSnapshot,
-    config: &crate::config::Config,
+    config: &vosu_core::config::Config,
     states: &BTreeMap<u32, Arc<StateBundleSnapshot>>,
     state_revisions: &BTreeMap<u32, u64>,
 ) -> Option<Arc<ManagerSnapshot>> {

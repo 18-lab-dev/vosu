@@ -56,7 +56,7 @@ impl BrokerToken {
         // tempfile creates Unix files with mode 0600 at creation, before writing.
         // On Windows the file inherits the destination directory's ACL.
         let mut file = tempfile::NamedTempFile::new_in(directory)?;
-        let origin = crate::desktop::dashboard_url(&address.ip().to_string(), address.port());
+        let origin = vosu_core::desktop::dashboard_url(&address.ip().to_string(), address.port());
         serde_json::to_writer(
             &mut file,
             &serde_json::json!({

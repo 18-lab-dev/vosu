@@ -42,7 +42,7 @@ vosu needs no elevation, installs no driver or service, and writes no registry k
 
 ## Changes outside vosu's own files
 
-- **Start at login** (Linux, off by default): writes a marked systemd user unit at `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/vosu.service` and enables it for the graphical session. Turning it off disables and deletes only a unit vosu wrote; an unrelated unit with that name is never overwritten ([`src/desktop/login.rs`](../src/desktop/login.rs)).
+- **Start at login** (Linux, off by default): writes a marked systemd user unit at `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/vosu.service` and enables it for the graphical session. Turning it off disables and deletes only a unit vosu wrote; an unrelated unit with that name is never overwritten ([`src/desktop/login.rs`](../crates/vosu-core/src/desktop/login.rs)).
 - **Self-update** (portable and other user-writable installs): replaces the vosu executable in place through a recoverable helper process, after checking the release archive's published SHA-256 digest. Package-managed installs never self-update.
 - **Browser and file manager:** vosu opens the dashboard in the default browser at startup (`OPEN_DASHBOARD_ON_STARTUP`, on by default), from the tray, and when it is launched a second time. **Open folder** opens an overlay folder in the file manager.
 - **Tray icon:** a StatusNotifierItem on Linux or a notification-area icon on Windows, with **Open dashboard** and **Quit**.

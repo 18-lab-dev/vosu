@@ -4,7 +4,6 @@
 )]
 
 use std::{
-    ffi::OsString,
     io,
     path::{Path, PathBuf},
     sync::{
@@ -24,17 +23,19 @@ use futures_util::StreamExt;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use vosu::{
-    app::{
-        App, EnvironmentSnapshot, HookFuture, RuntimeHooks, StartupArgs, StartupOutcome,
-        StartupPlatform,
-    },
-    config::{Config, ConfigChanged, ConfigDocument, ConfigStore},
     counters::{
         CounterError, CounterOpener, CounterService, DownloadRequest, HardenedCounterDownloader,
     },
     runtime::{TestProductionCompositionOptions, start_test_production_composition},
     server::runtime::ListenTarget,
     server::service::{DeferredUpdateTrigger, UpdateRouteResult, UpdaterHandoff},
+};
+use vosu_core::{
+    app::{
+        App, EnvironmentSnapshot, HookFuture, RuntimeHooks, StartupFlags, StartupOutcome,
+        StartupPlatform,
+    },
+    config::{Config, ConfigChanged, ConfigDocument, ConfigStore},
 };
 use vosu_net::{Deadlines, DownloadLimits, NetworkError, StreamingClient};
 use vosu_test_harness::{MockNetwork, USER_AGENT};
@@ -387,7 +388,10 @@ async fn real_app_lifecycle_uses_only_the_injected_in_process_origin() {
         ..Config::default()
     };
     let mut app = App::new(
-        StartupArgs::parse([OsString::from("vosu"), OsString::from("--update=false")]),
+        StartupFlags {
+            update: Some(false),
+            onedrive_bypass: false,
+        },
         EnvironmentSnapshot::default(),
         PathBuf::from("/temporary/program/vosu"),
         StartupPlatform::Other,

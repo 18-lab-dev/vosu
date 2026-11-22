@@ -22,7 +22,7 @@ mod native;
 
 const TEMPLATE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/assets/server/report.html"
+    "/../../assets/server/report.html"
 ));
 const CONTENT_TYPE: &str = "text/html; charset=utf-8";
 const LOG_LIMIT: usize = 10;

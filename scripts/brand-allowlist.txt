@@ -39,8 +39,8 @@ crates/vosu-sys/src/platform.rs 3 migration one-time migration of the legacy per
 assets/branding/vosu-social-preview.svg 2 upstream social-preview copy describing tosu-compatible APIs as the product's upstream compatibility target
 assets/server/homepage.js 1 upstream dashboard search-empty-state copy names tosu as an example compatible client
 crates/vosu-osu-calc/src/lib.rs 2 upstream doc comment mapping calculation helpers to their upstream tosu source paths
-src/config/migration.rs 11 migration one-time legacy tosu.env migration implementation
-src/config/tests.rs 27 migration tests covering the one-time legacy tosu.env migration precedence
+crates/vosu-core/src/config/migration.rs 11 migration one-time legacy tosu.env migration implementation
+crates/vosu-core/src/config/tests.rs 27 migration tests covering the one-time legacy tosu.env migration precedence
 crates/vosu-osu-reader/src/memory/snapshot.rs 4 upstream doc comment mapping memory snapshot control flow to upstream tosu source paths
 crates/vosu-osu-model/src/root.rs 2 upstream doc comment mapping the moved calculation helpers to their upstream tosu source paths
 src/runtime/render.rs 3 upstream page copy naming the upstream tosu.app catalog host and its overlay clients
@@ -48,7 +48,7 @@ src/runtime/render/settings.rs 2 upstream settings copy naming the upstream tosu
 src/server/catalog.rs 6 upstream overlay catalog client for the upstream tosu.app catalog endpoint
 src/server/commands.rs 1 parity counter-command compatibility test named for tosu-style counter frame paths
 src/server/files.rs 1 upstream doc comment describing upstream tosu file-range compatibility behavior
-src/updater/tests_release.rs 2 migration updater test fixture rejecting the former tosu release asset name
+crates/vosu-core/src/updater/tests_release.rs 2 migration updater test fixture rejecting the former tosu release asset name
 tests/config_compat.rs 2 migration compatibility test covering the legacy tosu.env migration input
 tests/daemon_smoke.rs 6 migration daemon smoke test covering the legacy tosu config-root migration
 tests/state_api_compat.rs 2 parity source-oracle revision document uses the upstream tosu field name as parity evidence

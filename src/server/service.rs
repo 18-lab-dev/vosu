@@ -33,8 +33,8 @@ use crate::{
     counters::{
         CounterError, CounterService, CounterSetting, ReloadableCounterService, SettingInput,
     },
-    report::{NativeReportProbe, ReportInput, ReportProbe, generate_report_document},
 };
+use vosu_core::report::{NativeReportProbe, ReportInput, ReportProbe, generate_report_document};
 
 use super::{
     commands::{CommandAction, CommandClient, CommandProcessor, Relay, RelaySink},

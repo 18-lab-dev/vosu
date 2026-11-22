@@ -17,7 +17,7 @@ The daemon discovers running osu! clients, reads their memory without modifying 
 
 Important constraints visible in the code are:
 
-- Linux and Windows have different process, memory, path, focus, and update implementations; platform selection is compile-time (`src/process/{linux,windows}.rs`, `src/platform/{linux,windows}.rs`, `src/updater/platform.rs`).
+- Linux and Windows have different process, memory, path, focus, and update implementations; platform selection is compile-time (`src/process/{linux,windows}.rs`, `src/platform/{linux,windows}.rs`, `crates/vosu-core/src/updater/platform.rs`).
 - Remote reads are fallible and may race the target process. Decoding distinguishes ready, pending/unchanged, unsupported, corrupt, and failed data instead of treating every failure as an empty value (`src/process.rs::ReadStatus`, `src/memory.rs::MemoryReader`).
 - Regular and precise sampling have independent configured cadences, but all state transitions are serialized before publication (`src/state/worker.rs::spawn_state_worker_with_clock`).
 - Public payloads must represent one atomic state point; wire schemas never assemble independently loaded pieces (`src/api.rs`, `src/api/snapshot.rs::SnapshotManager`).
@@ -44,7 +44,7 @@ The daemon boundary is the `vosu` process; hosted tools are supervised out-of-pr
 ```mermaid
 flowchart TB
     Entry[src/main.rs] --> Runtime[src/runtime/lifecycle.rs<br/>ProductionRuntime]
-    Runtime --> Config[src/config<br/>ConfigStore]
+    Runtime --> Config[crates/vosu-core/src/config<br/>ConfigStore]
     Runtime --> Instances[src/instance.rs<br/>InstanceRuntime and InstanceManager]
     Instances --> Process[src/process.rs and src/process/*<br/>ProcessHandle and ProcessMemory]
     Process --> Readers[src/memory/*<br/>stable and lazer readers]
@@ -56,13 +56,13 @@ flowchart TB
     Schemas --> Server[src/server/*<br/>Axum HTTP and WebSocket]
     Reducer --> Calc[src/calculation/* and<br/>crates/vosu-pp]
     Config --> Runtime
-    Runtime --> Update[src/updater/*]
-    Runtime --> Desktop[src/desktop/*<br/>tray and login service]
+    Runtime --> Update[crates/vosu-core/src/updater/*]
+    Runtime --> Desktop[crates/vosu-core/src/desktop/*<br/>tray and login service]
 ```
 
 `src/main.rs` only constructs Tokio, calls `runtime::run_cli`, maps the startup-owner conflict to exit status 75, and bounds runtime shutdown. `src/runtime/lifecycle.rs::ProductionRuntime` is the composition root and owns every long-lived service: configuration, logging, authorization, listener, WebSocket hubs, command processor and relays, counters, instance runtime, state supervisor, update handoff, and shutdown token. Its shutdown order first stops new HTTP accepts, closes WebSockets, then joins downstream services before configuration and logging.
 
-`src/desktop/login.rs` owns the opt-in Linux graphical-session user unit, independently of daemon startup and settings persistence. It injects the existing `PathResolver` and a `CommandRunner`, writes only a vosu-marked unit, and invokes `systemctl --user` without a shell or `--now`. Runtime composition treats startup reconciliation errors as warnings; settings save must reconcile before publishing or persisting `START_AT_LOGIN`.
+`crates/vosu-core/src/desktop/login.rs` owns the opt-in Linux graphical-session user unit, independently of daemon startup and settings persistence. It injects the existing `PathResolver` and a `CommandRunner`, writes only a vosu-marked unit, and invokes `systemctl --user` without a shell or `--now`. Runtime composition treats startup reconciliation errors as warnings; settings save must reconcile before publishing or persisting `START_AT_LOGIN`.
 
 Offset resolution is part of each discovered lazer instance lifecycle.
 `src/runtime/offset_generator.rs` receives the exact PID and version. The loader
@@ -99,7 +99,7 @@ checksum-verified payload and game installation remain untouched.
 
 | Concern | Primary ownership | Main entry points |
 |---|---|---|
-| Startup and process-wide lifecycle | `src/app.rs`, `src/runtime/lifecycle.rs` | `App::run`, `run_cli`, `ProductionRuntime::compose` |
+| Startup and process-wide lifecycle | `crates/vosu-core/src/app.rs`, `src/runtime/lifecycle.rs` | `App::run`, `run_cli`, `ProductionRuntime::compose` |
 | Client discovery, generations, focus | `src/instance.rs`, `src/instance/discovery.rs` | `InstanceRuntime`, `InstanceManager`, `classify_candidates` |
 | Native process access | `src/process.rs`, `src/process/linux.rs`, `src/process/windows.rs` | `ProcessMemory`, `ProcessHandle`, platform backends |
 | Signature/offset scanning | `src/process/scanner.rs`, `src/memory/stable/signatures.rs`, `src/memory/lazer_{loader,offsets,version}.rs` | `Pattern`, `StablePatterns`, `LazerOffsetLoader` |
@@ -112,9 +112,9 @@ checksum-verified payload and game installation remain untouched.
 | Listener bind/reload/drain | `src/server/runtime.rs` | `ListenerRuntime`, `AxumListenerFactory`, `ListenerOwner` |
 | Live and endpoint calculation | `src/calculation/*`, `crates/vosu-pp/src/lib.rs` | `LiveStateCalculationBackend`, `LiveBeatmapEngine`, `LegacyRosuEngine` |
 | Filesystem and platform paths | `src/platform.rs`, `src/server/files.rs` | `Paths`, `safe_child`, `resolve_resource` |
-| Configuration | `src/config/*` | `ConfigStore`, `ConfigDocument`, `ConfigSchema` |
-| Desktop integration | `src/desktop/*` | session tray, executable ownership policy, Linux `login::reconcile` |
-| Self-update | `src/updater/*` | startup recovery, release validation, prepare/transaction/platform stages |
+| Configuration | `crates/vosu-core/src/config/*` | `ConfigStore`, `ConfigDocument`, `ConfigSchema` |
+| Desktop integration | `crates/vosu-core/src/desktop/*` | session tray, executable ownership policy, Linux `login::reconcile` |
+| Self-update | `crates/vosu-core/src/updater/*` | startup recovery, release validation, prepare/transaction/platform stages |
 | Hosted tools | `src/tools/{mod,manifest,process,http,catalog,catalog_sources}.rs` | `ToolHost`, manifest validation, configurable tool/overlay catalog sources, hardened atomic package installation, supervised children and proxy/session authorization |
 | Live compatibility validation | `tools/live-parity/*` | `run.py`, `parity_capture.py`, `parity_compare.py`, `parity_diff.py` |
 
@@ -206,7 +206,7 @@ Windows shared file persistence (`src/platform/windows.rs::atomic_replace`) keep
 
 `ReloadableCounterService` replaces only root-specific filesystem selection on reload. Install admission (four jobs), the install gate, cancellation and active-job join accounting remain shared across all generations; detached jobs remain shutdown-owned after HTTP cancellation. No retired-generation registry is needed.
 
-`src/updater.rs` and its `release`, `prepare`, `transaction`, `startup`, `helper`, and `platform` modules form a crash-recoverable transactional, single-flight update boundary. Release validation precedes preparation; a durable `.vosu-update.json` install record drives candidate/rollback recovery on the next start. Update handoff is owned by the application lifecycle so the listener and other services shut down before replacement. Release archive entry and expanded-byte limits are enforced in this boundary.
+`crates/vosu-core/src/updater.rs` and its `release`, `prepare`, `transaction`, `startup`, `helper`, and `platform` modules form a crash-recoverable transactional, single-flight update boundary. Release validation precedes preparation; a durable `.vosu-update.json` install record drives candidate/rollback recovery on the next start. Update handoff is owned by the application lifecycle so the listener and other services shut down before replacement. Release archive entry and expanded-byte limits are enforced in this boundary.
 
 Candidate/rollback readiness uses a one-use secret delivered only through the exact child's piped stdin, not process-visible arguments or the durable record. The public transaction token still selects the transaction but cannot substitute for that readiness secret.
 

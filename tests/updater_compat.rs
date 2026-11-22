@@ -15,7 +15,7 @@ use std::{
 use semver::Version;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
-use vosu::updater::{
+use vosu_core::updater::{
     EncodedOsString, INSTALL_RECORD_NAME, InstallPhase, InstallRecord, MajorRelease,
     ProcessIdentity, RecoveryAction, ReleaseDecision, StartupIntent, TransactionGuard, UpdateError,
     UpdatePlatform, classify_recovery, load_record, parse_latest_release,

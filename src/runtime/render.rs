@@ -116,7 +116,7 @@ pub(super) const CATALOG_NOTICE: &str = concat!(
 #[derive(Clone)]
 pub(super) enum UpdateNotice {
     Minor(String),
-    Major(crate::updater::MajorRelease),
+    Major(vosu_core::updater::MajorRelease),
 }
 
 pub(super) fn render_homepage(
