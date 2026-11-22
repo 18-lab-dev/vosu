@@ -278,6 +278,39 @@ class ModuleBoundariesTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(set(edges), {("alpha", "beta"), ("beta", "gamma")})
 
+    def test_resolves_a_grouped_root_reexport_back_to_its_owning_module(self):
+        # `pub use beta::{Thing};` lets another module reach `beta::Thing`
+        # as a bare `crate::Thing`, never spelling `crate::beta::Thing`;
+        # `CRATE_PATH`'s own bare-name capture cannot trace that back to a
+        # module on its own, so `reexport_symbol_modules` must (da0300b).
+        lib_text = "pub mod alpha;\npub mod beta;\npub mod gamma;\npub use beta::{Thing};\n"
+        src_files = {"alpha.rs": "use crate::Thing;\n"}
+        self.rules.write_text("", encoding="utf-8")
+        errors, edges = boundaries.check(self.rules, src_files=src_files, lib_text=lib_text)
+        self.assertEqual(set(edges), {("alpha", "beta")})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("new module edge alpha -> beta", errors[0])
+
+    def test_resolves_a_single_root_reexport_back_to_its_owning_module(self):
+        # `pub use beta::Thing;` (no braces) is the single-symbol form of
+        # the same re-export; `reexport_symbol_modules` resolves it too.
+        lib_text = "pub mod alpha;\npub mod beta;\npub mod gamma;\npub use beta::Thing;\n"
+        src_files = {"alpha.rs": "use crate::Thing;\n"}
+        self.rules.write_text("alpha -> beta\n", encoding="utf-8")
+        errors, edges = boundaries.check(self.rules, src_files=src_files, lib_text=lib_text)
+        self.assertEqual(errors, [])
+        self.assertEqual(set(edges), {("alpha", "beta")})
+
+    def test_a_root_reexport_naming_the_users_own_module_is_not_an_edge(self):
+        # `alpha` re-exporting its own symbol and then using it through
+        # `crate::Thing` is not a dependency on another module.
+        lib_text = "pub mod alpha;\npub mod beta;\npub mod gamma;\npub use alpha::Thing;\n"
+        src_files = {"alpha.rs": "use crate::Thing;\n"}
+        self.rules.write_text("", encoding="utf-8")
+        errors, edges = boundaries.check(self.rules, src_files=src_files, lib_text=lib_text)
+        self.assertEqual(errors, [])
+        self.assertEqual(edges, {})
+
 
 if __name__ == "__main__":
     unittest.main()
