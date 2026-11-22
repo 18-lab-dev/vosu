@@ -31,7 +31,20 @@ def classify(paths):
         code = True
         # Pure schema/calculator changes retain the Windows cross-check. Everything
         # else defaults to native verification; new shared/platform files fail safe.
-        if not path.startswith(("src/api/", "src/model/", "src/calculation/", "crates/vosu-pp/", "benches/", "tools/oracle/")):
+        # `src/calculation/` moved out of the root package in M0: the JS-compatible
+        # root helpers, the calculation engines, and the osu! value types it
+        # covered now live in `crates/vosu-osu-model/` and `crates/vosu-osu-calc/`.
+        if not path.startswith(
+            (
+                "src/api/",
+                "src/model/",
+                "crates/vosu-osu-model/",
+                "crates/vosu-osu-calc/",
+                "crates/vosu-pp/",
+                "benches/",
+                "tools/oracle/",
+            )
+        ):
             native = True
         if is_ui_path(path):
             ui = True
