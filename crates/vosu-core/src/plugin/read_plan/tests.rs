@@ -801,6 +801,82 @@ fn target_gone_is_reported_before_any_read_when_the_process_is_already_dead() {
 }
 
 #[test]
+fn target_gone_outranks_ref_op_wrong_width_in_both_execution_paths() {
+    // A dependent stage whose `ref_op` is the wrong width *and* a dead
+    // target: both `execute` and `execute_bytes` must reject with the
+    // same variant (F2) — before this fix `execute` checked liveness
+    // first and `execute_bytes` checked the ref-op width first, so they
+    // disagreed on exactly this combination.
+    struct DeadMemory;
+    impl ProcessMemory for DeadMemory {
+        fn read_exact(&self, _address: usize, _dst: &mut [u8]) -> Result<(), MemoryError> {
+            panic!("must never read a dead target")
+        }
+        fn read_many(
+            &self,
+            _reads: &mut [vosu_sys::process::ReadRequest<'_>],
+        ) -> Result<(), MemoryError> {
+            panic!("must never read a dead target")
+        }
+        fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
+            Ok(Vec::new())
+        }
+        fn is_alive(&self) -> bool {
+            false
+        }
+    }
+
+    let submit = ReadPlanSubmit {
+        plan: 41,
+        handle: 1,
+        root: PlanBase::Absolute(0x1000),
+        stages: vec![
+            Stage {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops: vec![op(0, 4)],
+            },
+            Stage {
+                base: StageBase::Dependent {
+                    ref_stage: 0,
+                    ref_op: 0,
+                },
+                base_offset: 0,
+                ops: vec![op(0, 4)],
+            },
+        ],
+        sync: false,
+    };
+
+    let error = execute(
+        &submit,
+        &DeadMemory,
+        ProcessBitness::X64,
+        &NoModules,
+        far_deadline(),
+    )
+    .unwrap_err();
+    assert_eq!(error, ReadPlanError::TargetGone);
+
+    let message = Message::ReadPlanSubmit(submit);
+    let flags = message.flags();
+    let payload = message.encode_payload().unwrap();
+    let error = execute_bytes(
+        &payload,
+        flags,
+        &DeadMemory,
+        ProcessBitness::X64,
+        &NoModules,
+        far_deadline(),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        ExecuteBytesError::Execute(ReadPlanError::TargetGone)
+    ));
+}
+
+#[test]
 fn a_blocked_dependent_stage_reports_every_op_message_less() {
     // Stage 0's own read genuinely fails against an unmapped address, so
     // it carries a message; stage 1's three ops are all blocked by that
@@ -907,3 +983,9 @@ fn many_failing_ops_stay_within_the_read_plan_max_bytes_cap() {
 /// into its own file so this module stays under the maintained-file line
 /// limit, `docs/architecture/source-map.md`).
 mod zero_alloc;
+
+/// See `tests::tests_prop` for the F2 `execute`/`execute_bytes`
+/// differential property test (split out for the same reason as
+/// `zero_alloc`: `docs/architecture/source-map.md`'s maintained-file
+/// line limit).
+mod tests_prop;

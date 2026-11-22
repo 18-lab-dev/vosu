@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 1f173e3d2db2cffffa1b5b728c283d2b2bdda3c830ce8aa4a643b94b1b1fa9d0 # shrinks to (root, gen_stages) = (Absolute(65536), [GenStage { base: Root, base_offset: 0, extra: [(64, 1), (-1000000000000, 1)] }])
