@@ -14,11 +14,18 @@ needs only Rust and a native C toolchain; no Node.js, Electron, or .NET.
    | --- | --- |
    | Debian / Ubuntu | `sudo apt install build-essential clang pkg-config libelf-dev zlib1g-dev libbpf-dev` |
    | Arch Linux | `sudo pacman -S --needed base-devel clang libelf zlib libbpf` |
-   | Windows | Visual Studio Build Tools with the **Desktop development with C++** workload (MSVC and the Windows SDK) |
+   | Windows | Visual Studio Build Tools with the **Desktop development with C++** workload (MSVC and the Windows SDK), plus Clang on `PATH` separately (e.g. the [LLVM installer](https://github.com/llvm/llvm-project/releases)) |
 
    Clang, libelf, zlib, and libbpf compile the default `linux-process-events`
    eBPF backend. Building with `--no-default-features` skips them and produces a
    polling-only Linux binary.
+
+   `crates/vosu-plugin-api/tests/layout.rs` also needs a C compiler on `PATH`
+   (`$CC`, `cc`, `clang`, or `gcc`) to check `include/vosu_plugin.h` against the
+   Rust ABI types with `-fsyntax-only`. On Linux/macOS this is already covered by
+   the table above; on Windows it specifically means Clang, since the test's
+   flags are gcc-style and `cl.exe` does not accept them — MSVC alone does not
+   satisfy this test.
 
    On Debian and Ubuntu, the eBPF compile also needs the multiarch kernel
    headers on its include path (`asm/types.h` lives under

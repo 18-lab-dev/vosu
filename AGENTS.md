@@ -13,7 +13,7 @@
 
 ## Toolchain and commands
 
-Use the pinned Rust 1.96.1 toolchain from `rust-toolchain.toml`, including `rustfmt`, `clippy`, and both native targets. Windows builds require MSVC and the Windows SDK; Linux builds require a GNU C toolchain, Clang, pkg-config, and libelf, zlib, and libbpf development files for the process-event backends (per-distribution packages are in CONTRIBUTING.md). Keep `--locked`. Linux releases explicitly enable `linux-process-events`; Windows releases use no default features. GPU driver development libraries are not required.
+Use the pinned Rust 1.96.1 toolchain from `rust-toolchain.toml`, including `rustfmt`, `clippy`, and both native targets. Windows builds require MSVC and the Windows SDK; Linux builds require a GNU C toolchain, Clang, pkg-config, and libelf, zlib, and libbpf development files for the process-event backends (per-distribution packages are in CONTRIBUTING.md). `crates/vosu-plugin-api/tests/layout.rs` additionally needs a C compiler on `PATH` (`$CC`, `cc`, `clang`, or `gcc`) to verify `include/vosu_plugin.h` against the Rust ABI types; on Windows this means Clang specifically (not `cl.exe`, which the test never invokes), installed separately from the MSVC/Windows SDK workload above. Keep `--locked`. Linux releases explicitly enable `linux-process-events`; Windows releases use no default features. GPU driver development libraries are not required.
 
 ```sh
 # Local debug build/run
