@@ -36,6 +36,14 @@ RUNNER_ONLY = (
     # installed Playwright module through --playwright-module instead.
     re.compile(r"^npm install "),
     re.compile(r"^npx --yes playwright@\S+ install "),
+    # Hosted lookup of whether this push's exact SHA already has a passing
+    # "CI required" check run from its ci/<topic> landing; the local
+    # prepush gate IS that verification, so there is nothing to replicate.
+    re.compile(r"^python scripts/ci-check-verified\.py$"),
+    # Cache-warming rebuilds that run only on an already-verified main push
+    # whose cache missed: they recompile without testing, as a `--no-run`
+    # prefix of the full test command already covered just above.
+    re.compile(r"^cargo test --workspace --lib --bins --tests --examples --all-features --locked(?: --target \S+)? --no-run$"),
 )
 
 # Machine-specific arguments compared as placeholders on both sides.
@@ -166,8 +174,12 @@ class CiDriftTest(unittest.TestCase):
     def test_drift_test_catches_an_added_fake_step(self):
         text = CI_YML.read_text(encoding="utf-8")
         tampered = text.replace(
-            "      - name: Check formatting before native setup\n        run: cargo fmt --all -- --check\n",
-            "      - name: Check formatting before native setup\n        run: cargo fmt --all -- --check\n"
+            "      - name: Check formatting before native setup\n"
+            "        if: needs.changes.outputs.verified != 'true'\n"
+            "        run: cargo fmt --all -- --check\n",
+            "      - name: Check formatting before native setup\n"
+            "        if: needs.changes.outputs.verified != 'true'\n"
+            "        run: cargo fmt --all -- --check\n"
             "      - name: Fake uncovered step\n        run: cargo foo --not-a-real-check\n",
             1,
         )

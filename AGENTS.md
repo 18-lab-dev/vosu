@@ -110,6 +110,7 @@ python scripts/land.py [--topic <name>]
 - `land.py` accepts the evidence only when every step passed, or was not applicable, for exactly `HEAD`, and `HEAD` fast-forwards `origin/main`. It then pushes `ci/<topic>`, waits for hosted CI on that commit, fast-forwards `main`, and deletes the branch. Pass `--base <branch>` (and the matching `prepush.py --base <branch>`) to land onto a branch other than `main`, e.g. `v2/main`.
 - `--skip` is for local iteration only; `land.py` refuses evidence with a skipped or failed required step. Fix the cause and rerun. Do not weaken tests or bypass the gate.
 - When `ci.yml` gains a check, add it to `prepush.py` or `native-ci.ps1` in the same change. `scripts/test_gate_tooling.py` fails until the local gate covers it.
+- Hosted cache saves for Cargo downloads and `target` artifacts run only from `main` (caches are branch-scoped and only `main`'s are readable cross-branch); `ci/<topic>` and pull-request runs restore only. A `main` push whose exact SHA already passed `CI required` on its `ci/<topic>` run (checked by `scripts/ci-check-verified.py`) skips its own lint/test steps and, on a cache miss, only rebuilds without testing to refresh the cache.
 
 ## Compatibility and security invariants
 

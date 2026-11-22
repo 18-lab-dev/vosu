@@ -1,3 +1,10 @@
+# Cost policy: hosted-cache saves (Cargo downloads, Rust `target` artifacts)
+# run only from `main`, since GitHub scopes caches to the branch that wrote
+# them and only `main`'s caches are readable cross-branch; `ci/**` and pull
+# request runs restore only. A `main` push whose exact SHA already has a
+# passing "CI required" run (recorded by `scripts/land.py`'s ci/<topic>
+# landing) skips its own lint/test steps and only rebuilds, without testing,
+# to refresh a missed cache; see scripts/ci-check-verified.py.
 name: Rust CI
 
 on:
@@ -18,11 +25,15 @@ jobs:
     name: Classify changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: read
     outputs:
       code: ${{ steps.changes.outputs.code }}
       native: ${{ steps.changes.outputs.native }}
       ui: ${{ steps.changes.outputs.ui }}
       week: ${{ steps.week.outputs.week }}
+      verified: ${{ steps.verified.outputs.verified }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -47,6 +58,12 @@ jobs:
         run: python -m unittest discover -s scripts -p 'test_*.py'
       - id: week
         run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - id: verified
+        name: Check for an already-verified CI required run on this SHA
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/ci-check-verified.py
 
   validation:
     name: Ubuntu validation
@@ -71,6 +88,7 @@ jobs:
           components: rustfmt, clippy, llvm-tools
           targets: x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc
       - name: Check formatting before native setup
+        if: needs.changes.outputs.verified != 'true'
         run: cargo fmt --all -- --check
       - name: Install Linux native dependencies
         run: |
@@ -84,7 +102,8 @@ jobs:
           tool: cargo-xwin@0.23.1
           fallback: none
       - name: Restore Cargo downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             ~/.cargo/registry
@@ -92,7 +111,8 @@ jobs:
           key: cargo-downloads-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-downloads-${{ runner.os }}-
       - name: Restore Rust artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        id: target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
           # Weekly generations bound archive churn while refreshing workspace artifacts.
@@ -115,18 +135,40 @@ jobs:
           path: .xwin-cache
           key: ${{ steps.sdk.outputs.cache-primary-key }}
       - name: Lint Linux targets and features
+        if: needs.changes.outputs.verified != 'true'
         env:
           C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test workspace libraries, binaries, integration tests, and examples
+        if: needs.changes.outputs.verified != 'true'
         env:
           C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo test --workspace --lib --bins --tests --examples --all-features --locked
+      - name: Warm build for cache refresh (already verified on ci/<topic>)
+        if: needs.changes.outputs.verified == 'true' && steps.target-cache.outputs.cache-hit != 'true'
+        env:
+          C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
+        run: cargo test --workspace --lib --bins --tests --examples --all-features --locked --no-run
       - name: Report runner disk headroom
         if: always()
         run: df -h / "${{ github.workspace }}"
       - name: Lint Windows MSVC targets and features
+        if: needs.changes.outputs.verified != 'true'
         run: cargo xwin clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
+      - name: Save Cargo downloads
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+      - name: Save Rust artifacts
+        if: github.ref == 'refs/heads/main' && steps.target-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          key: ${{ steps.target-cache.outputs.cache-primary-key }}
 
   dashboard:
     name: Dashboard smoke
@@ -149,7 +191,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes clang libbpf-dev libelf-dev
       - name: Restore Cargo downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             ~/.cargo/registry
@@ -157,28 +200,50 @@ jobs:
           key: cargo-downloads-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-downloads-${{ runner.os }}-
       - name: Restore Rust artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        id: target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
           key: rust-${{ runner.os }}-1.96.1-dashboard-${{ needs.changes.outputs.week }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
           restore-keys: rust-${{ runner.os }}-1.96.1-dashboard-
       - name: Build debug daemon
+        # Needed to run the smokes, or (on an already-verified main push) to
+        # warm a missed cache; a cache hit with no smokes to run is a no-op.
+        if: needs.changes.outputs.verified != 'true' || steps.target-cache.outputs.cache-hit != 'true'
         env:
           C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo build --locked --features test-harness
       - name: Install pinned Node toolchain
+        if: needs.changes.outputs.verified != 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
       - name: Install pinned Playwright and Chromium
+        if: needs.changes.outputs.verified != 'true'
         working-directory: tests
         run: |
           npm install --no-save playwright@1.61.1
           npx --yes playwright@1.61.1 install --with-deps chromium
       - name: Tool host HTTP boundary smoke
+        if: needs.changes.outputs.verified != 'true'
         run: python tests/tool_host_smoke.py --binary target/debug/vosu
       - name: Dashboard browser smoke
+        if: needs.changes.outputs.verified != 'true'
         run: python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module "$PWD/tests/node_modules/playwright/index.mjs"
+      - name: Save Cargo downloads
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+      - name: Save Rust artifacts
+        if: github.ref == 'refs/heads/main' && steps.target-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          key: ${{ steps.target-cache.outputs.cache-primary-key }}
 
   windows-native:
     name: Windows MSVC native verification
@@ -208,7 +273,8 @@ jobs:
           components: clippy
           targets: x86_64-pc-windows-msvc
       - name: Restore Cargo downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             ~/.cargo/registry
@@ -216,7 +282,8 @@ jobs:
           key: cargo-downloads-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-downloads-${{ runner.os }}-
       - name: Restore Rust artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        id: target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: target
           # Weekly generations bound archive churn while refreshing workspace
@@ -226,9 +293,28 @@ jobs:
           restore-keys: rust-${{ runner.os }}-1.96.1-native-msvc-lt-
 
       - name: Lint native Windows targets and features
+        if: needs.changes.outputs.verified != 'true'
         run: cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
       - name: Test native Windows workspace
+        if: needs.changes.outputs.verified != 'true'
         run: cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc
+      - name: Warm build for cache refresh (already verified on ci/<topic>)
+        if: needs.changes.outputs.verified == 'true' && steps.target-cache.outputs.cache-hit != 'true'
+        run: cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc --no-run
+      - name: Save Cargo downloads
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+      - name: Save Rust artifacts
+        if: github.ref == 'refs/heads/main' && steps.target-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target
+          key: ${{ steps.target-cache.outputs.cache-primary-key }}
 
   required:
     name: CI required
