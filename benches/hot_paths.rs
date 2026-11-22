@@ -16,6 +16,7 @@ use vosu::server::v2_subscription::{
 use vosu::server::websocket::{
     Filter, Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub,
 };
+use vosu_core::plugin::{ModuleResolver, execute_into};
 use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
     Ruleset as BeatmapRuleset, ScoringMode,
@@ -29,6 +30,7 @@ use vosu_osu_reader::memory::{
 };
 use vosu_osu_reader::process::{Pattern, ProcessHandle};
 use vosu_osu_state::{PreciseState, RegularState, StateBundleSnapshot};
+use vosu_plugin_api::{Message, PlanBase, PlanOp, ReadPlanSubmit, Stage, StageBase};
 use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 const MAP: &[u8] = br#"osu file format v14
@@ -213,6 +215,10 @@ fn api_snapshot_with_history(history: usize) -> CombinedSnapshot {
         [instance],
     )))
 }
+
+#[path = "hot_paths/read_plan_executor.rs"]
+mod read_plan_executor;
+use read_plan_executor::bench_read_plan_executor;
 
 fn bench_batch_scan(c: &mut Criterion) {
     let base = 0x1000;
@@ -843,6 +849,7 @@ fn bench_subscription_documents(c: &mut Criterion) {
 
 fn hot_paths(c: &mut Criterion) {
     bench_batch_scan(c);
+    bench_read_plan_executor(c);
     bench_snapshot_reads(c);
     bench_map_calculation(c);
     #[cfg(target_os = "linux")]
