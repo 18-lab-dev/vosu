@@ -48,14 +48,19 @@ segment above addresses it by.
 
 The rule ranges over identified sessions only (see Visibility below). An
 identified session whose game plugin set `focus_priority: true` on its
-`SESSION_IDENTIFY` (`docs/v2/plugin-abi.md` §6.2; core enforces at most one
-such session held at a time, refusing a second) is always the focused
+`SESSION_IDENTIFY` (`docs/v2/plugin-abi.md` §6.2; core holds at most one
+such session at a time — the first identified, kept until it detaches — and
+ignores the flag on any later `SESSION_IDENTIFY` while one is already held)
+is always the focused
 session while it exists, regardless of OS foreground or recency. The osu!
 plugin sets this on the stable tournament-manager session once the M4a-
 or-later aggregate task (`docs/v2/implementation-plan.md`) lands, matching
 1.x's `select()`, which prefers the tournament manager unconditionally
 (`src/instance.rs:603-618`, `src/runtime/worker.rs:867-875`) — nothing
-else in 2.0 sets it at this freeze. Otherwise, exactly
+else in 2.0 sets it at this freeze (if two `--tournament` processes somehow
+attach at once, 2.0 keeps whichever is identified first, which need not be
+1.x's lowest-PID choice — an edge of an edge 1.x itself does not define
+deterministically either). Otherwise, exactly
 one identified session is focused whenever at least one exists: the session
 whose process owns the OS foreground window, or, when no identified session's
 process does, whichever session was most recently focused. The first focus

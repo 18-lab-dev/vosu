@@ -94,8 +94,11 @@ for types and `pid`/`session` constraints. Core fills `session`, `pid`,
 `focused`, and `plugin` directly; it has no other source for `game`,
 `variant`, `name`, and `version`, so the game plugin fills those four by
 sending `VOSU_OP_SESSION_IDENTIFY {session handle, game, variant, name,
-version}` once at attach (`docs/v2/plugin-abi.md`). A plugin never publishes
-the other four leaves itself.
+version, focus_priority}` once at attach (`docs/v2/plugin-abi.md`); `focus_priority`
+is a sibling parameter of that same message governing focus selection
+(`docs/v2/api-v1.md`'s Focus rule), not one of `vosu.client`'s own published
+leaves. A plugin never publishes
+the other four `vosu.client` leaves itself.
 
 ## Focus
 

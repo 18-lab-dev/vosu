@@ -444,7 +444,11 @@ bounds tests, unknown-flag rejection); `cargo test --locked -p vosu-core` host
 tests (trust refusal of `in-process` for an ineligible plugin, matcher
 overlap at validation and at runtime, `SESSION_DECLINE` re-offering a PID
 generation to the next matching plugin in install order and being refused
-after `SESSION_IDENTIFY`, identification timeout, focus delivery order, read-plan
+  after `SESSION_IDENTIFY`, identification timeout, focus delivery order,
+  `focus_priority` held by the first session to set it and ignored (logged
+  once, not refused) on a second session's `SESSION_IDENTIFY` while it is
+  held, then picked up by the next session to set it once the holder
+  detaches, read-plan
 validation including a dependent stage whose `ref_op` length differs from
 the pointer width, `VOSU_READ_PLAN_SYNC` refused on a dispatch thread and
 timing out with `VOSU_ERR_TIMED_OUT`, log rate limiting, timer
@@ -1288,7 +1292,9 @@ states what was adopted and why. Spec amendments land in A1.
   always the focused session regardless of OS foreground or recency — a
   deliberate addition to `docs/v2/api-v1.md`'s Focus rule, matching 1.x's
   `select()`, which prefers the manager unconditionally
-  (`src/instance.rs:603-618`, `src/runtime/worker.rs:867-875`) — and
+  (`src/instance.rs:603-618`, `src/runtime/worker.rs:867-875`; if two
+  `--tournament` processes somehow attach at once, 2.0 keeps whichever is
+  identified first rather than 1.x's lowest-PID choice, an edge of an edge) — and
   publish the resulting aggregate under `vosu.osu.tourney` to **every**
   currently attached stable session, not only the manager's own, exactly
   as 1.x's stable branch builds it per client. Until that task lands,
@@ -1300,13 +1306,11 @@ states what was adopted and why. Spec amendments land in A1.
   `v2-precise`), recorded as a `temporary`-class divergence in
   `tests/fixtures/upstream/DIVERGENCES.md` (G1's per-entry class scheme), and
   the M8 day-0 gate fails closed on a remaining `temporary` entry, or on
-  any entry whose class is missing or is none of the four defined classes
-  — the
-  file's permanent `security`/`contract`/`licensing` entries, correctly
-  recorded, never fail it —
-  so this entry must be
-  removed — the aggregate task must land — before day-0. "Never identify"
-  is never used as a deliberate
+  any entry whose class is missing or is none of the four defined classes;
+  the file's permanent `security`/`contract`/`licensing` entries, correctly
+  recorded, never fail it, so this entry must be removed — the aggregate
+  task must land — before day-0. "Never identify" is never used as a
+  deliberate
   state. Why: 1.x
   production never marks a tournament manager (`src/instance.rs:137` has
   only test callers; `src/instance.rs:473`) and exposes spectators as
