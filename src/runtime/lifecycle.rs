@@ -18,6 +18,12 @@ pub struct ProductionRuntime {
     tools: AsyncMutex<Option<Arc<crate::tools::ToolHost>>>,
     dev_tools: Vec<PathBuf>,
     plugins: Arc<PluginHost>,
+    /// Bridge B2's `ConfigStore` watch task (§6.9): has no other way to
+    /// stop, since `ConfigStore::shutdown` never drops the `changed`
+    /// sender this task's `RecvError::Closed` path waits on. Aborted
+    /// explicitly in `shutdown` instead of being left to outlive the
+    /// Tokio runtime.
+    plugin_settings_watch: AsyncMutex<Option<JoinHandle<()>>>,
     listener: AsyncMutex<Option<ListenerOwner>>,
     dashboard_listener: AsyncMutex<Option<ListenerOwner>>,
     origins: Arc<crate::server::origins::Origins>,
@@ -35,6 +41,9 @@ pub struct ProductionRuntime {
 impl ProductionRuntime {
     async fn shutdown(&self) -> io::Result<()> {
         self.shutdown_token.cancel();
+        if let Some(watch) = self.plugin_settings_watch.lock().await.take() {
+            watch.abort();
+        }
         if let Some(tools) = self.tools.lock().await.take() {
             tools.shutdown().await;
         }
@@ -861,7 +870,7 @@ pub async fn run_cli() -> io::Result<()> {
     let settings_storage: Arc<dyn SettingsStorage> = settings_bridge.clone();
     let plugin_settings = Arc::new(PluginSettingsService::new(settings_storage));
     let plugin_host = PluginHost::new(logger.clone(), plugin_settings, Handle::current());
-    plugin_host.watch_bridge_b2(&settings_bridge, &Handle::current());
+    let plugin_settings_watch = plugin_host.watch_bridge_b2(&settings_bridge, &Handle::current());
     {
         let host = Arc::clone(&plugin_host);
         let logger = logger.clone();
@@ -872,6 +881,7 @@ pub async fn run_cli() -> io::Result<()> {
         .await
         {
             let host = Arc::clone(&plugin_host);
+            plugin_settings_watch.abort();
             let _ = tokio::task::spawn_blocking(move || {
                 host.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE)
             })
@@ -900,6 +910,7 @@ pub async fn run_cli() -> io::Result<()> {
         tools: AsyncMutex::new(None),
         dev_tools,
         plugins: plugin_host,
+        plugin_settings_watch: AsyncMutex::new(Some(plugin_settings_watch)),
         listener: AsyncMutex::new(None),
         dashboard_listener: AsyncMutex::new(None),
         origins,

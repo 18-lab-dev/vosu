@@ -242,37 +242,49 @@ impl ConfigSettingsBridgeB2 {
     /// `ConfigStore::update` call, not only a write through this bridge's
     /// own `store` — and, whenever one actually touches any of its five
     /// keys, rebuilds the effective settings object and hands it to
-    /// `delivery` for `BRIDGE_B2_PLUGIN_ID`. Stops on its own once
-    /// `ConfigStore` itself shuts down.
+    /// `delivery` for `BRIDGE_B2_PLUGIN_ID`. Returns the task's
+    /// `JoinHandle` so the caller can stop it explicitly
+    /// (`ProductionRuntime::shutdown`): this task holds `service`, which
+    /// holds `self` (`Arc<ConfigSettingsBridgeB2>` -> `Arc<ConfigStore>`),
+    /// and `ConfigStore::shutdown` does not drop its own `changed`
+    /// sender, so `RecvError::Closed` never actually arrives in
+    /// practice — the task does not stop "on its own".
     pub fn watch_config_changes(
         self: &Arc<Self>,
         runtime: &Handle,
         service: Arc<PluginSettingsService>,
         delivery: Arc<dyn SettingsChangeDelivery>,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         let mut changes = self.config.subscribe();
         runtime.spawn(async move {
+            let deliver_current = |values_service: &PluginSettingsService| {
+                let schema = ConfigSettingsBridgeB2::schema();
+                if let Ok(values) =
+                    values_service.effective_settings(BRIDGE_B2_PLUGIN_ID, Some(&schema))
+                {
+                    delivery.settings_changed(
+                        BRIDGE_B2_PLUGIN_ID,
+                        Message::SettingsChanged(SettingsChanged { values }),
+                    );
+                }
+            };
             loop {
                 match changes.recv().await {
                     Ok(ConfigChanged { old, new }) => {
-                        if !bridge_b2_keys_changed(&old, &new) {
-                            continue;
-                        }
-                        let schema = ConfigSettingsBridgeB2::schema();
-                        if let Ok(values) =
-                            service.effective_settings(BRIDGE_B2_PLUGIN_ID, Some(&schema))
-                        {
-                            delivery.settings_changed(
-                                BRIDGE_B2_PLUGIN_ID,
-                                Message::SettingsChanged(SettingsChanged { values }),
-                            );
+                        if bridge_b2_keys_changed(&old, &new) {
+                            deliver_current(&service);
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    // A lagged receiver has already dropped one or more
+                    // change events: whether any of them touched a B2
+                    // key is unknowable from here, so resend the current
+                    // effective settings unconditionally rather than
+                    // risk the plugin silently keeping a stale value.
+                    Err(broadcast::error::RecvError::Lagged(_)) => deliver_current(&service),
                     Err(broadcast::error::RecvError::Closed) => return,
                 }
             }
-        });
+        })
     }
 }
 
