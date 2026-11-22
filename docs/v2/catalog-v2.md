@@ -92,8 +92,8 @@ version = "^1.0.0"
   `Manifest::parse`/`Catalog::validate`).
 - A tool's `requires`/`optional` list is also its permission surface: it may
   invoke only `action:` ids present there, after they resolve to an installed
-  provider, through the route `docs/v2/api-v1.md` defines
-  (`POST /api/v1/sessions/{id|active}/actions/{plugin-id}.{name}`, authorized
+  provider, through the action routes `docs/v2/api-v1.md` defines
+  (session-scoped and session-less, authorized
   by the dashboard-minted tool session that spec names). There is no separate
   "actions it invokes" list; declaring the capability *is* declaring the
   intent to call it. Overlays never invoke actions
@@ -505,8 +505,8 @@ game, not any real supported or planned integration.
   `{"process_names", "process_path_patterns", "command_line_patterns"}`
   (`docs/v2/plugin-abi.md` owns the matching semantics: regex dialect,
   anchoring, and case rules). A non-game plugin omits it.
-- `packages` is a map from target to `{"url","sha256","size"}`, identical
-  field rules to 1.x `Package`: absolute HTTPS URL without embedded
+- `packages` is a map from target to `{"url","sha256","size"}`, with the same
+  field rules as 1.x `Package` except the size limit (below): absolute HTTPS URL without embedded
   credentials, 64-character hex SHA-256 of the compressed ZIP, exact positive
   byte size. The size is checked against the local package limit (below)
   when installing, not when validating the catalog. Plugin
@@ -597,7 +597,8 @@ map from capability id to candidate plugin providers across every enabled,
 successfully-fetched source's `plugins` entries (own source and
 source-fetch-order are part of each candidate). A candidate is eligible for a
 requirement when its `provides` version satisfies the requirement's
-`VersionReq` and its `host` is satisfied by the running vosu version.
+`VersionReq`, its `host` is satisfied by the running vosu version, and its
+host-target package `size` is within the local package limit.
 
 Selection order among eligible catalog candidates for one capability id is
 strict and needs no user choice:
@@ -684,7 +685,10 @@ approval-gated: it is a plan **error** instead (`"errors"` gains an entry
 such as `"acme.game requests in-process but <source> is not trusted"`), the
 item never reaches `adds`, and the plan cannot be confirmed — matching the
 host's own load-time refusal for an ineligible `in-process` request
-(`docs/v2/plugin-abi.md`). Any other non-empty `errors` means resolution
+(`docs/v2/plugin-abi.md`). An add whose host-target package `size` exceeds
+`MAX_PACKAGE_MIB` is likewise a plan error (`"acme.game is too large to
+install; raise the package limit in Settings"`) and never reaches `adds`.
+Any other non-empty `errors` means resolution
 failed (conflict or cycle messages, see above); `adds` is then empty and the
 plan cannot be confirmed. Confirming returns `{"job_id"}`, polled exactly as
 1.x catalog jobs are.
@@ -890,16 +894,12 @@ On first 2.0 start, migration is one-time and idempotent (same pattern as
   (`docs/tools/protocol.md`'s "catalog identity updates"), not a new
   mechanism. If no 2.0 entry claims it, the 1.x install is left in place,
   unmanaged by the 2.0 catalog, until its source publishes one.
-- **User tools with a `[service]`**: 2.0 tools cannot run a service
-  (`[service]` is removed from v2 manifests), so these migrate to
-  `enabled: false`, `status: "disabled"`, `status_detail: "needs-2.0-update"`.
-  Durable data and settings are kept untouched so re-enabling after the
-  author ships a v2 manifest needs no data migration of its own.
-- **User tools without a `[service]`** (UI-only 1.x tools): also migrate to
-  `disabled`/`needs-2.0-update`, since a 1.x manifest's `[api]`/`[[requires]]`
-  cannot be automatically translated into 2.0 capability ids; only an
-  author-published v2 manifest (with `[[requires]]`/`[[optional]]`) re-enables
-  one.
+- **User tools**: 2.0 tools cannot run a service, and a 1.x manifest's
+  `[service]`/`[api]`/`[[requires]]` cannot be translated into 2.0
+  capability ids, so every 1.x user tool migrates to `enabled: false`,
+  `status: "disabled"`, `status_detail: "needs-2.0-update"`. Durable data and
+  settings are kept untouched, so re-enabling after the author ships a v2
+  `manifest.toml` needs no data migration of its own.
 - **User overlays**: unaffected and left enabled. Overlays never used the
   removed host API, so service removal does not touch them; they keep working
   unmanaged until a `kind = "overlay"` `manifest.toml`-bearing update appears.

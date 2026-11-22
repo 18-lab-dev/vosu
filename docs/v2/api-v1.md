@@ -223,7 +223,7 @@ Every API v1 error response is a JSON body:
 | 400 | `invalid_request` / `invalid_pointer` / `invalid_arguments` | malformed query, body, or pointer |
 | 401 | `unauthorized` | missing/invalid tool-session token or broker credential on an action route |
 | 403 | `forbidden` | peer/Origin policy; or a valid tool session whose action id is not in its resolved `requires`/`optional` |
-| 404 | `unknown_session` / `unknown_namespace` / `unknown_resource` / `unknown_tree` / `unknown_action` / `unknown_job` | id or path never valid for this server |
+| 404 | `unknown_session` / `unknown_namespace` / `unknown_resource` / `unknown_tree` / `unknown_action` / `unknown_job` | id or path never valid for this server; `unknown_job` also for a job another tool session created, so its existence is not disclosed |
 | 405 | `method_not_allowed` | wrong HTTP method on a route |
 | 410 | `unpublished_resource` / `unpublished_tree` | a structurally valid, correctly signed id no longer in the published registry |
 | 413 | `payload_too_large` | job creation/poll/cancel body over the POST body limit |
@@ -425,7 +425,8 @@ if that session later ends.
 - **Authorization**: `GET` and `DELETE /api/v1/jobs/{id}` are action routes
   and need the same tool-session token or broker credential as creating a
   job (Authorization below). A tool session can read and cancel only jobs it
-  created; the broker credential can read and cancel any job.
+  created (another session's job is 404 `unknown_job`); the broker credential
+  can read and cancel any job.
 
 Job creation, polling, and cancellation requests are capped at the existing
 1 MiB POST body limit.
