@@ -1,6 +1,7 @@
 //! Exercises the bundled-form `EchoPlugin`/`ConcurrentEchoPlugin` vtables
 //! directly: `create`, `dispatch` an echoed message back through a fake
 //! `vosu_host_services::send`, and `destroy`.
+#![cfg(feature = "test-harness")]
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
