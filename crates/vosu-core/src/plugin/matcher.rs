@@ -80,7 +80,7 @@ pub struct CompiledMatcher {
 /// Wraps a path-matching pattern in `^(?:…)$` (full-match anchoring, §6.1)
 /// and, for a case-insensitive platform, an inline `(?i)` flag.
 fn anchor(pattern: &str, case_insensitive: bool) -> String {
-    let normalized = normalize_separators(pattern);
+    let normalized = normalize_pattern_separators(pattern);
     if case_insensitive {
         format!("(?i)^(?:{normalized})$")
     } else {
@@ -88,10 +88,47 @@ fn anchor(pattern: &str, case_insensitive: bool) -> String {
     }
 }
 
-/// Normalizes path separators to `/` (§6.1: "Path separators in both the
-/// candidate path and the pattern are normalized to `/` before matching").
-fn normalize_separators(value: &str) -> String {
+/// Normalizes path separators to `/` in an actual candidate path (§6.1:
+/// "Path separators in both the candidate path and the pattern are
+/// normalized to `/` before matching"). A real filesystem path has no
+/// regex escapes, so every `\` is literally a separator here.
+fn normalize_path_separators(value: &str) -> String {
     value.replace('\\', "/")
+}
+
+/// Normalizes path separators to `/` in a *pattern's* source text. Unlike
+/// [`normalize_path_separators`], this must not touch the pattern's own
+/// regex escapes (`\.`, `\(`, `\d`, …) — only a literal escaped backslash
+/// (`\\`, the regex spelling of one literal `\`) is a path separator here.
+/// Rewriting every `\` naively would corrupt `\.` into `/.`, `\(x86\)`
+/// into `/(x86/)`, and so on, silently changing what a valid `regex`
+/// crate pattern matches (§6.1 "Patterns use Rust `regex` crate syntax").
+fn normalize_pattern_separators(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len());
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.clone().next() {
+            Some('\\') => {
+                // `\\`: an escaped literal backslash, i.e. a path
+                // separator written in regex syntax.
+                chars.next();
+                out.push('/');
+            }
+            Some(next) => {
+                // Any other escape (`\.`, `\(`, `\d`, …): pass both
+                // characters through unchanged.
+                chars.next();
+                out.push('\\');
+                out.push(next);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 fn case_insensitive_names(platform: MatchPlatform) -> bool {
@@ -180,7 +217,7 @@ impl CompiledMatcher {
         {
             return true;
         }
-        let path = normalize_separators(&candidate.path);
+        let path = normalize_path_separators(&candidate.path);
         if self
             .process_path_patterns
             .iter()
@@ -360,10 +397,10 @@ mod tests {
     #[test]
     fn path_patterns_are_full_match_anchored_and_normalize_separators() {
         // No backslash escapes in the pattern itself: §6.1's path
-        // separator normalization applies the same naive `\`→`/` rewrite
-        // to the pattern text, so a path pattern must spell path
-        // separators literally rather than escape regex metacharacters
-        // with `\`.
+        // separator normalization rewrites only an escaped literal
+        // backslash (`\\`) in the pattern text, so a bare `\` here would be
+        // a dangling, invalid regex escape rather than a separator; a
+        // pattern spells its own separators as `/` directly.
         let table = MatchTable {
             process_path_patterns: vec![".*/osu-lazer/osu!.exe".to_string()],
             ..Default::default()
@@ -372,6 +409,52 @@ mod tests {
         assert!(matcher.matches(&candidate("osu!.exe", r"C:\games\osu-lazer\osu!.exe", "")));
         // Not a full match: extra trailing text after the pattern's own end.
         assert!(!matcher.matches(&candidate("osu!.exe", "/games/osu-lazer/osu!.exe.bak", "")));
+    }
+
+    #[test]
+    fn pattern_escaped_dot_is_not_corrupted_by_separator_normalization() {
+        // `\.` is a regex-escaped literal dot, not a path separator: the
+        // naive `\`→`/` rewrite used to turn it into `/.`, which no longer
+        // matches a literal `.` (P1).
+        let table = MatchTable {
+            process_path_patterns: vec![r".*/osu!\.exe".to_string()],
+            ..Default::default()
+        };
+        let matcher = CompiledMatcher::compile(MatchPlatform::Linux, &table).unwrap();
+        assert!(matcher.matches(&candidate("osu!.exe", "/home/u/osu!.exe", "")));
+    }
+
+    #[test]
+    fn pattern_escaped_parens_are_not_corrupted_by_separator_normalization() {
+        // `\(x86\)` is a regex-escaped literal "(x86)", not a path
+        // separator plus a capture group: the naive rewrite used to turn
+        // it into `/(x86/)`, matching "/x86/" instead of the literal
+        // parenthesized text (P1).
+        let table = MatchTable {
+            process_path_patterns: vec![r".*/Program Files \(x86\)/.*".to_string()],
+            ..Default::default()
+        };
+        let matcher = CompiledMatcher::compile(MatchPlatform::Linux, &table).unwrap();
+        assert!(matcher.matches(&candidate(
+            "osu!.exe",
+            "/opt/Program Files (x86)/osu!.exe",
+            ""
+        )));
+        assert!(!matcher.matches(&candidate("osu!.exe", "/opt/x86/osu!.exe", "")));
+    }
+
+    #[test]
+    fn windows_style_pattern_keeps_its_escaped_dot_while_its_separators_normalize() {
+        // A pattern spelling its separators as escaped backslashes (valid
+        // regex syntax for a literal `\`) must still normalize only those,
+        // keeping `\.` intact.
+        let table = MatchTable {
+            process_path_patterns: vec![r".*\\osu!\.exe".to_string()],
+            ..Default::default()
+        };
+        let matcher = CompiledMatcher::compile(MatchPlatform::Windows, &table).unwrap();
+        assert!(matcher.matches(&candidate("osu!.exe", r"C:\games\osu!.exe", "")));
+        assert!(!matcher.matches(&candidate("osu!.exe", r"C:\games\osu!Xexe", "")));
     }
 
     #[test]
