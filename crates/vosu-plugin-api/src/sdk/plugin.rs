@@ -124,7 +124,15 @@ impl HostServices for VtableHostServices {
                 return vosu_status::VOSU_ERR_UNSUPPORTED;
             }
             match host.send {
-                Some(send) => send(self.host_ctx, &raw as *const vosu_message),
+                // `send` returns the raw status code, not the typed enum
+                // (M4): the host may be foreign (C) code, so an
+                // out-of-range value must become a detectable error
+                // rather than undefined behavior from reading an invalid
+                // enum discriminant.
+                Some(send) => {
+                    vosu_status::try_from(send(self.host_ctx, &raw as *const vosu_message))
+                        .unwrap_or(vosu_status::VOSU_ERR_BACKEND)
+                }
                 None => vosu_status::VOSU_ERR_UNSUPPORTED,
             }
         }

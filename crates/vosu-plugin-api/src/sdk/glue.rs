@@ -108,13 +108,13 @@ fn run_dispatch(
 pub extern "C" fn dispatch_serialized<T: Plugin>(
     plugin_ctx: *mut c_void,
     message: *const vosu_message,
-) -> vosu_status {
+) -> u32 {
     if plugin_ctx.is_null() {
-        return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        return vosu_status::VOSU_ERR_INVALID_ARGUMENT as u32;
     }
     let decoded = match decode_message(message) {
         Ok(decoded) => decoded,
-        Err(status) => return status,
+        Err(status) => return status as u32,
     };
     // SAFETY: `plugin_ctx` is the pointer `create_serialized::<T>` returned,
     // which the host passes back unchanged on every later call
@@ -127,7 +127,7 @@ pub extern "C" fn dispatch_serialized<T: Plugin>(
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         guard.on_message(message)
-    })
+    }) as u32
 }
 
 pub extern "C" fn destroy_serialized<T: Plugin>(plugin_ctx: *mut c_void) {
@@ -162,17 +162,17 @@ pub extern "C" fn create_concurrent<T: ConcurrentPlugin>(
 pub extern "C" fn dispatch_concurrent<T: ConcurrentPlugin>(
     plugin_ctx: *mut c_void,
     message: *const vosu_message,
-) -> vosu_status {
+) -> u32 {
     if plugin_ctx.is_null() {
-        return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        return vosu_status::VOSU_ERR_INVALID_ARGUMENT as u32;
     }
     let decoded = match decode_message(message) {
         Ok(decoded) => decoded,
-        Err(status) => return status,
+        Err(status) => return status as u32,
     };
     // SAFETY: see `dispatch_serialized`'s identical contract.
     let plugin = unsafe { &*plugin_ctx.cast::<T>() };
-    run_dispatch(decoded, |message| plugin.on_message(message))
+    run_dispatch(decoded, |message| plugin.on_message(message)) as u32
 }
 
 pub extern "C" fn destroy_concurrent<T: ConcurrentPlugin>(plugin_ctx: *mut c_void) {

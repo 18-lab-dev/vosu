@@ -4,7 +4,6 @@
 use core::ffi::c_void;
 
 use crate::envelope::{vosu_bytes, vosu_message};
-use crate::status::vosu_status;
 
 /// A plugin's implementation of the ABI. `struct_size` and `abi_version`
 /// are always the first two fields of any future minor revision, so a host
@@ -35,9 +34,15 @@ pub struct vosu_plugin_vtable {
     /// The single entry point for every host -> plugin message. The return
     /// value only accepts or rejects the message itself; any business
     /// reply is a later, separate message sent through
-    /// `vosu_host_services::send`.
+    /// `vosu_host_services::send`. Returns the raw `vosu_status` numeric
+    /// value, not the typed enum: a foreign (C) implementation of this
+    /// function pointer could otherwise return a value outside
+    /// `vosu_status`'s defined range, which would be immediate undefined
+    /// behavior for a typed enum return. A caller decodes it with
+    /// `vosu_status::try_from`, treating an unrecognized value as an
+    /// error rather than UB (M4).
     pub dispatch: Option<
-        unsafe extern "C" fn(plugin_ctx: *mut c_void, message: *const vosu_message) -> vosu_status,
+        unsafe extern "C" fn(plugin_ctx: *mut c_void, message: *const vosu_message) -> u32,
     >,
 
     /// The host is tearing this instance down. Must release every resource
@@ -60,8 +65,11 @@ pub struct vosu_host_services {
     /// `VOSU_OP_READ_PLAN_SUBMIT` carrying `VOSU_READ_PLAN_SYNC` in
     /// `vosu_message.flags` (D5), whose matching `VOSU_OP_READ_PLAN_RESULT`
     /// this call delivers itself, on this same thread, before returning.
+    /// Returns the raw `vosu_status` numeric value, not the typed enum,
+    /// for the same reason `dispatch` does (M4): the host implementing
+    /// this may be foreign code.
     pub send: Option<
-        unsafe extern "C" fn(host_ctx: *mut c_void, message: *const vosu_message) -> vosu_status,
+        unsafe extern "C" fn(host_ctx: *mut c_void, message: *const vosu_message) -> u32,
     >,
 }
 

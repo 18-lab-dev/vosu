@@ -59,8 +59,8 @@ export_plugin!(TestPlugin);
 unsafe extern "C" fn noop_send(
     _host_ctx: *mut c_void,
     _message: *const vosu_message,
-) -> vosu_status {
-    vosu_status::VOSU_OK
+) -> u32 {
+    vosu_status::VOSU_OK as u32
 }
 
 fn noop_host_services() -> vosu_host_services {
@@ -152,7 +152,7 @@ fn export_plugin_create_dispatch_destroy_round_trip() {
     // SAFETY: `plugin_ctx` is the pointer `create` just returned, not yet
     // destroyed; `message` is a well-formed, live `vosu_message`.
     let status = unsafe { (vt.dispatch.unwrap())(plugin_ctx, &message as *const vosu_message) };
-    assert_eq!(status, vosu_status::VOSU_OK);
+    assert_eq!(status, vosu_status::VOSU_OK as u32);
     assert!(ON_MESSAGE_CALLS.load(Ordering::SeqCst) >= 1);
 
     // SAFETY: `plugin_ctx` is destroyed exactly once, here, after every
@@ -201,7 +201,7 @@ fn export_plugin_panic_inside_on_message_never_crosses_ffi() {
     // Must return an error status, never unwind out of this call.
     // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
     let status = unsafe { (vt.dispatch.unwrap())(plugin_ctx, &message as *const vosu_message) };
-    assert_eq!(status, vosu_status::VOSU_ERR_BACKEND);
+    assert_eq!(status, vosu_status::VOSU_ERR_BACKEND as u32);
 
     // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
     unsafe { (vt.destroy.unwrap())(plugin_ctx) };
@@ -219,7 +219,7 @@ mod plan_memory_tests {
 
     struct SyncAnsweringHost {
         plugin_ctx: *mut c_void,
-        dispatch: unsafe extern "C" fn(*mut c_void, *const vosu_message) -> vosu_status,
+        dispatch: unsafe extern "C" fn(*mut c_void, *const vosu_message) -> u32,
     }
 
     impl HostServices for SyncAnsweringHost {
@@ -246,7 +246,8 @@ mod plan_memory_tests {
             // `vosu_message` — this reentrant call is exactly what an
             // in-process host's real `send` does for `VOSU_READ_PLAN_SYNC`
             // (D5).
-            unsafe { (self.dispatch)(self.plugin_ctx, &raw as *const vosu_message) }
+            let raw_status = unsafe { (self.dispatch)(self.plugin_ctx, &raw as *const vosu_message) };
+            vosu_status::try_from(raw_status).unwrap_or(vosu_status::VOSU_ERR_BACKEND)
         }
     }
 
@@ -347,7 +348,7 @@ mod plan_memory_tests {
         };
         // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
         let status = unsafe { (vt.dispatch.unwrap())(plugin_ctx, &message as *const vosu_message) };
-        assert_eq!(status, vosu_status::VOSU_OK);
+        assert_eq!(status, vosu_status::VOSU_OK as u32);
         assert_eq!(
             *REENTRANT_RESULT.lock().unwrap(),
             Some(Err(PlanMemoryError::OnDispatchThread))
