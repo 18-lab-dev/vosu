@@ -38,7 +38,7 @@ impl Plugin for TestPlugin {
         Ok(Self)
     }
 
-    fn on_message(&mut self, message: Message) -> Result<(), PluginError> {
+    fn on_message(&mut self, message: Message, _correlation_id: u64) -> Result<(), PluginError> {
         ON_MESSAGE_CALLS.fetch_add(1, Ordering::SeqCst);
         if let Message::FocusChanged(focus) = &message
             && focus.handle == 0xDEAD
@@ -223,7 +223,7 @@ mod plan_memory_tests {
     }
 
     impl HostServices for SyncAnsweringHost {
-        fn send(&self, message: &Message) -> vosu_status {
+        fn send(&self, message: &Message, _correlation_id: u64) -> vosu_status {
             let Message::ReadPlanSubmit(submit) = message else {
                 panic!("test host only answers ReadPlanSubmit");
             };
@@ -302,7 +302,7 @@ mod plan_memory_tests {
             Ok(Self)
         }
 
-        fn on_message(&mut self, message: Message) -> Result<(), PluginError> {
+        fn on_message(&mut self, message: Message, _correlation_id: u64) -> Result<(), PluginError> {
             if let Message::SessionDecline(_) = message {
                 let host = noop_host_services();
                 // SAFETY: `host` is a local, valid `vosu_host_services`
@@ -353,6 +353,115 @@ mod plan_memory_tests {
             *REENTRANT_RESULT.lock().unwrap(),
             Some(Err(PlanMemoryError::OnDispatchThread))
         );
+
+        // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
+        unsafe { (vt.destroy.unwrap())(plugin_ctx) };
+    }
+}
+
+/// B1: a plugin receiving a host -> plugin request carrying a
+/// `correlation_id` can echo it back in its own reply, and the SDK
+/// actually threads it all the way through `dispatch` -> `on_message` ->
+/// `HostServices::send` -> `vosu_host_services::send`'s raw
+/// `vosu_message.correlation_id`.
+mod correlation_tests {
+    use std::sync::Mutex;
+
+    use vosu_plugin_api::{ResourceResolve, ResourceResolved};
+
+    use super::*;
+
+    /// A plugin that answers `RESOURCE_RESOLVE` with `RESOURCE_RESOLVED`,
+    /// echoing back whatever `correlation_id` the request carried.
+    struct EchoPlugin(VtableHostServices);
+
+    impl Plugin for EchoPlugin {
+        fn create(host: VtableHostServices, _init: Init) -> Result<Self, PluginError> {
+            Ok(Self(host))
+        }
+
+        fn on_message(&mut self, message: Message, correlation_id: u64) -> Result<(), PluginError> {
+            if let Message::ResourceResolve(_) = message {
+                self.0.send(
+                    &Message::ResourceResolved(ResourceResolved::Path {
+                        root: "root".into(),
+                        path: "path".into(),
+                    }),
+                    correlation_id,
+                );
+            }
+            Ok(())
+        }
+    }
+
+    /// `(opcode, correlation_id)` of the last message `capturing_send`
+    /// observed.
+    static LAST_SENT: Mutex<Option<(u32, u64)>> = Mutex::new(None);
+
+    unsafe extern "C" fn capturing_send(
+        _host_ctx: *mut c_void,
+        message: *const vosu_message,
+    ) -> u32 {
+        // SAFETY: `message` is borrowed for the duration of this call,
+        // per `vosu_host_services::send`'s own contract.
+        let raw = unsafe { &*message };
+        *LAST_SENT.lock().unwrap() = Some((raw.opcode, raw.correlation_id));
+        vosu_status::VOSU_OK as u32
+    }
+
+    fn capturing_host_services() -> vosu_host_services {
+        vosu_host_services {
+            struct_size: core::mem::size_of::<vosu_host_services>() as u32,
+            abi_version: vosu_plugin_api::VOSU_PLUGIN_ABI_MAJOR,
+            send: Some(capturing_send),
+        }
+    }
+
+    #[test]
+    fn resource_resolve_reply_echoes_correlation_id() {
+        let _guard = super::TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        *LAST_SENT.lock().unwrap() = None;
+        let vt = vosu_plugin_api::__vtable_for_serialized::<EchoPlugin>();
+        let host = capturing_host_services();
+        let init = init_bytes();
+        // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
+        let plugin_ctx = unsafe {
+            (vt.create.unwrap())(
+                &host as *const vosu_host_services,
+                core::ptr::null_mut(),
+                vosu_bytes {
+                    data: init.as_ptr(),
+                    len: init.len() as u32,
+                },
+            )
+        };
+        assert!(!plugin_ctx.is_null());
+
+        let payload = vosu_plugin_api::encode(&ResourceResolve {
+            handle: 1,
+            kind: "root".into(),
+            key: vosu_plugin_api::CborValue::Null,
+        })
+        .expect("encode");
+        let message = vosu_message {
+            opcode: vosu_plugin_api::vosu_opcode::VOSU_OP_RESOURCE_RESOLVE as u32,
+            flags: 0,
+            correlation_id: 777,
+            payload: vosu_bytes {
+                data: payload.as_ptr(),
+                len: payload.len() as u32,
+            },
+        };
+        // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
+        let status = unsafe { (vt.dispatch.unwrap())(plugin_ctx, &message as *const vosu_message) };
+        assert_eq!(status, vosu_status::VOSU_OK as u32);
+
+        let (opcode, correlation_id) = LAST_SENT.lock().unwrap().expect("plugin replied");
+        assert_eq!(
+            opcode,
+            vosu_plugin_api::vosu_opcode::VOSU_OP_RESOURCE_RESOLVED as u32
+        );
+        assert_eq!(correlation_id, 777);
 
         // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
         unsafe { (vt.destroy.unwrap())(plugin_ctx) };

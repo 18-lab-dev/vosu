@@ -36,8 +36,11 @@ impl From<vosu_status> for PluginError {
 pub trait Plugin: Sized + Send {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError>;
 
-    /// A host -> plugin message this plugin's `dispatch` received.
-    fn on_message(&mut self, message: Message) -> Result<(), PluginError>;
+    /// A host -> plugin message this plugin's `dispatch` received, and the
+    /// `vosu_message.correlation_id` it carried (`0` when the opcode has
+    /// no reply): echo it back in `HostServices::send`'s own
+    /// `correlation_id` argument to answer it (B1).
+    fn on_message(&mut self, message: Message, correlation_id: u64) -> Result<(), PluginError>;
 }
 
 /// A plugin whose manifest sets `concurrent_dispatch = true` (D22): the
@@ -48,7 +51,7 @@ pub trait Plugin: Sized + Send {
 pub trait ConcurrentPlugin: Sized + Send + Sync {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError>;
 
-    fn on_message(&self, message: Message) -> Result<(), PluginError>;
+    fn on_message(&self, message: Message, correlation_id: u64) -> Result<(), PluginError>;
 }
 
 /// The one real [`HostServices`] implementation: wraps the raw
@@ -92,7 +95,7 @@ unsafe impl Send for VtableHostServices {}
 unsafe impl Sync for VtableHostServices {}
 
 impl HostServices for VtableHostServices {
-    fn send(&self, message: &Message) -> vosu_status {
+    fn send(&self, message: &Message, correlation_id: u64) -> vosu_status {
         let opcode = message.opcode();
         let flags = message.flags();
         let payload = match message.encode_payload() {
@@ -102,7 +105,7 @@ impl HostServices for VtableHostServices {
         let raw = vosu_message {
             opcode: opcode as u32,
             flags,
-            correlation_id: 0,
+            correlation_id,
             payload: crate::vosu_bytes {
                 data: payload.as_ptr(),
                 len: payload.len() as u32,

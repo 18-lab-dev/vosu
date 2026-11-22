@@ -34,8 +34,13 @@ pub trait HostServices {
     /// arrives later through the plugin's own `on_message`
     /// (`docs/v2/plugin-abi.md` §3) — except a `VOSU_READ_PLAN_SYNC`
     /// submission (D5), whose delivery the SDK's own implementation
-    /// handles, not this trait.
-    fn send(&self, message: &Message) -> vosu_status;
+    /// handles, not this trait. `correlation_id` is this plugin's own
+    /// choice (`0` when the opcode has no reply, or when echoing a
+    /// request this plugin received back as its reply — see
+    /// `on_message`'s own `correlation_id` parameter): the host carries it
+    /// unchanged into the matching reply's `vosu_message.correlation_id`
+    /// (B1).
+    fn send(&self, message: &Message, correlation_id: u64) -> vosu_status;
 
     /// `VOSU_OP_PUBLISH_FIELD`.
     fn publish(
@@ -45,12 +50,15 @@ pub trait HostServices {
         pointer: &str,
         value: PublishValue,
     ) -> vosu_status {
-        self.send(&Message::PublishField(crate::message::flat::PublishField {
-            handle,
-            ns: ns.to_owned(),
-            pointer: pointer.to_owned(),
-            value,
-        }))
+        self.send(
+            &Message::PublishField(crate::message::flat::PublishField {
+                handle,
+                ns: ns.to_owned(),
+                pointer: pointer.to_owned(),
+                value,
+            }),
+            0,
+        )
     }
 
     /// `VOSU_OP_SESSION_IDENTIFY` (§6.2).
@@ -63,14 +71,17 @@ pub trait HostServices {
         version: &str,
         focus_priority: bool,
     ) -> vosu_status {
-        self.send(&Message::SessionIdentify(SessionIdentify {
-            handle,
-            game: game.to_owned(),
-            variant: variant.to_owned(),
-            name: name.to_owned(),
-            version: version.to_owned(),
-            focus_priority,
-        }))
+        self.send(
+            &Message::SessionIdentify(SessionIdentify {
+                handle,
+                game: game.to_owned(),
+                variant: variant.to_owned(),
+                name: name.to_owned(),
+                version: version.to_owned(),
+                focus_priority,
+            }),
+            0,
+        )
     }
 
     /// `VOSU_OP_ROOT_DECLARE` (§6.5).
@@ -80,57 +91,101 @@ pub trait HostServices {
         name: &str,
         path: &Path,
     ) -> vosu_status {
-        self.send(&Message::RootDeclare(RootDeclare {
-            handle,
-            name: name.to_owned(),
-            path: path.to_string_lossy().into_owned(),
-        }))
+        self.send(
+            &Message::RootDeclare(RootDeclare {
+                handle,
+                name: name.to_owned(),
+                path: path.to_string_lossy().into_owned(),
+            }),
+            0,
+        )
     }
 
     /// `VOSU_OP_READ_PLAN_SUBMIT` (§6.3). `plan` is caller-assigned by the
-    /// caller of this method, never generated here.
+    /// caller of this method, never generated here; a result is correlated
+    /// by `plan`, not `correlation_id` (`docs/v2/plugin-abi.md` §5), so
+    /// this submission always carries `correlation_id` `0`.
     fn submit_read_plan(
         &self,
         plan: vosu_plan_id,
         handle: vosu_session_id,
         root: PlanBase,
         stages: Vec<Stage>,
-        sync: bool,
     ) -> vosu_status {
-        self.send(&Message::ReadPlanSubmit(ReadPlanSubmit {
-            plan,
-            handle,
-            root,
-            stages,
-            sync,
-        }))
+        self.send(
+            &Message::ReadPlanSubmit(ReadPlanSubmit {
+                plan,
+                handle,
+                root,
+                stages,
+                sync: false,
+            }),
+            0,
+        )
     }
 
-    /// `VOSU_OP_SCAN_REQUEST` (§6.4).
-    fn scan(&self, request: ScanRequest) -> vosu_status {
-        self.send(&Message::ScanRequest(request))
+    /// `VOSU_OP_SCAN_REQUEST` (§6.4): `correlation_id` is this plugin's own
+    /// choice, echoed back in the matching `VOSU_OP_SCAN_RESULT` so
+    /// several outstanding scans can be told apart.
+    fn scan(&self, correlation_id: u64, request: ScanRequest) -> vosu_status {
+        self.send(&Message::ScanRequest(request), correlation_id)
     }
 
     /// `VOSU_OP_LOG_RECORD` (§6.10).
     fn log(&self, level: LogLevel, message: &str, fields: CborValue) -> vosu_status {
-        self.send(&Message::LogRecord(LogRecord {
-            level,
-            message: message.to_owned(),
-            fields,
-        }))
+        self.send(
+            &Message::LogRecord(LogRecord {
+                level,
+                message: message.to_owned(),
+                fields,
+            }),
+            0,
+        )
     }
 
     /// `VOSU_OP_TIMER_SET` (§6.11); `interval: None` requests a one-shot.
     fn set_timer(&self, timer: vosu_timer_id, interval: Option<Duration>) -> vosu_status {
-        self.send(&Message::TimerSet(TimerSet {
-            timer,
-            interval_ms: interval.map(|d| d.as_millis() as u32),
-        }))
+        self.send(
+            &Message::TimerSet(TimerSet {
+                timer,
+                interval_ms: interval.map(saturating_millis),
+            }),
+            0,
+        )
+    }
+
+    /// `VOSU_OP_READ_PLAN_SUBMIT` with `VOSU_READ_PLAN_SYNC` set (§6.3, D5),
+    /// behind the unpublished `unstable-sync-reads` feature: never call
+    /// this directly. [`crate::PlanMemory`] is the one sanctioned caller
+    /// — it routes the matching `VOSU_OP_READ_PLAN_RESULT` to a per-plan
+    /// slot before the plugin's own `on_message` ever sees it (M5); a
+    /// synchronous result sent any other way would instead reach
+    /// `on_message` like any other message, which §6.3 says never
+    /// happens, and a published build must not be able to construct that
+    /// contradiction at all (D11).
+    #[cfg(feature = "unstable-sync-reads")]
+    fn submit_read_plan_sync(
+        &self,
+        plan: vosu_plan_id,
+        handle: vosu_session_id,
+        root: PlanBase,
+        stages: Vec<Stage>,
+    ) -> vosu_status {
+        self.send(
+            &Message::ReadPlanSubmit(ReadPlanSubmit {
+                plan,
+                handle,
+                root,
+                stages,
+                sync: true,
+            }),
+            0,
+        )
     }
 
     /// `VOSU_OP_TIMER_CANCEL` (§6.11).
     fn cancel_timer(&self, timer: vosu_timer_id) -> vosu_status {
-        self.send(&Message::TimerCancel(TimerCancel { timer }))
+        self.send(&Message::TimerCancel(TimerCancel { timer }), 0)
     }
 
     /// `VOSU_OP_STATE_SUBSCRIBE` (§6.12): replaces this plugin's previous
@@ -140,10 +195,13 @@ pub trait HostServices {
         session: Option<vosu_session_id>,
         selectors: Vec<Selector>,
     ) -> vosu_status {
-        self.send(&Message::StateSubscribe(StateSubscribe {
-            session,
-            selectors,
-        }))
+        self.send(
+            &Message::StateSubscribe(StateSubscribe {
+                session,
+                selectors,
+            }),
+            0,
+        )
     }
 
     /// `VOSU_OP_ACTION_CALL` (§6.12).
@@ -154,11 +212,27 @@ pub trait HostServices {
         session: Option<vosu_session_id>,
         args: CborValue,
     ) -> vosu_status {
-        self.send(&Message::ActionCall(ActionCall {
-            invocation,
-            action: action.to_owned(),
-            session,
-            args,
-        }))
+        self.send(
+            &Message::ActionCall(ActionCall {
+                invocation,
+                action: action.to_owned(),
+                session,
+                args,
+            }),
+            0,
+        )
     }
+}
+
+/// Converts `interval` to whole milliseconds for `VOSU_OP_TIMER_SET`,
+/// saturating at `u32::MAX` instead of silently wrapping, and rounding a
+/// non-zero sub-millisecond interval up to `1` rather than truncating it
+/// to `0` — `0` means "fire every tick" to the host, which §6.11 reserves
+/// for an actual one-shot/zero request, not a rounding artifact (minor 6).
+pub(crate) fn saturating_millis(interval: Duration) -> u32 {
+    let millis = interval.as_millis();
+    if millis == 0 && !interval.is_zero() {
+        return 1;
+    }
+    u32::try_from(millis).unwrap_or(u32::MAX)
 }

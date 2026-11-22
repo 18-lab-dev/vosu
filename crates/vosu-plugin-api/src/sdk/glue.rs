@@ -26,7 +26,7 @@ fn decode_init(init: vosu_bytes) -> Result<Init, ()> {
     crate::decode(bytes).map_err(|_| ())
 }
 
-fn decode_message(message: *const vosu_message) -> Result<Message, vosu_status> {
+fn decode_message(message: *const vosu_message) -> Result<(Message, u64), vosu_status> {
     if message.is_null() {
         return Err(vosu_status::VOSU_ERR_INVALID_ARGUMENT);
     }
@@ -43,7 +43,9 @@ fn decode_message(message: *const vosu_message) -> Result<Message, vosu_status> 
         // comment.
         unsafe { core::slice::from_raw_parts(raw.payload.data, raw.payload.len as usize) }
     };
-    Message::decode(opcode, raw.flags, payload).map_err(|_| vosu_status::VOSU_ERR_INVALID_ARGUMENT)
+    let message = Message::decode(opcode, raw.flags, payload)
+        .map_err(|_| vosu_status::VOSU_ERR_INVALID_ARGUMENT)?;
+    Ok((message, raw.correlation_id))
 }
 
 /// `Plugin`'s serialized context: `Mutex` is this SDK's own lock
@@ -78,14 +80,16 @@ pub extern "C" fn create_serialized<T: Plugin>(
     }
 }
 
-/// Runs one decoded message through `call`, under `catch_unwind`, after
-/// first giving the `unstable-sync-reads` feature's `PlanMemory` a chance
-/// to intercept a `VOSU_OP_READ_PLAN_RESULT` meant for it (D5) — see
+/// Runs one decoded message, plus its `correlation_id`, through `call`,
+/// under `catch_unwind`, after first giving the `unstable-sync-reads`
+/// feature's `PlanMemory` a chance to intercept a
+/// `VOSU_OP_READ_PLAN_RESULT` meant for it (D5) — see
 /// `sdk::plan_memory`'s module doc comment for why this has to happen
 /// here, before `call` (the plugin's own `on_message`) ever sees it.
 fn run_dispatch(
     decoded: Message,
-    call: impl FnOnce(Message) -> Result<(), crate::sdk::plugin::PluginError>,
+    correlation_id: u64,
+    call: impl FnOnce(Message, u64) -> Result<(), crate::sdk::plugin::PluginError>,
 ) -> vosu_status {
     #[cfg(feature = "unstable-sync-reads")]
     if let Message::ReadPlanResult(result) = &decoded
@@ -95,7 +99,7 @@ fn run_dispatch(
     }
     #[cfg(feature = "unstable-sync-reads")]
     crate::sdk::plan_memory::ON_DISPATCH_THREAD.with(|cell| cell.set(true));
-    let result = panic::catch_unwind(AssertUnwindSafe(|| call(decoded)));
+    let result = panic::catch_unwind(AssertUnwindSafe(|| call(decoded, correlation_id)));
     #[cfg(feature = "unstable-sync-reads")]
     crate::sdk::plan_memory::ON_DISPATCH_THREAD.with(|cell| cell.set(false));
     match result {
@@ -112,7 +116,7 @@ pub extern "C" fn dispatch_serialized<T: Plugin>(
     if plugin_ctx.is_null() {
         return vosu_status::VOSU_ERR_INVALID_ARGUMENT as u32;
     }
-    let decoded = match decode_message(message) {
+    let (decoded, correlation_id) = match decode_message(message) {
         Ok(decoded) => decoded,
         Err(status) => return status as u32,
     };
@@ -121,12 +125,12 @@ pub extern "C" fn dispatch_serialized<T: Plugin>(
     // (`include/vosu_plugin.h:493`); it stays valid until `destroy`
     // consumes it.
     let context = unsafe { &*plugin_ctx.cast::<SerializedContext<T>>() };
-    run_dispatch(decoded, |message| {
+    run_dispatch(decoded, correlation_id, |message, correlation_id| {
         let mut guard = context
             .inner
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        guard.on_message(message)
+        guard.on_message(message, correlation_id)
     }) as u32
 }
 
@@ -166,13 +170,15 @@ pub extern "C" fn dispatch_concurrent<T: ConcurrentPlugin>(
     if plugin_ctx.is_null() {
         return vosu_status::VOSU_ERR_INVALID_ARGUMENT as u32;
     }
-    let decoded = match decode_message(message) {
+    let (decoded, correlation_id) = match decode_message(message) {
         Ok(decoded) => decoded,
         Err(status) => return status as u32,
     };
     // SAFETY: see `dispatch_serialized`'s identical contract.
     let plugin = unsafe { &*plugin_ctx.cast::<T>() };
-    run_dispatch(decoded, |message| plugin.on_message(message)) as u32
+    run_dispatch(decoded, correlation_id, |message, correlation_id| {
+        plugin.on_message(message, correlation_id)
+    }) as u32
 }
 
 pub extern "C" fn destroy_concurrent<T: ConcurrentPlugin>(plugin_ctx: *mut c_void) {

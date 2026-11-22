@@ -195,14 +195,15 @@ fn roundtrip_a_cbor_opcode_through_the_same_message_api() {
     }));
 }
 
-/// A mock `HostServices` recording every message it was asked to send.
+/// A mock `HostServices` recording every message it was asked to send,
+/// alongside the `correlation_id` each call carried (B1).
 struct RecordingHost {
-    sent: RefCell<Vec<Message>>,
+    sent: RefCell<Vec<(Message, u64)>>,
 }
 
 impl HostServices for RecordingHost {
-    fn send(&self, message: &Message) -> vosu_plugin_api::vosu_status {
-        self.sent.borrow_mut().push(message.clone());
+    fn send(&self, message: &Message, correlation_id: u64) -> vosu_plugin_api::vosu_status {
+        self.sent.borrow_mut().push((message.clone(), correlation_id));
         vosu_plugin_api::vosu_status::VOSU_OK
     }
 }
@@ -223,8 +224,8 @@ fn host_services_default_methods_build_the_right_message() {
 
     let sent = host.sent.into_inner();
     assert_eq!(sent.len(), 4);
-    assert_eq!(sent[0].opcode(), vosu_opcode::VOSU_OP_PUBLISH_FIELD);
-    assert_eq!(sent[1].opcode(), vosu_opcode::VOSU_OP_SESSION_IDENTIFY);
-    assert_eq!(sent[2].opcode(), vosu_opcode::VOSU_OP_LOG_RECORD);
-    assert_eq!(sent[3].opcode(), vosu_opcode::VOSU_OP_TIMER_CANCEL);
+    assert_eq!(sent[0].0.opcode(), vosu_opcode::VOSU_OP_PUBLISH_FIELD);
+    assert_eq!(sent[1].0.opcode(), vosu_opcode::VOSU_OP_SESSION_IDENTIFY);
+    assert_eq!(sent[2].0.opcode(), vosu_opcode::VOSU_OP_LOG_RECORD);
+    assert_eq!(sent[3].0.opcode(), vosu_opcode::VOSU_OP_TIMER_CANCEL);
 }

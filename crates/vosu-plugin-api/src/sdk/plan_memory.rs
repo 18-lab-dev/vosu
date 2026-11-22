@@ -92,7 +92,7 @@ impl PlanMemory {
         }
         EXPECTING_PLAN.with(|cell| cell.set(Some(plan)));
         SYNC_SLOT.with(|slot| slot.set(None));
-        let status = host.submit_read_plan(plan, handle, root, stages, true);
+        let status = host.submit_read_plan_sync(plan, handle, root, stages);
         EXPECTING_PLAN.with(|cell| cell.set(None));
         if status != vosu_status::VOSU_OK {
             return Err(PlanMemoryError::Rejected(status));
