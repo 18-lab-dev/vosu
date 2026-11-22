@@ -1,7 +1,11 @@
 pub mod api;
 pub mod enums;
 pub mod memory;
+#[path = "root.rs"]
+mod root;
 pub mod states;
+
+pub use root::*;
 
 #[cfg(test)]
 mod tests {

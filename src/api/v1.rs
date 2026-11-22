@@ -22,9 +22,9 @@ use serde_json::ser::Serializer;
 
 use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
-use crate::calculation::{calculate_grade, to_legacy_hits};
 use crate::model::memory::{LazerSpectatorEntry, Score};
 use crate::model::states::{CalculateMods, MultiplayerTeamType};
+use crate::model::{calculate_grade, to_legacy_hits};
 use crate::state::{GameplayState, LeaderboardPlayerState, PreciseState, RegularState};
 
 pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {

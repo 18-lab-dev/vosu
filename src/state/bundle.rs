@@ -17,7 +17,6 @@ use crate::calculation::beatmap::{
     EventStatus, ManiaJudgementEvent, ManiaJudgementKind, ParsedBeatmap, StrainGraph,
 };
 use crate::calculation::progressive::{ProgressiveAttributes, ResultPerformance};
-use crate::calculation::{calculate_grade, default_calculated_mods, safe_join};
 use crate::memory::snapshot::{RawPreciseSnapshot, RawRegularSnapshot};
 use crate::model::enums::{ClientType, GameState};
 use crate::model::memory::{
@@ -29,6 +28,7 @@ use crate::model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton, KeypressButton, LeaderboardPlayer,
     SettingsObject, Statistics, TourneyManagerChatItem,
 };
+use crate::model::{calculate_grade, default_calculated_mods, safe_join};
 use crate::process::{MemoryRead, ReadStatus};
 
 fn ready<T>(read: &MemoryRead<T>) -> Option<&T> {
@@ -134,7 +134,7 @@ pub struct StateBundle {
     published_regular: Option<Arc<RegularState>>,
     published_precise: Option<Arc<PreciseState>>,
     precise_dirty: bool,
-    config_updates: Option<watch::Receiver<Arc<crate::config::Config>>>,
+    config_updates: Option<watch::Receiver<super::ReaderSettings>>,
 }
 
 #[cfg(test)]

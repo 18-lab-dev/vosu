@@ -8,10 +8,10 @@ use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
 use crate::calculation::beatmap::{
     AppliedMod, BeatmapCache, BeatmapInput, ModSet, ParsedBeatmap, Ruleset, ScoringMode,
 };
-use crate::calculation::state_backend::LiveBeatmapEngine;
 use crate::instance::InstanceSettings;
 use crate::model::memory::{LazerRoom, LazerRoomUser};
 use crate::model::states::KeypressButton;
+use crate::state::state_backend::LiveBeatmapEngine;
 use crate::state::{
     RegularState, StateBundle, StateBundleSnapshot, StateCalculationBackend,
     StateCalculationFuture, StateCalculationRequest, TourneyUserState,

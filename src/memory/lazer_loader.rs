@@ -12,7 +12,11 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use super::lazer_offsets::{LazerOffsets, LazerOffsetsError, validate_version};
-use crate::logging::Logger;
+
+/// Reports a resolution-attempt warning, so `memory` does not depend on
+/// `crate::logging::Logger` (module-boundaries.txt: breaking the
+/// `memory -> logging` edge). This becomes `VOSU_OP_LOG_RECORD` in M1.
+pub type LogWarn = Arc<dyn Fn(String) + Send + Sync>;
 
 pub const RETRY_DELAYS: [Duration; 5] = [
     Duration::from_secs(30),
@@ -32,6 +36,25 @@ pub enum LazerLoadError {
     Unavailable(String, String),
     #[error("offset resolution cancelled")]
     Cancelled,
+}
+
+/// Narrow view of a process generation that lazer offset resolution needs:
+/// identity, liveness, cancellation, and the per-generation offsets cache.
+/// Defined here (not imported from `crate::instance`) so that `memory` does
+/// not depend on `instance` (module-boundaries.txt: breaking the
+/// `memory <-> instance` cycle); `crate::instance::Instance` implements it.
+/// `instance` keeps calling the loader until M1 hands the resolver lifecycle
+/// to the osu! plugin.
+pub trait GenerationIdentity: Send + Sync + 'static {
+    fn client(&self) -> crate::model::enums::ClientType;
+    /// Stable identity of this generation, for log messages.
+    fn pid(&self) -> u32;
+    /// The live process id, or `None` once the process has exited.
+    fn process_id(&self) -> Option<u32>;
+    fn is_alive(&self) -> bool;
+    fn lifecycle_token(&self) -> CancellationToken;
+    fn lazer_offsets(&self) -> Option<Arc<LazerOffsets>>;
+    fn install_lazer_offsets(&self, offsets: Arc<LazerOffsets>) -> bool;
 }
 
 pub type GenerationFuture<'a> = Pin<Box<dyn Future<Output = io::Result<Bytes>> + Send + 'a>>;
@@ -224,34 +247,37 @@ where
     }
 }
 
-pub async fn resolve_for_instance<G>(
+pub async fn resolve_for_instance<G, I>(
     loader: Arc<LazerOffsetLoader<G>>,
-    instance: Arc<crate::instance::Instance>,
+    instance: Arc<I>,
 ) -> Result<Arc<LazerOffsets>, LazerLoadError>
 where
     G: OffsetGenerator + 'static,
+    I: GenerationIdentity,
 {
     resolve_for_instance_inner(loader, instance, None).await
 }
 
-pub(crate) async fn resolve_for_instance_with_logger<G>(
+pub(crate) async fn resolve_for_instance_with_logger<G, I>(
     loader: Arc<LazerOffsetLoader<G>>,
-    instance: Arc<crate::instance::Instance>,
-    logger: Logger,
+    instance: Arc<I>,
+    warn: LogWarn,
 ) -> Result<Arc<LazerOffsets>, LazerLoadError>
 where
     G: OffsetGenerator + 'static,
+    I: GenerationIdentity,
 {
-    resolve_for_instance_inner(loader, instance, Some(logger)).await
+    resolve_for_instance_inner(loader, instance, Some(warn)).await
 }
 
-async fn resolve_for_instance_inner<G>(
+async fn resolve_for_instance_inner<G, I>(
     loader: Arc<LazerOffsetLoader<G>>,
-    instance: Arc<crate::instance::Instance>,
-    logger: Option<Logger>,
+    instance: Arc<I>,
+    warn: Option<LogWarn>,
 ) -> Result<Arc<LazerOffsets>, LazerLoadError>
 where
     G: OffsetGenerator + 'static,
+    I: GenerationIdentity,
 {
     if instance.client() != crate::model::enums::ClientType::Lazer {
         return Err(LazerLoadError::Unavailable(
@@ -272,10 +298,10 @@ where
                 let loader = loader.clone();
                 let instance = instance.clone();
                 async move {
-                    if !instance.process().is_alive() {
+                    if !instance.is_alive() {
                         return Err(LazerLoadError::Cancelled);
                     }
-                    let pid = instance.process().process_id().ok_or_else(|| {
+                    let pid = instance.process_id().ok_or_else(|| {
                         LazerLoadError::Unavailable(
                             "unknown".into(),
                             "target PID unavailable".into(),
@@ -295,8 +321,8 @@ where
         tokio_sleep,
         cancel,
         move |error| {
-            if let Some(logger) = logger.as_ref() {
-                logger.warn(format!(
+            if let Some(warn) = warn.as_ref() {
+                warn(format!(
                     "Lazer offset resolution failed for PID {pid}; retrying: {error}"
                 ));
             }

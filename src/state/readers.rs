@@ -139,7 +139,7 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
 
 pub enum KeyOverlayUpdates {
     Direct(watch::Receiver<bool>),
-    Config(watch::Receiver<Arc<crate::config::Config>>),
+    Config(watch::Receiver<super::ReaderSettings>),
 }
 
 impl From<watch::Receiver<bool>> for KeyOverlayUpdates {
@@ -148,8 +148,8 @@ impl From<watch::Receiver<bool>> for KeyOverlayUpdates {
     }
 }
 
-impl From<watch::Receiver<Arc<crate::config::Config>>> for KeyOverlayUpdates {
-    fn from(value: watch::Receiver<Arc<crate::config::Config>>) -> Self {
+impl From<watch::Receiver<super::ReaderSettings>> for KeyOverlayUpdates {
+    fn from(value: watch::Receiver<super::ReaderSettings>) -> Self {
         Self::Config(value)
     }
 }

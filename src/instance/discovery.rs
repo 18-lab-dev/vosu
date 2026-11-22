@@ -13,7 +13,9 @@ use std::sync::Arc;
 #[cfg(windows)]
 use std::sync::{Mutex, OnceLock};
 
-use crate::app::StartupArgs;
+pub mod startup_args;
+pub use startup_args::{StartupArgs, StartupValue};
+
 use crate::model::enums::ClientType;
 use crate::process::{MemoryError, ProcessBitness, ProcessHandle};
 

@@ -44,9 +44,12 @@ Dependencies between the crate's top-level modules are recorded in
 `scripts/module-boundaries.txt` and checked by
 `python scripts/check-module-boundaries.py`. Adding an edge is a deliberate change:
 record it in the same change that explains the new dependency here or in the
-[architecture overview](overview.md). `calculation -> state` is intended:
-`calculation/state_backend.rs` implements the state reducer's calculation
-backend trait.
+[architecture overview](overview.md). `memory`, `calculation`, and `state`
+no longer cycle: the JS-compatible rounding/mods/grade helpers
+(`src/model/root/{helpers,mods,scores}.rs`) and the state reducer's
+calculation backend (`src/state/state_backend.rs`) live under `model` and
+`state` respectively, not `calculation`, so readers depend only on the
+model and `state -> calculation` (not the reverse) is the only edge left.
 
 - `src/instance/runtime.rs` owns the discovery loop and lifecycle publication;
   `src/instance.rs` retains instance identity, manager state, and the public types.

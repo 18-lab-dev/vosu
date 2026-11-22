@@ -14,13 +14,13 @@ use crate::calculation::beatmap::{
     StrainGraph,
 };
 use crate::calculation::progressive::{PerformanceAttributes, ProgressiveAttributes};
-use crate::calculation::state_backend::LiveBeatmapEngine;
 use crate::instance::InstanceSettings;
 use crate::model::enums::ClientType;
 use crate::model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton as StateKeyOverlayButton, KeypressButton,
     Statistics,
 };
+use crate::state::state_backend::LiveBeatmapEngine;
 use crate::state::{
     PreciseState, RegularState, StateBundle, StateBundleSnapshot, StateCalculationBackend,
     StateCalculationFuture, StateCalculationRequest,

@@ -409,15 +409,15 @@ async fn calculation_uses_post_read_paths_and_metadata_even_when_pp_disabled() {
         requests: requests.clone(),
     });
     let mut bundle = StateBundle::new_with_root(ClientType::Stable, 12, "/game", backend);
-    let (config_tx, config_rx) = watch::channel(Arc::new(crate::config::Config::default()));
+    let (config_tx, config_rx) = watch::channel(crate::state::ReaderSettings::default());
     bundle.set_config_updates(config_rx);
-    let config = crate::config::Config {
+    let config = crate::state::ReaderSettings {
         calculate_pp: false,
         read_mania_scroll_speed: false,
         show_mp_commands: true,
         ..Default::default()
     };
-    config_tx.send_replace(Arc::new(config));
+    config_tx.send_replace(config);
     let regular = RawRegularSnapshotBuilder::new(
         RegularCaptureContext::new(ClientType::Stable, 12, 0, 1),
         Ok(ReadStatus::Ready(raw_global(GameState::Menu, 0))),

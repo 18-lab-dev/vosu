@@ -1,6 +1,6 @@
 //! Allocation-free `Number(value.toFixed(n))` for the API encoders.
 //!
-//! [`crate::calculation::fix_decimals_to`] defines the semantics: it rounds the
+//! [`crate::model::fix_decimals_to`] defines the semantics: it rounds the
 //! exact binary value half-up to `amount` decimals, then parses the decimal
 //! text. The API encoders call it dozens of times per cold document, and the
 //! text round trip (format, insert, parse) dominated their cost. When the
@@ -8,14 +8,14 @@
 //! division is correctly rounded just like the parse, so the quotient is the
 //! same `f64`; everything else still goes through the general conversion.
 
-use crate::calculation::DecimalPlacesError;
+use crate::model::DecimalPlacesError;
 
 /// `Number(value.toFixed(2))`; see [`fix_decimals_to`].
 pub(crate) fn fix_decimals(value: f64) -> f64 {
     fix_decimals_to(value, 2).expect("two decimals are valid")
 }
 
-/// Same result as [`crate::calculation::fix_decimals_to`] for every input.
+/// Same result as [`crate::model::fix_decimals_to`] for every input.
 pub(crate) fn fix_decimals_to(value: f64, amount: u32) -> Result<f64, DecimalPlacesError> {
     const EXACT_INTEGER_LIMIT: u128 = 1 << 53;
     if value == 0.0 || value.is_nan() {
@@ -67,7 +67,7 @@ pub(crate) fn fix_decimals_to(value: f64, amount: u32) -> Result<f64, DecimalPla
             });
         }
     }
-    crate::calculation::fix_decimals_to(value, amount)
+    crate::model::fix_decimals_to(value, amount)
 }
 
 /// Every power of ten that is exactly representable as an `f64`.
@@ -82,7 +82,7 @@ mod tests {
 
     fn assert_same(value: f64, amount: u32) {
         let fast = fix_decimals_to(value, amount);
-        let general = crate::calculation::fix_decimals_to(value, amount);
+        let general = crate::model::fix_decimals_to(value, amount);
         assert_eq!(
             fast.map(f64::to_bits),
             general.map(f64::to_bits),

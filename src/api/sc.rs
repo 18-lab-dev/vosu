@@ -8,10 +8,10 @@ use serde::Serialize;
 
 use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot};
-use crate::calculation::{js_json_number, safe_join, to_legacy_hits};
 use crate::model::api::sc::{MapBreak, MapTimingPoint, Response};
 use crate::model::enums::{CountryCodes, Rulesets};
 use crate::model::states::{CalculateMods, KeyOverlayButton, LeaderboardPlayer};
+use crate::model::{js_json_number, safe_join, to_legacy_hits};
 use crate::state::{LeaderboardPlayerState, RegularState};
 
 const PLAY: i64 = 2;

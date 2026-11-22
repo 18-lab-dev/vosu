@@ -513,6 +513,8 @@ pub(super) async fn run_state_supervisor(
     let mut live = ManagerView::default();
     let mut lifecycle_value = lifecycle.borrow_and_update().clone();
     let mut config_value = config.borrow_and_update().clone();
+    let (reader_settings_tx, reader_settings_rx) =
+        watch::channel(reader_settings_from(&config_value));
 
     loop {
         let ready = lifecycle_value
@@ -529,7 +531,7 @@ pub(super) async fn run_state_supervisor(
         api.retain(&desired);
         live.retain(&desired);
 
-        let worker_config = config.clone();
+        let worker_reader_settings = reader_settings_rx.clone();
         let worker_demand = subscription_demand.clone();
         let worker_publications = Arc::clone(&publications);
         let worker_logger = logger.clone();
@@ -537,13 +539,13 @@ pub(super) async fn run_state_supervisor(
             .reconcile(&desired, |pid, _generation, worker_cancel| {
                 let entry = ready.get(&pid).expect("desired entry").clone();
                 let publications = Arc::clone(&worker_publications);
-                let config = worker_config.clone();
+                let reader_settings = worker_reader_settings.clone();
                 let demand = worker_demand.clone();
                 let logger = worker_logger.clone();
                 tokio::spawn(async move {
                     run_instance_state_worker(
                         entry,
-                        config,
+                        reader_settings,
                         demand,
                         publications,
                         logger,
@@ -570,6 +572,7 @@ pub(super) async fn run_state_supervisor(
             changed = config.changed() => {
                 if changed.is_err() { break; }
                 config_value = config.borrow_and_update().clone();
+                let _ = reader_settings_tx.send(reader_settings_from(&config_value));
                 snapshots.set_poll_rates(
                     poll_duration(config_value.poll_rate),
                     poll_duration(config_value.precise_data_poll_rate),
@@ -587,6 +590,22 @@ pub(super) async fn run_state_supervisor(
     }
     publications.close();
     workers.shutdown().await;
+}
+
+/// Narrows `Config` to the fields `state` reads, so `state` does not depend
+/// on `config` (module-boundaries.txt: breaking the `state -> config` edge).
+fn reader_settings_from(config: &crate::config::Config) -> crate::state::ReaderSettings {
+    crate::state::ReaderSettings {
+        calculate_pp: config.calculate_pp,
+        enable_key_overlay: config.enable_key_overlay,
+        enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
+        enable_hit_offsets: config.enable_hit_offsets,
+        poll_rate: config.poll_rate,
+        precise_data_poll_rate: config.precise_data_poll_rate,
+        v2_subscription_debounce: config.v2_subscription_debounce,
+        show_mp_commands: config.show_mp_commands,
+        read_mania_scroll_speed: config.read_mania_scroll_speed,
+    }
 }
 
 fn equivalent_state_snapshots(current: &StateBundleSnapshot, next: &StateBundleSnapshot) -> bool {
@@ -656,7 +675,7 @@ where
 
 pub(super) async fn run_instance_state_worker(
     entry: InstanceGeneration,
-    config: watch::Receiver<Arc<crate::config::Config>>,
+    reader_settings: watch::Receiver<crate::state::ReaderSettings>,
     subscription_demand: watch::Receiver<crate::state::SubscriptionDemand>,
     publications: Arc<StatePublicationQueue>,
     logger: Logger,
@@ -668,28 +687,28 @@ pub(super) async fn run_instance_state_worker(
         publications,
     ));
     let synchronization = Arc::new(Mutex::new(ReaderSynchronization::default()));
-    let worker =
-        initialize_state_worker(
-            &cancel,
-            Duration::from_secs(1),
-            || {
-                let entry = entry.clone();
-                let config = config.clone();
-                let demand = subscription_demand.clone();
-                let publisher = Arc::clone(&publisher);
-                let synchronization = Arc::clone(&synchronization);
-                async move {
-                    create_state_worker(&entry, config, demand, publisher, synchronization).await
-                }
-            },
-            |error| {
-                logger.error(format!(
-                    "State initialization stopped for PID {} ({:?}, generation {}): {error}",
-                    entry.pid, entry.client, entry.generation
-                ));
-            },
-        )
-        .await;
+    let worker = initialize_state_worker(
+        &cancel,
+        Duration::from_secs(1),
+        || {
+            let entry = entry.clone();
+            let reader_settings = reader_settings.clone();
+            let demand = subscription_demand.clone();
+            let publisher = Arc::clone(&publisher);
+            let synchronization = Arc::clone(&synchronization);
+            async move {
+                create_state_worker(&entry, reader_settings, demand, publisher, synchronization)
+                    .await
+            }
+        },
+        |error| {
+            logger.error(format!(
+                "State initialization stopped for PID {} ({:?}, generation {}): {error}",
+                entry.pid, entry.client, entry.generation
+            ));
+        },
+    )
+    .await;
     let Some(worker) = worker else {
         return;
     };
@@ -704,7 +723,7 @@ pub(super) enum PreparedReaders {
 
 pub(super) async fn create_state_worker(
     entry: &InstanceGeneration,
-    config: watch::Receiver<Arc<crate::config::Config>>,
+    reader_settings: watch::Receiver<crate::state::ReaderSettings>,
     subscription_demand: watch::Receiver<crate::state::SubscriptionDemand>,
     publisher: Arc<StatePublicationSink>,
     synchronization: Arc<Mutex<ReaderSynchronization>>,
@@ -757,7 +776,7 @@ pub(super) async fn create_state_worker(
         return Ok(None);
     };
     let intervals = PollIntervalUpdates::Config {
-        config: config.clone(),
+        config: reader_settings.clone(),
         demand: subscription_demand,
     };
     let worker = match readers {
@@ -765,7 +784,7 @@ pub(super) async fn create_state_worker(
             let (regular, precise) = *readers;
             finish_state_worker(
                 entry,
-                config,
+                reader_settings,
                 intervals,
                 publisher,
                 synchronization,
@@ -777,7 +796,7 @@ pub(super) async fn create_state_worker(
             let (regular, precise) = *readers;
             finish_state_worker(
                 entry,
-                config,
+                reader_settings,
                 intervals,
                 publisher,
                 synchronization,
@@ -791,7 +810,7 @@ pub(super) async fn create_state_worker(
 
 pub(super) fn finish_state_worker<R, Q>(
     entry: &InstanceGeneration,
-    config: watch::Receiver<Arc<crate::config::Config>>,
+    reader_settings: watch::Receiver<crate::state::ReaderSettings>,
     intervals: PollIntervalUpdates,
     publisher: Arc<StatePublicationSink>,
     synchronization: Arc<Mutex<ReaderSynchronization>>,
@@ -802,9 +821,8 @@ where
     R: SynchronizedMemoryReader + 'static,
     Q: SynchronizedMemoryReader + 'static,
 {
-    let current = config.borrow().clone();
-    let calculation =
-        Arc::new(crate::calculation::state_backend::LiveStateCalculationBackend::new());
+    let current = *reader_settings.borrow();
+    let calculation = Arc::new(crate::state::state_backend::LiveStateCalculationBackend::new());
     let mut bundle = StateBundle::new_with_root(
         entry.client,
         entry.generation,
@@ -817,7 +835,7 @@ where
     );
     bundle.set_calculate_pp(current.calculate_pp);
     bundle.set_capture_config(current.read_mania_scroll_speed, current.show_mp_commands);
-    bundle.set_config_updates(config.clone());
+    bundle.set_config_updates(reader_settings.clone());
     publisher.publish(bundle.snapshot(), Delivery::All)?;
 
     let initial_context = ReadContext {
@@ -839,7 +857,7 @@ where
     };
     let regular =
         SourceRegularReader::new(entry.client, regular_memory, Arc::clone(&synchronization));
-    let precise = SourcePreciseReader::new(precise_memory, config.clone());
+    let precise = SourcePreciseReader::new(precise_memory, reader_settings.clone());
     Ok(spawn_state_worker(
         regular,
         precise,

@@ -17,10 +17,9 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use crate::app::StartupArgs;
 use crate::logging::Logger;
 use crate::memory::lazer_loader::{
-    LazerLoadError, LazerOffsetLoader, OffsetGenerator, resolve_for_instance,
+    GenerationIdentity, LazerLoadError, LazerOffsetLoader, OffsetGenerator, resolve_for_instance,
     resolve_for_instance_with_logger,
 };
 use crate::memory::lazer_offsets::LazerOffsets;
@@ -53,8 +52,8 @@ mod runtime;
 #[cfg(any(target_os = "linux", windows))]
 pub use discovery::NativeProcessProvider;
 pub use discovery::{
-    ClassifiedCandidate, DiscoveryPlatform, ProcessDescriptor, ProcessProvider,
-    classify_candidates, should_skip,
+    ClassifiedCandidate, DiscoveryPlatform, ProcessDescriptor, ProcessProvider, StartupArgs,
+    StartupValue, classify_candidates, should_skip,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -207,7 +206,14 @@ impl Instance {
         let instance = self.clone();
         *task = Some(tokio::spawn(async move {
             match logger {
-                Some(logger) => resolve_for_instance_with_logger(loader, instance, logger).await,
+                Some(logger) => {
+                    resolve_for_instance_with_logger(
+                        loader,
+                        instance,
+                        Arc::new(move |message: String| logger.warn(message)),
+                    )
+                    .await
+                }
                 None => resolve_for_instance(loader, instance).await,
             }
         }));
@@ -230,6 +236,36 @@ impl Instance {
         {
             task.abort();
         }
+    }
+}
+
+impl GenerationIdentity for Instance {
+    fn client(&self) -> ClientType {
+        Instance::client(self)
+    }
+
+    fn pid(&self) -> Pid {
+        Instance::pid(self)
+    }
+
+    fn process_id(&self) -> Option<Pid> {
+        self.process.process_id()
+    }
+
+    fn is_alive(&self) -> bool {
+        self.process.is_alive()
+    }
+
+    fn lifecycle_token(&self) -> CancellationToken {
+        Instance::lifecycle_token(self)
+    }
+
+    fn lazer_offsets(&self) -> Option<Arc<LazerOffsets>> {
+        Instance::lazer_offsets(self)
+    }
+
+    fn install_lazer_offsets(&self, offsets: Arc<LazerOffsets>) -> bool {
+        Instance::install_lazer_offsets(self, offsets)
     }
 }
 

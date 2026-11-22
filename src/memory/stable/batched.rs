@@ -742,7 +742,7 @@ impl StableMemory {
         // ScoreV2 is a win condition and is not represented in the
         // score's regular mod bitfields.
         if score_processor != 0 {
-            bits |= crate::calculation::osu_mods::SCORE_V2;
+            bits |= crate::model::osu_mods::SCORE_V2;
         }
         let mods = self.with_random_seed(mods(bits), r, mode)?;
         self.gameplay_mode = mode;

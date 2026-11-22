@@ -2,19 +2,19 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use super::beatmap::{
+use crate::calculation::beatmap::{
     AppliedMod, BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, DifficultyAttributes,
     DifficultyValues, EngineOutput, EngineRequest, ModSet, ParsedBeatmap, PeakStrains,
     PerformanceAttributes, Ruleset as BeatmapRuleset, ScoreData, ScoringMode,
 };
-use super::progressive::{
+use crate::calculation::progressive::{
     CalculationOutcome, ClientScoring, GameplayCacheKey, GameplayCalculator, GameplayFrame,
     GameplayGate, HitStatistics, LiveGradualProgression, LiveProgressiveBeatmap, ResultCalculator,
     ResultFrame, Ruleset,
 };
-use super::{mods_checksum, mods_for_calculation, safe_join};
 use crate::model::enums::ClientType;
 use crate::model::states::{CalculateMods, Mod, Statistics};
+use crate::model::{mods_checksum, mods_for_calculation, safe_join};
 use crate::state::{
     BeatmapCalculationUpdate, CalculationPhase, StateCalculationBackend, StateCalculationFuture,
     StateCalculationRequest, StateCalculationResult, StateWorkerError,

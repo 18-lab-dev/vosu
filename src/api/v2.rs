@@ -7,11 +7,11 @@ use serde_json::Value;
 use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
 use crate::calculation::beatmap::ParsedBeatmap;
-use crate::calculation::{calculate_grade, to_legacy_hits};
 use crate::model::api::v2::*;
 use crate::model::enums::ClientType;
 use crate::model::memory::{LazerSpectatorEntry, User};
 use crate::model::states::{CalculateMods, HitErrorArray, LeaderboardPlayer, SettingsObject};
+use crate::model::{calculate_grade, to_legacy_hits};
 use crate::state::{GameplayState, RegularState};
 
 pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
@@ -166,7 +166,7 @@ fn normalize_javascript_numbers(value: &mut Value) -> Result<(), ApiError> {
     match value {
         Value::Number(number) if number.is_f64() => {
             let value = number.as_f64().expect("checked f64 JSON number");
-            *number = crate::calculation::js_json_number(value)
+            *number = crate::model::js_json_number(value)
                 .parse()
                 .map_err(|error: serde_json::Error| ApiError::serialization(error.to_string()))?;
         }

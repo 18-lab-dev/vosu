@@ -40,7 +40,6 @@ use crate::{
         StartupOutcome, StartupPlatform,
     },
     assets::DaemonAssets,
-    calculation::default_calculated_mods,
     config::{Config, ConfigChanged, ConfigDocument, ConfigStore},
     counters::ReloadableCounterService,
     instance::{
@@ -53,6 +52,7 @@ use crate::{
         lazer_loader::LazerOffsetLoader,
         stable::{StableMemory, StablePatterns},
     },
+    model::default_calculated_mods,
     model::enums::{ClientType, GameState},
     platform::{PathResolver, Paths},
     report::{ReportCounter, ReportInput, ReportInstance},

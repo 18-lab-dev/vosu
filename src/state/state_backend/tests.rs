@@ -398,7 +398,7 @@ fn backend_request(
 ) -> StateCalculationRequest {
     let snapshot =
         crate::state::StateBundle::new(ClientType::Stable, 1, backend.clone()).snapshot();
-    let mods = crate::calculation::default_calculated_mods();
+    let mods = crate::model::default_calculated_mods();
     StateCalculationRequest {
         input: crate::state::CalculationInput {
             game_folder: root.to_owned(),

@@ -46,7 +46,7 @@ Beatmap maximum combo comes from difficulty attributes across v1, v2, and
 StreamCompanion. In mania it includes hold-duration ticks; it must not be
 replaced by the maximum score's hit-result count.
 
-JSON number formatting is shared across v1, stream companion, v2, and runtime projection writers through `src/calculation/root/helpers.rs::write_js_json_number`. The formatter writes finite ECMAScript-compatible numbers directly to the output, emits `null` for non-finite values, normalizes signed zero to `0`, and avoids the former temporary `String` allocation; boundary tests in `src/calculation/root/tests.rs` cover the representation thresholds and special values. Preserve this helper when changing serializers rather than reintroducing per-value allocation.
+JSON number formatting is shared across v1, stream companion, v2, and runtime projection writers through `src/model/root/helpers.rs::write_js_json_number`. The formatter writes finite ECMAScript-compatible numbers directly to the output, emits `null` for non-finite values, normalizes signed zero to `0`, and avoids the former temporary `String` allocation; boundary tests in `src/model/root/tests.rs` cover the representation thresholds and special values. Preserve this helper when changing serializers rather than reintroducing per-value allocation.
 
 Pinned calculator, map-parser, and osu! framework revisions are declared in `Cargo.toml` metadata and evidenced under `tools/oracle/`, `crates/vosu-pp/rosu-map-api/`, and `crates/vosu-pp/rosu-pp-api/`. Treat these pinned API forks and their licenses/source mappings as provenance rather than ordinary application code.
 

@@ -909,7 +909,7 @@ fn stable_random_key_errors_never_guess_columns() {
     bundle.beatmap.source_key = Some(checksum);
     bundle.beatmap.parsed = Some(parsed);
     let mut mods = default_calculated_mods();
-    mods.number |= crate::calculation::osu_mods::RANDOM;
+    mods.number |= crate::model::osu_mods::RANDOM;
     let play = RawPreciseSnapshotBuilder::new(
         PreciseCaptureContext::new(ClientType::Stable, 46, 0, 3, mods, 0, 0),
         1,

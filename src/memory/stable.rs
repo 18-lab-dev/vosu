@@ -1,4 +1,4 @@
-use crate::calculation::{js_round_number, net_date_binary_to_date};
+use crate::model::{js_round_number, net_date_binary_to_date};
 use chrono::SecondsFormat;
 use indexmap::IndexMap;
 use md5::{Digest, Md5};

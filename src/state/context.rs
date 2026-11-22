@@ -266,7 +266,7 @@ impl PollIntervals {
 pub enum PollIntervalUpdates {
     Direct(watch::Receiver<PollIntervals>),
     Config {
-        config: watch::Receiver<Arc<crate::config::Config>>,
+        config: watch::Receiver<super::ReaderSettings>,
         /// Union of the producing lanes requested by established selections.
         demand: watch::Receiver<SubscriptionDemand>,
     },

@@ -813,7 +813,7 @@ async fn subscription_cadence_cpu_and_wakeups() {
             connection.write_completed();
             Some((connection, receiver))
         };
-        let (_config, config) = watch::channel(Arc::new(crate::config::Config::default()));
+        let (_config, config) = watch::channel(crate::state::ReaderSettings::default());
         let intervals = PollIntervalUpdates::Config {
             config,
             demand: hub.demand(),

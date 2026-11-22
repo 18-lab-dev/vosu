@@ -71,13 +71,13 @@ impl StateBundle {
         self.show_mp_commands = show_mp_commands;
     }
 
-    pub fn apply_config(&mut self, config: &crate::config::Config) {
+    pub fn apply_config(&mut self, config: &super::super::ReaderSettings) {
         self.calculate_pp = config.calculate_pp;
         self.read_mania_scroll_speed = config.read_mania_scroll_speed;
         self.show_mp_commands = config.show_mp_commands;
     }
 
-    pub fn set_config_updates(&mut self, updates: watch::Receiver<Arc<crate::config::Config>>) {
+    pub fn set_config_updates(&mut self, updates: watch::Receiver<super::super::ReaderSettings>) {
         self.config_updates = Some(updates);
         self.refresh_config();
     }
@@ -86,7 +86,7 @@ impl StateBundle {
         let config = self
             .config_updates
             .as_ref()
-            .map(|updates| updates.borrow().clone());
+            .map(|updates| *updates.borrow());
         if let Some(config) = config {
             self.apply_config(&config);
         }
@@ -649,8 +649,7 @@ impl StateBundle {
             && parsed.cache_key().source_checksum == source_key
             && parsed.cache_key().memory_identity.as_deref() == Some(checksum)
         {
-            let mirror =
-                snapshot.capture().mods().number & crate::calculation::osu_mods::MIRROR != 0;
+            let mirror = snapshot.capture().mods().number & crate::model::osu_mods::MIRROR != 0;
             return parsed
                 .mania_judgement_events(mirror)
                 .map_or(StableManiaMetadata::Unavailable, StableManiaMetadata::Ready);
@@ -856,7 +855,7 @@ impl StateBundle {
                         {
                             let mods = snapshot.capture().mods().number;
                             // Stable exposes HR, but no supported positional randomisation.
-                            if mods & crate::calculation::osu_mods::MIRROR == 0 {
+                            if mods & crate::model::osu_mods::MIRROR == 0 {
                                 self.stable_offsets.heads = Some(
                                     vosu_pp::LiveLazerEngine
                                         .parse_str(parsed.source())
@@ -910,35 +909,35 @@ impl StateBundle {
                     .hit_errors
                     .all
                     .extend_from_slice(&errors.errors.all);
-                let stable_partition =
-                    if self.source == ClientType::Stable && snapshot.capture().mode() == 3 {
-                        errors.stable_replay_frames.as_ref().map(|batch| {
-                            let target_checksum = self.menu.checksum.as_deref();
-                            let metadata = self
-                                .stable_mania_hit_errors
-                                .needs_metadata(target_checksum)
-                                .then(|| self.stable_mania_metadata(snapshot));
-                            self.stable_mania_hit_errors.key = (errors.errors.key.is_some()
-                                && snapshot.capture().mods().number
-                                    & crate::calculation::osu_mods::RANDOM
-                                    == 0)
-                                .then(Default::default);
-                            self.stable_mania_hit_errors.observe_list(
-                                errors.index - errors.errors.all.len() as i64,
-                                errors.list_len,
-                            );
-                            self.stable_mania_hit_errors.partition(
-                                &errors.errors.all,
-                                batch,
-                                target_checksum,
-                                self.calculation_failures,
-                                metadata,
-                                now,
-                            )
-                        })
-                    } else {
-                        None
-                    };
+                let stable_partition = if self.source == ClientType::Stable
+                    && snapshot.capture().mode() == 3
+                {
+                    errors.stable_replay_frames.as_ref().map(|batch| {
+                        let target_checksum = self.menu.checksum.as_deref();
+                        let metadata = self
+                            .stable_mania_hit_errors
+                            .needs_metadata(target_checksum)
+                            .then(|| self.stable_mania_metadata(snapshot));
+                        self.stable_mania_hit_errors.key = (errors.errors.key.is_some()
+                            && snapshot.capture().mods().number & crate::model::osu_mods::RANDOM
+                                == 0)
+                            .then(Default::default);
+                        self.stable_mania_hit_errors.observe_list(
+                            errors.index - errors.errors.all.len() as i64,
+                            errors.list_len,
+                        );
+                        self.stable_mania_hit_errors.partition(
+                            &errors.errors.all,
+                            batch,
+                            target_checksum,
+                            self.calculation_failures,
+                            metadata,
+                            now,
+                        )
+                    })
+                } else {
+                    None
+                };
                 if let Some((press, release)) = stable_partition {
                     partitioned = true;
                     self.gameplay.hit_errors.press.extend(press);

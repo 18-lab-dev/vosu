@@ -27,13 +27,13 @@ use tempfile::TempDir;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use vosu::{
-    calculation::{
-        ModsInput as CalculationModsInput, calculate_accuracy, calculate_grade, calculate_mods,
-        empty_statistics, fix_decimals_to, to_legacy_hits,
-    },
     counters::{
         CounterDownloader, CounterError, CounterOpener, CounterService, DownloadRequest,
         SettingInput,
+    },
+    model::{
+        ModsInput as CalculationModsInput, calculate_accuracy, calculate_grade, calculate_mods,
+        empty_statistics, fix_decimals_to, to_legacy_hits,
     },
     model::{
         enums::{GameState, GradeEnum, Rulesets},

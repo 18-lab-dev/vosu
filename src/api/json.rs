@@ -19,14 +19,14 @@ impl Formatter for JsFormatter {
     where
         W: ?Sized + Write,
     {
-        crate::calculation::write_js_json_number(writer, f64::from(value))
+        crate::model::write_js_json_number(writer, f64::from(value))
     }
 
     fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
     where
         W: ?Sized + Write,
     {
-        crate::calculation::write_js_json_number(writer, value)
+        crate::model::write_js_json_number(writer, value)
     }
 }
 
@@ -46,7 +46,7 @@ pub(crate) fn write_js_number(output: &mut Vec<u8>, value: f64) -> io::Result<()
         write_i64(output, integer);
         Ok(())
     } else {
-        crate::calculation::write_js_json_number(output, value)
+        crate::model::write_js_json_number(output, value)
     }
 }
 
@@ -379,7 +379,7 @@ mod tests {
         let mut fast = Vec::new();
         write_js_number(&mut fast, value).unwrap();
         let mut general = Vec::new();
-        crate::calculation::write_js_json_number(&mut general, value).unwrap();
+        crate::model::write_js_json_number(&mut general, value).unwrap();
         (
             String::from_utf8(fast).unwrap(),
             String::from_utf8(general).unwrap(),
