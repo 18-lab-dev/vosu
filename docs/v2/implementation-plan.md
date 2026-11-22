@@ -438,8 +438,9 @@ Scope:
 Exit: `cargo test --locked -p vosu-plugin-api` (layout, codecs, `prop_*`
 bounds tests, unknown-flag rejection); `cargo test --locked -p vosu-core` host
 tests (trust refusal of `in-process` for an ineligible plugin, matcher
-overlap at validation and at runtime, `SESSION_DECLINE` not re-offering a
-PID generation, identification timeout, focus delivery order, read-plan
+overlap at validation and at runtime, `SESSION_DECLINE` re-offering a PID
+generation to the next matching plugin in install order and being refused
+after `SESSION_IDENTIFY`, identification timeout, focus delivery order, read-plan
 validation including a dependent stage whose `ref_op` length differs from
 the pointer width, `VOSU_READ_PLAN_SYNC` refused on a dispatch thread and
 timing out with `VOSU_ERR_TIMED_OUT`, log rate limiting, timer
@@ -507,8 +508,8 @@ Scope:
   `vosu.osu/internal/paths` (per-variant fields, D8), publishing changed
   leaves as one batch per sample, following state-schema.md "1.x-to-2.0
   field mapping", "`keys`", "`skin`", and "Common-layer coverage";
-  `vosu.osu.session` carries the spectator IPC id (D6) and `vosu.osu.tourney`
-  stays unpublished (D6). Resource references arrive in M3; until then the
+  `vosu.osu.session.ipcId` carries the spectator IPC id (D6) and
+  `vosu.osu.tourney` is always `null` (D6). Resource references arrive in M3; until then the
   manifest declares no `[[resource_kinds]]`, so `vosu.chart.resources` and
   `vosu.skin.tree` are correctly absent.
 - Bridge B1 still feeds the 1.x surfaces; reader demand is the union of the
