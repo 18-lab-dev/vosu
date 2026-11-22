@@ -270,3 +270,123 @@ fn bundled_echo_create_dispatch_destroy() {
         .destroy(DESTROY_GRACE)
         .expect("destroying the bundled echo plugin instance");
 }
+
+// --- `PluginHost`: M1 host services (settings, logging, timers) end to end ---
+
+/// A console sink that records every line `vosu_core::logging::Logger`
+/// writes, so this test can assert on plugin-id attribution and the
+/// dropped-record summary without touching real stdout.
+#[derive(Default)]
+struct RecordingConsole {
+    lines: std::sync::Mutex<Vec<String>>,
+}
+
+impl vosu_core::logging::ConsoleSink for RecordingConsole {
+    fn is_tty(&self) -> bool {
+        false
+    }
+    fn write_log(&self, text: &str) -> std::io::Result<()> {
+        self.lines
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(text.to_owned());
+        Ok(())
+    }
+    fn clear_progress(&self, _lines: usize) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn write_progress(&self, _text: &str) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// End to end through a real `PluginHost` and a real plugin instance
+/// (`vosu-plugin-testkit`'s `host_services` plugin, not a bare echo): on
+/// `create` the plugin itself requests a one-shot timer (§6.11); once
+/// `PluginHost`'s `TimerRegistry` fires it and delivers `TIMER_FIRED`
+/// back through this same instance's dispatch path, the plugin cancels
+/// that timer and sends a burst of `LOG_RECORD`s past the per-instance
+/// rate limit (§6.10) — exercising `init.settings` (§6.9), timers, and
+/// rate-limited, plugin-id-attributed logging through one `PluginHost`
+/// instance, the M1 Exit list's "log rate limiting, timer cancellation".
+#[test]
+fn plugin_host_runs_the_host_services_testkit_plugin_end_to_end() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime for the test");
+    let _enter = runtime.enter();
+
+    let console = Arc::new(RecordingConsole::default());
+    let log_dir = tempfile::tempdir().expect("creating a temp log dir");
+    let logger = vosu_core::logging::Logger::new(
+        log_dir.path(),
+        vosu_core::logging::LoggerOptions {
+            version: "0.1.0".to_owned(),
+            debug_log: true,
+            queue_capacity: 4096,
+        },
+        console.clone(),
+    )
+    .expect("constructing the logger");
+
+    let config_dir = tempfile::tempdir().expect("creating a temp config dir");
+    let config_path = config_dir.path().join("vosu.toml");
+    let config = runtime
+        .block_on(vosu_core::config::ConfigStore::initialize(&config_path))
+        .expect("initializing a throwaway ConfigStore");
+    let storage: Arc<dyn vosu_core::plugin::settings::SettingsStorage> = Arc::new(
+        vosu_core::plugin::settings::ConfigSettingsBridgeB2::new(Arc::new(config)),
+    );
+    let settings = Arc::new(vosu_core::plugin::settings::PluginSettingsService::new(
+        storage,
+    ));
+
+    let host =
+        vosu_core::plugin::PluginHost::new(logger.clone(), settings, runtime.handle().clone());
+
+    let manifest = "kind='plugin'\nmanifest_version=1\nid='acme.testkit.host-services'\nname='Host Services Testkit'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n";
+    let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
+        manifest,
+        vtable: vosu_plugin_testkit::host_services::vosu_plugin_vtable,
+    }])
+    .expect("loading the host-services testkit plugin");
+
+    let data_dir = tempfile::tempdir().expect("creating a temp plugin data dir");
+    let instance_id = PluginInstanceId::new(1);
+    host.create_instance(instance_id, &loaded[0], data_dir.path().to_path_buf(), None)
+        .expect("creating the host-services testkit plugin instance");
+
+    // Waits for the dropped-record summary: it only appears once the
+    // plugin's burst (sent only in reaction to `TIMER_FIRED`) has run
+    // past the rate limit, so its presence alone proves the timer was
+    // set at `create`, fired, and was delivered back to the plugin.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        runtime
+            .block_on(logger.flush())
+            .expect("flushing the logger");
+        if console
+            .lines
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| line.contains("record(s) dropped"))
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "expected a dropped-record summary within 5s of the timer firing"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let lines = console.lines.lock().unwrap();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("plugin acme.testkit.host-services: burst")),
+        "expected plugin-id-attributed burst log lines, got: {lines:?}"
+    );
+    drop(lines);
+
+    host.destroy_all(DESTROY_GRACE);
+}

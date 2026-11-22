@@ -46,6 +46,12 @@ pub enum HostError {
     /// A bounded dispatch queue (per-instance serial, or the shared
     /// `concurrent_dispatch` pool) was full.
     DispatchQueueFull,
+    /// `create`'s `init.settings`/`init` payload failed to CBOR-encode
+    /// (`PluginHost::create_instance`, §6.9's `init.settings`).
+    InitEncodeFailed(String),
+    /// `PluginHost::dispatch_to_instance` named an id no instance is
+    /// currently registered under (never created, or already destroyed).
+    UnknownInstance,
 }
 
 impl fmt::Display for HostError {
@@ -78,6 +84,8 @@ impl fmt::Display for HostError {
             ),
             Self::DestroyTimedOut => write!(f, "destroy did not return within its grace period"),
             Self::DispatchQueueFull => write!(f, "dispatch queue is full"),
+            Self::InitEncodeFailed(error) => write!(f, "encoding init failed: {error}"),
+            Self::UnknownInstance => write!(f, "no instance is registered under that id"),
         }
     }
 }

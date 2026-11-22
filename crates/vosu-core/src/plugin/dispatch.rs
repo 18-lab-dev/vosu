@@ -92,6 +92,7 @@ impl Drop for InFlightGuard {
 /// One encoded `vosu_message`, owned so it can cross a channel: the raw
 /// ABI pointer inside `vosu_message` is only valid for the duration of one
 /// call, never across a channel hop to another thread.
+#[derive(Clone)]
 pub struct OwnedMessage {
     pub opcode: u32,
     pub flags: u32,
