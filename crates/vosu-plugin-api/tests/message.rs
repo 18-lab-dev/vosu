@@ -203,7 +203,9 @@ struct RecordingHost {
 
 impl HostServices for RecordingHost {
     fn send(&self, message: &Message, correlation_id: u64) -> vosu_plugin_api::vosu_status {
-        self.sent.borrow_mut().push((message.clone(), correlation_id));
+        self.sent
+            .borrow_mut()
+            .push((message.clone(), correlation_id));
         vosu_plugin_api::vosu_status::VOSU_OK
     }
 }
@@ -238,7 +240,10 @@ fn set_timer_rejects_a_sub_millisecond_nonzero_interval() {
         sent: RefCell::new(Vec::new()),
     };
     let status = host.set_timer(1, Some(std::time::Duration::from_micros(500)));
-    assert_eq!(status, vosu_plugin_api::vosu_status::VOSU_ERR_INVALID_ARGUMENT);
+    assert_eq!(
+        status,
+        vosu_plugin_api::vosu_status::VOSU_ERR_INVALID_ARGUMENT
+    );
     assert!(host.sent.into_inner().is_empty());
 }
 
@@ -269,6 +274,9 @@ fn declare_root_rejects_a_non_utf8_path() {
     };
     let path = std::path::Path::new(OsStr::from_bytes(b"/tmp/not-\xFF-utf8"));
     let status = host.declare_root(None, "root", path);
-    assert_eq!(status, vosu_plugin_api::vosu_status::VOSU_ERR_INVALID_ARGUMENT);
+    assert_eq!(
+        status,
+        vosu_plugin_api::vosu_status::VOSU_ERR_INVALID_ARGUMENT
+    );
     assert!(host.sent.into_inner().is_empty());
 }

@@ -204,10 +204,7 @@ pub trait HostServices {
         selectors: Vec<Selector>,
     ) -> vosu_status {
         self.send(
-            &Message::StateSubscribe(StateSubscribe {
-                session,
-                selectors,
-            }),
+            &Message::StateSubscribe(StateSubscribe { session, selectors }),
             0,
         )
     }

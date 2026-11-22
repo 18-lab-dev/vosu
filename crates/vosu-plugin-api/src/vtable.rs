@@ -41,9 +41,8 @@ pub struct vosu_plugin_vtable {
     /// behavior for a typed enum return. A caller decodes it with
     /// `vosu_status::try_from`, treating an unrecognized value as an
     /// error rather than UB (M4).
-    pub dispatch: Option<
-        unsafe extern "C" fn(plugin_ctx: *mut c_void, message: *const vosu_message) -> u32,
-    >,
+    pub dispatch:
+        Option<unsafe extern "C" fn(plugin_ctx: *mut c_void, message: *const vosu_message) -> u32>,
 
     /// The host is tearing this instance down. Must release every resource
     /// and return within the host's configured shutdown grace period.
@@ -68,9 +67,8 @@ pub struct vosu_host_services {
     /// Returns the raw `vosu_status` numeric value, not the typed enum,
     /// for the same reason `dispatch` does (M4): the host implementing
     /// this may be foreign code.
-    pub send: Option<
-        unsafe extern "C" fn(host_ctx: *mut c_void, message: *const vosu_message) -> u32,
-    >,
+    pub send:
+        Option<unsafe extern "C" fn(host_ctx: *mut c_void, message: *const vosu_message) -> u32>,
 }
 
 /// Entry point every external plugin dynamic library exports under exactly

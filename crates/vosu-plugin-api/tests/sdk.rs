@@ -56,10 +56,7 @@ export_plugin!(TestPlugin);
 
 /// A minimal `vosu_host_services` whose `send` always succeeds and does
 /// nothing else; `create` only needs a non-null, well-formed one.
-unsafe extern "C" fn noop_send(
-    _host_ctx: *mut c_void,
-    _message: *const vosu_message,
-) -> u32 {
+unsafe extern "C" fn noop_send(_host_ctx: *mut c_void, _message: *const vosu_message) -> u32 {
     vosu_status::VOSU_OK as u32
 }
 
@@ -80,22 +77,16 @@ fn init_bytes() -> Vec<u8> {
     .expect("encode init")
 }
 
-#[cfg(not(feature = "bundled"))]
 fn vtable() -> *const vosu_plugin_api::vosu_plugin_vtable {
     vosu_plugin_entry_v1()
 }
 
-#[cfg(feature = "bundled")]
-fn vtable() -> vosu_plugin_api::vosu_plugin_vtable {
-    vosu_plugin_vtable()
-}
-
 #[test]
 fn export_plugin_vtable_has_correct_abi_header_and_every_function() {
-    #[cfg(not(feature = "bundled"))]
+    // SAFETY: `vtable()` always returns a pointer to the `static`
+    // `vosu_plugin_vtable` the macro built; it lives for the program's
+    // duration.
     let vt = unsafe { &*vtable() };
-    #[cfg(feature = "bundled")]
-    let vt = vtable();
 
     assert_eq!(vt.abi_version, vosu_plugin_api::VOSU_PLUGIN_ABI_MAJOR);
     assert_eq!(
@@ -113,10 +104,7 @@ fn export_plugin_create_dispatch_destroy_round_trip() {
     // SAFETY: `vosu_plugin_entry_v1` always returns a pointer to the
     // `static` `vosu_plugin_vtable` the macro built; it lives for the
     // program's duration.
-    #[cfg(not(feature = "bundled"))]
     let vt = unsafe { &*vtable() };
-    #[cfg(feature = "bundled")]
-    let vt = vtable();
 
     let host = noop_host_services();
     let init = init_bytes();
@@ -164,10 +152,7 @@ fn export_plugin_create_dispatch_destroy_round_trip() {
 fn export_plugin_panic_inside_on_message_never_crosses_ffi() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     // SAFETY: see `export_plugin_create_dispatch_destroy_round_trip`.
-    #[cfg(not(feature = "bundled"))]
     let vt = unsafe { &*vtable() };
-    #[cfg(feature = "bundled")]
-    let vt = vtable();
 
     let host = noop_host_services();
     let init = init_bytes();
@@ -246,7 +231,8 @@ mod plan_memory_tests {
             // `vosu_message` — this reentrant call is exactly what an
             // in-process host's real `send` does for `VOSU_READ_PLAN_SYNC`
             // (D5).
-            let raw_status = unsafe { (self.dispatch)(self.plugin_ctx, &raw as *const vosu_message) };
+            let raw_status =
+                unsafe { (self.dispatch)(self.plugin_ctx, &raw as *const vosu_message) };
             vosu_status::try_from(raw_status).unwrap_or(vosu_status::VOSU_ERR_BACKEND)
         }
     }
@@ -302,7 +288,11 @@ mod plan_memory_tests {
             Ok(Self)
         }
 
-        fn on_message(&mut self, message: Message, _correlation_id: u64) -> Result<(), PluginError> {
+        fn on_message(
+            &mut self,
+            message: Message,
+            _correlation_id: u64,
+        ) -> Result<(), PluginError> {
             if let Message::SessionDecline(_) = message {
                 let host = noop_host_services();
                 // SAFETY: `host` is a local, valid `vosu_host_services`

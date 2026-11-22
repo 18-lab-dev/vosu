@@ -212,30 +212,43 @@ pub fn vtable_for_concurrent<T: ConcurrentPlugin>() -> crate::vosu_plugin_vtable
     }
 }
 
-/// One macro call generates `vosu_plugin_entry_v1` for an external
-/// `cdylib` build, or a plain `vosu_plugin_vtable()` function for a build
-/// with the unpublished `bundled` feature enabled (D11), for the root
-/// crate's explicit `BUNDLED` array (D13) to call directly — the plugin
-/// author's code is identical either way.
+/// One macro call generates either a plain `vosu_plugin_vtable()` function
+/// for the root crate's explicit `BUNDLED` array (D13) to call directly,
+/// or `vosu_plugin_entry_v1` for an external `cdylib` build — the call
+/// site says which, explicitly, rather than a `#[cfg(feature = "bundled")]`
+/// inside this `macro_rules!`: that `cfg` is evaluated in the crate that
+/// invokes the macro, so a downstream crate without its own `bundled`
+/// feature would get an `unexpected_cfgs` warning (`-D warnings` failure)
+/// for a feature it never declared, and a bundled plugin crate that forgot
+/// to enable it would silently export a `#[no_mangle] vosu_plugin_entry_v1`
+/// instead (M2) — two such crates linked into one executable would then
+/// collide.
 ///
-/// Write `export_plugin!(MyPlugin)` for a type implementing [`Plugin`]
-/// (serialized, `&mut self`), or `export_plugin!(concurrent MyPlugin)` for
-/// one implementing [`ConcurrentPlugin`] (`&self`, D22). This differs from
+/// Write `export_plugin!(bundled MyPlugin)` for the bundled form,
+/// `export_plugin!(MyPlugin)` for the `cdylib` form, each for a type
+/// implementing [`Plugin`] (serialized, `&mut self`); prefix either with
+/// `concurrent` for one implementing [`ConcurrentPlugin`] instead (`&self`,
+/// D22) — `export_plugin!(bundled concurrent MyPlugin)` or
+/// `export_plugin!(concurrent MyPlugin)`. This differs from
 /// `docs/v2/plugin-abi.md` §9's sketch, which shows one spelling for both
-/// and says the macro "picks the dispatch path from which trait the
-/// plugin's type implements": Rust has no stable, non-fragile way for one
-/// `macro_rules!` invocation to query which trait an arbitrary type
-/// implements, so this SDK asks the plugin author to say which once,
-/// explicitly, at the call site instead.
+/// `Plugin`/`ConcurrentPlugin` and says the macro "picks the dispatch path
+/// from which trait the plugin's type implements": Rust has no stable,
+/// non-fragile way for one `macro_rules!` invocation to query which trait
+/// an arbitrary type implements, so this SDK asks the plugin author to say
+/// which once, explicitly, at the call site instead.
 #[macro_export]
 macro_rules! export_plugin {
-    (concurrent $ty:ty) => {
-        #[cfg(feature = "bundled")]
+    (bundled concurrent $ty:ty) => {
         pub fn vosu_plugin_vtable() -> $crate::vosu_plugin_vtable {
             $crate::__vtable_for_concurrent::<$ty>()
         }
-
-        #[cfg(not(feature = "bundled"))]
+    };
+    (bundled $ty:ty) => {
+        pub fn vosu_plugin_vtable() -> $crate::vosu_plugin_vtable {
+            $crate::__vtable_for_serialized::<$ty>()
+        }
+    };
+    (concurrent $ty:ty) => {
         #[unsafe(no_mangle)]
         pub extern "C" fn vosu_plugin_entry_v1() -> *const $crate::vosu_plugin_vtable {
             static VTABLE: ::std::sync::LazyLock<$crate::vosu_plugin_vtable> =
@@ -244,12 +257,6 @@ macro_rules! export_plugin {
         }
     };
     ($ty:ty) => {
-        #[cfg(feature = "bundled")]
-        pub fn vosu_plugin_vtable() -> $crate::vosu_plugin_vtable {
-            $crate::__vtable_for_serialized::<$ty>()
-        }
-
-        #[cfg(not(feature = "bundled"))]
         #[unsafe(no_mangle)]
         pub extern "C" fn vosu_plugin_entry_v1() -> *const $crate::vosu_plugin_vtable {
             static VTABLE: ::std::sync::LazyLock<$crate::vosu_plugin_vtable> =
