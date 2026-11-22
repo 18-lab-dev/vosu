@@ -16,7 +16,11 @@ import sys
 
 def already_verified(repo, sha, run_id):
     result = subprocess.run(
-        ["gh", "api", f"repos/{repo}/commits/{sha}/check-runs", "-f", "check_name=CI required", "-f", "per_page=100"],
+        # `-f` fields default `gh api` to POST, which this list endpoint rejects.
+        [
+            "gh", "api", "--method", "GET", f"repos/{repo}/commits/{sha}/check-runs",
+            "-f", "check_name=CI required", "-f", "per_page=100",
+        ],
         capture_output=True,
         text=True,
         check=False,
