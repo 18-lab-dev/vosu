@@ -8,6 +8,15 @@
 //! intermediate form — and writes the matching `VOSU_OP_READ_PLAN_RESULT`
 //! straight into a caller-provided, reusable `Vec<u8>`. See
 //! `super::read_plan`'s module doc comment for the two-entry-point design.
+//!
+//! Every unchecked offset `read_struct_at`/`write_struct_at` touch here is
+//! bounds-checked only by a `debug_assert!`; the release build's memory
+//! safety therefore rests entirely on `vosu_plugin_api::validate_read_plan_submit`/
+//! `validate_read_plan_ref_op_width` having already rejected anything this
+//! module's own arithmetic could walk out of bounds — see [`execute_into`]'s
+//! first two calls.
+
+use std::mem::MaybeUninit;
 
 use super::*;
 
@@ -217,38 +226,33 @@ fn op_overflow_message(base: u64, offset: i64) -> String {
     format!("address arithmetic overflow: {base:#x} + {offset:#x}")
 }
 
-fn process_single_op_raw(
-    payload: &[u8],
-    stage: &vosu_stage_header,
-    base: u64,
+/// Reads `length` bytes at `address` into a freshly-appended region at the
+/// tail of `out`, writing the matching entry: on success the region stays
+/// and the entry points at it; on failure the just-reserved region is
+/// truncated away first, so a failed read never costs its `length` bytes
+/// of output space — shared by [`process_single_op_raw`] and the
+/// multi-op fallback below so both recover [`ErrorBudget`] room on
+/// failure exactly like [`super::execute_stage_ops`] does (the plugin-abi
+/// §6.3 worst-case accounting bounds every *successful* op's reply to its
+/// declared `length`; nothing here, success or failure, may exceed it).
+fn read_one_into_tail_raw(
     memory: &dyn ProcessMemory,
+    address: usize,
+    length: u32,
     global_index: usize,
     out: &mut Vec<u8>,
     budget: &mut ErrorBudget,
 ) {
-    let op: vosu_plan_op = read_struct_at(payload, stage.ops_offset as usize);
-    let Some(address) = resolve_op_address(base, op.offset) else {
-        budget.recover(op.length);
-        write_op_error_entry(
-            out,
-            global_index,
-            ReadErrorCode::AddressOverflow,
-            op_overflow_message(base, op.offset),
-            budget,
-        );
-        return;
-    };
-
     let region_start = out.len();
-    out.resize(region_start + op.length as usize, 0);
+    out.resize(region_start + length as usize, 0);
     match memory.read_exact(
         address,
-        &mut out[region_start..region_start + op.length as usize],
+        &mut out[region_start..region_start + length as usize],
     ) {
-        Ok(()) => write_entry(out, global_index, &ok_entry(region_start as u32, op.length)),
+        Ok(()) => write_entry(out, global_index, &ok_entry(region_start as u32, length)),
         Err(error) => {
             out.truncate(region_start);
-            budget.recover(op.length);
+            budget.recover(length);
             write_op_error_entry(
                 out,
                 global_index,
@@ -260,112 +264,207 @@ fn process_single_op_raw(
     }
 }
 
-fn process_multi_op_raw(
-    payload: &[u8],
+/// Bundles the three values every stage-processing function below needs
+/// but none of them mutate, so adding `deadline` (F3) did not push any of
+/// them over clippy's argument-count limit.
+struct RawContext<'a> {
+    payload: &'a [u8],
+    memory: &'a dyn ProcessMemory,
+    deadline: Instant,
+}
+
+fn process_single_op_raw(
+    ctx: &RawContext<'_>,
     stage: &vosu_stage_header,
     base: u64,
-    memory: &dyn ProcessMemory,
-    global_index_start: usize,
+    global_index: usize,
     out: &mut Vec<u8>,
     budget: &mut ErrorBudget,
 ) {
-    let op_size = size_of::<vosu_plan_op>();
-    let mut participants: Vec<(usize, usize, usize, u32)> = Vec::new();
+    let op: vosu_plan_op = read_struct_at(ctx.payload, stage.ops_offset as usize);
+    let Some(address) = resolve_op_address(base, op.offset) else {
+        budget.recover(op.length);
+        write_op_error_entry(
+            out,
+            global_index,
+            ReadErrorCode::AddressOverflow,
+            op_overflow_message(base, op.offset),
+            budget,
+        );
+        return;
+    };
+    read_one_into_tail_raw(ctx.memory, address, op.length, global_index, out, budget);
+}
 
-    for op_index in 0..stage.op_count as usize {
+/// Upper bound on how many sibling ops one [`process_multi_op_raw`] batch
+/// call covers at once (matching `src/process/linux.rs`'s own coalescer
+/// capacity): a stack array of this size, not a `Vec`, holds the batch's
+/// per-op metadata and `ReadRequest`s, so a multi-op stage allocates
+/// nothing regardless of its total op count (F1) — `validate_read_plan_submit`'s
+/// 24-bytes-per-op worst case already bounds one stage to about 2,730 ops,
+/// so the largest validated stage costs a few dozen chunks, not a few
+/// dozen allocations.
+const MULTI_OP_CHUNK: usize = 64;
+
+fn process_multi_op_chunk_raw(
+    ctx: &RawContext<'_>,
+    stage: &vosu_stage_header,
+    base: u64,
+    global_index_start: usize,
+    chunk: std::ops::Range<usize>,
+    out: &mut Vec<u8>,
+    budget: &mut ErrorBudget,
+) -> Result<(), ReadPlanError> {
+    let op_size = size_of::<vosu_plan_op>();
+    // (op_index, address, out_offset, length) for each op in this chunk
+    // whose address resolved — a plain stack array, never a `Vec`.
+    let mut participants = [(0usize, 0usize, 0usize, 0u32); MULTI_OP_CHUNK];
+    let mut participant_count = 0usize;
+    // An address-overflow op's message is charged against the budget
+    // immediately below (in the same op-index order [`super::execute_stage_ops`]'s
+    // own address-resolution loop charges in, so the two paths' budget
+    // truncation agrees, F2), but its bytes are appended to `out`'s tail
+    // only in the final pass below — never interleaved with the
+    // participant region a failed batch call may still truncate away.
+    let mut deferred_overflows: Vec<(usize, String)> = Vec::new();
+
+    for op_index in chunk {
         let op: vosu_plan_op =
-            read_struct_at(payload, stage.ops_offset as usize + op_index * op_size);
+            read_struct_at(ctx.payload, stage.ops_offset as usize + op_index * op_size);
         match resolve_op_address(base, op.offset) {
             Some(address) => {
                 let out_offset = out.len();
                 out.resize(out_offset + op.length as usize, 0);
-                participants.push((op_index, address, out_offset, op.length));
+                participants[participant_count] = (op_index, address, out_offset, op.length);
+                participant_count += 1;
             }
             None => {
                 budget.recover(op.length);
-                write_op_error_entry(
+                let message = budget.charge_message(op_overflow_message(base, op.offset));
+                deferred_overflows.push((op_index, message));
+            }
+        }
+    }
+
+    if participant_count > 0 {
+        let region_start = participants[0].2;
+
+        let batch_ok = {
+            let mut requests: [MaybeUninit<ReadRequest<'_>>; MULTI_OP_CHUNK] =
+                [const { MaybeUninit::uninit() }; MULTI_OP_CHUNK];
+            let mut remaining: &mut [u8] = &mut out[region_start..];
+            let mut cursor = region_start;
+            for (slot, &(_, address, out_offset, length)) in
+                requests.iter_mut().zip(&participants[..participant_count])
+            {
+                let gap = out_offset - cursor;
+                let (_skip, rest) = remaining.split_at_mut(gap);
+                let (slice, rest2) = rest.split_at_mut(length as usize);
+                slot.write(ReadRequest::new(address, slice));
+                remaining = rest2;
+                cursor = out_offset + length as usize;
+            }
+            // SAFETY: the loop above wrote exactly `participant_count`
+            // slots, `0..participant_count`, each with one `.write(...)`
+            // call; `ReadRequest` has no `Drop` impl, so the array's
+            // unwritten tail needs no cleanup when this block (and
+            // `requests`) goes out of scope.
+            let requests: &mut [ReadRequest<'_>] = unsafe {
+                std::slice::from_raw_parts_mut(
+                    requests.as_mut_ptr().cast::<ReadRequest<'_>>(),
+                    participant_count,
+                )
+            };
+            ctx.memory.read_many(requests).is_ok()
+        };
+
+        if batch_ok {
+            for &(op_index, _, out_offset, length) in &participants[..participant_count] {
+                write_entry(
                     out,
                     global_index_start + op_index,
-                    ReadErrorCode::AddressOverflow,
-                    op_overflow_message(base, op.offset),
+                    &ok_entry(out_offset as u32, length),
+                );
+            }
+        } else {
+            // The batch call itself failed (`src/process.rs`'s
+            // `read_many` contract: fill all requests or touch none), so
+            // every reserved byte in `out[region_start..]` is unused;
+            // retract it and re-read each op on its own, appending only
+            // what actually succeeds, so a failure here recovers its
+            // budget exactly like `read_one_into_tail_raw` (F2: matching
+            // `super::execute_stage_ops`'s own fallback accounting). Safe
+            // because nothing but this chunk's participants has been
+            // appended past `region_start` yet — the overflow ops above
+            // deferred their own tail writes past this point.
+            out.truncate(region_start);
+            for &(op_index, address, _, length) in &participants[..participant_count] {
+                if Instant::now() >= ctx.deadline {
+                    return Err(ReadPlanError::TimedOut);
+                }
+                read_one_into_tail_raw(
+                    ctx.memory,
+                    address,
+                    length,
+                    global_index_start + op_index,
+                    out,
                     budget,
                 );
             }
         }
     }
 
-    let Some(&(_, _, region_start, _)) = participants.first() else {
-        return;
-    };
-
-    let mut remaining: &mut [u8] = &mut out[region_start..];
-    let mut requests: Vec<ReadRequest<'_>> = Vec::with_capacity(participants.len());
-    let mut cursor = region_start;
-    for &(_, address, out_offset, length) in &participants {
-        let gap = out_offset - cursor;
-        let (_skip, rest) = remaining.split_at_mut(gap);
-        let (slice, rest2) = rest.split_at_mut(length as usize);
-        requests.push(ReadRequest::new(address, slice));
-        remaining = rest2;
-        cursor = out_offset + length as usize;
+    for (op_index, message) in deferred_overflows {
+        let (offset, len) = append_message(out, &message);
+        write_entry(
+            out,
+            global_index_start + op_index,
+            &error_entry(ReadErrorCode::AddressOverflow, offset, len),
+        );
     }
-
-    let batch_ok = memory.read_many(&mut requests).is_ok();
-    drop(requests);
-
-    if batch_ok {
-        for &(op_index, _, out_offset, length) in &participants {
-            write_entry(
-                out,
-                global_index_start + op_index,
-                &ok_entry(out_offset as u32, length),
-            );
-        }
-    } else {
-        for &(op_index, address, out_offset, length) in &participants {
-            let region = &mut out[out_offset..out_offset + length as usize];
-            match memory.read_exact(address, region) {
-                Ok(()) => write_entry(
-                    out,
-                    global_index_start + op_index,
-                    &ok_entry(out_offset as u32, length),
-                ),
-                Err(error) => {
-                    // Unlike the single-op path (which truncates its
-                    // reservation away on failure), this op's `length`
-                    // data bytes stay reserved-but-unused in `out`
-                    // (reclaiming a non-tail region mid-buffer would need
-                    // a compaction pass); recovering them into the error
-                    // budget here would let messages grow past the
-                    // validated worst-case cap.
-                    write_op_error_entry(
-                        out,
-                        global_index_start + op_index,
-                        error_code_for(&error),
-                        error.to_string(),
-                        budget,
-                    );
-                }
-            }
-        }
-    }
+    Ok(())
 }
 
-fn process_stage_raw(
-    payload: &[u8],
+fn process_multi_op_raw(
+    ctx: &RawContext<'_>,
     stage: &vosu_stage_header,
-    stage_base: Result<u64, RawFailure>,
-    memory: &dyn ProcessMemory,
+    base: u64,
     global_index_start: usize,
     out: &mut Vec<u8>,
     budget: &mut ErrorBudget,
-) {
+) -> Result<(), ReadPlanError> {
+    let op_count = stage.op_count as usize;
+    let mut chunk_start = 0usize;
+    while chunk_start < op_count {
+        let chunk_end = (chunk_start + MULTI_OP_CHUNK).min(op_count);
+        process_multi_op_chunk_raw(
+            ctx,
+            stage,
+            base,
+            global_index_start,
+            chunk_start..chunk_end,
+            out,
+            budget,
+        )?;
+        chunk_start = chunk_end;
+    }
+    Ok(())
+}
+
+fn process_stage_raw(
+    ctx: &RawContext<'_>,
+    stage: &vosu_stage_header,
+    stage_base: Result<u64, RawFailure>,
+    global_index_start: usize,
+    out: &mut Vec<u8>,
+    budget: &mut ErrorBudget,
+) -> Result<(), ReadPlanError> {
     let op_size = size_of::<vosu_plan_op>();
     let base = match stage_base {
         Err(failure) => {
             for op_index in 0..stage.op_count as usize {
                 let op: vosu_plan_op =
-                    read_struct_at(payload, stage.ops_offset as usize + op_index * op_size);
+                    read_struct_at(ctx.payload, stage.ops_offset as usize + op_index * op_size);
                 budget.recover(op.length);
                 let entry = match failure {
                     RawFailure::NotReady => not_ready_entry(),
@@ -373,31 +472,18 @@ fn process_stage_raw(
                 };
                 write_entry(out, global_index_start + op_index, &entry);
             }
-            return;
+            return Ok(());
         }
         Ok(base) => base,
     };
 
     match stage.op_count {
-        0 => {}
-        1 => process_single_op_raw(
-            payload,
-            stage,
-            base,
-            memory,
-            global_index_start,
-            out,
-            budget,
-        ),
-        _ => process_multi_op_raw(
-            payload,
-            stage,
-            base,
-            memory,
-            global_index_start,
-            out,
-            budget,
-        ),
+        0 => Ok(()),
+        1 => {
+            process_single_op_raw(ctx, stage, base, global_index_start, out, budget);
+            Ok(())
+        }
+        _ => process_multi_op_raw(ctx, stage, base, global_index_start, out, budget),
     }
 }
 
@@ -421,13 +507,17 @@ pub fn execute_into(
     validate_flags(vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT, flags)
         .map_err(|error| ExecuteBytesError::Message(error.into()))?;
     validate_read_plan_submit(payload).map_err(|error| ExecuteBytesError::Message(error.into()))?;
-    let pointer_width = u32::try_from(bitness.pointer_size()).unwrap_or(u32::MAX);
-    validate_read_plan_ref_op_width(payload, pointer_width)
-        .map_err(|_| ExecuteBytesError::Execute(ReadPlanError::RefOpWrongWidth))?;
 
+    // Checked in this order — target liveness before the ref-op-width
+    // check — to match `super::execute`'s own order (F2): both entry
+    // points must reject the same way when a plan is both for a dead
+    // target and wrong-width.
     if !memory.is_alive() {
         return Err(ExecuteBytesError::Execute(ReadPlanError::TargetGone));
     }
+    let pointer_width = u32::try_from(bitness.pointer_size()).unwrap_or(u32::MAX);
+    validate_read_plan_ref_op_width(payload, pointer_width)
+        .map_err(|_| ExecuteBytesError::Execute(ReadPlanError::RefOpWrongWidth))?;
 
     let header: vosu_read_plan_submit_header =
         read_flat_header(payload).map_err(|error| ExecuteBytesError::Message(error.into()))?;
@@ -465,8 +555,12 @@ pub fn execute_into(
 
     out.clear();
     out.resize(RESULT_HEADER_SIZE + RESULT_ENTRY_SIZE * total_ops, 0);
-
     let root_base = resolve_root_raw(payload, &header.root, modules);
+    let ctx = RawContext {
+        payload,
+        memory,
+        deadline,
+    };
     let mut global_index = 0usize;
     for stage_index in 0..header.stage_count as usize {
         if Instant::now() >= deadline {
@@ -484,15 +578,8 @@ pub fn execute_into(
             &root_base,
             bitness,
         );
-        process_stage_raw(
-            payload,
-            &stage,
-            stage_base,
-            memory,
-            global_index,
-            out,
-            &mut budget,
-        );
+        process_stage_raw(&ctx, &stage, stage_base, global_index, out, &mut budget)
+            .map_err(ExecuteBytesError::Execute)?;
         global_index += stage.op_count as usize;
     }
 

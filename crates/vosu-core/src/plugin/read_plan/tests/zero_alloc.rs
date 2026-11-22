@@ -193,3 +193,125 @@ fn execute_into_is_allocation_free_once_warmed_dependent_stage() {
         "a warmed dependent-stage read plan must allocate nothing"
     );
 }
+
+#[test]
+fn execute_into_is_allocation_free_once_warmed_multi_op_stage() {
+    // One stage, 13 sibling ops (the F1 regression case: more than a
+    // handful of participants, enough that the old `Vec`-based
+    // `participants`/`requests` would have grown past its initial
+    // capacity at least once).
+    const SIBLINGS: usize = 13;
+    let region: Vec<u8> = (0..(SIBLINGS as u8 * 4)).collect();
+    let memory = FakeMemory::new(vec![(0x1000, region)]);
+    let submit = ReadPlanSubmit {
+        plan: 202,
+        handle: 1,
+        root: PlanBase::Absolute(0x1000),
+        stages: vec![Stage {
+            base: StageBase::Root,
+            base_offset: 0,
+            ops: (0..SIBLINGS as i64).map(|i| op(i * 4, 4)).collect(),
+        }],
+        sync: false,
+    };
+    let message = Message::ReadPlanSubmit(submit);
+    let payload = message.encode_payload().unwrap();
+    let deadline = far_deadline();
+    let mut out = Vec::new();
+
+    execute_into(
+        &payload,
+        0,
+        &memory,
+        ProcessBitness::X64,
+        &NoModules,
+        deadline,
+        &mut out,
+    )
+    .unwrap();
+    let _ = allocations_during(|| ());
+
+    let (_, allocations) = allocations_during(|| {
+        execute_into(
+            black_box(&payload),
+            0,
+            &memory,
+            ProcessBitness::X64,
+            &NoModules,
+            black_box(deadline),
+            black_box(&mut out),
+        )
+        .unwrap();
+    });
+    assert_eq!(out.len(), 16 + 24 * SIBLINGS + 4 * SIBLINGS);
+    assert_eq!(
+        allocations, 0,
+        "a warmed 13-sibling multi-op stage must allocate nothing"
+    );
+}
+
+#[test]
+fn execute_into_is_allocation_free_once_warmed_multi_op_dependent_stage() {
+    // Stage 0: a single op reads the 8-byte pointer. Stage 1 depends on
+    // it and batches 13 sibling ops against the resolved base — the F1
+    // regression case one level into a dependent chain.
+    const SIBLINGS: usize = 13;
+    let pointer_bytes = 0x3000u64.to_le_bytes().to_vec();
+    let region: Vec<u8> = (0..(SIBLINGS as u8 * 4)).collect();
+    let memory = FakeMemory::new(vec![(0x1000, pointer_bytes), (0x3000, region)]);
+    let submit = ReadPlanSubmit {
+        plan: 203,
+        handle: 1,
+        root: PlanBase::Absolute(0x1000),
+        stages: vec![
+            Stage {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops: vec![op(0, 8)],
+            },
+            Stage {
+                base: StageBase::Dependent {
+                    ref_stage: 0,
+                    ref_op: 0,
+                },
+                base_offset: 0,
+                ops: (0..SIBLINGS as i64).map(|i| op(i * 4, 4)).collect(),
+            },
+        ],
+        sync: false,
+    };
+    let message = Message::ReadPlanSubmit(submit);
+    let payload = message.encode_payload().unwrap();
+    let deadline = far_deadline();
+    let mut out = Vec::new();
+
+    execute_into(
+        &payload,
+        0,
+        &memory,
+        ProcessBitness::X64,
+        &NoModules,
+        deadline,
+        &mut out,
+    )
+    .unwrap();
+    let _ = allocations_during(|| ());
+
+    let (_, allocations) = allocations_during(|| {
+        execute_into(
+            black_box(&payload),
+            0,
+            &memory,
+            ProcessBitness::X64,
+            &NoModules,
+            black_box(deadline),
+            black_box(&mut out),
+        )
+        .unwrap();
+    });
+    assert_eq!(out.len(), 16 + 24 * (1 + SIBLINGS) + 8 + 4 * SIBLINGS);
+    assert_eq!(
+        allocations, 0,
+        "a warmed 13-sibling dependent multi-op stage must allocate nothing"
+    );
+}
