@@ -47,12 +47,15 @@ segment above addresses it by.
 ### Focus rule
 
 The rule ranges over identified sessions only (see Visibility below). An
-identified stable `vosu.osu` session flagged as a tournament manager (D6,
-`docs/v2/implementation-plan.md`'s M4a-or-later task) is always the focused
-session while one exists, regardless of OS foreground or recency — matching
+identified session whose game plugin set `focus_priority: true` on its
+`SESSION_IDENTIFY` (`docs/v2/plugin-abi.md` §6.2; core enforces at most one
+such session held at a time, refusing a second) is always the focused
+session while it exists, regardless of OS foreground or recency. The osu!
+plugin sets this on the stable tournament-manager session once the M4a-
+or-later aggregate task (`docs/v2/implementation-plan.md`) lands, matching
 1.x's `select()`, which prefers the tournament manager unconditionally
-(`src/instance.rs:603-618`, `:677-683`) — and at most one session is ever
-flagged this way at a time. Otherwise, exactly
+(`src/instance.rs:603-618`, `src/runtime/worker.rs:867-875`) — nothing
+else in 2.0 sets it at this freeze. Otherwise, exactly
 one identified session is focused whenever at least one exists: the session
 whose process owns the OS foreground window, or, when no identified session's
 process does, whichever session was most recently focused. The first focus

@@ -76,8 +76,8 @@ extern "C" {
  * carries `truncated: bool`; a STATE_UPDATE, which may send one namespace's
  * changed leaves as more than one message, each but the last setting its
  * own `more: true` so a receiver applies the whole set only once the last
- * part arrives, merging by (ns, pointer) key across any update still
- * queued rather than discarding it — see docs/v2/plugin-abi.md §6.12)
+ * part arrives — the plugin-host delivery queue separately merges complete
+ * updates by (ns, pointer) key once queued; see docs/v2/plugin-abi.md §6.12)
  * splits instead; an entry that still does not fit carries a sibling
  * `error` key rather than a truncated `value`. A host rejects an oversize
  * send with VOSU_ERR_INVALID_ARGUMENT before it ever reaches a

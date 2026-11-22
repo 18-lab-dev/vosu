@@ -633,14 +633,16 @@ Scope:
   and `src/api/snapshot.rs`.
 - **Stable tournament-manager aggregate (D6, M4a-or-later; must land before
   the 2.0 release).** The osu! plugin attaches the `--tournament` process
-  as an ordinary identified `stable` session instead of declining it —
-  `--tournament` leaves plugin-abi.md:140's decline list once this task
+  as an identified `stable` session, setting `focus_priority: true` on its
+  `SESSION_IDENTIFY` (`docs/v2/plugin-abi.md` §6.2), instead of declining
+  it — `--tournament` leaves plugin-abi.md:140's decline list once this task
   lands, and stays declined under it until then. The attached manager
   session is visible in `/api/v1/sessions` and, while it exists, is always
   the focused session regardless of OS foreground or recency (api-v1.md
-  "Focus rule"'s tournament-manager override), matching 1.x's `select()`,
-  which prefers the manager unconditionally (`src/instance.rs:603-613`,
-  `:677-683`) — a deliberate addition to the plain rule, not something the
+  "Focus rule"'s `focus_priority` clause), matching 1.x's `select()`,
+  which prefers the manager unconditionally (`src/instance.rs:603-618`,
+  `src/runtime/worker.rs:867-875`) — a deliberate addition to the plain
+  rule, not something the
   plain rule already produces. It builds `vosu.osu.tourney` from the
   matched spectators' sessions exactly as 1.x's stable branch does
   (`src/api/v2/tourney.rs`'s `build_tourney` manager path) and publishes
@@ -660,8 +662,9 @@ Scope:
   pre-release gap with a task that closes it — must be gone by day-0). The
   one `temporary` entry at this freeze is `stable-tournament`'s `tourney`
   members (`v1`, `v2`, `v2-precise`), until the stable manager aggregate
-  task above lands; the M8 day-0 gate (below) fails closed only when a
-  `temporary` entry remains, never merely for the file being non-empty.
+  task above lands; the M8 day-0 gate (below) fails closed when a
+  `temporary` entry remains, or when any entry's class is missing or
+  unrecognized, never merely for the file being non-empty.
 
 Exit: `cargo test --locked --test state_api_compat`, rewritten to drive the
 adapters from bus input and compared byte for byte with the committed source
@@ -860,9 +863,10 @@ like `src/config/migration.rs`; the day-0 check (catalog-v2.md "Day-0
 release check") as `scripts/check-day0.py` wired into `release.yml` and
 covered by `scripts/test_gate_tooling.py`, extended to fail closed when
 `tests/fixtures/upstream/DIVERGENCES.md` contains any `temporary`-class
-entry (D6's `stable-tournament` exemption must be gone by day-0, which the
+entry, or any entry whose class is missing or is none of the four defined
+classes (D6's `stable-tournament` exemption must be gone by day-0, which the
 stable manager aggregate task removes; the file's permanent `security`,
-`contract`, and `licensing` entries never fail the gate);
+`contract`, and `licensing` entries, correctly recorded, never fail the gate);
 README, quickstart, CHANGELOG,
 architecture, and ADR statuses; packaging (section 7). Release requires
 every official plugin (vosu-tools plugins and the vosulay supervisor) to
@@ -1278,12 +1282,13 @@ states what was adopted and why. Spec amendments land in A1.
   `is_tournament_manager()` branch, production-dead per the "Why" below)
   must exist before the 2.0 release — it is an explicit M4a-or-later task:
   attach the `--tournament` process as the manager instead of declining it
-  — it becomes an ordinary identified `stable` session (`SESSION_IDENTIFY`
-  `variant: "stable"`), visible in `/api/v1/sessions` and, while it exists,
+  — it becomes an identified `stable` session (`SESSION_IDENTIFY`
+  `variant: "stable"`) that sets `focus_priority: true` (`docs/v2/plugin-abi.md`
+  §6.2), visible in `/api/v1/sessions` and, while it exists,
   always the focused session regardless of OS foreground or recency — a
   deliberate addition to `docs/v2/api-v1.md`'s Focus rule, matching 1.x's
   `select()`, which prefers the manager unconditionally
-  (`src/instance.rs:603-613`, `:677-683`) — and
+  (`src/instance.rs:603-618`, `src/runtime/worker.rs:867-875`) — and
   publish the resulting aggregate under `vosu.osu.tourney` to **every**
   currently attached stable session, not only the manager's own, exactly
   as 1.x's stable branch builds it per client. Until that task lands,
