@@ -68,14 +68,20 @@ pub struct AttachedSession {
     pub message: SessionAttached,
 }
 
-/// [`SessionRegistry::decline`]'s outcome.
+/// [`SessionRegistry::decline`]'s outcome. Both variants carry `detached`:
+/// the declining plugin's own old handle is retired with
+/// `SessionDetached{reason: Declined}` (`docs/v2/plugin-abi.md` §6.2: "core
+/// detaches it from this plugin instance"), delivered before any re-offer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeclineOutcome {
     /// Re-offered to the next candidate in install order (D6).
-    ReOffered(AttachedSession),
+    ReOffered {
+        detached: SessionDetached,
+        reoffered: AttachedSession,
+    },
     /// No more candidates matched this process: the generation is dropped
     /// for good, never exposed.
-    Dropped,
+    Dropped { detached: SessionDetached },
 }
 
 /// [`SessionRegistry::identify`]'s outcome.
@@ -125,6 +131,12 @@ pub struct SessionRegistry {
     /// "Core keeps the first session identified with `focus_priority: true`
     /// and holds it until that session detaches").
     priority_holder: Option<SessionHandle>,
+    /// PIDs declined by every matching plugin (D6: "dropped for that PID
+    /// generation, never re-offered again"), cleared only by
+    /// [`Self::forget_exited_pid`] once the real OS process behind the PID
+    /// is actually gone — bounded the same way the OS bounds live PIDs,
+    /// never by an eviction policy of its own.
+    dropped: HashMap<u32, Generation>,
 }
 
 impl Default for SessionRegistry {
@@ -151,6 +163,7 @@ impl SessionRegistry {
             pending: HashMap::new(),
             identified: HashMap::new(),
             priority_holder: None,
+            dropped: HashMap::new(),
         }
     }
 
@@ -180,8 +193,14 @@ impl SessionRegistry {
 
     /// Offers a newly discovered process to the first of `candidates`
     /// (install order). `candidates` empty means nothing matched: no
-    /// session is created at all. Mints a fresh [`Generation`] and public
-    /// id for this discovered occurrence.
+    /// session is created at all. Refuses (also returning `None`) a `pid`
+    /// this registry already tracks — pending, identified, or dropped for
+    /// this PID generation (D6) — since a rescan of a still-running
+    /// process must not mint it a second generation; the caller must
+    /// [`Self::forget_exited_pid`] once the OS process actually exits
+    /// before a later discovery of the same PID attaches again. Otherwise
+    /// mints a fresh [`Generation`] and public id for this discovered
+    /// occurrence.
     pub fn attach(
         &mut self,
         process: DiscoveredProcess,
@@ -189,6 +208,12 @@ impl SessionRegistry {
         now: Instant,
     ) -> Option<AttachedSession> {
         if candidates.is_empty() {
+            return None;
+        }
+        if self.dropped.contains_key(&process.pid)
+            || self.pending.values().any(|r| r.process.pid == process.pid)
+            || self.identified.values().any(|r| r.pid == process.pid)
+        {
             return None;
         }
         let generation = self.next_generation();
@@ -218,9 +243,27 @@ impl SessionRegistry {
         Some(AttachedSession { handle, message })
     }
 
+    /// Clears the dropped-PID record for `pid`: the real OS process behind
+    /// it has exited, so a PID reused by a different, later process is not
+    /// held to the first process's decline (D6 only promises the drop
+    /// holds "within" one PID generation). A no-op if `pid` was not
+    /// dropped.
+    pub fn forget_exited_pid(&mut self, pid: u32) {
+        self.dropped.remove(&pid);
+    }
+
+    /// Whether `pid` is currently refused by [`Self::attach`] because
+    /// every matching plugin declined its last discovered occurrence.
+    #[must_use]
+    pub fn is_dropped(&self, pid: u32) -> bool {
+        self.dropped.contains_key(&pid)
+    }
+
     /// `VOSU_OP_SESSION_DECLINE` from `plugin` for `handle` (D6): re-offers
     /// the same generation to the next candidate in install order, or
-    /// drops it if there is none left.
+    /// drops it if there is none left. Either way the declining plugin's
+    /// own `handle` is retired with `SessionDetached{reason: Declined}`
+    /// (`docs/v2/plugin-abi.md` §6.2).
     pub fn decline(
         &mut self,
         plugin: &str,
@@ -236,9 +279,14 @@ impl SessionRegistry {
             Some(_) => {}
         }
         let mut record = self.pending.remove(&handle).expect("checked above");
+        let detached = SessionDetached {
+            handle: handle.0,
+            reason: DetachReason::Declined,
+        };
         record.offer_index += 1;
         if record.offer_index >= record.candidates.len() {
-            return Ok(DeclineOutcome::Dropped);
+            self.dropped.insert(record.process.pid, record.generation);
+            return Ok(DeclineOutcome::Dropped { detached });
         }
         let next_owner = record.candidates[record.offer_index].clone();
         let new_handle = self.next_handle();
@@ -253,10 +301,13 @@ impl SessionRegistry {
         record.attached_at = now;
         record.timeout_logged = false;
         self.pending.insert(new_handle, record);
-        Ok(DeclineOutcome::ReOffered(AttachedSession {
-            handle: new_handle,
-            message,
-        }))
+        Ok(DeclineOutcome::ReOffered {
+            detached,
+            reoffered: AttachedSession {
+                handle: new_handle,
+                message,
+            },
+        })
     }
 
     /// `VOSU_OP_SESSION_IDENTIFY` from `plugin` for `handle`: exposes the
@@ -442,14 +493,25 @@ mod tests {
         let generation = registry.generation_of(first.handle).unwrap();
 
         let outcome = registry.decline("vosu.first", first.handle, now).unwrap();
-        let DeclineOutcome::ReOffered(second) = outcome else {
+        let DeclineOutcome::ReOffered {
+            detached,
+            reoffered,
+        } = outcome
+        else {
             panic!("expected a re-offer");
         };
-        assert_ne!(second.handle, first.handle);
-        assert_eq!(second.message.generation, generation.0);
-        assert_eq!(second.message.session, first.message.session);
+        assert_eq!(
+            detached,
+            SessionDetached {
+                handle: first.handle.0,
+                reason: DetachReason::Declined,
+            }
+        );
+        assert_ne!(reoffered.handle, first.handle);
+        assert_eq!(reoffered.message.generation, generation.0);
+        assert_eq!(reoffered.message.session, first.message.session);
         assert!(!registry.is_pending(first.handle));
-        assert!(registry.is_pending(second.handle));
+        assert!(registry.is_pending(reoffered.handle));
     }
 
     #[test]
@@ -460,8 +522,80 @@ mod tests {
             .attach(process(), vec!["vosu.only".into()], now)
             .unwrap();
         let outcome = registry.decline("vosu.only", only.handle, now).unwrap();
-        assert_eq!(outcome, DeclineOutcome::Dropped);
+        assert_eq!(
+            outcome,
+            DeclineOutcome::Dropped {
+                detached: SessionDetached {
+                    handle: only.handle.0,
+                    reason: DetachReason::Declined,
+                }
+            }
+        );
         assert!(!registry.is_pending(only.handle));
+    }
+
+    #[test]
+    fn attach_refuses_a_duplicate_pid_while_pending() {
+        let mut registry = SessionRegistry::new();
+        let now = Instant::now();
+        registry
+            .attach(process(), vec!["vosu.first".into()], now)
+            .unwrap();
+        // Same PID, a second matching plugin: still refused while the
+        // first offer is still pending.
+        assert!(
+            registry
+                .attach(process(), vec!["vosu.second".into()], now)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn attach_refuses_a_duplicate_pid_while_identified() {
+        let mut registry = SessionRegistry::new();
+        let now = Instant::now();
+        let attached = registry
+            .attach(process(), vec!["vosu.only".into()], now)
+            .unwrap();
+        registry
+            .identify("vosu.only", attached.handle, identify("osu", false), now)
+            .unwrap();
+        assert!(
+            registry
+                .attach(process(), vec!["vosu.other".into()], now)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn attach_refuses_a_duplicate_pid_dropped_by_decline_until_the_process_exits() {
+        let mut registry = SessionRegistry::new();
+        let now = Instant::now();
+        let attached = registry
+            .attach(process(), vec!["vosu.only".into()], now)
+            .unwrap();
+        let outcome = registry.decline("vosu.only", attached.handle, now).unwrap();
+        assert!(matches!(outcome, DeclineOutcome::Dropped { .. }));
+        assert!(registry.is_dropped(process().pid));
+
+        // A rescan of the same still-running PID must not mint a new
+        // session, even offered to a different plugin than the one that
+        // declined it.
+        assert!(
+            registry
+                .attach(process(), vec!["vosu.only".into()], now)
+                .is_none()
+        );
+
+        // Once the process actually exits, the PID is free to attach
+        // again.
+        registry.forget_exited_pid(process().pid);
+        assert!(!registry.is_dropped(process().pid));
+        assert!(
+            registry
+                .attach(process(), vec!["vosu.only".into()], now)
+                .is_some()
+        );
     }
 
     #[test]
