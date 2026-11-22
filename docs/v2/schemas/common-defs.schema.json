@@ -28,7 +28,7 @@
         },
         "type": {
           "type": "string",
-          "description": "MIME type from the resource-route allowlist (image/audio/video/chart-text), or `application/octet-stream`."
+          "description": "MIME type assigned once, at publish time, from the extension of the reference's `name` (ADR 0021; `docs/v2/api-v1.md` owns the family allowlist and extension mapping). The served `Content-Type` always equals this published value; it never changes for the lifetime of the reference."
         }
       }
     },

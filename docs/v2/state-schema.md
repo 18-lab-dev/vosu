@@ -76,11 +76,11 @@ never published as an all-null object. Within a declared namespace, each
 field the plugin does not individually fill is `null` (ADR 0020): never a zero,
 empty string, or empty array standing in for "unknown".
 
-`vosu.sessions` is reserved as a pseudo-namespace for session-lifecycle events
-delivered to subscribing plugins (`docs/v2/plugin-abi.md`'s `SESSION_ATTACHED`/
-`SESSION_IDENTIFY`/`SESSION_DETACHED`/`FOCUS_CHANGED`), not a published state
-namespace with a schema. No plugin id and no namespace schema may use
-`vosu.sessions` (CatalogV2Spec enforces this at validation).
+`vosu.sessions` is reserved as a pseudo-namespace for session-lifecycle
+events (`docs/v2/plugin-abi.md` §6.2 defines the opcodes and recipients),
+not a published state namespace with a schema. No plugin id and no
+namespace schema may use `vosu.sessions` (CatalogV2Spec enforces this at
+validation).
 
 ## `vosu.client`
 
@@ -106,9 +106,9 @@ carries an initial `focused` value.
 ## Common layer: `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`
 
 These hold values most rhythm games share (ADR 0020). Filling them is best
-effort but declared: a game plugin's manifest lists exactly which fields of
-these namespaces it fills, and the dashboard and resolver use that declaration
-rather than probing live state.
+effort but declared: a game plugin's `plugin.toml` lists the common-namespace
+`field:` ids it fills in `covers` (`docs/v2/catalog-v2.md`), and the
+dashboard and resolver use that declaration rather than probing live state.
 
 ### `vosu.status`
 
@@ -126,15 +126,19 @@ Chart (beatmap, in osu! terms) metadata: `title`, `artist`, `difficultyName`,
 `charter`, `length` (ms, unaffected by rate), `bpm` (a representative tempo,
 unaffected by rate), `keyCount` (null for charts/rulesets without a fixed lane
 count), and `resources` — always an object of [resource references](#resource-references)
-(`{}` when no chart is selected), with up to four bare, camelCase keys: `file`,
-`audio`, `background` (resource references) and `set` (a tree reference), none
-required. The dotted forms `chart.file`, `chart.audio`, `chart.background`,
-`chart.set` name these same core resource kinds only inside `resource:`
-capability ids (naming contract); a plugin's own resource kinds never appear
-inside `vosu.chart.resources` — they live in that plugin's own namespace, as
+(`{}` both when no chart is selected and when the plugin fills no kind at
+all), with up to four bare, camelCase keys: `file`, `audio`, `background`
+(resource references) and `set` (a tree reference), none required. The
+dotted forms `chart.file`, `chart.audio`, `chart.background`, `chart.set`
+name these same core resource kinds only inside `resource:` capability ids
+(naming contract); a plugin's own resource kinds never appear inside
+`vosu.chart.resources` — they live in that plugin's own namespace, as
 `<plugin-id>.<kind>` capability ids (ADR 0021). A kind the current chart has
 no file for is omitted from `resources`, never present with a reference to
-nothing.
+nothing. Which kinds a plugin can fill, and the type families a kind is
+bounded to, are its declared `[[resource_kinds]]` coverage
+(`docs/v2/catalog-v2.md`), which may also use the reserved core names to
+declare coverage of a core kind.
 
 ### `vosu.play`
 
@@ -290,12 +294,13 @@ Per ADR 0021, state never carries a raw filesystem path. It carries
 references that resolve through API v1:
 
 - A **resource reference** is `{"url", "type"}`: `url` is
-  `/api/v1/resources/{id}`; `type` is the response's MIME type, which core
-  assigns from the resolved file's extension against the allowlist
-  `docs/v2/api-v1.md` owns.
+  `/api/v1/resources/{id}`; `type` is assigned once, at publish time, from
+  the extension of the plugin's reference `name` (`docs/v2/api-v1.md` owns
+  the family allowlist and extension mapping). The served `Content-Type`
+  always equals this published `type`.
 - A **tree reference** is `{"url"}`: `url` is `/api/v1/trees/{id}/`, which
-  lists the indexed folder; `GET`/`HEAD` on a path under it resolves one file,
-  typed the same way.
+  lists the indexed folder; `GET`/`HEAD` on a path under it resolves one
+  file, typed the same way from that entry's own `path` (`docs/v2/api-v1.md`).
 
 Both shapes are defined once, in `schemas/common-defs.schema.json#/$defs/resourceRef`
 and `#/$defs/treeRef`, and `$ref`'d from every namespace schema that carries
