@@ -1014,6 +1014,9 @@ fn is_process_alive_at(proc_root: &Path, pid: u32) -> bool {
         .is_some_and(|state| *state != b'Z' && *state != b'X')
 }
 
+mod modules;
+pub use modules::{ModuleEntry, enumerate_modules};
+
 fn parse_maps(bytes: &[u8], writable_only: bool) -> Result<Vec<MemoryRegion>, MemoryError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| backend_message("parse /proc maps", "maps is not UTF-8"))?;

@@ -23,9 +23,10 @@ pub use windows::{
 pub mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{
-    LinuxProcessMemory, LinuxProcessMetadata, enumerate_processes, enumerate_processes_matching,
-    is_process_alive, open_process, process_bitness, process_command_line, process_cwd,
-    process_executable, process_metadata_matching, process_name, process_root,
+    LinuxProcessMemory, LinuxProcessMetadata, ModuleEntry, enumerate_modules, enumerate_processes,
+    enumerate_processes_matching, is_process_alive, open_process, process_bitness,
+    process_command_line, process_cwd, process_executable, process_metadata_matching, process_name,
+    process_root,
 };
 
 /// A borrowed remote read. Backends must fill every destination or return an
