@@ -193,6 +193,40 @@ def write_rules(path, edges):
     path.write_text(body, encoding="utf-8", newline="\n")
 
 
+def find_cycle(rules):
+    """Return an offending cycle (list of module names, first repeated at the
+    end) in the rules file's graph, or None if it is acyclic."""
+    graph = {}
+    for source, target in rules:
+        graph.setdefault(source, set()).add(target)
+    unvisited, in_progress, done = 0, 1, 2
+    state = {}
+    stack = []
+
+    def visit(node):
+        state[node] = in_progress
+        stack.append(node)
+        for neighbour in sorted(graph.get(node, ())):
+            status = state.get(neighbour, unvisited)
+            if status == unvisited:
+                cycle = visit(neighbour)
+                if cycle is not None:
+                    return cycle
+            elif status == in_progress:
+                start = stack.index(neighbour)
+                return stack[start:] + [neighbour]
+        state[node] = done
+        stack.pop()
+        return None
+
+    for node in sorted(graph):
+        if state.get(node, unvisited) == unvisited:
+            cycle = visit(node)
+            if cycle is not None:
+                return cycle
+    return None
+
+
 def check(rules_path, src_files=None, lib_text=None):
     edges, _modules = build_graph(src_files, lib_text)
     rules = load_rules(rules_path)
@@ -205,6 +239,14 @@ def check(rules_path, src_files=None, lib_text=None):
                 "docs/architecture/source-map.md, or add the edge to the rules file "
                 "deliberately in the same change as the architecture doc update"
             )
+    cycle = find_cycle(rules)
+    if cycle is not None:
+        errors.append(
+            f"{rules_path.name}: cyclic module rule "
+            + " -> ".join(cycle)
+            + "; break the cycle (it makes a future crate split impossible) before "
+            "adding or keeping these edges"
+        )
     for source, target in sorted(rules):
         if (source, target) not in edges:
             errors.append(

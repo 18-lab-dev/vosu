@@ -50,6 +50,11 @@ no longer cycle: the JS-compatible rounding/mods/grade helpers
 calculation backend (`src/state/state_backend.rs`) live under `model` and
 `state` respectively, not `calculation`, so readers depend only on the
 model and `state -> calculation` (not the reverse) is the only edge left.
+`server` and `tools` no longer cycle either: `server::routes::RouteExtension`
+(implemented by `tools::ToolHost`) covers the reserved `/tools` overlay prefix
+and the dashboard tool management routes, and `server::ids::valid_id`
+(re-exported as `tools::manifest::valid_id`) is the shared identifier check,
+so `tools -> server` is the only edge left.
 
 - `src/instance/runtime.rs` owns the discovery loop and lifecycle publication;
   `src/instance.rs` retains instance identity, manager state, and the public types.

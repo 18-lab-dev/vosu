@@ -714,6 +714,22 @@ impl ToolHost {
         response
     }
 }
+impl crate::server::service::RouteExtension for ToolHost {
+    fn overlay(
+        self: Arc<Self>,
+        request: Request,
+        body: Bytes,
+    ) -> crate::server::routes::ProviderFuture<'static, Response> {
+        Box::pin(async move { ToolHost::overlay(&self, request, body).await })
+    }
+    fn dashboard(
+        self: Arc<Self>,
+        request: Request,
+        body: Bytes,
+    ) -> crate::server::routes::ProviderFuture<'static, Response> {
+        Box::pin(async move { ToolHost::dashboard(&self, request, body).await })
+    }
+}
 async fn bridge_websocket(
     downstream: axum::extract::ws::WebSocket,
     upstream: tokio_tungstenite::WebSocketStream<

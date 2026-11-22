@@ -256,7 +256,27 @@ class ModuleBoundariesTests(unittest.TestCase):
         self.rules.write_text("", encoding="utf-8")
         errors, edges = boundaries.check(self.rules, src_files=src_files, lib_text=self.lib_text)
         self.assertEqual(errors, [])
-        self.assertEqual(edges, {})
+
+    def test_fails_on_a_cyclic_rules_file(self):
+        src_files = {
+            "alpha.rs": "use crate::beta::Thing;\n",
+            "beta.rs": "use crate::alpha::Thing;\n",
+        }
+        self.rules.write_text("alpha -> beta\nbeta -> alpha\n", encoding="utf-8")
+        errors, _edges = boundaries.check(self.rules, src_files=src_files, lib_text=self.lib_text)
+        cycle_errors = [error for error in errors if "cyclic module rule" in error]
+        self.assertEqual(len(cycle_errors), 1)
+        self.assertIn("alpha -> beta -> alpha", cycle_errors[0])
+
+    def test_passes_on_an_acyclic_multi_edge_rules_file(self):
+        src_files = {
+            "alpha.rs": "use crate::beta::Thing;\n",
+            "beta.rs": "use crate::gamma::Thing;\n",
+        }
+        self.rules.write_text("alpha -> beta\nbeta -> gamma\n", encoding="utf-8")
+        errors, edges = boundaries.check(self.rules, src_files=src_files, lib_text=self.lib_text)
+        self.assertEqual(errors, [])
+        self.assertEqual(set(edges), {("alpha", "beta"), ("beta", "gamma")})
 
 
 if __name__ == "__main__":

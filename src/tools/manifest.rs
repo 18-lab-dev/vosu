@@ -79,14 +79,8 @@ pub struct Permissions {
     pub host: Vec<String>,
 }
 
-pub fn valid_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 32
-        && (id.as_bytes()[0].is_ascii_lowercase() || id.as_bytes()[0].is_ascii_digit())
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
+/// `^[a-z0-9][a-z0-9-]{0,31}$`
+pub use crate::server::ids::valid_id;
 
 pub fn relative(path: &str) -> bool {
     !path.is_empty()

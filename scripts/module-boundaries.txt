@@ -49,7 +49,6 @@ server -> net
 server -> platform
 server -> report
 server -> state
-server -> tools
 state -> calculation
 state -> memory
 state -> model

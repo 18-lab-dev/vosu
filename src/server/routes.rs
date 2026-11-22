@@ -787,7 +787,7 @@ pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
             && path
                 .strip_prefix("/api/tools/")
                 .and_then(|p| p.strip_suffix("/autostart"))
-                .is_some_and(crate::tools::manifest::valid_id) =>
+                .is_some_and(super::ids::valid_id) =>
         {
             Some(ToolManagement)
         }

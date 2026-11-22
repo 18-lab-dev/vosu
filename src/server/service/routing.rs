@@ -1,9 +1,27 @@
+/// Everything routing needs from an optional out-of-process tool host for the
+/// reserved `/tools` overlay prefix and the dashboard tool management routes,
+/// so this module does not depend on `crate::tools` directly.
+pub trait RouteExtension: Send + Sync {
+    /// `/tools/<id>/...`: proxy an authenticated request into the owning tool.
+    fn overlay(
+        self: Arc<Self>,
+        request: Request<Body>,
+        body: Bytes,
+    ) -> ProviderFuture<'static, Response>;
+    /// `/api/tools...`: dashboard discovery, install, settings and lifecycle.
+    fn dashboard(
+        self: Arc<Self>,
+        request: Request<Body>,
+        body: Bytes,
+    ) -> ProviderFuture<'static, Response>;
+}
+
 #[derive(Clone)]
 pub struct ProductionRouteDelegate {
     services: ProductionServices,
     api_keys: Option<Arc<super::api_keys::ApiKeys>>,
     connections: OverlayConnections,
-    tools: Option<Arc<crate::tools::ToolHost>>,
+    tools: Option<Arc<dyn RouteExtension>>,
     skin_index: Arc<Mutex<files::SkinIndexCache>>,
 }
 
@@ -20,7 +38,7 @@ impl ProductionRouteDelegate {
         self.api_keys = Some(keys);
         self
     }
-    pub fn with_tools(mut self, tools: Arc<crate::tools::ToolHost>) -> Self {
+    pub fn with_tools(mut self, tools: Arc<dyn RouteExtension>) -> Self {
         self.tools = Some(tools);
         self
     }
@@ -31,11 +49,11 @@ impl ProductionRouteDelegate {
     async fn dispatch(&self, endpoint: Endpoint, request: Request<Body>, body: Bytes) -> Response {
         match endpoint {
             Endpoint::ToolOverlay => match &self.tools {
-                Some(tools) => tools.overlay(request, body).await,
+                Some(tools) => Arc::clone(tools).overlay(request, body).await,
                 None => not_found(),
             },
             Endpoint::ToolManagement => match &self.tools {
-                Some(tools) => tools.dashboard(request, body).await,
+                Some(tools) => Arc::clone(tools).dashboard(request, body).await,
                 None => not_found(),
             },
             Endpoint::State(_) | Endpoint::CalculatePp => {
