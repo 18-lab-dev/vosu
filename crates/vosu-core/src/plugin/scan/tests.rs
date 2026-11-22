@@ -489,3 +489,63 @@ fn cancel_session_frees_the_slot_and_suppresses_the_workers_own_result() {
     let result = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(result.error.unwrap().code, "session_detached");
 }
+
+#[test]
+fn submit_treats_a_queue_full_refusal_already_delivered_by_cancel_session_as_ok() {
+    // F6: `begin_internal` registers this scan's gate, then (via the
+    // deterministic race hook, standing in for a `cancel_session` call
+    // from another thread landing in that exact window) the session
+    // detaches and delivers the session-detached form, and only then
+    // does `try_spawn` discover the queue is full. `submit` must not
+    // *also* report `QueueFull` for a scan whose result the plugin
+    // already received.
+    let outstanding = OutstandingScans::new();
+    let pool = ScanWorkerPool::new(1, 1);
+
+    // One worker, blocked; one queue slot, pre-filled — so this test's
+    // own `submit` call below deterministically hits `QueueFull`.
+    let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let release_clone = Arc::clone(&release);
+    pool.try_spawn(move || {
+        let (lock, cvar) = &*release_clone;
+        let mut released = lock.lock().unwrap();
+        while !*released {
+            released = cvar.wait(released).unwrap();
+        }
+    })
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    pool.try_spawn(|| {}).unwrap();
+
+    let handle = 11;
+    let outstanding_for_hook = Arc::clone(&outstanding);
+    set_race_hook_for_tests(move || {
+        outstanding_for_hook.cancel_session(handle);
+    });
+
+    let memory: Arc<dyn ProcessMemory> = Arc::new(FakeMemory::new(vec![(0x1000, vec![0xaa])]));
+    let modules: Arc<dyn ModuleRegions + Send + Sync> = Arc::new(NoModulesSync);
+    let (tx, rx) = mpsc::channel();
+    let outcome = submit(
+        &outstanding,
+        &pool,
+        request(None, "AA", false, false),
+        memory,
+        modules,
+        handle,
+        move |result| tx.send(result).unwrap(),
+    );
+
+    assert_eq!(
+        outcome,
+        Ok(()),
+        "a QueueFull refusal must not also surface once cancel_session already delivered a result"
+    );
+    let result = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(result.error.unwrap().code, "session_detached");
+    assert_eq!(outstanding.len(), 0);
+
+    let (lock, cvar) = &*release;
+    *lock.lock().unwrap() = true;
+    cvar.notify_all();
+}

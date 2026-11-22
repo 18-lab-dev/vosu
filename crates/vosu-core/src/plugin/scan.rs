@@ -317,13 +317,20 @@ impl OutstandingScans {
                 .collect()
         };
         for (id, gate) in matches {
-            if let Some(gate) = gate
-                && let Some(deliver) = gate.lock().unwrap_or_else(PoisonError::into_inner).take()
-            {
-                deliver(error_result(
-                    "session_detached",
-                    "the target session detached while this scan was in flight",
-                ));
+            if let Some(gate) = gate {
+                // Released before `deliver` runs (F6): holding the
+                // gate's own mutex across that call would let a slow
+                // `deliver` (plugin-wiring code, not under this module's
+                // control) block `Self::free` below, or a concurrent
+                // `cancel_session`/worker-side take, for as long as it
+                // takes.
+                let deliver = gate.lock().unwrap_or_else(PoisonError::into_inner).take();
+                if let Some(deliver) = deliver {
+                    deliver(error_result(
+                        "session_detached",
+                        "the target session detached while this scan was in flight",
+                    ));
+                }
             }
             self.free(id);
         }
@@ -454,13 +461,6 @@ impl From<ScanSubmitError> for vosu_status {
     }
 }
 
-/// Submits one scan to run on `pool`, honoring [`OutstandingScans`]'s cap:
-/// refuses with `VOSU_ERR_INVALID_ARGUMENT` if `request.pattern` is
-/// malformed, the cap is already reached, or the worker queue is already
-/// full; otherwise `deliver` is called with the finished [`ScanResult`] on
-/// a worker thread, never on the caller's, unless
-/// [`OutstandingScans::cancel_session`] delivers the session-detached form
-/// first.
 pub fn submit(
     outstanding: &Arc<OutstandingScans>,
     pool: &ScanWorkerPool,
@@ -477,18 +477,75 @@ pub fn submit(
     let slot = outstanding
         .begin_internal(handle, Some(Arc::clone(&gate)))
         .map_err(|_| ScanSubmitError::CapExceeded)?;
-    pool.try_spawn(move || {
+    // Test-only seam (F6): lets a test run `cancel_session` in exactly
+    // the window a real race would need — after the gate above is
+    // registered, before `try_spawn` below is attempted — making that
+    // race deterministic instead of timing-dependent.
+    #[cfg(test)]
+    run_race_hook_for_tests();
+    let spawn_gate = Arc::clone(&gate);
+    let spawn_result = pool.try_spawn(move || {
         let result = execute(&request, memory.as_ref(), modules.as_ref());
         // §6.4/P3: deliver before freeing the slot, so the slot stays
         // held for the whole time its `SCAN_RESULT` could still be in
         // flight toward the plugin rather than being reusable the moment
-        // the scan itself finishes.
-        if let Some(deliver) = gate.lock().unwrap_or_else(PoisonError::into_inner).take() {
+        // the scan itself finishes. Released before calling `deliver`
+        // (F6), for the same reason as `cancel_session`'s own take.
+        let deliver = spawn_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(deliver) = deliver {
             deliver(result);
         }
         drop(slot);
-    })
-    .map_err(|_| ScanSubmitError::QueueFull)
+    });
+    match spawn_result {
+        Ok(()) => Ok(()),
+        Err(QueueFullError) => {
+            // F6: `try_spawn` failing does not prove this scan delivered
+            // nothing — a concurrent `cancel_session` may have already
+            // taken this gate and delivered the session-detached form in
+            // the window between `begin_internal` registering it, above,
+            // and this call failing. Take the gate ourselves: empty
+            // means that race happened, so this submission must not
+            // *also* report a refusal (the plugin already has its
+            // result); still holding the original `deliver` means
+            // nothing was delivered, so drop it (this scan is refused,
+            // and must never run) and report `QueueFull` as before.
+            let already_delivered = gate
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+                .is_none();
+            if already_delivered {
+                Ok(())
+            } else {
+                Err(ScanSubmitError::QueueFull)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static RACE_HOOK_FOR_TESTS: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Test-only hook for F6's race: installs a one-shot closure that
+/// [`submit`] runs at the exact point its own window for the race opens.
+#[cfg(test)]
+fn set_race_hook_for_tests(hook: impl FnOnce() + 'static) {
+    RACE_HOOK_FOR_TESTS.with(|cell| *cell.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_race_hook_for_tests() {
+    let hook = RACE_HOOK_FOR_TESTS.with(|cell| cell.borrow_mut().take());
+    if let Some(hook) = hook {
+        hook();
+    }
 }
 
 /// A snapshot of one process's loaded modules, built once from
