@@ -10,6 +10,7 @@
 
 mod dispatch;
 mod error;
+mod focus;
 mod host_services;
 mod instance;
 mod matcher;
@@ -18,6 +19,9 @@ mod session;
 
 pub use dispatch::{OwnedMessage, WorkerPool};
 pub use error::HostError;
+pub use focus::{
+    FocusCandidate, FocusEvent, FocusKey, FocusTracker, ForegroundSource, SyntheticForegroundSource,
+};
 pub use host_services::{PluginHostHandler, PluginInstanceId};
 pub use instance::{DEFAULT_QUEUE_CAPACITY, PluginInstance};
 pub use matcher::{
