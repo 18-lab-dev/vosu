@@ -212,7 +212,7 @@ Candidate/rollback readiness uses a one-use secret delivered only through the ex
 
 ## Deployment variants
 
-- The workspace builds one `vosu` binary, the internal `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, and `vosu-test-harness`; the harness is test support, not a production process (`Cargo.toml`).
+- The workspace builds one `vosu` binary, the internal `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, `vosu-test-harness`, and the dev-only `vosu-proptest` package; the harness is test support, not a production process (`Cargo.toml`).
 - Windows supports stable and lazer discovery/memory access. Linux supports native lazer and stable through Wine. For Wine installs, `src/process/linux.rs::resolve_osu_path` resolves the game root from `VOSU_OSU_PATH`, `${XDG_DATA_HOME:-$HOME/.local/share}/osuconfig/osupath`, or the target command line. The formal `tools/live-parity/live_parity.py::SUPPORTED_MATRIX` currently lists Linux/lazer but not Linux/stable; that tooling matrix is narrower than runtime support.
 - Native backends are selected with `cfg(windows)` and `cfg(target_os = "linux")`; there is no generic production process provider for other operating systems.
 - Release builds use thin LTO, one codegen unit, stripped symbols, and abort-on-panic (`Cargo.toml`). Panic therefore terminates the daemon rather than unwinding production resources.

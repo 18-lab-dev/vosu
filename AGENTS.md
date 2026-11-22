@@ -57,6 +57,7 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 - `src/runtime/`, `src/app.rs`, `src/logging/`, `src/report/`: daemon orchestration and operational services.
 - `src/tools/`: tool host — manifest validation, discovery and official catalog installation, supervision, `/tools/` proxy and access rules, host API, launch sessions, dashboard tool APIs. The contract is [docs/tools/protocol.md](docs/tools/protocol.md) (ADR 0017); change both together. The SDK and official tools live in [vosu-tools](https://github.com/18-lab-dev/vosu-tools).
 - `crates/vosu-test-harness/`: integration-test support only. `tests/` holds compatibility, native, daemon smoke, and performance contracts. `crates/vosu-release-smoke/` exercises an externally packaged executable without depending on the daemon crate. `benches/hot_paths.rs` holds Criterion benchmarks.
+- `crates/vosu-proptest/`: shared `vosu_proptest_config()` used by every `prop_*` test across the workspace.
 - `tools/live-parity/`: deterministic live capture, attestation, comparison, and diff tooling. `tools/oracle/` holds calculator provenance/evidence tooling.
 - Module dependencies between top-level `src/` modules are recorded in `scripts/module-boundaries.txt` and enforced by `python scripts/check-module-boundaries.py`. A new edge is a deliberate change made together with the [source map](docs/architecture/source-map.md) or architecture update. Code files stay at or below 1,000 lines; `python scripts/check-file-length.py` enforces this, and its baseline of older long files only shrinks.
 
@@ -67,7 +68,7 @@ Most rules below are enforced mechanically ([ADR 0018](docs/decisions/0018-enfor
 - Lint exceptions are `#[expect(lint, reason = "...")]` with the real reason; `#[allow]` is rejected (`clippy::allow_attributes`). Every `unsafe` block needs a `// SAFETY:` comment stating the invariant (`clippy::undocumented_unsafe_blocks`).
 - `clippy.toml` disallows direct file writes (`std::fs::write`, `File::create`, and their tokio equivalents), unbounded channels, and `std::thread::sleep`, with messages naming the replacement. Production exceptions need a per-site `#[expect(clippy::disallowed_methods, reason = "...")]`. Test code is exempt at the crate level.
 - Blocking work in async code goes through `tokio::task::spawn_blocking`; the sleep rule exists because blocking waits on async workers have shipped before.
-- Property tests are named `prop_*`, use `crate::proptest_support::vosu_proptest_config()`, and run with a fixed seed. `VOSU_PROPTEST_RANDOM=1 PROPTEST_CASES=<n>` explores with a random seed, which the nightly workflow does.
+- Property tests are named `prop_*`, use `vosu_proptest::vosu_proptest_config()`, and run with a fixed seed. `VOSU_PROPTEST_RANDOM=1 PROPTEST_CASES=<n>` explores with a random seed, which the nightly workflow does.
 
 ## Verification by change
 

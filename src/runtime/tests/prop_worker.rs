@@ -56,7 +56,7 @@ fn prop_client_type(lazer: bool) -> ClientType {
 }
 
 proptest! {
-    #![proptest_config(crate::proptest_support::vosu_proptest_config())]
+    #![proptest_config(vosu_proptest::vosu_proptest_config())]
 
     /// The API-visible regular selection (checksum, filename, folder, audio
     /// and background filenames, songs folder) always equals the live

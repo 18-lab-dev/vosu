@@ -28,6 +28,3 @@ pub mod state;
 pub mod tools;
 pub mod updater;
 pub mod vosux;
-
-#[cfg(test)]
-mod proptest_support;

@@ -3,7 +3,7 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::proptest_support::vosu_proptest_config;
+use vosu_proptest::vosu_proptest_config;
 
 #[test]
 fn pointer_syntax_and_boundaries_follow_rfc6901() {

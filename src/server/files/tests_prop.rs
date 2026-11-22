@@ -4,7 +4,7 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::proptest_support::vosu_proptest_config;
+use vosu_proptest::vosu_proptest_config;
 
 proptest! {
     #![proptest_config(vosu_proptest_config())]

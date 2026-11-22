@@ -241,7 +241,7 @@ fn cut_strategy() -> impl Strategy<Value = Option<UpdateCut>> {
 }
 
 proptest! {
-    #![proptest_config(crate::proptest_support::vosu_proptest_config())]
+    #![proptest_config(vosu_proptest::vosu_proptest_config())]
 
     /// After a crash injected anywhere in a full update lifecycle (and,
     /// optionally, a second crash during the recovery that follows it),

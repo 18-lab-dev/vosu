@@ -14,7 +14,7 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 use super::super::*;
-use crate::proptest_support::vosu_proptest_config;
+use vosu_proptest::vosu_proptest_config;
 
 fn entry_name() -> impl Strategy<Value = String> {
     "[a-zA-Z0-9_.-]{1,12}"

@@ -1,4 +1,4 @@
-//! Shared configuration for every `prop_*` property test in this crate.
+//! Shared configuration for every `prop_*` property test in the workspace.
 //!
 //! All `prop_*` tests should run with [`vosu_proptest_config`] so case
 //! counts, RNG seeding and failure persistence stay consistent: a fixed seed
@@ -24,7 +24,7 @@ const FIXED_SEED: u64 = 0x766f_7375_5f70_726f;
 /// (server/runtime). `Direct` always resolves the same crate-root-relative
 /// file regardless of which pattern a given target uses, so `cargo test
 /// --lib` reliably persists and reloads regressions.
-pub(crate) fn vosu_proptest_config() -> ProptestConfig {
+pub fn vosu_proptest_config() -> ProptestConfig {
     let rng_seed = if std::env::var("VOSU_PROPTEST_RANDOM").as_deref() == Ok("1") {
         ProptestConfig::default().rng_seed
     } else {
