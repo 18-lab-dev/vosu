@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::net::streaming::{NetworkError, StreamingClient};
+use vosu_net::streaming::{NetworkError, StreamingClient};
 
 pub const USER_AGENT: &str = concat!("vosu/", env!("CARGO_PKG_VERSION"));
 pub const INSTALL_RECORD_NAME: &str = ".vosu-update.json";

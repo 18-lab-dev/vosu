@@ -4,8 +4,6 @@ api -> model
 api -> state
 app -> config
 app -> instance
-config -> net
-counters -> net
 instance -> logging
 instance -> memory
 instance -> model
@@ -23,7 +21,6 @@ runtime -> instance
 runtime -> logging
 runtime -> memory
 runtime -> model
-runtime -> net
 runtime -> report
 runtime -> server
 runtime -> state
@@ -36,15 +33,12 @@ server -> counters
 server -> desktop
 server -> logging
 server -> model
-server -> net
 server -> report
 server -> state
 state -> calculation
 state -> memory
 state -> model
 tools -> counters
-tools -> net
 tools -> server
 updater -> desktop
-updater -> net
 vosux -> tools

@@ -126,7 +126,7 @@ pub(super) struct ArtCache {
     entries: VecDeque<(String, ArtKind, Bytes)>,
     bytes: usize,
     #[cfg(test)]
-    pub(super) client: Option<crate::net::StreamingClient>,
+    pub(super) client: Option<vosu_net::StreamingClient>,
 }
 
 impl ArtCache {
@@ -228,7 +228,7 @@ fn art_error(status: StatusCode, message: impl Into<String>) -> Response {
 }
 
 impl ToolHost {
-    fn art_client(&self) -> crate::net::StreamingClient {
+    fn art_client(&self) -> vosu_net::StreamingClient {
         #[cfg(test)]
         if let Some(client) = self.art.lock().client.clone() {
             return client;

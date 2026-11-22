@@ -369,7 +369,7 @@ impl RuntimeHooks for ProductionRuntime {
                     .info("Updates are managed externally; update vosu with your package manager");
                 return Ok(());
             }
-            let client = crate::net::streaming::StreamingClient::production();
+            let client = vosu_net::streaming::StreamingClient::production();
             let cancel = self.shutdown_token.child_token();
             let executable = env::current_exe()?;
             let check = check_startup_and_prepare(

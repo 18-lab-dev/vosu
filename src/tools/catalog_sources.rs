@@ -405,7 +405,7 @@ impl ToolHost {
         let cancel = self.cancel.clone();
         self.phase(job, &format!("installing overlay {id}"));
         tokio::task::spawn_blocking(move || {
-            crate::net::streaming::extract_zip_atomic_validated(
+            vosu_net::streaming::extract_zip_atomic_validated(
                 &archive,
                 &destination,
                 ZipLimits {
@@ -415,7 +415,7 @@ impl ToolHost {
                 &cancel,
                 |root| {
                     if !root.join("index.html").is_file() {
-                        return Err(crate::net::NetworkError::UnsafeZip(
+                        return Err(vosu_net::NetworkError::UnsafeZip(
                             "overlay index.html missing at archive root".into(),
                         ));
                     }

@@ -1,7 +1,7 @@
 //! Development-only, in-process network fixture for vosu integration tests.
 //!
 //! The fixture deliberately binds one ephemeral loopback socket and exposes it only
-//! through [`vosu::net::TestNetworkConfig`]. Production destination policy never
+//! through [`vosu_net::TestNetworkConfig`]. Production destination policy never
 //! receives the resolver or allowlist.
 
 #![forbid(unsafe_code)]
@@ -27,7 +27,7 @@ use bytes::Bytes;
 use parking_lot::Mutex;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use vosu::net::{
+use vosu_net::{
     AddressResolver, NetworkError, ResolverFuture, TestNetworkConfig, TestNetworkEndpoints,
 };
 use zip::write::SimpleFileOptions;

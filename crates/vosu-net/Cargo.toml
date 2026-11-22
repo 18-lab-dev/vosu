@@ -1,0 +1,40 @@
+[package]
+name = "vosu-net"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+test-harness = []
+
+[dependencies]
+bytes = "=1.12.1"
+futures-util = "0.3.32"
+reqwest = { version = "=0.13.4", default-features = false, features = ["rustls", "stream", "json"] }
+serde = { version = "=1.0.228", features = ["derive", "rc"] }
+serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
+tempfile = "3.26.0"
+thiserror = "2.0.18"
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "fs", "io-util"] }
+tokio-util = { version = "0.7.18", features = ["io", "rt"] }
+url = "2.5.8"
+vosu-sys = { path = "../vosu-sys" }
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "=0.2.186"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }
+[dev-dependencies]
+proptest = "1.12"
+vosu-proptest = { path = "../vosu-proptest" }

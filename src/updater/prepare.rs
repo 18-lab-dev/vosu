@@ -1,5 +1,5 @@
 use super::*;
-pub(super) use crate::net::streaming::{open_preflighted_zip, preflight_zip_entries};
+pub(super) use vosu_net::streaming::{open_preflighted_zip, preflight_zip_entries};
 
 /// Download, verify and extract the one expected root executable. The caller
 /// may then spawn `helper_path`, wait for its exact identity, and call

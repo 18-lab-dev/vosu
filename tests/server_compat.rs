@@ -39,7 +39,6 @@ use vosu::{
         enums::{GameState, GradeEnum, Rulesets},
         states::Mod,
     },
-    net::streaming::{ZipLimits, extract_zip_atomic, is_global_unicast},
     report::escape_html,
     server::{
         auth::{AuthorizationPolicy, RequestHeaders},
@@ -66,6 +65,7 @@ use vosu::{
         },
     },
 };
+use vosu_net::streaming::{ZipLimits, extract_zip_atomic, is_global_unicast};
 
 #[tokio::test]
 async fn api_key_revoked_during_post_body_is_rejected_before_dispatch() {

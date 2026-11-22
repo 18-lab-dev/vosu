@@ -3203,6 +3203,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "vosu-net",
  "vosu-pp",
  "vosu-proptest",
  "vosu-sys",
@@ -3211,6 +3212,28 @@ dependencies = [
  "wmi",
  "zip",
  "zmij",
+]
+
+[[package]]
+name = "vosu-net"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "libc",
+ "proptest",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "url",
+ "vosu-proptest",
+ "vosu-sys",
+ "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]
@@ -3294,6 +3317,7 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-util",
  "vosu",
+ "vosu-net",
  "zip",
 ]
 

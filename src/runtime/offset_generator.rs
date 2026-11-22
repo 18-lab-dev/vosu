@@ -1,4 +1,3 @@
-use crate::net::{ZipLimits, extract_zip_atomic};
 use bytes::Bytes;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -10,6 +9,7 @@ use std::{
 };
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
+use vosu_net::{ZipLimits, extract_zip_atomic};
 
 mod client_runtime;
 

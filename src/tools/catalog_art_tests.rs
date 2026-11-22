@@ -90,15 +90,15 @@ fn cache_is_bounded_and_dropped_with_the_catalog_revision() {
 mod routes {
     use super::super::super::catalog::{Overlay, Package, Tool};
     use super::*;
-    use crate::net::{Deadlines, DownloadLimits, StreamingClient, TestNetworkConfig};
     use axum::http::{Request, header};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use vosu_net::{Deadlines, DownloadLimits, StreamingClient, TestNetworkConfig};
 
     const HOST: &str = "art.invalid";
 
     struct Resolver;
-    impl crate::net::AddressResolver for Resolver {
-        fn resolve<'a>(&'a self, _: &'a str) -> crate::net::ResolverFuture<'a> {
+    impl vosu_net::AddressResolver for Resolver {
+        fn resolve<'a>(&'a self, _: &'a str) -> vosu_net::ResolverFuture<'a> {
             Box::pin(async { Ok(vec![std::net::IpAddr::from([127, 0, 0, 1])]) })
         }
     }

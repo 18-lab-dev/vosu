@@ -45,23 +45,20 @@ pub trait CounterDownloader: Send + Sync {
 
 #[derive(Clone)]
 pub struct HardenedCounterDownloader {
-    client: crate::net::streaming::StreamingClient,
+    client: vosu_net::streaming::StreamingClient,
     cache_root: PathBuf,
 }
 
 impl HardenedCounterDownloader {
     pub fn production(cache_root: PathBuf) -> Self {
         Self {
-            client: crate::net::streaming::StreamingClient::production(),
+            client: vosu_net::streaming::StreamingClient::production(),
             cache_root,
         }
     }
 
     #[cfg(feature = "test-harness")]
-    pub fn with_client(
-        client: crate::net::streaming::StreamingClient,
-        cache_root: PathBuf,
-    ) -> Self {
+    pub fn with_client(client: vosu_net::streaming::StreamingClient, cache_root: PathBuf) -> Self {
         Self { client, cache_root }
     }
 }
@@ -87,10 +84,10 @@ impl CounterDownloader for HardenedCounterDownloader {
                 .await
                 .map_err(|error| attribute_to_host(error, &request.url))?;
             tokio::task::spawn_blocking(move || {
-                crate::net::streaming::extract_zip_atomic(
+                vosu_net::streaming::extract_zip_atomic(
                     &archive_path,
                     &destination,
-                    crate::net::streaming::ZipLimits::default(),
+                    vosu_net::streaming::ZipLimits::default(),
                     &cancel,
                 )
             })
@@ -114,8 +111,8 @@ fn download_host(url: &str) -> String {
 /// users would otherwise report to vosu. Policy rejections (scheme, private
 /// destination, downgrade, size), unsafe archives, and local I/O stay vosu's own
 /// errors.
-fn attribute_to_host(error: crate::net::streaming::NetworkError, url: &str) -> CounterError {
-    use crate::net::streaming::NetworkError;
+fn attribute_to_host(error: vosu_net::streaming::NetworkError, url: &str) -> CounterError {
+    use vosu_net::streaming::NetworkError;
     match error {
         NetworkError::Status(_)
         | NetworkError::Timeout
@@ -154,7 +151,7 @@ pub enum CounterError {
     #[error("{host} (not operated by vosu): {reason}")]
     Host { host: String, reason: String },
     #[error(transparent)]
-    Network(#[from] crate::net::streaming::NetworkError),
+    Network(#[from] vosu_net::streaming::NetworkError),
     #[error("counter install capacity is full")]
     InstallBusy,
     #[error("counter service is shutting down")]

@@ -1,7 +1,7 @@
 use super::*;
-use crate::net::{Deadlines, DownloadLimits, StreamingClient, ZipLimits};
 use sha2::{Digest, Sha256};
 use std::io::Read;
+use vosu_net::{Deadlines, DownloadLimits, StreamingClient, ZipLimits};
 
 const OFFICIAL_SOURCE: &str = "18-lab-dev/vosu-tools";
 const VOSULAY_SOURCE: &str = "18-lab-dev/vosulay";
@@ -236,12 +236,12 @@ pub(super) fn client(max_bytes: u64) -> StreamingClient {
     #[cfg(feature = "test-harness")]
     if let Some(socket) = harness_socket() {
         struct Resolver(std::net::IpAddr);
-        impl crate::net::AddressResolver for Resolver {
-            fn resolve<'a>(&'a self, _: &'a str) -> crate::net::ResolverFuture<'a> {
+        impl vosu_net::AddressResolver for Resolver {
+            fn resolve<'a>(&'a self, _: &'a str) -> vosu_net::ResolverFuture<'a> {
                 Box::pin(async move { Ok(vec![self.0]) })
             }
         }
-        let network = crate::net::TestNetworkConfig::new(
+        let network = vosu_net::TestNetworkConfig::new(
             Arc::new(Resolver(socket.ip())),
             vec!["tools.invalid".into()],
             vec![socket],
@@ -316,7 +316,7 @@ fn extract(
     tool: &Tool,
     cancel: &CancellationToken,
 ) -> Result<(), String> {
-    crate::net::streaming::extract_zip_atomic_validated(
+    vosu_net::streaming::extract_zip_atomic_validated(
         path,
         destination,
         ZipLimits {
@@ -326,7 +326,7 @@ fn extract(
         cancel,
         |root| {
             let text = fs::read_to_string(root.join("tool.toml"))?;
-            let manifest = Manifest::parse(&text).map_err(crate::net::NetworkError::UnsafeZip)?;
+            let manifest = Manifest::parse(&text).map_err(vosu_net::NetworkError::UnsafeZip)?;
             if manifest.id != tool.id
                 || manifest.version != tool.version
                 || !manifest
@@ -335,7 +335,7 @@ fn extract(
                     .map(|r| (&r.id, &r.version))
                     .eq(tool.requires.iter().map(|r| (&r.id, &r.version)))
             {
-                return Err(crate::net::NetworkError::UnsafeZip(
+                return Err(vosu_net::NetworkError::UnsafeZip(
                     "package manifest differs from catalog".into(),
                 ));
             }

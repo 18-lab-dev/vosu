@@ -32,11 +32,11 @@ use vosu::{
     counters::{
         CounterError, CounterOpener, CounterService, DownloadRequest, HardenedCounterDownloader,
     },
-    net::{Deadlines, DownloadLimits, NetworkError, StreamingClient},
     runtime::{TestProductionCompositionOptions, start_test_production_composition},
     server::runtime::ListenTarget,
     server::service::{DeferredUpdateTrigger, UpdateRouteResult, UpdaterHandoff},
 };
+use vosu_net::{Deadlines, DownloadLimits, NetworkError, StreamingClient};
 use vosu_test_harness::{MockNetwork, USER_AGENT};
 
 #[derive(Default)]

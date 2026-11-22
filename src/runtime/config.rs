@@ -447,7 +447,7 @@ pub(super) struct RuntimeUpdater {
     pub(super) program: PathBuf,
     pub(super) program_dir: PathBuf,
     pub(super) shutdown: CancellationToken,
-    pub(super) client: crate::net::streaming::StreamingClient,
+    pub(super) client: vosu_net::streaming::StreamingClient,
     pub(super) release_api: String,
 }
 impl RuntimeUpdater {
@@ -460,7 +460,7 @@ impl RuntimeUpdater {
             program,
             program_dir,
             shutdown,
-            client: crate::net::streaming::StreamingClient::production(),
+            client: vosu_net::streaming::StreamingClient::production(),
             release_api: LATEST_RELEASE_API.to_owned(),
         }
     }
@@ -473,7 +473,7 @@ pub fn test_updater_handoff(
     program: PathBuf,
     program_dir: PathBuf,
     shutdown: CancellationToken,
-    network: crate::net::streaming::TestNetworkConfig,
+    network: vosu_net::streaming::TestNetworkConfig,
 ) -> io::Result<Arc<dyn UpdaterHandoff>> {
     let release_api = network
         .endpoints()
@@ -485,10 +485,10 @@ pub fn test_updater_handoff(
         })?
         .release
         .clone();
-    let client = crate::net::streaming::StreamingClient::for_test_network(
+    let client = vosu_net::streaming::StreamingClient::for_test_network(
         network,
-        crate::net::streaming::Deadlines::default(),
-        crate::net::streaming::DownloadLimits::default(),
+        vosu_net::streaming::Deadlines::default(),
+        vosu_net::streaming::DownloadLimits::default(),
     );
     Ok(Arc::new(RuntimeUpdater {
         program,

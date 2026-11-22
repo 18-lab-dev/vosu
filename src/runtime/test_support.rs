@@ -11,7 +11,7 @@ pub struct TestProductionCompositionOptions {
     pub cache_root: PathBuf,
     pub logs_root: PathBuf,
     pub updater: Arc<dyn UpdaterHandoff>,
-    pub network: crate::net::streaming::TestNetworkConfig,
+    pub network: vosu_net::streaming::TestNetworkConfig,
 }
 
 /// Owns the real production listener, WebSocket hubs, command workers, and
@@ -101,10 +101,10 @@ pub async fn start_test_production_composition(
             )
         })?
         .clone();
-    let test_client = crate::net::streaming::StreamingClient::for_test_network(
+    let test_client = vosu_net::streaming::StreamingClient::for_test_network(
         options.network,
-        crate::net::streaming::Deadlines::default(),
-        crate::net::streaming::DownloadLimits::default(),
+        vosu_net::streaming::Deadlines::default(),
+        vosu_net::streaming::DownloadLimits::default(),
     );
     let services = ProductionServices::with_native_report_probe(
         PageService,

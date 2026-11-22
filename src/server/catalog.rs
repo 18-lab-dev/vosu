@@ -8,7 +8,7 @@ use serde_json::Value;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::net::{Deadlines, DownloadLimits, NetworkError, StreamingClient};
+use vosu_net::{Deadlines, DownloadLimits, NetworkError, StreamingClient};
 
 pub const CATALOG_ENDPOINT: &str = "https://tosu.app/api.json";
 // The catalog is an explicit upstream tosu service dependency.
@@ -418,7 +418,7 @@ mod tests {
 
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        use crate::net::{AddressResolver, ResolverFuture, TestNetworkConfig};
+        use vosu_net::{AddressResolver, ResolverFuture, TestNetworkConfig};
 
         use super::*;
 

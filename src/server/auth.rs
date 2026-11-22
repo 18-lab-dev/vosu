@@ -7,7 +7,7 @@ use axum::http::{HeaderMap, header};
 use std::net::{IpAddr, Ipv4Addr};
 use url::Url;
 
-use crate::net::normalize_ip;
+use vosu_net::normalize_ip;
 
 /// Captured once at HTTP dispatch and retained for the lifetime of a socket.
 #[derive(Clone, Copy, Debug, Default)]

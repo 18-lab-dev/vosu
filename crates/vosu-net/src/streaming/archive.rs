@@ -125,7 +125,7 @@ fn read_end_record(
 /// file and agrees on the count: the specification's backward search and the
 /// `zip` decoder take the later record, other readers the earlier one, so the
 /// two could list different directories. Real archives never do this.
-pub(crate) fn preflight_zip_entries(
+pub fn preflight_zip_entries(
     file: &mut std::fs::File,
     maximum: usize,
     cancel: &CancellationToken,
@@ -206,7 +206,7 @@ pub(crate) fn preflight_zip_entries(
 
 /// Opens a preflighted archive and refuses it unless the decoder read the
 /// central directory that the archive's own end record describes.
-pub(crate) fn open_preflighted_zip(
+pub fn open_preflighted_zip(
     file: std::fs::File,
     entries: u64,
 ) -> Result<zip::ZipArchive<std::fs::File>, NetworkError> {

@@ -312,8 +312,8 @@ async fn catalog_transport_rejects_http_and_private_destinations() {
             .await
             .unwrap_err();
         assert!(
-            matches!(error, crate::net::NetworkError::Scheme) && scheme
-                || matches!(error, crate::net::NetworkError::Destination(_)) && !scheme,
+            matches!(error, vosu_net::NetworkError::Scheme) && scheme
+                || matches!(error, vosu_net::NetworkError::Destination(_)) && !scheme,
             "{error}"
         );
     }

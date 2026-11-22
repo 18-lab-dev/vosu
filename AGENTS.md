@@ -49,7 +49,7 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 ## Source ownership
 
 - `src/api/`: gosuMemory v1, streamCompanion, vosu v2, and precise payload projection/serialization.
-- `src/server/` and `src/net/`: HTTP/WebSocket routing, files, commands, pages, connection handling, and streaming.
+- `src/server/` and `crates/vosu-net/`: HTTP/WebSocket routing, files, commands, pages, connection handling, and hardened outbound streaming/archive extraction.
 - `src/state/`, `src/instance/`, `src/memory.rs`: process discovery, snapshots, and polling lifecycle.
 - `crates/vosu-sys/`: native process/platform boundary (process handles, memory reads, OS paths/capabilities) and process-exit-event backends (eBPF/CN_PROC/polling); all platform `unsafe` lives here.
 - `src/config/`, `src/counters/`: watched configuration, migration, settings, counter discovery/download/storage.

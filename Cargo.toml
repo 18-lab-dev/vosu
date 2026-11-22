@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
+members = [".", "crates/vosu-net", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
 resolver = "3"
 
 [workspace.package]
@@ -75,7 +75,7 @@ lazer-offsets-satori-coreclr-sha256 = "dcc631eda8fdb34d06956697e9709b8d828306eb7
 [features]
 default = ["linux-process-events"]
 linux-process-events = ["vosu-sys/linux-process-events"]
-test-harness = []
+test-harness = ["vosu-net/test-harness"]
 [dependencies]
 arc-swap = "1.8.2"
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws", "query", "original-uri", "matched-path", "tracing"] }
@@ -107,6 +107,7 @@ tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 tokio-tungstenite = "=0.29.0"
 toml = "=1.1.2"
 vosu-pp = { path = "crates/vosu-pp" }
+vosu-net = { path = "crates/vosu-net" }
 vosu-sys = { path = "crates/vosu-sys" }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["fmt", "env-filter", "ansi", "registry"] }
