@@ -9,20 +9,20 @@
 //! Standalone, like [`super::read_plan`]: wiring this into
 //! `PluginHostHandler::handle` (resolving `ScanRequest.session` to a live
 //! `ProcessMemory`, delivering `VOSU_OP_SCAN_RESULT` back through the
-//! dispatch queue once the worker finishes, and answering a mid-scan
-//! session detach with the error form below) is later wiring, not this
-//! phase's scope.
+//! dispatch queue once the worker finishes) is later wiring, not this
+//! phase's scope. [`OutstandingScans::cancel_session`] *is* in scope: it
+//! is the primitive that wiring calls when a session detaches mid-scan.
 //!
-//! **Module enumeration gap.** `vosu_sys::process` only exposes module
-//! enumeration on Windows (`enumerate_modules`/`ModuleEntry`); Linux has
-//! no equivalent today (`crates/vosu-sys/src/process/linux.rs` has no
-//! `enumerate_modules`, only the unnamed `readable_regions` a scan already
-//! uses). [`WindowsModuleTable`] implements both [`ModuleRegions`] and
-//! [`super::read_plan::ModuleResolver`] from that platform's own
-//! enumeration; a Linux module list (presumably built from
-//! `/proc/{pid}/maps`'s path column) is not part of this phase and is
-//! flagged here rather than invented without a spec to match against.
+//! **Module enumeration.** [`WindowsModuleTable`] and [`LinuxModuleTable`]
+//! both implement [`ModuleRegions`] and [`super::read_plan::ModuleResolver`]
+//! from one platform-native enumeration
+//! (`vosu_sys::process::enumerate_modules`, backed by the loader table on
+//! Windows and `/proc/{pid}/maps` on Linux). Either table is a point-in-time
+//! snapshot: a caller must build a fresh one for each read plan or scan
+//! that resolves a module root/scope ("resolved by the host at read time",
+//! `docs/v2/plugin-abi.md` §6.3) rather than caching one across requests.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
@@ -30,7 +30,7 @@ use std::thread;
 use vosu_plugin_api::{ErrorInfo, ScanRequest, ScanResult, vosu_status};
 use vosu_sys::process::scanner::{Pattern, PatternParseError};
 use vosu_sys::process::{MemoryError, MemoryRegion, ProcessMemory, ReadRequest};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use vosu_sys::process::{ModuleEntry, enumerate_modules};
 
 /// Per-instance bound on `VOSU_OP_SCAN_REQUEST`s outstanding at once
@@ -178,6 +178,18 @@ pub fn execute(
             .map(|found| found.into_iter().collect())
     };
 
+    // A scan is unbounded cost in the worst case; re-check liveness rather
+    // than trusting the check at the top of this function, so a session
+    // that detached partway through is reported as the error form (§6.4)
+    // instead of whatever partial/empty result the scanner's own "skip
+    // unreadable regions" behavior produced.
+    if !memory.is_alive() {
+        return error_result(
+            "target_gone",
+            "the target session's process exited during the scan",
+        );
+    }
+
     match outcome {
         Ok(addresses) => ScanResult {
             addresses: addresses
@@ -204,11 +216,38 @@ impl From<OutstandingScansError> for vosu_status {
     }
 }
 
+/// Called exactly once per scan: either the worker's own finished
+/// [`ScanResult`], or (if [`OutstandingScans::cancel_session`] wins the
+/// race) the session-detached error form.
+type DeliverFn = Box<dyn FnOnce(ScanResult) + Send>;
+/// Shared between the worker and [`OutstandingScans::cancel_session`]:
+/// whichever side `take()`s it first is the one that actually calls it,
+/// guaranteeing exactly-one delivery no matter which finishes first.
+type Gate = Arc<Mutex<Option<DeliverFn>>>;
+
+struct ScanEntry {
+    handle: u64,
+    gate: Option<Gate>,
+}
+
 /// Tracks one plugin instance's outstanding `VOSU_OP_SCAN_REQUEST`s
-/// against [`MAX_OUTSTANDING_SCANS`] (§5, §6.4).
+/// against [`MAX_OUTSTANDING_SCANS`] (§5, §6.4), and which session handle
+/// each belongs to, so a session detach can free every scan it still owes
+/// a result to.
 #[derive(Debug, Default)]
 pub struct OutstandingScans {
     count: Mutex<usize>,
+    entries: Mutex<std::collections::HashMap<u64, ScanEntry>>,
+    next_id: AtomicU64,
+}
+
+impl std::fmt::Debug for ScanEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScanEntry")
+            .field("handle", &self.handle)
+            .field("gate", &self.gate.is_some())
+            .finish()
+    }
 }
 
 impl OutstandingScans {
@@ -217,29 +256,83 @@ impl OutstandingScans {
         Arc::new(Self::default())
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, usize> {
+    fn lock_count(&self) -> std::sync::MutexGuard<'_, usize> {
         self.count.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Admits one more scan, refusing beyond [`MAX_OUTSTANDING_SCANS`].
-    /// The returned [`ScanSlot`] frees it when dropped — "a scan's slot is
-    /// freed by its `SCAN_RESULT` (success or the error form above) or, if
-    /// its session detaches first, by core sending that error form itself
-    /// rather than leaving the slot held" (§6.4): both paths are simply
-    /// "drop the slot once a `ScanResult` of either kind has been sent".
-    pub fn begin(self: &Arc<Self>) -> Result<ScanSlot, OutstandingScansError> {
-        let mut count = self.lock();
+    fn lock_entries(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<u64, ScanEntry>> {
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Frees `id`'s slot if it is still held: idempotent, so both
+    /// [`ScanSlot::drop`] and [`Self::cancel_session`] racing to free the
+    /// same scan never double-decrement the count (§6.4: "a scan's slot
+    /// is freed by its `SCAN_RESULT` ... or, if its session detaches
+    /// first, by core sending that error form itself").
+    fn free(&self, id: u64) {
+        let removed = self.lock_entries().remove(&id).is_some();
+        if removed {
+            let mut count = self.lock_count();
+            *count = count.saturating_sub(1);
+        }
+    }
+
+    fn begin_internal(
+        self: &Arc<Self>,
+        handle: u64,
+        gate: Option<Gate>,
+    ) -> Result<ScanSlot, OutstandingScansError> {
+        let mut count = self.lock_count();
         if *count >= MAX_OUTSTANDING_SCANS {
             return Err(OutstandingScansError::CapExceeded);
         }
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.lock_entries().insert(id, ScanEntry { handle, gate });
         *count += 1;
-        Ok(ScanSlot(Arc::clone(self)))
+        Ok(ScanSlot {
+            outstanding: Arc::clone(self),
+            id,
+        })
+    }
+
+    /// Admits one more scan for `handle`'s session, refusing beyond
+    /// [`MAX_OUTSTANDING_SCANS`]. The returned [`ScanSlot`] frees it when
+    /// dropped.
+    pub fn begin(self: &Arc<Self>, handle: u64) -> Result<ScanSlot, OutstandingScansError> {
+        self.begin_internal(handle, None)
+    }
+
+    /// `SESSION_DETACHED` for `handle`: frees every scan still outstanding
+    /// for that session immediately, and — racing against each one's own
+    /// worker — delivers the session-detached error form for it exactly
+    /// once, whichever side gets there first (§6.4, mirroring
+    /// `read_plan::OutstandingPlans::cancel_session`'s A1 rule).
+    pub fn cancel_session(&self, handle: u64) {
+        let matches: Vec<(u64, Option<Gate>)> = {
+            let entries = self.lock_entries();
+            entries
+                .iter()
+                .filter(|(_, entry)| entry.handle == handle)
+                .map(|(id, entry)| (*id, entry.gate.clone()))
+                .collect()
+        };
+        for (id, gate) in matches {
+            if let Some(gate) = gate
+                && let Some(deliver) = gate.lock().unwrap_or_else(PoisonError::into_inner).take()
+            {
+                deliver(error_result(
+                    "session_detached",
+                    "the target session detached while this scan was in flight",
+                ));
+            }
+            self.free(id);
+        }
     }
 
     /// Current outstanding count, for tests and diagnostics.
     #[must_use]
     pub fn len(&self) -> usize {
-        *self.lock()
+        *self.lock_count()
     }
 
     #[must_use]
@@ -253,12 +346,14 @@ impl OutstandingScans {
 /// detaching mid-scan) frees its slot.
 #[derive(Debug)]
 #[must_use]
-pub struct ScanSlot(Arc<OutstandingScans>);
+pub struct ScanSlot {
+    outstanding: Arc<OutstandingScans>,
+    id: u64,
+}
 
 impl Drop for ScanSlot {
     fn drop(&mut self) {
-        let mut count = self.0.lock();
-        *count = count.saturating_sub(1);
+        self.outstanding.free(self.id);
     }
 }
 
@@ -345,6 +440,12 @@ impl Drop for ScanWorkerPool {
 pub enum ScanSubmitError {
     CapExceeded,
     QueueFull,
+    /// `request.pattern` does not parse (§5: "Malformed payload →
+    /// `INVALID_ARGUMENT`"): refused synchronously here, before taking an
+    /// [`OutstandingScans`] slot or a worker-pool queue entry, rather than
+    /// answering the error form from a worker the way [`execute`] does
+    /// for a direct (non-pool) caller.
+    InvalidPattern,
 }
 
 impl From<ScanSubmitError> for vosu_status {
@@ -354,24 +455,38 @@ impl From<ScanSubmitError> for vosu_status {
 }
 
 /// Submits one scan to run on `pool`, honoring [`OutstandingScans`]'s cap:
-/// refuses with `VOSU_ERR_INVALID_ARGUMENT` if the cap is already reached
-/// or the worker queue is already full; otherwise `deliver` is called with
-/// the finished [`ScanResult`] on a worker thread, never on the caller's.
+/// refuses with `VOSU_ERR_INVALID_ARGUMENT` if `request.pattern` is
+/// malformed, the cap is already reached, or the worker queue is already
+/// full; otherwise `deliver` is called with the finished [`ScanResult`] on
+/// a worker thread, never on the caller's, unless
+/// [`OutstandingScans::cancel_session`] delivers the session-detached form
+/// first.
 pub fn submit(
     outstanding: &Arc<OutstandingScans>,
     pool: &ScanWorkerPool,
     request: ScanRequest,
     memory: Arc<dyn ProcessMemory>,
     modules: Arc<dyn ModuleRegions + Send + Sync>,
+    handle: u64,
     deliver: impl FnOnce(ScanResult) + Send + 'static,
 ) -> Result<(), ScanSubmitError> {
+    Pattern::parse(&request.pattern, request.non_zero_mask)
+        .map_err(|_| ScanSubmitError::InvalidPattern)?;
+
+    let gate: Gate = Arc::new(Mutex::new(Some(Box::new(deliver) as DeliverFn)));
     let slot = outstanding
-        .begin()
+        .begin_internal(handle, Some(Arc::clone(&gate)))
         .map_err(|_| ScanSubmitError::CapExceeded)?;
     pool.try_spawn(move || {
         let result = execute(&request, memory.as_ref(), modules.as_ref());
+        // §6.4/P3: deliver before freeing the slot, so the slot stays
+        // held for the whole time its `SCAN_RESULT` could still be in
+        // flight toward the plugin rather than being reusable the moment
+        // the scan itself finishes.
+        if let Some(deliver) = gate.lock().unwrap_or_else(PoisonError::into_inner).take() {
+            deliver(result);
+        }
         drop(slot);
-        deliver(result);
     })
     .map_err(|_| ScanSubmitError::QueueFull)
 }
@@ -382,8 +497,6 @@ pub fn submit(
 /// [`super::read_plan::ModuleResolver`] (read-plan `VOSU_BASE_MODULE`
 /// roots) from the same data, since both only need a named module's base
 /// address — `ModuleRegions` additionally needs its size to scope a scan.
-///
-/// Windows-only: see this module's doc comment for the Linux gap.
 #[cfg(windows)]
 pub struct WindowsModuleTable {
     modules: Vec<ModuleEntry>,
@@ -415,6 +528,47 @@ impl super::read_plan::ModuleResolver for WindowsModuleTable {
 
 #[cfg(windows)]
 impl ModuleRegions for WindowsModuleTable {
+    fn resolve(&self, module: &str) -> Option<ModuleRegion> {
+        self.find(module).map(|entry| ModuleRegion {
+            base: entry.base_address as u64,
+            size: u64::from(entry.size),
+        })
+    }
+}
+
+/// A snapshot of one Linux process's loaded modules, built once from
+/// `vosu_sys::process::enumerate_modules`'s `/proc/{pid}/maps`-derived
+/// table. Implements both [`ModuleRegions`] and
+/// [`super::read_plan::ModuleResolver`], mirroring [`WindowsModuleTable`].
+#[cfg(target_os = "linux")]
+pub struct LinuxModuleTable {
+    modules: Vec<ModuleEntry>,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxModuleTable {
+    pub fn snapshot(pid: u32) -> Result<Self, MemoryError> {
+        Ok(Self {
+            modules: enumerate_modules(pid)?,
+        })
+    }
+
+    /// Linux module-name comparison is exact: the filesystem (and so a
+    /// mapped file's own name) is case-sensitive there, unlike Windows.
+    fn find(&self, name: &str) -> Option<&ModuleEntry> {
+        self.modules.iter().find(|module| module.name == name)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl super::read_plan::ModuleResolver for LinuxModuleTable {
+    fn resolve(&self, module: &str) -> Option<u64> {
+        self.find(module).map(|entry| entry.base_address as u64)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl ModuleRegions for LinuxModuleTable {
     fn resolve(&self, module: &str) -> Option<ModuleRegion> {
         self.find(module).map(|entry| ModuleRegion {
             base: entry.base_address as u64,
