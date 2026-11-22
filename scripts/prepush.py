@@ -153,6 +153,7 @@ LINUX_STEPS = [
     ("file-length", [sys.executable, "scripts/check-file-length.py"], None, ()),
     ("brand", [sys.executable, "scripts/check-brand.py"], None, ()),
     ("module-boundaries", [sys.executable, "scripts/check-module-boundaries.py"], None, ()),
+    ("crate-boundaries", [sys.executable, "scripts/check-crate-boundaries.py"], None, ()),
     ("license-notices", [sys.executable, "scripts/assemble-release-license.py"], None, ()),
     ("asset-hashes", [sys.executable, "scripts/check-asset-hashes.py"], None, ()),
     ("script-tests", [sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_*.py"], None, ()),

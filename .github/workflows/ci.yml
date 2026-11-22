@@ -37,6 +37,8 @@ jobs:
         run: python scripts/check-brand.py
       - name: Check module dependency boundaries
         run: python scripts/check-module-boundaries.py
+      - name: Check workspace-crate dependency boundaries
+        run: python scripts/check-crate-boundaries.py
       - name: Check retained calculator notices in LICENSE
         run: python scripts/assemble-release-license.py
       - name: Check embedded asset digests
