@@ -10,20 +10,24 @@
 //! - a field the spec marks `|null` (always present, nullable) is
 //!   `Option<T>` with `#[serde(default)]` so a decoder accepts either an
 //!   explicit `null` or the key missing entirely, and an encoder always
-//!   emits the key (`null` when absent) — the spec treats both wire forms
-//!   as equivalent (§6.12 "an absent field reports value: null");
+//!   emits the key (`null` when absent) — this crate treats both wire
+//!   forms as equivalent for every such field, generalizing the one
+//!   instance the spec states explicitly, `STATE_UPDATE`'s per-selector
+//!   `value`/`error` (§6.12: "an absent field reports `value: null,
+//!   error: null`");
 //! - a field the spec marks `|omitted`, with omission having its own
 //!   defined meaning distinct from an explicit falsy value, is skipped on
 //!   encode and defaulted on decode instead (`SESSION_IDENTIFY`'s
 //!   `focus_priority`, `TREE_LIST`'s per-entry `hash`).
 //!
-//! No message here rejects an unrecognized map key: additive,
-//! backward-compatible growth is this ABI's own minor-version story (§1),
-//! so every struct accepts and ignores one exactly as a newer peer's extra
-//! `struct_size` field is ignored by an older reader. A field that is
-//! present but the wrong CBOR type, or an enum-typed string outside its
-//! defined literals, is rejected (`CborError::Decode`): spec ambiguity
-//! trade-off recorded in this crate's M1 report, not in this doc comment.
+//! No message here rejects an unrecognized map key: the spec states this
+//! as a general rule (§3, D4) — unlike an unrecognized `flags` bit, which
+//! is always rejected — so every struct here accepts and ignores one
+//! exactly as a newer peer's extra `struct_size` field is ignored by an
+//! older reader. A field that is present but the wrong CBOR type, or an
+//! enum-typed string outside its defined literals, is rejected
+//! (`CborError::Decode`): spec ambiguity trade-off recorded in this
+//! crate's M1 report, not in this doc comment.
 
 pub mod action;
 pub mod codec;
