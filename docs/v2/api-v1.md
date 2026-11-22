@@ -55,6 +55,15 @@ session having ended before a new one attaches) picks the first session by
 deterministic ordering within the earliest-attached plugin. `vosu.client.focused`
 is `true` for exactly that one session's summary; `active` always addresses it.
 
+### Visibility
+
+A session is not exposed anywhere in this API — `GET /api/v1/sessions`, the
+`{id|active}` routes, session-events subscription, or focus selection — until
+its game plugin identifies it (`SESSION_IDENTIFY`, `docs/v2/plugin-abi.md`).
+A session that does not identify within 5 seconds of attaching stays hidden
+indefinitely; core logs this once per session and never surfaces it through
+API v1 unless the plugin eventually identifies it.
+
 ### `GET /api/v1/sessions`
 
 Returns `{"sessions": [<summary>, ...]}`, every currently attached session, in
@@ -249,7 +258,7 @@ files are resources the state refers to, never "current file" lookups.
 | Route | Serves | Cache-Control | ETag |
 | --- | --- | --- | --- |
 | `GET`/`HEAD /api/v1/resources/{id}` | one file; a single validated byte range | `public, max-age=31536000, immutable` | strong, content-derived |
-| `GET /api/v1/trees/{id}/` | index of `{path, size, hash?, type}` entries, `truncated`, `revision` | `no-cache` (store, revalidate) | strong, revalidated |
+| `GET /api/v1/trees/{id}/` | `{"entries":[{"path","size","type","hash"?}],"truncated":bool,"revision":string}` | `no-cache` (store, revalidate) | strong, revalidated |
 | `GET`/`HEAD /api/v1/trees/{id}/{path}` | one file via the plugin's own lookup rules | `no-cache` | strong, revalidated |
 | `GET /api/v1/sessions/{id\|active}/chart/{file\|audio\|background}`, `/api/v1/sessions/{id\|active}/skin/{path}` | `307` to the current resource URL | `no-store` | none |
 
@@ -259,21 +268,29 @@ returns the same headers as GET with no body and ignores Range.
 
 ### Id registry
 
-Core mints an id when a plugin publishes a reference: an HMAC, under a
-persisted core secret, of the plugin identity, the plugin's own key for the
-content, and a content identity (a store hash, or path+size+modification
-time). Ids are stable across restarts, unguessable, and serve only from a
+Core mints an id at **publish time**, directly from the plugin's reference
+(`kind`, `key`, `name`, `content_id`) with no round trip to the plugin: an
+HMAC under a persisted core secret of the plugin identity and that tuple.
+`name` supplies the served resource's `Content-Type` and a tree entry's
+`type` by file extension; `content_id` is the plugin's own content identity
+(a content-store hash, or a path+size+modification-time digest) and feeds the
+ETag. Ids are stable across restarts, unguessable, and serve only from a
 bounded in-memory registry of currently published references — there is no
 route to browse a game folder, and core never serves a file that the current
 state or a published tree index did not reference. Registry capacity and
 eviction policy belong to the core implementation; this spec only fixes the
 observable 404/410 contract above.
 
-Plugins resolve a key to either a declared root plus a relative path — opened
-with [ADR 0005](../decisions/0005-root-confined-file-serving.md)'s
-retained-handle confinement — or a bounded byte stream for generated or
-`process`-plugin content. Plugins never serve HTTP directly. Resources and
-trees are read-only; changes go through actions.
+Resolving an id to actual bytes is lazy: core asks the plugin to resolve
+`{kind, key}` to a root+path or a stream only on that id's **first HTTP
+request**, never at publish time, and caches the resolution for the
+registry's lifetime of the id. Plugins resolve a key to either a declared
+root plus a relative path — opened with
+[ADR 0005](../decisions/0005-root-confined-file-serving.md)'s retained-handle
+confinement — or a bounded byte stream for generated or `process`-plugin
+content, which still supports the same single validated byte range as a
+file-backed resource. Plugins never serve HTTP directly. Resources and trees
+are read-only; changes go through actions.
 
 ### Headers and type allowlist
 
@@ -287,10 +304,10 @@ plugin-chosen or path-embedded string:
 
 | Family | Types |
 | --- | --- |
-| Image | `image/png`, `image/jpeg`, `image/webp`, `image/gif` |
-| Audio | `audio/mpeg`, `audio/ogg`, `audio/wav`, `audio/flac` |
-| Video | `video/mp4`, `video/webm` |
-| Chart text | `text/plain; charset=utf-8` |
+| `image` | `image/png`, `image/jpeg`, `image/webp`, `image/gif` |
+| `audio` | `audio/mpeg`, `audio/ogg`, `audio/wav`, `audio/flac` |
+| `video` | `video/mp4`, `video/webm` |
+| `chart-text` | `text/plain; charset=utf-8` |
 
 A plugin's manifest only bounds which of these families each of its
 resource/tree kinds may ever produce (`[[resource_kinds]]`,
@@ -301,10 +318,13 @@ bounded families, or outside this allowlist entirely, serves as
 
 ## Actions
 
-Tools invoke plugin actions named `action:<plugin-id>.<name>`; overlays never
-do (authorization below). Each action declares, in its owning plugin's
-manifest (`[[actions]]`, `docs/v2/catalog-v2.md`), whether it needs a
-session: `required`, `optional`, or `none`.
+Tools invoke plugin actions. The capability id is `action:<plugin-id>.<name>`
+(`requires`/`optional`, catalog entries), but routes and `vosu.invoke`
+address the action by its bare `{plugin-id}.{name}` — the `action:` prefix
+exists only in capability ids. Overlays never invoke actions (authorization
+below). Each action declares, in its owning plugin's manifest (`[[actions]]`,
+`docs/v2/catalog-v2.md`), whether it needs a session: `required`, `optional`,
+or `none`.
 
 ### Invoke
 
@@ -335,6 +355,11 @@ invocation `state` below) as:
 | success | `succeeded`, `result` = the action's value |
 | failure, `code: "cancelled"` | `cancelled`, no `error` |
 | failure, any other `code` | `failed`, `error = {code, message}` |
+
+Two outcomes are core-synthesized rather than reported by the action itself:
+a plugin action that exceeds its timeout is `failed` with
+`code: "timed_out"`; a plugin host that crashes or is killed mid-invocation
+is `failed` with `code: "plugin_crashed"`.
 
 ### Progress, result, and cancellation: `/api/v1/invocations/{invocationId}`
 
@@ -381,9 +406,10 @@ credential) never can:
   already does — a single-use launch code exchanged for a session held only
   in that tab's page memory — and the UI presents it on every action route as
   `X-Vosu-Tool-Session: <token>`. Core checks the token against the live
-  session, then that `action:` id must be present in the owning tool's
-  resolved `requires`/`optional` (`docs/v2/catalog-v2.md`'s permission-surface
-  rule: declaring the capability *is* declaring the intent to call it) —
+  session, then that action's capability id (`action:{plugin-id}.{name}`)
+  must be present in the owning tool's resolved `requires`/`optional`
+  (`docs/v2/catalog-v2.md`'s permission-surface rule: declaring the
+  capability *is* declaring the intent to call it) —
   otherwise 403 `forbidden` even with a valid session. The bridge exposes
   `vosu.invoke(actionId, args, { session })` to tool-UI JavaScript: it issues
   `POST /api/v1/sessions/{session|active}/actions/{actionId}` when `session`
@@ -394,7 +420,8 @@ credential) never can:
 - **The CLI**, through the native loopback broker credential, for an action
   declared `cli = true` (`docs/v2/catalog-v2.md`): `vosux <plugin-id>
   <action> [json-args]` forwards to the same HTTP route under the broker's
-  own authority, bypassing the tool-session check.
+  own authority, bypassing the tool-session check. A session-scoped action is
+  invoked against `active` unless the CLI is given `--session <id>`.
 - **A plugin**, calling another plugin's action through the ABI
   (`docs/v2/plugin-abi.md`) entirely inside the host process; this never
   reaches the HTTP surface at all.
@@ -484,12 +511,14 @@ than reusing this URL for different content.
   polling latency for slow actions but adds a transient, non-schema-backed
   document to the subscription model. Recommendation: ship polling for v1;
   revisit only if a real action's UX needs sub-poll-interval progress.
-- **Resource type family ownership.** The fixed image/audio/video/chart-text
-  allowlist here is a core list; `docs/v2/plugin-abi.md`/`docs/v2/catalog-v2.md`
-  describe how a plugin's manifest selects one of these families per
-  resource/tree kind. If a future kind genuinely needs a type outside these
-  four families, that is an ADR 0021 change, not something this spec can
-  resolve unilaterally.
+- **Resource type family ownership.** The fixed `image`/`audio`/`video`/
+  `chart-text` allowlist here is a core list; a plugin's manifest only bounds
+  which of these family tokens each of its resource/tree kinds may produce
+  (`docs/v2/plugin-abi.md`'s `[[resource_kinds]]`, mirrored in
+  `docs/v2/catalog-v2.md`), and core assigns the actual MIME type by file
+  extension. If a future kind genuinely needs a type outside these four
+  families, that is an ADR 0021 change, not something this spec can resolve
+  unilaterally.
 - **Invocation id lifetime.** This spec fixes the observable behavior (404
   once expired) but leaves the exact retention bound to the implementation,
   mirroring how the resource registry's capacity is unspecified here.
