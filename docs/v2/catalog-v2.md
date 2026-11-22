@@ -815,8 +815,3 @@ whole gate, and 2.0 is not published (ADR 0022).
   is needed so the resolver can plan an overlay's dependencies without
   parsing `metadata.txt` free text. Confirm this is in scope for 2.0 rather
   than a later overlay-ecosystem follow-up.
-- **`session: "none"` actions and the broker.** This spec defines `"none"` as
-  valid for `[[actions]].session`, but `docs/v2/api-v1.md`'s invoke route is
-  phrased per-session (`/sessions/{id|active}/actions/{plugin-id}.{name}`);
-  how a `"none"` action is addressed without a session segment needs a
-  decision from that spec, not this one.
