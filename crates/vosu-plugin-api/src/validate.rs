@@ -188,7 +188,8 @@ pub fn read_flat_header<T: Copy>(buffer: &[u8]) -> Result<T, ValidationError> {
 }
 
 /// Validates a standalone `VOSU_OP_PUBLISH_FIELD` payload's trailing
-/// `ns`/`pointer`/`data` byte ranges and `value_kind` discriminant.
+/// `ns`/`pointer`/`data` byte ranges, `value_kind` discriminant, and
+/// documented-zero `reserved` field.
 pub fn validate_publish_field(buffer: &[u8]) -> Result<(), ValidationError> {
     validate_frame_len(buffer.len())?;
     let header: vosu_field_publish_header = read_flat_header(buffer)?;
@@ -199,6 +200,9 @@ fn validate_publish_field_header(
     buffer_len: usize,
     header: &vosu_field_publish_header,
 ) -> Result<(), ValidationError> {
+    if header.reserved != 0 {
+        return Err(ValidationError::ReservedNonZero);
+    }
     validate_bytes_range(buffer_len, header.ns_offset, header.ns_len)?;
     validate_bytes_range(buffer_len, header.pointer_offset, header.pointer_len)?;
     validate_bytes_range(buffer_len, header.data_offset, header.data_len)?;
@@ -233,11 +237,15 @@ pub fn validate_publish_batch(buffer: &[u8]) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Validates a `VOSU_OP_DEMAND_CHANGED` payload's `selectors` array and
-/// every selector's own `ns`/`pointer` trailing bytes.
+/// Validates a `VOSU_OP_DEMAND_CHANGED` payload's documented-zero
+/// `reserved` field and its `selectors` array and every selector's own
+/// `ns`/`pointer` trailing bytes.
 pub fn validate_demand_changed(buffer: &[u8]) -> Result<(), ValidationError> {
     validate_frame_len(buffer.len())?;
     let header: vosu_demand_changed_header = read_flat_header(buffer)?;
+    if header.reserved != [0; 6] {
+        return Err(ValidationError::ReservedNonZero);
+    }
     let selectors = validate_array_range::<vosu_pointer_ref>(
         buffer.len(),
         header.selectors_offset,
@@ -540,6 +548,32 @@ mod tests {
         push_u32(&mut buf, 24); // selectors_offset (end of header; 0 entries)
         push_u32(&mut buf, 0); // selector_count
         assert!(validate_demand_changed(&buf).is_ok());
+    }
+
+    #[test]
+    fn publish_field_rejects_nonzero_reserved() {
+        let mut buf = Vec::new();
+        push_field_publish_header(&mut buf, FieldPublishBytes::default());
+        buf[28..32].copy_from_slice(&1u32.to_le_bytes()); // reserved, offset 28
+        assert_eq!(
+            validate_publish_field(&buf),
+            Err(ValidationError::ReservedNonZero)
+        );
+    }
+
+    #[test]
+    fn demand_changed_rejects_nonzero_reserved() {
+        let mut buf = Vec::new();
+        push_u64(&mut buf, 1); // handle
+        push_u8(&mut buf, 1); // regular
+        push_u8(&mut buf, 0); // precise
+        buf.extend_from_slice(&[0, 0, 0, 1, 0, 0]); // reserved, nonzero
+        push_u32(&mut buf, 24); // selectors_offset
+        push_u32(&mut buf, 0); // selector_count
+        assert_eq!(
+            validate_demand_changed(&buf),
+            Err(ValidationError::ReservedNonZero)
+        );
     }
 
     /// A read plan with one `VOSU_BASE_ABSOLUTE` stage and one op passes;

@@ -511,3 +511,92 @@ fn frame_cap_is_enforced_on_encode_and_decode() {
     let result: Result<CborValue, _> = decode(&over_cap_bytes);
     assert!(result.is_err());
 }
+
+/// The spec says to omit `hash` entirely for unknown content hashing,
+/// never send it explicit `null` (nits): an entry that does so is
+/// rejected, not silently treated the same as an absent key.
+#[test]
+fn tree_entry_rejects_explicit_null_hash() {
+    let bytes = encode(&CborValue::Map(vec![
+        (
+            CborValue::Text("path".into()),
+            CborValue::Text("a.osu".into()),
+        ),
+        (CborValue::Text("size".into()), CborValue::Integer(1.into())),
+        (CborValue::Text("hash".into()), CborValue::Null),
+    ]))
+    .expect("encode");
+    let result: Result<TreeEntry, _> = decode(&bytes);
+    assert!(
+        result.is_err(),
+        "hash: null must be rejected, not accepted as equivalent to omitting the key"
+    );
+}
+
+/// `ResourceResolved` is `#[serde(untagged)]`: a reply mixing fields from
+/// more than one shape (here `path`/`root` and `error`) must be rejected
+/// rather than silently accepted as whichever variant needs only a subset
+/// of what was sent (nits).
+#[test]
+fn resource_resolved_rejects_a_reply_mixing_path_and_error_shapes() {
+    let bytes = encode(&CborValue::Map(vec![
+        (
+            CborValue::Text("root".into()),
+            CborValue::Text("songs".into()),
+        ),
+        (
+            CborValue::Text("path".into()),
+            CborValue::Text("a/b.jpg".into()),
+        ),
+        (
+            CborValue::Text("error".into()),
+            CborValue::Map(vec![
+                (
+                    CborValue::Text("code".into()),
+                    CborValue::Text("not_found".into()),
+                ),
+                (
+                    CborValue::Text("message".into()),
+                    CborValue::Text("missing".into()),
+                ),
+            ]),
+        ),
+    ]))
+    .expect("encode");
+    let result: Result<ResourceResolved, _> = decode(&bytes);
+    assert!(
+        result.is_err(),
+        "a reply naming fields from both the Path and Error shapes must be rejected"
+    );
+}
+
+/// `LogRecord.fields` and `SettingsChanged.values` are always CBOR maps
+/// (minor 9): any other major type is rejected on decode.
+#[test]
+fn log_record_fields_and_settings_values_reject_non_map_values() {
+    let bytes = encode(&CborValue::Map(vec![
+        (
+            CborValue::Text("level".into()),
+            CborValue::Text("info".into()),
+        ),
+        (
+            CborValue::Text("message".into()),
+            CborValue::Text("hello".into()),
+        ),
+        (
+            CborValue::Text("fields".into()),
+            CborValue::Array(vec![CborValue::Integer(1.into())]),
+        ),
+    ]))
+    .expect("encode");
+    let result: Result<LogRecord, _> = decode(&bytes);
+    assert!(result.is_err(), "fields: [1] (an array) must be rejected");
+
+    let bytes = encode(&CborValue::Map(vec![(
+        CborValue::Text("values".into()),
+        CborValue::Text("not a map".into()),
+    )]))
+    .expect("encode");
+    let result: Result<SettingsChanged, _> = decode(&bytes);
+    assert!(result.is_err(), "values: a string must be rejected");
+}

@@ -2,7 +2,8 @@
 //! (`docs/v2/plugin-abi.md` §6.5).
 
 use ciborium::Value as CborValue;
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::cbor::common::ErrorInfo;
 
@@ -63,15 +64,40 @@ pub struct TreeEntry {
     pub path: String,
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_present_hash")]
     pub hash: Option<String>,
+}
+
+/// Deserializes `TreeEntry.hash` when the key is present: the spec says to
+/// omit the key for unknown content hashing, never send it explicit
+/// `null`, so this rejects `null` rather than quietly treating it the
+/// same as an absent key (serde's own `Option<String>` would).
+fn deserialize_present_hash<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = CborValue::deserialize(deserializer)?;
+    if value.is_null() {
+        return Err(D::Error::custom(
+            "TreeEntry.hash: omit the key for unknown content hashing rather than sending null",
+        ));
+    }
+    value
+        .into_text()
+        .map(Some)
+        .map_err(|_| D::Error::custom("TreeEntry.hash must be a string"))
 }
 
 /// The single reply opcode for `RESOURCE_RESOLVE`, `TREE_LIST`, and
 /// `TREE_LOOKUP` (plugin -> host, reply correlated by `correlation_id`):
 /// the host's own pending-request table disambiguates which request each
-/// reply answers, so this one opcode carries one of four shapes.
+/// reply answers, so this one opcode carries one of four shapes. Every
+/// variant denies unknown fields: without it, `#[serde(untagged)]`'s
+/// first-matching-variant search would accept a reply mixing fields from
+/// more than one shape (e.g. both `path` and `error`) as whichever variant
+/// happens to need only a subset of what was sent.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum ResourceResolved {
     /// a declared root plus a relative path inside it
     Path {
