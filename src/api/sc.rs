@@ -9,10 +9,10 @@ use serde::Serialize;
 use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot};
 use crate::model::api::sc::{MapBreak, MapTimingPoint, Response};
-use crate::state::{LeaderboardPlayerState, RegularState};
 use vosu_osu_model::enums::{CountryCodes, Rulesets};
 use vosu_osu_model::states::{CalculateMods, KeyOverlayButton, LeaderboardPlayer};
 use vosu_osu_model::{js_json_number, safe_join, to_legacy_hits};
+use vosu_osu_state::{LeaderboardPlayerState, RegularState};
 
 const PLAY: i64 = 2;
 const RESULT_SCREEN: i64 = 7;

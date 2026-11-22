@@ -16,7 +16,6 @@ use vosu::server::v2_subscription::{
 use vosu::server::websocket::{
     Filter, Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub,
 };
-use vosu::state::{PreciseState, RegularState, StateBundleSnapshot};
 use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
     Ruleset as BeatmapRuleset, ScoringMode,
@@ -29,6 +28,7 @@ use vosu_osu_reader::memory::{
     LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns,
 };
 use vosu_osu_reader::process::{Pattern, ProcessHandle};
+use vosu_osu_state::{PreciseState, RegularState, StateBundleSnapshot};
 use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 const MAP: &[u8] = br#"osu file format v14

@@ -1,12 +1,10 @@
 #[test]
 fn precise_publication_wakes_native_subscription_without_waking_regular_stream() {
-    use crate::{
-        instance::InstanceSettings,
-        state::{
-            BassDensityState, BeatmapPPState, GameplayState, GlobalState,
-            LazerMultiSpectatingState, MenuState, PreciseState, RankedPlayState, RegularState,
-            ResultScreenState, SettingsState, TourneyManagerState, UserState,
-        },
+    use crate::instance::InstanceSettings;
+    use vosu_osu_state::{
+        BassDensityState, BeatmapPPState, GameplayState, GlobalState,
+        LazerMultiSpectatingState, MenuState, PreciseState, RankedPlayState, RegularState,
+        ResultScreenState, SettingsState, TourneyManagerState, UserState,
     };
     use vosu_osu_model::states::{HitErrorArray, KeypressButton};
 

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::state::{
+use crate::{
     BeatmapCalculationUpdate, CalculationPhase, StateCalculationBackend, StateCalculationFuture,
     StateCalculationRequest, StateCalculationResult, StateWorkerError,
 };

@@ -11,12 +11,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 use super::*;
-use crate::state::{
+use std::ffi::OsString;
+use vosu_osu_state::{
     BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
     MenuState, PreciseState, RankedPlayState, RegularState, ResultScreenState, SettingsState,
     StateBundleSnapshot, TourneyManagerState, UserState,
 };
-use std::ffi::OsString;
 
 fn regular(play_time: f64) -> Arc<RegularState> {
     let global = GlobalState {
@@ -339,8 +339,8 @@ fn encode_schema(schema: ApiSchema, snapshot: &CombinedSnapshot) -> Result<Bytes
 
 #[test]
 fn mania_beatmap_combo_preserves_hold_ticks_in_every_regular_api() {
-    use crate::state::state_backend::LiveBeatmapEngine;
     use vosu_osu_calc::beatmap::{BeatmapCache, BeatmapInput, ModSet, Ruleset, ScoringMode};
+    use vosu_osu_state::state_backend::LiveBeatmapEngine;
 
     let content = concat!(
         "osu file format v14\n[General]\nMode:3\n",

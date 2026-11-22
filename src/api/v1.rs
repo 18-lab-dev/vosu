@@ -22,10 +22,10 @@ use serde_json::ser::Serializer;
 
 use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
-use crate::state::{GameplayState, LeaderboardPlayerState, PreciseState, RegularState};
 use vosu_osu_model::memory::{LazerSpectatorEntry, Score};
 use vosu_osu_model::states::{CalculateMods, MultiplayerTeamType};
 use vosu_osu_model::{calculate_grade, to_legacy_hits};
+use vosu_osu_state::{GameplayState, LeaderboardPlayerState, PreciseState, RegularState};
 
 pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
     build_with::<Vec<f64>>(snapshot)

@@ -8,10 +8,10 @@ use std::sync::Arc;
 use crate::api::json::{write_i64, write_js_number, write_str};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerSnapshot};
 use crate::model::api::v2::{KeyOverlayButton, Keypress, Keys, PreciseResponse, PreciseTourney};
-use crate::state::PreciseState;
 use vosu_osu_model::states::{
     KeyOverlayButton as StateKeyOverlayButton, KeypressButton as StateKeypressButton,
 };
+use vosu_osu_state::PreciseState;
 
 /// Builds the exact V2 precise document from one immutable publication point.
 pub fn build(snapshot: &CombinedSnapshot) -> Result<PreciseResponse, ApiError> {
@@ -292,13 +292,13 @@ mod tests {
     use super::*;
     use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
     use crate::instance::{InstanceSettings, Pid};
-    use crate::state::{
+    use vosu_osu_model::enums::ClientType;
+    use vosu_osu_model::states::HitErrorArray;
+    use vosu_osu_state::{
         BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
         MenuState, PreciseState, RankedPlayState, RegularState, ResultScreenState, SettingsState,
         StateBundleSnapshot, TourneyManagerState, UserState,
     };
-    use vosu_osu_model::enums::ClientType;
-    use vosu_osu_model::states::HitErrorArray;
 
     fn regular() -> Arc<RegularState> {
         Arc::new(RegularState {

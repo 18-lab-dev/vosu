@@ -202,7 +202,7 @@ fn write_document(
     out: &mut Vec<u8>,
     snapshot: &CombinedSnapshot,
     regular: &RegularState,
-    precise: &crate::state::PreciseState,
+    precise: &vosu_osu_state::PreciseState,
 ) -> io::Result<()> {
     let global = &regular.global;
     let menu = &regular.menu;

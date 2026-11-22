@@ -609,7 +609,7 @@ fn selected_serialization_projects_like_the_full_document_for_every_serde_shape(
 /// floats and tourney instances; `title` distinguishes publications.
 fn all_schema_snapshot(title: &str) -> CombinedSnapshot {
     use vosu_osu_model::states::{HitErrorArray, KeypressButton};
-    use crate::state::{PreciseState, RegularState};
+    use vosu_osu_state::{PreciseState, RegularState};
 
     let mut regular = RegularState {
         global: Default::default(),

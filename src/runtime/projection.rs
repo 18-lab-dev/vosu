@@ -134,7 +134,7 @@ impl SnapshotEncoder for ProductionSnapshotEncoder {
 /// inputs; an address cannot be reused while the document is alive.
 struct PassDocument<D> {
     manager: Arc<crate::api::ManagerSnapshot>,
-    focused: Option<Arc<crate::state::StateBundleSnapshot>>,
+    focused: Option<Arc<vosu_osu_state::StateBundleSnapshot>>,
     document: SharedDocument<D>,
 }
 

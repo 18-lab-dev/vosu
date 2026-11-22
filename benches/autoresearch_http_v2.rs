@@ -28,12 +28,12 @@ use vosu::{
         runtime::{AxumListenerFactory, ListenTarget, TcpListenerFactory},
         service::SnapshotStateProvider,
     },
-    state::{PreciseState, RegularState, StateBundleSnapshot},
 };
 use vosu_osu_model::{
     enums::ClientType,
     states::{HitErrorArray, KeypressButton},
 };
+use vosu_osu_state::{PreciseState, RegularState, StateBundleSnapshot};
 
 fn snapshot() -> Arc<ManagerSnapshot> {
     let regular = RegularState {

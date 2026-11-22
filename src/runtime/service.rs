@@ -81,7 +81,7 @@ pub(super) fn stable_skin_root(game_folder: &str, skin_name: &str) -> Option<Pat
 }
 
 pub(super) fn runtime_beatmap_files(
-    regular: &crate::state::RegularState,
+    regular: &vosu_osu_state::RegularState,
     source: ClientType,
     static_root: &Path,
 ) -> BeatmapFiles {

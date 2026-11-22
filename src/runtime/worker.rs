@@ -432,7 +432,7 @@ impl ProductionStateSupervisor {
     pub fn start(
         lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
         config: watch::Receiver<Arc<crate::config::Config>>,
-        subscription_demand: watch::Receiver<crate::state::SubscriptionDemand>,
+        subscription_demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
         snapshots: Arc<SnapshotProviders>,
         logger: Logger,
     ) -> Self {
@@ -502,7 +502,7 @@ impl ManagerView {
 pub(super) async fn run_state_supervisor(
     mut lifecycle: watch::Receiver<Arc<InstanceLifecycleSnapshot>>,
     mut config: watch::Receiver<Arc<crate::config::Config>>,
-    subscription_demand: watch::Receiver<crate::state::SubscriptionDemand>,
+    subscription_demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
     snapshots: Arc<SnapshotProviders>,
     logger: Logger,
     cancel: CancellationToken,
@@ -594,8 +594,8 @@ pub(super) async fn run_state_supervisor(
 
 /// Narrows `Config` to the fields `state` reads, so `state` does not depend
 /// on `config` (module-boundaries.txt: breaking the `state -> config` edge).
-fn reader_settings_from(config: &crate::config::Config) -> crate::state::ReaderSettings {
-    crate::state::ReaderSettings {
+fn reader_settings_from(config: &crate::config::Config) -> vosu_osu_state::ReaderSettings {
+    vosu_osu_state::ReaderSettings {
         calculate_pp: config.calculate_pp,
         enable_key_overlay: config.enable_key_overlay,
         enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
@@ -675,8 +675,8 @@ where
 
 pub(super) async fn run_instance_state_worker(
     entry: InstanceGeneration,
-    reader_settings: watch::Receiver<crate::state::ReaderSettings>,
-    subscription_demand: watch::Receiver<crate::state::SubscriptionDemand>,
+    reader_settings: watch::Receiver<vosu_osu_state::ReaderSettings>,
+    subscription_demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
     publications: Arc<StatePublicationQueue>,
     logger: Logger,
     cancel: CancellationToken,
@@ -723,8 +723,8 @@ pub(super) enum PreparedReaders {
 
 pub(super) async fn create_state_worker(
     entry: &InstanceGeneration,
-    reader_settings: watch::Receiver<crate::state::ReaderSettings>,
-    subscription_demand: watch::Receiver<crate::state::SubscriptionDemand>,
+    reader_settings: watch::Receiver<vosu_osu_state::ReaderSettings>,
+    subscription_demand: watch::Receiver<vosu_osu_state::SubscriptionDemand>,
     publisher: Arc<StatePublicationSink>,
     synchronization: Arc<Mutex<ReaderSynchronization>>,
 ) -> Result<Option<StateWorkerHandle>, StateWorkerError> {
@@ -810,7 +810,7 @@ pub(super) async fn create_state_worker(
 
 pub(super) fn finish_state_worker<R, Q>(
     entry: &InstanceGeneration,
-    reader_settings: watch::Receiver<crate::state::ReaderSettings>,
+    reader_settings: watch::Receiver<vosu_osu_state::ReaderSettings>,
     intervals: PollIntervalUpdates,
     publisher: Arc<StatePublicationSink>,
     synchronization: Arc<Mutex<ReaderSynchronization>>,
@@ -822,7 +822,7 @@ where
     Q: SynchronizedMemoryReader + 'static,
 {
     let current = *reader_settings.borrow();
-    let calculation = Arc::new(crate::state::state_backend::LiveStateCalculationBackend::new());
+    let calculation = Arc::new(vosu_osu_state::state_backend::LiveStateCalculationBackend::new());
     let mut bundle = StateBundle::new_with_root(
         entry.client,
         entry.generation,

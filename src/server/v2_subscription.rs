@@ -219,7 +219,7 @@ impl SubscriptionRequestError {
 #[derive(Clone, Debug, Eq)]
 struct Plan {
     pointers: Vec<Vec<String>>,
-    demand: crate::state::SubscriptionDemand,
+    demand: vosu_osu_state::SubscriptionDemand,
 }
 
 impl PartialEq for Plan {
@@ -253,7 +253,7 @@ fn compile_pointers(pointers: Vec<String>) -> Result<Plan, SubscriptionRequestEr
         compiled.push(tokens);
     }
     let demand = compiled.iter().fold(
-        crate::state::SubscriptionDemand::default(),
+        vosu_osu_state::SubscriptionDemand::default(),
         |demand, pointer| demand.union(pointer_demand(pointer)),
     );
     Ok(Plan {
@@ -264,8 +264,8 @@ fn compile_pointers(pointers: Vec<String>) -> Result<Plan, SubscriptionRequestEr
 
 /// Match a selected subtree to fields that actually need faster native sampling.
 /// Slow settings, identity, folders and beatmap metadata deliberately have no entry.
-fn pointer_demand(pointer: &[String]) -> crate::state::SubscriptionDemand {
-    use crate::state::SubscriptionDemand;
+fn pointer_demand(pointer: &[String]) -> vosu_osu_state::SubscriptionDemand {
+    use vosu_osu_state::SubscriptionDemand;
     let overlaps = |field: &[&str]| pointer.iter().zip(field).all(|(left, right)| left == right);
     let precise = overlaps(&["beatmap", "time", "live"]) || overlaps(&["state"]);
     let regular = [
@@ -688,7 +688,7 @@ struct DemandCounts {
 }
 
 impl DemandCounts {
-    fn change(&mut self, demand: crate::state::SubscriptionDemand, add: bool) {
+    fn change(&mut self, demand: vosu_osu_state::SubscriptionDemand, add: bool) {
         for (count, selected) in self.lanes.iter_mut().zip([
             demand.regular,
             demand.precise,
@@ -705,8 +705,8 @@ impl DemandCounts {
         }
     }
 
-    fn aggregate(&self) -> crate::state::SubscriptionDemand {
-        crate::state::SubscriptionDemand {
+    fn aggregate(&self) -> vosu_osu_state::SubscriptionDemand {
+        vosu_osu_state::SubscriptionDemand {
             regular: self.lanes[0] != 0,
             precise: self.lanes[1] != 0,
             gameplay_regular: self.lanes[2] != 0,
@@ -746,7 +746,7 @@ struct HubInner {
     /// window are already covered by that notification.
     wake_pending: AtomicBool,
     /// Union of producing lanes requested by open clients' established selections.
-    demand: watch::Sender<crate::state::SubscriptionDemand>,
+    demand: watch::Sender<vosu_osu_state::SubscriptionDemand>,
     demand_counts: Mutex<DemandCounts>,
     shutdown: CancellationToken,
     #[cfg(test)]
@@ -782,7 +782,7 @@ impl V2SubscriptionHub {
             wake: Notify::new(),
             epoch: Instant::now(),
             wake_pending: AtomicBool::new(false),
-            demand: watch::Sender::new(crate::state::SubscriptionDemand::default()),
+            demand: watch::Sender::new(vosu_osu_state::SubscriptionDemand::default()),
             demand_counts: Mutex::new(DemandCounts::default()),
             shutdown: CancellationToken::new(),
             #[cfg(test)]
@@ -830,7 +830,7 @@ impl V2SubscriptionHub {
 
     /// Producing lanes requested by established selections. Slow selectors leave
     /// this empty; gameplay-only lane demand is applied only while playing.
-    pub fn demand(&self) -> watch::Receiver<crate::state::SubscriptionDemand> {
+    pub fn demand(&self) -> watch::Receiver<vosu_osu_state::SubscriptionDemand> {
         self.0.demand.subscribe()
     }
 
@@ -905,7 +905,7 @@ impl V2SubscriptionHub {
         }
     }
 
-    fn change_demand(&self, demand: crate::state::SubscriptionDemand, add: bool) {
+    fn change_demand(&self, demand: vosu_osu_state::SubscriptionDemand, add: bool) {
         let mut counts = lock(&self.0.demand_counts);
         counts.change(demand, add);
         let subscribed = counts.aggregate();
@@ -991,7 +991,7 @@ impl V2SubscriptionHub {
         }
         self.0
             .demand
-            .send_replace(crate::state::SubscriptionDemand::default());
+            .send_replace(vosu_osu_state::SubscriptionDemand::default());
     }
 
     fn dispatch(&self, source_revision: u64) -> Option<Instant> {

@@ -6,9 +6,6 @@ use criterion::{Criterion, criterion_group, criterion_main};
 pub mod fixture {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
-    use vosu::state::{
-        RegularCapturePlan, RegularCaptureRequest, RegularSnapshotReader, SourceRegularReader,
-    };
     use vosu_osu_model::enums::ClientType;
     use vosu_osu_model::memory::Menu;
     use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
@@ -17,6 +14,9 @@ pub mod fixture {
         LazerMemory, LazerPattern, ReaderSynchronization, StableMemory, StablePatterns,
     };
     use vosu_osu_reader::process::ProcessHandle;
+    use vosu_osu_state::{
+        RegularCapturePlan, RegularCaptureRequest, RegularSnapshotReader, SourceRegularReader,
+    };
     use vosu_sys::process::{
         MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
     };

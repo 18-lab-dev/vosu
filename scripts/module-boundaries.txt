@@ -1,6 +1,5 @@
 api -> instance
 api -> model
-api -> state
 app -> config
 instance -> logging
 logging -> config
@@ -15,7 +14,6 @@ runtime -> instance
 runtime -> logging
 runtime -> report
 runtime -> server
-runtime -> state
 runtime -> tools
 runtime -> updater
 server -> api
@@ -24,7 +22,6 @@ server -> counters
 server -> desktop
 server -> logging
 server -> report
-server -> state
 tools -> counters
 tools -> server
 updater -> desktop

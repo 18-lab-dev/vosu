@@ -18,10 +18,10 @@
 1376 src/server/v2_subscription.rs
 1323 src/server/v2_subscription/tests.rs
 1197 src/server/websocket/tests.rs
-1364 src/state/bundle/gameplay.rs
-1047 src/state/bundle/reducer.rs
-1116 src/state/bundle/tests/epochs.rs
-1001 src/state/bundle/tests/transitions.rs
+1364 crates/vosu-osu-state/src/bundle/gameplay.rs
+1047 crates/vosu-osu-state/src/bundle/reducer.rs
+1116 crates/vosu-osu-state/src/bundle/tests/epochs.rs
+1001 crates/vosu-osu-state/src/bundle/tests/transitions.rs
 1416 src/tools/tests.rs
 1143 tests/daemon_smoke.rs
 1005 tests/server_compat.rs

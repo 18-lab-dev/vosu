@@ -820,7 +820,7 @@ impl PreciseState {
         self.catcher
             .filter(|_| self.status == GameState::Play.value() as i64 && self.mode == 2)
     }
-    pub(crate) fn hit_offsets(&self) -> &[f64] {
+    pub fn hit_offsets(&self) -> &[f64] {
         if self.status == GameState::Play.value() as i64 && self.mode == 0 {
             &self.hit_errors.offsets
         } else {

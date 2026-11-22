@@ -50,10 +50,11 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 
 - `src/api/`: gosuMemory v1, streamCompanion, vosu v2, and precise payload projection/serialization.
 - `src/server/` and `crates/vosu-net/`: HTTP/WebSocket routing, files, commands, pages, connection handling, and hardened outbound streaming/archive extraction.
-- `src/state/`, `src/instance/`: process discovery, snapshots, and polling lifecycle.
+- `src/instance/`: process discovery, snapshots, and polling lifecycle.
 - `crates/vosu-osu-reader/`: client decoding — stable/lazer memory readers and offsets, the pointer-width managed-heap read layer (`ProcessHandle`, AOB scanning) over `vosu-sys`'s object-safe syscall boundary, and osu!-specific discovery inputs (client argv parser `StartupArgs`, Wine data-path resolution `resolve_osu_path`).
 - `crates/vosu-sys/`: native process/platform boundary (process handles, memory reads, OS paths/capabilities) and process-exit-event backends (eBPF/CN_PROC/polling); all platform `unsafe` lives here.
 - `crates/vosu-osu-model/`: osu! memory/state/enum value types and the calculation root helpers (JS-compatible rounding/number writing, mods, grades, legacy hits) shared by the reader, calculator, and `src/model/api/` adapters.
+- `crates/vosu-osu-state/`: reducer, capture scheduling, and gameplay state — serialized transition reducer, per-instance raw capture workers, and the calculation backend (`state_backend.rs`, `vosu-pp`'s `LiveBeatmapEngine`/`LiveStateCalculationBackend`).
 - `src/config/`, `src/counters/`: watched configuration, migration, settings, counter discovery/download/storage.
 - `src/updater/`: release selection, verified staging, replacement, rollback, and recovery.
 - `crates/vosu-osu-calc/` and `crates/vosu-pp/`: stable and lazer performance calculation; the latter is a Rust facade over provenance-pinned MIT source forks. The remaining source-provenance questions are recorded in `docs/provenance-audit.md`.

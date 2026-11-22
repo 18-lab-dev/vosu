@@ -78,16 +78,16 @@ use crate::{
             StateSnapshot as WebSocketStateSnapshot, WebSocketHub,
         },
     },
-    state::{
-        Delivery, PollIntervalUpdates, ReadContext, RegularCapturePlan, SnapshotPublisher,
-        SourcePreciseReader, SourceRegularReader, StateBundle, StateBundleSnapshot,
-        StateWorkerError, StateWorkerHandle, duration_from_millis_saturating, spawn_state_worker,
-    },
     updater::{
         LATEST_RELEASE_API, NativePlatform, RELEASE_PLATFORM, RecoveryAction, StartupDispatch,
         StartupReadiness, UpdateCheck, check_latest_and_prepare, check_startup_and_prepare,
         current_version, dispatch_startup_role, recover_startup_update,
     },
+};
+use vosu_osu_state::{
+    Delivery, PollIntervalUpdates, ReadContext, RegularCapturePlan, SnapshotPublisher,
+    SourcePreciseReader, SourceRegularReader, StateBundle, StateBundleSnapshot, StateWorkerError,
+    StateWorkerHandle, duration_from_millis_saturating, spawn_state_worker,
 };
 
 mod cli;

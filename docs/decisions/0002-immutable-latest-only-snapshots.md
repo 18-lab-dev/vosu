@@ -21,7 +21,7 @@ Reduce mutable worker state into immutable, `Arc`-shared snapshots. Pair manager
 
 Use process generations and reset epochs to identify the state lineage, and calculation keys to reject asynchronous results for an obsolete lineage or beatmap. Share regular and precise components independently so unchanged data and schema encodings can be reused by pointer identity and semantic revision.
 
-The contracts are implemented in [`api/snapshot.rs`](../../src/api/snapshot.rs), [`state/bundle.rs`](../../src/state/bundle.rs), [`state/bundle/calculation.rs`](../../src/state/bundle/calculation.rs), and [`state/worker.rs`](../../src/state/worker.rs).
+The contracts are implemented in [`api/snapshot.rs`](../../src/api/snapshot.rs), [`state/bundle.rs`](../../crates/vosu-osu-state/src/bundle.rs), [`state/bundle/calculation.rs`](../../crates/vosu-osu-state/src/bundle/calculation.rs), and [`state/worker.rs`](../../crates/vosu-osu-state/src/worker.rs).
 
 ## Consequences
 

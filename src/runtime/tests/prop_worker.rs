@@ -5,7 +5,7 @@
 
 use proptest::prelude::*;
 
-use crate::state::RegularState;
+use vosu_osu_state::RegularState;
 
 fn prop_apply_selection(regular: &mut RegularState, selection: u8, title: u8) {
     regular.menu.checksum = Some(format!("checksum-{selection}"));

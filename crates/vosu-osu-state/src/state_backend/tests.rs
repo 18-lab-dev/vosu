@@ -396,11 +396,10 @@ fn backend_request(
     root: &Path,
     beatmap_path: PathBuf,
 ) -> StateCalculationRequest {
-    let snapshot =
-        crate::state::StateBundle::new(ClientType::Stable, 1, backend.clone()).snapshot();
+    let snapshot = crate::StateBundle::new(ClientType::Stable, 1, backend.clone()).snapshot();
     let mods = vosu_osu_model::default_calculated_mods();
     StateCalculationRequest {
-        input: crate::state::CalculationInput {
+        input: crate::CalculationInput {
             game_folder: root.to_owned(),
             songs_folder: root.to_owned(),
             menu_folder: Some("set".to_owned()),
@@ -411,7 +410,7 @@ fn backend_request(
             mods: mods.clone(),
             client_scoring: ClientType::Stable,
         },
-        key: crate::state::StateCalculationKey {
+        key: crate::StateCalculationKey {
             instance_generation: 1,
             reset_epoch: 0,
             checksum: "memory-identity".to_owned(),

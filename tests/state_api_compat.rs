@@ -17,11 +17,6 @@ use vosu::{
         ManagerSnapshot,
     },
     instance::InstanceSettings,
-    state::{
-        BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
-        MenuState, PreciseState, RankedPlayState, RegularState, ResultScreenState, SettingsState,
-        StateBundleSnapshot, TourneyManagerState, TourneyUserState, UserState,
-    },
 };
 use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapInput, EngineOutput, EngineRequest, ModSet, Ruleset,
@@ -34,6 +29,11 @@ use vosu_osu_model::{
         CalculateMods, HitErrorArray, KeyOverlayButton, LeaderboardPlayer, Statistics,
         TourneyManagerChatItem,
     },
+};
+use vosu_osu_state::{
+    BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
+    MenuState, PreciseState, RankedPlayState, RegularState, ResultScreenState, SettingsState,
+    StateBundleSnapshot, TourneyManagerState, TourneyUserState, UserState,
 };
 
 const EXPECTED_REVISIONS: Revisions = Revisions {

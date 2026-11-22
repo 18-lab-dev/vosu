@@ -91,7 +91,7 @@ struct Document<'a> {
     source: ClientType,
     status: i64,
     manager_instance: &'a ManagerInstanceSnapshot,
-    precise: &'a crate::state::PreciseState,
+    precise: &'a vosu_osu_state::PreciseState,
     graph: &'a str,
     tourney: Option<&'a Tourney>,
 }
@@ -593,7 +593,7 @@ fn write_play(
     out: &mut Vec<u8>,
     state: &RegularState,
     mods: &CalculateMods,
-    precise: &crate::state::PreciseState,
+    precise: &vosu_osu_state::PreciseState,
     enable_key_hits: bool,
     enable_hit_offsets: bool,
     source: Option<PlaySource>,

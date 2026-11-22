@@ -13,8 +13,8 @@ use arc_swap::ArcSwap;
 use bytes::Bytes;
 
 use crate::instance::{InstanceSettings, Pid};
-use crate::state::{PreciseState, RegularState, StateBundleSnapshot};
 use vosu_osu_model::enums::ClientType;
+use vosu_osu_state::{PreciseState, RegularState, StateBundleSnapshot};
 
 /// A concrete, non-stringly-typed public wire schema.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

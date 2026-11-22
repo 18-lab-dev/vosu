@@ -1,10 +1,8 @@
 fn state_bundle(generation: u64, reset_epoch: u64) -> Arc<StateBundleSnapshot> {
-    use crate::{
-        state::{
-            BassDensityState, BeatmapPPState, GameplayState, GlobalState,
-            LazerMultiSpectatingState, MenuState, PreciseState, RankedPlayState, RegularState,
-            ResultScreenState, SettingsState, TourneyManagerState, UserState,
-        },
+    use vosu_osu_state::{
+        BassDensityState, BeatmapPPState, GameplayState, GlobalState,
+        LazerMultiSpectatingState, MenuState, PreciseState, RankedPlayState, RegularState,
+        ResultScreenState, SettingsState, TourneyManagerState, UserState,
     };
     use vosu_osu_model::states::HitErrorArray;
 

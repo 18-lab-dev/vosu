@@ -504,7 +504,7 @@ async fn demand_tracks_established_selections_only() {
 
 #[test]
 fn selector_demand_follows_producing_lanes_and_parent_subtrees() {
-    use crate::state::SubscriptionDemand;
+    use vosu_osu_state::SubscriptionDemand;
     let selected = |paths: &[&str]| {
         compile_pointers(paths.iter().map(|s| (*s).into()).collect())
             .unwrap()

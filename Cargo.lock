@@ -3204,6 +3204,7 @@ dependencies = [
  "vosu-osu-calc",
  "vosu-osu-model",
  "vosu-osu-reader",
+ "vosu-osu-state",
  "vosu-pp",
  "vosu-proptest",
  "vosu-sys",
@@ -3285,6 +3286,24 @@ dependencies = [
  "tokio-util",
  "vosu-osu-model",
  "vosu-sys",
+]
+
+[[package]]
+name = "vosu-osu-state"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "md-5",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "vosu-osu-calc",
+ "vosu-osu-model",
+ "vosu-osu-reader",
+ "vosu-pp",
+ "vosu-sys",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -21,7 +21,7 @@ Keep compatibility helpers separate from performance engines. Preserve the legac
 
 Adapt engines to typed beatmap/progressive requests, then place asynchronous state integration behind `StateCalculationBackend`. Key each result with instance generation, reset epoch, beatmap checksum, mode, and mods so only a matching state accepts it. Pin calculator provenance in Cargo package metadata rather than implying that any dependency update is compatible.
 
-The separation is visible in [`vosu-osu-calc/src/lib.rs`](../../crates/vosu-osu-calc/src/lib.rs), [`vosu-osu-calc/src/engine.rs`](../../crates/vosu-osu-calc/src/engine.rs), [`state/state_backend.rs`](../../src/state/state_backend.rs), [`state/bundle/calculation.rs`](../../src/state/bundle/calculation.rs), [`crates/vosu-pp`](../../crates/vosu-pp), and [`Cargo.toml`](../../Cargo.toml).
+The separation is visible in [`vosu-osu-calc/src/lib.rs`](../../crates/vosu-osu-calc/src/lib.rs), [`vosu-osu-calc/src/engine.rs`](../../crates/vosu-osu-calc/src/engine.rs), [`state/state_backend.rs`](../../crates/vosu-osu-state/src/state_backend.rs), [`state/bundle/calculation.rs`](../../crates/vosu-osu-state/src/bundle/calculation.rs), [`crates/vosu-pp`](../../crates/vosu-pp), and [`Cargo.toml`](../../Cargo.toml).
 
 ## Consequences
 

@@ -409,9 +409,9 @@ async fn calculation_uses_post_read_paths_and_metadata_even_when_pp_disabled() {
         requests: requests.clone(),
     });
     let mut bundle = StateBundle::new_with_root(ClientType::Stable, 12, "/game", backend);
-    let (config_tx, config_rx) = watch::channel(crate::state::ReaderSettings::default());
+    let (config_tx, config_rx) = watch::channel(crate::ReaderSettings::default());
     bundle.set_config_updates(config_rx);
-    let config = crate::state::ReaderSettings {
+    let config = crate::ReaderSettings {
         calculate_pp: false,
         read_mania_scroll_speed: false,
         show_mp_commands: true,

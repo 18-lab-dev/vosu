@@ -8,11 +8,6 @@ use std::{
     time::Instant,
 };
 use tokio_util::sync::CancellationToken;
-use vosu::state::{
-    PreciseSnapshotReader, ReadContext, RegularCapturePlan, RegularCaptureRequest,
-    RegularSnapshotReader, SnapshotTransition, SourcePreciseReader, SourceRegularReader,
-    StateBundle, state_backend::LiveStateCalculationBackend,
-};
 use vosu_osu_model::{
     default_calculated_mods,
     enums::{ClientType, GameState},
@@ -25,6 +20,11 @@ use vosu_osu_reader::memory::{
     snapshot::{RawPreciseSnapshot, RawRegularSnapshot, RegularCaptureContext},
 };
 use vosu_osu_reader::process::ProcessHandle;
+use vosu_osu_state::{
+    PreciseSnapshotReader, ReadContext, RegularCapturePlan, RegularCaptureRequest,
+    RegularSnapshotReader, SnapshotTransition, SourcePreciseReader, SourceRegularReader,
+    StateBundle, state_backend::LiveStateCalculationBackend,
+};
 use vosu_sys::process::ReadStatus;
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 fn fail(message: impl Into<String>) -> Box<dyn Error> {

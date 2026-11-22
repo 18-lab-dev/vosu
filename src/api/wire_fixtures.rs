@@ -10,11 +10,6 @@ use serde_json::json;
 
 use crate::api::{ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot};
 use crate::instance::InstanceSettings;
-use crate::state::state_backend::LiveBeatmapEngine;
-use crate::state::{
-    PreciseState, RegularState, StateBundle, StateBundleSnapshot, StateCalculationBackend,
-    StateCalculationFuture, StateCalculationRequest,
-};
 use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapInput, GraphSeries, ModSet, ParsedBeatmap, Ruleset, ScoringMode,
     StrainGraph,
@@ -24,6 +19,11 @@ use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton as StateKeyOverlayButton, KeypressButton,
     Statistics,
+};
+use vosu_osu_state::state_backend::LiveBeatmapEngine;
+use vosu_osu_state::{
+    PreciseState, RegularState, StateBundle, StateBundleSnapshot, StateCalculationBackend,
+    StateCalculationFuture, StateCalculationRequest,
 };
 
 struct NeverCalculate;

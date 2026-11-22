@@ -278,7 +278,7 @@ impl From<watch::Receiver<PollIntervals>> for PollIntervalUpdates {
     }
 }
 
-pub(crate) fn duration_from_millis_saturating(milliseconds: f64) -> Duration {
+pub fn duration_from_millis_saturating(milliseconds: f64) -> Duration {
     let seconds = milliseconds / 1_000.0;
     if !seconds.is_finite() || seconds >= Duration::MAX.as_secs_f64() {
         Duration::MAX
