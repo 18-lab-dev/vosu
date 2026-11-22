@@ -270,22 +270,29 @@ returns the same headers as GET with no body and ignores Range.
 
 Core mints an id at **publish time**, directly from the plugin's reference
 (`kind`, `key`, `name`, `content_id`) with no round trip to the plugin: an
-HMAC under a persisted core secret of the plugin identity and that tuple.
-`name` supplies the served resource's `Content-Type` and a tree entry's
-`type` by file extension; `content_id` is the plugin's own content identity
-(a content-store hash, or a path+size+modification-time digest) and feeds the
-ETag. Ids are stable across restarts, unguessable, and serve only from a
-bounded in-memory registry of currently published references — there is no
-route to browse a game folder, and core never serves a file that the current
-state or a published tree index did not reference. Registry capacity and
-eviction policy belong to the core implementation; this spec only fixes the
-observable 404/410 contract above.
+HMAC under a persisted core secret of the plugin identity and that tuple. A
+resource's type is assigned exactly once, at this same moment, from the
+extension of `name` against the allowlist below — core never re-derives it
+later, so the served `Content-Type` for that id is its published type for the
+id's whole lifetime, even if the underlying file later changes. Each tree
+entry is typed independently of its tree's own `name`, from that entry's own
+`path` in the index core builds (below). `content_id` is the plugin's own
+content identity (a content-store hash, or a path+size+modification-time
+digest) and feeds the ETag. Ids are stable across restarts, unguessable, and
+serve only from a bounded in-memory registry of currently published
+references — there is no route to browse a game folder, and core never
+serves a file that the current state or a published tree index did not
+reference. Registry capacity and eviction policy belong to the core
+implementation; this spec only fixes the observable 404/410 contract above.
 
 Resolving an id to actual bytes is lazy: core asks the plugin to resolve
 `{kind, key}` to a root+path or a stream only on that id's **first HTTP
 request**, never at publish time, and caches the resolution for the
-registry's lifetime of the id. Plugins resolve a key to either a declared
-root plus a relative path — opened with
+registry's lifetime of the id. Once the plugin closes a stream-backed
+resolution (`STREAM_CLOSE`, `docs/v2/plugin-abi.md`), core drops that cached
+resolution; the next request re-resolves from scratch rather than reusing a
+closed stream. Plugins resolve a key to either a declared root plus a
+relative path — opened with
 [ADR 0005](../decisions/0005-root-confined-file-serving.md)'s retained-handle
 confinement — or a bounded byte stream for generated or `process`-plugin
 content, which still supports the same single validated byte range as a
@@ -297,10 +304,11 @@ are read-only; changes go through actions.
 Every resource and tree response carries
 `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`, so a
 page or SVG from a chart or skin folder runs without script and outside the
-overlay origin even opened directly. API v1 owns this allowlist; the
-`Content-Type` for a resource, and the `type` field of each tree-index entry,
-come from core matching the served file's extension against it — never a
-plugin-chosen or path-embedded string:
+overlay origin even opened directly. API v1 owns this allowlist. A
+resource's `Content-Type` is fixed at publish time (above) from its `name`'s
+extension against it; each tree entry's `type` is derived the same way from
+that entry's own `path` extension, independently of the tree reference's
+`name` — never a plugin-chosen or path-embedded string:
 
 | Family | Types |
 | --- | --- |
@@ -341,11 +349,13 @@ Calling an action at the route its own `session` declaration does not allow
 Body: `{"arguments": {...}}`, matching the action's declared `args_schema`
 (`docs/v2/catalog-v2.md`). Core waits up to 250 ms for the action's result:
 
-- Completed within that window: `200 {"result": {...}}`, matching the
-  action's `result_schema`.
-- Still running after 250 ms: `202 {"invocationId": "<opaque string>"}`
-  immediately, with the action continuing; use the invocation route below for
-  its eventual outcome.
+- Reaches any terminal state (`succeeded`, `failed`, or `cancelled`) within
+  that window: `200` with the same invocation object
+  `GET /api/v1/invocations/{id}` would return (`state` plus `result`, if
+  `succeeded`, or `error`, if `failed`).
+- Still `running` after 250 ms: `202 {"invocationId": "<opaque string>"}`
+  immediately, with the action continuing; use the invocation route below
+  for its eventual outcome.
 
 The action's own ABI result maps onto this API outcome (and onto the
 invocation `state` below) as:
