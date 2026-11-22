@@ -185,6 +185,64 @@ fn valid_plugin_id(id: &str) -> bool {
     (2..=4).contains(&segments.len()) && segments.iter().all(|s| valid_kind_segment(s))
 }
 
+/// The five core namespaces `covers` may address
+/// (`docs/v2/catalog-v2.md` "`kind = \"plugin\"`").
+const COVERS_CORE_NAMESPACES: [&str; 5] = [
+    "vosu.client",
+    "vosu.status",
+    "vosu.chart",
+    "vosu.play",
+    "vosu.skin",
+];
+
+/// One dotted segment of a `field:` id's `<path>` part: the dotted form
+/// of a namespace's own camelCase JSON Schema key (`docs/v2/state-schema.md`
+/// "Naming": schema keys are camelCase and never contain a dot).
+fn valid_camel_path_segment(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_alphanumeric())
+}
+
+/// `field:<core-namespace>[.<path>]` (`docs/v2/catalog-v2.md`
+/// "`kind = \"plugin\"`", `docs/v2/state-schema.md` "Naming" and
+/// `docs/v2/naming.md` "Capability id grammar"): a `covers` entry names one
+/// of the five core namespaces, bare (the whole namespace) or with a dotted
+/// path of camelCase schema keys below it — except
+/// `field:vosu.chart.resources`/`field:vosu.skin.tree` and everything below
+/// them, which only reserved-name `[[resource_kinds]]` entries cover, never
+/// `covers` ("Coverage matching"). A `field:` id outside a core namespace
+/// (including a plugin's own namespace) is likewise rejected here — this
+/// module has no `provides` field to also check the "own namespace" clause
+/// of that same rule against, since `provides`/`requires`/`optional` are
+/// catalog-owned fields out of this ABI-only module's scope (module doc
+/// comment).
+fn valid_covers_entry(cover: &str) -> bool {
+    let Some(rest) = cover.strip_prefix("field:") else {
+        return false;
+    };
+    for namespace in COVERS_CORE_NAMESPACES {
+        if rest == namespace {
+            return true;
+        }
+        let Some(path) = rest
+            .strip_prefix(namespace)
+            .and_then(|r| r.strip_prefix('.'))
+        else {
+            continue;
+        };
+        if path.is_empty() || !path.split('.').all(valid_camel_path_segment) {
+            return false;
+        }
+        return match namespace {
+            "vosu.chart" => path != "resources" && !path.starts_with("resources."),
+            "vosu.skin" => path != "tree" && !path.starts_with("tree."),
+            _ => true,
+        };
+    }
+    false
+}
+
 impl PluginManifest {
     pub fn parse(text: &str) -> Result<Self, ManifestError> {
         let manifest: Self =
@@ -222,10 +280,7 @@ impl PluginManifest {
             }
         }
         for cover in &self.covers {
-            let Some(rest) = cover.strip_prefix("field:") else {
-                return Err(ManifestError::Covers(cover.clone()));
-            };
-            if rest.is_empty() || rest.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            if !valid_covers_entry(cover) {
                 return Err(ManifestError::Covers(cover.clone()));
             }
         }
@@ -262,7 +317,7 @@ mod tests {
     #[test]
     fn accepts_full_targets_match_and_resource_kinds() {
         let text = format!(
-            "{}concurrent_dispatch=true\nsettings_schema='settings.schema.json'\nroot_slots=['songs']\ncovers=['field:vosu.osu', 'field:vosu.chart.title']\n\n[targets.x86_64-unknown-linux-gnu]\nlibrary='lib/libvosu_osu.so'\n\n[targets.x86_64-pc-windows-msvc]\nlibrary='lib/vosu_osu.dll'\n\n[match]\nprocess_names=['osu!.exe']\n\n[[resource_kinds]]\nkind='file'\ntree=false\nfamilies=['chart-text']\n",
+            "{}concurrent_dispatch=true\nsettings_schema='settings.schema.json'\nroot_slots=['songs']\ncovers=['field:vosu.play.combo', 'field:vosu.chart.title']\n\n[targets.x86_64-unknown-linux-gnu]\nlibrary='lib/libvosu_osu.so'\n\n[targets.x86_64-pc-windows-msvc]\nlibrary='lib/vosu_osu.dll'\n\n[match]\nprocess_names=['osu!.exe']\n\n[[resource_kinds]]\nkind='file'\ntree=false\nfamilies=['chart-text']\n",
             base()
         );
         let manifest = PluginManifest::parse(&text).unwrap();
@@ -374,6 +429,72 @@ mod tests {
             PluginManifest::parse(&text).unwrap_err(),
             ManifestError::Covers("vosu.play.combo".into())
         );
+    }
+
+    #[test]
+    fn accepts_covers_entries_in_every_core_namespace() {
+        for entry in [
+            "field:vosu.client",
+            "field:vosu.status.online",
+            "field:vosu.chart.title",
+            "field:vosu.chart.difficultyName",
+            "field:vosu.play.combo",
+            "field:vosu.skin.name",
+        ] {
+            let text = format!("{}covers=['{entry}']\n", base());
+            PluginManifest::parse(&text)
+                .unwrap_or_else(|e| panic!("expected {entry:?} to be accepted, got {e}"));
+        }
+    }
+
+    #[test]
+    fn rejects_covers_entry_outside_core_namespace() {
+        for entry in [
+            "field:vosu.osu",
+            "field:vosu.osu.play.pp.current",
+            "acme.test",
+        ] {
+            let text = format!("{}covers=['{entry}']\n", base());
+            assert_eq!(
+                PluginManifest::parse(&text).unwrap_err(),
+                ManifestError::Covers(entry.into()),
+                "expected {entry:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_covers_entry_with_non_camel_case_path_segment() {
+        for entry in [
+            "field:vosu.chart.difficulty-name",
+            "field:vosu.chart.DifficultyName",
+            "field:vosu.chart.",
+            "field:vosu.chart..title",
+        ] {
+            let text = format!("{}covers=['{entry}']\n", base());
+            assert_eq!(
+                PluginManifest::parse(&text).unwrap_err(),
+                ManifestError::Covers(entry.into()),
+                "expected {entry:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_covers_entry_reserved_for_resource_kinds() {
+        for entry in [
+            "field:vosu.chart.resources",
+            "field:vosu.chart.resources.file",
+            "field:vosu.skin.tree",
+            "field:vosu.skin.tree.anything",
+        ] {
+            let text = format!("{}covers=['{entry}']\n", base());
+            assert_eq!(
+                PluginManifest::parse(&text).unwrap_err(),
+                ManifestError::Covers(entry.into()),
+                "expected {entry:?} to be rejected"
+            );
+        }
     }
 
     #[test]
