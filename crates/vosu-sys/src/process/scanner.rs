@@ -104,7 +104,7 @@ pub struct BatchScanResult {
     pub address: usize,
 }
 
-impl dyn ProcessMemory {
+impl<'mem> dyn ProcessMemory + 'mem {
     /// Returns the first match in region order, then ascending offset order.
     pub fn scan_first(&self, pattern: &Pattern) -> Result<Option<usize>, MemoryError> {
         let regions = self.readable_regions()?;
