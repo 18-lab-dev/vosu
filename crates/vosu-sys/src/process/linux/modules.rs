@@ -6,12 +6,15 @@ use super::*;
 
 /// One loaded module, as reconstructed from `/proc/<pid>/maps`'s path
 /// column (there is no Linux equivalent of Windows's loader-table
-/// `Module32FirstW` for an unprivileged reader). `base` is the lowest
-/// mapping start seen for that file, `size` the span from there to the
-/// highest mapping end; matching `/proc/<pid>/maps` is a snapshot, so a
-/// caller must call [`enumerate_modules`] again to see a module that
-/// loaded since the last call rather than caching one snapshot across
-/// reads.
+/// `Module32FirstW` for an unprivileged reader). `base` is the start of
+/// the mapping whose file offset is zero — the file's own base, not
+/// necessarily the lowest-addressed mapping — and `size` the span from
+/// there to the highest mapping end grouped under the same full path
+/// (F4: two different files that merely share a basename, or two
+/// far-apart mappings of the same file, never collapse into one
+/// `ModuleEntry`); matching `/proc/<pid>/maps` is a snapshot, so a caller
+/// must call [`enumerate_modules`] again to see a module that loaded
+/// since the last call rather than caching one snapshot across reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleEntry {
     pub base_address: usize,
@@ -19,11 +22,48 @@ pub struct ModuleEntry {
     pub name: String,
 }
 
+/// One file's mappings, accumulated while walking `/proc/<pid>/maps` in
+/// order; `anchor_base` is `Some` once a mapping with file offset 0 has
+/// been seen, and wins over `min_start` once set (F4).
+struct ModuleSpan {
+    anchor_base: Option<usize>,
+    min_start: usize,
+    max_end: usize,
+    name: String,
+}
+
 /// Enumerates `pid`'s loaded modules from `/proc/<pid>/maps`, grouping
-/// every mapping backed by the same file name into one [`ModuleEntry`]
+/// every mapping backed by the same full path into one [`ModuleEntry`]
 /// (mirrors `windows::enumerate_modules`'s per-file semantics).
 pub fn enumerate_modules(pid: u32) -> Result<Vec<ModuleEntry>, MemoryError> {
     enumerate_modules_at(Path::new("/proc"), pid)
+}
+
+/// Splits one `/proc/<pid>/maps` line into its address range, file
+/// offset, and verbatim pathname (everything from the first
+/// non-whitespace byte of the sixth field to the end of the line,
+/// preserving any single spaces inside the path itself — F5), or `None`
+/// for a line with no backing file (an anonymous mapping, or a pseudo-path
+/// like `[heap]`).
+fn parse_maps_line(line: &str) -> Option<(&str, &str, &str)> {
+    let mut fields = line.split_whitespace();
+    let addr_range = fields.next()?;
+    let _perms = fields.next()?;
+    let offset_field = fields.next()?;
+    let _dev = fields.next()?;
+    let _inode = fields.next()?;
+    let first_path_token = fields.next()?;
+    // `first_path_token` borrows from `line`, so this recovers its own
+    // byte offset within `line` — the start of the path field, after
+    // whatever whitespace padding separates it from `inode` — without
+    // re-splitting (and thereby collapsing) the path's own internal
+    // spaces.
+    let path_start = first_path_token.as_ptr() as usize - line.as_ptr() as usize;
+    let pathname = &line[path_start..];
+    if pathname.starts_with('[') || pathname.is_empty() {
+        return None;
+    }
+    Some((addr_range, offset_field, pathname))
 }
 
 fn enumerate_modules_at(proc_root: &Path, pid: u32) -> Result<Vec<ModuleEntry>, MemoryError> {
@@ -33,21 +73,22 @@ fn enumerate_modules_at(proc_root: &Path, pid: u32) -> Result<Vec<ModuleEntry>, 
         .map_err(|_| backend_message("parse /proc maps", "maps is not UTF-8"))?;
 
     let mut order: Vec<String> = Vec::new();
-    let mut spans: std::collections::HashMap<String, (usize, usize)> =
-        std::collections::HashMap::new();
+    let mut spans: std::collections::HashMap<String, ModuleSpan> = std::collections::HashMap::new();
+
     for line in text.lines() {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() < 6 {
-            continue; // anonymous mapping: no backing file
-        }
-        let pathname = fields[5..].join(" ");
-        if pathname.starts_with('[') || pathname.is_empty() {
-            continue;
-        }
-        let Some(name) = Path::new(&pathname).file_name().and_then(OsStr::to_str) else {
+        let Some((addr_range, offset_field, pathname)) = parse_maps_line(line) else {
             continue;
         };
-        let (start, end) = fields[0]
+        // A replaced binary's mapping keeps its old dentry, so the kernel
+        // appends this marker to the path rather than the path itself
+        // changing; stripped here so the module still resolves by its
+        // real name (F5) instead of being permanently `NotReady`.
+        let path = pathname.strip_suffix(" (deleted)").unwrap_or(pathname);
+        let Some(name) = Path::new(path).file_name().and_then(OsStr::to_str) else {
+            continue;
+        };
+
+        let (start, end) = addr_range
             .split_once('-')
             .and_then(|(start, end)| {
                 Some((
@@ -56,29 +97,50 @@ fn enumerate_modules_at(proc_root: &Path, pid: u32) -> Result<Vec<ModuleEntry>, 
                 ))
             })
             .ok_or_else(|| backend_message("parse /proc maps", "invalid address range"))?;
-        match spans.get_mut(name) {
-            Some((base, top)) => {
-                *base = (*base).min(start);
-                *top = (*top).max(end);
+        let file_offset = u64::from_str_radix(offset_field, 16)
+            .map_err(|_| backend_message("parse /proc maps", "invalid file offset"))?;
+
+        match spans.get_mut(path) {
+            Some(span) => {
+                span.min_start = span.min_start.min(start);
+                span.max_end = span.max_end.max(end);
+                if file_offset == 0 {
+                    span.anchor_base = Some(span.anchor_base.map_or(start, |base| base.min(start)));
+                }
             }
             None => {
-                order.push(name.to_owned());
-                spans.insert(name.to_owned(), (start, end));
+                order.push(path.to_owned());
+                spans.insert(
+                    path.to_owned(),
+                    ModuleSpan {
+                        anchor_base: (file_offset == 0).then_some(start),
+                        min_start: start,
+                        max_end: end,
+                        name: name.to_owned(),
+                    },
+                );
             }
         }
     }
 
-    Ok(order
+    order
         .into_iter()
-        .map(|name| {
-            let (base, top) = spans[&name];
-            ModuleEntry {
+        .map(|path| {
+            let span = &spans[&path];
+            // The file-offset-0 mapping's own start, when one was seen —
+            // the file's real base, not necessarily this group's lowest
+            // address (F4) — falling back to the lowest start seen for a
+            // file with no offset-0 mapping in this snapshot at all.
+            let base = span.anchor_base.unwrap_or(span.min_start);
+            let size = u32::try_from(span.max_end - base)
+                .map_err(|_| backend_message("parse /proc maps", "module span exceeds u32::MAX"))?;
+            Ok(ModuleEntry {
                 base_address: base,
-                size: (top - base) as u32,
-                name,
-            }
+                size,
+                name: span.name.clone(),
+            })
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]
