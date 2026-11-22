@@ -527,6 +527,73 @@ this session: they need the native Windows gate, and the Windows VM was in
 use by a concurrent `prepush.py`/`land.py` run on this host for an unrelated
 change during this measurement.
 
+### Remaining D9 items: clean build times, hosted CI, release builds (2026-11-22)
+
+Measured **2026-11-22**, pre-M0 baseline `3a91ff9` versus the final landed M0
+commit `8af9277` (`origin/main`), closing the D9 items the measurement above
+could not reach. Same Ryzen 9 9950X3D host, Rust 1.96.1, `taskset
+--cpu-list 0-7,16-23` (the V-cache CCD); each checkout is an independent
+`ovnfs` worktree with its own `CARGO_TARGET_DIR`, recreated empty for every
+run (3 runs each, debug and release), so no run reuses another's incremental
+artifacts. Release builds: `cargo build --release --locked
+--no-default-features --features linux-process-events --target
+x86_64-unknown-linux-gnu`. Debug builds: `cargo build --locked`.
+
+| Build | Pre-M0 `3a91ff9` median (range) | M0 `8af9277` median (range) | Change |
+| --- | ---: | ---: | ---: |
+| `cargo build --locked` (debug, clean target) | 28.41 s (28.37–29.23 s) | 24.84 s (24.67–25.53 s) | -13% |
+| Release build (clean target) | 121.17 s (119.86–121.47 s) | 74.53 s (74.23–75.52 s) | -38% |
+| Release binary size (`target/.../release/vosu`, Linux) | 84,455,784 B | 84,828,584 B | +0.44% |
+
+Hosted CI (`gh run view --json jobs`, `ci.yml` on `main`, push event; one run
+per commit): `3a91ff9` run
+[44985148813](https://github.com/18-lab-dev/vosu/actions/runs/44985148813),
+`8af9277` run
+[45002454459](https://github.com/18-lab-dev/vosu/actions/runs/45002454459).
+
+| Job | Pre-M0 `3a91ff9` | M0 `8af9277` | Change |
+| --- | ---: | ---: | ---: |
+| Classify changes | 7.0 s | 15.0 s | +8.0 s |
+| Ubuntu validation | 238.0 s | 232.0 s | -6.0 s |
+| Windows MSVC native verification | 495.0 s | 1303.0 s | +808.0 s |
+| Dashboard smoke | skipped (no matching path change) | 164.0 s | n/a |
+| CI required | 4.0 s | 3.0 s | -1.0 s |
+
+The clean local Linux build is faster at M0 on both profiles, consistent
+with the per-crate incremental results above: full dependency graphs now
+compile with more cross-crate parallelism even untouched. Hosted Windows
+MSVC native verification is a single-run observation per commit, not a
+controlled benchmark, and the `8af9277` run is substantially slower
+(1303 s vs 495 s); the native `scripts/prepush.py` phase on this host
+measured both commits' native Windows test/clippy/doctest wall-clock within
+1s of each other (268.0 s vs 268.2 s, recorded earlier in this file), so the
+hosted-runner gap looks like hosted-runner variance (queue/VM provisioning,
+shared-runner contention) rather than a regression in the native work
+itself; it is recorded as an observation, not a verdict, since only one
+hosted run per commit was captured and `gh run list`'s hosted history
+contains no earlier repeat to pair against.
+
+Release-build native gates, run against this session's own packaged
+binaries (not the hosted CI artifacts): on Linux,
+`VOSU_RELEASE_SMOKE_BINARY=<packaged `vosu`> cargo test --locked -p
+vosu-release-smoke --test release_smoke -- --ignored --nocapture` passed
+(`packaged_release_obeys_production_policy_and_shuts_down_cleanly ... ok`)
+against the `8af9277` Linux release package (84,828,584 B binary,
+zip archive `vosu-linux-v1.2.4.zip`); natively in the Windows VM, the same
+smoke test passed against the `8af9277` Windows release package
+(81,308,672 B `vosu.exe`, zip archive `vosu-windows-v1.2.4.zip`,
+74,505,024 B). `cargo test --locked --test process_memory -- --nocapture`
+(7 tests) and `cargo test --locked --test updater_native -- --nocapture`
+(15 tests on Linux, 18 on Windows — the Windows run also exercises the
+Windows-only locked-target-preservation and locked-record-retry cases) both
+passed natively on Linux and, separately, natively inside the Windows VM.
+`scripts/package-linux.py check-glibc` was run against the locally built
+Linux binary and failed (`GLIBC baseline exceeds 2.35`); this host's
+toolchain and system libraries are newer than the pinned `ubuntu-22.04`
+hosted runner the release workflow actually packages on, so the check is
+expected to fail off that runner and is not part of this session's D9
+no-regression comparison.
+
 ## Performance changes for M0 (paired, D17)
 
 Measured **2026-11-22**, pre-M0 baseline `3a91ff9` versus M0 crate-split
