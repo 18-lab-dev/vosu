@@ -1,5 +1,6 @@
 # Dependencies between vosu-plugin-api's own top-level src/ modules,
 # enforced by scripts/check-module-boundaries.py.
+cbor -> validate
 vtable -> envelope
 vtable -> status
 validate -> flags

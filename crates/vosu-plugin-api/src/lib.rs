@@ -11,6 +11,7 @@
     non_camel_case_types,
     reason = "mirrors include/vosu_plugin.h's type and enumerator names exactly, so the header and these Rust types read as the same contract rather than two spellings of it"
 )]
+mod cbor;
 mod envelope;
 mod flags;
 mod flat;
@@ -22,6 +23,26 @@ mod validate;
 mod value;
 mod vtable;
 
+pub use cbor::action::{
+    ActionCall, ActionCancel, ActionInvoke, ActionProgress, ActionResult, ActionStatus, Caller,
+    CallerKind,
+};
+pub use cbor::common::ErrorInfo;
+pub use cbor::log::{LogLevel, LogRecord};
+pub use cbor::read_plan::ReadPlanCancel;
+pub use cbor::resource::{
+    ResourceRef, ResourceResolve, ResourceResolved, RootDeclare, StreamChunk, StreamClose,
+    StreamRead, TreeEntry, TreeList, TreeLookup,
+};
+pub use cbor::scan::{ScanRequest, ScanResult};
+pub use cbor::session::{
+    Bitness, DetachReason, FocusChanged, SessionAttached, SessionDecline, SessionDetached,
+    SessionIdentify,
+};
+pub use cbor::settings::SettingsChanged;
+pub use cbor::state::{Selector, StateEntry, StateSubscribe, StateUpdate};
+pub use cbor::timer::{TimerCancel, TimerFired, TimerSet};
+pub use cbor::{CborBytes, CborError, CborValue, decode, encode};
 pub use envelope::{vosu_bytes, vosu_message};
 pub use flags::VOSU_READ_PLAN_SYNC;
 pub use flat::demand::vosu_demand_changed_header;

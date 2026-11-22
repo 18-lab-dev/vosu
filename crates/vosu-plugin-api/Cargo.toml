@@ -13,6 +13,8 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+ciborium = "=0.2.2"
+serde = { version = "=1.0.228", features = ["derive"] }
 
 [dev-dependencies]
 proptest = "1.12"

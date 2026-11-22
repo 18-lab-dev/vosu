@@ -3341,7 +3341,9 @@ dependencies = [
 name = "vosu-plugin-api"
 version = "1.0.0-alpha.0"
 dependencies = [
+ "ciborium",
  "proptest",
+ "serde",
  "vosu-proptest",
 ]
 
