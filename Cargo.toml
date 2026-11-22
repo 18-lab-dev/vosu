@@ -151,8 +151,15 @@ harness = false
 name = "autoresearch_http_v2"
 harness = false
 
+[[bench]]
+name = "brokered_reads_bench"
+harness = false
+
 [[example]]
 name = "live_reader_bench"
+
+[[example]]
+name = "brokered_reads_target"
 
 [[example]]
 name = "process_event_bench"
