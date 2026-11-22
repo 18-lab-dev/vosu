@@ -977,11 +977,14 @@ tag parses as semver with major version `2`. The gate fails closed: a missing
 repository, a failed request, or any one of the four checks failing fails the
 whole gate, and 2.0 is not published (ADR 0022). The gate additionally fails
 closed if `tests/fixtures/upstream/DIVERGENCES.md` lists any `temporary`-class
-entry (ADR 0021's "Upstream adapters" amendment, D6, which defines the
+entry, or any entry whose class is missing or is none of the four defined
+classes (ADR 0021's "Upstream adapters" amendment, D6, which defines the
 file's four entry classes — `security`, `contract`, `licensing`,
-`temporary` — and reserves gate failure for the last): a temporary
+`temporary` — and reserves gate failure for `temporary` plus any
+unclassified entry): a temporary
 pre-release exception, such as the stable tournament-manager aggregate's
-deferral, must be resolved before day-0, not merely documented; the file's
+deferral, must be resolved before day-0, not merely documented, and every
+entry must carry one of the four recognized classes; the file's
 permanent `security`/`contract`/`licensing` entries never fail the gate.
 
 ## Open questions

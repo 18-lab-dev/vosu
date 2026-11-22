@@ -198,8 +198,10 @@ rationale in `docs/v2/implementation-plan.md` section 10):
   LGPL assets), and `temporary` (a pre-release gap with a task that closes
   it, newly adopted here: must be gone before the day-0 release gate
   passes, `docs/v2/catalog-v2.md` "Day-0 release check"). The gate fails
-  closed only when a `temporary` entry remains; the three permanent
-  classes never fail it, so the file keeping `/api/ingame`'s and ADR
+  closed when a `temporary` entry remains, or when any entry's class is
+  missing or is none of the four defined classes; the three permanent
+  classes, correctly recorded, never fail it, so the file keeping
+  `/api/ingame`'s and ADR
   0004's entries forever does not block release. The one `temporary` entry
   adopted at this freeze is the stable tournament-manager aggregate
   (`docs/v2/implementation-plan.md`'s M4a-or-later task): until it lands,

@@ -46,7 +46,13 @@ segment above addresses it by.
 
 ### Focus rule
 
-The rule ranges over identified sessions only (see Visibility below). Exactly
+The rule ranges over identified sessions only (see Visibility below). An
+identified stable `vosu.osu` session flagged as a tournament manager (D6,
+`docs/v2/implementation-plan.md`'s M4a-or-later task) is always the focused
+session while one exists, regardless of OS foreground or recency — matching
+1.x's `select()`, which prefers the tournament manager unconditionally
+(`src/instance.rs:603-618`, `:677-683`) — and at most one session is ever
+flagged this way at a time. Otherwise, exactly
 one identified session is focused whenever at least one exists: the session
 whose process owns the OS foreground window, or, when no identified session's
 process does, whichever session was most recently focused. The first focus
@@ -231,7 +237,7 @@ Every API v1 error response is a JSON body:
 | 404 | `unknown_session` / `unknown_namespace` / `unknown_resource` / `unknown_tree` / `unknown_action` / `unknown_job` | id or path never valid for this server; `unknown_job` also for a job another tool session created, so its existence is not disclosed |
 | 405 | `method_not_allowed` | wrong HTTP method on a route |
 | 410 | `unpublished_resource` / `unpublished_tree` | a structurally valid, correctly signed id no longer in the published registry |
-| 413 | `payload_too_large` | job creation/poll/cancel body over the POST body limit |
+| 413 | `payload_too_large` | job creation/poll/cancel body over the POST body limit, or a job-creation body within that limit whose CBOR re-encoding would exceed the plugin ABI's 1 MiB frame cap (`docs/v2/plugin-abi.md` §6.8) |
 | 429 | `too_many_jobs` | creating a job while 1024 jobs are still running |
 | 500 | `serialization_failed` | internal encode failure |
 

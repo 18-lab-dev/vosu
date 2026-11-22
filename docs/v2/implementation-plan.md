@@ -635,14 +635,19 @@ Scope:
   the 2.0 release).** The osu! plugin attaches the `--tournament` process
   as an ordinary identified `stable` session instead of declining it —
   `--tournament` leaves plugin-abi.md:140's decline list once this task
-  lands, and is declined under it until then — visible in
-  `/api/v1/sessions` and eligible for focus under the normal Focus rule
-  like any other identified session, matching 1.x's manager-wins-focus
-  intent (`src/instance.rs:603-613`) without a manager-specific override.
-  It builds `vosu.osu.tourney` from the matched
-  spectators' sessions exactly as 1.x's stable branch does
-  (`src/api/v2/tourney.rs`'s `build_tourney` manager path), publishing the
-  aggregate under `vosu.osu.tourney` like any other field. Landing this
+  lands, and stays declined under it until then. The attached manager
+  session is visible in `/api/v1/sessions` and, while it exists, is always
+  the focused session regardless of OS foreground or recency (api-v1.md
+  "Focus rule"'s tournament-manager override), matching 1.x's `select()`,
+  which prefers the manager unconditionally (`src/instance.rs:603-613`,
+  `:677-683`) — a deliberate addition to the plain rule, not something the
+  plain rule already produces. It builds `vosu.osu.tourney` from the
+  matched spectators' sessions exactly as 1.x's stable branch does
+  (`src/api/v2/tourney.rs`'s `build_tourney` manager path) and publishes
+  the resulting aggregate to **every** currently attached stable session's
+  `vosu.osu.tourney` — not only the manager's own — exactly as 1.x's
+  `build_tourney` is invoked per client and looks the manager up across
+  all instances each time (`src/api/v2/tourney.rs:36-43`). Landing this
   task removes the `stable-tournament` divergence below and the M2/M4a
   exit exemptions for it.
 - The divergence file next to the fixtures (`tests/fixtures/upstream/DIVERGENCES.md`)
@@ -1253,9 +1258,10 @@ states what was adopted and why. Spec amendments land in A1.
   its own `SESSION_IDENTIFY` for the handle; core detaches it from that
   plugin and, if another enabled plugin's matcher also accepted the
   process, offers it to that plugin next in install order before dropping
-  it for that PID generation. The osu! plugin declines only `--tournament`
-  and `debug-client-id` processes (an argv-based skip); 1.x's Linux
-  conditional fallback (the broad lazer pass that only runs when the named
+  it for that PID generation. The osu! plugin declines `debug-client-id`
+  processes always, and `--tournament` processes until the stable
+  tournament-manager aggregate task (below) lands (an argv-based skip);
+  1.x's Linux conditional fallback (the broad lazer pass that only runs when the named
   stable pass found nothing) is not a decline — 1.x never skips those
   processes, only chooses which variant classifies them
   (`src/instance/discovery.rs:74-111` inserts every matching candidate) —
@@ -1273,20 +1279,26 @@ states what was adopted and why. Spec amendments land in A1.
   must exist before the 2.0 release — it is an explicit M4a-or-later task:
   attach the `--tournament` process as the manager instead of declining it
   — it becomes an ordinary identified `stable` session (`SESSION_IDENTIFY`
-  `variant: "stable"`), visible in `/api/v1/sessions` and eligible for
-  focus under the normal Focus rule (`docs/v2/api-v1.md`) like any other
-  identified session, matching 1.x's manager-wins-focus intent
-  (`src/instance.rs:603-613`) without a manager-specific override — and
-  publish the resulting aggregate under `vosu.osu.tourney` exactly as 1.x's
-  stable branch builds it. Until that task lands, `--tournament` stays
+  `variant: "stable"`), visible in `/api/v1/sessions` and, while it exists,
+  always the focused session regardless of OS foreground or recency — a
+  deliberate addition to `docs/v2/api-v1.md`'s Focus rule, matching 1.x's
+  `select()`, which prefers the manager unconditionally
+  (`src/instance.rs:603-613`, `:677-683`) — and
+  publish the resulting aggregate under `vosu.osu.tourney` to **every**
+  currently attached stable session, not only the manager's own, exactly
+  as 1.x's stable branch builds it per client. Until that task lands,
+  `--tournament` stays
   declined exactly as D6 originally adopted, and the osu! plugin
   takes 1.x's "no manager found" branch unconditionally on stable, matching
   1.x's own production behavior; the M2 and M4a exits exempt exactly the
   `stable-tournament` oracle case's `tourney` members (`v1`, `v2`,
   `v2-precise`), recorded as a `temporary`-class divergence in
   `tests/fixtures/upstream/DIVERGENCES.md` (G1's per-entry class scheme), and
-  the M8 day-0 gate fails closed only on a remaining `temporary` entry — the
-  file's permanent `security`/`contract`/`licensing` entries never fail it —
+  the M8 day-0 gate fails closed on a remaining `temporary` entry, or on
+  any entry whose class is missing or is none of the four defined classes
+  — the
+  file's permanent `security`/`contract`/`licensing` entries, correctly
+  recorded, never fail it —
   so this entry must be
   removed — the aggregate task must land — before day-0. "Never identify"
   is never used as a deliberate
