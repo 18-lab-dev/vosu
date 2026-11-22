@@ -16,6 +16,18 @@ pub enum vosu_plan_base_kind {
     VOSU_BASE_MODULE = 1,
 }
 
+impl TryFrom<u32> for vosu_plan_base_kind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Ok(match value {
+            0 => Self::VOSU_BASE_ABSOLUTE,
+            1 => Self::VOSU_BASE_MODULE,
+            _ => return Err(()),
+        })
+    }
+}
+
 /// The plan's root base: either a previously obtained absolute
 /// target-process address, or a module name plus a byte offset from that
 /// module's base, resolved by the host at read time. 32 bytes
@@ -58,6 +70,18 @@ pub enum vosu_stage_base_kind {
     VOSU_STAGE_BASE_ROOT = 0,
     /// this stage's base is read from an earlier stage's op
     VOSU_STAGE_BASE_DEPENDENT = 1,
+}
+
+impl TryFrom<u32> for vosu_stage_base_kind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Ok(match value {
+            0 => Self::VOSU_STAGE_BASE_ROOT,
+            1 => Self::VOSU_STAGE_BASE_DEPENDENT,
+            _ => return Err(()),
+        })
+    }
 }
 
 /// 24 bytes (`docs/v2/plugin-abi.md` §3).
@@ -125,6 +149,20 @@ pub enum vosu_read_error_code {
     VOSU_READ_ERROR_ADDRESS_OVERFLOW = 4,
 }
 
+impl TryFrom<u32> for vosu_read_error_code {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Ok(match value {
+            1 => Self::VOSU_READ_ERROR_BACKEND,
+            2 => Self::VOSU_READ_ERROR_PERMISSION_DENIED,
+            3 => Self::VOSU_READ_ERROR_READ_FAILED,
+            4 => Self::VOSU_READ_ERROR_ADDRESS_OVERFLOW,
+            _ => return Err(()),
+        })
+    }
+}
+
 /// Mirrors `src/process.rs`'s `ReadStatus` vocabulary
 /// (`include/vosu_plugin.h:422-427`).
 #[repr(u32)]
@@ -135,6 +173,20 @@ pub enum vosu_read_result_kind {
     VOSU_READ_NOT_READY = 1,
     VOSU_READ_UNSUPPORTED = 2,
     VOSU_READ_ERROR = 3,
+}
+
+impl TryFrom<u32> for vosu_read_result_kind {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Ok(match value {
+            0 => Self::VOSU_READ_OK,
+            1 => Self::VOSU_READ_NOT_READY,
+            2 => Self::VOSU_READ_UNSUPPORTED,
+            3 => Self::VOSU_READ_ERROR,
+            _ => return Err(()),
+        })
+    }
 }
 
 /// One per-op read outcome. 24 bytes (`docs/v2/plugin-abi.md` §3).

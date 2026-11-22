@@ -2,3 +2,8 @@
 # enforced by scripts/check-module-boundaries.py.
 vtable -> envelope
 vtable -> status
+validate -> flags
+validate -> flat
+validate -> limits
+validate -> opcode
+validate -> value

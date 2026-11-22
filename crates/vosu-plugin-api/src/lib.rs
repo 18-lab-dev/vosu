@@ -11,7 +11,6 @@
     non_camel_case_types,
     reason = "mirrors include/vosu_plugin.h's type and enumerator names exactly, so the header and these Rust types read as the same contract rather than two spellings of it"
 )]
-
 mod envelope;
 mod flags;
 mod flat;
@@ -19,6 +18,7 @@ mod limits;
 mod opcode;
 mod primitives;
 mod status;
+mod validate;
 mod value;
 mod vtable;
 
@@ -41,5 +41,11 @@ pub use primitives::{
     vosu_invocation_id, vosu_plan_id, vosu_resource_id, vosu_session_id, vosu_timer_id,
 };
 pub use status::vosu_status;
+pub use validate::{
+    ValidationError, read_flat_header, validate_array_range, validate_bytes_range,
+    validate_demand_changed, validate_flags, validate_frame_len, validate_publish_batch,
+    validate_publish_field, validate_read_plan_len, validate_read_plan_result,
+    validate_read_plan_submit, validate_stream_chunk_len,
+};
 pub use value::vosu_value_kind;
 pub use vtable::{VosuPluginEntryFn, vosu_host_services, vosu_plugin_vtable};
