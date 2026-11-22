@@ -2,9 +2,8 @@ use std::fmt;
 
 use memchr::{memchr_iter, memmem};
 use thiserror::Error;
-use vosu_sys::process::{MemoryError, MemoryRegion};
 
-use super::ProcessHandle;
+use super::{MemoryError, MemoryRegion, ProcessMemory};
 
 /// Number of new region bytes read per scanner window.
 pub const SCAN_CHUNK_SIZE: usize = 1024 * 1024;
@@ -105,10 +104,10 @@ pub struct BatchScanResult {
     pub address: usize,
 }
 
-impl ProcessHandle {
+impl dyn ProcessMemory {
     /// Returns the first match in region order, then ascending offset order.
     pub fn scan_first(&self, pattern: &Pattern) -> Result<Option<usize>, MemoryError> {
-        let regions = self.memory.readable_regions()?;
+        let regions = self.readable_regions()?;
         let mut scratch = ScanScratch::new(pattern.bytes.len(), max_region_size(&regions))?;
 
         for region in &regions {
@@ -149,7 +148,7 @@ impl ProcessHandle {
         if pattern.bytes.is_empty() {
             return Ok(None);
         }
-        let regions = self.memory.readable_regions()?;
+        let regions = self.readable_regions()?;
         let mut scratch = ScanScratch::new(pattern.bytes.len(), max_region_size(&regions))?;
         for region in regions {
             let mut accepted = None;
@@ -185,7 +184,7 @@ impl ProcessHandle {
             return Ok(Vec::new());
         }
 
-        let regions = self.memory.readable_regions()?;
+        let regions = self.readable_regions()?;
         let mut scratch = ScanScratch::new(pattern.bytes.len(), max_region_size(&regions))?;
         let mut matches = Vec::new();
 
@@ -222,7 +221,7 @@ impl ProcessHandle {
             return Ok(Vec::new());
         }
 
-        let regions = self.memory.readable_regions()?;
+        let regions = self.readable_regions()?;
         let max_len = patterns
             .iter()
             .map(|pattern| pattern.bytes.len())
@@ -311,7 +310,7 @@ impl ScanScratch {
 /// Calls `visit` for each window in a region. A failed window discards the
 /// whole region, matching the upstream behavior for an unreadable region.
 fn scan_region(
-    handle: &ProcessHandle,
+    memory: &dyn ProcessMemory,
     region: MemoryRegion,
     max_pattern_len: usize,
     scratch: &mut ScanScratch,
@@ -325,7 +324,7 @@ fn scan_region(
         let read_len = remaining.min(capacity);
         let window = &mut scratch.bytes[..read_len];
         let address = region_address(region, base)?;
-        match handle.memory.read_scanner_region_exact(address, window) {
+        match memory.read_scanner_region_exact(address, window) {
             Ok(()) => {}
             Err(error @ MemoryError::PermissionDenied { .. }) => return Err(error),
             Err(_) => return Ok(false),
@@ -360,7 +359,7 @@ enum ScanRegionOutcome {
 }
 
 fn scan_region_until(
-    handle: &ProcessHandle,
+    memory: &dyn ProcessMemory,
     region: MemoryRegion,
     max_pattern_len: usize,
     scratch: &mut ScanScratch,
@@ -373,7 +372,7 @@ fn scan_region_until(
         let read_len = remaining.min(capacity);
         let window = &mut scratch.bytes[..read_len];
         let address = region_address(region, base)?;
-        match handle.memory.read_scanner_region_exact(address, window) {
+        match memory.read_scanner_region_exact(address, window) {
             Ok(()) => {}
             Err(error @ MemoryError::PermissionDenied { .. }) => return Err(error),
             Err(_) => return Ok(ScanRegionOutcome::Unreadable),

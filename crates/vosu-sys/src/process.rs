@@ -8,6 +8,9 @@ use std::fmt;
 
 use thiserror::Error;
 
+pub mod scanner;
+pub use scanner::{BatchScanResult, Pattern, PatternParseError, SCAN_CHUNK_SIZE};
+
 #[cfg(windows)]
 pub mod windows;
 #[cfg(windows)]

@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use super::*;
-use vosu_sys::process::{ProcessBitness, ProcessMemory, ReadRequest};
+use crate::process::ReadRequest;
 
 struct TestRegion {
     region: MemoryRegion,
@@ -111,8 +111,8 @@ impl ProcessMemory for PermissionDeniedMemory {
     }
 }
 
-fn handle(memory: Arc<TestMemory>) -> ProcessHandle {
-    ProcessHandle::new(memory, ProcessBitness::X64)
+fn handle(memory: Arc<TestMemory>) -> Arc<dyn ProcessMemory> {
+    memory
 }
 
 fn pattern(value: &str, non_zero_mask: bool) -> Pattern {
@@ -227,7 +227,7 @@ fn mixed_pattern_overlap_partitions_candidate_starts_without_duplicates() {
     let mut offsets = Vec::new();
     assert!(
         scan_region(
-            &process,
+            &*process,
             memory.regions[0].region,
             long.bytes().len(),
             &mut scratch,
@@ -417,7 +417,7 @@ fn batch_discards_failed_region_matches_before_reusing_slots() {
 
 #[test]
 fn permission_denials_stop_scanning_instead_of_appearing_unreadable() {
-    let process = ProcessHandle::new(Arc::new(PermissionDeniedMemory), ProcessBitness::X64);
+    let process: Arc<dyn ProcessMemory> = Arc::new(PermissionDeniedMemory);
     let target = pattern("AA", false);
 
     assert!(matches!(

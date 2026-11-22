@@ -10,12 +10,12 @@ use std::fmt;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
+pub use vosu_sys::process::scanner::{
+    BatchScanResult, Pattern, PatternParseError, SCAN_CHUNK_SIZE,
+};
 use vosu_sys::process::{
     MemoryError, MemoryRead, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
 };
-
-pub mod scanner;
-pub use scanner::{BatchScanResult, Pattern, PatternParseError, SCAN_CHUNK_SIZE};
 
 const MAX_MANAGED_STRING_LENGTH: usize = 4095;
 const MAX_MANAGED_COLLECTION_LENGTH: usize = 1_000_000;
@@ -512,6 +512,34 @@ impl ProcessHandle {
             data: array.data,
             entry_size: if self.pointer_size() == 8 { 24 } else { 16 },
         })
+    }
+
+    /// Returns the first match in region order, then ascending offset order
+    /// (`vosu_sys::process::scanner`'s generic primitive over this
+    /// handle's own `ProcessMemory` backend).
+    pub fn scan_first(&self, pattern: &Pattern) -> Result<Option<usize>, MemoryError> {
+        self.memory.scan_first(pattern)
+    }
+
+    /// Scans candidates in address order and stops at the first candidate
+    /// accepted by `validate`, without materializing every signature match.
+    pub fn scan_first_valid(
+        &self,
+        pattern: &Pattern,
+        validate: impl FnMut(usize) -> Result<bool, MemoryError>,
+    ) -> Result<Option<usize>, MemoryError> {
+        self.memory.scan_first_valid(pattern, validate)
+    }
+
+    /// Returns every match in region order, then ascending offset order.
+    pub fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError> {
+        self.memory.scan_all(pattern)
+    }
+
+    /// Finds at most one match per pattern. Regions are traversed first and
+    /// unresolved patterns are emitted in caller-index order within a region.
+    pub fn scan_batch(&self, patterns: &[Pattern]) -> Result<Vec<BatchScanResult>, MemoryError> {
+        self.memory.scan_batch(patterns)
     }
 }
 
