@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-core", "crates/vosu-net", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
+members = [".", "crates/vosu-core", "crates/vosu-net", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-plugin-api", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
 resolver = "3"
 
 [workspace.package]

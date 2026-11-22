@@ -3338,6 +3338,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vosu-plugin-api"
+version = "1.0.0-alpha.0"
+dependencies = [
+ "proptest",
+ "vosu-proptest",
+]
+
+[[package]]
 name = "vosu-pp"
 version = "0.1.0"
 dependencies = [

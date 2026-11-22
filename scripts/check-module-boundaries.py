@@ -30,6 +30,7 @@ CRATE_ROOTS = {
     "vosu-osu-model": ROOT / "crates/vosu-osu-model",
     "vosu-osu-reader": ROOT / "crates/vosu-osu-reader",
     "vosu-osu-state": ROOT / "crates/vosu-osu-state",
+    "vosu-plugin-api": ROOT / "crates/vosu-plugin-api",
     "vosu-proptest": ROOT / "crates/vosu-proptest",
     "vosu-sys": ROOT / "crates/vosu-sys",
 }

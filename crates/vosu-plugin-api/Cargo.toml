@@ -1,0 +1,19 @@
+[package]
+name = "vosu-plugin-api"
+version = "1.0.0-alpha.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "vosu 2.0 plugin ABI v1 types, layouts, and codecs (ADR 0019); see docs/v2/plugin-abi.md and include/vosu_plugin.h."
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+proptest = "1.12"
+vosu-proptest = { path = "../vosu-proptest" }
