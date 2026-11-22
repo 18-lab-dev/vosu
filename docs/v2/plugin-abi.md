@@ -270,11 +270,15 @@ Every package (plugin, tool, overlay) ships one `manifest.toml` at its root with
 kind = "plugin"                   # required top-level field, every manifest.toml (docs/v2/catalog-v2.md)
 manifest_version = 1              # required; this host accepts only 1
 id = "vosu.osu"                   # required; naming-contract plugin id
+name = "osu!"                     # required shared field (docs/v2/catalog-v2.md)
 version = "2.0.0"                 # required, semver of this plugin
+host = ">=2.0.0, <3.0.0"          # required shared field (docs/v2/catalog-v2.md)
 abi_version = 1                   # required; major ABI version this binary targets
 runtime = "in-process"            # required; "in-process" | "process" (request only, see 7.1)
 concurrent_dispatch = false       # optional, default false; see "Threading model"
 settings_schema = "settings.schema.json"  # optional, path relative to the manifest
+root_slots = ["songs"]            # declared root-slot names only, no paths (§6.5); paths register at runtime via VOSU_OP_ROOT_DECLARE
+covers = ["field:vosu.play.combo", "field:vosu.chart.title"]  # common-namespace fields this game plugin fills (`docs/v2/catalog-v2.md` defines; §6.6 consumes it)
 
 [targets.x86_64-unknown-linux-gnu]   # omitted entirely for bundled plugins
 library = "lib/libvosu_osu.so"       # path relative to the manifest
@@ -286,9 +290,6 @@ library = "lib/vosu_osu.dll"
 process_names = ["osu!.exe"]
 process_path_patterns = []
 command_line_patterns = []
-
-root_slots = ["songs"]            # declared root-slot names only, no paths (§6.5); paths register at runtime via VOSU_OP_ROOT_DECLARE
-covers = ["field:vosu.play.combo", "field:vosu.chart.title"]  # common-namespace fields this game plugin fills (`docs/v2/catalog-v2.md` defines; §6.6 consumes it)
 
 [[resource_kinds]]                # upper bound on the MIME-type families a kind may be typed as (§6.5); api-v1.md owns the allowlist itself
 kind = "file"                     # bare; one of the reserved core kinds (file/audio/background/set/skin), so this stays "resource:chart.file" — never prefixed with this plugin's own id

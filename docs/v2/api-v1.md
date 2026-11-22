@@ -227,6 +227,7 @@ Every API v1 error response is a JSON body:
 | 405 | `method_not_allowed` | wrong HTTP method on a route |
 | 410 | `unpublished_resource` / `unpublished_tree` | a structurally valid, correctly signed id no longer in the published registry |
 | 413 | `payload_too_large` | job creation/poll/cancel body over the POST body limit |
+| 429 | `too_many_jobs` | creating a job while 1024 jobs are still running |
 | 500 | `serialization_failed` | internal encode failure |
 
 The 404/410 split on resource and tree ids follows directly from how ids are
@@ -418,7 +419,13 @@ if that session later ends.
 - **Retention**: a terminal job stays readable for 5 minutes after it
   terminates, in a bounded registry of 1024 jobs (the oldest terminal job is
   evicted first once the registry is full); past that window, or once
-  evicted, `GET`/`DELETE` on its id is 404 `unknown_job`.
+  evicted, `GET`/`DELETE` on its id is 404 `unknown_job`. Running jobs count
+  toward the bound and are never evicted: creating a job while 1024 are
+  running is 429 `too_many_jobs`.
+- **Authorization**: `GET` and `DELETE /api/v1/jobs/{id}` are action routes
+  and need the same tool-session token or broker credential as creating a
+  job (Authorization below). A tool session can read and cancel only jobs it
+  created; the broker credential can read and cancel any job.
 
 Job creation, polling, and cancellation requests are capped at the existing
 1 MiB POST body limit.
@@ -443,15 +450,19 @@ credential) never can:
   otherwise 403 `forbidden` even with a valid session. The bridge exposes two
   calls, both attaching that header automatically: `vosu.invoke(actionId,
   args, { session, onProgress, signal })` awaits the job to completion via
-  `GET /api/v1/jobs/{id}` long-polling and resolves with its `result` (or
-  rejects with its `error`), calling `onProgress(progress)` on each change
-  and sending `DELETE /api/v1/jobs/{id}` if the passed `signal` aborts;
-  `vosu.start(actionId, args, { session })` creates the job with `wait=0` and
-  returns a job handle `{id, done, onProgress(fn), cancel()}` for a caller
-  that wants it to run in the background — `done` is a promise settling the
-  same way `vosu.invoke` does, `onProgress` registers a callback, and
-  `cancel()` sends `DELETE`. `docs/v2/catalog-v2.md` references this section
-  for both calls rather than restating them.
+  `GET /api/v1/jobs/{id}` long-polling and resolves with its `result`,
+  rejects with its `error` when it fails, and rejects with an error whose
+  `code` is `"cancelled"` when it is cancelled (including after the passed
+  `signal` aborts, which sends `DELETE /api/v1/jobs/{id}`); it calls
+  `onProgress(progress)` on each change. `vosu.start(actionId, args,
+  { session })` creates the job with `wait=0` and returns a job handle
+  `{id, done, onProgress(fn), cancel()}` for a caller that wants it to run in
+  the background — `done` is a promise settling the same way `vosu.invoke`
+  does, `onProgress` registers a callback, and `cancel()` sends `DELETE`.
+  Both route by `session`: omitted or a string (a session id or `"active"`;
+  omitted means `"active"`) uses `POST /api/v1/sessions/{session}/actions/…`,
+  and `null` uses `POST /api/v1/actions/…`; the action's declared `session`
+  mode decides which of the two is valid, as Create a job defines.
 - **The CLI**, through the native loopback broker credential, for an action
   declared `cli = true` (`docs/v2/catalog-v2.md`): `vosux <plugin-id>
   <action> [json-args]` forwards to the same HTTP route under the broker's

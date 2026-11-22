@@ -172,8 +172,7 @@ validation error.
 
 Every plugin, tool, and overlay package is `manifest.toml` at its package
 root (an overlay package also has `index.html` at the root); it replaces
-1.x's `tool.toml` and the earlier, separately-proposed `plugin.toml` and
-`overlay.toml` with one format shared by every package kind. `metadata.txt`
+1.x's `tool.toml` with one format shared by every package kind. `metadata.txt`
 remains read-only legacy input: still read for an overlay with no
 `manifest.toml` (an existing 1.x install, or an overlay from the upstream
 community catalog), never extended with new fields; when both are present,
@@ -248,7 +247,7 @@ version = "1.0.0"                 # must equal the matching `provides` entry for
 title = "Import beatmap"          # display name shown in install plans and tool permission prompts
 args_schema = "schemas/beatmap-import-args.schema.json"     # path inside the plugin package
 result_schema = "schemas/beatmap-import-result.schema.json" # path inside the plugin package
-session = "required"              # "required" | "optional" | "none": whether invocation needs a session
+session = "required"              # "required" | "optional" | "none": which action routes accept it
 cli = true                        # also exposed as `vosux <plugin-id> beatmap.import [json-args]`
 ```
 
@@ -280,7 +279,7 @@ cli = true                        # also exposed as `vosux <plugin-id> beatmap.i
   fields are equal. A `provides` action entry with no matching `[[actions]]`
   entry, or an `[[actions]]` entry with no matching `provides` entry, is a
   manifest validation error.
-- `session` controls the invocation route `docs/v2/api-v1.md` defines:
+- `session` controls which action routes `docs/v2/api-v1.md` accepts for it:
   `"required"` means `{id|active}` must resolve to an attached session,
   `"optional"` means the call is valid with or without one, `"none"` means
   the action takes no session at all (a utility action a tool or another
@@ -296,8 +295,7 @@ cli = true                        # also exposed as `vosux <plugin-id> beatmap.i
 
 Tools are web-only in 2.0 ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)):
 the only additional section is `[ui]`. There is no `[service]`, `[cli]`,
-`[api]`, or `[permissions]`; a 1.x `tool.toml` with any of those fields
-cannot be read as a valid `kind = "tool"` manifest — see
+`[api]`, or `[permissions]`. 2.0 never reads `tool.toml`; see
 [First-start migration](#first-start-migration-from-1x).
 
 ```toml
@@ -510,7 +508,8 @@ game, not any real supported or planned integration.
 - `packages` is a map from target to `{"url","sha256","size"}`, identical
   field rules to 1.x `Package`: absolute HTTPS URL without embedded
   credentials, 64-character hex SHA-256 of the compressed ZIP, exact positive
-  byte size, at most the configured package limit (below). Plugin
+  byte size. The size is checked against the local package limit (below)
+  when installing, not when validating the catalog. Plugin
   entries use real target triples (`x86_64-unknown-linux-gnu`,
   `x86_64-pc-windows-msvc`; a matching native package takes precedence, no
   matching package means unsupported on that host). Tool and overlay entries,
@@ -526,7 +525,8 @@ game, not any real supported or planned integration.
   limit protects the disk against oversized or archive-bomb packages, so the
   ceiling is not removable. A catalog entry whose `size` exceeds the current
   limit is shown as "too large to install; raise the package limit in
-  Settings" instead of failing after the download starts.
+  Settings" instead of failing after the download starts; exceeding the
+  local limit is never a catalog validation error.
 - `icon_url`, `banner_url`, and `preview` follow 1.x's art rules unchanged:
   absolute HTTPS, no embedded credentials, validated like package URLs,
   fetched through the dashboard's `/api/catalog/art?url=` proxy for the same
@@ -545,7 +545,10 @@ game, not any real supported or planned integration.
   `vosu-plugin-<id>-<version>-<target>.zip` for plugins. Every package ZIP
   has `manifest.toml` (`kind`-specific sections split between this spec and
   `docs/v2/plugin-abi.md`) at the archive root; an overlay ZIP also has
-  `index.html` there.
+  `index.html` there. On install, the archive's `manifest.toml` `kind`, `id`,
+  and `version` must equal the catalog array's kind and the entry's `id` and
+  `version`; any mismatch fails the install before anything is extracted
+  into place.
 
 ## API placement
 
