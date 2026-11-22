@@ -57,12 +57,14 @@ pub struct FocusKey(pub u64);
 pub struct FocusCandidate {
     pub handle: FocusKey,
     pub pid: u32,
-    /// Deterministic ordering for the "first focus decision ever" tie-break
-    /// (`docs/v2/api-v1.md` "Focus rule": "the first session by [ADR 0001]'s
-    /// deterministic ordering within the earliest-attached plugin"):
-    /// `(install order of the owning plugin, attach order within it)`,
-    /// ascending; the smallest tuple wins.
-    pub order: (usize, u64),
+    /// Install order of the owning plugin, the first key for the "first
+    /// focus decision ever" tie-break (`docs/v2/api-v1.md` "Focus rule":
+    /// "the first session by [ADR 0001]'s deterministic ordering within
+    /// the earliest-attached plugin"). The second key is `pid` itself:
+    /// ADR 0001 retains instances in PID order and "the lowest matching
+    /// PID wins", not attach/discovery order, which discovery's own
+    /// iteration makes unreliable.
+    pub install_order: usize,
 }
 
 /// `VOSU_OP_FOCUS_CHANGED` to deliver to one session.
@@ -77,9 +79,11 @@ pub struct FocusEvent {
 /// order.
 pub struct FocusTracker {
     focused: Option<FocusKey>,
-    /// Most-recent-first; a stale entry (its session is no longer a
-    /// candidate) is skipped, never removed eagerly, so a session that
-    /// briefly drops out of `candidates` and returns keeps its place.
+    /// Most-recent-first; pruned to only the sessions [`Self::recompute`]
+    /// was last given as present (§6.2: a session handle is used once —
+    /// `docs/v2/plugin-abi.md` §3 — so one that left `candidates` has
+    /// detached for good and keeping its entry here would only grow this
+    /// list without bound).
     recency: Vec<FocusKey>,
 }
 
@@ -133,8 +137,12 @@ impl FocusTracker {
         }
         // "The first focus decision after no session was focused … picks
         // the first session by [ADR 0001]'s deterministic ordering within
-        // the earliest-attached plugin."
-        candidates.iter().min_by_key(|c| c.order).map(|c| c.handle)
+        // the earliest-attached plugin": install order, then lowest PID
+        // (ADR 0001's "lowest matching PID wins").
+        candidates
+            .iter()
+            .min_by_key(|c| (c.install_order, c.pid))
+            .map(|c| c.handle)
     }
 
     /// Recomputes focus given the current identified `candidates` and
@@ -150,17 +158,20 @@ impl FocusTracker {
         foreground: &dyn ForegroundSource,
     ) -> Vec<FocusEvent> {
         let present: HashSet<FocusKey> = candidates.iter().map(|c| c.handle).collect();
+        self.recency.retain(|handle| present.contains(handle));
         let new_focus = self.decide(candidates, &present, priority_holder, foreground);
         if new_focus == self.focused {
             return Vec::new();
         }
         let mut events = Vec::new();
-        // The previously focused session is told it lost focus even when
-        // it is no longer a candidate (it just detached): §6.2 only
-        // requires "the session losing it" be notified, and that session
-        // already has its own `SESSION_DETACHED` to retire the handle.
+        // The previously focused session is told it lost focus only while
+        // it is still a candidate: once it has left `candidates` it has
+        // already detached, and its own `SESSION_DETACHED` already
+        // retired the handle — a `FOCUS_CHANGED` naming it afterward
+        // would name a handle the plugin no longer recognizes.
         if let Some(old) = self.focused
             && Some(old) != new_focus
+            && present.contains(&old)
         {
             events.push(FocusEvent {
                 handle: old,
@@ -219,11 +230,11 @@ impl FocusTracker {
 mod tests {
     use super::*;
 
-    fn candidate(handle: u64, pid: u32, order: (usize, u64)) -> FocusCandidate {
+    fn candidate(handle: u64, pid: u32, install_order: usize) -> FocusCandidate {
         FocusCandidate {
             handle: FocusKey(handle),
             pid,
-            order,
+            install_order,
         }
     }
 
@@ -231,7 +242,7 @@ mod tests {
     fn first_ever_decision_picks_the_deterministic_first_by_install_order() {
         let mut tracker = FocusTracker::new();
         let foreground = SyntheticForegroundSource::new(None);
-        let candidates = vec![candidate(2, 200, (1, 0)), candidate(1, 100, (0, 0))];
+        let candidates = vec![candidate(2, 200, 1), candidate(1, 100, 0)];
         let events = tracker.recompute(&candidates, None, &foreground);
         assert_eq!(
             events,
@@ -244,10 +255,28 @@ mod tests {
     }
 
     #[test]
+    fn first_ever_decision_ties_on_install_order_by_lowest_pid() {
+        // Same install order (both the earliest-installed plugin's own
+        // discoveries): ADR 0001's "lowest matching PID wins" decides, not
+        // whichever happened to attach/discover first.
+        let mut tracker = FocusTracker::new();
+        let foreground = SyntheticForegroundSource::new(None);
+        let candidates = vec![candidate(2, 300, 0), candidate(1, 150, 0)];
+        let events = tracker.recompute(&candidates, None, &foreground);
+        assert_eq!(
+            events,
+            vec![FocusEvent {
+                handle: FocusKey(1),
+                focused: true
+            }]
+        );
+    }
+
+    #[test]
     fn foreground_owner_wins_over_everything_but_focus_priority() {
         let mut tracker = FocusTracker::new();
         let foreground = SyntheticForegroundSource::new(Some(200));
-        let candidates = vec![candidate(1, 100, (0, 0)), candidate(2, 200, (1, 0))];
+        let candidates = vec![candidate(1, 100, 0), candidate(2, 200, 1)];
         let events = tracker.recompute(&candidates, None, &foreground);
         assert_eq!(
             events,
@@ -262,7 +291,7 @@ mod tests {
     fn delivery_order_is_losing_session_first_then_gaining_session() {
         let mut tracker = FocusTracker::new();
         let foreground = SyntheticForegroundSource::new(Some(100));
-        let candidates = vec![candidate(1, 100, (0, 0)), candidate(2, 200, (1, 0))];
+        let candidates = vec![candidate(1, 100, 0), candidate(2, 200, 1)];
         tracker.recompute(&candidates, None, &foreground);
         assert_eq!(tracker.focused(), Some(FocusKey(1)));
 
@@ -287,7 +316,7 @@ mod tests {
     fn most_recently_focused_fallback_when_nothing_owns_foreground() {
         let mut tracker = FocusTracker::new();
         let foreground = SyntheticForegroundSource::new(Some(100));
-        let candidates = vec![candidate(1, 100, (0, 0)), candidate(2, 200, (1, 0))];
+        let candidates = vec![candidate(1, 100, 0), candidate(2, 200, 1)];
         tracker.recompute(&candidates, None, &foreground);
         assert_eq!(tracker.focused(), Some(FocusKey(1)));
 
@@ -304,7 +333,7 @@ mod tests {
     fn most_recent_fallback_prefers_recency_over_deterministic_first() {
         let mut tracker = FocusTracker::new();
         let foreground = SyntheticForegroundSource::new(Some(200));
-        let candidates = vec![candidate(1, 100, (0, 0)), candidate(2, 200, (1, 0))];
+        let candidates = vec![candidate(1, 100, 0), candidate(2, 200, 1)];
         tracker.recompute(&candidates, None, &foreground);
         assert_eq!(tracker.focused(), Some(FocusKey(2)));
 
@@ -317,10 +346,29 @@ mod tests {
     }
 
     #[test]
+    fn recency_drops_a_handle_once_it_leaves_candidates() {
+        let mut tracker = FocusTracker::new();
+        let foreground = SyntheticForegroundSource::new(Some(200));
+        let candidates = vec![candidate(1, 100, 0), candidate(2, 200, 1)];
+        tracker.recompute(&candidates, None, &foreground);
+        assert_eq!(tracker.recency, vec![FocusKey(2)]);
+
+        // 2 detaches: its recency entry is pruned on the very next
+        // recompute, not kept around without bound in case it reappears
+        // (a handle is never reused, so it never does, `docs/v2/plugin-
+        // abi.md` §3).
+        foreground.set(None);
+        let remaining = vec![candidate(1, 100, 0)];
+        tracker.on_session_detached(&remaining, None, &foreground);
+        assert_eq!(tracker.focused(), Some(FocusKey(1)));
+        assert_eq!(tracker.recency, vec![FocusKey(1)]);
+    }
+
+    #[test]
     fn focus_priority_wins_unconditionally_over_foreground() {
         let mut tracker = FocusTracker::new();
         let foreground = SyntheticForegroundSource::new(Some(100));
-        let candidates = vec![candidate(1, 100, (0, 0)), candidate(2, 200, (1, 0))];
+        let candidates = vec![candidate(1, 100, 0), candidate(2, 200, 1)];
         let events = tracker.recompute(&candidates, Some(FocusKey(2)), &foreground);
         assert_eq!(
             events,
@@ -335,14 +383,14 @@ mod tests {
     fn on_session_identified_always_notifies_the_new_session_even_without_a_transition() {
         let mut tracker = FocusTracker::new();
         let foreground = SyntheticForegroundSource::new(Some(100));
-        let first = vec![candidate(1, 100, (0, 0))];
+        let first = vec![candidate(1, 100, 0)];
         tracker.recompute(&first, None, &foreground);
         assert_eq!(tracker.focused(), Some(FocusKey(1)));
 
         // Session 2 identifies but does not become focused (1 keeps
         // foreground): overall focus is unchanged, yet 2 still gets its
         // mandatory first FOCUS_CHANGED.
-        let both = vec![candidate(1, 100, (0, 0)), candidate(2, 200, (1, 0))];
+        let both = vec![candidate(1, 100, 0), candidate(2, 200, 1)];
         let events = tracker.on_session_identified(FocusKey(2), &both, None, &foreground);
         assert_eq!(
             events,
@@ -357,7 +405,7 @@ mod tests {
     fn on_session_identified_does_not_duplicate_when_the_new_session_wins_focus() {
         let mut tracker = FocusTracker::new();
         let foreground = SyntheticForegroundSource::new(Some(200));
-        let candidates = vec![candidate(1, 100, (0, 0)), candidate(2, 200, (1, 0))];
+        let candidates = vec![candidate(1, 100, 0), candidate(2, 200, 1)];
         let events = tracker.on_session_identified(FocusKey(2), &candidates, None, &foreground);
         assert_eq!(
             events,
@@ -372,7 +420,7 @@ mod tests {
     fn detach_of_the_focused_session_lets_recency_pick_the_next_one() {
         let mut tracker = FocusTracker::new();
         let foreground = SyntheticForegroundSource::new(None);
-        let candidates = vec![candidate(1, 100, (0, 0)), candidate(2, 200, (1, 0))];
+        let candidates = vec![candidate(1, 100, 0), candidate(2, 200, 1)];
         tracker.recompute(&candidates, None, &foreground);
         assert_eq!(tracker.focused(), Some(FocusKey(1)));
 
@@ -382,21 +430,17 @@ mod tests {
         assert_eq!(tracker.focused(), Some(FocusKey(2)));
         foreground.set(None);
 
-        // Session 2 detaches: falls back to the next most recent, 1.
-        let remaining = vec![candidate(1, 100, (0, 0))];
+        // Session 2 detaches: falls back to the next most recent, 1. 2's
+        // own SESSION_DETACHED already retired its handle, so no loss
+        // FOCUS_CHANGED is sent for it — only the gain for 1.
+        let remaining = vec![candidate(1, 100, 0)];
         let events = tracker.on_session_detached(&remaining, None, &foreground);
         assert_eq!(
             events,
-            vec![
-                FocusEvent {
-                    handle: FocusKey(2),
-                    focused: false
-                },
-                FocusEvent {
-                    handle: FocusKey(1),
-                    focused: true
-                },
-            ]
+            vec![FocusEvent {
+                handle: FocusKey(1),
+                focused: true
+            }]
         );
     }
 
@@ -404,18 +448,15 @@ mod tests {
     fn no_candidates_means_no_focused_session() {
         let mut tracker = FocusTracker::new();
         let foreground = SyntheticForegroundSource::new(Some(100));
-        let candidates = vec![candidate(1, 100, (0, 0))];
+        let candidates = vec![candidate(1, 100, 0)];
         tracker.recompute(&candidates, None, &foreground);
         assert_eq!(tracker.focused(), Some(FocusKey(1)));
 
+        // 1 detached (it is no longer a candidate): its own
+        // SESSION_DETACHED already retired the handle, so no loss
+        // FOCUS_CHANGED is sent for it.
         let events = tracker.on_session_detached(&[], None, &foreground);
-        assert_eq!(
-            events,
-            vec![FocusEvent {
-                handle: FocusKey(1),
-                focused: false
-            }]
-        );
+        assert!(events.is_empty());
         assert_eq!(tracker.focused(), None);
     }
 }
