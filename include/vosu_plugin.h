@@ -5,13 +5,19 @@
  * document; keep them in sync.
  *
  * Every pointer and `vosu_bytes`/`vosu_bytes_mut` view in this header is
- * borrowed for the duration of the call that receives it. A callee that
- * needs the data afterward must copy it; no struct in this header retains a
- * pointer past the call that produced it, and no field is ever a pointer
- * into the host's or the target process's address space (those are named by
- * opaque handles or by target-process-relative addresses, which are inert
- * u64 values the receiver never dereferences directly). See "Message
- * envelope and encoding" in the spec for the rationale.
+ * borrowed for the duration of the call that receives it. The four
+ * fixed-layout hot-path opcodes (VOSU_OP_PUBLISH_FIELD,
+ * VOSU_OP_DEMAND_CHANGED, VOSU_OP_READ_PLAN_SUBMIT,
+ * VOSU_OP_READ_PLAN_RESULT) go further: their payload bytes contain no
+ * pointers at all, not even call-scoped ones. Variable-length data inside
+ * them is addressed by `{offset, len}` pairs relative to the start of the
+ * payload buffer, so the exact same bytes are valid whether the call is a
+ * direct in-process vtable invocation or a frame relayed to/from
+ * `vosu plugin-host` (see "Message envelope and encoding" and "Execution and
+ * trust" in the spec). No field anywhere in this header is a pointer into
+ * the host's or the target process's address space; target-process
+ * addresses are inert `uint64_t` values, never dereferenced by either side
+ * directly.
  */
 #ifndef VOSU_PLUGIN_H
 #define VOSU_PLUGIN_H
@@ -30,6 +36,15 @@ extern "C" {
  * not recognize it; see "ABI version negotiation". */
 #define VOSU_PLUGIN_ABI_MAJOR 1u
 
+/* Upper bound on the encoded size of a read-plan submission and of its
+ * result, in bytes (header plus every trailing array/string). Measured
+ * generously against docs/v2/brokered-reads.md's benchmark plans (largest
+ * observed: 358 bytes of data, well under 1 KiB encoded); a host rejects a
+ * larger submission with VOSU_ERR_INVALID_ARGUMENT before executing any
+ * read, so a malformed or adversarial plugin cannot make core allocate an
+ * unbounded buffer. */
+#define VOSU_READ_PLAN_MAX_BYTES (64u * 1024u)
+
 /* ---------------------------------------------------------------------
  * Primitives
  * --------------------------------------------------------------------- */
@@ -42,69 +57,92 @@ typedef enum vosu_status {
     VOSU_ERR_PERMISSION_DENIED = 4,
     VOSU_ERR_TARGET_GONE = 5,
     VOSU_ERR_BACKEND = 6,
+    /* The call answers an invocation/stream/plan that was already
+     * cancelled or closed from the other side; see "Error model". */
     VOSU_ERR_CANCELLED = 7,
+    /* The call exceeded a host-enforced deadline (an action invocation, a
+     * stream read awaiting a slow generator, or a plan execution). */
     VOSU_ERR_TIMED_OUT = 8,
 } vosu_status;
 
-/* Borrowed read-only byte view. */
+/* Borrowed read-only byte view. Call-scoped: never retained past the call
+ * that receives it. */
 typedef struct vosu_bytes {
     const uint8_t *data;
     uint32_t len;
 } vosu_bytes;
 
-/* Borrowed writable byte view. */
-typedef struct vosu_bytes_mut {
-    uint8_t *data;
-    uint32_t len;
-} vosu_bytes_mut;
-
 /* Opaque handles. Each is an integer scoped to one plugin instance; it is
  * never a pointer and carries no meaning outside the vtable call pair that
  * minted and consumed it. */
-typedef uint64_t vosu_session_id;
+typedef uint64_t vosu_session_id; /* a session's `handle`; see B1 in the spec's review history */
 typedef uint64_t vosu_plan_id;
 typedef uint64_t vosu_timer_id;
 typedef uint64_t vosu_invocation_id;
-typedef uint64_t vosu_scan_id;
-typedef uint64_t vosu_resource_id;
+typedef uint64_t vosu_resource_id; /* an open bounded byte stream, minted by the plugin */
 
 /* ---------------------------------------------------------------------
  * Message envelope
  *
- * Every call across the vtable boundary (plugin -> host via
- * `vosu_host_services::send`, host -> plugin via
- * `vosu_plugin_vtable::dispatch`) carries one `vosu_message`. `payload` is
- * CBOR (RFC 8949) for every opcode except the three hot-path families
- * (VOSU_OP_PUBLISH_FIELD, VOSU_OP_DEMAND_CHANGED,
- * VOSU_OP_READ_PLAN_SUBMIT, VOSU_OP_READ_PLAN_RESULT), whose payload bytes
- * are the fixed-layout structs defined below reinterpreted as bytes, never
- * parsed. See the spec for the full opcode-to-payload table.
+ * Every call across the plugin/host boundary is one `vosu_message`:
+ * plugin -> host via `vosu_host_services::send`, host -> plugin via
+ * `vosu_plugin_vtable::dispatch`. `payload` is CBOR (RFC 8949) for every
+ * opcode except the four hot-path families (1-4), whose payload bytes are
+ * the corresponding flat `*_header` struct from this file followed by its
+ * trailing variable-length data, never parsed, never containing a pointer.
  * --------------------------------------------------------------------- */
 
 typedef enum vosu_opcode {
-    VOSU_OP_PUBLISH_FIELD = 1,     /* plugin -> host, fixed layout */
-    VOSU_OP_DEMAND_CHANGED = 2,    /* host -> plugin, fixed layout */
-    VOSU_OP_READ_PLAN_SUBMIT = 3,  /* plugin -> host, fixed layout */
-    VOSU_OP_READ_PLAN_RESULT = 4,  /* host -> plugin, fixed layout */
-    VOSU_OP_SESSION_ATTACHED = 10, /* host -> plugin, CBOR */
-    VOSU_OP_SESSION_DETACHED = 11, /* host -> plugin, CBOR */
-    VOSU_OP_SCAN_REQUEST = 12,     /* plugin -> host, CBOR */
-    VOSU_OP_SCAN_RESULT = 13,      /* host -> plugin, CBOR */
-    VOSU_OP_RESOURCE_RESOLVE = 14, /* plugin -> host, CBOR */
-    VOSU_OP_ACTION_INVOKE = 20,    /* host -> plugin, CBOR */
-    VOSU_OP_ACTION_RESULT = 21,    /* plugin -> host, CBOR */
-    VOSU_OP_ACTION_CANCEL = 22,    /* host -> plugin, CBOR */
-    VOSU_OP_SETTINGS_CHANGED = 30, /* host -> plugin, CBOR */
-    VOSU_OP_LOG_RECORD = 31,       /* plugin -> host, CBOR */
-    VOSU_OP_TIMER_SET = 32,        /* plugin -> host, CBOR */
-    VOSU_OP_TIMER_CANCEL = 33,     /* plugin -> host, CBOR */
-    VOSU_OP_TIMER_FIRED = 34,      /* host -> plugin, CBOR */
+    /* Hot path: fixed flat layout, no pointers in the payload. */
+    VOSU_OP_PUBLISH_FIELD = 1,      /* plugin -> host */
+    VOSU_OP_DEMAND_CHANGED = 2,     /* host -> plugin */
+    VOSU_OP_READ_PLAN_SUBMIT = 3,   /* plugin -> host */
+    VOSU_OP_READ_PLAN_RESULT = 4,   /* host -> plugin */
+
+    /* Session lifecycle and focus. */
+    VOSU_OP_SESSION_ATTACHED = 10,  /* host -> plugin, CBOR */
+    VOSU_OP_SESSION_DETACHED = 11,  /* host -> plugin, CBOR */
+    VOSU_OP_SESSION_IDENTIFY = 12,  /* plugin -> host, CBOR */
+    VOSU_OP_FOCUS_CHANGED = 13,     /* host -> plugin, CBOR */
+
+    /* Scanning. */
+    VOSU_OP_SCAN_REQUEST = 20,      /* plugin -> host, CBOR */
+    VOSU_OP_SCAN_RESULT = 21,       /* host -> plugin, CBOR, correlated */
+
+    /* Resources, trees, streams, file roots. */
+    VOSU_OP_RESOURCE_RESOLVE = 30,  /* host -> plugin, CBOR */
+    VOSU_OP_RESOURCE_RESOLVED = 31, /* plugin -> host, CBOR, correlated: answers RESOURCE_RESOLVE, TREE_LIST, or TREE_LOOKUP */
+    VOSU_OP_TREE_LIST = 32,         /* host -> plugin, CBOR */
+    VOSU_OP_TREE_LOOKUP = 33,       /* host -> plugin, CBOR */
+    VOSU_OP_STREAM_READ = 34,       /* host -> plugin, CBOR */
+    VOSU_OP_STREAM_CHUNK = 35,      /* plugin -> host, CBOR, correlated */
+    VOSU_OP_ROOT_DECLARE = 36,      /* plugin -> host, CBOR */
+
+    /* Actions. */
+    VOSU_OP_ACTION_INVOKE = 40,     /* host -> plugin, CBOR */
+    VOSU_OP_ACTION_RESULT = 41,     /* plugin -> host, CBOR */
+    VOSU_OP_ACTION_CANCEL = 42,     /* host -> plugin, CBOR */
+    VOSU_OP_ACTION_PROGRESS = 43,   /* plugin -> host, CBOR */
+    VOSU_OP_ACTION_CALL = 44,       /* plugin -> host, CBOR: this plugin invokes another plugin's action */
+
+    /* Settings and logging. */
+    VOSU_OP_SETTINGS_CHANGED = 50,  /* host -> plugin, CBOR */
+    VOSU_OP_LOG_RECORD = 51,        /* plugin -> host, CBOR */
+
+    /* Timers. */
+    VOSU_OP_TIMER_SET = 60,         /* plugin -> host, CBOR */
+    VOSU_OP_TIMER_CANCEL = 61,      /* plugin -> host, CBOR */
+    VOSU_OP_TIMER_FIRED = 62,       /* host -> plugin, CBOR */
+
+    /* Cross-plugin state reads. */
+    VOSU_OP_STATE_SUBSCRIBE = 70,   /* plugin -> host, CBOR */
+    VOSU_OP_STATE_UPDATE = 71,      /* host -> plugin, CBOR */
 } vosu_opcode;
 
 typedef struct vosu_message {
     uint32_t opcode;         /* a vosu_opcode value */
     uint32_t flags;          /* opcode-specific; 0 unless the spec says otherwise */
-    uint64_t correlation_id; /* 0 for messages with no reply (publish, log, demand, cancel) */
+    uint64_t correlation_id; /* 0 for messages with no reply; see per-opcode notes */
     vosu_bytes payload;
 } vosu_message;
 
@@ -118,42 +156,81 @@ typedef enum vosu_value_kind {
     VOSU_VALUE_I64 = 2,
     VOSU_VALUE_U64 = 3,
     VOSU_VALUE_F64 = 4,
-    VOSU_VALUE_STRING = 5, /* UTF-8, carried in `as.bytes` */
-    VOSU_VALUE_BYTES = 6,  /* opaque, carried in `as.bytes` */
+    VOSU_VALUE_STRING = 5,        /* UTF-8, trailing bytes */
+    VOSU_VALUE_BYTES = 6,         /* opaque, trailing bytes */
+    VOSU_VALUE_CBOR = 7,          /* a CBOR-encoded subtree that replaces the whole value at the pointer; the only way to publish an array or object */
+    VOSU_VALUE_RESOURCE_REF = 8,  /* trailing bytes are a CBOR `{"kind": string, "key": CBOR}` resolved later via RESOURCE_RESOLVE */
+    VOSU_VALUE_TREE_REF = 9,      /* trailing bytes are a CBOR `{"kind": string, "key": CBOR}` resolved later via TREE_LIST/TREE_LOOKUP */
 } vosu_value_kind;
 
-typedef struct vosu_value {
-    uint32_t kind; /* a vosu_value_kind value */
+/* ---------------------------------------------------------------------
+ * VOSU_OP_PUBLISH_FIELD: flat payload.
+ *
+ * `ns` plus `pointer` name the capability id `field:<ns>.<dotted form of
+ * pointer>` per the naming contract; `pointer` itself is an RFC 6901 JSON
+ * Pointer relative to the namespace root (e.g. "/pp/current"), matching how
+ * API v1 and the subscription protocol address the same field.
+ * --------------------------------------------------------------------- */
+
+typedef struct vosu_field_publish_header {
+    uint64_t handle;
+    uint32_t ns_offset;
+    uint32_t ns_len;
+    uint32_t pointer_offset;
+    uint32_t pointer_len;
+    uint32_t value_kind; /* a vosu_value_kind value */
+    uint32_t reserved;   /* keeps `scalar` 8-byte aligned; always 0 */
     union {
-        bool b;
+        uint8_t b;
         int64_t i64;
         uint64_t u64;
         double f64;
-        vosu_bytes bytes; /* VOSU_VALUE_STRING or VOSU_VALUE_BYTES */
-    } as;
-} vosu_value;
-
-/* VOSU_OP_PUBLISH_FIELD payload. `ns` plus `field_path` together name a
- * capability id `field:<ns>.<field_path>` per the shared naming contract;
- * the field's semantic schema is owned by docs/v2/state-schema.md. */
-typedef struct vosu_field_publish {
-    vosu_session_id session;
-    vosu_bytes ns;         /* dotted namespace, e.g. "vosu.osu" */
-    vosu_bytes field_path; /* dotted path below `ns`, e.g. "pp.current" */
-    vosu_value value;
-} vosu_field_publish;
-
-/* VOSU_OP_DEMAND_CHANGED payload. One subscriber transition for one field
- * (or, with an empty `field_path`, a whole namespace) this plugin fills. */
-typedef struct vosu_demand_changed {
-    vosu_session_id session; /* 0: applies to every session of this plugin */
-    vosu_bytes ns;
-    vosu_bytes field_path; /* empty selects the whole namespace */
-    bool subscribed;       /* false: no subscriber currently needs this field */
-} vosu_demand_changed;
+    } scalar;            /* meaningful for VOSU_VALUE_BOOL/I64/U64/F64 only */
+    uint32_t data_offset; /* STRING/BYTES/CBOR/RESOURCE_REF/TREE_REF: trailing bytes */
+    uint32_t data_len;
+} vosu_field_publish_header;
 
 /* ---------------------------------------------------------------------
- * Memory read plans
+ * VOSU_OP_DEMAND_CHANGED: flat payload.
+ *
+ * Sent whenever any demand for this session changes. `regular`/`precise`
+ * are host-computed lane gates (the precise gate already applies the
+ * `vosu.status` "play" requirement for gameplay-only fields); a plugin
+ * always samples its regular-cadence values regardless of `regular`, which
+ * exists only as a hint that nobody is currently reading them.
+ * `selectors` is the session's complete current set of subscribed
+ * (namespace, pointer) pairs, not a diff.
+ * --------------------------------------------------------------------- */
+
+typedef struct vosu_pointer_ref {
+    uint32_t ns_offset;
+    uint32_t ns_len;
+    uint32_t pointer_offset; /* empty selects the whole namespace */
+    uint32_t pointer_len;
+} vosu_pointer_ref;
+
+typedef struct vosu_demand_changed_header {
+    uint64_t handle;
+    uint8_t regular;
+    uint8_t precise;
+    uint8_t reserved[6]; /* always 0 */
+    uint32_t selectors_offset; /* vosu_pointer_ref[selector_count] */
+    uint32_t selector_count;
+} vosu_demand_changed_header;
+
+/* ---------------------------------------------------------------------
+ * Memory read plans.
+ *
+ * A plan is one base address plus an ordered list of stages. Stage 0's
+ * base is the plan's own `root`. A later stage's base may instead be
+ * "dependent": the pointer-width value read by an earlier stage's
+ * identified op, plus an additional offset, becomes that stage's base.
+ * Each stage batches independent `{offset, length}` ops relative to its own
+ * base. This lets one submission express both a deep sequential pointer
+ * chase (one op per stage, each stage depending on the previous) and a wide
+ * batch of sibling reads from one resolved address (many ops in one
+ * stage), which is the shape docs/v2/brokered-reads.md measured: one round
+ * trip regardless of stage or op count.
  * --------------------------------------------------------------------- */
 
 typedef enum vosu_plan_base_kind {
@@ -161,70 +238,82 @@ typedef enum vosu_plan_base_kind {
     VOSU_BASE_MODULE = 1,
 } vosu_plan_base_kind;
 
-/* A read's starting address: either a previously obtained absolute
+/* The plan's root base: either a previously obtained absolute
  * target-process address (e.g. from a scan result), or a module name plus a
  * byte offset from that module's base, resolved by the host at read time so
  * plugins never compute ASLR-sensitive bases themselves. */
-typedef struct vosu_plan_base {
-    uint32_t kind; /* a vosu_plan_base_kind value */
-    uint64_t address;      /* VOSU_BASE_ABSOLUTE */
-    vosu_bytes module;     /* VOSU_BASE_MODULE: module file name, e.g. "osu!.exe" */
-    int64_t module_offset; /* VOSU_BASE_MODULE */
-} vosu_plan_base;
+typedef struct vosu_plan_base_flat {
+    uint32_t kind;             /* a vosu_plan_base_kind value */
+    uint32_t module_name_offset; /* VOSU_BASE_MODULE: module file name, e.g. "osu!.exe" */
+    uint32_t module_name_len;
+    uint32_t reserved;         /* keeps `address`/`module_offset` 8-byte aligned; always 0 */
+    uint64_t address;          /* VOSU_BASE_ABSOLUTE */
+    int64_t module_offset;     /* VOSU_BASE_MODULE */
+} vosu_plan_base_flat;
 
-/* One step of a pointer path: add `offset` to the current address, then,
- * when `deref` is set, read a pointer-width value at the result (width
- * follows the session's reported process bitness) and continue from that
- * value. The final step in a read's `steps` is always followed by the
- * fixed-length read described by `vosu_plan_read::length`; its own `deref`
- * is ignored. */
-typedef struct vosu_plan_step {
-    int64_t offset;
-    bool deref;
-} vosu_plan_step;
+typedef struct vosu_plan_op {
+    int64_t offset; /* relative to the stage's resolved base */
+    uint32_t length; /* bytes to read at base + offset */
+    uint32_t reserved; /* always 0 */
+} vosu_plan_op;
 
-typedef struct vosu_plan_read {
-    vosu_plan_base base;
-    const vosu_plan_step *steps;
-    uint32_t step_count;
-    uint32_t length; /* bytes to read at the final address */
-} vosu_plan_read;
+typedef enum vosu_stage_base_kind {
+    VOSU_STAGE_BASE_ROOT = 0,      /* this stage's base is the plan's `root` */
+    VOSU_STAGE_BASE_DEPENDENT = 1, /* this stage's base is read from an earlier stage's op */
+} vosu_stage_base_kind;
 
-/* VOSU_OP_READ_PLAN_SUBMIT payload. One submission batches every read the
- * plugin needs this tick into a single call; the host executes all of them
- * and answers with exactly one VOSU_OP_READ_PLAN_RESULT, so a plan costs one
- * round trip regardless of `read_count`. The same plan runs identically
- * whether the plugin holds direct, in-process access or is brokered through
- * `vosu plugin-host`; only the transport between core and plugin-host
- * differs (see "Execution and trust"). */
-typedef struct vosu_read_plan_submit {
-    vosu_plan_id plan; /* caller-assigned; unique among this plugin's outstanding plans */
-    vosu_session_id session;
-    const vosu_plan_read *reads;
-    uint32_t read_count;
-} vosu_read_plan_submit;
+typedef struct vosu_stage_base {
+    uint32_t kind;     /* a vosu_stage_base_kind value */
+    uint32_t ref_stage; /* VOSU_STAGE_BASE_DEPENDENT: index of the earlier stage (< this stage's own index) */
+    uint32_t ref_op;    /* VOSU_STAGE_BASE_DEPENDENT: op index within that stage; its read bytes, interpreted
+                         * as a pointer-width value per the session's bitness, become the resolved address */
+    int64_t offset;     /* added after resolving either base kind, before this stage's ops apply */
+} vosu_stage_base;
+
+typedef struct vosu_stage_header {
+    vosu_stage_base base;
+    uint32_t ops_offset; /* vosu_plan_op[op_count] */
+    uint32_t op_count;
+} vosu_stage_header;
+
+/* VOSU_OP_READ_PLAN_SUBMIT: flat payload. One submission batches every
+ * stage this plugin needs into a single message; the host executes the
+ * whole dependent chain and answers with exactly one
+ * VOSU_OP_READ_PLAN_RESULT, so a plan costs one round trip regardless of
+ * `stage_count`. The same plan runs identically whether the plugin holds
+ * direct, in-process access or is brokered through `vosu plugin-host`. */
+typedef struct vosu_read_plan_submit_header {
+    uint64_t plan; /* caller-assigned; unique among this plugin's outstanding plans */
+    uint64_t handle;
+    vosu_plan_base_flat root;
+    uint32_t stages_offset; /* vosu_stage_header[stage_count] */
+    uint32_t stage_count;
+} vosu_read_plan_submit_header;
 
 typedef enum vosu_read_result_kind {
     VOSU_READ_OK = 0,
-    VOSU_READ_NOT_READY = 1,  /* mirrors src/process.rs ReadStatus::NotReady */
+    VOSU_READ_NOT_READY = 1, /* mirrors src/process.rs ReadStatus::NotReady */
     VOSU_READ_UNSUPPORTED = 2,
     VOSU_READ_ERROR = 3,
 } vosu_read_result_kind;
 
-typedef struct vosu_read_result {
-    uint32_t kind;           /* a vosu_read_result_kind value */
-    vosu_bytes bytes;        /* VOSU_READ_OK: exactly `vosu_plan_read::length` bytes */
-    uint32_t error_code;     /* VOSU_READ_ERROR: mirrors src/process.rs MemoryError variants */
-    vosu_bytes error_message; /* VOSU_READ_ERROR: human-readable detail */
-} vosu_read_result;
+typedef struct vosu_read_result_flat {
+    uint32_t kind; /* a vosu_read_result_kind value */
+    uint32_t bytes_offset; /* VOSU_READ_OK: offset of exactly the op's `length` bytes */
+    uint32_t bytes_len;
+    uint32_t error_code;   /* VOSU_READ_ERROR: mirrors src/process.rs MemoryError variants */
+    uint32_t error_message_offset;
+    uint32_t error_message_len;
+} vosu_read_result_flat;
 
-/* VOSU_OP_READ_PLAN_RESULT payload. `results` is parallel to the reads of
- * the matching submission: same order, same count. */
-typedef struct vosu_read_plan_result {
-    vosu_plan_id plan;
-    const vosu_read_result *results;
+/* VOSU_OP_READ_PLAN_RESULT: flat payload. `results` is flat, in the same
+ * (stage, op) traversal order as the matching submission; the plugin
+ * reconstructs which result answers which op from the shape it submitted. */
+typedef struct vosu_read_plan_result_header {
+    uint64_t plan;
+    uint32_t results_offset; /* vosu_read_result_flat[result_count] */
     uint32_t result_count;
-} vosu_read_plan_result;
+} vosu_read_plan_result_header;
 
 /* ---------------------------------------------------------------------
  * Vtables
@@ -232,37 +321,37 @@ typedef struct vosu_read_plan_result {
 
 struct vosu_host_services;
 
-/* Registered once by the plugin during `create`. The host invokes it for
- * every host -> plugin message that is not a direct reply to a call the
- * plugin made (session lifecycle, demand changes, actions, settings,
- * timers, scan results, read-plan results). Must return quickly: see
- * "Threading model" in the spec for the blocking budget. */
-typedef void (*vosu_plugin_on_message_fn)(void *plugin_ctx, const vosu_message *message);
-
 /* A plugin's implementation of the ABI. `struct_size` and `abi_version` are
  * always the first two fields of any future minor revision, so a host can
  * safely read up to `struct_size` bytes even when it was built against an
  * older or newer minor version; new function pointers are appended only at
- * the end and are NULL when the producer predates them. */
+ * the end and are treated as absent when a producer predates them. */
 typedef struct vosu_plugin_vtable {
     uint32_t struct_size; /* sizeof(vosu_plugin_vtable) as built */
     uint32_t abi_version; /* must equal VOSU_PLUGIN_ABI_MAJOR */
 
-    /* Called once after the host validates the plugin's manifest. Returns
-     * an opaque plugin-owned context passed back on every later call, or
-     * NULL to fail plugin load (the host logs and leaves the plugin
-     * unloaded). `host` and `host_ctx` outlive every call made through
-     * them until `destroy` returns. */
-    void *(*create)(const struct vosu_host_services *host, void *host_ctx);
+    /* Called once after the host validates the plugin's manifest. `init` is
+     * CBOR `{"plugin_id": string, "settings": <CBOR>, "data_dir": string}`:
+     * the plugin's id, its effective settings object, and its durable data
+     * directory. Returns an opaque plugin-owned context passed back on
+     * every later call, or NULL to fail plugin load (the host logs and
+     * leaves the plugin unloaded). `host` and `host_ctx` outlive every call
+     * made through them until `destroy` returns. */
+    void *(*create)(const struct vosu_host_services *host, void *host_ctx, vosu_bytes init);
 
-    /* The effective call for a host -> plugin message. The host serializes
-     * calls to one instance unless the manifest declares
-     * `concurrent_dispatch = true`. */
+    /* The single entry point for every host -> plugin message: session
+     * lifecycle, focus, demand, read-plan results, scan results, resource
+     * and tree requests, stream reads, action invoke/cancel, settings
+     * changes, timer fires, and state updates the plugin subscribed to.
+     * The host serializes calls to one instance unless the manifest
+     * declares `concurrent_dispatch = true`. The return value only accepts
+     * or rejects the message itself (VOSU_ERR_UNSUPPORTED for an opcode
+     * this plugin's minor version predates, VOSU_ERR_INVALID_ARGUMENT for a
+     * malformed payload, and so on); any business reply (an action result,
+     * a resolved resource, a published field) is a later, separate message
+     * the plugin sends through `vosu_host_services::send`, not this call's
+     * return value. */
     vosu_status (*dispatch)(void *plugin_ctx, const vosu_message *message);
-
-    /* Registers the plugin's asynchronous-message callback. Called at most
-     * once, before `create` returns. */
-    void (*set_message_callback)(void *plugin_ctx, vosu_plugin_on_message_fn callback, void *callback_ctx);
 
     /* The host is tearing this instance down (disabled, shutting down, or
      * crash-restarting it). Must release every resource and return within
@@ -278,8 +367,9 @@ typedef struct vosu_host_services {
 
     /* Sends one plugin -> host message. `message` is borrowed for the
      * duration of this call. A reply, when the opcode has one, arrives
-     * later through the plugin's registered callback carrying the same
-     * `correlation_id`. */
+     * later through the plugin's own `dispatch`, carrying the same
+     * `correlation_id` the plugin chose (or, for read plans, the same
+     * `plan`). */
     vosu_status (*send)(void *host_ctx, const vosu_message *message);
 } vosu_host_services;
 
