@@ -237,8 +237,8 @@ For `PluginAbiSpec`'s `process`-runtime read path:
 
 ## Open questions
 
-- **Windows transport is unmeasured.** ADR 0019 names named pipes and shared
-  sections as the Windows analogue of this benchmark's uds/shm variants.
+- **Windows transport is unmeasured.** Named pipes and shared sections are
+  the Windows analogues of this benchmark's uds/shm variants.
   Measuring it needs a Windows-native equivalent of this bench (`CreateNamedPipe`
   or `CreateFileMapping`/`MapViewOfFile` plus a Windows event object instead of
   `eventfd`) built and run on the native Windows guest, which this Linux-host
