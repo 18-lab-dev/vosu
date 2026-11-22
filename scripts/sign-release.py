@@ -19,6 +19,7 @@ in a repository secret, where anyone able to change a workflow could use it.
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -67,6 +68,11 @@ def sign(path, key):
     return signature
 
 
+def is_prerelease_tag(tag):
+    """True for a semver prerelease tag (e.g. v2.0.0-alpha.1), false for a stable one."""
+    return re.match(r"^v?\d+\.\d+\.\d+-", tag) is not None
+
+
 def download(tag, repo, name, directory):
     run("gh", "release", "download", tag, "--repo", repo, "--pattern", name, "--dir", str(directory))
     return directory / name
@@ -81,13 +87,13 @@ def find_release(repo, tag):
     return matches[0]
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--tag", required=True)
     parser.add_argument("--repo", default="18-lab-dev/vosu")
     parser.add_argument("--key", default=RELEASE_KEY)
     parser.add_argument("--publish", action="store_true", help="publish the draft release after signing")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     release = find_release(args.repo, args.tag)
     names = {asset["name"] for asset in release["assets"]}
@@ -118,8 +124,14 @@ def main():
         for name in verified:
             print(f"verified existing signature for {name}")
     if args.publish and release["draft"]:
+        fields = ["-F", "draft=false"]
+        if is_prerelease_tag(args.tag):
+            # A prerelease tag must not become the repo's "Latest release" or
+            # be marked stable: downstream updaters and release pages key off
+            # both flags to decide what to offer as a general-availability build.
+            fields += ["-F", "prerelease=true", "-F", "make_latest=false"]
         run("gh", "api", "--method", "PATCH", f"repos/{args.repo}/releases/{release['id']}",
-            "-F", "draft=false", capture=True)
+            *fields, capture=True)
         print(f"published {args.tag}")
 
 

@@ -107,14 +107,14 @@ def run_linux_step(name, cmd, log_dir, env_overrides=None, extra_env_unset=()):
     return StepResult(name, True, status, exit_code, round(wall, 3), " ".join(cmd), stdout + stderr)
 
 
-def changed_paths():
-    """Paths changed on HEAD relative to origin/main, or None when that cannot be proven."""
+def changed_paths(base="main"):
+    """Paths changed on HEAD relative to origin/<base>, or None when that cannot be proven."""
     try:
-        git("fetch", "origin", "main", check=True)
+        git("fetch", "origin", base, check=True)
     except RuntimeError as error:
-        print(f"warning: could not fetch origin/main to classify changes: {error}", file=sys.stderr)
+        print(f"warning: could not fetch origin/{base} to classify changes: {error}", file=sys.stderr)
         return None
-    diff = git("diff", "--no-renames", "--name-only", "origin/main...HEAD", check=False)
+    diff = git("diff", "--no-renames", "--name-only", f"origin/{base}...HEAD", check=False)
     return [line for line in diff.splitlines() if line]
 
 
@@ -306,6 +306,11 @@ def main():
     )
     parser.add_argument("--start-vm", action="store_true", help="Start the Windows VM if it is currently stopped.")
     parser.add_argument(
+        "--base",
+        default="main",
+        help="Branch to diff HEAD against for change detection (default: main).",
+    )
+    parser.add_argument(
         "--playwright-module",
         default=os.environ.get("VOSU_PLAYWRIGHT_MODULE", ""),
         help="Path to playwright/index.mjs for the dashboard smoke (default: $VOSU_PLAYWRIGHT_MODULE).",
@@ -340,7 +345,7 @@ def main():
         print(f"running {name} ...")
         results.append(run_linux_step(name, cmd, log_dir, env_overrides, unset))
 
-    paths = changed_paths()
+    paths = changed_paths(args.base)
     if "actionlint" in skip:
         results.append(StepResult("actionlint", True, "skipped", command=ACTIONLINT_CMD_TEXT))
     else:

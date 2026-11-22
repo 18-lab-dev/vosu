@@ -102,7 +102,7 @@ python scripts/land.py [--topic <name>]
   - native Windows Clippy, tests, and doctests in the VM through `scripts/native-ci.ps1`.
 
   It writes `target/prepush/<sha>.json`. `--start-vm` starts the Windows VM only if it is stopped; report that lifecycle action.
-- `land.py` accepts the evidence only when every step passed, or was not applicable, for exactly `HEAD`, and `HEAD` fast-forwards `origin/main`. It then pushes `ci/<topic>`, waits for hosted CI on that commit, fast-forwards `main`, and deletes the branch.
+- `land.py` accepts the evidence only when every step passed, or was not applicable, for exactly `HEAD`, and `HEAD` fast-forwards `origin/main`. It then pushes `ci/<topic>`, waits for hosted CI on that commit, fast-forwards `main`, and deletes the branch. Pass `--base <branch>` (and the matching `prepush.py --base <branch>`) to land onto a branch other than `main`, e.g. `v2/main`.
 - `--skip` is for local iteration only; `land.py` refuses evidence with a skipped or failed required step. Fix the cause and rerun. Do not weaken tests or bypass the gate.
 - When `ci.yml` gains a check, add it to `prepush.py` or `native-ci.ps1` in the same change. `scripts/test_gate_tooling.py` fails until the local gate covers it.
 

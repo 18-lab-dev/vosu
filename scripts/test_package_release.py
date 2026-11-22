@@ -263,5 +263,50 @@ class ReleaseSignatureTests(unittest.TestCase):
             sign_release.require_signed_by(self.asset, signature, self.release_key)
 
 
+class PrereleasePublishTests(unittest.TestCase):
+    def test_prerelease_tags_are_detected(self):
+        self.assertTrue(sign_release.is_prerelease_tag("v2.0.0-alpha.1"))
+        self.assertTrue(sign_release.is_prerelease_tag("v2.0.0-rc.2"))
+        self.assertFalse(sign_release.is_prerelease_tag("v2.0.0"))
+        self.assertFalse(sign_release.is_prerelease_tag("v1.2.4"))
+
+    def test_publishing_a_prerelease_tag_sets_prerelease_and_not_latest(self):
+        calls = []
+
+        def fake_run(*command, capture=False):
+            calls.append(command)
+            return "" if capture else None
+
+        def fake_find_release(repo, tag):
+            return {"id": 42, "draft": True, "assets": []}
+
+        with unittest.mock.patch.object(sign_release, "run", fake_run), \
+             unittest.mock.patch.object(sign_release, "find_release", fake_find_release):
+            sign_release.main(["--tag", "v2.0.0-alpha.1", "--publish"])
+
+        patch_call = next(c for c in calls if c[:2] == ("gh", "api"))
+        self.assertIn("prerelease=true", patch_call)
+        self.assertIn("make_latest=false", patch_call)
+
+    def test_publishing_a_stable_tag_does_not_touch_prerelease_flags(self):
+        calls = []
+
+        def fake_run(*command, capture=False):
+            calls.append(command)
+            return "" if capture else None
+
+        def fake_find_release(repo, tag):
+            return {"id": 42, "draft": True, "assets": []}
+
+        with unittest.mock.patch.object(sign_release, "run", fake_run), \
+             unittest.mock.patch.object(sign_release, "find_release", fake_find_release):
+            sign_release.main(["--tag", "v1.2.4", "--publish"])
+
+        patch_call = next(c for c in calls if c[:2] == ("gh", "api"))
+        self.assertNotIn("prerelease=true", patch_call)
+        self.assertNotIn("make_latest=false", patch_call)
+        self.assertIn("draft=false", patch_call)
+
+
 if __name__ == "__main__":
     unittest.main()

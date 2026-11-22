@@ -1,6 +1,9 @@
 """Verify prepush.py/native-ci.ps1 cover every ci.yml check, and land.py's refusals."""
 
+import contextlib
+import functools
 import importlib.util
+import io
 import json
 from pathlib import Path
 import re
@@ -9,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -260,6 +264,35 @@ class LandRefusalTest(unittest.TestCase):
         with self.assertRaisesRegex(self.land.GateRefused, "not a fast-forward"):
             self.land.plan(None, cwd=self.repo, evidence_dir=self.evidence_dir)
 
+    def test_custom_base_is_checked_instead_of_main(self):
+        self._write_evidence(self.sha, {})
+        # Push a second branch at the same commit and advance origin/main past
+        # it, so only the custom base still fast-forwards to HEAD.
+        self._git("push", "-q", "origin", f"{self.sha}:refs/heads/release")
+        other = self.repo.parent / (self.repo.name + "-other")
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True)
+        subprocess.run(["git", "checkout", "-q", "-B", "main", "origin/main"], cwd=other, check=True)
+        (other / "two.txt").write_text("two\n", encoding="utf-8")
+        subprocess.run(["git", "add", "two.txt"], cwd=other, check=True)
+        subprocess.run(["git", "-c", "user.email=t@e.com", "-c", "user.name=T", "commit", "-q", "-m", "two"], cwd=other, check=True)
+        subprocess.run(["git", "push", "-q", "origin", "main"], cwd=other, check=True)
+
+        with self.assertRaisesRegex(self.land.GateRefused, "not a fast-forward of origin/main"):
+            self.land.plan(None, cwd=self.repo, evidence_dir=self.evidence_dir)
+
+        sha, base_sha, branch = self.land.plan(None, "release", cwd=self.repo, evidence_dir=self.evidence_dir)
+        self.assertEqual(sha, self.sha)
+        self.assertEqual(base_sha, self.sha)
+
+    def test_dry_run_reports_the_custom_base(self):
+        self._write_evidence(self.sha, {})
+        self._git("push", "-q", "origin", f"{self.sha}:refs/heads/release")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = self.land.main(["--dry-run", "--base", "release"], cwd=self.repo, evidence_dir=self.evidence_dir)
+        self.assertEqual(code, 0)
+        self.assertIn("origin/release", output.getvalue())
+
     def test_dry_run_does_not_push_or_call_gh(self):
         self._write_evidence(self.sha, {})
         calls = []
@@ -307,6 +340,46 @@ class LandRefusalTest(unittest.TestCase):
         with self.assertRaisesRegex(self.land.GateRefused, "404"):
             self.land.find_ci_run(self.sha, timeout=3600, interval=3600, cwd=self.repo)
         self.assertEqual(len(calls), 1)
+
+
+class PrepushChangedPathsTest(unittest.TestCase):
+    def setUp(self):
+        self.prepush = _load_module("prepush_changed_paths_test", ROOT / "scripts" / "prepush.py")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        self._git("init", "-q", "-b", "release")
+        self._git("config", "user.email", "test@example.com")
+        self._git("config", "user.name", "Test")
+        (self.repo / "README.md").write_text("hello\n", encoding="utf-8")
+        self._git("add", "README.md")
+        self._git("commit", "-q", "-m", "init")
+        self.remote = Path(self.tmp.name + "-remote")
+        subprocess.run(["git", "init", "-q", "--bare", str(self.remote)], check=True)
+        self._git("remote", "add", "origin", str(self.remote))
+        self._git("push", "-q", "origin", "release")
+        (self.repo / "CHANGED.md").write_text("new\n", encoding="utf-8")
+        self._git("add", "CHANGED.md")
+        self._git("commit", "-q", "-m", "add file")
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(subprocess.run, ["rm", "-rf", str(self.remote)], check=False)
+
+    def _git(self, *args):
+        completed = subprocess.run(["git", *args], cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
+    def test_default_base_diffs_against_main(self):
+        # No origin/main exists in this fixture, so the fetch fails and the
+        # function fails safe by returning None rather than guessing.
+        original_git = self.prepush.git
+        with unittest.mock.patch.object(self.prepush, "git", functools.partial(original_git, cwd=self.repo)):
+            self.assertIsNone(self.prepush.changed_paths())
+
+    def test_custom_base_diffs_against_that_branch(self):
+        original_git = self.prepush.git
+        with unittest.mock.patch.object(self.prepush, "git", functools.partial(original_git, cwd=self.repo)):
+            paths = self.prepush.changed_paths("release")
+        self.assertEqual(paths, ["CHANGED.md"])
 
 
 if __name__ == "__main__":

@@ -17,32 +17,58 @@ env:
   PLAYWRIGHT_VERSION: 1.61.1
 
 jobs:
+  discover-branches:
+    name: Discover branches with nightly coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      branches: ${{ steps.list.outputs.branches }}
+    steps:
+      - name: List branches to run the lazer canary and random proptests against
+        id: list
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          branches='["main"]'
+          # v2/main is the v2 implementation branch (docs/v2/implementation-plan.md);
+          # it only exists for part of the migration, so probe rather than assume it.
+          if gh api "repos/${{ github.repository }}/branches/v2%2Fmain" >/dev/null 2>&1; then
+            branches='["main", "v2/main"]'
+          fi
+          echo "branches=$branches" >> "$GITHUB_OUTPUT"
+
   lazer-offset-canary:
-    name: Lazer offset generation canary
+    name: Lazer offset generation canary (${{ matrix.branch }})
+    needs: discover-branches
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJson(needs.discover-branches.outputs.branches) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Install offset helper build SDK
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: 8.0.x
-      - name: Canary the newest osu!lazer release against the embedded offset generator
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python scripts/lazer-offset-canary.py
+          ref: ${{ matrix.branch }}
 
   exploratory-property-tests:
-    name: Exploratory property tests
+    name: Exploratory property tests (${{ matrix.branch }})
+    needs: discover-branches
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJson(needs.discover-branches.outputs.branches) }}
     env:
       VOSU_PROPTEST_RANDOM: '1'
       PROPTEST_CASES: '20000'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.branch }}
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
