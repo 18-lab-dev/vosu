@@ -115,18 +115,22 @@ impl HostServices for VtableHostServices {
         // under that function's safety contract: non-null, outliving this
         // call. `struct_size`/`abi_version` are always the vtable's first
         // two fields regardless of minor-version growth
-        // (`docs/v2/plugin-abi.md` §1), so this read is always valid for
-        // any producer built against this major version; `send` is read
-        // only when `struct_size` covers its offset, treating a smaller
-        // producer's absent function pointer as "no services available"
-        // rather than reading past what it initialized.
+        // (`docs/v2/plugin-abi.md` §1), so reading `struct_size` alone is
+        // always valid for any producer built against this major version.
+        // `send` is read through the raw pointer — never via a `&*self.host`
+        // reference to the whole struct, which a smaller/older producer may
+        // not have fully initialized past its own `struct_size` — and only
+        // once `struct_size` is confirmed to cover its offset, treating a
+        // smaller producer's absent function pointer as "no services
+        // available" rather than reading past what it initialized (minor
+        // 5).
         unsafe {
-            let host = &*self.host;
+            let struct_size = core::ptr::addr_of!((*self.host).struct_size).read();
             let send_offset = core::mem::offset_of!(vosu_host_services, send);
-            if (host.struct_size as usize) < send_offset + core::mem::size_of::<usize>() {
+            if (struct_size as usize) < send_offset + core::mem::size_of::<usize>() {
                 return vosu_status::VOSU_ERR_UNSUPPORTED;
             }
-            match host.send {
+            match core::ptr::addr_of!((*self.host).send).read() {
                 // `send` returns the raw status code, not the typed enum
                 // (M4): the host may be foreign (C) code, so an
                 // out-of-range value must become a detectable error

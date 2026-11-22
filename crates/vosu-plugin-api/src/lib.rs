@@ -7,6 +7,7 @@
 //! Every public type here must read as the same contract as the C header:
 //! same name, same field order, same size. Keep both in sync (header
 //! comment, `include/vosu_plugin.h:1-5`).
+#![forbid(unsafe_op_in_unsafe_fn)]
 #![expect(
     non_camel_case_types,
     reason = "mirrors include/vosu_plugin.h's type and enumerator names exactly, so the header and these Rust types read as the same contract rather than two spellings of it"
@@ -49,7 +50,7 @@ pub use envelope::{vosu_bytes, vosu_message};
 pub use flags::VOSU_READ_PLAN_SYNC;
 pub use flat::demand::vosu_demand_changed_header;
 pub use flat::pointer::vosu_pointer_ref;
-pub use flat::publish::{vosu_field_publish_header, vosu_publish_batch_header};
+pub use flat::publish::{vosu_field_publish_header, vosu_publish_batch_header, vosu_scalar};
 pub use flat::read_plan::{
     vosu_plan_base_flat, vosu_plan_base_kind, vosu_plan_op, vosu_read_error_code,
     vosu_read_plan_result_header, vosu_read_plan_submit_header, vosu_read_result_flat,
