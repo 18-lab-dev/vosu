@@ -1,6 +1,6 @@
 # ADR 0017: Host tools on the overlay listener under a reserved `/tools` prefix
 
-Status: accepted.
+Status: accepted. For vosu 2.0, [ADR 0019](0019-plugin-runtime-and-trust.md) supersedes its tool services and its rejection of in-process plugins and a native plugin ABI.
 
 ## Context
 

@@ -1,6 +1,6 @@
 # Resolve plugin dependencies automatically and ship 2.0 with day-0 ecosystem support
 
-- Status: Proposed
+- Status: Accepted (vosu 2.0)
 - Date: 2026-11-21
 
 ## Context

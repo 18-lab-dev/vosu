@@ -9,7 +9,7 @@ tags: [architecture, decision, adr, lifecycle, multi-instance]
 
 ## Status
 
-Accepted
+Accepted. For vosu 2.0, [ADR 0020](0020-game-agnostic-data-model.md) extends it from osu! processes to sessions of any game plugin; deterministic generations and selection remain.
 
 ## Context
 

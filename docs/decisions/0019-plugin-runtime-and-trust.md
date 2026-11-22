@@ -1,6 +1,6 @@
 # Split vosu 2.0 into a minimal core and plugins
 
-- Status: Proposed
+- Status: Accepted (vosu 2.0)
 - Date: 2026-11-21
 - Supersedes: [ADR 0017](0017-tool-host.md) in part (tool services, the rejection of in-process plugins and of a native plugin ABI)
 - Extends: [ADR 0003](0003-process-memory-platform-boundary.md)

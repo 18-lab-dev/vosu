@@ -1,6 +1,6 @@
 # Serve vosu API v1 and keep upstream APIs as exact adapters
 
-- Status: Proposed
+- Status: Accepted (vosu 2.0)
 - Date: 2026-11-21
 - Extends: [ADR 0004](0004-separate-calculation-contracts.md), [ADR 0005](0005-root-confined-file-serving.md), [ADR 0011](0011-live-parity-optional.md)
 

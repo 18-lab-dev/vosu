@@ -1,6 +1,6 @@
 # Publish game state as owned namespaces with a best-effort common layer
 
-- Status: Proposed
+- Status: Accepted (vosu 2.0)
 - Date: 2026-11-21
 - Supersedes: [ADR 0001](0001-single-daemon-multi-instance-lifecycle.md) in part (its osu!-only scope; deterministic generations and selection remain)
 

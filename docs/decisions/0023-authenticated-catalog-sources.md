@@ -1,6 +1,6 @@
 # Support private and self-hosted catalog sources
 
-- Status: Proposed
+- Status: Accepted (vosu 2.0)
 - Date: 2026-11-21
 - Extends: [ADR 0015](0015-user-managed-api-keys.md), [ADR 0017](0017-tool-host.md) (catalog sources and trust)
 
