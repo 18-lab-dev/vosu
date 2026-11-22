@@ -19,27 +19,41 @@ in the [README](../../README.md#api-keys) and unchanged by this spec.
 Each attached game client is a session, discovered and selected per
 [ADR 0001](../decisions/0001-single-daemon-multi-instance-lifecycle.md) and
 [ADR 0020](../decisions/0020-game-agnostic-data-model.md). A session id is an
-opaque core-minted string; `active` addresses the focused session wherever a
-route accepts `{id|active}`. Addressing `active` when no session is focused
-behaves as an unknown id (see status codes below).
+opaque core-minted string, and core never mints the literal strings `active`
+or `subscribe` as one, so every `{id|active}` route segment and the literal
+`/subscribe` path stay unambiguous. `active` addresses the focused session
+wherever a route accepts `{id|active}`; addressing `active` when no session is
+focused behaves as an unknown id (see status codes below).
 
-A session summary is:
+A session summary is exactly the `vosu.client` fields from the naming
+contract, in that order:
 
 ```json
 {
-  "id": "string",
   "game": "string",
   "variant": "string",
   "name": "string",
   "version": "string",
   "pid": 0,
+  "session": "string",
   "focused": true,
   "plugin": { "id": "string", "version": "semver string" }
 }
 ```
 
-These are exactly the `vosu.client` fields from the naming contract, plus the
-session `id` as the record's own key/identity.
+`session` is the session's own id — the same string every `{id|active}` route
+segment above addresses it by.
+
+### Focus rule
+
+Exactly one attached session is focused whenever at least one is attached:
+the session whose process owns the OS foreground window, or, when no
+attached process does, whichever session was most recently focused. The
+first focus decision after no session was focused (daemon start, or every
+session having ended before a new one attaches) picks the first session by
+[ADR 0001](../decisions/0001-single-daemon-multi-instance-lifecycle.md)'s
+deterministic ordering within the earliest-attached plugin. `vosu.client.focused`
+is `true` for exactly that one session's summary; `active` always addresses it.
 
 ### `GET /api/v1/sessions`
 
@@ -62,11 +76,13 @@ already encodes, so no new frame shape is needed:
 
 - A pointer such as `/<sessionId>` selects a whole summary; `/<sessionId>/focused`
   selects only its focus flag; the empty pointer `""` selects every session.
-- A new session becoming visible is the corresponding id's pointer(s) newly
-  present in an update frame. A session ending is the corresponding id
-  appearing in that frame's removed-ids list. A focus change is a `focused`
-  value flip on exactly the two affected sessions (the old and new focus), or
-  a single flip if only one side is selected.
+- A new session becoming visible is its pointer(s) newly present, with a
+  value, in an update frame. A session ending is the *positions in this
+  client's own request array* that selected it appearing in that frame's
+  removed-index list — exactly 1.x's existing "became absent" mechanic, not a
+  list of session ids. A focus change is a `focused` value flip on exactly the
+  two affected sessions (the old and new focus), or a single flip if only one
+  side is selected.
 - Missing-but-valid pointers (an id not currently attached) report absence,
   exactly as in the base protocol; they do not invalidate the subscription.
 
@@ -158,6 +174,11 @@ separate client populations.
 
 ## HTTP state reads
 
+These are one-shot reads: they create no subscription demand and force no
+fresh sample. They return whatever value is currently published — the same
+value a concurrent subscriber would already have — at whatever cadence that
+field's own lane already runs.
+
 ### Whole document and whole namespace
 
 - `GET /api/v1/sessions/{id|active}/state` — the session's full merged
@@ -190,8 +211,8 @@ Every API v1 error response is a JSON body:
 | Status | `code` | Used by |
 | --- | --- | --- |
 | 400 | `invalid_request` / `invalid_pointer` / `invalid_arguments` | malformed query, body, or pointer |
-| 401 | `unauthorized` | missing/invalid API key on a scoped route |
-| 403 | `forbidden` | peer/Origin policy, or a valid key missing the required scope |
+| 401 | `unauthorized` | missing/invalid tool-session token or broker credential on an action route |
+| 403 | `forbidden` | peer/Origin policy; or a valid tool session whose action id is not in its resolved `requires`/`optional` |
 | 404 | `unknown_session` / `unknown_namespace` / `unknown_resource` / `unknown_tree` / `unknown_action` / `unknown_invocation` | id or path never valid for this server |
 | 405 | `method_not_allowed` | wrong HTTP method on a route |
 | 410 | `unpublished_resource` / `unpublished_tree` | a structurally valid, correctly signed id no longer in the published registry |
@@ -212,9 +233,15 @@ Exactly [ADR 0021](../decisions/0021-api-v1-and-upstream-adapters.md#resources):
 files are resources the state refers to, never "current file" lookups.
 
 - A **resource** is one file; a **tree** is an indexed folder (a chart's set
-  folder, the current skin). Core-defined kinds are `chart.file`,
-  `chart.audio`, `chart.background`, `chart.set`, `skin`; a plugin's own kinds
-  are `resource:<plugin-id>.<kind>`.
+  folder, the current skin). A kind name is bare — one segment
+  `[a-z0-9][a-z0-9-]{0,31}` — everywhere except inside a `resource:`
+  capability id: core's chart kinds are `file`, `audio`, `background` (each a
+  resource) and `set` (a tree); the skin tree has no further kind, just
+  `skin`. Context already supplies the namespace (the enclosing
+  `vosu.chart.resources` key, the route prefix, the plugin's own manifest
+  section), so only the capability-id form is qualified:
+  `resource:chart.background` for a core kind, `resource:<plugin-id>.<kind>`
+  for a plugin's own.
 - State carries references in place, never bare paths:
   `{"url": "/api/v1/resources/<id>", "type": "<mime>"}` or
   `{"url": "/api/v1/trees/<id>/"}`.
@@ -222,9 +249,9 @@ files are resources the state refers to, never "current file" lookups.
 | Route | Serves | Cache-Control | ETag |
 | --- | --- | --- | --- |
 | `GET`/`HEAD /api/v1/resources/{id}` | one file; a single validated byte range | `public, max-age=31536000, immutable` | strong, content-derived |
-| `GET /api/v1/trees/{id}/` | index of `{path, size, hash?}` entries, `truncated`, `revision` | `no-cache` (store, revalidate) | strong, revalidated |
+| `GET /api/v1/trees/{id}/` | index of `{path, size, hash?, type}` entries, `truncated`, `revision` | `no-cache` (store, revalidate) | strong, revalidated |
 | `GET`/`HEAD /api/v1/trees/{id}/{path}` | one file via the plugin's own lookup rules | `no-cache` | strong, revalidated |
-| `GET /api/v1/sessions/{id\|active}/chart/{kind}`, `/api/v1/sessions/{id\|active}/skin/{path}` | `307` to the current resource URL | `no-store` | none |
+| `GET /api/v1/sessions/{id\|active}/chart/{file\|audio\|background}`, `/api/v1/sessions/{id\|active}/skin/{path}` | `307` to the current resource URL | `no-store` | none |
 
 `If-None-Match` (including weak comparisons, lists, and `*`) takes precedence
 over `If-Modified-Since`; a satisfied condition returns a bodyless 304. HEAD
@@ -253,8 +280,10 @@ trees are read-only; changes go through actions.
 Every resource and tree response carries
 `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`, so a
 page or SVG from a chart or skin folder runs without script and outside the
-overlay origin even opened directly. The `Content-Type` comes from a fixed
-core allowlist, never a plugin-chosen string:
+overlay origin even opened directly. API v1 owns this allowlist; the
+`Content-Type` for a resource, and the `type` field of each tree-index entry,
+come from core matching the served file's extension against it — never a
+plugin-chosen or path-embedded string:
 
 | Family | Types |
 | --- | --- |
@@ -263,28 +292,57 @@ core allowlist, never a plugin-chosen string:
 | Video | `video/mp4`, `video/webm` |
 | Chart text | `text/plain; charset=utf-8` |
 
-A plugin declares which family each of its resource/tree kinds belongs to in
-its manifest (`docs/v2/catalog-v2.md`); it cannot introduce a new MIME type.
-Anything the allowlist does not cover, including HTML, serves as
+A plugin's manifest only bounds which of these families each of its
+resource/tree kinds may ever produce (`[[resource_kinds]]`,
+`docs/v2/plugin-abi.md`, mirrored in `docs/v2/catalog-v2.md`'s catalog
+entries); it never supplies a literal MIME type. A file extension outside the
+bounded families, or outside this allowlist entirely, serves as
 `application/octet-stream`.
 
 ## Actions
 
-Tools and overlays invoke plugin actions named `action:<plugin-id>.<name>`.
+Tools invoke plugin actions named `action:<plugin-id>.<name>`; overlays never
+do (authorization below). Each action declares, in its owning plugin's
+manifest (`[[actions]]`, `docs/v2/catalog-v2.md`), whether it needs a
+session: `required`, `optional`, or `none`.
 
 ### Invoke
 
-`POST /api/v1/sessions/{id|active}/actions/{plugin-id}.{name}` with body
-`{"arguments": {...}}` matching that action's declared argument schema
-(`docs/v2/catalog-v2.md`). Two outcomes:
+- `POST /api/v1/sessions/{id|active}/actions/{plugin-id}.{name}` — for an
+  action declared `required` or `optional`; the action receives this
+  resolved session id.
+- `POST /api/v1/actions/{plugin-id}.{name}` — for an action declared `none`
+  or `optional`; the action receives no session (`session: null`).
 
-- The action completes within the request: `200 {"result": {...}}`.
-- The action is long-running: `202 {"invocationId": "<opaque string>"}`.
+Calling an action at the route its own `session` declaration does not allow
+(`required` at the session-less route, `none` at a session route) is 404
+`unknown_action`: it is simply not registered there.
 
-### Progress, result, and cancellation
+Body: `{"arguments": {...}}`, matching the action's declared `args_schema`
+(`docs/v2/catalog-v2.md`). Core waits up to 250 ms for the action's result:
 
-- `GET /api/v1/sessions/{id|active}/actions/{invocationId}` polls current
-  status:
+- Completed within that window: `200 {"result": {...}}`, matching the
+  action's `result_schema`.
+- Still running after 250 ms: `202 {"invocationId": "<opaque string>"}`
+  immediately, with the action continuing; use the invocation route below for
+  its eventual outcome.
+
+The action's own ABI result maps onto this API outcome (and onto the
+invocation `state` below) as:
+
+| ABI result | API outcome |
+| --- | --- |
+| success | `succeeded`, `result` = the action's value |
+| failure, `code: "cancelled"` | `cancelled`, no `error` |
+| failure, any other `code` | `failed`, `error = {code, message}` |
+
+### Progress, result, and cancellation: `/api/v1/invocations/{invocationId}`
+
+Invocation ids are server-wide, not nested under a session or its actions —
+the originating session (or `null`) is fixed at invoke time and does not
+change if that session later ends.
+
+- `GET /api/v1/invocations/{invocationId}` polls current status:
 
   ```json
   {
@@ -295,46 +353,58 @@ Tools and overlays invoke plugin actions named `action:<plugin-id>.<name>`.
   }
   ```
 
-  `state` is `running`, `succeeded`, `failed`, or `cancelled`. `progress` is
-  `null` when the action reports none. `result` is populated only once
-  `succeeded`; `error` (the same `{code, message}` shape as HTTP errors) only
-  once `failed`.
-- `DELETE /api/v1/sessions/{id|active}/actions/{invocationId}` requests
-  cancellation. It is idempotent and advisory: the action may finish before
-  the request is observed, in which case its final `succeeded`/`failed` state
-  stands.
-- Invocation ids are scoped to the session and expire once their action
-  reaches a terminal state and has been read once, or after an
-  implementation-defined bound; a 404 `unknown_invocation` after that is
-  expected, not an error condition to guard against.
+  `state` is `running`, `succeeded`, `failed`, or `cancelled` (mapping above).
+  `progress` is `null` when the action reports none. `result` is populated
+  only once `succeeded`; `error` (the same `{code, message}` shape as HTTP
+  errors) only once `failed`.
+- `DELETE /api/v1/invocations/{invocationId}` requests cancellation. It is
+  idempotent and advisory: the action may finish before the request is
+  observed, in which case its final `succeeded`/`failed` state stands.
+- An invocation id expires once its action reaches a terminal state and has
+  been read once, or after an implementation-defined bound; a 404
+  `unknown_invocation` after that is expected, not an error condition to
+  guard against.
 
 Invoke, poll, and cancel requests are capped at the existing 1 MiB POST body
 limit.
 
 ### Authorization
 
-Reads, resources, trees, and subscriptions need no scope: they are open like
-other overlay-origin reads in 1.x, subject only to the peer policy
-(`ALLOWED_IPS`) that already gates every remote request. Actions mutate or
-drive the attached client, so invoking one needs one of:
+Reads, resources, trees, and subscriptions need no authorization beyond the
+existing peer policy (`ALLOWED_IPS`): open like other overlay-origin reads in
+1.x. Actions are different — only three caller classes may invoke one, and an
+overlay (browser script served from the overlay origin, with no further
+credential) never can:
 
-- A **dashboard-minted tool UI session**
-  ([ADR 0017](../decisions/0017-tool-host.md)'s write-authority model):
-  a tool UI opened from the dashboard holds a session kept only in page
-  memory, which authorizes action invocation the same way it already
-  authorizes a tool's own write routes.
-- An **API key** ([ADR 0015](../decisions/0015-user-managed-api-keys.md)) with
-  scope `actions:invoke`, for native and remote programmatic callers. This is
-  a new scope alongside the existing `settings:write` and `profiles:manage`;
-  it authorizes every `action:*` invocation and carries no per-action
-  granularity in v1.
-- The native loopback broker credential, which already bypasses scope checks
-  for trusted local tooling.
+- **A tool UI**, through the browser bridge. The dashboard mints a tool UI's
+  write-authority session exactly as [ADR 0017](../decisions/0017-tool-host.md)
+  already does — a single-use launch code exchanged for a session held only
+  in that tab's page memory — and the UI presents it on every action route as
+  `X-Vosu-Tool-Session: <token>`. Core checks the token against the live
+  session, then that `action:` id must be present in the owning tool's
+  resolved `requires`/`optional` (`docs/v2/catalog-v2.md`'s permission-surface
+  rule: declaring the capability *is* declaring the intent to call it) —
+  otherwise 403 `forbidden` even with a valid session. The bridge exposes
+  `vosu.invoke(actionId, args, { session })` to tool-UI JavaScript: it issues
+  `POST /api/v1/sessions/{session|active}/actions/{actionId}` when `session`
+  is given or defaulted to `"active"`, or `POST /api/v1/actions/{actionId}`
+  when `session: null` is passed, attaching that header automatically.
+  `docs/v2/catalog-v2.md` references this section for `vosu.invoke` rather
+  than restating it.
+- **The CLI**, through the native loopback broker credential, for an action
+  declared `cli = true` (`docs/v2/catalog-v2.md`): `vosux <plugin-id>
+  <action> [json-args]` forwards to the same HTTP route under the broker's
+  own authority, bypassing the tool-session check.
+- **A plugin**, calling another plugin's action through the ABI
+  (`docs/v2/plugin-abi.md`) entirely inside the host process; this never
+  reaches the HTTP surface at all.
 
-A request without one of these to an action route is 401 (no/invalid key) or
-403 (valid key, wrong scope; or dashboard-origin provenance missing CSRF).
-CORS does not allow `Authorization`, so cross-origin browser callers cannot
-use API keys, matching the existing 1.x policy.
+A request to an action route without a valid tool-session token or broker
+credential is 401 `unauthorized`. There is no API-key scope for actions:
+`settings:write` and `profiles:manage` remain the only key scopes (existing
+counter settings/profile writes, unrelated to API v1), and CORS does not
+allow `X-Vosu-Tool-Session` or `Authorization` cross-origin, so no action
+route is reachable from a page on another origin either way.
 
 ## Listener placement, CORS, and limits
 
@@ -373,11 +443,11 @@ An overlay that works for any installed game plugin selects only common-layer
 fields:
 
 ```json
-["/vosu.play/combo", "/vosu.play/accuracy", "/vosu.play/accuracy_kind"]
+["/vosu.play/combo", "/vosu.play/accuracy", "/vosu.play/accuracyKind"]
 ```
 
 sent as the first message to `WS /api/v1/sessions/active/subscribe`. It
-renders `combo` directly and labels `accuracy` with `accuracy_kind` (each
+renders `combo` directly and labels `accuracy` with `accuracyKind` (each
 game's own formula name, per `docs/v2/state-schema.md`) rather than assuming
 one formula. A plugin that does not fill `vosu.play.accuracy` for some mode
 reports it absent, which the overlay should treat as "no accuracy to show",
@@ -389,18 +459,22 @@ not zero.
 GET /api/v1/sessions/active/state/vosu.chart
 ```
 
-returns a chart document whose `background` field is a reference object, for
+returns a chart document whose `resources` object carries the current
+background as a resource reference under its `background` key (alongside
+`file`, `audio`, and the `set` tree reference, `docs/v2/state-schema.md`), for
 example:
 
 ```json
-{ "background": { "url": "/api/v1/resources/8f2c…", "type": "image/webp" } }
+{ "resources": { "background": { "url": "/api/v1/resources/8f2c…", "type": "image/webp" } } }
 ```
 
-The overlay sets that `url` directly as an `<img>` `src`. The resource id is
-stable for that chart's current background across restarts (it is minted from
-content identity, not a session-scoped path), so the browser's own HTTP cache
-serves repeat loads without a new request; a different chart publishes a
-different id rather than reusing this URL for different content.
+The overlay sets `resources.background.url` directly as an `<img>` `src` (or
+fetches `GET /api/v1/sessions/active/chart/background` for the same content
+without first reading state). The resource id is stable for that chart's
+current background across restarts (it is minted from content identity, not
+a session-scoped path), so the browser's own HTTP cache serves repeat loads
+without a new request; a different chart publishes a different id rather
+than reusing this URL for different content.
 
 ## Open questions
 
@@ -410,21 +484,16 @@ different id rather than reusing this URL for different content.
   polling latency for slow actions but adds a transient, non-schema-backed
   document to the subscription model. Recommendation: ship polling for v1;
   revisit only if a real action's UX needs sub-poll-interval progress.
-- **Per-action scope granularity.** `actions:invoke` is blanket: any key with
-  it can invoke any action a session's plugins expose, including file-system
-  or network side effects a specific action might have. Recommendation: keep
-  one scope for v1 (matches `settings:write`'s existing breadth), and let the
-  action's own declared trust/capability data in `docs/v2/catalog-v2.md`
-  carry finer authorization if a concrete action needs it, rather than
-  speculatively adding scopes with no current consumer.
 - **Resource type family ownership.** The fixed image/audio/video/chart-text
-  allowlist here is a core list; `docs/v2/catalog-v2.md` must describe how a
-  plugin's manifest selects one of these families per resource/tree kind. If
-  a future kind genuinely needs a type outside these four families, that is
-  an ADR 0021 change, not something this spec can resolve unilaterally.
+  allowlist here is a core list; `docs/v2/plugin-abi.md`/`docs/v2/catalog-v2.md`
+  describe how a plugin's manifest selects one of these families per
+  resource/tree kind. If a future kind genuinely needs a type outside these
+  four families, that is an ADR 0021 change, not something this spec can
+  resolve unilaterally.
 - **Invocation id lifetime.** This spec fixes the observable behavior (404
   once expired) but leaves the exact retention bound to the implementation,
   mirroring how the resource registry's capacity is unspecified here.
-  Recommendation: tie it to the owning session's lifetime plus a short grace
-  window after a terminal state is first read, so a client that reads the
-  result once cannot leak invocations across a long-running daemon process.
+  Recommendation: tie it to a short grace window after a terminal state is
+  first read (invocation ids are no longer session-scoped, so they do not
+  share a session's lifetime), so a client that reads the result once cannot
+  leak invocations across a long-running daemon process.
