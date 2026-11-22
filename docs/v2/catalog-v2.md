@@ -577,7 +577,7 @@ On first 2.0 start, migration is one-time and idempotent (same pattern as
 
 The release workflow checks, for the exact fixed official identities
 `18-lab-dev/vosu-tools`, `18-lab-dev/vosulay`, and `18-lab-dev/vosu-overlays`,
-plus the overlay quickstart repository: `GET /repos/<owner>/<repo>/releases/latest`
+plus the overlay quickstart `18-lab-dev/vosu-overlay-quickstart`: `GET /repos/<owner>/<repo>/releases/latest`
 (unauthenticated GitHub API). Pass requires, for every one of the three
 catalog repositories, a response whose asset list contains `catalog-v2.json`;
 for the quickstart repository (which is a template, not a catalog source and
@@ -588,11 +588,6 @@ whole gate, and 2.0 is not published (ADR 0022).
 
 ## Open questions
 
-- **Overlay quickstart repository identity.** ADR 0022 names "the overlay
-  quickstart" without an exact identity, and it does not appear in this
-  checkout. This spec assumes `18-lab-dev/vosu-overlay-quickstart`, matching
-  the existing official-org naming convention; confirm the exact identity
-  with its owner before the release-workflow check is implemented.
 - **Untrusted-source warning copy.** The exact warning text above is this
   spec's proposal, since no other owner currently specifies catalog-source
   dashboard copy; it may need a design/localization pass before shipping.

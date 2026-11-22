@@ -23,6 +23,8 @@ docs/decisions/0014-overlay-settings-profiles.md 2 upstream references the upstr
 docs/decisions/0019-plugin-runtime-and-trust.md 1 upstream names the bundled tosu v2 compatibility adapter
 docs/decisions/0020-game-agnostic-data-model.md 1 upstream contrasts 2.0 state with the upstream tosu-compatible schemas
 docs/decisions/0021-api-v1-and-upstream-adapters.md 10 upstream specifies the bug-for-bug tosu adapters, their pinned upstream revision, and the upstream /api/ingame page
+docs/v2/catalog-v2.md 1 migration names the legacy env file that the 1.x first-start migration reads
+docs/v2/plugin-abi.md 1 upstream names the bundled tosu v2 compatibility adapter
 docs/operations/runbook.md 2 upstream documents operational handling of the upstream tosu catalog dependency
 docs/provenance-audit.md 38 provenance records source-provenance findings for tosu-derived code
 docs/quickstart.md 1 upstream names the upstream tosu compatibility target for new users
