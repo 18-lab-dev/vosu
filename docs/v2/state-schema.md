@@ -105,7 +105,7 @@ plugins are notified. The attach handshake carries no initial `focused` value.
 ## Common layer: `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`
 
 These hold values most rhythm games share (ADR 0020). Filling them is best
-effort but declared: a game plugin's `plugin.toml` lists the common-namespace
+effort but declared: a game plugin's `manifest.toml` lists the common-namespace
 `field:` ids it fills in `covers` (`docs/v2/catalog-v2.md`), and the
 dashboard and resolver use that declaration rather than probing live state.
 
