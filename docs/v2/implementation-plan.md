@@ -6,7 +6,9 @@ description: "Crate layout, milestones, compatibility safety, ecosystem fan-out,
 
 # vosu 2.0 implementation plan
 
-Status: proposed for owner approval. Inputs, all at `v2/plan` `f07cceb`:
+Status: adopted. The owner accepted this plan subject to an adversarial
+review of its decisions; every verdict of that review is applied below, and
+section 10 records the adopted decisions. Inputs, all at `v2/plan` `f07cceb`:
 [ADR 0019](../decisions/0019-plugin-runtime-and-trust.md),
 [ADR 0020](../decisions/0020-game-agnostic-data-model.md),
 [ADR 0021](../decisions/0021-api-v1-and-upstream-adapters.md),
@@ -26,36 +28,43 @@ vosu 2.0 turns the single 1.x daemon crate into a small core plus bundled
 plugins (ADR 0019), publishes game state as owned namespaces (ADR 0020),
 serves API v1 beside bug-for-bug upstream adapters (ADR 0021), and installs
 plugins, tools, and overlays through a capability resolver and catalog v2
-(ADR 0022, ADR 0023). The work is sequenced so that every milestone lands on
-a long-lived integration branch with the full `prepush.py` gate green and the
-1.x observable behavior provably unchanged until a milestone deliberately
-replaces it. The first milestone is a behavior-neutral crate split, which
-alone addresses the build-time problem ADR 0019 measured. Plugin API and an
-in-process host follow, then the state bus, API v1, the adapters rebuilt as
-bus projections, the out-of-process plugin host, catalog v2 and the
-resolver, the dashboard/overlay/tool hosts on the new model, and finally the
-1.x migration and the day-0 release gate. Implementing the specs exposed
-nine contract gaps (section 9); eight need an owner decision before the
-milestone that first depends on them, and each decision has a
-recommendation (section 10).
+(ADR 0022, ADR 0023). The 1.x consent release (1.2.4) and the
+behavior-neutral crate split (M0) land on `main`, so 1.x gains the build-time
+improvement ADR 0019 measured and the long-lived `v2/main` branch, cut after
+M0, never carries a mass relocation. ABI amendments the code needs land before
+any plugin code. Then the plugin API and an in-process host, the state bus,
+API v1, the adapters rebuilt as bus projections, the out-of-process plugin
+host, catalog v2 and the resolver, the dashboard/overlay/tool hosts on the
+new model, and finally the 1.x migration and the day-0 release gate. Every
+milestone lands with the full `prepush.py` gate green and the 1.x observable
+behavior provably unchanged until a milestone deliberately replaces it.
+Planning against the 1.x code exposed fifteen contract gaps (section 9); each
+is closed by an adopted decision (section 10) or a milestone task.
 
 ## 1. Ground rules
 
-- **Integration branch.** All 2.0 work lands on `v2/main` (decision D1).
-  1.x fixes keep landing on `main`; `main` is merged into `v2/main` at least
-  weekly and before every milestone lands. A milestone lands only through
-  `python scripts/prepush.py` evidence for exactly `HEAD` and
+- **Branches (D1).** M−1 and all of M0 land on `main` through the normal
+  `python scripts/land.py` path; M0 is behavior-neutral by its own exit
+  criteria, so 1.x releases may ship from it. `v2/main` is branched from
+  `main` after M0 lands and receives M1 onward through
   `python scripts/land.py --base v2/main --topic <milestone>` (M−1 adds
-  `--base`). `--skip` never reaches `land.py`.
+  `--base`). `main` keeps taking 1.x fixes and is merged into `v2/main` at
+  least weekly and before every milestone lands; because both branches share
+  M0's paths, those merges carry no mass rename. After M4a, 1.x fixes in code
+  2.0 has rewritten (`src/api/`) are ported by hand. Every landing needs
+  `python scripts/prepush.py` evidence for exactly `HEAD`, including the
+  native Windows run (`AGENTS.md:96-105`); `--skip` never reaches `land.py`.
 - **Moves are content-identical.** Every file relocation lands as a pure
-  `git mv` commit (no edits), followed by a separate edit commit, so that
-  `git merge main` keeps following renames for 1.x fixes. `land.py`
-  fast-forwards, so both commits survive on `v2/main`.
+  `git mv` commit (no edits), followed by a separate edit commit, so history
+  and blame follow the move. `land.py` fast-forwards, so both commits survive.
 - **Interim bridges are named and dated.** A milestone that must keep a 1.x
-  surface alive across a structural change (for example the 1.x snapshot feed
-  in M1–M3) names the bridge, the code that implements it, and the milestone
-  that deletes it. No other compatibility shim, alias, or re-export is added
-  (`AGENTS.md` clean-cutover rule).
+  surface alive across a structural change names the bridge, the code that
+  implements it, its interim crate edge in `scripts/crate-boundaries.txt`,
+  and the milestone that deletes it (B1: M1→M4a; B2: M1→M8). No other
+  compatibility shim, alias, or re-export is added (`AGENTS.md:6`).
+- **Specs change before code.** Every adopted ABI or spec amendment
+  (section 10) lands as a documentation change on `v2/main`, header and
+  specs together, before the first milestone that implements it.
 - **Checks keep meaning.** `scripts/check-module-boundaries.py`,
   `scripts/check-file-length.py`, `scripts/ci-changes.py`, and
   `scripts/test_gate_tooling.py` are updated in the same change that
@@ -70,32 +79,35 @@ recommendation (section 10).
 
 The workspace splits along the existing module boundaries (ADR 0019 "Source
 layout"). Crate names avoid the upstream project's brand so that no
-`scripts/brand-allowlist.txt` entry is needed (decision D10). "Allowed
+`scripts/brand-allowlist.txt` entry is needed (D10). `vosu-adapter-support`
+and `vosu-osu-model` exist for dependency direction, not crate count: they
+let the reader, calculator, and adapters share osu! types without any of them
+depending on another (D9). "Allowed
 dependencies" lists workspace crates only; it is recorded in a new
 `scripts/crate-boundaries.txt` and enforced from `cargo metadata` (M0).
 
 | Crate | Responsibility | Allowed workspace dependencies |
 |---|---|---|
-| `crates/vosu-plugin-api` | ABI v1 types mirroring `include/vosu_plugin.h` (`repr(C)`, layout-tested), message codecs (flat hot-path layouts, CBOR), the Rust SDK (`Plugin`, `HostServices`, `Message`, `export_plugin!`, the bundled-plugin registry), `PlanMemory` (synchronous reads over read plans, decision D5), manifest model shared by core and SDK users. Ships the C header unchanged. | none |
+| `crates/vosu-plugin-api` | ABI v1 types mirroring `include/vosu_plugin.h` (`repr(C)`, layout-tested), message codecs (flat hot-path layouts including `PUBLISH_BATCH`, CBOR), the Rust SDK (`Plugin` with `&mut self` behind an SDK lock and `ConcurrentPlugin` with `&self`, D22; `HostServices`; `Message`; `export_plugin!`), manifest validation shared by core and SDK users. `PlanMemory` (synchronous reads, D5) and the bundled-registration glue sit behind the unpublished `unstable-sync-reads` and `bundled` features (D11). Versioned by SDK semver whose major equals the ABI major. | none |
 | `crates/vosu-sys` (core-owned) | Native boundary: `src/platform*`, `src/process*` (`ProcessMemory`, Linux/Windows backends, scanner), process-event backends `src/instance/events*` with the eBPF build step. All platform `unsafe`. | none |
 | `crates/vosu-net` (core-owned) | Hardened HTTPS streaming and archive extraction (`src/net*`), later credential origin scoping and the per-host private-network exception (ADR 0023). | `vosu-sys` |
-| `crates/vosu-surface` (core-owned) | Rust-only API for **bundled** surface plugins: exact route and WebSocket-feed registration on a listener role, typed read access to state-bus snapshots, root-confined file responses, management-route provenance. Not part of the C ABI (decision D3). | `vosu-plugin-api` |
+| `crates/vosu-surface` (core-owned) | Rust-only API for **bundled** surface plugins (D3), listed exhaustively in the ADR 0019 amendment: exact route and WebSocket-feed registration on a listener role; state reads that go through the same subscription, demand, and `requires` path as `STATE_SUBSCRIBE`; root-confined file responses against `ROOT_DECLARE` handles; management-route provenance. No `ProcessMemory`, configuration writes, or credentials. Not part of the C ABI. | `vosu-plugin-api` |
 | `crates/vosu-core` | Config, logging, report, updater, desktop integration, generic discovery/generations/focus (generalized `src/instance*`), plugin registry and host (in-process dispatch, `vosu plugin-host` supervision and channel), state bus and demand compiler, listeners/origins/auth/API keys/broker/file confinement/WebSocket hub primitives, API v1 (sessions, subscriptions, reads, resources, trees, jobs), catalog v2, sources, credentials, resolver, 1.x migration, lifecycle. | `vosu-sys`, `vosu-net`, `vosu-plugin-api`, `vosu-surface` |
 | `crates/vosu-osu-model` | osu! value types and osu!-exact helpers shared by reader, calculator, and adapters: `src/model/{memory,states,enums}*` and the calculation root helpers (`src/calculation/root/{helpers,mods,scores}.rs`: JS-compatible rounding and number writing, mods, grades, legacy hits). | none |
 | `crates/vosu-osu-calc` | Live and legacy calculation: `src/calculation/{beatmap,progressive,engine}*` over `crates/vosu-pp` (ADR 0004 contracts unchanged). | `vosu-osu-model`, `vosu-pp` |
 | `crates/vosu-osu-reader` | Client decoding: `src/memory*` (stable, lazer, offsets, loader, snapshots), the pointer-width read layer now in `src/process.rs::ProcessHandle`, the embedded `assets/offsets.json` and generator bundle, `src/runtime/offset_generator*`, osu!-specific discovery inputs (client argv parser `StartupArgs`, Wine path resolution `resolve_osu_path`). | `vosu-osu-model`, `vosu-plugin-api`; interim `vosu-sys` until M1 |
 | `crates/vosu-osu-state` | Reducer, capture scheduling, gameplay state: `src/state*` plus the calculation backend (`src/calculation/state_backend*`). | `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model` |
-| `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, session identification, namespace projection (`vosu.osu`, common layer, plugin-only subtree D2), roots and resource kinds, actions. | `vosu-plugin-api`, `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model` |
+| `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, `SESSION_DECLINE` use, session identification, namespace projection (`vosu.osu`, common layer, the paths-only `internal` subtree, D2), roots and resource kinds, settings (D19), the `beatmap.import` action (D8). A `test-harness`-only `cdylib` build with a non-bundled test manifest runs it out of process in M5 (gap 13). | `vosu-plugin-api`, `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`; interim `vosu-surface` for bridge B1, M1→M4a |
 | `crates/vosu-adapter-support` | Shared upstream-wire machinery: `src/api/{json,fixed,wire_fixtures}.rs`, legacy filter parsing, JS-number JSON writer. | `vosu-osu-model` |
 | `crates/vosu-adapter-upstream` | Upstream v2 adapter: `/json/v2`, `/json/v2/precise`, `/websocket/v2`, `/websocket/v2/precise`, `/files/...`, `/Songs/{path}`, `/backgroundImage`, `/api/calculate/pp`, `/api/ingame` (api-v1.md "Route ownership"). | `vosu-surface`, `vosu-plugin-api`, `vosu-adapter-support`, `vosu-osu-model`, `vosu-osu-calc` |
 | `crates/vosu-adapter-gosumemory` | gosuMemory-compatible `/json`, `/ws`. | `vosu-surface`, `vosu-plugin-api`, `vosu-adapter-support`, `vosu-osu-model` |
-| `crates/vosu-adapter-streamcompanion` | streamCompanion-compatible `/json/sc`, `/tokens`. | same as gosumemory |
+| `crates/vosu-adapter-streamcompanion` | streamCompanion-compatible `/json/sc`, `/tokens`; computes strains, breaks, kiai points, and timing points itself from the chart resource (D2). | gosumemory's list plus `vosu-osu-calc` |
 | `crates/vosu-dashboard` | Dashboard pages, server-side render, embedded `assets/server/`, report page, plugin/tool/overlay management UI, `VOSU_DASHBOARD=off`. | `vosu-surface`, `vosu-plugin-api` |
 | `crates/vosu-overlay-host` | Overlay hosting: counter discovery/download/settings/profiles (`src/counters*`), the community overlay catalog (`src/server/catalog.rs`), `/websocket/commands` (`src/server/commands*`), overlay static serving. | `vosu-surface`, `vosu-plugin-api`, `vosu-net` |
 | `crates/vosu-tool-host` | Web-only tool hosting: static UI serving, launch sessions, bridge, tool settings (`src/tools/mod.rs` minus services). | `vosu-surface`, `vosu-plugin-api` |
 | `crates/vosu-proptest` (dev-only) | `vosu_proptest_config()` from `src/proptest_support.rs`, shared by every crate with `prop_*` tests. | none |
 | `crates/vosu-plugin-testkit` (test-harness only) | Bundled test plugin with echo/progress/cancel/stream actions and a synthetic game, for API v1, bridge, and plugin-host tests and as the SDK reference example. | `vosu-plugin-api` |
-| `.` (`vosu`) | `main.rs`, `vosux` and `plugin-host` argv dispatch, Windows resources, bundled-plugin linkage, integration tests, benches, examples. | every crate above |
+| `.` (`vosu`) | `main.rs`, `vosux` and `plugin-host` argv dispatch, Windows resources, the explicit `BUNDLED` registration array (D13), integration tests, benches, examples. | every crate above |
 | `crates/vosu-pp` and members, `crates/vosu-test-harness`, `crates/vosu-release-smoke` | Unchanged roles (`AGENTS.md` "Source ownership"); the harness depends on the specific crates it drives instead of the old monolith. | unchanged |
 
 Layout rules:
@@ -103,7 +115,7 @@ Layout rules:
 - Plugins (`vosu-osu*`, adapters, hosts) never depend on `vosu-core`. Bundled
   surface plugins reach core only through `vosu-surface` traits that core
   implements; the game plugin reaches core only through the C ABI via
-  `vosu-plugin-api`. This is also the build-time property that matters: a
+  `vosu-plugin-api`, except bridge B1's recorded interim edge. This is also the build-time property that matters: a
   `vosu-core` edit relinks but does not recompile plugins (section 8).
 - Features: the root `linux-process-events` feature forwards to `vosu-sys`;
   `test-harness` forwards to every crate that has harness-only code. Each such
@@ -135,7 +147,7 @@ crates), **rewrite** (replaced by spec-driven code), **delete**.
 | `src/platform*` | 2,459 | `vosu-sys` | move | M0 |
 | `src/process*` | 5,822 | `vosu-sys`; `ProcessHandle` read layer to `vosu-osu-reader`; `resolve_osu_path` (`src/process/linux.rs`) to `vosu-osu-reader` | split | M0, M1 |
 | `src/net*` | 2,377 | `vosu-net` | move; extend for credentials (ADR 0023) | M0, M6 |
-| `src/config*` | 2,565 | `vosu-core` | move; drop removed keys (`src/config/schema.rs` lines 145–175, 257–276) and add `API_V1_SUBSCRIPTION_DEBOUNCE`, the dashboard key | M0, M3, M4, M7 |
+| `src/config*` | 2,565 | `vosu-core` | move; drop removed keys (`src/config/schema.rs` lines 145–175, 257–276), add `API_V1_SUBSCRIPTION_DEBOUNCE` and the dashboard key; the osu!-specific keys (lines 139, 163, 169, 181, 187) become `vosu.osu` settings (D19) | M0, M1, M3, M4, M7, M8 |
 | `src/logging*` | 981 | `vosu-core` | move | M0 |
 | `src/report*` | 1,156 | `vosu-core` (generation); report page to `vosu-dashboard` | move, split | M0, M7 |
 | `src/updater*` | 3,979 | `vosu-core` | move; major-version consent first ships on `main` (M−1) | M0 |
@@ -216,27 +228,47 @@ check over the recorded edges), so a cycle cannot return.
 ## 4. Milestones
 
 ```text
-M−1  main: 1.x consent release; v2/main branch infrastructure
- └─ M0   crate split, no behavior change
-     └─ M1   plugin API + in-process host + osu! plugin behind 1.x surfaces
-         └─ M2   state bus and vosu.* namespaces
-             ├─ M3   API v1, resources, jobs, bridge
-             │   ├─ M4a  adapters as bus projections
-             │   │   └─ M4b  live golden fixtures (owner capture)
-             │   └─ M5   plugin-host process (Linux, then Windows + measurement)
-             └─ M6a  manifest.toml + catalog-v2.json validation
-                 └─ M6b  sources, credentials, resolver
- F    ecosystem fan-out: after M3 + M6a and v2.0.0-alpha.1
- M7   dashboard, overlay host, tool host on the new model; /api/ingame  (needs M3, M5, M6b)
- M8   1.x migration, release smoke, day-0 gate, release              (needs all, M4b included)
+main:
+  M−1  1.2.4 consent gate; land.py --base; prerelease publishing
+   └─ M0   crate split, no behavior change           ── v2/main branched here
+v2/main:
+  A1   ABI and spec amendments (D2–D10, D18, D20, D22), docs only
+   └─ M1   plugin API + in-process host + osu! plugin behind 1.x surfaces
+       ├─ S1   vosulay supervisor-plugin spike, Linux and Windows
+       └─ M2   state bus and vosu.* namespaces
+           ├─ M3   API v1, resources, jobs, bridge
+           │   └─ M4a  adapters as bus projections (deletes B1)
+           │       ├─ M4b  golden fixtures: pilot capture at once, full set later
+           │       └─ M5   plugin-host process (needs S1; Linux, then Windows)
+           └─ M6a  manifest.toml + catalog-v2.json validation
+               └─ M6b  sources, credentials, resolver
+  F    ecosystem fan-out: after M3 + M6a and v2.0.0-alpha.1
+  M7   dashboard, overlay host, tool host; /api/ingame          (needs M3, M5, M6b)
+  M8   migration, release smoke, day-0 gate, release      (needs all, M4b included)
 ```
 
-M3 and M6a proceed in parallel after M2. M5 follows M3 because its exit
-runs the full opcode set, actions and resources included, out of process.
-M4a needs M3's root/tree machinery only for file routes, so its
-JSON/WebSocket projection may start in parallel with M3; M4a and M5 are
-independent of each other. M7 needs M3, M5, and M6b. M8 needs everything,
-M4b included.
+Ordering rules and why:
+
+- **M0 on `main`** (D1): no 2.0 code, so no reason for a long-lived branch to
+  carry the relocation.
+- **A1 before M1**: `SESSION_DECLINE` (D6), `PUBLISH_BATCH` and the
+  unknown-flag rule (D4), the per-plan synchronous-read flag (D5), the
+  `ConcurrentPlugin` SDK shape (D22), and the matcher hints (D18) change the
+  header and its layout tests, so they precede the code that freezes them.
+- **S1 before M5**: vosulay is on the day-0 critical path (catalog-v2.md
+  "Day-0 release check") and its hosting model is the riskiest integration
+  (D16); the spike needs only M1's SDK.
+- **M5 after M4a**: bridge B1 passes a typed Rust snapshot that cannot cross
+  a process boundary; once M4a deletes it, M5's process-runtime test of the
+  osu! plugin runs the real bus path.
+- **M4b pilot as soon as its tooling lands** (D14), so an adapter/upstream
+  mismatch surfaces months before M8, which the full capture still gates.
+- **Ecosystem plugins exercise the process runtime before release**: from M5,
+  `--plugin <dir>` loads with `user` trust in alpha builds, so the process
+  runtime and approval are what ecosystem testers use (section 7); M8
+  requires every official plugin to have passed a process-runtime smoke.
+- M3 and M6a proceed in parallel after M2; M4a's JSON/WebSocket projection
+  may start in parallel with M3 and needs M3 only for file routes.
 
 Every milestone's exit criteria include the **common gate**: `prepush.py`
 green for `HEAD` (formatting, `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`,
@@ -244,43 +276,43 @@ green for `HEAD` (formatting, `cargo clippy --workspace --all-targets --all-feat
 including doctests, repository checks and `scripts/test_*.py`, Windows MSVC
 cross-Clippy, native Windows Clippy/tests/doctests through
 `scripts/native-ci.ps1`, and the dashboard smokes when UI paths changed),
-then hosted CI through `land.py`. Only the milestone-specific commands are
+then hosted CI through `land.py`. Performance gates follow D17 at every
+milestone that touches a measured path. Only milestone-specific commands are
 listed below.
 
-### M−1: transition safety on `main` and integration-branch infrastructure
+### M−1: 1.2.4 consent gate and landing infrastructure (on `main`)
 
 Scope:
 
-- **1.x major-version consent (ships on `main` as 1.3.0, as early as
-  possible).** ADR 0022: it protects only installations that receive it before
-  2.0 is published. `parse_latest_release` (`src/updater/release.rs:26-56`)
-  returns a new `ReleaseDecision::NeedsConsent` when the candidate's major
-  version exceeds the running one; automatic updates stop there; the
-  dashboard update UI asks; `RunUpdates` accepts an explicit consent flag.
-- **Integration branch.** `scripts/land.py` gains `--base <branch>`
-  (default `main`): `ensure_fast_forward_of_main` (lines 83–93) and
-  `fast_forward_main` (lines 144–145) take the base. Branch protection on
-  `v2/main` requires `CI required`. `ci.yml` needs no trigger change
-  (`ci/**` already runs); `nightly.yml` gains a `v2/main` checkout so random
-  proptests and the lazer canary also run there. `scripts/test_gate_tooling.py`
-  covers `--base`.
-- **Prerelease publishing.** `scripts/sign-release.py --publish` (lines
-  120–122) publishes drafts with only `draft=false`; for a semver
-  prerelease tag it must also set `prerelease=true` and `make_latest=false`,
-  so `v2.0.0-alpha.N` tags never become the repository's latest release. 1.x
-  already ignores prereleases (`src/updater/release.rs:35-51`).
+- **1.x major-version consent ships as 1.2.4, before M0** (D1). ADR 0022:
+  it protects only installations that receive it before 2.0 is published.
+  `parse_latest_release` (`src/updater/release.rs:26-56`) returns a new
+  `ReleaseDecision::NeedsConsent` when the candidate's major version exceeds
+  the running one; automatic updates stop there; the dashboard update UI
+  asks; `RunUpdates` accepts an explicit consent flag.
+- **Landing base.** `scripts/land.py` gains `--base <branch>` (default
+  `main`): `ensure_fast_forward_of_main` (`scripts/land.py:83-93`) and
+  `fast_forward_main` (`scripts/land.py:144-145`) take the base; branch
+  protection on `v2/main` requires `CI required` when it is cut after M0.
+  `ci.yml` needs no trigger change (`ci/**` already runs);
+  `nightly.yml` gains a `v2/main` checkout so random proptests and the lazer
+  canary run there too; `scripts/test_gate_tooling.py` covers `--base`.
+- **Prerelease publishing.** `scripts/sign-release.py --publish`
+  (`scripts/sign-release.py:120-122`) publishes drafts with only
+  `draft=false`; for a semver prerelease tag it also sets `prerelease=true`
+  and `make_latest=false`, so `v2.0.0-alpha.N` never becomes the latest
+  release. 1.x already ignores prereleases (`src/updater/release.rs:35-51`).
 
 Exit: `cargo test --locked --test updater_compat`; native
 `cargo test --locked --test updater_native -- --nocapture` on Linux and
-Windows; new unit tests for `NeedsConsent` beside `src/updater/tests_release.rs`;
+Windows; unit tests for `NeedsConsent` beside `src/updater/tests_release.rs`;
 the dashboard smokes (update UI changed); `scripts/test_gate_tooling.py`
-(run by `prepush.py`) covering `--base`; the first milestone landed through
-`land.py --base v2/main`.
+(run by `prepush.py`) covering `--base`; 1.2.4 published.
 
-Risks: users who skip 1.3.0 still update to 2.0 silently (accepted by ADR
-0022); keep 1.3.0 small so it ships before M0 starts.
+Risks: users who skip 1.2.4 still update to 2.0 silently (accepted by ADR
+0022); 1.2.4 stays a minimal patch release so it ships before M0 starts.
 
-### M0: crate split without behavior change
+### M0: crate split without behavior change (on `main`)
 
 Scope, in three landable steps:
 
@@ -300,14 +332,15 @@ Scope, in three landable steps:
      `scripts/crate-boundaries.txt` against `cargo metadata --no-deps`.
    - `scripts/file-length-baseline.txt` entries are renamed to the new paths
      with identical counts (a reviewed edit; `--update` refuses additions).
-   - `scripts/ci-changes.py`: `UI_PREFIXES` and the `render*` rule cover the
-     relocated dashboard/tool/server paths, and the schema-only exemption
-     list (`src/api/`, `src/model/`, `src/calculation/`) names the new crate
-     paths; otherwise UI smokes and native verification silently stop.
+   - `scripts/ci-changes.py`: `UI_PREFIXES` and the `render*` rule
+     (`scripts/ci-changes.py:9-21`) cover the relocated paths, and the
+     schema-only exemption list (`scripts/ci-changes.py:34`) names the new
+     crate paths; otherwise UI smokes and native verification silently stop.
    - `AGENTS.md` "Source ownership", the property-test rule
      (`vosu_proptest::vosu_proptest_config()`), [source map](../architecture/source-map.md),
      and [overview](../architecture/overview.md) "Deployment variants".
-   - A build-time measurement script and its first results (section 8).
+   - `scripts/measure-build.py` and its first results, including the D9
+     budget items (section 8).
 
 Exit (all from `AGENTS.md` "Verification by change", since every area moves):
 `cargo test --locked --test state_api_compat`;
@@ -319,99 +352,163 @@ Exit (all from `AGENTS.md` "Verification by change", since every area moves):
 both native release builds; `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture`;
 both dashboard smokes against a `--features test-harness` build;
 `python scripts/check-module-boundaries.py`, `check-file-length.py`,
-`check-asset-hashes.py`; `cargo bench --locked --package vosu --bench hot_paths -- serializers_cold`
-(also `raw_snapshot_reads`, `publication`, `v2_subscription`) compared
-like-for-like with the pre-split commit: no difference beyond run-to-run noise.
+`check-asset-hashes.py`; the D17 reader, serializer, and publication benches
+against the pre-M0 commit, which becomes the cumulative baseline for every
+later milestone; `scripts/measure-build.py` within the D9 budget.
 
 Risks: lost cross-crate inlining in debug and test builds (release keeps thin
 LTO and one codegen unit, `Cargo.toml` `[profile.release]`); `pub(crate)`
 items and `#[cfg(test)]` helpers used across new crate boundaries (for
 example `src/runtime/test_support.rs`) need explicit `pub` or a
-`test-harness`-gated module; a long-lived diff against `main` (mitigation:
-content-identical move commits, land M0 within days, pause large 1.x
-refactors meanwhile).
+`test-harness`-gated module; MSVC link time for one test binary per crate in
+the native Windows gate (measured under D9).
+
+### A1: ABI and spec amendments (on `v2/main`, documentation only)
+
+Scope: the adopted amendments in section 10, written into
+`include/vosu_plugin.h`, [plugin ABI](plugin-abi.md), [state schema](state-schema.md)
+and [`schemas/`](schemas/), [API v1](api-v1.md), [catalog v2](catalog-v2.md),
+and ADRs 0019 and 0021: `VOSU_OP_PUBLISH_BATCH` and the unknown-flag rule
+(D4); `VOSU_READ_PLAN_SYNC` (D5); `VOSU_OP_SESSION_DECLINE` (D6);
+`x-visibility` on `vosu.osu` `/internal` and the per-variant path fields
+(D2, D8); the bundled-only HTTP surface, multi-crate source layout, and
+adapter-name amendments to ADRs 0019 and 0021 (D3, D9, D10); the bounded
+`[[provides]] schema` profile (D7); the matcher `comm_hints` and runtime
+overlap rule (D18); the catalog-v2.md wording for user overlays (D20); the
+`ConcurrentPlugin` SDK sketch (D22); `docs/v2/naming.md` (gap 8).
+
+Exit: `python scripts/check-doc-links.py`, `python scripts/check-brand.py`;
+the owner signs off the amended specs, which are frozen again.
 
 ### M1: plugin API, in-process host, osu! plugin behind the 1.x surfaces
 
 Scope:
 
-- `vosu-plugin-api`: plugin-abi.md §1–§5 and §9; layout tests asserting every
-  size and offset in the §3 table with `core::mem::offset_of!`, and a C
-  translation unit with `_Static_assert`s on the same table compiled from a
-  test, so header and Rust cannot drift; CBOR codecs over `ciborium`; flat
-  payload validation (offsets inside the buffer, 64 KiB
-  `VOSU_READ_PLAN_MAX_BYTES`, alignment); `export_plugin!` producing
-  `vosu_plugin_entry_v1` for `cdylib` builds or a registry entry under the
-  `bundled` feature; `PlanMemory`.
-- Core plugin host: bundled registry iteration and external `dlopen`
-  (`libloading`); manifest `kind = "plugin"` runtime fields (plugin-abi.md
-  §8) for bundled and development plugins (`--plugin <dir>`, the analog of
-  1.x `--tool <dir>`, trusted, development builds only until M6 sources
-  exist); dispatch thread per instance and the `concurrent_dispatch` pool
-  (§4); error model (§5); matching (§6.1) with overlap refusal; session
-  lifecycle, identification, the 5-second hidden rule, focus rule and
-  notifications (§6.2, api-v1.md "Focus rule"); read-plan executor (§6.3)
-  over `vosu-sys`; scanning (§6.4) over `src/process/scanner.rs`; settings
+- `vosu-plugin-api`: plugin-abi.md §1–§5 and §9 as amended by A1; layout
+  tests asserting every size and offset in the §3 table with
+  `core::mem::offset_of!`, and a C translation unit with `_Static_assert`s
+  on the same table compiled from a test, so header and Rust cannot drift;
+  CBOR codecs over `ciborium` (D13); flat payload validation (offsets inside
+  the buffer, 64 KiB `VOSU_READ_PLAN_MAX_BYTES` and the matching
+  `PUBLISH_BATCH` cap, alignment, unknown flag bits rejected); `Plugin`
+  (`&mut self`, serialized by an SDK lock) and `ConcurrentPlugin` (`&self`,
+  `Sync`) with `export_plugin!` producing `vosu_plugin_entry_v1` for
+  `cdylib` builds (D22); `PlanMemory` behind `unstable-sync-reads` (D5).
+- Core plugin host: the explicit `BUNDLED` array in the root crate and
+  external `dlopen` (`libloading`, D13); manifest `kind = "plugin"` runtime
+  fields (plugin-abi.md §8) for bundled and development plugins
+  (`--plugin <dir>`, the analog of 1.x `--tool <dir>`; trusted in-process in
+  debug builds only); dispatch thread per instance and the
+  `concurrent_dispatch` pool (§4); error model (§5); matching (§6.1) with
+  the D18 overlap rule; `SESSION_DECLINE` (D6); session lifecycle,
+  identification, the 5-second hidden rule, focus rule and notifications
+  (§6.2, api-v1.md "Focus rule"); read-plan executor (§6.3) over `vosu-sys`,
+  including `VOSU_READ_PLAN_SYNC` delivery on the submitting thread with its
+  deadline (D5); scanning (§6.4) over `src/process/scanner.rs`; settings
   (§6.9); logging with the 200/s limit (§6.10); timers (§6.11).
-- Discovery moves into core, parameterized by enabled plugins' matchers. The
-  process-event backends filter exec events by hard-coded osu! names today
-  (`candidate_comm`, `src/instance/events.rs:150-155`); the filter becomes
-  the union of enabled plugins' `process_names` (truncated to the kernel's
-  15-byte `comm`), and a plugin declaring path or command-line patterns
-  widens it to unfiltered exec events plus the existing periodic
-  reconciliation. `vosu-surface` is created here for bridge B1.
-- `vosu-osu`: matchers reproducing `src/instance/discovery.rs` (lines 44–110
-  and `should_skip`, line 118) or decision D6; identification; the lazer
-  offset-resolver lifecycle moved from `src/instance.rs` into the plugin on
-  `SESSION_ATTACHED`; reads through `PlanMemory`, so the 1.x readers stay
-  unchanged; `concurrent_dispatch = true` with the stress test that
-  plugin-abi.md §10 requires.
-- **Interim bridge B1** (deleted in M4a): the bundled osu! plugin hands each
+- Discovery moves into core, parameterized by enabled plugins' matchers.
+  The event backends' hard-coded `osu!`/`osulazer.exe` substring filter
+  (`src/instance/events.rs:150-155`,
+  `src/instance/events/bpf/process_events.bpf.c:76-92`) becomes a bounded
+  BPF map and CN_PROC set filled from enabled plugins' `comm_hints` (D18),
+  so the measured in-kernel filtering that `AGENTS.md:130` requires is kept.
+- `vosu-osu`: matchers `process_names`/`process_path_patterns` plus
+  `comm_hints = ["osu!", "osulazer.exe"]`; `SESSION_DECLINE` reproduces
+  `should_skip` (`src/instance/discovery.rs:118-123`: `--tournament` and
+  `debug-client-id`) and the Linux conditional fallback
+  (`src/instance/discovery.rs:73-107`), which depends on other processes
+  and cannot be a full-match regex (plugin-abi.md:115); `-spectateclient N`
+  processes are identified as ordinary sessions with their IPC id, as 1.x
+  attaches them (`src/instance.rs:68-80`, D6); the lazer offset-resolver
+  lifecycle moves from `src/instance.rs` into the plugin on
+  `SESSION_ATTACHED`; reads through `PlanMemory` with the synchronous flag,
+  so the 1.x readers stay unchanged, always from the plugin's own reader
+  threads, never a dispatch thread; `ConcurrentPlugin` with the stress test
+  that plugin-abi.md §10 requires.
+- Settings: the five osu!-specific keys become `vosu.osu` settings declared
+  by its `settings_schema` (D19). **Interim bridge B2** (deleted in M8):
+  core serves the plugin's settings from the existing `vosu.toml` values
+  until the M8 migration moves them into plugin settings storage.
+- **Interim bridge B1** (deleted in M4a): the osu! plugin hands each
   `StateBundleSnapshot` to the existing `SnapshotManager`
-  (`src/api/snapshot.rs`) through a `vosu-surface` hook, so every 1.x route
-  keeps serving unchanged bytes.
+  (`src/api/snapshot.rs`) through a `vosu-surface` hook, recorded as the
+  interim `vosu-osu → vosu-surface` edge, so every 1.x route keeps serving
+  unchanged bytes.
 
 Exit: `cargo test --locked -p vosu-plugin-api` (layout, codecs, `prop_*`
-bounds tests); `cargo test --locked -p vosu-core` host tests (trust refusal of
-`in-process` for an ineligible plugin, matcher overlap, identification
-timeout, focus delivery order, read-plan validation including a dependent
-stage whose `ref_op` length differs from the pointer width, log rate limiting,
-timer cancellation); a new `tests/plugin_host.rs` that builds the testkit as a
-`cdylib` and loads it in-process on Linux and Windows; all M0 exit tests,
-unchanged; `cargo test --locked --test process_memory -- --nocapture` on both
-OSes; `cargo bench --locked --package vosu --bench hot_paths -- raw_snapshot_reads`,
-`cargo bench --locked --package vosu --bench memory_reader_bench`, and the
-`live_reader_bench` example compared with M0. Threshold proposed for owner
-sign-off: no more than 10% p50 regression on raw snapshot reads.
+bounds tests, unknown-flag rejection); `cargo test --locked -p vosu-core` host
+tests (trust refusal of `in-process` for an ineligible plugin, matcher
+overlap at validation and at runtime, `SESSION_DECLINE` not re-offering a
+PID generation, identification timeout, focus delivery order, read-plan
+validation including a dependent stage whose `ref_op` length differs from
+the pointer width, `VOSU_READ_PLAN_SYNC` refused on a dispatch thread and
+timing out with `VOSU_ERR_TIMED_OUT`, log rate limiting, timer
+cancellation); a new `tests/plugin_host.rs` that builds the testkit as a
+`cdylib` and loads it in-process on Linux and Windows; discovery parity:
+every case in `src/instance/tests.rs` and the classification tests in
+`src/instance/discovery.rs` reproduced through matchers plus decline,
+including spectator clients selected by lowest PID
+(`src/instance.rs:603-620`); all M0 exit tests unchanged;
+`cargo test --locked --test process_memory -- --nocapture` on both OSes; the
+Linux process-event examples (`examples/process_event_bench.rs`,
+`examples/process_event_lazer_bench.rs`, `Cargo.toml` `[[example]]`
+entries) run natively to show the in-kernel filter still drops
+non-matching execs; D17 M1 benches.
 
-Risks: the 1.x readers issue many sequential reads; one plan per read adds a
-message round trip each. D5 keeps that round trip on the calling thread; if the
-benchmark still misses the threshold, convert the hottest chains (the lazer
-precise chain named in brokered-reads.md "Plan shapes") to dependent multi-stage
-plans before M2. Discovery parity (D6).
+Risks: the 1.x readers issue many sequential reads, one plan each. D5 keeps
+each on the calling thread; if D17's `PlanMemory` reader benches miss the
+bar, convert the hottest chains (brokered-reads.md "Plan shapes") to
+dependent multi-stage plans before M2.
+
+### S1: vosulay supervisor-plugin spike (Linux and Windows, before M5)
+
+Scope (D16): a throwaway official-trust plugin built on M1's SDK, running
+in-process, that starts vosulay's existing host executable as a child: on
+Windows inside a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+(the `src/tools/process.rs:59-70` pattern), on Linux with
+`PR_SET_PDEATHSIG`; it forwards session and focus changes as the child's
+input and exposes start/stop actions.
+
+Exit, recorded in [verification](../testing/verification.md): on Linux the
+child's `chrome-sandbox` setuid helper works (no `no_new_privs` is
+inherited, unlike under `vosu plugin-host`, plugin-abi.md:254;
+`vosulay/docs/security.md:58-60`) and the child's `CapEff` is zero although
+the daemon holds file capabilities; on Windows the child starts through its
+packaged sandbox bootstrap (`vosulay/docs/security.md:265`,
+`vosulay/docs/architecture.md:24`); killing the daemon kills the child on
+both. A failure reopens D16 before M5 starts.
 
 ### M2: state bus and `vosu.*` namespaces
 
 Scope:
 
 - Core state bus: per-session immutable namespace documents published
-  latest-only (ADR 0002), typed values (`vosu_value_kind`), batch commit (D4),
-  coverage enforcement (`covers`, reserved-name `[[resource_kinds]]`,
-  plugin-abi.md §6.6; undeclared publication refused), `null` semantics and
-  namespace omission (state-schema.md "Namespaces"), `vosu.client` filled by
-  core from attach and `SESSION_IDENTIFY` (state-schema.md "`vosu.client`").
+  latest-only (ADR 0002), typed values (`vosu_value_kind`), one commit per
+  `VOSU_OP_PUBLISH_BATCH` validated as a whole (D4), coverage enforcement
+  (`covers`, reserved-name `[[resource_kinds]]`, plugin-abi.md §6.6;
+  undeclared publication refused), `null` semantics and namespace omission
+  (state-schema.md "Namespaces"), `vosu.client` filled by core from attach
+  and `SESSION_IDENTIFY` (state-schema.md "`vosu.client`").
 - Schema registry: `docs/v2/schemas/*.schema.json` embedded with
   `include_str!` (core namespaces in `vosu-core`, `vosu.osu` in `vosu-osu`)
-  as the single source; the `x-sampling-lane` demand compiler generalizing
+  as the single source; a hand-written lane walker (no runtime
+  `jsonschema`, D7/D13) compiling `x-sampling-lane` demand, generalizing
   `V2SubscriptionHub` demand (`src/server/v2_subscription.rs`,
   state-schema.md "Sampling lanes"); `DEMAND_CHANGED` snapshots (§6.7);
   plugin `STATE_SUBSCRIBE`/`STATE_UPDATE` and `vosu.sessions` events (§6.12,
-  §6.2); typed snapshot reads for bundled consumers through `vosu-surface`.
+  §6.2); `vosu-surface` reads through the same subscription, demand, and
+  `requires` checks (D3).
+- `x-visibility: "plugins"` accepted only on `vosu.osu`'s top-level
+  `/internal` key and rejected anywhere else at schema load; one projector
+  function strips it from every API-facing document and from `STATE_UPDATE`
+  and `vosu-surface` reads for consumers that do not `require` it (D2).
 - `vosu-osu` projects each `StateBundleSnapshot` onto `vosu.status`,
-  `vosu.chart`, `vosu.play`, `vosu.skin`, `vosu.osu`, and the plugin-only
-  subtree (D2), publishing only changed leaves per batch, following
-  state-schema.md "1.x-to-2.0 field mapping", "`keys`", "`skin`", and
-  "Common-layer coverage". Resource references arrive in M3; until then the
+  `vosu.chart`, `vosu.play`, `vosu.skin`, `vosu.osu`, and
+  `vosu.osu/internal/paths` (per-variant fields, D8), publishing changed
+  leaves as one batch per sample, following state-schema.md "1.x-to-2.0
+  field mapping", "`keys`", "`skin`", and "Common-layer coverage";
+  `vosu.osu.session` carries the spectator IPC id (D6) and `vosu.osu.tourney`
+  stays unpublished (D6). Resource references arrive in M3; until then the
   manifest declares no `[[resource_kinds]]`, so `vosu.chart.resources` and
   `vosu.skin.tree` are correctly absent.
 - Bridge B1 still feeds the 1.x surfaces; reader demand is the union of the
@@ -420,20 +517,19 @@ Scope:
 Exit: new `tests/state_bus_compat.rs`: for every case in
 `tests/fixtures/oracle/inventory.json` (its `required_coverage` list,
 `tests/state_api_compat.rs:46-74`), the published documents validate against
-their schemas and every mapped value equals the 1.x `/json/v2` or precise
-value at its 1.x path; plugin-only pointers never appear in any API-facing
-document. `cargo test --locked --test state_api_compat` and
-`--test server_compat` unchanged; `--test performance_invariants`; a new
-`state_bus` Criterion group (batch publish at regular and precise cadence,
-hit-error arrays of 0, 1,000, and 5,000 entries) compared with the
-`publication` group from M1.
+their schemas (`jsonschema`, dev-only, `default-features = false`) and every
+mapped value equals the 1.x `/json/v2` or precise value at its 1.x path; the
+`internal` subtree is absent from every API-facing projection — whole
+document, whole namespace, `""` and `/vosu.osu` subscriptions and their
+encoding caches, session events, `STATE_UPDATE` to a non-requiring plugin,
+and a non-requiring `vosu-surface` read; a concurrent regular/precise
+publisher test proving no snapshot mixes two batches.
+`cargo test --locked --test state_api_compat` and `--test server_compat`
+unchanged; `--test performance_invariants`; D17 M2 benches.
 
 Risks: whole-array republication of growing hit-error arrays (§6.6 publishes
 arrays only as whole CBOR subtrees) may cost more than 1.x's shared vectors;
-if the bench shows it, add an append form as an additive ABI revision.
-Tournament clients: `vosu.osu.tourney.clients[]` aggregates processes that
-1.x selects as one instance (`src/instance.rs`); how they appear as sessions
-is decision D6.
+D17's end-to-end bench decides whether an additive append form is needed.
 
 ### M3: API v1, resources, jobs, bridge
 
@@ -443,18 +539,21 @@ Scope:
   "Visibility"; "Session events"; "Field subscriptions" (generalizing
   `src/server/v2_subscription.rs`, a separate hub with
   `API_V1_SUBSCRIPTION_DEBOUNCE`); "HTTP state reads"; "Status codes and
-  error bodies"; "Resources and trees" with "Id registry" (HMAC under a
-  persisted core secret, bounded registry) and "Headers and type allowlist";
-  the `307` convenience routes; "Actions" ("Create a job", "Job object",
-  `/api/v1/jobs/{id}`, "Authorization"); "Listener placement, CORS, and
-  limits" (overlay listener only).
+  error bodies"; "Resources and trees" with "Id registry" (HMAC from the
+  TLS stack already in the tree, D13, under a persisted core secret, bounded
+  registry) and "Headers and type allowlist"; the `307` convenience routes;
+  "Actions" ("Create a job", "Job object", `/api/v1/jobs/{id}`,
+  "Authorization"); "Listener placement, CORS, and limits" (overlay listener
+  only).
 - Plugin side: `ROOT_DECLARE`, `RESOURCE_RESOLVE`, `TREE_LIST`,
   `TREE_LOOKUP`, `STREAM_*` (§6.5) over ADR 0005 confinement in
   `src/server/files.rs`; `ACTION_*` (§6.8) including relay and id remapping;
   timeouts producing `timed_out`. The osu! plugin declares `songs`, `skins`,
   and lazer file-store roots and the `file`, `audio`, `background`, `set`,
-  and `skin` kinds, and moves lazer skin lookup from `src/server/files/skin.rs`
-  into its `TREE_LOOKUP`.
+  and `skin` kinds, moves lazer skin lookup from `src/server/files/skin.rs`
+  into its `TREE_LOOKUP`, and provides `vosu.osu.beatmap.import`
+  (catalog-v2.md:244-249 is the template) so writers never need a writable
+  path (D8).
 - Bridge: `assets/server/tool-bridge.js` gains `vosu.invoke` and
   `vosu.start` exactly as api-v1.md "Authorization" defines, and an API v1
   `vosu.subscribe` (pointers such as `/vosu.play/combo`, `session` option);
@@ -464,20 +563,22 @@ Scope:
   `--session` through the broker credential. 1.x tool ids cannot contain a
   dot (`src/tools/manifest.rs:82-89`) and plugin ids always do, so both forms
   coexist until M7 removes the tool form.
+- Alpha data isolation (D21): prerelease builds use the prerelease
+  subdirectory of each vosu root.
 
 Exit: new `tests/api_v1_compat.rs` (every route, status, error body, cache
 header, `sandbox`/`nosniff`, type allowlist, range handling, CORS refusal of
 `X-Vosu-Tool-Session` and `Authorization`, dashboard-listener refusal,
 subscription frames, removed-index absence, 1 MiB limits, close `1011` on a
-full pong queue, job states including `plugin_crashed`/`timed_out`);
-`cargo test --workspace --lib --all-features --locked prop_` with new
-`prop_*` tests for API v1 pointer parsing, resource-id parsing, and tree path
-validation; `cargo test --locked --test server_compat` unchanged;
+full pong queue, job states including `plugin_crashed`/`timed_out`, no
+`internal` pointer reachable by any route); `cargo test --workspace --lib --all-features --locked prop_`
+with new `prop_*` tests for API v1 pointer parsing, resource-id parsing, and
+tree path validation; `cargo test --locked --test server_compat` unchanged;
 `cargo test --locked --test daemon_smoke` extended to read
 `/api/v1/sessions` and fetch a resource; a browser test driving `vosu.invoke`,
 progress, and `AbortSignal` cancellation against the testkit, run by
-`python tests/tool_host_smoke.py`; a Criterion comparison of the API v1 hub
-with `v2_subscription`.
+`python tests/tool_host_smoke.py`; a test that a prerelease build never
+reads or writes the 1.x config file; D17 M3 benches.
 
 Risks: resource-id stability across restarts depends on the content identity
 the osu! plugin chooses (lazer store hash, stable path/size/mtime); the
@@ -492,67 +593,92 @@ Scope:
   `src/model/api/*`), the HTTP providers (`src/server/service/providers.rs`,
   including ADR 0004's `LegacyCalculateProvider`), the stable
   `/files/skin/{path}` behavior, and the WebSocket encoders from
-  `src/runtime/projection.rs`. Builders take a typed view assembled from the
-  bus (`vosu.osu`, `vosu.client`, plugin-only subtree D2) instead of
-  `RegularState`/`PreciseState`; core's hub keeps latest-only publication and
-  per-snapshot encoding caches (`tests/performance_invariants.rs:509-701`).
+  `src/runtime/projection.rs`. Builders take a typed view assembled from
+  `vosu-surface` reads of `vosu.osu`, `vosu.client`, and
+  `vosu.osu/internal/paths`, which the adapters `require` (D2); the
+  streamCompanion adapter computes `mapStrains`, breaks, kiai points, and
+  timing points (`src/model/api/sc.rs:132-141`) from `vosu-osu-calc` and the
+  chart resource. Core's hub keeps latest-only publication and per-snapshot
+  encoding caches (`tests/performance_invariants.rs:509-701`).
+- File routes (`/Songs/{path}`, `/files/...`, `/backgroundImage`,
+  api-v1.md:507) resolve against the osu! plugin's `ROOT_DECLARE` handles
+  (plugin-abi.md:167) through `vosu-surface`, never against a path string
+  read from the bus, so ADR 0005 confinement never takes its root from
+  published data (D2). The path strings are only echoed in upstream JSON
+  fields such as `folders` and `directPath`.
 - Remove what ADR 0021 removes: `pressHitErrors`, `releaseHitErrors`,
   `keyHitErrors`, `keys.all`, `catcher`, `hitOffsets`, the `/files/skin/`
   index, `/websocket/v2/subscribe`; lazer `/files/skin/{path}` returns 404;
   the removed configuration keys (`ENABLE_KEY_OVERLAY`,
   `ENABLE_MANIA_KEY_HIT_ERRORS`, `ENABLE_HIT_OFFSETS`,
   `V2_SUBSCRIPTION_DEBOUNCE`) leave the schema and enter the M8 migration
-  list. Delete bridge B1 and `src/api/snapshot.rs`.
+  list. Requests to a removed route are attributed to the requesting overlay
+  for the D20 dashboard notice. Delete bridge B1, its interim crate edge,
+  and `src/api/snapshot.rs`.
 - The divergence file next to the fixtures (`tests/fixtures/upstream/DIVERGENCES.md`)
-  lists every security divergence
-  with its reason (sandbox header, path confinement, peer and Origin policy,
-  request limits, ADR 0004 endpoint, `/api/ingame` functional compatibility).
+  lists every security divergence with its reason (sandbox header, path
+  confinement, peer and Origin policy, request limits, ADR 0004 endpoint,
+  `/api/ingame` functional compatibility).
 
 Exit: `cargo test --locked --test state_api_compat`, rewritten to drive the
 adapters from bus input and compared byte for byte with the committed source
 oracle; `strip_vosu_extensions` (`tests/state_api_compat.rs:198`) is deleted
 because the adapters no longer emit those fields;
 `cargo test --locked --test server_compat` updated in the same change for each
-intentional removal; `--test performance_invariants` ported to the adapters;
-`--test daemon_smoke`; `cargo bench --locked --package vosu --bench hot_paths -- serializers_cold`,
-`serialization_cache`, `publication`, and `--bench autoresearch_http_v2`
-against M3, within the owner-approved threshold.
+intentional removal, plus traversal attempts proving file routes stay inside
+declared roots; `--test performance_invariants` ported to the adapters;
+`--test daemon_smoke`; D17 M4a benches, including the end-to-end
+snapshot → bus → `/json/v2` bytes and API v1 frames bench against the 1.x
+serializers.
 
-Risks: the adapters lose data the 1.x builders read directly from typed state
-unless D2 lands; per-frame projection from the bus may cost more than 1.x
-encoding from typed snapshots (measured above).
+Risks: per-frame projection from the bus may cost more than 1.x encoding
+from typed snapshots (the end-to-end bench decides).
 
-### M4b: live golden fixtures (owner-dependent)
+### M4b: golden fixtures from live captures (owner-dependent)
 
 Scope: extend `tools/live-parity` with (1) a route-probe matrix recording
 status, headers, and error bodies, including near-miss routes; (2) a
 vosu-side bus dump per sample through a `test-harness`-only endpoint so
 captures can be replayed; (3) a `golden` command that normalizes volatile
 values and writes fixtures under `tests/fixtures/upstream/<pinned revision>/`.
-Then the **owner** runs captures against the pinned upstream revision
-(`Cargo.toml` `source-commit`) on every supported pair in
-`tools/live-parity/live_parity.py` `SUPPORTED_MATRIX` (Windows stable,
-Windows lazer, Linux lazer), traversing menu → play → paused → result. A new
-`tests/adapter_golden.rs` replays the bus dumps into the adapters and compares
-every route and frame with the upstream capture, minus the divergence file.
+A new `tests/adapter_golden.rs` replays the bus dumps into the adapters and
+compares every route and frame with the upstream capture, minus the
+divergence file.
 
-Exit: `cargo test --locked --test adapter_golden`; the fixture inventory names
-its revision and is covered by `scripts/brand-allowlist.txt` entries in
-the `parity`/`fixture` categories where fixtures spell the upstream name.
+Captures (D14), against the pinned upstream revision (`Cargo.toml`
+`source-commit`), traversing menu → play → paused → result:
 
-Blocking: M8's release gate blocks on M4b. Nothing else does.
+1. **Pilot**, as soon as the tooling lands: one pair (Windows lazer, the pair
+   that exercises the most adapter surface) by the owner. Mismatches become
+   M4a follow-up fixes immediately.
+2. **Full set** before M8: every pair in `tools/live-parity/live_parity.py:25`
+   `SUPPORTED_MATRIX` (Windows stable, Windows lazer, Linux lazer), in the
+   same owner session as the `/api/ingame` observation (section 6).
+3. **Recapture** if the pin moves before M8.
+
+Exit: `cargo test --locked --test adapter_golden` on the pilot, then on the
+full set; the fixture inventory names its revision and is covered by
+`scripts/brand-allowlist.txt` entries in the `parity`/`fixture` categories
+where fixtures spell the upstream name.
+
+Blocking: M8's release gate blocks on the full set. Nothing else does.
 
 ### M5: plugin-host process, capability drop, brokered reads
 
+Starts after M4a (no bridge B1 exists) and S1.
+
 Scope:
 
-- `vosu plugin-host` argv dispatch in `src/main.rs` beside `vosux`; one
-  process per plugin instance; the shared-memory rings, framing, and 2-second
-  backpressure window (§7.2); crash detection and 1/2/4/8/16-second restart
-  backoff with the five-in-five-minutes `failed` state; read plans relayed
-  byte for byte; bounded streams for generated resources.
+- `vosu plugin-host` argv dispatch in `src/main.rs` beside `vosux`, before
+  the Tokio runtime is built; one process per plugin instance; the
+  shared-memory rings, framing, and 2-second backpressure window (§7.2);
+  crash detection and 1/2/4/8/16-second restart backoff with the
+  five-in-five-minutes `failed` state; read plans relayed byte for byte; a
+  dedicated ring-reader thread that hands `VOSU_READ_PLAN_SYNC` results to
+  the blocked submitter, which dispatches them on its own thread (D5);
+  bounded streams for generated resources.
 - Linux: the §7.3 sequence before `dlopen` on the single initial thread.
-  `vosu --setup` grants file capabilities (`src/platform/linux/capabilities.rs`),
+  `vosu --setup` grants file capabilities (`src/platform/linux/capabilities.rs:8-12`),
   so the exec of `vosu plugin-host` regains them and must drop them first.
 - Windows: `CREATE_SUSPENDED`, job object with
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` before resume (§7.4), reusing
@@ -560,22 +686,32 @@ Scope:
   questions" requires: port `benches/brokered_reads_bench.rs` to a Windows
   helper (unnamed section + event versus named pipe), run it pinned on the
   native Windows guest, record results in [brokered reads](brokered-reads.md)
-  and the [benchmark guide](../testing/benchmarks.md), and adopt the faster
-  transport for Windows.
+  and the [benchmark guide](../testing/benchmarks.md), adopt the faster
+  transport for Windows, and set the Windows brokered-read bar (D17).
+- `--plugin <dir>` becomes available in prerelease release builds, loading
+  the plugin with `user` trust: `runtime = "process"` after the approval
+  prompt (catalog-v2.md "Trust"), so ecosystem testers exercise the process
+  runtime and approval from here on.
+- The osu! plugin's `test-harness`-only `cdylib` build with a non-bundled
+  test manifest (bundled manifests must not request `process`,
+  plugin-abi.md:36) runs the real bus path out of process (gap 13).
 
 Exit: new `tests/plugin_host_native.rs` run with `-- --nocapture` on Linux and
-Windows: the testkit and the osu! plugin run under `runtime = "process"`;
-read plans against another session's handle return
-`VOSU_ERR_PERMISSION_DENIED`; killing the plugin host detaches its sessions
-with `reason: "lost"` and restarts with backoff; a stalled ring trips the
-2-second window. On Linux an `#[ignore]` test, run natively after
+Windows: the testkit and the osu! plugin `cdylib` run under
+`runtime = "process"` and produce the same `/json/v2` bytes and API v1 frames
+as in-process for the oracle inputs; read plans against another session's
+handle return `VOSU_ERR_PERMISSION_DENIED`; `VOSU_READ_PLAN_SYNC` works and
+times out identically in both runtimes; killing the plugin host detaches its
+sessions with `reason: "lost"` and restarts with backoff; a stalled ring
+trips the 2-second window. On Linux an `#[ignore]` test, run natively after
 `vosu --setup` on a packaged build, asserts that the plugin host's
 `/proc/<pid>/status` shows `CapInh`, `CapPrm`, `CapEff`, `CapBnd`, and
 `CapAmb` all zero and `NoNewPrivs: 1`; on Windows, terminating core
-terminates the plugin host. `cargo bench --locked --bench brokered_reads_bench`
-with the production transport stays within 2x of the recorded prototype
-numbers; `cargo test --locked --test process_memory -- --nocapture` on both
-OSes.
+terminates the plugin host. D17 M5 benches: `brokered_reads_bench` with the
+production transport, and the osu! plugin's reader benches and per-tick CPU
+under the process runtime (D5) recorded as data, not gated, since the
+bundled plugin runs in-process; `cargo test --locked --test process_memory -- --nocapture`
+on both OSes.
 
 Risks: shared-memory setup and teardown robustness against a crashed host
 (brokered-reads.md "Recommendation" keeps a socket fallback acceptable);
@@ -588,15 +724,17 @@ Scope: the unified manifest (catalog-v2.md "Package manifest v2", "Shared
 fields", the three kinds, "Capability fields", "Capability coverage",
 "Namespace and kind parsing", "Game capabilities"); `metadata.txt` as
 read-only legacy overlay input; `catalog-v2.json` parsing and validation;
+the bounded `[[provides]] schema` profile and the catalog's mirrored schema
+version and lane table (D7); the `comm_hints` matcher field (D18);
 committed JSON Schemas for both documents under `docs/v2/schemas/` so
-ecosystem packaging scripts can validate without vosu; the namespace-schema
-declaration in `[[provides]]` (D7). Validation lives in `vosu-plugin-api` so
-plugin authors and core use one implementation.
+ecosystem packaging scripts can validate without vosu. Validation lives in
+`vosu-plugin-api` so plugin authors and core use one implementation.
 
 Exit: `cargo test --locked -p vosu-plugin-api manifest` and a corpus test
-`tests/catalog_v2_compat.rs` with valid and invalid manifests for every rule in
-catalog-v2.md, including reserved names, id prefix rules, and
-`provides`/`[[actions]]` pairing.
+`tests/catalog_v2_compat.rs` with valid and invalid manifests for every rule
+in catalog-v2.md, including reserved names, id prefix rules,
+`provides`/`[[actions]]` pairing, and D7's size, depth, `$ref`, and
+namespace limits.
 
 ### M6b: sources, credentials, resolver, private sources
 
@@ -605,23 +743,26 @@ detection", "Per-forge private asset retrieval", "Credentials", "Origin
 scoping on redirects", "Private networks", "Trust") on top of the manual
 redirect loop in `src/net/streaming.rs`; "Resolver algorithm" (built-in
 providers, provider selection, version solving, install plan with
-`needs_approval` and in-process plan errors, dependency-only autoremove, game
-detection); "API placement" (dashboard listener, CSRF); plugin trust tiers
-complete §7.1 and the approval flow. `AGENTS.md`'s private-destination rule
-is amended with ADR 0023's per-host exception in the same change.
+`needs_approval`, in-process plan errors, and the D8 `internal.paths`
+disclosure field, dependency-only autoremove, game detection); "API
+placement" (dashboard listener, CSRF); plugin trust tiers complete §7.1 and
+the approval flow. `AGENTS.md`'s private-destination rule is amended with
+ADR 0023's per-host exception in the same change.
 
 Exit: `tests/catalog_v2_compat.rs` resolver scenarios;
 `cargo test --locked -p vosu-test-harness --test network_integration`
 extended with credential stripping on every cross-origin redirect, the
-GitHub API asset redirect to presigned storage, and the private-network
-exception limited to the exact source host; `cargo test --workspace --lib --all-features --locked prop_`
-(ZIP preflight unchanged); `python tests/tool_catalog_smoke.py` and
-`python tests/catalog_art_smoke.py` on catalog v2; `credentials` never
+GitHub API asset redirect to presigned storage, and a local Forgejo or Gitea
+container behind an internal certificate authority installed into the test
+trust store, proving the private-network exception stays limited to the
+exact source host (ADR 0023:52-60, D15);
+`cargo test --workspace --lib --all-features --locked prop_` (ZIP preflight
+unchanged); `python tests/tool_catalog_smoke.py` and
+`python tests/catalog_art_smoke.py` on catalog v2; credentials never
 returned by any route (server_compat-style test).
-**Owner-dependent:** ADR 0023 requires forge-specific retrieval to be
-verified against each forge. The owner provides read-only tokens for private
-test repositories on GitHub, GitLab (nested group), Codeberg, and one Gitea or
-Forgejo instance; the results are recorded in
+**Owner-dependent (D15):** a one-time check against GitHub, GitLab (nested
+group), Codeberg, and one Gitea or Forgejo instance with read-only tokens
+that are never stored in the repository; results recorded in
 [verification](../testing/verification.md).
 
 ### M7: dashboard, overlay host, tool host on the new model
@@ -629,8 +770,9 @@ Forgejo instance; the results are recorded in
 Scope:
 
 - `vosu-dashboard`, `vosu-overlay-host`, `vosu-tool-host` become bundled
-  surface plugins; core's router is registration-based and still exact
-  (unknown and near-miss routes stay 404, `AGENTS.md`).
+  surface plugins (ids `vosu.dashboard`, `vosu.overlayhost`, `vosu.toolhost`,
+  D10); core's router is registration-based and still exact (unknown and
+  near-miss routes stay 404, `AGENTS.md`).
 - Tools are web-only: delete service supervision, the `/tools/<id>/api/*`
   proxy, readiness, per-launch service tokens, the host API
   (`/tools/_host/v1/{self,settings,context,overlays}`), and the tool CLI
@@ -641,21 +783,23 @@ Scope:
   protocol.
 - Dashboard: plugin management (installed, approvals, settings from
   `settings_schema`, the verbatim trust warning in catalog-v2.md "Trust"),
-  "Add support for `<name>`" from game detection, install plans, the
+  "Add support for `<name>`" from game detection, install plans with the D8
+  disclosure, the D20 notice for overlays that use removed 1.x APIs, the
   `/api/ingame` deprecation banner with one-click vosulay install,
   `VOSU_DASHBOARD=off` and its configuration key (ADR 0019).
 - `/api/ingame` clean-room implementation in the upstream adapter (section 6).
 - Core lifecycle absorbs the rest of `src/runtime/`; the root package is
-  `main.rs` plus bundled linkage, with a startup assertion that the registry
-  contains exactly the expected bundled set (a dependency that is never
-  referenced is not linked, so every bundled crate is named with `use … as _`).
+  `main.rs` plus the explicit `BUNDLED` array, and startup asserts that the
+  registry contains exactly that list (D13).
 
 Exit: rewritten `python tests/tool_host_smoke.py --binary target/debug/vosu`
 (launch, bridge, invoke, progress, cancel, 401/403 rules) and
 `python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module <playwright index.mjs>`
-against a `cargo build --locked --features test-harness` binary;
-`python tests/catalog_art_smoke.py`; `cargo test --locked --test server_compat`
-(origins, CSRF, API keys, counters); `cargo test --locked --test config_compat`;
+against a `cargo build --locked --features test-harness` binary, including
+the D20 notice for a fixture overlay that subscribes to
+`/websocket/v2/subscribe`; `python tests/catalog_art_smoke.py`;
+`cargo test --locked --test server_compat` (origins, CSRF, API keys,
+counters); `cargo test --locked --test config_compat`;
 `cargo test --locked --test daemon_smoke` including `VOSU_DASHBOARD=off`; a
 new `tests/ingame_compat.rs` derived only from the behavioral specification.
 
@@ -664,22 +808,27 @@ new `tests/ingame_compat.rs` derived only from the behavioral specification.
 Scope: first-start migration exactly per catalog-v2.md "First-start migration
 from 1.x" (sources verbatim with `trusted: false` except official identities;
 official tools queued through `replaces`; user tools disabled with
-`needs-2.0-update`; overlays untouched) plus removed configuration keys,
-idempotent like `src/config/migration.rs`; the day-0 check (catalog-v2.md
-"Day-0 release check") as `scripts/check-day0.py` wired into `release.yml`
-and covered by `scripts/test_gate_tooling.py`; README, quickstart, CHANGELOG,
-architecture, and ADR statuses; packaging (section 7).
+`needs-2.0-update`; user overlays left enabled, flagged by D20 when they use
+removed APIs) plus removed configuration keys and the D19 move of the
+osu!-specific keys into `vosu.osu` settings (deleting bridge B2), idempotent
+like `src/config/migration.rs`; the day-0 check (catalog-v2.md "Day-0
+release check") as `scripts/check-day0.py` wired into `release.yml` and
+covered by `scripts/test_gate_tooling.py`; README, quickstart, CHANGELOG,
+architecture, and ADR statuses; packaging (section 7). Release requires
+every official plugin (vosu-tools plugins and the vosulay supervisor) to
+have passed a process-runtime smoke in its own CI against the latest alpha.
 
 Exit: new `tests/migration_compat.rs` over 1.x config/data fixtures for Linux
-and Windows path layouts, run twice to prove idempotence;
-`cargo test --locked --test config_compat`;
+and Windows path layouts, run twice to prove idempotence and once after a
+simulated crash mid-migration; `cargo test --locked --test config_compat`;
 `VOSU_RELEASE_SMOKE_BINARY=<packaged-binary> cargo test --locked -p vosu-release-smoke --test release_smoke -- --ignored --nocapture`
 extended to start `vosu plugin-host` from the packaged binary, read
 `/api/v1/sessions`, and confirm the bundled set; native updater tests;
-`python scripts/check-day0.py` passing against the four repositories; M4b
-complete; an owner-run live session on Windows stable, Windows lazer, and
-Linux lazer through menu → play → paused → result with one official tool, one
-overlay, and vosulay installed through the resolver.
+`python scripts/check-day0.py` passing against the four repositories; M4b's
+full set green; an owner-run live session on Windows stable, Windows lazer,
+and Linux lazer through menu → play → paused → result with one official
+tool (its plugin under `runtime = "process"`), one overlay, and vosulay
+installed through the resolver.
 
 ## 5. Compatibility safety during the rewrite
 
@@ -694,9 +843,9 @@ change once in M0; that is the only edit before the milestone listed.
 | `tests/server_compat.rs` (+ `server_compat/listener.rs`) | routes, methods, CORS, body limits, auth matrix, file security, pages, counters, catalog hardening, WebSocket cadence and backpressure | M3 | M4a edits only the intentional removals; M7 edits tool/dashboard routes; the listener, origin, and file-security cases persist unchanged into 2.0 |
 | `tests/performance_invariants.rs` | allocation-free reads, scanner bounds, encoding-cache sharing, latest-only coalescing | M3 | M4a ports the encoding/coalescing cases to adapter feeds |
 | `tests/process_memory.rs` | native reads on both OSes | M0 onward (run natively at every milestone touching reads: M0, M1, M5) | — |
-| `tests/config_compat.rs` | config format, migration, reload | M3 | M4a/M8 for removed keys |
+| `tests/config_compat.rs` | config format, migration, reload | M3 (on `main` until M0 lands) | M4a for removed keys; M8 for the D19 move and migration |
 | `tests/daemon_smoke.rs` | end-to-end startup and serving | every milestone; extended in M3, M7 | — |
-| `tests/updater_compat.rs`, `updater_native.rs` | transactional update | M−1 adds consent | — |
+| `tests/updater_compat.rs`, `updater_native.rs` | transactional update | M−1 adds consent (1.2.4) | — |
 | `tests/tool_host_smoke.py`, `tests/fixtures/tool-host/` | 1.x tool services | M6 (M3 adds a bridge case) | M7 rewrite for web-only tools |
 | `tests/dashboard_smoke.py`, `catalog_art_smoke.py`, `tool_catalog_smoke.py` | dashboard and catalogs | M5 (M−1 adds the update-consent prompt) | M6b (catalog v2), M7 |
 
@@ -713,9 +862,11 @@ Golden fixtures come from two sources with different owners:
    framing and cadence, and near-miss routes are observable only from a
    running pinned upstream with a live osu! client. ADR 0021 requires these
    captures to be committed and checked in CI. The tooling extension lands
-   first in M4b without the owner; the capture itself needs the owner's
-   machines and clients. **M8 (the release) blocks on it; no earlier
-   milestone does.** Each later pin bump repeats the capture (ADR 0021).
+   first in M4b without the owner; the captures need the owner's machines and
+   clients. A one-pair **pilot** runs as soon as the tooling lands, so
+   mismatches surface early; **M8 (the release) blocks on the full set; no
+   earlier milestone does.** Each later pin bump repeats the capture (ADR
+   0021).
 
 Between M4a and M4b the adapters are checked by the source oracle plus the
 1.x behavioral tests in `server_compat`, which already encode the upstream
@@ -741,7 +892,7 @@ recorded in `CHANGELOG.md` and [ADR 0008](../decisions/0008-external-in-game-ove
   mode entry and exit, placement persistence, reaction to overlay
   install/removal, error states. The output is
   `docs/v2/ingame-behavior.md` (normative behavior, no upstream text or code).
-- **Who, recommended:** the owner if eligible; otherwise a contributor who
+- **Who (adopted):** the owner if eligible; otherwise a contributor who
   has never worked in this repository's history before `1ccd4cc`. The plan's
   implementing agents are not eligible, because they routinely read history.
 - **When:** in the same owner session as the M4b captures (D14), because both
@@ -760,25 +911,42 @@ recorded in `CHANGELOG.md` and [ADR 0008](../decisions/0008-external-in-game-ove
 
 ## 7. Ecosystem fan-out
 
-ADR 0022 starts ecosystem work once the contracts are frozen (they are) and
-the SDK and web bridge exist. **Trigger: M3 and M6a landed on `v2/main` and
-`v2.0.0-alpha.1` published as a GitHub prerelease (M−1 publishing fix).** At
-that point the SDK can build and load an external plugin (M1), plugins can
-publish namespaces (M2), declare resources and actions, and tools can call
-them through `vosu.invoke`/`vosu.start` and subscribe through API v1 (M3),
-and every package kind has a validator and JSON Schema (M6a). Until M6b,
-ecosystem plugins run through `--plugin <dir>`; until M5, only in-process.
-One owner agent per repository; each repository pins the alpha tag and moves
-to each newer alpha deliberately.
+ADR 0022 starts ecosystem work once the contracts are frozen (they are,
+amended by A1) and the SDK and web bridge exist. **Trigger: M3 and M6a landed
+on `v2/main` and `v2.0.0-alpha.1` published as a GitHub prerelease (M−1
+publishing fix).** At that point the SDK can build and load an external
+plugin (M1), plugins can publish namespaces (M2), declare resources and
+actions, and tools can call them through `vosu.invoke`/`vosu.start` and
+subscribe through API v1 (M3), and every package kind has a validator and
+JSON Schema (M6a).
 
-| Repository | Changes (ADR 0022, specs) |
+- **SDK:** `vosu-plugin-api` `1.0.0-alpha.N` prereleases on crates.io, so a
+  plugin build never clones this repository (D11).
+- **Testing data:** alpha builds keep their state in the prerelease
+  subdirectory of each vosu root and never rewrite 1.x configuration, so
+  testers can return to 1.x by simply running it (D21).
+- **Runtime:** until M5, ecosystem plugins load in-process through
+  `--plugin <dir>` in debug builds only; from M5, `--plugin <dir>` in alpha
+  builds loads them with `user` trust under `runtime = "process"` after
+  approval, and from M6b they install from their own sources. Official
+  plugins may request `in-process` for release, but each must pass a
+  process-runtime smoke in its own CI before M8 (section 4).
+- **Plugin ids:** the bundled hosts are `vosu.toolhost` and
+  `vosu.overlayhost` (D10), so `vosu.tools.<name>` and
+  `vosu.overlays.<name>` stay available for official plugins
+  (catalog-v2.md:120-131 rejects ids that extend a registered id).
+
+One owner agent per repository; each repository pins an alpha and moves to
+each newer alpha deliberately.
+
+| Repository | Changes (ADR 0022, specs, adopted decisions) |
 |---|---|
-| vosu-tools | Each `[service]` becomes a plugin crate on `vosu-plugin-api` (replacing `crates/vosu-tool-sdk`): `[api].write` routes become `[[actions]]` with `args_schema`/`result_schema`; read routes that return state become a plugin namespace with a published schema; file-returning routes become resources or trees; `[cli]` becomes actions with `cli = true` (`vosux <plugin-id> <action>`); `[permissions].host = ["context"]` and `songs:write` become `requires` on `vosu.osu` fields and the plugin-only paths subtree (D2, D8). Each `tool.toml` becomes `manifest.toml` `kind = "tool"` with `[ui]` and `requires`/`optional`; `kind = "plugin"` manifests with `runtime`, `[targets.*]`, `provides`. `packages/tool-web` (`bridge.d.ts`) adopts the 2.0 bridge; every `/json/v2` and `/websocket/v2/subscribe` consumer moves to API v1 pointers using state-schema.md's mapping table. `scripts/package.py` emits `catalog-v2.json` beside `catalog.json` (catalog-v2.md "1.x coexistence"). |
-| vosulay | The always-on service (`tool.toml` `[service] startup = "always"`, `src/backend.rs`) becomes a plugin requesting `runtime = "process"` that owns the CEF in-game host (D16); the editor becomes a `kind = "tool"` UI; consumers of `/websocket/v2/subscribe` and `keys.all` (`src/backend.rs`, `src/runtime/editor/rulesets.rs`) move to API v1. It is the `/api/ingame` successor named in the `Link` header. Publishes `catalog-v2.json`; its own winget/Scoop/AUR packaging is unchanged. |
+| vosu-tools | Each `[service]` becomes a plugin crate on `vosu-plugin-api` (replacing `crates/vosu-tool-sdk`) with id `vosu.tools.<tool>`: `[api].write` routes become `[[actions]]` with `args_schema`/`result_schema`; read routes that return state become a plugin namespace whose schema `[[provides]]` declares (D7); file-returning routes become resources or trees; `[cli]` becomes actions with `cli = true` (`vosux <plugin-id> <action>`). `[permissions].host = ["context"]` becomes `requires` on `vosu.osu` fields and, where a raw path is truly needed, `vosu.osu/internal/paths` (D8) — replacing the `songs_dir` reinterpretation in `tools/replay-renderer/src/main.rs:628-636`; `songs:write` writers (the downloader, practice) call `vosu.osu.beatmap.import` instead of writing paths (D8). Each `tool.toml` becomes `manifest.toml` `kind = "tool"` with `[ui]` and `requires`/`optional`; plugin manifests carry `runtime`, `[targets.*]`, `provides`. `packages/tool-web` (`src/bridge.d.ts`) adopts the 2.0 bridge; every `/json/v2` and `/websocket/v2/subscribe` consumer moves to API v1 pointers using state-schema.md's mapping table. `scripts/package.py` emits `catalog-v2.json` beside `catalog.json` (catalog-v2.md "1.x coexistence"). CI runs each plugin under `runtime = "process"` against the latest alpha. |
+| vosulay | A small official plugin supervises vosulay's existing host executable as a child process (D16, validated by S1): job object on Windows, `PR_SET_PDEATHSIG` on Linux, session/focus forwarding, start/stop actions; the host keeps its CEF sandbox (`vosulay/docs/security.md:58-60`, `:265`) and its standalone mode against upstream-compatible backends. The editor becomes a `kind = "tool"` UI; consumers of `/websocket/v2/subscribe` and `keys.all` (`src/backend.rs`, `src/runtime/editor/rulesets.rs`) move to API v1 when attached to vosu. It is the `/api/ingame` successor named in the `Link` header. Publishes `catalog-v2.json`; its winget/Scoop/AUR packaging is unchanged. |
 | vosu-overlays | `metadata.txt` becomes `manifest.toml` `kind = "overlay"` with `requires`/`optional` field ids (common-layer fields where possible so overlays work across games); `overlays/*/overlay.js` move from `/websocket/v2/subscribe` to `WS /api/v1/sessions/active/subscribe`; `scripts/package.py` publishes both catalogs. |
-| vosu-overlay-quickstart | `app.js` uses API v1 (api-v1.md "Worked examples"), ships a `manifest.toml` template, `TUTORIAL.md` rewritten; a release tagged `v2.x` (required by the day-0 check). |
+| vosu-overlay-quickstart | `app.js` (its `/websocket/v2/subscribe` at `app.js:449`) uses API v1 (api-v1.md "Worked examples"), ships a `manifest.toml` template, `TUTORIAL.md` rewritten with a section on porting overlays built from the 1.x template (D20); a release tagged `v2.x` (required by the day-0 check). |
 | packaging (`packaging/` here) | `nfpm.yaml` and AUR install hooks keep running `vosu --setup`; the plugin host is the same executable, so no new file capabilities; the `vosux` symlink stays; the release adds `include/vosu_plugin.h` as an asset for C plugin authors; `scripts/package-release.py` notes describe 2.0. Starts after M5 (plugin host exists). |
-| docs | README routes, configuration, and CLI; quickstart; a plugin author guide (SDK, manifest, trust, runtime); an overlay author guide (API v1, resources, common layer); the 2.0 tool protocol; a 1.x→2.0 migration guide; each ecosystem repository's README. Public docs name only osu! as a supported game. Runs continuously from the trigger; final at M8. |
+| docs | README routes, configuration, and CLI; quickstart; a plugin author guide (SDK, manifest, trust, runtime); an overlay author guide (API v1, resources, common layer); the 2.0 tool protocol; a 1.x→2.0 migration guide including overlays that used removed APIs (D20) and the alpha data location (D21); each ecosystem repository's README. Public docs name only osu! as a supported game. Runs continuously from the trigger; final at M8. |
 
 The day-0 gate (M8) passes only when vosu-tools, vosulay, and vosu-overlays
 each have a published release with `catalog-v2.json` and the quickstart's
@@ -812,10 +980,17 @@ Expected effect of the target layout (inference, to be measured):
 - **Clean builds** gain parallelism across crates on 32 threads. Release
   output is unchanged in kind (thin LTO, one codegen unit).
 
-Goals to adopt (owner may adjust): leaf-crate edit `cargo check` ≤ 1.0 s,
-`cargo build` ≤ 2.5 s, crate library test build ≤ 3.0 s; `vosu-osu-reader`
-edit `cargo check` ≤ 2.0 s; a `vosu-core` edit no slower than today's
-whole-crate rebuild.
+Adopted goals: leaf-crate edit `cargo check` ≤ 1.0 s, `cargo build`
+≤ 2.5 s, crate library test build ≤ 3.0 s; `vosu-osu-reader` edit
+`cargo check` ≤ 2.0 s; a `vosu-core` edit no slower than today's whole-crate
+rebuild. Incremental edits are not the whole cost (D9), so the same script
+also records, with a no-regression budget against the pre-M0 commit: the
+full `python scripts/prepush.py` wall-clock time; the native Windows Clippy,
+test, and doctest run (`scripts/native-ci.ps1`), where one test binary per
+crate adds MSVC link time; clean local and hosted CI build times; and the
+rebuild caused by alternating `cargo test -p <crate>` with workspace
+`--all-features` builds (feature unification of the per-crate
+`test-harness` features).
 
 Measurement (added in M0 as `scripts/measure-build.py`, results recorded as
 the latest observation in the [benchmark guide](../testing/benchmarks.md)):
@@ -833,41 +1008,79 @@ debug builds is the next step; it does not change release builds.
 
 ## 9. Contract gaps found while planning
 
-Implementing the frozen specs against the 1.x code exposed these gaps. Each
-maps to an owner decision in section 10 (D2–D9) except item 8, which is a
-documentation step; amendments are additive and land
-before the milestone named, while no plugin has shipped.
+Planning against the 1.x code, and the adversarial review of the first
+draft, exposed these gaps. Each is closed by an adopted decision in section
+10 or by a milestone task; every spec amendment lands in A1.
 
-1. Adapters must serve values that `vosu.osu` intentionally omits: raw
-   folder and file paths (`src/model/api/v2.rs` `Folders`, `DirectPath`;
-   `src/model/api/v1.rs` `Folders`, `BeatmapPaths`), and upstream-only
-   derived data (`src/model/api/sc.rs` `mapStrains`, breaks, kiai and timing
-   points), while state-schema.md says API v1 never serves a raw path (D2).
-2. The ABI has no HTTP opcode, and api-v1.md says plugins never serve HTTP,
-   yet the dashboard, overlay host, tool host, and adapters are bundled
-   plugins whose job is serving routes (D3).
-3. `VOSU_OP_PUBLISH_FIELD` carries one leaf and no batch boundary
-   (`vosu_message.flags` is "0 unless the spec says otherwise"), so a
-   multi-field change cannot be published atomically, which ADR 0002 and the
-   overview's "Atomicity regressions" hotspot require (D4).
-4. Read plans are asynchronous messages even in-process (plugin-abi.md §3,
-   §5), while the 21,756-line 1.x reader stack reads synchronously (D5).
-5. 1.x discovery is conditional — Linux's broad lazer fallback runs only
-   when the named first pass is empty (`src/instance/discovery.rs:50-110`) —
-   and argv-based skipping (`should_skip`, line 118); flat `[match]` tables
-   cannot express either. Tournament clients aggregate into one 1.x instance
-   but would be separate 2.0 sessions (D6).
-6. External plugins have no way to hand core their namespace schema, so core
-   cannot compile `x-sampling-lane` demand for third-party namespaces (D7).
-7. 1.x services received install paths through `GET /tools/_host/v1/context`
-   (`songs_dir`, `osu_dir`, skin folder); 2.0 plugins such as the downloader
-   and practice tools have no equivalent (D8).
-8. The shared naming contract that state-schema.md, catalog-v2.md, and the
-   schemas cite is not a committed document; its rules are spread across
-   catalog-v2.md "Namespace and kind parsing" and the schemas. Commit it as
-   `docs/v2/naming.md` before M1 so the validators have one source.
-9. ADR 0019 says "one crate per bundled plugin"; the build-time goal needs
-   the osu! plugin as five crates and core as four (D9).
+1. **Paths the adapters must echo.** Upstream JSON carries raw folder and
+   file paths (`src/model/api/v2.rs` `Folders`, `DirectPath`;
+   `src/model/api/v1.rs` `Folders`, `BeatmapPaths`) that `vosu.osu` omits,
+   and state-schema.md:292 says state never carries a raw path. Only the
+   paths need hiding: the upstream-only derived values
+   (`src/model/api/sc.rs:132-141`) are computed by the streamCompanion
+   adapter itself. → D2.
+2. **No HTTP in the ABI.** The ABI has no HTTP opcode and ADR 0021:61 says
+   plugins never serve HTTP, yet the dashboard, hosts, and adapters are
+   bundled plugins whose job is serving routes. → D3.
+3. **No atomic multi-field publication.** `VOSU_OP_PUBLISH_FIELD` carries one
+   leaf and no batch boundary, so a multi-field change cannot be committed
+   atomically (ADR 0002:38, `docs/architecture/overview.md:238`); a
+   continuation flag is unsafe with concurrent publishers whose frames
+   interleave in one ring (plugin-abi.md §7.2). → D4.
+4. **Synchronous readers versus asynchronous plans.** Read plans are
+   asynchronous even in-process (plugin-abi.md §3, §5;
+   `include/vosu_plugin.h:409-411`), while the 21,756-line 1.x reader stack
+   reads synchronously. → D5.
+5. **Discovery parity.** 1.x skips `--tournament` and `debug-client-id`
+   processes (`src/instance/discovery.rs:118-123`) and runs Linux's broad
+   lazer fallback only when the named pass is empty
+   (`src/instance/discovery.rs:73-107`); full-match `regex` patterns
+   (plugin-abi.md:115) can express neither. Tournament spectator clients are
+   ordinary 1.x instances (`src/instance.rs:68-80`) selected by lowest PID
+   (`src/instance.rs:603-620`); the tournament-manager aggregate is set only
+   by tests (`src/instance.rs:137`, every instance starts `false` at
+   `src/instance.rs:473`). → D6.
+6. **Third-party namespace schemas.** External plugins have no way to hand
+   core their namespace schema, so core cannot compile `x-sampling-lane`
+   demand for third-party namespaces. → D7.
+7. **Install paths for plugins.** 1.x services received paths through
+   `GET /tools/_host/v1/context`, whose `songs_dir` is the lazer file store on
+   lazer (`vosu-tools/tools/replay-renderer/src/main.rs:628-636`); 2.0 has no
+   equivalent, and writers need an import path rather than a writable
+   folder. → D8.
+8. **Naming contract.** The shared naming contract that state-schema.md,
+   catalog-v2.md, and the schemas cite is not a committed document. → A1
+   commits `docs/v2/naming.md`.
+9. **Crate granularity.** ADR 0019:111-114 says one crate per bundled
+   plugin; the build-time goal needs the osu! plugin as five crates and core
+   as four. → D9.
+10. **Linux matcher semantics and the event filter.** 1.x matches the
+    substrings `osu!` and `osulazer.exe` in the 16-byte kernel `comm`
+    (`src/instance/events.rs:150-155`,
+    `src/instance/events/bpf/process_events.bpf.c:76-92`); `process_names`
+    are exact names (plugin-abi.md:108), so the osu! plugin needs path
+    patterns, which would widen the filter to every exec and lose the
+    benefit `AGENTS.md:130` preserves. "Overlapping" regex matchers
+    (plugin-abi.md:118) are undecidable in general. → D18.
+11. **osu!-specific configuration keys.** `CALCULATE_PP`, `POLL_RATE`,
+    `PRECISE_DATA_POLL_RATE`, `SHOW_MP_COMMANDS`, and
+    `READ_MANIA_SCROLL_SPEED` (`src/config/schema.rs:139,163,169,181,187`)
+    have no owner in 2.0, and the M8 migration listed only removed keys.
+    → D19.
+12. **1.x user overlays that use removed APIs.** Overlays built from the 1.x
+    quickstart subscribe to `/websocket/v2/subscribe`
+    (`vosu-overlay-quickstart/app.js:449`), which M4a removes, while
+    catalog-v2.md:903-905 calls user overlays "unaffected". → D20.
+13. **Bundled plugins cannot run out of process.** A bundled manifest must
+    not request `runtime = "process"` (plugin-abi.md:36), yet M5 must prove
+    the osu! plugin behaves identically there. → M5 task: a
+    `test-harness`-only `cdylib` build with a non-bundled test manifest.
+14. **Alpha builds share state with 1.x.** Alphas would read and rewrite the
+    1.x roots, and 1.x's canonical rewrite drops unknown keys
+    (`src/config/tests.rs:359-395`), so going back to 1.x is undefined. → D21.
+15. **The SDK signature.** `fn on_message(&mut self, …)` (plugin-abi.md:315)
+    cannot accept the concurrent calls `concurrent_dispatch = true` permits,
+    which the osu! plugin needs. → D22.
 
 ### Edge cases every milestone's tests must cover
 
@@ -895,113 +1108,256 @@ before the milestone named, while no plugin has shipped.
   manifest validation; a catalogued but uninstalled plugin never triggers it.
 - Unknown and near-miss routes remain 404 after route registration replaces
   the 1.x `Endpoint` enum (`src/server/routes.rs`).
+- A regular and a precise reader publishing concurrently never produce a
+  snapshot that mixes their batches; an invalid entry rejects its whole
+  `PUBLISH_BATCH` and commits nothing.
+- A declined process is not re-offered until its PID generation ends; a
+  tournament spectator client is a visible session with its IPC id.
+- `VOSU_READ_PLAN_SYNC` submitted from a dispatch thread is refused in both
+  runtimes.
 
-## 10. Risks and owner decisions
+## 10. Adopted decisions and risks
 
-Decisions, each with a recommendation:
+The owner accepted the first draft's recommendations subject to an
+adversarial review; every verdict of that review is adopted. Each entry
+states what was adopted and why. Spec amendments land in A1.
 
-- **D1 Integration branch.** Name `v2/main`, protected with `CI required`,
-  landed through `land.py --base v2/main`, `main` merged in weekly.
-  *Recommend: approve.* The alternative of landing 2.0 on `main` behind
-  features would ship half-built 2.0 code in 1.x releases.
-- **D2 Plugin-only state.** Add an `x-visibility: "plugins"` schema
-  annotation (common-defs) and a `vosu.osu` subtree `internal` carrying raw
-  paths and upstream-only derived values. Core never serves those pointers
-  through API v1 (reads return absence, subscriptions never select them) and
-  delivers them only to plugins whose manifest `requires` them; overlays and
-  tools may not require them. Amend state-schema.md, api-v1.md, catalog-v2.md;
-  bump `vosu.osu` to 1.1.0. *Recommend: approve before M2.* Rejected
-  alternative: typed Rust access from adapters into the osu! plugin's
-  internals, which contradicts ADR 0019/0021 ("adapters project the state
-  bus") and couples them to reducer types.
-- **D3 Bundled surface API.** Bundled plugins register through the C ABI for
-  lifecycle, manifests, settings, and actions, and additionally receive the
-  Rust-only `vosu-surface` API for route and WebSocket-feed registration and
-  typed snapshot reads. External plugins never serve HTTP. Record as an ADR
-  0019 amendment. *Recommend: approve before M1.* An HTTP opcode in the ABI
-  would copy every response through messages and widen the third-party
-  surface.
-- **D4 Publish batches.** Define `vosu_message.flags` bit 0 on
-  `VOSU_OP_PUBLISH_FIELD` as `VOSU_PUBLISH_CONTINUES`; core commits one
-  immutable snapshot at the first message without it. Update the header,
-  plugin-abi.md §6.6, and the layout tests. *Recommend: approve before M1.*
-- **D5 Synchronous reads in-process.** Clarify plugin-abi.md §4/§6.3: for an
-  in-process plugin with `concurrent_dispatch = true`, the host may deliver
-  `VOSU_OP_READ_PLAN_RESULT` re-entrantly on the submitting thread before
-  `send` returns; the SDK's `PlanMemory` relies on it. The osu! plugin ships
-  the §10 stress test. *Recommend: approve before M1.* Rewriting every 1.x
-  reader as an asynchronous plan state machine first would delay M1 by the
-  size of `src/memory/` and risk parity.
-- **D6 Discovery parity and auxiliary processes.** (a) Add
-  `VOSU_OP_SESSION_DECLINE` (plugin → host, CBOR `{"handle"}`): the plugin
-  rejects a matched process that is not a client (the conditional lazer
-  fallback, argv skips); core detaches it and does not re-offer that PID
-  generation. (b) Tournament client processes stay attached but are
-  deliberately never identified, so plugin-abi.md §6.2 keeps them hidden
-  while the osu! plugin still reads them for `vosu.osu.tourney.clients[]`;
-  the only cost is one log line per client. *Recommend: (b) as specified
-  today; (a) only if the M1 matcher translation of the
-  `src/instance/discovery.rs` tests fails; decide by M1 exit.*
-- **D7 Namespace schemas for external plugins.** Add `schema = "<path>"` to
-  `[[provides]]` entries naming a whole `field:` namespace (catalog-v2.md),
-  mirrored in `catalog-v2.json`. *Recommend: approve before the fan-out
-  trigger (M6a).*
-- **D8 Install paths for plugins.** Serve them through the D2 subtree
-  (`vosu.osu.internal.paths`), so a plugin that writes into Songs declares it
-  in `requires` and the install plan shows it. *Recommend: approve with D2.*
-- **D9 Multi-crate plugins and core.** Allow a bundled plugin and core to
-  span several crates, recorded in the architecture docs and ADR 0019's
-  "Source layout". *Recommend: approve before M0 step 2.*
-- **D10 Crate and plugin names.** `vosu-adapter-upstream`,
-  `vosu-adapter-gosumemory`, `vosu-adapter-streamcompanion`; plugin ids
-  `vosu.adapter.upstream`, `vosu.adapter.gosumemory`,
-  `vosu.adapter.streamcompanion`; `vosu.osu`, `vosu.dashboard`,
-  `vosu.overlays`, `vosu.tools`. *Recommend: approve;* upstream-brand names
-  would need new `scripts/brand-allowlist.txt` entries for every crate path.
-- **D11 SDK distribution.** Git tag dependency during alphas; publish
-  `vosu-plugin-api` to crates.io at 2.0.0 (the only crate with
-  `publish = true`) and the C header as a release asset. *Recommend:
-  approve.*
-- **D12 Bridge path.** Serve the 2.0 bridge at `/tools/_host/v2/bridge.js`
-  and remove the v1 path in M7 (every official tool is rebuilt).
-  *Recommend: approve.*
-- **D13 New dependencies.** `libloading` (dlopen), `linkme` (bundled
-  registry), `hmac` (resource ids), `jsonschema` (dev-only, schema
-  validation) are new; `ciborium` and `regex` are already in `Cargo.lock`.
-  Each lands with its `Cargo.lock` review. *Recommend: approve the list.*
-- **D14 Owner capture session.** One scheduled session covering the M4b
-  captures on Windows stable, Windows lazer, and Linux lazer and the
-  `/api/ingame` observation, with the clean-room author named beforehand.
-  *Recommend: schedule once M4b tooling lands; it gates only M8.*
-- **D15 Forge verification.** Owner provides private test repositories and
-  read-only tokens on GitHub, GitLab, Codeberg, and a Gitea or Forgejo
-  instance for M6b. *Recommend: approve; mocks cover CI, real forges cover
-  ADR 0023's verification clause.*
-- **D16 vosulay architecture.** Its native host becomes a plugin requesting
-  `runtime = "process"` (official, so it could run in-process, but a CEF host
-  inside the daemon would let a renderer crash stop every game); the editor
-  becomes a tool. *Recommend: approve.*
-- **D17 Performance thresholds.** No more than 10% p50 regression against the
-  previous milestone for `raw_snapshot_reads` (M1), `publication` (M2), and
-  `serializers_cold`/`serialization_cache` (M4a); 2x the prototype for
-  brokered reads (M5). *Recommend: approve as the landing bar.*
+- **D1 Branches and the 1.x consent release.** M−1 and all of M0 land on
+  `main`; `v2/main` is branched after M0 and receives M1 onward through
+  `land.py --base v2/main`, with `main` merged in weekly. The 1.x consent gate
+  ships as **1.2.4, before M0**. Why: M0 is behavior-neutral by its exit
+  criteria, so it carries no 2.0 code; landing it on `main` removes the mass
+  rename from every weekly merge (a split file follows only one rename
+  destination) and gives 1.x the build-time gain at once, while the consent
+  release protects only installations that receive it before 2.0 ships (ADR
+  0022).
+- **D2 Plugin-only paths.** `x-visibility: "plugins"` is allowed only on
+  `vosu.osu`'s top-level `/internal` key and rejected anywhere else at schema
+  load; `/internal` carries **paths only** (per-variant fields, D8); one
+  projector function strips it from every API v1 document, subscription and
+  encoding cache, session event, `STATE_UPDATE`, `vosu-surface` read, and
+  debug log for any consumer that does not `require` it. The
+  streamCompanion adapter computes strains, breaks, kiai points, and timing
+  points itself from `vosu-osu-calc` and the chart resource. Adapter file
+  routes resolve against the osu! plugin's `ROOT_DECLARE` handles
+  (plugin-abi.md:167), never against a path string from the bus. A1 amends
+  state-schema.md (including the line-292 statement), api-v1.md,
+  catalog-v2.md, ADR 0021, and ADR 0020's "published schema" rule
+  (ADR 0020:20-21) with the carve-out, and bumps `vosu.osu` to 1.1.0. Why:
+  the adapters must echo upstream path fields while API v1 must never serve
+  them; the subtree is disclosure control, not confinement, because
+  out-of-process plugins already have the user's filesystem access (ADR
+  0019:105-107) and vosu-tools finds the folders itself
+  (`vosu-tools/tools/lazer-library/src/main.rs:52-58`); hiding non-sensitive
+  derived values there only mixed two purposes.
+- **D3 Bundled-only HTTP surfaces.** Bundled plugins register through the C
+  ABI for lifecycle, manifests, settings, and actions, and additionally use
+  `vosu-surface` for routes, WebSocket feeds, and reads. A1 writes the ADR
+  0019 and 0021 amendments: HTTP surfaces are bundled-only in 2.0; a future
+  external HTTP opcode would be an additive minor ABI revision; the ADR lists
+  the trait surface exhaustively, with no `ProcessMemory`, configuration
+  writes, or credentials. `vosu-surface` reads go through the same
+  subscription, demand, and `requires` path as `STATE_SUBSCRIBE`. Bridge B1's
+  `vosu-osu → vosu-surface` edge is recorded as interim until M4a, and M5
+  starts after M4a. Why: ADR 0019:51-53 promises one plugin interface and ADR
+  0021:61 says plugins never serve HTTP, so the exception must be explicit;
+  reads outside the demand path would leave `/websocket/v2/precise` without
+  precise sampling; B1 cannot cross a process boundary.
+- **D4 `VOSU_OP_PUBLISH_BATCH`.** A new flat opcode carries one handle, a
+  count, and an array of `vosu_field_publish_header` entries plus trailing
+  data, capped like `VOSU_READ_PLAN_MAX_BYTES`, validated as a whole: all or
+  nothing, one status, one commit per message, no pending host state.
+  Receivers reject unknown `vosu_message.flags` bits with
+  `VOSU_ERR_INVALID_ARGUMENT` (today only "0 unless the spec says otherwise",
+  `include/vosu_plugin.h:167`). Why: a continuation flag lets a precise
+  reader thread commit half of a regular batch (`src/state/worker.rs:216-285`
+  runs both concurrently, and process-runtime frames interleave in one
+  ring), leaves partial failure undefined since every `send` is accepted on
+  its own (plugin-abi.md §5), and keeps unbounded pending state
+  (`AGENTS.md:112`); one batch message also cuts per-leaf `send` overhead.
+- **D5 Opt-in synchronous reads.** A `VOSU_READ_PLAN_SYNC` flag on
+  `READ_PLAN_SUBMIT` guarantees, in both runtimes, that the result is
+  dispatched on the submitting thread before `send` returns (in-process
+  directly; in `vosu plugin-host` a dedicated ring-reader thread hands it to
+  the blocked submitter), under a deadline that returns `VOSU_ERR_TIMED_OUT`.
+  The SDK routes flagged results to a per-plan slot before user code sees
+  them; `PlanMemory` refuses to run on a dispatch thread and ships only behind
+  the unpublished `unstable-sync-reads` feature. The osu! plugin is measured
+  under the process runtime in M5. Why: an optional "host may" behavior is
+  one plugins cannot rely on, deadlocks a plugin holding a lock across `send`,
+  contradicts the header's "arrives later" contract
+  (`include/vosu_plugin.h:409-411`), and differs between runtimes; one plan
+  per read is the pattern brokered-reads.md measured 16–25x slower
+  (brokered-reads.md:103,107) and must not spread to third parties.
+- **D6 Discovery parity.** `VOSU_OP_SESSION_DECLINE` (plugin → host, CBOR
+  `{"handle"}`) is adopted in A1, before M1: the plugin rejects a matched
+  process; core detaches it and does not re-offer that PID generation. The
+  osu! plugin declines `--tournament` and `debug-client-id` processes and
+  applies the Linux conditional fallback through it. Tournament spectator
+  clients are identified as normal sessions, with their IPC id in
+  `vosu.osu.session`, as 1.x attaches them. `vosu.osu.tourney` is not
+  published until real manager detection exists, which needs its own
+  decision. "Never identify" is never used as a deliberate state. Why: 1.x
+  production never marks a tournament manager (`src/instance.rs:137` has
+  only test callers; `src/instance.rs:473`) and exposes spectators as
+  selectable instances (`src/instance.rs:68-80`, `:603-620`), so hiding them
+  would leave API v1 with no session during a tournament; the 1.x rules
+  depend on argv and on other processes and cannot be written as full-match
+  regex matchers (plugin-abi.md:115); core cannot tell an unidentified
+  session from a plugin bug.
+- **D7 Bounded namespace schemas.** `[[provides]]` entries naming a whole
+  `field:` namespace carry `schema = "<path>"`. Core consumes only a bounded
+  profile: at most 256 KiB, depth at most 32, `$ref` only within the schema
+  or to core `common-defs` by fixed id, lanes only; core never validates
+  publishes against third-party schemas at runtime; the schema's namespace
+  must equal the `provides` id. `catalog-v2.json` mirrors the schema
+  `version` and the extracted lane table so the resolver plans without
+  downloading. Core's demand compiler is a hand-written lane walker. Why:
+  the trust surface of an arbitrary schema (size, references, patterns)
+  was unspecified, and runtime `jsonschema` would contradict D13.
+- **D8 Install paths and imports.** `vosu.osu/internal/paths` has per-variant
+  fields — stable `{game, songs, skins, replays}`, lazer `{data, files}` —
+  each `null` when unknown or not applicable to the variant. The install plan
+  gains a field flagging plugins that require `internal.paths`, labelled
+  disclosure, not a sandbox. Writers use a new `vosu.osu.beatmap.import`
+  action (M3) instead of a writable path. Why: install-plan `adds` entries
+  show no `requires` (catalog-v2.md:648-702), 1.x's `songs_dir` already means
+  two things (`vosu-tools/tools/replay-renderer/src/main.rs:628-636`), and
+  writing into lazer's store directly is unsafe.
+- **D9 Multi-crate plugins and core.** The osu! plugin spans five crates and
+  core four; ADR 0019:111-114 is amended in A1. `vosu-adapter-support` and
+  `vosu-osu-model` are justified by dependency direction. The build budget
+  covers prepush wall-clock, native Windows Clippy/test/doctest, clean and CI
+  builds, and feature-unification rebuilds, not only incremental edits
+  (section 8). Why: incremental edits alone would hide costs the split can
+  add elsewhere.
+- **D10 Names.** Crates `vosu-adapter-upstream`, `vosu-adapter-gosumemory`,
+  `vosu-adapter-streamcompanion`; plugin ids `vosu.adapter.upstream`,
+  `vosu.adapter.gosumemory`, `vosu.adapter.streamcompanion`, `vosu.osu`,
+  `vosu.dashboard`, `vosu.overlayhost`, `vosu.toolhost`; display names
+  describe the routes served. A1 amends ADR 0021:119-120. Why: ids that
+  extend a registered id are rejected (catalog-v2.md:120-131), so bundled
+  `vosu.tools`/`vosu.overlays` would block the ecosystem's natural
+  `vosu.tools.<name>` ids; upstream-brand names would need allowlist entries
+  that ADR 0021 required but `AGENTS.md:5-6` discourages.
+- **D11 SDK distribution.** `vosu-plugin-api` is published to crates.io as
+  `1.0.0-alpha.N` prereleases and `1.0.0` at release, versioned by SDK semver
+  whose major equals the ABI major, not by the vosu release; the bundled
+  registration glue and `PlanMemory` stay out of the published surface
+  (unpublished features); the C header ships as a release asset. Why: a git
+  dependency clones this whole repository (assets, `vosu-pp`, fixtures) into
+  every plugin build.
+- **D12 Bridge path.** The 2.0 bridge is served at
+  `/tools/_host/v2/bridge.js`; the v1 path is removed in M7. Why: every
+  official tool is rebuilt and 1.x user tools are disabled by the migration
+  (catalog-v2.md:897-902).
+- **D13 Dependencies.** `ciborium` and `regex` become runtime dependencies
+  with full review and `THIRD_PARTY_NOTICES.md` entries (today they are in
+  `Cargo.lock` only through the dev-dependency `criterion`, `Cargo.toml:130`);
+  `libloading` is added; HMAC comes from the crypto stack already in the tree
+  (`aws-lc-rs` 1.18.2 or `ring` 0.17.14, `Cargo.lock:147-148,2193-2194`)
+  instead of a new `hmac` crate; `linkme` is dropped for an explicit
+  `BUNDLED` array in the root crate; `jsonschema` is dev-only with
+  `default-features = false`. Why: a linker-collected slice still needs every
+  crate referenced to be linked, so it gives no omission guarantee that a
+  compile-time list does not give more simply.
+- **D14 Owner captures.** A one-pair pilot capture runs as soon as the M4b
+  tooling lands; the full set (Windows stable, Windows lazer, Linux lazer) and
+  the `/api/ingame` observation run in one later session with the clean-room
+  author named beforehand; a pin move before M8 triggers a recapture. Why: a
+  single end-of-project session would surface adapter mismatches only at
+  the release gate.
+- **D15 Forge verification.** CI uses a local Forgejo or Gitea container
+  behind an internal certificate authority in `network_integration`, making
+  the private-network exception and the OS trust-store path repeatable (ADR
+  0023:52-60); the owner runs a one-time check against GitHub, GitLab,
+  Codeberg, and a Gitea or Forgejo instance with tokens never stored in the
+  repository. Why: real forges cannot run in CI, and ADR 0023 requires
+  verification against each.
+- **D16 vosulay hosting.** vosulay ships a small official plugin, running
+  in-process, that supervises vosulay's existing host executable as a child:
+  job object on Windows, `PR_SET_PDEATHSIG` on Linux. Spike S1 validates it
+  on Linux and Windows before M5. Why: under `vosu plugin-host` the
+  `no_new_privs` bit (plugin-abi.md:254) disables the setuid `chrome-sandbox`
+  vosulay's Linux packages install (`vosulay/docs/security.md:58-60`), CEF on
+  Windows must start through vosulay's sandbox bootstrap
+  (`vosulay/docs/security.md:265`, `vosulay/docs/architecture.md:24`), CEF
+  cannot be reinitialized within one process (`vosulay/docs/architecture.md:7`)
+  and installs its own signal handlers (`vosulay/docs/architecture.md:35`);
+  CEF renderers already run out of process, and the standalone mode for
+  upstream-compatible backends keeps working unchanged.
+- **D17 Performance gates.** Benches: M1 runs the reader benches and the
+  allocation invariant (`scalar_readers_allocate_nothing`) over `PlanMemory`
+  with the in-process executor, since `raw_snapshot_reads`
+  (`benches/hot_paths.rs:236-264`) and the invariant
+  (`tests/performance_invariants.rs:220-259`) read through `ProcessHandle`
+  directly; M2 onward adds an end-to-end bench (snapshot → osu! projection →
+  bus → `/json/v2` bytes and API v1 frames) compared with the 1.x
+  serializers, because `publication` (`benches/hot_paths.rs:442-498`)
+  measures only the 1.x hub; M1, M2, and M4a record daemon CPU per tick and
+  read-to-frame latency with `examples/live_reader_bench.rs`. Bar: no
+  regression above 10% of the median per milestone **and** cumulatively
+  against the pre-M0 commit, judged by non-overlapping Criterion 95%
+  confidence intervals on pinned CPUs; Linux brokered reads within 2x of
+  brokered-reads.md's prototype; the Windows brokered bar is set from M5's
+  measurement. Why: the first draft's benches bypassed the code under
+  change, and per-milestone bounds alone compound to about 33%.
+- **D18 Matcher hints and overlap.** `[match]` gains optional
+  `comm_hints` (substrings of at most 15 bytes) used only to fill the bounded
+  in-kernel and CN_PROC pre-filter, with full matching in userspace; if any
+  enabled plugin declares path or command-line patterns without hints, the
+  filter widens to all execs and the dashboard says which plugin caused it.
+  Overlap is checked statically on `process_names` and `comm_hints`; at
+  runtime a process matched by two enabled plugins goes to the earlier
+  installed one and core logs once. Why: exact `process_names` cannot
+  express 1.x's substring rules (gap 10), widening the filter would discard
+  the measured benefit `AGENTS.md:130` requires to keep, and regex overlap
+  cannot be decided statically.
+- **D19 osu!-specific configuration.** `CALCULATE_PP`, `POLL_RATE`,
+  `PRECISE_DATA_POLL_RATE`, `SHOW_MP_COMMANDS`, and `READ_MANIA_SCROLL_SPEED`
+  become `vosu.osu` settings in its `settings_schema` (M1); bridge B2 serves
+  them from `vosu.toml` until the M8 migration moves the values and removes
+  the keys. Why: they configure only the osu! plugin, and core configuration
+  should hold only core concerns.
+- **D20 1.x overlays using removed APIs.** User overlays stay enabled, as
+  catalog-v2.md specifies, but requests to removed routes and fields are
+  attributed to the requesting overlay (M4a) and the dashboard shows a
+  notice with a link to the migration guide (M7); A1 amends
+  catalog-v2.md:903-905 from "unaffected" to "left enabled; flagged when
+  they use removed APIs"; the quickstart documents the port. Why: overlays
+  built from the 1.x quickstart (`vosu-overlay-quickstart/app.js:449`)
+  stop receiving data after M4a, and silent breakage is worse than a notice.
+- **D21 Alpha data isolation.** Builds whose version has a semver
+  prerelease part keep config, data, and cache in a prerelease subdirectory
+  of each vosu root and never write the 1.x files; on first start they import
+  1.x settings read-only. Release 2.0 uses the normal roots and the M8
+  migration. Why: 1.x's canonical rewrite drops unknown keys
+  (`src/config/tests.rs:359-395`), so shared roots would make returning to 1.x
+  lossy and untested.
+- **D22 SDK dispatch shape.** The SDK has `Plugin` (`fn on_message(&mut self,
+  …)`, the SDK serializes calls behind a lock, safe whatever the manifest
+  says) and `ConcurrentPlugin` (`fn on_message(&self, …)`, `Send + Sync`)
+  for `concurrent_dispatch = true`; A1 amends the plugin-abi.md §9 sketch.
+  Why: `&mut self` (plugin-abi.md:315) cannot accept the concurrent calls the
+  osu! plugin needs.
 
-Risks without a separate decision:
+Risks that need no further decision:
 
-- **Integration drift:** 1.x fixes in code that 2.0 has rewritten (after M4a,
-  `src/api/`) must be ported by hand; the weekly merge surfaces them early.
+- **Integration drift after M4a:** 1.x fixes in code 2.0 has rewritten
+  (`src/api/`) are ported by hand; the weekly merge surfaces them early.
 - **Ecosystem schedule:** ADR 0022 ties the release date to four
-  repositories; the trigger in section 7 is placed as early as the contracts
-  allow, and alphas let each repository integrate continuously.
-- **Hidden 1.x quirks:** the adapters rely on M4b to catch behavior that the
-  source oracle and `server_compat` do not cover; until then "same as 1.x" is
-  the bar.
-- **Windows transport:** unmeasured until M5; the spec allows the choice to
-  follow the measurement.
-- **Linux capability drop:** must run before any thread exists; a
-  dependency that spawns threads during static initialization in
-  `vosu plugin-host` would break §7.3, so `plugin-host` dispatch happens
-  first in `main`, before the Tokio runtime is built (`src/main.rs`).
+  repositories; the trigger in section 7 is as early as the contracts allow,
+  and alphas with isolated data let each repository integrate continuously.
+- **Hidden 1.x quirks:** the adapters rely on M4b to catch behavior the
+  source oracle and `server_compat` do not cover; the pilot narrows that
+  window.
+- **Windows transport:** unmeasured until M5; the spec lets the choice follow
+  the measurement.
+- **Linux capability drop:** must run before any thread exists, so
+  `plugin-host` dispatch happens first in `main`, before the Tokio runtime is
+  built (`src/main.rs:3-16`).
+- **vosulay:** if S1 fails on either OS, D16 reopens before M5, while there
+  is still time before the day-0 gate.
 
 ## Critical files
 
