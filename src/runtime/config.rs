@@ -433,7 +433,7 @@ impl ReportInputProvider for RuntimeReportInput {
     }
 }
 
-pub(super) fn report_instance_version(values: &crate::model::states::SettingsObject) -> String {
+pub(super) fn report_instance_version(values: &vosu_osu_model::states::SettingsObject) -> String {
     values
         .get("client")
         .and_then(serde_json::Value::as_object)

@@ -6,15 +6,15 @@ use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
 use crate::calculation::beatmap::{EventStatus, GraphSeries, StrainGraph};
 use crate::calculation::progressive::{PerformanceAttributes, ProgressiveAttributes};
 use crate::instance::InstanceSettings;
-use crate::model::enums::ClientType;
-use crate::model::memory::User;
-use crate::model::states::{
-    CalculateMods, HitErrorArray, KeyOverlayButton, KeypressButton, LeaderboardPlayer, Statistics,
-};
 use crate::state::{
     BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
     MenuState, PreciseState, RankedPlayState, RegularState, ResultScreenState, SettingsState,
     StateBundleSnapshot, TourneyManagerState, UserState,
+};
+use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::memory::User;
+use vosu_osu_model::states::{
+    CalculateMods, HitErrorArray, KeyOverlayButton, KeypressButton, LeaderboardPlayer, Statistics,
 };
 
 use super::*;

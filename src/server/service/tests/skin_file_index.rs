@@ -108,7 +108,7 @@ async fn lazer_file_etag_is_the_store_hash() {
     std::fs::write(root.path().join(&relative), b"data").unwrap();
     let delegate = skin_index_delegate(root.path(), BeatmapFiles { lazer: true, ready: true,
         songs_root: Some(root.path().to_owned()), beatmap_file: Some(relative.clone().into()),
-        skin: Some(Arc::new(crate::model::memory::CurrentSkin { name: "skin".into(), base: None, builtin: None, files: [("skin.ini".into(), relative)].into() })),
+        skin: Some(Arc::new(vosu_osu_model::memory::CurrentSkin { name: "skin".into(), base: None, builtin: None, files: [("skin.ini".into(), relative)].into() })),
         ..Default::default()
     });
     let report = delegate.file(Endpoint::SkinFile, Request::builder().uri("/files/skin/").body(Body::empty()).unwrap()).await;

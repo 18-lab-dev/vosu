@@ -18,17 +18,17 @@ use crate::calculation::beatmap::{
 };
 use crate::calculation::progressive::{ProgressiveAttributes, ResultPerformance};
 use crate::memory::snapshot::{RawPreciseSnapshot, RawRegularSnapshot};
-use crate::model::enums::{ClientType, GameState};
-use crate::model::memory::{
+use vosu_osu_model::enums::{ClientType, GameState};
+use vosu_osu_model::memory::{
     LazerRoom as RawLazerRoom, LazerSpectator, Menu as RawMenu, MenuFull,
     RankedPlay as RawRankedPlay, ResultScreen as RawResultScreen, Score, StableReplayFrameBatch,
     Tourney as RawTourney, User as RawUser,
 };
-use crate::model::states::{
+use vosu_osu_model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton, KeypressButton, LeaderboardPlayer,
     SettingsObject, Statistics, TourneyManagerChatItem,
 };
-use crate::model::{calculate_grade, default_calculated_mods, safe_join};
+use vosu_osu_model::{calculate_grade, default_calculated_mods, safe_join};
 use vosu_sys::process::{MemoryRead, ReadStatus};
 
 fn ready<T>(read: &MemoryRead<T>) -> Option<&T> {

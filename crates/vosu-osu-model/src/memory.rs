@@ -194,7 +194,7 @@ impl StableReplayFrames {
         self.chunks.iter().flat_map(|chunk| chunk.iter())
     }
 
-    pub(crate) fn extend(&mut self, frames: Vec<StableReplayFrame>) {
+    pub fn extend(&mut self, frames: Vec<StableReplayFrame>) {
         let mut frames = frames.into_iter();
         if let Some(chunk) = self.chunks.pop_if(|chunk| chunk.len() < Self::CHUNK) {
             let mut tail = chunk.to_vec();
@@ -521,7 +521,7 @@ mod tests {
     use serde_json::json;
 
     use super::{Menu, MenuChecksum, RankedPlay};
-    use crate::model::enums::RankedPlayStage;
+    use crate::enums::RankedPlayStage;
 
     #[test]
     fn menu_checksum_is_a_typed_wire_payload() {

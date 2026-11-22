@@ -56,7 +56,7 @@ fn filter_field_key(value: &Value) -> Option<String> {
         Value::Bool(true) => Some("true".into()),
         Value::Number(number) => {
             let value = number.as_f64()?;
-            (value != 0.0).then(|| crate::model::js_json_number(value))
+            (value != 0.0).then(|| vosu_osu_model::js_json_number(value))
         }
         Value::String(value) => (!value.is_empty()).then(|| value.clone()),
         // Arrays and objects are truthy in JavaScript even when empty.
@@ -76,7 +76,7 @@ fn js_filter_value_to_string(value: &Value) -> String {
         Value::Null => String::new(),
         Value::Bool(value) => value.to_string(),
         Value::Number(number) => {
-            crate::model::js_json_number(number.as_f64().expect("JSON numbers are finite"))
+            vosu_osu_model::js_json_number(number.as_f64().expect("JSON numbers are finite"))
         }
         Value::String(value) => value.clone(),
         Value::Array(values) => values

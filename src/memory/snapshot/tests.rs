@@ -1,9 +1,9 @@
 use indexmap::IndexMap;
 
 use super::*;
-use crate::model::enums::ClientType;
-use crate::model::memory::*;
-use crate::model::states::{CalculateMods, HitErrorArray};
+use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::memory::*;
+use vosu_osu_model::states::{CalculateMods, HitErrorArray};
 use vosu_sys::process::{MemoryError, MemoryRead, ReadStatus};
 
 fn mods(checksum: &str) -> CalculateMods {

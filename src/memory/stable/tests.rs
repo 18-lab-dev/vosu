@@ -570,7 +570,7 @@ fn legacy_replay_reads(reader: &mut StableMemory, index: i64) -> i64 {
             high = middle;
         }
     }
-    let start = index.max(low - crate::model::memory::StableReplayFrames::LIMIT as i64);
+    let start = index.max(low - vosu_osu_model::memory::StableReplayFrames::LIMIT as i64);
     let count = (low - start) as usize;
     if count > 0 {
         let mut pointers = vec![0; count * 4];
@@ -915,7 +915,7 @@ fn stable_all_rulesets_decode_raw_replay_slots_and_bound_long_map_history() {
             };
             let batch = errors.stable_replay_frames.unwrap();
             assert_eq!(batch.index, size as i64);
-            assert!(batch.frames.len() <= crate::model::memory::StableReplayFrames::LIMIT);
+            assert!(batch.frames.len() <= vosu_osu_model::memory::StableReplayFrames::LIMIT);
             assert_eq!(batch.frames_since(acknowledged_frame).unwrap().count(), 100);
             let newest = batch.newest().unwrap();
             assert_eq!(newest.time, (size - 1) as i64 * 50);
@@ -953,7 +953,7 @@ fn stable_all_rulesets_decode_raw_replay_slots_and_bound_long_map_history() {
         let late = late.stable_replay_frames.unwrap();
         assert_eq!(
             late.frames.len(),
-            crate::model::memory::StableReplayFrames::LIMIT
+            vosu_osu_model::memory::StableReplayFrames::LIMIT
         );
         assert_eq!(late.index, total as i64);
         assert_eq!(late.start_index, total as i64 - late.frames.len() as i64);
@@ -1014,7 +1014,7 @@ fn stable_all_rulesets_decode_raw_replay_slots_and_bound_long_map_history() {
             assert_eq!(batch.newest().unwrap().time, 150);
             assert_eq!(
                 reader.catcher(150.0).unwrap(),
-                ReadStatus::Ready(crate::model::memory::Catcher {
+                ReadStatus::Ready(vosu_osu_model::memory::Catcher {
                     x: 123.25,
                     dashing: false
                 })
@@ -1683,7 +1683,7 @@ fn catch_position_tracks_play_time_without_new_judgements() {
         assert!(errors.errors.all.is_empty());
         assert_eq!(
             reader.catcher(time).unwrap(),
-            ReadStatus::Ready(crate::model::memory::Catcher { x, dashing })
+            ReadStatus::Ready(vosu_osu_model::memory::Catcher { x, dashing })
         );
     }
     assert_eq!(reader.catcher(-1.0).unwrap(), ReadStatus::NotReady);

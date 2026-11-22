@@ -15,15 +15,15 @@ use crate::calculation::beatmap::{
 };
 use crate::calculation::progressive::{PerformanceAttributes, ProgressiveAttributes};
 use crate::instance::InstanceSettings;
-use crate::model::enums::ClientType;
-use crate::model::states::{
-    CalculateMods, HitErrorArray, KeyOverlayButton as StateKeyOverlayButton, KeypressButton,
-    Statistics,
-};
 use crate::state::state_backend::LiveBeatmapEngine;
 use crate::state::{
     PreciseState, RegularState, StateBundle, StateBundleSnapshot, StateCalculationBackend,
     StateCalculationFuture, StateCalculationRequest,
+};
+use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::states::{
+    CalculateMods, HitErrorArray, KeyOverlayButton as StateKeyOverlayButton, KeypressButton,
+    Statistics,
 };
 
 struct NeverCalculate;

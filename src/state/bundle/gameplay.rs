@@ -83,7 +83,7 @@ pub(super) struct StableManiaHitErrorState {
     list_len: i64,
     history_end: i64,
     last_time: Option<i64>,
-    pub(super) key: Option<crate::model::states::KeyHitErrors>,
+    pub(super) key: Option<vosu_osu_model::states::KeyHitErrors>,
 }
 
 impl StableManiaHitErrorState {
@@ -468,7 +468,7 @@ pub struct GameplayState {
     pub keypresses: Vec<KeypressButton>,
     pub keypress_identity_mode: Option<i64>,
     pub hit_errors: HitErrorArray,
-    pub catcher: Option<crate::model::memory::Catcher>,
+    pub catcher: Option<vosu_osu_model::memory::Catcher>,
     pub total_hit_errors: f64,
     pub total_hit_error_squares: f64,
     pub previous_hit_error_index: i64,
@@ -808,7 +808,7 @@ pub struct PreciseState {
     pub key_overlay: Arc<Vec<KeyOverlayButton>>,
     pub keypresses: Arc<Vec<KeypressButton>>,
     pub hit_errors: Arc<HitErrorArray>,
-    pub catcher: Option<crate::model::memory::Catcher>,
+    pub catcher: Option<vosu_osu_model::memory::Catcher>,
     pub total_hit_errors: f64,
     pub committed_hit_error_index: i64,
     pub unstable_rate: f64,
@@ -816,7 +816,7 @@ pub struct PreciseState {
 
 impl PreciseState {
     #[must_use]
-    pub fn active_catcher(&self) -> Option<crate::model::memory::Catcher> {
+    pub fn active_catcher(&self) -> Option<vosu_osu_model::memory::Catcher> {
         self.catcher
             .filter(|_| self.status == GameState::Play.value() as i64 && self.mode == 2)
     }
@@ -858,7 +858,7 @@ pub struct StateCalculationKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::memory::StableReplayFrame;
+    use vosu_osu_model::memory::StableReplayFrame;
 
     #[test]
     fn stable_mania_errors_wait_for_replay_transitions_and_partition_release_judgements() {
@@ -1319,7 +1319,7 @@ mod tests {
         };
         let now = Instant::now();
         let mut state = StableManiaHitErrorState::default();
-        let mut key = crate::model::states::KeyHitErrors::default();
+        let mut key = vosu_osu_model::states::KeyHitErrors::default();
         let mut press = Vec::new();
         let mut release = Vec::new();
         // Attached after frames 0..50 (hold 0) were evicted. The list already holds that

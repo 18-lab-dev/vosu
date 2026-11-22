@@ -262,7 +262,7 @@ fn projected_numbers_print_like_javascript() {
         1e-7,
     ] {
         let number = serde_json::Number::from_f64(value).unwrap();
-        assert_eq!(write(number), crate::model::js_json_number(value), "{value:?}");
+        assert_eq!(write(number), vosu_osu_model::js_json_number(value), "{value:?}");
     }
     for value in [i64::MIN, -1, 0, 1, i64::MAX] {
         assert_eq!(write(value.into()), value.to_string(), "{value}");
@@ -608,7 +608,7 @@ fn selected_serialization_projects_like_the_full_document_for_every_serde_shape(
 /// A focused stable snapshot whose four documents contain strings, nonfinite
 /// floats and tourney instances; `title` distinguishes publications.
 fn all_schema_snapshot(title: &str) -> CombinedSnapshot {
-    use crate::model::states::{HitErrorArray, KeypressButton};
+    use vosu_osu_model::states::{HitErrorArray, KeypressButton};
     use crate::state::{PreciseState, RegularState};
 
     let mut regular = RegularState {

@@ -10,7 +10,7 @@ use std::io::{self, Write};
 
 use super::*;
 use crate::api::json::{Serde, Wire, With, wire_object};
-use crate::model::states::{Mod, Statistics};
+use vosu_osu_model::states::{Mod, Statistics};
 
 /// `{"number":…,"name":…}` with the number omitted when absent.
 struct NumberNameWire<'a>(Option<i64>, &'a str);
@@ -603,7 +603,7 @@ fn write_play(
     let precise_hits = &precise.hit_errors;
     let a = attrs.copied().unwrap_or_default();
     let s: &Statistics = &gameplay.statistics;
-    let empty = crate::model::states::KeyHitErrors::default();
+    let empty = vosu_osu_model::states::KeyHitErrors::default();
     wire_object!(out {
         "source": Serde(&source),
         "failed": gameplay.failed,

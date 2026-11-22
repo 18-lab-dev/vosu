@@ -1,30 +1,8 @@
 pub mod api;
-pub mod enums;
-pub mod memory;
-#[path = "root.rs"]
-mod root;
-pub mod states;
-
-pub use root::*;
 
 #[cfg(test)]
 mod tests {
-    use super::{api, enums, memory};
-
-    #[test]
-    fn numeric_enums_use_source_discriminants() {
-        assert_eq!(
-            serde_json::to_string(&enums::GameState::ResultScreen).unwrap(),
-            "7"
-        );
-        assert_eq!(
-            serde_json::from_str::<enums::GroupType>("12").unwrap(),
-            enums::GroupType::SearchShowAll
-        );
-        assert_eq!(enums::GroupType::Title.value(), 13);
-        assert_eq!(enums::Bitness::X64.value(), 64);
-        assert!(enums::GroupType::from_value(11).is_none());
-    }
+    use super::api;
 
     #[test]
     fn undefined_fields_are_omitted_but_nullable_fields_are_null() {
@@ -36,18 +14,6 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&timing).unwrap(),
             r#"{"startTime":100.0,"beatLength":500.0}"#
-        );
-
-        let matchmaking = memory::MatchmakingStats {
-            rating: 1234.5,
-            rank: None,
-            plays: 10,
-            wins: 6,
-            is_provisional: true,
-        };
-        assert_eq!(
-            serde_json::to_string(&matchmaking).unwrap(),
-            r#"{"rating":1234.5,"rank":null,"plays":10,"wins":6,"isProvisional":true}"#
         );
     }
 

@@ -589,7 +589,7 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
         let mut selected = BeatmapFiles {
             lazer: true, ready: true, skin_client: Some("lazer"),
             skin_name: Some("Fixture".into()), songs_root: Some(root.path().to_owned()),
-            skin: Some(Arc::new(crate::model::memory::CurrentSkin { base: None, name: "Fixture".into(), builtin: None,
+            skin: Some(Arc::new(vosu_osu_model::memory::CurrentSkin { base: None, name: "Fixture".into(), builtin: None,
             files: [("skin.ini".into(), relative)].into(), })),
             ..BeatmapFiles::default()
         };
@@ -603,7 +603,7 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
             assert!(matches!(resolve_file_endpoint(Endpoint::SkinFile, &selected, &path, &path, &mut files::SkinIndexCache::default()).unwrap(), ResourceOutcome::Missing(MissingKind::NotFound)), "{name}");
         }
         assert_eq!(skin_report_value(&selected, &files::SkinFileIndex::default()), json!({"client":"lazer","name":"Fixture","files":true,"builtin":null,"base":null,"entries":[],"truncated":false}));
-        selected.skin = Some(Arc::new(crate::model::memory::CurrentSkin { base: Some("argon".into()), name: "Argon".into(), builtin: Some("argon".into()), files: Default::default() }));
+        selected.skin = Some(Arc::new(vosu_osu_model::memory::CurrentSkin { base: Some("argon".into()), name: "Argon".into(), builtin: Some("argon".into()), files: Default::default() }));
         assert_eq!(skin_report_value(&selected, &files::SkinFileIndex::default())["builtin"], "argon");
         assert_eq!(skin_report_value(&selected, &files::SkinFileIndex::default())["base"], "argon");
         assert_eq!(skin_report_value(&selected, &files::SkinFileIndex::default())["files"], false);

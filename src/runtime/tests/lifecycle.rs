@@ -2,13 +2,13 @@
 fn precise_publication_wakes_native_subscription_without_waking_regular_stream() {
     use crate::{
         instance::InstanceSettings,
-        model::states::{HitErrorArray, KeypressButton},
         state::{
             BassDensityState, BeatmapPPState, GameplayState, GlobalState,
             LazerMultiSpectatingState, MenuState, PreciseState, RankedPlayState, RegularState,
             ResultScreenState, SettingsState, TourneyManagerState, UserState,
         },
     };
+    use vosu_osu_model::states::{HitErrorArray, KeypressButton};
 
     let regular = Arc::new(RegularState {
         global: GlobalState::default(),

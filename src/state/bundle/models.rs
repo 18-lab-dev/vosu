@@ -224,8 +224,8 @@ pub struct GlobalState {
     pub menu_mods: CalculateMods,
     pub game_folder: String,
     pub skin_folder: String,
-    pub current_skin: Option<std::sync::Arc<crate::model::memory::CurrentSkin>>,
-    pub render: Option<crate::model::memory::ClientRenderState>,
+    pub current_skin: Option<std::sync::Arc<vosu_osu_model::memory::CurrentSkin>>,
+    pub render: Option<vosu_osu_model::memory::ClientRenderState>,
     pub songs_folder: String,
     pub memory_songs_folder: String,
 }

@@ -3204,6 +3204,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "vosu-net",
+ "vosu-osu-model",
  "vosu-pp",
  "vosu-proptest",
  "vosu-sys",
@@ -3234,6 +3235,19 @@ dependencies = [
  "vosu-sys",
  "windows-sys 0.61.2",
  "zip",
+]
+
+[[package]]
+name = "vosu-osu-model"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "indexmap",
+ "md-5",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "zmij",
 ]
 
 [[package]]

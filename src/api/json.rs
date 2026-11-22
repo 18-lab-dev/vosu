@@ -19,14 +19,14 @@ impl Formatter for JsFormatter {
     where
         W: ?Sized + Write,
     {
-        crate::model::write_js_json_number(writer, f64::from(value))
+        vosu_osu_model::write_js_json_number(writer, f64::from(value))
     }
 
     fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
     where
         W: ?Sized + Write,
     {
-        crate::model::write_js_json_number(writer, value)
+        vosu_osu_model::write_js_json_number(writer, value)
     }
 }
 
@@ -46,7 +46,7 @@ pub(crate) fn write_js_number(output: &mut Vec<u8>, value: f64) -> io::Result<()
         write_i64(output, integer);
         Ok(())
     } else {
-        crate::model::write_js_json_number(output, value)
+        vosu_osu_model::write_js_json_number(output, value)
     }
 }
 
@@ -304,7 +304,7 @@ macro_rules! wire_object {
     };
 }
 pub(crate) use wire_object;
-impl Wire for crate::model::memory::Catcher {
+impl Wire for vosu_osu_model::memory::Catcher {
     fn write_wire(&self, output: &mut Vec<u8>) -> io::Result<()> {
         wire_object!(output {
             "x": f64::from(self.x),
@@ -379,7 +379,7 @@ mod tests {
         let mut fast = Vec::new();
         write_js_number(&mut fast, value).unwrap();
         let mut general = Vec::new();
-        crate::model::write_js_json_number(&mut general, value).unwrap();
+        vosu_osu_model::write_js_json_number(&mut general, value).unwrap();
         (
             String::from_utf8(fast).unwrap(),
             String::from_utf8(general).unwrap(),

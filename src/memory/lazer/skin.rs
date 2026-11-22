@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::memory::CurrentSkin;
+use vosu_osu_model::memory::CurrentSkin;
 
 // Skin's first resource store is RealmBackedResourceStore<SkinInfo>. Its lazy
 // dictionary is populated by Skin's constructor when it requests skin.ini.

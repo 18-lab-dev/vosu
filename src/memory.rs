@@ -14,7 +14,7 @@ pub mod snapshot;
 pub mod stable;
 pub use stable::{StableMemory, StablePatterns};
 
-use crate::model::memory::{
+use vosu_osu_model::memory::{
     AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerRoom,
     LazerSpectator, Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney,
     TourneyChat, TourneyUser, User,
@@ -34,7 +34,7 @@ pub trait MemoryReader: Send {
     fn hit_errors(&mut self, last_index: i64) -> MemoryRead<HitErrors>;
     fn set_mania_key_hit_errors(&mut self, _enabled: bool) {}
     fn set_hit_offsets(&mut self, _enabled: bool) {}
-    fn catcher(&mut self, _play_time: f64) -> MemoryRead<crate::model::memory::Catcher> {
+    fn catcher(&mut self, _play_time: f64) -> MemoryRead<vosu_osu_model::memory::Catcher> {
         Ok(ReadStatus::Unsupported("catcher"))
     }
     fn global(&mut self) -> MemoryRead<Global>;
@@ -44,7 +44,7 @@ pub trait MemoryReader: Send {
     fn tourney(&mut self) -> MemoryRead<Tourney>;
     fn tourney_chat(
         &mut self,
-        messages: &[crate::model::states::TourneyManagerChatItem],
+        messages: &[vosu_osu_model::states::TourneyManagerChatItem],
     ) -> MemoryRead<TourneyChat>;
     fn tourney_user(&mut self) -> MemoryRead<TourneyUser>;
     fn leaderboard(&mut self, mode: i64) -> MemoryRead<Leaderboard>;
@@ -288,7 +288,7 @@ impl ErrorReportCounters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::memory::MatchmakingStats;
+    use vosu_osu_model::memory::MatchmakingStats;
 
     fn hard_error() -> MemoryError {
         MemoryError::Backend {

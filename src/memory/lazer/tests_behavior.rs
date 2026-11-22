@@ -1013,7 +1013,7 @@ fn catcher_decodes_typed_chain_and_batches_precise_position_and_dash() {
         key_used: false,
         hit_used: false,
     });
-    let expected = ReadStatus::Ready(crate::model::memory::Catcher {
+    let expected = ReadStatus::Ready(vosu_osu_model::memory::Catcher {
         x: 123.125,
         dashing: true,
     });

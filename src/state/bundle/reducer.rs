@@ -649,7 +649,7 @@ impl StateBundle {
             && parsed.cache_key().source_checksum == source_key
             && parsed.cache_key().memory_identity.as_deref() == Some(checksum)
         {
-            let mirror = snapshot.capture().mods().number & crate::model::osu_mods::MIRROR != 0;
+            let mirror = snapshot.capture().mods().number & vosu_osu_model::osu_mods::MIRROR != 0;
             return parsed
                 .mania_judgement_events(mirror)
                 .map_or(StableManiaMetadata::Unavailable, StableManiaMetadata::Ready);
@@ -792,7 +792,7 @@ impl StateBundle {
                 if errors.errors.key.is_some() {
                     let len = self.gameplay.hit_errors.press.len();
                     self.gameplay.hit_errors.key.get_or_insert_with(|| {
-                        crate::model::states::KeyHitErrors {
+                        vosu_osu_model::states::KeyHitErrors {
                             press_columns: vec![None; len],
                             ..Default::default()
                         }
@@ -855,7 +855,7 @@ impl StateBundle {
                         {
                             let mods = snapshot.capture().mods().number;
                             // Stable exposes HR, but no supported positional randomisation.
-                            if mods & crate::model::osu_mods::MIRROR == 0 {
+                            if mods & vosu_osu_model::osu_mods::MIRROR == 0 {
                                 self.stable_offsets.heads = Some(
                                     vosu_pp::LiveLazerEngine
                                         .parse_str(parsed.source())
@@ -919,7 +919,7 @@ impl StateBundle {
                             .needs_metadata(target_checksum)
                             .then(|| self.stable_mania_metadata(snapshot));
                         self.stable_mania_hit_errors.key = (errors.errors.key.is_some()
-                            && snapshot.capture().mods().number & crate::model::osu_mods::RANDOM
+                            && snapshot.capture().mods().number & vosu_osu_model::osu_mods::RANDOM
                                 == 0)
                             .then(Default::default);
                         self.stable_mania_hit_errors.observe_list(

@@ -10,15 +10,15 @@ use tokio::sync::watch;
 use vosu::api::ApiSchema;
 use vosu::api::{ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot};
 use vosu::instance::InstanceSettings;
-use vosu::model::{
-    enums::ClientType,
-    states::{HitErrorArray, KeypressButton},
-};
 use vosu::runtime::{ProductionSnapshotEncoder, SnapshotEncoder};
 use vosu::server::websocket::{
     Filter, Outbound, OutboundReceiver, Schema, StateProvider, StateSnapshot, WebSocketHub,
 };
 use vosu::state::{PreciseState, RegularState, StateBundleSnapshot};
+use vosu_osu_model::{
+    enums::ClientType,
+    states::{HitErrorArray, KeypressButton},
+};
 
 pub const SCHEMAS: [(Schema, ApiSchema, &str); 4] = [
     (Schema::V1, ApiSchema::V1, "v1"),

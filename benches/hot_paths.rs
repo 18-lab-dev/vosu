@@ -17,8 +17,6 @@ use vosu::calculation::engine::{LiveDifficultyConfig, LiveLazerEngine, LiveScore
 use vosu::instance::InstanceSettings;
 use vosu::memory::lazer_offsets::LazerOffsets;
 use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns};
-use vosu::model::enums::ClientType;
-use vosu::model::states::{HitErrorArray, KeypressButton};
 use vosu::server::v2_subscription::{
     V2SubscriptionHub, V2SubscriptionOutbound, V2SubscriptionProvider, V2SubscriptionSnapshot,
 };
@@ -26,6 +24,8 @@ use vosu::server::websocket::{
     Filter, Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub,
 };
 use vosu::state::{PreciseState, RegularState, StateBundleSnapshot};
+use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::states::{HitErrorArray, KeypressButton};
 use vosu_sys::process::{
     MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
 };

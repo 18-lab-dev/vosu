@@ -345,8 +345,8 @@ impl MemoryReader for LazerMemory {
             self.read_hit_error_suffix(items, size, last)?,
         ))
     }
-    fn catcher(&mut self, _play_time: f64) -> MemoryRead<crate::model::memory::Catcher> {
-        use crate::model::memory::Catcher;
+    fn catcher(&mut self, _play_time: f64) -> MemoryRead<vosu_osu_model::memory::Catcher> {
+        use vosu_osu_model::memory::Catcher;
         let fields = (
             self.offsets.catch_ruleset.playfield,
             self.offsets.catch_playfield.catcher,
@@ -867,7 +867,7 @@ impl MemoryReader for LazerMemory {
             users,
         }))
     }
-    fn room(&mut self) -> MemoryRead<crate::model::memory::LazerRoom> {
+    fn room(&mut self) -> MemoryRead<vosu_osu_model::memory::LazerRoom> {
         let room = self.multiplayer_room()?;
         if room == 0 {
             return self.not_ready();
@@ -912,14 +912,14 @@ impl MemoryReader for LazerMemory {
                 },
                 None => None,
             };
-            result.push(crate::model::memory::LazerRoomUser {
+            result.push(vosu_osu_model::memory::LazerRoomUser {
                 id,
                 username: user.name,
                 country_code: user.country_code,
                 avatar_url,
             });
         }
-        Ok(ReadStatus::Ready(crate::model::memory::LazerRoom {
+        Ok(ReadStatus::Ready(vosu_osu_model::memory::LazerRoom {
             room_id,
             users: result,
         }))
@@ -927,7 +927,7 @@ impl MemoryReader for LazerMemory {
     fn spectating_data(
         &mut self,
         show_mp_commands: bool,
-    ) -> MemoryRead<crate::model::memory::LazerSpectator> {
+    ) -> MemoryRead<vosu_osu_model::memory::LazerSpectator> {
         LazerMemory::spectating_data(self, show_mp_commands)
     }
     fn settings(&mut self) -> MemoryRead<Settings> {

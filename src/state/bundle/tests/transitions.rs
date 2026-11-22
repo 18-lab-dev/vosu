@@ -104,7 +104,7 @@ fn state_defaults_and_retry_retention_match_source_contract() {
     assert_eq!(gameplay.grade_expected, "");
     gameplay.is_default_state = false;
     gameplay.retries = 8;
-    gameplay.mods.array = vec![crate::model::states::Mod {
+    gameplay.mods.array = vec![vosu_osu_model::states::Mod {
         acronym: "HD".into(),
         settings: None,
     }];
@@ -367,7 +367,7 @@ async fn regular_transition_is_source_ordered_and_rewind_resets_epoch() {
         Ok(ReadStatus::Ready(raw_global(GameState::Play, 100))),
     )
     .menu(Ok(ReadStatus::Ready(RawMenu::Checksum(
-        crate::model::memory::MenuChecksum {
+        vosu_osu_model::memory::MenuChecksum {
             gamemode: 0,
             ranked_status: 4.0,
         },
@@ -596,7 +596,7 @@ async fn editor_graph_change_retries_same_time_after_transient_failure() {
     bundle
         .apply_regular(snapshot(
             3,
-            RawMenu::Checksum(crate::model::memory::MenuChecksum {
+            RawMenu::Checksum(vosu_osu_model::memory::MenuChecksum {
                 gamemode: 0,
                 ranked_status: 4.0,
             }),
@@ -811,7 +811,7 @@ async fn precise_publication_reuses_regular_arc_and_regular_reuses_clean_precise
         Ok(ReadStatus::Ready(raw_global(GameState::Play, 510))),
     )
     .menu(Ok(ReadStatus::Ready(RawMenu::Checksum(
-        crate::model::memory::MenuChecksum {
+        vosu_osu_model::memory::MenuChecksum {
             gamemode: 0,
             ranked_status: 4.0,
         },

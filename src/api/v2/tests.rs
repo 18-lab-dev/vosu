@@ -9,13 +9,13 @@ use crate::calculation::beatmap::{
     AppliedMod, BeatmapCache, BeatmapInput, ModSet, ParsedBeatmap, Ruleset, ScoringMode,
 };
 use crate::instance::InstanceSettings;
-use crate::model::memory::{LazerRoom, LazerRoomUser};
-use crate::model::states::KeypressButton;
 use crate::state::state_backend::LiveBeatmapEngine;
 use crate::state::{
     RegularState, StateBundle, StateBundleSnapshot, StateCalculationBackend,
     StateCalculationFuture, StateCalculationRequest, TourneyUserState,
 };
+use vosu_osu_model::memory::{LazerRoom, LazerRoomUser};
+use vosu_osu_model::states::KeypressButton;
 
 struct NeverCalculate;
 impl StateCalculationBackend for NeverCalculate {
@@ -259,15 +259,15 @@ fn mode_and_lazer_team_fixture_matches_source_contract() {
         r#"[{"number":0,"name":"osu"},{"number":1,"name":"taiko"},{"number":2,"name":"fruits"},{"number":3,"name":"mania"}]"#
     );
     assert_eq!(
-        lazer_wire_team(crate::model::states::MultiplayerTeamType::Red),
+        lazer_wire_team(vosu_osu_model::states::MultiplayerTeamType::Red),
         TourneyTeam::Left
     );
     assert_eq!(
-        lazer_wire_team(crate::model::states::MultiplayerTeamType::Blue),
+        lazer_wire_team(vosu_osu_model::states::MultiplayerTeamType::Blue),
         TourneyTeam::Right
     );
     assert_eq!(
-        lazer_wire_team(crate::model::states::MultiplayerTeamType::None),
+        lazer_wire_team(vosu_osu_model::states::MultiplayerTeamType::None),
         TourneyTeam::Right
     );
 }
@@ -318,7 +318,7 @@ fn absent_profile_omits_undefined_but_present_matchmaking_is_null() {
         json(&build_profile(None)),
         r#"{"userStatus":{"name":""},"banchoStatus":{"name":""},"mode":{"name":""},"countryCode":{"name":""}}"#
     );
-    let mut user = crate::model::memory::User {
+    let mut user = vosu_osu_model::memory::User {
         name: String::new(),
         accuracy: 0.0,
         ranked_score: 0.0,
@@ -336,7 +336,7 @@ fn absent_profile_omits_undefined_but_present_matchmaking_is_null() {
     };
     let encoded = json(&build_profile(Some(&user)));
     assert!(encoded.ends_with("\"matchmaking\":null}"));
-    user.matchmaking = Some(crate::model::memory::MatchmakingStats {
+    user.matchmaking = Some(vosu_osu_model::memory::MatchmakingStats {
         rating: 1.5,
         rank: None,
         plays: 2,
@@ -572,7 +572,7 @@ fn key_hit_errors_are_opt_in_and_wire_identical_for_both_v2_payloads() {
         let base = StateBundle::new(ClientType::Lazer, 1, Arc::new(NeverCalculate)).snapshot();
         let mut precise = (*base.precise).clone();
         let mut hits = HitErrorArray::default();
-        let mut keys = crate::model::states::KeyHitErrors::default();
+        let mut keys = vosu_osu_model::states::KeyHitErrors::default();
         keys.append(-3.5, Some(2), false);
         keys.append(6.25, Some(0), true);
         hits.key = Some(keys);
@@ -954,7 +954,7 @@ fn catcher_is_additive_only_during_catch_gameplay_and_both_encoders_agree() {
         let mut precise = (*base.precise).clone();
         precise.status = status;
         precise.mode = mode;
-        precise.catcher = Some(crate::model::memory::Catcher {
+        precise.catcher = Some(vosu_osu_model::memory::Catcher {
             x: 123.125,
             dashing: true,
         });

@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-net", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
+members = [".", "crates/vosu-net", "crates/vosu-osu-model", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
 resolver = "3"
 
 [workspace.package]
@@ -107,6 +107,7 @@ tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 tokio-tungstenite = "=0.29.0"
 toml = "=1.1.2"
 vosu-pp = { path = "crates/vosu-pp" }
+vosu-osu-model = { path = "crates/vosu-osu-model" }
 vosu-net = { path = "crates/vosu-net" }
 vosu-sys = { path = "crates/vosu-sys" }
 tracing = "=0.1.44"

@@ -19,10 +19,6 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use vosu::{
     api::{self, ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot, SnapshotManager},
     instance::InstanceSettings,
-    model::{
-        enums::ClientType,
-        states::{HitErrorArray, KeypressButton},
-    },
     server::{
         auth::AuthorizationPolicy,
         routes::{
@@ -33,6 +29,10 @@ use vosu::{
         service::SnapshotStateProvider,
     },
     state::{PreciseState, RegularState, StateBundleSnapshot},
+};
+use vosu_osu_model::{
+    enums::ClientType,
+    states::{HitErrorArray, KeypressButton},
 };
 
 fn snapshot() -> Arc<ManagerSnapshot> {

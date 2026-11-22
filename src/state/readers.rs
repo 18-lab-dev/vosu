@@ -11,7 +11,7 @@ use crate::memory::snapshot::{
     RawRegularSnapshotBuilder,
 };
 use crate::memory::{ReaderSynchronization, SynchronizedMemoryReader};
-use crate::model::enums::{ClientType, GameState};
+use vosu_osu_model::enums::{ClientType, GameState};
 
 /// Production raw capture adapter. It preserves source ordering while retaining
 /// every MemoryRead status in the immutable snapshot.
@@ -56,13 +56,13 @@ impl<R: SynchronizedMemoryReader + 'static> RegularSnapshotReader for SourceRegu
         let menu = self.reader.menu(&plan.previous_checksum);
         let menu_not_ready = matches!(menu, Ok(vosu_sys::process::ReadStatus::NotReady));
         let fresh_folder = match &menu {
-            Ok(vosu_sys::process::ReadStatus::Ready(crate::model::memory::Menu::Full(value))) => {
+            Ok(vosu_sys::process::ReadStatus::Ready(vosu_osu_model::memory::Menu::Full(value))) => {
                 Some(!value.folder.is_empty())
             }
             _ => None,
         };
         let menu_keeps_first_object_time = match &menu {
-            Ok(vosu_sys::process::ReadStatus::Ready(crate::model::memory::Menu::Full(value))) => {
+            Ok(vosu_sys::process::ReadStatus::Ready(vosu_osu_model::memory::Menu::Full(value))) => {
                 value.checksum == plan.previous_checksum
             }
             _ => true,

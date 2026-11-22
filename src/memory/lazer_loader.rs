@@ -46,7 +46,7 @@ pub enum LazerLoadError {
 /// `instance` keeps calling the loader until M1 hands the resolver lifecycle
 /// to the osu! plugin.
 pub trait GenerationIdentity: Send + Sync + 'static {
-    fn client(&self) -> crate::model::enums::ClientType;
+    fn client(&self) -> vosu_osu_model::enums::ClientType;
     /// Stable identity of this generation, for log messages.
     fn pid(&self) -> u32;
     /// The live process id, or `None` once the process has exited.
@@ -279,7 +279,7 @@ where
     G: OffsetGenerator + 'static,
     I: GenerationIdentity,
 {
-    if instance.client() != crate::model::enums::ClientType::Lazer {
+    if instance.client() != vosu_osu_model::enums::ClientType::Lazer {
         return Err(LazerLoadError::Unavailable(
             "not a lazer instance".into(),
             String::new(),

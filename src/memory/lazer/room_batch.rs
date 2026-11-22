@@ -250,7 +250,7 @@ impl LazerMemory {
     }
 
     /// [`MemoryReader::room`] for a non-null room.
-    pub(super) fn room_batched(&self, room: usize) -> Option<crate::model::memory::LazerRoom> {
+    pub(super) fn room_batched(&self, room: usize) -> Option<vosu_osu_model::memory::LazerRoom> {
         if self.process.pointer_size() != 8 {
             return None;
         }
@@ -328,14 +328,14 @@ impl LazerMemory {
                 continue;
             }
             let (user, avatar_url) = self.read_user_batched(api_user, avatar)?;
-            result.push(crate::model::memory::LazerRoomUser {
+            result.push(vosu_osu_model::memory::LazerRoomUser {
                 id: le_i32(&id) as i64,
                 username: user.name,
                 country_code: user.country_code,
                 avatar_url,
             });
         }
-        Some(crate::model::memory::LazerRoom {
+        Some(vosu_osu_model::memory::LazerRoom {
             room_id: le_i64(&room_id),
             users: result,
         })

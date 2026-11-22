@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::helpers::fix_decimals_to;
 
-use crate::model::states::{CalculateMods, Mod};
+use crate::states::{CalculateMods, Mod};
 
 pub const BIT_VALUES: [&str; 31] = [
     "NF", "EZ", "TD", "HD", "HR", "SD", "DT", "RX", "HT", "NC", "FL", "AT", "SO", "AP", "PF", "4K",

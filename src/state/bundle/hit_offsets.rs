@@ -10,7 +10,7 @@ pub(super) struct StableHitOffsets {
     judged: Vec<bool>,
     frame_index: i64,
     buttons: Option<u8>,
-    presses: VecDeque<crate::model::memory::StableReplayFrame>,
+    presses: VecDeque<vosu_osu_model::memory::StableReplayFrame>,
     pending: VecDeque<(f64, Instant)>,
 }
 
@@ -120,7 +120,7 @@ impl StableHitOffsets {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::memory::{StableReplayFrame, StableReplayFrames};
+    use vosu_osu_model::memory::{StableReplayFrame, StableReplayFrames};
 
     fn batch(frames: &[(i64, f32, f32, u8)]) -> StableReplayFrameBatch {
         let frames: Vec<_> = frames
@@ -250,14 +250,14 @@ mod ordering_tests {
     fn simultaneous_heads_follow_map_order_and_missing_evidence_expires() {
         let now = Instant::now();
         let frames = vec![
-            crate::model::memory::StableReplayFrame {
+            vosu_osu_model::memory::StableReplayFrame {
                 time: 0,
                 x: 0.0,
                 y: 0.0,
                 buttons: 0,
                 buttons_raw: 0,
             },
-            crate::model::memory::StableReplayFrame {
+            vosu_osu_model::memory::StableReplayFrame {
                 time: 100,
                 x: 50.0,
                 y: 60.0,

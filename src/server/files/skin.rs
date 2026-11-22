@@ -1,10 +1,10 @@
 use super::*;
-use crate::model::memory::CurrentSkin;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use vosu_osu_model::memory::CurrentSkin;
 
 const MAX_ENTRIES: usize = 20_000;
 const MAX_SCAN: usize = 40_000;

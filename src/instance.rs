@@ -23,7 +23,7 @@ use crate::memory::lazer_loader::{
     resolve_for_instance_with_logger,
 };
 use crate::memory::lazer_offsets::LazerOffsets;
-use crate::model::enums::ClientType;
+use vosu_osu_model::enums::ClientType;
 use vosu_sys::process::{MemoryError, ProcessHandle};
 pub type Pid = u32;
 type LazerResolverHandle = JoinHandle<Result<Arc<LazerOffsets>, LazerLoadError>>;

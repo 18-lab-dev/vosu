@@ -5,16 +5,16 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
-use crate::model::default_calculated_mods;
-use crate::model::memory::{LazerSpectator, User};
-use crate::model::states::{
-    HitErrorArray, KeyOverlayButton as StateKey, KeypressButton as StateKeypress, Statistics,
-    TourneyManagerChatItem,
-};
 use crate::state::{
     BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
     MenuState, PreciseState, RankedPlayState, ResultScreenState, SettingsState,
     StateBundleSnapshot, TourneyManagerState, TourneyUserState, UserState,
+};
+use vosu_osu_model::default_calculated_mods;
+use vosu_osu_model::memory::{LazerSpectator, User};
+use vosu_osu_model::states::{
+    HitErrorArray, KeyOverlayButton as StateKey, KeypressButton as StateKeypress, Statistics,
+    TourneyManagerChatItem,
 };
 
 fn statistics() -> Statistics {

@@ -8,11 +8,11 @@ use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
 use crate::calculation::beatmap::ParsedBeatmap;
 use crate::model::api::v2::*;
-use crate::model::enums::ClientType;
-use crate::model::memory::{LazerSpectatorEntry, User};
-use crate::model::states::{CalculateMods, HitErrorArray, LeaderboardPlayer, SettingsObject};
-use crate::model::{calculate_grade, to_legacy_hits};
 use crate::state::{GameplayState, RegularState};
+use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::memory::{LazerSpectatorEntry, User};
+use vosu_osu_model::states::{CalculateMods, HitErrorArray, LeaderboardPlayer, SettingsObject};
+use vosu_osu_model::{calculate_grade, to_legacy_hits};
 
 pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
     build_internal(snapshot, true)
@@ -166,7 +166,7 @@ fn normalize_javascript_numbers(value: &mut Value) -> Result<(), ApiError> {
     match value {
         Value::Number(number) if number.is_f64() => {
             let value = number.as_f64().expect("checked f64 JSON number");
-            *number = crate::model::js_json_number(value)
+            *number = vosu_osu_model::js_json_number(value)
                 .parse()
                 .map_err(|error: serde_json::Error| ApiError::serialization(error.to_string()))?;
         }

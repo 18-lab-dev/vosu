@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use crate::model::enums::ClientType;
-use crate::model::memory::{
+use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::memory::{
     AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerSpectator,
     Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney, TourneyChat,
     TourneyUser, User,
 };
-use crate::model::states::CalculateMods;
+use vosu_osu_model::states::CalculateMods;
 use vosu_sys::process::{MemoryRead, ReadStatus};
 
 /// A branch which may not have been reached by the source loop.
@@ -202,7 +202,7 @@ pub struct RawRegularSnapshot {
     pub(super) tourney_chat: ConditionalRead<TourneyChat>,
     pub(super) tourney_user: ConditionalRead<TourneyUser>,
     pub(super) lazer_spectating: ConditionalRead<LazerSpectator>,
-    pub(super) room: ConditionalRead<crate::model::memory::LazerRoom>,
+    pub(super) room: ConditionalRead<vosu_osu_model::memory::LazerRoom>,
 }
 
 impl RawRegularSnapshot {
@@ -282,7 +282,7 @@ impl RawRegularSnapshot {
     }
 
     #[must_use]
-    pub fn room(&self) -> Option<&MemoryRead<crate::model::memory::LazerRoom>> {
+    pub fn room(&self) -> Option<&MemoryRead<vosu_osu_model::memory::LazerRoom>> {
         self.room.as_ref()
     }
 }
@@ -307,7 +307,7 @@ pub struct RawPreciseSnapshot {
     pub(super) key_overlay: ConditionalRead<KeyOverlay>,
     pub(super) hit_errors: ConditionalRead<HitErrors>,
     pub(super) enable_hit_offsets: bool,
-    pub(super) catcher: ConditionalRead<crate::model::memory::Catcher>,
+    pub(super) catcher: ConditionalRead<vosu_osu_model::memory::Catcher>,
 }
 
 impl RawPreciseSnapshot {
@@ -342,7 +342,7 @@ impl RawPreciseSnapshot {
     }
 
     #[must_use]
-    pub fn catcher(&self) -> Option<&MemoryRead<crate::model::memory::Catcher>> {
+    pub fn catcher(&self) -> Option<&MemoryRead<vosu_osu_model::memory::Catcher>> {
         self.catcher.as_ref()
     }
 

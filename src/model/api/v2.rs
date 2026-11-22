@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use crate::model::{memory::RankedPlay, states::CalculateMods};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
+use vosu_osu_model::{memory::RankedPlay, states::CalculateMods};
 mod settings;
 
 pub use settings::*;
@@ -358,9 +358,9 @@ pub struct Play<V = Vec<f64>> {
         skip_serializing_if = "Option::is_none",
         default
     )]
-    pub key_hit_errors: Option<crate::model::states::KeyHitErrors>,
+    pub key_hit_errors: Option<vosu_osu_model::states::KeyHitErrors>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catcher: Option<crate::model::memory::Catcher>,
+    pub catcher: Option<vosu_osu_model::memory::Catcher>,
     pub combo: Combo,
     pub mods: CalculateMods,
     pub rank: Rank,
@@ -456,9 +456,9 @@ pub struct PreciseResponse {
         skip_serializing_if = "Option::is_none",
         default
     )]
-    pub key_hit_errors: Option<Box<crate::model::states::KeyHitErrors>>,
+    pub key_hit_errors: Option<Box<vosu_osu_model::states::KeyHitErrors>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catcher: Option<crate::model::memory::Catcher>,
+    pub catcher: Option<vosu_osu_model::memory::Catcher>,
     pub tourney: Vec<PreciseTourney>,
 }
 

@@ -1,5 +1,5 @@
-use crate::model::memory::{StableReplayFrame, StableReplayFrameBatch};
-use crate::model::states::{KeyOverlayButton, KeypressButton};
+use vosu_osu_model::memory::{StableReplayFrame, StableReplayFrameBatch};
+use vosu_osu_model::states::{KeyOverlayButton, KeypressButton};
 
 /// Reducer-owned cursor: history eviction must not discard accumulated down-edges.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -49,7 +49,7 @@ impl StableKeys {
         // A reset re-baselines from the retained window, so once history has been evicted
         // it permanently loses earlier counts; clock jitter must not trigger it.
         let rewound = self.time.is_some_and(|newest| {
-            newest - time > crate::model::memory::StableReplayFrames::CLOCK_STEP_BACK_MS as f64
+            newest - time > vosu_osu_model::memory::StableReplayFrames::CLOCK_STEP_BACK_MS as f64
         });
         let reset = self.identity != Some((mode, count)) || rewound || batch.index < self.cursor;
         if reset {

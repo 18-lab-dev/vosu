@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::memory::{ClientRenderState, PlaybackClock};
+use vosu_osu_model::memory::{ClientRenderState, PlaybackClock};
 
 impl LazerMemory {
     pub(super) fn set_playback_source(&mut self, replay: bool, spectator: bool) {

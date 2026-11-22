@@ -12,8 +12,8 @@ use crate::memory::snapshot::PreciseCaptureContext;
 use crate::memory::snapshot::{
     InstanceEpoch, RawPreciseSnapshot, RawRegularSnapshot, RegularCaptureContext,
 };
-use crate::model::enums::{ClientType, GameState};
-use crate::model::states::{CalculateMods, TourneyManagerChatItem};
+use vosu_osu_model::enums::{ClientType, GameState};
+use vosu_osu_model::states::{CalculateMods, TourneyManagerChatItem};
 use vosu_sys::process::MemoryError;
 
 pub type TransitionFuture<'a, T> =

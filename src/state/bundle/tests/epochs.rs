@@ -3,9 +3,9 @@ use crate::calculation::beatmap::{
     BeatmapCache, BeatmapEngine, BeatmapError, BeatmapInput, EngineOutput, EngineRequest, ModSet,
     Ruleset, ScoringMode,
 };
-use crate::model::memory::{StableReplayFrame, StableReplayFrameBatch};
 use md5::{Digest, Md5};
 use std::fmt::Write as _;
+use vosu_osu_model::memory::{StableReplayFrame, StableReplayFrameBatch};
 
 struct MetadataTestEngine;
 
@@ -85,7 +85,7 @@ async fn changed_beatmap_projection_publishes_a_new_regular_arc() {
         Ok(ReadStatus::Ready(raw_global(GameState::Menu, 0))),
     )
     .menu(Ok(ReadStatus::Ready(RawMenu::Checksum(
-        crate::model::memory::MenuChecksum {
+        vosu_osu_model::memory::MenuChecksum {
             gamemode: 0,
             ranked_status: 4.0,
         },
@@ -148,7 +148,7 @@ async fn pre_object_poll_preserves_hit_history_cursor_and_keys() {
         Ok(ReadStatus::Ready(raw_global(GameState::Play, 50))),
     )
     .menu(Ok(ReadStatus::Ready(RawMenu::Checksum(
-        crate::model::memory::MenuChecksum {
+        vosu_osu_model::memory::MenuChecksum {
             gamemode: 0,
             ranked_status: 4.0,
         },
@@ -201,7 +201,7 @@ async fn old_map_timing_is_ignored_until_new_map_metadata_is_accepted() {
         Ok(ReadStatus::Ready(raw_global(GameState::Play, 2_000))),
     )
     .menu(Ok(ReadStatus::Ready(RawMenu::Checksum(
-        crate::model::memory::MenuChecksum {
+        vosu_osu_model::memory::MenuChecksum {
             gamemode: 0,
             ranked_status: 4.0,
         },
@@ -486,7 +486,7 @@ fn boundary_corrections_reclassify_exact_prior_presses_in_timing_order() {
         13.0,
     ];
     bundle.gameplay.hit_errors = press_hit_errors(all.clone());
-    let mut key = crate::model::states::KeyHitErrors::default();
+    let mut key = vosu_osu_model::states::KeyHitErrors::default();
     for (&value, column) in all.iter().zip([0, 2, 0, 1, 2]) {
         key.append(value, Some(column), false);
     }
@@ -909,7 +909,7 @@ fn stable_random_key_errors_never_guess_columns() {
     bundle.beatmap.source_key = Some(checksum);
     bundle.beatmap.parsed = Some(parsed);
     let mut mods = default_calculated_mods();
-    mods.number |= crate::model::osu_mods::RANDOM;
+    mods.number |= vosu_osu_model::osu_mods::RANDOM;
     let play = RawPreciseSnapshotBuilder::new(
         PreciseCaptureContext::new(ClientType::Stable, 46, 0, 3, mods, 0, 0),
         1,

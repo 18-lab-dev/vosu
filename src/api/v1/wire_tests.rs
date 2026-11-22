@@ -8,8 +8,8 @@ use crate::api::wire_fixtures::{
 };
 use crate::api::{ApiRuntimeSettings, ManagerSnapshot};
 use crate::instance::InstanceSettings;
-use crate::model::states::TourneyManagerChatItem;
 use crate::state::{StateBundleSnapshot, TourneyUserState};
+use vosu_osu_model::states::TourneyManagerChatItem;
 
 fn assert_direct_matches(snapshot: &CombinedSnapshot) {
     let direct = String::from_utf8(wire::encode(snapshot).unwrap()).unwrap();

@@ -102,7 +102,7 @@ pub fn number_from_decimal(lo64: f64, hi32: u32, flags: i32) -> f64 {
 
 /// JavaScript `Math.round`, retaining the number domain for callers whose
 /// source data can be non-finite.
-pub(crate) fn js_round_number(value: f64) -> f64 {
+pub fn js_round_number(value: f64) -> f64 {
     if !value.is_finite() || value == 0.0 || value.fract() == 0.0 {
         return value;
     }
@@ -138,7 +138,7 @@ pub fn js_json_number(value: f64) -> String {
     super::mods::finite_ecma_number(value).as_str().to_owned()
 }
 
-pub(crate) fn write_js_json_number<W>(writer: &mut W, value: f64) -> std::io::Result<()>
+pub fn write_js_json_number<W>(writer: &mut W, value: f64) -> std::io::Result<()>
 where
     W: ?Sized + std::io::Write,
 {

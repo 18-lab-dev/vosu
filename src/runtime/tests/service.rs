@@ -830,7 +830,7 @@ fn production_catalog_query_matches_source_token_rules() {
 
 #[test]
 fn report_adapter_reads_real_instance_client_version() {
-    let mut settings = crate::model::states::SettingsObject::new();
+    let mut settings = vosu_osu_model::states::SettingsObject::new();
     settings.insert("client".into(), serde_json::json!({"version":"2026.714.0"}));
     assert_eq!(report_instance_version(&settings), "2026.714.0");
     settings.insert("client".into(), serde_json::json!({"version":42}));

@@ -88,7 +88,7 @@ impl MemoryReader for LoggingMemoryReader {
         }
         if let Some(checksum) = self.full_menu_checksum {
             return Ok(ReadStatus::Ready(Menu::Full(
-                crate::model::memory::MenuFull {
+                vosu_osu_model::memory::MenuFull {
                     gamemode: 0,
                     checksum: checksum.into(),
                     filename: "map.osu".into(),
@@ -116,7 +116,7 @@ impl MemoryReader for LoggingMemoryReader {
             )));
         }
         Ok(ReadStatus::Ready(Menu::Checksum(
-            crate::model::memory::MenuChecksum {
+            vosu_osu_model::memory::MenuChecksum {
                 gamemode: 2,
                 ranked_status: 0.0,
             },
@@ -150,7 +150,7 @@ impl MemoryReader for LoggingMemoryReader {
     fn ranked_play(&mut self) -> MemoryRead<RankedPlay> {
         self.pending("ranked")
     }
-    fn room(&mut self) -> MemoryRead<crate::model::memory::LazerRoom> {
+    fn room(&mut self) -> MemoryRead<vosu_osu_model::memory::LazerRoom> {
         Ok(ReadStatus::NotReady)
     }
     fn spectating_data(&mut self, _: bool) -> MemoryRead<LazerSpectator> {

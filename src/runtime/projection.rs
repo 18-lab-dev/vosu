@@ -68,7 +68,7 @@ fn subscription_json(value: ProjectionValue) -> Result<serde_json::Value, ApiErr
         ProjectionValue::Bool(value) => Value::Bool(value),
         ProjectionValue::Number(mut number) => {
             if let Some(value) = number.as_f64().filter(|_| number.is_f64()) {
-                number = crate::model::js_json_number(value).parse().map_err(
+                number = vosu_osu_model::js_json_number(value).parse().map_err(
                     |error: serde_json::Error| ApiError::serialization(error.to_string()),
                 )?;
             }
@@ -1632,7 +1632,7 @@ pub(super) fn write_projection_json(
                 if value.fract() == 0.0 && value.abs() < MAX_PLAIN_INTEGER {
                     write_integer(bytes, value < 0.0, value.abs() as u64);
                 } else {
-                    crate::model::write_js_json_number(bytes, value)?;
+                    vosu_osu_model::write_js_json_number(bytes, value)?;
                 }
             }
         }

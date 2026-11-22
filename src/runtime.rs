@@ -29,6 +29,8 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
+use vosu_osu_model::default_calculated_mods;
+use vosu_osu_model::enums::{ClientType, GameState};
 use vosu_sys::platform::{PathResolver, Paths};
 
 use crate::{
@@ -53,8 +55,6 @@ use crate::{
         lazer_loader::LazerOffsetLoader,
         stable::{StableMemory, StablePatterns},
     },
-    model::default_calculated_mods,
-    model::enums::{ClientType, GameState},
     report::{ReportCounter, ReportInput, ReportInstance},
     server::{
         auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},

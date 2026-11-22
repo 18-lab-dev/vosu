@@ -165,7 +165,7 @@ pub(super) fn build_stable_client(
 }
 pub(super) fn build_lazer_tourney(
     state: &RegularState,
-    data: &crate::model::memory::LazerSpectator,
+    data: &vosu_osu_model::memory::LazerSpectator,
     status: i64,
 ) -> Result<Tourney, ApiError> {
     let mut clients = Vec::with_capacity(data.spectating_clients.len());
@@ -202,17 +202,17 @@ pub(super) fn build_lazer_tourney(
             })
             .collect(),
         total_score: Sides {
-            left: sum(crate::model::states::MultiplayerTeamType::Red),
-            right: sum(crate::model::states::MultiplayerTeamType::Blue),
+            left: sum(vosu_osu_model::states::MultiplayerTeamType::Red),
+            right: sum(vosu_osu_model::states::MultiplayerTeamType::Blue),
         },
         clients,
     })
 }
-pub(super) fn lazer_wire_team(team: crate::model::states::MultiplayerTeamType) -> TourneyTeam {
+pub(super) fn lazer_wire_team(team: vosu_osu_model::states::MultiplayerTeamType) -> TourneyTeam {
     match team {
-        crate::model::states::MultiplayerTeamType::Red => TourneyTeam::Left,
-        crate::model::states::MultiplayerTeamType::Blue
-        | crate::model::states::MultiplayerTeamType::None => TourneyTeam::Right,
+        vosu_osu_model::states::MultiplayerTeamType::Red => TourneyTeam::Left,
+        vosu_osu_model::states::MultiplayerTeamType::Blue
+        | vosu_osu_model::states::MultiplayerTeamType::None => TourneyTeam::Right,
     }
 }
 

@@ -12,13 +12,13 @@ use crate::memory::snapshot::{
     RawRegularSnapshotBuilder, RegularCaptureContext,
 };
 use crate::memory::{MemoryReader, ReaderSynchronization, SynchronizedMemoryReader};
-use crate::model::enums::{ClientType, GameState};
-use crate::model::memory::{
+use vosu_osu_model::enums::{ClientType, GameState};
+use vosu_osu_model::memory::{
     AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerSpectator,
     Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney, TourneyChat,
     TourneyUser, User,
 };
-use crate::model::states::{CalculateMods, HitErrorArray, Statistics, TourneyManagerChatItem};
+use vosu_osu_model::states::{CalculateMods, HitErrorArray, Statistics, TourneyManagerChatItem};
 use vosu_sys::process::{MemoryRead, ReadStatus};
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

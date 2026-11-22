@@ -16,15 +16,15 @@ use vosu::{
         lazer_version,
         snapshot::{RawPreciseSnapshot, RawRegularSnapshot, RegularCaptureContext},
     },
-    model::{
-        default_calculated_mods,
-        enums::{ClientType, GameState},
-    },
     state::{
         PreciseSnapshotReader, ReadContext, RegularCapturePlan, RegularCaptureRequest,
         RegularSnapshotReader, SnapshotTransition, SourcePreciseReader, SourceRegularReader,
         StateBundle, state_backend::LiveStateCalculationBackend,
     },
+};
+use vosu_osu_model::{
+    default_calculated_mods,
+    enums::{ClientType, GameState},
 };
 use vosu_sys::process::{ProcessHandle, ReadStatus};
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;

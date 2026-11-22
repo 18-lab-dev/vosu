@@ -12,13 +12,13 @@ use crate::calculation::progressive::{
     GameplayGate, HitStatistics, LiveGradualProgression, LiveProgressiveBeatmap, ResultCalculator,
     ResultFrame, Ruleset,
 };
-use crate::model::enums::ClientType;
-use crate::model::states::{CalculateMods, Mod, Statistics};
-use crate::model::{mods_checksum, mods_for_calculation, safe_join};
 use crate::state::{
     BeatmapCalculationUpdate, CalculationPhase, StateCalculationBackend, StateCalculationFuture,
     StateCalculationRequest, StateCalculationResult, StateWorkerError,
 };
+use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::states::{CalculateMods, Mod, Statistics};
+use vosu_osu_model::{mods_checksum, mods_for_calculation, safe_join};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LiveBeatmapEngine;

@@ -149,7 +149,7 @@ impl StableMemory {
                 .and_then(StableReplayFrameBatch::newest)
                 .is_some_and(|newest| {
                     newest.time - play_time
-                        > crate::model::memory::StableReplayFrames::CLOCK_STEP_BACK_MS
+                        > vosu_osu_model::memory::StableReplayFrames::CLOCK_STEP_BACK_MS
                 })
         {
             self.reset_replay_frames(score, acknowledged_error_index);
@@ -157,7 +157,7 @@ impl StableMemory {
         if size < self.replay_frame_index + self.replay_pending.len() as i64 {
             self.replay_pending.clear();
         }
-        let limit = crate::model::memory::StableReplayFrames::LIMIT as i64;
+        let limit = vosu_osu_model::memory::StableReplayFrames::LIMIT as i64;
         let mut end = size;
         if self.replay_batch.is_none() && size > limit {
             let mut low = 0;
@@ -428,7 +428,7 @@ impl StableMemory {
                 // ScoreV2 is a win condition and is not represented in the
                 // score's regular mod bitfields.
                 if score_processor != 0 {
-                    bits |= crate::model::osu_mods::SCORE_V2;
+                    bits |= vosu_osu_model::osu_mods::SCORE_V2;
                 }
                 self.with_random_seed(mods(bits), r, mode)?
             },
@@ -831,9 +831,8 @@ impl MemoryReader for StableMemory {
             stable_replay_frames,
         }))
     }
-    fn catcher(&mut self, play_time: f64) -> MemoryRead<crate::model::memory::Catcher> {
-        use crate::model::memory::Catcher;
-        // The ordinary suffix capture refreshes this batch even when no judgement arrived.
+    fn catcher(&mut self, play_time: f64) -> MemoryRead<vosu_osu_model::memory::Catcher> {
+        use vosu_osu_model::memory::Catcher;
         if let Some(frame) = self
             .replay_batch
             .as_ref()
@@ -977,13 +976,13 @@ impl MemoryReader for StableMemory {
             "Stable: ranked play not implemented",
         ))
     }
-    fn room(&mut self) -> MemoryRead<crate::model::memory::LazerRoom> {
+    fn room(&mut self) -> MemoryRead<vosu_osu_model::memory::LazerRoom> {
         Ok(ReadStatus::Unsupported("lazer multiplayer room"))
     }
     fn spectating_data(
         &mut self,
         _show_mp_commands: bool,
-    ) -> MemoryRead<crate::model::memory::LazerSpectator> {
+    ) -> MemoryRead<vosu_osu_model::memory::LazerSpectator> {
         Ok(ReadStatus::Unsupported(
             "Stable: lazer spectating not implemented",
         ))

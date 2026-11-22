@@ -11,11 +11,11 @@ pub mod fixture {
     use vosu::memory::{
         LazerMemory, LazerPattern, ReaderSynchronization, StableMemory, StablePatterns,
     };
-    use vosu::model::enums::ClientType;
-    use vosu::model::memory::Menu;
     use vosu::state::{
         RegularCapturePlan, RegularCaptureRequest, RegularSnapshotReader, SourceRegularReader,
     };
+    use vosu_osu_model::enums::ClientType;
+    use vosu_osu_model::memory::Menu;
     use vosu_sys::process::{
         MemoryError, MemoryRegion, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
         ReadStatus,

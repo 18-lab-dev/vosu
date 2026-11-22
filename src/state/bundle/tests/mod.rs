@@ -3,7 +3,7 @@ use crate::memory::snapshot::{
     PreciseCaptureContext, RawPreciseSnapshotBuilder, RawRegularSnapshotBuilder,
     RegularCaptureContext,
 };
-use crate::model::memory::{
+use vosu_osu_model::memory::{
     Global as RawGlobal, GlobalPrecise, HitErrors, ReleaseCorrection, TourneyUser,
 };
 use vosu_sys::process::ReadStatus;

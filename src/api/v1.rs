@@ -8,9 +8,9 @@ use helpers::join_node_path;
 use helpers::joined_path;
 
 use crate::model::api::v1::*;
-use crate::model::enums::{ClientType, CountryCodes, GameState};
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use vosu_osu_model::enums::{ClientType, CountryCodes, GameState};
 
 #[cfg(test)]
 use crate::api::JsFormatter;
@@ -22,10 +22,10 @@ use serde_json::ser::Serializer;
 
 use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
-use crate::model::memory::{LazerSpectatorEntry, Score};
-use crate::model::states::{CalculateMods, MultiplayerTeamType};
-use crate::model::{calculate_grade, to_legacy_hits};
 use crate::state::{GameplayState, LeaderboardPlayerState, PreciseState, RegularState};
+use vosu_osu_model::memory::{LazerSpectatorEntry, Score};
+use vosu_osu_model::states::{CalculateMods, MultiplayerTeamType};
+use vosu_osu_model::{calculate_grade, to_legacy_hits};
 
 pub fn build(snapshot: &CombinedSnapshot) -> Result<Response, ApiError> {
     build_with::<Vec<f64>>(snapshot)
@@ -340,7 +340,7 @@ fn leaderboard_player_state(player: &LeaderboardPlayerState) -> LeaderboardPlaye
     }
 }
 
-fn leaderboard_player(player: &crate::model::states::LeaderboardPlayer) -> LeaderboardPlayer {
+fn leaderboard_player(player: &vosu_osu_model::states::LeaderboardPlayer) -> LeaderboardPlayer {
     LeaderboardPlayer {
         name: player.name.clone(),
         score: player.score,
@@ -511,7 +511,7 @@ fn default_tourney_manager() -> TourneyManager {
 }
 
 fn map_chat(
-    messages: &[crate::model::states::TourneyManagerChatItem],
+    messages: &[vosu_osu_model::states::TourneyManagerChatItem],
     clients: &[TourneyIpcClient],
 ) -> Vec<TourneyMessage> {
     // Preserve the first matching client when names repeat, without rescanning

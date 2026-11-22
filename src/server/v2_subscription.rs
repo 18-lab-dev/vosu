@@ -455,14 +455,14 @@ impl Formatter for FrameFormatter {
     where
         W: ?Sized + io::Write,
     {
-        crate::model::write_js_json_number(writer, f64::from(value))
+        vosu_osu_model::write_js_json_number(writer, f64::from(value))
     }
 
     fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
     where
         W: ?Sized + io::Write,
     {
-        crate::model::write_js_json_number(writer, value)
+        vosu_osu_model::write_js_json_number(writer, value)
     }
 }
 

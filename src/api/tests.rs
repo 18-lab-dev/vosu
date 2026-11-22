@@ -3,8 +3,8 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 use crate::instance::{InstanceSettings, Pid};
-use crate::model::enums::ClientType;
-use crate::model::states::{HitErrorArray, KeypressButton};
+use vosu_osu_model::enums::ClientType;
+use vosu_osu_model::states::{HitErrorArray, KeypressButton};
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -409,8 +409,8 @@ fn schema_index(schema: ApiSchema) -> usize {
 
 #[test]
 fn synthetic_live_state_worker_smoke_encodes_every_transition() {
-    use crate::model::enums::GameState;
-    use crate::model::states::KeyOverlayButton;
+    use vosu_osu_model::enums::GameState;
+    use vosu_osu_model::states::KeyOverlayButton;
 
     let snapshots = Arc::new(SnapshotManager::new(Arc::new(ManagerSnapshot::not_ready(
         0,

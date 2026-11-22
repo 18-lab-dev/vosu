@@ -47,7 +47,7 @@ pub struct BeatmapFiles {
     pub audio_file: Option<PathBuf>,
     pub songs_root: Option<PathBuf>,
     pub skin_root: Option<PathBuf>,
-    pub skin: Option<Arc<crate::model::memory::CurrentSkin>>,
+    pub skin: Option<Arc<vosu_osu_model::memory::CurrentSkin>>,
     pub skin_client: Option<&'static str>,
     pub skin_name: Option<String>,
     pub static_root: Option<PathBuf>,

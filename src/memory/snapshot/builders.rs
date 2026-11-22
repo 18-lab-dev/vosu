@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::model::memory::{
+use vosu_osu_model::memory::{
     AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, LazerRoom,
     LazerSpectator, Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney,
     TourneyChat, TourneyUser, User,
@@ -182,7 +182,7 @@ impl RawPreciseSnapshotBuilder {
     }
 
     #[must_use]
-    pub fn catcher(mut self, read: MemoryRead<crate::model::memory::Catcher>) -> Self {
+    pub fn catcher(mut self, read: MemoryRead<vosu_osu_model::memory::Catcher>) -> Self {
         self.snapshot.catcher = Some(read);
         self
     }

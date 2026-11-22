@@ -386,7 +386,7 @@ fn mania_dual_stage_final_columns_publish_press_and_release_errors() {
     let mut reader = reader(Arc::new(memory));
     Arc::make_mut(&mut reader.offsets).mania_hit_object =
         Some(crate::memory::lazer_offsets::ManiaHitObjectOffsets { column: Some(0x44) });
-    let mut keys = crate::model::states::KeyHitErrors::default();
+    let mut keys = vosu_osu_model::states::KeyHitErrors::default();
     for (column, object) in [(18, 0x1000), (19, 0x2000)] {
         assert_eq!(reader.mania_column(object), Some(column));
         keys.append(4.0, reader.mania_column(object), false);
@@ -1126,7 +1126,7 @@ fn room_decodes_managed_users_and_handles_optional_fields_and_bounds() {
             } else {
                 assert_eq!(
                     value.users,
-                    vec![crate::model::memory::LazerRoomUser {
+                    vec![vosu_osu_model::memory::LazerRoomUser {
                         id: 42,
                         username: "Player Ω".into(),
                         country_code: 225,

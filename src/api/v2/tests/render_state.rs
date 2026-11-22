@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::memory::{ClientRenderState, PlaybackClock};
+use vosu_osu_model::memory::{ClientRenderState, PlaybackClock};
 
 #[test]
 fn source_distinguishes_own_gameplay_watching_and_non_gameplay() {
@@ -31,7 +31,7 @@ fn source_distinguishes_own_gameplay_watching_and_non_gameplay() {
     );
     state.global.render = None;
     let mut autoplay = mods;
-    autoplay.array.push(crate::model::states::Mod {
+    autoplay.array.push(vosu_osu_model::states::Mod {
         acronym: "AT".into(),
         settings: None,
     });
@@ -84,7 +84,7 @@ fn song_select_encode_includes_clock_mod_settings_ruleset_and_visuals() {
         .global
         .menu_mods
         .array
-        .push(crate::model::states::Mod {
+        .push(vosu_osu_model::states::Mod {
             acronym: "DT".into(),
             settings: Some([("speed_change".into(), serde_json::json!(1.23))].into()),
         });

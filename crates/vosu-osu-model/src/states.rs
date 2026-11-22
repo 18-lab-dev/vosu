@@ -127,7 +127,7 @@ static MOUSE_ONE_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("M1"));
 static MOUSE_TWO_NAME: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from("M2"));
 
 impl KeyOverlayButton {
-    pub(crate) fn stable_name(mode: i64, index: usize) -> Arc<str> {
+    pub fn stable_name(mode: i64, index: usize) -> Arc<str> {
         match (mode, index) {
             (3, _) | (_, 4..) => Arc::clone(&KEY_NAMES[index]),
             (2, 0) => Arc::clone(&LEFT_NAME),
@@ -140,11 +140,11 @@ impl KeyOverlayButton {
         }
     }
 
-    pub(crate) const fn lazer_button_count() -> usize {
+    pub const fn lazer_button_count() -> usize {
         20
     }
 
-    pub(crate) fn lazer_name(index: usize) -> Arc<str> {
+    pub fn lazer_name(index: usize) -> Arc<str> {
         Arc::clone(&BUTTON_NAMES[index])
     }
 }

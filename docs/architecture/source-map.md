@@ -16,6 +16,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Desktop integration | `src/desktop/` | Session tray, executable ownership policy, opt-in Linux systemd user login service |
 | Process instances | `src/instance/` | Candidate classification, focus, PID generations, tournament selection |
 | Native access | `crates/vosu-sys/` | Linux/Windows process handles, memory reads, paths, OS behavior, and process-exit-event backends; all platform `unsafe` lives here |
+| osu! value types | `crates/vosu-osu-model/` | osu! memory/state/enum models and the calculation root helpers (JS-compatible rounding/number writing, mods, grades, legacy hits) shared by the reader, calculator, and adapters |
 | Client decoding | `src/memory/`, `src/memory/stable/`, `src/memory/lazer/` | Offsets, signatures, pointers, snapshots, stable/lazer sentinels |
 | State reduction | `src/state/` | Capture scheduling, stale-sample rejection, retention, gameplay state |
 | Public APIs | `src/api/`, `src/model/api/` | v1, stream companion, v2, precise schemas and serialization |
@@ -46,7 +47,7 @@ Dependencies between the crate's top-level modules are recorded in
 record it in the same change that explains the new dependency here or in the
 [architecture overview](overview.md). `memory`, `calculation`, and `state`
 no longer cycle: the JS-compatible rounding/mods/grade helpers
-(`src/model/root/{helpers,mods,scores}.rs`) and the state reducer's
+(`crates/vosu-osu-model/src/root/{helpers,mods,scores}.rs`) and the state reducer's
 calculation backend (`src/state/state_backend.rs`) live under `model` and
 `state` respectively, not `calculation`, so readers depend only on the
 model and `state -> calculation` (not the reverse) is the only edge left.
@@ -90,7 +91,7 @@ so `tools -> server` is the only edge left.
 
 ## Workspace boundaries
 
-`Cargo.toml` defines one workspace with the production `vosu` package, the `vosu-sys` crate (native process/platform/process-event boundary, M0 crate split), the `vosu-net` crate (hardened outbound HTTPS streaming and archive extraction, M0 crate split), the `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, the integration-only `vosu-test-harness`, the dependency-isolated `vosu-release-smoke` package, and the dev-only `vosu-proptest` package (`vosu_proptest_config()`, shared by every `prop_*` test). The smoke package launches an external packaged executable and does not depend on the daemon crate. Release profiles retain thin LTO, one codegen unit, stripped symbols, and abort-on-panic; `test-harness` is rejected by `build.rs` in release builds.
+`Cargo.toml` defines one workspace with the production `vosu` package, the `vosu-sys` crate (native process/platform/process-event boundary, M0 crate split), the `vosu-net` crate (hardened outbound HTTPS streaming and archive extraction, M0 crate split), the `vosu-osu-model` crate (osu! value types and calculation root helpers, M0 crate split), the `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, the integration-only `vosu-test-harness`, the dependency-isolated `vosu-release-smoke` package, and the dev-only `vosu-proptest` package (`vosu_proptest_config()`, shared by every `prop_*` test). The smoke package launches an external packaged executable and does not depend on the daemon crate. Release profiles retain thin LTO, one codegen unit, stripped symbols, and abort-on-panic; `test-harness` is rejected by `build.rs` in release builds.
 
 ## Evidence hierarchy
 

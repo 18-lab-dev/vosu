@@ -1,16 +1,16 @@
-use crate::model::{js_round_number, net_date_binary_to_date};
 use chrono::SecondsFormat;
 use indexmap::IndexMap;
 use md5::{Digest, Md5};
 use serde_json::{Value, json};
+use vosu_osu_model::{js_round_number, net_date_binary_to_date};
 
 use super::{MemoryReader, ReaderSynchronization, SynchronizedMemoryReader};
-use crate::model::memory::{
+use vosu_osu_model::memory::{
     AudioVelocityBase, Gameplay, Global, GlobalPrecise, HitErrors, KeyOverlay, Leaderboard, Menu,
     MenuChecksum, MenuFull, Mp3Length, RankedPlay, ResultScreen, Settings, StableReplayFrame,
     StableReplayFrameBatch, Tourney, TourneyChat, TourneyUser, User,
 };
-use crate::model::states::{
+use vosu_osu_model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton, LeaderboardPlayer, Mod, Statistics,
     TourneyManagerChatItem,
 };

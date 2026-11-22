@@ -1,6 +1,6 @@
 use super::helpers::fix_decimals_to;
 
-use crate::model::states::{Mod, Statistics};
+use crate::states::{Mod, Statistics};
 
 pub fn calculate_accuracy(is_lazer: bool, mods: &[Mod], mode: i32, hits: &Statistics) -> f64 {
     let (numerator, denominator) = match mode {

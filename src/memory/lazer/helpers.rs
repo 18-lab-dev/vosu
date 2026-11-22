@@ -112,7 +112,7 @@ pub(super) fn calculate_mods(mut array: Vec<Mod>) -> CalculateMods {
         .iter()
         .find_map(|item| item.settings.as_ref()?.get("speed_change")?.as_f64())
         .filter(|value| *value != 0.0);
-    let checksum = crate::model::mods_checksum(&array);
+    let checksum = vosu_osu_model::mods_checksum(&array);
     CalculateMods {
         checksum,
         number,
@@ -400,5 +400,5 @@ pub(super) fn mime(name: &str) -> String {
     .into()
 }
 pub(super) fn js_fixed2(value: f64) -> f64 {
-    crate::model::fix_decimals(value)
+    vosu_osu_model::fix_decimals(value)
 }

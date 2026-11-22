@@ -524,7 +524,7 @@ pub(super) fn build_play<'a, V: From<&'a [f64]>>(
     mods: &CalculateMods,
     precise_hits: &'a HitErrorArray,
     enable_key_hits: bool,
-    catcher: Option<crate::model::memory::Catcher>,
+    catcher: Option<vosu_osu_model::memory::Catcher>,
     hit_offsets: Option<&'a [f64]>,
 ) -> Play<V> {
     let a = attrs.copied().unwrap_or_default();
@@ -535,7 +535,7 @@ pub(super) fn build_play<'a, V: From<&'a [f64]>>(
             precise_hits
                 .key
                 .as_ref()
-                .map(crate::model::states::KeyHitErrors::payload)
+                .map(vosu_osu_model::states::KeyHitErrors::payload)
                 .unwrap_or_default()
         }),
         failed: gameplay.failed,

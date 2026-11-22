@@ -21,18 +21,18 @@ use vosu::{
         ManagerSnapshot,
     },
     instance::InstanceSettings,
-    model::{
-        enums::ClientType,
-        memory::{LazerSpectator, ResultScreen as RawResultScreen, User as RawUser},
-        states::{
-            CalculateMods, HitErrorArray, KeyOverlayButton, LeaderboardPlayer, Statistics,
-            TourneyManagerChatItem,
-        },
-    },
     state::{
         BassDensityState, BeatmapPPState, GameplayState, GlobalState, LazerMultiSpectatingState,
         MenuState, PreciseState, RankedPlayState, RegularState, ResultScreenState, SettingsState,
         StateBundleSnapshot, TourneyManagerState, TourneyUserState, UserState,
+    },
+};
+use vosu_osu_model::{
+    enums::ClientType,
+    memory::{LazerSpectator, ResultScreen as RawResultScreen, User as RawUser},
+    states::{
+        CalculateMods, HitErrorArray, KeyOverlayButton, LeaderboardPlayer, Statistics,
+        TourneyManagerChatItem,
     },
 };
 
@@ -435,7 +435,7 @@ fn regular(input: &Input) -> RegularState {
             key_overlay: key_overlay.clone(),
             keypresses: key_overlay
                 .iter()
-                .map(|key| vosu::model::states::KeypressButton {
+                .map(|key| vosu_osu_model::states::KeypressButton {
                     name: Arc::clone(&key.name),
                     is_pressed: key.is_pressed,
                     count: key.count,
@@ -547,7 +547,7 @@ fn manager(input: &Input) -> CombinedSnapshot {
         let mut manager_regular = manager_state.regular.as_ref().clone();
         manager_regular.tourney = TourneyManagerState {
             is_default_state: false,
-            scoreboard: vosu::model::memory::Tourney {
+            scoreboard: vosu_osu_model::memory::Tourney {
                 ipc_state: 2,
                 left_stars: 1,
                 right_stars: 2,

@@ -175,7 +175,7 @@ async fn lazer_pause_then_select_play_resets_retained_gameplay_epoch() {
     dt.name = "DT".into();
     dt.checksum = "dt-1.1".into();
     dt.rate = 1.1;
-    dt.array = vec![crate::model::states::Mod {
+    dt.array = vec![vosu_osu_model::states::Mod {
         acronym: "DT".into(),
         settings: Some(
             [("speed_change".into(), serde_json::json!(1.1))]

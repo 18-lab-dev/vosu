@@ -16,7 +16,7 @@ use std::sync::{Mutex, OnceLock};
 pub mod startup_args;
 pub use startup_args::{StartupArgs, StartupValue};
 
-use crate::model::enums::ClientType;
+use vosu_osu_model::enums::ClientType;
 use vosu_sys::process::{MemoryError, ProcessBitness, ProcessHandle};
 
 use super::Pid;

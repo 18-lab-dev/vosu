@@ -31,14 +31,6 @@ use vosu::{
         CounterDownloader, CounterError, CounterOpener, CounterService, DownloadRequest,
         SettingInput,
     },
-    model::{
-        ModsInput as CalculationModsInput, calculate_accuracy, calculate_grade, calculate_mods,
-        empty_statistics, fix_decimals_to, to_legacy_hits,
-    },
-    model::{
-        enums::{GameState, GradeEnum, Rulesets},
-        states::Mod,
-    },
     report::escape_html,
     server::{
         auth::{AuthorizationPolicy, RequestHeaders},
@@ -66,6 +58,14 @@ use vosu::{
     },
 };
 use vosu_net::streaming::{ZipLimits, extract_zip_atomic, is_global_unicast};
+use vosu_osu_model::{
+    ModsInput as CalculationModsInput, calculate_accuracy, calculate_grade, calculate_mods,
+    empty_statistics, fix_decimals_to, to_legacy_hits,
+};
+use vosu_osu_model::{
+    enums::{GameState, GradeEnum, Rulesets},
+    states::Mod,
+};
 
 #[tokio::test]
 async fn api_key_revoked_during_post_body_is_rejected_before_dispatch() {
