@@ -28,6 +28,11 @@ pub const LOG_RATE_LIMIT_PER_SECOND: u32 = 200;
 const WINDOW: Duration = Duration::from_secs(1);
 
 struct InstanceState {
+    /// The plugin id `record` was last called with for this instance
+    /// (§6.10 attributes every record to its plugin id; the dropped-count
+    /// summary `flush_task` emits for this instance must carry it too,
+    /// not just the bare instance id).
+    plugin_id: String,
     window_start: Instant,
     window_count: u32,
     dropped_since_summary: u64,
@@ -35,8 +40,9 @@ struct InstanceState {
 }
 
 impl InstanceState {
-    fn new(now: Instant) -> Self {
+    fn new(now: Instant, plugin_id: String) -> Self {
         Self {
+            plugin_id,
             window_start: now,
             window_count: 0,
             dropped_since_summary: 0,
@@ -177,7 +183,8 @@ impl PluginLogRouter {
                 .unwrap_or_else(|poison| poison.into_inner());
             let state = guard
                 .entry(instance)
-                .or_insert_with(|| InstanceState::new(now));
+                .or_insert_with(|| InstanceState::new(now, plugin_id.to_owned()));
+            state.plugin_id = plugin_id.to_owned();
             if now.duration_since(state.window_start) >= WINDOW {
                 state.window_start = now;
                 state.window_count = 0;
@@ -223,7 +230,7 @@ async fn flush_task(inner: Weak<RouterInner>) {
         let Some(inner) = inner.upgrade() else {
             return;
         };
-        let due: Vec<(PluginInstanceId, u64)> = {
+        let due: Vec<(PluginInstanceId, String, u64)> = {
             let mut guard = inner
                 .state
                 .lock()
@@ -237,16 +244,16 @@ async fn flush_task(inner: Weak<RouterInner>) {
                     {
                         let dropped = std::mem::take(&mut state.dropped_since_summary);
                         state.last_summary = now;
-                        Some((*instance, dropped))
+                        Some((*instance, state.plugin_id.clone(), dropped))
                     } else {
                         None
                     }
                 })
                 .collect()
         };
-        for (instance, dropped) in due {
+        for (instance, plugin_id, dropped) in due {
             inner.logger.warn(format!(
-                "plugin instance {instance:?} exceeded the log rate limit ({LOG_RATE_LIMIT_PER_SECOND}/s): {dropped} record(s) dropped in the last second"
+                "plugin {plugin_id} ({instance:?}) exceeded the log rate limit ({LOG_RATE_LIMIT_PER_SECOND}/s): {dropped} record(s) dropped in the last second"
             ));
         }
     }

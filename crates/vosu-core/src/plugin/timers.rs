@@ -41,8 +41,15 @@ pub const MAX_TIMERS_PER_INSTANCE: usize = 64;
 pub trait TimerDelivery: Send + Sync {
     /// `VOSU_OP_TIMER_FIRED` (host -> plugin, no reply): delivered through
     /// `instance`'s own dispatch path exactly like any other host ->
-    /// plugin message (§4), never called directly from this registry's
-    /// internal lock.
+    /// plugin message (§4). **Always called while holding this
+    /// registry's internal table lock** (that is how the cancel race
+    /// below is made race-free): an implementation must not block, and
+    /// must never re-enter this registry (`set`/`cancel`/`cancel_all`)
+    /// from inside this call, or it deadlocks against the very lock it
+    /// is running under. See `cancel`'s own doc comment for a race this
+    /// call's own correctness does not close: once this returns, the
+    /// message may still be sitting in the owning instance's own
+    /// dispatch queue, not yet delivered to the plugin.
     fn timer_fired(&self, instance: PluginInstanceId, timer: u64);
 }
 
@@ -140,8 +147,17 @@ impl TimerRegistry {
     /// one-shot that already fired (or an id this instance never set) is
     /// a no-op, per §6.11, so this always answers `VOSU_OK`. Removing the
     /// entry under this same lock is what makes `run_timer`'s generation
-    /// check race-free: once this returns, no `TIMER_FIRED` for `timer`
-    /// can follow.
+    /// check race-free: once this returns, this registry will not start
+    /// delivering another `TIMER_FIRED` for `timer`. That is not the same
+    /// as saying the plugin can never observe one for it again: a fire
+    /// `timer_fired` already decided to deliver, and already handed off
+    /// to the instance's own dispatch queue, before this call started,
+    /// can still be sitting in that queue and reach the plugin after this
+    /// call has returned — this registry has no way to retract a message
+    /// already queued elsewhere, nor any per-message tag left to filter
+    /// it by once it has left for the instance's own queue.
+    /// `docs/v2/plugin-abi.md` §6.11 tells plugins to tolerate one stray
+    /// `TIMER_FIRED` for a timer they just cancelled.
     pub fn cancel(&self, instance: PluginInstanceId, timer: u64) -> vosu_status {
         let mut guard = self
             .timers
