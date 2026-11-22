@@ -18,7 +18,7 @@ spec changes; differences from 1.x are called out explicitly.
 
 Plugin ABI runtime fields (`manifest_version`, `abi_version`, `runtime`,
 `concurrent_dispatch`, `settings_schema`, `[targets.*]`, `[match]`,
-`[resources]`), the process matcher's matching semantics, and everything else
+`root_slots`, and `[[resource_kinds]]`), the process matcher's matching
 a plugin implements against the C ABI are defined in `docs/v2/plugin-abi.md`;
 this spec references them by name without redefining them, and owns every
 other `plugin.toml` field (below). Field semantics are defined in
@@ -59,8 +59,14 @@ version = "^1.0.0"
   - For an `action:` id, `version` is the plugin's own chosen version for
     that action and must equal the matching `[[actions]]` entry's `version`
     (below).
-  - For a `resource:` id, `version` is the plugin's own chosen version for
-    that resource kind.
+  - For a `resource:` id naming a plugin's own kind
+    (`resource:<plugin-id>.<kind>`), `version` is the plugin's own chosen
+    version for that resource kind. For a `resource:` id naming a core kind
+    (`resource:chart.file`, `chart.audio`, `chart.background`, `chart.set`,
+    or `skin`), `version` is pinned to the owning namespace's schema version
+    (`vosu.chart` or `vosu.skin`), exactly as for `field:` ids; a plugin must
+    not list a core kind in its own `provides` at all (see "Built-in
+    providers" below).
   - For a `game:` id, `version` must be the literal string `"*"` (see
     "Game capabilities" below); game support is a presence check, not a
     version negotiation.
@@ -72,8 +78,11 @@ version = "^1.0.0"
   is ordinary and common. Core-owned namespaces and bundled plugins' own
   capabilities are always resolvable without installing anything (see
   "Built-in providers" below); a game plugin needs no `requires` entry at all
-  to have its session's `vosu.client` fields filled, since core fills those
-  itself from the attach handshake rather than from a plugin subscription.
+  to have most of its session's `vosu.client` fields filled: core fills
+  `session`, `pid`, `focused`, and `plugin` itself from session discovery,
+  and the game plugin fills `game`, `variant`, `name`, and `version` through
+  its own `SESSION_IDENTIFY` message (`docs/v2/plugin-abi.md`), neither of
+  which is a `provides`/`requires` declaration.
 - `version` in `requires`/`optional` is a semver requirement string
   (`semver::VersionReq` syntax, matching 1.x's `Requirement.version`), except
   for a `game:` id, whose requirement must be the literal string `"*"`.
@@ -109,23 +118,34 @@ covering namespace.
 
 Plugin ids are 2–4 dotted segments, so a `field:`/`action:`/`resource:` id's
 namespace boundary is ambiguous from the string alone. The resolver parses it
-by the **longest registered plugin id** (bundled, installed, or catalogued,
-across every enabled source) that is a prefix of the capability id's path;
+by the **longest registered namespace** — a core-owned namespace
+(`vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`, the
+reserved `vosu.sessions`, below) or a bundled/installed/catalogued plugin id,
+across every enabled source — that is a prefix of the capability id's path;
 everything after that prefix is the field path, action name, or resource
-kind. A plugin id that extends another already-registered plugin id (for
-example `a.b.c` when `a.b` is already bundled, installed, or catalogued) is
-rejected at install time and at catalog validation time, since it would make
-this parse ambiguous.
+kind. A plugin id that extends another already-registered plugin id or any
+core-owned namespace (for example `a.b.c` when `a.b` is already bundled,
+installed, or catalogued, or a plugin id starting with the segment `vosu`)
+is rejected at install time and at catalog validation time, since it would
+make this parse ambiguous.
 
-Resource kinds are one segment, `[a-z0-9][a-z0-9-]{0,31}`. Core-owned kinds
-are the reserved dotted names `chart.file`, `chart.audio`, `chart.background`,
-`chart.set`, and `skin`; a plugin id must not start with the segment `chart`
-or `skin`, so a `resource:` id is unambiguous: `resource:chart.background` is
-always the core kind, `resource:<plugin-id>.<kind>` is always that plugin's
-own kind. A bare kind name (e.g. in a `[[resource_kinds]]` declaration,
-`docs/v2/plugin-abi.md`) is written without any plugin-id prefix; the
+Resource kinds are one segment, `[a-z0-9][a-z0-9-]{0,31}`. The bare names
+`file`, `audio`, `background`, `set`, and `skin` always mean the core kinds
+(`chart.file`, `chart.audio`, `chart.background`, `chart.set`, `skin`) and
+are reserved: a plugin's own `[[resource_kinds]]` entry (`docs/v2/plugin-abi.md`)
+must not use any of them as its bare `kind`. A plugin id must not start with
+the segment `chart` or `skin` either, so a `resource:` id is unambiguous:
+`resource:chart.background` is always the core kind,
+`resource:<plugin-id>.<kind>` is always that plugin's own kind. A bare kind
+name (as written in `[[resource_kinds]]`) carries no plugin-id prefix; the
 `resource:` capability id is the only place that prefix (or its absence, for
 a core kind) appears.
+
+The pseudo-namespace `vosu.sessions` is reserved for session lifecycle
+events delivered to a subscribing plugin (`docs/v2/plugin-abi.md`'s
+`VOSU_OP_STATE_SUBSCRIBE` session-events use); it is never a plugin id, a
+published data namespace, or a `field:`/`resource:`/`action:` capability —
+no manifest, schema, or catalog entry may use it as such.
 
 ### Game capabilities
 
@@ -138,8 +158,9 @@ validation error.
 ## Plugin manifest v2 (`plugin.toml`, metadata fields)
 
 Runtime fields — `manifest_version`, `abi_version`, `runtime`,
-`concurrent_dispatch`, `settings_schema`, `[targets.*]`, `[match]`, and
-`[resources]` — are defined in `docs/v2/plugin-abi.md` and not repeated here.
+`concurrent_dispatch`, `settings_schema`, `[targets.*]`, `[match]`,
+`root_slots`, and `[[resource_kinds]]` — are defined in
+`docs/v2/plugin-abi.md` and not repeated here.
 This section defines the remaining fields of the same `plugin.toml`: identity
 and display metadata, `provides`/`requires`/`optional` (above), and
 `[[actions]]`.
@@ -313,6 +334,11 @@ plugin's whole-namespace `provides` entry per "Capability coverage" above.
       "session": "required",
       "cli": true
     }],
+    "resource_kinds": [{
+      "kind": "replay",
+      "tree": false,
+      "families": ["chart-text"]
+    }],
     "replaces": [],
     "matcher": {
       "process_names": ["AcmeGame.exe", "acme-game"],
@@ -404,6 +430,10 @@ game, not any real supported or planned integration.
   "result_schema","session","cli"}`), empty when the plugin declares none.
   Tool and overlay entries carry no `actions` key: they only invoke actions,
   never declare them.
+- `resource_kinds` appears only on `plugins` entries and mirrors the
+  manifest's `[[resource_kinds]]` verbatim (`{"kind","tree","families"}`,
+  `docs/v2/plugin-abi.md`), empty when the plugin fills no kind of its own
+  (it may still fill a core kind, declared through coverage, not here).
 - `runtime` appears only on `plugins` entries and mirrors the manifest's
   runtime request (`"in-process"` or `"process"`, `docs/v2/plugin-abi.md`)
   verbatim; the install plan (below) uses it.
@@ -463,6 +493,15 @@ reference count:
 - core's own namespaces (`vosu.client`, `vosu.status`, `vosu.chart`,
   `vosu.play`, `vosu.skin`), each at its schema's current version
   (`docs/v2/state-schema.md`);
+- the core resource kinds `resource:chart.file`, `resource:chart.audio`,
+  `resource:chart.background`, and `resource:chart.set` (version = the
+  `vosu.chart` schema version), and `resource:skin` (version = the
+  `vosu.skin` schema version). No plugin may list any of these in its own
+  `provides`; whether a given game plugin actually fills a given core kind
+  for a session is per-plugin declared coverage
+  (`[[resource_kinds]]`/common-field coverage, `docs/v2/plugin-abi.md`), the
+  same way common `vosu.play`/`vosu.chart` field coverage is declared, not a
+  separate capability negotiation;
 - every bundled plugin's `provides` ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)'s
   bundled set: the dashboard, overlay hosting, tool hosting, the osu!
   plugin, and the upstream adapters). Their exact `provides` lists live in
