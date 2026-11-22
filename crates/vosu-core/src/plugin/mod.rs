@@ -3,12 +3,12 @@
 //! lifecycle, and focus
 //! (`docs/v2/implementation-plan.md` M1 "Core plugin host";
 //! `docs/v2/plugin-abi.md` §1, §2, §4, §5, §6.1, §6.2, §7.1), plus the M1
-//! host services logging with the 200/s rate limit (§6.10) and timers
-//! (§6.11).
+//! host services: settings (§6.9), logging with the 200/s rate limit
+//! (§6.10), and timers (§6.11).
 //!
 //! Out of scope for this phase (later milestones): wiring these
-//! mechanisms to real OS discovery (phase (d)), read plans, scanning,
-//! and settings.
+//! mechanisms to real OS discovery (phase (d)), read plans, and
+//! scanning.
 
 mod dispatch;
 mod error;
@@ -19,6 +19,7 @@ pub mod logging;
 mod matcher;
 mod registry;
 mod session;
+pub mod settings;
 pub mod timers;
 
 pub use dispatch::{OwnedMessage, WorkerPool};

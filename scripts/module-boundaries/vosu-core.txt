@@ -1,5 +1,6 @@
 app -> config
 logging -> config
+plugin -> config
 plugin -> logging
 report -> config
 updater -> desktop
