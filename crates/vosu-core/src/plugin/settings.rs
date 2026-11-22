@@ -23,9 +23,11 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use tokio::runtime::Handle;
+use tokio::sync::broadcast;
 use vosu_plugin_api::{CborValue, Message, SettingsChanged};
 
-use crate::config::ConfigStore;
+use crate::config::{Config, ConfigChanged, ConfigStore};
 
 /// One `settings.json`/`settings.schema.json` entry
 /// (`docs/tools/protocol.md`, the overlay settings format): `uniqueID`,
@@ -214,6 +216,66 @@ impl ConfigSettingsBridgeB2 {
     }
 }
 
+/// Delivers a `VOSU_OP_SETTINGS_CHANGED` this layer built back to every
+/// live instance of `plugin_id`: the host-service modules in
+/// `crate::plugin` have no instance registry of their own (same reasoning
+/// as `timers::TimerDelivery`), so a plugin-id-scoped broadcast like this
+/// is this one narrow callback instead.
+pub trait SettingsChangeDelivery: Send + Sync {
+    fn settings_changed(&self, plugin_id: &str, message: Message);
+}
+
+/// Whether any of bridge B2's five `vosu.toml` keys actually changed
+/// value between `old` and `new`.
+fn bridge_b2_keys_changed(old: &Config, new: &Config) -> bool {
+    old.calculate_pp != new.calculate_pp
+        || old.poll_rate != new.poll_rate
+        || old.precise_data_poll_rate != new.precise_data_poll_rate
+        || old.show_mp_commands != new.show_mp_commands
+        || old.read_mania_scroll_speed != new.read_mania_scroll_speed
+}
+
+impl ConfigSettingsBridgeB2 {
+    /// Spawns a background task watching every `ConfigStore` change (§6.9:
+    /// "every later change arrives as `SETTINGS_CHANGED`") — a dashboard
+    /// settings-page write, a `vosu.toml` hot reload, or a plain
+    /// `ConfigStore::update` call, not only a write through this bridge's
+    /// own `store` — and, whenever one actually touches any of its five
+    /// keys, rebuilds the effective settings object and hands it to
+    /// `delivery` for `BRIDGE_B2_PLUGIN_ID`. Stops on its own once
+    /// `ConfigStore` itself shuts down.
+    pub fn watch_config_changes(
+        self: &Arc<Self>,
+        runtime: &Handle,
+        service: Arc<PluginSettingsService>,
+        delivery: Arc<dyn SettingsChangeDelivery>,
+    ) {
+        let mut changes = self.config.subscribe();
+        runtime.spawn(async move {
+            loop {
+                match changes.recv().await {
+                    Ok(ConfigChanged { old, new }) => {
+                        if !bridge_b2_keys_changed(&old, &new) {
+                            continue;
+                        }
+                        let schema = ConfigSettingsBridgeB2::schema();
+                        if let Ok(values) =
+                            service.effective_settings(BRIDGE_B2_PLUGIN_ID, Some(&schema))
+                        {
+                            delivery.settings_changed(
+                                BRIDGE_B2_PLUGIN_ID,
+                                Message::SettingsChanged(SettingsChanged { values }),
+                            );
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+    }
+}
+
 fn json_number(value: f64) -> Value {
     serde_json::Number::from_f64(value)
         .map(Value::Number)
@@ -347,14 +409,24 @@ impl PluginSettingsService {
         }
         let effective = schema.merge(&merged)?;
         self.storage.store(plugin_id, &effective)?;
+        // Storage may adjust what was actually saved (bridge B2's
+        // `ConfigStore::update` clamps `POLL_RATE`/`PRECISE_DATA_POLL_RATE`
+        // to their schema minimums, for instance): rebuild the broadcast
+        // from what storage now reports is actually stored, never from
+        // what this call merely asked it to store, so a plugin is never
+        // told a value it did not get.
+        let stored = self.storage.load(plugin_id)?;
+        let actual_effective = schema.merge(&stored)?;
         Ok(Message::SettingsChanged(SettingsChanged {
-            values: json_map_to_cbor(effective),
+            values: json_map_to_cbor(actual_effective),
         }))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     fn schema() -> SettingsSchema {
@@ -438,17 +510,16 @@ mod tests {
         );
     }
 
-    async fn config_store() -> Arc<ConfigStore> {
+    async fn config_store() -> (tempfile::TempDir, Arc<ConfigStore>) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vosu.toml");
         let store = ConfigStore::initialize(&path).await.unwrap();
-        std::mem::forget(dir);
-        Arc::new(store)
+        (dir, Arc::new(store))
     }
 
     #[tokio::test]
     async fn bridge_b2_loads_current_config_values() {
-        let config = config_store().await;
+        let (_dir, config) = config_store().await;
         config.update(|c| {
             c.poll_rate = 200.0;
             c.calculate_pp = false;
@@ -461,7 +532,7 @@ mod tests {
 
     #[tokio::test]
     async fn bridge_b2_store_writes_through_to_the_config() {
-        let config = config_store().await;
+        let (_dir, config) = config_store().await;
         let bridge = ConfigSettingsBridgeB2::new(Arc::clone(&config));
         let mut values = Map::new();
         values.insert("POLL_RATE".into(), Value::from(300.0));
@@ -473,7 +544,7 @@ mod tests {
 
     #[tokio::test]
     async fn bridge_b2_refuses_an_unbridged_plugin_id() {
-        let config = config_store().await;
+        let (_dir, config) = config_store().await;
         let bridge = ConfigSettingsBridgeB2::new(config);
         assert_eq!(
             bridge.load("some.other.plugin").unwrap_err(),
@@ -483,7 +554,7 @@ mod tests {
 
     #[tokio::test]
     async fn apply_validates_stores_and_builds_settings_changed() {
-        let config = config_store().await;
+        let (_dir, config) = config_store().await;
         let storage: Arc<dyn SettingsStorage> = Arc::new(ConfigSettingsBridgeB2::new(config));
         let service = PluginSettingsService::new(storage);
         let mut patch = Map::new();
@@ -507,13 +578,124 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn apply_reports_the_clamped_value_actually_stored_not_the_submitted_one() {
+        // `ConfigDocument::validate` raises `POLL_RATE` below 100 up to
+        // 100 (`config/document.rs`): `apply` must broadcast what was
+        // actually saved, never the value this call merely submitted.
+        let (_dir, config) = config_store().await;
+        let storage: Arc<dyn SettingsStorage> = Arc::new(ConfigSettingsBridgeB2::new(config));
+        let service = PluginSettingsService::new(storage);
+        let mut patch = Map::new();
+        patch.insert("POLL_RATE".into(), Value::from(50.0));
+        let message = service
+            .apply(
+                BRIDGE_B2_PLUGIN_ID,
+                &ConfigSettingsBridgeB2::schema(),
+                &patch,
+            )
+            .unwrap();
+        let Message::SettingsChanged(changed) = message else {
+            panic!("expected SettingsChanged");
+        };
+        let CborValue::Map(entries) = changed.values else {
+            panic!("expected a CBOR map");
+        };
+        assert!(
+            entries.iter().any(|(key, value)| {
+                *key == CborValue::Text("POLL_RATE".into()) && *value == CborValue::Float(100.0)
+            }),
+            "expected the clamped 100.0, got: {entries:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn effective_settings_is_an_empty_map_without_a_schema() {
-        let config = config_store().await;
+        let (_dir, config) = config_store().await;
         let storage: Arc<dyn SettingsStorage> = Arc::new(ConfigSettingsBridgeB2::new(config));
         let service = PluginSettingsService::new(storage);
         let value = service
             .effective_settings(BRIDGE_B2_PLUGIN_ID, None)
             .unwrap();
         assert_eq!(value, CborValue::Map(Vec::new()));
+    }
+
+    struct RecordingSettingsDelivery {
+        tx: std::sync::Mutex<std::sync::mpsc::Sender<(String, Message)>>,
+    }
+
+    impl SettingsChangeDelivery for RecordingSettingsDelivery {
+        fn settings_changed(&self, plugin_id: &str, message: Message) {
+            let _ = self
+                .tx
+                .lock()
+                .unwrap()
+                .send((plugin_id.to_owned(), message));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_dashboard_style_config_update_reaches_the_plugin_as_settings_changed() {
+        let (_dir, config) = config_store().await;
+        let bridge = Arc::new(ConfigSettingsBridgeB2::new(Arc::clone(&config)));
+        let service = Arc::new(PluginSettingsService::new(bridge.clone()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let delivery = Arc::new(RecordingSettingsDelivery {
+            tx: std::sync::Mutex::new(tx),
+        });
+        bridge.watch_config_changes(&Handle::current(), service, delivery);
+
+        // A plain `ConfigStore::update` call, exactly the shape the
+        // existing dashboard settings page (`src/runtime/render/settings.rs`)
+        // and a `vosu.toml` hot reload both use — not a write through
+        // this bridge's own `store` method.
+        config.update(|c| {
+            c.poll_rate = 275.0;
+        });
+
+        let (plugin_id, message) = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(received) = rx.try_recv() {
+                    return received;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("expected a SETTINGS_CHANGED delivery after the config update");
+
+        assert_eq!(plugin_id, BRIDGE_B2_PLUGIN_ID);
+        let Message::SettingsChanged(changed) = message else {
+            panic!("expected SettingsChanged");
+        };
+        let CborValue::Map(entries) = changed.values else {
+            panic!("expected a CBOR map");
+        };
+        assert!(
+            entries.iter().any(|(key, value)| {
+                *key == CborValue::Text("POLL_RATE".into()) && *value == CborValue::Float(275.0)
+            }),
+            "expected POLL_RATE=275.0, got: {entries:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unrelated_config_change_does_not_trigger_a_settings_changed() {
+        let (_dir, config) = config_store().await;
+        let bridge = Arc::new(ConfigSettingsBridgeB2::new(Arc::clone(&config)));
+        let service = Arc::new(PluginSettingsService::new(bridge.clone()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let delivery = Arc::new(RecordingSettingsDelivery {
+            tx: std::sync::Mutex::new(tx),
+        });
+        bridge.watch_config_changes(&Handle::current(), service, delivery);
+
+        config.update(|c| {
+            c.debug_log = !c.debug_log;
+        });
+        // Let the watcher task observe and discard the change.
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        assert!(rx.try_recv().is_err());
     }
 }
