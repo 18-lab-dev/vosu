@@ -93,12 +93,12 @@ pub fn discover_from_root(executable_root: &Path) -> Result<String, LazerVersion
 pub fn process_executable_root(pid: u32) -> Result<PathBuf, LazerVersionError> {
     #[cfg(target_os = "linux")]
     {
-        crate::process::process_root(pid)
+        vosu_sys::process::process_root(pid)
             .map_err(|error| io::Error::other(error.to_string()).into())
     }
     #[cfg(windows)]
     {
-        let module = crate::process::enumerate_modules(pid)
+        let module = vosu_sys::process::enumerate_modules(pid)
             .map_err(|error| io::Error::other(error.to_string()))?
             .into_iter()
             .next()

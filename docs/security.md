@@ -8,7 +8,7 @@ vosu reads the state of a running osu!stable or osu!lazer client from that proce
 
 ## Access to the game process
 
-- **Read-only memory access.** Linux reads with `process_vm_readv` ([`src/process/linux.rs`](../src/process/linux.rs)); Windows opens the game with `PROCESS_VM_READ | PROCESS_QUERY_INFORMATION` only ([`src/process/windows.rs`](../src/process/windows.rs)). vosu has no code path that writes to another process.
+- **Read-only memory access.** Linux reads with `process_vm_readv` ([`crates/vosu-sys/src/process/linux.rs`](../crates/vosu-sys/src/process/linux.rs)); Windows opens the game with `PROCESS_VM_READ | PROCESS_QUERY_INFORMATION` only ([`crates/vosu-sys/src/process/windows.rs`](../crates/vosu-sys/src/process/windows.rs)). vosu has no code path that writes to another process.
 - **Same user only.** Linux discovery and opening require the target to run under the daemon's real user ID; Windows compares the primary-token user SIDs. vosu must run as the desktop user who runs osu!, never as root or Administrator.
 - **Process discovery.** vosu enumerates processes to find osu! clients and reads their command lines and install paths. Tournament and debug clients are filtered by command line.
 - **Lazer offset generation.** When neither the offset cache nor the embedded asset matches a lazer build, vosu extracts its embedded helper payload into the cache and runs two helper processes on the client's own .NET runtime. They measure field offsets from the client's assemblies on disk (`--assemblies-only`) and from a separate helper process; they do not attach to, pause, or modify the running game ([`src/runtime/offset_generator.rs`](../src/runtime/offset_generator.rs)).
@@ -17,14 +17,14 @@ vosu reads the state of a running osu!stable or osu!lazer client from that proce
 
 ### Linux
 
-Same-user memory reads can be blocked by the kernel's Yama ptrace policy. `vosu --setup` grants file capabilities on the vosu executable so it can read without running as root ([`src/platform/linux/capabilities.rs`](../src/platform/linux/capabilities.rs)):
+Same-user memory reads can be blocked by the kernel's Yama ptrace policy. `vosu --setup` grants file capabilities on the vosu executable so it can read without running as root ([`crates/vosu-sys/src/platform/linux/capabilities.rs`](../crates/vosu-sys/src/platform/linux/capabilities.rs)):
 
 - `cap_sys_ptrace,cap_sys_resource,cap_perfmon,cap_bpf=ep` when the eBPF process-event backend works on this kernel;
 - otherwise `cap_sys_ptrace=ep` only.
 
 Run as a normal user, setup asks for authentication through polkit `pkexec` before calling `setcap`. If the executable or its directory is writable without root, as with a portable archive, setup warns first, because the prompt authorizes whatever file is at that path. Linux packages run `/usr/bin/vosu --setup` as root after installation and upgrade; a failure there does not fail the package transaction ([`packaging/linux/postinstall.sh`](../packaging/linux/postinstall.sh)).
 
-With those capabilities, vosu watches process starts and exits to notice osu! quickly. It prefers an eBPF program attached to the `sched_process_exec`, `sched_process_fork`, `sched_process_exit`, and `task_rename` raw tracepoints ([`src/instance/events/bpf/process_events.bpf.c`](../src/instance/events/bpf/process_events.bpf.c)), falls back to the kernel's process-event connector (CN_PROC) when permitted, and otherwise polls. The eBPF program sees every process start, rename, and exit in the kernel, but reports to vosu only processes whose names match osu! candidates.
+With those capabilities, vosu watches process starts and exits to notice osu! quickly. It prefers an eBPF program attached to the `sched_process_exec`, `sched_process_fork`, `sched_process_exit`, and `task_rename` raw tracepoints ([`crates/vosu-sys/src/events/bpf/process_events.bpf.c`](../crates/vosu-sys/src/events/bpf/process_events.bpf.c)), falls back to the kernel's process-event connector (CN_PROC) when permitted, and otherwise polls. The eBPF program sees every process start, rename, and exit in the kernel, but reports to vosu only processes whose names match osu! candidates.
 
 ### Windows
 

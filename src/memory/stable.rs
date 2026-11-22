@@ -14,7 +14,7 @@ use crate::model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton, LeaderboardPlayer, Mod, Statistics,
     TourneyManagerChatItem,
 };
-use crate::process::{
+use vosu_sys::process::{
     MemoryError, MemoryRead, Pattern, ProcessHandle, ReadRequest, ReadStatus, checked_address_add,
 };
 

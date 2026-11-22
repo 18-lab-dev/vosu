@@ -21,7 +21,7 @@ use crate::model::states::{
     Statistics, TourneyManagerChatItem,
 };
 use crate::model::{js_round_number, net_date_binary_to_date};
-use crate::process::{MemoryError, MemoryRead, Pattern, ProcessHandle, ReadRequest, ReadStatus};
+use vosu_sys::process::{MemoryError, MemoryRead, Pattern, ProcessHandle, ReadRequest, ReadStatus};
 
 const MAX_COLLECTION: usize = 1_000_000;
 // Room/client counts and retained chat are far smaller than gameplay histories.

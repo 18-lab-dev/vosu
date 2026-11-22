@@ -259,7 +259,7 @@ pub(super) fn persist_record(path: &Path, record: &InstallRecord) -> Result<(), 
     file.write_all(&bytes)?;
     file.sync_all()?;
     drop(file);
-    crate::platform::atomic_replace(&temp, path)?;
+    vosu_sys::platform::atomic_replace(&temp, path)?;
     sync_parent(path)?;
     Ok(())
 }

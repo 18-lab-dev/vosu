@@ -19,9 +19,6 @@ use vosu::memory::lazer_offsets::LazerOffsets;
 use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns};
 use vosu::model::enums::ClientType;
 use vosu::model::states::{HitErrorArray, KeypressButton};
-use vosu::process::{
-    MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
-};
 use vosu::server::v2_subscription::{
     V2SubscriptionHub, V2SubscriptionOutbound, V2SubscriptionProvider, V2SubscriptionSnapshot,
 };
@@ -29,6 +26,9 @@ use vosu::server::websocket::{
     Filter, Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub,
 };
 use vosu::state::{PreciseState, RegularState, StateBundleSnapshot};
+use vosu_sys::process::{
+    MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
+};
 
 const MAP: &[u8] = br#"osu file format v14
 
@@ -648,7 +648,8 @@ struct BenchmarkPage([u8; 4096]);
 fn bench_windows_process_memory(c: &mut Criterion) {
     let backing = black_box(BenchmarkPage([0x5a_u8; 4096]));
     let address = black_box(backing.0.as_ptr() as usize);
-    let memory = vosu::process::open_process(std::process::id()).expect("open benchmark process");
+    let memory =
+        vosu_sys::process::open_process(std::process::id()).expect("open benchmark process");
     let mut group = c.benchmark_group("windows_process_memory");
     group.throughput(Throughput::Bytes(64));
 
@@ -753,7 +754,8 @@ fn bench_windows_process_memory(c: &mut Criterion) {
 fn bench_linux_process_memory(c: &mut Criterion) {
     let source = black_box([0x5a_u8; 64]);
     let address = source.as_ptr() as usize;
-    let memory = vosu::process::open_process(std::process::id()).expect("open benchmark process");
+    let memory =
+        vosu_sys::process::open_process(std::process::id()).expect("open benchmark process");
     let mut group = c.benchmark_group("linux_process_memory");
     group.throughput(Throughput::Bytes(source.len() as u64));
     group.bench_function("current_process_64_bytes", |b| {

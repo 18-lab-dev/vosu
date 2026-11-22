@@ -7,7 +7,7 @@ use crate::model::memory::{
     TourneyUser, User,
 };
 use crate::model::states::CalculateMods;
-use crate::process::{MemoryRead, ReadStatus};
+use vosu_sys::process::{MemoryRead, ReadStatus};
 
 /// A branch which may not have been reached by the source loop.
 ///

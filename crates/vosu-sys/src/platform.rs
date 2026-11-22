@@ -109,7 +109,7 @@ impl Paths {
     }
 
     /// Local native-broker credential location (not the Windows program folder).
-    pub(crate) fn broker_path(&self) -> io::Result<PathBuf> {
+    pub fn broker_path(&self) -> io::Result<PathBuf> {
         self.broker_path_with(&SystemPathResolver)
     }
 
@@ -183,12 +183,12 @@ fn nonempty_env(resolver: &impl PathResolver, name: &str) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn install_supported_capabilities(executable: &Path) -> io::Result<()> {
+pub fn install_supported_capabilities(executable: &Path) -> io::Result<()> {
     linux::install_supported_capabilities(executable)
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn cap_sys_ptrace_warning(executable: &Path) -> Option<String> {
+pub fn cap_sys_ptrace_warning(executable: &Path) -> Option<String> {
     cap_sys_ptrace_warning_for(linux::cap_sys_ptrace_effective(), executable)
 }
 

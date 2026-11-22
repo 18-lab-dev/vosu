@@ -9,9 +9,9 @@ use super::*;
 
 use super::batched::StringSlot;
 use super::tests::fixture_patterns;
-use crate::process::{MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 use parking_lot::Mutex;
 use std::sync::Arc;
+use vosu_sys::process::{MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 struct FaultMemory {
     bytes: Vec<u8>,

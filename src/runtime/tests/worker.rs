@@ -320,7 +320,7 @@ async fn five_hub_tasks_join_without_lingering() {
 
 #[test]
 fn memory_permission_denial_keeps_typed_identity_in_state_worker_errors() {
-    let denied = StateWorkerError::from(crate::process::MemoryError::PermissionDenied {
+    let denied = StateWorkerError::from(vosu_sys::process::MemoryError::PermissionDenied {
         address: 0x1234,
         len: 16,
         message: "operation not permitted".into(),
@@ -334,7 +334,7 @@ fn memory_permission_denial_keeps_typed_identity_in_state_worker_errors() {
         }
     ));
 
-    let fault = StateWorkerError::from(crate::process::MemoryError::Read {
+    let fault = StateWorkerError::from(vosu_sys::process::MemoryError::Read {
         address: 0x1234,
         len: 16,
         message: "bad address".into(),

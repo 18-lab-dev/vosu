@@ -15,7 +15,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Startup and lifecycle | `src/app.rs`, `src/runtime/` | CLI decisions, composition, workers, shutdown, runtime reload |
 | Desktop integration | `src/desktop/` | Session tray, executable ownership policy, opt-in Linux systemd user login service |
 | Process instances | `src/instance/` | Candidate classification, focus, PID generations, tournament selection |
-| Native access | `src/process/`, `src/platform/` | Linux/Windows process handles, memory reads, paths and OS behavior |
+| Native access | `crates/vosu-sys/` | Linux/Windows process handles, memory reads, paths, OS behavior, and process-exit-event backends; all platform `unsafe` lives here |
 | Client decoding | `src/memory/`, `src/memory/stable/`, `src/memory/lazer/` | Offsets, signatures, pointers, snapshots, stable/lazer sentinels |
 | State reduction | `src/state/` | Capture scheduling, stale-sample rejection, retention, gameplay state |
 | Public APIs | `src/api/`, `src/model/api/` | v1, stream companion, v2, precise schemas and serialization |
@@ -90,7 +90,7 @@ so `tools -> server` is the only edge left.
 
 ## Workspace boundaries
 
-`Cargo.toml` defines one workspace with the production `vosu` package, the `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, the integration-only `vosu-test-harness`, the dependency-isolated `vosu-release-smoke` package, and the dev-only `vosu-proptest` package (`vosu_proptest_config()`, shared by every `prop_*` test). The smoke package launches an external packaged executable and does not depend on the daemon crate. Release profiles retain thin LTO, one codegen unit, stripped symbols, and abort-on-panic; `test-harness` is rejected by `build.rs` in release builds.
+`Cargo.toml` defines one workspace with the production `vosu` package, the `vosu-sys` crate (native process/platform/process-event boundary, M0 crate split), the `vosu-pp` facade plus its `rosu-map-api` and `rosu-pp-api` members, the integration-only `vosu-test-harness`, the dependency-isolated `vosu-release-smoke` package, and the dev-only `vosu-proptest` package (`vosu_proptest_config()`, shared by every `prop_*` test). The smoke package launches an external packaged executable and does not depend on the daemon crate. Release profiles retain thin LTO, one codegen unit, stripped symbols, and abort-on-panic; `test-harness` is rejected by `build.rs` in release builds.
 
 ## Evidence hierarchy
 

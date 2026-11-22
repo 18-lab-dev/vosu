@@ -24,7 +24,7 @@ use crate::memory::lazer_loader::{
 };
 use crate::memory::lazer_offsets::LazerOffsets;
 use crate::model::enums::ClientType;
-use crate::process::{MemoryError, ProcessHandle};
+use vosu_sys::process::{MemoryError, ProcessHandle};
 pub type Pid = u32;
 type LazerResolverHandle = JoinHandle<Result<Arc<LazerOffsets>, LazerLoadError>>;
 
@@ -42,9 +42,7 @@ const EXIT_CONFIRMATION_MAX_BACKOFF: Duration = Duration::from_millis(250);
 pub const WINDOWS_FOCUS_INTERVAL: Duration = Duration::from_millis(100);
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
-mod events;
-#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
-pub use events::{LinuxProcessEvents, ProcessEventMode};
+pub use vosu_sys::events::{LinuxProcessEvents, ProcessEventMode};
 
 mod discovery;
 mod runtime;

@@ -14,7 +14,7 @@ use vosu::assets::DaemonAssets;
 use vosu::memory::lazer_loader::{GenerationFuture, LazerOffsetLoader, OffsetGenerator};
 use vosu::memory::lazer_offsets::LazerOffsets;
 use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns};
-use vosu::process::{
+use vosu_sys::process::{
     MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
     ReadStatus,
 };
@@ -621,7 +621,7 @@ async fn lazer_offsets_cover_embedded_current_cache_and_exact_instance_generatio
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_native_backend_opens_and_reads_this_process() {
-    use vosu::process::{open_process, process_bitness};
+    use vosu_sys::process::{open_process, process_bitness};
     let marker = Box::new(0x9a7b_6c5d_4e3f_2011_u64);
     let address = (&*marker as *const u64) as usize;
     let pid = std::process::id();
@@ -635,7 +635,7 @@ fn linux_native_backend_opens_and_reads_this_process() {
 #[cfg(windows)]
 #[test]
 fn windows_native_backend_opens_and_reads_this_process() {
-    use vosu::process::open_process;
+    use vosu_sys::process::open_process;
     let marker = Box::new(0x9a7b_6c5d_4e3f_2011_u64);
     let address = (&*marker as *const u64) as usize;
     let pid = std::process::id();

@@ -50,7 +50,8 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 
 - `src/api/`: gosuMemory v1, streamCompanion, vosu v2, and precise payload projection/serialization.
 - `src/server/` and `src/net/`: HTTP/WebSocket routing, files, commands, pages, connection handling, and streaming.
-- `src/state/`, `src/instance/`, `src/process/`, `src/memory.rs`, `src/platform.rs`: process discovery, native memory reads, snapshots, and polling lifecycle.
+- `src/state/`, `src/instance/`, `src/memory.rs`: process discovery, snapshots, and polling lifecycle.
+- `crates/vosu-sys/`: native process/platform boundary (process handles, memory reads, OS paths/capabilities) and process-exit-event backends (eBPF/CN_PROC/polling); all platform `unsafe` lives here.
 - `src/config/`, `src/counters/`: watched configuration, migration, settings, counter discovery/download/storage.
 - `src/updater/`: release selection, verified staging, replacement, rollback, and recovery.
 - `src/calculation.rs` and `crates/vosu-pp/`: stable and lazer performance calculation; the latter is a Rust facade over provenance-pinned MIT source forks. The remaining source-provenance questions are recorded in `docs/provenance-audit.md`.

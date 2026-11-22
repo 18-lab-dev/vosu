@@ -17,7 +17,7 @@ pub mod startup_args;
 pub use startup_args::{StartupArgs, StartupValue};
 
 use crate::model::enums::ClientType;
-use crate::process::{MemoryError, ProcessBitness, ProcessHandle};
+use vosu_sys::process::{MemoryError, ProcessBitness, ProcessHandle};
 
 use super::Pid;
 
@@ -169,16 +169,14 @@ pub trait ProcessProvider: Send + Sync {
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 #[derive(Debug)]
 pub struct NativeProcessProvider {
-    events: Option<super::events::LinuxProcessEvents>,
+    events: Option<super::LinuxProcessEvents>,
 }
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 impl NativeProcessProvider {
-    pub fn open_process_events(mode: Option<super::events::ProcessEventMode>) -> io::Result<Self> {
+    pub fn open_process_events(mode: Option<super::ProcessEventMode>) -> io::Result<Self> {
         Ok(Self {
-            events: mode
-                .map(super::events::LinuxProcessEvents::open)
-                .transpose()?,
+            events: mode.map(super::LinuxProcessEvents::open).transpose()?,
         })
     }
 
@@ -193,7 +191,7 @@ impl NativeProcessProvider {
 impl Default for NativeProcessProvider {
     fn default() -> Self {
         Self {
-            events: super::events::LinuxProcessEvents::from_environment(),
+            events: super::LinuxProcessEvents::from_environment(),
         }
     }
 }
@@ -203,8 +201,8 @@ impl Default for NativeProcessProvider {
 pub struct NativeProcessProvider;
 
 #[cfg(target_os = "linux")]
-fn linux_descriptor(process: crate::process::LinuxProcessMetadata) -> ProcessDescriptor {
-    let root = crate::process::resolve_osu_path(process.pid).unwrap_or_else(|_| {
+fn linux_descriptor(process: vosu_sys::process::LinuxProcessMetadata) -> ProcessDescriptor {
+    let root = vosu_sys::process::resolve_osu_path(process.pid).unwrap_or_else(|_| {
         process
             .executable
             .parent()
@@ -228,7 +226,7 @@ impl ProcessProvider for NativeProcessProvider {
 
     fn enumerate(&self) -> Result<Vec<ProcessDescriptor>, MemoryError> {
         Ok(
-            crate::process::enumerate_processes_matching(is_linux_candidate_name)?
+            vosu_sys::process::enumerate_processes_matching(is_linux_candidate_name)?
                 .into_iter()
                 .map(linux_descriptor)
                 .collect(),
@@ -237,14 +235,14 @@ impl ProcessProvider for NativeProcessProvider {
 
     fn inspect(&self, pid: Pid) -> Result<Option<ProcessDescriptor>, MemoryError> {
         Ok(
-            crate::process::process_metadata_matching(pid, is_linux_candidate_name)?
+            vosu_sys::process::process_metadata_matching(pid, is_linux_candidate_name)?
                 .map(linux_descriptor),
         )
     }
 
     fn open(&self, pid: Pid) -> Result<ProcessHandle, MemoryError> {
-        let bitness = crate::process::process_bitness(pid)?;
-        let memory = crate::process::open_process(pid)?;
+        let bitness = vosu_sys::process::process_bitness(pid)?;
+        let memory = vosu_sys::process::open_process(pid)?;
         Ok(ProcessHandle::new(Arc::new(memory), bitness))
     }
 
@@ -257,22 +255,21 @@ impl ProcessProvider for NativeProcessProvider {
     fn discovery_events_healthy(&self) -> bool {
         self.events
             .as_ref()
-            .is_some_and(super::events::LinuxProcessEvents::healthy)
+            .is_some_and(super::LinuxProcessEvents::healthy)
     }
 
     #[cfg(feature = "linux-process-events")]
     fn discovery_event_count(&self) -> u64 {
         self.events
             .as_ref()
-            .map_or(0, super::events::LinuxProcessEvents::event_count)
+            .map_or(0, super::LinuxProcessEvents::event_count)
     }
 
     #[cfg(feature = "linux-process-events")]
     fn discovery_reconciliation_request_count(&self) -> u64 {
-        self.events.as_ref().map_or(
-            0,
-            super::events::LinuxProcessEvents::reconciliation_request_count,
-        )
+        self.events
+            .as_ref()
+            .map_or(0, super::LinuxProcessEvents::reconciliation_request_count)
     }
 
     #[cfg(feature = "linux-process-events")]
@@ -361,7 +358,7 @@ impl NativeProcessProvider {
         {
             self.events
                 .as_ref()
-                .map_or("polling", super::events::LinuxProcessEvents::backend_name)
+                .map_or("polling", super::LinuxProcessEvents::backend_name)
         }
         #[cfg(any(
             windows,
@@ -381,7 +378,7 @@ impl ProcessProvider for NativeProcessProvider {
 
     fn enumerate(&self) -> Result<Vec<ProcessDescriptor>, MemoryError> {
         let processes =
-            crate::process::windows::enumerate_processes_matching(is_windows_candidate_name)?;
+            vosu_sys::process::windows::enumerate_processes_matching(is_windows_candidate_name)?;
         let mut metadata = windows_metadata_cache()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -389,7 +386,7 @@ impl ProcessProvider for NativeProcessProvider {
 
         let mut result = Vec::with_capacity(processes.len());
         for process in processes {
-            let Ok(memory) = crate::process::WindowsProcessMemory::open(process.pid) else {
+            let Ok(memory) = vosu_sys::process::WindowsProcessMemory::open(process.pid) else {
                 continue;
             };
             let Ok(creation_time) = memory.creation_time() else {
@@ -428,9 +425,9 @@ impl ProcessProvider for NativeProcessProvider {
     }
 
     fn open(&self, pid: Pid) -> Result<ProcessHandle, MemoryError> {
-        crate::process::open_process(pid)
+        vosu_sys::process::open_process(pid)
     }
     fn foreground_pid(&self) -> Option<Pid> {
-        crate::process::foreground_process_id()
+        vosu_sys::process::foreground_process_id()
     }
 }

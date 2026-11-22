@@ -29,7 +29,7 @@ use crate::model::states::{
     SettingsObject, Statistics, TourneyManagerChatItem,
 };
 use crate::model::{calculate_grade, default_calculated_mods, safe_join};
-use crate::process::{MemoryRead, ReadStatus};
+use vosu_sys::process::{MemoryRead, ReadStatus};
 
 fn ready<T>(read: &MemoryRead<T>) -> Option<&T> {
     match read {

@@ -3173,8 +3173,6 @@ dependencies = [
  "httpdate",
  "indexmap",
  "ksni",
- "libbpf-cargo",
- "libbpf-rs",
  "libc",
  "md-5",
  "memchr",
@@ -3207,6 +3205,7 @@ dependencies = [
  "url",
  "vosu-pp",
  "vosu-proptest",
+ "vosu-sys",
  "windows-sys 0.61.2",
  "winresource",
  "wmi",
@@ -3261,6 +3260,23 @@ dependencies = [
  "proptest",
  "rosu-mods",
  "vosu-rosu-map",
+]
+
+[[package]]
+name = "vosu-sys"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "libbpf-cargo",
+ "libbpf-rs",
+ "libc",
+ "memchr",
+ "parking_lot",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

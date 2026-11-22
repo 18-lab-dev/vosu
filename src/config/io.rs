@@ -19,7 +19,7 @@ pub struct SystemAtomicReplace;
 
 impl AtomicReplace for SystemAtomicReplace {
     fn replace(&self, temp: &Path, target: &Path) -> io::Result<()> {
-        crate::platform::atomic_replace(temp, target)
+        vosu_sys::platform::atomic_replace(temp, target)
     }
 }
 

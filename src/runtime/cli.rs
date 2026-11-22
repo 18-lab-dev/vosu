@@ -116,7 +116,7 @@ pub(super) async fn run_command(command: CliCommand) -> io::Result<()> {
 
 #[cfg(target_os = "linux")]
 fn run_setup() -> io::Result<()> {
-    crate::platform::install_supported_capabilities(&env::current_exe()?)
+    vosu_sys::platform::install_supported_capabilities(&env::current_exe()?)
 }
 
 #[cfg(not(target_os = "linux"))]

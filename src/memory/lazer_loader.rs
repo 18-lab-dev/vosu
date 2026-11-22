@@ -199,7 +199,7 @@ pub fn install_cache(target: &Path, bytes: &[u8], cancel: &CancellationToken) ->
         return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
     }
     let temp_path = temp.into_temp_path();
-    crate::platform::atomic_replace(&temp_path, target)?;
+    vosu_sys::platform::atomic_replace(&temp_path, target)?;
     Ok(())
 }
 

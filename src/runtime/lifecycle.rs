@@ -799,7 +799,7 @@ pub async fn run_cli() -> io::Result<()> {
     logger.info("Starting %vosu%");
     #[cfg(target_os = "linux")]
     if ordinary_role
-        && let Some(warning) = crate::platform::cap_sys_ptrace_warning(&resolver.executable)
+        && let Some(warning) = vosu_sys::platform::cap_sys_ptrace_warning(&resolver.executable)
     {
         logger.warn(warning);
     }

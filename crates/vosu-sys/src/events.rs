@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use super::Pid;
+/// Process id. A plain `u32` alias: the daemon's own `Pid` alias is the
+/// identical type, so values cross the crate boundary without conversion.
+pub type Pid = u32;
 
 mod cn_proc;
 mod ebpf;
@@ -50,7 +52,7 @@ pub(super) trait ProcessTrackingControl: Send + Sync {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct ProcessEventBatch {
+pub struct ProcessEventBatch {
     pub inspect: Vec<Pid>,
     pub exit: Vec<Pid>,
     pub needs_reconcile: bool,
@@ -360,7 +362,7 @@ impl LinuxProcessEvents {
     }
 
     #[must_use]
-    pub(super) fn backend_name(&self) -> &'static str {
+    pub fn backend_name(&self) -> &'static str {
         self.mode.backend_name()
     }
 
@@ -383,18 +385,18 @@ impl LinuxProcessEvents {
         self.notify.notified().await;
     }
 
-    pub(crate) fn notifier(&self) -> &Notify {
+    pub fn notifier(&self) -> &Notify {
         self.notify.as_ref()
     }
 
-    pub(super) fn drain(&self) -> ProcessEventBatch {
+    pub fn drain(&self) -> ProcessEventBatch {
         self.queue
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .drain()
     }
 
-    pub(super) fn replace_tracked(&self, tracked: impl IntoIterator<Item = Pid>) {
+    pub fn replace_tracked(&self, tracked: impl IntoIterator<Item = Pid>) {
         let tracked = tracked.into_iter().collect::<BTreeSet<_>>();
         let mut queue = self
             .queue

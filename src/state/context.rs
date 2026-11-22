@@ -14,7 +14,7 @@ use crate::memory::snapshot::{
 };
 use crate::model::enums::{ClientType, GameState};
 use crate::model::states::{CalculateMods, TourneyManagerChatItem};
-use crate::process::MemoryError;
+use vosu_sys::process::MemoryError;
 
 pub type TransitionFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, StateWorkerError>> + Send + 'a>>;

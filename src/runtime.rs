@@ -29,6 +29,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
+use vosu_sys::platform::{PathResolver, Paths};
 
 use crate::{
     api::{
@@ -54,7 +55,6 @@ use crate::{
     },
     model::default_calculated_mods,
     model::enums::{ClientType, GameState},
-    platform::{PathResolver, Paths},
     report::{ReportCounter, ReportInput, ReportInstance},
     server::{
         auth::{AuthorizationDecision, AuthorizationPolicy, RequestHeaders},

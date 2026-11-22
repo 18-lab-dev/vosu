@@ -969,7 +969,7 @@ async fn room_state_enters_updates_and_clears_on_unavailable_reads() {
                     users: Vec::new(),
                 })),
                 None if index == 2 => Ok(ReadStatus::NotReady),
-                None => Err(crate::process::MemoryError::Corrupt {
+                None => Err(vosu_sys::process::MemoryError::Corrupt {
                     context: "room fixture",
                     address: 0,
                     message: "disconnected",

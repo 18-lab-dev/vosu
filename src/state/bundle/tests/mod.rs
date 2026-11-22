@@ -6,7 +6,7 @@ use crate::memory::snapshot::{
 use crate::model::memory::{
     Global as RawGlobal, GlobalPrecise, HitErrors, ReleaseCorrection, TourneyUser,
 };
-use crate::process::ReadStatus;
+use vosu_sys::process::ReadStatus;
 
 fn press_hit_errors(values: Vec<f64>) -> HitErrorArray {
     HitErrorArray {

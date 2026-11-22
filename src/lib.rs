@@ -19,8 +19,6 @@ pub mod logging;
 pub mod memory;
 pub mod model;
 pub mod net;
-pub mod platform;
-pub mod process;
 pub mod report;
 pub mod runtime;
 pub mod server;

@@ -8,9 +8,9 @@
 1230 src/memory/lazer/tests_core.rs
 1059 src/memory/stable/batched.rs
 1712 src/memory/stable/tests.rs
-1045 src/platform/linux/capabilities.rs
-1211 src/process/linux.rs
-1201 src/process/linux/tests.rs
+1045 crates/vosu-sys/src/platform/linux/capabilities.rs
+1211 crates/vosu-sys/src/process/linux.rs
+1201 crates/vosu-sys/src/process/linux/tests.rs
 2093 src/runtime/projection.rs
 1085 src/runtime/tests/projection.rs
 1041 src/runtime/tests/service.rs

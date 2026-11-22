@@ -5,7 +5,7 @@ use crate::model::memory::{
     LazerSpectator, Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney,
     TourneyChat, TourneyUser, User,
 };
-use crate::process::{MemoryRead, ReadStatus};
+use vosu_sys::process::{MemoryRead, ReadStatus};
 
 use super::models::{
     PreciseCaptureContext, RawPreciseSnapshot, RawRegularSnapshot, RegularCaptureContext,

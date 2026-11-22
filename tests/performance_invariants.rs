@@ -16,12 +16,12 @@ use vosu::calculation::beatmap::{
 };
 use vosu::memory::lazer_offsets::LazerOffsets;
 use vosu::memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, StablePatterns};
-use vosu::process::{
-    MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
-    SCAN_CHUNK_SIZE,
-};
 use vosu::server::websocket::{
     Filter, Outbound, Schema, StateProvider, StateSnapshot, WebSocketHub,
+};
+use vosu_sys::process::{
+    MemoryError, MemoryRegion, Pattern, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
+    SCAN_CHUNK_SIZE,
 };
 
 struct TrackingAllocator;
@@ -391,7 +391,7 @@ fn stable_groups_snapshot_reads_while_lazer_audio_matches_source_reads() {
     );
     assert!(matches!(
         stable.gameplay(1_000.0, Some(1_000)).unwrap(),
-        vosu::process::ReadStatus::Ready(_)
+        vosu_sys::process::ReadStatus::Ready(_)
     ));
     let batch_calls = stable_memory.batch_calls.load(Ordering::Relaxed);
     assert!(batch_calls > 0);
@@ -454,7 +454,7 @@ fn stable_groups_snapshot_reads_while_lazer_audio_matches_source_reads() {
         LazerPattern::source_default(),
     );
     lazer.set_resolved_state(base, 0);
-    let vosu::process::ReadStatus::Ready(values) = lazer.audio_velocity_base().unwrap() else {
+    let vosu_sys::process::ReadStatus::Ready(values) = lazer.audio_velocity_base().unwrap() else {
         panic!("lazer amplitudes were not ready");
     };
     assert_eq!((values.len(), values[39]), (40, 39.0));

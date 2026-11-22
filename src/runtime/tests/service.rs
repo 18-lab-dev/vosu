@@ -994,7 +994,7 @@ async fn failed_network_rollback_keeps_guard_and_retries_until_persisted() {
             if self.0.load(Ordering::SeqCst) {
                 Err(io::Error::other("injected persistence failure"))
             } else {
-                crate::platform::atomic_replace(temp, target)
+                vosu_sys::platform::atomic_replace(temp, target)
             }
         }
     }

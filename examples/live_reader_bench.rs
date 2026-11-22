@@ -20,13 +20,13 @@ use vosu::{
         default_calculated_mods,
         enums::{ClientType, GameState},
     },
-    process::{ProcessHandle, ReadStatus},
     state::{
         PreciseSnapshotReader, ReadContext, RegularCapturePlan, RegularCaptureRequest,
         RegularSnapshotReader, SnapshotTransition, SourcePreciseReader, SourceRegularReader,
         StateBundle, state_backend::LiveStateCalculationBackend,
     },
 };
+use vosu_sys::process::{ProcessHandle, ReadStatus};
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 fn fail(message: impl Into<String>) -> Box<dyn Error> {
     io::Error::other(message.into()).into()
@@ -158,13 +158,13 @@ fn precise_failed(s: &RawPreciseSnapshot) -> bool {
 }
 #[cfg(windows)]
 fn open(pid: u32) -> Result<ProcessHandle> {
-    Ok(vosu::process::open_process(pid)?)
+    Ok(vosu_sys::process::open_process(pid)?)
 }
 #[cfg(target_os = "linux")]
 fn open(pid: u32) -> Result<ProcessHandle> {
     Ok(ProcessHandle::new(
-        Arc::new(vosu::process::open_process(pid)?),
-        vosu::process::process_bitness(pid)?,
+        Arc::new(vosu_sys::process::open_process(pid)?),
+        vosu_sys::process::process_bitness(pid)?,
     ))
 }
 fn run<R: SynchronizedMemoryReader + 'static>(
@@ -315,7 +315,7 @@ fn execute() -> Result<()> {
         }
         ClientType::Lazer => {
             let version = lazer_version::discover_for_process(args.pid)?;
-            let cache = vosu::platform::Paths::system_cache_root()?.join("offsets");
+            let cache = vosu_sys::platform::Paths::system_cache_root()?.join("offsets");
             let asset = vosu::assets::DaemonAssets::get("offsets.json")
                 .ok_or_else(|| fail("embedded offsets missing"))?;
             let loader = LazerOffsetLoader::new(

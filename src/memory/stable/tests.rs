@@ -1,12 +1,12 @@
 use super::readers::{MAX_TOURNEY_CHAT_CHANNELS, MAX_TOURNEY_CHAT_MESSAGES};
 use super::*;
 
-use crate::process::{MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 use arc_swap::ArcSwap;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
+use vosu_sys::process::{MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 
 struct SparseMemory {
     base: usize,

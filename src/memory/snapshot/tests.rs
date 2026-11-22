@@ -4,7 +4,7 @@ use super::*;
 use crate::model::enums::ClientType;
 use crate::model::memory::*;
 use crate::model::states::{CalculateMods, HitErrorArray};
-use crate::process::{MemoryError, MemoryRead, ReadStatus};
+use vosu_sys::process::{MemoryError, MemoryRead, ReadStatus};
 
 fn mods(checksum: &str) -> CalculateMods {
     CalculateMods {

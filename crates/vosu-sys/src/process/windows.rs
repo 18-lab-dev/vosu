@@ -125,7 +125,7 @@ pub fn enumerate_processes() -> Result<Vec<ProcessEntry>, MemoryError> {
     enumerate_processes_matching(|_| true)
 }
 
-pub(crate) fn enumerate_processes_matching(
+pub fn enumerate_processes_matching(
     predicate: impl FnMut(&[u16]) -> bool,
 ) -> Result<Vec<ProcessEntry>, MemoryError> {
     enumerate_processes_with_buffer(predicate)
@@ -443,7 +443,7 @@ impl WindowsProcessMemory {
         }
     }
 
-    pub(crate) fn creation_time(&self) -> Result<u64, MemoryError> {
+    pub fn creation_time(&self) -> Result<u64, MemoryError> {
         let mut creation = FILETIME {
             dwLowDateTime: 0,
             dwHighDateTime: 0,
@@ -471,10 +471,7 @@ impl WindowsProcessMemory {
         self.command_line_for_bitness(self.bitness()?)
     }
 
-    pub(crate) fn command_line_for_bitness(
-        &self,
-        bitness: ProcessBitness,
-    ) -> Result<String, MemoryError> {
+    pub fn command_line_for_bitness(&self, bitness: ProcessBitness) -> Result<String, MemoryError> {
         let ntdll = Ntdll::load()?;
         let descriptor = match bitness {
             ProcessBitness::X64 => {

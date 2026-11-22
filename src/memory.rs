@@ -19,7 +19,7 @@ use crate::model::memory::{
     LazerSpectator, Leaderboard, Menu, Mp3Length, RankedPlay, ResultScreen, Settings, Tourney,
     TourneyChat, TourneyUser, User,
 };
-use crate::process::{MemoryError, MemoryRead, ReadStatus};
+use vosu_sys::process::{MemoryError, MemoryRead, ReadStatus};
 
 /// Complete regular/precise reader surface shared by stable and lazer clients.
 ///

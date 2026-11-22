@@ -19,7 +19,7 @@ use crate::model::memory::{
     TourneyUser, User,
 };
 use crate::model::states::{CalculateMods, HitErrorArray, Statistics, TourneyManagerChatItem};
-use crate::process::{MemoryRead, ReadStatus};
+use vosu_sys::process::{MemoryRead, ReadStatus};
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex

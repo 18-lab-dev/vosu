@@ -928,7 +928,7 @@ fn atomic_bytes(path: &Path, value: &[u8], replace_existing: bool) -> Result<boo
     // non-shareable handle to it. Close the temporary file before the rename,
     // matching the ownership boundary used by the other atomic writers.
     drop(file);
-    if let Err(error) = crate::platform::atomic_replace(&temp_path, path) {
+    if let Err(error) = vosu_sys::platform::atomic_replace(&temp_path, path) {
         let _ = fs::remove_file(&temp_path);
         return Err(error.into());
     }

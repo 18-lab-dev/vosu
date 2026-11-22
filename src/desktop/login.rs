@@ -1,10 +1,10 @@
 //! Opt-in graphical-session startup through the systemd user manager.
 
-use crate::platform::{PathResolver, SystemPathResolver};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+use vosu_sys::platform::{PathResolver, SystemPathResolver};
 
 const UNIT_NAME: &str = "vosu.service";
 const MARKER: &str = "# Written by vosu: Start at login";

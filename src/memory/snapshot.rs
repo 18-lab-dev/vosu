@@ -1,7 +1,7 @@
 //! Immutable raw-memory publication contracts.
 //!
 //! These types are the ownership boundary between the two memory-reader workers
-//! and the reducer. They deliberately retain each [`crate::process::MemoryRead`]
+//! and the reducer. They deliberately retain each [`vosu_sys::process::MemoryRead`]
 //! verbatim: a failed, pending, unchanged, or unsupported read is not converted
 //! to a default value. Conditional reads use `None` only when the source loop did
 //! not execute that branch; `Some(Ok(ReadStatus::…))` means the branch executed.

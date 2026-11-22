@@ -168,7 +168,7 @@ impl ApiKeys {
             .map_err(|_| "cannot save keys")?;
         // ReplaceFileW fails with a sharing violation while the replacement is still open.
         let file = file.into_temp_path();
-        crate::platform::atomic_replace(&file, &self.path).map_err(|_| "cannot save keys".into())
+        vosu_sys::platform::atomic_replace(&file, &self.path).map_err(|_| "cannot save keys".into())
     }
     pub fn list(&self) -> Vec<Entry> {
         self.state

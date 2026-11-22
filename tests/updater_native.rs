@@ -21,15 +21,13 @@ use std::{
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
-use vosu::{
-    platform::atomic_replace,
-    updater::{
-        EncodedOsString, INSTALL_RECORD_NAME, InstallPhase, InstallRecord, ProcessIdentity,
-        RecoveryAction, StartupIntent, StartupReadiness, TransactionGuard, UpdateCut, UpdateError,
-        UpdatePlatform, finish_ready_cleanup, load_record, parse_startup_update_args,
-        recover_dead_transaction, recover_startup_update, run_helper,
-    },
+use vosu::updater::{
+    EncodedOsString, INSTALL_RECORD_NAME, InstallPhase, InstallRecord, ProcessIdentity,
+    RecoveryAction, StartupIntent, StartupReadiness, TransactionGuard, UpdateCut, UpdateError,
+    UpdatePlatform, finish_ready_cleanup, load_record, parse_startup_update_args,
+    recover_dead_transaction, recover_startup_update, run_helper,
 };
+use vosu_sys::platform::atomic_replace;
 
 fn digest(bytes: &[u8]) -> String {
     Sha256::digest(bytes)

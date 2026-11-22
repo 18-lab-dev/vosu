@@ -366,7 +366,7 @@ impl StreamingClient {
             .open(&path)?;
         synced.sync_all()?;
         drop(synced);
-        crate::platform::atomic_replace(&path, destination)?;
+        vosu_sys::platform::atomic_replace(&path, destination)?;
         drop(path_guard);
         Ok(())
     }

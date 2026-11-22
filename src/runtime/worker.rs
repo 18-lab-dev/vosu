@@ -737,10 +737,10 @@ pub(super) async fn create_state_worker(
                 ClientType::Stable => {
                     let patterns =
                         match StablePatterns::resolve(&process).map_err(StateWorkerError::from)? {
-                            crate::process::ReadStatus::Ready(patterns) => patterns,
-                            crate::process::ReadStatus::NotReady
-                            | crate::process::ReadStatus::Unchanged
-                            | crate::process::ReadStatus::Unsupported(_) => return Ok(None),
+                            vosu_sys::process::ReadStatus::Ready(patterns) => patterns,
+                            vosu_sys::process::ReadStatus::NotReady
+                            | vosu_sys::process::ReadStatus::Unchanged
+                            | vosu_sys::process::ReadStatus::Unsupported(_) => return Ok(None),
                         };
                     Ok(Some(PreparedReaders::Stable(Box::new((
                         StableMemory::new(process.clone(), patterns),

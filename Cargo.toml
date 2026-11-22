@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-proptest", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
+members = [".", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
 resolver = "3"
 
 [workspace.package]
@@ -74,7 +74,7 @@ lazer-offsets-satori-coreclr-sha256 = "dcc631eda8fdb34d06956697e9709b8d828306eb7
 
 [features]
 default = ["linux-process-events"]
-linux-process-events = ["dep:libbpf-cargo", "dep:libbpf-rs"]
+linux-process-events = ["vosu-sys/linux-process-events"]
 test-harness = []
 [dependencies]
 arc-swap = "1.8.2"
@@ -107,6 +107,7 @@ tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 tokio-tungstenite = "=0.29.0"
 toml = "=1.1.2"
 vosu-pp = { path = "crates/vosu-pp" }
+vosu-sys = { path = "crates/vosu-sys" }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["fmt", "env-filter", "ansi", "registry"] }
 url = "2.5.8"
@@ -122,7 +123,6 @@ wmi = "=0.18.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "=0.2.186"
-libbpf-rs = { version = "=0.26.2", optional = true }
 ksni = "=0.3.6"
 png = "=0.18.1"
 
@@ -166,9 +166,6 @@ required-features = ["linux-process-events"]
 [build-dependencies]
 winresource = "=0.1.31"
 sha2 = "=0.11.0"
-
-[target.'cfg(target_os = "linux")'.build-dependencies]
-libbpf-cargo = { version = "=0.26.2", optional = true }
 
 [profile.release]
 lto = "thin"

@@ -13,12 +13,12 @@ pub mod fixture {
     };
     use vosu::model::enums::ClientType;
     use vosu::model::memory::Menu;
-    use vosu::process::{
-        MemoryError, MemoryRegion, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
-        ReadStatus,
-    };
     use vosu::state::{
         RegularCapturePlan, RegularCaptureRequest, RegularSnapshotReader, SourceRegularReader,
+    };
+    use vosu_sys::process::{
+        MemoryError, MemoryRegion, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
+        ReadStatus,
     };
 
     const SIZE: usize = 4 * 1024 * 1024;
@@ -146,7 +146,7 @@ pub mod fixture {
         bytes: AtomicU64,
     }
     struct Native {
-        inner: vosu::process::LinuxProcessMemory,
+        inner: vosu_sys::process::LinuxProcessMemory,
         counts: Arc<Counts>,
     }
     impl ProcessMemory for Native {
@@ -186,7 +186,7 @@ pub mod fixture {
             });
             let process = ProcessHandle::new(
                 Arc::new(Native {
-                    inner: vosu::process::open_process(std::process::id()).unwrap(),
+                    inner: vosu_sys::process::open_process(std::process::id()).unwrap(),
                     counts: counts.clone(),
                 }),
                 if lazer {

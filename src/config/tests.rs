@@ -22,7 +22,7 @@ impl AtomicReplace for RecordingReplace {
         if self.fail.swap(false, Ordering::SeqCst) {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, "injected"));
         }
-        crate::platform::atomic_replace(temp, target)
+        vosu_sys::platform::atomic_replace(temp, target)
     }
 }
 
@@ -32,7 +32,7 @@ struct RemovingReplace {
 
 impl AtomicReplace for RemovingReplace {
     fn replace(&self, temp: &Path, target: &Path) -> io::Result<()> {
-        crate::platform::atomic_replace(temp, target)?;
+        vosu_sys::platform::atomic_replace(temp, target)?;
         match std::fs::remove_file(&self.source) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),

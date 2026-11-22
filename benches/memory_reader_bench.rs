@@ -23,7 +23,7 @@ use vosu::memory::{
     LazerMemory, LazerPattern, MemoryReader, ReaderSynchronization, StableMemory, StablePatterns,
     SynchronizedMemoryReader,
 };
-use vosu::process::{
+use vosu_sys::process::{
     MemoryError, MemoryRegion, ProcessBitness, ProcessHandle, ProcessMemory, ReadRequest,
     ReadStatus,
 };
@@ -475,12 +475,12 @@ fn main() {
     };
 
     #[cfg(target_os = "windows")]
-    let native_process = vosu::process::open_process(std::process::id())
+    let native_process = vosu_sys::process::open_process(std::process::id())
         .expect("open benchmark process for native memory reads");
     #[cfg(not(target_os = "windows"))]
     let native_process = ProcessHandle::new(
         Arc::new(
-            vosu::process::open_process(std::process::id())
+            vosu_sys::process::open_process(std::process::id())
                 .expect("open benchmark process for native memory reads"),
         ),
         ProcessBitness::X64,
