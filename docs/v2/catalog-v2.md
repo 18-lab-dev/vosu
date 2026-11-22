@@ -37,7 +37,7 @@ fields, using capability ids from the [naming contract](naming.md) (`field:…`,
 ```toml
 [[provides]]
 id = "field:vosu.osu"              # a bare namespace id covers the whole namespace
-version = "1.0.0"                  # the owning namespace's schema version, not the plugin's own release
+version = "1.1.0"                  # the owning namespace's schema version, not the plugin's own release
 schema = "schemas/vosu.osu.schema.json"  # required for a whole-namespace `field:` entry naming the plugin's own namespace (D7); path inside this package
 
 [[requires]]
@@ -54,22 +54,35 @@ version = "^1.0.0"
   several capabilities, each independently versioned:
   - For a `field:` id, `version` must equal the owning namespace's current
     schema version (`docs/v2/state-schema.md`; every namespace schema starts
-    at `1.0.0`) — a field's shape, not the plugin release that happens to
-    implement it, is what a requirer actually depends on. A plugin cannot
-    publish a namespace at a version its own build doesn't match the
-    corresponding schema revision for. A whole-namespace entry additionally
-    carries `schema = "<path>"` (D7), a path inside the plugin package to
-    that namespace's own `*.schema.json`: core consumes only a bounded
-    profile of it (at most 256 KiB, `$ref` depth at most 32, `$ref` only
-    within the schema itself or to core's `common-defs` by a fixed id,
-    `x-sampling-lane` annotations only) and never validates a publish
-    against a third-party schema at runtime; the schema's own top-level
-    namespace must equal this `provides` id. `catalog-v2.json` mirrors the
-    schema's `version` and its extracted lane table (below) so the resolver
-    and core's demand compiler — a hand-written lane walker over that
-    mirrored table, not a general JSON Schema evaluator — can plan without
-    downloading the package. A `field:` entry naming a leaf path rather than
-    a whole namespace carries no `schema` field.
+    at `1.0.0`, additive amendments bump it from there — `vosu.osu` is
+    `1.1.0` at this freeze) — a field's shape, not the plugin release that
+    happens to implement it, is what a requirer actually depends on. A
+    plugin cannot publish a namespace at a version its own build doesn't
+    match the corresponding schema revision for. A whole-namespace entry
+    for a plugin's **own** namespace (never a core namespace, which is
+    always a built-in provider, below) additionally carries
+    `schema = "<path>"` (D7), a path inside the plugin package to that
+    namespace's own `*.schema.json`. Core consumes only a bounded profile
+    of it: at most 256 KiB of file size, at most 32 levels of JSON
+    structural nesting, `$ref` resolved only within the schema itself or to
+    core's `common-defs` by a fixed id, and `x-sampling-lane` as the only
+    annotation keyword core reads from it — core never validates a publish
+    against a third-party schema at runtime, and an `x-visibility`
+    annotation in a third-party schema is rejected at schema load (D2
+    reserves it to `vosu.osu`'s own `/internal` key only, nowhere else, in
+    any schema). The schema's own namespace is its top-level `title`
+    (matched verbatim against this `provides` id's full namespace, not
+    `$id`, which stays a stable documentation URL independent of which
+    plugin ships the schema); a mismatch is a manifest validation error.
+    `catalog-v2.json` mirrors the schema's `version` and its extracted lane
+    table (below) for an **installed or catalogued** namespace schema, so
+    the resolver and core's demand compiler — a hand-written lane walker
+    over that mirrored table, not a general JSON Schema evaluator — can
+    plan without downloading the package; a **bundled** namespace schema
+    (core's own, or a bundled game plugin's) is compiled in and read
+    directly, never through the catalog mirror, since there is no catalog
+    entry for a bundled plugin (below). A `field:` entry naming a leaf path
+    rather than a whole namespace carries no `schema` field.
   - For an `action:` id, `version` is the plugin's own chosen version for
     that action and must equal the matching `[[actions]]` entry's `version`
     (below).
@@ -96,7 +109,13 @@ version = "^1.0.0"
   `session`, `pid`, `focused`, and `plugin` itself from session discovery,
   and the game plugin fills `game`, `variant`, `name`, and `version` through
   its own `SESSION_IDENTIFY` message (`docs/v2/plugin-abi.md`), neither of
-  which is a `provides`/`requires` declaration.
+  which is a `provides`/`requires` declaration. A **tool's or overlay's**
+  `requires`/`optional` must not name `field:vosu.osu.internal` or a
+  descendant of it — that grant exists only for a plugin's own ABI reads
+  (`docs/v2/state-schema.md`'s `internal` carve-out, D2); declaring it in a
+  tool or overlay manifest is a manifest validation error, since a
+  dashboard-granted tool session can never reach it anyway (API v1 always
+  strips it).
 - `version` in `requires`/`optional` is a semver requirement string
   (`semver::VersionReq` syntax, matching 1.x's `Requirement.version`), except
   for a `game:` id, whose requirement must be the literal string `"*"`.
@@ -702,12 +721,14 @@ its requested `runtime`; confirming the plan when any add still needs
 approval is rejected until the caller also lists that add's id in
 `POST /api/catalog/plans/<plan_id>/confirm {"approve": ["acme.game", …]}`.
 `requires_internal_paths` (D8) is `true` only for a `kind: "plugin"` add
-whose resolved `requires`/`optional` names `field:vosu.osu.internal.paths`
-or an ancestor of it; it is a disclosure flag the install UI surfaces
-(the grant exposes the attached client's install paths to that plugin, per
-`docs/v2/state-schema.md`'s `vosu.osu.internal` carve-out), never a sandbox
-decision — it does not gate `needs_approval` or `trust` and carries no
-approval step of its own. `false` for every non-plugin entry.
+whose resolved `requires`/`optional` names `field:vosu.osu.internal` or a
+**descendant** of it (such as `field:vosu.osu.internal.paths`) — never for
+one naming only the whole-namespace `field:vosu.osu`, which grants no
+access to the carve-out (`docs/v2/state-schema.md`'s `internal` section
+owns this predicate). It is a disclosure flag the install UI surfaces (the
+grant exposes the attached client's install paths to that plugin), never a
+sandbox decision — it does not gate `needs_approval` or `trust` and carries
+no approval step of its own. `false` for every non-plugin entry.
 
 A plugin add whose `runtime` is `"in-process"` while its `trust` would be
 `"user"` is never silently downgraded to `"process"` or merely
@@ -937,7 +958,10 @@ On first 2.0 start, migration is one-time and idempotent (same pattern as
   `/websocket/v2/subscribe`, which M4a removes: once that happens, requests
   to a removed route or field are attributed to the requesting overlay (M4a)
   and the dashboard shows a notice with a link to the migration guide (M7);
-  the quickstart documents the port. They keep working unmanaged until a
+  the quickstart documents the port. The overlay package stays installed
+  and enabled, unmanaged by the 2.0 catalog, and renders normally for any
+  field it still receives; only its requests to a route or field M4a
+  removed stop working and are the ones flagged, until a
   `kind = "overlay"` `manifest.toml`-bearing update appears.
 
 ## Day-0 release check

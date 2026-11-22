@@ -59,6 +59,16 @@ extern "C" {
  * unbounded buffer. */
 #define VOSU_READ_PLAN_MAX_BYTES (64u * 1024u)
 
+/* Upper bound on the encoded size of a VOSU_OP_PUBLISH_BATCH payload, in
+ * bytes (header plus every entry plus its trailing data). Matches the 1 MiB
+ * WebSocket/frame limit (docs/v2/api-v1.md "Listener placement, CORS, and
+ * limits") rather than VOSU_READ_PLAN_MAX_BYTES: a batch carries whole
+ * array/object values (VOSU_VALUE_CBOR), which are not bounded the way a
+ * read plan's small fixed-width ops are, so it needs the larger of the
+ * two existing size ceilings rather than a new one. A host rejects a
+ * larger batch with VOSU_ERR_INVALID_ARGUMENT before applying any entry. */
+#define VOSU_PUBLISH_BATCH_MAX_BYTES (1024u * 1024u)
+
 /* ---------------------------------------------------------------------
  * Primitives
  * --------------------------------------------------------------------- */
@@ -110,7 +120,7 @@ typedef enum vosu_opcode {
     /* Hot path: fixed flat layout, no pointers in the payload. */
     VOSU_OP_PUBLISH_FIELD = 1,      /* plugin -> host */
     VOSU_OP_DEMAND_CHANGED = 2,     /* host -> plugin */
-    VOSU_OP_READ_PLAN_SUBMIT = 3,   /* plugin -> host; VOSU_READ_FLAG_SYNC may be set in `vosu_message.flags` (D5) */
+    VOSU_OP_READ_PLAN_SUBMIT = 3,   /* plugin -> host; VOSU_READ_PLAN_SYNC may be set in `vosu_message.flags` (D5) */
     VOSU_OP_READ_PLAN_RESULT = 4,   /* host -> plugin */
     VOSU_OP_READ_PLAN_CANCEL = 5,   /* plugin -> host, CBOR: abandon a submitted plan before its result arrives */
     VOSU_OP_PUBLISH_BATCH = 6,      /* plugin -> host: atomic multi-field publish, see "vosu_publish_batch_header" below (D4) */
@@ -120,7 +130,7 @@ typedef enum vosu_opcode {
     VOSU_OP_SESSION_DETACHED = 11,  /* host -> plugin, CBOR */
     VOSU_OP_SESSION_IDENTIFY = 12,  /* plugin -> host, CBOR */
     VOSU_OP_FOCUS_CHANGED = 13,     /* host -> plugin, CBOR */
-    VOSU_OP_SESSION_DECLINE = 14,   /* plugin -> host, CBOR: {"handle"}; this plugin will never identify this session, so core detaches it and never re-offers this PID generation (D6) */
+    VOSU_OP_SESSION_DECLINE = 14,   /* plugin -> host, CBOR: {"handle"}; valid only before this plugin's own SESSION_IDENTIFY for the handle (refused with VOSU_ERR_INVALID_ARGUMENT after), so core offers this PID generation to the next plugin whose matcher accepts it, in install order, before dropping it (D6) */
 
     /* Scanning. */
     VOSU_OP_SCAN_REQUEST = 20,      /* plugin -> host, CBOR */
@@ -222,13 +232,21 @@ typedef struct vosu_field_publish_header {
  * entries (each still carrying its own `ns`/`pointer`/`value_kind`/`data`
  * offsets, relative to this same payload buffer, exactly as a standalone
  * VOSU_OP_PUBLISH_FIELD payload does) plus their trailing variable-length
- * data. The whole encoded payload is capped at VOSU_READ_PLAN_MAX_BYTES,
+ * data. The whole encoded payload is capped at VOSU_PUBLISH_BATCH_MAX_BYTES,
  * rejected with VOSU_ERR_INVALID_ARGUMENT before any field is applied if it
- * is larger. A batch is validated and committed as a whole: every entry is
- * parsed first; if any entry is malformed, none is applied. Otherwise every
- * entry in `entries` is applied as one commit — a single VOSU_OK answers
- * the whole message, never a per-entry status, and core never holds a
- * partially-applied batch as pending host state between entries. */
+ * is larger. A batch is validated and committed as a whole; every one of
+ * the following rejects the *entire* batch with no entry applied:
+ *   - any entry is malformed (as a standalone PUBLISH_FIELD would reject);
+ *   - any entry's own `handle` differs from `vosu_publish_batch_header::handle`
+ *     (every entry in one batch names the same session);
+ *   - any entry would itself be semantically rejected as a standalone
+ *     PUBLISH_FIELD (an uncovered field, or `vosu.client`, which a plugin
+ *     never publishes directly);
+ *   - two entries name the same (`ns`, `pointer`) pair (no ordering or
+ *     last-write-wins rule is defined for a duplicate within one batch).
+ * Otherwise every entry is applied as one commit — a single VOSU_OK
+ * answers the whole message, never a per-entry status, and core never
+ * holds a partially-applied batch as pending host state between entries. */
 typedef struct vosu_publish_batch_header {
     uint64_t handle;
     uint32_t entries_offset; /* vosu_field_publish_header[entry_count] */
@@ -332,18 +350,22 @@ typedef struct vosu_stage_header {
  * `stage_count`. The same plan runs identically whether the plugin holds
  * direct, in-process access or is brokered through `vosu plugin-host`.
  *
- * `vosu_message.flags` on this opcode may set VOSU_READ_FLAG_SYNC (D5): the
+ * `vosu_message.flags` on this opcode may set VOSU_READ_PLAN_SYNC (D5): the
  * host guarantees the matching VOSU_OP_READ_PLAN_RESULT is dispatched on
  * this same submitting thread before `send` returns (directly, in-process;
  * through a dedicated ring-reader thread that hands it to the blocked
  * submitter, under `vosu plugin-host`), or the call returns
- * VOSU_ERR_TIMED_OUT once a host-enforced deadline elapses. Submitting a
+ * VOSU_ERR_TIMED_OUT once a host-enforced deadline elapses. This is the one
+ * case where a reply is delivered concurrently with an ordinary `dispatch`
+ * call already in flight on this plugin instance's own thread (§4/§7.2 in
+ * the spec describe the carve-out); every other opcode keeps `dispatch`
+ * serialized exactly as before. Submitting a
  * synchronous plan from a thread the host itself dispatches on (the
  * publisher thread, or any `dispatch` invocation) is refused with
  * VOSU_ERR_INVALID_ARGUMENT, in both runtimes, rather than deadlocking.
  * Every other flag bit on this opcode is unrecognized and rejected per
  * `vosu_message::flags`'s rule above. */
-#define VOSU_READ_FLAG_SYNC (1u << 0)
+#define VOSU_READ_PLAN_SYNC (1u << 0)
 
 typedef struct vosu_read_plan_submit_header {
     uint64_t plan; /* caller-assigned; never reused for another plan within this plugin instance's lifetime */
@@ -418,8 +440,14 @@ typedef struct vosu_plugin_vtable {
      * settings changes, timer fires, state updates the plugin subscribed
      * to, and — when this plugin issued its own `ACTION_CALL` — the
      * resulting `ACTION_RESULT`/`ACTION_PROGRESS`. The host serializes
-     * calls to one instance unless the manifest declares
-     * `concurrent_dispatch = true`. The return value only accepts or
+     * calls to one instance onto one thread unless the manifest declares
+     * `concurrent_dispatch = true` — except a `VOSU_OP_READ_PLAN_RESULT`
+     * answering a `VOSU_READ_PLAN_SYNC` submission, which the host always
+     * delivers on the submitting thread itself, concurrently with this
+     * instance's ordinary serialized `dispatch` thread; a plugin using
+     * `VOSU_READ_PLAN_SYNC` must treat its own state as accessed from two
+     * threads for the duration of that call, synchronous-read result
+     * included. The return value only accepts or
      * rejects the message itself (VOSU_ERR_UNSUPPORTED for an opcode this
      * plugin's minor version predates, VOSU_ERR_INVALID_ARGUMENT for a
      * malformed payload, VOSU_ERR_CANCELLED for a `STREAM_READ` naming a
@@ -446,7 +474,10 @@ typedef struct vosu_host_services {
      * duration of this call. A reply, when the opcode has one, arrives
      * later through the plugin's own `dispatch`, carrying the same
      * `correlation_id` the plugin chose (or, for read plans, the same
-     * `plan`). Returns VOSU_ERR_CANCELLED for an `ACTION_RESULT`,
+     * `plan`) — except a `VOSU_OP_READ_PLAN_SUBMIT` carrying
+     * `VOSU_READ_PLAN_SYNC` in `vosu_message.flags` (D5), whose matching
+     * `VOSU_OP_READ_PLAN_RESULT` this call delivers itself, on this same
+     * thread, before returning. Returns VOSU_ERR_CANCELLED for an `ACTION_RESULT`,
      * `ACTION_PROGRESS`, or `STREAM_CHUNK` answering an invocation or
      * stream the host already closed (timed out, caller disconnected, or
      * `STREAM_CLOSE`/`ACTION_CANCEL` already sent). */

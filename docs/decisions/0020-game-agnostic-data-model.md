@@ -94,14 +94,19 @@ rationale in `docs/v2/implementation-plan.md` section 10):
 
 - **D2 Plugin-only paths.** "Each namespace has one owner and a published
   JSON Schema" above gains one narrow carve-out: a namespace schema may mark
-  a subtree `"x-visibility": "plugins"`, published and readable by plugins
-  exactly like any other field but stripped by core's projector from every
-  API v1 projection, subscription, encoding cache, session event,
-  `STATE_UPDATE`, and debug log for a consumer that does not `require` it.
-  Only `vosu.osu`'s top-level `internal` key (per-variant install paths,
-  `docs/v2/state-schema.md`) uses it in this freeze, and a schema may use it
-  only on `vosu.osu`'s top-level `/internal` key — nowhere else, at any
-  schema load. The carve-out is disclosure control, not confinement: an
-  out-of-process plugin already has the user's own filesystem access
+  a subtree `"x-visibility": "plugins"`, published exactly like any other
+  field. Core's projector strips it from every API v1 projection,
+  subscription, encoding cache, and session event **unconditionally**,
+  regardless of any consumer's declared capabilities, since API v1 never
+  carries it at all; a non-owning plugin's own ABI read of it (`STATE_UPDATE`,
+  or a bundled plugin's `vosu-surface` read) is instead gated by that
+  plugin's `requires`/`optional` naming the subtree's `field:` id or a
+  descendant of it (`docs/v2/state-schema.md`'s `internal` section is
+  authoritative for the exact rule). Only `vosu.osu`'s top-level `internal`
+  key (per-variant install paths, `docs/v2/state-schema.md`) uses it in
+  this freeze, and a schema may use it only on `vosu.osu`'s top-level
+  `/internal` key — nowhere else, at any schema load. The carve-out is
+  disclosure control, not confinement: an out-of-process plugin already
+  has the user's own filesystem access
   ([ADR 0019](0019-plugin-runtime-and-trust.md):105-107), so this narrows
   only what reaches the wire, not what a plugin process can see.

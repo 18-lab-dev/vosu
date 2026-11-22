@@ -136,20 +136,33 @@ one-click vosulay install while the endpoint is in use.
 **2026-11-21** (A1, adversarial review of the implementation plan; full
 rationale in `docs/v2/implementation-plan.md` section 10):
 
-- **D2 Plugin-only paths.** "State carries references: … never a bare
-  path" above holds for every ordinary field, but one narrow,
-  schema-declared carve-out exists ([ADR 0020](0020-game-agnostic-data-model.md)'s
-  own amendment): `vosu.osu`'s `internal.paths` subtree, stripped from API
-  v1 by core's projector for any consumer that does not `require` it. The
-  streamCompanion adapter's upstream-only derived values
-  (`src/model/api/sc.rs:132-141`) are computed by that adapter itself from
-  `vosu-osu-calc` and the chart resource, not read back out of `internal`.
-- **D3 Bundled-only HTTP surfaces.** "Plugins never serve HTTP" stands for
-  every plugin that is not bundled; the dashboard, overlay hosting, tool
-  hosting, and these adapters additionally use the in-process-only
-  `vosu-surface` interface for routes, feeds, and reads
-  (`docs/v2/plugin-abi.md` §7.5, [ADR 0019](0019-plugin-runtime-and-trust.md)
-  amendment).
+- **D2 Plugin-only paths.** "State carries references" (above, line 43)
+  holds for every ordinary field reaching API v1, with one narrow,
+  schema-declared carve-out ([ADR 0020](0020-game-agnostic-data-model.md)'s
+  own amendment): `vosu.osu`'s `internal.paths` subtree, which core's
+  projector strips from every API v1 document, subscription, and session
+  event **unconditionally** — never gated by a consumer's declared
+  capabilities, which cannot reach API v1 at all. A plugin's own ABI reads
+  of it are instead gated by `requires`/`optional` naming
+  `field:vosu.osu.internal` or a descendant
+  (`docs/v2/state-schema.md`'s `internal` section is authoritative). Every
+  adapter file route in this document (`GET /Songs/{path}`,
+  `GET /files/skin/{path}`, and the rest) resolves against the osu!
+  plugin's own `ROOT_DECLARE` handles (`docs/v2/plugin-abi.md` §6.5), never
+  against a path string read off the bus, so an adapter needs no grant onto
+  `internal` to serve them. The streamCompanion adapter's upstream-only
+  derived values (`src/model/api/sc.rs:132-141`) are computed by that
+  adapter itself from `vosu-osu-calc` and the chart resource, not read back
+  out of `internal` either.
+- **D3 Bundled-only HTTP surfaces.** "Plugins never serve HTTP" applies to
+  every plugin that is not bundled, without exception; the dashboard,
+  overlay hosting, tool hosting, and these adapters are the one documented
+  exception, using the in-process-only `vosu-surface` interface — listed
+  exhaustively in `docs/v2/plugin-abi.md` §7.5 and
+  [ADR 0019](0019-plugin-runtime-and-trust.md)'s D3 amendment: route and
+  WebSocket-feed registration, subscription-gated state reads,
+  `ROOT_DECLARE`-confined file responses, and management-route provenance;
+  no `ProcessMemory`, configuration writes, or credentials.
 - **D10 Names.** The three adapters above are named, as crates and plugin
   ids, `vosu-adapter-upstream`/`vosu.adapter.upstream`,
   `vosu-adapter-gosumemory`/`vosu.adapter.gosumemory`, and

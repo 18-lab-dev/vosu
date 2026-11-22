@@ -39,9 +39,10 @@ RFC 6901 JSON Pointer relative to the namespace root (`docs/v2/plugin-abi.md`,
 `/play/pp/current` inside `vosu.osu`.
 
 A `field:` requirement's version is always the owning namespace's schema
-version — this document's `schemas/*.schema.json` `version` key, every one at
-`1.0.0` for this freeze — never a value a plugin or catalog entry picks
-independently (`docs/v2/catalog-v2.md`).
+version — this document's `schemas/*.schema.json` `version` key, `1.0.0` for
+every namespace at this freeze except `vosu.osu` (bumped to `1.1.0` by the
+D2/D8 `internal` carve-out, an additive minor change) — never a value a
+plugin or catalog entry picks independently (`docs/v2/catalog-v2.md`).
 
 ## Namespaces
 
@@ -171,8 +172,9 @@ full 1.x-to-2.0 mapping.
 ### Restructuring, at a glance
 
 - `vosu.osu.session` holds osu!-specific session bookkeeping (`playTime`,
-  `playCount`, `paused`, `focused`) that sits beside, not inside,
-  `vosu.client`.
+  `playCount`, `paused`, `focused`, `ipcId` — D6: a tournament spectator
+  client's IPC id, `null` for every non-spectator session) that sits beside,
+  not inside, `vosu.client`.
 - `vosu.osu.beatmap` keeps full osu! chart detail (difficulty stats, hit
   windows, convert flag, checksum, ids); the subset listed under
   [`vosu.chart`](#vosu-chart) is the same underlying data, additionally
@@ -257,7 +259,7 @@ carry the same values while subscribed, at different cadences.
 | `folders.*`, `files.*`, `directPath.*` | removed; use [resource references](#resource-references) under `vosu.chart.resources` and `vosu.skin.tree` | ADR 0021: no "current file" lookups in the 2.0 surface. Unchanged in the upstream adapter. |
 | `settings.*` | `vosu.osu.settings.*` | `interfaceVisible`, `replayUIVisible`, `bassDensity` keep their [sampling-lane](#sampling-lanes) roles; `skin` sub-object is replaced by [`vosu.osu.skin`](#skin-vosu-skin-and-vosu-osu-skin) plus the common `vosu.skin.name`. |
 | `room` | `vosu.osu.room` | |
-| `tourney` | `vosu.osu.tourney` | |
+| `tourney` | `vosu.osu.tourney` | Always `null` until real tournament-manager detection exists (D6), which needs its own decision; the schema permits a value so a later decision is additive, not breaking. |
 | `GET /files/skin/` metadata (`client`, `name`, `files`, `builtin`, `base`, `entries[]`, `truncated`) | `vosu.skin.name` (common `name`); `vosu.osu.skin.{builtin,base,variant,files}`; `entries`/`truncated` are now the tree index at `vosu.skin.tree`'s `url` (`GET /api/v1/trees/{id}/`, ADR 0021) rather than a duplicated inline list | |
 
 ### `keys` (`vosu.osu.keys`)
@@ -289,15 +291,39 @@ storage has no filesystem folder; `vosu.osu.settings.client`/compatibility
 
 ### `internal` (`vosu.osu.internal`)
 
-**Plugin-only; D2.** The sole `"x-visibility": "plugins"` subtree in this
-freeze (`docs/v2/plugin-abi.md` §6.6 defines the ABI-side behavior). Core's
-projector strips `internal` from every API v1 document, subscription frame,
-encoding cache, session event, `STATE_UPDATE` sent to a non-owning plugin,
-and debug log, for any consumer that does not `require` `field:vosu.osu.internal`
-or a path below it; the osu! plugin publishes it exactly like any other
-field. This is disclosure control, not confinement (`docs/v2/plugin-abi.md`
-§7.5): an out-of-process plugin already has the user's own filesystem
-access, and vosu-tools already finds these folders itself
+**Plugin-only; D2. This section owns the carve-out's rule; every other spec
+summarizes it.** The sole `"x-visibility": "plugins"` subtree in this
+freeze. `internal` is an **optional** field (never in the namespace's
+`required` list, unlike every other top-level `vosu.osu` key): the osu!
+plugin publishes it exactly like any other field, but a consumer that
+predates D8 simply sees it absent, which is why adding it is a
+backward-compatible minor bump (1.1.0) rather than a breaking one.
+
+The rule has two parts, by consumer:
+
+- **Every API-facing document always strips it, unconditionally.** Core's
+  projector removes `internal` from every API v1 projection (`GET .../state`,
+  `GET .../state/vosu.osu`, a pointer read under it), every subscription
+  frame, the encoding cache, session events, and debug logs — regardless of
+  any tool's or overlay's declared `requires`/`optional`. A tool's
+  dashboard-granted API session (`docs/v2/api-v1.md` "Authorization") never
+  exposes it, however the tool's manifest is written; `docs/v2/catalog-v2.md`
+  additionally rejects `field:vosu.osu.internal` or a descendant of it in a
+  tool's or overlay's `requires`/`optional` at manifest validation, so no
+  manifest can even declare the intent.
+- **A plugin's own ABI reads are gated by capability, not stripped.** A
+  `STATE_UPDATE` a non-owning plugin receives as a subscriber
+  (`docs/v2/plugin-abi.md` §6.12), and a bundled plugin's `vosu-surface`
+  read (`docs/v2/plugin-abi.md` §7.5), include `internal` only when that
+  plugin's manifest `requires`/`optional` names `field:vosu.osu.internal` or
+  a path below it; a whole-namespace `field:vosu.osu` requirement does
+  **not** grant it, since granting it to every namespace consumer would
+  defeat the carve-out. `docs/v2/catalog-v2.md`'s `requires_internal_paths`
+  install-plan flag (below) uses this same predicate.
+
+This is disclosure control, not confinement (`docs/v2/plugin-abi.md` §6.6):
+an out-of-process plugin already has the user's own filesystem access, and
+vosu-tools already finds these folders itself
 (`vosu-tools/tools/lazer-library/src/main.rs:52-58`); the carve-out only
 keeps a raw path off API v1, which must never serve one (below).
 

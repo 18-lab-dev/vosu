@@ -1032,14 +1032,19 @@ draft, exposed these gaps. Each is closed by an adopted decision in section
    `include/vosu_plugin.h:409-411`), while the 21,756-line 1.x reader stack
    reads synchronously. → D5.
 5. **Discovery parity.** 1.x skips `--tournament` and `debug-client-id`
-   processes (`src/instance/discovery.rs:118-123`) and runs Linux's broad
-   lazer fallback only when the named pass is empty
-   (`src/instance/discovery.rs:73-107`); full-match `regex` patterns
-   (plugin-abi.md:115) can express neither. Tournament spectator clients are
-   ordinary 1.x instances (`src/instance.rs:68-80`) selected by lowest PID
-   (`src/instance.rs:603-620`); the tournament-manager aggregate is set only
-   by tests (`src/instance.rs:137`, every instance starts `false` at
-   `src/instance.rs:473`). → D6.
+   processes (`src/instance/discovery.rs:118-123`), an argv-based rule
+   full-match `regex` matchers (plugin-abi.md:115) cannot express as a
+   matcher — the process itself must still be examined to decide whether to
+   expose it. Separately, 1.x runs Linux's broad lazer fallback only when
+   the named stable pass is empty (`src/instance/discovery.rs:73-107`); this
+   is not a skip at all (1.x inserts every matching candidate either way,
+   `src/instance/discovery.rs:74-111`), only a classification choice between
+   variants, so it needs no matcher-level gap closed, only somewhere to
+   express the choice (`SESSION_IDENTIFY`'s `variant`). Tournament spectator
+   clients are ordinary 1.x instances (`src/instance.rs:68-80`) selected by
+   lowest PID (`src/instance.rs:603-620`); the tournament-manager aggregate
+   is set only by tests (`src/instance.rs:137`, every instance starts
+   `false` at `src/instance.rs:473`). → D6.
 6. **Third-party namespace schemas.** External plugins have no way to hand
    core their namespace schema, so core cannot compile `x-sampling-lane`
    demand for third-party namespaces. → D7.
@@ -1190,21 +1195,31 @@ states what was adopted and why. Spec amendments land in A1.
   per read is the pattern brokered-reads.md measured 16–25x slower
   (brokered-reads.md:103,107) and must not spread to third parties.
 - **D6 Discovery parity.** `VOSU_OP_SESSION_DECLINE` (plugin → host, CBOR
-  `{"handle"}`) is adopted in A1, before M1: the plugin rejects a matched
-  process; core detaches it and does not re-offer that PID generation. The
-  osu! plugin declines `--tournament` and `debug-client-id` processes and
-  applies the Linux conditional fallback through it. Tournament spectator
-  clients are identified as normal sessions, with their IPC id in
-  `vosu.osu.session`, as 1.x attaches them. `vosu.osu.tourney` is not
-  published until real manager detection exists, which needs its own
+  `{"handle"}`) is adopted in A1, before M1: a plugin declines a matched
+  process it never wants to expose as a session at all, valid only before
+  its own `SESSION_IDENTIFY` for the handle; core detaches it from that
+  plugin and, if another enabled plugin's matcher also accepted the
+  process, offers it to that plugin next in install order before dropping
+  it for that PID generation. The osu! plugin declines only `--tournament`
+  and `debug-client-id` processes (an argv-based skip); 1.x's Linux
+  conditional fallback (the broad lazer pass that only runs when the named
+  stable pass found nothing) is not a decline — 1.x never skips those
+  processes, only chooses which variant classifies them
+  (`src/instance/discovery.rs:74-111` inserts every matching candidate) —
+  so the osu! plugin always identifies a matched Linux process and
+  expresses the fallback choice as `SESSION_IDENTIFY`'s `variant`. Tournament
+  spectator clients are identified as normal sessions, with their IPC id in
+  `vosu.osu.session.ipcId`, as 1.x attaches them. `vosu.osu.tourney` is
+  always `null` until real manager detection exists, which needs its own
   decision. "Never identify" is never used as a deliberate state. Why: 1.x
   production never marks a tournament manager (`src/instance.rs:137` has
   only test callers; `src/instance.rs:473`) and exposes spectators as
   selectable instances (`src/instance.rs:68-80`, `:603-620`), so hiding them
   would leave API v1 with no session during a tournament; the 1.x rules
-  depend on argv and on other processes and cannot be written as full-match
-  regex matchers (plugin-abi.md:115); core cannot tell an unidentified
-  session from a plugin bug.
+  depend on argv and cannot be written as full-match regex matchers
+  (plugin-abi.md:115) for the argv-based skip, and the Linux fallback is a
+  classification choice 1.x never expresses as skipping a process at all;
+  core cannot tell an unidentified session from a plugin bug.
 - **D7 Bounded namespace schemas.** `[[provides]]` entries naming a whole
   `field:` namespace carry `schema = "<path>"`. Core consumes only a bounded
   profile: at most 256 KiB, depth at most 32, `$ref` only within the schema

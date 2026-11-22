@@ -146,21 +146,36 @@ rationale in `docs/v2/implementation-plan.md` section 10):
 
 - **D3 Bundled-only HTTP surfaces.** "Native code runs only in plugins" and
   "plugins never serve HTTP" ([ADR 0021](0021-api-v1-and-upstream-adapters.md))
-  stand, but the dashboard, overlay hosting, tool hosting, and the upstream
-  adapters — all bundled plugins whose job is serving routes — additionally
-  use a second, HTTP-only in-process crate interface (`vosu-surface`, never
-  exposed to an external or out-of-process plugin) for routes, WebSocket
-  feeds, and reads, specified in full in
-  [`docs/v2/plugin-abi.md`](../v2/plugin-abi.md) §7.5. The osu! plugin's
-  edge into it is interim bridge **B1** (M1→M4a).
+  apply to every external or out-of-process plugin without exception. The
+  one documented exception is the bundled first-party set: the dashboard,
+  overlay hosting, tool hosting, and every upstream-compatible adapter
+  additionally use a second, HTTP-only in-process crate interface,
+  `vosu-surface`, never exposed to an external or out-of-process plugin,
+  listed exhaustively in [`docs/v2/plugin-abi.md`](../v2/plugin-abi.md) §7.5:
+  route and WebSocket-feed registration on a listener role; state reads
+  through the same subscription/demand/`requires` path as
+  `STATE_SUBSCRIBE`; root-confined file responses against `ROOT_DECLARE`
+  handles, never a path string read off the bus
+  ([ADR 0021](0021-api-v1-and-upstream-adapters.md)'s D2 amendment);
+  management-route provenance (dashboard-origin, `X-Vosu-CSRF`). It grants
+  no `ProcessMemory` access outside a plugin's own matched session, no
+  configuration writes, and no credentials. The osu! plugin's edge into it
+  is interim bridge **B1** (M1→M4a). A future external HTTP opcode remains
+  possible as an additive minor ABI revision, not a breaking one.
 - **D9 Multi-crate plugins and core.** "One crate per bundled plugin" is
   relaxed for the osu! plugin and for core: the osu! plugin spans five
-  crates (including `vosu-adapter-support` and `vosu-osu-model`, justified
-  by dependency direction) and core spans four crates, per
-  `docs/v2/implementation-plan.md` section 2's target layout. The build
-  budget (section 8 there) covers prepush wall-clock, native Windows
-  Clippy/test/doctest, clean and CI builds, and feature-unification
-  rebuilds, not only incremental edits.
+  crates (`vosu-osu-model`, `vosu-osu-calc`, `vosu-osu-reader`,
+  `vosu-osu-state`, `vosu-osu`) and core spans four
+  (`vosu-sys`, `vosu-net`, `vosu-surface`, `vosu-core`), per
+  `docs/v2/implementation-plan.md` section 2's target layout. Two further
+  crates are justified by dependency direction rather than counted against
+  either plugin or core: `vosu-osu-model` (osu! value types shared by the
+  osu! plugin's own reader, calculator, and the adapter crates, so none of
+  those depends on another) and `vosu-adapter-support` (upstream-wire
+  machinery shared by the three adapter crates, which are not part of the
+  osu! plugin's five). The build budget (section 8 there) covers prepush
+  wall-clock, native Windows Clippy/test/doctest, clean and CI builds, and
+  feature-unification rebuilds, not only incremental edits.
 - **D10 Names.** The bundled adapter crates and plugin ids are
   `vosu-adapter-upstream`/`vosu.adapter.upstream`,
   `vosu-adapter-gosumemory`/`vosu.adapter.gosumemory`, and
@@ -168,4 +183,11 @@ rationale in `docs/v2/implementation-plan.md` section 10):
   this ADR's informal "tosu v2, gosumemory v1, and StreamCompanion adapters"
   phrasing above, which named the adapters by the project each imitates,
   not by their shipped crate/plugin id); the dashboard, overlay host, and
-  tool host are `vosu.dashboard`, `vosu.overlayhost`, `vosu.toolhost`.
+  tool host are `vosu.dashboard`, `vosu.overlayhost`, `vosu.toolhost`. Each
+  plugin's display name (`manifest.toml` `name`, `catalog-v2.json` `name`)
+  describes the routes it serves rather than restating its id — e.g. the
+  upstream adapter's display name names the upstream-compatible routes it
+  serves (`/json/v2`, `/websocket/v2`, and the rest of
+  [ADR 0021](0021-api-v1-and-upstream-adapters.md)'s "Route ownership"
+  table), not the upstream project itself, so the catalog UI never needs a
+  `scripts/brand-allowlist.txt` entry for a display string.

@@ -31,11 +31,15 @@ is rejected at install time and at catalog validation time, since it would
 make the longest-registered-namespace parse below ambiguous
 (`docs/v2/catalog-v2.md` "Namespace and kind parsing" owns this algorithm).
 
-The segment `vosu` as a plugin id's leading segment, and every core-owned
-namespace id, is reserved to core and official plugins; a plugin id starting
-with `vosu` is accepted only from an official source. A plugin id must also
-not start with the segment `chart` or `skin`, so that a `resource:` id stays
-unambiguous between a core kind and a plugin's own (below).
+A plugin id that equals or extends any core-owned namespace id (`vosu.client`,
+`vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`, `vosu.sessions`) is
+always rejected, from any source, official included — those ids are never
+a plugin id. Beyond that, a plugin id merely starting with the segment
+`vosu` (without matching a core-owned namespace, e.g. `vosu.osu`,
+`vosu.dashboard`) is reserved to official plugins and is rejected only from
+a non-official source. A plugin id must also not start with the segment
+`chart` or `skin`, so that a `resource:` id stays unambiguous between a
+core kind and a plugin's own (below).
 
 ## Namespaces
 
@@ -95,7 +99,7 @@ rule a `provides` entry satisfies a `requires`/`optional` entry under.
   (`docs/v2/catalog-v2.md` `[[actions]]`); the full capability id is
   `action:<plugin-id>.<name>`.
 - A judgement id is `^[a-z][a-z0-9-]{0,31}$`
-  (`schemas/common-defs.schema.json#/$defs/judgement`).
+  (`schemas/common-defs.schema.json#/$defs/judgement/properties/id`).
 
 ## Game ids
 

@@ -7,8 +7,7 @@
   "type": "object",
   "required": [
     "session", "profile", "beatmap", "play", "keys", "leaderboard",
-    "performance", "result", "settings", "skin", "rankedPlay", "room", "tourney",
-    "internal"
+    "performance", "result", "settings", "skin", "rankedPlay", "room", "tourney"
   ],
   "additionalProperties": false,
   "$defs": {
@@ -263,14 +262,15 @@
   "properties": {
     "session": {
       "type": "object",
-      "required": ["playTime", "playCount", "paused", "focused"],
+      "required": ["playTime", "playCount", "paused", "focused", "ipcId"],
       "additionalProperties": false,
       "description": "osu!-specific session bookkeeping not covered by vosu.client.",
       "properties": {
         "playTime": { "type": "number", "x-sampling-lane": { "lane": "regular", "activity": "always" } },
         "playCount": { "type": "integer", "minimum": 0 },
         "paused": { "type": "boolean", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
-        "focused": { "type": ["boolean", "null"], "description": "Windows-only: whether the client window has OS input focus. `null` elsewhere." }
+        "focused": { "type": ["boolean", "null"], "description": "Windows-only: whether the client window has OS input focus. `null` elsewhere." },
+        "ipcId": { "type": ["integer", "null"], "description": "D6: the tournament spectator client's IPC id, as 1.x attaches it; `null` for every non-spectator session. A spectator session is identified as a normal session, never hidden for being one." }
       }
     },
     "profile": {
@@ -942,7 +942,7 @@
     "internal": {
       "type": "object",
       "x-visibility": "plugins",
-      "description": "Plugin-only subtree (D2); stripped from every API v1 projection, subscription frame, STATE_UPDATE to a non-owning plugin, and debug log for any consumer that does not `require` field:vosu.osu.internal. Disclosure control only, never confinement (docs/v2/plugin-abi.md §7.5). See docs/v2/state-schema.md's `internal` section for the full carve-out rationale.",
+      "description": "Plugin-only subtree (D2). Always stripped from every API v1 projection, subscription frame, and debug log, regardless of any consumer's declared capabilities. A non-owning plugin's ABI reads (STATE_UPDATE) and vosu-surface reads are instead gated by `requires`/`optional` naming field:vosu.osu.internal or a descendant of it; a whole-namespace field:vosu.osu requirement does not grant it. Disclosure control only, never confinement (docs/v2/plugin-abi.md §6.6). See docs/v2/state-schema.md's `internal` section for the full carve-out rationale.",
       "required": ["paths"],
       "additionalProperties": false,
       "properties": {
