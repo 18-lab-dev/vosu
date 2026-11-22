@@ -546,11 +546,23 @@ impl ProductionRouteDelegate {
             )
             .await
         } else {
-            if matches!(endpoint, Endpoint::SkinFile | Endpoint::BeatmapPath | Endpoint::BeatmapFile | Endpoint::BeatmapAudio | Endpoint::BeatmapBackground) {
+            let mut response = if matches!(endpoint, Endpoint::SkinFile | Endpoint::BeatmapPath | Endpoint::BeatmapFile | Endpoint::BeatmapAudio | Endpoint::BeatmapBackground) {
                 game_resource_response(outcome, range, current.lazer, request.headers(), request.method() == Method::HEAD).await
             } else {
                 resource_response(outcome, range).await
-            }
+            };
+            // Beatmap and skin folders hold whatever an imported archive contained,
+            // and an HTML or SVG file opened from them would otherwise run script on
+            // the overlay origin that counters and tool UIs share. `sandbox` alone
+            // removes that origin and script. Content types stay as they are for
+            // compatibility with the upstream API, which also rules out `nosniff`
+            // (it lets browsers block cross-origin embeds of the nonstandard types)
+            // and `default-src 'none'` (it can block media opened directly in a tab).
+            response.headers_mut().insert(
+                header::CONTENT_SECURITY_POLICY,
+                axum::http::HeaderValue::from_static("sandbox"),
+            );
+            response
         }
     }
 

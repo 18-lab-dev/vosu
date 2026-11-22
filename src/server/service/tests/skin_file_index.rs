@@ -122,3 +122,39 @@ async fn lazer_file_etag_is_the_store_hash() {
         assert_eq!(response.headers()[header::ETAG], format!("\"{hash}\""));
     }
 }
+
+#[tokio::test]
+async fn game_files_are_sandboxed_but_counter_pages_are_not() {
+    let root = tempfile::tempdir().unwrap();
+    let set = root.path().join("songs/set");
+    std::fs::create_dir_all(&set).unwrap();
+    let page = b"<html><head></head><script>parent.alert(1)</script></html>";
+    std::fs::write(set.join("page.html"), page).unwrap();
+    std::fs::write(set.join("bg.svg"), b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>").unwrap();
+    let skin = root.path().join("skin");
+    std::fs::create_dir(&skin).unwrap();
+    std::fs::write(skin.join("page.html"), page).unwrap();
+    let counter = root.path().join("static/counter");
+    std::fs::create_dir_all(&counter).unwrap();
+    std::fs::write(counter.join("index.html"), page).unwrap();
+    let delegate = skin_index_delegate(root.path(), BeatmapFiles {
+        songs_root: Some(root.path().join("songs")), skin_root: Some(skin), skin_name: Some("fixture".into()),
+        static_root: Some(root.path().join("static")),
+        beatmap_file: Some("set/page.html".into()), audio_file: Some("set/page.html".into()), background_file: Some("set/bg.svg".into()),
+        ready: true, ..Default::default()
+    });
+    for path in ["/Songs/set/page.html", "/Songs/set/", "/files/beatmap/set/page.html", "/files/beatmap/set/bg.svg",
+        "/files/skin/page.html", "/files/beatmap/file", "/files/beatmap/audio", "/files/beatmap/background", "/backgroundImage"] {
+        let endpoint = crate::server::routes::classify(&Method::GET, path).unwrap();
+        for method in [Method::GET, Method::HEAD] {
+            let response = delegate.file(endpoint, Request::builder().method(method.clone()).uri(path).body(Body::empty()).unwrap()).await;
+            assert_eq!(response.status(), StatusCode::OK, "{method} {path}");
+            assert_eq!(response.headers()[header::CONTENT_SECURITY_POLICY], "sandbox", "{method} {path}");
+        }
+    }
+    let html = delegate.file(Endpoint::SongsFile, Request::builder().uri("/Songs/set/page.html").body(Body::empty()).unwrap()).await;
+    assert_eq!(html.headers()[header::CONTENT_TYPE], "text/html; charset=utf-8", "the upstream-compatible type is kept");
+    let counter_page = delegate.file(Endpoint::CounterStatic, Request::builder().uri("/counter/").body(Body::empty()).unwrap()).await;
+    assert_eq!(counter_page.status(), StatusCode::OK);
+    assert!(counter_page.headers().get(header::CONTENT_SECURITY_POLICY).is_none(), "counters must keep running script");
+}

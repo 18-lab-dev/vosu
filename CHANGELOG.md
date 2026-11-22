@@ -2,6 +2,12 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased
+
+### Server
+
+- Serve beatmap, song folder, and skin files with `Content-Security-Policy: sandbox`. These folders hold whatever an imported `.osz` or `.osk` contained, and an HTML or SVG file from them opened in a browser could previously run script on the overlay origin, which installed counters and tool UIs share. Overlays that embed these files as images, audio, or video are unaffected.
+
 ## 1.2.4 - 2026-11-21
 
 ### Updater
