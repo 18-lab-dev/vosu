@@ -976,10 +976,13 @@ so carries no `catalog-v2.json`), pass requires only that its latest release
 tag parses as semver with major version `2`. The gate fails closed: a missing
 repository, a failed request, or any one of the four checks failing fails the
 whole gate, and 2.0 is not published (ADR 0022). The gate additionally fails
-closed if `tests/fixtures/upstream/DIVERGENCES.md` lists any entry that is
-not a security divergence (ADR 0021's "Upstream adapters" amendment, D6):
-a temporary pre-release exception, such as the stable tournament-manager
-aggregate's deferral, must be resolved before day-0, not merely documented.
+closed if `tests/fixtures/upstream/DIVERGENCES.md` lists any `temporary`-class
+entry (ADR 0021's "Upstream adapters" amendment, D6, which defines the
+file's four entry classes — `security`, `contract`, `licensing`,
+`temporary` — and reserves gate failure for the last): a temporary
+pre-release exception, such as the stable tournament-manager aggregate's
+deferral, must be resolved before day-0, not merely documented; the file's
+permanent `security`/`contract`/`licensing` entries never fail the gate.
 
 ## Open questions
 

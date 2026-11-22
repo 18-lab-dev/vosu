@@ -74,7 +74,10 @@ extern "C" {
  * VOSU_ERR_INVALID_ARGUMENT rather than silently truncating it; a sender
  * whose content is naturally splittable (a tree listing, which already
  * carries `truncated: bool`; a STATE_UPDATE, which may send one namespace's
- * changed leaves as more than one message) splits instead. A host rejects
+ * changed leaves as more than one message, each but the last setting its
+ * own `more: true` so a receiver applies the whole set only once the last
+ * part arrives — see docs/v2/plugin-abi.md §6.12) splits instead. A host
+ * rejects
  * an oversize send with VOSU_ERR_INVALID_ARGUMENT before it ever reaches a
  * `vosu plugin-host` ring, so every ring's fixed capacity only has to hold
  * one frame at this cap plus its frame header — a connection is never
@@ -86,6 +89,14 @@ extern "C" {
  * specifically; equal to VOSU_FRAME_MAX_BYTES, since a batch is one
  * message like any other and needs no narrower cap of its own. */
 #define VOSU_PUBLISH_BATCH_MAX_BYTES VOSU_FRAME_MAX_BYTES
+
+/* Upper bound on `len` in a VOSU_OP_STREAM_READ request, and so on the
+ * `data` a matching VOSU_OP_STREAM_CHUNK reply may return: strictly below
+ * VOSU_FRAME_MAX_BYTES, leaving room for the reply's own CBOR map/key/
+ * byte-string-header overhead (a handful of bytes) so that returning
+ * exactly `len` bytes of data can never itself produce a message over the
+ * universal cap. */
+#define VOSU_STREAM_CHUNK_MAX_BYTES (VOSU_FRAME_MAX_BYTES - 64u)
 
 /* ---------------------------------------------------------------------
  * Primitives

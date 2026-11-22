@@ -181,24 +181,33 @@ rationale in `docs/v2/implementation-plan.md` section 10):
   `/websocket/v2/subscribe` addition, which M4a removes — see
   `docs/v2/catalog-v2.md`'s amended "User overlays" migration entry for the
   resulting notice-and-attribution behavior.
-- **D6 Discovery parity and temporary pre-release divergences (second
-  re-review, F2/F3).** `vosu.osu.tourney` is `null` exactly where 1.x omits
-  the `tourney` key (the lazer multi-spectating path before the first
-  lobby read lands); the upstream adapter drops the key from its wire
-  output when the published value is `null`, matching 1.x's own omission.
-  "Adapters diverge only for security" (above, line 87) is amended with
-  one narrow, dated carve-out: the divergence file may additionally list a
-  temporary pre-release exception for a feature not yet built, each entry
-  naming the feature, the gap, and the task that closes it; every such
-  entry must be gone — the file must contain only security divergences —
-  before the day-0 release gate passes (`docs/v2/catalog-v2.md` "Day-0
-  release check"). The one entry adopted under this carve-out at this
-  freeze is the stable tournament-manager aggregate
+- **D6 Discovery parity and divergence-file classes (third/fourth
+  re-review, F2/F3/G1).** `vosu.osu.tourney` is `null` exactly where 1.x
+  omits the `tourney` key (the lazer multi-spectating path before the
+  first lobby read lands); every upstream-compatible adapter that carries
+  `tourney` (the upstream v2 adapter and the gosuMemory v1 adapter, both
+  of which 1.x also omits the key for) drops the key from its wire output
+  when the published value is `null`, matching 1.x's own omission.
+  "Adapters diverge only for security" (above, line 87) is amended: every
+  divergence-file entry (above, and `/api/ingame`'s, line 101) carries one
+  of four classes — `security` (the sandbox header, path confinement, peer
+  and Origin policy, request limits: permanent), `contract` (the ADR 0004
+  legacy calculation endpoint's separate contract, line 90: permanent),
+  `licensing` (`/api/ingame`'s functional-rather-than-byte-identical
+  compatibility, line 101: permanent, since vosu cannot ship upstream's
+  LGPL assets), and `temporary` (a pre-release gap with a task that closes
+  it, newly adopted here: must be gone before the day-0 release gate
+  passes, `docs/v2/catalog-v2.md` "Day-0 release check"). The gate fails
+  closed only when a `temporary` entry remains; the three permanent
+  classes never fail it, so the file keeping `/api/ingame`'s and ADR
+  0004's entries forever does not block release. The one `temporary` entry
+  adopted at this freeze is the stable tournament-manager aggregate
   (`docs/v2/implementation-plan.md`'s M4a-or-later task): until it lands,
   `stable-tournament`'s `tourney` members (`v1`, `v2`, `v2-precise`) are
   exempted from the M2/M4a byte-for-byte exits. Why: deferring the
   aggregate indefinitely (the first A1 review round's resolution) made
   those exit tests impossible to pass against the committed oracle, since
-  `stable-tournament` encodes real manager and spectator data; building it
-  is the only fix that does not also carve the oracle fixture itself out of
-  the exit tests permanently.
+  `stable-tournament` encodes real manager and spectator data; a gate that
+  failed on any non-security entry could never pass, since `/api/ingame`'s
+  and ADR 0004's entries are permanent and not about security; per-entry
+  classes let the gate target exactly the pre-release gaps it should.

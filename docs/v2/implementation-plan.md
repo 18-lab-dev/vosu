@@ -389,8 +389,10 @@ Scope:
   `core::mem::offset_of!`, and a C translation unit with `_Static_assert`s
   on the same table compiled from a test, so header and Rust cannot drift;
   CBOR codecs over `ciborium` (D13); flat payload validation (offsets inside
-  the buffer, 64 KiB `VOSU_READ_PLAN_MAX_BYTES` and the separate 1 MiB
-  `VOSU_PUBLISH_BATCH_MAX_BYTES`, alignment, unknown flag bits rejected); `Plugin`
+  the buffer, 64 KiB `VOSU_READ_PLAN_MAX_BYTES`, the universal 1 MiB
+  `VOSU_FRAME_MAX_BYTES` every opcode shares (F4; `VOSU_PUBLISH_BATCH_MAX_BYTES`
+  is an alias of it, not a cap of its own) and the narrower
+  `VOSU_STREAM_CHUNK_MAX_BYTES`, alignment, unknown flag bits rejected); `Plugin`
   (`&mut self`, serialized by an SDK lock) and `ConcurrentPlugin` (`&self`,
   `Sync`) with `export_plugin!` producing `vosu_plugin_entry_v1` for
   `cdylib` builds (D22); `PlanMemory` behind `unstable-sync-reads` (D5).
@@ -530,11 +532,11 @@ their schemas (`jsonschema`, dev-only, `default-features = false`) and every
 mapped value equals the 1.x `/json/v2` or precise value at its 1.x path —
 except `stable-tournament`'s `tourney` members (`v1`, `v2`, `v2-precise`),
 exempted until the stable manager aggregate lands (D6, M4a-or-later task,
-recorded as a temporary non-security divergence in
-`tests/fixtures/upstream/DIVERGENCES.md`); the
+recorded as a `temporary` divergence in
+`tests/fixtures/upstream/DIVERGENCES.md`, G1); the
 `internal` subtree is absent from every API-facing projection — whole
 document, whole namespace, `""` and `/vosu.osu` subscriptions and their
-encoding caches, session events — and `STATE_UPDATE`/`vosu-surface` reads
+encoding caches, session events, and debug logs — and `STATE_UPDATE`/`vosu-surface` reads
 are gated by `requires`/`optional` naming `field:vosu.osu.internal` or a
 descendant, never granted by `field:vosu.osu`; a concurrent regular/precise
 publisher test proving no snapshot mixes two batches.
@@ -631,21 +633,30 @@ Scope:
   and `src/api/snapshot.rs`.
 - **Stable tournament-manager aggregate (D6, M4a-or-later; must land before
   the 2.0 release).** The osu! plugin attaches the `--tournament` process
-  as the manager instead of declining it (gap 5/D6's argv-skip list drops
-  `--tournament`), and builds `vosu.osu.tourney` from the matched
+  as an ordinary identified `stable` session instead of declining it —
+  `--tournament` leaves plugin-abi.md:140's decline list once this task
+  lands, and is declined under it until then — visible in
+  `/api/v1/sessions` and eligible for focus under the normal Focus rule
+  like any other identified session, matching 1.x's manager-wins-focus
+  intent (`src/instance.rs:603-613`) without a manager-specific override.
+  It builds `vosu.osu.tourney` from the matched
   spectators' sessions exactly as 1.x's stable branch does
   (`src/api/v2/tourney.rs`'s `build_tourney` manager path), publishing the
   aggregate under `vosu.osu.tourney` like any other field. Landing this
   task removes the `stable-tournament` divergence below and the M2/M4a
   exit exemptions for it.
 - The divergence file next to the fixtures (`tests/fixtures/upstream/DIVERGENCES.md`)
-  lists every security divergence with its reason (sandbox header, path
-  confinement, peer and Origin policy, request limits, ADR 0004 endpoint,
-  `/api/ingame` functional compatibility), plus exactly one temporary
-  non-security entry — `stable-tournament`'s `tourney` members (`v1`, `v2`,
-  `v2-precise`) — until the stable manager aggregate task above lands; the
-  M8 day-0 gate (below) requires this file to contain only security
-  entries, so that entry must be gone by day-0.
+  lists every divergence with its reason and a per-entry class (G1):
+  `security` (sandbox header, path confinement, peer and Origin policy,
+  request limits — permanent), `contract` (the ADR 0004 legacy calculation
+  endpoint's separate contract — permanent), `licensing` (`/api/ingame`'s
+  functional-rather-than-byte-identical compatibility, ADR 0021 — permanent,
+  since vosu cannot ship upstream's LGPL assets), and `temporary` (a
+  pre-release gap with a task that closes it — must be gone by day-0). The
+  one `temporary` entry at this freeze is `stable-tournament`'s `tourney`
+  members (`v1`, `v2`, `v2-precise`), until the stable manager aggregate
+  task above lands; the M8 day-0 gate (below) fails closed only when a
+  `temporary` entry remains, never merely for the file being non-empty.
 
 Exit: `cargo test --locked --test state_api_compat`, rewritten to drive the
 adapters from bus input and compared byte for byte with the committed source
@@ -843,9 +854,10 @@ osu!-specific keys into `vosu.osu` settings (deleting bridge B2), idempotent
 like `src/config/migration.rs`; the day-0 check (catalog-v2.md "Day-0
 release check") as `scripts/check-day0.py` wired into `release.yml` and
 covered by `scripts/test_gate_tooling.py`, extended to fail closed when
-`tests/fixtures/upstream/DIVERGENCES.md` contains any entry that is not a
-security divergence (D6's temporary `stable-tournament` exemption must be
-gone by day-0, which the stable manager aggregate task removes);
+`tests/fixtures/upstream/DIVERGENCES.md` contains any `temporary`-class
+entry (D6's `stable-tournament` exemption must be gone by day-0, which the
+stable manager aggregate task removes; the file's permanent `security`,
+`contract`, and `licensing` entries never fail the gate);
 README, quickstart, CHANGELOG,
 architecture, and ADR statuses; packaging (section 7). Release requires
 every official plugin (vosu-tools plugins and the vosulay supervisor) to
@@ -1174,9 +1186,9 @@ states what was adopted and why. Spec amendments land in A1.
   `vosu.osu`'s top-level `/internal` key and rejected anywhere else at schema
   load; `/internal` carries **paths only** (per-variant fields, D8); one
   projector function strips it from every API-facing document
-  unconditionally — whole document, whole namespace, every subscription and
-  encoding cache, session events — and gates `STATE_UPDATE` and
-  `vosu-surface` reads by `requires`/`optional` naming
+  unconditionally — whole document, whole namespace, every subscription
+  and encoding cache, session events, and debug logs — and gates
+  `STATE_UPDATE` and `vosu-surface` reads by `requires`/`optional` naming
   `field:vosu.osu.internal` or a descendant of it, never by the
   whole-namespace `field:vosu.osu`. The
   streamCompanion adapter computes strains, breaks, kiai points, and timing
@@ -1207,9 +1219,10 @@ states what was adopted and why. Spec amendments land in A1.
   precise sampling; B1 cannot cross a process boundary.
 - **D4 `VOSU_OP_PUBLISH_BATCH`.** A new flat opcode carries one handle, a
   count, and an array of `vosu_field_publish_header` entries plus trailing
-  data, capped by its own `VOSU_PUBLISH_BATCH_MAX_BYTES` (1 MiB, not the
+  data, capped by `VOSU_PUBLISH_BATCH_MAX_BYTES` — an alias of the
+  universal `VOSU_FRAME_MAX_BYTES` (1 MiB, F4, G6), not the narrower
   64 KiB `VOSU_READ_PLAN_MAX_BYTES`, since a batch's whole-value CBOR
-  entries are not bounded the small fixed-width way a read plan's ops are),
+  entries are not bounded the small fixed-width way a read plan's ops are —
   validated as a whole: all or
   nothing, one status, one commit per message, no pending host state.
   Receivers reject unknown `vosu_message.flags` bits with
@@ -1258,15 +1271,23 @@ states what was adopted and why. Spec amendments land in A1.
   everywhere else. The stable tournament-manager aggregate (1.x's
   `is_tournament_manager()` branch, production-dead per the "Why" below)
   must exist before the 2.0 release — it is an explicit M4a-or-later task:
-  attach the `--tournament` process as the manager instead of declining it,
-  and publish the resulting aggregate under `vosu.osu.tourney` exactly as
-  1.x's stable branch builds it. Until that task lands, the osu! plugin
+  attach the `--tournament` process as the manager instead of declining it
+  — it becomes an ordinary identified `stable` session (`SESSION_IDENTIFY`
+  `variant: "stable"`), visible in `/api/v1/sessions` and eligible for
+  focus under the normal Focus rule (`docs/v2/api-v1.md`) like any other
+  identified session, matching 1.x's manager-wins-focus intent
+  (`src/instance.rs:603-613`) without a manager-specific override — and
+  publish the resulting aggregate under `vosu.osu.tourney` exactly as 1.x's
+  stable branch builds it. Until that task lands, `--tournament` stays
+  declined exactly as D6 originally adopted, and the osu! plugin
   takes 1.x's "no manager found" branch unconditionally on stable, matching
   1.x's own production behavior; the M2 and M4a exits exempt exactly the
   `stable-tournament` oracle case's `tourney` members (`v1`, `v2`,
-  `v2-precise`), recorded as a temporary non-security divergence in
-  `tests/fixtures/upstream/DIVERGENCES.md`, and the M8 day-0 gate requires
-  that file to contain only security entries, so this entry must be
+  `v2-precise`), recorded as a `temporary`-class divergence in
+  `tests/fixtures/upstream/DIVERGENCES.md` (G1's per-entry class scheme), and
+  the M8 day-0 gate fails closed only on a remaining `temporary` entry — the
+  file's permanent `security`/`contract`/`licensing` entries never fail it —
+  so this entry must be
   removed — the aggregate task must land — before day-0. "Never identify"
   is never used as a deliberate
   state. Why: 1.x
