@@ -389,8 +389,8 @@ Scope:
   `core::mem::offset_of!`, and a C translation unit with `_Static_assert`s
   on the same table compiled from a test, so header and Rust cannot drift;
   CBOR codecs over `ciborium` (D13); flat payload validation (offsets inside
-  the buffer, 64 KiB `VOSU_READ_PLAN_MAX_BYTES` and the matching
-  `PUBLISH_BATCH` cap, alignment, unknown flag bits rejected); `Plugin`
+  the buffer, 64 KiB `VOSU_READ_PLAN_MAX_BYTES` and the separate 1 MiB
+  `VOSU_PUBLISH_BATCH_MAX_BYTES`, alignment, unknown flag bits rejected); `Plugin`
   (`&mut self`, serialized by an SDK lock) and `ConcurrentPlugin` (`&self`,
   `Sync`) with `export_plugin!` producing `vosu_plugin_entry_v1` for
   `cdylib` builds (D22); `PlanMemory` behind `unstable-sync-reads` (D5).
@@ -414,11 +414,13 @@ Scope:
   so the measured in-kernel filtering that `AGENTS.md:130` requires is kept.
 - `vosu-osu`: matchers `process_names`/`process_path_patterns` plus
   `comm_hints = ["osu!", "osulazer.exe"]`; `SESSION_DECLINE` reproduces
-  `should_skip` (`src/instance/discovery.rs:118-123`: `--tournament` and
-  `debug-client-id`) and the Linux conditional fallback
-  (`src/instance/discovery.rs:73-107`), which depends on other processes
-  and cannot be a full-match regex (plugin-abi.md:115); `-spectateclient N`
-  processes are identified as ordinary sessions with their IPC id, as 1.x
+  `should_skip` only (`src/instance/discovery.rs:118-123`: `--tournament`
+  and `debug-client-id`); the Linux conditional fallback
+  (`src/instance/discovery.rs:73-107`, which depends on other processes and
+  cannot be a full-match regex, plugin-abi.md:115) is expressed as
+  `SESSION_IDENTIFY`'s `variant` instead, never a decline, since 1.x never
+  skips those processes; `-spectateclient N` processes are identified as
+  ordinary sessions with their IPC id in `vosu.osu.session.ipcId`, as 1.x
   attaches them (`src/instance.rs:68-80`, D6); the lazer offset-resolver
   lifecycle moves from `src/instance.rs` into the plugin on
   `SESSION_ATTACHED`; reads through `PlanMemory` with the synchronous flag,
@@ -501,15 +503,19 @@ Scope:
   `requires` checks (D3).
 - `x-visibility: "plugins"` accepted only on `vosu.osu`'s top-level
   `/internal` key and rejected anywhere else at schema load; one projector
-  function strips it from every API-facing document and from `STATE_UPDATE`
-  and `vosu-surface` reads for consumers that do not `require` it (D2).
+  function strips it from every API-facing document unconditionally, and
+  gates `STATE_UPDATE` and `vosu-surface` reads by `requires`/`optional`
+  naming `field:vosu.osu.internal` or a descendant of it, never by the
+  whole-namespace `field:vosu.osu` (D2).
 - `vosu-osu` projects each `StateBundleSnapshot` onto `vosu.status`,
   `vosu.chart`, `vosu.play`, `vosu.skin`, `vosu.osu`, and
   `vosu.osu/internal/paths` (per-variant fields, D8), publishing changed
   leaves as one batch per sample, following state-schema.md "1.x-to-2.0
   field mapping", "`keys`", "`skin`", and "Common-layer coverage";
   `vosu.osu.session.ipcId` carries the spectator IPC id (D6) and
-  `vosu.osu.tourney` is always `null` (D6). Resource references arrive in M3; until then the
+  `vosu.osu.tourney` is published exactly where 1.x builds it — the lazer
+  multi-spectating path and 1.x's default empty object otherwise, never
+  `null` — with only the stable manager aggregate deferred (D6). Resource references arrive in M3; until then the
   manifest declares no `[[resource_kinds]]`, so `vosu.chart.resources` and
   `vosu.skin.tree` are correctly absent.
 - Bridge B1 still feeds the 1.x surfaces; reader demand is the union of the
@@ -1117,8 +1123,9 @@ draft, exposed these gaps. Each is closed by an adopted decision in section
 - A regular and a precise reader publishing concurrently never produce a
   snapshot that mixes their batches; an invalid entry rejects its whole
   `PUBLISH_BATCH` and commits nothing.
-- A declined process is not re-offered until its PID generation ends; a
-  tournament spectator client is a visible session with its IPC id.
+- A declined process goes to the next matching plugin in install order and
+  is dropped for its PID generation only once none remains; a tournament
+  spectator client is a visible session with its IPC id.
 - `VOSU_READ_PLAN_SYNC` submitted from a dispatch thread is refused in both
   runtimes.
 
@@ -1171,7 +1178,10 @@ states what was adopted and why. Spec amendments land in A1.
   precise sampling; B1 cannot cross a process boundary.
 - **D4 `VOSU_OP_PUBLISH_BATCH`.** A new flat opcode carries one handle, a
   count, and an array of `vosu_field_publish_header` entries plus trailing
-  data, capped like `VOSU_READ_PLAN_MAX_BYTES`, validated as a whole: all or
+  data, capped by its own `VOSU_PUBLISH_BATCH_MAX_BYTES` (1 MiB, not the
+  64 KiB `VOSU_READ_PLAN_MAX_BYTES`, since a batch's whole-value CBOR
+  entries are not bounded the small fixed-width way a read plan's ops are),
+  validated as a whole: all or
   nothing, one status, one commit per message, no pending host state.
   Receivers reject unknown `vosu_message.flags` bits with
   `VOSU_ERR_INVALID_ARGUMENT` (today only "0 unless the spec says otherwise",
@@ -1211,8 +1221,14 @@ states what was adopted and why. Spec amendments land in A1.
   expresses the fallback choice as `SESSION_IDENTIFY`'s `variant`. Tournament
   spectator clients are identified as normal sessions, with their IPC id in
   `vosu.osu.session.ipcId`, as 1.x attaches them. `vosu.osu.tourney` is
-  always `null` until real manager detection exists, which needs its own
-  decision. "Never identify" is never used as a deliberate state. Why: 1.x
+  published exactly where 1.x builds it (`src/api/v2/tourney.rs`): the
+  lazer multi-spectating path (`ipcState == 11`) and 1.x's default empty
+  object everywhere else, never `null`. Only the stable tournament-manager
+  aggregate (1.x's `is_tournament_manager()` branch, production-dead per
+  the "Why" below) is deferred to its own decision; the osu! plugin takes
+  1.x's "no manager found" branch unconditionally on stable, matching 1.x's
+  own production behavior. "Never identify" is never used as a deliberate
+  state. Why: 1.x
   production never marks a tournament manager (`src/instance.rs:137` has
   only test callers; `src/instance.rs:473`) and exposes spectators as
   selectable instances (`src/instance.rs:68-80`, `:603-620`), so hiding them

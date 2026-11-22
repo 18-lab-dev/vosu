@@ -262,7 +262,7 @@
   "properties": {
     "session": {
       "type": "object",
-      "required": ["playTime", "playCount", "paused", "focused", "ipcId"],
+      "required": ["playTime", "playCount", "paused", "focused"],
       "additionalProperties": false,
       "description": "osu!-specific session bookkeeping not covered by vosu.client.",
       "properties": {
@@ -270,7 +270,7 @@
         "playCount": { "type": "integer", "minimum": 0 },
         "paused": { "type": "boolean", "x-sampling-lane": { "lane": "regular", "activity": "gameplay" } },
         "focused": { "type": ["boolean", "null"], "description": "Windows-only: whether the client window has OS input focus. `null` elsewhere." },
-        "ipcId": { "type": ["integer", "null"], "description": "D6: the tournament spectator client's IPC id, as 1.x attaches it; `null` for every non-spectator session. A spectator session is identified as a normal session, never hidden for being one." }
+        "ipcId": { "type": ["number", "null"], "description": "D6, optional (1.1.0 bump, additive alongside `internal`): the tournament spectator client's IPC id, as 1.x stores it (`Option<f64>`); `null` or absent for every non-spectator session. A spectator session is identified as a normal session, never hidden for being one." }
       }
     },
     "profile": {
@@ -934,9 +934,9 @@
               }
             }
           }
-        },
-        { "type": "null" }
+        }
       ],
+      "description": "D6: populated with real data on the lazer multi-spectating path (ipcState 11); 1.x's default empty object (scoreVisible: false, clients: [], and so on) otherwise. Never null. The stable tournament-manager aggregate is deferred to its own decision; the osu! plugin takes 1.x's no-manager-found branch unconditionally on stable.",
       "x-sampling-lane": { "lane": "regular", "activity": "gameplay" }
     },
     "internal": {

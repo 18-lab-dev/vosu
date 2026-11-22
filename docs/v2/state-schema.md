@@ -40,9 +40,10 @@ RFC 6901 JSON Pointer relative to the namespace root (`docs/v2/plugin-abi.md`,
 
 A `field:` requirement's version is always the owning namespace's schema
 version — this document's `schemas/*.schema.json` `version` key, `1.0.0` for
-every namespace at this freeze except `vosu.osu` (bumped to `1.1.0` by the
-D2/D8 `internal` carve-out, an additive minor change) — never a value a
-plugin or catalog entry picks independently (`docs/v2/catalog-v2.md`).
+every namespace at this freeze except `vosu.osu` (bumped to `1.1.0` by two
+additive, optional-field changes: the D2/D8 `internal` subtree and D6's
+`session.ipcId`) — never a value a plugin or catalog entry picks
+independently (`docs/v2/catalog-v2.md`).
 
 ## Namespaces
 
@@ -172,9 +173,10 @@ full 1.x-to-2.0 mapping.
 ### Restructuring, at a glance
 
 - `vosu.osu.session` holds osu!-specific session bookkeeping (`playTime`,
-  `playCount`, `paused`, `focused`, `ipcId` — D6: a tournament spectator
-  client's IPC id, `null` for every non-spectator session) that sits beside,
-  not inside, `vosu.client`.
+  `playCount`, `paused`, `focused`, and the optional `ipcId` — D6: a
+  tournament spectator client's IPC id as 1.x stores it, a nullable number;
+  `null` or absent for every non-spectator session) that sits beside, not
+  inside, `vosu.client`.
 - `vosu.osu.beatmap` keeps full osu! chart detail (difficulty stats, hit
   windows, convert flag, checksum, ids); the subset listed under
   [`vosu.chart`](#vosu-chart) is the same underlying data, additionally
@@ -259,7 +261,7 @@ carry the same values while subscribed, at different cadences.
 | `folders.*`, `files.*`, `directPath.*` | removed; use [resource references](#resource-references) under `vosu.chart.resources` and `vosu.skin.tree` | ADR 0021: no "current file" lookups in the 2.0 surface. Unchanged in the upstream adapter. |
 | `settings.*` | `vosu.osu.settings.*` | `interfaceVisible`, `replayUIVisible`, `bassDensity` keep their [sampling-lane](#sampling-lanes) roles; `skin` sub-object is replaced by [`vosu.osu.skin`](#skin-vosu-skin-and-vosu-osu-skin) plus the common `vosu.skin.name`. |
 | `room` | `vosu.osu.room` | |
-| `tourney` | `vosu.osu.tourney` | Always `null` until real tournament-manager detection exists (D6), which needs its own decision; the schema permits a value so a later decision is additive, not breaking. |
+| `tourney` | `vosu.osu.tourney` | Published exactly where 1.x builds it (D6): the lazer multi-spectating path (`ipcState == 11`, populated `clients[]`) and 1.x's default empty object (`scoreVisible: false`, `clients: []`, and so on) everywhere else; never `null`. Only the stable tournament-manager aggregate is deferred to its own decision — the osu! plugin takes 1.x's "no manager found" branch unconditionally on stable, which 1.x itself takes in every production case today. |
 | `GET /files/skin/` metadata (`client`, `name`, `files`, `builtin`, `base`, `entries[]`, `truncated`) | `vosu.skin.name` (common `name`); `vosu.osu.skin.{builtin,base,variant,files}`; `entries`/`truncated` are now the tree index at `vosu.skin.tree`'s `url` (`GET /api/v1/trees/{id}/`, ADR 0021) rather than a duplicated inline list | |
 
 ### `keys` (`vosu.osu.keys`)
@@ -292,9 +294,15 @@ storage has no filesystem folder; `vosu.osu.settings.client`/compatibility
 ### `internal` (`vosu.osu.internal`)
 
 **Plugin-only; D2. This section owns the carve-out's rule; every other spec
-summarizes it.** The sole `"x-visibility": "plugins"` subtree in this
-freeze. `internal` is an **optional** field (never in the namespace's
-`required` list, unlike every other top-level `vosu.osu` key): the osu!
+summarizes it.** `"x-visibility": "plugins"` is a schema keyword a namespace
+schema may set on exactly one subtree's definition (a sibling of that
+subtree's `type`/`properties`/etc., not a separate top-level list); it is
+accepted only on `vosu.osu`'s top-level `/internal` key and rejected
+anywhere else, in any namespace schema, at schema load — including on a
+third-party namespace schema `docs/v2/catalog-v2.md`'s D7 profile admits.
+`internal` is the sole subtree that carries it in this freeze. `internal`
+is an **optional** field (never in the namespace's `required` list, unlike
+every other top-level `vosu.osu` key): the osu!
 plugin publishes it exactly like any other field, but a consumer that
 predates D8 simply sees it absent, which is why adding it is a
 backward-compatible minor bump (1.1.0) rather than a breaking one.
@@ -342,9 +350,10 @@ when unknown or not applicable to the session's variant:
 `internal.paths.stable` is `null` entirely on a lazer session and vice
 versa. A writer plugin or tool imports files through the
 `vosu.osu.beatmap.import` action (M3) rather than writing into `paths`
-directly; the install plan gains a field flagging a plugin that `requires`
-`field:vosu.osu.internal.paths`, labelled as a disclosure permission, not a
-sandbox escape (`docs/v2/catalog-v2.md`).
+directly; the install plan gains a field flagging a plugin whose resolved
+`requires`/`optional` names `field:vosu.osu.internal` or a descendant of it
+(such as `field:vosu.osu.internal.paths`), labelled as a disclosure
+permission, not a sandbox escape (`docs/v2/catalog-v2.md`).
 
 ## Resource references
 

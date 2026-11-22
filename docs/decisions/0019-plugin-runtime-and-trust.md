@@ -154,7 +154,8 @@ rationale in `docs/v2/implementation-plan.md` section 10):
   listed exhaustively in [`docs/v2/plugin-abi.md`](../v2/plugin-abi.md) §7.5:
   route and WebSocket-feed registration on a listener role; state reads
   through the same subscription/demand/`requires` path as
-  `STATE_SUBSCRIBE`; root-confined file responses against `ROOT_DECLARE`
+  `STATE_SUBSCRIBE`; root-confined file responses against the
+  session-owning game plugin's own `ROOT_DECLARE`
   handles, never a path string read off the bus
   ([ADR 0021](0021-api-v1-and-upstream-adapters.md)'s D2 amendment);
   management-route provenance (dashboard-origin, `X-Vosu-CSRF`). It grants
@@ -167,13 +168,14 @@ rationale in `docs/v2/implementation-plan.md` section 10):
   crates (`vosu-osu-model`, `vosu-osu-calc`, `vosu-osu-reader`,
   `vosu-osu-state`, `vosu-osu`) and core spans four
   (`vosu-sys`, `vosu-net`, `vosu-surface`, `vosu-core`), per
-  `docs/v2/implementation-plan.md` section 2's target layout. Two further
-  crates are justified by dependency direction rather than counted against
-  either plugin or core: `vosu-osu-model` (osu! value types shared by the
-  osu! plugin's own reader, calculator, and the adapter crates, so none of
-  those depends on another) and `vosu-adapter-support` (upstream-wire
-  machinery shared by the three adapter crates, which are not part of the
-  osu! plugin's five). The build budget (section 8 there) covers prepush
+  `docs/v2/implementation-plan.md` section 2's target layout. One further
+  crate, `vosu-adapter-support`, is justified by dependency direction
+  rather than counted against either plugin or core: upstream-wire
+  machinery shared by the three adapter crates (none of the osu! plugin's
+  five), so none of them depends on another. `vosu-osu-model` is one of
+  the osu! plugin's own five, not a further crate, but is itself shared by
+  that plugin's reader, calculator, and the adapter crates for the same
+  dependency-direction reason. The build budget (section 8 there) covers prepush
   wall-clock, native Windows Clippy/test/doctest, clean and CI builds, and
   feature-unification rebuilds, not only incremental edits.
 - **D10 Names.** The bundled adapter crates and plugin ids are

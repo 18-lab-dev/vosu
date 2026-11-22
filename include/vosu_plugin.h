@@ -66,7 +66,13 @@ extern "C" {
  * array/object values (VOSU_VALUE_CBOR), which are not bounded the way a
  * read plan's small fixed-width ops are, so it needs the larger of the
  * two existing size ceilings rather than a new one. A host rejects a
- * larger batch with VOSU_ERR_INVALID_ARGUMENT before applying any entry. */
+ * larger batch with VOSU_ERR_INVALID_ARGUMENT before applying any entry;
+ * under `vosu plugin-host` (docs/v2/plugin-abi.md §7.2), `send` itself
+ * rejects a frame this large the same way, before it ever reaches the
+ * ring, since every ring's fixed capacity is required to hold at least
+ * one largest legal frame (a VOSU_PUBLISH_BATCH payload at this cap, plus
+ * its frame header) — a connection is never treated as unresponsive merely
+ * because the frame it was asked to carry could never fit. */
 #define VOSU_PUBLISH_BATCH_MAX_BYTES (1024u * 1024u)
 
 /* ---------------------------------------------------------------------
@@ -242,8 +248,11 @@ typedef struct vosu_field_publish_header {
  *   - any entry would itself be semantically rejected as a standalone
  *     PUBLISH_FIELD (an uncovered field, or `vosu.client`, which a plugin
  *     never publishes directly);
- *   - two entries name the same (`ns`, `pointer`) pair (no ordering or
- *     last-write-wins rule is defined for a duplicate within one batch).
+ *   - two entries share the same `ns` and their `pointer`s overlap — equal,
+ *     or one a prefix of the other at a `/`-segment boundary (e.g. `/play`
+ *     and `/play/combo`), since the ancestor entry's value would cover the
+ *     descendant entry's own write; no ordering or last-write-wins rule is
+ *     defined for an overlap within one batch, it is rejected instead.
  * Otherwise every entry is applied as one commit — a single VOSU_OK
  * answers the whole message, never a per-entry status, and core never
  * holds a partially-applied batch as pending host state between entries. */
