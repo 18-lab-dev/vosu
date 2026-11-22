@@ -189,7 +189,6 @@ impl Logger {
         OpenOptions::new().create(true).append(true).open(&latest)?;
 
         let (tx, rx) = mpsc::channel(options.queue_capacity.max(1));
-        let runtime = tokio::runtime::Handle::current();
         let writer_console = console.clone();
         let progress = Arc::new(Mutex::new(ProgressData {
             next_token: 1,
@@ -198,9 +197,22 @@ impl Logger {
             disabled: false,
         }));
         let writer_progress = Arc::clone(&progress);
-        let writer = tokio::task::spawn_blocking(move || {
-            runtime.block_on(writer_task(latest, rx, writer_console, writer_progress));
-        });
+        // `writer_task` is already async and only ever awaits channel
+        // receives and async (`tokio::fs`) I/O, so it belongs on a plain
+        // task, not wrapped in `spawn_blocking` driving a *second*,
+        // independent `block_on` of this same handle: on a
+        // `current_thread` runtime (every plain `#[tokio::test]`,
+        // including this crate's own `plugin::logging` tests) there is
+        // only one scheduler "core" to drive, and a second `block_on`
+        // entry from another thread must wait for the first to park
+        // before it can make any progress at all. With a background
+        // task that only wakes on its own ~1s cadence (`PluginLogRouter`'s
+        // flush ticker) contending for that same core, the two can starve
+        // each other for an unbounded time — observed as this logger
+        // never finishing `flush()` on native Windows, where the
+        // handoff is slow enough to make that starvation practically
+        // permanent instead of just rare.
+        let writer = tokio::task::spawn(writer_task(latest, rx, writer_console, writer_progress));
         Ok(Self {
             inner: Arc::new(Inner {
                 version: Arc::from(options.version),
