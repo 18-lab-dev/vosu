@@ -16,16 +16,17 @@ and alternatives are not repeated here. The 1.x tool protocol
 `src/tools/catalog.rs`, `src/tools/catalog_sources.rs` are the baseline this
 spec changes; differences from 1.x are called out explicitly.
 
-Plugin ABI runtime fields (`manifest_version`, `abi_version`, `runtime`,
-`concurrent_dispatch`, `settings_schema`, `[targets.*]`, `[match]`,
-`root_slots`, and `[[resource_kinds]]`), the process matcher's matching
-a plugin implements against the C ABI are defined in `docs/v2/plugin-abi.md`;
-this spec references them by name without redefining them, and owns every
-other `plugin.toml` field (below). Field semantics are defined in
-`docs/v2/state-schema.md`; action invocation (the HTTP route, session header,
-and authorization) is defined in `docs/v2/api-v1.md`. The shared naming
-contract (plugin ids, capability ids, namespaces, sessions) is normative for
-every identifier in this document.
+Plugin ABI runtime fields (`abi_version`, `runtime`, `concurrent_dispatch`,
+`settings_schema`, `[targets.*]`, `[match]`, `root_slots`, and
+`[[resource_kinds]]`), the process matcher's matching semantics, and
+everything else a plugin implements against the C ABI are defined in
+`docs/v2/plugin-abi.md`; this spec references them by name without
+redefining them, and owns the unified `manifest.toml` format every package
+kind uses (below), including its shared fields and `manifest_version`. Field
+semantics are defined in `docs/v2/state-schema.md`; action invocation (the
+HTTP route, session header, and authorization) is defined in
+`docs/v2/api-v1.md`. The shared naming contract (plugin ids, capability ids,
+namespaces, sessions) is normative for every identifier in this document.
 
 ## Capability fields (plugin, tool, and overlay manifests)
 
@@ -167,30 +168,79 @@ Every `provides`/`requires`/`optional` entry for a `game:` id uses the
 literal version `"*"`; a `game:` entry with any other version string is a
 validation error.
 
-## Plugin manifest v2 (`plugin.toml`, metadata fields)
+## Package manifest v2 (`manifest.toml`)
 
-Runtime fields — `manifest_version`, `abi_version`, `runtime`,
-`concurrent_dispatch`, `settings_schema`, `[targets.*]`, `[match]`,
-`root_slots`, and `[[resource_kinds]]` — are defined in
-`docs/v2/plugin-abi.md` and not repeated here.
-This section defines the remaining fields of the same `plugin.toml`: identity
-and display metadata, `provides`/`requires`/`optional` (above), and
-`[[actions]]`.
+Every plugin, tool, and overlay package is `manifest.toml` at its package
+root (an overlay package also has `index.html` at the root); it replaces
+1.x's `tool.toml` and the earlier, separately-proposed `plugin.toml` and
+`overlay.toml` with one format shared by every package kind. `metadata.txt`
+remains read-only legacy input: still read for an overlay with no
+`manifest.toml` (an existing 1.x install, or an overlay from the upstream
+community catalog), never extended with new fields; when both are present,
+`manifest.toml` wins and `metadata.txt` is ignored. `settings.json` stays
+its own separate file, unchanged from 1.x.
+
+### Shared fields
 
 ```toml
-id = "vosu.osu"                   # naming-contract plugin id: dotted, 2-4 segments
-name = "osu!"                     # display name
-version = "2.0.0"                 # the plugin's own release version (distinct from any `provides` field: version)
+manifest_version = 1              # required; this host accepts only 1
+kind = "plugin"                   # required; "plugin" | "tool" | "overlay"
+id = "vosu.osu"                   # grammar depends on `kind`, below
+name = "osu!"                     # required, display name
+version = "2.0.0"                 # required, semver: this package's own release version
 description = "…"                 # optional
 author = "18-LAB"                 # optional
 homepage = "https://…"            # optional
-icon = "icon.svg"                 # optional, path inside the plugin directory
-banner = "banner.webp"            # optional
+icon = "icon.svg"                 # optional, path inside the package root
+banner = "banner.webp"            # optional, path inside the package root
 host = ">=2.0.0, <3.0.0"          # required; semver requirement on the running vosu version
-replaces = []                     # optional, default []; see "replaces" below
-covers = ["field:vosu.play.combo", "field:vosu.chart.title"]  # optional, default []; common-namespace field: ids this plugin fills
+replaces = []                     # optional, default []; grammar matches `id`'s grammar for this kind
 
-# [[provides]] / [[requires]] / [[optional]]: see "Capability fields" above.
+# [[provides]] (kind = "plugin" only) / [[requires]] / [[optional]]: "Capability fields" above.
+```
+
+- `manifest_version` is the `manifest.toml` *format*'s own version, shared
+  by every kind; it is unrelated to a plugin's ABI major version
+  (`abi_version`, below) or to any package's own `version`.
+- `kind` selects which of the per-kind sections below apply; a field from a
+  section that does not apply to the declared `kind` is a manifest
+  validation error (for example `[ui]` on `kind = "plugin"`, or `runtime` on
+  `kind = "tool"`).
+- `id` uses the naming-contract plugin id grammar (dotted, 2–4 segments) for
+  `kind = "plugin"`, and the unchanged 1.x tool/overlay id grammar
+  (`^[a-z0-9][a-z0-9-]{0,31}$`) for `kind = "tool"` or `kind = "overlay"`.
+  `name`, `version`, `description`, `author`, `homepage`, `icon`, `banner`
+  have the same meaning and validation for every kind, matching the 1.x tool
+  manifest's identically-named fields (`docs/tools/protocol.md`). A plugin
+  `id` must not extend, or be extended by, another registered plugin id or
+  core-owned namespace (see "Namespace and kind parsing" above); tool and
+  overlay ids have no such cross-registration rule, as in 1.x.
+- `host` is the same `semver::VersionReq` field `catalog-v2.json` mirrors
+  per entry (below); a package's own manifest and its catalog entry must
+  agree.
+- `replaces` is a list of former ids this package's current `id` supersedes:
+  for `kind = "plugin"`, validated with the plugin-id grammar; for
+  `kind = "tool"`/`kind = "overlay"`, validated with the 1.x tool-id
+  grammar. In every case: not the package's own id, no duplicate or
+  ambiguous claim, and never naming another current id of the same kind
+  from the same source. A package cannot replace one of a different kind.
+- `provides` is valid only for `kind = "plugin"`; a non-empty `provides` on
+  `kind = "tool"` or `kind = "overlay"` is invalid (see "Capability fields"
+  above).
+
+### `kind = "plugin"`
+
+Runtime fields — `abi_version`, `runtime`, `concurrent_dispatch`,
+`settings_schema`, `[targets.*]`, `[match]`, `root_slots`, and
+`[[resource_kinds]]` — are defined in `docs/v2/plugin-abi.md` and not
+repeated here. This spec additionally defines, for `kind = "plugin"` only,
+`covers` and `[[actions]]`:
+
+```toml
+kind = "plugin"
+# … shared fields above …
+
+covers = ["field:vosu.play.combo", "field:vosu.chart.title"]  # optional, default []; common-namespace field: ids this plugin fills
 
 [[actions]]
 name = "beatmap.import"           # dot-segments, each [a-z0-9][a-z0-9-]{0,31}; full id is action:<plugin-id>.<name>
@@ -202,20 +252,6 @@ session = "required"              # "required" | "optional" | "none": whether in
 cli = true                        # also exposed as `vosux <plugin-id> beatmap.import [json-args]`
 ```
 
-- `id`, `name`, `version` are required; `description`, `author`, `homepage`,
-  `icon`, `banner` are optional, with the same meaning and validation as the
-  1.x tool manifest's identically-named fields (`docs/tools/protocol.md`).
-  `icon`/`banner` are paths inside the plugin directory, same file-type rules
-  as tools. `id` must not extend, or be extended by, another registered
-  plugin id (see "Namespace and kind parsing" above).
-- `host` is the same `semver::VersionReq` field `catalog-v2.json` mirrors per
-  entry (below); a plugin's own manifest and its catalog entry must agree.
-- `replaces` is a list of former plugin ids this plugin's current id
-  supersedes, validated with the **naming-contract plugin id grammar**
-  (dotted), not the 1.x tool/overlay id grammar: not the plugin's own id, no
-  duplicate or ambiguous claim, and never naming another current plugin id
-  from the same source. Tool and overlay `replaces` (below) keep the 1.x id
-  grammar, since tool and overlay ids are unchanged from 1.x.
 - `covers` lists the common-namespace `field:` ids (core namespaces only —
   `vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, `vosu.skin`) that
   this plugin actually fills for its matched sessions. A plugin's own
@@ -256,24 +292,17 @@ cli = true                        # also exposed as `vosux <plugin-id> beatmap.i
   "tool command lines become commands that plugins provide" is implemented.
   `cli: false` exposes the action only to tools and other plugins.
 
-## Tool manifest v2 (`tool.toml`, `manifest_version = 2`)
+### `kind = "tool"`
 
-Tools are web-only in 2.0: no `[service]`, `[cli]`, `[api]`, or
-`[permissions]` ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)). A
-v1 manifest with any of those fields cannot be a valid v2 manifest; see
+Tools are web-only in 2.0 ([ADR 0019](../decisions/0019-plugin-runtime-and-trust.md)):
+the only additional section is `[ui]`. There is no `[service]`, `[cli]`,
+`[api]`, or `[permissions]`; a 1.x `tool.toml` with any of those fields
+cannot be read as a valid `kind = "tool"` manifest — see
 [First-start migration](#first-start-migration-from-1x).
 
 ```toml
-manifest_version = 2
-id = "skill-tracker"              # unchanged 1.x id grammar: ^[a-z0-9][a-z0-9-]{0,31}$
-name = "Skill Tracker"
-version = "0.1.0"                 # semver
-description = "…"                 # optional
-author = "…"                      # optional
-homepage = "https://…"            # optional
-icon = "web/icon.svg"             # optional, path inside the tool directory
-banner = "art/banner.webp"        # optional
-host = ">=2.0.0, <3.0.0"          # required; semver requirement on the running vosu version
+kind = "tool"
+# … shared fields above …
 
 [ui]                              # required; a tool with no UI is an overlay or a plugin
 root = "web"
@@ -300,27 +329,17 @@ catalog-installed plugin's capability (triggering a dependency install, see
 "Install plan" below) and optionally reads a built-in capability that needs
 no install at all (see "Built-in providers" below).
 
-## Overlay manifest v2 (`overlay.toml`, new in 2.0)
+### `kind = "overlay"`
 
-1.x overlays carry only a free-text `metadata.txt` and no `requires`; 2.0
-overlays need declared capabilities for the resolver to install their
-dependency plugins, so 2.0 introduces `overlay.toml` at the overlay root,
-alongside `index.html`. `metadata.txt`-based overlays remain readable
-(existing community/user content keeps working unmanaged); only a catalog-v2
-overlay entry requires `overlay.toml`.
+The only additional field is `resolution` (optional `[width, height]`).
+`requires`/`optional` may contain only `field:`/`resource:` ids (above);
+`provides` is always empty (shared rule above). Overlays never invoke
+actions (above), so no `action:` id may appear in `requires`/`optional`.
 
 ```toml
-manifest_version = 2
-id = "pp-counter"                 # same id grammar as tools
-name = "PP Counter"
-version = "1.0.0"
-description = "…"                 # optional
-author = "…"                      # optional
-homepage = "https://…"            # optional
-icon = "icon.svg"                 # optional
-banner = "banner.webp"            # optional
+kind = "overlay"
+# … shared fields above …
 resolution = [400, 150]           # optional [width, height]
-host = ">=2.0.0, <3.0.0"          # required; semver requirement on the running vosu version
 
 [[requires]]
 id = "field:acme.game.combo"
@@ -331,10 +350,9 @@ id = "field:vosu.play.combo"
 version = "^1.0.0"
 ```
 
-`requires`/`optional` may contain only `field:`/`resource:` ids (see above).
-`provides` is always empty and rejected if present. The example above
-requires one leaf field of a catalog plugin's namespace, satisfied by that
-plugin's whole-namespace `provides` entry per "Capability coverage" above.
+The example above requires one leaf field of a catalog plugin's namespace,
+satisfied by that plugin's whole-namespace `provides` entry per "Capability
+coverage" above.
 
 ## `catalog-v2.json`
 
@@ -455,7 +473,7 @@ game, not any real supported or planned integration.
   listed as unsupported (installable-never, same surfacing as 1.x `supported`)
   rather than hidden.
 - `provides` is accepted only on `plugins` entries (empty/absent elsewhere) and
-  must equal the `provides` declared by the package's own `plugin.toml`; the
+  must equal the `provides` declared by the package's own `manifest.toml`; the
   resolver uses the catalog copy to plan an install without downloading every
   candidate package, so catalog and package must agree — a published mismatch
   is a publisher defect, not something the resolver reconciles.
@@ -524,10 +542,10 @@ game, not any real supported or planned integration.
 - ZIP layout, extraction limits, and conventional (non-authoritative) asset
   file names carry over from 1.x: `vosu-tool-<id>-<version>-<target>.zip` for
   tools, `vosu-overlay-<id>-<version>-any.zip` for overlays, and
-  `vosu-plugin-<id>-<version>-<target>.zip` for plugins. A plugin ZIP has
-  `plugin.toml` (schema split between this spec and `docs/v2/plugin-abi.md`)
-  at the archive root; a tool ZIP has `tool.toml`; an overlay ZIP has
-  `overlay.toml` and `index.html`, both at the archive root.
+  `vosu-plugin-<id>-<version>-<target>.zip` for plugins. Every package ZIP
+  has `manifest.toml` (`kind`-specific sections split between this spec and
+  `docs/v2/plugin-abi.md`) at the archive root; an overlay ZIP also has
+  `index.html` there.
 
 ## API placement
 
@@ -881,7 +899,7 @@ On first 2.0 start, migration is one-time and idempotent (same pattern as
   one.
 - **User overlays**: unaffected and left enabled. Overlays never used the
   removed host API, so service removal does not touch them; they keep working
-  unmanaged until a v2 `overlay.toml`-bearing update appears.
+  unmanaged until a `kind = "overlay"` `manifest.toml`-bearing update appears.
 
 ## Day-0 release check
 
@@ -898,8 +916,4 @@ whole gate, and 2.0 is not published (ADR 0022).
 
 ## Open questions
 
-- **`overlay.toml` as a new file.** Introducing a manifest file for overlays
-  is a deliberate new surface beyond what ADR 0022/0023 state explicitly; it
-  is needed so the resolver can plan an overlay's dependencies without
-  parsing `metadata.txt` free text. Confirm this is in scope for 2.0 rather
-  than a later overlay-ecosystem follow-up.
+(none at this time)
