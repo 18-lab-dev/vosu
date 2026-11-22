@@ -391,9 +391,14 @@ fn pad_to(buf: &mut Vec<u8>, align: usize) {
 
 fn push_struct<T: Copy>(buf: &mut Vec<u8>, value: &T) {
     // SAFETY: every flat header struct's fields are plain integers/arrays/
-    // unions of them with explicit `reserved` padding, so reading its raw
-    // bytes is always well-defined; this mirrors how `read_header_at`
-    // writes them back with `read_unaligned`.
+    // nested structs of those, or the `vosu_scalar` union, so every byte
+    // position has a valid value for *some* field; reading them as raw
+    // bytes is well-defined only because every constructor in this crate
+    // also initializes every one of those bytes (`encode_value`'s `Bool`
+    // arm writes `vosu_scalar`'s full `u64`, not just its `b` byte, for
+    // exactly this reason; see M1 in this crate's conformance history).
+    // This mirrors how `read_header_at` writes them back with
+    // `read_unaligned`.
     let bytes =
         unsafe { core::slice::from_raw_parts((value as *const T).cast::<u8>(), size_of::<T>()) };
     buf.extend_from_slice(bytes);
@@ -408,7 +413,13 @@ fn encode_value(value: &PublishValue) -> Result<(u32, vosu_scalar, Vec<u8>), Mes
         ),
         PublishValue::Bool(b) => (
             vosu_value_kind::VOSU_VALUE_BOOL as u32,
-            vosu_scalar { b: u8::from(*b) },
+            // `u64`, not `b`: a union field only initializes the bytes its
+            // own type covers, and `push_struct` reads every byte of this
+            // struct, including `scalar`'s other 7 bytes, so a bare `u8`
+            // write here would leave them uninitialized (M1). Both ABI
+            // targets are little-endian, so `b`'s value still lands at
+            // byte 0.
+            vosu_scalar { u64: u64::from(*b) },
             Vec::new(),
         ),
         PublishValue::I64(v) => (

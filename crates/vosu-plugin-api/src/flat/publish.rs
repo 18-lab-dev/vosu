@@ -17,8 +17,12 @@ pub union vosu_scalar {
 
 impl fmt::Debug for vosu_scalar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // SAFETY: every bit pattern is a valid `u64`; this reads the union's
-        // raw bits for display only, never as a typed scalar.
+        // SAFETY: every bit pattern is a valid `u64`, and every
+        // constructor of this union in this crate always initializes the
+        // full 8 bytes (`message::flat::encode_value`'s `Bool` arm writes
+        // `u64`, not `b`, for exactly this reason), so reading it as `u64`
+        // here never reads uninitialized bytes; this is for display only,
+        // never as a typed scalar.
         let bits = unsafe { self.u64 };
         write!(f, "vosu_scalar {{ bits: {bits:#018x} }}")
     }
