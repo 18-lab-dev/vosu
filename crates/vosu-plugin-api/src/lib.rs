@@ -19,6 +19,7 @@ mod limits;
 mod message;
 mod opcode;
 mod primitives;
+mod sdk;
 mod status;
 mod validate;
 mod value;
@@ -67,6 +68,11 @@ pub use opcode::vosu_opcode;
 pub use primitives::{
     vosu_invocation_id, vosu_plan_id, vosu_resource_id, vosu_session_id, vosu_timer_id,
 };
+#[doc(hidden)]
+pub use sdk::{__vtable_for_concurrent, __vtable_for_serialized};
+pub use sdk::{ConcurrentPlugin, Init, Plugin, PluginError, VtableHostServices};
+#[cfg(feature = "unstable-sync-reads")]
+pub use sdk::{PlanMemory, PlanMemoryError};
 pub use status::vosu_status;
 pub use validate::{
     ValidationError, read_flat_header, validate_array_range, validate_bytes_range,

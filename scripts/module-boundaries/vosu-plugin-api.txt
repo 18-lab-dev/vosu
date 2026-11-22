@@ -7,6 +7,9 @@ message -> flat
 message -> opcode
 message -> validate
 message -> value
+sdk -> cbor
+sdk -> message
+sdk -> opcode
 vtable -> envelope
 vtable -> status
 validate -> flags

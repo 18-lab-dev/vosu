@@ -12,6 +12,14 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
+[features]
+# Synchronous read-plan delivery (D5): a plugin's own reader threads only;
+# never published (D11).
+unstable-sync-reads = []
+# Bundled-plugin registration glue consumed by the root crate's explicit
+# `BUNDLED` array (D13); never published (D11).
+bundled = []
+
 [dependencies]
 ciborium = "=0.2.2"
 serde = { version = "=1.0.228", features = ["derive"] }

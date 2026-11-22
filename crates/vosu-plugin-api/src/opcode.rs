@@ -87,3 +87,49 @@ pub enum vosu_opcode {
     /// host -> plugin, CBOR
     VOSU_OP_STATE_UPDATE = 71,
 }
+
+impl TryFrom<u32> for vosu_opcode {
+    type Error = ();
+
+    /// An opcode a receiver's minor version predates is
+    /// `VOSU_ERR_UNSUPPORTED` (`docs/v2/plugin-abi.md` §5), not a decode
+    /// failure; this `TryFrom` lets a dispatch loop distinguish the two.
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        Ok(match value {
+            1 => Self::VOSU_OP_PUBLISH_FIELD,
+            2 => Self::VOSU_OP_DEMAND_CHANGED,
+            3 => Self::VOSU_OP_READ_PLAN_SUBMIT,
+            4 => Self::VOSU_OP_READ_PLAN_RESULT,
+            5 => Self::VOSU_OP_READ_PLAN_CANCEL,
+            6 => Self::VOSU_OP_PUBLISH_BATCH,
+            10 => Self::VOSU_OP_SESSION_ATTACHED,
+            11 => Self::VOSU_OP_SESSION_DETACHED,
+            12 => Self::VOSU_OP_SESSION_IDENTIFY,
+            13 => Self::VOSU_OP_FOCUS_CHANGED,
+            14 => Self::VOSU_OP_SESSION_DECLINE,
+            20 => Self::VOSU_OP_SCAN_REQUEST,
+            21 => Self::VOSU_OP_SCAN_RESULT,
+            30 => Self::VOSU_OP_RESOURCE_RESOLVE,
+            31 => Self::VOSU_OP_RESOURCE_RESOLVED,
+            32 => Self::VOSU_OP_TREE_LIST,
+            33 => Self::VOSU_OP_TREE_LOOKUP,
+            34 => Self::VOSU_OP_STREAM_READ,
+            35 => Self::VOSU_OP_STREAM_CHUNK,
+            36 => Self::VOSU_OP_ROOT_DECLARE,
+            37 => Self::VOSU_OP_STREAM_CLOSE,
+            40 => Self::VOSU_OP_ACTION_INVOKE,
+            41 => Self::VOSU_OP_ACTION_RESULT,
+            42 => Self::VOSU_OP_ACTION_CANCEL,
+            43 => Self::VOSU_OP_ACTION_PROGRESS,
+            44 => Self::VOSU_OP_ACTION_CALL,
+            50 => Self::VOSU_OP_SETTINGS_CHANGED,
+            51 => Self::VOSU_OP_LOG_RECORD,
+            60 => Self::VOSU_OP_TIMER_SET,
+            61 => Self::VOSU_OP_TIMER_CANCEL,
+            62 => Self::VOSU_OP_TIMER_FIRED,
+            70 => Self::VOSU_OP_STATE_SUBSCRIBE,
+            71 => Self::VOSU_OP_STATE_UPDATE,
+            _ => return Err(()),
+        })
+    }
+}
