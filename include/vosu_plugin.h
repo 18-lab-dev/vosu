@@ -92,7 +92,7 @@ typedef struct vosu_bytes {
 typedef uint64_t vosu_session_id; /* a session's `handle`; see "Session identity" in the spec */
 typedef uint64_t vosu_plan_id;
 typedef uint64_t vosu_timer_id;
-typedef uint64_t vosu_invocation_id;
+typedef uint64_t vosu_invocation_id; /* caller-assigned (ACTION_CALL) or host-assigned (ACTION_INVOKE); never reused within one plugin instance's lifetime */
 typedef uint64_t vosu_resource_id; /* an open bounded byte stream, minted by the plugin */
 
 /* ---------------------------------------------------------------------
@@ -134,17 +134,18 @@ typedef enum vosu_opcode {
     VOSU_OP_ROOT_DECLARE = 36,      /* plugin -> host, CBOR */
     VOSU_OP_STREAM_CLOSE = 37,      /* host -> plugin, CBOR: host no longer needs this stream; plugin releases it */
 
-    /* Actions. ACTION_RESULT, ACTION_PROGRESS, and ACTION_CANCEL are each
-     * bidirectional: host -> plugin when core is the caller (a tool/CLI
-     * invocation, or relaying to the plugin that issued ACTION_CALL),
-     * plugin -> host when this plugin is the caller of its own
-     * ACTION_CALL. `invocation` disambiguates by construction: a plugin
-     * only recognizes an incoming id as "my own call's reply" when it
-     * matches one it itself assigned via ACTION_CALL. */
+    /* Actions. ACTION_RESULT and ACTION_PROGRESS: callee -> host when a
+     * plugin answers an invocation it was given (ACTION_INVOKE), and
+     * host -> plugin when core relays that same answer to the plugin that
+     * issued ACTION_CALL for it. ACTION_CANCEL: host -> plugin to ask a
+     * callee to stop, and plugin -> host for a plugin cancelling its own
+     * outstanding ACTION_CALL. `invocation` disambiguates by construction:
+     * a plugin only recognizes an incoming id as "my own call's reply"
+     * when it matches one it itself assigned via ACTION_CALL. */
     VOSU_OP_ACTION_INVOKE = 40,     /* host -> plugin, CBOR */
-    VOSU_OP_ACTION_RESULT = 41,     /* bidirectional, CBOR */
-    VOSU_OP_ACTION_CANCEL = 42,     /* bidirectional, CBOR */
-    VOSU_OP_ACTION_PROGRESS = 43,   /* bidirectional, CBOR */
+    VOSU_OP_ACTION_RESULT = 41,     /* bidirectional, CBOR; see above */
+    VOSU_OP_ACTION_CANCEL = 42,     /* bidirectional, CBOR; see above */
+    VOSU_OP_ACTION_PROGRESS = 43,   /* bidirectional, CBOR; see above */
     VOSU_OP_ACTION_CALL = 44,       /* plugin -> host, CBOR: this plugin invokes another plugin's action */
 
     /* Settings and logging. */
@@ -309,7 +310,7 @@ typedef struct vosu_stage_header {
  * `stage_count`. The same plan runs identically whether the plugin holds
  * direct, in-process access or is brokered through `vosu plugin-host`. */
 typedef struct vosu_read_plan_submit_header {
-    uint64_t plan; /* caller-assigned; unique among this plugin's outstanding plans */
+    uint64_t plan; /* caller-assigned; never reused for another plan within this plugin instance's lifetime */
     uint64_t handle;
     vosu_plan_base_flat root;
     uint32_t stages_offset; /* vosu_stage_header[stage_count] */
