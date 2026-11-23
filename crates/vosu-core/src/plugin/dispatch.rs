@@ -10,6 +10,7 @@ use std::thread::JoinHandle;
 use vosu_plugin_api::{vosu_bytes, vosu_message, vosu_plugin_vtable, vosu_status};
 
 use super::error::HostError;
+use super::read_plan::DispatchThreadScope;
 
 /// A raw plugin pointer, valid to call from any thread for the instance's
 /// whole lifetime (`docs/v2/plugin-abi.md` §4's `concurrent_dispatch`
@@ -155,6 +156,11 @@ pub(crate) struct Job {
 }
 
 fn run_job(job: Job) {
+    // §4/D5: every call this host makes into a plugin's own `dispatch`
+    // runs under this scope, so a `VOSU_READ_PLAN_SYNC` submission the
+    // plugin makes reentrant from inside it (on this same thread) is
+    // refused instead of deadlocking or running out of serialized order.
+    let _dispatch_thread = DispatchThreadScope::enter();
     let status = job.message.call(&job.vtable, job.ctx);
     if let Some(reply) = job.reply {
         let _ = reply.send(status);

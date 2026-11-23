@@ -18,9 +18,10 @@
 //! (phase (d2): the real OS process list, the Linux conditional fallback,
 //! the kernel/CN_PROC pre-filter); non-owning `STATE_SUBSCRIBE` delivery
 //! of session/focus events (§6.2's "Non-owning plugins" rule, §6.12);
-//! routing read plans and scans into `PluginHostHandler::handle`
-//! (`read_plan`/`scan` are standalone modules a later handler calls into);
-//! resource/tree/stream operations and action calls.
+//! routing scans into `PluginHostHandler::handle` (`scan` is still a
+//! standalone module a later handler calls into; read plans, `§6.3`, now
+//! route through `host/read_plans.rs`); resource/tree/stream operations
+//! and action calls.
 
 mod dispatch;
 mod error;

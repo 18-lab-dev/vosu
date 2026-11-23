@@ -10,7 +10,7 @@ use super::super::settings::{SettingsError, SettingsStorage};
 use super::*;
 use crate::logging::{ConsoleSink, LoggerOptions};
 
-struct DummyStorage;
+pub(super) struct DummyStorage;
 impl SettingsStorage for DummyStorage {
     fn load(&self, _plugin_id: &str) -> Result<Map<String, Value>, SettingsError> {
         Ok(Map::new())
@@ -20,7 +20,7 @@ impl SettingsStorage for DummyStorage {
     }
 }
 
-struct SilentConsole;
+pub(super) struct SilentConsole;
 impl ConsoleSink for SilentConsole {
     fn is_tty(&self) -> bool {
         false
@@ -44,7 +44,7 @@ impl ConsoleSink for SilentConsole {
 /// and deterministic instead of depending on real OS focus) and the
 /// real 5-second identification timeout; tests that need a different
 /// foreground or a short timeout use [`test_host_with`] instead.
-fn test_host(runtime: Handle) -> (tempfile::TempDir, Arc<PluginHost>) {
+pub(super) fn test_host(runtime: Handle) -> (tempfile::TempDir, Arc<PluginHost>) {
     test_host_with(
         runtime,
         Arc::new(focus::SyntheticForegroundSource::new(None)),
@@ -54,7 +54,7 @@ fn test_host(runtime: Handle) -> (tempfile::TempDir, Arc<PluginHost>) {
 
 /// Same as [`test_host`], injecting `foreground` and
 /// `identification_timeout` through [`PluginHost::new_for_tests`].
-fn test_host_with(
+pub(super) fn test_host_with(
     runtime: Handle,
     foreground: Arc<dyn ForegroundSource>,
     identification_timeout: Duration,
@@ -159,7 +159,7 @@ fn session_manifest_by_path_suffix(plugin_id: &str, name: &str) -> String {
     )
 }
 
-fn test_process(pid: u32, name: &str) -> ProcessRecord {
+pub(super) fn test_process(pid: u32, name: &str) -> ProcessRecord {
     ProcessRecord {
         pid,
         name: name.to_owned(),

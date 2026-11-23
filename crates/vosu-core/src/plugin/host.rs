@@ -28,12 +28,12 @@
 //! later phase feeds them from the real OS process list; this phase's
 //! own tests drive them with synthetic [`ProcessRecord`]s), and
 //! [`PluginHost::handle`] routes `SESSION_IDENTIFY`/`SESSION_DECLINE`.
-//! Read plans and scans are still later phases this type does not
-//! implement.
+//! Read plans (§6.3, including the §4 `VOSU_READ_PLAN_SYNC` exception,
+//! `read_plans.rs`) route through this host too; scans do not yet.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -52,7 +52,9 @@ use super::host_services::{PluginHostHandler, PluginInstanceId};
 use super::instance::PluginInstance;
 use super::logging::PluginLogRouter;
 use super::matcher::{CandidateProcess, MatcherEngine, host_platform};
+use super::read_plan::OutstandingPlans;
 use super::registry::LoadedPlugin;
+use super::scan::ScanWorkerPool;
 use super::session::{DiscoveredProcess, SessionHandle, SessionRegistry};
 use super::settings::{
     BRIDGE_B2_PLUGIN_ID, ConfigSettingsBridgeB2, PluginSettingsService, SettingsChangeDelivery,
@@ -67,6 +69,11 @@ use crate::logging::Logger;
 struct InstanceEntry {
     instance: PluginInstance,
     plugin_id: String,
+    /// This instance's own asynchronous (non-`VOSU_READ_PLAN_SYNC`) read
+    /// plans (§6.3, `read_plans.rs`): capped at
+    /// [`super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS`], freed on
+    /// `READ_PLAN_CANCEL` or the owning session's detach.
+    outstanding_plans: Arc<OutstandingPlans>,
 }
 
 /// One `instances` map slot's lifecycle state. Every state keeps
@@ -163,6 +170,18 @@ pub struct PluginHost {
     /// Focus rule: [`OsForegroundSource`] in production,
     /// `focus::SyntheticForegroundSource` in tests.
     foreground: Arc<dyn ForegroundSource>,
+    /// Read-plan routing's per-session cached process handle (§6.3,
+    /// `read_plans.rs`): opened once per [`SessionHandle`], reused until
+    /// the session detaches. A module table is deliberately not cached
+    /// alongside it (`scan.rs`'s own documented rule: fresh per call).
+    read_plan_memory: Mutex<HashMap<SessionHandle, Arc<read_plans::SessionMemory>>>,
+    /// Bounded worker pool async read plans execute on (§4: real work off
+    /// a dispatch thread); reuses [`ScanWorkerPool`]'s own generic,
+    /// already-bounded pattern rather than a second copy of it.
+    read_plan_pool: ScanWorkerPool,
+    /// [`read_plans::READ_PLAN_DEADLINE`] in milliseconds; mutable only so
+    /// a test can shorten it (`read_plans::set_read_plan_deadline_for_tests`).
+    read_plan_deadline_ms: AtomicU64,
 }
 
 impl PluginHost {
@@ -227,6 +246,11 @@ impl PluginHost {
                 )),
                 focus: Mutex::new(FocusTracker::new()),
                 foreground,
+                read_plan_memory: Mutex::new(HashMap::new()),
+                read_plan_pool: read_plans::new_worker_pool(),
+                read_plan_deadline_ms: AtomicU64::new(
+                    u64::try_from(read_plans::READ_PLAN_DEADLINE.as_millis()).unwrap_or(u64::MAX),
+                ),
             }
         })
     }
@@ -379,6 +403,7 @@ impl PluginHost {
             InstanceSlot::Live(InstanceEntry {
                 instance,
                 plugin_id,
+                outstanding_plans: Arc::new(OutstandingPlans::new()),
             }),
         );
         let pending = match previous {
@@ -753,7 +778,9 @@ impl PluginHost {
         };
         if let Some(owner) = owner {
             self.dispatch_to(&owner, &Message::SessionDetached(detached));
+            self.cancel_read_plans_for_session(&owner, handle);
         }
+        self.forget_read_plan_session(handle);
         self.recompute_focus();
     }
 }
@@ -825,7 +852,10 @@ impl PluginHostHandler for PluginHost {
                         detached,
                         reoffered,
                     }) => {
+                        let declined_handle = SessionHandle(detached.handle);
                         self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
+                        self.cancel_read_plans_for_session(&plugin_id, declined_handle);
+                        self.forget_read_plan_session(declined_handle);
                         // The re-offered handle's own `owner` is already
                         // the next install-order candidate (`decline`'s
                         // own doc comment), so look it up the same way
@@ -847,12 +877,17 @@ impl PluginHostHandler for PluginHost {
                         vosu_status::VOSU_OK
                     }
                     Ok(super::session::DeclineOutcome::Dropped { detached }) => {
+                        let declined_handle = SessionHandle(detached.handle);
                         self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
+                        self.cancel_read_plans_for_session(&plugin_id, declined_handle);
+                        self.forget_read_plan_session(declined_handle);
                         vosu_status::VOSU_OK
                     }
                     Err(error) => error.into(),
                 }
             }
+            Message::ReadPlanSubmit(submit) => self.handle_read_plan_submit(instance, submit),
+            Message::ReadPlanCancel(cancel) => self.handle_read_plan_cancel(instance, cancel),
             other => {
                 // State reads (`STATE_SUBSCRIBE`), resource/tree/stream
                 // operations, and action calls are later milestones:
@@ -932,6 +967,8 @@ impl SettingsChangeDelivery for PluginHost {
         self.dispatch_to(plugin_id, &message);
     }
 }
+
+mod read_plans;
 
 #[cfg(test)]
 mod tests;

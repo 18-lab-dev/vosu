@@ -159,6 +159,18 @@ impl PluginInstance {
         Ok(reply_rx)
     }
 
+    /// This instance's raw vtable/ctx pair, for a direct, non-queued call
+    /// that bypasses `Dispatch::Serial`/`Dispatch::Concurrent` entirely
+    /// (`docs/v2/plugin-abi.md` §4's one documented exception: a
+    /// `VOSU_READ_PLAN_SYNC` result, delivered on the submitting thread
+    /// itself rather than through this instance's own dispatch queue).
+    /// Both fields are `Copy`; the caller must not hold any lock the
+    /// direct call could reentrantly need while making it (e.g. a plugin
+    /// calling back into the host from inside this call).
+    pub(crate) fn ctx_and_vtable(&self) -> (vosu_plugin_vtable, PluginCtx) {
+        (self.vtable, self.ctx)
+    }
+
     /// Stops accepting new dispatch work, waits for every already queued
     /// or running job to finish, then calls `destroy`, giving the whole
     /// sequence up to `grace` (§4). A timeout leaves the plugin's own

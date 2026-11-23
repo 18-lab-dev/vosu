@@ -21,7 +21,11 @@ crate-type = ["rlib", "cdylib"]
 
 [features]
 default = []
-test-harness = []
+# `vosu-plugin-api/unstable-sync-reads` backs `read_plan.rs`'s own
+# `PlanMemory` use (D5): only the test-harness build needs it, never a
+# published build of this crate (which never ships at all, `publish =
+# false` above, but the split still documents the boundary).
+test-harness = ["vosu-plugin-api/unstable-sync-reads"]
 
 [dependencies]
 vosu-plugin-api = { path = "../vosu-plugin-api" }
