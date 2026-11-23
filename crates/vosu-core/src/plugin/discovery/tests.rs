@@ -439,16 +439,30 @@ async fn hint_set_change_syncs_the_source_and_forces_a_reconcile() {
     // Registering the plugin only after the service has started proves
     // the service re-reads `PluginHost::prefilter` on every pass rather
     // than snapshotting it once at startup.
+    // The initial pass (before the plugin is even registered) syncs an
+    // empty `Prefilter::Names([])` first; loop past that to the widened
+    // set the registration below causes, bounded the same way
+    // `expect_event` is.
     let events = create_session_instance(
         &host,
         PluginInstanceId(0),
         "vosu.testkit.hints",
         &["osu!.exe"],
     );
-    let applied = prefilter
-        .recv_timeout(RECV_TIMEOUT)
-        .expect("discovery did not sync the widened pre-filter set in time");
-    assert!(applied.allows(crate::plugin::matcher::MatchPlatform::Linux, "osu!.exe"));
+    let deadline = std::time::Instant::now() + RECV_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        assert!(
+            remaining > Duration::ZERO,
+            "discovery did not sync the widened pre-filter set in time"
+        );
+        let applied = prefilter
+            .recv_timeout(remaining)
+            .expect("discovery did not sync the widened pre-filter set in time");
+        if applied.allows(crate::plugin::matcher::MatchPlatform::Linux, "osu!.exe") {
+            break;
+        }
+    }
 
     // The forced reconcile after a pre-filter change must pick up a
     // process already present in the source at that point -- inserted
