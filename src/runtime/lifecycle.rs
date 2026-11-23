@@ -34,6 +34,14 @@ pub struct ProductionRuntime {
     instances: AsyncMutex<Option<InstanceRuntime<NativeProcessProvider, EmbeddedOffsetGenerator>>>,
     ordinary_role: bool,
     tray: AsyncMutex<Option<vosu_core::desktop::tray::TrayHandle>>,
+    /// M1 §4 phase d2b unit d: `None` whenever no enabled plugin has a
+    /// `[match]` table (`discovery::start_discovery`'s own doc
+    /// comment) — production `BUNDLED` holds none until `vosu-osu`
+    /// lands, so this is `None` there and 1.x's own discovery
+    /// (`instances`) stays the only active one.
+    discovery: AsyncMutex<Option<vosu_core::plugin::DiscoveryService>>,
+    #[cfg(windows)]
+    foreground: AsyncMutex<Option<vosu_core::plugin::ForegroundPoller>>,
     #[cfg(target_os = "linux")]
     login_state: Arc<AsyncMutex<bool>>,
 }
@@ -46,6 +54,26 @@ impl ProductionRuntime {
         }
         if let Some(tools) = self.tools.lock().await.take() {
             tools.shutdown().await;
+        }
+        // M1 §4 phase d2b unit d: discovery (and, on Windows, the
+        // foreground poller) must stop before `destroy_all` — both call
+        // back into `self.plugins` (`process_appeared`/`process_exited`/
+        // `foreground_changed`), which must not race a plugin instance
+        // tearing down under it.
+        if let Some(discovery) = self.discovery.lock().await.take() {
+            tokio::task::spawn_blocking(move || discovery.stop())
+                .await
+                .map_err(|error| {
+                    io::Error::other(format!("discovery shutdown task failed: {error}"))
+                })?;
+        }
+        #[cfg(windows)]
+        if let Some(foreground) = self.foreground.lock().await.take() {
+            tokio::task::spawn_blocking(move || foreground.stop())
+                .await
+                .map_err(|error| {
+                    io::Error::other(format!("foreground poller shutdown task failed: {error}"))
+                })?;
         }
         let plugins = Arc::clone(&self.plugins);
         tokio::task::spawn_blocking(move || plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE))
@@ -899,6 +927,17 @@ pub async fn run_cli() -> io::Result<()> {
             )));
         }
     }
+    // M1 §4 phase d2b unit d: started only once plugins are loaded and
+    // only when an enabled one actually has a `[match]` table
+    // (`discovery::start_discovery`'s own zero-cost doc comment); every
+    // exit path from here on routes through `ProductionRuntime::shutdown`
+    // (`finish_runtime_run`'s own unconditional call below), which stops
+    // both before `plugins.destroy_all`.
+    let discovery = discovery::start_discovery(&plugin_host, Handle::current());
+    #[cfg(windows)]
+    let foreground = discovery
+        .is_some()
+        .then(|| vosu_core::plugin::ForegroundPoller::start(&plugin_host, Handle::current()));
     let hooks = ProductionRuntime {
         config,
         changes,
@@ -929,6 +968,9 @@ pub async fn run_cli() -> io::Result<()> {
         instances: AsyncMutex::new(None),
         ordinary_role,
         tray: AsyncMutex::new(None),
+        discovery: AsyncMutex::new(discovery),
+        #[cfg(windows)]
+        foreground: AsyncMutex::new(foreground),
         #[cfg(target_os = "linux")]
         login_state: Arc::new(AsyncMutex::new(current.start_at_login)),
     };

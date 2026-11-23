@@ -29,19 +29,23 @@
 //! `discovery.rs` (M1 §4, phase d2b) is the generic core discovery
 //! service that feeds `process_appeared`/`process_exited` from a real OS
 //! process list in production: a pluggable [`discovery::ProcessSource`]
-//! seam (the real Linux eBPF/CN_PROC/polling backend and Windows polling
-//! backend live in the root crate/`vosu-sys`, wired in through
-//! `discovery::DiscoveryService::start`; a synthetic in-memory source in
-//! `discovery`'s own tests), one dedicated background thread (never a
-//! Tokio worker), periodic full reconciliation as a bounded-loss
-//! backstop plus targeted event-driven updates when the source provides
-//! them, the Linux comm-hint pre-filter sync
-//! (`MatcherEngine::comm_hints`), and PID-generation correctness (a
+//! seam — the Linux eBPF/CN_PROC/polling backend
+//! ([`discovery::LinuxSource`], `linux-process-events` feature) and the
+//! Windows polling backend ([`discovery::WindowsProcessSource`], with an
+//! executable-name pre-filter against the enabled plugin set's
+//! `process_names`) both live here too, not the root crate; a synthetic
+//! in-memory source in `discovery`'s own tests — one dedicated
+//! background thread (never a Tokio worker), periodic full
+//! reconciliation as a bounded-loss backstop plus targeted event-driven
+//! updates when the source provides them, the Linux comm-hint pre-filter
+//! sync (`MatcherEngine::comm_hints`), and PID-generation correctness (a
 //! reused pid is reported as an exit immediately followed by a fresh
 //! appearance). `DiscoveryService::start` only provides the mechanism;
 //! whether to call it at all (zero cost when no enabled plugin has a
-//! matcher, `PluginHost::has_enabled_matchers`) and the production
-//! `ProcessSource` wiring are `src/runtime/lifecycle.rs`'s own concern.
+//! matcher, `PluginHost::has_enabled_matchers`) is
+//! `src/runtime/discovery.rs`'s own concern, alongside picking the
+//! platform `ProcessSource` and starting [`discovery::ForegroundPoller`]
+//! (Windows only) under the same gate.
 //!
 //! Out of scope for this phase (later milestones): non-owning
 //! `STATE_SUBSCRIBE` delivery of session/focus events (§6.2's
