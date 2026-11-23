@@ -94,6 +94,35 @@ The [release runbook](docs/operations/runbook.md#linux-distribution-releases)
 describes package inspection, container smoke checks, and the `vosu-git` AUR
 package.
 
+## Speed up the local build loop
+
+`scripts/dev-env.sh` is an optional, opt-in `sccache` wrapper for Linux debug
+builds and gates. It is not enabled by default, not set by CI, and not
+written into any committed Cargo config.
+
+```sh
+cargo install --locked sccache --version 0.11.0   # once, if not already on PATH
+source scripts/dev-env.sh                         # exports RUSTC_WRAPPER=sccache
+```
+
+This is worthwhile mainly when several checkouts (e.g. multiple `ovnfs`
+worktrees, or several coding agents) build the same commit: a shared
+`sccache` cache (`~/.cache/sccache` by default; set `SCCACHE_DIR` to share one
+across checkouts explicitly) skips recompiling dependencies that an earlier
+checkout already built with the same flags. Measured on 2026-11-23, a cold
+gate build (`cargo clippy --workspace --all-targets --all-features`,
+`cargo nextest run --workspace ... --no-run`) in a fresh checkout against a
+warm shared cache ran 25% faster than the same cold build with no cache; see
+[benchmarks](docs/testing/benchmarks.md#local-dev-build-speed-up-tools-sccache-and-mold)
+for the full numbers and caveats. `prepush.py` and `measure-build.py` already
+inherit the full process environment, so no change to either script was
+needed for them to honor it.
+
+`sccache` cannot cache incrementally-compiled crates (this repository's own
+workspace crates, under the default dev profile), so it speeds up dependency
+rebuilds across checkouts, not single-crate edit/rebuild cycles within one
+checkout. A `mold`/`lld` linker override was also measured and was not worth
+adopting; see the same benchmark section for why.
 
 ## Repository map
 

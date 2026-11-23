@@ -39,6 +39,21 @@ NATIVE_COMMANDS = {
 # `native` flag) still runs it for every Rust change regardless.
 NATIVE_NOT_APPLICABLE_REASON = "portable-only change; hosted Windows CI verifies it"
 
+# Measured cold (CARGO_INCREMENTAL=0, no sccache, right after clippy-linux and
+# xwin-clippy already warmed the shared target dir): ~140s for the full
+# standalone-crates matrix across every workspace member on both Linux and
+# Windows, well over the ~60s prepush likes to add unconditionally. Gate it
+# the same way as the native VM phase: skip it when scripts/windows_sensitivity.py
+# finds nothing Cargo.toml- or cfg(windows)-shaped in the diff (that
+# classifier already treats Cargo.toml/Cargo.lock changes and `windows_sys`/
+# `cfg(windows)` diff markers as sensitive, which is exactly what can create
+# or unmask a standalone-build feature gap). Unlike the native VM phase,
+# nothing else in this gate or in ci.yml runs a per-crate standalone build,
+# so a false negative here is not caught elsewhere; keep the classifier's
+# existing Cargo.toml/Cargo.lock/windows_sys coverage honest if this step's
+# false-negative rate ever becomes a problem.
+STANDALONE_CRATES_NOT_APPLICABLE_REASON = "no Cargo.toml/cfg(windows) change; unlikely to hide a feature gap"
+
 
 def run(cmd, *, cwd=ROOT, env_overrides=None, extra_env_unset=()):
     import os
@@ -180,6 +195,7 @@ LINUX_STEPS = [
 XWIN_CLIPPY_CMD = ["cargo", "xwin", "clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--target", "x86_64-pc-windows-msvc", "--", "-D", "warnings"]
 ACTIONLINT_CMD_TEXT = "go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml"
 DASHBOARD_BUILD_CMD = ["cargo", "build", "--locked", "--features", "test-harness"]
+STANDALONE_CRATES_CMD = [sys.executable, "scripts/check-standalone-crates.py"]
 
 # Literal commands this file runs, for scripts/test_gate_tooling.py's ci.yml
 # drift check. The dictionary values use real argv tokens, not shell-globbed
@@ -193,6 +209,24 @@ COMMAND_MANIFEST["dashboard-build"] = " ".join(DASHBOARD_BUILD_CMD)
 COMMAND_MANIFEST["dashboard-tool-host"] = "python tests/tool_host_smoke.py --binary <binary>"
 COMMAND_MANIFEST["dashboard-browser"] = "python tests/dashboard_smoke.py --binary <binary> --playwright-module <playwright>"
 COMMAND_MANIFEST.update(NATIVE_COMMANDS)
+COMMAND_MANIFEST["standalone-crates"] = " ".join("python" if token == sys.executable else token for token in STANDALONE_CRATES_CMD)
+
+
+def run_standalone_crates(log_dir, applicable):
+    """Per-member `cargo check -p`/`cargo xwin check -p`: catches a windows-sys
+    (or other target-cfg) feature a crate needs only when built standalone,
+    which workspace feature unification otherwise hides. See
+    STANDALONE_CRATES_NOT_APPLICABLE_REASON for why this is gated rather than
+    always-on."""
+    name = "standalone-crates"
+    command = " ".join("python" if token == sys.executable else token for token in STANDALONE_CRATES_CMD)
+    if not applicable:
+        return StepResult(name, False, "not_applicable", command=command, log_tail=STANDALONE_CRATES_NOT_APPLICABLE_REASON)
+    exit_code, stdout, stderr, wall = run(STANDALONE_CRATES_CMD, env_overrides=CARGO_ENV, extra_env_unset=("C_INCLUDE_PATH",))
+    log_path = log_dir / f"{name}.log"
+    log_path.write_text(f"$ {command}\n\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n", encoding="utf-8")
+    status = "passed" if exit_code == 0 else "failed"
+    return StepResult(name, True, status, exit_code, round(wall, 3), command, stdout + stderr)
 
 
 def run_dashboard(log_dir, applicable, playwright_module):
@@ -329,7 +363,8 @@ def main():
         default="",
         help="Comma-separated step names to skip for local iteration (fmt, clippy-linux, test-linux, "
         "doc-links, file-length, brand, lint-expectations, module-boundaries, license-notices, "
-        "asset-hashes, script-tests, deleted-assertions, actionlint, xwin-clippy, dashboard, native). "
+        "asset-hashes, script-tests, deleted-assertions, actionlint, xwin-clippy, standalone-crates, "
+        "dashboard, native). "
         "land.py refuses evidence that skipped a required step.",
     )
     parser.add_argument("--start-vm", action="store_true", help="Start the Windows VM if it is currently stopped.")
@@ -409,6 +444,13 @@ def main():
                 extra_env_unset=("C_INCLUDE_PATH",),
             )
         )
+
+    if "standalone-crates" in skip:
+        results.append(StepResult("standalone-crates", True, "skipped", command=COMMAND_MANIFEST["standalone-crates"]))
+    else:
+        applicable = windows_sensitivity.windows_sensitive(paths, changed_diff(args.base))
+        print(f"running standalone-crates ... (applicable={applicable})")
+        results.append(run_standalone_crates(log_dir, applicable))
 
     if "dashboard" in skip:
         results.append(StepResult("dashboard", True, "skipped", command="dashboard smokes"))
