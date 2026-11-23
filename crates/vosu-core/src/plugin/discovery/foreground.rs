@@ -32,7 +32,7 @@
 //! [`FOREGROUND_POLL_INTERVAL`] timeout — runs through
 //! `Handle::block_on`, never a worker. `tokio::time::sleep` under
 //! `block_on` (not `std::thread::sleep`) keeps this off the
-//! `clippy::disallowed_methods` list `scripts/lint-expectations.txt`
+//! disallowed-methods lint's `scripts/lint-expectations.txt` list it
 //! would otherwise need an entry for. [`ForegroundPoller`] holds only a
 //! [`std::sync::Weak`] reference to the host (`AGENTS.md`: background
 //! tasks hold `Weak`) and never joins its own thread: `stop`/`Drop` set

@@ -229,6 +229,19 @@ impl CompiledMatcher {
             .iter()
             .any(|re| re.is_match(&candidate.command_line))
     }
+
+    /// Whether this matcher can only ever accept a process by an exact
+    /// `process_names` entry — no `process_path_patterns`/
+    /// `command_line_patterns` that could accept a process regardless of
+    /// its executable name. The Windows enumeration-cost pre-filter
+    /// ([`NamePrefilter`], M1 §4 phase d2b unit c) is only sound across
+    /// *every* registered plugin when this holds for all of them: one
+    /// plugin matching by path/command-line pattern alone can accept a
+    /// process whose name was never in any `process_names` list.
+    #[must_use]
+    fn names_only(&self) -> bool {
+        self.process_path_patterns.is_empty() && self.command_line_patterns.is_empty()
+    }
 }
 
 /// D18's statically decidable overlap rule: equal `process_names` entries,
@@ -257,6 +270,46 @@ pub fn overlaps(platform: MatchPlatform, a: &MatchTable, b: &MatchTable) -> bool
     };
     hints_hit(&a.comm_hints, &b.process_names, &b.comm_hints)
         || hints_hit(&b.comm_hints, &a.process_names, &a.comm_hints)
+}
+
+/// The Windows enumeration-cost pre-filter input (M1 §4 phase d2b, unit
+/// c): the union of every registered plugin's `process_names`, or
+/// [`NamePrefilter::Unfiltered`] the moment any registered plugin also
+/// matches by `process_path_patterns`/`command_line_patterns`
+/// ([`CompiledMatcher::names_only`]) — those can accept a process whose
+/// executable name was never in any `process_names` list, so narrowing
+/// by name alone would silently hide it from a pre-filtered source
+/// before userspace matching (`docs/v2/plugin-abi.md` §6.1) ever runs.
+/// [`MatcherEngine::name_prefilter`] is the only producer;
+/// [`Self::allows`] is the only consumer a real source needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NamePrefilter {
+    /// At least one registered plugin matches by path or command-line
+    /// pattern: every process must still be read in full.
+    Unfiltered,
+    /// Every registered plugin matches by `process_names` only: this is
+    /// their deduplicated union (unsorted order not guaranteed to
+    /// callers; only equality/membership is a contract).
+    Names(Vec<String>),
+}
+
+impl NamePrefilter {
+    /// Whether `name` (an observed process's bare executable file name,
+    /// not a path) can possibly match some registered plugin, under
+    /// `platform`'s own case rule (§6.1: Windows name matching is
+    /// case-insensitive, `names_equal`). Cheaply reproduces
+    /// [`CompiledMatcher::matches`]'s own `process_names` check without
+    /// needing a full [`CandidateProcess`] — a source consults this
+    /// before reading anything else about the process at all.
+    #[must_use]
+    pub fn allows(&self, platform: MatchPlatform, name: &str) -> bool {
+        match self {
+            Self::Unfiltered => true,
+            Self::Names(names) => names
+                .iter()
+                .any(|candidate| names_equal(platform, candidate, name)),
+        }
+    }
 }
 
 /// A plugin whose matcher statically overlaps an already-registered one
@@ -453,6 +506,30 @@ impl MatcherEngine {
         hints.sort_unstable();
         hints.dedup();
         hints
+    }
+
+    /// The Windows enumeration-cost pre-filter (M1 §4 phase d2b, unit c,
+    /// [`NamePrefilter`]'s own doc comment): [`NamePrefilter::Unfiltered`]
+    /// the moment any registered plugin's matcher is not
+    /// [`CompiledMatcher::names_only`], otherwise the deduplicated union
+    /// of every registered plugin's `process_names`.
+    #[must_use]
+    pub fn name_prefilter(&self) -> NamePrefilter {
+        if self
+            .entries
+            .iter()
+            .any(|(_, _, compiled)| !compiled.names_only())
+        {
+            return NamePrefilter::Unfiltered;
+        }
+        let mut names: Vec<String> = self
+            .entries
+            .iter()
+            .flat_map(|(_, table, _)| table.process_names.iter().cloned())
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        NamePrefilter::Names(names)
     }
 }
 

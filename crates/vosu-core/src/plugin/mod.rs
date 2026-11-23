@@ -80,7 +80,7 @@ pub use host_services::{PluginHostHandler, PluginInstanceId};
 pub use instance::{DEFAULT_QUEUE_CAPACITY, PluginInstance};
 pub use matcher::{
     CandidateProcess, CompiledMatcher, MatchOutcome, MatchPlatform, MatcherEngine, MatcherError,
-    OverlapError, PluginId, RegisterError, overlaps,
+    NamePrefilter, OverlapError, PluginId, RegisterError, overlaps,
 };
 pub use read_plan::{
     DispatchThreadScope, ExecuteBytesError, FinishOutcome, MAX_OUTSTANDING_ASYNC_PLANS,

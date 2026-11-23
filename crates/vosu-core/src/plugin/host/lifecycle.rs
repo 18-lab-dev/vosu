@@ -12,6 +12,7 @@ use vosu_plugin_api::{DetachReason, Message};
 
 use super::super::error::HostError;
 use super::super::host_services::PluginInstanceId;
+use super::super::matcher::NamePrefilter;
 use super::super::session::SessionHandle;
 use super::{InstanceSlot, PluginHost};
 
@@ -252,5 +253,17 @@ impl PluginHost {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .comm_hints()
+    }
+
+    /// The Windows enumeration-cost pre-filter (M1 §4 phase d2b, unit c,
+    /// `MatcherEngine::name_prefilter`'s own doc comment): re-read on
+    /// every reconciliation pass so a plugin installed or torn down
+    /// after startup narrows or widens what a Windows source opens.
+    #[must_use]
+    pub fn name_prefilter(&self) -> NamePrefilter {
+        self.matcher
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .name_prefilter()
     }
 }

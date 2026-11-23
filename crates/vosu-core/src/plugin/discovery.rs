@@ -33,6 +33,7 @@ use tokio::runtime::Handle;
 use tokio::sync::Notify;
 
 use super::host::{PluginHost, ProcessRecord};
+use super::matcher::NamePrefilter;
 
 /// Event hints [`ProcessSource::drain_events`] buffers since the last
 /// call, generic over whatever push-capable channel a real backend uses
@@ -119,6 +120,18 @@ pub trait ProcessSource: Send + Sync {
     fn set_comm_hints(&self, _hints: &[String]) -> io::Result<()> {
         Ok(())
     }
+
+    /// Updates the source's own executable-name pre-filter (Windows
+    /// production only, M1 §4 phase d2b unit c) to `filter`, derived from
+    /// every registered plugin's `process_names`
+    /// (`MatcherEngine::name_prefilter`, §6.1): a real backend skips
+    /// opening/reading anything else about a process whose bare
+    /// executable name [`NamePrefilter::allows`] rejects. The default is
+    /// a correct no-op for a source with no per-process open cost to
+    /// avoid this way — Linux's own `/proc` reads are already narrowed by
+    /// its kernel/CN_PROC [`Self::set_comm_hints`] filter, independent of
+    /// this one.
+    fn set_name_prefilter(&self, _filter: &NamePrefilter) {}
 
     /// A [`Notify`] this service awaits alongside its own
     /// [`RECONCILE_INTERVAL`] timeout, woken whenever new events are ready
@@ -269,6 +282,28 @@ fn sync_comm_hints(
     true
 }
 
+/// Syncs the Windows enumeration-cost name pre-filter
+/// (`MatcherEngine::name_prefilter`, §6.1, M1 §4 phase d2b unit c) to
+/// `source` whenever it has changed since the last sync, and reports
+/// whether it did: the caller forces a full reconcile on a change, since
+/// a widening (a new plugin registered, or an existing one losing a
+/// path/command-line pattern) can newly admit a process
+/// [`NamePrefilter::Names`] previously hid from `source.enumerate()`
+/// entirely.
+fn sync_name_prefilter(
+    host: &PluginHost,
+    source: &dyn ProcessSource,
+    last_filter: &mut Option<NamePrefilter>,
+) -> bool {
+    let filter = host.name_prefilter();
+    if last_filter.as_ref() == Some(&filter) {
+        return false;
+    }
+    source.set_name_prefilter(&filter);
+    *last_filter = Some(filter);
+    true
+}
+
 /// Blocks the calling (dedicated, non-worker) thread until `source`'s own
 /// event [`Notify`] fires, `wake` fires (service stopping, or a hint-set
 /// change worth checking promptly), or `timeout` elapses — whichever comes
@@ -303,11 +338,13 @@ fn run_pass(
     source: &dyn ProcessSource,
     tracked: &mut HashMap<u32, ProcessRecord>,
     last_hints: &mut Vec<String>,
+    last_name_prefilter: &mut Option<NamePrefilter>,
     next_reconcile: Instant,
 ) -> Instant {
     let hints_changed = sync_comm_hints(host, source, last_hints);
+    let prefilter_changed = sync_name_prefilter(host, source, last_name_prefilter);
     let now = Instant::now();
-    if hints_changed || now >= next_reconcile {
+    if hints_changed || prefilter_changed || now >= next_reconcile {
         full_reconcile(host, source, tracked);
         return Instant::now() + RECONCILE_INTERVAL;
     }
@@ -349,6 +386,7 @@ impl DiscoveryService {
             .spawn(move || {
                 let mut tracked: HashMap<u32, ProcessRecord> = HashMap::new();
                 let mut last_hints: Vec<String> = Vec::new();
+                let mut last_name_prefilter: Option<NamePrefilter> = None;
                 // Due immediately: the first pass is always a full
                 // reconcile, regardless of what `source` reports before
                 // then.
@@ -362,6 +400,7 @@ impl DiscoveryService {
                         source.as_ref(),
                         &mut tracked,
                         &mut last_hints,
+                        &mut last_name_prefilter,
                         next_reconcile,
                     );
                     drop(host);
