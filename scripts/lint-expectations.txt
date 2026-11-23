@@ -1,0 +1,18 @@
+# Allowlist for scripts/check-lint-expectations.py.
+# Format: <path-or-glob> <lint> <max-count> <category> <reason>
+# lint is disallowed_methods or disallowed_types (the clippy.toml lints a
+# per-site #[expect(clippy::<lint>, reason = "...")] can suppress).
+# Category is one of: bounded-poll, disposable-io, bounded-queue, benchmark-helper
+# (AGENTS.md: "Production exceptions need a per-site #[expect(clippy::disallowed_methods,
+# reason = "...")]. Test code is exempt at the crate level.")
+build.rs disallowed_methods 1 disposable-io build script writes generated daemon-asset bindings into Cargo-owned OUT_DIR
+crates/vosu-core/src/config/store.rs disallowed_methods 1 bounded-queue config-store command channel depth tracks concurrent Save/Flush/Shutdown callers, not an unbounded backlog
+crates/vosu-core/src/desktop/login.rs disallowed_methods 1 bounded-poll systemd login reconciliation polls systemctl on spawn_blocking until a ten-second deadline
+crates/vosu-core/src/updater/helper.rs disallowed_methods 5 bounded-poll the synchronous updater helper process polls owner/readiness handoff state until its own deadline
+crates/vosu-core/src/updater/platform.rs disallowed_methods 1 bounded-poll synchronous updater process polls a process identity until the caller's timeout
+crates/vosu-core/src/updater/prepare.rs disallowed_methods 1 bounded-poll spawn_helper's caller runs on spawn_blocking and waits on the helper bounded by a 15-second deadline
+crates/vosu-net/src/streaming/archive.rs disallowed_methods 1 disposable-io ZIP extraction writes into a private staging directory published later by one same-filesystem replacement
+crates/vosu-sys/src/platform/windows.rs disallowed_methods 2 bounded-poll native same-directory replacement and a transient missing-name read both retry on a bounded deadline
+examples/support/process_event_bench.rs disallowed_methods 2 benchmark-helper helper process only stays alive as a named discovery target for the benchmark
+src/runtime/offset_generator.rs disallowed_methods 1 disposable-io generator template write lands in a disposable work directory; the generated offsets are validated before install
+src/runtime/offset_generator/client_runtime.rs disallowed_methods 2 disposable-io rewritten runtime manifests belong to a disposable staged runtime, not user state

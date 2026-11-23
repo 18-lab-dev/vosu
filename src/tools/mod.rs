@@ -162,6 +162,12 @@ pub fn secret() -> io::Result<String> {
 fn equal(a: &str, b: &str) -> bool {
     bool::from(a.as_bytes().ct_eq(b.as_bytes()))
 }
+/// Publishes via tempfile `persist` (`MoveFileExW` on Windows), not the
+/// cross-directory `vosu_sys::platform::atomic_replace`: readers of files
+/// this writes (tool settings, `state.json`, catalog sources,
+/// `overlay-catalog-state.json`) are out of scope for
+/// `vosu_sys::platform::read_published`'s measured guarantee; see its doc
+/// comment's exclusion list.
 fn atomic_json(path: &Path, value: &impl Serialize) -> io::Result<()> {
     fs::create_dir_all(path.parent().unwrap())?;
     let mut temp = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;

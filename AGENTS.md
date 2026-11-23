@@ -13,7 +13,7 @@
 
 ## Toolchain and commands
 
-Use the pinned Rust 1.96.1 toolchain from `rust-toolchain.toml`, including `rustfmt`, `clippy`, and both native targets. Windows builds require MSVC and the Windows SDK; Linux builds require a GNU C toolchain, Clang, pkg-config, and libelf, zlib, and libbpf development files for the process-event backends (per-distribution packages are in CONTRIBUTING.md). `crates/vosu-plugin-api/tests/layout.rs` additionally needs a C compiler on `PATH` (`$CC`, `cc`, `clang`, or `gcc`) to verify `include/vosu_plugin.h` against the Rust ABI types; on Windows this means Clang specifically (not `cl.exe`, which the test never invokes), installed separately from the MSVC/Windows SDK workload above. Keep `--locked`. Linux releases explicitly enable `linux-process-events`; Windows releases use no default features. GPU driver development libraries are not required.
+Use the pinned Rust 1.96.1 toolchain from `rust-toolchain.toml`, including `rustfmt`, `clippy`, and both native targets. Windows builds require MSVC and the Windows SDK; Linux builds require a GNU C toolchain, Clang, pkg-config, and libelf, zlib, and libbpf development files for the process-event backends (per-distribution packages are in CONTRIBUTING.md). `crates/vosu-plugin-api/tests/layout.rs` additionally needs a C compiler on `PATH` (`$CC`, `cc`, `clang`, or `gcc`) to verify `include/vosu_plugin.h` against the Rust ABI types; on Windows this means Clang specifically (not `cl.exe`, which the test never invokes), installed separately from the MSVC/Windows SDK workload above. Keep `--locked`. Linux releases explicitly enable `linux-process-events`; Windows releases use no default features. GPU driver development libraries are not required. Tests run through `cargo-nextest` 0.9.152 (pinned in CONTRIBUTING.md), which kills any individual test that runs past the bound in `.config/nextest.toml` and names it in its output; nextest does not run doctests, so those run separately with plain `cargo test --doc`.
 
 ```sh
 # Local debug build/run
@@ -23,7 +23,8 @@ cargo run --locked
 # CI checks
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --lib --bins --tests --examples --all-features --locked
+cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked
+cargo test --workspace --doc --all-features --locked
 
 # Native release build (select the host target)
 cargo build --release --locked --no-default-features --features linux-process-events --target x86_64-unknown-linux-gnu
@@ -71,9 +72,10 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 Most rules below are enforced mechanically ([ADR 0018](docs/decisions/0018-enforce-rules-with-checks.md)). When a check fails, fix the cause it names. When you correct a mistake that a check could catch, add or extend the check instead of adding prose here.
 
 - Lint exceptions are `#[expect(lint, reason = "...")]` with the real reason; `#[allow]` is rejected (`clippy::allow_attributes`). Every `unsafe` block needs a `// SAFETY:` comment stating the invariant (`clippy::undocumented_unsafe_blocks`).
-- `clippy.toml` disallows direct file writes (`std::fs::write`, `File::create`, and their tokio equivalents), unbounded channels, and `std::thread::sleep`, with messages naming the replacement. Production exceptions need a per-site `#[expect(clippy::disallowed_methods, reason = "...")]`. Test code is exempt at the crate level.
+- `clippy.toml` disallows direct file writes (`std::fs::write`, `File::create`, and their tokio equivalents), unbounded channels, and `std::thread::sleep`, with messages naming the replacement. Production exceptions need a per-site `#[expect(clippy::disallowed_methods, reason = "...")]` (or `disallowed_types`). Test code is exempt at the crate level (a `#![cfg_attr(test, expect(...))]`), a `#[cfg(test)]` module, or a `tests/`/`benches/` file. `python scripts/check-lint-expectations.py` enforces that every production-code site matches a `scripts/lint-expectations.txt` entry (path, lint, a ratcheting maximum count, category, reason), the same ratchet discipline as `scripts/brand-allowlist.txt`.
 - Blocking work in async code goes through `tokio::task::spawn_blocking`; the sleep rule exists because blocking waits on async workers have shipped before.
 - Property tests are named `prop_*`, use `vosu_proptest::vosu_proptest_config()`, and run with a fixed seed. `VOSU_PROPTEST_RANDOM=1 PROPTEST_CASES=<n>` explores with a random seed, which the nightly workflow does.
+- `python scripts/check-deleted-assertions.py`, a required `prepush.py` step, diffs HEAD against the merge-base and fails if an `assert!`/`assert_eq!`/`assert_ne!`/`debug_assert*`/`prop_assert*` line was removed from test code (a `#[cfg(test)]` module, or a `tests/`, `tests.rs`, or `*_tests.rs` file) without the same assertion text reappearing elsewhere in the diff; a deliberate removal needs an `Assertions-Removed: <reason>` trailer on a commit in the range.
 
 ## Verification by change
 
@@ -89,6 +91,7 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 - Dashboard, tool host, or catalog UI (`assets/server/`, `src/server/`, `src/tools/`, `src/runtime/render*`): `python tests/tool_host_smoke.py --binary target/debug/vosu` and `python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module <playwright index.mjs>` against a `cargo build --locked --features test-harness` binary; CI's `dashboard` job runs both.
 - Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](docs/testing/benchmarks.md). The guide holds only each benchmark's latest result: replace the old section rather than appending a dated one; Git history keeps earlier results.
 - Before merging a Rust change, run the applicable native smoke path and the CI checks above; platform-specific code requires evidence from that platform.
+- Windows-sensitive changes (conditional compilation, path/line-ending handling, native process/memory code): run `python scripts/vm-test.py [--package P] [--test T] [--lib] [-- <filter>]` before handing off. It stages HEAD plus your uncommitted changes and runs a filtered `cargo test` natively in the Windows VM in minutes, well before `scripts/prepush.py`'s full native gate; it never starts the VM and never replaces that gate.
 
 ## Local CI and landing
 
@@ -100,17 +103,18 @@ python scripts/land.py [--topic <name>]
 ```
 
 - `prepush.py` refuses a dirty tree. It runs every applicable `ci.yml` check against `HEAD`:
-  - formatting, Linux Clippy and the full workspace tests including doctests;
+  - formatting, Linux Clippy and the full workspace tests (unit/integration tests through `cargo nextest run`, doctests through a separate `cargo test --doc`) — a test that runs past `.config/nextest.toml`'s `slow-timeout` bound is killed and reported by name instead of hanging the gate;
   - the repository check scripts and every `scripts/test_*.py` suite;
   - actionlint when workflows changed;
   - Windows MSVC cross-Clippy;
   - the dashboard smokes when UI paths changed;
-  - native Windows Clippy, tests, and doctests in the VM through `scripts/native-ci.ps1`.
+  - native Windows Clippy, nextest tests, and doctests in the VM through `scripts/native-ci.ps1`, but only when `scripts/windows_sensitivity.py` finds the diff against `--base` Windows-sensitive (the native process/platform boundary, updater staging, process/platform-specific modules, the plugin host's native-library loading, Cargo/toolchain manifests, `.cargo/`, `.github/workflows/`, `scripts/native-ci.ps1`/`prepush.py` itself, any `windows`/`win32`-named or `.ps1` path, or an added/removed `cfg(windows)`/`target_os`/`windows_sys`/`unsafe` diff line) or `--force-native` is passed; otherwise it records `not_applicable` with a reason and skips the VM entirely. Hosted CI's `windows-native` job still runs for every Rust change regardless, so this only narrows the slower local VM phase.
 
-  It writes `target/prepush/<sha>.json`. `--start-vm` starts the Windows VM only if it is stopped; report that lifecycle action.
+  It writes `target/prepush/<sha>.json`. `--start-vm` starts the Windows VM only if it is stopped and the native phase is applicable; report that lifecycle action.
 - `land.py` accepts the evidence only when every step passed, or was not applicable, for exactly `HEAD`, and `HEAD` fast-forwards `origin/main`. It then pushes `ci/<topic>`, waits for hosted CI on that commit, fast-forwards `main`, and deletes the branch. Pass `--base <branch>` (and the matching `prepush.py --base <branch>`) to land onto a branch other than `main`, e.g. `v2/main`.
 - `--skip` is for local iteration only; `land.py` refuses evidence with a skipped or failed required step. Fix the cause and rerun. Do not weaken tests or bypass the gate.
 - When `ci.yml` gains a check, add it to `prepush.py` or `native-ci.ps1` in the same change. `scripts/test_gate_tooling.py` fails until the local gate covers it.
+- Hosted cache saves for Cargo downloads and `target` artifacts run only from `main` (caches are branch-scoped and only `main`'s are readable cross-branch); `ci/<topic>` and pull-request runs restore only. A `main` push whose exact SHA already passed `CI required` on its `ci/<topic>` run (checked by `scripts/ci-check-verified.py`) skips its own lint/test steps and, on a cache miss, only rebuilds without testing to refresh the cache.
 
 ## Compatibility and security invariants
 
@@ -118,7 +122,7 @@ python scripts/land.py [--topic <name>]
 - Preserve bounded request/frame handling and latest-state backpressure. Do not introduce unbounded queues or buffering in polling or streaming paths.
 - Counter downloads must remain HTTPS-only in production, reject downgrade/private/reserved destinations, and retain redirect, ZIP path/symlink/count/expanded-size checks before same-filesystem replacement.
 - Updater changes must retain platform-asset selection, published SHA-256 verification, single-root-executable staging, atomic replacement, rollback, and crash recovery.
-- Keep report output escaped and configuration/settings writes same-directory and atomically replaced. Never weaken native process-memory permission boundaries or run the service as root to bypass them.
+- Keep report output escaped and configuration/settings writes same-directory and atomically replaced; a reader of a file published through `vosu_sys::platform::atomic_replace` goes through the retrying read helper (`read_published`/`read_published_async`), is serialized against that file's own in-process writer by a lock the writer already holds while it publishes (e.g. counter settings files and `PROFILE_MUTATIONS`), or is a documented exclusion — an in-code comment at the read site, or the central list next to `read_published` (e.g. a same-task read strictly after that task's own publish, with no other writer of that path) — not a raw read. Files published through tempfile `persist` (a different, non-cross-directory publish) are out of scope for this helper. Never weaken native process-memory permission boundaries or run the service as root to bypass them.
 - Keep `#![forbid(unsafe_op_in_unsafe_fn)]`; isolate and justify platform `unsafe` at the native boundary.
 
 ## Vendored, generated, and documentation boundaries

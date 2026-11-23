@@ -1,0 +1,29 @@
+# cargo-nextest configuration (see AGENTS.md "Local CI and landing").
+#
+# A deadlocked test once held the native Windows gate for 12 hours with no
+# name and no bound (see docs/testing/benchmarks.md and the prepush/land
+# history around 2026-11). slow-timeout below guarantees every test gets
+# reported once it runs unusually long, and killed well before it can repeat
+# that: `period` is how long a test may run before nextest calls it slow and
+# prints its name and current output, and `terminate-after` is how many
+# periods it gets before nextest sends SIGTERM (then SIGKILL after the grace
+# period) and reports it as a timeout failure naming the test. A timed
+# baseline run (`cargo nextest run --workspace --lib --bins --tests
+# --examples --all-features --locked`, warm target dir) found the slowest
+# test at ~15s on Linux, well under the default bound, so there is no
+# Linux-only override.
+[profile.default]
+retries = 0
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+# The same baseline run on the native Windows VM found one test past the
+# default 60s/5-period bound: `vosu-sys` platform::windows::tests::
+# concurrent_readers_never_observe_missing_file measured 99.1s. It is a
+# fixed-work NTFS contention stress test (200 generations x 32
+# atomic-replace rounds against two concurrent readers, see its own doc
+# comment), not an open-ended wait, so it gets a wider explicit bound
+# instead of raising the default for every test: 150s x 4 periods = 600s,
+# about 6x its measured time for slower CI hardware headroom.
+[[profile.default.overrides]]
+filter = 'package(vosu-sys) & test(=platform::windows::tests::concurrent_readers_never_observe_missing_file)'
+slow-timeout = { period = "150s", terminate-after = 4 }

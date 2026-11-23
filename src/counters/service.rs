@@ -83,6 +83,8 @@ impl CounterDownloader for HardenedCounterDownloader {
                 .download_atomic(&request.url, USER_AGENT, &archive_path, &cancel)
                 .await
                 .map_err(|error| attribute_to_host(error, &request.url))?;
+            // Same-task read of this own just-downloaded archive after our
+            // own publish: excluded per `read_published`'s doc comment.
             tokio::task::spawn_blocking(move || {
                 vosu_net::streaming::extract_zip_atomic(
                     &archive_path,

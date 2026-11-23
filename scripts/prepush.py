@@ -11,6 +11,8 @@ import subprocess
 import sys
 import time
 
+import windows_sensitivity
+
 ROOT = Path(__file__).resolve().parent.parent
 EVIDENCE_DIR = ROOT / "target" / "prepush"
 # Own, non-incremental target dir outside the checkout filesystem: a shared
@@ -28,9 +30,14 @@ LINUX_ENV = {**CARGO_ENV, "C_INCLUDE_PATH": "/usr/include/x86_64-linux-gnu"}
 # and with ci.yml's windows-native job; scripts/test_gate_tooling.py checks it.
 NATIVE_COMMANDS = {
     "native-clippy": "cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings",
-    "native-test-workspace": "cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc",
+    "native-test-workspace": "cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc",
     "native-test-doc": "cargo test --workspace --doc --all-features --locked --target x86_64-pc-windows-msvc",
 }
+
+# scripts/windows_sensitivity.py decides whether this diff needs the native
+# VM phase at all; hosted CI's windows-native job (scripts/ci-changes.py's
+# `native` flag) still runs it for every Rust change regardless.
+NATIVE_NOT_APPLICABLE_REASON = "portable-only change; hosted Windows CI verifies it"
 
 
 def run(cmd, *, cwd=ROOT, env_overrides=None, extra_env_unset=()):
@@ -118,6 +125,16 @@ def changed_paths(base="main"):
     return [line for line in diff.splitlines() if line]
 
 
+def changed_diff(base="main"):
+    """Unified diff of HEAD against origin/<base>, or None when that cannot be proven."""
+    try:
+        git("fetch", "origin", base, check=True)
+    except RuntimeError as error:
+        print(f"warning: could not fetch origin/{base} to classify changes: {error}", file=sys.stderr)
+        return None
+    return git("diff", "--no-renames", f"origin/{base}...HEAD", check=False)
+
+
 def workflows_changed(paths):
     # Unknown changes fail safe: run actionlint rather than skip it.
     return paths is None or any(path.startswith(".github/workflows/") for path in paths)
@@ -148,10 +165,12 @@ def run_actionlint(log_dir, applicable):
 LINUX_STEPS = [
     ("fmt", ["cargo", "fmt", "--all", "--", "--check"], CARGO_ENV, ()),
     ("clippy-linux", ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"], LINUX_ENV, ()),
-    ("test-linux", ["cargo", "test", "--workspace", "--all-features", "--locked"], LINUX_ENV, ()),
+    ("test-linux", ["cargo", "nextest", "run", "--workspace", "--lib", "--bins", "--tests", "--examples", "--all-features", "--locked"], LINUX_ENV, ()),
+    ("test-linux-doc", ["cargo", "test", "--workspace", "--doc", "--all-features", "--locked"], LINUX_ENV, ()),
     ("doc-links", [sys.executable, "scripts/check-doc-links.py"], None, ()),
     ("file-length", [sys.executable, "scripts/check-file-length.py"], None, ()),
     ("brand", [sys.executable, "scripts/check-brand.py"], None, ()),
+    ("lint-expectations", [sys.executable, "scripts/check-lint-expectations.py"], None, ()),
     ("module-boundaries", [sys.executable, "scripts/check-module-boundaries.py"], None, ()),
     ("crate-boundaries", [sys.executable, "scripts/check-crate-boundaries.py"], None, ()),
     ("license-notices", [sys.executable, "scripts/assemble-release-license.py"], None, ()),
@@ -207,8 +226,13 @@ def run_dashboard(log_dir, applicable, playwright_module):
     return StepResult(name, True, status, exit_code, round(total, 3), command, log[-1])
 
 
-def run_native(sha, log_dir, evidence_dir, start_vm):
+def run_native(sha, log_dir, evidence_dir, start_vm, applicable):
     names = ["native-clippy", "native-test-workspace", "native-test-doc"]
+    if not applicable:
+        return [
+            StepResult(n, False, "not_applicable", command=NATIVE_COMMANDS[n], log_tail=NATIVE_NOT_APPLICABLE_REASON)
+            for n in names
+        ]
     sha12 = sha[:12]
     remote_stage = f"V:\\omp-prepush\\{sha12}"
     remote_work = f"V:\\bt\\vosu-{sha12}"
@@ -252,9 +276,11 @@ def run_native(sha, log_dir, evidence_dir, start_vm):
     code, out, err = vm("put", str(bundle_path), f"{remote_stage}/vosu.bundle")
     if code != 0:
         return failed_all(f"could not upload bundle: {err or out}")
-    code, out, err = vm("put", str(ROOT / "scripts" / "native-ci.ps1"), f"{remote_stage}/native-ci.ps1")
-    if code != 0:
-        return failed_all(f"could not upload native-ci.ps1: {err or out}")
+    # native-ci.ps1 dot-sources windows-ci-env.ps1 from its own directory.
+    for script in ("native-ci.ps1", "windows-ci-env.ps1"):
+        code, out, err = vm("put", str(ROOT / "scripts" / script), f"{remote_stage}/{script}")
+        if code != 0:
+            return failed_all(f"could not upload {script}: {err or out}")
 
     started = time.monotonic()
     run_cmd = (
@@ -302,10 +328,17 @@ def main():
         "--skip",
         default="",
         help="Comma-separated step names to skip for local iteration (fmt, clippy-linux, test-linux, "
-        "doc-links, file-length, brand, module-boundaries, license-notices, asset-hashes, script-tests, "
-        "actionlint, xwin-clippy, dashboard, native). land.py refuses evidence that skipped a required step.",
+        "doc-links, file-length, brand, lint-expectations, module-boundaries, license-notices, "
+        "asset-hashes, script-tests, deleted-assertions, actionlint, xwin-clippy, dashboard, native). "
+        "land.py refuses evidence that skipped a required step.",
     )
     parser.add_argument("--start-vm", action="store_true", help="Start the Windows VM if it is currently stopped.")
+    parser.add_argument(
+        "--force-native",
+        action="store_true",
+        help="Run the native Windows VM phase even when scripts/windows_sensitivity.py finds the "
+        "change portable-only (it is always applicable otherwise).",
+    )
     parser.add_argument(
         "--base",
         default="main",
@@ -346,6 +379,14 @@ def main():
         print(f"running {name} ...")
         results.append(run_linux_step(name, cmd, log_dir, env_overrides, unset))
 
+    deleted_assertions_cmd = [sys.executable, "scripts/check-deleted-assertions.py", "--base", args.base]
+    skipped = maybe_skip("deleted-assertions", True, " ".join(deleted_assertions_cmd))
+    if skipped:
+        results.append(skipped)
+    else:
+        print("running deleted-assertions ...")
+        results.append(run_linux_step("deleted-assertions", deleted_assertions_cmd, log_dir))
+
     paths = changed_paths(args.base)
     if "actionlint" in skip:
         results.append(StepResult("actionlint", True, "skipped", command=ACTIONLINT_CMD_TEXT))
@@ -380,8 +421,9 @@ def main():
         for name in ("native-clippy", "native-test-workspace", "native-test-doc"):
             results.append(StepResult(name, True, "skipped", command=NATIVE_COMMANDS[name]))
     else:
-        print("running native Windows CI in the VM ...")
-        results.extend(run_native(sha, log_dir, evidence_dir, args.start_vm))
+        applicable = args.force_native or windows_sensitivity.windows_sensitive(paths, changed_diff(args.base))
+        print(f"running native Windows CI in the VM ... (applicable={applicable})")
+        results.extend(run_native(sha, log_dir, evidence_dir, args.start_vm, applicable))
 
     evidence = {
         "sha": sha,

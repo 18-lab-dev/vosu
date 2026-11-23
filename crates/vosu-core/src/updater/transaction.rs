@@ -198,8 +198,15 @@ impl InstallRecord {
     }
 }
 
+/// Reads and parses an `InstallRecord`, including those written by a
+/// different process (the separate helper binary polls this while the main
+/// process is still writing). Goes through the retrying helper
+/// (`vosu_sys::platform::read_published`) to absorb the measured,
+/// load-dependent Windows missing-name window documented on
+/// `vosu_sys::platform::atomic_replace`; a genuinely absent record still
+/// surfaces `NotFound` after that helper's bounded retry latency.
 pub fn load_record(path: &Path) -> Result<InstallRecord, UpdateError> {
-    let bytes = fs::read(path)?;
+    let bytes = vosu_sys::platform::read_published(path)?;
     let record: InstallRecord = serde_json::from_slice(&bytes)?;
     validate_record_paths(path, &record)?;
     Ok(record)

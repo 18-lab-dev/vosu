@@ -86,12 +86,22 @@ pub(super) async fn run_store(args: RunStoreArgs) -> io::Result<()> {
                 if event.is_none() {
                     continue;
                 }
+                // Retries a transient missing-name window (see
+                // `vosu_sys::platform::atomic_replace` docs) briefly rather than
+                // silently dropping this reload on a load-dependent Windows race.
+                // Blocking (not `read_published_async`): this runs inside
+                // `spawn_blocking` (see `ConfigStore::initialize_with_options`).
+                // Read before taking `publish_lock`: reading under the lock
+                // would order nothing that reading outside it does not, and
+                // would otherwise hold the lock across the full retry window,
+                // stalling an async `ConfigStore::update()` caller
+                // (`store.rs`) that takes the same lock.
+                let Ok(bytes) = vosu_sys::platform::read_published(&path) else {
+                    continue;
+                };
                 let _publication = publish_lock
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let Ok(bytes) = std::fs::read(&path) else {
-                    continue;
-                };
                 let hash = hash_bytes(&bytes);
                 if hash == current_hash {
                     continue;

@@ -46,10 +46,21 @@ needs only Rust and a native C toolchain; no Node.js, Electron, or .NET.
      --target x86_64-pc-windows-msvc -- -D warnings
    ```
 
+3. Install the pinned test runner:
 
-3. Install Python 3.11 or newer for the repository checks in `scripts/`
+   ```sh
+   cargo install --locked cargo-nextest --version 0.9.152
+   ```
+
+   CI and `scripts/prepush.py`/`scripts/native-ci.ps1` use this exact pin
+   (via `taiki-e/install-action` on hosted CI, a plain pinned `cargo install`
+   on this host, and the same pinned `cargo install` into the Windows VM's
+   `CARGO_HOME` for `native-ci.ps1`). `cargo nextest run` does not execute
+   doctests; run those with `cargo test --doc`.
+
+4. Install Python 3.11 or newer for the repository checks in `scripts/`
    (they read TOML with the standard-library `tomllib`).
-4. Clone, build, and run:
+5. Clone, build, and run:
 
    ```sh
    git clone https://github.com/18-lab-dev/vosu.git
@@ -108,7 +119,8 @@ Run the checks that CI runs on Linux:
 ```sh
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --all-features --locked
+cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked
+cargo test --workspace --doc --all-features --locked
 python scripts/check-doc-links.py
 python scripts/check-file-length.py
 python scripts/check-brand.py
@@ -131,7 +143,11 @@ For a narrower loop, [Testing and verification](docs/testing/verification.md#fas
 maps each kind of change to its test targets. Changes to process discovery,
 memory reading, or the updater also need the native tests
 (`process_memory`, `updater_native`) on each affected OS. CI covers Windows
-with an MSVC cross-check and a native Windows job.
+with an MSVC cross-check and a native Windows job. Coding agents with access
+to the project's Windows VM: for Windows-sensitive changes, run
+`python scripts/vm-test.py [--package P] [--test T] [--lib] [-- <filter>]`
+before handing off. It is a fast, narrower lever than the native phase of
+`scripts/prepush.py`; it never starts the VM.
 
 Keep these in the same pull request:
 

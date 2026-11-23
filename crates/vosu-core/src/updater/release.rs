@@ -221,6 +221,12 @@ pub(super) async fn check_release_and_prepare<'a, 'b, P: UpdatePlatform>(
             "release metadata exceeds 1 MiB".into(),
         ));
     }
+    // Reads this task's own just-downloaded `metadata_path` strictly after
+    // its own `download_atomic` call returned: no other writer can touch
+    // this transaction-scoped path, so this is the same same-task-after-
+    // own-publish exclusion as `prepare.rs`'s staging reads (see the
+    // exclusion list on `vosu_sys::platform::read_published`'s doc
+    // comment); unlike those, this one is small enough to read whole here.
     let body = fs::read(&metadata_path)?;
     fs::remove_file(&metadata_path)?;
     match parse_latest_release(&body, current, platform_name, major_consent)? {

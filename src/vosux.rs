@@ -234,8 +234,15 @@ pub fn run(args: Vec<OsString>) -> i32 {
     }
 }
 async fn execute(invocation: Invocation) -> Result<i32, Failure> {
+    // `broker.json` is republished with `atomic_replace` on every listener
+    // stage change (`runtime/worker.rs`), a cross-process write this
+    // separate `vosux` process can race; goes through the retrying helper
+    // to absorb the measured transient Windows missing-name window instead
+    // of surfacing this cross-process read as "unavailable".
     let broker: Broker = serde_json::from_slice(
-        &std::fs::read(broker_path().map_err(unavailable)?).map_err(unavailable)?,
+        &vosu_sys::platform::read_published_async(&broker_path().map_err(unavailable)?)
+            .await
+            .map_err(unavailable)?,
     )
     .map_err(unavailable)?;
     let origin = url::Url::parse(&broker.origin).map_err(unavailable)?;
