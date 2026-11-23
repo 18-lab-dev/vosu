@@ -361,16 +361,15 @@ impl ProductionRuntime {
         *self.relays.get_mut() = Some(relays);
         *self.supervisor.get_mut() = Some(supervisor);
         *self.instances.get_mut() = Some(instances);
-        // M1 §4 phase d2b unit d: started only once plugins are loaded and
-        // only when an enabled one actually has a `[match]` table
-        // (`discovery::start_discovery`'s own zero-cost doc comment), and
-        // only here -- after `App::run`'s own Archive/OneDrive guard and
-        // update decision, and after `instances` (1.x's own discovery) is
-        // set above (P3 review finding: starting any earlier could attach
-        // sessions to plugins before a guarded or handed-off run exits).
-        // Every exit path from here on routes through
-        // `ProductionRuntime::shutdown` (`finish_runtime_run`'s own
-        // unconditional call), which stops both before `plugins.destroy_all`.
+        // M1 §4 phase d2b unit d: started here (after `instances`, 1.x's
+        // own discovery, is set above) so it only runs after `App::run`'s
+        // Archive/OneDrive guard and update decision (P3 review finding:
+        // starting any earlier could attach sessions to plugins before a
+        // guarded or handed-off run exits); zero cost when no enabled
+        // plugin has a `[match]` table (`discovery::start_discovery`'s own
+        // doc comment). Every exit path from here on routes through
+        // `ProductionRuntime::shutdown`, which stops both before
+        // `plugins.destroy_all`.
         let discovery = discovery::start_discovery(&self.plugins, Handle::current());
         #[cfg(windows)]
         let foreground = discovery
@@ -947,11 +946,7 @@ pub async fn run_cli() -> io::Result<()> {
             )));
         }
     }
-    // M1 §4 phase d2b unit d: started in `compose()`, after `instances`
-    // (1.x's own discovery) is set -- which only runs once `App::run`'s
-    // own Archive/OneDrive guard and update decision have passed (P3
-    // review finding: starting any earlier could attach sessions to
-    // plugins before a guarded or handed-off run exits).
+    // Discovery/foreground poller start in `compose()`, not here (P3: only after `App::run`'s guards).
     let hooks = ProductionRuntime {
         config,
         changes,
