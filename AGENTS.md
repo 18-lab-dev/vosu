@@ -118,7 +118,7 @@ python scripts/land.py [--topic <name>]
 - Preserve bounded request/frame handling and latest-state backpressure. Do not introduce unbounded queues or buffering in polling or streaming paths.
 - Counter downloads must remain HTTPS-only in production, reject downgrade/private/reserved destinations, and retain redirect, ZIP path/symlink/count/expanded-size checks before same-filesystem replacement.
 - Updater changes must retain platform-asset selection, published SHA-256 verification, single-root-executable staging, atomic replacement, rollback, and crash recovery.
-- Keep report output escaped and configuration/settings writes same-directory and atomically replaced. Never weaken native process-memory permission boundaries or run the service as root to bypass them.
+- Keep report output escaped and configuration/settings writes same-directory and atomically replaced; readers of vosu-published files go through the retrying read helper (`vosu_sys::platform::read_published`/`read_published_async`), not a raw read. Never weaken native process-memory permission boundaries or run the service as root to bypass them.
 - Keep `#![forbid(unsafe_op_in_unsafe_fn)]`; isolate and justify platform `unsafe` at the native boundary.
 
 ## Vendored, generated, and documentation boundaries
