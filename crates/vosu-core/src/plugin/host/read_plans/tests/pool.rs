@@ -345,3 +345,110 @@ fn process_exit_cancels_outstanding_plans_before_detach_so_no_stale_result_follo
         "a plan cancelled by its session's own detach must never still deliver its result"
     );
 }
+
+/// N3: a `READ_PLAN_CANCEL`/a detach can still land between
+/// `OutstandingPlans::begin` admitting a plan and
+/// `submit_read_plan_async` recording its own pool job ticket —
+/// deterministic here through `set_async_submit_race_hook_for_tests`,
+/// standing in for that arrival on another thread. Every shared
+/// background worker is kept busy on this same instance's own blocking
+/// plans the whole time, so the racing plan's job can only ever sit
+/// queued, proving its removal (not merely that no worker reached it
+/// anyway). The plan must never deliver a result, and every one of
+/// `OutstandingPlans`'s own maps must end up exactly as if it had never
+/// been submitted at all — not left stuck in `cancelled`/
+/// `queue_tickets` forever, the leak N3 closes.
+#[test]
+fn a_cancel_racing_admission_still_removes_the_queued_job_and_leaves_no_leak() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let instance = PluginInstanceId::new(1);
+    let (_log_dir, host) = test_host(runtime.handle().clone());
+    let (events, commands) = create_read_plan_instance(
+        &host,
+        instance,
+        "testkit.readplan.racecancel",
+        &["proc-racecancel"],
+        ReadPlanPluginConfig::default(),
+    );
+
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let pid = 500_100_301;
+    set_session_memory_hook_for_tests(
+        pid,
+        Arc::new(GatedMemory {
+            gate: Arc::clone(&gate),
+        }),
+        ProcessBitness::X64,
+    );
+    host.process_appeared(test_process(pid, "proc-racecancel"));
+    let handle = expect_attached(&events);
+
+    // Occupy every shared background worker with this same instance's
+    // own blocking plans first, so the racing plan below can only ever
+    // sit queued behind them.
+    let stages = vec![one_op_stage(1)];
+    for plan in 1..=BACKGROUND_WORKER_COUNT as u64 {
+        commands
+            .send(ReadPlanCommand::SubmitAsync {
+                plan,
+                handle,
+                root: PlanBase::Absolute(0),
+                stages: stages.clone(),
+            })
+            .expect("sending a blocking submit command");
+        assert_eq!(expect_status(&events), vosu_status::VOSU_OK);
+    }
+
+    let outstanding = host
+        .outstanding_plans_of(instance)
+        .expect("the instance must still be live");
+    let racing_plan = 1_000u64;
+    let outstanding_for_hook = Arc::clone(&outstanding);
+    set_async_submit_race_hook_for_tests(pid, move || {
+        let _ = outstanding_for_hook.cancel(racing_plan);
+    });
+
+    commands
+        .send(ReadPlanCommand::SubmitAsync {
+            plan: racing_plan,
+            handle,
+            root: PlanBase::Absolute(0),
+            stages,
+        })
+        .expect("sending the racing submit command");
+    assert_eq!(
+        expect_status(&events),
+        vosu_status::VOSU_OK,
+        "admission itself already succeeded before the race landed"
+    );
+    assert!(
+        events.recv_timeout(Duration::from_millis(200)).is_err(),
+        "a plan cancelled by a race between `begin` and `set_queue_ticket` must never still \
+         deliver its result"
+    );
+
+    assert_eq!(
+        outstanding.len(),
+        BACKGROUND_WORKER_COUNT,
+        "only the still-blocked plans must remain outstanding"
+    );
+    assert_eq!(
+        outstanding.cancelled_len(),
+        0,
+        "N3: a cancel racing admission must not leak a `cancelled`-set entry"
+    );
+    assert_eq!(
+        outstanding.queue_tickets_len(),
+        BACKGROUND_WORKER_COUNT,
+        "the racing plan's own ticket must not remain either"
+    );
+
+    release_gate(&gate);
+    for _ in 1..=BACKGROUND_WORKER_COUNT {
+        match events.recv_timeout(RECV_TIMEOUT).expect("READ_PLAN_RESULT") {
+            ReadPlanEvent::AsyncResult(_) => {}
+            other => panic!("expected AsyncResult, got {other:?}"),
+        }
+    }
+}

@@ -124,19 +124,34 @@ pub(super) struct SessionMemory {
     modules: Mutex<Option<Arc<dyn ModuleResolver + Send + Sync>>>,
 }
 
-/// One session's own, lazily-opened slot (F5): the global
+/// One session's own, lazily-opened slot (F5, N2): the global
 /// `read_plan_memory` map holds one `Arc<SessionMemorySlot>` per handle,
 /// never the open result directly, so [`PluginHost::session_memory`]
 /// only ever needs that global lock long enough to get or insert the
 /// slot itself — the actual `open_session_memory` call (a handful of
 /// syscalls, `/proc/<pid>/maps` on Linux) runs against this slot's own
-/// `OnceLock`, outside the global lock, so one session's slow first open
+/// state, outside the global lock, so one session's slow first open
 /// never blocks another plugin's already-cached (or independently
 /// opening) session, including a `VOSU_READ_PLAN_SYNC` submission on a
 /// completely different session.
+///
+/// N2: only a successful open is ever cached, in `result` — a failed
+/// open (e.g. `ptrace_scope` denying it) is never stored, so the next
+/// submission against this same handle retries the open instead of
+/// replaying the same failure for the rest of the session's life (e.g.
+/// the user lowers `ptrace_scope` at runtime; before this fix the next
+/// plan would still fail until the game restarted). `open` single-
+/// flights concurrent openers of this one slot onto one real open: a
+/// plain `OnceLock<Result<..>>` could not do this without also caching
+/// `Err`, so this slot takes its own `Mutex` around the open instead —
+/// held only across `open_session_memory` itself, never across another
+/// slot's, so two different sessions' opens still never serialize
+/// against each other (only concurrent openers of the *same* session do,
+/// same as before).
 #[derive(Default)]
 pub(super) struct SessionMemorySlot {
-    result: std::sync::OnceLock<Result<Arc<SessionMemory>, SessionMemoryError>>,
+    result: std::sync::OnceLock<Arc<SessionMemory>>,
+    open: Mutex<()>,
 }
 
 /// Every way [`open_session_memory`] can fail to open `pid`'s process
@@ -275,8 +290,40 @@ pub(crate) fn set_session_memory_hook_for_tests(
             }),
         );
 }
+/// N2: lets a test make [`open_session_memory`] fail `pid`'s next
+/// `count` calls with `VOSU_ERR_PERMISSION_DENIED` before falling
+/// through to [`session_memory_hooks`]'s own success hook — proving a
+/// failed open is never cached (`SessionMemorySlot`'s own doc comment):
+/// the submission that hits it fails, but the next one against the same
+/// handle retries the open and succeeds.
+#[cfg(test)]
+fn open_failure_hooks() -> &'static Mutex<HashMap<u32, usize>> {
+    static HOOKS: std::sync::LazyLock<Mutex<HashMap<u32, usize>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+    &HOOKS
+}
+
+#[cfg(test)]
+pub(crate) fn set_open_failure_count_for_tests(pid: u32, count: usize) {
+    open_failure_hooks()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(pid, count);
+}
 
 fn open_session_memory(pid: u32) -> Result<Arc<SessionMemory>, SessionMemoryError> {
+    #[cfg(test)]
+    {
+        let mut failures = open_failure_hooks()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(remaining) = failures.get_mut(&pid)
+            && *remaining > 0
+        {
+            *remaining -= 1;
+            return Err(SessionMemoryError::PermissionDenied);
+        }
+    }
     #[cfg(test)]
     {
         let hooked = session_memory_hooks()
@@ -367,6 +414,50 @@ fn resolve_cached(
     address
 }
 
+/// N3: a test-only seam standing in for a `READ_PLAN_CANCEL`/detach
+/// landing on another thread in the narrow window between
+/// [`PluginHost::submit_read_plan_async`]'s own `begin` and
+/// `set_queue_ticket` calls — a `Mutex`, not a `thread_local`, since the
+/// real submission may run on a different thread than the test that sets
+/// this hook (unlike `scan.rs`'s own `RACE_HOOK_FOR_TESTS`, which a test
+/// always races from a direct, same-thread `submit` call). Keyed by
+/// `pid`, not a single global slot (unlike `scan.rs`'s own
+/// thread-local), so an unrelated test's submission running concurrently
+/// in the same test binary (`cargo test`'s default parallelism) can
+/// never consume a hook meant for a different test's own pid, or run one
+/// it never installed.
+#[cfg(test)]
+type AsyncSubmitRaceHook = Box<dyn FnOnce() + Send>;
+
+#[cfg(test)]
+fn async_submit_race_hooks_for_tests() -> &'static Mutex<HashMap<u32, AsyncSubmitRaceHook>> {
+    static HOOKS: std::sync::LazyLock<Mutex<HashMap<u32, AsyncSubmitRaceHook>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+    &HOOKS
+}
+
+/// Installs a one-shot hook [`PluginHost::submit_read_plan_async`] runs,
+/// for `pid`'s own submissions only, at the exact point its own window
+/// for the N3 race opens.
+#[cfg(test)]
+pub(crate) fn set_async_submit_race_hook_for_tests(pid: u32, hook: impl FnOnce() + Send + 'static) {
+    async_submit_race_hooks_for_tests()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(pid, Box::new(hook));
+}
+
+#[cfg(test)]
+fn run_async_submit_race_hook_for_tests(pid: u32) {
+    let hook = async_submit_race_hooks_for_tests()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(&pid);
+    if let Some(hook) = hook {
+        hook();
+    }
+}
+
 impl PluginHost {
     /// Returns `handle`'s cached process handle, opening (and caching) it
     /// on first use (point 1 of this phase). `pub(super)`: `host::scans`
@@ -379,12 +470,18 @@ impl PluginHost {
     /// across `open_session_memory` itself, which on Linux parses
     /// `/proc/<pid>/maps`. Without this, every plugin's submissions,
     /// including a `VOSU_READ_PLAN_SYNC` read on an unrelated session,
-    /// would wait behind one session's first (slowest) open. A
-    /// concurrent `session_memory` call for the *same* handle instead
-    /// blocks on that slot's own `OnceLock` (`SessionMemorySlot`'s own
-    /// doc comment), so the open still runs exactly once per session —
-    /// never duplicated, never serialized against an unrelated session's
-    /// open.
+    /// would wait behind one session's first (slowest) open.
+    ///
+    /// N2: only `Ok` is ever cached (`SessionMemorySlot`'s own doc
+    /// comment) — a fast lock-free read against `slot.result` once it is
+    /// set, otherwise `slot.open` single-flights concurrent openers of
+    /// this *same* handle onto one real `open_session_memory` call,
+    /// re-checking `slot.result` once that lock is held in case another
+    /// opener already won while this one was waiting for it. A failed
+    /// open is returned straight to its own caller, never written to
+    /// `slot.result`, so the next submission against this handle (sync
+    /// or async) retries the open instead of replaying the same failure
+    /// for the rest of the session's life.
     pub(super) fn session_memory(
         &self,
         handle: SessionHandle,
@@ -397,7 +494,18 @@ impl PluginHost {
                 .entry(handle)
                 .or_default(),
         );
-        slot.result.get_or_init(|| open_session_memory(pid)).clone()
+        if let Some(memory) = slot.result.get() {
+            return Ok(Arc::clone(memory));
+        }
+        let _open = slot.open.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(memory) = slot.result.get() {
+            return Ok(Arc::clone(memory));
+        }
+        let memory = open_session_memory(pid)?;
+        // Another opener can never have raced past the check above: it
+        // would need `slot.open` too, and this call still holds it.
+        let _ = slot.result.set(Arc::clone(&memory));
+        Ok(memory)
     }
 
     /// `handle`'s session is gone (detached, declined, or superseded):
@@ -622,6 +730,13 @@ impl PluginHost {
         if let Err(error) = outstanding.begin(plan, handle.0) {
             return error.into();
         }
+        // N3: deterministic test seam for the race this method's own
+        // `set_queue_ticket` call below closes — a test installs a hook
+        // here that cancels `plan` right in this window, standing in for
+        // `READ_PLAN_CANCEL`/a detach landing on another thread between
+        // `begin` (just above) and the job actually being queued.
+        #[cfg(test)]
+        run_async_submit_race_hook_for_tests(pid);
         let modules = CachingModuleResolver {
             memory: Arc::clone(&memory),
         };
@@ -680,8 +795,22 @@ impl PluginHost {
         let ticket = self.background_pool.submit(instance.0, job);
         // F1: lets a later `READ_PLAN_CANCEL`/session detach remove this
         // job from the pool's own sub-queue immediately if it still can
-        // — a no-op if the job already ran by the time this runs.
-        outstanding.set_queue_ticket(plan, ticket);
+        // — a no-op if the job already ran by the time this runs. N3: a
+        // cancel can still slip in before this runs (`begin` already
+        // admitted the plan, but `READ_PLAN_CANCEL`/a detach arrives on
+        // another thread before this call reaches `set_queue_ticket`'s
+        // own lock); `CancelledMeanwhile` means the ticket was never
+        // recorded, so remove the job from the pool directly with the
+        // `ticket` already in hand and forget the `cancelled`-set entry
+        // in turn — otherwise the job stays queued until a worker
+        // happens to reach it, and `cancelled` leaks the entry forever
+        // (F1's pattern, on this narrower window).
+        if let read_plan::SetQueueTicketOutcome::CancelledMeanwhile =
+            outstanding.set_queue_ticket(plan, ticket)
+            && self.background_pool.cancel(instance.0, ticket)
+        {
+            outstanding.forget_cancelled(plan);
+        }
         vosu_status::VOSU_OK
     }
 

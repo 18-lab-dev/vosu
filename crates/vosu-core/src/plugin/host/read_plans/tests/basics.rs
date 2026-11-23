@@ -379,3 +379,57 @@ fn async_ref_op_wrong_width_is_invalid_argument() {
         "a refused submission must never still produce an AsyncResult"
     );
 }
+
+/// N2: a failed process open must never be cached — only `Ok` is, so the
+/// next submission against the same handle retries the open and
+/// succeeds instead of replaying the same failure for the rest of the
+/// session's life (e.g. `ptrace_scope` denying the open once, then the
+/// user lowering it at runtime).
+#[test]
+fn a_failed_open_is_never_cached_so_the_next_submission_retries_and_succeeds() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let (_log_dir, host) = test_host(runtime.handle().clone());
+    let (events, commands) = create_read_plan_instance(
+        &host,
+        PluginInstanceId::new(1),
+        "testkit.readplan.retryafteropen",
+        &["proc-retryafteropen"],
+        ReadPlanPluginConfig::default(),
+    );
+
+    let pid = 500_100_501;
+    set_open_failure_count_for_tests(pid, 1);
+    set_session_memory_hook_for_tests(pid, Arc::new(DyingMemory::new()), ProcessBitness::X64);
+    host.process_appeared(test_process(pid, "proc-retryafteropen"));
+    let handle = expect_attached(&events);
+
+    let stages = vec![one_op_stage(1)];
+    commands
+        .send(ReadPlanCommand::SubmitAsync {
+            plan: 1,
+            handle,
+            root: PlanBase::Absolute(0),
+            stages: stages.clone(),
+        })
+        .expect("sending the first submit command");
+    assert_eq!(
+        expect_status(&events),
+        vosu_status::VOSU_ERR_PERMISSION_DENIED,
+        "the first submission must hit the injected open failure"
+    );
+
+    commands
+        .send(ReadPlanCommand::SubmitAsync {
+            plan: 2,
+            handle,
+            root: PlanBase::Absolute(0),
+            stages,
+        })
+        .expect("sending the retry submit command");
+    assert_eq!(
+        expect_status(&events),
+        vosu_status::VOSU_OK,
+        "a submission after a failed open must retry the open, not replay the same failure"
+    );
+}
