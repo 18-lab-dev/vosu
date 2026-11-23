@@ -358,5 +358,77 @@ mod tests {
             discovery.stop();
             host.destroy_all(Duration::from_secs(5));
         }
+
+        /// P1 end-to-end: a manifest whose `[match]` table has only
+        /// `process_names` (the §8 manifest example's own shape) and an
+        /// empty `comm_hints` must still attach a real spawned child
+        /// through the production Linux pre-filter wiring
+        /// (`MatcherEngine::prefilter`/`ProcessSource::set_prefilter`,
+        /// which production's CN_PROC/kernel path consults before any
+        /// userspace match ever runs) -- not just the synthetic-source
+        /// unit coverage in `vosu-core`'s own `discovery`/`linux_source`
+        /// tests. Before the P1 fix an empty `comm_hints` left the
+        /// pre-filter matching nothing, so this process would never have
+        /// been read at all.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn discovery_attaches_via_process_names_without_comm_hints() {
+            let runtime = tokio::runtime::Handle::current();
+            let (_log_dir, host) = test_host(runtime.clone());
+
+            let comm = unique_comm();
+            let events = session::register_with_config(
+                format!("vosu.testkit.{comm}"),
+                SessionPluginConfig::default(),
+            );
+            let manifest = format!(
+                "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.{comm}'\nname='vosu.testkit.{comm}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{comm}']\ncomm_hints=[]\n"
+            );
+            let loaded = load_bundled(&[BundledPlugin {
+                manifest: &manifest,
+                vtable: session::vosu_plugin_vtable,
+            }])
+            .expect("loading the session testkit plugin");
+            let data_dir = tempfile::tempdir().unwrap();
+            host.create_instance(
+                PluginInstanceId::new(0),
+                &loaded[0],
+                data_dir.path().to_path_buf(),
+                None,
+            )
+            .expect("creating the session testkit instance");
+
+            let bin_dir = tempfile::tempdir().unwrap();
+            let binary = renamed_sleep(bin_dir.path(), &comm);
+            let mut child = ChildGuard(
+                std::process::Command::new(&binary)
+                    .arg("60")
+                    .spawn()
+                    .expect("spawning the renamed sleep child"),
+            );
+            let pid = child.0.id();
+
+            assert!(host.has_enabled_matchers());
+            let discovery = start_discovery(&host, runtime)
+                .expect("a registered [match] table must start discovery");
+
+            let attached = match expect_event(
+                &events,
+                |event| matches!(event, SessionEvent::Attached(attached) if attached.pid == pid),
+            ) {
+                SessionEvent::Attached(attached) => attached,
+                _ => unreachable!("expect_event's own predicate only matches Attached"),
+            };
+            assert_eq!(
+                attached.pid, pid,
+                "process_names alone (no comm_hints) must still widen the pre-filter to this child"
+            );
+
+            child.0.kill().expect("killing the test child");
+            child.0.wait().expect("reaping the test child");
+            drop(child);
+
+            discovery.stop();
+            host.destroy_all(Duration::from_secs(5));
+        }
     }
 }
