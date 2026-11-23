@@ -361,6 +361,26 @@ impl ProductionRuntime {
         *self.relays.get_mut() = Some(relays);
         *self.supervisor.get_mut() = Some(supervisor);
         *self.instances.get_mut() = Some(instances);
+        // M1 §4 phase d2b unit d: started only once plugins are loaded and
+        // only when an enabled one actually has a `[match]` table
+        // (`discovery::start_discovery`'s own zero-cost doc comment), and
+        // only here -- after `App::run`'s own Archive/OneDrive guard and
+        // update decision, and after `instances` (1.x's own discovery) is
+        // set above (P3 review finding: starting any earlier could attach
+        // sessions to plugins before a guarded or handed-off run exits).
+        // Every exit path from here on routes through
+        // `ProductionRuntime::shutdown` (`finish_runtime_run`'s own
+        // unconditional call), which stops both before `plugins.destroy_all`.
+        let discovery = discovery::start_discovery(&self.plugins, Handle::current());
+        #[cfg(windows)]
+        let foreground = discovery
+            .is_some()
+            .then(|| vosu_core::plugin::ForegroundPoller::start(&self.plugins, Handle::current()));
+        *self.discovery.get_mut() = discovery;
+        #[cfg(windows)]
+        {
+            *self.foreground.get_mut() = foreground;
+        }
         if self.ordinary_role {
             let origins = Arc::clone(&self.origins);
             *self.tray.get_mut() = Some(vosu_core::desktop::tray::start(
@@ -927,17 +947,11 @@ pub async fn run_cli() -> io::Result<()> {
             )));
         }
     }
-    // M1 §4 phase d2b unit d: started only once plugins are loaded and
-    // only when an enabled one actually has a `[match]` table
-    // (`discovery::start_discovery`'s own zero-cost doc comment); every
-    // exit path from here on routes through `ProductionRuntime::shutdown`
-    // (`finish_runtime_run`'s own unconditional call below), which stops
-    // both before `plugins.destroy_all`.
-    let discovery = discovery::start_discovery(&plugin_host, Handle::current());
-    #[cfg(windows)]
-    let foreground = discovery
-        .is_some()
-        .then(|| vosu_core::plugin::ForegroundPoller::start(&plugin_host, Handle::current()));
+    // M1 §4 phase d2b unit d: started in `compose()`, after `instances`
+    // (1.x's own discovery) is set -- which only runs once `App::run`'s
+    // own Archive/OneDrive guard and update decision have passed (P3
+    // review finding: starting any earlier could attach sessions to
+    // plugins before a guarded or handed-off run exits).
     let hooks = ProductionRuntime {
         config,
         changes,
@@ -968,9 +982,9 @@ pub async fn run_cli() -> io::Result<()> {
         instances: AsyncMutex::new(None),
         ordinary_role,
         tray: AsyncMutex::new(None),
-        discovery: AsyncMutex::new(discovery),
+        discovery: AsyncMutex::new(None),
         #[cfg(windows)]
-        foreground: AsyncMutex::new(foreground),
+        foreground: AsyncMutex::new(None),
         #[cfg(target_os = "linux")]
         login_state: Arc::new(AsyncMutex::new(current.start_at_login)),
     };

@@ -316,6 +316,20 @@ class SummarizeBenchResultsTests(unittest.TestCase):
         self.assertAlmostEqual(summary["ebpf"]["detect_latency_us_mean"], 55.0)
         self.assertEqual(summary["cn-proc"]["lifecycle_cpu_us_mean"], 2500)
 
+    def test_null_median_us_raises_ebpf_verify_error_not_a_traceback(self):
+        sample = '{"lifecycle": {"user_cpu_us": 1, "system_cpu_us": 1}, "add_latency": {"median_us": null}}'
+        with self.assertRaises(ebpf_verify.EbpfVerifyError):
+            ebpf_verify.summarize_bench_results({"ebpf": [sample]})
+
+    def test_invalid_json_sample_raises_ebpf_verify_error_not_a_traceback(self):
+        with self.assertRaises(ebpf_verify.EbpfVerifyError):
+            ebpf_verify.summarize_bench_results({"ebpf": ["{not json"]})
+
+    def test_missing_key_raises_ebpf_verify_error_not_a_traceback(self):
+        sample = '{"lifecycle": {"user_cpu_us": 1, "system_cpu_us": 1}, "add_latency": {}}'
+        with self.assertRaises(ebpf_verify.EbpfVerifyError):
+            ebpf_verify.summarize_bench_results({"ebpf": [sample]})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -349,11 +349,22 @@ def summarize_bench_results(results: dict[str, list[str]]) -> dict[str, dict[str
             continue
         cpu_values = []
         latency_values = []
-        for sample_text in samples:
-            data = json.loads(sample_text)
-            lifecycle = data["lifecycle"]
-            cpu_values.append(lifecycle["user_cpu_us"] + lifecycle["system_cpu_us"])
-            latency_values.append(data["add_latency"]["median_us"])
+        for index, sample_text in enumerate(samples):
+            try:
+                data = json.loads(sample_text)
+                lifecycle = data["lifecycle"]
+                cpu = lifecycle["user_cpu_us"] + lifecycle["system_cpu_us"]
+                median_us = data["add_latency"]["median_us"]
+            except json.JSONDecodeError as error:
+                raise EbpfVerifyError(f"{mode} sample {index} is not valid JSON: {error}") from error
+            except (KeyError, TypeError) as error:
+                raise EbpfVerifyError(f"{mode} sample {index} is missing an expected bench field: {error}") from error
+            if median_us is None:
+                raise EbpfVerifyError(
+                    f"{mode} sample {index} has a null add_latency.median_us (no samples observed)"
+                )
+            cpu_values.append(cpu)
+            latency_values.append(median_us)
         summary[mode] = {
             "lifecycle_cpu_us_mean": statistics.fmean(cpu_values),
             "lifecycle_cpu_us_min": min(cpu_values),
