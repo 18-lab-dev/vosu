@@ -228,6 +228,15 @@ type Gate = Arc<Mutex<Option<DeliverFn>>>;
 struct ScanEntry {
     handle: u64,
     gate: Option<Gate>,
+    /// F1: this scan's still-queued [`ScanWorkerPool`] job id, set once
+    /// [`submit`] has actually queued it — `None` once a worker has
+    /// already dequeued the job (or it never queued at all, e.g. a
+    /// malformed request answered inline before reaching the pool).
+    /// [`OutstandingScans::cancel_session`] hands this back so the
+    /// caller can remove the job from its key's own sub-queue
+    /// immediately, instead of leaving a cancelled job to sit there
+    /// until a worker happens to reach it (F1).
+    queue_ticket: Option<u64>,
 }
 
 /// Tracks one plugin instance's outstanding `VOSU_OP_SCAN_REQUEST`s
@@ -287,12 +296,29 @@ impl OutstandingScans {
             return Err(OutstandingScansError::CapExceeded);
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.lock_entries().insert(id, ScanEntry { handle, gate });
+        self.lock_entries().insert(
+            id,
+            ScanEntry {
+                handle,
+                gate,
+                queue_ticket: None,
+            },
+        );
         *count += 1;
         Ok(ScanSlot {
             outstanding: Arc::clone(self),
             id,
         })
+    }
+
+    /// F1: records `id`'s pool job ticket once [`submit`] has actually
+    /// queued it; a no-op if `id`'s slot already finished (or was
+    /// already freed) by the time this runs — nothing left to remove
+    /// from the pool's queue either way.
+    fn set_queue_ticket(&self, id: u64, ticket: u64) {
+        if let Some(entry) = self.lock_entries().get_mut(&id) {
+            entry.queue_ticket = Some(ticket);
+        }
     }
 
     /// Admits one more scan for `handle`'s session, refusing beyond
@@ -306,17 +332,23 @@ impl OutstandingScans {
     /// for that session immediately, and — racing against each one's own
     /// worker — delivers the session-detached error form for it exactly
     /// once, whichever side gets there first (§6.4, mirroring
-    /// `read_plan::OutstandingPlans::cancel_session`'s A1 rule).
-    pub fn cancel_session(&self, handle: u64) {
-        let matches: Vec<(u64, Option<Gate>)> = {
+    /// `read_plan::OutstandingPlans::cancel_session`'s A1 rule). Returns
+    /// every freed scan's own pool job ticket, if it still had one (F1):
+    /// the caller removes each from the shared pool's own per-key
+    /// sub-queue immediately, rather than leaving a cancelled job to pile
+    /// up there until a worker happens to reach it.
+    #[must_use]
+    pub fn cancel_session(&self, handle: u64) -> Vec<u64> {
+        let matches: Vec<(u64, Option<Gate>, Option<u64>)> = {
             let entries = self.lock_entries();
             entries
                 .iter()
                 .filter(|(_, entry)| entry.handle == handle)
-                .map(|(id, entry)| (*id, entry.gate.clone()))
+                .map(|(id, entry)| (*id, entry.gate.clone(), entry.queue_ticket))
                 .collect()
         };
-        for (id, gate) in matches {
+        let mut tickets = Vec::new();
+        for (id, gate, queue_ticket) in matches {
             if let Some(gate) = gate {
                 // Released before `deliver` runs (F6): holding the
                 // gate's own mutex across that call would let a slow
@@ -332,8 +364,12 @@ impl OutstandingScans {
                     ));
                 }
             }
+            if let Some(ticket) = queue_ticket {
+                tickets.push(ticket);
+            }
             self.free(id);
         }
+        tickets
     }
 
     /// Current outstanding count, for tests and diagnostics.
@@ -378,16 +414,25 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 /// already have admitted `job` against its own bounded cap
 /// (`OutstandingPlans`/`OutstandingScans`, 64 read plans + 64 scans) before
 /// calling [`Self::submit`], so one key's own sub-queue never holds more
-/// than 128 jobs at a time — [`Self::submit`] therefore never refuses, and
-/// one plugin flooding its own cap can never delay another plugin's
-/// already-admitted work the way a single shared, fixed-capacity queue
-/// could. Each sub-queue is a plain unbounded-looking `VecDeque`, but its
-/// true bound is that external per-instance admission, exactly the same
-/// way `dispatch::WorkerPool`'s own per-instance queue is bounded by a
-/// fixed capacity rather than a wholly separate admission check — here the
-/// admission check already lives in `OutstandingPlans`/`OutstandingScans`,
-/// so duplicating it as a second, pool-level capacity would only let the
-/// two bounds disagree.
+/// than 128 jobs *genuinely outstanding* at a time — [`Self::submit`]
+/// therefore never refuses, and one plugin flooding its own cap can never
+/// delay another plugin's already-admitted work the way a single shared,
+/// fixed-capacity queue could. [`Self::submit`] returns a ticket
+/// identifying the queued job; [`Self::cancel`] removes it again if a
+/// caller's own cancellation (`VOSU_OP_READ_PLAN_CANCEL`, a session
+/// detach) reaches it before a worker does (F1) — without this, a plugin
+/// that loops submit-then-cancel against its own already-admitted cap
+/// could grow its own sub-queue without bound while this instance's own
+/// workers stay busy on its other, still-running jobs, since admission
+/// alone only bounds how many jobs are genuinely *outstanding*, not how
+/// many cancelled-but-still-queued entries accumulate behind them. Each
+/// sub-queue is a plain unbounded-looking `VecDeque`, but its true bound
+/// is that external per-instance admission *combined with* prompt
+/// cancellation — exactly the same way `dispatch::WorkerPool`'s own
+/// per-instance queue is bounded by a fixed capacity rather than a wholly
+/// separate admission check — here the admission check already lives in
+/// `OutstandingPlans`/`OutstandingScans`, so duplicating it as a second,
+/// pool-level capacity would only let the two bounds disagree.
 ///
 /// A small fixed worker count (`host/read_plans.rs`'s own
 /// `BACKGROUND_WORKER_COUNT`) bounds total concurrency; workers drain
@@ -400,7 +445,7 @@ pub struct ScanWorkerPool {
 
 #[derive(Default)]
 struct PoolState {
-    queues: HashMap<u64, VecDeque<Job>>,
+    queues: HashMap<u64, VecDeque<(u64, Job)>>,
     /// Keys with at least one queued job, in round-robin service order.
     /// A key appears at most once: pushed back onto the end when its
     /// sub-queue is still non-empty after a worker takes one job from it.
@@ -411,6 +456,11 @@ struct PoolState {
 struct PoolInner {
     state: Mutex<PoolState>,
     not_empty: Condvar,
+    /// F1: assigns each queued job its own [`Self::submit`]-returned
+    /// ticket, unique for the pool's whole lifetime (never reused, so a
+    /// stale ticket from an already-run or already-cancelled job can
+    /// never collide with, and wrongly cancel, a later one).
+    next_job_id: AtomicU64,
 }
 
 fn worker_loop(inner: Arc<PoolInner>) {
@@ -423,7 +473,7 @@ fn worker_loop(inner: Arc<PoolInner>) {
                         .queues
                         .get_mut(&key)
                         .expect("a ready key always has a non-empty queue");
-                    let job = queue.pop_front().expect("ready implies a queued job");
+                    let (_id, job) = queue.pop_front().expect("ready implies a queued job");
                     if queue.is_empty() {
                         state.queues.remove(&key);
                     } else {
@@ -453,6 +503,7 @@ impl ScanWorkerPool {
         let inner = Arc::new(PoolInner {
             state: Mutex::new(PoolState::default()),
             not_empty: Condvar::new(),
+            next_job_id: AtomicU64::new(0),
         });
         let workers = (0..worker_count.max(1))
             .map(|_| {
@@ -465,20 +516,68 @@ impl ScanWorkerPool {
 
     /// Queues `job` on `key`'s own sub-queue (this struct's own doc
     /// comment): the caller must already have admitted it against its own
-    /// per-instance cap, so this never refuses.
-    pub fn submit(&self, key: u64, job: impl FnOnce() + Send + 'static) {
+    /// per-instance cap, so this never refuses. Returns a ticket
+    /// [`Self::cancel`] can later use to remove `job` again, if a worker
+    /// has not already dequeued it (F1).
+    pub fn submit(&self, key: u64, job: impl FnOnce() + Send + 'static) -> u64 {
         let mut state = self
             .inner
             .state
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        let id = self.inner.next_job_id.fetch_add(1, Ordering::Relaxed);
         let queue = state.queues.entry(key).or_default();
-        queue.push_back(Box::new(job) as Job);
+        queue.push_back((id, Box::new(job) as Job));
         if queue.len() == 1 {
             state.ready.push_back(key);
         }
         drop(state);
         self.inner.not_empty.notify_one();
+        id
+    }
+
+    /// F1: removes `ticket`'s job from `key`'s own sub-queue if a worker
+    /// has not already dequeued it, returning whether it was still there
+    /// to remove. A caller whose own cancellation races a worker that
+    /// already started the job gets `false` back — nothing left to
+    /// remove, and the job's own `is_cancelled`/gate-take check (the
+    /// caller's own admission bookkeeping) still skips its real work.
+    pub fn cancel(&self, key: u64, ticket: u64) -> bool {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(queue) = state.queues.get_mut(&key) else {
+            return false;
+        };
+        let before = queue.len();
+        queue.retain(|(id, _)| *id != ticket);
+        let removed = queue.len() != before;
+        if removed && queue.is_empty() {
+            // Mirrors `worker_loop`'s own bookkeeping: an empty sub-queue
+            // is never left in `queues`, and its key is never left in
+            // `ready` either, or a later worker's `expect` above would
+            // panic finding a `ready` key with no queue behind it.
+            state.queues.remove(&key);
+            state.ready.retain(|&ready_key| ready_key != key);
+        }
+        removed
+    }
+}
+
+#[cfg(test)]
+impl ScanWorkerPool {
+    /// Test-only: `key`'s own sub-queue length, for F1's own regression
+    /// test — proving a loop of submit-then-cancel never grows it.
+    pub(crate) fn queue_len_for_tests(&self, key: u64) -> usize {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .queues
+            .get(&key)
+            .map_or(0, VecDeque::len)
     }
 }
 
@@ -492,7 +591,21 @@ impl Drop for ScanWorkerPool {
             .unwrap_or_else(PoisonError::into_inner)
             .closed = true;
         self.inner.not_empty.notify_all();
+        // F4: a narrower self-join window than P1-2's own closed — a job
+        // holds only a `Weak<PluginHost>` (P1-2), but the runtime can
+        // still drop the last strong `Arc` from inside that job's own
+        // `host.upgrade()` window, making *this* `drop` run on a worker
+        // thread that is this pool's own. Joining that thread's handle
+        // from inside itself would deadlock (a plain `thread::Builder`
+        // join, not even `JoinHandle::join`'s own panic-propagation,
+        // ever supports that); skip exactly that one handle; every other
+        // worker is still joined normally, and the running job (this
+        // call itself) returns, letting that one thread exit on its own.
+        let current = thread::current().id();
         for worker in self.workers.drain(..) {
+            if worker.thread().id() == current {
+                continue;
+            }
             let _ = worker.join();
         }
     }
@@ -548,8 +661,9 @@ pub fn submit(
     // deterministic instead of timing-dependent.
     #[cfg(test)]
     run_race_hook_for_tests();
+    let slot_id = slot.id;
     let spawn_gate = Arc::clone(&gate);
-    pool.submit(routing.queue_key, move || {
+    let ticket = pool.submit(routing.queue_key, move || {
         // P2-7: skip the real (possibly whole-address-space) scan
         // entirely if `cancel_session` already won the race and
         // delivered the session-detached form — this job has nothing
@@ -579,6 +693,10 @@ pub fn submit(
         }
         drop(slot);
     });
+    // F1: lets a later `cancel_session` remove this job from the pool's
+    // own sub-queue immediately if it still can — a no-op if the job
+    // already ran (or was already cancelled) by the time this runs.
+    outstanding.set_queue_ticket(slot_id, ticket);
     Ok(())
 }
 
