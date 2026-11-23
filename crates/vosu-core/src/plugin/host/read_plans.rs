@@ -124,6 +124,21 @@ pub(super) struct SessionMemory {
     modules: Mutex<Option<Arc<dyn ModuleResolver + Send + Sync>>>,
 }
 
+/// One session's own, lazily-opened slot (F5): the global
+/// `read_plan_memory` map holds one `Arc<SessionMemorySlot>` per handle,
+/// never the open result directly, so [`PluginHost::session_memory`]
+/// only ever needs that global lock long enough to get or insert the
+/// slot itself — the actual `open_session_memory` call (a handful of
+/// syscalls, `/proc/<pid>/maps` on Linux) runs against this slot's own
+/// `OnceLock`, outside the global lock, so one session's slow first open
+/// never blocks another plugin's already-cached (or independently
+/// opening) session, including a `VOSU_READ_PLAN_SYNC` submission on a
+/// completely different session.
+#[derive(Default)]
+pub(super) struct SessionMemorySlot {
+    result: std::sync::OnceLock<Result<Arc<SessionMemory>, SessionMemoryError>>,
+}
+
 /// Every way [`open_session_memory`] can fail to open `pid`'s process
 /// (P2-8, §5): only a `pid` that is actually dead maps to
 /// `VOSU_ERR_TARGET_GONE`; a live process this host simply could not open
@@ -358,30 +373,31 @@ impl PluginHost {
     /// reuses this directly (module doc comment) instead of opening a
     /// second handle for a session this instance also has read plans
     /// outstanding against.
+    ///
+    /// F5: the global `read_plan_memory` lock is held only long enough
+    /// to get or insert this handle's own [`SessionMemorySlot`] — never
+    /// across `open_session_memory` itself, which on Linux parses
+    /// `/proc/<pid>/maps`. Without this, every plugin's submissions,
+    /// including a `VOSU_READ_PLAN_SYNC` read on an unrelated session,
+    /// would wait behind one session's first (slowest) open. A
+    /// concurrent `session_memory` call for the *same* handle instead
+    /// blocks on that slot's own `OnceLock` (`SessionMemorySlot`'s own
+    /// doc comment), so the open still runs exactly once per session —
+    /// never duplicated, never serialized against an unrelated session's
+    /// open.
     pub(super) fn session_memory(
         &self,
         handle: SessionHandle,
         pid: u32,
     ) -> Result<Arc<SessionMemory>, SessionMemoryError> {
-        // P3: held across the whole check-open-insert sequence (opening
-        // a process handle is a handful of syscalls, not unbounded I/O)
-        // instead of releasing between the cache check and the insert —
-        // the previous two-lock version let a `forget_read_plan_session`
-        // for this same `handle` land in that gap and then have this
-        // call's own insert put the now-stale handle straight back,
-        // leaking an open process handle nothing would ever forget again.
-        let mut cache = self
-            .read_plan_memory
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        match cache.entry(handle) {
-            std::collections::hash_map::Entry::Occupied(entry) => Ok(Arc::clone(entry.get())),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                let memory = open_session_memory(pid)?;
-                entry.insert(Arc::clone(&memory));
-                Ok(memory)
-            }
-        }
+        let slot = Arc::clone(
+            self.read_plan_memory
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(handle)
+                .or_default(),
+        );
+        slot.result.get_or_init(|| open_session_memory(pid)).clone()
     }
 
     /// `handle`'s session is gone (detached, declined, or superseded):
@@ -403,11 +419,21 @@ impl PluginHost {
             .instances
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        for slot in guard.values() {
+        for (id, slot) in guard.iter() {
             if let InstanceSlot::Live(entry) = slot
                 && entry.plugin_id == plugin_id
             {
-                entry.outstanding_plans.cancel_session(handle.0);
+                // F1: removes each freed plan's still-queued job from
+                // this instance's own pool sub-queue immediately (mirrors
+                // `Self::handle_read_plan_cancel`'s own fix); a job
+                // actually found and removed there will now never call
+                // its own `finish`, so `forget_cancelled` clears its
+                // `cancelled`-set entry right here instead of leaking it.
+                for (plan, ticket) in entry.outstanding_plans.cancel_session(handle.0) {
+                    if self.background_pool.cancel(id.0, ticket) {
+                        entry.outstanding_plans.forget_cancelled(plan);
+                    }
+                }
             }
         }
     }
@@ -488,7 +514,18 @@ impl PluginHost {
         cancel: ReadPlanCancel,
     ) -> vosu_status {
         if let Some(outstanding) = self.outstanding_plans_of(instance) {
-            outstanding.cancel(cancel.plan);
+            // F1: a cancelled plan's job, if still queued (never started
+            // by a worker), is removed from the pool's own per-key
+            // sub-queue right away instead of being left to pile up
+            // there until a worker happens to reach it; since its job
+            // will now never call its own `finish`, `forget_cancelled`
+            // clears its `cancelled`-set entry right here instead of
+            // leaking it forever.
+            if let Some(ticket) = outstanding.cancel(cancel.plan)
+                && self.background_pool.cancel(instance.0, ticket)
+            {
+                outstanding.forget_cancelled(cancel.plan);
+            }
         }
         vosu_status::VOSU_OK
     }
@@ -640,7 +677,11 @@ impl PluginHost {
         // 64-outstanding cap, so `instance`'s own sub-queue
         // (`ScanWorkerPool`'s own doc comment) always has room for it —
         // another instance's own admitted work can never delay it.
-        self.background_pool.submit(instance.0, job);
+        let ticket = self.background_pool.submit(instance.0, job);
+        // F1: lets a later `READ_PLAN_CANCEL`/session detach remove this
+        // job from the pool's own sub-queue immediately if it still can
+        // — a no-op if the job already ran by the time this runs.
+        outstanding.set_queue_ticket(plan, ticket);
         vosu_status::VOSU_OK
     }
 

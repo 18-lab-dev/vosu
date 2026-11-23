@@ -307,34 +307,52 @@ fn resolve_stage_base(
     checked_add_signed(unresolved, stage.base_offset)
 }
 
+/// F2 (`docs/v2/plugin-abi.md` §5, §6.3, D5): an async plan has no
+/// synchronous caller left to report a whole-call rejection to by the
+/// time a worker discovers a dead target or a passed deadline, so it
+/// answers per read instead ([`DeadlineMode::PerRead`]); a
+/// `VOSU_READ_PLAN_SYNC` submission still has exactly that caller, so the
+/// spec's whole-call `VOSU_ERR_TARGET_GONE`/`VOSU_ERR_TIMED_OUT` apply
+/// there instead ([`DeadlineMode::RejectCall`]). The per-read conversion
+/// (P1-3) stays async-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeadlineMode {
+    PerRead,
+    RejectCall,
+}
+
 /// Executes one stage's independent ops against `memory`, batching every
 /// address-resolved op into a single [`ProcessMemory::read_many`] call and
 /// falling back to per-op `read_exact` only if that call itself fails
 /// (P1: one syscall per stage, not one per op); the fallback loop checks
 /// `deadline` before each of its own reads (F3), since a batch failure can
 /// fall back to hundreds of individually slow reads that a once-per-stage
-/// check would otherwise let run unbounded. Never rejects the whole
-/// submission: an op that does not get to run before `deadline` passes
-/// reports [`timeout_result`] instead (P1-3), exactly like any other
-/// per-read failure.
+/// check would otherwise let run unbounded. In [`DeadlineMode::PerRead`],
+/// never rejects the whole submission: an op that does not get to run
+/// before `deadline` passes reports [`timeout_result`] instead (P1-3),
+/// exactly like any other per-read failure. In
+/// [`DeadlineMode::RejectCall`] (F2), the first op that does not get to
+/// run before `deadline` passes rejects the whole call with
+/// [`ReadPlanError::TimedOut`] instead, matching D5/§6.3.
 fn execute_stage_ops(
     memory: &dyn ProcessMemory,
     stage_base: &Result<u64, ReadResult>,
     ops: &[PlanOp],
     budget: &mut ErrorBudget,
     deadline: Instant,
-) -> Vec<ReadResult> {
+    mode: DeadlineMode,
+) -> Result<Vec<ReadResult>, ReadPlanError> {
     let base = match stage_base {
         Ok(base) => *base,
         Err(failure) => {
             let failure = strip_message(failure);
-            return ops
+            return Ok(ops
                 .iter()
                 .map(|op| {
                     budget.recover(op.length);
                     failure.clone()
                 })
-                .collect();
+                .collect());
         }
     };
 
@@ -386,6 +404,9 @@ fn execute_stage_ops(
                 .zip(participants.iter().zip(buffers.iter_mut()))
             {
                 if timed_out || Instant::now() >= deadline {
+                    if mode == DeadlineMode::RejectCall {
+                        return Err(ReadPlanError::TimedOut);
+                    }
                     timed_out = true;
                     *outcome = Outcome::TimedOut;
                     continue;
@@ -412,12 +433,12 @@ fn execute_stage_ops(
         });
     }
 
-    results
+    Ok(results
         .into_iter()
         .map(|result| {
             result.expect("every op index is filled by either the address loop or the read loop")
         })
-        .collect()
+        .collect())
 }
 
 fn error_budget_slack(submit: &ReadPlanSubmit) -> usize {
@@ -437,22 +458,28 @@ fn error_budget_slack(submit: &ReadPlanSubmit) -> usize {
 /// Executes `submit`'s whole dependent chain against `memory` in (stage,
 /// op) order, honoring `deadline` once per stage, and returns the decoded
 /// `VOSU_OP_READ_PLAN_RESULT` (`docs/v2/plugin-abi.md` §6.3: "one
-/// submission is one round trip"). A per-read failure (an unresolved
-/// module, a dependent chain blocked on an earlier failure, a
-/// [`MemoryError`], the target already dead, or a deadline passed
-/// mid-plan) is reported per read in the returned [`ReadPlanResult`],
-/// never by rejecting the call (P1-3: an accepted asynchronous plan has
-/// no synchronous caller left to report a whole-call rejection to by the
-/// time a worker discovers any of these). Only
+/// submission is one round trip"). Shared by [`execute`]
+/// ([`DeadlineMode::PerRead`], the async path) and [`execute_sync`]
+/// ([`DeadlineMode::RejectCall`], D5's `VOSU_READ_PLAN_SYNC` path, F2):
+/// in `PerRead` mode a per-read failure (an unresolved module, a
+/// dependent chain blocked on an earlier failure, a [`MemoryError`], the
+/// target already dead, or a deadline passed mid-plan) is reported per
+/// read in the returned [`ReadPlanResult`], never by rejecting the call
+/// (P1-3: an accepted asynchronous plan has no synchronous caller left to
+/// report a whole-call rejection to by the time a worker discovers any
+/// of these); in `RejectCall` mode the target already being dead rejects
+/// the call outright with [`ReadPlanError::TargetGone`], and a deadline
+/// passed mid-plan rejects it with [`ReadPlanError::TimedOut`], matching
+/// D5/§6.3's whole-call errors. Either mode also rejects
 /// [`ReadPlanError::RefOpWrongWidth`] (checked before any read; a plan
-/// validation error, not a runtime one) rejects the call outright.
-/// Allocates freely; prefer [`execute_into`] on a measured hot path.
-pub fn execute(
+/// validation error, not a runtime one) outright.
+fn execute_core(
     submit: &ReadPlanSubmit,
     memory: &dyn ProcessMemory,
     bitness: ProcessBitness,
     modules: &dyn ModuleResolver,
     deadline: Instant,
+    mode: DeadlineMode,
 ) -> Result<ReadPlanResult, ReadPlanError> {
     let pointer_width = u32::try_from(bitness.pointer_size()).unwrap_or(u32::MAX);
     if !ref_op_width_ok(submit, pointer_width) {
@@ -462,7 +489,10 @@ pub fn execute(
     let mut budget = ErrorBudget::new(error_budget_slack(submit));
 
     if !memory.is_alive() {
-        return Ok(not_ready_result(submit));
+        return match mode {
+            DeadlineMode::PerRead => Ok(not_ready_result(submit)),
+            DeadlineMode::RejectCall => Err(ReadPlanError::TargetGone),
+        };
     }
 
     let root_base = resolve_root(&submit.root, modules);
@@ -470,6 +500,9 @@ pub fn execute(
 
     for (index, stage) in submit.stages.iter().enumerate() {
         if Instant::now() >= deadline {
+            if mode == DeadlineMode::RejectCall {
+                return Err(ReadPlanError::TimedOut);
+            }
             for remaining in &submit.stages[index..] {
                 per_stage.push(
                     remaining
@@ -494,13 +527,56 @@ pub fn execute(
             &stage.ops,
             &mut budget,
             deadline,
-        ));
+            mode,
+        )?);
     }
 
     Ok(ReadPlanResult {
         plan: submit.plan,
         results: per_stage.into_iter().flatten().collect(),
     })
+}
+
+/// The async (non-`VOSU_READ_PLAN_SYNC`) path's own entry point
+/// ([`DeadlineMode::PerRead`], `execute_core`'s own doc comment).
+/// Allocates freely; prefer [`execute_into`] on a measured hot path.
+pub fn execute(
+    submit: &ReadPlanSubmit,
+    memory: &dyn ProcessMemory,
+    bitness: ProcessBitness,
+    modules: &dyn ModuleResolver,
+    deadline: Instant,
+) -> Result<ReadPlanResult, ReadPlanError> {
+    execute_core(
+        submit,
+        memory,
+        bitness,
+        modules,
+        deadline,
+        DeadlineMode::PerRead,
+    )
+}
+
+/// `VOSU_READ_PLAN_SYNC`'s own entry point (D5, §6.3, F2):
+/// [`DeadlineMode::RejectCall`], `execute_core`'s own doc comment —
+/// unlike [`execute`], a dead target or a deadline passed mid-plan
+/// rejects the whole call instead of answering per read, since a
+/// synchronous submission still has the caller to report that to.
+fn execute_sync(
+    submit: &ReadPlanSubmit,
+    memory: &dyn ProcessMemory,
+    bitness: ProcessBitness,
+    modules: &dyn ModuleResolver,
+    deadline: Instant,
+) -> Result<ReadPlanResult, ReadPlanError> {
+    execute_core(
+        submit,
+        memory,
+        bitness,
+        modules,
+        deadline,
+        DeadlineMode::RejectCall,
+    )
 }
 
 mod raw;
@@ -573,10 +649,11 @@ impl From<SyncReadPlanError> for vosu_status {
 /// (submitting) thread, before returning — exactly what `send` must do
 /// for this one opcode flag (D5): refuses before executing anything if the
 /// calling thread is itself a dispatch thread ([`on_dispatch_thread`]),
-/// otherwise runs [`execute`] directly, inline, under `deadline`.
-/// `VOSU_READ_PLAN_SYNC` submissions never count against
-/// [`OutstandingPlans`]'s cap: the result is delivered before `send`
-/// returns, so it is never "outstanding".
+/// otherwise runs [`execute_sync`] directly, inline, under `deadline`
+/// (F2: whole-call `VOSU_ERR_TARGET_GONE`/`VOSU_ERR_TIMED_OUT`, never the
+/// async path's per-read conversion). `VOSU_READ_PLAN_SYNC` submissions
+/// never count against [`OutstandingPlans`]'s cap: the result is
+/// delivered before `send` returns, so it is never "outstanding".
 pub fn deliver_sync(
     submit: &ReadPlanSubmit,
     memory: &dyn ProcessMemory,
@@ -587,7 +664,7 @@ pub fn deliver_sync(
     if on_dispatch_thread() {
         return Err(SyncReadPlanError::OnDispatchThread);
     }
-    execute(submit, memory, bitness, modules, deadline).map_err(SyncReadPlanError::Execute)
+    execute_sync(submit, memory, bitness, modules, deadline).map_err(SyncReadPlanError::Execute)
 }
 
 /// Whether a just-finished plan's result should still be delivered, or was
@@ -629,6 +706,14 @@ struct PlansState {
     /// still tracked here until `finish` so a late result can still be
     /// reported [`FinishOutcome::Cancelled`].
     cancelled: HashSet<vosu_plan_id>,
+    /// plan id -> its still-queued `ScanWorkerPool` job ticket (F1), set
+    /// once `host/read_plans.rs::submit_read_plan_async` has actually
+    /// queued it. [`OutstandingPlans::cancel`]/[`OutstandingPlans::cancel_session`]
+    /// hand this back so the host layer can remove the job from the
+    /// pool's own per-key sub-queue immediately, instead of leaving a
+    /// cancelled job to pile up there until a worker happens to reach
+    /// it.
+    queue_tickets: HashMap<vosu_plan_id, u64>,
 }
 
 /// Tracks one plugin instance's asynchronous (non-`VOSU_READ_PLAN_SYNC`)
@@ -666,17 +751,46 @@ impl OutstandingPlans {
         Ok(())
     }
 
+    /// F1: records `plan`'s pool job ticket once it has actually been
+    /// queued; a no-op if `plan` already finished (or was already
+    /// cancelled and freed) by the time this runs — nothing left to
+    /// remove from the pool's queue either way.
+    pub fn set_queue_ticket(&self, plan: vosu_plan_id, ticket: u64) {
+        let mut state = self.lock();
+        if state.outstanding.contains_key(&plan) {
+            state.queue_tickets.insert(plan, ticket);
+        }
+    }
+
     /// `VOSU_OP_READ_PLAN_CANCEL`: the plugin no longer needs `plan`'s
     /// result. Frees `plan`'s slot immediately (it stops counting against
     /// the cap right away) while remembering it was cancelled, so
     /// [`Self::finish`] still reports [`FinishOutcome::Cancelled`] once
     /// the in-flight execution actually completes. A `plan` already
-    /// finished (and so no longer tracked) is a silent no-op.
-    pub fn cancel(&self, plan: vosu_plan_id) {
+    /// finished (and so no longer tracked) is a silent no-op. Returns
+    /// `plan`'s own pool job ticket, if it still had one (F1): the caller
+    /// removes the job from the shared pool's own per-key sub-queue
+    /// immediately, rather than leaving it to pile up there until a
+    /// worker happens to reach it.
+    #[must_use]
+    pub fn cancel(&self, plan: vosu_plan_id) -> Option<u64> {
         let mut state = self.lock();
         if state.outstanding.remove(&plan).is_some() {
             state.cancelled.insert(plan);
+            return state.queue_tickets.remove(&plan);
         }
+        None
+    }
+
+    /// F1: the host layer calls this once it has confirmed, through
+    /// [`super::scan::ScanWorkerPool::cancel`]'s own return value, that
+    /// `plan`'s pool job was still queued and so was removed before it
+    /// could ever run — meaning its job closure's own [`Self::finish`]
+    /// call (the only other thing that ever clears a `cancelled` entry)
+    /// will now never happen. Without this, every plan cancelled while
+    /// still queued would leak its own entry in `cancelled` forever.
+    pub fn forget_cancelled(&self, plan: vosu_plan_id) {
+        self.lock().cancelled.remove(&plan);
     }
 
     /// Whether `plan` was already cancelled (`VOSU_OP_READ_PLAN_CANCEL` or
@@ -692,8 +806,14 @@ impl OutstandingPlans {
 
     /// `SESSION_DETACHED` (A1): cancels every plan still outstanding under
     /// `handle`, exactly as if the plugin had sent `READ_PLAN_CANCEL` for
-    /// each one.
-    pub fn cancel_session(&self, handle: u64) {
+    /// each one. Returns every freed plan's own id paired with its pool
+    /// job ticket, for each one that still had one (F1): the caller
+    /// removes each job from the shared pool's own per-key sub-queue
+    /// immediately, and [`Self::forget_cancelled`]s it in turn if that
+    /// removal actually found it still queued, for the same reason
+    /// [`Self::cancel`] does.
+    #[must_use]
+    pub fn cancel_session(&self, handle: u64) -> Vec<(vosu_plan_id, u64)> {
         let mut state = self.lock();
         let ids: Vec<vosu_plan_id> = state
             .outstanding
@@ -701,10 +821,15 @@ impl OutstandingPlans {
             .filter(|&(_, owner)| *owner == handle)
             .map(|(&id, _)| id)
             .collect();
+        let mut tickets = Vec::new();
         for id in ids {
             state.outstanding.remove(&id);
             state.cancelled.insert(id);
+            if let Some(ticket) = state.queue_tickets.remove(&id) {
+                tickets.push((id, ticket));
+            }
         }
+        tickets
     }
 
     /// Call once `plan`'s execution has actually finished: removes it from

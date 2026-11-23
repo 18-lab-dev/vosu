@@ -126,27 +126,38 @@ impl PluginHost {
     /// "every instance of this plugin id" fan-out, itself mirroring
     /// [`Self::dispatch_to`]).
     pub(super) fn cancel_scans_for_session(&self, plugin_id: &str, handle: SessionHandle) {
-        // Collects the matching instances' `OutstandingScans` first and
-        // drops `instances` before calling `cancel_session` on any of
-        // them: `cancel_session` may synchronously call this module's own
+        // Collects the matching instances' `OutstandingScans` (with their
+        // owning instance id, F1: needed to remove a still-queued scan
+        // from that instance's own pool sub-queue below) first and drops
+        // `instances` before calling `cancel_session` on any of them:
+        // `cancel_session` may synchronously call this module's own
         // `deliver` closure (the A1 error form, §6.4), which calls
         // `dispatch_to_instance` — itself locking `instances` — so still
         // holding that lock here would self-deadlock on every session
         // detach with a scan outstanding.
-        let matching: Vec<Arc<OutstandingScans>> = self
+        let matching: Vec<(PluginInstanceId, Arc<OutstandingScans>)> = self
             .instances
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .values()
-            .filter_map(|slot| match slot {
+            .iter()
+            .filter_map(|(id, slot)| match slot {
                 InstanceSlot::Live(entry) if entry.plugin_id == plugin_id => {
-                    Some(Arc::clone(&entry.outstanding_scans))
+                    Some((*id, Arc::clone(&entry.outstanding_scans)))
                 }
                 _ => None,
             })
             .collect();
-        for outstanding in matching {
-            outstanding.cancel_session(handle.0);
+        for (id, outstanding) in matching {
+            // F1: removes each freed scan's still-queued job from this
+            // instance's own pool sub-queue immediately, instead of
+            // leaving it to pile up there until a worker happens to
+            // reach it (mirrors `read_plans.rs::handle_read_plan_cancel`'s
+            // own fix; a scan has no `VOSU_OP_READ_PLAN_CANCEL` equivalent,
+            // so this session-detach path is the only one that can ever
+            // need it).
+            for ticket in outstanding.cancel_session(handle.0) {
+                self.background_pool.cancel(id.0, ticket);
+            }
         }
     }
 

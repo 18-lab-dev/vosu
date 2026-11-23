@@ -189,7 +189,10 @@ pub struct PluginHost {
     /// `read_plans.rs`): opened once per [`SessionHandle`], reused until
     /// the session detaches. A module table is deliberately not cached
     /// alongside it (`scan.rs`'s own documented rule: fresh per call).
-    read_plan_memory: Mutex<HashMap<SessionHandle, Arc<read_plans::SessionMemory>>>,
+    /// F5: holds a `SessionMemorySlot` (its own doc comment), not the
+    /// open result directly, so the actual open never runs under this
+    /// lock.
+    read_plan_memory: Mutex<HashMap<SessionHandle, Arc<read_plans::SessionMemorySlot>>>,
     /// Bounded worker pool async read plans AND scans both execute on
     /// (§4, §6.4): one shared [`ScanWorkerPool`] instance
     /// ([`read_plans::new_background_pool`]) rather than one per opcode —
@@ -336,6 +339,19 @@ impl PluginHost {
     /// a timer must not outlive the instance that set it, including one
     /// that never finished coming up).
     ///
+    /// F3: `plugin.manifest().matcher`'s `[match]` table is registered
+    /// only once this call is about to publish `id` `Live`, under the
+    /// same `instances` lock as that publish — never while `id` is only
+    /// `Creating`. Before this fix, registering it up front left a
+    /// narrow window where `process_appeared` (phase (d2)) could attach
+    /// a session to a plugin id whose own `create` had not yet (and
+    /// might never) finish, stranding that session: the registry
+    /// de-duplicates by pid, so a process matched during that window was
+    /// never offered again while it lived, and a later-installed,
+    /// shadowed plugin never got the chance either. Registering only at
+    /// publish time removes the window instead of papering over it with
+    /// a detach-and-re-offer step on every failure path.
+    ///
     /// Races [`Self::destroy_all`] safely: `shutting_down` is checked
     /// twice. The early check (before the plugin's own `create` even
     /// runs, and before this call takes `instances` at all) only ever
@@ -364,13 +380,7 @@ impl PluginHost {
             return Err(HostError::ShuttingDown);
         }
         let plugin_id = plugin.manifest().id.clone();
-        if let Some(table) = plugin.manifest().matcher.clone() {
-            self.matcher
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .register(plugin_id.clone(), table)
-                .map_err(HostError::MatcherRegister)?;
-        }
+        let matcher_table = plugin.manifest().matcher.clone();
         self.instances
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -412,20 +422,15 @@ impl PluginHost {
                     .unwrap_or_else(|poison| poison.into_inner())
                     .remove(&id);
                 self.instances_changed.notify_all();
-                // P2-5: this `create` never published a `Live` instance,
-                // so the `[match]` table `register` installed above must
-                // not outlive it — otherwise `process_appeared` keeps
-                // handing every matching process to a plugin id nothing
-                // answers for, hiding the session from every later-
-                // installed, shadowed plugin forever.
-                self.matcher
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .unregister(&plugin_id);
+                // F3: the matcher is registered only once this instance
+                // is about to publish `Live` (below), never before
+                // `create` runs, so a `create` failure here needs no
+                // matcher unregister — nothing was ever registered for
+                // it, and no process discovered during this window could
+                // ever have been attached to this dead plugin id.
                 return Err(error);
             }
         };
-
         let mut guard = self
             .instances
             .lock()
@@ -440,12 +445,9 @@ impl PluginHost {
             drop(guard);
             self.instances_changed.notify_all();
             self.timers.cancel_all(id);
-            // P2-5: same reason as the `created` error path above — this
-            // instance is being destroyed, never published `Live`.
-            self.matcher
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .unregister(&plugin_id);
+            // F3: same reason as the `created` error path above — this
+            // instance is being destroyed, never published `Live`, so
+            // its matcher table (not yet registered) needs no unregister.
             if let Err(error) = instance.destroy(SHUTDOWN_RACE_DESTROY_GRACE) {
                 tracing::warn!(
                     ?id, %error,
@@ -454,6 +456,34 @@ impl PluginHost {
             }
             self.timers.cancel_all(id);
             return Err(HostError::ShuttingDown);
+        }
+        if let Some(table) = matcher_table {
+            // F3: registered only now, atomically with publishing `Live`
+            // under this same `instances` lock — never while `id` was
+            // only `Creating`, so `process_appeared` can never attach a
+            // session to a plugin instance that might still fail to come
+            // up. A refusal here (a duplicate id already registered)
+            // tears this instance down exactly like the two paths above:
+            // it never got a chance to publish `Live` either.
+            if let Err(error) = self
+                .matcher
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .register(plugin_id.clone(), table)
+            {
+                guard.remove(&id);
+                drop(guard);
+                self.instances_changed.notify_all();
+                self.timers.cancel_all(id);
+                if let Err(destroy_error) = instance.destroy(SHUTDOWN_RACE_DESTROY_GRACE) {
+                    tracing::warn!(
+                        ?id, %destroy_error,
+                        "instance whose matcher registration failed did not destroy within its grace period"
+                    );
+                }
+                self.timers.cancel_all(id);
+                return Err(HostError::MatcherRegister(error));
+            }
         }
         let previous = guard.insert(
             id,
