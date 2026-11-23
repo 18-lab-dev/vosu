@@ -48,9 +48,17 @@ struct NetworkState {
 fn journal_path(path: &Path) -> PathBuf {
     path.with_extension("network.json")
 }
+/// Reads the network Apply journal, written by [`persist`] through
+/// `atomic_replace`. Every caller runs this inside `spawn_blocking`
+/// (`validate_network`, `stage_network`, `confirm_network`,
+/// `rollback_pending_network`), so the blocking retry in
+/// `vosu_sys::platform::read_published` is safe here; it absorbs the
+/// measured transient missing-name window so a concurrent `stage_network`/
+/// `confirm_network` publish cannot be misread as "no journal", which would
+/// silently drop `overlay_origins` and defeat the overlap check.
 fn load(path: &Path) -> io::Result<NetworkState> {
     reject_target_symlink(path)?;
-    match std::fs::read(path) {
+    match vosu_sys::platform::read_published(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(NetworkState::default()),
         Err(error) => Err(error),

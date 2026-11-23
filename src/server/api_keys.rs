@@ -107,11 +107,16 @@ impl ApiKeys {
             }
         }
         let loaded = (|| -> Result<Document, String> {
-            let text = match fs::read_to_string(&path) {
-                Ok(text) => text,
+            // Goes through the retrying helper so a `save` republishing
+            // this file via `atomic_replace` is not misread as "no keys
+            // configured" during the measured transient Windows
+            // missing-name window.
+            let bytes = match vosu_sys::platform::read_published(&path) {
+                Ok(bytes) => bytes,
                 Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Document::default()),
                 Err(_) => return Err("unreadable file".into()),
             };
+            let text = String::from_utf8(bytes).map_err(|_| "malformed file")?;
             let doc: Document = toml::from_str(&text).map_err(|_| "malformed file")?;
             if doc.keys.len() > 64 {
                 return Err("too many keys".into());

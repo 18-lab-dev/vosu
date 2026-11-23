@@ -206,14 +206,22 @@ impl ProductionRuntime {
                 self.snapshots.snapshot_manager(),
             )),
             calculation: Arc::new(LegacyCalculateProvider::new(beatmap)),
-            delegate: Arc::new(
+            delegate: Arc::new({
+                let api_keys_path = self.paths.config().join("api-keys.toml");
+                let logger = Some(self.logger.clone());
+                // `ApiKeys::load` now retries a transient missing read of
+                // `api-keys.toml` (Windows, bounded ~50ms) through
+                // `vosu_sys::platform::read_published`; run it in
+                // `spawn_blocking` rather than on this async worker.
+                let api_keys = tokio::task::spawn_blocking(move || {
+                    crate::server::api_keys::ApiKeys::load(api_keys_path, logger)
+                })
+                .await
+                .map_err(io::Error::other)?;
                 ProductionRouteDelegate::new(services)
-                    .with_api_keys(Arc::new(crate::server::api_keys::ApiKeys::load(
-                        self.paths.config().join("api-keys.toml"),
-                        Some(self.logger.clone()),
-                    )))
-                    .with_tools(tools.clone()),
-            ),
+                    .with_api_keys(Arc::new(api_keys))
+                    .with_tools(tools.clone())
+            }),
         };
         let mut dashboard_providers = providers.clone();
         dashboard_providers.authorization = Arc::new(crate::server::origins::OriginAuthorizer {

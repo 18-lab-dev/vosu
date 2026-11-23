@@ -15,11 +15,21 @@ fn concurrent_readers_never_observe_missing_file() {
     let missing = Arc::new(AtomicUsize::new(0));
     let reads = Arc::new(AtomicUsize::new(0));
     let start = Arc::new(Barrier::new(3));
-    // Readers go through the production retrying helper every vosu reader of
-    // an atomically-published file uses, so this stays a strict, non-flaky
-    // regression check: see `raw_concurrent_readers_characterize_missing_file_rate`
-    // below for the unretried window this is absorbing.
-    let readers = [(); 2].map(|()| {
+    // One reader goes through the production retrying helper every vosu
+    // reader of an atomically-published file uses, so this stays a strict,
+    // non-flaky regression check: see
+    // `raw_concurrent_readers_characterize_missing_file_rate` below for the
+    // unretried window this is absorbing. The other reader opens the file
+    // raw with `FILE_SHARE_READ` only (denying delete) and never through
+    // the helper, continuously across the whole run: this exercises
+    // `atomic_replace`'s own retry of the writer-side sharing violation a
+    // delete-denying reader can cause, independent of the reader-visibility
+    // window above. Its reads are `.unwrap()`ed outright (not matched
+    // against `NotFound`): denying delete for the open's own duration means
+    // a successful open never observes the name vanish underneath it, so a
+    // regression in the writer's sharing-violation retry panics here
+    // instead of silently degrading to the generic missing-name race.
+    let helper_reader = {
         let target = target.clone();
         let stop = stop.clone();
         let missing = missing.clone();
@@ -44,7 +54,25 @@ fn concurrent_readers_never_observe_missing_file() {
                 }
             }
         })
-    });
+    };
+    let no_share_delete_reader = {
+        let target = target.clone();
+        let stop = stop.clone();
+        let start = start.clone();
+        thread::spawn(move || {
+            start.wait();
+            while !stop.load(Ordering::Acquire) {
+                let mut file = OpenOptions::new()
+                    .read(true)
+                    .share_mode(FILE_SHARE_READ)
+                    .open(&target)
+                    .unwrap();
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes).unwrap();
+            }
+        })
+    };
+    let readers = [helper_reader, no_share_delete_reader];
     start.wait();
     let result = (|| -> io::Result<()> {
         for generation in 0..200 {
@@ -212,13 +240,23 @@ fn read_published_async_retries_missing_file_then_surfaces_not_found() {
 fn read_published_succeeds_once_file_appears_within_the_retry_window() {
     let root = tempfile::tempdir().unwrap();
     let target = root.path().join("vosu.toml");
+    let temp = root.path().join("pending");
     let target_copy = target.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(5));
-        fs::write(&target_copy, b"generation=0001\n").unwrap();
+    // A channel instead of a fixed sleep: the writer thread races the
+    // reader's own scheduling rather than a wall-clock guess that could run
+    // short under load. Publishing through `atomic_replace` (not a raw
+    // `fs::write`) rules out the reader ever observing an empty or partial
+    // file as a second source of flakiness.
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<()>(0);
+    let writer = thread::spawn(move || {
+        ready_rx.recv().unwrap();
+        fs::write(&temp, b"generation=0001\n").unwrap();
+        atomic_replace(&temp, &target_copy).unwrap();
     });
+    ready_tx.send(()).unwrap();
     let bytes = read_published(&target).unwrap();
     assert_eq!(bytes, b"generation=0001\n");
+    writer.join().unwrap();
 }
 
 #[test]

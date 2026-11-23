@@ -2,10 +2,16 @@ use super::*;
 
 /// Helper-side swap and candidate supervision.
 ///
-/// After authorizing a live owner's record, poll every 5 ms until its durable
-/// handoff arrives. Missing records remain retryable while that owner lives;
-/// truncated JSON and Windows sharing/delete-pending errors get a bounded
-/// two-second retry window, reset only by a successfully loaded record.
+/// After authorizing a live owner's record, loop with a 5 ms sleep between
+/// attempts until its durable handoff arrives. On Windows, `load_record`'s
+/// own retrying read (`vosu_sys::platform::read_published`) adds up to
+/// another ~50ms on top of that 5 ms sleep whenever the record is
+/// transiently or genuinely missing, so a missing record costs up to ~55ms
+/// per loop pass there, off this thread's own scheduling (this loop runs on
+/// a plain OS thread, not a Tokio worker). Missing records remain retryable
+/// while that owner lives; truncated JSON and Windows sharing/delete-pending
+/// errors get a bounded two-second retry window, reset only by a
+/// successfully loaded record.
 pub fn run_helper<P: UpdatePlatform>(
     record_path: &Path,
     token: &str,

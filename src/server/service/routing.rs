@@ -265,7 +265,10 @@ impl ProductionRouteDelegate {
 
     async fn counter_settings(&self, request: Request<Body>, body: Bytes) -> Response {
         if request.uri().path() == "/api/counters/profiles" {
-            return self.counter_profiles(&request, &body);
+            let delegate = self.clone();
+            return tokio::task::spawn_blocking(move || delegate.counter_profiles(&request, &body))
+                .await
+                .unwrap_or_else(|_| internal_error("counter profiles worker failed"));
         }
         let query = query_pairs(&request);
         let overlay = decoded_capture(&request, "/api/counters/settings/").unwrap_or_default();
@@ -277,12 +280,14 @@ impl ProductionRouteDelegate {
             return json_response(StatusCode::OK, json!({ "error": "no folder name" }));
         }
         if request.method() == axum::http::Method::GET {
-            return match self.services.counters.get_settings(&name) {
-                Ok((settings, values)) => json_response(
+            let counters = Arc::clone(&self.services.counters);
+            return match tokio::task::spawn_blocking(move || counters.get_settings(&name)).await {
+                Ok(Ok((settings, values))) => json_response(
                     StatusCode::OK,
                     json!({ "settings": settings, "values": values }),
                 ),
-                Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
+                Ok(Err(error)) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
+                Err(_) => internal_error("counter settings worker failed"),
             };
         }
         if query_value(&query, "update") == Some("yes") {
@@ -301,9 +306,18 @@ impl ProductionRouteDelegate {
                 Err(error) => json_response(StatusCode::OK, json!({ "error": error.to_string() })),
             };
         }
-        let resolved_profile = match self.services.counters.settings_store().resolve_profile(query_value(&query, "profile")) {
-            Ok(profile) => profile,
-            Err(error) => return json_response(StatusCode::OK, json!({ "error": error.to_string() })),
+        let resolved_profile = {
+            let store = self.services.counters.settings_store();
+            let profile_query = query_value(&query, "profile").map(str::to_owned);
+            match tokio::task::spawn_blocking(move || store.resolve_profile(profile_query.as_deref()))
+                .await
+            {
+                Ok(Ok(profile)) => profile,
+                Ok(Err(error)) => {
+                    return json_response(StatusCode::OK, json!({ "error": error.to_string() }));
+                }
+                Err(_) => return internal_error("resolve profile worker failed"),
+            }
         };
         let name = crate::counters::qualified_counter(&overlay, &resolved_profile);
         match serde_json::from_slice::<Vec<SettingInput>>(&body) {
@@ -315,7 +329,13 @@ impl ProductionRouteDelegate {
             {
                 Ok(saved) => {
                     if saved {
-                        self.refresh_profile(&overlay, &resolved_profile);
+                        let delegate = self.clone();
+                        let overlay = overlay.clone();
+                        let resolved_profile = resolved_profile.clone();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            delegate.refresh_profile(&overlay, &resolved_profile);
+                        })
+                        .await;
                     }
                     json_response(StatusCode::OK, json!({ "result": "success" }))
                 }
@@ -483,15 +503,24 @@ impl ProductionRouteDelegate {
     }
 
 
-    fn profile_html_path(&self, path: &str, request: &Request<Body>) -> String {
-        let query = query_pairs(request);
-        if let Some(requested) = query_value(&query, "vosuProfile") {
-            let store = self.services.counters.settings_store();
-            if let Ok(profile) = store.resolve_profile(Some(requested)).or_else(|_| store.resolve_profile(None)) {
-                return format!("{path}?vosuProfile={profile}");
+    async fn profile_html_path(&self, path: &str, requested_profile: Option<&str>) -> String {
+        let Some(requested) = requested_profile.map(str::to_owned) else {
+            return path.to_owned();
+        };
+        let store = self.services.counters.settings_store();
+        let owned_path = path.to_owned();
+        let fallback = owned_path.clone();
+        tokio::task::spawn_blocking(move || {
+            match store
+                .resolve_profile(Some(&requested))
+                .or_else(|_| store.resolve_profile(None))
+            {
+                Ok(profile) => format!("{owned_path}?vosuProfile={profile}"),
+                Err(_) => owned_path,
             }
-        }
-        path.to_owned()
+        })
+        .await
+        .unwrap_or(fallback)
     }
     async fn file(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
         if endpoint == Endpoint::CounterStatic
@@ -538,10 +567,14 @@ impl ProductionRouteDelegate {
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
         if let Some(encoded_html_path) = counter_html_path {
+            let query = query_pairs(&request);
+            let profile_path = self
+                .profile_html_path(&encoded_html_path, query_value(&query, "vosuProfile"))
+                .await;
             counter_resource_response(
                 outcome,
                 range,
-                &self.profile_html_path(&encoded_html_path, &request),
+                &profile_path,
                 is_preview_request(&request),
             )
             .await
@@ -590,13 +623,19 @@ impl ProductionRouteDelegate {
                     .and_then(|value| value.to_str().ok())
                     .map(str::to_owned);
                 match outcome {
-                    Ok(value) => counter_resource_response(
-                        value,
-                        range,
-                        &self.profile_html_path(&index_path, &request),
-                        is_preview_request(&request),
-                    )
-                    .await,
+                    Ok(value) => {
+                        let query = query_pairs(&request);
+                        let profile_path = self
+                            .profile_html_path(&index_path, query_value(&query, "vosuProfile"))
+                            .await;
+                        counter_resource_response(
+                            value,
+                            range,
+                            &profile_path,
+                            is_preview_request(&request),
+                        )
+                        .await
+                    }
                     Err(_) => not_found(),
                 }
             }

@@ -247,17 +247,40 @@ pub fn atomic_replace(temp: &Path, target: &Path) -> io::Result<()> {
 
 /// Reads a file previously published through [`atomic_replace`].
 ///
-/// On Windows, a `NotFound` result is retried up to 3 times over roughly
-/// 50ms: the measured evidence cited on [`atomic_replace`] shows every
-/// observed transient miss resolved within 40ms of the publishing rename.
-/// A file that is genuinely absent (e.g. first run, before anything has
-/// published it) still surfaces `NotFound`, just after that bounded extra
-/// latency. Non-Windows platforms read directly: [`atomic_replace`] there is
-/// a same-directory `rename()`, which POSIX never desyncs the name under a
-/// concurrent reader.
+/// On Windows, a `NotFound` result triggers up to 3 reads total (2 retries)
+/// spread over roughly 50ms: the measured evidence cited on
+/// [`atomic_replace`] shows every observed transient miss resolved within
+/// 40ms of the publishing rename. A file that is genuinely absent (e.g.
+/// first run, before anything has published it) still surfaces `NotFound`,
+/// just after that bounded extra latency. Non-Windows platforms read
+/// directly: [`atomic_replace`] there is a same-directory `rename()`, which
+/// POSIX never desyncs the name under a concurrent reader.
 ///
 /// This is a blocking call; async callers should use
 /// [`read_published_async`] instead.
+///
+/// ## Which readers go through this helper
+///
+/// Every vosu read of a file published through [`atomic_replace`] either
+/// goes through [`read_published`]/[`read_published_async`], or is one of
+/// the documented exclusions below:
+/// - **Same-task reads strictly after that task's own publish**: the
+///   reading task is the only writer of that specific path for the
+///   duration of the read, so there is no concurrent-rename window to
+///   absorb. E.g. `updater/prepare.rs`'s `digest_file_bytes_cancelled`,
+///   `validate_archive_shape`, `extract_staged_binary_with_limit` (stream
+///   the just-downloaded private staging file right after
+///   `download_atomic`/`atomic_replace` returned); `updater/release.rs`'s
+///   release-metadata read (same pattern); `counters/service.rs`,
+///   `tools/catalog.rs`, `tools/catalog_sources.rs` (extract/verify a
+///   just-downloaded archive right after their own `download_atomic` call).
+/// - **Not `atomic_replace`-published**: files written through tempfile
+///   `persist` (`MoveFileExW`, not this crate's cross-directory
+///   `FILE_RENAME_POSIX_SEMANTICS` publish) are out of scope for this
+///   helper's measured guarantee. E.g. tool settings and `state.json`
+///   (`tools/mod.rs`'s `atomic_json`), catalog sources and
+///   `overlay-catalog-state.json` (`tools/catalog_sources.rs`'s
+///   `atomic_json`).
 pub fn read_published(path: &Path) -> io::Result<Vec<u8>> {
     #[cfg(windows)]
     {

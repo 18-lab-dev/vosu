@@ -596,6 +596,10 @@ impl ToolHost {
                 .download_atomic(&package.url, "vosu-tool-catalog", &archive, &self.cancel)
                 .await
                 .map_err(|e| e.to_string())?;
+            // Same-task read of this task's own just-downloaded archive,
+            // strictly after its own `download_atomic`/`atomic_replace`
+            // returned: excluded from `vosu_sys::platform::read_published`
+            // per its doc comment (no other writer of this private path).
             verify_package(&archive, &package)?;
             self.phase(job, &format!("installing {}", tool.id));
             let _gate = self.gate.lock().await;

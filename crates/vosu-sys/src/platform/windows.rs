@@ -198,7 +198,7 @@ fn move_file(temp: &[u16], target: &[u16]) -> io::Result<()> {
 /// Merges metadata and publishes `candidate` as `target`'s name through a
 /// cross-directory `FILE_RENAME_POSIX_SEMANTICS` rename.
 ///
-/// **Measured guarantee (2026-11-23, `windows_tests::concurrent_readers_never_observe_missing_file`
+/// **Measured guarantee (2026-11-23, `windows_tests::raw_concurrent_readers_characterize_missing_file_rate`
 /// and the heavy-load evidence run on hosted-CI-shaped hardware):**
 ///
 /// | Load | Runs | Missing-name observations |
@@ -419,7 +419,7 @@ pub(super) fn read_published(path: &Path) -> io::Result<Vec<u8>> {
                 attempt += 1;
                 #[expect(
                     clippy::disallowed_methods,
-                    reason = "bounded blocking retry absorbing the measured transient missing-name window of a cross-directory atomic_replace publish"
+                    reason = "bounded (READ_RETRY_ATTEMPTS, deadline <=50ms) blocking retry absorbing the measured transient missing-name window of a cross-directory atomic_replace publish; read_published is the synchronous-caller variant only, callers already on a Tokio runtime must use read_published_async instead"
                 )]
                 thread::sleep(READ_RETRY_DELAY);
             }

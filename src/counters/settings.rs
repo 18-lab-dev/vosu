@@ -96,7 +96,7 @@ impl SettingsStore {
 
     pub fn profiles(&self) -> Result<Profiles, SettingsError> {
         let path = self.settings_root.join("profiles.json");
-        if !checked_exists(&path)? {
+        if !checked_exists_published(&path)? {
             return Ok(Profiles {
                 active: "default".into(),
                 profiles: vec!["default".into()],
@@ -272,7 +272,7 @@ impl SettingsStore {
             let path = self
                 .profile_root(&profile)?
                 .join(format!("{name}.settings.values.toml"));
-            if checked_exists(&path)? {
+            if checked_exists_published(&path)? {
                 read_values_toml(&path)?
             } else {
                 defaults_from_schema(&settings)
@@ -408,7 +408,7 @@ impl SettingsStore {
         counter_dir: &Path,
     ) -> Result<Vec<CounterSetting>, SettingsError> {
         let target = self.schema_path(name);
-        if checked_exists(&target)? {
+        if checked_exists_published(&target)? {
             let mut settings = read_schema_toml(&target)?;
             normalize_settings(&mut settings);
             return Ok(settings);
@@ -447,7 +447,7 @@ impl SettingsStore {
         settings: &[CounterSetting],
     ) -> Result<CompactValues, SettingsError> {
         let target = self.values_path(name);
-        if checked_exists(&target)? {
+        if checked_exists_published(&target)? {
             return read_values_toml(&target);
         }
 
@@ -551,15 +551,25 @@ fn defaults_from_schema(settings: &[CounterSetting]) -> CompactValues {
         .collect()
 }
 
+/// Reads and decodes JSON. Goes through `vosu_sys::platform::read_published`
+/// so authoritative targets written via `atomic_bytes(..., true)` (schema,
+/// values, `profiles.json`) absorb the measured transient Windows
+/// missing-name window; legacy migration-source candidates read through the
+/// same helper for simplicity, though they are not concurrently replaced.
 fn read_json<T>(path: &Path) -> Result<T, SettingsError>
 where
     T: serde::de::DeserializeOwned,
 {
-    Ok(serde_json::from_slice(&fs::read(path)?)?)
+    Ok(serde_json::from_slice(
+        &vosu_sys::platform::read_published(path)?,
+    )?)
 }
 
+/// See [`read_json`]: same retrying-read rationale.
 fn read_toml(path: &Path) -> Result<toml::Value, SettingsError> {
-    Ok(toml::from_slice(&fs::read(path)?)?)
+    Ok(toml::from_slice(&vosu_sys::platform::read_published(
+        path,
+    )?)?)
 }
 
 fn read_schema_toml(path: &Path) -> Result<Vec<CounterSetting>, SettingsError> {
@@ -838,6 +848,46 @@ fn checked_exists(path: &Path) -> Result<bool, SettingsError> {
         SourceState::Missing => Ok(false),
         SourceState::Present => Ok(true),
         SourceState::Symlink => Err(SettingsError::UnsafeSettingsFile),
+    }
+}
+
+/// Existence/symlink probe for files this store republishes through
+/// `atomic_bytes(..., true)` -> `vosu_sys::platform::atomic_replace`
+/// (`profiles.json`, a counter's schema/values target, a profile's values
+/// file). On Windows, retries a transient "missing" result with the same
+/// bound as `vosu_sys::platform::read_published` (see its doc), so a
+/// concurrent `atomic_replace` publish of one of these files cannot be
+/// misread here as "file absent" and silently fall back to defaults or a
+/// migration path. A genuinely absent file still resolves to `Ok(false)`,
+/// after that bounded extra latency. Legacy migration-source candidates
+/// (`settings.json`/`.toml` beside the counter, the prior XDG schema path,
+/// internal `.values.json`) are not atomic_replace-published by this
+/// process, so their call sites use plain [`checked_exists`] instead.
+fn checked_exists_published(path: &Path) -> Result<bool, SettingsError> {
+    #[cfg(windows)]
+    {
+        const ATTEMPTS: u32 = 3;
+        const DELAY: std::time::Duration = std::time::Duration::from_millis(25);
+        let mut attempt = 1;
+        loop {
+            match source_state(path)? {
+                SourceState::Missing if attempt < ATTEMPTS => {
+                    attempt += 1;
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "bounded (<=50ms) blocking retry mirroring vosu_sys::platform::read_published, absorbing the measured transient missing-name window of a cross-directory atomic_replace publish for this store's own atomically-republished files"
+                    )]
+                    std::thread::sleep(DELAY);
+                }
+                SourceState::Missing => return Ok(false),
+                SourceState::Present => return Ok(true),
+                SourceState::Symlink => return Err(SettingsError::UnsafeSettingsFile),
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        checked_exists(path)
     }
 }
 
