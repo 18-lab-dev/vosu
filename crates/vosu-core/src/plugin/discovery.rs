@@ -407,5 +407,14 @@ impl Drop for DiscoveryService {
     }
 }
 
+mod foreground;
+pub use foreground::FOREGROUND_POLL_INTERVAL;
+#[cfg(windows)]
+pub use foreground::ForegroundPoller;
+
+mod windows_source;
+#[cfg(windows)]
+pub use windows_source::WindowsProcessSource;
+
 #[cfg(test)]
 mod tests;

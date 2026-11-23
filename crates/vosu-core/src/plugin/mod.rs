@@ -64,7 +64,9 @@ mod session;
 pub mod settings;
 pub mod timers;
 
-pub use discovery::{DiscoveryService, ProcessSource};
+pub use discovery::{DiscoveryService, FOREGROUND_POLL_INTERVAL, ProcessSource};
+#[cfg(windows)]
+pub use discovery::{ForegroundPoller, WindowsProcessSource};
 pub use dispatch::{OwnedMessage, WorkerPool};
 pub use error::HostError;
 pub use focus::{
