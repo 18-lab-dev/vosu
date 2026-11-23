@@ -166,9 +166,11 @@ impl CompiledMatcher {
     /// ([`overlaps`]) reads `comm_hints` from the raw [`MatchTable`]s
     /// instead, before compilation.
     pub fn compile(platform: MatchPlatform, table: &MatchTable) -> Result<Self, MatcherError> {
-        for hint in &table.comm_hints {
-            if hint.len() > 15 {
-                return Err(MatcherError::HintTooLong { hint: hint.clone() });
+        if platform == MatchPlatform::Linux {
+            for hint in &table.comm_hints {
+                if hint.len() > 15 {
+                    return Err(MatcherError::HintTooLong { hint: hint.clone() });
+                }
             }
         }
         let compile_patterns =
