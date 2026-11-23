@@ -493,11 +493,17 @@ mod tests {
         // called still completes: it raced `cancel`, it did not follow
         // it. The periodic timer's next tick can race `cancel` for the
         // same lock too (see `BlockingDelivery`'s doc comment above) and
-        // fire again, non-blocking, before `cancel` wins; drain every
-        // delivery that arrives promptly, the same "raced it, did not
-        // follow it" allowance `cancel_stops_further_firing` makes.
+        // fire again, non-blocking, before `cancel` wins. Every such
+        // delivery sends on `fired` while holding the registry lock,
+        // before `cancel` acquires it, so all of them are already queued
+        // once `join` returns: drain them without waiting.
         fire_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        while fire_rx.recv_timeout(Duration::from_millis(5)).is_ok() {}
+        while fire_rx.try_recv().is_ok() {}
+
+        // Nothing fires once `cancel` has returned: the next tick finds
+        // no entry (removed under the same lock) and the task stops.
+        assert!(fire_rx.recv_timeout(Duration::from_millis(300)).is_err());
+        assert_eq!(registry.live_count(instance), 0);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
