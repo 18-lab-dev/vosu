@@ -258,3 +258,43 @@ fn unfiltered_prefilter_never_mirrors_the_tracked_set_to_the_kernel() {
 
     assert_eq!(
         tracking_control.calls(),
+        0,
+        "unfiltered must never mirror the tracked set into the bounded eBPF tracking control"
+    );
+}
+
+#[test]
+fn set_prefilter_updates_the_userspace_filter_before_a_failed_kernel_push() {
+    use vosu_sys::events::test_support::{FailingCommFilter, events_with_failing_comm_filter};
+
+    let comm_filter = Arc::new(FailingCommFilter::new());
+    let events = events_with_failing_comm_filter(comm_filter.clone());
+    let source = LinuxSource {
+        events: Some(events),
+        filter: Mutex::new(CommHints::default()),
+        tracked: Mutex::new(HashSet::new()),
+    };
+
+    let filter = Prefilter::Names(vec!["osu!.exe".to_owned()]);
+    let result = source.set_prefilter(&filter);
+    assert!(
+        result.is_err(),
+        "the injected comm filter always fails the kernel push"
+    );
+
+    // P2 (module doc comment): the userspace filter -- what
+    // `Self::enumerate`/`Self::inspect` actually match against -- must
+    // reflect the attempted update regardless of the kernel push's own
+    // outcome, never silently keep matching the stale set.
+    let applied = source.current_filter();
+    assert!(applied.matches(b"osu!.exe"));
+    assert!(!applied.is_unfiltered());
+
+    // And the kernel push really was attempted with the new set, proving
+    // this exercises the ordering, not a no-op.
+    assert!(
+        comm_filter
+            .last_attempted()
+            .is_some_and(|hints| hints.matches(b"osu!.exe"))
+    );
+}

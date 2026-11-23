@@ -717,3 +717,50 @@ async fn foreground_change_recomputes_focus_deterministically() {
 
     service.stop();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_prefilter_advances_last_filter_after_a_failure() {
+    struct FailingPrefilterSource {
+        calls: std::sync::atomic::AtomicU64,
+    }
+    impl ProcessSource for FailingPrefilterSource {
+        fn enumerate(&self) -> io::Result<Vec<ProcessRecord>> {
+            Ok(Vec::new())
+        }
+        fn set_prefilter(&self, _filter: &Prefilter) -> io::Result<()> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err(io::Error::other("set_prefilter always fails"))
+        }
+    }
+
+    let runtime = Handle::current();
+    let (_log_dir, host) = test_host(
+        runtime,
+        Arc::new(focus::SyntheticForegroundSource::new(None)),
+    );
+    let source = FailingPrefilterSource {
+        calls: std::sync::atomic::AtomicU64::new(0),
+    };
+    let mut last_filter: Option<Prefilter> = None;
+
+    // The first pass always has a new filter to apply (`None` -> the
+    // host's current, empty `Prefilter::Names([])`), so `set_prefilter`
+    // is attempted and fails; the caller is told no reconcile was forced
+    // (`sync_prefilter`'s own return value is whether the update
+    // actually applied), but `last_filter` must still advance to the
+    // attempted value regardless (P2).
+    let forced = sync_prefilter(&host, &source, &mut last_filter);
+    assert!(!forced, "a failed update must not force a reconcile");
+    assert_eq!(last_filter, Some(host.prefilter()));
+    assert_eq!(source.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+    // A second call against the identical (still-failing) filter must
+    // not retry `set_prefilter` at all: proof `last_filter` genuinely
+    // holds the attempted value instead of being left at `None` to
+    // retry -- and hot-loop -- every pass (`sync_prefilter`'s own doc
+    // comment).
+    let forced_again = sync_prefilter(&host, &source, &mut last_filter);
+    assert!(!forced_again);
+    assert_eq!(source.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
