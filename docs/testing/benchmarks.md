@@ -627,6 +627,122 @@ un-tuned hosted runner (this VM has Windows Defender exclusions on its
 cargo directories that a hosted runner does not) rather than anything
 `CARGO_PROFILE_DEV_DEBUG` or the linker choice can address.
 
+## Local dev build speed-up tools: sccache and mold
+
+Measured **2026-11-23** on `7ea1c3d`, in a dedicated `ovnfs` checkout
+(`dl-buildspeed`) of this repository. Ryzen 9 9950X3D host, kernel
+`7.3.5-2-cachyos-bore`, Rust 1.96.1, performance governor, `--locked`,
+`taskset --cpu-list 0-7,16-23` (the Windows VM's QEMU workers are confined
+to 8-15/24-31; measurements only ran while the VM was otherwise idle). Tools:
+sccache 0.11.0 (`cargo install --locked sccache --version 0.11.0`, built with
+the `vendored-openssl` feature because the host's system OpenSSL is newer
+than `openssl-sys` supports) and mold 3.0.0, extracted from the official
+`x86_64-linux` release tarball into a user-local path (no root available for
+`pacman -S mold` non-interactively: `sudo -n true` failed with "a password is
+required"). `rust-lld` was represented by the system `lld`/`ld.lld` package
+already installed (same LLVM lld implementation Rust's bundled `rust-lld`
+is), driven through `-C link-arg=-fuse-ld=lld`. Each configuration used its
+own `CARGO_TARGET_DIR`; sccache used its own cache directory, separate from
+every target dir.
+
+### Cold new-checkout cost (sccache)
+
+Models a new `ovnfs` checkout (or a second coding agent) building the same
+commit: `cargo clippy --workspace --all-targets --all-features --locked --
+-D warnings` then `cargo nextest run --workspace --lib --bins --tests
+--examples --all-features --locked --no-run`, from an empty `CARGO_TARGET_DIR`
+each run (default `CARGO_INCREMENTAL` left at Cargo's default, i.e. not
+`prepush.py`'s own `CARGO_INCREMENTAL=0`). The sccache cache was warmed by
+one untimed prior build in a different target dir, then 5 further runs each
+started from a fresh, empty target dir against that warm cache. Baseline also
+ran 5 times, each from a fresh empty target dir, no sccache.
+
+| Configuration | Median total (range) | vs. baseline |
+| --- | ---: | ---: |
+| No sccache (cold, 5 runs) | 54.800 s (54.652–55.254 s) | — |
+| `RUSTC_WRAPPER=sccache`, warm shared cache (5 runs) | 41.208 s (41.148–59.873 s) | **-24.8%** |
+
+The sccache series' first run (59.873 s) is a one-time sccache-server
+startup/warm-up outlier (the daemon was freshly started for that series);
+the other 4 runs landed in a tight 41.148–41.574 s band, so the median is
+representative. Final `sccache --show-stats` for the 5 timed runs: 7,440
+compile requests, 71.50% overall hit rate (83.33% for the bundled C/C++
+dependencies, 66.67% for Rust); of the 1,539 compilations that still ran,
+306 were non-cacheable specifically because of `incremental` compilation —
+this repository's own workspace crates (`vosu`, `vosu-core`,
+`vosu-osu-reader`, …) use Cargo's default incremental dev profile, which
+sccache cannot cache, so only third-party dependencies were served from
+cache in this run. `prepush.py` already sets `CARGO_INCREMENTAL=0` for its
+own builds (`scripts/prepush.py`'s `CARGO_ENV`), so sccache would cache the
+workspace crates too there; that combination was not separately measured to
+a clean, reproducible number in this session; an inc0 probe showed large
+run-to-run spread attributable to the host's page cache warming over the
+session rather than to the setting itself; and was removed from this record
+rather than overstate it.
+
+### Incremental edit loop (mold / lld)
+
+Used `scripts/measure-build.py --runs 5` unmodified (its own probes: edit a
+marker line into `api-fixed`, `osu-reader-lazer`, `osu-state-reducer`,
+`server-routes`, `dashboard-render`; time `cargo check`, `cargo build`,
+`cargo test -p <crate> --lib --no-run`; revert; repeat). `cargo check` never
+links, so it is unaffected by the linker and serves as a methodology check
+(its deltas were all within ±2.3%, i.e. noise). Sums of the 5 probes' command
+medians:
+
+| Commands | Default linker | mold (`-fuse-ld=mold`) | system `lld` (`-fuse-ld=lld`) |
+| --- | ---: | ---: | ---: |
+| `cargo check` × 5 probes | 5.299 s | 5.331 s (+0.6%) | 5.289 s (-0.2%) |
+| `cargo build` + `cargo test --no-run` × 5 probes (link-affected) | 18.657 s | 17.013 s (**-8.8%**) | 18.711 s (+0.3%) |
+| All three commands × 5 probes | 23.957 s | 22.344 s (-6.7%) | 24.001 s (+0.2%) |
+
+Per-probe, mold's `cargo build` savings ranged 8.6–14.2% and its
+`cargo test --no-run` savings ranged -5.1–+9.6% (`server-routes`'s test
+probe was the one regression, within its own run-to-run range); `lld`'s
+deltas on every command, every probe, stayed within ±2.1%, indistinguishable
+from noise. mold's link-step win is real (confirmed by `readelf -p .comment`
+showing `mold 3.0.0` vs. `LLD 22.1.2` in the two linked test binaries) but
+does not reach 15% once folded into the whole check+build+test loop, because
+linking is only part of each command's cost for these small probe crates.
+
+### Representative agent iteration (vosu-core)
+
+Edit `crates/vosu-core/src/lib.rs` (append a marker line), build its test
+binary (`cargo nextest run --locked -p vosu-core --lib --no-run`), run it
+(`cargo nextest run --locked -p vosu-core --lib`), revert; 5 cycles per
+configuration against a target dir warmed by one untimed full-workspace
+`cargo nextest run --no-run`. The first cycle of each series re-pays
+nextest's one-time list-building cost (~10 s) and is excluded as a known,
+reproduced-on-both-sides artifact; medians below are of cycles 2–5:
+
+| Configuration | Build median | Run median | Total median |
+| --- | ---: | ---: | ---: |
+| Default linker | 0.673 s | 0.550 s | 1.213 s |
+| mold | 0.586 s (**-12.9%**) | 0.548 s (-0.4%) | 1.134 s (**-6.5%**) |
+
+`vosu-core` is a leaf crate with a small test binary, so even mold's ~13%
+link-time win is a small absolute amount against the test-run time it cannot
+affect; the realistic edit-loop total falls short of the 15% bar.
+
+### Decision
+
+- **Adopt sccache**, opt-in only, via `source scripts/dev-env.sh`
+  (`CONTRIBUTING.md` "Speed up the local build loop"). It clears the 15% bar
+  by a wide margin (-24.8%) on the cold-checkout cost that dominates when
+  several `ovnfs` checkouts or coding agents build the same commit, with no
+  change needed to `prepush.py` or `measure-build.py` (both already inherit
+  the full process environment, so an exported `RUSTC_WRAPPER` reaches their
+  subprocesses unmodified). No correctness risk: it is a transparent,
+  content-addressed object cache around `rustc`, never set by CI or any
+  committed config, and release builds are untouched (only exported in an
+  interactive shell via `dev-env.sh`).
+- **Do not adopt mold or lld.** mold is a genuine, reproducible win on pure
+  link time (9–14% per `cargo build`/`test --no-run`) but the realistic
+  edit-check-build-test loop and the `vosu-core` iteration both land at
+  6.5–8.8%, short of the 15% bar; system `lld` showed no measurable benefit
+  over the default linker at all. Neither is wired into any build path;
+  `scripts/dev-env.sh` sets no linker variables.
+
 ## Performance changes for M0 (paired, D17)
 
 Measured **2026-11-22**, pre-M0 baseline `3a91ff9` versus M0 crate-split
