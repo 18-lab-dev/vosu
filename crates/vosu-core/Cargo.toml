@@ -58,4 +58,4 @@ vosu-plugin-testkit = { path = "../vosu-plugin-testkit", features = ["test-harne
 vosu-proptest = { path = "../vosu-proptest" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-vosu-sys = { path = "../vosu-sys", features = ["test-support"] }
+vosu-sys = { path = "../vosu-sys", features = ["test-harness"] }

@@ -298,3 +298,76 @@ fn set_prefilter_updates_the_userspace_filter_before_a_failed_kernel_push() {
             .is_some_and(|hints| hints.matches(b"osu!.exe"))
     );
 }
+
+#[test]
+fn unfiltered_cn_proc_style_source_still_delivers_a_tracked_exit() {
+    use vosu_sys::events::test_support::{events_with_cn_proc_mode, push_exit_event};
+
+    let events = events_with_cn_proc_mode();
+    let source = LinuxSource {
+        events: Some(events),
+        filter: Mutex::new(CommHints::default()),
+        tracked: Mutex::new(HashSet::new()),
+    };
+
+    source.set_prefilter(&Prefilter::Unfiltered).unwrap();
+    // CN_PROC has no kernel-side tracking map to bound (N1), so
+    // `sync_tracked` must keep mirroring into the event backend's own
+    // userspace queue even while unfiltered -- unlike eBPF, there is
+    // nothing here to protect by skipping it.
+    source.replace_all_tracked([4242].into_iter());
+
+    push_exit_event(source.events.as_ref().unwrap(), 4242);
+    let batch = source.drain_events();
+
+    // Before the N1 fix (an unconditional no-op while unfiltered),
+    // `sync_tracked` would never have mirrored pid 4242 into the queue's
+    // own `tracked` set, so this exit would hit `EventQueue::push`'s
+    // untracked-exit path instead. CN_PROC sets `reconcile_untracked_exit
+    // = false` (`LinuxProcessEvents::open`), so that path silently drops
+    // the event rather than forcing a reconcile -- the exit would be
+    // lost outright until the next full reconcile, up to
+    // `RECONCILE_INTERVAL` (2s) later.
+    assert_eq!(
+        batch.exit,
+        vec![4242],
+        "a tracked pid's exit must still be delivered precisely while unfiltered on CN_PROC"
+    );
+    assert!(!batch.needs_reconcile);
+}
+
+#[test]
+fn returning_to_a_filtered_prefilter_restores_the_kernel_mirror() {
+    use vosu_sys::events::test_support::{CountingTrackingControl, events_with_tracking_control};
+
+    let tracking_control = Arc::new(CountingTrackingControl::new(128));
+    let events = events_with_tracking_control(tracking_control.clone());
+    let source = LinuxSource {
+        events: Some(events),
+        filter: Mutex::new(CommHints::default()),
+        tracked: Mutex::new(HashSet::new()),
+    };
+
+    source.set_prefilter(&Prefilter::Unfiltered).unwrap();
+    source.replace_all_tracked(0..PAST_EBPF_TRACKING_BOUND);
+    assert_eq!(
+        tracking_control.calls(),
+        0,
+        "the kernel tracking control must stay untouched while unfiltered"
+    );
+
+    // Narrowing the pre-filter again must resume mirroring to the
+    // kernel: a `sync_tracked` that skipped the push unconditionally,
+    // regardless of the current filter (rather than only while
+    // unfiltered), would leave `calls()` at 0 here too.
+    source
+        .set_prefilter(&Prefilter::Names(vec!["osu!.exe".to_owned()]))
+        .unwrap();
+    source.replace_all_tracked([10, 20, 30].into_iter());
+
+    assert_eq!(
+        tracking_control.calls(),
+        1,
+        "returning to a filtered prefilter must restore the kernel mirror"
+    );
+}

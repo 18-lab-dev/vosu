@@ -40,9 +40,12 @@
 //! [`Self::enumerate`] replaces the whole tracked set with what it just
 //! observed, [`Self::inspect`] adds/removes one pid, and
 //! [`Self::drain_events`] removes every pid its own `events.drain()` just
-//! reported exited. [`Self::sync_tracked`] skips this mirroring entirely
-//! while the pre-filter is [`CommHints::unfiltered`] (P2): see its own doc
-//! comment.
+//! reported exited. The private `sync_tracked` helper behind all three
+//! skips only the bounded in-kernel eBPF push while the pre-filter is
+//! `CommHints::unfiltered` (P2, N1) — a real desktop routinely runs more
+//! processes than that push's own bound tolerates; CN_PROC has no such
+//! bound and keeps mirroring normally even then, so its own exits stay
+//! immediate (`sync_tracked`'s own doc comment).
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -51,7 +54,7 @@ use std::sync::Mutex;
 
 use crate::plugin::host::ProcessRecord;
 use tokio::sync::Notify;
-use vosu_sys::events::{CommHints, LinuxProcessEvents};
+use vosu_sys::events::{CommHints, LinuxProcessEvents, ProcessEventMode};
 use vosu_sys::process::{enumerate_processes_matching, process_metadata_matching};
 
 use crate::plugin::matcher::Prefilter;
@@ -106,28 +109,32 @@ impl LinuxSource {
             .clone()
     }
 
-    /// Mirrors `tracked` into the event backend's own tracking control,
-    /// except while the pre-filter is [`CommHints::unfiltered`] (P2): an
-    /// unfiltered Linux desktop routinely runs more than
-    /// `vosu_sys::events::MAX_PENDING_EVENTS` user processes, and eBPF's
-    /// own bounded tracking control rejects a set past that bound,
-    /// marking the backend unhealthy and latching a reconcile on every
-    /// call. `DiscoveryService`'s own full reconcile always re-derives
-    /// this method's `tracked` argument from scratch via
-    /// [`Self::enumerate`], so the next call would fail identically,
-    /// hot-looping full `/proc` scans and warnings forever. Skipping the
-    /// mirror while unfiltered instead leaves the kernel/CN_PROC side
-    /// with nothing tracked, which only degrades that backend's own
-    /// exec/exit fast path to the discovery service's bounded
-    /// `RECONCILE_INTERVAL` cadence ([`CommHints::unfiltered`]'s own doc
-    /// comment) — never an unbounded reconcile storm.
+    /// Mirrors `tracked` into the event backend's own tracking state,
+    /// except for the bounded in-kernel eBPF push while the pre-filter is
+    /// [`CommHints::unfiltered`] (P2, N1): an unfiltered Linux desktop
+    /// routinely runs more than `vosu_sys::events::MAX_PENDING_EVENTS`
+    /// user processes, and eBPF's own bounded tracking control rejects a
+    /// set past that bound, marking the backend unhealthy and latching a
+    /// reconcile on every call. `DiscoveryService`'s own full reconcile
+    /// always re-derives this method's `tracked` argument from scratch
+    /// via [`Self::enumerate`], so the next call would fail identically,
+    /// hot-looping full `/proc` scans and warnings forever.
+    ///
+    /// CN_PROC has no such bound (it has no kernel-side tracking map at
+    /// all; `LinuxProcessEvents::replace_tracked` only ever updates its
+    /// own userspace queue for it), so this still calls through for that
+    /// backend even while unfiltered: skipping it there would only cost
+    /// CN_PROC its own precise, immediate exit recognition for nothing,
+    /// degrading every exit to the discovery service's bounded
+    /// `RECONCILE_INTERVAL` cadence without any bound to protect.
     fn sync_tracked(&self, tracked: &HashSet<u32>) {
-        if self.current_filter().is_unfiltered() {
+        let Some(events) = self.events.as_ref() else {
+            return;
+        };
+        if self.current_filter().is_unfiltered() && events.mode() == ProcessEventMode::Ebpf {
             return;
         }
-        if let Some(events) = self.events.as_ref() {
-            events.replace_tracked(tracked.iter().copied());
-        }
+        events.replace_tracked(tracked.iter().copied());
     }
 
     fn mark_tracked(&self, pid: u32) {

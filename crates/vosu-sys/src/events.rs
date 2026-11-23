@@ -244,25 +244,32 @@ impl CommHints {
     /// opposed to an empty [`Self::new`] set, which admits none: the two
     /// are not interchangeable. The CN_PROC backend's own userspace
     /// substring check (`events::cn_proc`) treats this as "every comm
-    /// matches" for free; the in-kernel eBPF `candidate_comm` filter has
-    /// no such bypass compiled in, so `EbpfCommFilter::set_comm_hints`
-    /// pushes this down as an empty hint set instead. With an empty
-    /// in-kernel hint set, `candidate_comm` never matches, so the eBPF
-    /// backend never adds a pid to its own `candidates`/`tracked` maps on
-    /// exec, and `bpf/process_events.bpf.c`'s `emit_exit` then also never
-    /// fires for it on exit (both gated behind `candidate_comm` there
-    /// too). A `ProcessSource`'s own tracking-control wiring must also
-    /// skip mirroring its confirmed-live pid set into the kernel while
-    /// this is in effect (`LinuxSource::sync_tracked`'s own doc comment
-    /// in `vosu-core`): the in-kernel `tracked` map is bounded
-    /// ([`MAX_PENDING_EVENTS`]), and a real desktop routinely runs more
-    /// user processes than that, so mirroring it would hot-loop a full
-    /// reconcile instead of merely degrading. Together this degrades
-    /// both new-process *and* exit detection -- not only the exec fast
-    /// path -- to the discovery service's bounded `RECONCILE_INTERVAL`
-    /// full-reconcile cadence (the same cadence Windows's own
-    /// enumeration-cost pre-filter already uses when unfiltered) rather
-    /// than losing detection outright or hot-looping past the bound.
+    /// matches" for free, so it is unaffected by this: CN_PROC still
+    /// emits an inspect event for every exec, and exit detection for a
+    /// confirmed-live pid stays immediate as long as a `ProcessSource`
+    /// keeps mirroring it (`LinuxSource::sync_tracked`'s own doc comment
+    /// in `vosu-core`, N1) -- CN_PROC has no kernel-side tracking map to
+    /// bound, so there is nothing to skip for it.
+    ///
+    /// The in-kernel eBPF `candidate_comm` filter has no such bypass
+    /// compiled in, so `EbpfCommFilter::set_comm_hints` pushes this down
+    /// as an empty hint set instead. With an empty in-kernel hint set,
+    /// `candidate_comm` never matches, so the eBPF backend never adds a
+    /// pid to its own `candidates`/`tracked` maps on exec, and
+    /// `bpf/process_events.bpf.c`'s `emit_exit` then also never fires for
+    /// it on exit (both gated behind `candidate_comm` there too). A
+    /// `ProcessSource`'s own tracking-control wiring must also skip
+    /// mirroring its confirmed-live pid set into *this* backend's kernel
+    /// map while this is in effect: it is bounded (`MAX_PENDING_EVENTS`,
+    /// crate-private), and a real desktop routinely runs more user
+    /// processes than that, so mirroring it would hot-loop a full
+    /// reconcile instead of merely degrading. So, for eBPF only, this
+    /// degrades both new-process *and* exit detection -- not only the
+    /// exec fast path -- to the discovery service's bounded
+    /// `RECONCILE_INTERVAL` full-reconcile cadence (the same cadence
+    /// Windows's own enumeration-cost pre-filter already uses when
+    /// unfiltered) rather than losing detection outright or hot-looping
+    /// past the bound.
     #[must_use]
     pub fn unfiltered() -> Self {
         Self {
@@ -665,21 +672,22 @@ impl Drop for LinuxProcessEvents {
 /// Test-only doubles for a dependent crate's own `ProcessSource`
 /// implementation (`vosu-core`'s `LinuxSource`): exercising
 /// [`LinuxProcessEvents::replace_tracked`]/[`LinuxProcessEvents::set_comm_hints`]'s
-/// failure paths needs a [`ProcessTrackingControl`]/[`ProcessCommFilter`]
+/// failure paths needs a `ProcessTrackingControl`/`ProcessCommFilter`
 /// that fails on demand, but both traits are crate-private (`pub(super)`)
 /// and `LinuxProcessEvents`'s own fields are private, so a dependent
 /// crate cannot build one through the public API alone. Gated behind the
-/// `test-support` feature, which only `vosu-core`'s own `[dev-dependencies]`
+/// `test-harness` feature, which only `vosu-core`'s own `[dev-dependencies]`
 /// enables (`Cargo.toml`) -- never part of a production build.
-#[cfg(feature = "test-support")]
+#[cfg(feature = "test-harness")]
 pub mod test_support {
     use super::{
         Arc, AtomicBool, AtomicU64, CommHints, EventQueue, LinuxProcessEvents, Mutex, Notify,
-        Ordering, Pid, ProcessCommFilter, ProcessEventMode, ProcessTrackingControl, io,
+        Ordering, Pid, ProcessCommFilter, ProcessEvent, ProcessEventKind, ProcessEventMode,
+        ProcessTrackingControl, io,
     };
     use std::collections::BTreeSet;
 
-    /// A [`ProcessCommFilter`] whose `set_comm_hints` always fails,
+    /// A `ProcessCommFilter` whose `set_comm_hints` always fails,
     /// recording the last hint set it was asked (and failed) to apply.
     #[derive(Default)]
     pub struct FailingCommFilter {
@@ -709,7 +717,7 @@ pub mod test_support {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(hints.clone());
             Err(io::Error::other(
-                "test-support: kernel comm-hint push always fails",
+                "test-harness: kernel comm-hint push always fails",
             ))
         }
     }
@@ -722,7 +730,7 @@ pub mod test_support {
         }
     }
 
-    /// A [`ProcessTrackingControl`] that counts every call and fails
+    /// A `ProcessTrackingControl` that counts every call and fails
     /// whenever the requested set's size exceeds `fail_over` -- mirrors
     /// the real eBPF backend's own `EbpfTrackingControl` bound
     /// (`events/ebpf.rs`), without needing real kernel/BPF access.
@@ -751,7 +759,7 @@ pub mod test_support {
             self.calls.fetch_add(1, Ordering::Relaxed);
             if tracked.len() > self.fail_over {
                 Err(io::Error::other(
-                    "test-support: tracked set exceeds the injected bound",
+                    "test-harness: tracked set exceeds the injected bound",
                 ))
             } else {
                 Ok(())
@@ -803,6 +811,46 @@ pub mod test_support {
             cancel: Arc::new(AtomicBool::new(false)),
             task: None,
         }
+    }
+
+    /// Builds a [`LinuxProcessEvents`] with no real backend thread and no
+    /// tracking control, mirroring the CN_PROC backend (which has no
+    /// kernel-side tracking map to push to): `set_comm_hints` delegates to
+    /// a no-op filter, and `replace_tracked` only ever updates the
+    /// returned value's own userspace queue (N1) -- enough to assert a
+    /// dependent crate's own `ProcessSource` keeps mirroring exits for
+    /// this backend even while unfiltered, since there is no kernel bound
+    /// to protect.
+    #[must_use]
+    pub fn events_with_cn_proc_mode() -> LinuxProcessEvents {
+        LinuxProcessEvents {
+            mode: ProcessEventMode::CnProc,
+            notify: Arc::new(Notify::new()),
+            healthy: Arc::new(AtomicBool::new(true)),
+            event_count: Arc::new(AtomicU64::new(0)),
+            reconciliation_request_count: Arc::new(AtomicU64::new(0)),
+            queue: Arc::new(Mutex::new(EventQueue::default())),
+            tracking_control: None,
+            comm_filter: Arc::new(NoopCommFilter),
+            cancel: Arc::new(AtomicBool::new(false)),
+            task: None,
+        }
+    }
+
+    /// Pushes a raw exit event straight into `events`'s own queue, as if
+    /// the (absent, in a test-built value) backend thread had just
+    /// delivered it -- lets a dependent crate's own test assert which
+    /// pids `LinuxProcessEvents::drain` reports without a real
+    /// eBPF/CN_PROC backend to generate the event.
+    pub fn push_exit_event(events: &LinuxProcessEvents, pid: Pid) {
+        events
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(ProcessEvent {
+                tgid: pid,
+                kind: ProcessEventKind::Exit,
+            });
     }
 }
 

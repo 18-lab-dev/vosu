@@ -11,6 +11,9 @@
 //! process memory boundary, and process-exit-event backends. All platform
 //! `unsafe` lives here.
 
+#[cfg(all(feature = "test-harness", not(debug_assertions)))]
+compile_error!("the test-harness feature is forbidden in release builds");
+
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 pub mod events;
 pub mod platform;
