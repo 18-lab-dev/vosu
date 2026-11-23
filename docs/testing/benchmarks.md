@@ -1255,3 +1255,57 @@ fps counter are substituted for that missing evidence. In particular, these
 Windows stable results cannot establish Linux lazer or Helium presentation
 quality, and no frame-drop improvement is claimed for the projection optimization.
 
+## Process-event backend (comm-hint eBPF vs CN_PROC)
+
+Reproduce with the Linux guest VM already running (`scripts/ebpf-verify.py`
+builds the host's real `process_events.bpf.o` and release
+`process_event_bench`, stages both into the `vosu-gaming` VM, and runs the
+interleaved samples itself; it never starts the VM):
+
+```sh
+python scripts/ebpf-verify.py --bench 5
+```
+
+`process_events.bpf.c`'s bounded-loop comm-hint matcher (kernel 5.8 floor,
+`bpf/process_events.bpf.c`) loaded all five programs well under the
+100,000-processed-instruction budget on the `vosu-gaming` VM
+(linux-zen 7.2.11, `bpftool -d prog loadall`):
+
+| program | processed | limit | total_states | peak_states | verify_us |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| process_exec | 64,300 | 1,000,000 | 1,586 | 236 | 270,847 |
+| process_fork | 101 | 1,000,000 | 9 | 9 | 356 |
+| process_exit | 64,446 | 1,000,000 | 1,639 | 237 | 283,781 |
+| process_exit_group_dead | 62,437 | 1,000,000 | 1,583 | 234 | 286,635 |
+| task_rename | 64,483 | 1,000,000 | 1,595 | 239 | 271,574 |
+
+Worst case (`process_exec`/`task_rename`) is about 64% of the 100,000
+budget, 6.4% of the kernel's hard 1,000,000-instruction limit.
+
+Bench samples ran the staged release `process_event_bench` in the guest,
+5 interleaved `ebpf`/`cn-proc` samples each with `idle-ms 1000 iterations 16
+churn-rate-hz 50 churn-duration-ms 10000`. Lifecycle CPU is the backend's own
+(self, not reaped-child) user+system time during the churn phase; median
+detect latency is the add-phase median (time from releasing a pre-spawned
+target to its PID appearing in the lifecycle snapshot):
+
+| backend | lifecycle CPU (own, µs) mean / range | median detect latency (µs) mean / range |
+| --- | ---: | ---: |
+| eBPF | 50,085 / 48,827–51,984 | 173.2 / 164–183 |
+| cn-proc | 77,558 / 75,317–80,160 | 233.4 / 221–254 |
+
+This is a rerun on this VM at the time of this commit, not FilterFix3's
+earlier manual run from the same branch: that run (same bounded-loop design,
+same `idle-ms`/`iterations`/churn settings, but `taskset -c 0-3`-pinned and
+built with a dedicated `CARGO_TARGET_DIR`) measured eBPF at 51,976 µs
+(51,661–53,067) lifecycle CPU and 255.2 µs (232–274) median detect latency,
+and cn-proc at 116,100 µs (113,233–117,687) and 272.0 µs (247–298); both
+runs agree the eBPF backend's own CPU is far below cn-proc's and neither
+shows a detect-latency regression between backends. The difference between
+the two runs (cn-proc CPU roughly 78k vs 116k µs) reflects host/VM load and
+core-pinning differences between the two invocations, not a code change —
+this file keeps only the latest measurement per the policy above.
+
+Synthetic fixture only: an isolated VM guest with a copied target binary and
+unrelated `/bin/true` churn, not live-game or whole-daemon load.
+
