@@ -52,6 +52,11 @@ pub enum HostError {
     /// `PluginHost::dispatch_to_instance` named an id no instance is
     /// currently registered under (never created, or already destroyed).
     UnknownInstance,
+    /// `create_instance` raced `destroy_all` (the instance's own `create`
+    /// was still running when shutdown started): the instance was
+    /// destroyed immediately instead of being published `Live`, so it
+    /// never actually starts running.
+    ShuttingDown,
 }
 
 impl fmt::Display for HostError {
@@ -86,6 +91,7 @@ impl fmt::Display for HostError {
             Self::DispatchQueueFull => write!(f, "dispatch queue is full"),
             Self::InitEncodeFailed(error) => write!(f, "encoding init failed: {error}"),
             Self::UnknownInstance => write!(f, "no instance is registered under that id"),
+            Self::ShuttingDown => write!(f, "the plugin host is shutting down"),
         }
     }
 }

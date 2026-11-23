@@ -32,6 +32,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -98,6 +99,13 @@ struct PendingDelivery {
     message: Message,
 }
 
+/// Grace period `create_instance` gives an instance it destroys itself
+/// after losing the `destroy_all` race (module doc comment): there is no
+/// caller-supplied `grace` available at that point, so this matches the
+/// same 5-second shutdown-grace precedent `instance.rs`'s own
+/// `DROP_DESTROY_GRACE` cites.
+const SHUTDOWN_RACE_DESTROY_GRACE: Duration = Duration::from_secs(5);
+
 /// Owns every live plugin instance (replacing a bare `Vec<PluginInstance>`,
 /// `src/runtime/dev_plugins.rs`'s former ad-hoc `LoggingHandler`, and its
 /// stub `TIMER_SET`/empty `init.settings` answers) and answers the M1 host
@@ -108,6 +116,12 @@ pub struct PluginHost {
     timers: TimerRegistry,
     settings: Arc<PluginSettingsService>,
     instances: Mutex<HashMap<PluginInstanceId, InstanceSlot>>,
+    /// Set once by [`Self::destroy_all`], before it starts draining
+    /// `instances`: tells a [`Self::create_instance`] call still racing it
+    /// (the plugin's own `create` still running when shutdown started,
+    /// module doc comment) to destroy the instance it just built instead
+    /// of publishing it `Live` — the fix for the race this field closes.
+    shutting_down: AtomicBool,
 }
 
 impl PluginHost {
@@ -123,6 +137,7 @@ impl PluginHost {
             timers: TimerRegistry::new(runtime),
             settings,
             instances: Mutex::new(HashMap::new()),
+            shutting_down: AtomicBool::new(false),
         })
     }
 
@@ -170,6 +185,21 @@ impl PluginHost {
     /// have set from inside its own failed `create` (§6.11's exit item:
     /// a timer must not outlive the instance that set it, including one
     /// that never finished coming up).
+    ///
+    /// Races [`Self::destroy_all`] safely: `shutting_down` is checked
+    /// twice, both times under the same `instances` lock `destroy_all`
+    /// itself takes, so the two calls never disagree about which of them
+    /// "saw" the instance first. The early check (before the plugin's own
+    /// `create` even runs) rejects a brand new instance outright once
+    /// shutdown has started. The second check — after `create` returns,
+    /// atomically with the swap that would otherwise publish the instance
+    /// `Live` — closes the actual race this method's doc comment
+    /// describes: `destroy_all` only ever skips a `Creating` placeholder
+    /// (never removes it, so it never stops waiting for this id), so if
+    /// this check loses the race, `destroy_all`'s own loop is guaranteed
+    /// to still find and tear down the `Live` entry; if it wins the race,
+    /// this call destroys the instance itself instead of publishing it,
+    /// and removes the placeholder so `destroy_all`'s wait resolves.
     pub fn create_instance(
         self: &Arc<Self>,
         id: PluginInstanceId,
@@ -177,6 +207,9 @@ impl PluginHost {
         data_dir: PathBuf,
         concurrent_pool: Option<Arc<WorkerPool>>,
     ) -> Result<(), HostError> {
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err(HostError::ShuttingDown);
+        }
         let plugin_id = plugin.manifest().id.clone();
         self.instances
             .lock()
@@ -222,23 +255,40 @@ impl PluginHost {
             }
         };
 
-        let pending = {
-            let mut guard = self
-                .instances
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            let previous = guard.insert(
-                id,
-                InstanceSlot::Live(InstanceEntry {
-                    instance,
-                    plugin_id,
-                }),
-            );
-            match previous {
-                Some(InstanceSlot::Creating { pending, .. }) => pending,
-                _ => Vec::new(),
+        let mut guard = self
+            .instances
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if self.shutting_down.load(Ordering::Acquire) {
+            // `destroy_all` started (and may already have finished
+            // draining every non-`Creating` slot) while the plugin's own
+            // `create` above was still running. Destroy the instance this
+            // call just built instead of publishing it `Live`, and remove
+            // the placeholder so `destroy_all`'s own wait for it resolves.
+            guard.remove(&id);
+            drop(guard);
+            self.timers.cancel_all(id);
+            if let Err(error) = instance.destroy(SHUTDOWN_RACE_DESTROY_GRACE) {
+                tracing::warn!(
+                    ?id, %error,
+                    "instance created during shutdown did not destroy within its grace period"
+                );
             }
+            self.timers.cancel_all(id);
+            return Err(HostError::ShuttingDown);
+        }
+        let previous = guard.insert(
+            id,
+            InstanceSlot::Live(InstanceEntry {
+                instance,
+                plugin_id,
+            }),
+        );
+        let pending = match previous {
+            Some(InstanceSlot::Creating { pending, .. }) => pending,
+            _ => Vec::new(),
         };
+        drop(guard);
         self.replay_pending(id, pending);
         Ok(())
     }
@@ -278,15 +328,45 @@ impl PluginHost {
     /// returns (§6.11's exit item: `destroy`'s own queue drain can run
     /// `TIMER_SET` again, which must not outlive the instance either),
     /// one instance's hang never extending another's grace period.
+    ///
+    /// Sets `shutting_down` first, then — unlike a `Live`/`Destroying`
+    /// slot — never removes a `Creating` one itself: that instance's own
+    /// `create_instance` call is still running the plugin's `create`, and
+    /// once it returns, it will observe `shutting_down` and destroy the
+    /// instance itself rather than publish it `Live` (`create_instance`'s
+    /// own doc comment). Removing the placeholder here instead, the way
+    /// an earlier version of this method did, let that call's final swap
+    /// still install a `Live` entry *after* this loop had already decided
+    /// the map was empty and returned — leaking a running instance this
+    /// function was supposed to have torn down. Waiting for
+    /// `create_instance` to resolve its own placeholder closes that race.
     pub fn destroy_all(&self, grace: Duration) {
+        self.shutting_down.store(true, Ordering::Release);
         loop {
             let next = {
                 let mut guard = self
                     .instances
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner());
-                let Some(id) = guard.keys().next().copied() else {
+                if guard.is_empty() {
                     break;
+                }
+                let ready = guard
+                    .iter()
+                    .find(|(_, slot)| !matches!(slot, InstanceSlot::Creating { .. }))
+                    .map(|(id, _)| *id);
+                let Some(id) = ready else {
+                    // Only `Creating` placeholders remain: wait for their
+                    // own `create_instance` calls to resolve them (see
+                    // this method's doc comment) rather than dropping
+                    // them here.
+                    drop(guard);
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "a short poll for a Creating placeholder to resolve into Live or disappear; its own create_instance call finishes it (there is no other backstop — a plugin's create is already documented, §4, as never performing unbounded I/O, the same trust this loop relies on)"
+                    )]
+                    std::thread::sleep(Duration::from_millis(1));
+                    continue;
                 };
                 let slot = guard.remove(&id).expect("just read this key from the map");
                 match slot {
@@ -299,7 +379,8 @@ impl PluginHost {
                         );
                         (id, Some(entry.instance))
                     }
-                    InstanceSlot::Creating { .. } | InstanceSlot::Destroying { .. } => (id, None),
+                    InstanceSlot::Destroying { .. } => (id, None),
+                    InstanceSlot::Creating { .. } => unreachable!("excluded by `find` above"),
                 }
             };
             let (id, instance) = next;
@@ -722,5 +803,156 @@ mod tests {
         );
 
         host.destroy_all(Duration::from_secs(5));
+    }
+
+    /// A plugin whose own `create` blocks on this test's [`CreateGate`]
+    /// (reused from the timer-race fixture above) until released, and
+    /// whose `Drop` records that it was actually destroyed — the proof
+    /// `destroy_all_does_not_leak_an_instance_still_creating_when_it_races`
+    /// needs that losing the shutdown race tears the instance down
+    /// instead of merely refusing to publish it.
+    mod race_gated_plugin {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        use vosu_plugin_api::{Init, Message, Plugin, PluginError, VtableHostServices};
+
+        use super::create_gate_registry;
+
+        pub static DESTROYED: AtomicBool = AtomicBool::new(false);
+
+        pub struct RaceGatedPlugin;
+
+        impl Plugin for RaceGatedPlugin {
+            fn create(_host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
+                let gate = create_gate_registry()
+                    .lock()
+                    .unwrap()
+                    .get(&init.plugin_id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        panic!("no create gate registered for {:?}", init.plugin_id)
+                    });
+                gate.wait_for_release();
+                Ok(Self)
+            }
+
+            fn on_message(
+                &mut self,
+                _message: Message,
+                _correlation_id: u64,
+            ) -> Result<(), PluginError> {
+                Ok(())
+            }
+        }
+
+        impl Drop for RaceGatedPlugin {
+            fn drop(&mut self) {
+                DESTROYED.store(true, Ordering::SeqCst);
+            }
+        }
+
+        vosu_plugin_api::export_plugin!(bundled RaceGatedPlugin);
+    }
+
+    /// The race this finding's fix closes: `destroy_all` must not drop a
+    /// still-`Creating` placeholder and declare itself done while
+    /// `create_instance`'s own thread is still inside the plugin's
+    /// `create` — otherwise that call's later swap installs a `Live`
+    /// entry `destroy_all` has already finished draining, leaking a
+    /// running instance forever. Proves both ends: `create_instance`
+    /// loses the race with `HostError::ShuttingDown`, and the instance it
+    /// built is actually destroyed (not merely unpublished), with no
+    /// `Live` entry left behind afterward.
+    #[test]
+    fn destroy_all_does_not_leak_an_instance_still_creating_when_it_races() {
+        let plugin_id = "acme.race-gated";
+        let gate = CreateGate::new();
+        create_gate_registry()
+            .lock()
+            .unwrap()
+            .insert(plugin_id.to_owned(), Arc::clone(&gate));
+        race_gated_plugin::DESTROYED.store(false, Ordering::SeqCst);
+
+        let manifest_text = format!(
+            "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='Race Gated'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n"
+        );
+        let loaded = registry::load_bundled(&[registry::BundledPlugin {
+            manifest: &manifest_text,
+            vtable: race_gated_plugin::vosu_plugin_vtable,
+        }])
+        .expect("loading the race-gated test plugin");
+
+        let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+        let _enter = runtime.enter();
+        let (_log_dir, host) = test_host(runtime.handle().clone());
+        let data_dir = tempfile::tempdir().unwrap();
+        let id = PluginInstanceId::new(1);
+
+        std::thread::scope(|scope| {
+            let host_ref = &host;
+            let loaded_ref = &loaded[0];
+            let data_dir_path = data_dir.path().to_path_buf();
+            let create_thread =
+                scope.spawn(move || host_ref.create_instance(id, loaded_ref, data_dir_path, None));
+
+            // Wait for `create_instance` to register the `Creating`
+            // placeholder: the plugin's own `create` is now blocked on
+            // the gate.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let creating = matches!(
+                    host.instances
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .get(&id),
+                    Some(InstanceSlot::Creating { .. })
+                );
+                if creating {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "expected the Creating placeholder to appear within 5s"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+
+            let destroy_thread = scope.spawn(|| host_ref.destroy_all(Duration::from_secs(5)));
+
+            // Wait for `destroy_all` to have actually set `shutting_down`
+            // before releasing `create`, so this test exercises the exact
+            // race window the fix closes rather than letting `create`
+            // finish first by scheduling luck.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !host.shutting_down.load(Ordering::Acquire) {
+                assert!(
+                    Instant::now() < deadline,
+                    "expected destroy_all to observe the race within 5s"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+
+            gate.release();
+
+            let create_result = create_thread.join().unwrap();
+            destroy_thread.join().unwrap();
+
+            assert!(
+                matches!(create_result, Err(HostError::ShuttingDown)),
+                "expected create_instance to lose the shutdown race, got {create_result:?}"
+            );
+        });
+
+        assert!(
+            race_gated_plugin::DESTROYED.load(Ordering::SeqCst),
+            "the instance created during the shutdown race must still be destroyed, not leaked"
+        );
+        assert!(
+            host.instances
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_empty(),
+            "destroy_all must not leave a Live entry behind after racing create_instance"
+        );
     }
 }
