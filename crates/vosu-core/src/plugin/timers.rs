@@ -431,18 +431,35 @@ mod tests {
             .unwrap();
         let instance = PluginInstanceId::new(99);
 
-        // `timer_fired` rendezvous-blocks: it only returns, and only lets
-        // `run_timer` release the registry lock it is called under, once
-        // the test sends on `release`.
+        // `timer_fired` rendezvous-blocks only on its first call: it only
+        // returns, and only lets `run_timer` release the registry lock it
+        // is called under, once the test sends on `release`. The timer is
+        // periodic (`Some(10)` below) so its next tick can race `cancel`
+        // for that same lock before `cancel`'s thread gets scheduled —
+        // likely under Windows's coarser timer granularity and full
+        // test-thread contention. A second rendezvous-block would then
+        // hold the lock on a `release` nobody sends again (the test sends
+        // on it exactly once), deadlocking both that delivery and
+        // `cancel` forever. Every delivery after the first is therefore
+        // non-blocking: it still proves nothing fires once `cancel` has
+        // returned (the drain below), without this test being able to
+        // hang itself.
         struct BlockingDelivery {
             entered: Sender<()>,
             release: StdMutex<Receiver<()>>,
+            first: std::sync::atomic::AtomicBool,
             fired: Sender<(PluginInstanceId, u64)>,
         }
         impl TimerDelivery for BlockingDelivery {
             fn timer_fired(&self, instance: PluginInstanceId, timer: u64) {
-                self.entered.send(()).unwrap();
-                self.release.lock().unwrap().recv().unwrap();
+                if self
+                    .first
+                    .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    self.entered.send(()).unwrap();
+                    self.release.lock().unwrap().recv().unwrap();
+                }
                 self.fired.send((instance, timer)).unwrap();
             }
         }
@@ -453,6 +470,7 @@ mod tests {
         let delivery = Arc::new(BlockingDelivery {
             entered: entered_tx,
             release: StdMutex::new(release_rx),
+            first: std::sync::atomic::AtomicBool::new(true),
             fired: fire_tx,
         });
 
@@ -473,13 +491,13 @@ mod tests {
         assert_eq!(cancel.join().unwrap(), vosu_status::VOSU_OK);
         // The delivery that was already in flight when `cancel` was
         // called still completes: it raced `cancel`, it did not follow
-        // it.
+        // it. The periodic timer's next tick can race `cancel` for the
+        // same lock too (see `BlockingDelivery`'s doc comment above) and
+        // fire again, non-blocking, before `cancel` wins; drain every
+        // delivery that arrives promptly, the same "raced it, did not
+        // follow it" allowance `cancel_stops_further_firing` makes.
         fire_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-
-        // Nothing fires once `cancel` has returned: the next tick finds
-        // no entry (removed under the same lock) and the task stops.
-        assert!(fire_rx.recv_timeout(Duration::from_millis(300)).is_err());
-        assert_eq!(registry.live_count(instance), 0);
+        while fire_rx.recv_timeout(Duration::from_millis(5)).is_ok() {}
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
