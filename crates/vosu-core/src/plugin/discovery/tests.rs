@@ -421,6 +421,134 @@ async fn argv_rewrite_with_the_same_start_time_is_not_churned() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn in_place_rename_to_a_matching_name_attaches() {
+    let runtime = Handle::current();
+    let (_log_dir, host) = test_host(
+        runtime.clone(),
+        Arc::new(focus::SyntheticForegroundSource::new(None)),
+    );
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId(0),
+        "vosu.testkit.rename-attach",
+        &["osu!.exe"],
+    );
+    let (source, _prefilter) = SyntheticSource::new();
+    let service = DiscoveryService::start(&host, source.clone(), runtime);
+
+    // A loader execs under a non-matching name, then renames itself in
+    // place (Wine's `set_process_name` -> `prctl(PR_SET_NAME)` is the
+    // motivating case, P2): same pid, same start_time, only name/path
+    // change. No plugin matches "loader.exe", so nothing attaches yet.
+    source.appear(test_process(600, "loader.exe"));
+    source.appear(test_process(600, "osu!.exe"));
+
+    let attached = expect_attached(&events, 600);
+    assert_eq!(attached.pid, 600);
+
+    service.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn in_place_rename_that_still_matches_does_not_churn_the_session() {
+    let runtime = Handle::current();
+    let (_log_dir, host) = test_host(
+        runtime.clone(),
+        Arc::new(focus::SyntheticForegroundSource::new(None)),
+    );
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId(0),
+        "vosu.testkit.rename-keep",
+        &["osu!.exe", "osu!stable.exe"],
+    );
+    let (source, _prefilter) = SyntheticSource::new();
+    let service = DiscoveryService::start(&host, source.clone(), runtime);
+
+    source.appear(test_process(601, "osu!.exe"));
+    let first = expect_attached(&events, 601);
+
+    // Renamed in place to another name the same matcher still accepts:
+    // `process_appeared` re-runs the match and calls
+    // `SessionRegistry::attach` again, which is a no-op for an
+    // already-pending/identified pid (`session.rs::attach`'s own no-op
+    // rule) -- no second `SESSION_ATTACHED`, and definitely no
+    // `SESSION_DETACHED` (P2: an in-place rename must never send a
+    // spurious exit).
+    source.appear(test_process(601, "osu!stable.exe"));
+    source.appear(test_process(602, "osu!.exe"));
+
+    loop {
+        let event = events
+            .recv_timeout(RECV_TIMEOUT)
+            .expect("the marker process's own attach never arrived");
+        match &event {
+            SessionEvent::Detached(detached) => assert_ne!(
+                detached.handle, first.handle,
+                "a rename that still matches must not be churned"
+            ),
+            SessionEvent::Attached(attached) if attached.pid == 601 => {
+                panic!("a rename that still matches must not re-attach the same pid")
+            }
+            SessionEvent::Attached(attached) if attached.pid == 602 => break,
+            _ => {}
+        }
+    }
+
+    service.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn in_place_rename_that_stops_matching_keeps_the_session_attached() {
+    let runtime = Handle::current();
+    let (_log_dir, host) = test_host(
+        runtime.clone(),
+        Arc::new(focus::SyntheticForegroundSource::new(None)),
+    );
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId(0),
+        "vosu.testkit.rename-stop",
+        &["osu!.exe"],
+    );
+    let (source, _prefilter) = SyntheticSource::new();
+    let service = DiscoveryService::start(&host, source.clone(), runtime);
+
+    source.appear(test_process(603, "osu!.exe"));
+    let first = expect_attached(&events, 603);
+
+    // Renamed in place to a name this plugin's matcher no longer accepts
+    // (same pid, same start_time): `process_appeared`'s own
+    // `match_candidate` now finds no winner and returns before touching
+    // `SessionRegistry` at all, so the already-attached session is
+    // neither re-attached nor detached. `docs/v2/plugin-abi.md` §6.2's
+    // `SESSION_DETACHED` reasons are exactly `"exited"|"lost"|
+    // "superseded"|"declined"` -- "no longer matches a matcher" is none
+    // of them, so the spec-correct behavior is to leave the session
+    // running: once attached, a session is identified by its OS process
+    // occurrence (pid + start_time) alone for the rest of its life,
+    // exactly as 1.x's own pid-based session lifecycle.
+    source.appear(test_process(603, "notes.exe"));
+    source.appear(test_process(604, "osu!.exe"));
+
+    loop {
+        let event = events
+            .recv_timeout(RECV_TIMEOUT)
+            .expect("the marker process's own attach never arrived");
+        match &event {
+            SessionEvent::Detached(detached) => assert_ne!(
+                detached.handle, first.handle,
+                "a rename that stops matching must not detach the already-attached session (§6.2)"
+            ),
+            SessionEvent::Attached(attached) if attached.pid == 604 => break,
+            _ => {}
+        }
+    }
+
+    service.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hint_set_change_syncs_the_source_and_forces_a_reconcile() {
     let runtime = Handle::current();
     let (_log_dir, host) = test_host(

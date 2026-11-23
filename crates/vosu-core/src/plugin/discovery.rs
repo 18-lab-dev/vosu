@@ -154,18 +154,38 @@ fn same_occurrence(a: &ProcessRecord, b: &ProcessRecord) -> bool {
 /// disagree (PID-generation correctness: a reused pid is a new process,
 /// reported as an exit immediately followed by a fresh appearance, never
 /// folded into the old occurrence). A repeat observation of the same
-/// occurrence is **not** re-sent to `host`: [`PluginHost::process_appeared`]
-/// is itself idempotent for an already-tracked pid
-/// (`SessionRegistry::attach`'s own no-op rule), but skipping the call
-/// here avoids needless matcher/session lock traffic on every
-/// reconciliation pass for a process that never changed.
+/// occurrence with an unchanged name/path is **not** re-sent to `host`:
+/// [`PluginHost::process_appeared`] is itself idempotent for an
+/// already-tracked pid (`SessionRegistry::attach`'s own no-op rule), but
+/// skipping the call here avoids needless matcher/session lock traffic on
+/// every reconciliation pass for a process that never changed.
+///
+/// A same-occurrence observation whose name or path *did* change (P2: an
+/// in-place rename, e.g. Wine's `set_process_name` calling
+/// `prctl(PR_SET_NAME)` right after `execve` keeps the same pid and
+/// `start_time`) is still never reported as an exit — `same_occurrence`
+/// already established this is the same running process, and the host
+/// has no detach reason for "renamed" (`docs/v2/plugin-abi.md` §6.2 lists
+/// only `"exited"|"lost"|"superseded"|"declined"` for
+/// `VOSU_OP_SESSION_DETACHED`). Instead this re-offers the updated record
+/// to [`PluginHost::process_appeared`], which is idempotent either way: a
+/// no-op for a pid `SessionRegistry` already attached (unaffected by a
+/// rename that stops matching — §6.2's detach-reason list has no "no
+/// longer matches" entry, so the already-attached session simply keeps
+/// running, exactly 1.x's own pid-identified session lifecycle), and a
+/// fresh attach for one whose new name/path a matcher now accepts that
+/// did not accept the old one.
 fn apply_appeared(
     host: &PluginHost,
     tracked: &mut HashMap<u32, ProcessRecord>,
     record: ProcessRecord,
 ) {
     match tracked.get(&record.pid) {
-        Some(previous) if same_occurrence(previous, &record) => {}
+        Some(previous) if same_occurrence(previous, &record) => {
+            if previous.name != record.name || previous.path != record.path {
+                host.process_appeared(record.clone());
+            }
+        }
         Some(_) => {
             host.process_exited(record.pid);
             host.process_appeared(record.clone());
