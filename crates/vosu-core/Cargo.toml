@@ -56,3 +56,6 @@ ciborium = "0.2.2"
 proptest = "1.12"
 vosu-plugin-testkit = { path = "../vosu-plugin-testkit", features = ["test-harness"] }
 vosu-proptest = { path = "../vosu-proptest" }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+vosu-sys = { path = "../vosu-sys", features = ["test-support"] }

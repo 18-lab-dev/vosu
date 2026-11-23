@@ -220,3 +220,41 @@ async fn real_child_process_drives_attach_and_detach() {
 
     service.stop();
 }
+
+/// Real desktops routinely run more than the eBPF tracking control's own
+/// bounded capacity (`vosu_sys::events::MAX_PENDING_EVENTS`, 128,
+/// crate-private); this value is chosen well past it.
+const PAST_EBPF_TRACKING_BOUND: u32 = 300;
+
+#[test]
+fn unfiltered_prefilter_never_mirrors_the_tracked_set_to_the_kernel() {
+    use vosu_sys::events::test_support::{CountingTrackingControl, events_with_tracking_control};
+
+    let tracking_control = Arc::new(CountingTrackingControl::new(128));
+    let events = events_with_tracking_control(tracking_control.clone());
+    let source = LinuxSource {
+        events: Some(events),
+        filter: Mutex::new(CommHints::default()),
+        tracked: Mutex::new(HashSet::new()),
+    };
+
+    source
+        .set_prefilter(&Prefilter::Unfiltered)
+        .expect("switching to Unfiltered never touches the kernel tracking control");
+
+    // Before the fix, each of these calls -- `Self::enumerate`'s own
+    // private helper, also reached by `Self::mark_tracked`/
+    // `Self::forget_tracked` -- pushed the whole set to the kernel
+    // tracking control, which rejects anything past its bound, marks
+    // the backend unhealthy, and latches a reconcile; `DiscoveryService`'s
+    // own full reconcile then re-derives this exact set and retries
+    // identically, hot-looping full `/proc` scans. Calling it several
+    // times here, well past that bound, proves there is no such storm:
+    // the kernel tracking control is never touched at all while
+    // unfiltered.
+    for _ in 0..3 {
+        source.replace_all_tracked(0..PAST_EBPF_TRACKING_BOUND);
+    }
+
+    assert_eq!(
+        tracking_control.calls(),

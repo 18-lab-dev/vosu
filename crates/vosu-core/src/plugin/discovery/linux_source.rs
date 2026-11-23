@@ -40,7 +40,9 @@
 //! [`Self::enumerate`] replaces the whole tracked set with what it just
 //! observed, [`Self::inspect`] adds/removes one pid, and
 //! [`Self::drain_events`] removes every pid its own `events.drain()` just
-//! reported exited.
+//! reported exited. [`Self::sync_tracked`] skips this mirroring entirely
+//! while the pre-filter is [`CommHints::unfiltered`] (P2): see its own doc
+//! comment.
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -76,7 +78,7 @@ impl LinuxSource {
     /// first, CN_PROC fallback) and degrades to polling when none is
     /// available (module doc comment). Starts with an empty comm-hint
     /// filter: [`DiscoveryService`](super::DiscoveryService) always syncs
-    /// the real set through [`ProcessSource::set_comm_hints`] before its
+    /// the real set through [`ProcessSource::set_prefilter`] before its
     /// first full reconcile (`run_pass`'s own ordering), so this never
     /// observes a stale filter.
     #[must_use]
@@ -104,7 +106,25 @@ impl LinuxSource {
             .clone()
     }
 
+    /// Mirrors `tracked` into the event backend's own tracking control,
+    /// except while the pre-filter is [`CommHints::unfiltered`] (P2): an
+    /// unfiltered Linux desktop routinely runs more than
+    /// `vosu_sys::events::MAX_PENDING_EVENTS` user processes, and eBPF's
+    /// own bounded tracking control rejects a set past that bound,
+    /// marking the backend unhealthy and latching a reconcile on every
+    /// call. `DiscoveryService`'s own full reconcile always re-derives
+    /// this method's `tracked` argument from scratch via
+    /// [`Self::enumerate`], so the next call would fail identically,
+    /// hot-looping full `/proc` scans and warnings forever. Skipping the
+    /// mirror while unfiltered instead leaves the kernel/CN_PROC side
+    /// with nothing tracked, which only degrades that backend's own
+    /// exec/exit fast path to the discovery service's bounded
+    /// `RECONCILE_INTERVAL` cadence ([`CommHints::unfiltered`]'s own doc
+    /// comment) — never an unbounded reconcile storm.
     fn sync_tracked(&self, tracked: &HashSet<u32>) {
+        if self.current_filter().is_unfiltered() {
+            return;
+        }
         if let Some(events) = self.events.as_ref() {
             events.replace_tracked(tracked.iter().copied());
         }

@@ -246,11 +246,23 @@ impl CommHints {
     /// substring check (`events::cn_proc`) treats this as "every comm
     /// matches" for free; the in-kernel eBPF `candidate_comm` filter has
     /// no such bypass compiled in, so `EbpfCommFilter::set_comm_hints`
-    /// pushes this down as an empty hint set instead, degrading only that
-    /// backend's own exec fast path to the discovery service's bounded
-    /// `RECONCILE_INTERVAL` full-reconcile cadence (the same cadence
-    /// Windows's own enumeration-cost pre-filter already uses when
-    /// unfiltered) rather than losing new-process detection outright.
+    /// pushes this down as an empty hint set instead. With an empty
+    /// in-kernel hint set, `candidate_comm` never matches, so the eBPF
+    /// backend never adds a pid to its own `candidates`/`tracked` maps on
+    /// exec, and `bpf/process_events.bpf.c`'s `emit_exit` then also never
+    /// fires for it on exit (both gated behind `candidate_comm` there
+    /// too). A `ProcessSource`'s own tracking-control wiring must also
+    /// skip mirroring its confirmed-live pid set into the kernel while
+    /// this is in effect (`LinuxSource::sync_tracked`'s own doc comment
+    /// in `vosu-core`): the in-kernel `tracked` map is bounded
+    /// ([`MAX_PENDING_EVENTS`]), and a real desktop routinely runs more
+    /// user processes than that, so mirroring it would hot-loop a full
+    /// reconcile instead of merely degrading. Together this degrades
+    /// both new-process *and* exit detection -- not only the exec fast
+    /// path -- to the discovery service's bounded `RECONCILE_INTERVAL`
+    /// full-reconcile cadence (the same cadence Windows's own
+    /// enumeration-cost pre-filter already uses when unfiltered) rather
+    /// than losing detection outright or hot-looping past the bound.
     #[must_use]
     pub fn unfiltered() -> Self {
         Self {
@@ -646,6 +658,150 @@ impl Drop for LinuxProcessEvents {
             && task.join().is_err()
         {
             tracing::warn!("Linux process-event task panicked during shutdown");
+        }
+    }
+}
+
+/// Test-only doubles for a dependent crate's own `ProcessSource`
+/// implementation (`vosu-core`'s `LinuxSource`): exercising
+/// [`LinuxProcessEvents::replace_tracked`]/[`LinuxProcessEvents::set_comm_hints`]'s
+/// failure paths needs a [`ProcessTrackingControl`]/[`ProcessCommFilter`]
+/// that fails on demand, but both traits are crate-private (`pub(super)`)
+/// and `LinuxProcessEvents`'s own fields are private, so a dependent
+/// crate cannot build one through the public API alone. Gated behind the
+/// `test-support` feature, which only `vosu-core`'s own `[dev-dependencies]`
+/// enables (`Cargo.toml`) -- never part of a production build.
+#[cfg(feature = "test-support")]
+pub mod test_support {
+    use super::{
+        Arc, AtomicBool, AtomicU64, CommHints, EventQueue, LinuxProcessEvents, Mutex, Notify,
+        Ordering, Pid, ProcessCommFilter, ProcessEventMode, ProcessTrackingControl, io,
+    };
+    use std::collections::BTreeSet;
+
+    /// A [`ProcessCommFilter`] whose `set_comm_hints` always fails,
+    /// recording the last hint set it was asked (and failed) to apply.
+    #[derive(Default)]
+    pub struct FailingCommFilter {
+        attempted: Mutex<Option<CommHints>>,
+    }
+
+    impl FailingCommFilter {
+        #[must_use]
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// The last hint set `set_comm_hints` was asked to apply, if any.
+        #[must_use]
+        pub fn last_attempted(&self) -> Option<CommHints> {
+            self.attempted
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        }
+    }
+
+    impl ProcessCommFilter for FailingCommFilter {
+        fn set_comm_hints(&self, hints: &CommHints) -> io::Result<()> {
+            *self
+                .attempted
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(hints.clone());
+            Err(io::Error::other(
+                "test-support: kernel comm-hint push always fails",
+            ))
+        }
+    }
+
+    struct NoopCommFilter;
+
+    impl ProcessCommFilter for NoopCommFilter {
+        fn set_comm_hints(&self, _hints: &CommHints) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A [`ProcessTrackingControl`] that counts every call and fails
+    /// whenever the requested set's size exceeds `fail_over` -- mirrors
+    /// the real eBPF backend's own `EbpfTrackingControl` bound
+    /// (`events/ebpf.rs`), without needing real kernel/BPF access.
+    pub struct CountingTrackingControl {
+        calls: AtomicU64,
+        fail_over: usize,
+    }
+
+    impl CountingTrackingControl {
+        #[must_use]
+        pub fn new(fail_over: usize) -> Self {
+            Self {
+                calls: AtomicU64::new(0),
+                fail_over,
+            }
+        }
+
+        #[must_use]
+        pub fn calls(&self) -> u64 {
+            self.calls.load(Ordering::Relaxed)
+        }
+    }
+
+    impl ProcessTrackingControl for CountingTrackingControl {
+        fn replace_tracked(&self, tracked: &BTreeSet<Pid>) -> io::Result<()> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            if tracked.len() > self.fail_over {
+                Err(io::Error::other(
+                    "test-support: tracked set exceeds the injected bound",
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// Builds a [`LinuxProcessEvents`] with no real backend thread, whose
+    /// [`LinuxProcessEvents::set_comm_hints`] delegates only to
+    /// `comm_filter` -- enough to assert a dependent crate's own ordering
+    /// around a failed kernel push without a real eBPF/CN_PROC backend.
+    #[must_use]
+    pub fn events_with_failing_comm_filter(
+        comm_filter: Arc<FailingCommFilter>,
+    ) -> LinuxProcessEvents {
+        LinuxProcessEvents {
+            mode: ProcessEventMode::Ebpf,
+            notify: Arc::new(Notify::new()),
+            healthy: Arc::new(AtomicBool::new(true)),
+            event_count: Arc::new(AtomicU64::new(0)),
+            reconciliation_request_count: Arc::new(AtomicU64::new(0)),
+            queue: Arc::new(Mutex::new(EventQueue::default())),
+            tracking_control: None,
+            comm_filter,
+            cancel: Arc::new(AtomicBool::new(false)),
+            task: None,
+        }
+    }
+
+    /// Builds a [`LinuxProcessEvents`] with no real backend thread, whose
+    /// [`LinuxProcessEvents::replace_tracked`] delegates only to
+    /// `tracking_control` -- enough to assert a dependent crate's own
+    /// `ProcessSource` never calls into a bounded tracking control past
+    /// its own capacity (P2's eBPF hot-loop fix) without a real
+    /// eBPF backend.
+    #[must_use]
+    pub fn events_with_tracking_control(
+        tracking_control: Arc<CountingTrackingControl>,
+    ) -> LinuxProcessEvents {
+        LinuxProcessEvents {
+            mode: ProcessEventMode::Ebpf,
+            notify: Arc::new(Notify::new()),
+            healthy: Arc::new(AtomicBool::new(true)),
+            event_count: Arc::new(AtomicU64::new(0)),
+            reconciliation_request_count: Arc::new(AtomicU64::new(0)),
+            queue: Arc::new(Mutex::new(EventQueue::default())),
+            tracking_control: Some(tracking_control),
+            comm_filter: Arc::new(NoopCommFilter),
+            cancel: Arc::new(AtomicBool::new(false)),
+            task: None,
         }
     }
 }

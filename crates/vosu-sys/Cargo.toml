@@ -16,6 +16,7 @@ path = "src/lib.rs"
 [features]
 default = []
 linux-process-events = ["dep:libbpf-cargo", "dep:libbpf-rs"]
+test-support = []
 
 [dependencies]
 chrono = "0.4.44"
