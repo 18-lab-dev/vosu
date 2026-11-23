@@ -221,7 +221,10 @@ pub(super) async fn check_release_and_prepare<'a, 'b, P: UpdatePlatform>(
             "release metadata exceeds 1 MiB".into(),
         ));
     }
-    let body = fs::read(&metadata_path)?;
+    // Retries a transient missing-name window (see
+    // `vosu_sys::platform::atomic_replace` docs) briefly rather than failing
+    // the update check on a load-dependent Windows race.
+    let body = vosu_sys::platform::read_published_async(&metadata_path).await?;
     fs::remove_file(&metadata_path)?;
     match parse_latest_release(&body, current, platform_name, major_consent)? {
         ReleaseDecision::Latest(version) => {

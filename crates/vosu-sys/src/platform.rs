@@ -6,6 +6,8 @@ mod linux;
 mod windows;
 
 use std::ffi::OsString;
+#[cfg(not(windows))]
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -222,7 +224,16 @@ fn platform_roots(
 
 /// Replaces `target` with a fully written same-filesystem temporary file.
 ///
-/// The target is left untouched whenever replacement fails.
+/// The target is left untouched whenever replacement fails. On Windows this
+/// cross-directory `FILE_RENAME_POSIX_SEMANTICS` publish is atomic from the
+/// writer's perspective (`writer=Ok(())` only once the name is durably
+/// replaced) but is not fully atomic from a concurrent reader's: measured
+/// evidence (`windows::publish_file` doc comment, 2026-11-23) found 0 missing-name
+/// observations across 320k+ concurrent reads at normal load, but 674 transient
+/// `NotFound`s in one in ten runs under extreme contention (16 build jobs plus a
+/// second concurrent full build), each within 0.8-40ms of the rename call.
+/// [`read_published`]/[`read_published_async`] absorb that window for vosu's
+/// own readers; this function itself makes no concurrent-reader guarantee.
 pub fn atomic_replace(temp: &Path, target: &Path) -> io::Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -231,6 +242,44 @@ pub fn atomic_replace(temp: &Path, target: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
         windows::atomic_replace(temp, target)
+    }
+}
+
+/// Reads a file previously published through [`atomic_replace`].
+///
+/// On Windows, a `NotFound` result is retried up to 3 times over roughly
+/// 50ms: the measured evidence cited on [`atomic_replace`] shows every
+/// observed transient miss resolved within 40ms of the publishing rename.
+/// A file that is genuinely absent (e.g. first run, before anything has
+/// published it) still surfaces `NotFound`, just after that bounded extra
+/// latency. Non-Windows platforms read directly: [`atomic_replace`] there is
+/// a same-directory `rename()`, which POSIX never desyncs the name under a
+/// concurrent reader.
+///
+/// This is a blocking call; async callers should use
+/// [`read_published_async`] instead.
+pub fn read_published(path: &Path) -> io::Result<Vec<u8>> {
+    #[cfg(windows)]
+    {
+        windows::read_published(path)
+    }
+    #[cfg(not(windows))]
+    {
+        fs::read(path)
+    }
+}
+
+/// Async equivalent of [`read_published`] for callers already on a Tokio
+/// runtime: the Windows retry delay uses `tokio::time::sleep` instead of
+/// blocking the calling thread.
+pub async fn read_published_async(path: &Path) -> io::Result<Vec<u8>> {
+    #[cfg(windows)]
+    {
+        windows::read_published_async(path).await
+    }
+    #[cfg(not(windows))]
+    {
+        tokio::fs::read(path).await
     }
 }
 

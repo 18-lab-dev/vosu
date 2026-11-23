@@ -15,6 +15,86 @@ fn concurrent_readers_never_observe_missing_file() {
     let missing = Arc::new(AtomicUsize::new(0));
     let reads = Arc::new(AtomicUsize::new(0));
     let start = Arc::new(Barrier::new(3));
+    // Readers go through the production retrying helper every vosu reader of
+    // an atomically-published file uses, so this stays a strict, non-flaky
+    // regression check: see `raw_concurrent_readers_characterize_missing_file_rate`
+    // below for the unretried window this is absorbing.
+    let readers = [(); 2].map(|()| {
+        let target = target.clone();
+        let stop = stop.clone();
+        let missing = missing.clone();
+        let reads = reads.clone();
+        let start = start.clone();
+        thread::spawn(move || {
+            start.wait();
+            while !stop.load(Ordering::Acquire) {
+                match read_published(&target) {
+                    Ok(bytes) => {
+                        assert_eq!(
+                            bytes.len(),
+                            b"generation=0000\n".len(),
+                            "reader saw a partial file"
+                        );
+                        reads.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        missing.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(error) => panic!("reader failed: {error}"),
+                }
+            }
+        })
+    });
+    start.wait();
+    let result = (|| -> io::Result<()> {
+        for generation in 0..200 {
+            for _ in 0..32 {
+                let temp = root.path().join("pending");
+                let mut file = fs::File::create(&temp)?;
+                writeln!(file, "generation={generation:04}")?;
+                file.sync_all()?;
+                drop(file);
+                atomic_replace(&temp, &target)?;
+            }
+        }
+        Ok(())
+    })();
+    stop.store(true, Ordering::Release);
+    for reader in readers {
+        reader.join().unwrap();
+    }
+    let missing = missing.load(Ordering::Relaxed);
+    let reads = reads.load(Ordering::Relaxed);
+    eprintln!(
+        "200 rounds, 6400 replacements: successful reads={reads}, missing-name observations (through read_published)={missing}, writer={result:?}"
+    );
+    assert_eq!(
+        missing, 0,
+        "a reader using the production retrying helper still observed a missing public file name"
+    );
+    result.unwrap();
+    assert!(reads > 0);
+}
+
+/// Raw (non-retrying) characterization of the production publish-rename's
+/// reader-visibility window, kept separate from the strict regression test
+/// above so CI never flakes on it. See `publish_file`'s doc comment for the
+/// full measured matrix this reproduces; this harness alone, with no
+/// competing CPU load, usually observes 0 misses. To reproduce the measured
+/// 1-in-10 extreme-contention failure, run manually under real background
+/// contention (e.g. several concurrent `cargo build --workspace` instances
+/// plus 16+ parallel jobs):
+/// `cargo test -p vosu-sys --target x86_64-pc-windows-msvc raw_concurrent_readers_characterize_missing_file_rate -- --ignored --nocapture`
+#[test]
+#[ignore = "raw (non-retrying) characterization of a rare, load-dependent Windows rename/reader race; run manually under heavy contention, see publish_file docs"]
+fn raw_concurrent_readers_characterize_missing_file_rate() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("vosu.toml");
+    fs::write(&target, b"generation=0000\n").unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let missing = Arc::new(AtomicUsize::new(0));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let start = Arc::new(Barrier::new(3));
     let readers = [false, true].map(|no_share_delete| {
         let target = target.clone();
         let stop = stop.clone();
@@ -86,12 +166,59 @@ fn concurrent_readers_never_observe_missing_file() {
     eprintln!(
         "200 rounds, 6400 replacements: successful reads={reads}, missing-name observations={missing}, writer={result:?}"
     );
-    assert_eq!(
-        missing, 0,
-        "a public file name disappeared during replacement"
-    );
     result.unwrap();
     assert!(reads > 0);
+}
+
+#[test]
+fn read_published_retries_missing_file_then_surfaces_not_found() {
+    let root = tempfile::tempdir().unwrap();
+    let absent = root.path().join("never-created.toml");
+    let start = Instant::now();
+    let error = read_published(&absent).unwrap_err();
+    let elapsed = start.elapsed();
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    let minimum = READ_RETRY_DELAY * (READ_RETRY_ATTEMPTS - 1);
+    assert!(
+        elapsed >= minimum,
+        "a genuinely absent file must exhaust every bounded retry ({minimum:?}) before \
+         surfacing NotFound, took {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "the retry window must stay bounded, took {elapsed:?}"
+    );
+}
+
+#[test]
+fn read_published_async_retries_missing_file_then_surfaces_not_found() {
+    let root = tempfile::tempdir().unwrap();
+    let absent = root.path().join("never-created.toml");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let start = Instant::now();
+    let error = runtime.block_on(read_published_async(&absent)).unwrap_err();
+    let elapsed = start.elapsed();
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    assert!(
+        elapsed >= READ_RETRY_DELAY * (READ_RETRY_ATTEMPTS - 1),
+        "took {elapsed:?}"
+    );
+}
+
+#[test]
+fn read_published_succeeds_once_file_appears_within_the_retry_window() {
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("vosu.toml");
+    let target_copy = target.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(5));
+        fs::write(&target_copy, b"generation=0001\n").unwrap();
+    });
+    let bytes = read_published(&target).unwrap();
+    assert_eq!(bytes, b"generation=0001\n");
 }
 
 #[test]

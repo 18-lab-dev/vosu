@@ -195,6 +195,25 @@ fn move_file(temp: &[u16], target: &[u16]) -> io::Result<()> {
     }
 }
 
+/// Merges metadata and publishes `candidate` as `target`'s name through a
+/// cross-directory `FILE_RENAME_POSIX_SEMANTICS` rename.
+///
+/// **Measured guarantee (2026-11-23, `windows_tests::concurrent_readers_never_observe_missing_file`
+/// and the heavy-load evidence run on hosted-CI-shaped hardware):**
+///
+/// | Load | Runs | Missing-name observations |
+/// |---|---|---|
+/// | Normal (idle to ~capped background build load), NTFS | 20 (0/20 across two row repeats) | 0 |
+/// | Normal, ReFS | 10 | 0 |
+/// | Extreme: 16 build jobs plus a second concurrent full `cargo build --workspace` | 10 | 1 run, 674 misses (all within 0.8-40ms of the rename call, inside this function; `writer=Ok(())` every time — the rename itself always succeeds) |
+///
+/// This is **not** a reliability claim of zero missing-name windows: under
+/// extreme Windows CPU contention a concurrent reader can transiently see
+/// `NotFound` for a name this function is actively (and successfully)
+/// replacing. `atomic_replace`'s own caller observes no such gap (it waits
+/// for this call to return); readers in a different thread or process
+/// should go through `read_published`/`read_published_async`, which retry a
+/// `NotFound` briefly to absorb exactly this window.
 fn publish_file(
     candidate: &Path,
     target: &Path,
@@ -379,6 +398,48 @@ fn cleanup_stage(path: &Path) {
     }
     if let Err(error) = fs::remove_dir_all(path) {
         tracing::warn!(%error, path = %path.display(), "cannot clean stale atomic replacement staging");
+    }
+}
+
+/// Bounded retry count for [`read_published`]/[`read_published_async`]:
+/// the measured evidence on [`publish_file`] resolved every observed
+/// transient miss within 40ms of the rename call, so 3 reads spread across
+/// [`READ_RETRY_DELAY`] (2 waits of 25ms = 50ms total) covers every
+/// recorded case with margin.
+const READ_RETRY_ATTEMPTS: u32 = 3;
+const READ_RETRY_DELAY: Duration = Duration::from_millis(25);
+
+pub(super) fn read_published(path: &Path) -> io::Result<Vec<u8>> {
+    let mut attempt = 1;
+    loop {
+        match fs::read(path) {
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound && attempt < READ_RETRY_ATTEMPTS =>
+            {
+                attempt += 1;
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "bounded blocking retry absorbing the measured transient missing-name window of a cross-directory atomic_replace publish"
+                )]
+                thread::sleep(READ_RETRY_DELAY);
+            }
+            result => return result,
+        }
+    }
+}
+
+pub(super) async fn read_published_async(path: &Path) -> io::Result<Vec<u8>> {
+    let mut attempt = 1;
+    loop {
+        match tokio::fs::read(path).await {
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound && attempt < READ_RETRY_ATTEMPTS =>
+            {
+                attempt += 1;
+                tokio::time::sleep(READ_RETRY_DELAY).await;
+            }
+            result => return result,
+        }
     }
 }
 

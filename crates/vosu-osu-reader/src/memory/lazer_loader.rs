@@ -159,12 +159,19 @@ fn template_fields(embedded: &[u8]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Reads the lazer offset cache written by [`install_cache`] (possibly by a
+/// different process or thread resolving the same version concurrently).
+/// Goes through the retrying helper (`vosu_sys::platform::read_published`)
+/// to absorb the measured, load-dependent Windows missing-name window
+/// documented on `vosu_sys::platform::atomic_replace`; a genuinely absent
+/// cache still returns `None` here, after that helper's bounded retry
+/// latency, and resolution falls through to regeneration as before.
 fn read_matching(
     path: &Path,
     version: &str,
     template_fields: &[(String, String)],
 ) -> Option<LazerOffsets> {
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = vosu_sys::platform::read_published(path).ok()?;
     // The cache is keyed by client version only, so a file generated from an older
     // template would otherwise parse with its newer groups defaulted to zero and keep
     // those features off for that client version. Regenerate it instead.

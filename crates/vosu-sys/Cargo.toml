@@ -21,7 +21,7 @@ linux-process-events = ["dep:libbpf-cargo", "dep:libbpf-rs"]
 chrono = "0.4.44"
 memchr = "=2.8.3"
 thiserror = "2.0.18"
-tokio = { version = "=1.52.3", features = ["sync"] }
+tokio = { version = "=1.52.3", features = ["fs", "sync", "time"] }
 tracing = "=0.1.44"
 
 [dev-dependencies]
@@ -31,6 +31,9 @@ tempfile = "3.26.0"
 [target.'cfg(windows)'.dependencies]
 tempfile = "3.26.0"
 windows-sys = { version = "=0.61.2", features = ["Wdk_System_SystemInformation", "Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Diagnostics", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+tokio = { version = "=1.52.3", features = ["macros", "rt"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "=0.2.186"

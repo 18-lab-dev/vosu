@@ -131,9 +131,17 @@ pub(super) fn initialize_file(
     })
 }
 
+/// Reads the previous (or another live instance's just-published) `vosu.toml`
+/// through the retrying helper (`vosu_sys::platform::read_published`), which
+/// absorbs the measured, load-dependent Windows missing-name window
+/// documented on `vosu_sys::platform::atomic_replace`. A genuinely first-run,
+/// never-published path still surfaces `None` here, after that helper's
+/// bounded retry latency (at most ~50ms on Windows).
 fn read_authoritative(path: &Path) -> io::Result<Option<String>> {
-    match fs::read_to_string(path) {
-        Ok(content) => Ok(Some(content)),
+    match vosu_sys::platform::read_published(path) {
+        Ok(bytes) => String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
