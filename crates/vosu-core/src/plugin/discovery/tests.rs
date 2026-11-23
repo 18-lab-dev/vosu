@@ -203,9 +203,11 @@ impl SyntheticSource {
     /// Inserts `record` into the source's own ground truth without
     /// queuing an `inspect` hint or waking the service: only a full
     /// reconcile (`enumerate()`) will ever see it, never the targeted
-    /// event path `appear` also exercises. Proves a forced full
-    /// reconcile actually re-derives state from `enumerate()`, not just
-    /// from whatever was queued (`hint_set_change_syncs_the_source_and_forces_a_reconcile`).
+    /// event path `appear` also exercises -- used by tests that need to
+    /// tell a full reconcile's own `enumerate()` apart from
+    /// `reoffer_tracked`'s re-send of an already-tracked record
+    /// (`matcher_change_forces_a_full_reconcile_of_an_untracked_process`,
+    /// `hint_set_change_syncs_the_source_and_reoffers_tracked_processes`).
     fn insert(&self, record: ProcessRecord) {
         self.state
             .lock()
@@ -617,9 +619,12 @@ async fn hint_set_change_syncs_the_source_and_reoffers_tracked_processes() {
         }
     }
 
-    // The forced reconcile after a pre-filter change must pick up a
-    // process already present in the source at that point -- inserted
-    // silently above, never through `appear`'s own inspect hint.
+    // `sync_generation`'s own re-offer of this already-tracked pid (not a
+    // forced full reconcile's `enumerate()`, which
+    // `matcher_change_forces_a_full_reconcile_of_an_untracked_process`
+    // covers) must pick up a process already present in the source at
+    // that point -- inserted silently above, never through `appear`'s
+    // own inspect hint.
     expect_attached(&events, 400);
 
     service.stop();
