@@ -90,6 +90,7 @@ Run the narrowest relevant command first; do not substitute a compile-only check
 - Dashboard, tool host, or catalog UI (`assets/server/`, `src/server/`, `src/tools/`, `src/runtime/render*`): `python tests/tool_host_smoke.py --binary target/debug/vosu` and `python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module <playwright index.mjs>` against a `cargo build --locked --features test-harness` binary; CI's `dashboard` job runs both.
 - Performance-sensitive hot paths: run the relevant Criterion target in release mode, compare like-for-like on the same machine, and record observations—not promises—in the [benchmark guide](docs/testing/benchmarks.md). The guide holds only each benchmark's latest result: replace the old section rather than appending a dated one; Git history keeps earlier results.
 - Before merging a Rust change, run the applicable native smoke path and the CI checks above; platform-specific code requires evidence from that platform.
+- Windows-sensitive changes (conditional compilation, path/line-ending handling, native process/memory code): run `python scripts/vm-test.py [--package P] [--test T] [--lib] [-- <filter>]` before handing off. It stages HEAD plus your uncommitted changes and runs a filtered `cargo test` natively in the Windows VM in minutes, well before `scripts/prepush.py`'s full native gate; it never starts the VM and never replaces that gate.
 
 ## Local CI and landing
 

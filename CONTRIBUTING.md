@@ -136,7 +136,11 @@ For a narrower loop, [Testing and verification](docs/testing/verification.md#fas
 maps each kind of change to its test targets. Changes to process discovery,
 memory reading, or the updater also need the native tests
 (`process_memory`, `updater_native`) on each affected OS. CI covers Windows
-with an MSVC cross-check and a native Windows job.
+with an MSVC cross-check and a native Windows job. Coding agents with access
+to the project's Windows VM: for Windows-sensitive changes, run
+`python scripts/vm-test.py [--package P] [--test T] [--lib] [-- <filter>]`
+before handing off. It is a fast, narrower lever than the native phase of
+`scripts/prepush.py`; it never starts the VM.
 
 Keep these in the same pull request:
 

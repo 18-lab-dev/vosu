@@ -38,70 +38,15 @@ if ($LASTEXITCODE -ne 0) { throw 'git checkout of expected commit failed.' }
 $actual = (& $git -C $source rev-parse HEAD | Out-String).Trim()
 if ($actual -ne $ExpectedCommit) { throw "Checked-out commit $actual does not match expected $ExpectedCommit." }
 
-$vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
-$devEnvironment = & cmd.exe /d /c ('call "' + $vcvars + '" >nul && set')
-if ($LASTEXITCODE -ne 0) { throw 'vcvars64 import failed.' }
-foreach ($line in $devEnvironment) {
-    if ($line -match '^([^=][^=]*)=(.*)$') {
-        Set-Item -Path ('Env:\' + $matches[1]) -Value $matches[2]
-    }
-}
-
-$rust = 'C:\Program Files\Rust\1.96.1\bin'
-# cargo-nextest.exe is pinned and installed once into this VM's CARGO_HOME
-# (see CONTRIBUTING.md "Install the native build dependencies"), not
-# reinstalled per run; cargo resolves it as a subcommand from PATH.
-$env:PATH = $rust + ';' + (Join-Path 'V:\agent-desktop\.cargo' 'bin') + ';' + $env:PATH
-Remove-Item Env:\C_INCLUDE_PATH -ErrorAction SilentlyContinue
-$cargoTarget = Join-Path $WorkRoot 'target'
-New-Item -ItemType Directory -Force -Path $cargoTarget | Out-Null
-$env:CARGO_TARGET_DIR = $cargoTarget
-$env:CARGO_HOME = 'V:\agent-desktop\.cargo'
-$env:CARGO_INCREMENTAL = '0'
-# Matches ci.yml's windows-native job: full PDB debuginfo scales badly with
-# workspace crate count (M0 added ~8 crates and regressed the hosted job by
-# 186s); line tables keep panic backtraces readable. See
-# docs/testing/benchmarks.md for the measurement.
-$env:CARGO_PROFILE_DEV_DEBUG = 'line-tables-only'
-$tmp = Join-Path $WorkRoot 'tmp'
-New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-$env:TEMP = $tmp
-$env:TMP = $tmp
+. (Join-Path $PSScriptRoot 'windows-ci-env.ps1')
+$cargo = Import-VosuNativeToolchain
+$cargoTarget = Set-VosuCargoWorkEnv -WorkRoot $WorkRoot
 
 $steps = New-Object 'System.Collections.Generic.List[object]'
-$cargo = Join-Path $rust 'cargo.exe'
 
 function Invoke-Step([string]$Name, [string[]]$Arguments) {
-    $prefix = Join-Path $logs $Name
-    $watch = [Diagnostics.Stopwatch]::StartNew()
-    $info = New-Object Diagnostics.ProcessStartInfo
-    $info.FileName = $cargo
-    $info.Arguments = $Arguments -join ' '
-    $info.WorkingDirectory = $source
-    $info.UseShellExecute = $false
-    $info.CreateNoWindow = $true
-    $info.RedirectStandardOutput = $true
-    $info.RedirectStandardError = $true
-    $process = New-Object Diagnostics.Process
-    $process.StartInfo = $info
-    if (-not $process.Start()) { throw "Could not start step $Name" }
-    $stdout = $process.StandardOutput.ReadToEndAsync()
-    $stderr = $process.StandardError.ReadToEndAsync()
-    $process.WaitForExit()
-    [IO.File]::WriteAllText($prefix + '.stdout.log', $stdout.GetAwaiter().GetResult())
-    [IO.File]::WriteAllText($prefix + '.stderr.log', $stderr.GetAwaiter().GetResult())
-    $watch.Stop()
-    $entry = [ordered]@{
-        step = $Name
-        exitCode = $process.ExitCode
-        wallSeconds = $watch.Elapsed.TotalSeconds
-        stdout = $prefix + '.stdout.log'
-        stderr = $prefix + '.stderr.log'
-    }
-    [void]$steps.Add([pscustomobject]$entry)
-    $process.Dispose()
-    Write-Host ('{0}: exit {1}, {2:N2}s' -f $Name, $entry.exitCode, $entry.wallSeconds)
-    return $entry.exitCode
+    return Invoke-VosuCargoStep -Name $Name -CargoExe $cargo -WorkingDirectory $source `
+        -Arguments $Arguments -LogDir $logs -Steps $steps
 }
 
 $overallExit = 0
