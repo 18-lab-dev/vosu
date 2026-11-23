@@ -26,7 +26,7 @@ use windows_sys::{
             Threading::{
                 GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, IsWow64Process2,
                 OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
-                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ, QueryFullProcessImageNameW,
             },
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
@@ -101,6 +101,15 @@ pub struct ProcessEntry {
     pub thread_count: u32,
     pub base_priority: i32,
     pub executable: String,
+    /// This process occurrence's own start time (`FILETIME`-shaped: 100 ns
+    /// ticks since 1601-01-01), read directly from
+    /// `SYSTEM_PROCESS_INFORMATION`'s own `CreateTime` field without
+    /// opening the process (`system_process_create_time`'s own doc
+    /// comment) — the preferred source for `ProcessRecord::start_time`
+    /// (P1 pid-reuse identity); `WindowsProcessMemory::creation_time`
+    /// (`GetProcessTimes`, requires an open handle) is the fallback when
+    /// a caller already has one open for another reason.
+    pub create_time: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,6 +229,7 @@ fn decode_system_processes_matching(
                 thread_count: raw.NumberOfThreads,
                 base_priority: raw.BasePriority,
                 executable: String::from_utf16_lossy(name),
+                create_time: system_process_create_time(raw),
             });
         }
 
@@ -276,6 +286,28 @@ fn system_process_name_units<'a>(
     let units =
         unsafe { std::slice::from_raw_parts(process.ImageName.Buffer, length / size_of::<u16>()) };
     Ok(units)
+}
+
+/// `SYSTEM_PROCESS_INFORMATION.CreateTime` (`FILETIME`-shaped: 100 ns
+/// ticks since 1601-01-01), read directly out of the raw record without
+/// opening the process — the undocumented `winternl.h`/`phnt` layout
+/// `windows-sys` does not expose by name, folding it into the opaque
+/// `Reserved1` byte array along with `WorkingSetPrivateSize`,
+/// `HardFaultCount`, `NumberOfThreadsHighWatermark` and `CycleTime`
+/// before it, and `UserTime`/`KernelTime` after it: struct layout (every
+/// field before `ImageName`, byte offset from the struct's own start)
+/// `WorkingSetPrivateSize`(8, LARGE_INTEGER) `HardFaultCount`(4)
+/// `NumberOfThreadsHighWatermark`(4) `CycleTime`(8, ULONGLONG)
+/// `CreateTime`(8, LARGE_INTEGER, at offset 32) `UserTime`(8)
+/// `KernelTime`(8) -- summing to `Reserved1`'s own declared 48 bytes
+/// before `ImageName`, matching this module's existing reliance on the
+/// same layout for `Reserved2` (`InheritedFromUniqueProcessId`, the
+/// parent pid, above).
+fn system_process_create_time(process: &SYSTEM_PROCESS_INFORMATION) -> u64 {
+    const CREATE_TIME_OFFSET: usize = 24; // within Reserved1, after an 8+4+4+8-byte header
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&process.Reserved1[CREATE_TIME_OFFSET..CREATE_TIME_OFFSET + 8]);
+    u64::from_le_bytes(bytes)
 }
 
 pub fn enumerate_threads(pid: Option<u32>) -> Result<Vec<ThreadEntry>, MemoryError> {
@@ -378,6 +410,31 @@ pub fn is_process_alive(pid: u32) -> bool {
         CloseHandle(handle);
     }
     alive
+}
+
+/// The full executable image path for `pid`
+/// (`QueryFullProcessImageNameW`, `PROCESS_NAME_WIN32` format), opened
+/// with the same weakest-possible access right [`is_process_alive`] uses
+/// (`PROCESS_QUERY_LIMITED_INFORMATION`) so a protected or elevated
+/// process this host cannot `PROCESS_VM_READ` still yields a path. The
+/// preferred source for `process_path_patterns` matching (§6.1): unlike
+/// a raw command line's argv[0], this is never relative, never bare, and
+/// never whatever an unrelated `lpApplicationName` happened to be.
+pub fn process_image_path(pid: u32) -> Result<String, MemoryError> {
+    // SAFETY: `OpenProcess` returns an owned handle on success; no
+    // caller-owned buffers are passed.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let handle = OwnedHandle::new(handle, "OpenProcess")?;
+    let mut buffer = vec![0u16; 32_768];
+    let mut size = u32::try_from(buffer.len())
+        .map_err(|_| backend("QueryFullProcessImageNameW", "buffer size exceeds u32"))?;
+    // SAFETY: `handle` is a valid open handle; `buffer` is writable for
+    // `size` UTF-16 units and `size` is updated in place on success.
+    let ok = unsafe { QueryFullProcessImageNameW(handle.raw(), 0, buffer.as_mut_ptr(), &mut size) };
+    if ok == 0 {
+        return Err(last_error("QueryFullProcessImageNameW"));
+    }
+    Ok(String::from_utf16_lossy(&buffer[..size as usize]))
 }
 
 fn same_process_user(process: HANDLE) -> Result<bool, MemoryError> {

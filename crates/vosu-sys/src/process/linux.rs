@@ -25,6 +25,12 @@ pub struct LinuxProcessMetadata {
     pub command_line: Vec<OsString>,
     pub executable: PathBuf,
     pub bitness: ProcessBitness,
+    /// `/proc/<pid>/stat`'s `starttime` field (clock ticks since boot),
+    /// read by the same `process_start_time_at` `LinuxProcessMemory`
+    /// already uses for its own pidfd reuse-safety check: the Rust-side
+    /// identity discovery compares to detect a reused pid (P1,
+    /// `crate::plugin::discovery::same_occurrence` in vosu-core).
+    pub start_time: u64,
 }
 fn owned_by_real_uid(dir: &Path) -> io::Result<bool> {
     let status = read_bounded(&dir.join("status"), 0)?;
@@ -825,12 +831,17 @@ fn process_metadata_matching_at(
         Err(error) if process_disappeared(&error) => return Ok(None),
         Err(error) => return Err(backend("read ELF header", error)),
     };
+    let start_time = match process_start_time_at(proc_root, pid) {
+        Some(start_time) => start_time,
+        None => return Ok(None),
+    };
     Ok(Some(LinuxProcessMetadata {
         pid,
         name,
         command_line,
         executable,
         bitness,
+        start_time,
     }))
 }
 
@@ -870,12 +881,16 @@ fn enumerate_processes_matching_at(
         let Ok(bitness) = elf_bitness_at(&dir.join("exe")) else {
             continue;
         };
+        let Some(start_time) = process_start_time_at(proc_root, pid) else {
+            continue;
+        };
         processes.push(LinuxProcessMetadata {
             pid,
             name,
             command_line,
             executable,
             bitness,
+            start_time,
         });
     }
     processes.sort_unstable_by_key(|process| process.pid);

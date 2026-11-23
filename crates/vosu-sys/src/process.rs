@@ -18,6 +18,7 @@ pub use windows::{
     ModuleEntry, OwnedHandle, ProcessEntry, ThreadEntry, TimerResolutionGuard,
     WindowsProcessMemory, enumerate_modules, enumerate_processes, enumerate_threads,
     foreground_process_id, is_process_alive, process_bitness, process_command_line,
+    process_image_path,
 };
 #[cfg(target_os = "linux")]
 pub mod linux;

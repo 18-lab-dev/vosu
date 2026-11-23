@@ -168,6 +168,13 @@ pub const MAX_COMM_HINTS: usize = 256;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommHints {
     hints: Vec<Vec<u8>>,
+    /// §6.1's widening rule: an enabled plugin declared a
+    /// `process_path_patterns`/`command_line_patterns` matcher with no
+    /// usable hint of its own, so the pre-filter must admit every exec
+    /// instead of narrowing by substring. [`Self::matches`] short-circuits
+    /// on this before consulting `hints` (which stays empty for an
+    /// unfiltered set, `Self::unfiltered`'s own doc comment).
+    unfiltered: bool,
 }
 
 /// A `comm_hints` entry or set that violates `docs/v2/plugin-abi.md` Sec
@@ -227,7 +234,35 @@ impl CommHints {
         }
         collected.sort_unstable();
         collected.dedup();
-        Ok(Self { hints: collected })
+        Ok(Self {
+            hints: collected,
+            unfiltered: false,
+        })
+    }
+
+    /// An explicit "admit every exec" set (§6.1's widening rule), as
+    /// opposed to an empty [`Self::new`] set, which admits none: the two
+    /// are not interchangeable. The CN_PROC backend's own userspace
+    /// substring check (`events::cn_proc`) treats this as "every comm
+    /// matches" for free; the in-kernel eBPF `candidate_comm` filter has
+    /// no such bypass compiled in, so `EbpfCommFilter::set_comm_hints`
+    /// pushes this down as an empty hint set instead, degrading only that
+    /// backend's own exec fast path to the discovery service's bounded
+    /// `RECONCILE_INTERVAL` full-reconcile cadence (the same cadence
+    /// Windows's own enumeration-cost pre-filter already uses when
+    /// unfiltered) rather than losing new-process detection outright.
+    #[must_use]
+    pub fn unfiltered() -> Self {
+        Self {
+            hints: Vec::new(),
+            unfiltered: true,
+        }
+    }
+
+    /// Whether this is [`Self::unfiltered`]'s own "admit every exec" set.
+    #[must_use]
+    pub fn is_unfiltered(&self) -> bool {
+        self.unfiltered
     }
 
     #[must_use]
@@ -247,13 +282,15 @@ impl CommHints {
 
     /// Reports whether `comm` contains any hint as a substring -- the exact
     /// matching rule `docs/v2/plugin-abi.md` Sec 6.1 and the former
-    /// hard-coded `osu!`/`osulazer.exe` filter both use.
+    /// hard-coded `osu!`/`osulazer.exe` filter both use -- or unconditionally
+    /// `true` for [`Self::unfiltered`]'s own "admit every exec" set.
     #[must_use]
     pub fn matches(&self, comm: &[u8]) -> bool {
-        self.hints.iter().any(|hint| {
-            comm.windows(hint.len())
-                .any(|window| window == hint.as_slice())
-        })
+        self.unfiltered
+            || self.hints.iter().any(|hint| {
+                comm.windows(hint.len())
+                    .any(|window| window == hint.as_slice())
+            })
     }
 }
 
