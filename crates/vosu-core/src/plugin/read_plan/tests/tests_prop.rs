@@ -20,6 +20,7 @@
 use proptest::prelude::*;
 use vosu_plugin_api::Message;
 
+use super::helpers::{FakeMemory, far_deadline, op};
 use super::*;
 
 /// The one region every generated plan's memory reads against; large

@@ -11,6 +11,9 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::hint::black_box;
 
+use vosu_plugin_api::Message;
+
+use super::helpers::{FakeMemory, NoModules, far_deadline, op};
 use super::*;
 
 struct TrackingAllocator;
