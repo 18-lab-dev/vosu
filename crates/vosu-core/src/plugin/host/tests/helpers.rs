@@ -171,5 +171,6 @@ pub(in crate::plugin::host) fn test_process(pid: u32, name: &str) -> ProcessReco
         path: format!("/games/{name}"),
         command_line: name.to_owned(),
         bitness: Bitness::X64,
+        start_time: 1,
     }
 }

@@ -24,6 +24,8 @@ use std::sync::Arc;
 
 use tokio::runtime::Handle;
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
+use vosu_core::plugin::Prefilter;
+#[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 use vosu_core::plugin::ProcessRecord;
 use vosu_core::plugin::{DiscoveryService, PluginHost, ProcessSource};
 
@@ -46,7 +48,7 @@ fn platform_process_source() -> Arc<dyn ProcessSource> {
 
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
 fn platform_process_source() -> Arc<dyn ProcessSource> {
-    Arc::new(PollingLinuxSource)
+    Arc::new(PollingLinuxSource::default())
 }
 
 /// Plain-polling [`ProcessSource`] for a Linux build without the
@@ -55,40 +57,76 @@ fn platform_process_source() -> Arc<dyn ProcessSource> {
 /// command `AGENTS.md` documents (`--all-features`, or the release
 /// command's explicit `--features linux-process-events`), so this only
 /// ever runs for an explicit `--no-default-features` local build.
-/// `vosu_sys::process::enumerate_processes` on Linux already returns
-/// every field a [`ProcessRecord`] needs in one call per process (`comm`,
-/// exe symlink, `/proc/<pid>/cmdline`) — unlike Windows, there is no
-/// cheap-list/expensive-open split to narrow with a name pre-filter here
-/// — so this is `RECONCILE_INTERVAL`-driven full reads every tick,
-/// exactly 1.x's own CN_PROC-less fallback.
+///
+/// Honors the same unified pre-filter (`vosu_core::plugin::Prefilter`,
+/// §6.1, P3) [`vosu_core::plugin::LinuxSource`] does, just applied to a
+/// plain `/proc` substring scan instead of the kernel/CN_PROC side —
+/// `vosu_sys::events::CommHints` (and its kernel-facing validation) is
+/// gated on the same `linux-process-events` feature this module is
+/// without, so matching here is a small local substring check instead of
+/// reusing that type. `enumerate_processes_matching`'s own `include`
+/// predicate already skips the heavier `cmdline`/`exe`/ELF-header reads
+/// for a `comm` the pre-filter rejects, so this still gets the narrowing
+/// benefit, not just the correctness of matching it at all.
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
-struct PollingLinuxSource;
+struct PollingLinuxSource {
+    prefilter: std::sync::Mutex<Prefilter>,
+}
 
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
-impl ProcessSource for PollingLinuxSource {
-    fn enumerate(&self) -> io::Result<Vec<ProcessRecord>> {
-        vosu_sys::process::enumerate_processes()
-            .map(|entries| entries.into_iter().map(map_linux_metadata).collect())
-            .map_err(io::Error::other)
+impl Default for PollingLinuxSource {
+    fn default() -> Self {
+        // Fail open, mirroring `WindowsSource`'s own starting value
+        // (`discovery/windows_source.rs`): `DiscoveryService::run_pass`
+        // always syncs the real set before the first `enumerate()`, so
+        // this default is never actually observed in production.
+        Self {
+            prefilter: std::sync::Mutex::new(Prefilter::Unfiltered),
+        }
+    }
+}
+
+/// Substring pre-filter check mirroring `vosu_sys::events::CommHints::matches`
+/// (§6.1's substring rule), without depending on that feature-gated type.
+#[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
+fn comm_allows(filter: &Prefilter, comm: &std::ffi::OsStr) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    match filter {
+        Prefilter::Unfiltered => true,
+        Prefilter::Names(hints) => {
+            let comm = comm.as_bytes();
+            hints.iter().any(|hint| {
+                let hint = hint.as_bytes();
+                !hint.is_empty() && comm.windows(hint.len()).any(|window| window == hint)
+            })
+        }
     }
 }
 
 #[cfg(all(target_os = "linux", not(feature = "linux-process-events")))]
-fn map_linux_metadata(metadata: vosu_sys::process::LinuxProcessMetadata) -> ProcessRecord {
-    ProcessRecord {
-        pid: metadata.pid,
-        name: metadata.name.to_string_lossy().into_owned(),
-        path: metadata.executable.to_string_lossy().into_owned(),
-        command_line: metadata
-            .command_line
-            .iter()
-            .map(|part| part.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" "),
-        bitness: match metadata.bitness {
-            vosu_sys::process::ProcessBitness::X86 => vosu_plugin_api::Bitness::X86,
-            vosu_sys::process::ProcessBitness::X64 => vosu_plugin_api::Bitness::X64,
-        },
+impl ProcessSource for PollingLinuxSource {
+    fn enumerate(&self) -> io::Result<Vec<ProcessRecord>> {
+        let filter = self
+            .prefilter
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        vosu_sys::process::enumerate_processes_matching(|comm| comm_allows(&filter, comm))
+            .map(|entries| {
+                entries
+                    .into_iter()
+                    .map(vosu_core::plugin::linux_common::map_metadata)
+                    .collect()
+            })
+            .map_err(io::Error::other)
+    }
+
+    fn set_prefilter(&self, filter: &Prefilter) -> io::Result<()> {
+        *self
+            .prefilter
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = filter.clone();
+        Ok(())
     }
 }
 

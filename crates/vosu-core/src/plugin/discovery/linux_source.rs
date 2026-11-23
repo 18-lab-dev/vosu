@@ -19,13 +19,15 @@
 //! [`DiscoveryService`](super::DiscoveryService)'s own
 //! `RECONCILE_INTERVAL` alone drives discovery.
 //!
-//! Comm-hint handling (§6.1, D18): [`ProcessSource::set_comm_hints`]
-//! validates the host's `Vec<String>` into `vosu_sys::events::CommHints`,
-//! logs and leaves the previous (already-validated) filter in place on a
-//! bounds violation (never panics), and only on success both updates this
-//! source's own userspace pre-filter (used by [`Self::enumerate`]/
-//! [`Self::inspect`] regardless of whether an event backend is open) and,
-//! if one is open, the kernel/CN_PROC pre-filter.
+//! Pre-filter handling (§6.1, D18, unified across both targets through
+//! [`crate::plugin::matcher::Prefilter`]): [`ProcessSource::set_prefilter`]
+//! converts `Prefilter::Names`/`Prefilter::Unfiltered` into
+//! `vosu_sys::events::CommHints` (validating the former, no validation
+//! needed for the latter), and *always* updates this source's own
+//! userspace filter (used by [`Self::enumerate`]/[`Self::inspect`]
+//! regardless of whether an event backend is open) before touching the
+//! kernel/CN_PROC side — a kernel push failure must not leave the
+//! userspace filter on the old, already-superseded set (P2).
 //!
 //! This source also mirrors every pid it has itself most recently
 //! confirmed live and comm-matched into the event backend's own "tracked"
@@ -41,49 +43,19 @@
 //! reported exited.
 
 use std::collections::HashSet;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::io;
 use std::sync::Mutex;
 
-use tokio::sync::Notify;
-use vosu_plugin_api::Bitness;
-use vosu_sys::events::{CommHints, LinuxProcessEvents};
-use vosu_sys::process::{
-    LinuxProcessMetadata, ProcessBitness, enumerate_processes_matching, process_metadata_matching,
-};
-
 use crate::plugin::host::ProcessRecord;
+use tokio::sync::Notify;
+use vosu_sys::events::{CommHints, LinuxProcessEvents};
+use vosu_sys::process::{enumerate_processes_matching, process_metadata_matching};
 
+use crate::plugin::matcher::Prefilter;
+
+use super::linux_common::map_metadata;
 use super::{ProcessEventBatch, ProcessSource};
-
-fn map_bitness(bitness: ProcessBitness) -> Bitness {
-    match bitness {
-        ProcessBitness::X86 => Bitness::X86,
-        ProcessBitness::X64 => Bitness::X64,
-    }
-}
-
-/// `ProcessRecord::command_line`'s own "joined argv" contract
-/// (`crate::plugin::host::ProcessRecord`), space-joined to match
-/// `MatcherEngine`'s `command_line_patterns` full-match semantics against
-/// a single string (matcher.rs's own doc comment).
-fn join_command_line(parts: &[OsString]) -> String {
-    parts
-        .iter()
-        .map(|part| part.to_string_lossy())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn map_metadata(metadata: LinuxProcessMetadata) -> ProcessRecord {
-    ProcessRecord {
-        pid: metadata.pid,
-        name: metadata.name.to_string_lossy().into_owned(),
-        path: metadata.executable.to_string_lossy().into_owned(),
-        command_line: join_command_line(&metadata.command_line),
-        bitness: map_bitness(metadata.bitness),
-    }
-}
 
 fn comm_matches(filter: &CommHints, name: &OsStr) -> bool {
     use std::os::unix::ffi::OsStrExt;
@@ -217,18 +189,26 @@ impl ProcessSource for LinuxSource {
         }
     }
 
-    fn set_comm_hints(&self, hints: &[String]) -> io::Result<()> {
-        let hints = CommHints::new(hints).map_err(|error| {
-            tracing::warn!(%error, "comm hints rejected; keeping the previous filter");
-            io::Error::new(io::ErrorKind::InvalidInput, error)
-        })?;
-        if let Some(events) = self.events.as_ref() {
-            events.set_comm_hints(&hints)?;
-        }
+    fn set_prefilter(&self, filter: &Prefilter) -> io::Result<()> {
+        let hints = match filter {
+            Prefilter::Unfiltered => CommHints::unfiltered(),
+            Prefilter::Names(names) => CommHints::new(names).map_err(|error| {
+                tracing::warn!(%error, "comm hints rejected; keeping the previous filter");
+                io::Error::new(io::ErrorKind::InvalidInput, error)
+            })?,
+        };
+        // Update the userspace filter first and unconditionally (P2):
+        // `Self::enumerate`/`Self::inspect` must reflect the new set
+        // even if the kernel/CN_PROC push below fails, so a failure
+        // there degrades only the event fast path, never silently
+        // narrows what a full reconcile finds.
         *self
             .filter
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = hints;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = hints.clone();
+        if let Some(events) = self.events.as_ref() {
+            events.set_comm_hints(&hints)?;
+        }
         Ok(())
     }
 

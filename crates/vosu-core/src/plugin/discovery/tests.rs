@@ -120,6 +120,7 @@ fn test_process(pid: u32, name: &str) -> ProcessRecord {
         path: format!("/games/{name}"),
         command_line: name.to_owned(),
         bitness: Bitness::X64,
+        start_time: 1,
     }
 }
 
@@ -183,20 +184,34 @@ struct SyntheticState {
 struct SyntheticSource {
     state: Mutex<SyntheticState>,
     notifier: Notify,
-    comm_hints: SyncSender<Vec<String>>,
+    prefilter: SyncSender<Prefilter>,
 }
 
 impl SyntheticSource {
-    fn new() -> (Arc<Self>, Receiver<Vec<String>>) {
+    fn new() -> (Arc<Self>, Receiver<Prefilter>) {
         let (tx, rx) = sync_channel(16);
         (
             Arc::new(Self {
                 state: Mutex::new(SyntheticState::default()),
                 notifier: Notify::new(),
-                comm_hints: tx,
+                prefilter: tx,
             }),
             rx,
         )
+    }
+
+    /// Inserts `record` into the source's own ground truth without
+    /// queuing an `inspect` hint or waking the service: only a full
+    /// reconcile (`enumerate()`) will ever see it, never the targeted
+    /// event path `appear` also exercises. Proves a forced full
+    /// reconcile actually re-derives state from `enumerate()`, not just
+    /// from whatever was queued (`hint_set_change_syncs_the_source_and_forces_a_reconcile`).
+    fn insert(&self, record: ProcessRecord) {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .processes
+            .insert(record.pid, record);
     }
 
     fn appear(&self, record: ProcessRecord) {
@@ -257,12 +272,12 @@ impl ProcessSource for SyntheticSource {
         }
     }
 
-    fn set_comm_hints(&self, hints: &[String]) -> io::Result<()> {
+    fn set_prefilter(&self, filter: &Prefilter) -> io::Result<()> {
         // A full channel means a test stopped draining it; losing the
         // update would be the wrong failure mode for a bounded test
         // fixture, so block instead of the usual `try_send` a production
         // sink would use for an unbounded-backpressure-sensitive path.
-        self.comm_hints.send(hints.to_vec()).ok();
+        self.prefilter.send(filter.clone()).ok();
         Ok(())
     }
 
@@ -321,7 +336,7 @@ async fn exit_delivers_session_detached() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn reused_pid_is_reported_as_exit_then_a_fresh_appearance() {
+async fn reused_pid_with_a_new_start_time_is_reported_as_exit_then_a_fresh_appearance() {
     let runtime = Handle::current();
     let (_log_dir, host) = test_host(
         runtime.clone(),
@@ -333,19 +348,20 @@ async fn reused_pid_is_reported_as_exit_then_a_fresh_appearance() {
         "vosu.testkit.reuse",
         &["osu!.exe"],
     );
-    let (source, _comm_hints) = SyntheticSource::new();
+    let (source, _prefilter) = SyntheticSource::new();
     let service = DiscoveryService::start(&host, source.clone(), runtime);
 
     source.appear(test_process(300, "osu!.exe"));
     let first = expect_attached(&events, 300);
 
-    // Same pid, a different executable path: a different OS process
-    // occupies pid 300 now, never a genuine update to the first one —
-    // the service must report the first occurrence's own exit before the
-    // second's appearance, not silently swap the identity underneath the
-    // first's still-live session.
+    // Same pid, identical name/path/command_line/bitness: only
+    // `start_time` differs, as a fast osu! restart reusing the pid
+    // within one reconciliation pass would look (P1 pid reuse) — the
+    // service must still report the first occurrence's own exit before
+    // the second's appearance, not silently swap the identity underneath
+    // the first's still-live session.
     let mut reused = test_process(300, "osu!.exe");
-    reused.path = "/games/osu!.exe-reused".to_owned();
+    reused.start_time = 2;
     source.appear(reused);
 
     let detached = expect_detached(&events, first.handle);
@@ -357,17 +373,71 @@ async fn reused_pid_is_reported_as_exit_then_a_fresh_appearance() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn argv_rewrite_with_the_same_start_time_is_not_churned() {
+    let runtime = Handle::current();
+    let (_log_dir, host) = test_host(
+        runtime.clone(),
+        Arc::new(focus::SyntheticForegroundSource::new(None)),
+    );
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId(0),
+        "vosu.testkit.argv",
+        &["osu!.exe"],
+    );
+    let (source, _prefilter) = SyntheticSource::new();
+    let service = DiscoveryService::start(&host, source.clone(), runtime);
+
+    source.appear(test_process(301, "osu!.exe"));
+    let first = expect_attached(&events, 301);
+
+    // setproctitle-style argv rewrite: `command_line` changes but the
+    // process never exited (same `start_time`) -- `same_occurrence` must
+    // not treat this as a reused pid (P1), so no detach/re-attach may
+    // follow. A second, distinct process's own attach proves the loop
+    // kept running past the rewrite; every event up to it is checked for
+    // a forbidden detach instead of silently discarding whatever
+    // `expect_attached` alone would not care about.
+    let mut rewritten = test_process(301, "osu!.exe");
+    rewritten.command_line = "osu! -devserver".to_owned();
+    source.appear(rewritten);
+    source.appear(test_process(302, "osu!.exe"));
+
+    loop {
+        let event = events
+            .recv_timeout(RECV_TIMEOUT)
+            .expect("the marker process's own attach never arrived");
+        match &event {
+            SessionEvent::Detached(detached) => assert_ne!(
+                detached.handle, first.handle,
+                "an argv-only rewrite with the same start_time must not be churned"
+            ),
+            SessionEvent::Attached(attached) if attached.pid == 302 => break,
+            _ => {}
+        }
+    }
+
+    service.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hint_set_change_syncs_the_source_and_forces_a_reconcile() {
     let runtime = Handle::current();
     let (_log_dir, host) = test_host(
         runtime.clone(),
         Arc::new(focus::SyntheticForegroundSource::new(None)),
     );
-    let (source, comm_hints) = SyntheticSource::new();
+    let (source, prefilter) = SyntheticSource::new();
+    // Inserted directly into the source's own state, bypassing `appear`'s
+    // own `inspect` hint entirely (P3: the earlier version of this test
+    // could not tell a forced full reconcile apart from the ordinary
+    // targeted-inspect path `appear` also exercises): only a full
+    // `enumerate()` can ever see this pid.
+    source.insert(test_process(400, "osu!.exe"));
     let service = DiscoveryService::start(&host, source.clone(), runtime);
 
     // Registering the plugin only after the service has started proves
-    // the service re-reads `PluginHost::comm_hints` on every pass rather
+    // the service re-reads `PluginHost::prefilter` on every pass rather
     // than snapshotting it once at startup.
     let events = create_session_instance(
         &host,
@@ -375,15 +445,14 @@ async fn hint_set_change_syncs_the_source_and_forces_a_reconcile() {
         "vosu.testkit.hints",
         &["osu!.exe"],
     );
-    let applied = comm_hints
+    let applied = prefilter
         .recv_timeout(RECV_TIMEOUT)
-        .expect("discovery did not sync the widened comm-hint set in time");
-    assert!(applied.iter().any(|hint| hint == "osu!.exe"));
+        .expect("discovery did not sync the widened pre-filter set in time");
+    assert!(applied.allows(crate::plugin::matcher::MatchPlatform::Linux, "osu!.exe"));
 
-    // The forced reconcile after a hint-set change must pick up a
-    // process already present in the source at that point, not only one
-    // appearing afterward.
-    source.appear(test_process(400, "osu!.exe"));
+    // The forced reconcile after a pre-filter change must pick up a
+    // process already present in the source at that point -- inserted
+    // silently above, never through `appear`'s own inspect hint.
     expect_attached(&events, 400);
 
     service.stop();

@@ -7,13 +7,19 @@
 //! code itself: only the reconciliation loop (periodic full enumeration as
 //! a bounded-loss backstop, targeted [`ProcessSource::drain_events`]/
 //! [`ProcessSource::inspect`] for cheap incremental updates when a source
-//! provides them), the Linux comm-hint pre-filter sync
-//! (`MatcherEngine::comm_hints` -> [`ProcessSource::set_comm_hints`], §6.1,
-//! D18), and PID-generation correctness: a pid whose freshly observed
-//! identity (name/path/command_line/bitness) differs from what this
-//! service last reported for it is a reused pid, reported as an exit
-//! immediately followed by a fresh appearance, never silently folded into
-//! the old occurrence.
+//! provides them), the unified enumeration-cost pre-filter sync
+//! (`MatcherEngine::prefilter` -> [`ProcessSource::set_prefilter`], §6.1),
+//! the matcher-set generation sync (`MatcherEngine::generation`, P2: a
+//! plugin installed or torn down after discovery already tracked a
+//! process re-offers every tracked record), and PID-generation
+//! correctness: a pid whose freshly observed occurrence (`start_time`)
+//! differs from what this service last reported for it is a reused pid,
+//! reported as an exit immediately followed by a fresh appearance, never
+//! silently folded into the old occurrence. Identity is `start_time`
+//! alone (not name/path/command_line/bitness, P1): a still-running
+//! process that rewrites its own argv (a setproctitle-style
+//! `/proc/<pid>/cmdline` change) keeps the same `start_time` and must not
+//! churn the session.
 //!
 //! Runs on one dedicated OS thread, not a Tokio worker (`AGENTS.md`: "No
 //! blocking sleep or wait on a Tokio worker"): every [`ProcessSource`] call
@@ -33,7 +39,7 @@ use tokio::runtime::Handle;
 use tokio::sync::Notify;
 
 use super::host::{PluginHost, ProcessRecord};
-use super::matcher::NamePrefilter;
+use super::matcher::Prefilter;
 
 /// Event hints [`ProcessSource::drain_events`] buffers since the last
 /// call, generic over whatever push-capable channel a real backend uses
@@ -108,30 +114,17 @@ pub trait ProcessSource: Send + Sync {
         ProcessEventBatch::default()
     }
 
-    /// Updates the source's own live comm-hint pre-filter (Linux
-    /// production only) to the union of every enabled plugin's
-    /// `comm_hints` (`docs/v2/plugin-abi.md` §6.1), already deduplicated
-    /// and sorted (`MatcherEngine::comm_hints`). The default is a correct
-    /// no-op for a source with nothing to narrow; a real Linux backend
-    /// converts this into its own validated
-    /// `vosu_sys::events::CommHints`, logging and leaving its filter
-    /// unchanged on a combined set over
-    /// `vosu_sys::events::MAX_COMM_HINTS`.
-    fn set_comm_hints(&self, _hints: &[String]) -> io::Result<()> {
+    /// Updates the source's own enumeration-cost pre-filter (§6.1,
+    /// [`Prefilter`]'s own doc comment) to `filter`, derived from every
+    /// registered plugin's hint names (`MatcherEngine::prefilter`). A
+    /// real backend skips opening/reading anything else about a process
+    /// [`Prefilter::allows`] rejects; on Linux this also fills the
+    /// bounded in-kernel/CN_PROC pre-filter, which can fail independently
+    /// of the userspace side (logged and returned, never panicking). The
+    /// default is a correct no-op for a source with nothing to narrow.
+    fn set_prefilter(&self, _filter: &Prefilter) -> io::Result<()> {
         Ok(())
     }
-
-    /// Updates the source's own executable-name pre-filter (Windows
-    /// production only, M1 §4 phase d2b unit c) to `filter`, derived from
-    /// every registered plugin's `process_names`
-    /// (`MatcherEngine::name_prefilter`, §6.1): a real backend skips
-    /// opening/reading anything else about a process whose bare
-    /// executable name [`NamePrefilter::allows`] rejects. The default is
-    /// a correct no-op for a source with no per-process open cost to
-    /// avoid this way — Linux's own `/proc` reads are already narrowed by
-    /// its kernel/CN_PROC [`Self::set_comm_hints`] filter, independent of
-    /// this one.
-    fn set_name_prefilter(&self, _filter: &NamePrefilter) {}
 
     /// A [`Notify`] this service awaits alongside its own
     /// [`RECONCILE_INTERVAL`] timeout, woken whenever new events are ready
@@ -144,14 +137,16 @@ pub trait ProcessSource: Send + Sync {
 }
 
 /// Whether two observations of the same pid are the same OS process
-/// occurrence (identity, not a generation counter): differing in any of
-/// these fields means the pid was reused by a different process between
-/// the two observations, never a genuine update to a still-running one.
+/// occurrence (identity, not a generation counter): a different
+/// `start_time` means the pid was reused by a different process between
+/// the two observations, never a genuine update to a still-running one
+/// (P1: 1.x's own Windows `creation_time` cache, `src/instance/discovery.rs`,
+/// generalized to both targets through `ProcessRecord::start_time`).
+/// Every other field (name/path/command_line/bitness) may legitimately
+/// change without the process ever exiting — in particular a
+/// setproctitle-style argv rewrite, which must not churn the session.
 fn same_occurrence(a: &ProcessRecord, b: &ProcessRecord) -> bool {
-    a.name == b.name
-        && a.path == b.path
-        && a.command_line == b.command_line
-        && a.bitness == b.bitness
+    a.start_time == b.start_time
 }
 
 /// Feeds one observed `record` to `host`, first reporting an exit for
@@ -254,54 +249,66 @@ fn apply_batch(
     needs_reconcile
 }
 
-/// Syncs the Linux comm-hint pre-filter (`MatcherEngine::comm_hints`,
-/// §6.1) to `source` whenever the enabled plugin set's union has changed
-/// since the last sync, and reports whether it did: the caller forces a
-/// full reconcile on a change, since a hint widening can newly admit a
-/// process the pre-filter previously hid from `source.enumerate()`/the
-/// kernel event stream entirely, so only a full pass is guaranteed to
-/// pick it up. Leaves `last_hints` unchanged on a
-/// [`ProcessSource::set_comm_hints`] failure (already logged by the
-/// backend itself, e.g. a combined set over
-/// `vosu_sys::events::MAX_COMM_HINTS`), so this never silently narrows
-/// the filter to something wrong.
-fn sync_comm_hints(
+/// Syncs the unified enumeration-cost pre-filter (`MatcherEngine::prefilter`,
+/// §6.1) to `source` whenever it has changed since the last sync, and
+/// reports whether it did: the caller forces a full reconcile on a
+/// change, since a widening can newly admit a process the pre-filter
+/// previously hid from `source.enumerate()`/the kernel event stream
+/// entirely, so only a full pass is guaranteed to pick it up.
+///
+/// Always advances `last_filter` to `filter`, success or failure (P2):
+/// retrying the exact same already-failed update on every pass — e.g. a
+/// kernel comm-hint push [`ProcessSource::set_prefilter`] cannot apply —
+/// would otherwise hot-loop this service (repeated `/proc` scans and log
+/// spam) without ever making progress, since the failure is
+/// deterministic for an unchanged input. A backend that implements
+/// `set_prefilter` is itself responsible for applying what it safely can
+/// even when it returns `Err` (`ProcessSource::set_prefilter`'s own doc
+/// comment) — this function never second-guesses a partial success.
+fn sync_prefilter(
     host: &PluginHost,
     source: &dyn ProcessSource,
-    last_hints: &mut Vec<String>,
+    last_filter: &mut Option<Prefilter>,
 ) -> bool {
-    let hints = host.comm_hints();
-    if hints == *last_hints {
-        return false;
-    }
-    if let Err(error) = source.set_comm_hints(&hints) {
-        tracing::warn!(%error, "comm-hint pre-filter update failed; left unchanged");
-        return false;
-    }
-    *last_hints = hints;
-    true
-}
-
-/// Syncs the Windows enumeration-cost name pre-filter
-/// (`MatcherEngine::name_prefilter`, §6.1, M1 §4 phase d2b unit c) to
-/// `source` whenever it has changed since the last sync, and reports
-/// whether it did: the caller forces a full reconcile on a change, since
-/// a widening (a new plugin registered, or an existing one losing a
-/// path/command-line pattern) can newly admit a process
-/// [`NamePrefilter::Names`] previously hid from `source.enumerate()`
-/// entirely.
-fn sync_name_prefilter(
-    host: &PluginHost,
-    source: &dyn ProcessSource,
-    last_filter: &mut Option<NamePrefilter>,
-) -> bool {
-    let filter = host.name_prefilter();
+    let filter = host.prefilter();
     if last_filter.as_ref() == Some(&filter) {
         return false;
     }
-    source.set_name_prefilter(&filter);
+    let applied = source.set_prefilter(&filter).is_ok();
+    if !applied {
+        tracing::warn!(
+            "enumeration-cost pre-filter update failed; retrying only on the next change"
+        );
+    }
     *last_filter = Some(filter);
+    applied
+}
+
+/// Syncs this host's own matcher-set generation (`MatcherEngine::generation`,
+/// P2) and reports whether it changed since the last sync. The caller
+/// forces a full reconcile on a change and then re-offers every tracked
+/// record (`reoffer_tracked`): a plugin installed (or re-installed) after
+/// discovery already tracked a non-matching process must still get a
+/// chance to match it, which `apply_appeared`'s own same-occurrence skip
+/// would otherwise suppress forever for an unchanged process.
+fn sync_generation(host: &PluginHost, last_generation: &mut Option<u64>) -> bool {
+    let generation = host.matcher_generation();
+    if *last_generation == Some(generation) {
+        return false;
+    }
+    *last_generation = Some(generation);
     true
+}
+
+/// Re-offers every currently tracked record to `host` (P2,
+/// `sync_generation`'s own doc comment): `PluginHost::process_appeared`
+/// is idempotent for a pid it already attached a session to
+/// (`SessionRegistry::attach`'s own no-op rule), so this only ever has an
+/// effect for a record no plugin matched the last time it was offered.
+fn reoffer_tracked(host: &PluginHost, tracked: &HashMap<u32, ProcessRecord>) {
+    for record in tracked.values() {
+        host.process_appeared(record.clone());
+    }
 }
 
 /// Blocks the calling (dedicated, non-worker) thread until `source`'s own
@@ -329,23 +336,28 @@ fn wait_next(runtime: &Handle, source: &dyn ProcessSource, wake: &Notify, timeou
     });
 }
 
-/// One discovery reconciliation pass: syncs comm hints, then either a full
-/// reconcile (startup, due tick, a hint-set change, or a source-requested
-/// reconcile) or a targeted event batch. Returns the deadline for the next
-/// full reconcile.
+/// One discovery reconciliation pass: syncs the pre-filter and matcher
+/// generation, then either a full reconcile (startup, due tick, a
+/// pre-filter/generation change, or a source-requested reconcile) or a
+/// targeted event batch. A generation change additionally re-offers
+/// every tracked record once the full reconcile's own enumerate() has
+/// run. Returns the deadline for the next full reconcile.
 fn run_pass(
     host: &PluginHost,
     source: &dyn ProcessSource,
     tracked: &mut HashMap<u32, ProcessRecord>,
-    last_hints: &mut Vec<String>,
-    last_name_prefilter: &mut Option<NamePrefilter>,
+    last_filter: &mut Option<Prefilter>,
+    last_generation: &mut Option<u64>,
     next_reconcile: Instant,
 ) -> Instant {
-    let hints_changed = sync_comm_hints(host, source, last_hints);
-    let prefilter_changed = sync_name_prefilter(host, source, last_name_prefilter);
+    let filter_changed = sync_prefilter(host, source, last_filter);
+    let generation_changed = sync_generation(host, last_generation);
     let now = Instant::now();
-    if hints_changed || prefilter_changed || now >= next_reconcile {
+    if filter_changed || generation_changed || now >= next_reconcile {
         full_reconcile(host, source, tracked);
+        if generation_changed {
+            reoffer_tracked(host, tracked);
+        }
         return Instant::now() + RECONCILE_INTERVAL;
     }
     if apply_batch(host, source, tracked, source.drain_events()) {
@@ -385,8 +397,8 @@ impl DiscoveryService {
             .name("vosu-discovery".to_owned())
             .spawn(move || {
                 let mut tracked: HashMap<u32, ProcessRecord> = HashMap::new();
-                let mut last_hints: Vec<String> = Vec::new();
-                let mut last_name_prefilter: Option<NamePrefilter> = None;
+                let mut last_filter: Option<Prefilter> = None;
+                let mut last_generation: Option<u64> = None;
                 // Due immediately: the first pass is always a full
                 // reconcile, regardless of what `source` reports before
                 // then.
@@ -399,8 +411,8 @@ impl DiscoveryService {
                         &host,
                         source.as_ref(),
                         &mut tracked,
-                        &mut last_hints,
-                        &mut last_name_prefilter,
+                        &mut last_filter,
+                        &mut last_generation,
                         next_reconcile,
                     );
                     drop(host);
@@ -431,7 +443,13 @@ impl DiscoveryService {
 
     fn stop_inner(&mut self) {
         self.cancel.store(true, Ordering::Release);
-        self.wake.notify_waiters();
+        // `notify_one` (not `notify_waiters`): a wake between this
+        // store and the loop's own next `wait_next` call stores a
+        // permit that call consumes immediately, instead of being lost
+        // the way `notify_waiters` would lose it for a `Notify` nobody
+        // was already awaiting at the moment it fired (P3: `stop` must
+        // not stall until `RECONCILE_INTERVAL`'s own timeout).
+        self.wake.notify_one();
         if let Some(thread) = self.thread.take()
             && thread.join().is_err()
         {
@@ -456,6 +474,13 @@ mod linux_source;
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 pub use linux_source::LinuxSource;
 mod foreground;
+/// `ProcessRecord` mapping shared by [`linux_source`] and
+/// `src/runtime/discovery.rs::PollingLinuxSource` (P3): gated only on
+/// `target_os = "linux"`, so a `--no-default-features` build without the
+/// `linux-process-events` feature still reaches it
+/// (`linux_common`'s own module doc comment).
+#[cfg(target_os = "linux")]
+pub mod linux_common;
 pub use foreground::FOREGROUND_POLL_INTERVAL;
 #[cfg(windows)]
 pub use foreground::ForegroundPoller;

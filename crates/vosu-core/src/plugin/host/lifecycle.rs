@@ -12,7 +12,7 @@ use vosu_plugin_api::{DetachReason, Message};
 
 use super::super::error::HostError;
 use super::super::host_services::PluginInstanceId;
-use super::super::matcher::NamePrefilter;
+use super::super::matcher::Prefilter;
 use super::super::session::SessionHandle;
 use super::{InstanceSlot, PluginHost};
 
@@ -242,28 +242,28 @@ impl PluginHost {
             .is_empty()
     }
 
-    /// The union of every registered plugin's `comm_hints`
-    /// (`docs/v2/plugin-abi.md` §6.1, `MatcherEngine::comm_hints`'s own
-    /// doc comment): the discovery service's own Linux kernel/CN_PROC
-    /// pre-filter input, re-read on every reconciliation pass so a
-    /// plugin installed or torn down after startup is picked up.
+    /// This host's own matcher-set generation (P2,
+    /// `MatcherEngine::generation`'s own doc comment): re-read on every
+    /// reconciliation pass so a plugin installed or torn down after
+    /// startup is picked up, including re-offering a process discovery
+    /// already tracked under the old set.
     #[must_use]
-    pub fn comm_hints(&self) -> Vec<String> {
+    pub fn matcher_generation(&self) -> u64 {
         self.matcher
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .comm_hints()
+            .generation()
     }
 
-    /// The Windows enumeration-cost pre-filter (M1 §4 phase d2b, unit c,
-    /// `MatcherEngine::name_prefilter`'s own doc comment): re-read on
-    /// every reconciliation pass so a plugin installed or torn down
-    /// after startup narrows or widens what a Windows source opens.
+    /// The unified enumeration-cost pre-filter (§6.1,
+    /// `MatcherEngine::prefilter`'s own doc comment): re-read on every
+    /// reconciliation pass so a plugin installed or torn down after
+    /// startup narrows or widens what a source opens or admits.
     #[must_use]
-    pub fn name_prefilter(&self) -> NamePrefilter {
+    pub fn prefilter(&self) -> Prefilter {
         self.matcher
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .name_prefilter()
+            .prefilter()
     }
 }

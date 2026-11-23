@@ -70,6 +70,8 @@ pub mod timers;
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 pub use discovery::LinuxSource;
+#[cfg(target_os = "linux")]
+pub use discovery::linux_common;
 pub use discovery::{DiscoveryService, FOREGROUND_POLL_INTERVAL, ProcessSource};
 #[cfg(windows)]
 pub use discovery::{ForegroundPoller, WindowsProcessSource};
@@ -84,7 +86,7 @@ pub use host_services::{PluginHostHandler, PluginInstanceId};
 pub use instance::{DEFAULT_QUEUE_CAPACITY, PluginInstance};
 pub use matcher::{
     CandidateProcess, CompiledMatcher, MatchOutcome, MatchPlatform, MatcherEngine, MatcherError,
-    NamePrefilter, OverlapError, PluginId, RegisterError, overlaps,
+    OverlapError, PluginId, Prefilter, RegisterError, overlaps,
 };
 pub use read_plan::{
     DispatchThreadScope, ExecuteBytesError, FinishOutcome, MAX_OUTSTANDING_ASYNC_PLANS,

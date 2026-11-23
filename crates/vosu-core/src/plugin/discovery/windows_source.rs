@@ -2,54 +2,68 @@
 //! §4, phase d2b, unit c): full system enumeration every
 //! [`super::RECONCILE_INTERVAL`] tick — no live event channel exists on
 //! Windows, so [`super::ProcessSource`]'s defaults (`drain_events`,
-//! `notifier`) already do the right thing and this module implements only
-//! [`super::ProcessSource::enumerate`]/[`super::ProcessSource::set_name_prefilter`].
+//! `notifier`) already do the right thing and this module implements
+//! [`super::ProcessSource::enumerate`]/[`super::ProcessSource::set_prefilter`].
 //!
-//! **Enumeration-cost pre-filter** (this unit's own addition over the
-//! first cut landed in d4e0a07): 1.x narrowed its Windows pass with an
+//! **Enumeration-cost pre-filter**: 1.x narrowed its Windows pass with an
 //! osu!-specific `is_windows_candidate_name` before opening each process.
 //! The generic core has no such plugin, so [`WindowsSource::enumerate`]
-//! instead consults [`NamePrefilter`] — the union of every registered
-//! plugin's `process_names` (`MatcherEngine::name_prefilter`, §6.1),
-//! pushed down by [`super::DiscoveryService`]'s own `run_pass` through
-//! [`super::ProcessSource::set_name_prefilter`] exactly like the Linux
-//! comm-hint sync — and skips
-//! `vosu_sys::process::{process_bitness, process_command_line}`
-//! (the "open" calls) for a pid whose bare executable name the filter
-//! rejects. Case rule: [`NamePrefilter::allows`] is always evaluated
-//! against [`MatchPlatform::Windows`] here (§6.1's case-insensitive name
-//! rule), independent of the host this file happens to be compiled on.
+//! instead consults [`Prefilter`] — the union of every registered
+//! plugin's hint names (`MatcherEngine::prefilter`, §6.1), pushed down by
+//! [`super::DiscoveryService`]'s own `run_pass` through
+//! [`super::ProcessSource::set_prefilter`] exactly like Linux's own comm
+//! pre-filter sync — and skips [`ProcessOps::bitness`]/
+//! [`ProcessOps::command_line`]/[`ProcessOps::image_path`] (the "open"
+//! calls) for a pid whose bare executable name the filter rejects. Case
+//! rule: [`Prefilter::allows`] is always evaluated against
+//! [`MatchPlatform::Windows`] here (§6.1's case-insensitive name rule),
+//! independent of the host this file happens to be compiled on.
 //!
 //! **Unfiltered fallback**: a plugin whose `[match]` table matches only
-//! by `process_path_patterns`/`command_line_patterns` can accept a
-//! process whose executable name is nowhere in any `process_names` list,
-//! so narrowing by name would silently hide it. `MatcherEngine` already
-//! encodes this: the moment *any* registered plugin is not
-//! `names_only`, `name_prefilter()` returns [`NamePrefilter::Unfiltered`]
-//! for the whole set (not just that one plugin), and
-//! [`WindowsSource::enumerate`] opens every process again, exactly as
-//! before this unit.
+//! by `process_path_patterns`/`command_line_patterns` (with no usable
+//! hint, Windows has none, `MatcherEngine::prefilter`'s own doc comment)
+//! can accept a process whose executable name is nowhere in any
+//! `process_names` list, so narrowing by name would silently hide it.
+//! `MatcherEngine` already encodes this: the moment *any* registered
+//! plugin is not `names_only`, `prefilter()` returns
+//! [`Prefilter::Unfiltered`] for the whole set (not just that one
+//! plugin), and [`WindowsSource::enumerate`] opens every process again.
 //!
-//! This also still deliberately skips 1.x's `windows_metadata_cache`
-//! (`CachedWindowsMetadata`, keyed by `creation_time()`): that cache's
-//! safety depends on `creation_time()` to detect pid reuse before serving
-//! stale bitness/command-line data for the new occurrence, and that
-//! function is outside this unit's listed surface
-//! (`enumerate_processes`/`process_bitness`/`process_command_line`).
-//! Re-reading every still-admitted process every tick is the simple,
-//! always-correct alternative; a `creation_time`-backed cache is a future
-//! optimization, not required for M1. Discovery's own
-//! `discovery.rs::apply_appeared` already handles pid reuse correctly at
-//! the `ProcessRecord` level (a changed name/path/command_line/bitness is
-//! reported as an exit immediately followed by a fresh appearance); this
-//! source only needs to make sure a reused pid whose *new* occurrence no
-//! longer matches the pre-filter stops being reported at all, which
-//! `tests::pid_reuse_with_a_name_change_drops_the_stale_entry`
-//! below proves directly.
+//! **Metadata cache** (P1 "Windows cost"): keyed by `(pid, create_time)`,
+//! mirroring 1.x's own `windows_metadata_cache`/`CachedWindowsMetadata`
+//! (`src/instance/discovery.rs`) — `create_time` detects pid reuse before
+//! serving stale bitness/command-line/path data for a new occurrence, so
+//! even when the pre-filter is [`Prefilter::Unfiltered`] (every process
+//! admitted; `vosu-osu`'s own matcher will declare path patterns) each
+//! tick opens only pids the cache has not already seen at their current
+//! `create_time` — [`tests::cache_hits_do_not_reopen_an_unchanged_pid`]
+//! proves this through [`ProcessOps`]'s own open-count log.
+//!
+//! **Identity and pid reuse**: `ProcessOps::enumerate`'s own
+//! `create_time` (`vosu_sys::process::ProcessEntry::create_time`, read
+//! directly from `SYSTEM_PROCESS_INFORMATION` without opening the
+//! process) is `ProcessRecord::start_time`'s source on this platform —
+//! `discovery.rs::same_occurrence` (P1) compares it, not name/path/
+//! command_line/bitness, so a still-running process that rewrites its
+//! own argv is never churned, and a reused pid with identical metadata
+//! but a new `create_time` is still reported as an exit immediately
+//! followed by a fresh appearance. This source only needs to make sure a
+//! reused pid whose *new* occurrence no longer matches the pre-filter
+//! stops being reported at all, which
+//! `tests::pid_reuse_with_a_name_change_drops_the_stale_entry` below
+//! proves directly.
+//!
+//! **Executable path**: [`ProcessOps::image_path`]
+//! (`vosu_sys::process::process_image_path`, `QueryFullProcessImageNameW`)
+//! is the preferred [`ProcessRecord::path`] source — a raw command line's
+//! argv[0] can be relative, bare, or whatever an unrelated
+//! `lpApplicationName` happened to be, and `process_path_patterns`
+//! matches the full executable path (§6.1). `executable_path_from_command_line`
+//! is only the fallback for a pid whose image path read fails.
 //!
 //! The [`ProcessOps`] seam (real Win32 calls vs. a synthetic recording
-//! implementation) makes the skip-on-non-match and pid-reuse behavior
-//! unit-testable on any host: [`WindowsSource`]/[`ProcessOps`]/
+//! implementation) makes the skip-on-non-match, cache, and pid-reuse
+//! behavior unit-testable on any host: [`WindowsSource`]/[`ProcessOps`]/
 //! [`RawEntry`] compile under `#[cfg(any(windows, test))]`, [`RealOps`]
 //! (the only piece that actually calls into `vosu_sys::process`) stays
 //! `#[cfg(windows)]`-only, compile-checked exclusively through
@@ -57,6 +71,8 @@
 //! nothing under `#[cfg(windows)]` in this file runs natively in this
 //! environment).
 
+#[cfg(any(windows, test))]
+use std::collections::HashMap;
 #[cfg(any(windows, test))]
 use std::io;
 #[cfg(any(windows, test))]
@@ -68,7 +84,7 @@ use vosu_plugin_api::Bitness;
 #[cfg(any(windows, test))]
 use super::super::host::ProcessRecord;
 #[cfg(any(windows, test))]
-use super::super::matcher::{MatchPlatform, NamePrefilter};
+use super::super::matcher::{MatchPlatform, Prefilter};
 #[cfg(any(windows, test))]
 use super::ProcessSource;
 
@@ -80,7 +96,9 @@ use super::ProcessSource;
 /// needs the full executable path, not just its containing directory.
 /// Returns `None` for an empty or whitespace-only command line, so the
 /// caller can fall back to the raw process-list name instead of reporting
-/// an empty path.
+/// an empty path. Only a fallback itself now (module doc comment
+/// "Executable path"): [`ProcessOps::image_path`] is preferred whenever
+/// it succeeds.
 /// Compiled for `#[cfg(windows)]` (the real backend below) and `test`
 /// (this module's own `tests`, run on Linux): a non-Windows, non-test
 /// build has no caller, which `-D warnings`' `dead_code` lint correctly
@@ -110,11 +128,12 @@ pub(crate) fn executable_path_from_command_line(command_line: &str) -> Option<St
 /// `std::path::Path` would silently use `/`-only splitting when this
 /// pure function is compiled for its `test` cfg on a non-Windows host,
 /// giving a wrong answer there that a Windows build would not
-/// reproduce). `entry_name` is also the fallback for
-/// [`ProcessRecord::path`] when `command_line` does not parse to a
-/// usable executable path (an empty command line, or one
-/// `CreateProcess` never populated). Same `#[cfg(any(windows, test))]`
-/// as [`executable_path_from_command_line`] and for the same reason.
+/// reproduce). `image_path` (§6.1's `process_path_patterns` source,
+/// module doc comment) is preferred for [`ProcessRecord::path`];
+/// `entry_name` is the fallback when it is `None` (an image-path read
+/// failure) *and* `command_line` does not parse to a usable executable
+/// path either. Same `#[cfg(any(windows, test))]` as
+/// [`executable_path_from_command_line`] and for the same reason.
 #[cfg(any(windows, test))]
 #[must_use]
 pub(crate) fn build_record(
@@ -122,44 +141,59 @@ pub(crate) fn build_record(
     entry_name: &str,
     bitness: Bitness,
     command_line: String,
+    image_path: Option<String>,
+    start_time: u64,
 ) -> ProcessRecord {
-    let path =
-        executable_path_from_command_line(&command_line).unwrap_or_else(|| entry_name.to_owned());
+    let path = image_path
+        .or_else(|| executable_path_from_command_line(&command_line))
+        .unwrap_or_else(|| entry_name.to_owned());
     ProcessRecord {
         pid,
         name: entry_name.to_owned(),
         path,
         command_line,
         bitness,
+        start_time,
     }
 }
 
 /// One raw OS process-list entry [`WindowsSource::enumerate`]'s
-/// pre-filter check needs: pid and bare executable name. A local type,
-/// not `vosu_sys::process::ProcessEntry` (`#[cfg(windows)]`-only), so the
-/// pre-filter skip behavior below is unit-testable on any host.
+/// pre-filter check needs: pid, bare executable name, and `create_time`
+/// (identity/cache key, module doc comment). A local type, not
+/// `vosu_sys::process::ProcessEntry` (`#[cfg(windows)]`-only), so the
+/// pre-filter skip, cache, and pid-reuse behavior below are unit-testable
+/// on any host.
 #[cfg(any(windows, test))]
 struct RawEntry {
     pid: u32,
     executable: String,
+    create_time: u64,
 }
 
 /// Seam over the raw Win32 process calls [`WindowsSource::enumerate`]
 /// needs, so "a non-matching name is never opened" (no [`Self::bitness`]/
-/// [`Self::command_line`] call for it) and pid-reuse-with-a-name-change
-/// behavior are unit-testable on any host. [`RealOps`] is the
-/// `#[cfg(windows)]` production implementation; this module's own
-/// `tests` use a synthetic recording implementation instead.
+/// [`Self::command_line`]/[`Self::image_path`] call for it), the
+/// `(pid, create_time)` cache, and pid-reuse-with-a-name-change behavior
+/// are unit-testable on any host. [`RealOps`] is the `#[cfg(windows)]`
+/// production implementation; this module's own `tests` use a synthetic
+/// recording implementation instead.
 #[cfg(any(windows, test))]
 trait ProcessOps {
     fn enumerate(&self) -> io::Result<Vec<RawEntry>>;
     fn bitness(&self, pid: u32) -> io::Result<Bitness>;
     fn command_line(&self, pid: u32) -> io::Result<String>;
+    /// The full executable image path (module doc comment "Executable
+    /// path"). `Ok` with no success path makes this indistinguishable
+    /// from "not available" to callers, which already fall back to
+    /// `command_line`'s own argv[0]: `Err` here never fails the whole
+    /// pid the way [`Self::bitness`]/[`Self::command_line`] failing does.
+    fn image_path(&self, pid: u32) -> io::Result<String>;
 }
 
 #[cfg(windows)]
 use vosu_sys::process::{
     MemoryError, ProcessBitness, enumerate_processes, process_bitness, process_command_line,
+    process_image_path,
 };
 
 #[cfg(windows)]
@@ -178,8 +212,8 @@ fn to_io_error(error: MemoryError) -> io::Error {
 /// `#[cfg(windows)]`, compile-checked only through `cargo xwin`
 /// (`AGENTS.md`: no native Windows run is possible here, the Windows VM
 /// being down) — unverified natively: every call into `vosu_sys::process`
-/// below (`enumerate_processes`, `process_bitness`,
-/// `process_command_line`), and in particular whether the
+/// below (`enumerate_processes`, `process_bitness`, `process_command_line`,
+/// `process_image_path`), and in particular whether the
 /// access-denied/exited-mid-enumeration skip in [`WindowsSource::enumerate`]
 /// actually keeps the pass going on a real Windows host the way 1.x's
 /// equivalent does.
@@ -196,6 +230,7 @@ impl ProcessOps for RealOps {
             .map(|entry| RawEntry {
                 pid: entry.pid,
                 executable: entry.executable,
+                create_time: entry.create_time,
             })
             .collect())
     }
@@ -209,27 +244,46 @@ impl ProcessOps for RealOps {
     fn command_line(&self, pid: u32) -> io::Result<String> {
         process_command_line(pid).map_err(to_io_error)
     }
+
+    fn image_path(&self, pid: u32) -> io::Result<String> {
+        process_image_path(pid).map_err(to_io_error)
+    }
+}
+
+/// Cached per-pid metadata (module doc comment "Metadata cache"), reused
+/// across ticks while `create_time` stays the same.
+#[cfg(any(windows, test))]
+#[derive(Clone)]
+struct CachedWindowsMetadata {
+    create_time: u64,
+    bitness: Bitness,
+    command_line: String,
+    image_path: Option<String>,
 }
 
 /// The [`ProcessSource`] itself: full enumeration through `ops` every
 /// [`super::RECONCILE_INTERVAL`] tick, skipping a pid whose bare
-/// executable name [`NamePrefilter::allows`] rejects before ever calling
-/// [`ProcessOps::bitness`]/[`ProcessOps::command_line`] for it (module
-/// doc comment's "enumeration-cost pre-filter"). A pid that *did* pass
-/// the pre-filter but fails either read (exited mid-enumeration, access
-/// denied) is still skipped rather than failing the whole pass — 1.x's
-/// own `let Ok(..) = .. else { continue; }` handling
-/// (`src/instance/discovery.rs`'s `NativeProcessProvider::enumerate`).
+/// executable name [`Prefilter::allows`] rejects before ever calling
+/// [`ProcessOps::bitness`]/[`ProcessOps::command_line`]/
+/// [`ProcessOps::image_path`] for it (module doc comment "Enumeration-cost
+/// pre-filter"), and serving a pid already in `cache` at its current
+/// `create_time` from there instead of reopening it (module doc comment
+/// "Metadata cache"). A pid that passed the pre-filter but fails either
+/// read (exited mid-enumeration, access denied) is still skipped rather
+/// than failing the whole pass — 1.x's own `let Ok(..) = .. else {
+/// continue; }` handling (`src/instance/discovery.rs`'s
+/// `NativeProcessProvider::enumerate`).
 #[cfg(any(windows, test))]
 pub struct WindowsSource<Ops> {
     ops: Ops,
-    /// Starts [`NamePrefilter::Unfiltered`] (fail open): the discovery
-    /// service always calls [`Self::set_name_prefilter`] (via
-    /// `run_pass`'s `sync_name_prefilter`) before its very first
-    /// `enumerate()`, so this default is never actually observed in
-    /// production — it only avoids wrongly narrowing a source some other
-    /// caller enumerates before syncing it.
-    prefilter: Mutex<NamePrefilter>,
+    /// Starts [`Prefilter::Unfiltered`] (fail open): the discovery
+    /// service always calls [`Self::set_prefilter`] (via `run_pass`'s
+    /// `sync_prefilter`) before its very first `enumerate()`, so this
+    /// default is never actually observed in production — it only avoids
+    /// wrongly narrowing a source some other caller enumerates before
+    /// syncing it.
+    prefilter: Mutex<Prefilter>,
+    cache: Mutex<HashMap<u32, CachedWindowsMetadata>>,
 }
 
 #[cfg(any(windows, test))]
@@ -237,7 +291,8 @@ impl<Ops> WindowsSource<Ops> {
     fn new(ops: Ops) -> Self {
         Self {
             ops,
-            prefilter: Mutex::new(NamePrefilter::Unfiltered),
+            prefilter: Mutex::new(Prefilter::Unfiltered),
+            cache: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -251,32 +306,57 @@ impl<Ops: ProcessOps + Send + Sync> ProcessSource for WindowsSource<Ops> {
             .unwrap_or_else(|poison| poison.into_inner())
             .clone();
         let entries = self.ops.enumerate()?;
+        let mut cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        cache.retain(|pid, _| entries.iter().any(|entry| entry.pid == *pid));
         let mut records = Vec::with_capacity(entries.len());
         for entry in entries {
             if !filter.allows(MatchPlatform::Windows, &entry.executable) {
                 continue;
             }
-            let Ok(bitness) = self.ops.bitness(entry.pid) else {
-                continue;
-            };
-            let Ok(command_line) = self.ops.command_line(entry.pid) else {
-                continue;
+            let cached = cache
+                .get(&entry.pid)
+                .filter(|cached| cached.create_time == entry.create_time)
+                .cloned();
+            let metadata = if let Some(cached) = cached {
+                cached
+            } else {
+                let Ok(bitness) = self.ops.bitness(entry.pid) else {
+                    continue;
+                };
+                let Ok(command_line) = self.ops.command_line(entry.pid) else {
+                    continue;
+                };
+                let image_path = self.ops.image_path(entry.pid).ok();
+                let metadata = CachedWindowsMetadata {
+                    create_time: entry.create_time,
+                    bitness,
+                    command_line,
+                    image_path,
+                };
+                cache.insert(entry.pid, metadata.clone());
+                metadata
             };
             records.push(build_record(
                 entry.pid,
                 &entry.executable,
-                bitness,
-                command_line,
+                metadata.bitness,
+                metadata.command_line,
+                metadata.image_path,
+                metadata.create_time,
             ));
         }
         Ok(records)
     }
 
-    fn set_name_prefilter(&self, filter: &NamePrefilter) {
+    fn set_prefilter(&self, filter: &Prefilter) -> io::Result<()> {
         *self
             .prefilter
             .lock()
             .unwrap_or_else(|poison| poison.into_inner()) = filter.clone();
+        Ok(())
     }
 }
 
@@ -302,7 +382,7 @@ mod tests {
     use vosu_plugin_api::Bitness;
 
     use super::{
-        NamePrefilter, ProcessOps, ProcessSource, RawEntry, WindowsSource, build_record,
+        Prefilter, ProcessOps, ProcessSource, RawEntry, WindowsSource, build_record,
         executable_path_from_command_line,
     };
 
@@ -349,37 +429,56 @@ mod tests {
     }
 
     #[test]
-    fn build_record_uses_parsed_path_and_entry_name() {
+    fn build_record_prefers_the_image_path_over_the_command_line() {
         let record = build_record(
             4242,
             "osu!.exe",
             Bitness::X64,
             r#""C:\Games\osu!\osu!.exe" -nosplash"#.to_owned(),
+            Some(r"C:\Games\osu-lazer\osu!.exe".to_owned()),
+            7,
         );
         assert_eq!(record.pid, 4242);
-        assert_eq!(record.path, r"C:\Games\osu!\osu!.exe");
+        assert_eq!(record.path, r"C:\Games\osu-lazer\osu!.exe");
         assert_eq!(record.name, "osu!.exe");
         assert_eq!(record.bitness, Bitness::X64);
         assert_eq!(record.command_line, r#""C:\Games\osu!\osu!.exe" -nosplash"#);
+        assert_eq!(record.start_time, 7);
     }
 
     #[test]
-    fn build_record_falls_back_to_entry_name_without_a_parseable_command_line() {
-        let record = build_record(7, "svchost.exe", Bitness::X86, String::new());
+    fn build_record_falls_back_to_the_command_line_without_an_image_path() {
+        let record = build_record(
+            4242,
+            "osu!.exe",
+            Bitness::X64,
+            r#""C:\Games\osu!\osu!.exe" -nosplash"#.to_owned(),
+            None,
+            0,
+        );
+        assert_eq!(record.path, r"C:\Games\osu!\osu!.exe");
+    }
+
+    #[test]
+    fn build_record_falls_back_to_entry_name_without_an_image_path_or_command_line() {
+        let record = build_record(7, "svchost.exe", Bitness::X86, String::new(), None, 0);
         assert_eq!(record.path, "svchost.exe");
         assert_eq!(record.name, "svchost.exe");
     }
 
     /// Synthetic [`ProcessOps`]: a mutable in-memory process list plus a
-    /// log of every pid [`Self::bitness`]/[`Self::command_line`] was
-    /// called for — "opened", in the enumeration-cost sense this unit's
-    /// pre-filter exists to avoid.
+    /// log of every pid [`Self::bitness`] was called for — "opened", in
+    /// the enumeration-cost sense the pre-filter and cache both exist to
+    /// avoid (`enumerate`'s own implementation always calls
+    /// [`Self::bitness`] exactly once per real open, before
+    /// [`Self::command_line`]/[`Self::image_path`]).
     #[derive(Clone)]
     struct FakeEntry {
         pid: u32,
         name: &'static str,
         bitness: Bitness,
         command_line: &'static str,
+        create_time: u64,
     }
 
     #[derive(Default)]
@@ -407,6 +506,7 @@ mod tests {
                 .map(|entry| RawEntry {
                     pid: entry.pid,
                     executable: entry.name.to_owned(),
+                    create_time: entry.create_time,
                 })
                 .collect())
         }
@@ -434,6 +534,10 @@ mod tests {
                 .map(|entry| entry.command_line.to_owned())
                 .ok_or_else(|| io::Error::other("pid gone"))
         }
+
+        fn image_path(&self, _pid: u32) -> io::Result<String> {
+            Err(io::Error::other("no image path in this fixture"))
+        }
     }
 
     #[test]
@@ -445,16 +549,20 @@ mod tests {
                 name: "match.exe",
                 bitness: Bitness::X64,
                 command_line: "match.exe",
+                create_time: 1,
             },
             FakeEntry {
                 pid: 2,
                 name: "nomatch.exe",
                 bitness: Bitness::X64,
                 command_line: "nomatch.exe",
+                create_time: 1,
             },
         ]);
         let source = WindowsSource::new(ops);
-        source.set_name_prefilter(&NamePrefilter::Names(vec!["match.exe".to_owned()]));
+        source
+            .set_prefilter(&Prefilter::Names(vec!["match.exe".to_owned()]))
+            .expect("set_prefilter never fails on Windows");
 
         let records = source.enumerate().expect("enumerate succeeds");
 
@@ -479,9 +587,12 @@ mod tests {
             name: "Match.EXE",
             bitness: Bitness::X64,
             command_line: "Match.EXE",
+            create_time: 1,
         }]);
         let source = WindowsSource::new(ops);
-        source.set_name_prefilter(&NamePrefilter::Names(vec!["match.exe".to_owned()]));
+        source
+            .set_prefilter(&Prefilter::Names(vec!["match.exe".to_owned()]))
+            .expect("set_prefilter never fails on Windows");
 
         let records = source.enumerate().expect("enumerate succeeds");
 
@@ -500,9 +611,12 @@ mod tests {
             name: "anything.exe",
             bitness: Bitness::X64,
             command_line: "anything.exe",
+            create_time: 1,
         }]);
         let source = WindowsSource::new(ops);
-        source.set_name_prefilter(&NamePrefilter::Unfiltered);
+        source
+            .set_prefilter(&Prefilter::Unfiltered)
+            .expect("set_prefilter never fails on Windows");
 
         let records = source.enumerate().expect("enumerate succeeds");
 
@@ -525,9 +639,12 @@ mod tests {
             name: "match.exe",
             bitness: Bitness::X64,
             command_line: "match.exe",
+            create_time: 1,
         }]);
         let source = WindowsSource::new(ops);
-        source.set_name_prefilter(&NamePrefilter::Names(vec!["match.exe".to_owned()]));
+        source
+            .set_prefilter(&Prefilter::Names(vec!["match.exe".to_owned()]))
+            .expect("set_prefilter never fails on Windows");
 
         let first = source.enumerate().expect("enumerate succeeds");
         assert_eq!(first.len(), 1, "the original occurrence matches");
@@ -539,6 +656,7 @@ mod tests {
             name: "unrelated.exe",
             bitness: Bitness::X64,
             command_line: "unrelated.exe",
+            create_time: 2,
         }]);
         let second = source.enumerate().expect("enumerate succeeds");
 
@@ -556,9 +674,12 @@ mod tests {
             name: "other.exe",
             bitness: Bitness::X64,
             command_line: "other.exe",
+            create_time: 1,
         }]);
         let source = WindowsSource::new(ops);
-        source.set_name_prefilter(&NamePrefilter::Names(vec!["match.exe".to_owned()]));
+        source
+            .set_prefilter(&Prefilter::Names(vec!["match.exe".to_owned()]))
+            .expect("set_prefilter never fails on Windows");
 
         assert!(source.enumerate().expect("enumerate succeeds").is_empty());
 
@@ -568,10 +689,82 @@ mod tests {
             name: "match.exe",
             bitness: Bitness::X64,
             command_line: "match.exe",
+            create_time: 2,
         }]);
         let records = source.enumerate().expect("enumerate succeeds");
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].pid, 3);
+    }
+
+    #[test]
+    fn cache_hits_do_not_reopen_an_unchanged_pid() {
+        // P1 "Windows cost": even `Prefilter::Unfiltered` (every process
+        // admitted) must open a still-live, unchanged process only once.
+        let ops = FakeOps::default();
+        ops.set_entries(vec![FakeEntry {
+            pid: 11,
+            name: "osu!.exe",
+            bitness: Bitness::X64,
+            command_line: "osu!.exe",
+            create_time: 42,
+        }]);
+        let source = WindowsSource::new(ops);
+        source
+            .set_prefilter(&Prefilter::Unfiltered)
+            .expect("set_prefilter never fails on Windows");
+
+        let first = source.enumerate().expect("enumerate succeeds");
+        assert_eq!(first.len(), 1);
+        let second = source.enumerate().expect("enumerate succeeds");
+        assert_eq!(second.len(), 1);
+
+        assert_eq!(
+            *source
+                .ops
+                .opened
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()),
+            vec![11],
+            "the second pass must serve pid 11 from the cache instead of reopening it"
+        );
+    }
+
+    #[test]
+    fn a_new_start_time_invalidates_the_cache() {
+        let ops = FakeOps::default();
+        ops.set_entries(vec![FakeEntry {
+            pid: 11,
+            name: "osu!.exe",
+            bitness: Bitness::X64,
+            command_line: "osu!.exe",
+            create_time: 42,
+        }]);
+        let source = WindowsSource::new(ops);
+        source
+            .set_prefilter(&Prefilter::Unfiltered)
+            .expect("set_prefilter never fails on Windows");
+        source.enumerate().expect("enumerate succeeds");
+
+        // The OS reused pid 11 for a new occurrence with the same name,
+        // bitness and command line but a different `create_time`.
+        source.ops.set_entries(vec![FakeEntry {
+            pid: 11,
+            name: "osu!.exe",
+            bitness: Bitness::X64,
+            command_line: "osu!.exe",
+            create_time: 43,
+        }]);
+        source.enumerate().expect("enumerate succeeds");
+
+        assert_eq!(
+            *source
+                .ops
+                .opened
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner()),
+            vec![11, 11],
+            "a new create_time must reopen the pid rather than serve the stale cache entry"
+        );
     }
 }

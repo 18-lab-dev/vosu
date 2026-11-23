@@ -152,7 +152,13 @@ mod backend {
 
         fn stop_inner(&mut self) {
             self.cancel.store(true, Ordering::Release);
-            self.wake.notify_waiters();
+            // `notify_one` (not `notify_waiters`): see
+            // `DiscoveryService::stop_inner`'s own comment -- a wake
+            // between this store and the loop's next wait stores a
+            // permit that wait consumes immediately, instead of being
+            // lost (P3: `stop` must not stall until
+            // `FOREGROUND_POLL_INTERVAL`'s own timeout).
+            self.wake.notify_one();
             if let Some(thread) = self.thread.take()
                 && thread.join().is_err()
             {

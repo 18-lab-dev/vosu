@@ -146,6 +146,16 @@ pub struct ProcessRecord {
     /// The joined argv.
     pub command_line: String,
     pub bitness: Bitness,
+    /// This OS process occurrence's own start time, in a unit private to
+    /// each platform's own source (Linux: `/proc/<pid>/stat`'s
+    /// `starttime` field, clock ticks since boot; Windows: the
+    /// `FILETIME`-shaped value `GetProcessTimes`/`SYSTEM_PROCESS_INFORMATION`'s
+    /// `CreateTime` report) — never compared across platforms, only
+    /// against another observation of the same pid on the same host
+    /// (`discovery.rs::same_occurrence`, P1: identity is `start_time`,
+    /// not this struct's other fields, so a still-running process that
+    /// rewrites its own argv is never churned).
+    pub start_time: u64,
 }
 
 /// Owns every live plugin instance (replacing a bare `Vec<PluginInstance>`,

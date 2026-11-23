@@ -272,35 +272,38 @@ pub fn overlaps(platform: MatchPlatform, a: &MatchTable, b: &MatchTable) -> bool
         || hints_hit(&b.comm_hints, &a.process_names, &a.comm_hints)
 }
 
-/// The Windows enumeration-cost pre-filter input (M1 §4 phase d2b, unit
-/// c): the union of every registered plugin's `process_names`, or
-/// [`NamePrefilter::Unfiltered`] the moment any registered plugin also
-/// matches by `process_path_patterns`/`command_line_patterns`
-/// ([`CompiledMatcher::names_only`]) — those can accept a process whose
-/// executable name was never in any `process_names` list, so narrowing
-/// by name alone would silently hide it from a pre-filtered source
-/// before userspace matching (`docs/v2/plugin-abi.md` §6.1) ever runs.
-/// [`MatcherEngine::name_prefilter`] is the only producer;
-/// [`Self::allows`] is the only consumer a real source needs.
+/// The enumeration-cost pre-filter (§6.1), unified across both released
+/// targets (M1 §4 phase d2b): Windows's own "which pids are worth
+/// opening at all" narrowing and Linux's kernel/CN_PROC comm pre-filter
+/// are the same concept — a deduplicated set of names a process's bare
+/// executable name (Windows) or `comm` (Linux, via substring) must hit
+/// before anything else about it is read — so one type and one producer
+/// ([`MatcherEngine::prefilter`]) serve both, and the widening rule is
+/// identical in shape even though what counts as a "usable hint" differs
+/// per platform (that method's own doc comment).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NamePrefilter {
+pub enum Prefilter {
     /// At least one registered plugin matches by path or command-line
-    /// pattern: every process must still be read in full.
+    /// pattern with no usable hint of its own: every process must still
+    /// be read in full (§6.1's widening rule).
     Unfiltered,
-    /// Every registered plugin matches by `process_names` only: this is
-    /// their deduplicated union (unsorted order not guaranteed to
-    /// callers; only equality/membership is a contract).
+    /// Every registered plugin either matches by `process_names` only,
+    /// or declares a usable hint for its path/command-line patterns:
+    /// this is the deduplicated union of those hint names (unsorted
+    /// order not guaranteed to callers; only equality/membership is a
+    /// contract).
     Names(Vec<String>),
 }
 
-impl NamePrefilter {
-    /// Whether `name` (an observed process's bare executable file name,
-    /// not a path) can possibly match some registered plugin, under
-    /// `platform`'s own case rule (§6.1: Windows name matching is
-    /// case-insensitive, `names_equal`). Cheaply reproduces
-    /// [`CompiledMatcher::matches`]'s own `process_names` check without
-    /// needing a full [`CandidateProcess`] — a source consults this
-    /// before reading anything else about the process at all.
+impl Prefilter {
+    /// Whether `name` (an observed process's bare executable file name
+    /// on Windows, or its `comm` on Linux) can possibly match some
+    /// registered plugin, under `platform`'s own case rule (§6.1:
+    /// Windows name matching is case-insensitive, `names_equal`).
+    /// Cheaply reproduces [`CompiledMatcher::matches`]'s own
+    /// `process_names` check without needing a full [`CandidateProcess`]
+    /// — a source consults this before reading anything else about the
+    /// process at all.
     #[must_use]
     pub fn allows(&self, platform: MatchPlatform, name: &str) -> bool {
         match self {
@@ -349,6 +352,18 @@ fn prefilter_entries(table: &MatchTable) -> usize {
         + table.comm_hints.len()
 }
 
+/// Whether `table`'s own matcher has a hint the pre-filter can narrow
+/// by, used only by [`MatcherEngine::prefilter`]'s widening rule
+/// (§6.1): on Linux, a `comm_hints` entry or a `process_names` entry
+/// short enough to match the kernel `comm` field; on Windows, always
+/// `false` — Windows has no `comm`/CN_PROC pre-filter at all (§6.1:
+/// "accepted but unused on Windows"), so a plugin there never has a
+/// hint to fall back on once it declares a path/command-line pattern.
+fn has_usable_hint(linux: bool, table: &MatchTable) -> bool {
+    linux
+        && (!table.comm_hints.is_empty() || table.process_names.iter().any(|name| name.len() <= 15))
+}
+
 /// A plugin whose `comm_hints`/short `process_names` would push the
 /// combined Linux pre-filter past [`PREFILTER_LIMIT`] (§6.1, D18): refused
 /// at manifest validation, in enable order, never silently dropped or
@@ -391,6 +406,12 @@ pub struct MatchOutcome {
 pub struct MatcherEngine {
     platform: MatchPlatform,
     entries: Vec<(PluginId, MatchTable, CompiledMatcher)>,
+    /// Bumped on every [`Self::register`]/[`Self::unregister`] that
+    /// actually changes `entries` (P2: a plugin installed or torn down
+    /// after discovery already tracked a process must still get a
+    /// chance to match it, `DiscoveryService`'s own re-offer-on-change
+    /// wiring).
+    generation: u64,
 }
 
 impl MatcherEngine {
@@ -399,6 +420,7 @@ impl MatcherEngine {
         Self {
             platform,
             entries: Vec::new(),
+            generation: 0,
         }
     }
 
@@ -436,6 +458,7 @@ impl MatcherEngine {
         let compiled =
             CompiledMatcher::compile(self.platform, &table).map_err(RegisterError::Matcher)?;
         self.entries.push((id, table, compiled));
+        self.generation += 1;
         Ok(())
     }
 
@@ -476,7 +499,11 @@ impl MatcherEngine {
     /// shadowed plugin forever. A no-op for an `id` this engine never
     /// registered (or already unregistered).
     pub fn unregister(&mut self, id: &str) {
+        let before = self.entries.len();
         self.entries.retain(|(existing, _, _)| existing != id);
+        if self.entries.len() != before {
+            self.generation += 1;
+        }
     }
 
     /// Whether any plugin is currently registered — the discovery
@@ -489,47 +516,62 @@ impl MatcherEngine {
         self.entries.is_empty()
     }
 
-    /// The union of every registered plugin's `comm_hints`
-    /// (`docs/v2/plugin-abi.md` §6.1), deduplicated and sorted for a
-    /// deterministic change comparison: the discovery service's own
-    /// Linux kernel/CN_PROC pre-filter input. Each plugin's own hints
-    /// are already length-validated by `CompiledMatcher::compile`
-    /// (`Self::register`'s own caller contract); this only merges across
-    /// plugins.
+    /// This engine's own install-set generation (P2): bumped by every
+    /// [`Self::register`]/[`Self::unregister`] that actually changes
+    /// which plugins are installed. `DiscoveryService` re-reads this on
+    /// every reconciliation pass and, on a change, re-offers every
+    /// already-tracked process to [`PluginHost::process_appeared`] — a
+    /// plugin installed (or re-installed) after discovery already saw a
+    /// process must still get a chance to match it, and
+    /// `PluginHost::process_appeared` is idempotent for one it already
+    /// attached.
     #[must_use]
-    pub fn comm_hints(&self) -> Vec<String> {
-        let mut hints: Vec<String> = self
-            .entries
-            .iter()
-            .flat_map(|(_, table, _)| table.comm_hints.iter().cloned())
-            .collect();
-        hints.sort_unstable();
-        hints.dedup();
-        hints
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
-    /// The Windows enumeration-cost pre-filter (M1 §4 phase d2b, unit c,
-    /// [`NamePrefilter`]'s own doc comment): [`NamePrefilter::Unfiltered`]
-    /// the moment any registered plugin's matcher is not
-    /// [`CompiledMatcher::names_only`], otherwise the deduplicated union
-    /// of every registered plugin's `process_names`.
+    /// The unified enumeration-cost pre-filter (§6.1, [`Prefilter`]'s own
+    /// doc comment): [`Prefilter::Unfiltered`] the moment any registered
+    /// plugin's matcher is not [`CompiledMatcher::names_only`] *and* has
+    /// no usable hint of its own (`has_usable_hint`); otherwise the
+    /// deduplicated union of every registered plugin's hint names. A
+    /// plugin's hint names are: on Linux, its `process_names` entries
+    /// short enough to match the kernel `comm` field (`≤15` bytes) plus
+    /// every `comm_hints` entry (§6.1); on Windows, every `process_names`
+    /// entry verbatim (Windows has no `comm` field width limit and no
+    /// `comm_hints` concept at all, so a plugin there either matches by
+    /// name alone or widens the whole pre-filter the moment it also
+    /// declares a path/command-line pattern — exactly 1.x's own
+    /// name-filter-or-nothing behavior).
     #[must_use]
-    pub fn name_prefilter(&self) -> NamePrefilter {
-        if self
+    pub fn prefilter(&self) -> Prefilter {
+        let linux = self.platform == MatchPlatform::Linux;
+        let widens = self
             .entries
             .iter()
-            .any(|(_, _, compiled)| !compiled.names_only())
-        {
-            return NamePrefilter::Unfiltered;
+            .any(|(_, table, compiled)| !compiled.names_only() && !has_usable_hint(linux, table));
+        if widens {
+            return Prefilter::Unfiltered;
         }
         let mut names: Vec<String> = self
             .entries
             .iter()
-            .flat_map(|(_, table, _)| table.process_names.iter().cloned())
+            .flat_map(|(_, table, _)| {
+                table
+                    .process_names
+                    .iter()
+                    .filter(move |name| !linux || name.len() <= 15)
+                    .cloned()
+                    .chain(if linux {
+                        table.comm_hints.clone()
+                    } else {
+                        Vec::new()
+                    })
+            })
             .collect();
         names.sort_unstable();
         names.dedup();
-        NamePrefilter::Names(names)
+        Prefilter::Names(names)
     }
 }
 
@@ -741,12 +783,16 @@ mod tests {
     }
 
     #[test]
-    fn engine_comm_hints_union_deduplicated_and_sorted() {
+    fn prefilter_union_includes_short_process_names_and_comm_hints_deduplicated() {
+        // §6.1: the pre-filter is short `process_names` *plus*
+        // `comm_hints`, not `comm_hints` alone (P1) -- and a plugin whose
+        // `comm_hints` differ from its `process_names` contributes both.
         let mut engine = MatcherEngine::new(MatchPlatform::Linux);
         engine
             .register(
                 "vosu.first".to_string(),
                 MatchTable {
+                    process_names: vec!["osu!.exe".to_string()],
                     // A repeated hint within one plugin's own table
                     // exercises dedup without triggering D18's
                     // cross-plugin overlap rejection below.
@@ -765,9 +811,129 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            engine.comm_hints(),
-            vec!["osu!".to_string(), "other-game".to_string()]
+            engine.prefilter(),
+            Prefilter::Names(vec![
+                "osu!".to_string(),
+                "osu!.exe".to_string(),
+                "other-game".to_string(),
+            ])
         );
+    }
+
+    #[test]
+    fn prefilter_accepts_a_plugin_with_only_process_names() {
+        // The §8 manifest example (`osu!.exe` as the sole matcher): an
+        // empty `comm_hints` must not make the pre-filter match nothing
+        // (P1) -- the short `process_names` entry alone is enough.
+        let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+        engine
+            .register("vosu.osu".to_string(), table(&["osu!.exe"]))
+            .unwrap();
+        assert_eq!(
+            engine.prefilter(),
+            Prefilter::Names(vec!["osu!.exe".to_string()])
+        );
+    }
+
+    #[test]
+    fn prefilter_widens_for_a_path_pattern_plugin_with_no_usable_hint() {
+        let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+        engine
+            .register(
+                "vosu.paths".to_string(),
+                MatchTable {
+                    process_path_patterns: vec![".*/osu/.*".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(engine.prefilter(), Prefilter::Unfiltered);
+    }
+
+    #[test]
+    fn prefilter_stays_narrow_when_a_path_pattern_plugin_also_has_a_hint() {
+        let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+        engine
+            .register(
+                "vosu.paths".to_string(),
+                MatchTable {
+                    process_path_patterns: vec![".*/osu/.*".to_string()],
+                    comm_hints: vec!["osu!".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            engine.prefilter(),
+            Prefilter::Names(vec!["osu!".to_string()])
+        );
+    }
+
+    #[test]
+    fn prefilter_excludes_a_process_names_entry_over_15_bytes_on_linux() {
+        let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+        engine
+            .register("vosu.long".to_string(), table(&["this-name-is-sixteen!"]))
+            .unwrap();
+        assert_eq!(engine.prefilter(), Prefilter::Names(Vec::new()));
+    }
+
+    #[test]
+    fn prefilter_on_windows_ignores_comm_hints_and_the_15_byte_limit() {
+        // §6.1: `comm_hints` is "accepted but unused on Windows", and
+        // Windows has no kernel `comm` field width to respect.
+        let mut engine = MatcherEngine::new(MatchPlatform::Windows);
+        engine
+            .register(
+                "vosu.osu".to_string(),
+                MatchTable {
+                    process_names: vec!["this-name-is-sixteen!".to_string()],
+                    comm_hints: vec!["unused-on-windows".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            engine.prefilter(),
+            Prefilter::Names(vec!["this-name-is-sixteen!".to_string()])
+        );
+    }
+
+    #[test]
+    fn prefilter_on_windows_widens_for_any_path_pattern_plugin() {
+        // Windows has no hint concept at all, so a path-pattern-only
+        // plugin always widens there, unlike Linux's own
+        // `prefilter_stays_narrow_when_a_path_pattern_plugin_also_has_a_hint`.
+        let mut engine = MatcherEngine::new(MatchPlatform::Windows);
+        engine
+            .register(
+                "vosu.paths".to_string(),
+                MatchTable {
+                    process_path_patterns: vec![".*/osu/.*".to_string()],
+                    comm_hints: vec!["osu!".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(engine.prefilter(), Prefilter::Unfiltered);
+    }
+
+    #[test]
+    fn generation_bumps_on_register_and_unregister_but_not_on_a_no_op() {
+        let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+        assert_eq!(engine.generation(), 0);
+        engine
+            .register("vosu.osu".to_string(), table(&["osu!.exe"]))
+            .unwrap();
+        assert_eq!(engine.generation(), 1);
+        engine.unregister("vosu.absent");
+        assert_eq!(
+            engine.generation(),
+            1,
+            "unregistering an unknown id is a no-op"
+        );
+        engine.unregister("vosu.osu");
+        assert_eq!(engine.generation(), 2);
     }
 
     #[test]
