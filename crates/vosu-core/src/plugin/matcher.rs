@@ -425,6 +425,35 @@ impl MatcherEngine {
     pub fn unregister(&mut self, id: &str) {
         self.entries.retain(|(existing, _, _)| existing != id);
     }
+
+    /// Whether any plugin is currently registered — the discovery
+    /// service's own "zero cost when unused" gate
+    /// (`docs/v2/implementation-plan.md` M1 §4, phase d2b): no registered
+    /// plugin can ever match a process, so there is nothing for the
+    /// service to usefully watch for.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// The union of every registered plugin's `comm_hints`
+    /// (`docs/v2/plugin-abi.md` §6.1), deduplicated and sorted for a
+    /// deterministic change comparison: the discovery service's own
+    /// Linux kernel/CN_PROC pre-filter input. Each plugin's own hints
+    /// are already length-validated by `CompiledMatcher::compile`
+    /// (`Self::register`'s own caller contract); this only merges across
+    /// plugins.
+    #[must_use]
+    pub fn comm_hints(&self) -> Vec<String> {
+        let mut hints: Vec<String> = self
+            .entries
+            .iter()
+            .flat_map(|(_, table, _)| table.comm_hints.iter().cloned())
+            .collect();
+        hints.sort_unstable();
+        hints.dedup();
+        hints
+    }
 }
 
 /// The running host's own [`MatchPlatform`] (§6.1's two released
@@ -622,6 +651,46 @@ mod tests {
                 candidate,
             }) if existing == "vosu.osu" && candidate == "vosu.other"
         ));
+    }
+
+    #[test]
+    fn engine_is_empty_until_first_register() {
+        let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+        assert!(engine.is_empty());
+        engine
+            .register("vosu.osu".to_string(), table(&["osu!.exe"]))
+            .unwrap();
+        assert!(!engine.is_empty());
+    }
+
+    #[test]
+    fn engine_comm_hints_union_deduplicated_and_sorted() {
+        let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+        engine
+            .register(
+                "vosu.first".to_string(),
+                MatchTable {
+                    // A repeated hint within one plugin's own table
+                    // exercises dedup without triggering D18's
+                    // cross-plugin overlap rejection below.
+                    comm_hints: vec!["osu!".to_string(), "osu!".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        engine
+            .register(
+                "vosu.second".to_string(),
+                MatchTable {
+                    comm_hints: vec!["other-game".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            engine.comm_hints(),
+            vec!["osu!".to_string(), "other-game".to_string()]
+        );
     }
 
     #[test]

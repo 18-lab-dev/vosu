@@ -225,4 +225,32 @@ impl PluginHost {
         self.forget_read_plan_session(handle);
         self.recompute_focus();
     }
+
+    /// Whether any enabled plugin currently has a registered `[match]`
+    /// table (`docs/v2/plugin-abi.md` §6.1): the discovery service's own
+    /// "zero cost when unused" gate (`docs/v2/implementation-plan.md` M1
+    /// §4, phase d2b) — production `BUNDLED` holds no matching plugin
+    /// until `vosu-osu` lands, so this is `false` there and the caller
+    /// never starts the discovery service at all.
+    #[must_use]
+    pub fn has_enabled_matchers(&self) -> bool {
+        !self
+            .matcher
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .is_empty()
+    }
+
+    /// The union of every registered plugin's `comm_hints`
+    /// (`docs/v2/plugin-abi.md` §6.1, `MatcherEngine::comm_hints`'s own
+    /// doc comment): the discovery service's own Linux kernel/CN_PROC
+    /// pre-filter input, re-read on every reconciliation pass so a
+    /// plugin installed or torn down after startup is picked up.
+    #[must_use]
+    pub fn comm_hints(&self) -> Vec<String> {
+        self.matcher
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .comm_hints()
+    }
 }

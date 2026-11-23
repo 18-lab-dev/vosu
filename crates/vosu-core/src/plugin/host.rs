@@ -237,9 +237,12 @@ impl PluginHost {
     /// `focus::SyntheticForegroundSource` and a short identification
     /// timeout instead of the real 5-second one, without changing
     /// [`Self::new`]'s own public signature (the one production call
-    /// site, `src/runtime/lifecycle.rs`, needs neither).
+    /// site, `src/runtime/lifecycle.rs`, needs neither). `pub(crate)`
+    /// rather than `host`-module-private: `plugin::discovery`'s own
+    /// tests (a sibling module, not a descendant of `host`) build a test
+    /// host the same way `host::tests::helpers::test_host_with` does.
     #[cfg(test)]
-    fn new_for_tests(
+    pub(crate) fn new_for_tests(
         logger: Logger,
         settings: Arc<PluginSettingsService>,
         runtime: Handle,

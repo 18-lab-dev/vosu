@@ -10,12 +10,10 @@
 //! `PluginHost` also owns process matching, session lifecycle, and focus
 //! (`host.rs`'s `process_appeared`/`process_exited`/`foreground_changed`,
 //! `MatcherEngine`, `SessionRegistry`, `FocusTracker`):
-//! `process_appeared`/`process_exited` are the entry points a later
-//! phase's real OS discovery (phase (d2)) calls for a process appearing
-//! or exiting; `foreground_changed` is that same phase (d2)'s entry point
-//! for an OS foreground-window-change event, re-running the Focus rule —
-//! this phase only provides and tests all three with synthetic process
-//! records and a `SyntheticForegroundSource`.
+//! `process_appeared`/`process_exited` are discovery's own entry points
+//! for a process appearing or exiting; `foreground_changed` is that same
+//! phase's entry point for an OS foreground-window-change event,
+//! re-running the Focus rule.
 //!
 //! Memory read plans (§6.3, `host/read_plans.rs`) and signature scans
 //! (§6.4, `host/scans.rs`) both route through `PluginHost::handle` now,
@@ -28,13 +26,29 @@
 //! `host/read_plans.rs` wire into instance/session state; neither pure
 //! module is itself a `PluginHostHandler`.
 //!
-//! Out of scope for this phase (later milestones): discovery itself
-//! (phase (d2): the real OS process list, the Linux conditional fallback,
-//! the kernel/CN_PROC pre-filter) is the only item left from M1's own
-//! service list; non-owning `STATE_SUBSCRIBE` delivery of session/focus
-//! events (§6.2's "Non-owning plugins" rule, §6.12) and resource/tree/
-//! stream operations and action calls are later milestones entirely.
+//! `discovery.rs` (M1 §4, phase d2b) is the generic core discovery
+//! service that feeds `process_appeared`/`process_exited` from a real OS
+//! process list in production: a pluggable [`discovery::ProcessSource`]
+//! seam (the real Linux eBPF/CN_PROC/polling backend and Windows polling
+//! backend live in the root crate/`vosu-sys`, wired in through
+//! `discovery::DiscoveryService::start`; a synthetic in-memory source in
+//! `discovery`'s own tests), one dedicated background thread (never a
+//! Tokio worker), periodic full reconciliation as a bounded-loss
+//! backstop plus targeted event-driven updates when the source provides
+//! them, the Linux comm-hint pre-filter sync
+//! (`MatcherEngine::comm_hints`), and PID-generation correctness (a
+//! reused pid is reported as an exit immediately followed by a fresh
+//! appearance). `DiscoveryService::start` only provides the mechanism;
+//! whether to call it at all (zero cost when no enabled plugin has a
+//! matcher, `PluginHost::has_enabled_matchers`) and the production
+//! `ProcessSource` wiring are `src/runtime/lifecycle.rs`'s own concern.
+//!
+//! Out of scope for this phase (later milestones): non-owning
+//! `STATE_SUBSCRIBE` delivery of session/focus events (§6.2's
+//! "Non-owning plugins" rule, §6.12) and resource/tree/stream operations
+//! and action calls.
 
+mod discovery;
 mod dispatch;
 mod error;
 mod focus;
@@ -50,6 +64,7 @@ mod session;
 pub mod settings;
 pub mod timers;
 
+pub use discovery::{DiscoveryService, ProcessSource};
 pub use dispatch::{OwnedMessage, WorkerPool};
 pub use error::HostError;
 pub use focus::{
