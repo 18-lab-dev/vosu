@@ -322,12 +322,27 @@ fn process_exited_detaches_and_recomputes_focus() {
 /// level timeout to ever notice) — each hammerer signals its own
 /// completion over `done_tx` before this test ever calls `join` on it,
 /// so a genuine deadlock fails with a clear assertion message instead of
-/// hanging silently. F6 also checks event order: every `FOCUS_CHANGED`
-/// this test observes, grouped by handle, must strictly alternate
-/// `focused: true`/`false` — two of the same state in a row for one
-/// handle would mean a concurrent recomputation delivered (or skipped)
-/// an event out of order, the exact race P2-6's `focus`-held-through-
-/// delivery discipline exists to prevent.
+/// hanging silently.
+/// N5: the event-order check itself needs a handle that genuinely gains
+/// and then loses focus while still a live candidate — not through its
+/// own detach, which sends no loss event for the handle that just left
+/// (`FocusTracker::recompute`'s own doc comment) — or "two consecutive
+/// events with the same `focused`" has nothing real to compare, and the
+/// check trivially passes no matter what. Under 8 threads hammering
+/// `identify_focus(h1)` 1,600 times total, `h1`'s own recency entry
+/// never moves (`FocusTracker::decide`'s recency fallback always finds
+/// it first, since nothing ever makes it stop being the decided focus),
+/// so a session 2 handle attached/exited during that storm gets exactly
+/// one mandatory `focused: false` and nothing to pair it with — the
+/// previous version of this test checked such pairs and so could never
+/// actually fail. The deadlock-proving phase below keeps that storm
+/// (and discards its own events, for the same reason). A second,
+/// deterministic phase then drives a real gain-then-loss cycle through
+/// the OS foreground instead of recency, on its own freshly built host
+/// and instance — not phase one's, whose per-instance dispatch queue
+/// could still be draining a deep backlog from the hammering/20-round
+/// storm above under heavy load, which would make a bound on how long
+/// this phase's own events take to arrive meaningless.
 #[test]
 fn concurrent_focus_recomputation_never_deadlocks() {
     let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
@@ -366,7 +381,9 @@ fn concurrent_focus_recomputation_never_deadlocks() {
 
     // Concurrently attach, re-identify (ignored — already identified, but
     // still exercises `identify_focus`'s own callers racing the
-    // hammerers above), and exit a second session several times over.
+    // hammerers above), and exit a second session several times over —
+    // purely to prove the absence of a deadlock (this phase's own doc
+    // comment above explains why its events are not worth checking).
     for round in 0..20u32 {
         let pid = 901 + round;
         host.process_appeared(test_process(pid, "proc-focusrace-2.exe"));
@@ -382,31 +399,132 @@ fn concurrent_focus_recomputation_never_deadlocks() {
         hammerer.join().expect("a hammerer thread must not panic");
     }
 
-    // Every `FOCUS_CHANGED` the attach/exit rounds above produced for
-    // session 2's own handles (a fresh one each round), grouped by
-    // handle, must strictly alternate focused/unfocused — proving
-    // delivery never duplicated or reordered an event for the same
-    // handle under concurrent recomputation. `h1` is excluded: the
-    // hammerers call `identify_focus(h1)` directly, bypassing the normal
-    // `SESSION_IDENTIFY` `AlreadyIdentified` refusal, and
-    // `on_session_identified` always sends one `FOCUS_CHANGED` per call
-    // "even if focus does not change" (its own doc comment) — so h1
-    // legitimately receives repeated `focused: true` here, by this
-    // test's own deliberate construction, not a reordering bug.
-    let mut last_focused: std::collections::HashMap<u64, bool> = std::collections::HashMap::new();
-    while let Ok(event) = events.try_recv() {
-        if let SessionEvent::Focus(focus) = event
-            && focus.handle != h1.0
-        {
-            if let Some(&previous) = last_focused.get(&focus.handle) {
-                assert_ne!(
-                    previous, focus.focused,
-                    "handle {} received two consecutive FOCUS_CHANGED with the same \
-                     focused={} — an event was duplicated or delivered out of order",
-                    focus.handle, focus.focused
-                );
+    // The deterministic phase: a fresh host/instance of its own (this
+    // test's own doc comment explains why), so every `recv_until` below
+    // is immune to anything still working through phase one's own
+    // per-instance dispatch queue.
+    fn recv_until(
+        events: &std::sync::mpsc::Receiver<SessionEvent>,
+        label: &str,
+        mut matches: impl FnMut(&SessionEvent) -> bool,
+    ) -> SessionEvent {
+        loop {
+            let event = events
+                .recv_timeout(RECV_TIMEOUT)
+                .unwrap_or_else(|_| panic!("timed out waiting for {label}"));
+            if matches(&event) {
+                return event;
             }
-            last_focused.insert(focus.handle, focus.focused);
         }
+    }
+
+    let foreground = Arc::new(focus::SyntheticForegroundSource::new(None));
+    let (_log_dir2, host2) = test_host_with(
+        runtime.handle().clone(),
+        foreground.clone(),
+        crate::plugin::session::IDENTIFICATION_TIMEOUT,
+    );
+    let events2 = create_session_instance(
+        &host2,
+        PluginInstanceId::new(1),
+        "testkit.session.focuspair",
+        &["proc-focuspair-1.exe", "proc-focuspair-2.exe"],
+        SessionPluginConfig::default(),
+    );
+
+    host2.process_appeared(test_process(2_000, "proc-focuspair-1.exe"));
+    let p1 = match events2.recv_timeout(RECV_TIMEOUT).expect("attach 1") {
+        SessionEvent::Attached(attached) => SessionHandle(attached.handle),
+        other => panic!("expected Attached, got {other:?}"),
+    };
+    events2.recv_timeout(RECV_TIMEOUT).expect("focus 1");
+
+    let mut history: std::collections::HashMap<u64, Vec<bool>> = std::collections::HashMap::new();
+    for round in 0..5u32 {
+        let pid = 2_001 + round;
+        // Session 2 takes the OS foreground, which outranks recency:
+        // its own identify must now genuinely win focus away from `p1`.
+        foreground.set(Some(pid));
+        host2.process_appeared(test_process(pid, "proc-focuspair-2.exe"));
+        let p2 = match recv_until(
+            &events2,
+            "attach 2",
+            |event| matches!(event, SessionEvent::Attached(attached) if attached.pid == pid),
+        ) {
+            SessionEvent::Attached(attached) => attached.handle,
+            _ => unreachable!("filtered above"),
+        };
+        match recv_until(
+            &events2,
+            "p1 loses focus",
+            |event| matches!(event, SessionEvent::Focus(focus) if focus.handle == p1.0 && !focus.focused),
+        ) {
+            SessionEvent::Focus(_) => {}
+            _ => unreachable!("filtered above"),
+        }
+        match recv_until(
+            &events2,
+            "p2 gains focus",
+            |event| matches!(event, SessionEvent::Focus(focus) if focus.handle == p2),
+        ) {
+            SessionEvent::Focus(focus) => {
+                assert!(focus.focused, "p2's own first Focus event must be a gain");
+                history.entry(p2).or_default().push(true);
+            }
+            _ => unreachable!("filtered above"),
+        }
+
+        // Give the foreground back to `p1` while session 2 is still a
+        // live candidate (not yet detached), forcing a real loss event
+        // for session 2's own handle — the pair this test actually
+        // needs.
+        foreground.set(Some(2_000));
+        host2.recompute_focus();
+        match recv_until(
+            &events2,
+            "p2 loses focus",
+            |event| matches!(event, SessionEvent::Focus(focus) if focus.handle == p2),
+        ) {
+            SessionEvent::Focus(focus) => {
+                assert!(!focus.focused, "p2's own second Focus event must be a loss");
+                history.entry(p2).or_default().push(false);
+            }
+            _ => unreachable!("filtered above"),
+        }
+        match recv_until(
+            &events2,
+            "p1 regains focus",
+            |event| matches!(event, SessionEvent::Focus(focus) if focus.handle == p1.0 && focus.focused),
+        ) {
+            SessionEvent::Focus(_) => {}
+            _ => unreachable!("filtered above"),
+        }
+
+        host2.process_exited(pid);
+        match recv_until(
+            &events2,
+            "detach 2",
+            |event| matches!(event, SessionEvent::Detached(detached) if detached.handle == p2),
+        ) {
+            SessionEvent::Detached(_) => {}
+            _ => unreachable!("filtered above"),
+        }
+    }
+
+    // Every session-2 handle this deterministic phase drove through a
+    // real gain-then-loss cycle must show exactly that alternating pair
+    // — the check an out-of-order or duplicated delivery could actually
+    // trip, unlike the previous version's vacuous single-event case.
+    assert_eq!(
+        history.len(),
+        5,
+        "every round must have produced a real gain/loss pair"
+    );
+    for (handle, states) in &history {
+        assert_eq!(
+            states.as_slice(),
+            [true, false],
+            "handle {handle} must gain then lose focus exactly once"
+        );
     }
 }
