@@ -8,6 +8,10 @@ use thiserror::Error;
 
 use super::model::{CompactValues, CounterSetting, SettingInput, SettingType};
 
+/// Serializes in-process reads and writes of the files this store
+/// atomically republishes (vosu's daemon is their only writer), so a
+/// reader holding it never observes a concurrent publish; a `_locked`
+/// method below assumes it is already held. Never held across `await`.
 static PROFILE_MUTATIONS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Debug, Error)]
@@ -95,6 +99,13 @@ impl SettingsStore {
     }
 
     pub fn profiles(&self) -> Result<Profiles, SettingsError> {
+        let _guard = PROFILE_MUTATIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.profiles_locked()
+    }
+
+    fn profiles_locked(&self) -> Result<Profiles, SettingsError> {
         let path = self.settings_root.join("profiles.json");
         if !checked_exists_published(&path)? {
             return Ok(Profiles {
@@ -121,7 +132,14 @@ impl SettingsStore {
     }
 
     pub fn resolve_profile(&self, profile: Option<&str>) -> Result<String, SettingsError> {
-        let registry = self.profiles()?;
+        let _guard = PROFILE_MUTATIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.resolve_profile_locked(profile)
+    }
+
+    fn resolve_profile_locked(&self, profile: Option<&str>) -> Result<String, SettingsError> {
+        let registry = self.profiles_locked()?;
         let name = profile.unwrap_or(&registry.active);
         if !registry.profiles.iter().any(|p| p == name) {
             return Err(SettingsError::Profile("unknown profile".into()));
@@ -151,7 +169,7 @@ impl SettingsStore {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         fs::create_dir_all(&self.settings_root)?;
         validate_profile(name)?;
-        let mut registry = self.profiles()?;
+        let mut registry = self.profiles_locked()?;
         match action {
             "create" | "rename" => {
                 let new_name = if action == "rename" {
@@ -172,7 +190,7 @@ impl SettingsStore {
                         return Err(SettingsError::Profile("profile limit reached".into()));
                     }
                     if let Some(source) = target {
-                        self.resolve_profile(Some(source))?;
+                        self.resolve_profile_locked(Some(source))?;
                         let source_root = self.profile_root(source)?;
                         let destination = self.profile_root(new_name)?;
                         fs::create_dir_all(&source_root)?;
@@ -214,7 +232,7 @@ impl SettingsStore {
                 }
             }
             "delete" => {
-                self.resolve_profile(Some(name))?;
+                self.resolve_profile_locked(Some(name))?;
                 if name == "default" {
                     return Err(SettingsError::Profile("default cannot be deleted".into()));
                 }
@@ -228,7 +246,7 @@ impl SettingsStore {
                 }
             }
             "activate" => {
-                self.resolve_profile(Some(name))?;
+                self.resolve_profile_locked(Some(name))?;
                 registry.active = name.into();
             }
             _ => return Err(SettingsError::Profile("unknown profile action".into())),
@@ -250,9 +268,9 @@ impl SettingsStore {
         let _guard = PROFILE_MUTATIONS
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.resolve_profile(Some(source))?;
-        self.resolve_profile(Some(target))?;
-        let (_, values) = self.load(&qualified_counter(name, source))?;
+        self.resolve_profile_locked(Some(source))?;
+        self.resolve_profile_locked(Some(target))?;
+        let (_, values) = self.load_locked(&qualified_counter(name, source))?;
         let root = self.profile_root(target)?;
         fs::create_dir_all(&root)?;
         write_values_toml(&root.join(format!("{name}.settings.values.toml")), &values)?;
@@ -260,9 +278,19 @@ impl SettingsStore {
     }
 
     pub fn load(&self, name: &str) -> Result<(Vec<CounterSetting>, CompactValues), SettingsError> {
+        let _guard = PROFILE_MUTATIONS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.load_locked(name)
+    }
+
+    fn load_locked(
+        &self,
+        name: &str,
+    ) -> Result<(Vec<CounterSetting>, CompactValues), SettingsError> {
         let (name, profile) = split_counter(name);
         validate_component(name)?;
-        let profile = self.resolve_profile(profile)?;
+        let profile = self.resolve_profile_locked(profile)?;
         let counter_dir = self.require_counter_directory(name)?;
         fs::create_dir_all(&self.settings_root)?;
         let settings = self.load_or_migrate_schema(name, &counter_dir)?;
@@ -302,13 +330,14 @@ impl SettingsStore {
         Ok(values)
     }
 
-    pub fn prepare_user_values(
+    /// Assumes `PROFILE_MUTATIONS` is held; only called from [`Self::save_user_values`].
+    fn prepare_user_values(
         &self,
         name: &str,
         payload: &[SettingInput],
     ) -> Result<CompactValues, SettingsError> {
         validate_component(split_counter(name).0)?;
-        let (settings, mut values) = self.load(name)?;
+        let (settings, mut values) = self.load_locked(name)?;
         for item in payload {
             let sanitized_id = sanitize_id(&item.unique_id);
             let Some(setting) = settings
@@ -342,7 +371,7 @@ impl SettingsStore {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let values = self.prepare_user_values(name, payload)?;
         let (name, profile) = split_counter(name);
-        let profile = self.resolve_profile(profile)?;
+        let profile = self.resolve_profile_locked(profile)?;
         let root = self.profile_root(&profile)?;
         fs::create_dir_all(&root)?;
         write_values_toml(&root.join(format!("{name}.settings.values.toml")), &values)
@@ -402,6 +431,7 @@ impl SettingsStore {
         Ok(canonical)
     }
 
+    /// Assumes `PROFILE_MUTATIONS` is held; only called from [`Self::load_locked`].
     fn load_or_migrate_schema(
         &self,
         name: &str,
@@ -440,6 +470,7 @@ impl SettingsStore {
         Ok(settings)
     }
 
+    /// Assumes `PROFILE_MUTATIONS` is held; only called from [`Self::load_locked`].
     fn load_or_migrate_values(
         &self,
         name: &str,
@@ -852,43 +883,15 @@ fn checked_exists(path: &Path) -> Result<bool, SettingsError> {
 }
 
 /// Existence/symlink probe for files this store republishes through
-/// `atomic_bytes(..., true)` -> `vosu_sys::platform::atomic_replace`
-/// (`profiles.json`, a counter's schema/values target, a profile's values
-/// file). On Windows, retries a transient "missing" result with the same
-/// bound as `vosu_sys::platform::read_published` (see its doc), so a
-/// concurrent `atomic_replace` publish of one of these files cannot be
-/// misread here as "file absent" and silently fall back to defaults or a
-/// migration path. A genuinely absent file still resolves to `Ok(false)`,
-/// after that bounded extra latency. Legacy migration-source candidates
-/// (`settings.json`/`.toml` beside the counter, the prior XDG schema path,
-/// internal `.values.json`) are not atomic_replace-published by this
+/// `atomic_bytes(..., true)` -> `vosu_sys::platform::atomic_replace`.
+/// Unlike `vosu_sys::platform::read_published`, this has no retry: every
+/// call site runs under `PROFILE_MUTATIONS`, which `atomic_bytes`
+/// publishers of these same files also hold, so a concurrent in-process
+/// publish can never be mid-replace while this runs. Legacy
+/// migration-source candidates are not atomic_replace-published by this
 /// process, so their call sites use plain [`checked_exists`] instead.
 fn checked_exists_published(path: &Path) -> Result<bool, SettingsError> {
-    #[cfg(windows)]
-    {
-        const ATTEMPTS: u32 = 3;
-        const DELAY: std::time::Duration = std::time::Duration::from_millis(25);
-        let mut attempt = 1;
-        loop {
-            match source_state(path)? {
-                SourceState::Missing if attempt < ATTEMPTS => {
-                    attempt += 1;
-                    #[expect(
-                        clippy::disallowed_methods,
-                        reason = "bounded (<=50ms) blocking retry mirroring vosu_sys::platform::read_published, absorbing the measured transient missing-name window of a cross-directory atomic_replace publish for this store's own atomically-republished files"
-                    )]
-                    std::thread::sleep(DELAY);
-                }
-                SourceState::Missing => return Ok(false),
-                SourceState::Present => return Ok(true),
-                SourceState::Symlink => return Err(SettingsError::UnsafeSettingsFile),
-            }
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        checked_exists(path)
-    }
+    checked_exists(path)
 }
 
 fn reject_symlink(path: &Path) -> Result<(), SettingsError> {

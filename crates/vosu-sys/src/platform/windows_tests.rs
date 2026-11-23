@@ -62,13 +62,37 @@ fn concurrent_readers_never_observe_missing_file() {
         thread::spawn(move || {
             start.wait();
             while !stop.load(Ordering::Acquire) {
-                let mut file = OpenOptions::new()
+                let result = OpenOptions::new()
                     .read(true)
                     .share_mode(FILE_SHARE_READ)
                     .open(&target)
-                    .unwrap();
-                let mut bytes = Vec::new();
-                file.read_to_end(&mut bytes).unwrap();
+                    .and_then(|mut file| {
+                        let mut bytes = Vec::new();
+                        file.read_to_end(&mut bytes)?;
+                        Ok(bytes)
+                    });
+                match result {
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    // A no-share-delete open can race the writer's DELETE
+                    // access on the target it is about to replace, or on
+                    // the new file it is about to rename into place; this
+                    // is not a missing name and the reader tries again.
+                    Err(error)
+                        if error
+                            .raw_os_error()
+                            .is_some_and(|code| code == 5 || code == 32) => {}
+                    Err(error) => panic!("reader failed: {error}"),
+                }
+                // Matches the raw characterization test below: denying
+                // delete sharing for the whole open+read means this
+                // reader can observe the writer's own transient sharing
+                // violation on the target or the replacement file, and
+                // even a missing name briefly, outside the production
+                // retrying helper's path. None of that is a bug here;
+                // only `read_published`'s own callers get the retry
+                // guarantee this test's helper_reader exercises above.
+                thread::sleep(Duration::from_millis(1));
             }
         })
     };
@@ -242,18 +266,25 @@ fn read_published_succeeds_once_file_appears_within_the_retry_window() {
     let target = root.path().join("vosu.toml");
     let temp = root.path().join("pending");
     let target_copy = target.clone();
-    // A channel instead of a fixed sleep: the writer thread races the
-    // reader's own scheduling rather than a wall-clock guess that could run
-    // short under load. Publishing through `atomic_replace` (not a raw
-    // `fs::write`) rules out the reader ever observing an empty or partial
-    // file as a second source of flakiness.
+    // `target` is deliberately absent when `read_published` starts, so its
+    // first attempt always misses. A test hook (`super::test_hooks`) fires
+    // on this thread exactly when `read_published` observes that first
+    // `NotFound` and is about to retry, and only then wakes the writer
+    // through a rendezvous channel. That proves the retry path actually
+    // ran, rather than racing a fixed wall-clock sleep against the writer
+    // and risking a pass that never exercised retry at all. Publishing
+    // through `atomic_replace` (not a raw `fs::write`) also rules out the
+    // reader ever observing an empty or partial file as a second source of
+    // flakiness.
     let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<()>(0);
+    super::test_hooks::on_first_missing_retry(move || {
+        let _ = ready_tx.send(());
+    });
     let writer = thread::spawn(move || {
         ready_rx.recv().unwrap();
         fs::write(&temp, b"generation=0001\n").unwrap();
         atomic_replace(&temp, &target_copy).unwrap();
     });
-    ready_tx.send(()).unwrap();
     let bytes = read_published(&target).unwrap();
     assert_eq!(bytes, b"generation=0001\n");
     writer.join().unwrap();

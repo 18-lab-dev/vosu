@@ -281,6 +281,13 @@ pub fn atomic_replace(temp: &Path, target: &Path) -> io::Result<()> {
 ///   (`tools/mod.rs`'s `atomic_json`), catalog sources and
 ///   `overlay-catalog-state.json` (`tools/catalog_sources.rs`'s
 ///   `atomic_json`).
+/// - **Serialized against their own writer instead**: `counters/settings.rs`
+///   reads `profiles.json`, a counter's schema/values file, and a profile's
+///   values file only while holding its `PROFILE_MUTATIONS` lock, which
+///   every in-process writer of those same files already holds while it
+///   publishes through `atomic_bytes`/`atomic_replace`. vosu's daemon is the
+///   only writer of these files, so holding that lock for the read rules
+///   out observing a concurrent publish, with no retry needed.
 pub fn read_published(path: &Path) -> io::Result<Vec<u8>> {
     #[cfg(windows)]
     {

@@ -417,6 +417,8 @@ pub(super) fn read_published(path: &Path) -> io::Result<Vec<u8>> {
                 if error.kind() == io::ErrorKind::NotFound && attempt < READ_RETRY_ATTEMPTS =>
             {
                 attempt += 1;
+                #[cfg(test)]
+                test_hooks::fire_first_missing_retry();
                 #[expect(
                     clippy::disallowed_methods,
                     reason = "bounded (READ_RETRY_ATTEMPTS, deadline <=50ms) blocking retry absorbing the measured transient missing-name window of a cross-directory atomic_replace publish; read_published is the synchronous-caller variant only, callers already on a Tokio runtime must use read_published_async instead"
@@ -445,6 +447,34 @@ pub(super) async fn read_published_async(path: &Path) -> io::Result<Vec<u8>> {
 
 fn wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain(Some(0)).collect()
+}
+
+/// Test-only seam letting `windows_tests` prove
+/// [`read_published`]'s retry path actually ran, instead of racing a
+/// fixed wall-clock sleep against a writer thread.
+#[cfg(test)]
+mod test_hooks {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static ON_FIRST_MISSING_RETRY: RefCell<Option<Box<dyn FnOnce()>>> =
+            const { RefCell::new(None) };
+    }
+
+    /// Installs a one-shot callback invoked on this thread the next time
+    /// [`super::read_published`] observes a transient `NotFound` and is
+    /// about to retry.
+    pub(super) fn on_first_missing_retry(callback: impl FnOnce() + 'static) {
+        ON_FIRST_MISSING_RETRY.with(|cell| *cell.borrow_mut() = Some(Box::new(callback)));
+    }
+
+    pub(super) fn fire_first_missing_retry() {
+        ON_FIRST_MISSING_RETRY.with(|cell| {
+            if let Some(callback) = cell.borrow_mut().take() {
+                callback();
+            }
+        });
+    }
 }
 
 #[cfg(test)]
