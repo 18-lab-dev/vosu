@@ -27,7 +27,7 @@ const INITIAL_PID_NAMESPACE_INODE: u64 = 0xEFFF_FFFC;
 // in `bpf/process_events.bpf.c`: trailing bytes past `len` stay zero.
 const COMM_HINT_KEY_LEN: usize = 1 + MAX_COMM_HINT_LEN;
 
-fn comm_hint_key(hint: &[u8]) -> [u8; COMM_HINT_KEY_LEN] {
+pub(super) fn comm_hint_key(hint: &[u8]) -> [u8; COMM_HINT_KEY_LEN] {
     let mut key = [0_u8; COMM_HINT_KEY_LEN];
     key[0] = hint.len() as u8;
     key[1..1 + hint.len()].copy_from_slice(hint);
@@ -39,7 +39,7 @@ fn comm_hint_key(hint: &[u8]) -> [u8; COMM_HINT_KEY_LEN] {
 /// holds `len` when `hints` has at least one hint of that length, 0
 /// otherwise. `CommHints::new` bounds every length to
 /// `1..=MAX_COMM_HINT_LEN` (15), so every hint maps to a valid slot.
-fn length_slots<'a>(hints: impl Iterator<Item = &'a [u8]>) -> [u8; MAX_COMM_HINT_LEN] {
+pub(super) fn length_slots<'a>(hints: impl Iterator<Item = &'a [u8]>) -> [u8; MAX_COMM_HINT_LEN] {
     let mut slots = [0_u8; MAX_COMM_HINT_LEN];
     for hint in hints {
         let len = hint.len();

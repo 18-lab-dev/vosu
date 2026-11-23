@@ -138,13 +138,15 @@ static __always_inline void record_drop(void)
  * This version instead keeps both loops as plain, non-unrolled, bounded
  * `for` loops: the outer loop (COMM_HINT_MAX_LEN slots) and the inner loop
  * (TASK_COMM_LEN start positions) each have a fixed, compile-time trip
- * count and no #pragma unroll, so the verifier analyzes each loop's body
- * once -- the "bounded loops" feature (Linux 5.3+) that lets a plain
- * `for (i = 0; i < N; i++)` loop pass without unrolling or a bpf_loop()
- * callback. Because the body is walked once regardless of how many times
- * it runs at runtime, there is exactly one `bpf_map_lookup_elem` call site
- * against comm_hints in the whole translation unit, the same property the
- * bpf_loop() callback had, without requiring 5.17.
+ * count and no #pragma unroll, so the verifier uses the "bounded loops"
+ * feature (Linux 5.3+): it simulates each loop iteration by iteration,
+ * pruning a branch once its state is provably equivalent to one already
+ * explored, instead of unrolling the loop body at compile time or needing
+ * a bpf_loop() callback. Because the translation unit still only contains
+ * one occurrence of the `bpf_map_lookup_elem` call against comm_hints --
+ * state pruning collapses the repeated per-iteration visits back down,
+ * it does not multiply the call site the way unrolling would -- that is
+ * the same property the bpf_loop() callback had, without requiring 5.17.
  *
  * Two bounded, data-dependent cuts keep the common non-matching case cheap
  * without adding a verifier-unbounded loop:

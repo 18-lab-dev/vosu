@@ -546,3 +546,162 @@ fn comm_matcher_parity_with_former_hardcoded_filter_across_lengths_and_boundarie
     assert!(long_hints.matches(&comm15[..MAX_COMM_HINT_LEN]));
     assert!(!long_hints.matches(&comm15[..MAX_COMM_HINT_LEN - 1]));
 }
+
+use super::ebpf::{comm_hint_key, length_slots};
+
+const RAW_COMM_LEN: usize = 16;
+
+fn raw_comm_len(comm: &[u8; RAW_COMM_LEN]) -> usize {
+    comm.iter().position(|&b| b == 0).unwrap_or(RAW_COMM_LEN)
+}
+
+/// Rust model of `candidate_comm`'s length x start enumeration in
+/// `bpf/process_events.bpf.c`: for every length with a registered
+/// `comm_hint_len_slots` entry (as `length_slots` would produce) that does
+/// not exceed `comm`'s run of non-NUL bytes, probes every start position
+/// whose window stays within `comm_len`, building the exact
+/// `comm_hint_key` key the real `comm_hints` map lookup would use and
+/// checking it against the registered key set. `candidate_comm` skips a
+/// length whose slot is unset (not merely probing and missing), so this
+/// mirrors that gate explicitly rather than relying on `registered_keys`
+/// alone.
+fn model_candidate_comm(
+    comm: &[u8; RAW_COMM_LEN],
+    slots: &[u8; MAX_COMM_HINT_LEN],
+    registered_keys: &BTreeSet<Vec<u8>>,
+) -> bool {
+    let comm_len = raw_comm_len(comm);
+    if comm_len == 0 {
+        return false;
+    }
+    for len in 1..=MAX_COMM_HINT_LEN {
+        if slots[len - 1] == 0 || len > comm_len {
+            continue;
+        }
+        let mut start = 0_usize;
+        while start + len <= comm_len {
+            let key = comm_hint_key(&comm[start..start + len]);
+            if registered_keys.contains(&key.to_vec()) {
+                return true;
+            }
+            start += 1;
+        }
+    }
+    false
+}
+
+fn registered_keys_for(hints: &CommHints) -> BTreeSet<Vec<u8>> {
+    hints
+        .iter()
+        .map(|hint| comm_hint_key(hint).to_vec())
+        .collect()
+}
+
+#[test]
+fn model_candidate_comm_matches_comm_hints_across_comm_and_hint_lengths() {
+    fn padded(content: &[u8]) -> [u8; RAW_COMM_LEN] {
+        let mut buffer = [0_u8; RAW_COMM_LEN];
+        buffer[..content.len()].copy_from_slice(content);
+        buffer
+    }
+
+    // Hint sets covering short, mid, and the maximum (15) allowed length,
+    // including two hints that share a length to exercise length_slots'
+    // bitmap-not-counter behavior.
+    let hint_sets: &[&[&str]] = &[
+        &["osu!", "osulazer.exe"],
+        &["a"],
+        &[&"z".repeat(MAX_COMM_HINT_LEN)],
+        &["ab", "cd", "efgh"],
+        &[],
+    ];
+
+    for hint_strs in hint_sets {
+        let hints = CommHints::new(hint_strs.iter().copied()).unwrap();
+        let slots = length_slots(hints.iter());
+        let registered_keys = registered_keys_for(&hints);
+
+        for comm_len in 0..=RAW_COMM_LEN {
+            for fill in [b'a', b'!', b'z', b'h'] {
+                let comm = padded(&vec![fill; comm_len]);
+                assert_eq!(
+                    model_candidate_comm(&comm, &slots, &registered_keys),
+                    hints.matches(&comm),
+                    "hints {hint_strs:?}, comm_len {comm_len}, fill {fill}"
+                );
+            }
+        }
+
+        for comm in [
+            b"osu!\0\0\0\0\0\0\0\0\0\0\0\0".as_slice(),
+            b"xosu!\0\0\0\0\0\0\0\0\0\0\0",
+            b"prefix-osu!\0\0\0\0\0",
+            b"unrelated\0\0\0\0\0\0\0",
+            &[0_u8; RAW_COMM_LEN],
+        ] {
+            let comm: [u8; RAW_COMM_LEN] = comm.try_into().unwrap();
+            assert_eq!(
+                model_candidate_comm(&comm, &slots, &registered_keys),
+                hints.matches(&comm),
+                "hints {hint_strs:?}, comm {comm:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn comm_hint_key_pads_trailing_bytes_with_zero() {
+    let key = comm_hint_key(b"ab");
+    assert_eq!(key[0], 2);
+    assert_eq!(&key[1..3], b"ab");
+    assert!(key[3..].iter().all(|&b| b == 0));
+}
+
+#[test]
+fn length_slots_marks_only_registered_lengths_once_each() {
+    let hints = CommHints::new(["ab", "wxyz", "yz"]).unwrap(); // lengths 2, 4, 2
+    let slots = length_slots(hints.iter());
+    for len in 1..=MAX_COMM_HINT_LEN {
+        let expected = hints.iter().any(|hint| hint.len() == len);
+        assert_eq!(slots[len - 1] != 0, expected, "len {len}");
+        if expected {
+            assert_eq!(slots[len - 1] as usize, len);
+        }
+    }
+}
+
+#[test]
+fn length_slots_of_no_hints_is_all_zero() {
+    assert_eq!(length_slots(std::iter::empty()), [0_u8; MAX_COMM_HINT_LEN]);
+}
+
+#[test]
+fn length_slots_widen_narrow_sequence_stays_a_superset_during_transition() {
+    // Mirrors EbpfCommFilter::set_comm_hints's own sequence: widen to the
+    // union of old and new lengths first, diff comm_hints, then narrow to
+    // exactly the new (post-diff shadow) lengths -- so every length that
+    // was, or is about to be, registered stays probed for the whole
+    // transition instead of ever being narrower than either side.
+    let old_hints = CommHints::new(["abcd", &"z".repeat(MAX_COMM_HINT_LEN)]).unwrap(); // lens 4, 15
+    let new_hints = CommHints::new(["xy", "abcd"]).unwrap(); // lens 2, 4
+
+    let old_slots = length_slots(old_hints.iter());
+    let new_slots = length_slots(new_hints.iter());
+    let union_slots = length_slots(old_hints.iter().chain(new_hints.iter()));
+
+    for len in 1..=MAX_COMM_HINT_LEN {
+        let old_present = old_slots[len - 1] != 0;
+        let new_present = new_slots[len - 1] != 0;
+        let union_present = union_slots[len - 1] != 0;
+        assert_eq!(union_present, old_present || new_present, "len {len}");
+    }
+
+    // Length 15 is only ever registered by old_hints, so the union must
+    // still carry it even though the final (narrowed) target drops it.
+    assert_ne!(union_slots[MAX_COMM_HINT_LEN - 1], 0);
+    assert_eq!(new_slots[MAX_COMM_HINT_LEN - 1], 0);
+    // Length 2 is only ever registered by new_hints, so the union must
+    // already carry it before the diff adds its comm_hints entry.
+    assert_ne!(union_slots[1], 0);
+    assert_eq!(old_slots[1], 0);
+}
