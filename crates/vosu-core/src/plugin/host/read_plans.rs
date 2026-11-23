@@ -6,11 +6,12 @@
 //! [`PluginHost::forget_read_plan_session`]) — a module table is built
 //! fresh on every call instead, `scan.rs`'s own documented rule for
 //! `WindowsModuleTable`/`LinuxModuleTable`. An async
-//! (non-`VOSU_READ_PLAN_SYNC`) submission then executes on a small bounded
-//! worker pool (reusing [`super::super::scan::ScanWorkerPool`]'s already
-//! generic implementation rather than a third copy of the same pattern,
-//! `dispatch::WorkerPool` and `ScanWorkerPool` being the first two) and
-//! delivers its result through the normal dispatch queue
+//! (non-`VOSU_READ_PLAN_SYNC`) submission then executes on
+//! `PluginHost`'s own `background_pool` — one [`ScanWorkerPool`] shared
+//! with `scans.rs` (that field's own doc comment: both opcodes' work is
+//! off the hot path, so splitting worker threads between two pools buys
+//! nothing but doubles the idle OS threads every `PluginHost` keeps
+//! parked) — and delivers its result through the normal dispatch queue
 //! ([`PluginHost::dispatch_to_instance`]); a `VOSU_READ_PLAN_SYNC`
 //! submission instead delivers its result through a direct, non-queued
 //! plugin call on the submitting thread itself, before this call (and so
@@ -20,12 +21,19 @@
 //! `VOSU_OP_READ_PLAN_CANCEL` and a session's detach both resolve to
 //! [`super::super::read_plan::OutstandingPlans`]'s own `cancel`/
 //! `cancel_session`; this module never re-derives that bookkeeping.
+//!
+//! [`PluginHost::session_memory`] and [`PluginHost::resolve_owned_session`]
+//! are `pub(super)`, not private to this module: `host/scans.rs` (§6.4)
+//! reuses both verbatim rather than opening a second process handle per
+//! session or re-deriving the same ownership check — a scan against a
+//! session this instance also has read plans outstanding against shares
+//! the one cached handle.
 
 #[cfg(test)]
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 #[cfg(test)]
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -41,6 +49,31 @@ use super::super::scan::ScanWorkerPool;
 use super::super::session::SessionHandle;
 use super::{InstanceSlot, PluginHost};
 
+/// Worker threads the shared background pool runs (production default):
+/// comparatively cheap, deadline-bounded work (a read plan's handful of
+/// syscalls, a scan's bounded memory walk), so a small fixed count
+/// bounds total concurrency the same way `scan.rs`'s own
+/// `ScanWorkerPool` doc comment reasons about scans alone —
+/// `PluginHost::background_pool`'s own field doc comment covers why this
+/// one pool now serves both opcodes.
+const BACKGROUND_WORKER_COUNT: usize = 4;
+
+/// [`ScanWorkerPool::new`], queue capacity
+/// [`super::super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS`] +
+/// [`super::super::scan::MAX_OUTSTANDING_SCANS`] (128): both caps admit
+/// independently, so up to that many jobs can be genuinely queued at
+/// once; sized for the sum so neither submission path's own
+/// `OutstandingPlans`/`OutstandingScans` admission cap can ever be
+/// second-guessed by this pool's queue being the thing that actually
+/// refuses a legitimately-admitted job.
+pub(super) fn new_background_pool() -> ScanWorkerPool {
+    ScanWorkerPool::new(
+        BACKGROUND_WORKER_COUNT,
+        super::super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS
+            + super::super::scan::MAX_OUTSTANDING_SCANS,
+    )
+}
+
 /// Deadline given to one read plan's execution, sync or async (§6.3, §5's
 /// `VOSU_ERR_TIMED_OUT`): the spec names no value, so this host picks one
 /// generous enough that a legitimate dependent chain never trips it under
@@ -49,24 +82,6 @@ use super::{InstanceSlot, PluginHost};
 /// thread — indefinitely.
 pub(super) const READ_PLAN_DEADLINE: Duration = Duration::from_secs(2);
 
-/// Worker threads the async read-plan pool runs (production default): a
-/// read plan is comparatively cheap (a handful of syscalls under a
-/// deadline), so a small fixed count bounds total concurrency the same way
-/// `scan.rs`'s own `ScanWorkerPool` doc comment reasons about scans.
-const READ_PLAN_WORKER_COUNT: usize = 4;
-
-/// [`ScanWorkerPool::new`], sized for read plans (its queue bounded at
-/// [`super::super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS`]: no submission
-/// `OutstandingPlans::begin` ever admits can fail to queue here, so a
-/// queue-full refusal below only ever means this pool's own worker
-/// threads are genuinely saturated, never an undersized queue).
-pub(super) fn new_worker_pool() -> ScanWorkerPool {
-    ScanWorkerPool::new(
-        READ_PLAN_WORKER_COUNT,
-        super::super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS,
-    )
-}
-
 /// One session's cached, already-opened live-process handle plus its
 /// bitness: opening a process handle is comparatively expensive, so it is
 /// opened once per session and reused for every read plan the owning
@@ -74,8 +89,10 @@ pub(super) fn new_worker_pool() -> ScanWorkerPool {
 /// backing a `VOSU_BASE_MODULE` root is deliberately NOT cached alongside
 /// it — see this module's own doc comment.
 pub(super) struct SessionMemory {
-    process: Arc<dyn ProcessMemory>,
-    bitness: ProcessBitness,
+    /// `pub(super)`: `host::scans` reads this directly (module doc
+    /// comment) rather than caching a second handle for the same session.
+    pub(super) process: Arc<dyn ProcessMemory>,
+    pub(super) bitness: ProcessBitness,
 }
 
 #[cfg(target_os = "linux")]
@@ -182,10 +199,29 @@ fn build_module_table(pid: u32) -> Option<Arc<dyn ModuleResolver + Send + Sync>>
     build_module_table_real(pid)
 }
 
+/// Whether [`set_session_memory_hook_for_tests`] registered a hook for
+/// `pid`: `host::scans`'s own test-only module-table seam checks the same
+/// hook registry (module doc comment) rather than keeping an independent
+/// one keyed by the same pids.
+#[cfg(test)]
+pub(super) fn is_hooked_for_tests(pid: u32) -> bool {
+    session_memory_hooks()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains_key(&pid)
+}
+
 impl PluginHost {
     /// Returns `handle`'s cached process handle, opening (and caching) it
-    /// on first use (point 1 of this phase).
-    fn session_memory(&self, handle: SessionHandle, pid: u32) -> Option<Arc<SessionMemory>> {
+    /// on first use (point 1 of this phase). `pub(super)`: `host::scans`
+    /// reuses this directly (module doc comment) instead of opening a
+    /// second handle for a session this instance also has read plans
+    /// outstanding against.
+    pub(super) fn session_memory(
+        &self,
+        handle: SessionHandle,
+        pid: u32,
+    ) -> Option<Arc<SessionMemory>> {
         {
             let cache = self
                 .read_plan_memory
@@ -247,7 +283,10 @@ impl PluginHost {
     /// read plan for a detached handle answers `VOSU_ERR_TARGET_GONE`")
     /// covers an unknown handle the same way as a genuinely detached one,
     /// since `SessionRegistry::owner_and_pid` reports both as `None`.
-    fn resolve_read_plan_session(
+    /// `pub(super)`: `host::scans`'s own §6.4 session resolution is the
+    /// same ownership check (module doc comment), so it calls this
+    /// directly instead of re-deriving it.
+    pub(super) fn resolve_owned_session(
         &self,
         plugin_id: &str,
         handle: SessionHandle,
@@ -282,7 +321,7 @@ impl PluginHost {
             return SyncReadPlanError::OnDispatchThread.into();
         }
         let handle = SessionHandle(submit.handle);
-        let pid = match self.resolve_read_plan_session(&plugin_id, handle) {
+        let pid = match self.resolve_owned_session(&plugin_id, handle) {
             Ok(pid) => pid,
             Err(status) => return status,
         };
@@ -392,7 +431,7 @@ impl PluginHost {
         let deadline = Instant::now() + self.read_plan_deadline();
         let host = self.arc();
         let spawned_outstanding = Arc::clone(&outstanding);
-        let spawn_result = self.read_plan_pool.try_spawn(move || {
+        let spawn_result = self.background_pool.try_spawn(move || {
             // §6.3/§5: `RefOpWrongWidth`/`TargetGone`/`TimedOut` reject the
             // whole submission, which for an async plan means no later
             // `VOSU_OP_READ_PLAN_RESULT` at all — there is no synchronous
@@ -410,7 +449,7 @@ impl PluginHost {
             });
             let should_deliver = spawned_outstanding.finish(plan) == FinishOutcome::Deliver;
             if let (true, Some(result)) = (should_deliver, outcome) {
-                let _ = host.dispatch_to_instance(instance, &Message::ReadPlanResult(result));
+                let _ = host.dispatch_to_instance(instance, &Message::ReadPlanResult(result), 0);
             }
         });
         if spawn_result.is_err() {

@@ -29,7 +29,9 @@
 //! own tests drive them with synthetic [`ProcessRecord`]s), and
 //! [`PluginHost::handle`] routes `SESSION_IDENTIFY`/`SESSION_DECLINE`.
 //! Read plans (§6.3, including the §4 `VOSU_READ_PLAN_SYNC` exception,
-//! `read_plans.rs`) route through this host too; scans do not yet.
+//! `read_plans.rs`) and scans (§6.4, `scans.rs`) both route through this
+//! host too, sharing `read_plans.rs`'s own per-session cached process
+//! handle ([`PluginHost::session_memory`]).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -54,7 +56,7 @@ use super::logging::PluginLogRouter;
 use super::matcher::{CandidateProcess, MatcherEngine, host_platform};
 use super::read_plan::OutstandingPlans;
 use super::registry::LoadedPlugin;
-use super::scan::ScanWorkerPool;
+use super::scan::{OutstandingScans, ScanWorkerPool};
 use super::session::{DiscoveredProcess, SessionHandle, SessionRegistry};
 use super::settings::{
     BRIDGE_B2_PLUGIN_ID, ConfigSettingsBridgeB2, PluginSettingsService, SettingsChangeDelivery,
@@ -74,6 +76,12 @@ struct InstanceEntry {
     /// [`super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS`], freed on
     /// `READ_PLAN_CANCEL` or the owning session's detach.
     outstanding_plans: Arc<OutstandingPlans>,
+    /// This instance's own `VOSU_OP_SCAN_REQUEST`s (§6.4, `scans.rs`):
+    /// capped at [`super::scan::MAX_OUTSTANDING_SCANS`], freed on
+    /// delivery or the owning session's detach — a scan has no
+    /// plugin-initiated cancel opcode of its own (`scans.rs`'s own module
+    /// doc comment).
+    outstanding_scans: Arc<OutstandingScans>,
 }
 
 /// One `instances` map slot's lifecycle state. Every state keeps
@@ -175,10 +183,13 @@ pub struct PluginHost {
     /// the session detaches. A module table is deliberately not cached
     /// alongside it (`scan.rs`'s own documented rule: fresh per call).
     read_plan_memory: Mutex<HashMap<SessionHandle, Arc<read_plans::SessionMemory>>>,
-    /// Bounded worker pool async read plans execute on (§4: real work off
-    /// a dispatch thread); reuses [`ScanWorkerPool`]'s own generic,
-    /// already-bounded pattern rather than a second copy of it.
-    read_plan_pool: ScanWorkerPool,
+    /// Bounded worker pool async read plans AND scans both execute on
+    /// (§4, §6.4): one shared [`ScanWorkerPool`] instance
+    /// ([`read_plans::new_background_pool`]) rather than one per opcode —
+    /// both are off the hot path, so splitting worker threads between
+    /// them buys nothing but doubles the idle OS threads every
+    /// `PluginHost` keeps parked.
+    background_pool: ScanWorkerPool,
     /// [`read_plans::READ_PLAN_DEADLINE`] in milliseconds; mutable only so
     /// a test can shorten it (`read_plans::set_read_plan_deadline_for_tests`).
     read_plan_deadline_ms: AtomicU64,
@@ -247,7 +258,7 @@ impl PluginHost {
                 focus: Mutex::new(FocusTracker::new()),
                 foreground,
                 read_plan_memory: Mutex::new(HashMap::new()),
-                read_plan_pool: read_plans::new_worker_pool(),
+                background_pool: read_plans::new_background_pool(),
                 read_plan_deadline_ms: AtomicU64::new(
                     u64::try_from(read_plans::READ_PLAN_DEADLINE.as_millis()).unwrap_or(u64::MAX),
                 ),
@@ -404,6 +415,7 @@ impl PluginHost {
                 instance,
                 plugin_id,
                 outstanding_plans: Arc::new(OutstandingPlans::new()),
+                outstanding_scans: OutstandingScans::new(),
             }),
         );
         let pending = match previous {
@@ -542,13 +554,16 @@ impl PluginHost {
     /// [`InstanceSlot::Live`] (including one still `Creating` or already
     /// `Destroying`): a caller needing `Creating`-aware queuing is
     /// `timer_fired`/`settings_changed`'s own narrower logic, not this
-    /// general hook.
+    /// general hook. `correlation_id` is carried unchanged into the
+    /// delivered message (`0` for every current timer/settings/read-plan
+    /// caller; a scan's own request-chosen value for `scans.rs`, §6.4).
     pub fn dispatch_to_instance(
         &self,
         instance: PluginInstanceId,
         message: &Message,
+        correlation_id: u64,
     ) -> Result<std::sync::mpsc::Receiver<vosu_status>, HostError> {
-        let owned = OwnedMessage::from_message(message, 0)
+        let owned = OwnedMessage::from_message(message, correlation_id)
             .map_err(|error| HostError::InitEncodeFailed(error.to_string()))?;
         let guard = self
             .instances
@@ -779,6 +794,7 @@ impl PluginHost {
         if let Some(owner) = owner {
             self.dispatch_to(&owner, &Message::SessionDetached(detached));
             self.cancel_read_plans_for_session(&owner, handle);
+            self.cancel_scans_for_session(&owner, handle);
         }
         self.forget_read_plan_session(handle);
         self.recompute_focus();
@@ -789,7 +805,7 @@ impl PluginHostHandler for PluginHost {
         &self,
         instance: PluginInstanceId,
         message: Message,
-        _correlation_id: u64,
+        correlation_id: u64,
     ) -> vosu_status {
         match message {
             Message::LogRecord(record) => {
@@ -855,6 +871,7 @@ impl PluginHostHandler for PluginHost {
                         let declined_handle = SessionHandle(detached.handle);
                         self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
                         self.cancel_read_plans_for_session(&plugin_id, declined_handle);
+                        self.cancel_scans_for_session(&plugin_id, declined_handle);
                         self.forget_read_plan_session(declined_handle);
                         // The re-offered handle's own `owner` is already
                         // the next install-order candidate (`decline`'s
@@ -880,6 +897,7 @@ impl PluginHostHandler for PluginHost {
                         let declined_handle = SessionHandle(detached.handle);
                         self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
                         self.cancel_read_plans_for_session(&plugin_id, declined_handle);
+                        self.cancel_scans_for_session(&plugin_id, declined_handle);
                         self.forget_read_plan_session(declined_handle);
                         vosu_status::VOSU_OK
                     }
@@ -888,6 +906,9 @@ impl PluginHostHandler for PluginHost {
             }
             Message::ReadPlanSubmit(submit) => self.handle_read_plan_submit(instance, submit),
             Message::ReadPlanCancel(cancel) => self.handle_read_plan_cancel(instance, cancel),
+            Message::ScanRequest(request) => {
+                self.handle_scan_request(instance, correlation_id, request)
+            }
             other => {
                 // State reads (`STATE_SUBSCRIBE`), resource/tree/stream
                 // operations, and action calls are later milestones:
@@ -969,6 +990,7 @@ impl SettingsChangeDelivery for PluginHost {
 }
 
 mod read_plans;
+mod scans;
 
 #[cfg(test)]
 mod tests;

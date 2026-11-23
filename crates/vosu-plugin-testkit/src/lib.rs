@@ -6,10 +6,11 @@
 //! rate-limited logging end to end, a session/focus plugin identifying
 //! every session it is attached to and reporting
 //! `SESSION_ATTACHED`/`SESSION_DETACHED`/`FOCUS_CHANGED` back to a test
-//! (`session.rs`), and a read-plan plugin driving async and
+//! (`session.rs`), a read-plan plugin driving async and
 //! `VOSU_READ_PLAN_SYNC` submissions from a test-controlled background
-//! thread (`read_plan.rs`). Actions, streams, and the synthetic game are
-//! out of scope for this phase.
+//! thread (`read_plan.rs`), and a signature-scan plugin driving
+//! `VOSU_OP_SCAN_REQUEST` submissions the same way (`scan.rs`). Actions,
+//! streams, and the synthetic game are out of scope for this phase.
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 #[cfg(all(feature = "test-harness", not(debug_assertions)))]
@@ -23,5 +24,7 @@ pub mod echo;
 pub mod host_services;
 #[cfg(feature = "test-harness")]
 pub mod read_plan;
+#[cfg(feature = "test-harness")]
+pub mod scan;
 #[cfg(feature = "test-harness")]
 pub mod session;
