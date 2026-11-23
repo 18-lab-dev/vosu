@@ -424,7 +424,7 @@ async fn argv_rewrite_with_the_same_start_time_is_not_churned() {
 async fn in_place_rename_to_a_matching_name_attaches() {
     let runtime = Handle::current();
     let (_log_dir, host) = test_host(
-        runtime.clone(),
+        runtime,
         Arc::new(focus::SyntheticForegroundSource::new(None)),
     );
     let events = create_session_instance(
@@ -433,22 +433,40 @@ async fn in_place_rename_to_a_matching_name_attaches() {
         "vosu.testkit.rename-attach",
         &["osu!.exe"],
     );
-    let (source, _prefilter) = SyntheticSource::new();
-    let service = DiscoveryService::start(&host, source.clone(), runtime);
+
+    // Drives `apply_appeared` directly, synchronously, instead of through
+    // `DiscoveryService`'s background thread plus `SyntheticSource::appear`
+    // (N2): `SyntheticSource::inspect` always reads the *current* state,
+    // so two `appear` calls issued back to back almost always collapse
+    // into one drained observation of the already-renamed record before
+    // any pass runs, exercising the pre-existing first-sighting (`None`)
+    // branch instead of the in-place-rename branch this test means to
+    // cover -- and the test would still pass either way, which is not a
+    // reliable regression check. Calling `apply_appeared` twice against
+    // one `tracked` map in hand makes the loader sighting and the rename
+    // land as two distinct calls deterministically, exercising exactly
+    // `apply_appeared`'s `Some(previous) if same_occurrence(..)` branch
+    // with a changed name on the second call.
+    let mut tracked = HashMap::new();
 
     // A loader execs under a non-matching name, then renames itself in
     // place (Wine's `set_process_name` -> `prctl(PR_SET_NAME)` is the
     // motivating case, P2): same pid, same start_time, only name/path
     // change. No plugin matches "loader.exe", so nothing attaches yet.
-    source.appear(test_process(600, "loader.exe"));
-    source.appear(test_process(600, "osu!.exe"));
+    apply_appeared(&host, &mut tracked, test_process(600, "loader.exe"));
+    apply_appeared(&host, &mut tracked, test_process(600, "osu!.exe"));
 
     let attached = expect_attached(&events, 600);
     assert_eq!(attached.pid, 600);
-
-    service.stop();
 }
 
+/// Behaviour pin (N2): on *both* the pre-fix and the fixed `apply_appeared`,
+/// a same-`start_time` rename that still matches never churns the
+/// session -- the pre-fix code skipped every repeat same-`start_time`
+/// sighting outright, so this alone cannot distinguish the two. It
+/// documents the intended steady-state behaviour rather than catching a
+/// regression in the rename branch itself (`in_place_rename_to_a_matching_name_attaches`
+/// covers that).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn in_place_rename_that_still_matches_does_not_churn_the_session() {
     let runtime = Handle::current();
@@ -498,6 +516,13 @@ async fn in_place_rename_that_still_matches_does_not_churn_the_session() {
     service.stop();
 }
 
+/// Behaviour pin (N2): a session, once attached, has no detach reason for
+/// "no longer matches" (`docs/v2/plugin-abi.md` SS6.2), so it stays
+/// attached through a rename that stops matching. The pre-fix code also
+/// left it attached (it skipped every repeat same-`start_time` sighting
+/// outright, rename or not), so this documents the spec-correct steady
+/// state rather than catching a regression in the rename branch itself
+/// (`in_place_rename_to_a_matching_name_attaches` covers that).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn in_place_rename_that_stops_matching_keeps_the_session_attached() {
     let runtime = Handle::current();
