@@ -678,6 +678,24 @@ pub enum FinishOutcome {
     Cancelled,
 }
 
+/// Outcome of [`OutstandingPlans::set_queue_ticket`] (N3): whether `plan`
+/// is still outstanding (the ticket was recorded normally) or was
+/// cancelled before this call could run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetQueueTicketOutcome {
+    /// Recorded normally; `plan` is still outstanding.
+    Recorded,
+    /// `plan` was no longer outstanding by the time this ran — either a
+    /// `READ_PLAN_CANCEL`/detach raced [`OutstandingPlans::begin`] and
+    /// won before this call reached the lock, or (rarer: the job itself
+    /// would have to run and call [`OutstandingPlans::finish`] in that
+    /// same window) the plan already finished. Either way there is no
+    /// ticket left to track; the caller removes the job from the pool
+    /// itself using the `ticket` it already has, which is a safe no-op
+    /// if the job already ran.
+    CancelledMeanwhile,
+}
+
 /// Every way admitting a new asynchronous plan can be refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutstandingPlansError {
@@ -752,13 +770,22 @@ impl OutstandingPlans {
     }
 
     /// F1: records `plan`'s pool job ticket once it has actually been
-    /// queued; a no-op if `plan` already finished (or was already
-    /// cancelled and freed) by the time this runs — nothing left to
-    /// remove from the pool's queue either way.
-    pub fn set_queue_ticket(&self, plan: vosu_plan_id, ticket: u64) {
+    /// queued. N3: a `READ_PLAN_CANCEL`/detach can race this (arriving
+    /// after [`Self::begin`] but before this call reaches the lock), in
+    /// which case `plan` is already in `cancelled`, not `outstanding` —
+    /// reported as [`SetQueueTicketOutcome::CancelledMeanwhile`] so the
+    /// caller can still remove the now-orphaned job from the pool itself
+    /// (it already has `ticket`) and `forget_cancelled` it, rather than
+    /// leaving it to pile up in the pool's own per-key sub-queue until a
+    /// worker happens to reach it — the same leak F1 closed, on this
+    /// narrower race window.
+    pub fn set_queue_ticket(&self, plan: vosu_plan_id, ticket: u64) -> SetQueueTicketOutcome {
         let mut state = self.lock();
         if state.outstanding.contains_key(&plan) {
             state.queue_tickets.insert(plan, ticket);
+            SetQueueTicketOutcome::Recorded
+        } else {
+            SetQueueTicketOutcome::CancelledMeanwhile
         }
     }
 
@@ -834,9 +861,17 @@ impl OutstandingPlans {
 
     /// Call once `plan`'s execution has actually finished: removes it from
     /// the outstanding/cancelled set and reports whether its result should
-    /// still be delivered or was cancelled meanwhile.
+    /// still be delivered or was cancelled meanwhile. N1: also removes
+    /// `plan`'s own `queue_tickets` entry if it still had one — before
+    /// this, a plan that ran to completion normally (never cancelled, so
+    /// never freed by [`Self::cancel`]/[`Self::cancel_session`] either)
+    /// left its ticket behind here forever: every async plan a plugin
+    /// ever submits and lets finish normally, "many times per second per
+    /// session" (`docs/v2/implementation-plan.md` section 10) on the hot
+    /// path, grew this map without bound for the life of the instance.
     pub fn finish(&self, plan: vosu_plan_id) -> FinishOutcome {
         let mut state = self.lock();
+        state.queue_tickets.remove(&plan);
         if state.cancelled.remove(&plan) {
             FinishOutcome::Cancelled
         } else {
@@ -855,6 +890,24 @@ impl OutstandingPlans {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Current `cancelled`-set size, for tests and diagnostics (N1):
+    /// every entry here must eventually clear through [`Self::finish`]
+    /// or [`Self::forget_cancelled`], never accumulate for the life of
+    /// the instance.
+    #[must_use]
+    pub fn cancelled_len(&self) -> usize {
+        self.lock().cancelled.len()
+    }
+
+    /// Current `queue_tickets` map size, for tests and diagnostics (N1):
+    /// every entry here must eventually clear through [`Self::finish`],
+    /// [`Self::cancel`], or [`Self::cancel_session`], never accumulate
+    /// for the life of the instance.
+    #[must_use]
+    pub fn queue_tickets_len(&self) -> usize {
+        self.lock().queue_tickets.len()
     }
 }
 

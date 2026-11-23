@@ -120,3 +120,39 @@ fn forget_cancelled_prevents_the_cancelled_set_from_leaking_queue_removed_plans(
     }
     assert_eq!(outstanding.len(), 0);
 }
+
+/// N1: `finish` must also clear `plan`'s own `queue_tickets` entry, not
+/// just `outstanding`/`cancelled` — otherwise every async plan that
+/// completes normally (never cancelled, so never freed by
+/// [`OutstandingPlans::cancel`]/`cancel_session` either) leaves its
+/// ticket behind forever, growing this map without bound for the life
+/// of the instance (plans run "many times per second per session" on
+/// the hot path, `docs/v2/implementation-plan.md` section 10). 10,000
+/// submit-ticket-finish iterations against the same handful of plan ids
+/// prove every one of [`OutstandingPlans`]'s own maps — not just
+/// `outstanding`, which [`forget_cancelled_prevents_the_cancelled_set_from_leaking_queue_removed_plans`]
+/// already covers for the cancel path — ends at length 0 through the
+/// test-only [`OutstandingPlans::cancelled_len`]/
+/// [`OutstandingPlans::queue_tickets_len`] accessors.
+#[test]
+fn finish_leaves_every_outstanding_plans_map_at_length_zero_after_10000_completions() {
+    let outstanding = OutstandingPlans::new();
+    for plan in 0..10_000u64 {
+        let plan = plan % (MAX_OUTSTANDING_ASYNC_PLANS as u64);
+        outstanding
+            .begin(plan, 1)
+            .unwrap_or_else(|error| panic!("plan {plan} must still be admittable: {error:?}"));
+        assert_eq!(
+            outstanding.set_queue_ticket(plan, plan),
+            SetQueueTicketOutcome::Recorded
+        );
+        assert_eq!(outstanding.finish(plan), FinishOutcome::Deliver);
+    }
+    assert_eq!(outstanding.len(), 0);
+    assert_eq!(outstanding.cancelled_len(), 0);
+    assert_eq!(
+        outstanding.queue_tickets_len(),
+        0,
+        "N1: `finish` must remove `plan`'s own `queue_tickets` entry too"
+    );
+}
