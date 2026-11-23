@@ -104,9 +104,9 @@ python scripts/land.py [--topic <name>]
   - actionlint when workflows changed;
   - Windows MSVC cross-Clippy;
   - the dashboard smokes when UI paths changed;
-  - native Windows Clippy, tests, and doctests in the VM through `scripts/native-ci.ps1`.
+  - native Windows Clippy, tests, and doctests in the VM through `scripts/native-ci.ps1`, but only when `scripts/windows_sensitivity.py` finds the diff against `--base` Windows-sensitive (the native process/platform boundary, updater staging, process/platform-specific modules, the plugin host's native-library loading, Cargo/toolchain manifests, `.cargo/`, `.github/workflows/`, `scripts/native-ci.ps1`/`prepush.py` itself, any `windows`/`win32`-named or `.ps1` path, or an added/removed `cfg(windows)`/`target_os`/`windows_sys`/`unsafe` diff line) or `--force-native` is passed; otherwise it records `not_applicable` with a reason and skips the VM entirely. Hosted CI's `windows-native` job still runs for every Rust change regardless, so this only narrows the slower local VM phase.
 
-  It writes `target/prepush/<sha>.json`. `--start-vm` starts the Windows VM only if it is stopped; report that lifecycle action.
+  It writes `target/prepush/<sha>.json`. `--start-vm` starts the Windows VM only if it is stopped and the native phase is applicable; report that lifecycle action.
 - `land.py` accepts the evidence only when every step passed, or was not applicable, for exactly `HEAD`, and `HEAD` fast-forwards `origin/main`. It then pushes `ci/<topic>`, waits for hosted CI on that commit, fast-forwards `main`, and deletes the branch. Pass `--base <branch>` (and the matching `prepush.py --base <branch>`) to land onto a branch other than `main`, e.g. `v2/main`.
 - `--skip` is for local iteration only; `land.py` refuses evidence with a skipped or failed required step. Fix the cause and rerun. Do not weaken tests or bypass the gate.
 - When `ci.yml` gains a check, add it to `prepush.py` or `native-ci.ps1` in the same change. `scripts/test_gate_tooling.py` fails until the local gate covers it.

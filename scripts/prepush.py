@@ -11,6 +11,8 @@ import subprocess
 import sys
 import time
 
+import windows_sensitivity
+
 ROOT = Path(__file__).resolve().parent.parent
 EVIDENCE_DIR = ROOT / "target" / "prepush"
 # Own, non-incremental target dir outside the checkout filesystem: a shared
@@ -31,6 +33,11 @@ NATIVE_COMMANDS = {
     "native-test-workspace": "cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc",
     "native-test-doc": "cargo test --workspace --doc --all-features --locked --target x86_64-pc-windows-msvc",
 }
+
+# scripts/windows_sensitivity.py decides whether this diff needs the native
+# VM phase at all; hosted CI's windows-native job (scripts/ci-changes.py's
+# `native` flag) still runs it for every Rust change regardless.
+NATIVE_NOT_APPLICABLE_REASON = "portable-only change; hosted Windows CI verifies it"
 
 
 def run(cmd, *, cwd=ROOT, env_overrides=None, extra_env_unset=()):
@@ -116,6 +123,16 @@ def changed_paths(base="main"):
         return None
     diff = git("diff", "--no-renames", "--name-only", f"origin/{base}...HEAD", check=False)
     return [line for line in diff.splitlines() if line]
+
+
+def changed_diff(base="main"):
+    """Unified diff of HEAD against origin/<base>, or None when that cannot be proven."""
+    try:
+        git("fetch", "origin", base, check=True)
+    except RuntimeError as error:
+        print(f"warning: could not fetch origin/{base} to classify changes: {error}", file=sys.stderr)
+        return None
+    return git("diff", "--no-renames", f"origin/{base}...HEAD", check=False)
 
 
 def workflows_changed(paths):
@@ -207,8 +224,13 @@ def run_dashboard(log_dir, applicable, playwright_module):
     return StepResult(name, True, status, exit_code, round(total, 3), command, log[-1])
 
 
-def run_native(sha, log_dir, evidence_dir, start_vm):
+def run_native(sha, log_dir, evidence_dir, start_vm, applicable):
     names = ["native-clippy", "native-test-workspace", "native-test-doc"]
+    if not applicable:
+        return [
+            StepResult(n, False, "not_applicable", command=NATIVE_COMMANDS[n], log_tail=NATIVE_NOT_APPLICABLE_REASON)
+            for n in names
+        ]
     sha12 = sha[:12]
     remote_stage = f"V:\\omp-prepush\\{sha12}"
     remote_work = f"V:\\bt\\vosu-{sha12}"
@@ -307,6 +329,12 @@ def main():
     )
     parser.add_argument("--start-vm", action="store_true", help="Start the Windows VM if it is currently stopped.")
     parser.add_argument(
+        "--force-native",
+        action="store_true",
+        help="Run the native Windows VM phase even when scripts/windows_sensitivity.py finds the "
+        "change portable-only (it is always applicable otherwise).",
+    )
+    parser.add_argument(
         "--base",
         default="main",
         help="Branch to diff HEAD against for change detection (default: main).",
@@ -380,8 +408,9 @@ def main():
         for name in ("native-clippy", "native-test-workspace", "native-test-doc"):
             results.append(StepResult(name, True, "skipped", command=NATIVE_COMMANDS[name]))
     else:
-        print("running native Windows CI in the VM ...")
-        results.extend(run_native(sha, log_dir, evidence_dir, args.start_vm))
+        applicable = args.force_native or windows_sensitivity.windows_sensitive(paths, changed_diff(args.base))
+        print(f"running native Windows CI in the VM ... (applicable={applicable})")
+        results.extend(run_native(sha, log_dir, evidence_dir, args.start_vm, applicable))
 
     evidence = {
         "sha": sha,
