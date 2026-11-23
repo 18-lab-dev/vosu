@@ -25,6 +25,7 @@ vosu-net -> vosu-proptest
 
 vosu-core -> vosu-net
 vosu-core -> vosu-plugin-api
+vosu-core -> vosu-plugin-testkit
 vosu-core -> vosu-sys
 vosu-core -> vosu-proptest
 

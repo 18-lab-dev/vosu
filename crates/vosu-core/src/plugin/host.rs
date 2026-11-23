@@ -21,30 +21,39 @@
 //! arrives while `Creating` is queued in its own `pending` list instead,
 //! and replayed, in order, once the real instance takes its place.
 //!
-//! Session lifecycle (§6.2) and focus (`FocusTracker`) delivery, and real
-//! process discovery feeding `MatcherEngine`, are later phases: this type
-//! does not implement them. [`InstanceSlot::plugin_id`] is already the
-//! hook a session-scoped log attribution would read, [`PluginHost::handle`]'s
-//! fallback arm is where `SESSION_IDENTIFY`/`SESSION_DECLINE` routing
-//! plugs in, and [`PluginHost::log_session`] is where an attached
-//! session's public id would come from once session lifecycle routes
-//! through here.
+//! Session lifecycle (§6.2, [`super::session::SessionRegistry`]) and the
+//! Focus rule (`docs/v2/api-v1.md`, [`super::focus::FocusTracker`]) route
+//! through this host too: [`PluginHost::process_appeared`]/
+//! [`PluginHost::process_exited`] are discovery's own entry points (a
+//! later phase feeds them from the real OS process list; this phase's
+//! own tests drive them with synthetic [`ProcessRecord`]s), and
+//! [`PluginHost::handle`] routes `SESSION_IDENTIFY`/`SESSION_DECLINE`.
+//! Read plans and scans are still later phases this type does not
+//! implement.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::runtime::Handle;
-use vosu_plugin_api::{Init, Message, TimerCancel, TimerFired, TimerSet, encode, vosu_status};
+use vosu_plugin_api::{
+    Bitness, DetachReason, FocusChanged, Init, Message, SessionDecline, TimerCancel, TimerFired,
+    TimerSet, encode, vosu_status,
+};
 
 use super::dispatch::{OwnedMessage, WorkerPool};
 use super::error::HostError;
+use super::focus::{
+    FocusCandidate, FocusEvent, FocusKey, FocusTracker, ForegroundSource, OsForegroundSource,
+};
 use super::host_services::{PluginHostHandler, PluginInstanceId};
 use super::instance::PluginInstance;
 use super::logging::PluginLogRouter;
+use super::matcher::{CandidateProcess, MatcherEngine, host_platform};
 use super::registry::LoadedPlugin;
+use super::session::{DiscoveredProcess, SessionHandle, SessionRegistry};
 use super::settings::{
     BRIDGE_B2_PLUGIN_ID, ConfigSettingsBridgeB2, PluginSettingsService, SettingsChangeDelivery,
 };
@@ -106,6 +115,24 @@ struct PendingDelivery {
 /// `DROP_DESTROY_GRACE` cites.
 const SHUTDOWN_RACE_DESTROY_GRACE: Duration = Duration::from_secs(5);
 
+/// One process discovery (phase (d2)) observed, enough to match it
+/// against every registered game plugin's `[match]` table (§6.1) and
+/// attach a session to the winner (§6.2):
+/// [`PluginHost::process_appeared`]'s own parameter. Synthetic in this
+/// phase's tests (`docs/v2/implementation-plan.md` M1 Exit: "Tests drive
+/// matching with synthetic process records").
+#[derive(Debug, Clone)]
+pub struct ProcessRecord {
+    pub pid: u32,
+    /// The executable file name only (no directory), e.g. `osu!.exe`.
+    pub name: String,
+    /// The full executable path.
+    pub path: String,
+    /// The joined argv.
+    pub command_line: String,
+    pub bitness: Bitness,
+}
+
 /// Owns every live plugin instance (replacing a bare `Vec<PluginInstance>`,
 /// `src/runtime/dev_plugins.rs`'s former ad-hoc `LoggingHandler`, and its
 /// stub `TIMER_SET`/empty `init.settings` answers) and answers the M1 host
@@ -122,6 +149,20 @@ pub struct PluginHost {
     /// module doc comment) to destroy the instance it just built instead
     /// of publishing it `Live` — the fix for the race this field closes.
     shutting_down: AtomicBool,
+    /// Every enabled game plugin's compiled `[match]` table, in install
+    /// order (§6.1, D18), registered by [`Self::create_instance`].
+    matcher: Mutex<MatcherEngine>,
+    /// Session lifecycle bookkeeping (§6.2): PID generations,
+    /// `SESSION_IDENTIFY`/`SESSION_DECLINE` processing, the 5-second
+    /// identification timeout, `focus_priority` holding.
+    sessions: Mutex<SessionRegistry>,
+    /// The Focus rule's own state (`docs/v2/api-v1.md` "Focus rule"):
+    /// currently focused session and recency fallback.
+    focus: Mutex<FocusTracker>,
+    /// Which process (if any) owns the OS foreground window, for the
+    /// Focus rule: [`OsForegroundSource`] in production,
+    /// `focus::SyntheticForegroundSource` in tests.
+    foreground: Arc<dyn ForegroundSource>,
 }
 
 impl PluginHost {
@@ -129,15 +170,64 @@ impl PluginHost {
     /// task and the timer registry's spawned timer tasks (`Handle::spawn`
     /// works from any thread, unlike the ambient `tokio::spawn`, so a
     /// plugin instance's own dispatch thread — a plain OS thread, not a
-    /// Tokio runtime, §4 — can still drive both through this one host).
+    /// Tokio runtime, §4 — can still drive both through this one host),
+    /// plus the 5-second session-identification sweep task (§6.2) this
+    /// constructor also spawns.
     pub fn new(logger: Logger, settings: Arc<PluginSettingsService>, runtime: Handle) -> Arc<Self> {
-        Arc::new_cyclic(|self_ref| Self {
-            self_ref: self_ref.clone(),
-            log_router: PluginLogRouter::new(logger, runtime.clone()),
-            timers: TimerRegistry::new(runtime),
+        Self::new_inner(
+            logger,
             settings,
-            instances: Mutex::new(HashMap::new()),
-            shutting_down: AtomicBool::new(false),
+            runtime,
+            Arc::new(OsForegroundSource),
+            super::session::IDENTIFICATION_TIMEOUT,
+        )
+    }
+
+    /// Test-only entry point: lets a test inject a
+    /// `focus::SyntheticForegroundSource` and a short identification
+    /// timeout instead of the real 5-second one, without changing
+    /// [`Self::new`]'s own public signature (the one production call
+    /// site, `src/runtime/lifecycle.rs`, needs neither).
+    #[cfg(test)]
+    fn new_for_tests(
+        logger: Logger,
+        settings: Arc<PluginSettingsService>,
+        runtime: Handle,
+        foreground: Arc<dyn ForegroundSource>,
+        identification_timeout: Duration,
+    ) -> Arc<Self> {
+        Self::new_inner(
+            logger,
+            settings,
+            runtime,
+            foreground,
+            identification_timeout,
+        )
+    }
+
+    fn new_inner(
+        logger: Logger,
+        settings: Arc<PluginSettingsService>,
+        runtime: Handle,
+        foreground: Arc<dyn ForegroundSource>,
+        identification_timeout: Duration,
+    ) -> Arc<Self> {
+        Arc::new_cyclic(|self_ref| {
+            runtime.spawn(identification_sweep_loop(self_ref.clone()));
+            Self {
+                self_ref: self_ref.clone(),
+                log_router: PluginLogRouter::new(logger, runtime.clone()),
+                timers: TimerRegistry::new(runtime),
+                settings,
+                instances: Mutex::new(HashMap::new()),
+                shutting_down: AtomicBool::new(false),
+                matcher: Mutex::new(MatcherEngine::new(host_platform())),
+                sessions: Mutex::new(SessionRegistry::with_identification_timeout(
+                    identification_timeout,
+                )),
+                focus: Mutex::new(FocusTracker::new()),
+                foreground,
+            }
         })
     }
 
@@ -211,6 +301,13 @@ impl PluginHost {
             return Err(HostError::ShuttingDown);
         }
         let plugin_id = plugin.manifest().id.clone();
+        if let Some(table) = plugin.manifest().matcher.clone() {
+            self.matcher
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .register(plugin_id.clone(), table)
+                .map_err(HostError::MatcherRegister)?;
+        }
         self.instances
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -461,8 +558,205 @@ impl PluginHost {
             }
         }
     }
-}
 
+    /// `plugin_id` this `instance` is registered under, for every message
+    /// that must be attributed or routed by plugin id rather than by
+    /// `PluginInstanceId` — the same lookup `handle`'s `LogRecord` arm
+    /// already did inline.
+    fn plugin_id_of(&self, instance: PluginInstanceId) -> Option<String> {
+        self.instances
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(&instance)
+            .map(|slot| slot.plugin_id().to_owned())
+    }
+
+    /// The Focus rule's current inputs (`docs/v2/api-v1.md` "Focus
+    /// rule"): every identified session re-keyed to [`FocusKey`] with its
+    /// owning plugin's install order, plus the current `focus_priority`
+    /// holder. Locks `sessions` then `matcher`, in that order, every time
+    /// — the one lock order every focus-recomputing call site below uses,
+    /// so two such calls never deadlock against each other.
+    fn focus_inputs(&self) -> (Vec<FocusCandidate>, Option<FocusKey>) {
+        let sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let matcher = self
+            .matcher
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let candidates = sessions
+            .identified_sessions()
+            .map(|(handle, owner, pid)| FocusCandidate {
+                handle: FocusKey(handle.0),
+                pid,
+                install_order: matcher.install_order_of(owner),
+            })
+            .collect();
+        let priority_holder = sessions.priority_holder().map(|handle| FocusKey(handle.0));
+        (candidates, priority_holder)
+    }
+
+    /// Delivers every `VOSU_OP_FOCUS_CHANGED` event in `events`'s own
+    /// order (loss before gain, §6.2 "Delivery ordering"), to each
+    /// session's owning plugin.
+    fn deliver_focus_events(&self, events: Vec<FocusEvent>) {
+        for event in events {
+            let handle = SessionHandle(event.handle.0);
+            let owner = {
+                let sessions = self
+                    .sessions
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                sessions
+                    .owner_and_pid(handle)
+                    .map(|(owner, _)| owner.clone())
+            };
+            if let Some(owner) = owner {
+                self.dispatch_to(
+                    &owner,
+                    &Message::FocusChanged(FocusChanged {
+                        handle: handle.0,
+                        focused: event.focused,
+                    }),
+                );
+            }
+        }
+    }
+
+    /// Recomputes focus from the current session set and delivers any
+    /// resulting `FOCUS_CHANGED` events: call after any change to which
+    /// sessions are identified or who holds `focus_priority`.
+    fn recompute_focus(&self) {
+        let (candidates, priority_holder) = self.focus_inputs();
+        let events = self
+            .focus
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .recompute(&candidates, priority_holder, self.foreground.as_ref());
+        self.deliver_focus_events(events);
+    }
+
+    /// `SESSION_IDENTIFY` just exposed `handle`: §6.2 "a plugin that
+    /// needs [focus] waits for the first `FOCUS_CHANGED` (sent once,
+    /// promptly, after the session is identified, even if focus does not
+    /// change relative to the previous state)" — `FocusTracker::recompute`
+    /// alone would miss that case, so this always uses
+    /// `on_session_identified` instead of [`Self::recompute_focus`].
+    fn identify_focus(&self, handle: SessionHandle) {
+        let (candidates, priority_holder) = self.focus_inputs();
+        let events = self
+            .focus
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .on_session_identified(
+                FocusKey(handle.0),
+                &candidates,
+                priority_holder,
+                self.foreground.as_ref(),
+            );
+        self.deliver_focus_events(events);
+    }
+
+    /// Discovery's own entry point (phase (d2) calls this from a real OS
+    /// process list; this phase only provides and tests it): matches
+    /// `process` against every registered game plugin's `MatcherEngine`
+    /// (§6.1), attaches a session to the winner (`SessionRegistry::attach`,
+    /// §6.2), and delivers `SESSION_ATTACHED` to it. A no-op when no
+    /// plugin's matcher accepts `process`, or when `SessionRegistry`
+    /// already tracks its pid (a rescan of a still-running process, D6).
+    pub fn process_appeared(&self, process: ProcessRecord) {
+        let candidate = CandidateProcess {
+            name: process.name.clone(),
+            path: process.path.clone(),
+            command_line: process.command_line.clone(),
+        };
+        let outcome = self
+            .matcher
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .match_candidate(&candidate);
+        let Some(winner) = outcome.winner else {
+            return;
+        };
+        if !outcome.shadowed.is_empty() {
+            tracing::warn!(
+                pid = process.pid,
+                winner = %winner,
+                shadowed = ?outcome.shadowed,
+                "multiple plugins matched this process; the earliest installed one wins (D18)"
+            );
+        }
+        // `outcome.winner` plus `outcome.shadowed`, in that order, is
+        // already the full install-order candidate list `attach` wants
+        // (`MatchOutcome`'s own doc comment).
+        let mut candidates = Vec::with_capacity(1 + outcome.shadowed.len());
+        candidates.push(winner.clone());
+        candidates.extend(outcome.shadowed);
+        let discovered = DiscoveredProcess {
+            pid: process.pid,
+            bitness: process.bitness,
+        };
+        let attached = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .attach(discovered, candidates, Instant::now());
+        if let Some(attached) = attached {
+            self.dispatch_to(&winner, &Message::SessionAttached(attached.message));
+        }
+    }
+
+    /// Discovery's own entry point for a process exit (phase (d2)):
+    /// detaches whatever session, if any, this registry still tracks for
+    /// `pid` (`DetachReason::Exited`) and clears the D6 decline record so
+    /// a later reuse of `pid` can attach fresh.
+    pub fn process_exited(&self, pid: u32) {
+        let handle = {
+            self.sessions
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .handle_for_pid(pid)
+        };
+        if let Some(handle) = handle {
+            self.detach_session(handle, DetachReason::Exited);
+        }
+        self.sessions
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .forget_exited_pid(pid);
+    }
+
+    /// Common path for every non-`SESSION_DECLINE` way a session leaves
+    /// (process exit, lost, superseded): delivers `SESSION_DETACHED` to
+    /// the owning plugin, then recomputes focus — `handle` may have been
+    /// the focused session.
+    fn detach_session(&self, handle: SessionHandle, reason: DetachReason) {
+        let owner = {
+            let sessions = self
+                .sessions
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            sessions
+                .owner_and_pid(handle)
+                .map(|(owner, _)| owner.clone())
+        };
+        let detached = {
+            self.sessions
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .detach(handle, reason)
+        };
+        let Some(detached) = detached else {
+            return;
+        };
+        if let Some(owner) = owner {
+            self.dispatch_to(&owner, &Message::SessionDetached(detached));
+        }
+        self.recompute_focus();
+    }
+}
 impl PluginHostHandler for PluginHost {
     fn handle(
         &self,
@@ -489,10 +783,80 @@ impl PluginHostHandler for PluginHost {
                 self.timers.set(instance, timer, interval_ms, delivery)
             }
             Message::TimerCancel(TimerCancel { timer }) => self.timers.cancel(instance, timer),
+            Message::SessionIdentify(identify) => {
+                let Some(plugin_id) = self.plugin_id_of(instance) else {
+                    return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+                };
+                let handle = SessionHandle(identify.handle);
+                let outcome = {
+                    self.sessions
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner())
+                        .identify(&plugin_id, handle, identify, Instant::now())
+                };
+                match outcome {
+                    Ok(outcome) => {
+                        if outcome.focus_priority_ignored {
+                            tracing::warn!(
+                                ?handle,
+                                %plugin_id,
+                                "focus_priority requested while another session already holds it; ignored, not refused (§6.2)"
+                            );
+                        }
+                        self.identify_focus(handle);
+                        vosu_status::VOSU_OK
+                    }
+                    Err(error) => error.into(),
+                }
+            }
+            Message::SessionDecline(SessionDecline { handle }) => {
+                let Some(plugin_id) = self.plugin_id_of(instance) else {
+                    return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+                };
+                let handle = SessionHandle(handle);
+                let outcome = {
+                    self.sessions
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner())
+                        .decline(&plugin_id, handle, Instant::now())
+                };
+                match outcome {
+                    Ok(super::session::DeclineOutcome::ReOffered {
+                        detached,
+                        reoffered,
+                    }) => {
+                        self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
+                        // The re-offered handle's own `owner` is already
+                        // the next install-order candidate (`decline`'s
+                        // own doc comment), so look it up the same way
+                        // every other session lookup does rather than
+                        // re-deriving it from the matcher.
+                        let next_owner = {
+                            self.sessions
+                                .lock()
+                                .unwrap_or_else(|poison| poison.into_inner())
+                                .owner_and_pid(reoffered.handle)
+                                .map(|(owner, _)| owner.clone())
+                        };
+                        if let Some(next_owner) = next_owner {
+                            self.dispatch_to(
+                                &next_owner,
+                                &Message::SessionAttached(reoffered.message),
+                            );
+                        }
+                        vosu_status::VOSU_OK
+                    }
+                    Ok(super::session::DeclineOutcome::Dropped { detached }) => {
+                        self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
+                        vosu_status::VOSU_OK
+                    }
+                    Err(error) => error.into(),
+                }
+            }
             other => {
-                // Session lifecycle (`SESSION_IDENTIFY`/`SESSION_DECLINE`,
-                // §6.2), state reads, scans, and action calls are later
-                // milestones: logged, not acted on, exactly as the former
+                // State reads (`STATE_SUBSCRIBE`), resource/tree/stream
+                // operations, and action calls are later milestones:
+                // logged, not acted on, exactly as the former
                 // `LoggingHandler` did for every opcode.
                 tracing::debug!(
                     ?instance,
@@ -501,6 +865,33 @@ impl PluginHostHandler for PluginHost {
                 );
                 vosu_status::VOSU_OK
             }
+        }
+    }
+}
+
+/// Background task spawned once per [`PluginHost`] (module doc comment,
+/// §6.2): sweeps every still-pending session for the 5-second
+/// identification timeout on a tokio interval, logging each one once.
+/// Stops once `host` no longer upgrades (the host was dropped).
+async fn identification_sweep_loop(host: Weak<PluginHost>) {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        interval.tick().await;
+        let Some(host) = host.upgrade() else {
+            return;
+        };
+        let timed_out = {
+            host.sessions
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .sweep_identification_timeouts(Instant::now())
+        };
+        for handle in timed_out {
+            tracing::warn!(
+                ?handle,
+                "session did not identify within 5s of SESSION_ATTACHED; keeping it hidden (§6.2)"
+            );
         }
     }
 }
@@ -543,416 +934,4 @@ impl SettingsChangeDelivery for PluginHost {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Condvar;
-    use std::time::Instant;
-
-    use serde_json::{Map, Value};
-
-    use super::super::registry;
-    use super::super::settings::{SettingsError, SettingsStorage};
-    use super::*;
-    use crate::logging::{ConsoleSink, LoggerOptions};
-
-    struct DummyStorage;
-    impl SettingsStorage for DummyStorage {
-        fn load(&self, _plugin_id: &str) -> Result<Map<String, Value>, SettingsError> {
-            Ok(Map::new())
-        }
-        fn store(
-            &self,
-            _plugin_id: &str,
-            _values: &Map<String, Value>,
-        ) -> Result<(), SettingsError> {
-            Ok(())
-        }
-    }
-
-    struct SilentConsole;
-    impl ConsoleSink for SilentConsole {
-        fn is_tty(&self) -> bool {
-            false
-        }
-        fn write_log(&self, _text: &str) -> std::io::Result<()> {
-            Ok(())
-        }
-        fn clear_progress(&self, _lines: usize) -> std::io::Result<()> {
-            Ok(())
-        }
-        fn write_progress(&self, _text: &str) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    /// Returns the backing `TempDir` too, so the caller keeps it alive
-    /// for exactly its own test's scope instead of leaking it into
-    /// `/tmp` forever.
-    fn test_host(runtime: Handle) -> (tempfile::TempDir, Arc<PluginHost>) {
-        let log_dir = tempfile::tempdir().unwrap();
-        let logger = Logger::new(
-            log_dir.path(),
-            LoggerOptions {
-                version: "0.1.0".to_owned(),
-                debug_log: false,
-                queue_capacity: 64,
-            },
-            Arc::new(SilentConsole),
-        )
-        .unwrap();
-        let settings = Arc::new(PluginSettingsService::new(Arc::new(DummyStorage)));
-        (log_dir, PluginHost::new(logger, settings, runtime))
-    }
-
-    /// Blocks the gated plugin's own `create` until released, so a test
-    /// can force a `TIMER_SET` it made from inside `create` to fire —
-    /// and be queued, not delivered or lost — strictly before `create`
-    /// itself returns: an ordering this gate decides, never how fast
-    /// `create` happens to run on whatever machine runs this test.
-    struct CreateGate {
-        release: Mutex<bool>,
-        release_cv: Condvar,
-        delivered: Mutex<bool>,
-        delivered_cv: Condvar,
-    }
-
-    impl CreateGate {
-        fn new() -> Arc<Self> {
-            Arc::new(Self {
-                release: Mutex::new(false),
-                release_cv: Condvar::new(),
-                delivered: Mutex::new(false),
-                delivered_cv: Condvar::new(),
-            })
-        }
-
-        fn wait_for_release(&self) {
-            let mut release = self.release.lock().unwrap_or_else(|p| p.into_inner());
-            while !*release {
-                release = self
-                    .release_cv
-                    .wait(release)
-                    .unwrap_or_else(|p| p.into_inner());
-            }
-        }
-
-        fn release(&self) {
-            *self.release.lock().unwrap_or_else(|p| p.into_inner()) = true;
-            self.release_cv.notify_all();
-        }
-
-        fn mark_delivered(&self) {
-            *self.delivered.lock().unwrap_or_else(|p| p.into_inner()) = true;
-            self.delivered_cv.notify_all();
-        }
-
-        fn wait_for_delivery(&self, timeout: Duration) -> bool {
-            let (guard, result) = self
-                .delivered_cv
-                .wait_timeout_while(
-                    self.delivered.lock().unwrap_or_else(|p| p.into_inner()),
-                    timeout,
-                    |delivered| !*delivered,
-                )
-                .unwrap_or_else(|p| p.into_inner());
-            drop(guard);
-            !result.timed_out()
-        }
-    }
-
-    fn create_gate_registry() -> &'static Mutex<HashMap<String, Arc<CreateGate>>> {
-        static REGISTRY: std::sync::LazyLock<Mutex<HashMap<String, Arc<CreateGate>>>> =
-            std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-        &REGISTRY
-    }
-
-    /// A plugin whose own `create` sets a one-shot timer (§6.11) and then
-    /// blocks on this test's [`CreateGate`] before returning, so the test
-    /// can hold `create` open across the real timer firing. `on_message`
-    /// marks the gate once it actually receives the replayed
-    /// `TIMER_FIRED` — the end-to-end proof this finding's fix requires,
-    /// not merely that something got queued.
-    mod gated_timer_plugin {
-        use std::sync::Arc;
-
-        use vosu_plugin_api::{
-            HostServices, Init, Message, Plugin, PluginError, TimerFired, TimerSet,
-            VtableHostServices, vosu_status,
-        };
-
-        use super::{CreateGate, create_gate_registry};
-
-        pub struct GatedTimerPlugin {
-            gate: Arc<CreateGate>,
-        }
-
-        impl Plugin for GatedTimerPlugin {
-            fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
-                let status = host.send(
-                    &Message::TimerSet(TimerSet {
-                        timer: 1,
-                        interval_ms: None,
-                    }),
-                    0,
-                );
-                if status != vosu_status::VOSU_OK {
-                    return Err(status.into());
-                }
-                let gate = create_gate_registry()
-                    .lock()
-                    .unwrap()
-                    .get(&init.plugin_id)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        panic!("no create gate registered for {:?}", init.plugin_id)
-                    });
-                gate.wait_for_release();
-                Ok(Self { gate })
-            }
-
-            fn on_message(
-                &mut self,
-                message: Message,
-                _correlation_id: u64,
-            ) -> Result<(), PluginError> {
-                if let Message::TimerFired(TimerFired { timer: 1 }) = message {
-                    self.gate.mark_delivered();
-                }
-                Ok(())
-            }
-        }
-
-        vosu_plugin_api::export_plugin!(bundled GatedTimerPlugin);
-    }
-
-    /// The new-finding P2 race, closed: a `TIMER_SET` the plugin makes
-    /// from inside its own `create` fires, and is handed to
-    /// `PluginHost::timer_fired`, while `create_instance` has not yet
-    /// replaced the `Creating` placeholder with the real instance — this
-    /// test gates `create` open until it observes exactly that (the
-    /// fire queued in `InstanceSlot::Creating`'s own `pending` list, a
-    /// real internal state transition this test waits on, never a fixed
-    /// sleep guessing the two have raced) — and then proves the queued
-    /// fire still reaches the plugin once `create` finally returns,
-    /// rather than being discarded for good.
-    #[test]
-    fn a_timer_set_during_create_that_fires_before_registration_is_queued_and_replayed() {
-        let plugin_id = "acme.gated-timer";
-        let gate = CreateGate::new();
-        create_gate_registry()
-            .lock()
-            .unwrap()
-            .insert(plugin_id.to_owned(), Arc::clone(&gate));
-
-        let manifest_text = format!(
-            "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='Gated Timer'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n"
-        );
-        let loaded = registry::load_bundled(&[registry::BundledPlugin {
-            manifest: &manifest_text,
-            vtable: gated_timer_plugin::vosu_plugin_vtable,
-        }])
-        .expect("loading the gated-timer test plugin");
-
-        let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
-        let _enter = runtime.enter();
-        let (_log_dir, host) = test_host(runtime.handle().clone());
-        let data_dir = tempfile::tempdir().unwrap();
-        let id = PluginInstanceId::new(1);
-
-        std::thread::scope(|scope| {
-            let host_ref = &host;
-            let loaded_ref = &loaded[0];
-            let data_dir_path = data_dir.path().to_path_buf();
-            let create_thread =
-                scope.spawn(move || host_ref.create_instance(id, loaded_ref, data_dir_path, None));
-
-            // Wait for the real one-shot timer (fires after
-            // `timers::MIN_TIMER_GRANULARITY`) to have already reached
-            // `timer_fired` and queued itself against the still-`Creating`
-            // slot — proof the race actually happened before
-            // `create_instance` got anywhere near installing the real
-            // instance, not an assumption resting on scheduling luck.
-            let deadline = Instant::now() + Duration::from_secs(5);
-            loop {
-                let queued = {
-                    let guard = host.instances.lock().unwrap_or_else(|p| p.into_inner());
-                    matches!(
-                        guard.get(&id),
-                        Some(InstanceSlot::Creating { pending, .. }) if !pending.is_empty()
-                    )
-                };
-                if queued {
-                    break;
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "expected the timer to fire and queue against the Creating placeholder within 5s"
-                );
-                std::thread::sleep(Duration::from_millis(1));
-            }
-
-            gate.release();
-            create_thread
-                .join()
-                .unwrap()
-                .expect("creating the gated-timer instance");
-        });
-
-        assert!(
-            gate.wait_for_delivery(Duration::from_secs(5)),
-            "the timer fire queued during create must still reach the plugin once replayed"
-        );
-
-        host.destroy_all(Duration::from_secs(5));
-    }
-
-    /// A plugin whose own `create` blocks on this test's [`CreateGate`]
-    /// (reused from the timer-race fixture above) until released, and
-    /// whose `Drop` records that it was actually destroyed — the proof
-    /// `destroy_all_does_not_leak_an_instance_still_creating_when_it_races`
-    /// needs that losing the shutdown race tears the instance down
-    /// instead of merely refusing to publish it.
-    mod race_gated_plugin {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        use vosu_plugin_api::{Init, Message, Plugin, PluginError, VtableHostServices};
-
-        use super::create_gate_registry;
-
-        pub static DESTROYED: AtomicBool = AtomicBool::new(false);
-
-        pub struct RaceGatedPlugin;
-
-        impl Plugin for RaceGatedPlugin {
-            fn create(_host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
-                let gate = create_gate_registry()
-                    .lock()
-                    .unwrap()
-                    .get(&init.plugin_id)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        panic!("no create gate registered for {:?}", init.plugin_id)
-                    });
-                gate.wait_for_release();
-                Ok(Self)
-            }
-
-            fn on_message(
-                &mut self,
-                _message: Message,
-                _correlation_id: u64,
-            ) -> Result<(), PluginError> {
-                Ok(())
-            }
-        }
-
-        impl Drop for RaceGatedPlugin {
-            fn drop(&mut self) {
-                DESTROYED.store(true, Ordering::SeqCst);
-            }
-        }
-
-        vosu_plugin_api::export_plugin!(bundled RaceGatedPlugin);
-    }
-
-    /// The race this finding's fix closes: `destroy_all` must not drop a
-    /// still-`Creating` placeholder and declare itself done while
-    /// `create_instance`'s own thread is still inside the plugin's
-    /// `create` — otherwise that call's later swap installs a `Live`
-    /// entry `destroy_all` has already finished draining, leaking a
-    /// running instance forever. Proves both ends: `create_instance`
-    /// loses the race with `HostError::ShuttingDown`, and the instance it
-    /// built is actually destroyed (not merely unpublished), with no
-    /// `Live` entry left behind afterward.
-    #[test]
-    fn destroy_all_does_not_leak_an_instance_still_creating_when_it_races() {
-        let plugin_id = "acme.race-gated";
-        let gate = CreateGate::new();
-        create_gate_registry()
-            .lock()
-            .unwrap()
-            .insert(plugin_id.to_owned(), Arc::clone(&gate));
-        race_gated_plugin::DESTROYED.store(false, Ordering::SeqCst);
-
-        let manifest_text = format!(
-            "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='Race Gated'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n"
-        );
-        let loaded = registry::load_bundled(&[registry::BundledPlugin {
-            manifest: &manifest_text,
-            vtable: race_gated_plugin::vosu_plugin_vtable,
-        }])
-        .expect("loading the race-gated test plugin");
-
-        let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
-        let _enter = runtime.enter();
-        let (_log_dir, host) = test_host(runtime.handle().clone());
-        let data_dir = tempfile::tempdir().unwrap();
-        let id = PluginInstanceId::new(1);
-
-        std::thread::scope(|scope| {
-            let host_ref = &host;
-            let loaded_ref = &loaded[0];
-            let data_dir_path = data_dir.path().to_path_buf();
-            let create_thread =
-                scope.spawn(move || host_ref.create_instance(id, loaded_ref, data_dir_path, None));
-
-            // Wait for `create_instance` to register the `Creating`
-            // placeholder: the plugin's own `create` is now blocked on
-            // the gate.
-            let deadline = Instant::now() + Duration::from_secs(5);
-            loop {
-                let creating = matches!(
-                    host.instances
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .get(&id),
-                    Some(InstanceSlot::Creating { .. })
-                );
-                if creating {
-                    break;
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "expected the Creating placeholder to appear within 5s"
-                );
-                std::thread::sleep(Duration::from_millis(1));
-            }
-
-            let destroy_thread = scope.spawn(|| host_ref.destroy_all(Duration::from_secs(5)));
-
-            // Wait for `destroy_all` to have actually set `shutting_down`
-            // before releasing `create`, so this test exercises the exact
-            // race window the fix closes rather than letting `create`
-            // finish first by scheduling luck.
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while !host.shutting_down.load(Ordering::Acquire) {
-                assert!(
-                    Instant::now() < deadline,
-                    "expected destroy_all to observe the race within 5s"
-                );
-                std::thread::sleep(Duration::from_millis(1));
-            }
-
-            gate.release();
-
-            let create_result = create_thread.join().unwrap();
-            destroy_thread.join().unwrap();
-
-            assert!(
-                matches!(create_result, Err(HostError::ShuttingDown)),
-                "expected create_instance to lose the shutdown race, got {create_result:?}"
-            );
-        });
-
-        assert!(
-            race_gated_plugin::DESTROYED.load(Ordering::SeqCst),
-            "the instance created during the shutdown race must still be destroyed, not leaked"
-        );
-        assert!(
-            host.instances
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .is_empty(),
-            "destroy_all must not leave a Live entry behind after racing create_instance"
-        );
-    }
-}
+mod tests;

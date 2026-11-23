@@ -400,6 +400,33 @@ impl MatcherEngine {
         let shadowed = hits.collect();
         MatchOutcome { winner, shadowed }
     }
+
+    /// `id`'s position in install order, the Focus rule's "earliest-
+    /// attached plugin" tie-break (`docs/v2/api-v1.md` "Focus rule"):
+    /// `usize::MAX` for a plugin this engine never registered (a game
+    /// plugin with no `[match]` table never matches a process at all, so
+    /// it can never own a session the Focus rule needs to rank).
+    #[must_use]
+    pub fn install_order_of(&self, id: &str) -> usize {
+        self.entries
+            .iter()
+            .position(|(existing, _, _)| existing == id)
+            .unwrap_or(usize::MAX)
+    }
+}
+
+/// The running host's own [`MatchPlatform`] (§6.1's two released
+/// targets, `docs/v2/plugin-abi.md:15`).
+#[must_use]
+pub const fn host_platform() -> MatchPlatform {
+    #[cfg(windows)]
+    {
+        MatchPlatform::Windows
+    }
+    #[cfg(not(windows))]
+    {
+        MatchPlatform::Linux
+    }
 }
 
 /// Everything [`MatcherEngine::register`] can fail with.

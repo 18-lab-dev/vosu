@@ -5,6 +5,8 @@ use std::fmt;
 
 use vosu_plugin_api::ManifestError;
 
+use super::matcher::RegisterError;
+
 /// Every way loading, starting, or tearing down a plugin instance can fail.
 #[derive(Debug)]
 pub enum HostError {
@@ -57,6 +59,10 @@ pub enum HostError {
     /// destroyed immediately instead of being published `Live`, so it
     /// never actually starts running.
     ShuttingDown,
+    /// `create_instance`'s manifest `[match]` table failed to register
+    /// with `MatcherEngine` (§6.1, D18: static overlap, the Linux
+    /// pre-filter bound, or the table itself failing to compile).
+    MatcherRegister(RegisterError),
 }
 
 impl fmt::Display for HostError {
@@ -92,6 +98,7 @@ impl fmt::Display for HostError {
             Self::InitEncodeFailed(error) => write!(f, "encoding init failed: {error}"),
             Self::UnknownInstance => write!(f, "no instance is registered under that id"),
             Self::ShuttingDown => write!(f, "the plugin host is shutting down"),
+            Self::MatcherRegister(e) => write!(f, "{e}"),
         }
     }
 }
@@ -102,6 +109,7 @@ impl std::error::Error for HostError {
             Self::Manifest(e) => Some(e),
             Self::Io(e) => Some(e),
             Self::Load(e) => Some(e),
+            Self::MatcherRegister(e) => Some(e),
             _ => None,
         }
     }

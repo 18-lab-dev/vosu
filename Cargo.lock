@@ -3255,6 +3255,7 @@ dependencies = [
  "tracing",
  "vosu-net",
  "vosu-plugin-api",
+ "vosu-plugin-testkit",
  "vosu-proptest",
  "vosu-sys",
  "windows-sys 0.61.2",

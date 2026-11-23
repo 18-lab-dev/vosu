@@ -7,10 +7,20 @@
 //! (§6.10), and timers (§6.11), wired into one `PluginHostHandler`
 //! (`host.rs`'s `PluginHost`) that owns every live instance.
 //!
-//! Out of scope for this phase (later milestones): wiring `PluginHost` to
-//! real OS discovery (phase (d)), session (§6.2)/focus delivery through
-//! it, and routing read plans and scans into `PluginHostHandler::handle`
-//! (`read_plan`/`scan` are standalone modules a later handler calls into).
+//! `PluginHost` also owns process matching, session lifecycle, and focus
+//! (`host.rs`'s `process_appeared`/`process_exited`, `MatcherEngine`,
+//! `SessionRegistry`, `FocusTracker`): `process_appeared`/`process_exited`
+//! are the entry points a later phase's real OS discovery (phase (d2))
+//! calls; this phase only provides and tests them with synthetic process
+//! records.
+//!
+//! Out of scope for this phase (later milestones): discovery itself
+//! (phase (d2): the real OS process list, the Linux conditional fallback,
+//! the kernel/CN_PROC pre-filter); non-owning `STATE_SUBSCRIBE` delivery
+//! of session/focus events (§6.2's "Non-owning plugins" rule, §6.12);
+//! routing read plans and scans into `PluginHostHandler::handle`
+//! (`read_plan`/`scan` are standalone modules a later handler calls into);
+//! resource/tree/stream operations and action calls.
 
 mod dispatch;
 mod error;
@@ -30,9 +40,10 @@ pub mod timers;
 pub use dispatch::{OwnedMessage, WorkerPool};
 pub use error::HostError;
 pub use focus::{
-    FocusCandidate, FocusEvent, FocusKey, FocusTracker, ForegroundSource, SyntheticForegroundSource,
+    FocusCandidate, FocusEvent, FocusKey, FocusTracker, ForegroundSource, OsForegroundSource,
+    SyntheticForegroundSource,
 };
-pub use host::PluginHost;
+pub use host::{PluginHost, ProcessRecord};
 pub use host_services::{PluginHostHandler, PluginInstanceId};
 pub use instance::{DEFAULT_QUEUE_CAPACITY, PluginInstance};
 pub use matcher::{

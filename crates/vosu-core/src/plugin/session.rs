@@ -17,7 +17,9 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use vosu_plugin_api::{Bitness, DetachReason, SessionAttached, SessionDetached, SessionIdentify};
+use vosu_plugin_api::{
+    Bitness, DetachReason, SessionAttached, SessionDetached, SessionIdentify, vosu_status,
+};
 
 use super::matcher::PluginId;
 
@@ -392,6 +394,18 @@ impl SessionRegistry {
             .collect()
     }
 
+    /// Test-only: whether `handle`'s pending identification timeout has
+    /// already been logged by [`Self::sweep_identification_timeouts`] —
+    /// lets a test wait for the sweep to actually run instead of a fixed
+    /// sleep guessing it has.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn timeout_logged(&self, handle: SessionHandle) -> Option<bool> {
+        self.pending
+            .get(&handle)
+            .map(|record| record.timeout_logged)
+    }
+
     #[must_use]
     pub fn is_identified(&self, handle: SessionHandle) -> bool {
         self.identified.contains_key(&handle)
@@ -432,6 +446,60 @@ impl SessionRegistry {
             .get(&handle)
             .map(|record| record.generation)
             .or_else(|| self.pending.get(&handle).map(|record| record.generation))
+    }
+
+    /// The owning plugin and pid for `handle`, whether pending or
+    /// identified: a plugin may read a session before identifying it
+    /// (§6.2 "The plugin may now begin reading ... and must identify the
+    /// client ... before publishing anything else"), so read-plan/scan
+    /// resolution (§6.3, §6.4) needs this for either state, unlike
+    /// [`Self::identified_sessions`], which is Focus-rule-only.
+    #[must_use]
+    pub fn owner_and_pid(&self, handle: SessionHandle) -> Option<(&PluginId, u32)> {
+        if let Some(record) = self.identified.get(&handle) {
+            return Some((&record.owner, record.pid));
+        }
+        self.pending
+            .get(&handle)
+            .map(|record| (&record.owner, record.process.pid))
+    }
+
+    /// The current handle for `pid`, pending or identified, for
+    /// `PluginHost::process_exited` to resolve a discovery-reported exit
+    /// back to the session it must detach. `None` once `pid` already has
+    /// no tracked session (never attached, or whichever was there already
+    /// detached) — correct either way, since [`Self::detach`] is already
+    /// a no-op for an unknown handle.
+    #[must_use]
+    pub fn handle_for_pid(&self, pid: u32) -> Option<SessionHandle> {
+        self.identified
+            .iter()
+            .find(|(_, record)| record.pid == pid)
+            .map(|(handle, _)| *handle)
+            .or_else(|| {
+                self.pending
+                    .iter()
+                    .find(|(_, record)| record.process.pid == pid)
+                    .map(|(handle, _)| *handle)
+            })
+    }
+}
+
+impl From<SessionError> for vosu_status {
+    fn from(error: SessionError) -> Self {
+        match error {
+            // Nothing this registry tracks has that handle at all: the
+            // call itself is malformed, not a permission question.
+            SessionError::UnknownHandle => Self::VOSU_ERR_INVALID_ARGUMENT,
+            // The handle exists, but belongs to a different plugin
+            // instance — exactly §5's `VOSU_ERR_PERMISSION_DENIED`
+            // example ("a read plan touching a session it did not
+            // match").
+            SessionError::NotOwner => Self::VOSU_ERR_PERMISSION_DENIED,
+            // D6: "sending it after is refused with
+            // `VOSU_ERR_INVALID_ARGUMENT`".
+            SessionError::AlreadyIdentified => Self::VOSU_ERR_INVALID_ARGUMENT,
+        }
     }
 }
 

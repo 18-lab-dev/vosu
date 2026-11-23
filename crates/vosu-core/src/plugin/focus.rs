@@ -45,6 +45,30 @@ impl ForegroundSource for SyntheticForegroundSource {
     }
 }
 
+/// The real OS foreground window's owning process, for production use
+/// (`PluginHost`'s default; tests use [`SyntheticForegroundSource`]
+/// instead). `vosu-sys` only implements foreground-window detection on
+/// Windows today (`vosu_sys::process::foreground_process_id`); on every
+/// other target this always reports no foreground owner, which the Focus
+/// rule already handles correctly (falls through to the most-recently-
+/// focused session, then the first-ever tie-break) rather than being
+/// wrong — a known gap for a future Linux window-manager integration to
+/// fill, not this phase's scope.
+#[derive(Debug, Default)]
+pub struct OsForegroundSource;
+
+impl ForegroundSource for OsForegroundSource {
+    #[cfg(windows)]
+    fn foreground_pid(&self) -> Option<u32> {
+        vosu_sys::process::foreground_process_id()
+    }
+
+    #[cfg(not(windows))]
+    fn foreground_pid(&self) -> Option<u32> {
+        None
+    }
+}
+
 /// A session's own `vosu_session_id` handle, decoupled from
 /// `super::session::SessionHandle` so this module stays independent and
 /// directly testable with synthetic data (`docs/v2/implementation-plan.md`
