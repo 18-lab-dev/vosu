@@ -413,6 +413,18 @@ impl MatcherEngine {
             .position(|(existing, _, _)| existing == id)
             .unwrap_or(usize::MAX)
     }
+
+    /// Removes `id`'s matcher, installed by [`Self::register`] (P2-5): a
+    /// plugin whose own `create` then fails, or whose instance is
+    /// destroyed losing a `destroy_all` shutdown race, must not keep a
+    /// `[match]` table with no live instance behind it — `process_appeared`
+    /// would otherwise keep handing every matching process to a plugin id
+    /// nothing answers for, hiding that session from every later-installed,
+    /// shadowed plugin forever. A no-op for an `id` this engine never
+    /// registered (or already unregistered).
+    pub fn unregister(&mut self, id: &str) {
+        self.entries.retain(|(existing, _, _)| existing != id);
+    }
 }
 
 /// The running host's own [`MatchPlatform`] (§6.1's two released

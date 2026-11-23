@@ -429,6 +429,33 @@ impl ScanWorkerPool {
             }
         }
     }
+
+    /// Queues `job`, or — if the bounded queue is already full — runs it
+    /// on a dedicated one-off thread instead (P2-7,
+    /// `docs/v2/plugin-abi.md` §5): work a caller already admitted
+    /// against its own per-instance cap (64 read plans, 64 scans) must
+    /// still run and answer, never silently drop, because this pool's
+    /// *shared* queue — bounded only to keep idle worker-thread capacity
+    /// small, not to second-guess per-instance admission — happened to be
+    /// busy with every other instance's work at that moment. One
+    /// instance flooding its own 64-outstanding budget can cause at most
+    /// 64 such overflow threads, never an unbounded number, and every one
+    /// of them still answers the plugin that was already told `VOSU_OK`.
+    pub fn spawn_or_overflow(&self, job: impl FnOnce() + Send + 'static) {
+        let sender = self
+            .sender
+            .as_ref()
+            .expect("sender is only taken by this pool's own Drop");
+        match sender.try_send(Box::new(job)) {
+            Ok(()) => {}
+            Err(TrySendError::Full(job)) => {
+                std::thread::spawn(job);
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                unreachable!("this pool outlives every worker it spawned")
+            }
+        }
+    }
 }
 
 impl Drop for ScanWorkerPool {
@@ -446,7 +473,6 @@ impl Drop for ScanWorkerPool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanSubmitError {
     CapExceeded,
-    QueueFull,
     /// `request.pattern` does not parse (§5: "Malformed payload →
     /// `INVALID_ARGUMENT`"): refused synchronously here, before taking an
     /// [`OutstandingScans`] slot or a worker-pool queue entry, rather than
@@ -479,12 +505,27 @@ pub fn submit(
         .map_err(|_| ScanSubmitError::CapExceeded)?;
     // Test-only seam (F6): lets a test run `cancel_session` in exactly
     // the window a real race would need — after the gate above is
-    // registered, before `try_spawn` below is attempted — making that
+    // registered, before `spawn_or_overflow` below runs it — making that
     // race deterministic instead of timing-dependent.
     #[cfg(test)]
     run_race_hook_for_tests();
     let spawn_gate = Arc::clone(&gate);
-    let spawn_result = pool.try_spawn(move || {
+    pool.spawn_or_overflow(move || {
+        // P2-7: skip the real (possibly whole-address-space) scan
+        // entirely if `cancel_session` already won the race and
+        // delivered the session-detached form — this job has nothing
+        // left to do. `spawn_or_overflow` also means a full shared queue
+        // never turns into "no answer": this job always runs, queued or
+        // on a one-off thread, for work already admitted against the
+        // instance's own cap.
+        let already_cancelled = spawn_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_none();
+        if already_cancelled {
+            drop(slot);
+            return;
+        }
         let result = execute(&request, memory.as_ref(), modules.as_ref());
         // §6.4/P3: deliver before freeing the slot, so the slot stays
         // held for the whole time its `SCAN_RESULT` could still be in
@@ -500,31 +541,7 @@ pub fn submit(
         }
         drop(slot);
     });
-    match spawn_result {
-        Ok(()) => Ok(()),
-        Err(QueueFullError) => {
-            // F6: `try_spawn` failing does not prove this scan delivered
-            // nothing — a concurrent `cancel_session` may have already
-            // taken this gate and delivered the session-detached form in
-            // the window between `begin_internal` registering it, above,
-            // and this call failing. Take the gate ourselves: empty
-            // means that race happened, so this submission must not
-            // *also* report a refusal (the plugin already has its
-            // result); still holding the original `deliver` means
-            // nothing was delivered, so drop it (this scan is refused,
-            // and must never run) and report `QueueFull` as before.
-            let already_delivered = gate
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take()
-                .is_none();
-            if already_delivered {
-                Ok(())
-            } else {
-                Err(ScanSubmitError::QueueFull)
-            }
-        }
-    }
+    Ok(())
 }
 
 #[cfg(test)]

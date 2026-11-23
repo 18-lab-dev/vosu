@@ -423,6 +423,12 @@ fn address_overflow_is_reported_per_op_not_as_a_call_rejection() {
     ));
 }
 
+/// P1-3: a deadline exceeded mid-plan does not reject the whole call —
+/// the stage that already finished keeps its result, and the stage that
+/// did not get to run reports `VOSU_READ_ERROR`/`VOSU_READ_ERROR_BACKEND`
+/// ("plan deadline exceeded") per op instead, since an async plan has no
+/// synchronous caller left to report a whole-call rejection to by the
+/// time a worker discovers this.
 #[test]
 fn execute_times_out_before_the_next_read() {
     // The deadline is checked once per stage, not once per op: two
@@ -450,10 +456,17 @@ fn execute_times_out_before_the_next_read() {
     };
 
     let deadline = Instant::now() + Duration::from_millis(10);
-    let error = execute(&submit, &memory, ProcessBitness::X64, &NoModules, deadline).unwrap_err();
+    let result = execute(&submit, &memory, ProcessBitness::X64, &NoModules, deadline).unwrap();
 
-    assert_eq!(error, ReadPlanError::TimedOut);
-    assert_eq!(vosu_status::from(error), vosu_status::VOSU_ERR_TIMED_OUT);
+    assert_eq!(result.results.len(), 2);
+    assert!(matches!(result.results[0], ReadResult::Ok(_)));
+    assert_eq!(
+        result.results[1],
+        ReadResult::Error {
+            code: ReadErrorCode::Backend,
+            message: "plan deadline exceeded".to_owned(),
+        }
+    );
 }
 
 #[test]
@@ -583,9 +596,15 @@ fn dispatch_thread_scope_is_thread_local_and_times_out_on_the_caller() {
     };
     assert!(!on_dispatch_thread());
     let deadline = Instant::now() + Duration::from_millis(5);
-    let error =
-        deliver_sync(&submit, &memory, ProcessBitness::X64, &NoModules, deadline).unwrap_err();
-    assert_eq!(error, SyncReadPlanError::Execute(ReadPlanError::TimedOut));
+    let result = deliver_sync(&submit, &memory, ProcessBitness::X64, &NoModules, deadline).unwrap();
+    assert!(matches!(result.results[0], ReadResult::Ok(_)));
+    assert_eq!(
+        result.results[1],
+        ReadResult::Error {
+            code: ReadErrorCode::Backend,
+            message: "plan deadline exceeded".to_owned(),
+        }
+    );
 
     handle.join().unwrap();
 }
@@ -738,6 +757,13 @@ fn execute_reads_this_process_own_memory_through_the_native_backend() {
     );
 }
 
+/// P1-3/P1-1: `execute` (the production-wired path, `host/read_plans.rs`)
+/// reports a dead target as a per-read `VOSU_READ_NOT_READY`, never a
+/// whole-call rejection — an async plan has no synchronous caller left to
+/// report `VOSU_ERR_TARGET_GONE` to by the time a worker discovers this.
+/// `execute_bytes` (the raw, not-yet-wired-into-production entry point)
+/// still rejects outright, which this test documents as an intentional
+/// divergence between the two rather than letting it bit-rot unnoticed.
 #[test]
 fn target_gone_is_reported_before_any_read_when_the_process_is_already_dead() {
     struct DeadMemory;
@@ -771,16 +797,16 @@ fn target_gone_is_reported_before_any_read_when_the_process_is_already_dead() {
         sync: false,
     };
 
-    let error = execute(
+    let result = execute(
         &submit,
         &DeadMemory,
         ProcessBitness::X64,
         &NoModules,
         far_deadline(),
     )
-    .unwrap_err();
-    assert_eq!(error, ReadPlanError::TargetGone);
-    assert_eq!(vosu_status::from(error), vosu_status::VOSU_ERR_TARGET_GONE);
+    .unwrap();
+    assert_eq!(result.plan, 40);
+    assert_eq!(result.results, vec![ReadResult::NotReady]);
 
     let message = Message::ReadPlanSubmit(submit);
     let flags = message.flags();
@@ -801,12 +827,13 @@ fn target_gone_is_reported_before_any_read_when_the_process_is_already_dead() {
 }
 
 #[test]
-fn target_gone_outranks_ref_op_wrong_width_in_both_execution_paths() {
+fn ref_op_wrong_width_outranks_target_gone_in_both_execution_paths() {
     // A dependent stage whose `ref_op` is the wrong width *and* a dead
     // target: both `execute` and `execute_bytes` must reject with the
-    // same variant (F2) — before this fix `execute` checked liveness
-    // first and `execute_bytes` checked the ref-op width first, so they
-    // disagreed on exactly this combination.
+    // same variant. P1-3 made `ref_op` width a pure plan-validation
+    // error, checked before any runtime/target-state concern (including
+    // liveness) in both entry points, reversing this phase's earlier
+    // precedence (F2, where liveness used to win).
     struct DeadMemory;
     impl ProcessMemory for DeadMemory {
         fn read_exact(&self, _address: usize, _dst: &mut [u8]) -> Result<(), MemoryError> {
@@ -856,7 +883,7 @@ fn target_gone_outranks_ref_op_wrong_width_in_both_execution_paths() {
         far_deadline(),
     )
     .unwrap_err();
-    assert_eq!(error, ReadPlanError::TargetGone);
+    assert_eq!(error, ReadPlanError::RefOpWrongWidth);
 
     let message = Message::ReadPlanSubmit(submit);
     let flags = message.flags();
@@ -872,7 +899,7 @@ fn target_gone_outranks_ref_op_wrong_width_in_both_execution_paths() {
     .unwrap_err();
     assert!(matches!(
         error,
-        ExecuteBytesError::Execute(ReadPlanError::TargetGone)
+        ExecuteBytesError::Execute(ReadPlanError::RefOpWrongWidth)
     ));
 }
 

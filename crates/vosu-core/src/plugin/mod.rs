@@ -8,11 +8,14 @@
 //! (`host.rs`'s `PluginHost`) that owns every live instance.
 //!
 //! `PluginHost` also owns process matching, session lifecycle, and focus
-//! (`host.rs`'s `process_appeared`/`process_exited`, `MatcherEngine`,
-//! `SessionRegistry`, `FocusTracker`): `process_appeared`/`process_exited`
-//! are the entry points a later phase's real OS discovery (phase (d2))
-//! calls; this phase only provides and tests them with synthetic process
-//! records.
+//! (`host.rs`'s `process_appeared`/`process_exited`/`foreground_changed`,
+//! `MatcherEngine`, `SessionRegistry`, `FocusTracker`):
+//! `process_appeared`/`process_exited` are the entry points a later
+//! phase's real OS discovery (phase (d2)) calls for a process appearing
+//! or exiting; `foreground_changed` is that same phase (d2)'s entry point
+//! for an OS foreground-window-change event, re-running the Focus rule —
+//! this phase only provides and tests all three with synthetic process
+//! records and a `SyntheticForegroundSource`.
 //!
 //! Memory read plans (§6.3, `host/read_plans.rs`) and signature scans
 //! (§6.4, `host/scans.rs`) both route through `PluginHost::handle` now,

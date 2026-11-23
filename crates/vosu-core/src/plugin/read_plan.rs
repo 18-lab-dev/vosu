@@ -127,12 +127,16 @@ impl From<ExecuteBytesError> for vosu_status {
 
 /// Re-derives `vosu_plugin_api::validate_read_plan_ref_op_width`'s check
 /// against the decoded form, for [`execute`] (which has no raw buffer to
-/// hand that function): every dependent stage's `ref_op` must name an
-/// earlier stage's op whose declared `length` equals `pointer_width`.
-/// `Message::decode` already bounds-checked every `ref_stage`/`ref_op`
-/// index through `vosu_plugin_api::validate_read_plan_submit`, so indexing
-/// here never panics.
-fn ref_op_width_ok(submit: &ReadPlanSubmit, pointer_width: u32) -> bool {
+/// hand that function) and for `host/read_plans.rs`'s own synchronous
+/// pre-submit validation (P1-3: an asynchronous plan validates this
+/// before admission, not inside the worker, where there is no longer a
+/// synchronous caller to report `VOSU_ERR_INVALID_ARGUMENT` to): every
+/// dependent stage's `ref_op` must name an earlier stage's op whose
+/// declared `length` equals `pointer_width`. `Message::decode` already
+/// bounds-checked every `ref_stage`/`ref_op` index through
+/// `vosu_plugin_api::validate_read_plan_submit`, so indexing here never
+/// panics.
+pub(crate) fn ref_op_width_ok(submit: &ReadPlanSubmit, pointer_width: u32) -> bool {
     submit.stages.iter().all(|stage| match stage.base {
         StageBase::Root => true,
         StageBase::Dependent { ref_stage, ref_op } => {
@@ -200,6 +204,42 @@ fn memory_error_to_result(error: MemoryError, budget: &mut ErrorBudget) -> ReadR
     ReadResult::Error {
         code,
         message: budget.charge_message(error.to_string()),
+    }
+}
+
+/// The message every op that did not get to run before `deadline` passed
+/// reports (`docs/v2/plugin-abi.md` §5's `VOSU_ERR_TIMED_OUT`, mirrored
+/// per read: a stage that already finished keeps its result, so a
+/// deadline mid-plan never rejects the whole submission, only the reads
+/// it did not reach in time).
+const DEADLINE_MESSAGE: &str = "plan deadline exceeded";
+
+/// A `VOSU_READ_ERROR`/`VOSU_READ_ERROR_BACKEND` result for one op that
+/// did not get to run before `deadline` passed.
+fn timeout_result(budget: &mut ErrorBudget) -> ReadResult {
+    ReadResult::Error {
+        code: ReadErrorCode::Backend,
+        message: budget.charge_message(DEADLINE_MESSAGE.to_owned()),
+    }
+}
+
+/// Every op in `submit`, flattened in (stage, op) order, as
+/// `ReadResult::NotReady` — the target process was already dead before
+/// any read executed (`docs/v2/plugin-abi.md` §5: "Per-read failure
+/// inside an otherwise-accepted plan is reported per read", mirroring
+/// `src/process.rs`'s own `ReadStatus::NotReady`); an asynchronous plan
+/// has no synchronous caller left to report a whole-call rejection to by
+/// the time a worker discovers this, so [`execute`] answers per read
+/// instead of rejecting the call.
+fn not_ready_result(submit: &ReadPlanSubmit) -> ReadPlanResult {
+    ReadPlanResult {
+        plan: submit.plan,
+        results: submit
+            .stages
+            .iter()
+            .flat_map(|stage| stage.ops.iter())
+            .map(|_| ReadResult::NotReady)
+            .collect(),
     }
 }
 
@@ -273,25 +313,28 @@ fn resolve_stage_base(
 /// (P1: one syscall per stage, not one per op); the fallback loop checks
 /// `deadline` before each of its own reads (F3), since a batch failure can
 /// fall back to hundreds of individually slow reads that a once-per-stage
-/// check would otherwise let run unbounded.
+/// check would otherwise let run unbounded. Never rejects the whole
+/// submission: an op that does not get to run before `deadline` passes
+/// reports [`timeout_result`] instead (P1-3), exactly like any other
+/// per-read failure.
 fn execute_stage_ops(
     memory: &dyn ProcessMemory,
     stage_base: &Result<u64, ReadResult>,
     ops: &[PlanOp],
     budget: &mut ErrorBudget,
     deadline: Instant,
-) -> Result<Vec<ReadResult>, ReadPlanError> {
+) -> Vec<ReadResult> {
     let base = match stage_base {
         Ok(base) => *base,
         Err(failure) => {
             let failure = strip_message(failure);
-            return Ok(ops
+            return ops
                 .iter()
                 .map(|op| {
                     budget.recover(op.length);
                     failure.clone()
                 })
-                .collect());
+                .collect();
         }
     };
 
@@ -324,7 +367,11 @@ fn execute_stage_ops(
         }
     }
 
-    let mut outcomes: Vec<Result<(), MemoryError>> = participants.iter().map(|_| Ok(())).collect();
+    enum Outcome {
+        Read(Result<(), MemoryError>),
+        TimedOut,
+    }
+    let mut outcomes: Vec<Outcome> = participants.iter().map(|_| Outcome::Read(Ok(()))).collect();
     if !participants.is_empty() {
         let mut requests: Vec<ReadRequest<'_>> = participants
             .iter()
@@ -333,14 +380,17 @@ fn execute_stage_ops(
             .collect();
         if memory.read_many(&mut requests).is_err() {
             drop(requests);
+            let mut timed_out = false;
             for (outcome, (&(_, address), buffer)) in outcomes
                 .iter_mut()
                 .zip(participants.iter().zip(buffers.iter_mut()))
             {
-                if Instant::now() >= deadline {
-                    return Err(ReadPlanError::TimedOut);
+                if timed_out || Instant::now() >= deadline {
+                    timed_out = true;
+                    *outcome = Outcome::TimedOut;
+                    continue;
                 }
-                *outcome = memory.read_exact(address, buffer);
+                *outcome = Outcome::Read(memory.read_exact(address, buffer));
             }
         }
     }
@@ -350,20 +400,24 @@ fn execute_stage_ops(
         .zip(outcomes.into_iter().zip(buffers))
     {
         results[index] = Some(match outcome {
-            Ok(()) => ReadResult::Ok(buffer),
-            Err(error) => {
+            Outcome::Read(Ok(())) => ReadResult::Ok(buffer),
+            Outcome::Read(Err(error)) => {
                 budget.recover(ops[index].length);
                 memory_error_to_result(error, budget)
+            }
+            Outcome::TimedOut => {
+                budget.recover(ops[index].length);
+                timeout_result(budget)
             }
         });
     }
 
-    Ok(results
+    results
         .into_iter()
         .map(|result| {
             result.expect("every op index is filled by either the address loop or the read loop")
         })
-        .collect())
+        .collect()
 }
 
 fn error_budget_slack(submit: &ReadPlanSubmit) -> usize {
@@ -384,14 +438,15 @@ fn error_budget_slack(submit: &ReadPlanSubmit) -> usize {
 /// op) order, honoring `deadline` once per stage, and returns the decoded
 /// `VOSU_OP_READ_PLAN_RESULT` (`docs/v2/plugin-abi.md` §6.3: "one
 /// submission is one round trip"). A per-read failure (an unresolved
-/// module, a dependent chain blocked on an earlier failure, or a
-/// [`MemoryError`]) is reported per read in the returned
-/// [`ReadPlanResult`], never by rejecting the call; only
-/// [`ReadPlanError::TargetGone`] (checked once, up front),
-/// [`ReadPlanError::RefOpWrongWidth`] (checked before any read), and
-/// [`ReadPlanError::TimedOut`] (checked once per stage) reject the whole
-/// submission. Allocates freely; prefer [`execute_into`] on a measured hot
-/// path.
+/// module, a dependent chain blocked on an earlier failure, a
+/// [`MemoryError`], the target already dead, or a deadline passed
+/// mid-plan) is reported per read in the returned [`ReadPlanResult`],
+/// never by rejecting the call (P1-3: an accepted asynchronous plan has
+/// no synchronous caller left to report a whole-call rejection to by the
+/// time a worker discovers any of these). Only
+/// [`ReadPlanError::RefOpWrongWidth`] (checked before any read; a plan
+/// validation error, not a runtime one) rejects the call outright.
+/// Allocates freely; prefer [`execute_into`] on a measured hot path.
 pub fn execute(
     submit: &ReadPlanSubmit,
     memory: &dyn ProcessMemory,
@@ -399,21 +454,38 @@ pub fn execute(
     modules: &dyn ModuleResolver,
     deadline: Instant,
 ) -> Result<ReadPlanResult, ReadPlanError> {
-    if !memory.is_alive() {
-        return Err(ReadPlanError::TargetGone);
-    }
     let pointer_width = u32::try_from(bitness.pointer_size()).unwrap_or(u32::MAX);
     if !ref_op_width_ok(submit, pointer_width) {
         return Err(ReadPlanError::RefOpWrongWidth);
     }
 
     let mut budget = ErrorBudget::new(error_budget_slack(submit));
+
+    if !memory.is_alive() {
+        return Ok(not_ready_result(submit));
+    }
+
     let root_base = resolve_root(&submit.root, modules);
     let mut per_stage: Vec<Vec<ReadResult>> = Vec::with_capacity(submit.stages.len());
 
-    for stage in &submit.stages {
+    for (index, stage) in submit.stages.iter().enumerate() {
         if Instant::now() >= deadline {
-            return Err(ReadPlanError::TimedOut);
+            for remaining in &submit.stages[index..] {
+                per_stage.push(
+                    remaining
+                        .ops
+                        .iter()
+                        .map(|op| {
+                            budget.recover(op.length);
+                            timeout_result(&mut budget)
+                        })
+                        .collect(),
+                );
+            }
+            return Ok(ReadPlanResult {
+                plan: submit.plan,
+                results: per_stage.into_iter().flatten().collect(),
+            });
         }
         let stage_base = resolve_stage_base(stage, &per_stage, &root_base, bitness);
         per_stage.push(execute_stage_ops(
@@ -422,7 +494,7 @@ pub fn execute(
             &stage.ops,
             &mut budget,
             deadline,
-        )?);
+        ));
     }
 
     Ok(ReadPlanResult {
@@ -605,6 +677,17 @@ impl OutstandingPlans {
         if state.outstanding.remove(&plan).is_some() {
             state.cancelled.insert(plan);
         }
+    }
+
+    /// Whether `plan` was already cancelled (`VOSU_OP_READ_PLAN_CANCEL` or
+    /// the owning session's detach) while it was queued or running —
+    /// without resolving it the way [`Self::finish`] does (P2-7: a worker
+    /// peeks this before spending time actually executing the plan, so a
+    /// plugin that cancels work it no longer needs does not also cost the
+    /// shared pool the time of running it).
+    #[must_use]
+    pub fn is_cancelled(&self, plan: vosu_plan_id) -> bool {
+        self.lock().cancelled.contains(&plan)
     }
 
     /// `SESSION_DETACHED` (A1): cancels every plan still outstanding under

@@ -261,6 +261,71 @@ fn focus_changed_loss_before_gain_on_foreground_switch() {
     }
 }
 
+/// P2-9: `foreground_changed()` re-runs the Focus rule from the current
+/// `ForegroundSource` snapshot without any other session event having to
+/// happen first — the entry point phase (d2) wires a real OS
+/// foreground-change source to (`mod.rs`'s own scope doc comment).
+#[test]
+fn foreground_changed_reruns_the_focus_rule() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let foreground = Arc::new(focus::SyntheticForegroundSource::new(None));
+    let (_log_dir, host) = test_host_with(
+        runtime.handle().clone(),
+        foreground.clone(),
+        super::super::session::IDENTIFICATION_TIMEOUT,
+    );
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId::new(1),
+        "testkit.session.foregroundchanged",
+        &["proc1.exe", "proc2.exe"],
+        SessionPluginConfig::default(),
+    );
+
+    host.process_appeared(test_process(100, "proc1.exe"));
+    let h1 = match events.recv_timeout(RECV_TIMEOUT).expect("attach 1") {
+        SessionEvent::Attached(attached) => attached.handle,
+        other => panic!("expected Attached, got {other:?}"),
+    };
+    events.recv_timeout(RECV_TIMEOUT).expect("focus 1");
+
+    host.process_appeared(test_process(200, "proc2.exe"));
+    let h2 = match events.recv_timeout(RECV_TIMEOUT).expect("attach 2") {
+        SessionEvent::Attached(attached) => attached.handle,
+        other => panic!("expected Attached, got {other:?}"),
+    };
+    // h1 is already the most-recently-focused session, and nothing owns
+    // the foreground yet, so the recency fallback keeps it focused; h2
+    // still gets its own always-sent first `FOCUS_CHANGED` (focused:
+    // false).
+    match events.recv_timeout(RECV_TIMEOUT).expect("focus 2") {
+        SessionEvent::Focus(focus) => assert!(!focus.focused && focus.handle == h2),
+        other => panic!("expected Focus, got {other:?}"),
+    }
+
+    // The OS foreground window switches to pid 200's process — no new
+    // `SESSION_ATTACHED`/`SESSION_IDENTIFY` happens, so only
+    // `foreground_changed()` itself can notice and re-run the rule.
+    foreground.set(Some(200));
+    host.foreground_changed();
+
+    match events.recv_timeout(RECV_TIMEOUT).expect("focus loss") {
+        SessionEvent::Focus(focus) => {
+            assert_eq!(focus.handle, h1);
+            assert!(!focus.focused, "h1 loses focus first (loss before gain)");
+        }
+        other => panic!("expected Focus, got {other:?}"),
+    }
+    match events.recv_timeout(RECV_TIMEOUT).expect("focus gain") {
+        SessionEvent::Focus(focus) => {
+            assert_eq!(focus.handle, h2);
+            assert!(focus.focused, "the new foreground owner gains focus second");
+        }
+        other => panic!("expected Focus, got {other:?}"),
+    }
+}
+
 /// §6.2: `focus_priority` is held by the first session that requests
 /// it, and a second request while it is held is ignored (logged, not
 /// refused): the second session's own first `FOCUS_CHANGED` still
@@ -279,6 +344,7 @@ fn focus_priority_hold_and_ignore() {
         SessionPluginConfig {
             focus_priority: true,
             on_attach: OnAttach::Identify,
+            ..Default::default()
         },
     );
 
@@ -334,6 +400,7 @@ fn decline_re_offers_to_next_candidate_and_detaches_decliner() {
         SessionPluginConfig {
             focus_priority: false,
             on_attach: OnAttach::Decline,
+            ..Default::default()
         },
     );
     let accepter_events = create_session_instance_from_manifest(
@@ -390,6 +457,72 @@ fn decline_re_offers_to_next_candidate_and_detaches_decliner() {
     }
 }
 
+/// P2-5: a plugin whose own `create` fails must not keep the `[match]`
+/// table `register` installed before `create` ran — otherwise a process
+/// matching it is handed to a plugin id with no live instance forever,
+/// and a later-installed, shadowed plugin that would otherwise have
+/// matched it never gets the chance.
+#[test]
+fn failed_create_unregisters_the_matcher_so_a_shadowed_plugin_still_gets_the_session() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let (_log_dir, host) = test_host(runtime.handle().clone());
+
+    // The failing plugin: registered first (install order), its own
+    // `create` always fails (`fail_create`).
+    let failing_events = session::register_with_config(
+        "testkit.session.failing",
+        SessionPluginConfig {
+            fail_create: true,
+            ..Default::default()
+        },
+    );
+    let failing_loaded = registry::load_bundled(&[registry::BundledPlugin {
+        manifest: &session_manifest("testkit.session.failing", &["shared-p25.exe"]),
+        vtable: session::vosu_plugin_vtable,
+    }])
+    .expect("loading the failing testkit plugin");
+    let data_dir = tempfile::tempdir().unwrap();
+    let result = host.create_instance(
+        PluginInstanceId::new(1),
+        &failing_loaded[0],
+        data_dir.path().to_path_buf(),
+        None,
+    );
+    assert!(
+        result.is_err(),
+        "the plugin's own create always fails in this test"
+    );
+
+    // A second, shadowed plugin matching the same process by path
+    // pattern instead of `process_names` (D18's static overlap check
+    // only compares those, so this does not trip `register`'s own
+    // refusal): if the first plugin's failed `create` left its matcher
+    // registered, this process would still go to it and never reach
+    // here.
+    let accepter_events = create_session_instance_from_manifest(
+        &host,
+        PluginInstanceId::new(2),
+        "testkit.session.accepter",
+        SessionPluginConfig::default(),
+        &session_manifest_by_path_suffix("testkit.session.accepter", "shared-p25.exe"),
+    );
+
+    host.process_appeared(test_process(301, "shared-p25.exe"));
+
+    match accepter_events
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("accepter attach")
+    {
+        SessionEvent::Attached(attached) => assert_eq!(attached.pid, 301),
+        other => panic!("expected Attached, got {other:?}"),
+    }
+    assert!(
+        failing_events.try_recv().is_err(),
+        "the plugin whose create failed must never receive anything"
+    );
+}
+
 /// §6.2: "If identification does not arrive within 5 seconds of
 /// `SESSION_ATTACHED`, core logs once and keeps the session hidden" —
 /// exercised with a short injected timeout rather than a real 5-second
@@ -412,6 +545,7 @@ fn identification_timeout_sweep_keeps_an_unidentified_session_hidden() {
         SessionPluginConfig {
             focus_priority: false,
             on_attach: OnAttach::Ignore,
+            ..Default::default()
         },
     );
 
@@ -539,6 +673,76 @@ fn process_exited_detaches_and_recomputes_focus() {
     }
 
     let _ = h2;
+}
+
+/// P2-6: `focus` is locked before `sessions`/`matcher`, and held through
+/// delivery, in every focus-recomputing call site — the one lock order
+/// this host ever uses for them. Hammering `recompute_focus`/
+/// `identify_focus` concurrently from several threads, while the main
+/// thread keeps attaching, identifying, and exiting sessions, must
+/// neither deadlock nor panic; every thread finishing within a bounded
+/// timeout is this test's own proof that the fix holds under real
+/// contention, not just by inspection.
+#[test]
+fn concurrent_focus_recomputation_never_deadlocks() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let (_log_dir, host) = test_host(runtime.handle().clone());
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId::new(1),
+        "testkit.session.focusrace",
+        &["proc-focusrace-1.exe", "proc-focusrace-2.exe"],
+        SessionPluginConfig::default(),
+    );
+
+    host.process_appeared(test_process(900, "proc-focusrace-1.exe"));
+    let h1 = match events.recv_timeout(RECV_TIMEOUT).expect("attach 1") {
+        SessionEvent::Attached(attached) => SessionHandle(attached.handle),
+        other => panic!("expected Attached, got {other:?}"),
+    };
+    events.recv_timeout(RECV_TIMEOUT).expect("focus 1");
+
+    let hammerers: Vec<_> = (0..8)
+        .map(|_| {
+            let host = Arc::clone(&host);
+            std::thread::spawn(move || {
+                for _ in 0..200 {
+                    host.recompute_focus();
+                    host.identify_focus(h1);
+                }
+            })
+        })
+        .collect();
+
+    // Concurrently attach, re-identify (ignored — already identified, but
+    // still exercises `identify_focus`'s own callers racing the
+    // hammerers above), and exit a second session several times over.
+    for round in 0..20u32 {
+        let pid = 901 + round;
+        host.process_appeared(test_process(pid, "proc-focusrace-2.exe"));
+        host.process_exited(pid);
+    }
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    for hammerer in hammerers {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        // `JoinHandle` has no timed join: a thread that did not finish by
+        // `deadline` would hang this `join` too, so the bound is on the
+        // loop as a whole racing `deadline`, and a genuine deadlock still
+        // fails this test (the process-level test-harness timeout) rather
+        // than hanging silently.
+        assert!(
+            remaining > Duration::ZERO,
+            "a hammerer thread did not finish within the deadline — possible deadlock"
+        );
+        hammerer.join().expect("a hammerer thread must not panic");
+    }
+
+    // Drain every event the hammerers and the attach/exit rounds above
+    // produced; this test only needs to prove nothing deadlocked or
+    // panicked, not a specific final event sequence.
+    while events.try_recv().is_ok() {}
 }
 
 /// Blocks the gated plugin's own `create` until released, so a test

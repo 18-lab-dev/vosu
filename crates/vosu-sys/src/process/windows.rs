@@ -25,7 +25,8 @@ use windows_sys::{
             SystemInformation::{IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_I386},
             Threading::{
                 GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, IsWow64Process2,
-                OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+                OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
+                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
             },
             WindowsProgramming::SYSTEM_PROCESS_INFORMATION,
         },
@@ -349,6 +350,34 @@ pub fn foreground_process_id() -> Option<u32> {
         GetWindowThreadProcessId(window, &mut pid);
         (pid != 0).then_some(pid)
     }
+}
+
+/// Whether `pid` currently names a live process, probed with the
+/// weakest possible access right (`PROCESS_QUERY_LIMITED_INFORMATION`,
+/// granted even for a protected or elevated process this host has no
+/// `PROCESS_VM_READ` rights to) so a denied [`WindowsProcessMemory::open`]
+/// can be told apart from a genuinely dead `pid` (`docs/v2/plugin-abi.md`
+/// §5: only a dead process is `VOSU_ERR_TARGET_GONE`; an OS failure to
+/// open a live one is `VOSU_ERR_PERMISSION_DENIED`/`VOSU_ERR_BACKEND`).
+#[must_use]
+pub fn is_process_alive(pid: u32) -> bool {
+    // SAFETY: `OpenProcess` returns an owned handle on success; no
+    // caller-owned buffers are passed.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        return false;
+    }
+    let mut exit_code = 0u32;
+    // SAFETY: `handle` was just opened above and is closed below;
+    // `exit_code` is a valid writable local.
+    let alive = unsafe {
+        GetExitCodeProcess(handle, &mut exit_code) != 0 && exit_code == STILL_ACTIVE as u32
+    };
+    // SAFETY: `handle` is a valid, owned kernel handle not used again.
+    unsafe {
+        CloseHandle(handle);
+    }
+    alive
 }
 
 fn same_process_user(process: HANDLE) -> Result<bool, MemoryError> {

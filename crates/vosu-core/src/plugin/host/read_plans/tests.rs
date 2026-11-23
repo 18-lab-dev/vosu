@@ -74,6 +74,35 @@ fn expect_status(events: &Receiver<ReadPlanEvent>) -> vosu_status {
     }
 }
 
+/// `SubmitStatus` and `AsyncResult` for one submission can race in
+/// either order once the job is admitted: the submitting thread resumes
+/// from `send`'s own synchronous return at the same time a worker thread
+/// may already be delivering the result through the instance's own
+/// dispatch thread (§5 promises a *later* message, never one strictly
+/// after `send` itself returns), mirroring `host/scans/tests.rs`'s own
+/// `expect_status_and_result` (P2-10). Receives exactly these two
+/// events, in whichever order they arrive.
+fn expect_status_and_async_result(
+    events: &Receiver<ReadPlanEvent>,
+) -> (vosu_status, vosu_plugin_api::ReadPlanResult) {
+    let mut status = None;
+    let mut result = None;
+    for _ in 0..2 {
+        match events
+            .recv_timeout(RECV_TIMEOUT)
+            .expect("submit status or READ_PLAN_RESULT")
+        {
+            ReadPlanEvent::SubmitStatus(value) => status = Some(value),
+            ReadPlanEvent::AsyncResult(value) => result = Some(value),
+            other => panic!("unexpected event {other:?}"),
+        }
+    }
+    (
+        status.expect("SubmitStatus"),
+        result.expect("READ_PLAN_RESULT"),
+    )
+}
+
 fn one_op_stage(length: u32) -> Stage {
     Stage {
         base: StageBase::Root,
@@ -115,12 +144,8 @@ fn async_plan_returns_the_right_bytes() {
         })
         .expect("sending the async submit command");
 
-    assert_eq!(expect_status(&events), vosu_status::VOSU_OK);
-
-    let result = match events.recv_timeout(RECV_TIMEOUT).expect("READ_PLAN_RESULT") {
-        ReadPlanEvent::AsyncResult(result) => result,
-        other => panic!("expected AsyncResult, got {other:?}"),
-    };
+    let (status, result) = expect_status_and_async_result(&events);
+    assert_eq!(status, vosu_status::VOSU_OK);
     assert_eq!(result.plan, 1);
     match &result.results[0] {
         ReadResult::Ok(bytes) => assert_eq!(bytes.as_slice(), &marker.to_le_bytes()),
@@ -175,12 +200,8 @@ fn dependent_stage_resolves_a_pointer_chase() {
         })
         .expect("sending the async submit command");
 
-    assert_eq!(expect_status(&events), vosu_status::VOSU_OK);
-
-    let result = match events.recv_timeout(RECV_TIMEOUT).expect("READ_PLAN_RESULT") {
-        ReadPlanEvent::AsyncResult(result) => result,
-        other => panic!("expected AsyncResult, got {other:?}"),
-    };
+    let (status, result) = expect_status_and_async_result(&events);
+    assert_eq!(status, vosu_status::VOSU_OK);
     assert_eq!(result.results.len(), 2);
     match &result.results[1] {
         ReadResult::Ok(bytes) => {
@@ -294,6 +315,11 @@ impl ProcessMemory for SlowMemory {
     }
 }
 
+/// P1-3: a deadline passed mid-plan does not reject the whole call
+/// (`VOSU_ERR_TIMED_OUT`) — the completed stage keeps its result, and the
+/// stage that did not get to run reports `VOSU_READ_ERROR`/
+/// `VOSU_READ_ERROR_BACKEND` ("plan deadline exceeded") instead, so an
+/// async submission's worker would still have an answer to deliver.
 #[test]
 fn sync_deadline_times_out() {
     let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
@@ -332,10 +358,18 @@ fn sync_deadline_times_out() {
         .expect("sending the sync submit command");
 
     match events.recv_timeout(RECV_TIMEOUT).expect("sync result") {
-        ReadPlanEvent::SyncResult(Err(PlanMemoryError::Rejected(status))) => {
-            assert_eq!(status, vosu_status::VOSU_ERR_TIMED_OUT);
+        ReadPlanEvent::SyncResult(Ok(result)) => {
+            assert_eq!(result.results.len(), 2);
+            assert!(matches!(result.results[0], ReadResult::Ok(_)));
+            match &result.results[1] {
+                ReadResult::Error { code, message } => {
+                    assert_eq!(*code, vosu_plugin_api::ReadErrorCode::Backend);
+                    assert_eq!(message, "plan deadline exceeded");
+                }
+                other => panic!("expected a timeout Error for the second stage, got {other:?}"),
+            }
         }
-        other => panic!("expected a TIMED_OUT SyncResult, got {other:?}"),
+        other => panic!("expected an Ok SyncResult with a partial timeout, got {other:?}"),
     }
 }
 
@@ -555,7 +589,237 @@ fn outstanding_plans_capped_then_freed_by_cancel_and_detach() {
         .expect("sending the async submit command");
     assert_eq!(expect_status(&events), vosu_status::VOSU_OK);
 
-    // Let every gated worker (cancelled or not) finish, so dropping `host`
-    // below does not wait on one still blocked.
+    // Release every gated worker (cancelled or not): dropping `host`
+    // below runs `background_pool`'s own `Drop`, which joins every
+    // worker thread on this (the test's) thread — leaving one gated
+    // worker blocked would make that join (correctly) block until it
+    // finishes, not hang forever, but there would be nothing left to
+    // release it from inside this test.
     release_gate(&gate);
+}
+
+/// P1-1: a hit never rebuilds; a miss (empty cache, or a module the
+/// cached table does not have) rebuilds exactly once per call, even when
+/// the fresh table still cannot resolve it — the module may have loaded
+/// since the last snapshot, so the next miss tries again rather than
+/// trusting a stale "not found" forever.
+#[test]
+fn resolve_cached_hits_without_rebuilding_and_refreshes_on_miss() {
+    struct FixedTable(std::collections::HashMap<&'static str, u64>);
+    impl ModuleResolver for FixedTable {
+        fn resolve(&self, module: &str) -> Option<u64> {
+            self.0.get(module).copied()
+        }
+    }
+
+    let cache: Mutex<Option<Arc<dyn ModuleResolver + Send + Sync>>> = Mutex::new(None);
+    let builds = std::sync::atomic::AtomicUsize::new(0);
+
+    // First resolve: cache empty, so `build` runs once and finds it.
+    let mut found = std::collections::HashMap::new();
+    found.insert("found.dll", 0x1000u64);
+    let address = resolve_cached(&cache, "found.dll", || {
+        builds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some(Arc::new(FixedTable(found.clone())) as Arc<dyn ModuleResolver + Send + Sync>)
+    });
+    assert_eq!(address, Some(0x1000));
+    assert_eq!(builds.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+    // Second resolve of the same module: a cache hit, `build` must not
+    // run again.
+    let address = resolve_cached(&cache, "found.dll", || {
+        builds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        panic!("a cache hit must never rebuild")
+    });
+    assert_eq!(address, Some(0x1000));
+    assert_eq!(builds.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+    // A different module the cached table does not have: a miss, so
+    // `build` runs again.
+    let mut refreshed = std::collections::HashMap::new();
+    refreshed.insert("found.dll", 0x1000u64);
+    refreshed.insert("new.dll", 0x2000u64);
+    let address = resolve_cached(&cache, "new.dll", || {
+        builds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some(Arc::new(FixedTable(refreshed.clone())) as Arc<dyn ModuleResolver + Send + Sync>)
+    });
+    assert_eq!(address, Some(0x2000));
+    assert_eq!(builds.load(std::sync::atomic::Ordering::Relaxed), 2);
+}
+
+/// P1-2: a background job captures only a `Weak<PluginHost>`. Dropping
+/// the last strong `Arc<PluginHost>` while a job is still blocked must
+/// neither abort (the old bug: a strong `Arc` captured by the job let the
+/// worker thread running it become the one to drop the last reference,
+/// which `ScanWorkerPool::drop` then self-joins against) nor hang forever
+/// — it runs on a different thread than the worker, which blocks exactly
+/// until the job finishes, then returns normally.
+#[test]
+fn dropping_host_while_a_background_job_runs_neither_aborts_nor_self_joins() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let (_log_dir, host) = test_host(runtime.handle().clone());
+    let (events, commands) = create_read_plan_instance(
+        &host,
+        PluginInstanceId::new(1),
+        "testkit.readplan.dropwhilerunning",
+        &["proc-dropwhilerunning"],
+        ReadPlanPluginConfig::default(),
+    );
+
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let pid = 500_100_101;
+    set_session_memory_hook_for_tests(
+        pid,
+        Arc::new(GatedMemory {
+            gate: Arc::clone(&gate),
+        }),
+        ProcessBitness::X64,
+    );
+    host.process_appeared(test_process(pid, "proc-dropwhilerunning"));
+    let handle = expect_attached(&events);
+
+    commands
+        .send(ReadPlanCommand::SubmitAsync {
+            plan: 1,
+            handle,
+            root: PlanBase::Absolute(0),
+            stages: vec![one_op_stage(1)],
+        })
+        .expect("sending the async submit command");
+    assert_eq!(expect_status(&events), vosu_status::VOSU_OK);
+
+    // `host.instances` holds this instance, whose own `HostContext`
+    // holds a strong `Arc<PluginHost>` back (so `handle()` can be called
+    // from inside the plugin) — a reference cycle the test must break
+    // first, exactly as real shutdown does, or the external `host` below
+    // is never actually the last strong reference.
+    host.destroy_all(Duration::from_secs(5));
+
+    // The worker is still blocked inside `GatedMemory::read_exact`,
+    // holding this job's own `Weak<PluginHost>` — never a strong
+    // reference. Dropping the test's own `host` (now the only strong
+    // reference left) on a separate thread must only ever block that
+    // thread (joining `background_pool`'s workers), never abort or
+    // deadlock.
+    let dropper = std::thread::spawn(move || drop(host));
+
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        !dropper.is_finished(),
+        "dropping host should still be blocked on the gated worker"
+    );
+    release_gate(&gate);
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !dropper.is_finished() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(dropper.is_finished(), "dropping host did not complete");
+    dropper.join().expect("dropping host must not panic");
+}
+
+/// P2-7: a full *shared* background-pool queue must never turn already-
+/// admitted work into `VOSU_ERR_INVALID_ARGUMENT`, and one plugin cannot
+/// starve another's admitted work by filling that shared queue —
+/// `spawn_or_overflow` runs overflow work on a one-off thread instead of
+/// refusing it. Three instances each submit their own full 64-outstanding
+/// budget (192 total) of async plans gated on the same never-yet-released
+/// memory, guaranteeing the pool's 128-capacity queue genuinely fills;
+/// every one of the 192 submissions must still answer `VOSU_OK`, and —
+/// once released — every one must still receive its `READ_PLAN_RESULT`.
+#[test]
+fn one_plugin_cannot_starve_another_through_the_shared_pool_queue() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let (_log_dir, host) = test_host(runtime.handle().clone());
+
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let instances: Vec<(Receiver<ReadPlanEvent>, SyncSender<ReadPlanCommand>, u64)> = (0..3u64)
+        .map(|i| {
+            let pid = 500_200_000 + i as u32;
+            set_session_memory_hook_for_tests(
+                pid,
+                Arc::new(GatedMemory {
+                    gate: Arc::clone(&gate),
+                }),
+                ProcessBitness::X64,
+            );
+            let process_name = format!("proc-starve-{i}");
+            let (events, commands) = create_read_plan_instance(
+                &host,
+                PluginInstanceId::new(i + 1),
+                &format!("testkit.readplan.starve{i}"),
+                &[process_name.as_str()],
+                ReadPlanPluginConfig::default(),
+            );
+            host.process_appeared(test_process(pid, &process_name));
+            let handle = expect_attached(&events);
+            (events, commands, handle)
+        })
+        .collect();
+
+    let stages = vec![one_op_stage(1)];
+    for (events, commands, handle) in &instances {
+        for plan in 1..=64u64 {
+            commands
+                .send(ReadPlanCommand::SubmitAsync {
+                    plan,
+                    handle: *handle,
+                    root: PlanBase::Absolute(0),
+                    stages: stages.clone(),
+                })
+                .expect("sending the async submit command");
+            assert_eq!(
+                expect_status(events),
+                vosu_status::VOSU_OK,
+                "plan {plan} must be admitted: work already granted a slot must never be \
+                 refused because the shared pool's queue happened to be full"
+            );
+        }
+    }
+
+    release_gate(&gate);
+
+    for (events, _commands, _handle) in &instances {
+        for _ in 1..=64u64 {
+            match events.recv_timeout(RECV_TIMEOUT).expect("READ_PLAN_RESULT") {
+                ReadPlanEvent::AsyncResult(_) => {}
+                other => panic!("expected AsyncResult, got {other:?}"),
+            }
+        }
+    }
+}
+
+/// P2-8: only a `pid` that is actually dead maps to `TargetGone`; a live
+/// process this host simply failed to open does not look dead to the
+/// plugin, and a `PermissionDenied` error is reported as such regardless
+/// of liveness.
+#[test]
+fn classify_open_error_distinguishes_dead_denied_and_backend() {
+    let permission_denied = MemoryError::PermissionDenied {
+        address: 0,
+        len: 0,
+        message: "denied".to_owned(),
+    };
+    assert_eq!(
+        classify_open_error(u32::MAX, &permission_denied),
+        SessionMemoryError::PermissionDenied
+    );
+
+    let backend = MemoryError::Backend {
+        operation: "open",
+        message: "boom".to_owned(),
+    };
+    // `u32::MAX` is not a real pid on any test machine this gate runs on.
+    assert_eq!(
+        classify_open_error(u32::MAX, &backend),
+        SessionMemoryError::TargetGone
+    );
+    // This test process's own pid is alive, so the same error kind must
+    // not look like a dead target.
+    assert_eq!(
+        classify_open_error(std::process::id(), &backend),
+        SessionMemoryError::Backend
+    );
 }

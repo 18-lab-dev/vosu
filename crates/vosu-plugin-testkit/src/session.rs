@@ -32,12 +32,15 @@ pub enum SessionEvent {
 }
 
 /// Per-plugin-id test behavior: whether `create`'s instance should
-/// request `focus_priority` on every `SESSION_IDENTIFY` it sends, and how
-/// it reacts to `SESSION_ATTACHED`.
+/// request `focus_priority` on every `SESSION_IDENTIFY` it sends, how it
+/// reacts to `SESSION_ATTACHED`, and whether its own `create` should
+/// fail outright (P2-5: proving a failed `create` does not leak the
+/// `[match]` table `register` installed before it ran).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SessionPluginConfig {
     pub focus_priority: bool,
     pub on_attach: OnAttach,
+    pub fail_create: bool,
 }
 
 /// How [`SessionPlugin`] reacts to `SESSION_ATTACHED`.
@@ -101,6 +104,15 @@ pub struct SessionPlugin {
 
 impl Plugin for SessionPlugin {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
+        let config = config_registry()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(&init.plugin_id)
+            .copied()
+            .unwrap_or_default();
+        if config.fail_create {
+            return Err(PluginError(vosu_plugin_api::vosu_status::VOSU_ERR_BACKEND));
+        }
         let events = events_registry()
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -112,12 +124,6 @@ impl Plugin for SessionPlugin {
                     init.plugin_id
                 )
             });
-        let config = config_registry()
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .get(&init.plugin_id)
-            .copied()
-            .unwrap_or_default();
         Ok(Self {
             host,
             events,

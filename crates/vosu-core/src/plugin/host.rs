@@ -242,28 +242,37 @@ impl PluginHost {
         foreground: Arc<dyn ForegroundSource>,
         identification_timeout: Duration,
     ) -> Arc<Self> {
-        Arc::new_cyclic(|self_ref| {
-            runtime.spawn(identification_sweep_loop(self_ref.clone()));
-            Self {
-                self_ref: self_ref.clone(),
-                log_router: PluginLogRouter::new(logger, runtime.clone()),
-                timers: TimerRegistry::new(runtime),
-                settings,
-                instances: Mutex::new(HashMap::new()),
-                shutting_down: AtomicBool::new(false),
-                matcher: Mutex::new(MatcherEngine::new(host_platform())),
-                sessions: Mutex::new(SessionRegistry::with_identification_timeout(
-                    identification_timeout,
-                )),
-                focus: Mutex::new(FocusTracker::new()),
-                foreground,
-                read_plan_memory: Mutex::new(HashMap::new()),
-                background_pool: read_plans::new_background_pool(),
-                read_plan_deadline_ms: AtomicU64::new(
-                    u64::try_from(read_plans::READ_PLAN_DEADLINE.as_millis()).unwrap_or(u64::MAX),
-                ),
-            }
-        })
+        let host = Arc::new_cyclic(|self_ref| Self {
+            self_ref: self_ref.clone(),
+            log_router: PluginLogRouter::new(logger, runtime.clone()),
+            timers: TimerRegistry::new(runtime.clone()),
+            settings,
+            instances: Mutex::new(HashMap::new()),
+            shutting_down: AtomicBool::new(false),
+            matcher: Mutex::new(MatcherEngine::new(host_platform())),
+            sessions: Mutex::new(SessionRegistry::with_identification_timeout(
+                identification_timeout,
+            )),
+            focus: Mutex::new(FocusTracker::new()),
+            foreground,
+            read_plan_memory: Mutex::new(HashMap::new()),
+            background_pool: read_plans::new_background_pool(),
+            read_plan_deadline_ms: AtomicU64::new(
+                u64::try_from(read_plans::READ_PLAN_DEADLINE.as_millis()).unwrap_or(u64::MAX),
+            ),
+        });
+        // P2-4: spawned only after `new_cyclic` has returned a real
+        // `Arc<Self>` — never from inside its own closure, where no
+        // strong `Arc` exists yet. A multi-thread runtime can poll a
+        // task spawned from inside `new_cyclic` immediately (even
+        // concurrently with `new_cyclic` itself still running), so
+        // `identification_sweep_loop`'s first `host.upgrade()` could
+        // observe `None` and return for good before construction even
+        // finished — the §6.2 "logs once" timeout warning then never
+        // fires again. `Arc::downgrade` here instead always has a live
+        // `Arc` to weaken.
+        runtime.spawn(identification_sweep_loop(Arc::downgrade(&host)));
+        host
     }
 
     /// `self.self_ref` always upgrades while any `&self` call (this one
@@ -383,6 +392,16 @@ impl PluginHost {
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner())
                     .remove(&id);
+                // P2-5: this `create` never published a `Live` instance,
+                // so the `[match]` table `register` installed above must
+                // not outlive it — otherwise `process_appeared` keeps
+                // handing every matching process to a plugin id nothing
+                // answers for, hiding the session from every later-
+                // installed, shadowed plugin forever.
+                self.matcher
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .unregister(&plugin_id);
                 return Err(error);
             }
         };
@@ -400,6 +419,12 @@ impl PluginHost {
             guard.remove(&id);
             drop(guard);
             self.timers.cancel_all(id);
+            // P2-5: same reason as the `created` error path above — this
+            // instance is being destroyed, never published `Live`.
+            self.matcher
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .unregister(&plugin_id);
             if let Err(error) = instance.destroy(SHUTDOWN_RACE_DESTROY_GRACE) {
                 tracing::warn!(
                     ?id, %error,
@@ -614,9 +639,11 @@ impl PluginHost {
     /// The Focus rule's current inputs (`docs/v2/api-v1.md` "Focus
     /// rule"): every identified session re-keyed to [`FocusKey`] with its
     /// owning plugin's install order, plus the current `focus_priority`
-    /// holder. Locks `sessions` then `matcher`, in that order, every time
-    /// — the one lock order every focus-recomputing call site below uses,
-    /// so two such calls never deadlock against each other.
+    /// holder. Locks `sessions` then `matcher`, in that order — callers
+    /// (P2-6) already hold `focus` before calling this, so the full lock
+    /// order every focus-recomputing call site below uses is `focus`,
+    /// then `sessions`, then `matcher`, so two such calls never deadlock
+    /// against each other.
     fn focus_inputs(&self) -> (Vec<FocusCandidate>, Option<FocusKey>) {
         let sessions = self
             .sessions
@@ -640,7 +667,13 @@ impl PluginHost {
 
     /// Delivers every `VOSU_OP_FOCUS_CHANGED` event in `events`'s own
     /// order (loss before gain, §6.2 "Delivery ordering"), to each
-    /// session's owning plugin.
+    /// session's owning plugin. Called while the caller (P2-6,
+    /// [`Self::recompute_focus`]/[`Self::identify_focus`]) still holds
+    /// `focus`, so a concurrent recompute can never interleave with, or
+    /// reorder, this delivery; every send `dispatch_to` makes is already
+    /// a non-blocking `try_send` (`SerialWorker::submit`/`WorkerPool`'s
+    /// own queue), so holding `focus` across it never risks blocking on a
+    /// slow or stuck plugin.
     fn deliver_focus_events(&self, events: Vec<FocusEvent>) {
         for event in events {
             let handle = SessionHandle(event.handle.0);
@@ -667,15 +700,22 @@ impl PluginHost {
 
     /// Recomputes focus from the current session set and delivers any
     /// resulting `FOCUS_CHANGED` events: call after any change to which
-    /// sessions are identified or who holds `focus_priority`.
+    /// sessions are identified or who holds `focus_priority`. Holds
+    /// `focus` for the whole call, including delivery (P2-6): taking
+    /// `sessions`/`matcher` (inside [`Self::focus_inputs`]) only after
+    /// `focus` is already held, and delivering only while still holding
+    /// it, closes the race where a concurrent recompute running from an
+    /// older snapshot could finish second and deliver events out of the
+    /// §6.2 "loss before gain" order relative to this one.
     fn recompute_focus(&self) {
-        let (candidates, priority_holder) = self.focus_inputs();
-        let events = self
+        let mut focus = self
             .focus
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .recompute(&candidates, priority_holder, self.foreground.as_ref());
+            .unwrap_or_else(|poison| poison.into_inner());
+        let (candidates, priority_holder) = self.focus_inputs();
+        let events = focus.recompute(&candidates, priority_holder, self.foreground.as_ref());
         self.deliver_focus_events(events);
+        drop(focus);
     }
 
     /// `SESSION_IDENTIFY` just exposed `handle`: §6.2 "a plugin that
@@ -683,20 +723,23 @@ impl PluginHost {
     /// promptly, after the session is identified, even if focus does not
     /// change relative to the previous state)" — `FocusTracker::recompute`
     /// alone would miss that case, so this always uses
-    /// `on_session_identified` instead of [`Self::recompute_focus`].
+    /// `on_session_identified` instead of [`Self::recompute_focus`]. Same
+    /// `focus`-held-through-delivery discipline as `recompute_focus`
+    /// (P2-6).
     fn identify_focus(&self, handle: SessionHandle) {
-        let (candidates, priority_holder) = self.focus_inputs();
-        let events = self
+        let mut focus = self
             .focus
             .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .on_session_identified(
-                FocusKey(handle.0),
-                &candidates,
-                priority_holder,
-                self.foreground.as_ref(),
-            );
+            .unwrap_or_else(|poison| poison.into_inner());
+        let (candidates, priority_holder) = self.focus_inputs();
+        let events = focus.on_session_identified(
+            FocusKey(handle.0),
+            &candidates,
+            priority_holder,
+            self.foreground.as_ref(),
+        );
         self.deliver_focus_events(events);
+        drop(focus);
     }
 
     /// Discovery's own entry point (phase (d2) calls this from a real OS
@@ -766,6 +809,20 @@ impl PluginHost {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .forget_exited_pid(pid);
+    }
+
+    /// Discovery's foreground-window entry point (P2-9, phase (d2)): the
+    /// OS foreground window changed owner (or lost one), so the Focus
+    /// rule (`docs/v2/api-v1.md` "Focus rule") must be re-run — nothing
+    /// else calls [`Self::recompute_focus`] on a foreground change by
+    /// itself; `foreground_pid()` is otherwise only consulted lazily, the
+    /// next time some other event (identify, detach) happens to
+    /// recompute. A later wiring phase feeds this from a real OS
+    /// foreground-change source; this phase only provides and tests it,
+    /// the same split `process_appeared`/`process_exited` already use for
+    /// the rest of discovery.
+    pub fn foreground_changed(&self) {
+        self.recompute_focus();
     }
 
     /// Common path for every non-`SESSION_DECLINE` way a session leaves

@@ -3,10 +3,20 @@
 //! `docs/v2/implementation-plan.md` section 10, D5): resolves a session
 //! handle to its live process, opening it once and caching the handle per
 //! session ([`PluginHost::session_memory`]; dropped on detach,
-//! [`PluginHost::forget_read_plan_session`]) — a module table is built
-//! fresh on every call instead, `scan.rs`'s own documented rule for
-//! `WindowsModuleTable`/`LinuxModuleTable`. An async
-//! (non-`VOSU_READ_PLAN_SYNC`) submission then executes on
+//! [`PluginHost::forget_read_plan_session`]). A `PlanBase::Module` root's
+//! module table is built lazily — only when a plan actually names one,
+//! never for a `PlanBase::Absolute` plan (P1-1) — and cached alongside the
+//! process handle, refreshed once on a resolve miss
+//! ([`CachingModuleResolver`]): opening a process handle and parsing
+//! `/proc/<pid>/maps` (or taking a Toolhelp module snapshot) are both too
+//! expensive to repeat on every submission, which M1's own 1.x-style
+//! per-tick reads make a hot path. A module snapshot that cannot be built
+//! at all still resolves nothing, which `read_plan::resolve_root` already
+//! reports as a per-read `VOSU_READ_NOT_READY` — never
+//! `VOSU_ERR_TARGET_GONE`, and never for an `Absolute` plan, which never
+//! touches the module table in the first place.
+//!
+//! An async (non-`VOSU_READ_PLAN_SYNC`) submission executes on
 //! `PluginHost`'s own `background_pool` — one [`ScanWorkerPool`] shared
 //! with `scans.rs` (that field's own doc comment: both opcodes' work is
 //! off the hot path, so splitting worker threads between two pools buys
@@ -16,7 +26,22 @@
 //! submission instead delivers its result through a direct, non-queued
 //! plugin call on the submitting thread itself, before this call (and so
 //! `send`) returns — §4's one documented exception to per-instance
-//! serialization.
+//! serialization. The job this spawns captures only a `Weak<PluginHost>`
+//! (P1-2), upgraded once, only to deliver: a strong `Arc` here would let a
+//! background-pool worker end up being the thread that drops the last
+//! `PluginHost` reference, which self-joins (`ScanWorkerPool::drop` joins
+//! every worker, including whichever one is running) and aborts or hangs
+//! instead of shutting down. `submit_read_plan_async` also validates a
+//! dependent stage's `ref_op` width synchronously, before admission (P1-3):
+//! an async plan has no synchronous caller left to report
+//! `VOSU_ERR_INVALID_ARGUMENT` to once a worker discovers this, so it must
+//! never reach the worker in the first place. If the shared pool's queue
+//! is already full, already-admitted work still runs — on a one-off
+//! thread instead of the pool (P2-7) — rather than silently answering
+//! nothing for a plan this instance was already granted a slot for; the
+//! job itself also peeks [`super::super::read_plan::OutstandingPlans::is_cancelled`]
+//! before doing any real work, so a plugin that cancels a plan it no
+//! longer needs does not also cost the shared pool the time of running it.
 //!
 //! `VOSU_OP_READ_PLAN_CANCEL` and a session's detach both resolve to
 //! [`super::super::read_plan::OutstandingPlans`]'s own `cancel`/
@@ -27,18 +52,20 @@
 //! reuses both verbatim rather than opening a second process handle per
 //! session or re-deriving the same ownership check — a scan against a
 //! session this instance also has read plans outstanding against shares
-//! the one cached handle.
+//! the one cached handle. [`SessionMemoryError`] is likewise shared: both
+//! modules map a failed open the same way (§5: only a dead process is
+//! `VOSU_ERR_TARGET_GONE`; a live one this host simply failed to open is
+//! `VOSU_ERR_PERMISSION_DENIED`/`VOSU_ERR_BACKEND`, P2-8).
 
 #[cfg(test)]
 use std::collections::HashMap;
-#[cfg(test)]
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
 use vosu_plugin_api::{Message, ReadPlanCancel, ReadPlanSubmit, vosu_status};
-use vosu_sys::process::{ProcessBitness, ProcessMemory};
+use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory};
 
 use super::super::dispatch::OwnedMessage;
 use super::super::host_services::PluginInstanceId;
@@ -62,10 +89,11 @@ const BACKGROUND_WORKER_COUNT: usize = 4;
 /// [`super::super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS`] +
 /// [`super::super::scan::MAX_OUTSTANDING_SCANS`] (128): both caps admit
 /// independently, so up to that many jobs can be genuinely queued at
-/// once; sized for the sum so neither submission path's own
-/// `OutstandingPlans`/`OutstandingScans` admission cap can ever be
-/// second-guessed by this pool's queue being the thing that actually
-/// refuses a legitimately-admitted job.
+/// once. A plugin instance whose admitted work finds this queue already
+/// full still runs it (module doc comment, P2-7) rather than being
+/// refused — this capacity only bounds how much work waits its turn on
+/// the shared pool before overflowing to a one-off thread, never what a
+/// plugin is allowed to have outstanding at all.
 pub(super) fn new_background_pool() -> ScanWorkerPool {
     ScanWorkerPool::new(
         BACKGROUND_WORKER_COUNT,
@@ -86,32 +114,91 @@ pub(super) const READ_PLAN_DEADLINE: Duration = Duration::from_secs(2);
 /// bitness: opening a process handle is comparatively expensive, so it is
 /// opened once per session and reused for every read plan the owning
 /// plugin submits against it until the session detaches. The module table
-/// backing a `VOSU_BASE_MODULE` root is deliberately NOT cached alongside
-/// it — see this module's own doc comment.
+/// backing a `VOSU_BASE_MODULE` root is cached here too, lazily
+/// ([`CachingModuleResolver`]): built only once a plan actually names a
+/// module, not unconditionally alongside the process handle itself.
 pub(super) struct SessionMemory {
     /// `pub(super)`: `host::scans` reads this directly (module doc
     /// comment) rather than caching a second handle for the same session.
     pub(super) process: Arc<dyn ProcessMemory>,
     pub(super) bitness: ProcessBitness,
+    pid: u32,
+    /// Lazily built by [`CachingModuleResolver`]; `None` until the first
+    /// `PlanBase::Module` root this session's plans ever resolve.
+    modules: Mutex<Option<Arc<dyn ModuleResolver + Send + Sync>>>,
+}
+
+/// Every way [`open_session_memory`] can fail to open `pid`'s process
+/// (P2-8, §5): only a `pid` that is actually dead maps to
+/// `VOSU_ERR_TARGET_GONE`; a live process this host simply could not open
+/// (denied access, or any other OS failure) must not look dead to the
+/// plugin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SessionMemoryError {
+    TargetGone,
+    PermissionDenied,
+    Backend,
+}
+
+impl From<SessionMemoryError> for vosu_status {
+    fn from(error: SessionMemoryError) -> Self {
+        match error {
+            SessionMemoryError::TargetGone => vosu_status::VOSU_ERR_TARGET_GONE,
+            SessionMemoryError::PermissionDenied => vosu_status::VOSU_ERR_PERMISSION_DENIED,
+            SessionMemoryError::Backend => vosu_status::VOSU_ERR_BACKEND,
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
-fn open_session_memory_real(pid: u32) -> Option<SessionMemory> {
-    let process = vosu_sys::process::open_process(pid).ok()?;
-    let bitness = vosu_sys::process::process_bitness(pid).ok()?;
-    Some(SessionMemory {
+fn process_alive(pid: u32) -> bool {
+    vosu_sys::process::is_process_alive(pid)
+}
+
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    vosu_sys::process::is_process_alive(pid)
+}
+
+/// Classifies an [`open_session_memory_real`] failure (P2-8): a
+/// `MemoryError::PermissionDenied` is reported as such regardless of
+/// liveness; otherwise `pid` is checked directly rather than trusting the
+/// failed open's own error kind, since neither backend's "could not open"
+/// error reliably distinguishes "already dead" from "denied" on its own
+/// (`vosu-sys`'s own `open_process`/`WindowsProcessMemory::open` fold a
+/// stale/wrong-owner pid into the same error shape as a live one this
+/// host lacks rights to).
+fn classify_open_error(pid: u32, error: &MemoryError) -> SessionMemoryError {
+    if matches!(error, MemoryError::PermissionDenied { .. }) {
+        return SessionMemoryError::PermissionDenied;
+    }
+    if !process_alive(pid) {
+        return SessionMemoryError::TargetGone;
+    }
+    SessionMemoryError::Backend
+}
+
+#[cfg(target_os = "linux")]
+fn open_session_memory_real(pid: u32) -> Result<SessionMemory, MemoryError> {
+    let process = vosu_sys::process::open_process(pid)?;
+    let bitness = vosu_sys::process::process_bitness(pid)?;
+    Ok(SessionMemory {
         process: Arc::new(process),
         bitness,
+        pid,
+        modules: Mutex::new(None),
     })
 }
 
 #[cfg(windows)]
-fn open_session_memory_real(pid: u32) -> Option<SessionMemory> {
-    let process = vosu_sys::process::WindowsProcessMemory::open(pid).ok()?;
-    let bitness = process.bitness().ok()?;
-    Some(SessionMemory {
+fn open_session_memory_real(pid: u32) -> Result<SessionMemory, MemoryError> {
+    let process = vosu_sys::process::WindowsProcessMemory::open(pid)?;
+    let bitness = process.bitness()?;
+    Ok(SessionMemory {
         process: Arc::new(process),
         bitness,
+        pid,
+        modules: Mutex::new(None),
     })
 }
 
@@ -167,10 +254,18 @@ pub(crate) fn set_session_memory_hook_for_tests(
     session_memory_hooks()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .insert(pid, Arc::new(SessionMemory { process, bitness }));
+        .insert(
+            pid,
+            Arc::new(SessionMemory {
+                process,
+                bitness,
+                pid,
+                modules: Mutex::new(None),
+            }),
+        );
 }
 
-fn open_session_memory(pid: u32) -> Option<Arc<SessionMemory>> {
+fn open_session_memory(pid: u32) -> Result<Arc<SessionMemory>, SessionMemoryError> {
     #[cfg(test)]
     {
         let hooked = session_memory_hooks()
@@ -179,10 +274,12 @@ fn open_session_memory(pid: u32) -> Option<Arc<SessionMemory>> {
             .get(&pid)
             .cloned();
         if let Some(hooked) = hooked {
-            return Some(hooked);
+            return Ok(hooked);
         }
     }
-    open_session_memory_real(pid).map(Arc::new)
+    open_session_memory_real(pid)
+        .map(Arc::new)
+        .map_err(|error| classify_open_error(pid, &error))
 }
 
 fn build_module_table(pid: u32) -> Option<Arc<dyn ModuleResolver + Send + Sync>> {
@@ -211,6 +308,54 @@ pub(super) fn is_hooked_for_tests(pid: u32) -> bool {
         .contains_key(&pid)
 }
 
+/// Lazily builds, and caches per session, the module table a
+/// `PlanBase::Module` root needs (P1-1): `read_plan::resolve_root` only
+/// ever calls [`ModuleResolver::resolve`] for a `Module` root, never an
+/// `Absolute` one, so this type's own work — opening a loader table,
+/// parsing `/proc/<pid>/maps` — never runs at all for the common
+/// `Absolute` case this phase exists to stop paying for on every call.
+/// Refreshes the cached table once on a resolve miss before reporting a
+/// module unresolved, since the named module may have loaded since the
+/// last snapshot; a snapshot that cannot be built at all still resolves
+/// nothing, which the caller already reports as a per-read
+/// `VOSU_READ_NOT_READY`.
+struct CachingModuleResolver {
+    memory: Arc<SessionMemory>,
+}
+
+impl ModuleResolver for CachingModuleResolver {
+    fn resolve(&self, module: &str) -> Option<u64> {
+        let pid = self.memory.pid;
+        resolve_cached(&self.memory.modules, module, || build_module_table(pid))
+    }
+}
+
+/// The caching/refresh-on-miss policy [`CachingModuleResolver`] applies,
+/// factored out so it is testable independently of a real `pid` or the OS
+/// (P1-1): a hit against the already-cached `table` never calls `build`
+/// at all; a miss (cache empty, or the named module not in the cached
+/// table) calls `build` exactly once and replaces the cache with
+/// whatever it returns, even `None`'s absence of a table, so a plan
+/// against a target with no resolvable module does not rebuild out of
+/// `cache`'s own storage — only ever from `build` being called again the
+/// next time this function runs.
+fn resolve_cached(
+    cache: &Mutex<Option<Arc<dyn ModuleResolver + Send + Sync>>>,
+    module: &str,
+    build: impl FnOnce() -> Option<Arc<dyn ModuleResolver + Send + Sync>>,
+) -> Option<u64> {
+    let mut cache = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(table) = cache.as_ref()
+        && let Some(address) = table.resolve(module)
+    {
+        return Some(address);
+    }
+    let fresh = build()?;
+    let address = fresh.resolve(module);
+    *cache = Some(fresh);
+    address
+}
+
 impl PluginHost {
     /// Returns `handle`'s cached process handle, opening (and caching) it
     /// on first use (point 1 of this phase). `pub(super)`: `host::scans`
@@ -221,14 +366,14 @@ impl PluginHost {
         &self,
         handle: SessionHandle,
         pid: u32,
-    ) -> Option<Arc<SessionMemory>> {
+    ) -> Result<Arc<SessionMemory>, SessionMemoryError> {
         {
             let cache = self
                 .read_plan_memory
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
             if let Some(memory) = cache.get(&handle) {
-                return Some(Arc::clone(memory));
+                return Ok(Arc::clone(memory));
             }
         }
         let memory = open_session_memory(pid)?;
@@ -236,7 +381,7 @@ impl PluginHost {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(handle, Arc::clone(&memory));
-        Some(memory)
+        Ok(memory)
     }
 
     /// `handle`'s session is gone (detached, declined, or superseded):
@@ -326,7 +471,7 @@ impl PluginHost {
             Err(status) => return status,
         };
         if submit.sync {
-            self.deliver_read_plan_sync(instance, pid, submit)
+            self.deliver_read_plan_sync(instance, handle, pid, submit)
         } else {
             self.submit_read_plan_async(instance, handle, pid, submit)
         }
@@ -351,22 +496,23 @@ impl PluginHost {
     fn deliver_read_plan_sync(
         &self,
         instance: PluginInstanceId,
+        handle: SessionHandle,
         pid: u32,
         submit: ReadPlanSubmit,
     ) -> vosu_status {
-        let handle = SessionHandle(submit.handle);
-        let Some(memory) = self.session_memory(handle, pid) else {
-            return vosu_status::VOSU_ERR_TARGET_GONE;
+        let memory = match self.session_memory(handle, pid) {
+            Ok(memory) => memory,
+            Err(error) => return error.into(),
         };
-        let Some(modules) = build_module_table(pid) else {
-            return vosu_status::VOSU_ERR_TARGET_GONE;
+        let modules = CachingModuleResolver {
+            memory: Arc::clone(&memory),
         };
         let deadline = Instant::now() + self.read_plan_deadline();
         let result = match read_plan::deliver_sync(
             &submit,
             memory.process.as_ref(),
             memory.bitness,
-            modules.as_ref(),
+            &modules,
             deadline,
         ) {
             Ok(result) => result,
@@ -420,42 +566,77 @@ impl PluginHost {
         let Some(outstanding) = self.outstanding_plans_of(instance) else {
             return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
         };
+        let memory = match self.session_memory(handle, pid) {
+            Ok(memory) => memory,
+            Err(error) => return error.into(),
+        };
+        // P1-3: a wrong `ref_op` width is validated synchronously, before
+        // admission — an accepted async plan has no synchronous caller
+        // left to report `VOSU_ERR_INVALID_ARGUMENT` to once a worker
+        // discovers this later.
+        let pointer_width = u32::try_from(memory.bitness.pointer_size()).unwrap_or(u32::MAX);
+        if !read_plan::ref_op_width_ok(&submit, pointer_width) {
+            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        }
         let plan = submit.plan;
         if let Err(error) = outstanding.begin(plan, handle.0) {
             return error.into();
         }
-        let Some(memory) = self.session_memory(handle, pid) else {
-            outstanding.finish(plan);
-            return vosu_status::VOSU_ERR_TARGET_GONE;
+        let modules = CachingModuleResolver {
+            memory: Arc::clone(&memory),
         };
-        let deadline = Instant::now() + self.read_plan_deadline();
-        let host = self.arc();
+        let deadline_duration = self.read_plan_deadline();
+        // P1-2: a `Weak` reference, upgraded only to deliver. A strong
+        // `Arc<PluginHost>` here could let a background-pool worker end
+        // up being the thread that drops the last reference — which
+        // self-joins (`ScanWorkerPool::drop` joins every worker,
+        // including whichever one is running this very job) and aborts
+        // or hangs instead of shutting down cleanly.
+        let host = self.self_ref.clone();
         let spawned_outstanding = Arc::clone(&outstanding);
-        let spawn_result = self.background_pool.try_spawn(move || {
-            // §6.3/§5: `RefOpWrongWidth`/`TargetGone`/`TimedOut` reject the
-            // whole submission, which for an async plan means no later
-            // `VOSU_OP_READ_PLAN_RESULT` at all — there is no synchronous
-            // caller left to report a status to (recorded as a spec
-            // ambiguity in this phase's handoff notes).
-            let outcome = build_module_table(pid).and_then(|modules| {
-                read_plan::execute(
-                    &submit,
-                    memory.process.as_ref(),
-                    memory.bitness,
-                    modules.as_ref(),
-                    deadline,
-                )
-                .ok()
-            });
+        let job = move || {
+            // P2-7: skip the real work entirely if this plan was already
+            // cancelled while queued — a plugin that cancels work it no
+            // longer needs should not also cost the shared pool the time
+            // of running it.
+            if spawned_outstanding.is_cancelled(plan) {
+                spawned_outstanding.finish(plan);
+                return;
+            }
+            // P1-3: the deadline starts when execution actually begins,
+            // not at submission time — a plan queued behind other work on
+            // the shared pool must not already be expired before a
+            // worker even picks it up.
+            let deadline = Instant::now() + deadline_duration;
+            let result = match read_plan::execute(
+                &submit,
+                memory.process.as_ref(),
+                memory.bitness,
+                &modules,
+                deadline,
+            ) {
+                Ok(result) => result,
+                Err(_ref_op_wrong_width) => {
+                    // Unreachable in practice: already validated
+                    // synchronously above against this same (cached)
+                    // bitness. Handled defensively instead of panicking a
+                    // worker thread.
+                    spawned_outstanding.finish(plan);
+                    return;
+                }
+            };
             let should_deliver = spawned_outstanding.finish(plan) == FinishOutcome::Deliver;
-            if let (true, Some(result)) = (should_deliver, outcome) {
+            if should_deliver && let Some(host) = host.upgrade() {
                 let _ = host.dispatch_to_instance(instance, &Message::ReadPlanResult(result), 0);
             }
-        });
-        if spawn_result.is_err() {
-            outstanding.finish(plan);
-            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
-        }
+        };
+        // P2-7: this plan was already admitted against the instance's own
+        // 64-outstanding cap — a full *shared* queue (bounded only to
+        // keep genuinely idle capacity small, module doc comment) must
+        // never turn into "no answer" for work this instance was already
+        // granted a slot for; `spawn_or_overflow` keeps the pool's queue
+        // bounded while still guaranteeing admitted work always runs.
+        self.background_pool.spawn_or_overflow(job);
         vosu_status::VOSU_OK
     }
 

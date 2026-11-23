@@ -508,16 +508,17 @@ pub fn execute_into(
         .map_err(|error| ExecuteBytesError::Message(error.into()))?;
     validate_read_plan_submit(payload).map_err(|error| ExecuteBytesError::Message(error.into()))?;
 
-    // Checked in this order — target liveness before the ref-op-width
-    // check — to match `super::execute`'s own order (F2): both entry
-    // points must reject the same way when a plan is both for a dead
-    // target and wrong-width.
-    if !memory.is_alive() {
-        return Err(ExecuteBytesError::Execute(ReadPlanError::TargetGone));
-    }
+    // Checked in this order — the ref-op-width check before target
+    // liveness — to match `super::execute`'s own order (P1-3: a plan
+    // validation error takes priority over a runtime/target-state one):
+    // both entry points must reject the same way when a plan is both for
+    // a dead target and wrong-width.
     let pointer_width = u32::try_from(bitness.pointer_size()).unwrap_or(u32::MAX);
     validate_read_plan_ref_op_width(payload, pointer_width)
         .map_err(|_| ExecuteBytesError::Execute(ReadPlanError::RefOpWrongWidth))?;
+    if !memory.is_alive() {
+        return Err(ExecuteBytesError::Execute(ReadPlanError::TargetGone));
+    }
 
     let header: vosu_read_plan_submit_header =
         read_flat_header(payload).map_err(|error| ExecuteBytesError::Message(error.into()))?;

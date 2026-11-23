@@ -6,9 +6,17 @@
 //! [`PluginHost::session_memory`]/[`PluginHost::resolve_owned_session`]
 //! directly (`read_plans.rs`'s own module doc comment), so a session this
 //! instance also has read plans outstanding against shares the one cached
-//! process handle rather than this module opening a second one — and a
-//! module table built fresh per request (`scan.rs`'s own documented rule
-//! for `WindowsModuleTable`/`LinuxModuleTable`).
+//! process handle rather than this module opening a second one, and
+//! mapping a failed open the same way (P2-8: only a dead process is
+//! `VOSU_ERR_TARGET_GONE`; a live one this host failed to open is
+//! `VOSU_ERR_PERMISSION_DENIED`/`VOSU_ERR_BACKEND`) — and a module table
+//! built fresh per request (`scan.rs`'s own documented rule for
+//! `WindowsModuleTable`/`LinuxModuleTable`). A snapshot that cannot be
+//! built at all falls back to a resolver that resolves nothing rather than
+//! refusing the whole request: `scan::execute` already answers an
+//! unresolved `module` with its own `module_not_found` error form, never a
+//! call rejection, so a transient snapshot failure degrades the same way
+//! (mirroring `read_plans.rs`'s own P1-1 fix).
 //!
 //! Every accepted scan then runs through [`scan::submit`] on
 //! `PluginHost`'s own `background_pool` — one [`ScanWorkerPool`] shared
@@ -25,7 +33,13 @@
 //! ([`PluginHost::dispatch_to_instance`]), carrying the request's own
 //! `correlation_id` (§6.4: "there is no dedicated scan-id type: a scan is
 //! correlated like every other CBOR request/reply pair" — unlike a read
-//! plan, which is instead correlated by its own `plan` id).
+//! plan, which is instead correlated by its own `plan` id). The delivery
+//! closure captures only a `Weak<PluginHost>` (P1-2), upgraded once, only
+//! to deliver — the same reason `read_plans.rs`'s own async job does:
+//! `ScanWorkerPool::drop` joins every worker, including whichever one is
+//! running the job that would otherwise hold the last strong
+//! `Arc<PluginHost>`, which self-joins and aborts or hangs instead of
+//! shutting down.
 //!
 //! `VOSU_OP_SCAN_REQUEST` has no `VOSU_READ_PLAN_SYNC`-equivalent opt-in
 //! (§6.4 names none): every scan, however cheap, is delivered
@@ -43,9 +57,7 @@ use std::sync::Arc;
 use vosu_plugin_api::{Message, ScanRequest, vosu_status};
 
 use super::super::host_services::PluginInstanceId;
-#[cfg(test)]
-use super::super::scan::ModuleRegion;
-use super::super::scan::{self, ModuleRegions, OutstandingScans};
+use super::super::scan::{self, ModuleRegion, ModuleRegions, OutstandingScans};
 use super::super::session::SessionHandle;
 use super::{InstanceSlot, PluginHost};
 
@@ -67,12 +79,12 @@ fn build_module_regions_real(pid: u32) -> Option<Arc<dyn ModuleRegions + Send + 
 /// synthetic pid, mirroring `read_plans.rs`'s own `NoModules` — a test
 /// using `super::read_plans::set_session_memory_hook_for_tests` has no
 /// real `/proc`/loader table to enumerate, and its scans never set
-/// `module` anyway.
-#[cfg(test)]
-struct NoModuleRegions;
+/// `module` anyway. Also the production fallback when a real snapshot
+/// cannot be built at all (module doc comment): a module-scoped scan then
+/// answers `module_not_found` instead of the whole request being refused.
+struct UnresolvedModuleRegions;
 
-#[cfg(test)]
-impl ModuleRegions for NoModuleRegions {
+impl ModuleRegions for UnresolvedModuleRegions {
     fn resolve(&self, _module: &str) -> Option<ModuleRegion> {
         None
     }
@@ -80,18 +92,19 @@ impl ModuleRegions for NoModuleRegions {
 
 /// Mirrors `read_plans.rs`'s own `build_module_table`: a fresh snapshot
 /// every call (`scan.rs`'s documented rule), substituting
-/// [`NoModuleRegions`] for a test's synthetic pid
+/// [`UnresolvedModuleRegions`] for a test's synthetic pid
 /// ([`super::read_plans::is_hooked_for_tests`] — the same hook registry
 /// `read_plans.rs` itself checks, so a test only ever registers one hook
-/// per pid regardless of which opcode it exercises).
-fn build_module_regions(pid: u32) -> Option<Arc<dyn ModuleRegions + Send + Sync>> {
+/// per pid regardless of which opcode it exercises) or a real snapshot
+/// that failed to build at all (module doc comment).
+fn build_module_regions(pid: u32) -> Arc<dyn ModuleRegions + Send + Sync> {
     #[cfg(test)]
     {
         if super::read_plans::is_hooked_for_tests(pid) {
-            return Some(Arc::new(NoModuleRegions));
+            return Arc::new(UnresolvedModuleRegions);
         }
     }
-    build_module_regions_real(pid)
+    build_module_regions_real(pid).unwrap_or_else(|| Arc::new(UnresolvedModuleRegions))
 }
 
 impl PluginHost {
@@ -160,13 +173,14 @@ impl PluginHost {
             Ok(pid) => pid,
             Err(status) => return status,
         };
-        let Some(memory) = self.session_memory(handle, pid) else {
-            return vosu_status::VOSU_ERR_TARGET_GONE;
+        let memory = match self.session_memory(handle, pid) {
+            Ok(memory) => memory,
+            Err(error) => return error.into(),
         };
-        let Some(modules) = build_module_regions(pid) else {
-            return vosu_status::VOSU_ERR_TARGET_GONE;
-        };
-        let host = self.arc();
+        let modules = build_module_regions(pid);
+        // P1-2: a `Weak` reference, upgraded only to deliver — see this
+        // module's own doc comment.
+        let host = self.self_ref.clone();
         let process = Arc::clone(&memory.process);
         let result = scan::submit(
             &outstanding,
@@ -176,11 +190,13 @@ impl PluginHost {
             modules,
             handle.0,
             move |result| {
-                let _ = host.dispatch_to_instance(
-                    instance,
-                    &Message::ScanResult(result),
-                    correlation_id,
-                );
+                if let Some(host) = host.upgrade() {
+                    let _ = host.dispatch_to_instance(
+                        instance,
+                        &Message::ScanResult(result),
+                        correlation_id,
+                    );
+                }
             },
         );
         match result {
