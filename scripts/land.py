@@ -28,6 +28,7 @@ EXPECTED_STEPS = {
     "script-tests",
     "actionlint",
     "xwin-clippy",
+    "standalone-crates",
     "dashboard",
     "native-clippy",
     "native-test-workspace",
