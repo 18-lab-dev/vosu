@@ -312,12 +312,23 @@ impl OutstandingScans {
     }
 
     /// F1: records `id`'s pool job ticket once [`submit`] has actually
-    /// queued it; a no-op if `id`'s slot already finished (or was
-    /// already freed) by the time this runs — nothing left to remove
-    /// from the pool's queue either way.
-    fn set_queue_ticket(&self, id: u64, ticket: u64) {
+    /// queued it. N3: a session detach (`cancel_session`, the only way a
+    /// scan is ever cancelled) can still land between
+    /// [`Self::begin_internal`] and this call, in which case `id`'s slot
+    /// is already gone (freed and, through its own gate, already
+    /// delivered the session-detached result) — reported `false` so
+    /// [`submit`] can remove the now-pointless job from the pool itself
+    /// with the `ticket` it already has, rather than leaving it to sit
+    /// in the pool's own per-key sub-queue until a worker reaches it and
+    /// finds nothing left to do (mirroring `read_plan::OutstandingPlans`'
+    /// own `set_queue_ticket`, which has the same race for the same
+    /// reason).
+    fn set_queue_ticket(&self, id: u64, ticket: u64) -> bool {
         if let Some(entry) = self.lock_entries().get_mut(&id) {
             entry.queue_ticket = Some(ticket);
+            true
+        } else {
+            false
         }
     }
 
@@ -695,8 +706,17 @@ pub fn submit(
     });
     // F1: lets a later `cancel_session` remove this job from the pool's
     // own sub-queue immediately if it still can — a no-op if the job
-    // already ran (or was already cancelled) by the time this runs.
-    outstanding.set_queue_ticket(slot_id, ticket);
+    // already ran (or was already cancelled) by the time this runs. N3:
+    // if `cancel_session` already won the race against this very call
+    // (`set_queue_ticket` found `slot_id`'s own slot already gone), the
+    // ticket was never recorded there for a later `cancel_session` to
+    // find — remove the now-pointless job from the pool directly with
+    // the `ticket` already in hand instead, rather than leaving it to
+    // sit in the pool's own per-key sub-queue until a worker reaches it
+    // and finds nothing left to do.
+    if !outstanding.set_queue_ticket(slot_id, ticket) {
+        pool.cancel(routing.queue_key, ticket);
+    }
     Ok(())
 }
 

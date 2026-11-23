@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -324,35 +325,58 @@ fn one_keys_backlog_never_blocks_another_keys_job() {
     // thread. Key 1 then floods its own sub-queue well past any size a
     // shared, fixed-capacity queue would have refused beyond — key 2's
     // own job must still queue (never refused) and run promptly once the
-    // worker reaches key 2's turn, rather than waiting behind the whole
-    // of key 1's backlog (each key gets its own sub-queue, served
-    // round-robin).
+    // worker reaches key 2's turn (round-robin across keys), long before
+    // key 1's own 200-deep backlog has drained, rather than waiting
+    // behind the whole of it the way a single shared FIFO queue would
+    // (F6: the previous version of this test only checked that key 2's
+    // job ran at all, which a FIFO pool satisfies too, just last).
     let pool = ScanWorkerPool::new(1);
     let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
     let gate_clone = Arc::clone(&gate);
+    let (started_tx, started_rx) = mpsc::channel();
     pool.submit(1, move || {
+        started_tx.send(()).unwrap();
         let (lock, cvar) = &*gate_clone;
         let mut released = lock.lock().unwrap();
         while !*released {
             released = cvar.wait(released).unwrap();
         }
     });
-    // Give the worker a moment to pick up the blocking job so key 1's
-    // queue is actually empty before this floods it.
-    std::thread::sleep(Duration::from_millis(50));
+    // Wait for the blocking job to actually start (and so leave key 1's
+    // own sub-queue empty) before this floods it, rather than guessing
+    // with a sleep (N4).
+    started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the blocking job must start");
+
+    let key1_completed = Arc::new(AtomicUsize::new(0));
     for _ in 0..200 {
-        pool.submit(1, || {});
+        let key1_completed = Arc::clone(&key1_completed);
+        pool.submit(1, move || {
+            key1_completed.fetch_add(1, Ordering::SeqCst);
+        });
     }
 
     let (tx, rx) = mpsc::channel();
-    pool.submit(2, move || tx.send(()).unwrap());
+    let key1_completed_at_key2 = Arc::clone(&key1_completed);
+    pool.submit(2, move || {
+        tx.send(key1_completed_at_key2.load(Ordering::SeqCst))
+            .unwrap();
+    });
 
     let (lock, cvar) = &*gate;
     *lock.lock().unwrap() = true;
     cvar.notify_all();
 
-    rx.recv_timeout(Duration::from_secs(5))
+    let completed_when_key2_ran = rx
+        .recv_timeout(Duration::from_secs(5))
         .expect("key 2's job must run promptly, not behind key 1's whole backlog");
+    assert!(
+        completed_when_key2_ran < 200,
+        "key 2's job only ran once all 200 of key 1's backlog had already drained (got \
+         {completed_when_key2_ran}) — a FIFO pool shared across keys would serialize exactly \
+         this way, instead of each key getting its own sub-queue"
+    );
 }
 
 /// F1: cancelling a still-queued job must remove it from its key's own
@@ -368,16 +392,23 @@ fn cancelled_jobs_never_pile_up_in_their_keys_queue() {
     let key = 1u64;
     let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
     let gate_clone = Arc::clone(&gate);
+    let (started_tx, started_rx) = mpsc::channel();
     pool.submit(key, move || {
+        started_tx.send(()).unwrap();
         let (lock, cvar) = &*gate_clone;
         let mut released = lock.lock().unwrap();
         while !*released {
             released = cvar.wait(released).unwrap();
         }
     });
-    // Give the worker a moment to pick up the blocking job so `key`'s
-    // queue is actually empty before this loop runs.
-    std::thread::sleep(Duration::from_millis(50));
+    // N4: wait for the blocking job to actually start (and so leave
+    // `key`'s own sub-queue empty) before this loop runs — a fixed sleep
+    // here could still race it on a loaded machine, making iteration 0
+    // see `queue_len == 1` (the blocker itself) and fail outright rather
+    // than merely slow down.
+    started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the blocking job must start");
 
     for i in 0..10_000u64 {
         let ticket = pool.submit(key, || {});
@@ -609,6 +640,72 @@ fn cancel_session_racing_admission_still_answers_exactly_once() {
     let result = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(result.error.unwrap().code, "session_detached");
     assert_eq!(outstanding.len(), 0);
+
+    let (lock, cvar) = &*release;
+    *lock.lock().unwrap() = true;
+    cvar.notify_all();
+}
+
+/// N3: the race above also used to leave this scan's own job sitting in
+/// the pool's queue until a worker happened to reach it and found its
+/// gate already taken — `set_queue_ticket` reporting the race lets
+/// `submit` remove it immediately instead, the same leak F1 closed for
+/// `READ_PLAN_CANCEL` applied to this narrower, detach-only window.
+#[test]
+fn cancel_session_racing_admission_also_removes_the_queued_job() {
+    let outstanding = OutstandingScans::new();
+    let pool = ScanWorkerPool::new(1);
+
+    // One worker, blocked, so this test's own job provably has not run
+    // by the time the race hook fires below — waited for through a
+    // started signal rather than a fixed sleep, so a loaded machine
+    // cannot make this test flake.
+    let (started_tx, started_rx) = mpsc::channel();
+    let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let release_clone = Arc::clone(&release);
+    pool.submit(1, move || {
+        started_tx.send(()).unwrap();
+        let (lock, cvar) = &*release_clone;
+        let mut released = lock.lock().unwrap();
+        while !*released {
+            released = cvar.wait(released).unwrap();
+        }
+    });
+    started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the blocking job must start");
+
+    let handle = 12;
+    let outstanding_for_hook = Arc::clone(&outstanding);
+    set_race_hook_for_tests(move || {
+        let _ = outstanding_for_hook.cancel_session(handle);
+    });
+
+    let memory: Arc<dyn ProcessMemory> = Arc::new(FakeMemory::new(vec![(0x1000, vec![0xaa])]));
+    let modules: Arc<dyn ModuleRegions + Send + Sync> = Arc::new(NoModulesSync);
+    let (tx, rx) = mpsc::channel();
+    submit(
+        &outstanding,
+        &pool,
+        request(None, "AA", false, false),
+        memory,
+        modules,
+        ScanRouting {
+            session: handle,
+            queue_key: 1,
+        },
+        move |result| tx.send(result).unwrap(),
+    )
+    .unwrap();
+    let result = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(result.error.unwrap().code, "session_detached");
+
+    assert_eq!(
+        pool.queue_len_for_tests(1),
+        0,
+        "N3: the cancelled scan's own job must be removed from the pool immediately, not left \
+         to sit there until the blocked worker eventually reaches it"
+    );
 
     let (lock, cvar) = &*release;
     *lock.lock().unwrap() = true;
