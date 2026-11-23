@@ -1,0 +1,411 @@
+//! [`MatcherEngine`]/[`CompiledMatcher`]/[`Prefilter`] unit tests (split out per
+//! `docs/architecture/source-map.md`'s 1,000-line maintained-file limit).
+
+use super::*;
+
+fn table(process_names: &[&str]) -> MatchTable {
+    MatchTable {
+        process_names: process_names.iter().map(|s| s.to_string()).collect(),
+        ..Default::default()
+    }
+}
+
+fn candidate(name: &str, path: &str, command_line: &str) -> CandidateProcess {
+    CandidateProcess {
+        name: name.into(),
+        path: path.into(),
+        command_line: command_line.into(),
+    }
+}
+
+#[test]
+fn process_names_match_case_insensitively_on_windows_only() {
+    let windows = CompiledMatcher::compile(MatchPlatform::Windows, &table(&["osu!.exe"])).unwrap();
+    assert!(windows.matches(&candidate("OSU!.EXE", "C:/osu/osu!.exe", "")));
+
+    let linux = CompiledMatcher::compile(MatchPlatform::Linux, &table(&["osu!.exe"])).unwrap();
+    assert!(!linux.matches(&candidate("OSU!.EXE", "/home/user/osu!.exe", "")));
+    assert!(linux.matches(&candidate("osu!.exe", "/home/user/osu!.exe", "")));
+}
+
+#[test]
+fn path_patterns_are_full_match_anchored_and_normalize_separators() {
+    // No backslash escapes in the pattern itself: §6.1's path
+    // separator normalization rewrites only an escaped literal
+    // backslash (`\\`) in the pattern text, so a bare `\` here would be
+    // a dangling, invalid regex escape rather than a separator; a
+    // pattern spells its own separators as `/` directly.
+    let table = MatchTable {
+        process_path_patterns: vec![".*/osu-lazer/osu!.exe".to_string()],
+        ..Default::default()
+    };
+    let matcher = CompiledMatcher::compile(MatchPlatform::Linux, &table).unwrap();
+    assert!(matcher.matches(&candidate("osu!.exe", r"C:\games\osu-lazer\osu!.exe", "")));
+    // Not a full match: extra trailing text after the pattern's own end.
+    assert!(!matcher.matches(&candidate("osu!.exe", "/games/osu-lazer/osu!.exe.bak", "")));
+}
+
+#[test]
+fn pattern_escaped_dot_is_not_corrupted_by_separator_normalization() {
+    // `\.` is a regex-escaped literal dot, not a path separator: the
+    // naive `\`→`/` rewrite used to turn it into `/.`, which no longer
+    // matches a literal `.` (P1).
+    let table = MatchTable {
+        process_path_patterns: vec![r".*/osu!\.exe".to_string()],
+        ..Default::default()
+    };
+    let matcher = CompiledMatcher::compile(MatchPlatform::Linux, &table).unwrap();
+    assert!(matcher.matches(&candidate("osu!.exe", "/home/u/osu!.exe", "")));
+}
+
+#[test]
+fn pattern_escaped_parens_are_not_corrupted_by_separator_normalization() {
+    // `\(x86\)` is a regex-escaped literal "(x86)", not a path
+    // separator plus a capture group: the naive rewrite used to turn
+    // it into `/(x86/)`, matching "/x86/" instead of the literal
+    // parenthesized text (P1).
+    let table = MatchTable {
+        process_path_patterns: vec![r".*/Program Files \(x86\)/.*".to_string()],
+        ..Default::default()
+    };
+    let matcher = CompiledMatcher::compile(MatchPlatform::Linux, &table).unwrap();
+    assert!(matcher.matches(&candidate(
+        "osu!.exe",
+        "/opt/Program Files (x86)/osu!.exe",
+        ""
+    )));
+    assert!(!matcher.matches(&candidate("osu!.exe", "/opt/x86/osu!.exe", "")));
+}
+
+#[test]
+fn windows_style_pattern_keeps_its_escaped_dot_while_its_separators_normalize() {
+    // A pattern spelling its separators as escaped backslashes (valid
+    // regex syntax for a literal `\`) must still normalize only those,
+    // keeping `\.` intact.
+    let table = MatchTable {
+        process_path_patterns: vec![r".*\\osu!\.exe".to_string()],
+        ..Default::default()
+    };
+    let matcher = CompiledMatcher::compile(MatchPlatform::Windows, &table).unwrap();
+    assert!(matcher.matches(&candidate("osu!.exe", r"C:\games\osu!.exe", "")));
+    assert!(!matcher.matches(&candidate("osu!.exe", r"C:\games\osu!Xexe", "")));
+}
+
+#[test]
+fn command_line_patterns_match_joined_argv() {
+    let table = MatchTable {
+        command_line_patterns: vec![r".*--tournament.*".to_string()],
+        ..Default::default()
+    };
+    let matcher = CompiledMatcher::compile(MatchPlatform::Linux, &table).unwrap();
+    assert!(matcher.matches(&candidate(
+        "osu!.exe",
+        "/osu/osu!.exe",
+        "osu!.exe --tournament"
+    )));
+    assert!(!matcher.matches(&candidate("osu!.exe", "/osu/osu!.exe", "osu!.exe")));
+}
+
+#[test]
+fn comm_hint_over_15_bytes_is_rejected() {
+    let table = MatchTable {
+        comm_hints: vec!["this-hint-is-too-long".to_string()],
+        ..Default::default()
+    };
+    assert!(matches!(
+        CompiledMatcher::compile(MatchPlatform::Linux, &table),
+        Err(MatcherError::HintTooLong { .. })
+    ));
+}
+
+#[test]
+fn static_overlap_on_equal_process_names() {
+    let a = table(&["osu!.exe"]);
+    let b = table(&["osu!.exe"]);
+    assert!(overlaps(MatchPlatform::Windows, &a, &b));
+}
+
+#[test]
+fn static_overlap_on_comm_hint_substring_of_process_name() {
+    let a = MatchTable {
+        comm_hints: vec!["osu!".to_string()],
+        ..Default::default()
+    };
+    let b = table(&["osu!.exe"]);
+    assert!(overlaps(MatchPlatform::Linux, &a, &b));
+    assert!(overlaps(MatchPlatform::Linux, &b, &a));
+}
+
+#[test]
+fn static_overlap_absent_for_disjoint_matchers() {
+    let a = table(&["osu!.exe"]);
+    let b = table(&["other-game.exe"]);
+    assert!(!overlaps(MatchPlatform::Windows, &a, &b));
+}
+
+#[test]
+fn register_refuses_overlapping_second_plugin() {
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    engine
+        .register("vosu.osu".to_string(), table(&["osu!.exe"]))
+        .unwrap();
+    let err = engine
+        .register("vosu.other".to_string(), table(&["osu!.exe"]))
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        RegisterError::Overlap(OverlapError {
+            existing,
+            candidate,
+        }) if existing == "vosu.osu" && candidate == "vosu.other"
+    ));
+}
+
+#[test]
+fn engine_is_empty_until_first_register() {
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    assert!(engine.is_empty());
+    engine
+        .register("vosu.osu".to_string(), table(&["osu!.exe"]))
+        .unwrap();
+    assert!(!engine.is_empty());
+}
+
+#[test]
+fn prefilter_union_includes_short_process_names_and_comm_hints_deduplicated() {
+    // §6.1: the pre-filter is short `process_names` *plus*
+    // `comm_hints`, not `comm_hints` alone (P1) -- and a plugin whose
+    // `comm_hints` differ from its `process_names` contributes both.
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    engine
+        .register(
+            "vosu.first".to_string(),
+            MatchTable {
+                process_names: vec!["osu!.exe".to_string()],
+                // A repeated hint within one plugin's own table
+                // exercises dedup without triggering D18's
+                // cross-plugin overlap rejection below.
+                comm_hints: vec!["osu!".to_string(), "osu!".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    engine
+        .register(
+            "vosu.second".to_string(),
+            MatchTable {
+                comm_hints: vec!["other-game".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        engine.prefilter(),
+        Prefilter::Names(vec![
+            "osu!".to_string(),
+            "osu!.exe".to_string(),
+            "other-game".to_string(),
+        ])
+    );
+}
+
+#[test]
+fn prefilter_accepts_a_plugin_with_only_process_names() {
+    // The §8 manifest example (`osu!.exe` as the sole matcher): an
+    // empty `comm_hints` must not make the pre-filter match nothing
+    // (P1) -- the short `process_names` entry alone is enough.
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    engine
+        .register("vosu.osu".to_string(), table(&["osu!.exe"]))
+        .unwrap();
+    assert_eq!(
+        engine.prefilter(),
+        Prefilter::Names(vec!["osu!.exe".to_string()])
+    );
+}
+
+#[test]
+fn prefilter_widens_for_a_path_pattern_plugin_with_no_usable_hint() {
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    engine
+        .register(
+            "vosu.paths".to_string(),
+            MatchTable {
+                process_path_patterns: vec![".*/osu/.*".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(engine.prefilter(), Prefilter::Unfiltered);
+}
+
+#[test]
+fn prefilter_stays_narrow_when_a_path_pattern_plugin_also_has_a_hint() {
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    engine
+        .register(
+            "vosu.paths".to_string(),
+            MatchTable {
+                process_path_patterns: vec![".*/osu/.*".to_string()],
+                comm_hints: vec!["osu!".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        engine.prefilter(),
+        Prefilter::Names(vec!["osu!".to_string()])
+    );
+}
+
+#[test]
+fn prefilter_excludes_a_process_names_entry_over_15_bytes_on_linux() {
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    engine
+        .register("vosu.long".to_string(), table(&["this-name-is-sixteen!"]))
+        .unwrap();
+    assert_eq!(engine.prefilter(), Prefilter::Names(Vec::new()));
+}
+
+#[test]
+fn prefilter_on_windows_ignores_comm_hints_and_the_15_byte_limit() {
+    // §6.1: `comm_hints` is "accepted but unused on Windows", and
+    // Windows has no kernel `comm` field width to respect.
+    let mut engine = MatcherEngine::new(MatchPlatform::Windows);
+    engine
+        .register(
+            "vosu.osu".to_string(),
+            MatchTable {
+                process_names: vec!["this-name-is-sixteen!".to_string()],
+                comm_hints: vec!["unused-on-windows".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        engine.prefilter(),
+        Prefilter::Names(vec!["this-name-is-sixteen!".to_string()])
+    );
+}
+
+#[test]
+fn prefilter_on_windows_widens_for_any_path_pattern_plugin() {
+    // Windows has no hint concept at all, so a path-pattern-only
+    // plugin always widens there, unlike Linux's own
+    // `prefilter_stays_narrow_when_a_path_pattern_plugin_also_has_a_hint`.
+    let mut engine = MatcherEngine::new(MatchPlatform::Windows);
+    engine
+        .register(
+            "vosu.paths".to_string(),
+            MatchTable {
+                process_path_patterns: vec![".*/osu/.*".to_string()],
+                comm_hints: vec!["osu!".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(engine.prefilter(), Prefilter::Unfiltered);
+}
+
+#[test]
+fn generation_bumps_on_register_and_unregister_but_not_on_a_no_op() {
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    assert_eq!(engine.generation(), 0);
+    engine
+        .register("vosu.osu".to_string(), table(&["osu!.exe"]))
+        .unwrap();
+    assert_eq!(engine.generation(), 1);
+    engine.unregister("vosu.absent");
+    assert_eq!(
+        engine.generation(),
+        1,
+        "unregistering an unknown id is a no-op"
+    );
+    engine.unregister("vosu.osu");
+    assert_eq!(engine.generation(), 2);
+}
+
+#[test]
+fn runtime_match_prefers_earlier_installed_plugin_and_reports_shadowed() {
+    // Only path patterns can collide at runtime despite passing static
+    // validation (D18: path/command-line overlap is undecidable).
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    engine
+        .register(
+            "vosu.first".to_string(),
+            MatchTable {
+                process_path_patterns: vec![".*/osu/.*".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    engine
+        .register(
+            "vosu.second".to_string(),
+            MatchTable {
+                process_path_patterns: vec![".*/osu/.*".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let outcome = engine.match_candidate(&candidate("osu!.exe", "/games/osu/osu!.exe", ""));
+    assert_eq!(outcome.winner.as_deref(), Some("vosu.first"));
+    assert_eq!(outcome.shadowed, vec!["vosu.second".to_string()]);
+}
+
+#[test]
+fn runtime_match_is_none_when_nothing_matches() {
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    engine
+        .register("vosu.osu".to_string(), table(&["osu!.exe"]))
+        .unwrap();
+    let outcome = engine.match_candidate(&candidate("unrelated", "/bin/unrelated", ""));
+    assert_eq!(outcome.winner, None);
+    assert!(outcome.shadowed.is_empty());
+}
+
+#[test]
+fn register_refuses_when_combined_prefilter_total_exceeds_256() {
+    let mut engine = MatcherEngine::new(MatchPlatform::Linux);
+    let hints: Vec<String> = (0..256).map(|i| format!("h{i}")).collect();
+    engine
+        .register(
+            "vosu.first".to_string(),
+            MatchTable {
+                comm_hints: hints,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let err = engine
+        .register(
+            "vosu.second".to_string(),
+            MatchTable {
+                comm_hints: vec!["extra".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        RegisterError::PreFilterLimit(PreFilterLimitError { candidate, total })
+            if candidate == "vosu.second" && total == 257
+    ));
+}
+
+#[test]
+fn register_ignores_the_prefilter_limit_on_windows() {
+    // The pre-filter is Linux-only (§6.1): Windows registration never
+    // refuses on this ground, however many hints are declared.
+    let mut engine = MatcherEngine::new(MatchPlatform::Windows);
+    let hints: Vec<String> = (0..300).map(|i| format!("h{i}")).collect();
+    engine
+        .register(
+            "vosu.osu".to_string(),
+            MatchTable {
+                comm_hints: hints,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+}
