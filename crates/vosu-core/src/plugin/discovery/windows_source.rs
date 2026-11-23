@@ -767,4 +767,128 @@ mod tests {
             "a new create_time must reopen the pid rather than serve the stale cache entry"
         );
     }
+
+    /// Native-only coverage (`#[cfg(target_os = "windows")]`): everything
+    /// above this point uses [`FakeOps`] and runs on any host. These
+    /// tests drive [`WindowsSource<RealOps>`] against the real Win32
+    /// process list, proving the DiscReview2 Windows checklist items the
+    /// synthetic tests above cannot: real enumeration finds a freshly
+    /// spawned, uniquely renamed child and stops reporting it once it
+    /// exits, and §6.1's case-insensitive name rule holds against a real
+    /// on-disk image name, not a hand-written [`FakeEntry`].
+    #[cfg(target_os = "windows")]
+    mod native_tests {
+        use std::path::{Path, PathBuf};
+        use std::process::{Child, Command, Stdio};
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::time::{Duration, Instant};
+
+        use super::super::RealOps;
+        use super::{Prefilter, ProcessSource, WindowsSource};
+
+        fn unique_name(extension: &str) -> String {
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            format!("vtest{}-{n}{extension}", std::process::id() % 1_000_000)
+        }
+
+        fn cmd_source() -> PathBuf {
+            std::env::var_os("ComSpec")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(r"C:\Windows\System32\cmd.exe"))
+        }
+
+        /// Copies `cmd.exe` to a unique name under `dir` and spawns it
+        /// running a ~20s `ping`, so the real process list carries this
+        /// test's own chosen image name instead of a shared `cmd.exe`.
+        fn renamed_child(dir: &Path, name: &str) -> Child {
+            let dest = dir.join(name);
+            std::fs::copy(cmd_source(), &dest).expect("copying cmd.exe for a renamed test child");
+            Command::new(&dest)
+                .args(["/C", "ping", "-n", "20", "127.0.0.1"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawning the renamed test child")
+        }
+
+        fn poll_until<T>(mut probe: impl FnMut() -> Option<T>) -> T {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(value) = probe() {
+                    return value;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for the real Windows process list to settle"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+
+        #[test]
+        fn real_os_enumerate_finds_a_renamed_child_and_stops_after_it_exits() {
+            let dir = tempfile::tempdir().unwrap();
+            let name = unique_name(".exe");
+            let mut child = renamed_child(dir.path(), &name);
+            let pid = child.id();
+
+            let source = WindowsSource::new(RealOps);
+            source
+                .set_prefilter(&Prefilter::Names(vec![name.clone()]))
+                .expect("set_prefilter never fails on Windows");
+
+            let found = poll_until(|| {
+                source
+                    .enumerate()
+                    .expect("enumerate succeeds")
+                    .into_iter()
+                    .find(|record| record.pid == pid)
+            });
+            assert_eq!(found.name.to_ascii_lowercase(), name.to_ascii_lowercase());
+
+            child.kill().expect("killing the test child");
+            child.wait().expect("reaping the test child");
+
+            poll_until(|| {
+                let still_present = source
+                    .enumerate()
+                    .expect("enumerate succeeds")
+                    .iter()
+                    .any(|record| record.pid == pid);
+                (!still_present).then_some(())
+            });
+        }
+
+        #[test]
+        fn prefilter_matching_is_case_insensitive_against_a_real_image_name() {
+            let dir = tempfile::tempdir().unwrap();
+            // The real on-disk/process-list image name is upper-case;
+            // the configured hint below is lower-case.
+            let name = unique_name(".EXE");
+            let mut child = renamed_child(dir.path(), &name);
+            let pid = child.id();
+
+            let source = WindowsSource::new(RealOps);
+            source
+                .set_prefilter(&Prefilter::Names(vec![name.to_ascii_lowercase()]))
+                .expect("set_prefilter never fails on Windows");
+
+            let found = poll_until(|| {
+                source
+                    .enumerate()
+                    .expect("enumerate succeeds")
+                    .into_iter()
+                    .find(|record| record.pid == pid)
+            });
+            assert_eq!(
+                found.pid, pid,
+                "§6.1: Windows name matching must be case-insensitive against a real image name"
+            );
+
+            child.kill().expect("killing the test child");
+            child.wait().expect("reaping the test child");
+        }
+    }
 }

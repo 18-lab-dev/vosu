@@ -278,6 +278,96 @@ fn native_self_read() {
     assert!(!process.command_line().unwrap().is_empty());
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn create_time_from_the_process_list_matches_get_process_times_for_self_and_a_child() {
+    let self_pid = std::process::id();
+    let self_create_time = WindowsProcessMemory::open(self_pid)
+        .unwrap()
+        .creation_time()
+        .unwrap();
+
+    let mut child = std::process::Command::new("cmd.exe")
+        .args(["/C", "ping", "-n", "5", "127.0.0.1"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let child_pid = child.id();
+    let child_create_time = WindowsProcessMemory::open(child_pid)
+        .unwrap()
+        .creation_time()
+        .unwrap();
+
+    let entries = enumerate_processes().unwrap();
+    let self_entry = entries
+        .iter()
+        .find(|entry| entry.pid == self_pid)
+        .expect("self must be in the process list");
+    let child_entry = entries
+        .iter()
+        .find(|entry| entry.pid == child_pid)
+        .expect("the spawned child must be in the process list");
+
+    assert_eq!(
+        self_entry.create_time, self_create_time,
+        "SYSTEM_PROCESS_INFORMATION.CreateTime must match GetProcessTimes for self"
+    );
+    assert_eq!(
+        child_entry.create_time, child_create_time,
+        "SYSTEM_PROCESS_INFORMATION.CreateTime must match GetProcessTimes for a spawned child"
+    );
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn process_image_path_returns_the_full_path_of_a_spawned_child_and_matches_current_exe_for_self() {
+    let self_path = process_image_path(std::process::id()).unwrap();
+    let current_exe = std::env::current_exe()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        self_path.to_ascii_lowercase(),
+        current_exe.to_ascii_lowercase(),
+        "process_image_path for self must equal std::env::current_exe"
+    );
+
+    let mut child = std::process::Command::new("cmd.exe")
+        .args(["/C", "ping", "-n", "5", "127.0.0.1"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let child_pid = child.id();
+    let child_path = process_image_path(child_pid).unwrap();
+    let expected_comspec = std::env::var_os("ComSpec")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows\System32\cmd.exe"));
+    let expected_name = expected_comspec
+        .file_name()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase());
+    let actual_name = std::path::Path::new(&child_path)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase());
+    assert_eq!(
+        actual_name, expected_name,
+        "process_image_path must return the child's own executable path"
+    );
+    assert!(
+        child_path.contains(':') && child_path.len() > child_path.rfind(['/', '\\']).unwrap_or(0),
+        "the returned path must be a full Win32 path, not a bare name: {child_path}"
+    );
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
 #[test]
 fn is_process_alive_reports_the_running_self_process() {
     assert!(is_process_alive(std::process::id()));

@@ -431,4 +431,166 @@ mod tests {
             host.destroy_all(Duration::from_secs(5));
         }
     }
+
+    /// Windows integration test (test-harness): mirrors the Linux
+    /// `real_child_process` module above, but against the real
+    /// `WindowsProcessSource` (`platform_process_source`, `#[cfg(windows)]`)
+    /// instead of a synthetic `ProcessSource`. Proves the checklist items
+    /// `vosu-core`'s own synthetic `windows_source` unit tests cannot: a
+    /// real spawned, uniquely renamed child is attached through
+    /// `start_discovery`'s production wiring, detaches when it exits, and
+    /// a restart under a brand-new pid produces a fresh attach rather than
+    /// being folded into the old session.
+    #[cfg(all(feature = "test-harness", windows))]
+    mod real_child_process {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::mpsc::Receiver;
+        use std::time::Duration;
+
+        use vosu_core::plugin::{BundledPlugin, PluginInstanceId, load_bundled};
+        use vosu_plugin_testkit::session::{self, SessionEvent, SessionPluginConfig};
+
+        use super::{start_discovery, test_host};
+
+        const RECV_TIMEOUT: Duration = Duration::from_secs(20);
+
+        fn unique_name() -> String {
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            format!("rt{}-{n}.exe", std::process::id() % 1_000_000)
+        }
+
+        fn cmd_source() -> std::path::PathBuf {
+            std::env::var_os("ComSpec")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows\System32\cmd.exe"))
+        }
+
+        /// Copies `cmd.exe` to `name` under `dir` and spawns it running a
+        /// ~60s `ping`, so the real process list carries this test's own
+        /// chosen image name instead of a shared `cmd.exe`.
+        fn spawn_renamed(dir: &std::path::Path, name: &str) -> std::process::Child {
+            let dest = dir.join(name);
+            std::fs::copy(cmd_source(), &dest).expect("copying cmd.exe for a renamed test child");
+            std::process::Command::new(&dest)
+                .args(["/C", "ping", "-n", "60", "127.0.0.1"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawning the renamed test child")
+        }
+
+        struct ChildGuard(std::process::Child);
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        fn expect_event(
+            events: &Receiver<SessionEvent>,
+            matches: impl Fn(&SessionEvent) -> bool,
+        ) -> SessionEvent {
+            let deadline = std::time::Instant::now() + RECV_TIMEOUT;
+            loop {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                assert!(
+                    remaining > Duration::ZERO,
+                    "timed out waiting for a matching session event"
+                );
+                let event = events
+                    .recv_timeout(remaining)
+                    .expect("channel closed before a matching event arrived");
+                if matches(&event) {
+                    return event;
+                }
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn discovery_attaches_detaches_and_reattaches_a_restarted_child() {
+            let runtime = tokio::runtime::Handle::current();
+            let (_log_dir, host) = test_host(runtime.clone());
+
+            let name = unique_name();
+            let events = session::register_with_config(
+                format!("vosu.testkit.{name}"),
+                SessionPluginConfig::default(),
+            );
+            let manifest = format!(
+                "kind='plugin'\nmanifest_version=1\nid='vosu.testkit.{name}'\nname='vosu.testkit.{name}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{name}']\n"
+            );
+            let loaded = load_bundled(&[BundledPlugin {
+                manifest: &manifest,
+                vtable: session::vosu_plugin_vtable,
+            }])
+            .expect("loading the session testkit plugin");
+            let data_dir = tempfile::tempdir().unwrap();
+            host.create_instance(
+                PluginInstanceId::new(0),
+                &loaded[0],
+                data_dir.path().to_path_buf(),
+                None,
+            )
+            .expect("creating the session testkit instance");
+
+            let bin_dir = tempfile::tempdir().unwrap();
+            let mut child = ChildGuard(spawn_renamed(bin_dir.path(), &name));
+            let pid = child.0.id();
+
+            assert!(host.has_enabled_matchers());
+            let discovery = start_discovery(&host, runtime.clone())
+                .expect("a registered [match] table must start discovery");
+
+            let attached = match expect_event(
+                &events,
+                |event| matches!(event, SessionEvent::Attached(attached) if attached.pid == pid),
+            ) {
+                SessionEvent::Attached(attached) => attached,
+                _ => unreachable!("expect_event's own predicate only matches Attached"),
+            };
+            assert_eq!(
+                attached.pid, pid,
+                "the real WindowsProcessSource must attach the spawned child"
+            );
+
+            child.0.kill().expect("killing the first test child");
+            child.0.wait().expect("reaping the first test child");
+
+            expect_event(
+                &events,
+                |event| matches!(event, SessionEvent::Detached(detached) if detached.handle == attached.handle),
+            );
+
+            // Restart under a new pid: respawn the same renamed binary.
+            let mut second = ChildGuard(spawn_renamed(bin_dir.path(), &name));
+            let second_pid = second.0.id();
+            assert_ne!(
+                second_pid, pid,
+                "the OS must hand out a different pid for the restart"
+            );
+
+            let reattached = match expect_event(
+                &events,
+                |event| matches!(event, SessionEvent::Attached(attached) if attached.pid == second_pid),
+            ) {
+                SessionEvent::Attached(attached) => attached,
+                _ => unreachable!("expect_event's own predicate only matches Attached"),
+            };
+            assert_eq!(
+                reattached.pid, second_pid,
+                "the restarted child under a new pid must be freshly attached"
+            );
+
+            second.0.kill().expect("killing the second test child");
+            second.0.wait().expect("reaping the second test child");
+            drop(second);
+            drop(child);
+
+            discovery.stop();
+            host.destroy_all(Duration::from_secs(5));
+        }
+    }
 }
