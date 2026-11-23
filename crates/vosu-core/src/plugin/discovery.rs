@@ -407,5 +407,15 @@ impl Drop for DiscoveryService {
     }
 }
 
+/// Linux [`ProcessSource`] backend (M1 phase d2b, unit b):
+/// `vosu_sys::process::{enumerate_processes_matching, process_metadata_matching}`
+/// for reads, `vosu_sys::events::LinuxProcessEvents` for push events when
+/// available. Gated on the `linux-process-events` feature because
+/// `vosu_sys::events` itself is (module doc comment).
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+mod linux_source;
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+pub use linux_source::LinuxSource;
+
 #[cfg(test)]
 mod tests;

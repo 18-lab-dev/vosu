@@ -64,6 +64,8 @@ mod session;
 pub mod settings;
 pub mod timers;
 
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+pub use discovery::LinuxSource;
 pub use discovery::{DiscoveryService, ProcessSource};
 pub use dispatch::{OwnedMessage, WorkerPool};
 pub use error::HostError;
