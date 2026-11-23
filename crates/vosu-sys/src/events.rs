@@ -149,11 +149,111 @@ fn record_reconciliation_request(counter: &AtomicU64, newly_latched: bool) {
     }
 }
 
-fn candidate_comm(comm: &[u8]) -> bool {
-    comm.windows(b"osu!".len()).any(|name| name == b"osu!")
-        || comm
-            .windows(b"osulazer.exe".len())
-            .any(|name| name == b"osulazer.exe")
+/// Maximum length, in bytes, of one `comm_hints` substring -- the Linux
+/// kernel/CN_PROC `comm` field width minus its NUL terminator
+/// (`docs/v2/plugin-abi.md` Sec 6.1; mirrored by `COMM_HINT_MAX_LEN` in
+/// `bpf/process_events.bpf.c`).
+pub const MAX_COMM_HINT_LEN: usize = 15;
+
+/// Maximum number of `comm_hints` entries accepted at once -- the bounded
+/// in-kernel/CN_PROC pre-filter table size (`docs/v2/plugin-abi.md` Sec 6.1;
+/// mirrored by `MAX_COMM_HINTS` in `bpf/process_events.bpf.c`).
+pub const MAX_COMM_HINTS: usize = 256;
+
+/// A validated, bounded set of `comm` substrings (`docs/v2/plugin-abi.md`
+/// Sec 6.1 `comm_hints`) used only to fill the in-kernel eBPF map and the
+/// CN_PROC userspace pre-filter; full process matching still runs in
+/// userspace against the candidate's full path/argv regardless of what this
+/// narrows (core discovery wiring lands in a later unit).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommHints {
+    hints: Vec<Vec<u8>>,
+}
+
+/// A `comm_hints` entry or set that violates `docs/v2/plugin-abi.md` Sec
+/// 6.1's bounds.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CommHintsError {
+    #[error("comm hint at index {index} is empty")]
+    Empty { index: usize },
+    #[error("comm hint at index {index} is {len} bytes, over the {MAX_COMM_HINT_LEN}-byte limit")]
+    TooLong { index: usize, len: usize },
+    #[error("{count} comm hints exceed the bounded pre-filter capacity of {MAX_COMM_HINTS}")]
+    TooMany { count: usize },
+}
+
+impl CommHints {
+    /// Validates every hint (non-empty, at most [`MAX_COMM_HINT_LEN`] bytes,
+    /// at most [`MAX_COMM_HINTS`] entries total), then deduplicates and
+    /// sorts them for deterministic iteration and diffing.
+    pub fn new<I, S>(hints: I) -> Result<Self, CommHintsError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<[u8]>,
+    {
+        let mut collected: Vec<Vec<u8>> = Vec::new();
+        for (index, hint) in hints.into_iter().enumerate() {
+            let hint = hint.as_ref();
+            if hint.is_empty() {
+                return Err(CommHintsError::Empty { index });
+            }
+            if hint.len() > MAX_COMM_HINT_LEN {
+                return Err(CommHintsError::TooLong {
+                    index,
+                    len: hint.len(),
+                });
+            }
+            collected.push(hint.to_vec());
+        }
+        if collected.len() > MAX_COMM_HINTS {
+            return Err(CommHintsError::TooMany {
+                count: collected.len(),
+            });
+        }
+        collected.sort_unstable();
+        collected.dedup();
+        Ok(Self { hints: collected })
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.hints.is_empty()
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.hints.len()
+    }
+
+    /// Iterates the validated hints in sorted order.
+    pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
+        self.hints.iter().map(Vec::as_slice)
+    }
+
+    fn contains(&self, hint: &[u8]) -> bool {
+        self.hints
+            .binary_search_by(|existing| existing.as_slice().cmp(hint))
+            .is_ok()
+    }
+
+    /// Reports whether `comm` contains any hint as a substring -- the exact
+    /// matching rule `docs/v2/plugin-abi.md` Sec 6.1 and the former
+    /// hard-coded `osu!`/`osulazer.exe` filter both use.
+    #[must_use]
+    pub fn matches(&self, comm: &[u8]) -> bool {
+        self.hints.iter().any(|hint| {
+            comm.windows(hint.len())
+                .any(|window| window == hint.as_slice())
+        })
+    }
+}
+
+/// Live backend-specific sink for [`CommHints`] updates, mirroring
+/// [`ProcessTrackingControl`]'s split between construction-time seeding
+/// (`LinuxProcessEvents::open`) and later live updates
+/// (`LinuxProcessEvents::set_comm_hints`).
+pub(super) trait ProcessCommFilter: Send + Sync {
+    fn set_comm_hints(&self, hints: &CommHints) -> io::Result<()>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +302,7 @@ pub struct LinuxProcessEvents {
     reconciliation_request_count: Arc<AtomicU64>,
     queue: Arc<Mutex<EventQueue>>,
     tracking_control: Option<Arc<dyn ProcessTrackingControl>>,
+    comm_filter: Arc<dyn ProcessCommFilter>,
     cancel: Arc<AtomicBool>,
     task: Option<JoinHandle<()>>,
 }
@@ -218,7 +319,7 @@ impl std::fmt::Debug for LinuxProcessEvents {
 }
 
 impl LinuxProcessEvents {
-    pub fn from_environment() -> Option<Self> {
+    pub fn from_environment(comm_hints: &CommHints) -> Option<Self> {
         let configured = match env::var("VOSU_PROCESS_EVENTS") {
             Ok(value) => ProcessEventMode::configured(Some(&value)),
             Err(env::VarError::NotPresent) => ProcessEventMode::configured(None),
@@ -234,7 +335,7 @@ impl LinuxProcessEvents {
                 return None;
             }
         };
-        match Self::open(mode) {
+        match Self::open(mode, comm_hints) {
             Ok(events) => {
                 tracing::info!(mode = ?events.mode, "Linux process-event wakeups enabled");
                 Some(events)
@@ -246,23 +347,33 @@ impl LinuxProcessEvents {
         }
     }
 
-    pub fn open(mode: ProcessEventMode) -> io::Result<Self> {
-        let (mode, backend, tracking_control): (
+    pub fn open(mode: ProcessEventMode, comm_hints: &CommHints) -> io::Result<Self> {
+        type OpenedBackend = (
             ProcessEventMode,
             Box<dyn ProcessEventLoop>,
             Option<Arc<dyn ProcessTrackingControl>>,
-        ) = match mode {
-            ProcessEventMode::CnProc => (mode, cn_proc::open()?, None),
-            ProcessEventMode::Ebpf => {
-                let (backend, tracking_control) = ebpf::open()?;
-                (mode, backend, Some(tracking_control))
+            Arc<dyn ProcessCommFilter>,
+        );
+        let (mode, backend, tracking_control, comm_filter): OpenedBackend = match mode {
+            ProcessEventMode::CnProc => {
+                let (backend, comm_filter) = cn_proc::open(comm_hints)?;
+                (mode, backend, None, comm_filter)
             }
-            ProcessEventMode::Auto => match ebpf::open() {
-                Ok((backend, tracking_control)) => {
-                    (ProcessEventMode::Ebpf, backend, Some(tracking_control))
-                }
-                Err(ebpf_error) => match cn_proc::open() {
-                    Ok(backend) => (ProcessEventMode::CnProc, backend, None),
+            ProcessEventMode::Ebpf => {
+                let (backend, tracking_control, comm_filter) = ebpf::open(comm_hints)?;
+                (mode, backend, Some(tracking_control), comm_filter)
+            }
+            ProcessEventMode::Auto => match ebpf::open(comm_hints) {
+                Ok((backend, tracking_control, comm_filter)) => (
+                    ProcessEventMode::Ebpf,
+                    backend,
+                    Some(tracking_control),
+                    comm_filter,
+                ),
+                Err(ebpf_error) => match cn_proc::open(comm_hints) {
+                    Ok((backend, comm_filter)) => {
+                        (ProcessEventMode::CnProc, backend, None, comm_filter)
+                    }
                     Err(cn_error) => {
                         return Err(io::Error::other(format!(
                             "eBPF unavailable ({ebpf_error}); proc connector unavailable ({cn_error})"
@@ -351,6 +462,7 @@ impl LinuxProcessEvents {
             reconciliation_request_count,
             queue,
             tracking_control,
+            comm_filter,
             cancel,
             task: Some(task),
         })
@@ -418,6 +530,25 @@ impl LinuxProcessEvents {
 
         queue.replace_tracked(tracked);
     }
+
+    pub fn set_comm_hints(&self, hints: &CommHints) -> io::Result<()> {
+        if let Err(error) = self.comm_filter.set_comm_hints(hints) {
+            tracing::warn!(%error, "Linux process-event comm-hint update failed; restoring polling cadence");
+            self.healthy.store(false, Ordering::Release);
+            let mut queue = self
+                .queue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let reconcile = queue.request_reconcile();
+            drop(queue);
+            record_reconciliation_request(&self.reconciliation_request_count, reconcile);
+            if reconcile {
+                self.notify.notify_one();
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
 }
 
 impl Drop for LinuxProcessEvents {
@@ -447,6 +578,26 @@ mod tests {
         }
     }
 
+    struct NoopCommFilter;
+
+    impl ProcessCommFilter for NoopCommFilter {
+        fn set_comm_hints(&self, _hints: &CommHints) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct FailOnceCommFilter(AtomicU64);
+
+    impl ProcessCommFilter for FailOnceCommFilter {
+        fn set_comm_hints(&self, _hints: &CommHints) -> io::Result<()> {
+            if self.0.fetch_add(1, Ordering::Relaxed) == 0 {
+                Err(io::Error::other("synthetic comm-filter failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     fn events_with_tracking_control(
         tracking_control: Arc<dyn ProcessTrackingControl>,
     ) -> LinuxProcessEvents {
@@ -458,6 +609,7 @@ mod tests {
             reconciliation_request_count: Arc::new(AtomicU64::new(0)),
             queue: Arc::new(Mutex::new(EventQueue::default())),
             tracking_control: Some(tracking_control),
+            comm_filter: Arc::new(NoopCommFilter),
             cancel: Arc::new(AtomicBool::new(false)),
             task: None,
         }
@@ -701,5 +853,90 @@ mod tests {
 
         assert_eq!(queue.exiting.len(), MAX_PENDING_EVENTS);
         assert!(queue.needs_reconcile);
+    }
+
+    fn events_with_comm_filter(comm_filter: Arc<dyn ProcessCommFilter>) -> LinuxProcessEvents {
+        LinuxProcessEvents {
+            mode: ProcessEventMode::Ebpf,
+            notify: Arc::new(Notify::new()),
+            healthy: Arc::new(AtomicBool::new(true)),
+            event_count: Arc::new(AtomicU64::new(0)),
+            reconciliation_request_count: Arc::new(AtomicU64::new(0)),
+            queue: Arc::new(Mutex::new(EventQueue::default())),
+            tracking_control: None,
+            comm_filter,
+            cancel: Arc::new(AtomicBool::new(false)),
+            task: None,
+        }
+    }
+
+    #[test]
+    fn comm_filter_failure_preserves_health_and_successful_retry_clears_it() {
+        let filter = Arc::new(FailOnceCommFilter(AtomicU64::new(0)));
+        let events = events_with_comm_filter(filter.clone());
+        let hints = CommHints::new(["osu!"]).unwrap();
+
+        assert!(events.set_comm_hints(&hints).is_err());
+        assert!(!events.healthy());
+        assert_eq!(events.reconciliation_request_count(), 1);
+
+        assert!(events.set_comm_hints(&hints).is_ok());
+        assert_eq!(filter.0.load(Ordering::Relaxed), 2);
+        assert_eq!(events.reconciliation_request_count(), 1);
+        assert!(events.drain().needs_reconcile);
+    }
+
+    #[test]
+    fn comm_hints_reject_empty_overlong_and_oversized_sets() {
+        assert_eq!(
+            CommHints::new([""]).unwrap_err(),
+            CommHintsError::Empty { index: 0 }
+        );
+        assert_eq!(
+            CommHints::new(["osu!", ""]).unwrap_err(),
+            CommHintsError::Empty { index: 1 }
+        );
+
+        let max_len_hint = vec![b'a'; MAX_COMM_HINT_LEN];
+        assert_eq!(CommHints::new([max_len_hint]).unwrap().len(), 1);
+
+        let over_len_hint = vec![b'a'; MAX_COMM_HINT_LEN + 1];
+        assert_eq!(
+            CommHints::new([over_len_hint]).unwrap_err(),
+            CommHintsError::TooLong {
+                index: 0,
+                len: MAX_COMM_HINT_LEN + 1,
+            }
+        );
+
+        let too_many: Vec<String> = (0..=MAX_COMM_HINTS)
+            .map(|index| format!("h{index}"))
+            .collect();
+        assert_eq!(
+            CommHints::new(too_many).unwrap_err(),
+            CommHintsError::TooMany {
+                count: MAX_COMM_HINTS + 1,
+            }
+        );
+
+        let exactly_bounded: Vec<String> = (0..MAX_COMM_HINTS)
+            .map(|index| format!("h{index}"))
+            .collect();
+        assert_eq!(
+            CommHints::new(exactly_bounded).unwrap().len(),
+            MAX_COMM_HINTS
+        );
+    }
+
+    #[test]
+    fn comm_hints_dedupe_and_match_substrings_like_the_former_hardcoded_filter() {
+        let hints = CommHints::new(["osu!", "osulazer.exe", "osu!"]).unwrap();
+        assert_eq!(hints.len(), 2);
+
+        assert!(hints.matches(b"bench-osu!-away"));
+        assert!(hints.matches(b"osulazer.exe"));
+        assert!(!hints.matches(b"unrelated"));
+        assert!(!hints.matches(b""));
+        assert!(!CommHints::default().matches(b"osu!"));
     }
 }

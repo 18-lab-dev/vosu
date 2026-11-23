@@ -172,10 +172,21 @@ pub struct NativeProcessProvider {
 }
 
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
+fn default_comm_hints() -> super::CommHints {
+    // Byte-identical to the former hard-coded `osu!`/`osulazer.exe` filter.
+    // Wiring this to enabled plugins' `comm_hints` (plugin-abi.md Sec 6.1,
+    // D18) lands in a later unit.
+    super::CommHints::new(["osu!", "osulazer.exe"])
+        .expect("hardcoded default comm hints satisfy CommHints::new's bounds")
+}
+
+#[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 impl NativeProcessProvider {
     pub fn open_process_events(mode: Option<super::ProcessEventMode>) -> io::Result<Self> {
         Ok(Self {
-            events: mode.map(super::LinuxProcessEvents::open).transpose()?,
+            events: mode
+                .map(|mode| super::LinuxProcessEvents::open(mode, &default_comm_hints()))
+                .transpose()?,
         })
     }
 
@@ -190,7 +201,7 @@ impl NativeProcessProvider {
 impl Default for NativeProcessProvider {
     fn default() -> Self {
         Self {
-            events: super::LinuxProcessEvents::from_environment(),
+            events: super::LinuxProcessEvents::from_environment(&default_comm_hints()),
         }
     }
 }

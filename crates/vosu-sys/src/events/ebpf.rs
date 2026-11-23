@@ -13,14 +13,25 @@ use libbpf_rs::{
 };
 
 use super::{
-    MAX_PENDING_EVENTS, Pid, ProcessEvent, ProcessEventKind, ProcessEventLoop, ProcessEventPoll,
-    ProcessTrackingControl,
+    CommHints, MAX_COMM_HINT_LEN, MAX_PENDING_EVENTS, Pid, ProcessCommFilter, ProcessEvent,
+    ProcessEventKind, ProcessEventLoop, ProcessEventPoll, ProcessTrackingControl,
 };
 
 const BPF_OBJECT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/process_events.bpf.o"));
 const DROPPED_KEY: [u8; 4] = 0_u32.to_ne_bytes();
 // Linux reserves this namespace inode as PROC_PID_INIT_INO.
 const INITIAL_PID_NAMESPACE_INODE: u64 = 0xEFFF_FFFC;
+
+// `{len: u8, bytes: [u8; MAX_COMM_HINT_LEN]}`, matching `struct comm_hint_key`
+// in `bpf/process_events.bpf.c`: trailing bytes past `len` stay zero.
+const COMM_HINT_KEY_LEN: usize = 1 + MAX_COMM_HINT_LEN;
+
+fn comm_hint_key(hint: &[u8]) -> [u8; COMM_HINT_KEY_LEN] {
+    let mut key = [0_u8; COMM_HINT_KEY_LEN];
+    key[0] = hint.len() as u8;
+    key[1..1 + hint.len()].copy_from_slice(hint);
+    key
+}
 
 const EVENT_RECORD_SIZE: usize = 8;
 
@@ -114,6 +125,48 @@ fn delete_if_present(map: &MapHandle, key: &[u8], label: &str) -> io::Result<()>
     }
 }
 
+/// Live [`CommHints`] updates for the eBPF backend: diffs the requested set
+/// against a shadow copy and applies only the add/remove delta to the
+/// `comm_hints` BPF map, mirroring [`EbpfTrackingControl`]'s pattern for the
+/// `tracked` map (a `BPF_MAP_TYPE_HASH` has no atomic bulk-replace).
+struct EbpfCommFilter {
+    comm_hints: MapHandle,
+    shadow: Mutex<CommHints>,
+}
+
+impl ProcessCommFilter for EbpfCommFilter {
+    fn set_comm_hints(&self, hints: &CommHints) -> io::Result<()> {
+        let mut shadow = self
+            .shadow
+            .lock()
+            .map_err(|_| io::Error::other("eBPF comm-hints shadow was poisoned"))?;
+
+        let removed: Vec<Vec<u8>> = shadow
+            .iter()
+            .filter(|hint| !hints.contains(hint))
+            .map(<[u8]>::to_vec)
+            .collect();
+        for hint in &removed {
+            delete_if_present(&self.comm_hints, &comm_hint_key(hint), "comm hint")?;
+        }
+
+        for hint in hints.iter() {
+            if !shadow.contains(hint) {
+                self.comm_hints
+                    .update(&comm_hint_key(hint), &[1], MapFlags::ANY)
+                    .map_err(|error| {
+                        io::Error::other(format!(
+                            "cannot seed comm hint in eBPF comm_hints map: {error}"
+                        ))
+                    })?;
+            }
+        }
+
+        *shadow = hints.clone();
+        Ok(())
+    }
+}
+
 struct EbpfProcessEvents {
     // The links detach before the object closes because fields drop in declaration order.
     _links: [Link; 4],
@@ -179,7 +232,13 @@ impl ProcessEventLoop for EbpfProcessEvents {
     }
 }
 
-pub(super) fn open() -> io::Result<(Box<dyn ProcessEventLoop>, Arc<dyn ProcessTrackingControl>)> {
+type EbpfOpened = (
+    Box<dyn ProcessEventLoop>,
+    Arc<dyn ProcessTrackingControl>,
+    Arc<dyn ProcessCommFilter>,
+);
+
+pub(super) fn open(comm_hints: &CommHints) -> io::Result<EbpfOpened> {
     ensure_initial_pid_namespace()?;
 
     let mut builder = ObjectBuilder::default();
@@ -192,6 +251,15 @@ pub(super) fn open() -> io::Result<(Box<dyn ProcessEventLoop>, Arc<dyn ProcessTr
     let object = open_object
         .load()
         .map_err(|error| io::Error::other(format!("eBPF object load failed: {error}")))?;
+
+    // Seed comm_hints before attaching any tracepoint below, so no exec/exit/rename can
+    // ever observe a partially-filled or empty filter.
+    let comm_hints_map = clone_map_handle(&object, "comm_hints")?;
+    let comm_filter: Arc<dyn ProcessCommFilter> = Arc::new(EbpfCommFilter {
+        comm_hints: comm_hints_map,
+        shadow: Mutex::new(CommHints::default()),
+    });
+    comm_filter.set_comm_hints(comm_hints)?;
 
     let exec_link = attach_raw(&object, "process_exec", "sched_process_exec")?;
     let fork_link = attach_raw(&object, "process_fork", "sched_process_fork")?;
@@ -246,6 +314,7 @@ pub(super) fn open() -> io::Result<(Box<dyn ProcessEventLoop>, Arc<dyn ProcessTr
             dropped,
         }),
         tracking_control,
+        comm_filter,
     ))
 }
 fn clone_map_handle(object: &Object, name: &str) -> io::Result<MapHandle> {

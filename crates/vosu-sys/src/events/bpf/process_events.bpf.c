@@ -6,6 +6,8 @@
 
 #define TASK_COMM_LEN 16
 #define MAX_CANDIDATES 128
+#define COMM_HINT_MAX_LEN 15
+#define MAX_COMM_HINTS 256
 #define EVENT_INSPECT 1
 #define EVENT_EXIT 2
 
@@ -64,6 +66,25 @@ struct {
     __type(value, __u64);
 } dropped SEC(".maps");
 
+/*
+ * comm_hints (D18, plugin-abi.md Sec 6.1) is filled from userspace
+ * (vosu-sys::events::ebpf::EbpfCommFilter) with up to MAX_COMM_HINTS
+ * substrings of at most COMM_HINT_MAX_LEN bytes each. Key layout mirrors
+ * Rust's comm_hint_key: byte 0 is the hint length, bytes 1..=15 are the
+ * hint content, right-padded with zero past that length.
+ */
+struct comm_hint_key {
+    __u8 len;
+    char bytes[COMM_HINT_MAX_LEN];
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, MAX_COMM_HINTS);
+    __type(key, struct comm_hint_key);
+    __type(value, __u8);
+} comm_hints SEC(".maps");
+
 static __always_inline void record_drop(void)
 {
     __u32 key = 0;
@@ -73,24 +94,51 @@ static __always_inline void record_drop(void)
         __sync_fetch_and_add(count, 1);
 }
 
+/*
+ * In-kernel comm_hints matching.
+ *
+ * The BPF verifier cannot do data-dependent substring search against an
+ * arbitrary-length value, so this does not scan the (up to MAX_COMM_HINTS)
+ * stored hints. Instead it enumerates every (start, length) window of the
+ * fixed-size kernel `comm` field (TASK_COMM_LEN bytes) and probes the
+ * comm_hints hash map with the exact {len, bytes} key for that window.
+ *
+ * The outer "start" loop is #pragma unroll, so "start" is a compile-time
+ * constant in every unrolled copy of the body; "window" (bytes remaining
+ * from "start", capped at COMM_HINT_MAX_LEN) is therefore also compile-time
+ * per copy, which makes the inner byte-copy and length loops' bounds and
+ * indices compile-time constants too. There is no data-dependent loop bound
+ * anywhere in this function: the generated code is straight-line regardless
+ * of how many hints comm_hints holds, bounding the cost to a fixed
+ * triangular-sum count of lookups (15+14+...+1 = 120 for TASK_COMM_LEN=16,
+ * COMM_HINT_MAX_LEN=15) per exec/exit/rename event.
+ */
 static __always_inline int candidate_comm(const char comm[TASK_COMM_LEN])
 {
 #pragma unroll
-    for (int i = 0; i <= TASK_COMM_LEN - 4; i++) {
-        if (comm[i] == 'o' && comm[i + 1] == 's' &&
-            comm[i + 2] == 'u' && comm[i + 3] == '!')
-            return 1;
-    }
+    for (int start = 0; start < TASK_COMM_LEN; start++) {
+        struct comm_hint_key key = {};
+        int window = TASK_COMM_LEN - start;
+
+        if (window > COMM_HINT_MAX_LEN)
+            window = COMM_HINT_MAX_LEN;
 
 #pragma unroll
-    for (int i = 0; i <= TASK_COMM_LEN - 12; i++) {
-        if (comm[i] == 'o' && comm[i + 1] == 's' &&
-            comm[i + 2] == 'u' && comm[i + 3] == 'l' &&
-            comm[i + 4] == 'a' && comm[i + 5] == 'z' &&
-            comm[i + 6] == 'e' && comm[i + 7] == 'r' &&
-            comm[i + 8] == '.' && comm[i + 9] == 'e' &&
-            comm[i + 10] == 'x' && comm[i + 11] == 'e')
-            return 1;
+        for (int i = 0; i < COMM_HINT_MAX_LEN; i++) {
+            if (i < window)
+                key.bytes[i] = comm[start + i];
+        }
+
+#pragma unroll
+        for (int len = COMM_HINT_MAX_LEN; len >= 1; len--) {
+            if (len > window)
+                continue;
+            key.len = (__u8)len;
+            if (bpf_map_lookup_elem(&comm_hints, &key))
+                return 1;
+            if (len > 1)
+                key.bytes[len - 1] = 0;
+        }
     }
 
     return 0;

@@ -1,9 +1,11 @@
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::{
-    MAX_PENDING_EVENTS, ProcessEvent, ProcessEventKind, ProcessEventLoop, ProcessEventPoll,
+    CommHints, MAX_PENDING_EVENTS, ProcessCommFilter, ProcessEvent, ProcessEventKind,
+    ProcessEventLoop, ProcessEventPoll,
 };
 
 const CN_IDX_PROC: u32 = 1;
@@ -30,6 +32,7 @@ const ACK_TIMEOUT: Duration = Duration::from_secs(1);
 struct CnProcEventLoop {
     socket: OwnedFd,
     receive_buffer: Box<[u8]>,
+    comm_hints: Arc<Mutex<CommHints>>,
 }
 
 struct SubscriptionCleanup {
@@ -60,7 +63,27 @@ struct ConnectorMessage<'a> {
     payload: &'a [u8],
 }
 
-pub(super) fn open() -> io::Result<Box<dyn ProcessEventLoop>> {
+/// Live [`CommHints`] updates for the CN_PROC backend: the socket itself
+/// needs no kernel-side configuration (CN_PROC has no in-kernel filter), so
+/// this only swaps the shared value the event loop's `poll` reads.
+struct CnProcCommFilter {
+    comm_hints: Arc<Mutex<CommHints>>,
+}
+
+impl ProcessCommFilter for CnProcCommFilter {
+    fn set_comm_hints(&self, hints: &CommHints) -> io::Result<()> {
+        let mut comm_hints = self
+            .comm_hints
+            .lock()
+            .map_err(|_| io::Error::other("CN_PROC comm-hints lock was poisoned"))?;
+        *comm_hints = hints.clone();
+        Ok(())
+    }
+}
+
+pub(super) fn open(
+    comm_hints: &CommHints,
+) -> io::Result<(Box<dyn ProcessEventLoop>, Arc<dyn ProcessCommFilter>)> {
     let raw_fd = unsafe {
         // SAFETY: socket has no pointer arguments. A successful descriptor is immediately owned.
         libc::socket(
@@ -119,10 +142,18 @@ pub(super) fn open() -> io::Result<Box<dyn ProcessEventLoop>> {
     )?;
     cleanup.disarm();
 
-    Ok(Box::new(CnProcEventLoop {
-        socket,
-        receive_buffer: vec![0; RECEIVE_BUFFER_SIZE].into_boxed_slice(),
-    }))
+    let comm_hints = Arc::new(Mutex::new(comm_hints.clone()));
+    let comm_filter: Arc<dyn ProcessCommFilter> = Arc::new(CnProcCommFilter {
+        comm_hints: Arc::clone(&comm_hints),
+    });
+    Ok((
+        Box::new(CnProcEventLoop {
+            socket,
+            receive_buffer: vec![0; RECEIVE_BUFFER_SIZE].into_boxed_slice(),
+            comm_hints,
+        }),
+        comm_filter,
+    ))
 }
 
 impl ProcessEventLoop for CnProcEventLoop {
@@ -163,8 +194,16 @@ impl ProcessEventLoop for CnProcEventLoop {
                 )));
             }
             if descriptor.revents & (libc::POLLIN | libc::POLLERR) != 0 {
-                let mut outcome =
-                    receive_available(self.socket.as_raw_fd(), &mut self.receive_buffer, events)?;
+                let comm_hints = self
+                    .comm_hints
+                    .lock()
+                    .map_err(|_| io::Error::other("CN_PROC comm-hints lock was poisoned"))?;
+                let mut outcome = receive_available(
+                    self.socket.as_raw_fd(),
+                    &mut self.receive_buffer,
+                    events,
+                    &comm_hints,
+                )?;
                 if descriptor.revents & libc::POLLERR != 0 {
                     outcome.needs_reconcile = true;
                 }
@@ -381,6 +420,7 @@ fn receive_available(
     fd: libc::c_int,
     buffer: &mut [u8],
     events: &mut Vec<ProcessEvent>,
+    comm_hints: &CommHints,
 ) -> io::Result<ProcessEventPoll> {
     let mut outcome = ProcessEventPoll::default();
     for _ in 0..MAX_RECEIVES_PER_POLL {
@@ -419,7 +459,7 @@ fn receive_available(
             continue;
         }
 
-        match parse_event_datagram(&buffer[..received as usize], events) {
+        match parse_event_datagram(&buffer[..received as usize], events, comm_hints) {
             Ok(parsed) => {
                 outcome.observed = outcome.observed.saturating_add(parsed.observed);
                 outcome.needs_reconcile |= parsed.needs_reconcile;
@@ -434,10 +474,11 @@ fn receive_available(
 fn parse_event_datagram(
     bytes: &[u8],
     events: &mut Vec<ProcessEvent>,
+    comm_hints: &CommHints,
 ) -> io::Result<ProcessEventPoll> {
     let mut outcome = ProcessEventPoll::default();
     visit_connector_messages(bytes, |message| {
-        let Some(event) = parse_connector_event(message.payload)? else {
+        let Some(event) = parse_connector_event(message.payload, comm_hints)? else {
             return Ok(());
         };
         outcome.observed = outcome.observed.saturating_add(1);
@@ -453,7 +494,10 @@ fn parse_event_datagram(
     Ok(outcome)
 }
 
-fn parse_connector_event(payload: &[u8]) -> io::Result<Option<Option<ProcessEvent>>> {
+fn parse_connector_event(
+    payload: &[u8],
+    comm_hints: &CommHints,
+) -> io::Result<Option<Option<ProcessEvent>>> {
     if payload.len() != PROC_EVENT_LEN {
         return Err(invalid_data("invalid process event length"));
     }
@@ -461,7 +505,7 @@ fn parse_connector_event(payload: &[u8]) -> io::Result<Option<Option<ProcessEven
     let kind = match what {
         PROC_EVENT_EXEC => Some(ProcessEventKind::Inspect),
         PROC_EVENT_COMM => {
-            if super::candidate_comm(&payload[24..40]) {
+            if comm_hints.matches(&payload[24..40]) {
                 Some(ProcessEventKind::Inspect)
             } else {
                 None
@@ -553,6 +597,10 @@ fn invalid_data(message: &'static str) -> io::Error {
 mod tests {
     use super::*;
 
+    fn test_comm_hints() -> CommHints {
+        CommHints::new(["osu!", "osulazer.exe"]).unwrap()
+    }
+
     fn event_message(what: u32, tgid: u32, comm: &[u8]) -> Vec<u8> {
         let message_len = NETLINK_HEADER_LEN + CONNECTOR_HEADER_LEN + PROC_EVENT_LEN;
         let mut bytes = vec![0_u8; align(message_len).unwrap()];
@@ -574,8 +622,12 @@ mod tests {
     #[test]
     fn parser_extracts_exec_tgid_as_inspect_delta() {
         let mut events = Vec::new();
-        let outcome =
-            parse_event_datagram(&event_message(PROC_EVENT_EXEC, 42, &[]), &mut events).unwrap();
+        let outcome = parse_event_datagram(
+            &event_message(PROC_EVENT_EXEC, 42, &[]),
+            &mut events,
+            &test_comm_hints(),
+        )
+        .unwrap();
 
         assert_eq!(
             (outcome, events),
@@ -595,9 +647,12 @@ mod tests {
     #[test]
     fn parser_appends_candidate_comm_as_inspect_delta() {
         let mut events = Vec::new();
-        let outcome =
-            parse_event_datagram(&event_message(PROC_EVENT_COMM, 73, b"osu!"), &mut events)
-                .unwrap();
+        let outcome = parse_event_datagram(
+            &event_message(PROC_EVENT_COMM, 73, b"osu!"),
+            &mut events,
+            &test_comm_hints(),
+        )
+        .unwrap();
 
         assert_eq!(
             (outcome, events),
@@ -620,6 +675,7 @@ mod tests {
         let outcome = parse_event_datagram(
             &event_message(PROC_EVENT_COMM, 73, b"unrelated"),
             &mut events,
+            &test_comm_hints(),
         )
         .unwrap();
 
@@ -636,8 +692,12 @@ mod tests {
     #[test]
     fn parser_extracts_exit_tgid_as_exit_delta() {
         let mut events = Vec::new();
-        let outcome =
-            parse_event_datagram(&event_message(PROC_EVENT_EXIT, 99, &[]), &mut events).unwrap();
+        let outcome = parse_event_datagram(
+            &event_message(PROC_EVENT_EXIT, 99, &[]),
+            &mut events,
+            &test_comm_hints(),
+        )
+        .unwrap();
 
         assert_eq!(
             (outcome, events),
@@ -657,7 +717,9 @@ mod tests {
     #[test]
     fn parser_rejects_unrelated_event_without_observing_or_appending() {
         let mut events = Vec::new();
-        let outcome = parse_event_datagram(&event_message(1, 101, &[]), &mut events).unwrap();
+        let outcome =
+            parse_event_datagram(&event_message(1, 101, &[]), &mut events, &test_comm_hints())
+                .unwrap();
 
         assert_eq!(outcome, ProcessEventPoll::default());
         assert!(events.is_empty());
@@ -670,7 +732,7 @@ mod tests {
         write_u16(&mut bytes, connector + 16, 32);
 
         assert_eq!(
-            parse_event_datagram(&bytes, &mut Vec::new())
+            parse_event_datagram(&bytes, &mut Vec::new(), &test_comm_hints())
                 .unwrap_err()
                 .kind(),
             io::ErrorKind::InvalidData
