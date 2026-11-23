@@ -188,14 +188,18 @@ impl PluginHost {
             request,
             process,
             modules,
-            handle.0,
+            scan::ScanRouting {
+                session: handle.0,
+                queue_key: instance.0,
+            },
             move |result| {
                 if let Some(host) = host.upgrade() {
-                    let _ = host.dispatch_to_instance(
-                        instance,
-                        &Message::ScanResult(result),
-                        correlation_id,
-                    );
+                    let message = Message::ScanResult(result);
+                    if let Err(error) =
+                        host.dispatch_to_instance(instance, &message, correlation_id)
+                    {
+                        host.log_dispatch_dropped(instance, message.opcode(), &error);
+                    }
                 }
             },
         );

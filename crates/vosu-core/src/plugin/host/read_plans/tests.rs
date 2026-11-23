@@ -737,7 +737,11 @@ fn one_plugin_cannot_starve_another_through_the_shared_pool_queue() {
     let gate = Arc::new((Mutex::new(false), Condvar::new()));
     let instances: Vec<(Receiver<ReadPlanEvent>, SyncSender<ReadPlanCommand>, u64)> = (0..3u64)
         .map(|i| {
-            let pid = 500_200_000 + i as u32;
+            // Offset away from `scans/tests.rs`'s own `500_200_0xx` pids
+            // (a process-wide static hook map, module doc comment) so
+            // parallel test threads never clobber each other's hook for
+            // the same pid.
+            let pid = 500_210_000 + i as u32;
             set_session_memory_hook_for_tests(
                 pid,
                 Arc::new(GatedMemory {

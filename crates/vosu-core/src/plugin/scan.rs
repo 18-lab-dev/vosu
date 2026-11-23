@@ -22,9 +22,9 @@
 //! that resolves a module root/scope ("resolved by the host at read time",
 //! `docs/v2/plugin-abi.md` §6.3) rather than caching one across requests.
 
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
 
 use vosu_plugin_api::{ErrorInfo, ScanRequest, ScanResult, vosu_status};
@@ -366,103 +366,132 @@ impl Drop for ScanSlot {
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
-/// Refused when [`ScanWorkerPool`]'s bounded queue is already full.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct QueueFullError;
-
-/// A small, bounded pool of worker threads scans run on, so a slow or
-/// whole-address-space scan never blocks a plugin instance's own dispatch
-/// thread (`docs/v2/plugin-abi.md` §4: real work triggered by a
-/// notification-shaped opcode "must be handed off to another thread").
-/// Scans are not on the measured hot path (§6.4: "a plugin that scans
-/// every tick instead of caching the result … is a plugin bug"), so a
-/// small fixed worker count bounds total scanning concurrency rather than
-/// maximizing it; its queue is bounded by `queue_capacity`, matching
-/// `dispatch::WorkerPool`'s own "no unbounded channels" rule.
+/// A small, bounded pool of worker threads read plans and scans both run
+/// on (`host/read_plans.rs`'s own `background_pool`), so neither ever
+/// blocks a plugin instance's own dispatch thread (`docs/v2/plugin-abi.md`
+/// §4: real work triggered by a notification-shaped opcode "must be
+/// handed off to another thread").
+///
+/// P2-7 (`docs/v2/plugin-abi.md` §5): jobs queue per *key* — in practice a
+/// `PluginInstanceId`'s own `u64`, one sub-queue per live instance —
+/// rather than into one queue shared by every instance. A caller must
+/// already have admitted `job` against its own bounded cap
+/// (`OutstandingPlans`/`OutstandingScans`, 64 read plans + 64 scans) before
+/// calling [`Self::submit`], so one key's own sub-queue never holds more
+/// than 128 jobs at a time — [`Self::submit`] therefore never refuses, and
+/// one plugin flooding its own cap can never delay another plugin's
+/// already-admitted work the way a single shared, fixed-capacity queue
+/// could. Each sub-queue is a plain unbounded-looking `VecDeque`, but its
+/// true bound is that external per-instance admission, exactly the same
+/// way `dispatch::WorkerPool`'s own per-instance queue is bounded by a
+/// fixed capacity rather than a wholly separate admission check — here the
+/// admission check already lives in `OutstandingPlans`/`OutstandingScans`,
+/// so duplicating it as a second, pool-level capacity would only let the
+/// two bounds disagree.
+///
+/// A small fixed worker count (`host/read_plans.rs`'s own
+/// `BACKGROUND_WORKER_COUNT`) bounds total concurrency; workers drain
+/// every live key's sub-queue in round-robin order, so no one key's
+/// backlog starves another's.
 pub struct ScanWorkerPool {
-    sender: Option<SyncSender<Job>>,
+    inner: Arc<PoolInner>,
     workers: Vec<thread::JoinHandle<()>>,
+}
+
+#[derive(Default)]
+struct PoolState {
+    queues: HashMap<u64, VecDeque<Job>>,
+    /// Keys with at least one queued job, in round-robin service order.
+    /// A key appears at most once: pushed back onto the end when its
+    /// sub-queue is still non-empty after a worker takes one job from it.
+    ready: VecDeque<u64>,
+    closed: bool,
+}
+
+struct PoolInner {
+    state: Mutex<PoolState>,
+    not_empty: Condvar,
+}
+
+fn worker_loop(inner: Arc<PoolInner>) {
+    loop {
+        let job = {
+            let mut state = inner.state.lock().unwrap_or_else(PoisonError::into_inner);
+            loop {
+                if let Some(key) = state.ready.pop_front() {
+                    let queue = state
+                        .queues
+                        .get_mut(&key)
+                        .expect("a ready key always has a non-empty queue");
+                    let job = queue.pop_front().expect("ready implies a queued job");
+                    if queue.is_empty() {
+                        state.queues.remove(&key);
+                    } else {
+                        state.ready.push_back(key);
+                    }
+                    break Some(job);
+                }
+                if state.closed {
+                    break None;
+                }
+                state = inner
+                    .not_empty
+                    .wait(state)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+        };
+        match job {
+            Some(job) => job(),
+            None => break,
+        }
+    }
 }
 
 impl ScanWorkerPool {
     #[must_use]
-    pub fn new(worker_count: usize, queue_capacity: usize) -> Self {
-        let (sender, receiver) = mpsc::sync_channel::<Job>(queue_capacity);
-        let receiver = Arc::new(Mutex::new(receiver));
+    pub fn new(worker_count: usize) -> Self {
+        let inner = Arc::new(PoolInner {
+            state: Mutex::new(PoolState::default()),
+            not_empty: Condvar::new(),
+        });
         let workers = (0..worker_count.max(1))
             .map(|_| {
-                let receiver = Arc::clone(&receiver);
-                thread::spawn(move || {
-                    loop {
-                        let job = {
-                            let receiver = receiver.lock().unwrap_or_else(PoisonError::into_inner);
-                            receiver.recv()
-                        };
-                        match job {
-                            Ok(job) => job(),
-                            Err(_disconnected) => break,
-                        }
-                    }
-                })
+                let inner = Arc::clone(&inner);
+                thread::spawn(move || worker_loop(inner))
             })
             .collect();
-        Self {
-            sender: Some(sender),
-            workers,
-        }
+        Self { inner, workers }
     }
 
-    /// Queues `job` without blocking the caller. `Err` means the bounded
-    /// queue is already full: the caller should refuse the submission
-    /// (`VOSU_ERR_INVALID_ARGUMENT`) rather than block a dispatch thread
-    /// waiting for room.
-    pub fn try_spawn(&self, job: impl FnOnce() + Send + 'static) -> Result<(), QueueFullError> {
-        let sender = self
-            .sender
-            .as_ref()
-            .expect("sender is only taken by this pool's own Drop");
-        match sender.try_send(Box::new(job)) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => Err(QueueFullError),
-            Err(TrySendError::Disconnected(_)) => {
-                unreachable!("this pool outlives every worker it spawned")
-            }
+    /// Queues `job` on `key`'s own sub-queue (this struct's own doc
+    /// comment): the caller must already have admitted it against its own
+    /// per-instance cap, so this never refuses.
+    pub fn submit(&self, key: u64, job: impl FnOnce() + Send + 'static) {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let queue = state.queues.entry(key).or_default();
+        queue.push_back(Box::new(job) as Job);
+        if queue.len() == 1 {
+            state.ready.push_back(key);
         }
-    }
-
-    /// Queues `job`, or — if the bounded queue is already full — runs it
-    /// on a dedicated one-off thread instead (P2-7,
-    /// `docs/v2/plugin-abi.md` §5): work a caller already admitted
-    /// against its own per-instance cap (64 read plans, 64 scans) must
-    /// still run and answer, never silently drop, because this pool's
-    /// *shared* queue — bounded only to keep idle worker-thread capacity
-    /// small, not to second-guess per-instance admission — happened to be
-    /// busy with every other instance's work at that moment. One
-    /// instance flooding its own 64-outstanding budget can cause at most
-    /// 64 such overflow threads, never an unbounded number, and every one
-    /// of them still answers the plugin that was already told `VOSU_OK`.
-    pub fn spawn_or_overflow(&self, job: impl FnOnce() + Send + 'static) {
-        let sender = self
-            .sender
-            .as_ref()
-            .expect("sender is only taken by this pool's own Drop");
-        match sender.try_send(Box::new(job)) {
-            Ok(()) => {}
-            Err(TrySendError::Full(job)) => {
-                std::thread::spawn(job);
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                unreachable!("this pool outlives every worker it spawned")
-            }
-        }
+        drop(state);
+        self.inner.not_empty.notify_one();
     }
 }
 
 impl Drop for ScanWorkerPool {
     fn drop(&mut self) {
-        // Drop the sender first so every worker's blocking `recv` returns
-        // `Err` and its loop exits, then join them instead of detaching.
-        self.sender.take();
+        // Close first so every worker's `wait` wakes, observes `closed`,
+        // and exits its loop, then join them instead of detaching.
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .closed = true;
+        self.inner.not_empty.notify_all();
         for worker in self.workers.drain(..) {
             let _ = worker.join();
         }
@@ -487,13 +516,23 @@ impl From<ScanSubmitError> for vosu_status {
     }
 }
 
+/// Where [`submit`] routes one scan: `session` is the handle
+/// [`OutstandingScans::cancel_session`] keys it by; `queue_key` is the
+/// owning instance's own `u64` the shared [`ScanWorkerPool`] sub-queues it
+/// by (P2-7). Grouped into one struct so `submit` stays under clippy's
+/// argument-count limit rather than taking both as bare `u64`s.
+pub struct ScanRouting {
+    pub session: u64,
+    pub queue_key: u64,
+}
+
 pub fn submit(
     outstanding: &Arc<OutstandingScans>,
     pool: &ScanWorkerPool,
     request: ScanRequest,
     memory: Arc<dyn ProcessMemory>,
     modules: Arc<dyn ModuleRegions + Send + Sync>,
-    handle: u64,
+    routing: ScanRouting,
     deliver: impl FnOnce(ScanResult) + Send + 'static,
 ) -> Result<(), ScanSubmitError> {
     Pattern::parse(&request.pattern, request.non_zero_mask)
@@ -501,23 +540,22 @@ pub fn submit(
 
     let gate: Gate = Arc::new(Mutex::new(Some(Box::new(deliver) as DeliverFn)));
     let slot = outstanding
-        .begin_internal(handle, Some(Arc::clone(&gate)))
+        .begin_internal(routing.session, Some(Arc::clone(&gate)))
         .map_err(|_| ScanSubmitError::CapExceeded)?;
     // Test-only seam (F6): lets a test run `cancel_session` in exactly
     // the window a real race would need — after the gate above is
-    // registered, before `spawn_or_overflow` below runs it — making that
-    // race deterministic instead of timing-dependent.
+    // registered, before `pool.submit` below runs it — making that race
+    // deterministic instead of timing-dependent.
     #[cfg(test)]
     run_race_hook_for_tests();
     let spawn_gate = Arc::clone(&gate);
-    pool.spawn_or_overflow(move || {
+    pool.submit(routing.queue_key, move || {
         // P2-7: skip the real (possibly whole-address-space) scan
         // entirely if `cancel_session` already won the race and
         // delivered the session-detached form — this job has nothing
-        // left to do. `spawn_or_overflow` also means a full shared queue
-        // never turns into "no answer": this job always runs, queued or
-        // on a one-off thread, for work already admitted against the
-        // instance's own cap.
+        // left to do. `queue_key`'s own sub-queue (`ScanWorkerPool`'s
+        // own doc comment) also means this job always runs, since
+        // `queue_key` already has room for it under its own admitted cap.
         let already_cancelled = spawn_gate
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

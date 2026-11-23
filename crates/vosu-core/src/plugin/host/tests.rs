@@ -2,6 +2,7 @@ use std::sync::Condvar;
 use std::time::Instant;
 
 use serde_json::{Map, Value};
+use vosu_plugin_api::DetachReason;
 use vosu_plugin_testkit::session::{self, OnAttach, SessionEvent, SessionPluginConfig};
 
 use super::super::focus;
@@ -500,12 +501,18 @@ fn failed_create_unregisters_the_matcher_so_a_shadowed_plugin_still_gets_the_ses
     // refusal): if the first plugin's failed `create` left its matcher
     // registered, this process would still go to it and never reach
     // here.
+    // `testkit.session.accepter.p25`: a distinct plugin id from
+    // `decline_re_offers_to_next_candidate_and_detaches_decliner`'s own
+    // `testkit.session.accepter` — the testkit's own event/config
+    // registries are process-wide statics keyed by plugin id (module doc
+    // comment), so two tests racing on the same id in parallel can
+    // overwrite each other's event channel.
     let accepter_events = create_session_instance_from_manifest(
         &host,
         PluginInstanceId::new(2),
-        "testkit.session.accepter",
+        "testkit.session.accepter.p25",
         SessionPluginConfig::default(),
-        &session_manifest_by_path_suffix("testkit.session.accepter", "shared-p25.exe"),
+        &session_manifest_by_path_suffix("testkit.session.accepter.p25", "shared-p25.exe"),
     );
 
     host.process_appeared(test_process(301, "shared-p25.exe"));

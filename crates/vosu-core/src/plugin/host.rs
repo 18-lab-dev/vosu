@@ -36,13 +36,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use tokio::runtime::Handle;
 use vosu_plugin_api::{
-    Bitness, DetachReason, FocusChanged, Init, Message, SessionDecline, TimerCancel, TimerFired,
-    TimerSet, encode, vosu_status,
+    Bitness, FocusChanged, Init, Message, SessionDecline, TimerCancel, TimerFired, TimerSet,
+    encode, vosu_status,
 };
 
 use super::dispatch::{OwnedMessage, WorkerPool};
@@ -158,6 +158,13 @@ pub struct PluginHost {
     timers: TimerRegistry,
     settings: Arc<PluginSettingsService>,
     instances: Mutex<HashMap<PluginInstanceId, InstanceSlot>>,
+    /// Notified whenever [`Self::create_instance`] resolves a
+    /// `Creating` placeholder (publishes it `Live`, or removes it on a
+    /// failed/shutdown-raced `create`) — lets [`Self::destroy_all`]'s own
+    /// wait for the last `Creating` placeholders to resolve (P3) block on
+    /// this condvar, bounded by a deadline, instead of polling
+    /// `instances` on a fixed sleep.
+    instances_changed: Condvar,
     /// Set once by [`Self::destroy_all`], before it starts draining
     /// `instances`: tells a [`Self::create_instance`] call still racing it
     /// (the plugin's own `create` still running when shutdown started,
@@ -193,6 +200,13 @@ pub struct PluginHost {
     /// [`read_plans::READ_PLAN_DEADLINE`] in milliseconds; mutable only so
     /// a test can shorten it (`read_plans::set_read_plan_deadline_for_tests`).
     read_plan_deadline_ms: AtomicU64,
+    /// Last time this host logged a dropped delivery caused by a full
+    /// per-instance dispatch queue (P3): rate-limited to once per second
+    /// total (not per instance) so a plugin stuck with a full queue,
+    /// dropping every `TIMER_FIRED`/`SESSION_DETACHED`/read-plan-or-scan
+    /// result sent to it, cannot flood the log the way an unrated
+    /// per-drop `tracing::warn!` would.
+    last_dispatch_queue_full_log: Mutex<Option<Instant>>,
 }
 
 impl PluginHost {
@@ -248,6 +262,7 @@ impl PluginHost {
             timers: TimerRegistry::new(runtime.clone()),
             settings,
             instances: Mutex::new(HashMap::new()),
+            instances_changed: Condvar::new(),
             shutting_down: AtomicBool::new(false),
             matcher: Mutex::new(MatcherEngine::new(host_platform())),
             sessions: Mutex::new(SessionRegistry::with_identification_timeout(
@@ -260,6 +275,7 @@ impl PluginHost {
             read_plan_deadline_ms: AtomicU64::new(
                 u64::try_from(read_plans::READ_PLAN_DEADLINE.as_millis()).unwrap_or(u64::MAX),
             ),
+            last_dispatch_queue_full_log: Mutex::new(None),
         });
         // P2-4: spawned only after `new_cyclic` has returned a real
         // `Arc<Self>` — never from inside its own closure, where no
@@ -321,19 +337,22 @@ impl PluginHost {
     /// that never finished coming up).
     ///
     /// Races [`Self::destroy_all`] safely: `shutting_down` is checked
-    /// twice, both times under the same `instances` lock `destroy_all`
-    /// itself takes, so the two calls never disagree about which of them
-    /// "saw" the instance first. The early check (before the plugin's own
-    /// `create` even runs) rejects a brand new instance outright once
-    /// shutdown has started. The second check — after `create` returns,
-    /// atomically with the swap that would otherwise publish the instance
-    /// `Live` — closes the actual race this method's doc comment
-    /// describes: `destroy_all` only ever skips a `Creating` placeholder
-    /// (never removes it, so it never stops waiting for this id), so if
-    /// this check loses the race, `destroy_all`'s own loop is guaranteed
-    /// to still find and tear down the `Live` entry; if it wins the race,
-    /// this call destroys the instance itself instead of publishing it,
-    /// and removes the placeholder so `destroy_all`'s wait resolves.
+    /// twice. The early check (before the plugin's own `create` even
+    /// runs, and before this call takes `instances` at all) only ever
+    /// rejects a brand new instance outright once shutdown has already
+    /// been observably set — it cannot by itself close the race this
+    /// method's doc comment describes, since `destroy_all` may set
+    /// `shutting_down` and start draining `instances` at any point after
+    /// it. The second check — after `create` returns, atomically with
+    /// the swap that would otherwise publish the instance `Live`, both
+    /// under the same `instances` lock `destroy_all` itself takes — is
+    /// what actually closes it: `destroy_all` only ever skips a
+    /// `Creating` placeholder (never removes it, so it never stops
+    /// waiting for this id), so if this second check loses the race,
+    /// `destroy_all`'s own loop is guaranteed to still find and tear
+    /// down the `Live` entry; if it wins the race, this call destroys
+    /// the instance itself instead of publishing it, and removes the
+    /// placeholder so `destroy_all`'s wait resolves.
     pub fn create_instance(
         self: &Arc<Self>,
         id: PluginInstanceId,
@@ -392,6 +411,7 @@ impl PluginHost {
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner())
                     .remove(&id);
+                self.instances_changed.notify_all();
                 // P2-5: this `create` never published a `Live` instance,
                 // so the `[match]` table `register` installed above must
                 // not outlive it — otherwise `process_appeared` keeps
@@ -418,6 +438,7 @@ impl PluginHost {
             // the placeholder so `destroy_all`'s own wait for it resolves.
             guard.remove(&id);
             drop(guard);
+            self.instances_changed.notify_all();
             self.timers.cancel_all(id);
             // P2-5: same reason as the `created` error path above — this
             // instance is being destroyed, never published `Live`.
@@ -448,6 +469,7 @@ impl PluginHost {
             _ => Vec::new(),
         };
         drop(guard);
+        self.instances_changed.notify_all();
         self.replay_pending(id, pending);
         Ok(())
     }
@@ -470,90 +492,9 @@ impl PluginHost {
             let Ok(owned) = OwnedMessage::from_message(&delivery.message, 0) else {
                 continue;
             };
-            let _ = entry.instance.dispatch(owned);
-        }
-    }
-
-    /// Destroys every registered instance (daemon shutdown). Takes
-    /// exactly one instance out of active duty at a time — never all of
-    /// them upfront — so an instance still waiting its own turn in this
-    /// loop keeps receiving timer and settings deliveries, and keeps its
-    /// plugin id on its logs, for as long as it is genuinely still alive
-    /// (P3: taking every entry at once left every instance but the first
-    /// undeliverable the moment this method started, regardless of how
-    /// far down the loop its own turn was). Cancels the instance's timers
-    /// both before its own `destroy` call (so none fire into a dispatch
-    /// queue about to stop accepting work) and again after `destroy`
-    /// returns (§6.11's exit item: `destroy`'s own queue drain can run
-    /// `TIMER_SET` again, which must not outlive the instance either),
-    /// one instance's hang never extending another's grace period.
-    ///
-    /// Sets `shutting_down` first, then — unlike a `Live`/`Destroying`
-    /// slot — never removes a `Creating` one itself: that instance's own
-    /// `create_instance` call is still running the plugin's `create`, and
-    /// once it returns, it will observe `shutting_down` and destroy the
-    /// instance itself rather than publish it `Live` (`create_instance`'s
-    /// own doc comment). Removing the placeholder here instead, the way
-    /// an earlier version of this method did, let that call's final swap
-    /// still install a `Live` entry *after* this loop had already decided
-    /// the map was empty and returned — leaking a running instance this
-    /// function was supposed to have torn down. Waiting for
-    /// `create_instance` to resolve its own placeholder closes that race.
-    pub fn destroy_all(&self, grace: Duration) {
-        self.shutting_down.store(true, Ordering::Release);
-        loop {
-            let next = {
-                let mut guard = self
-                    .instances
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner());
-                if guard.is_empty() {
-                    break;
-                }
-                let ready = guard
-                    .iter()
-                    .find(|(_, slot)| !matches!(slot, InstanceSlot::Creating { .. }))
-                    .map(|(id, _)| *id);
-                let Some(id) = ready else {
-                    // Only `Creating` placeholders remain: wait for their
-                    // own `create_instance` calls to resolve them (see
-                    // this method's doc comment) rather than dropping
-                    // them here.
-                    drop(guard);
-                    #[expect(
-                        clippy::disallowed_methods,
-                        reason = "a short poll for a Creating placeholder to resolve into Live or disappear; its own create_instance call finishes it (there is no other backstop — a plugin's create is already documented, §4, as never performing unbounded I/O, the same trust this loop relies on)"
-                    )]
-                    std::thread::sleep(Duration::from_millis(1));
-                    continue;
-                };
-                let slot = guard.remove(&id).expect("just read this key from the map");
-                match slot {
-                    InstanceSlot::Live(entry) => {
-                        guard.insert(
-                            id,
-                            InstanceSlot::Destroying {
-                                plugin_id: entry.plugin_id,
-                            },
-                        );
-                        (id, Some(entry.instance))
-                    }
-                    InstanceSlot::Destroying { .. } => (id, None),
-                    InstanceSlot::Creating { .. } => unreachable!("excluded by `find` above"),
-                }
-            };
-            let (id, instance) = next;
-            self.timers.cancel_all(id);
-            if let Some(instance) = instance {
-                if let Err(error) = instance.destroy(grace) {
-                    tracing::warn!(?id, %error, "plugin did not destroy within its grace period");
-                }
-                self.timers.cancel_all(id);
+            if let Err(error) = entry.instance.dispatch(owned) {
+                self.log_dispatch_dropped(id, delivery.message.opcode(), &error);
             }
-            self.instances
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .remove(&id);
         }
     }
 
@@ -608,10 +549,12 @@ impl PluginHost {
             .instances
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        for slot in guard.values_mut() {
+        for (id, slot) in guard.iter_mut() {
             match slot {
                 InstanceSlot::Live(entry) if entry.plugin_id == plugin_id => {
-                    let _ = entry.instance.dispatch(owned.clone());
+                    if let Err(error) = entry.instance.dispatch(owned.clone()) {
+                        self.log_dispatch_dropped(*id, message.opcode(), &error);
+                    }
                 }
                 InstanceSlot::Creating {
                     plugin_id: creating_id,
@@ -790,72 +733,6 @@ impl PluginHost {
             self.dispatch_to(&winner, &Message::SessionAttached(attached.message));
         }
     }
-
-    /// Discovery's own entry point for a process exit (phase (d2)):
-    /// detaches whatever session, if any, this registry still tracks for
-    /// `pid` (`DetachReason::Exited`) and clears the D6 decline record so
-    /// a later reuse of `pid` can attach fresh.
-    pub fn process_exited(&self, pid: u32) {
-        let handle = {
-            self.sessions
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .handle_for_pid(pid)
-        };
-        if let Some(handle) = handle {
-            self.detach_session(handle, DetachReason::Exited);
-        }
-        self.sessions
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .forget_exited_pid(pid);
-    }
-
-    /// Discovery's foreground-window entry point (P2-9, phase (d2)): the
-    /// OS foreground window changed owner (or lost one), so the Focus
-    /// rule (`docs/v2/api-v1.md` "Focus rule") must be re-run — nothing
-    /// else calls [`Self::recompute_focus`] on a foreground change by
-    /// itself; `foreground_pid()` is otherwise only consulted lazily, the
-    /// next time some other event (identify, detach) happens to
-    /// recompute. A later wiring phase feeds this from a real OS
-    /// foreground-change source; this phase only provides and tests it,
-    /// the same split `process_appeared`/`process_exited` already use for
-    /// the rest of discovery.
-    pub fn foreground_changed(&self) {
-        self.recompute_focus();
-    }
-
-    /// Common path for every non-`SESSION_DECLINE` way a session leaves
-    /// (process exit, lost, superseded): delivers `SESSION_DETACHED` to
-    /// the owning plugin, then recomputes focus — `handle` may have been
-    /// the focused session.
-    fn detach_session(&self, handle: SessionHandle, reason: DetachReason) {
-        let owner = {
-            let sessions = self
-                .sessions
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            sessions
-                .owner_and_pid(handle)
-                .map(|(owner, _)| owner.clone())
-        };
-        let detached = {
-            self.sessions
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .detach(handle, reason)
-        };
-        let Some(detached) = detached else {
-            return;
-        };
-        if let Some(owner) = owner {
-            self.dispatch_to(&owner, &Message::SessionDetached(detached));
-            self.cancel_read_plans_for_session(&owner, handle);
-            self.cancel_scans_for_session(&owner, handle);
-        }
-        self.forget_read_plan_session(handle);
-        self.recompute_focus();
-    }
 }
 impl PluginHostHandler for PluginHost {
     fn handle(
@@ -926,9 +803,13 @@ impl PluginHostHandler for PluginHost {
                         reoffered,
                     }) => {
                         let declined_handle = SessionHandle(detached.handle);
-                        self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
+                        // P3: cancel before dispatching `SESSION_DETACHED`
+                        // so a result or scan answer already queued for
+                        // this handle is delivered before it, never
+                        // after, on serial dispatch.
                         self.cancel_read_plans_for_session(&plugin_id, declined_handle);
                         self.cancel_scans_for_session(&plugin_id, declined_handle);
+                        self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
                         self.forget_read_plan_session(declined_handle);
                         // The re-offered handle's own `owner` is already
                         // the next install-order candidate (`decline`'s
@@ -952,9 +833,11 @@ impl PluginHostHandler for PluginHost {
                     }
                     Ok(super::session::DeclineOutcome::Dropped { detached }) => {
                         let declined_handle = SessionHandle(detached.handle);
-                        self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
+                        // P3: same cancel-before-dispatch ordering as the
+                        // `ReOffered` arm above.
                         self.cancel_read_plans_for_session(&plugin_id, declined_handle);
                         self.cancel_scans_for_session(&plugin_id, declined_handle);
+                        self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
                         self.forget_read_plan_session(declined_handle);
                         vosu_status::VOSU_OK
                     }
@@ -1028,8 +911,10 @@ impl TimerDelivery for PluginHost {
             .unwrap_or_else(|poison| poison.into_inner());
         match guard.get_mut(&instance) {
             Some(InstanceSlot::Live(entry)) => {
-                if let Ok(owned) = OwnedMessage::from_message(&message, 0) {
-                    let _ = entry.instance.dispatch(owned);
+                if let Ok(owned) = OwnedMessage::from_message(&message, 0)
+                    && let Err(error) = entry.instance.dispatch(owned)
+                {
+                    self.log_dispatch_dropped(instance, message.opcode(), &error);
                 }
             }
             Some(InstanceSlot::Creating { pending, .. }) => {
@@ -1046,6 +931,7 @@ impl SettingsChangeDelivery for PluginHost {
     }
 }
 
+mod lifecycle;
 mod read_plans;
 mod scans;
 

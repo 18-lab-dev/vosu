@@ -77,7 +77,7 @@ pub use scan::LinuxModuleTable;
 pub use scan::WindowsModuleTable;
 pub use scan::{
     MAX_OUTSTANDING_SCANS, ModuleRegion, ModuleRegions, OutstandingScans, OutstandingScansError,
-    QueueFullError, ScanSlot, ScanSubmitError, ScanWorkerPool, execute as execute_scan,
+    ScanRouting, ScanSlot, ScanSubmitError, ScanWorkerPool, execute as execute_scan,
     submit as submit_scan,
 };
 pub use session::{

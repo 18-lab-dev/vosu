@@ -277,3 +277,22 @@ fn native_self_read() {
     assert_eq!(u64::from_le_bytes(bytes), *expected);
     assert!(!process.command_line().unwrap().is_empty());
 }
+
+#[test]
+fn is_process_alive_reports_the_running_self_process() {
+    assert!(is_process_alive(std::process::id()));
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn is_process_alive_reports_a_recycled_pid_as_dead() {
+    // A freshly spawned-then-reaped child's pid is very unlikely to be
+    // reused by the time this check runs.
+    let mut child = std::process::Command::new("cmd.exe")
+        .args(["/C", "exit"])
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    assert!(!is_process_alive(pid));
+}

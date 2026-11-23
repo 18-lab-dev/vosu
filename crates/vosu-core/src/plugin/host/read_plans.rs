@@ -35,13 +35,15 @@
 //! dependent stage's `ref_op` width synchronously, before admission (P1-3):
 //! an async plan has no synchronous caller left to report
 //! `VOSU_ERR_INVALID_ARGUMENT` to once a worker discovers this, so it must
-//! never reach the worker in the first place. If the shared pool's queue
-//! is already full, already-admitted work still runs — on a one-off
-//! thread instead of the pool (P2-7) — rather than silently answering
-//! nothing for a plan this instance was already granted a slot for; the
-//! job itself also peeks [`super::super::read_plan::OutstandingPlans::is_cancelled`]
+//! never reach the worker in the first place. Each live instance submits
+//! onto its own sub-queue in the shared pool (P2-7,
+//! `super::super::scan::ScanWorkerPool`'s own doc comment), bounded only
+//! by that instance's own admission caps, so a plan this instance was
+//! already granted a slot for is never delayed by another instance's
+//! backlog filling a queue the two would otherwise share; the job itself
+//! also peeks [`super::super::read_plan::OutstandingPlans::is_cancelled`]
 //! before doing any real work, so a plugin that cancels a plan it no
-//! longer needs does not also cost the shared pool the time of running it.
+//! longer needs does not also cost the pool the time of running it.
 //!
 //! `VOSU_OP_READ_PLAN_CANCEL` and a session's detach both resolve to
 //! [`super::super::read_plan::OutstandingPlans`]'s own `cancel`/
@@ -85,21 +87,15 @@ use super::{InstanceSlot, PluginHost};
 /// one pool now serves both opcodes.
 const BACKGROUND_WORKER_COUNT: usize = 4;
 
-/// [`ScanWorkerPool::new`], queue capacity
-/// [`super::super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS`] +
-/// [`super::super::scan::MAX_OUTSTANDING_SCANS`] (128): both caps admit
-/// independently, so up to that many jobs can be genuinely queued at
-/// once. A plugin instance whose admitted work finds this queue already
-/// full still runs it (module doc comment, P2-7) rather than being
-/// refused — this capacity only bounds how much work waits its turn on
-/// the shared pool before overflowing to a one-off thread, never what a
-/// plugin is allowed to have outstanding at all.
+/// [`ScanWorkerPool::new`]: each live instance gets its own sub-queue
+/// (`ScanWorkerPool`'s own doc comment, P2-7), bounded only by the sum of
+/// that instance's own [`super::super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS`]
+/// and [`super::super::scan::MAX_OUTSTANDING_SCANS`] (128) admission caps,
+/// enforced by [`OutstandingPlans`]/[`super::super::scan::OutstandingScans`]
+/// themselves, not by this pool — so one instance's admitted work can
+/// never find its own sub-queue "full" or wait behind another instance's.
 pub(super) fn new_background_pool() -> ScanWorkerPool {
-    ScanWorkerPool::new(
-        BACKGROUND_WORKER_COUNT,
-        super::super::read_plan::MAX_OUTSTANDING_ASYNC_PLANS
-            + super::super::scan::MAX_OUTSTANDING_SCANS,
-    )
+    ScanWorkerPool::new(BACKGROUND_WORKER_COUNT)
 }
 
 /// Deadline given to one read plan's execution, sync or async (§6.3, §5's
@@ -367,21 +363,25 @@ impl PluginHost {
         handle: SessionHandle,
         pid: u32,
     ) -> Result<Arc<SessionMemory>, SessionMemoryError> {
-        {
-            let cache = self
-                .read_plan_memory
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if let Some(memory) = cache.get(&handle) {
-                return Ok(Arc::clone(memory));
+        // P3: held across the whole check-open-insert sequence (opening
+        // a process handle is a handful of syscalls, not unbounded I/O)
+        // instead of releasing between the cache check and the insert —
+        // the previous two-lock version let a `forget_read_plan_session`
+        // for this same `handle` land in that gap and then have this
+        // call's own insert put the now-stale handle straight back,
+        // leaking an open process handle nothing would ever forget again.
+        let mut cache = self
+            .read_plan_memory
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match cache.entry(handle) {
+            std::collections::hash_map::Entry::Occupied(entry) => Ok(Arc::clone(entry.get())),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let memory = open_session_memory(pid)?;
+                entry.insert(Arc::clone(&memory));
+                Ok(memory)
             }
         }
-        let memory = open_session_memory(pid)?;
-        self.read_plan_memory
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(handle, Arc::clone(&memory));
-        Ok(memory)
     }
 
     /// `handle`'s session is gone (detached, declined, or superseded):
@@ -544,11 +544,14 @@ impl PluginHost {
                 InstanceSlot::Creating { .. } | InstanceSlot::Destroying { .. } => None,
             });
         let Some((vtable, ctx)) = target else {
-            // The instance tore down between this submission arriving and
-            // its result finishing executing: the submission itself is
-            // still accepted (it ran to completion), there is simply
-            // nothing left to deliver the result to.
-            return vosu_status::VOSU_OK;
+            // P3: the instance tore down between this submission
+            // arriving and its result finishing executing. The
+            // submission itself genuinely ran to completion, but
+            // `VOSU_OK` here would tell the plugin's own SDK the result
+            // was delivered when nothing was: `VOSU_ERR_NOT_READY`
+            // instead reports "no result" accurately (the SDK's own
+            // `NoResult` case this leg of the race used to hide).
+            return vosu_status::VOSU_ERR_NOT_READY;
         };
         if let Ok(owned) = OwnedMessage::from_message(&Message::ReadPlanResult(result), 0) {
             let _ = owned.call(&vtable, ctx);
@@ -627,16 +630,17 @@ impl PluginHost {
             };
             let should_deliver = spawned_outstanding.finish(plan) == FinishOutcome::Deliver;
             if should_deliver && let Some(host) = host.upgrade() {
-                let _ = host.dispatch_to_instance(instance, &Message::ReadPlanResult(result), 0);
+                let message = Message::ReadPlanResult(result);
+                if let Err(error) = host.dispatch_to_instance(instance, &message, 0) {
+                    host.log_dispatch_dropped(instance, message.opcode(), &error);
+                }
             }
         };
         // P2-7: this plan was already admitted against the instance's own
-        // 64-outstanding cap — a full *shared* queue (bounded only to
-        // keep genuinely idle capacity small, module doc comment) must
-        // never turn into "no answer" for work this instance was already
-        // granted a slot for; `spawn_or_overflow` keeps the pool's queue
-        // bounded while still guaranteeing admitted work always runs.
-        self.background_pool.spawn_or_overflow(job);
+        // 64-outstanding cap, so `instance`'s own sub-queue
+        // (`ScanWorkerPool`'s own doc comment) always has room for it —
+        // another instance's own admitted work can never delay it.
+        self.background_pool.submit(instance.0, job);
         vosu_status::VOSU_OK
     }
 

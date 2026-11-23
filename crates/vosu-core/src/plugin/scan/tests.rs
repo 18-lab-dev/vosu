@@ -308,43 +308,51 @@ fn cancel_session_frees_only_that_sessions_slots() {
 
 #[test]
 fn worker_pool_runs_jobs_off_the_calling_thread() {
-    let pool = ScanWorkerPool::new(2, 4);
+    let pool = ScanWorkerPool::new(2);
     let (tx, rx) = mpsc::channel();
     let caller_thread = thread::current().id();
-    pool.try_spawn(move || {
+    pool.submit(1, move || {
         tx.send(thread::current().id()).unwrap();
-    })
-    .unwrap();
+    });
     let worker_thread = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_ne!(worker_thread, caller_thread);
 }
 
 #[test]
-fn worker_pool_refuses_beyond_its_bounded_queue() {
-    // One worker, blocked on a gate; a queue of capacity 1 then means the
-    // *second* try_spawn still fits the queue slot, and the third is
-    // refused while the worker is still blocked on the first job.
-    let pool = ScanWorkerPool::new(1, 1);
+fn one_keys_backlog_never_blocks_another_keys_job() {
+    // P2-7: a single worker, so key 1 genuinely contends for the only
+    // thread. Key 1 then floods its own sub-queue well past any size a
+    // shared, fixed-capacity queue would have refused beyond — key 2's
+    // own job must still queue (never refused) and run promptly once the
+    // worker reaches key 2's turn, rather than waiting behind the whole
+    // of key 1's backlog (each key gets its own sub-queue, served
+    // round-robin).
+    let pool = ScanWorkerPool::new(1);
     let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
     let gate_clone = Arc::clone(&gate);
-    pool.try_spawn(move || {
+    pool.submit(1, move || {
         let (lock, cvar) = &*gate_clone;
         let mut released = lock.lock().unwrap();
         while !*released {
             released = cvar.wait(released).unwrap();
         }
-    })
-    .unwrap();
-
-    // Give the worker a moment to pick up the blocking job so the queue is
-    // actually empty before we fill it.
+    });
+    // Give the worker a moment to pick up the blocking job so key 1's
+    // queue is actually empty before this floods it.
     std::thread::sleep(Duration::from_millis(50));
-    pool.try_spawn(|| {}).unwrap();
-    assert_eq!(pool.try_spawn(|| {}), Err(QueueFullError));
+    for _ in 0..200 {
+        pool.submit(1, || {});
+    }
+
+    let (tx, rx) = mpsc::channel();
+    pool.submit(2, move || tx.send(()).unwrap());
 
     let (lock, cvar) = &*gate;
     *lock.lock().unwrap() = true;
     cvar.notify_all();
+
+    rx.recv_timeout(Duration::from_secs(5))
+        .expect("key 2's job must run promptly, not behind key 1's whole backlog");
 }
 
 struct NoModulesSync;
@@ -357,7 +365,7 @@ impl ModuleRegions for NoModulesSync {
 #[test]
 fn submit_runs_execute_off_the_caller_and_frees_its_slot() {
     let outstanding = OutstandingScans::new();
-    let pool = ScanWorkerPool::new(1, 4);
+    let pool = ScanWorkerPool::new(1);
     let memory: Arc<dyn ProcessMemory> = Arc::new(FakeMemory::new(vec![(0x1000, vec![0xaa])]));
     let modules: Arc<dyn ModuleRegions + Send + Sync> = Arc::new(NoModulesSync);
     let (tx, rx) = mpsc::channel();
@@ -368,7 +376,10 @@ fn submit_runs_execute_off_the_caller_and_frees_its_slot() {
         request(None, "AA", false, false),
         memory,
         modules,
-        1,
+        ScanRouting {
+            session: 1,
+            queue_key: 1,
+        },
         move |result| {
             tx.send(result).unwrap();
         },
@@ -407,7 +418,7 @@ fn submit_refuses_once_the_cap_is_reached() {
     let _slots: Vec<_> = (0..MAX_OUTSTANDING_SCANS)
         .map(|_| outstanding.begin(1).unwrap())
         .collect();
-    let pool = ScanWorkerPool::new(1, 4);
+    let pool = ScanWorkerPool::new(1);
     let memory: Arc<dyn ProcessMemory> = Arc::new(FakeMemory::new(vec![]));
     let modules: Arc<dyn ModuleRegions + Send + Sync> = Arc::new(NoModulesSync);
 
@@ -417,7 +428,10 @@ fn submit_refuses_once_the_cap_is_reached() {
         request(None, "AA", false, false),
         memory,
         modules,
-        1,
+        ScanRouting {
+            session: 1,
+            queue_key: 1,
+        },
         |_| {},
     )
     .unwrap_err();
@@ -427,7 +441,7 @@ fn submit_refuses_once_the_cap_is_reached() {
 #[test]
 fn submit_refuses_a_malformed_pattern_before_taking_a_slot_or_a_worker() {
     let outstanding = OutstandingScans::new();
-    let pool = ScanWorkerPool::new(1, 4);
+    let pool = ScanWorkerPool::new(1);
     let memory: Arc<dyn ProcessMemory> = Arc::new(FakeMemory::new(vec![]));
     let modules: Arc<dyn ModuleRegions + Send + Sync> = Arc::new(NoModulesSync);
 
@@ -437,7 +451,10 @@ fn submit_refuses_a_malformed_pattern_before_taking_a_slot_or_a_worker() {
         request(None, "ZZ", false, false),
         memory,
         modules,
-        1,
+        ScanRouting {
+            session: 1,
+            queue_key: 1,
+        },
         |_| panic!("a malformed pattern must never reach a worker"),
     )
     .unwrap_err();
@@ -448,19 +465,18 @@ fn submit_refuses_a_malformed_pattern_before_taking_a_slot_or_a_worker() {
 #[test]
 fn cancel_session_frees_the_slot_and_suppresses_the_workers_own_result() {
     let outstanding = OutstandingScans::new();
-    let pool = ScanWorkerPool::new(1, 1);
+    let pool = ScanWorkerPool::new(1);
     // A worker gate the test controls, so the scan only finishes once the
     // test has already called `cancel_session`.
     let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
     let release_clone = Arc::clone(&release);
-    pool.try_spawn(move || {
+    pool.submit(1, move || {
         let (lock, cvar) = &*release_clone;
         let mut released = lock.lock().unwrap();
         while !*released {
             released = cvar.wait(released).unwrap();
         }
-    })
-    .unwrap();
+    });
     std::thread::sleep(Duration::from_millis(50));
 
     let memory: Arc<dyn ProcessMemory> = Arc::new(FakeMemory::new(vec![(0x1000, vec![0xaa])]));
@@ -472,13 +488,17 @@ fn cancel_session_frees_the_slot_and_suppresses_the_workers_own_result() {
         request(None, "AA", false, false),
         memory,
         modules,
-        7,
+        ScanRouting {
+            session: 7,
+            queue_key: 1,
+        },
         move |result| tx.send(result).unwrap(),
     )
     .unwrap();
 
-    // The scan job is queued behind the blocked job above, so it has not
-    // run yet: cancelling now must win the race.
+    // The scan job is queued behind the blocked job above (same key, so
+    // the same sub-queue), so it has not run yet: cancelling now must
+    // win the race.
     outstanding.cancel_session(7);
     assert_eq!(outstanding.len(), 0);
 
@@ -491,31 +511,28 @@ fn cancel_session_frees_the_slot_and_suppresses_the_workers_own_result() {
 }
 
 #[test]
-fn submit_treats_a_queue_full_refusal_already_delivered_by_cancel_session_as_ok() {
+fn cancel_session_racing_admission_still_answers_exactly_once() {
     // F6: `begin_internal` registers this scan's gate, then (via the
     // deterministic race hook, standing in for a `cancel_session` call
     // from another thread landing in that exact window) the session
-    // detaches and delivers the session-detached form, and only then
-    // does `try_spawn` discover the queue is full. `submit` must not
-    // *also* report `QueueFull` for a scan whose result the plugin
-    // already received.
+    // detaches and delivers the session-detached form before this scan's
+    // own job ever runs on the pool. `submit` must not also report an
+    // error for a scan whose result the plugin already received.
     let outstanding = OutstandingScans::new();
-    let pool = ScanWorkerPool::new(1, 1);
+    let pool = ScanWorkerPool::new(1);
 
-    // One worker, blocked; one queue slot, pre-filled — so this test's
-    // own `submit` call below deterministically hits `QueueFull`.
+    // One worker, blocked, so this test's own job provably has not run
+    // by the time the race hook fires below.
     let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
     let release_clone = Arc::clone(&release);
-    pool.try_spawn(move || {
+    pool.submit(1, move || {
         let (lock, cvar) = &*release_clone;
         let mut released = lock.lock().unwrap();
         while !*released {
             released = cvar.wait(released).unwrap();
         }
-    })
-    .unwrap();
+    });
     std::thread::sleep(Duration::from_millis(50));
-    pool.try_spawn(|| {}).unwrap();
 
     let handle = 11;
     let outstanding_for_hook = Arc::clone(&outstanding);
@@ -532,14 +549,17 @@ fn submit_treats_a_queue_full_refusal_already_delivered_by_cancel_session_as_ok(
         request(None, "AA", false, false),
         memory,
         modules,
-        handle,
+        ScanRouting {
+            session: handle,
+            queue_key: 1,
+        },
         move |result| tx.send(result).unwrap(),
     );
 
     assert_eq!(
         outcome,
         Ok(()),
-        "a QueueFull refusal must not also surface once cancel_session already delivered a result"
+        "a session already detached mid-admission must not also surface a submit error"
     );
     let result = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(result.error.unwrap().code, "session_detached");
