@@ -169,6 +169,7 @@ LINUX_STEPS = [
     ("doc-links", [sys.executable, "scripts/check-doc-links.py"], None, ()),
     ("file-length", [sys.executable, "scripts/check-file-length.py"], None, ()),
     ("brand", [sys.executable, "scripts/check-brand.py"], None, ()),
+    ("lint-expectations", [sys.executable, "scripts/check-lint-expectations.py"], None, ()),
     ("module-boundaries", [sys.executable, "scripts/check-module-boundaries.py"], None, ()),
     ("crate-boundaries", [sys.executable, "scripts/check-crate-boundaries.py"], None, ()),
     ("license-notices", [sys.executable, "scripts/assemble-release-license.py"], None, ()),
@@ -324,8 +325,9 @@ def main():
         "--skip",
         default="",
         help="Comma-separated step names to skip for local iteration (fmt, clippy-linux, test-linux, "
-        "doc-links, file-length, brand, module-boundaries, license-notices, asset-hashes, script-tests, "
-        "actionlint, xwin-clippy, dashboard, native). land.py refuses evidence that skipped a required step.",
+        "doc-links, file-length, brand, lint-expectations, module-boundaries, license-notices, "
+        "asset-hashes, script-tests, deleted-assertions, actionlint, xwin-clippy, dashboard, native). "
+        "land.py refuses evidence that skipped a required step.",
     )
     parser.add_argument("--start-vm", action="store_true", help="Start the Windows VM if it is currently stopped.")
     parser.add_argument(
@@ -373,6 +375,14 @@ def main():
             continue
         print(f"running {name} ...")
         results.append(run_linux_step(name, cmd, log_dir, env_overrides, unset))
+
+    deleted_assertions_cmd = [sys.executable, "scripts/check-deleted-assertions.py", "--base", args.base]
+    skipped = maybe_skip("deleted-assertions", True, " ".join(deleted_assertions_cmd))
+    if skipped:
+        results.append(skipped)
+    else:
+        print("running deleted-assertions ...")
+        results.append(run_linux_step("deleted-assertions", deleted_assertions_cmd, log_dir))
 
     paths = changed_paths(args.base)
     if "actionlint" in skip:
