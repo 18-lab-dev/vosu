@@ -85,6 +85,23 @@ struct {
     __type(value, __u8);
 } comm_hints SEC(".maps");
 
+/*
+ * comm_hint_lengths holds one __u16 bitmap at key 0: bit (len - 1) is set
+ * when comm_hints currently has at least one hint of that length. Userspace
+ * (EbpfCommFilter::set_comm_hints) widens this to the union of the current
+ * and target length sets before diffing comm_hints, then narrows it to the
+ * target set once the diff lands, so it is always a superset of the lengths
+ * actually present. candidate_comm reads it once per call and skips the
+ * length loop's bpf_map_lookup_elem entirely for any length with no
+ * registered hint, instead of always probing all 15 lengths.
+ */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u16);
+} comm_hint_lengths SEC(".maps");
+
 static __always_inline void record_drop(void)
 {
     __u32 key = 0;
@@ -108,30 +125,64 @@ static __always_inline void record_drop(void)
  * from "start", capped at COMM_HINT_MAX_LEN) is therefore also compile-time
  * per copy, which makes the inner byte-copy and length loops' bounds and
  * indices compile-time constants too. There is no data-dependent loop bound
- * anywhere in this function: the generated code is straight-line regardless
- * of how many hints comm_hints holds, bounding the cost to a fixed
- * triangular-sum count of lookups (15+14+...+1 = 120 for TASK_COMM_LEN=16,
- * COMM_HINT_MAX_LEN=15) per exec/exit/rename event.
+ * anywhere in this function: every one of the 15 outer copies and their
+ * nested 15-iteration byte-copy/length loops is fully unrolled regardless of
+ * how many hints comm_hints holds or how long comm is.
+ *
+ * Two data-dependent (but still bounded, branch-only) cuts keep the actual
+ * runtime cost cheap for the common non-matching case, without adding any
+ * loop the verifier has to bound itself:
+ *   - comm is always NUL-padded (the raw kernel `comm` field, and every
+ *     probe-read helper used to fill it, zero-fill past the terminator), and
+ *     no registered hint may contain a NUL (CommHints::new rejects that), so
+ *     a window that reaches comm's first NUL byte can never match. The outer
+ *     loop breaks there, and each start's window is capped to the run of
+ *     non-NUL bytes from "start", so no lookup ever probes a key spanning
+ *     the terminator.
+ *   - comm_hint_lengths (set from userspace) limits the length loop to
+ *     lengths that actually have a registered hint, instead of trying every
+ *     length from 1 to 15.
+ * With the default two hints (lengths 4 and 12) a non-matching short comm
+ * like "bash" now costs one comm_hint_lengths lookup plus at most one
+ * comm_hints lookup per starting byte before the NUL -- about 16 lookups or
+ * fewer worst case, not the previous fixed 135 (15+14+...+1 for
+ * TASK_COMM_LEN=16, COMM_HINT_MAX_LEN=15) every time regardless of comm or
+ * registered hints.
  */
 static __always_inline int candidate_comm(const char comm[TASK_COMM_LEN])
 {
+    __u32 lengths_key = 0;
+    __u16 *lengths_ptr = bpf_map_lookup_elem(&comm_hint_lengths, &lengths_key);
+    __u16 lengths = lengths_ptr ? *lengths_ptr : 0xffff;
+
 #pragma unroll
     for (int start = 0; start < TASK_COMM_LEN; start++) {
         struct comm_hint_key key = {};
         int window = TASK_COMM_LEN - start;
+        int zero_at = -1;
+
+        if (comm[start] == 0)
+            break;
 
         if (window > COMM_HINT_MAX_LEN)
             window = COMM_HINT_MAX_LEN;
 
 #pragma unroll
         for (int i = 0; i < COMM_HINT_MAX_LEN; i++) {
-            if (i < window)
+            if (i < window) {
                 key.bytes[i] = comm[start + i];
+                if (key.bytes[i] == 0 && zero_at < 0)
+                    zero_at = i;
+            }
         }
+        if (zero_at >= 0 && zero_at < window)
+            window = zero_at;
 
 #pragma unroll
         for (int len = COMM_HINT_MAX_LEN; len >= 1; len--) {
             if (len > window)
+                continue;
+            if (!(lengths & (1u << (len - 1))))
                 continue;
             key.len = (__u8)len;
             if (bpf_map_lookup_elem(&comm_hints, &key))

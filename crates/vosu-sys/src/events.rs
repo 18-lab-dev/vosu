@@ -178,14 +178,26 @@ pub enum CommHintsError {
     Empty { index: usize },
     #[error("comm hint at index {index} is {len} bytes, over the {MAX_COMM_HINT_LEN}-byte limit")]
     TooLong { index: usize, len: usize },
+    #[error(
+        "comm hint at index {index} contains a NUL byte, which would match every \
+         process (the kernel/CN_PROC `comm` field is always NUL-padded)"
+    )]
+    ContainsNul { index: usize },
     #[error("{count} comm hints exceed the bounded pre-filter capacity of {MAX_COMM_HINTS}")]
     TooMany { count: usize },
 }
 
 impl CommHints {
     /// Validates every hint (non-empty, at most [`MAX_COMM_HINT_LEN`] bytes,
-    /// at most [`MAX_COMM_HINTS`] entries total), then deduplicates and
-    /// sorts them for deterministic iteration and diffing.
+    /// no NUL byte, at most [`MAX_COMM_HINTS`] entries total), then
+    /// deduplicates and sorts them for deterministic iteration and diffing.
+    ///
+    /// A NUL byte is rejected rather than matched literally: every `comm`
+    /// source (`bpf_get_current_comm`, the kernel string-read helpers, and
+    /// CN_PROC's fixed-width field) is NUL-padded, so a hint containing one
+    /// -- e.g. a bare `"\0"` -- would match every process, and a trailing
+    /// `"x\0"` would act as a silent suffix anchor, contradicting the
+    /// substring rule in `docs/v2/plugin-abi.md` Sec 6.1.
     pub fn new<I, S>(hints: I) -> Result<Self, CommHintsError>
     where
         I: IntoIterator<Item = S>,
@@ -202,6 +214,9 @@ impl CommHints {
                     index,
                     len: hint.len(),
                 });
+            }
+            if hint.contains(&0) {
+                return Err(CommHintsError::ContainsNul { index });
             }
             collected.push(hint.to_vec());
         }
@@ -230,12 +245,6 @@ impl CommHints {
         self.hints.iter().map(Vec::as_slice)
     }
 
-    fn contains(&self, hint: &[u8]) -> bool {
-        self.hints
-            .binary_search_by(|existing| existing.as_slice().cmp(hint))
-            .is_ok()
-    }
-
     /// Reports whether `comm` contains any hint as a substring -- the exact
     /// matching rule `docs/v2/plugin-abi.md` Sec 6.1 and the former
     /// hard-coded `osu!`/`osulazer.exe` filter both use.
@@ -254,6 +263,48 @@ impl CommHints {
 /// (`LinuxProcessEvents::set_comm_hints`).
 pub(super) trait ProcessCommFilter: Send + Sync {
     fn set_comm_hints(&self, hints: &CommHints) -> io::Result<()>;
+}
+
+/// Backend hook for one comm-hint insert or remove into an underlying map
+/// that has no atomic bulk-replace, used by [`diff_comm_hints`].
+pub(super) trait CommHintMapOps {
+    fn insert(&self, hint: &[u8]) -> io::Result<()>;
+    fn remove(&self, hint: &[u8]) -> io::Result<()>;
+}
+
+/// Diffs `shadow` against `hints` through `ops`: removes every shadow hint
+/// absent from `hints`, then adds every hint absent from `shadow` --
+/// mirroring the eBPF `tracked`-map diff pattern, since a
+/// `BPF_MAP_TYPE_HASH` has no atomic bulk-replace either.
+///
+/// `shadow` is updated immediately after each individual operation
+/// succeeds, so a partial failure -- this returns the first error and stops
+/// -- leaves `shadow` equal to exactly the hints `ops` actually holds at
+/// that point, never missing an applied add or keeping a removed one. A
+/// later retry resumes the diff from that consistent point instead of
+/// leaking an entry that was applied but forgotten (which would otherwise
+/// waste map capacity and could eventually fail a full replace with
+/// E2BIG).
+pub(super) fn diff_comm_hints(
+    shadow: &mut BTreeSet<Vec<u8>>,
+    hints: &CommHints,
+    ops: &impl CommHintMapOps,
+) -> io::Result<()> {
+    let target: BTreeSet<Vec<u8>> = hints.iter().map(<[u8]>::to_vec).collect();
+
+    let removed: Vec<Vec<u8>> = shadow.difference(&target).cloned().collect();
+    for hint in removed {
+        ops.remove(&hint)?;
+        shadow.remove(&hint);
+    }
+
+    let added: Vec<Vec<u8>> = target.difference(shadow).cloned().collect();
+    for hint in added {
+        ops.insert(&hint)?;
+        shadow.insert(hint);
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -563,380 +614,5 @@ impl Drop for LinuxProcessEvents {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct FailOnceTrackingControl(AtomicU64);
-
-    impl ProcessTrackingControl for FailOnceTrackingControl {
-        fn replace_tracked(&self, _tracked: &BTreeSet<Pid>) -> io::Result<()> {
-            if self.0.fetch_add(1, Ordering::Relaxed) == 0 {
-                Err(io::Error::other("synthetic map failure"))
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    struct NoopCommFilter;
-
-    impl ProcessCommFilter for NoopCommFilter {
-        fn set_comm_hints(&self, _hints: &CommHints) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    struct FailOnceCommFilter(AtomicU64);
-
-    impl ProcessCommFilter for FailOnceCommFilter {
-        fn set_comm_hints(&self, _hints: &CommHints) -> io::Result<()> {
-            if self.0.fetch_add(1, Ordering::Relaxed) == 0 {
-                Err(io::Error::other("synthetic comm-filter failure"))
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    fn events_with_tracking_control(
-        tracking_control: Arc<dyn ProcessTrackingControl>,
-    ) -> LinuxProcessEvents {
-        LinuxProcessEvents {
-            mode: ProcessEventMode::Ebpf,
-            notify: Arc::new(Notify::new()),
-            healthy: Arc::new(AtomicBool::new(true)),
-            event_count: Arc::new(AtomicU64::new(0)),
-            reconciliation_request_count: Arc::new(AtomicU64::new(0)),
-            queue: Arc::new(Mutex::new(EventQueue::default())),
-            tracking_control: Some(tracking_control),
-            comm_filter: Arc::new(NoopCommFilter),
-            cancel: Arc::new(AtomicBool::new(false)),
-            task: None,
-        }
-    }
-
-    #[test]
-    fn tracking_control_failure_preserves_queue_and_successful_retry_commits() {
-        let control = Arc::new(FailOnceTrackingControl(AtomicU64::new(0)));
-        let events = events_with_tracking_control(control.clone());
-        events
-            .queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .replace_tracked([3]);
-
-        events.replace_tracked([7]);
-        assert!(!events.healthy());
-        assert_eq!(events.reconciliation_request_count(), 1);
-        assert_eq!(
-            events
-                .queue
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .tracked,
-            BTreeSet::from([3]),
-        );
-
-        events.replace_tracked([8]);
-        assert_eq!(control.0.load(Ordering::Relaxed), 2);
-        assert_eq!(
-            events
-                .queue
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .tracked,
-            BTreeSet::from([8]),
-        );
-        assert_eq!(events.reconciliation_request_count(), 1);
-        assert!(events.drain().needs_reconcile);
-    }
-
-    #[test]
-    fn absent_mode_uses_auto_while_explicit_polling_stays_disabled() {
-        assert_eq!(
-            ProcessEventMode::configured(None).unwrap(),
-            Some(ProcessEventMode::Auto)
-        );
-        for value in ["", "off", "poll"] {
-            assert_eq!(ProcessEventMode::configured(Some(value)).unwrap(), None);
-        }
-        assert_eq!(
-            ProcessEventMode::configured(Some("cn-proc")).unwrap(),
-            Some(ProcessEventMode::CnProc)
-        );
-        assert_eq!(
-            ProcessEventMode::configured(Some("ebpf")).unwrap(),
-            Some(ProcessEventMode::Ebpf)
-        );
-        assert!(ProcessEventMode::configured(Some("unknown")).is_err());
-    }
-
-    #[test]
-    fn queue_ignores_untracked_exit_and_coalesces_same_tgid() {
-        let mut queue = EventQueue::default();
-        assert!(!queue.push(ProcessEvent {
-            tgid: 8,
-            kind: ProcessEventKind::Exit,
-        }));
-        assert!(queue.push(ProcessEvent {
-            tgid: 8,
-            kind: ProcessEventKind::Inspect,
-        }));
-        assert!(queue.push(ProcessEvent {
-            tgid: 8,
-            kind: ProcessEventKind::Exit,
-        }));
-        let batch = queue.drain();
-        assert!(batch.inspect.is_empty());
-        assert!(batch.exit.is_empty());
-        assert!(queue.push(ProcessEvent {
-            tgid: 7,
-            kind: ProcessEventKind::Inspect,
-        }));
-        queue.replace_tracked([7]);
-        assert!(queue.push(ProcessEvent {
-            tgid: 7,
-            kind: ProcessEventKind::Exit,
-        }));
-
-        let batch = queue.drain();
-        assert_eq!(batch.exit, [7]);
-        assert!(batch.inspect.is_empty());
-        assert!(!batch.needs_reconcile);
-    }
-
-    #[test]
-    fn ebpf_queue_reconciles_untracked_exit() {
-        let mut queue = EventQueue {
-            reconcile_untracked_exit: true,
-            ..EventQueue::default()
-        };
-
-        assert!(queue.push(ProcessEvent {
-            tgid: 8,
-            kind: ProcessEventKind::Exit,
-        }));
-        let batch = queue.drain();
-        assert!(batch.inspect.is_empty());
-        assert!(batch.exit.is_empty());
-        assert!(batch.needs_reconcile);
-    }
-
-    #[test]
-    fn queue_suppresses_tracked_inspects_across_drains() {
-        let mut queue = EventQueue::default();
-        queue.replace_tracked([7]);
-
-        for _ in 0..2 {
-            assert!(!queue.push(ProcessEvent {
-                tgid: 7,
-                kind: ProcessEventKind::Inspect,
-            }));
-            let batch = queue.drain();
-            assert!(batch.inspect.is_empty());
-            assert!(batch.exit.is_empty());
-        }
-    }
-
-    #[test]
-    fn queue_preserves_exit_and_reconciles_inspect_conflicts() {
-        let mut queue = EventQueue::default();
-        queue.replace_tracked([7]);
-        assert!(queue.push(ProcessEvent {
-            tgid: 7,
-            kind: ProcessEventKind::Exit,
-        }));
-        assert!(queue.push(ProcessEvent {
-            tgid: 7,
-            kind: ProcessEventKind::Inspect,
-        }));
-
-        let batch = queue.drain();
-        assert_eq!(batch.exit, [7]);
-        assert!(batch.inspect.is_empty());
-        assert!(batch.needs_reconcile);
-
-        assert!(queue.push(ProcessEvent {
-            tgid: 7,
-            kind: ProcessEventKind::Inspect,
-        }));
-        let batch = queue.drain();
-        assert!(batch.inspect.is_empty());
-        assert!(batch.exit.is_empty());
-        assert!(batch.needs_reconcile);
-    }
-
-    #[test]
-    fn queue_keeps_untracked_inspects_for_generic_rename_discovery() {
-        let mut queue = EventQueue::default();
-
-        for _ in 0..2 {
-            assert!(queue.push(ProcessEvent {
-                tgid: 7,
-                kind: ProcessEventKind::Inspect,
-            }));
-            let batch = queue.drain();
-            assert_eq!(batch.inspect, [7]);
-            assert!(batch.exit.is_empty());
-        }
-    }
-
-    #[test]
-    fn replacing_tracked_set_discards_removed_exit_state() {
-        let mut queue = EventQueue::default();
-        queue.replace_tracked([7]);
-        assert!(queue.push(ProcessEvent {
-            tgid: 7,
-            kind: ProcessEventKind::Exit,
-        }));
-        queue.drain();
-
-        queue.replace_tracked([7, 8]);
-        assert!(queue.exiting.contains(&7));
-        queue.replace_tracked([8]);
-        assert!(!queue.exiting.contains(&7));
-        assert!(queue.push(ProcessEvent {
-            tgid: 7,
-            kind: ProcessEventKind::Inspect,
-        }));
-        let batch = queue.drain();
-        assert_eq!(batch.inspect, [7]);
-        assert!(batch.exit.is_empty());
-    }
-
-    #[test]
-    fn queue_overflow_latches_one_reconciliation() {
-        let mut queue = EventQueue::default();
-        for tgid in 1..=MAX_PENDING_EVENTS as Pid {
-            assert!(queue.push(ProcessEvent {
-                tgid,
-                kind: ProcessEventKind::Inspect,
-            }));
-        }
-        assert!(!queue.push(ProcessEvent {
-            tgid: MAX_PENDING_EVENTS as Pid + 1,
-            kind: ProcessEventKind::Inspect,
-        }));
-        assert!(queue.needs_reconcile);
-        assert!(queue.drain().needs_reconcile);
-        assert!(!queue.drain().needs_reconcile);
-    }
-    #[test]
-    fn reconciliation_counter_only_records_new_latches() {
-        let counter = AtomicU64::new(0);
-        let mut queue = EventQueue::default();
-
-        record_reconciliation_request(&counter, queue.request_reconcile());
-        record_reconciliation_request(&counter, queue.request_reconcile());
-        assert_eq!(counter.load(Ordering::Relaxed), 1);
-
-        assert!(queue.drain().needs_reconcile);
-        record_reconciliation_request(&counter, queue.request_reconcile());
-        assert_eq!(counter.load(Ordering::Relaxed), 2);
-    }
-
-    #[test]
-    fn queue_bounds_exit_tracking_and_reconciles_overflow() {
-        let mut queue = EventQueue::default();
-        queue.replace_tracked(1..=MAX_PENDING_EVENTS as Pid + 1);
-
-        for tgid in 1..=MAX_PENDING_EVENTS as Pid {
-            assert!(queue.push(ProcessEvent {
-                tgid,
-                kind: ProcessEventKind::Exit,
-            }));
-        }
-        assert!(!queue.push(ProcessEvent {
-            tgid: MAX_PENDING_EVENTS as Pid + 1,
-            kind: ProcessEventKind::Exit,
-        }));
-
-        assert_eq!(queue.exiting.len(), MAX_PENDING_EVENTS);
-        assert!(queue.needs_reconcile);
-    }
-
-    fn events_with_comm_filter(comm_filter: Arc<dyn ProcessCommFilter>) -> LinuxProcessEvents {
-        LinuxProcessEvents {
-            mode: ProcessEventMode::Ebpf,
-            notify: Arc::new(Notify::new()),
-            healthy: Arc::new(AtomicBool::new(true)),
-            event_count: Arc::new(AtomicU64::new(0)),
-            reconciliation_request_count: Arc::new(AtomicU64::new(0)),
-            queue: Arc::new(Mutex::new(EventQueue::default())),
-            tracking_control: None,
-            comm_filter,
-            cancel: Arc::new(AtomicBool::new(false)),
-            task: None,
-        }
-    }
-
-    #[test]
-    fn comm_filter_failure_preserves_health_and_successful_retry_clears_it() {
-        let filter = Arc::new(FailOnceCommFilter(AtomicU64::new(0)));
-        let events = events_with_comm_filter(filter.clone());
-        let hints = CommHints::new(["osu!"]).unwrap();
-
-        assert!(events.set_comm_hints(&hints).is_err());
-        assert!(!events.healthy());
-        assert_eq!(events.reconciliation_request_count(), 1);
-
-        assert!(events.set_comm_hints(&hints).is_ok());
-        assert_eq!(filter.0.load(Ordering::Relaxed), 2);
-        assert_eq!(events.reconciliation_request_count(), 1);
-        assert!(events.drain().needs_reconcile);
-    }
-
-    #[test]
-    fn comm_hints_reject_empty_overlong_and_oversized_sets() {
-        assert_eq!(
-            CommHints::new([""]).unwrap_err(),
-            CommHintsError::Empty { index: 0 }
-        );
-        assert_eq!(
-            CommHints::new(["osu!", ""]).unwrap_err(),
-            CommHintsError::Empty { index: 1 }
-        );
-
-        let max_len_hint = vec![b'a'; MAX_COMM_HINT_LEN];
-        assert_eq!(CommHints::new([max_len_hint]).unwrap().len(), 1);
-
-        let over_len_hint = vec![b'a'; MAX_COMM_HINT_LEN + 1];
-        assert_eq!(
-            CommHints::new([over_len_hint]).unwrap_err(),
-            CommHintsError::TooLong {
-                index: 0,
-                len: MAX_COMM_HINT_LEN + 1,
-            }
-        );
-
-        let too_many: Vec<String> = (0..=MAX_COMM_HINTS)
-            .map(|index| format!("h{index}"))
-            .collect();
-        assert_eq!(
-            CommHints::new(too_many).unwrap_err(),
-            CommHintsError::TooMany {
-                count: MAX_COMM_HINTS + 1,
-            }
-        );
-
-        let exactly_bounded: Vec<String> = (0..MAX_COMM_HINTS)
-            .map(|index| format!("h{index}"))
-            .collect();
-        assert_eq!(
-            CommHints::new(exactly_bounded).unwrap().len(),
-            MAX_COMM_HINTS
-        );
-    }
-
-    #[test]
-    fn comm_hints_dedupe_and_match_substrings_like_the_former_hardcoded_filter() {
-        let hints = CommHints::new(["osu!", "osulazer.exe", "osu!"]).unwrap();
-        assert_eq!(hints.len(), 2);
-
-        assert!(hints.matches(b"bench-osu!-away"));
-        assert!(hints.matches(b"osulazer.exe"));
-        assert!(!hints.matches(b"unrelated"));
-        assert!(!hints.matches(b""));
-        assert!(!CommHints::default().matches(b"osu!"));
-    }
-}
+#[path = "events_tests.rs"]
+mod tests;

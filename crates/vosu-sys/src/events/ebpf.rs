@@ -13,8 +13,9 @@ use libbpf_rs::{
 };
 
 use super::{
-    CommHints, MAX_COMM_HINT_LEN, MAX_PENDING_EVENTS, Pid, ProcessCommFilter, ProcessEvent,
-    ProcessEventKind, ProcessEventLoop, ProcessEventPoll, ProcessTrackingControl,
+    CommHintMapOps, CommHints, MAX_COMM_HINT_LEN, MAX_PENDING_EVENTS, Pid, ProcessCommFilter,
+    ProcessEvent, ProcessEventKind, ProcessEventLoop, ProcessEventPoll, ProcessTrackingControl,
+    diff_comm_hints,
 };
 
 const BPF_OBJECT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/process_events.bpf.o"));
@@ -31,6 +32,16 @@ fn comm_hint_key(hint: &[u8]) -> [u8; COMM_HINT_KEY_LEN] {
     key[0] = hint.len() as u8;
     key[1..1 + hint.len()].copy_from_slice(hint);
     key
+}
+
+const COMM_HINT_LENGTHS_KEY: [u8; 4] = 0_u32.to_ne_bytes();
+
+/// Bit `len - 1` set for every hint length present in `hints`, matching
+/// `comm_hint_lengths` in `bpf/process_events.bpf.c`. `CommHints::new`
+/// bounds every length to `1..=MAX_COMM_HINT_LEN` (15), so this fits in a
+/// `u16`.
+fn hint_lengths_bitmask<'a>(hints: impl Iterator<Item = &'a [u8]>) -> u16 {
+    hints.fold(0_u16, |mask, hint| mask | (1_u16 << (hint.len() - 1)))
 }
 
 const EVENT_RECORD_SIZE: usize = 8;
@@ -126,12 +137,51 @@ fn delete_if_present(map: &MapHandle, key: &[u8], label: &str) -> io::Result<()>
 }
 
 /// Live [`CommHints`] updates for the eBPF backend: diffs the requested set
-/// against a shadow copy and applies only the add/remove delta to the
-/// `comm_hints` BPF map, mirroring [`EbpfTrackingControl`]'s pattern for the
-/// `tracked` map (a `BPF_MAP_TYPE_HASH` has no atomic bulk-replace).
+/// against a shadow copy via [`diff_comm_hints`] and applies only the
+/// add/remove delta to the `comm_hints` BPF map, mirroring
+/// [`EbpfTrackingControl`]'s pattern for the `tracked` map (a
+/// `BPF_MAP_TYPE_HASH` has no atomic bulk-replace). Also keeps
+/// `comm_hint_lengths` -- the length bitmap `candidate_comm` in
+/// `bpf/process_events.bpf.c` reads to skip lookups for unregistered
+/// lengths -- in step with the diff.
 struct EbpfCommFilter {
     comm_hints: MapHandle,
-    shadow: Mutex<CommHints>,
+    comm_hint_lengths: MapHandle,
+    shadow: Mutex<BTreeSet<Vec<u8>>>,
+}
+
+struct BpfCommHintOps<'a> {
+    map: &'a MapHandle,
+}
+
+impl CommHintMapOps for BpfCommHintOps<'_> {
+    fn insert(&self, hint: &[u8]) -> io::Result<()> {
+        self.map
+            .update(&comm_hint_key(hint), &[1], MapFlags::ANY)
+            .map_err(|error| {
+                io::Error::other(format!(
+                    "cannot seed comm hint in eBPF comm_hints map: {error}"
+                ))
+            })
+    }
+
+    fn remove(&self, hint: &[u8]) -> io::Result<()> {
+        delete_if_present(self.map, &comm_hint_key(hint), "comm hint")
+    }
+}
+
+impl EbpfCommFilter {
+    fn update_lengths(&self, lengths: u16) -> io::Result<()> {
+        self.comm_hint_lengths
+            .update(
+                &COMM_HINT_LENGTHS_KEY,
+                &lengths.to_ne_bytes(),
+                MapFlags::ANY,
+            )
+            .map_err(|error| {
+                io::Error::other(format!("cannot update eBPF comm_hint_lengths map: {error}"))
+            })
+    }
 }
 
 impl ProcessCommFilter for EbpfCommFilter {
@@ -141,29 +191,25 @@ impl ProcessCommFilter for EbpfCommFilter {
             .lock()
             .map_err(|_| io::Error::other("eBPF comm-hints shadow was poisoned"))?;
 
-        let removed: Vec<Vec<u8>> = shadow
-            .iter()
-            .filter(|hint| !hints.contains(hint))
-            .map(<[u8]>::to_vec)
-            .collect();
-        for hint in &removed {
-            delete_if_present(&self.comm_hints, &comm_hint_key(hint), "comm hint")?;
-        }
+        // Widen comm_hint_lengths to the union of the current and target
+        // length sets before touching comm_hints, so every length that is
+        // still (or about to become) present stays probed for the whole
+        // diff below; only once the diff fully lands do we narrow it to
+        // exactly the target lengths.
+        let union_lengths = hint_lengths_bitmask(shadow.iter().map(Vec::as_slice))
+            | hint_lengths_bitmask(hints.iter());
+        self.update_lengths(union_lengths)?;
 
-        for hint in hints.iter() {
-            if !shadow.contains(hint) {
-                self.comm_hints
-                    .update(&comm_hint_key(hint), &[1], MapFlags::ANY)
-                    .map_err(|error| {
-                        io::Error::other(format!(
-                            "cannot seed comm hint in eBPF comm_hints map: {error}"
-                        ))
-                    })?;
-            }
-        }
+        diff_comm_hints(
+            &mut shadow,
+            hints,
+            &BpfCommHintOps {
+                map: &self.comm_hints,
+            },
+        )?;
 
-        *shadow = hints.clone();
-        Ok(())
+        let final_lengths = hint_lengths_bitmask(shadow.iter().map(Vec::as_slice));
+        self.update_lengths(final_lengths)
     }
 }
 
@@ -252,12 +298,15 @@ pub(super) fn open(comm_hints: &CommHints) -> io::Result<EbpfOpened> {
         .load()
         .map_err(|error| io::Error::other(format!("eBPF object load failed: {error}")))?;
 
-    // Seed comm_hints before attaching any tracepoint below, so no exec/exit/rename can
-    // ever observe a partially-filled or empty filter.
+    // Seed comm_hints and comm_hint_lengths before attaching any tracepoint
+    // below, so no exec/exit/rename can ever observe a partially-filled or
+    // empty filter.
     let comm_hints_map = clone_map_handle(&object, "comm_hints")?;
+    let comm_hint_lengths_map = clone_map_handle(&object, "comm_hint_lengths")?;
     let comm_filter: Arc<dyn ProcessCommFilter> = Arc::new(EbpfCommFilter {
         comm_hints: comm_hints_map,
-        shadow: Mutex::new(CommHints::default()),
+        comm_hint_lengths: comm_hint_lengths_map,
+        shadow: Mutex::new(BTreeSet::new()),
     });
     comm_filter.set_comm_hints(comm_hints)?;
 
