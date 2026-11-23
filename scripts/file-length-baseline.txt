@@ -1,7 +1,6 @@
 1001 crates/vosu-osu-state/src/bundle/tests/transitions.rs
 1005 src/server/routes.rs
 1005 tests/server_compat.rs
-1018 crates/vosu-core/src/plugin/read_plan/tests.rs
 1019 src/api/v2/tests.rs
 1027 crates/vosu-osu-reader/src/memory/lazer/tests_behavior.rs
 1041 src/runtime/tests/service.rs
@@ -9,7 +8,6 @@
 1047 crates/vosu-osu-state/src/bundle/reducer.rs
 1059 crates/vosu-osu-reader/src/memory/stable/batched.rs
 1085 src/runtime/tests/projection.rs
-1102 crates/vosu-core/src/plugin/host/tests.rs
 1115 crates/vosu-osu-reader/src/memory/lazer/reader.rs
 1116 crates/vosu-osu-state/src/bundle/tests/epochs.rs
 1143 tests/daemon_smoke.rs
