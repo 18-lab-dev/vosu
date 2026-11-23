@@ -416,6 +416,14 @@ impl Drop for DiscoveryService {
 mod linux_source;
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 pub use linux_source::LinuxSource;
+mod foreground;
+pub use foreground::FOREGROUND_POLL_INTERVAL;
+#[cfg(windows)]
+pub use foreground::ForegroundPoller;
+
+mod windows_source;
+#[cfg(windows)]
+pub use windows_source::WindowsProcessSource;
 
 #[cfg(test)]
 mod tests;
