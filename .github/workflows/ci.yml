@@ -151,6 +151,12 @@ jobs:
         env:
           C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
         run: cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked
+      - name: Check for broken rustdoc intra-doc links
+        if: needs.changes.outputs.verified != 'true'
+        env:
+          C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links
+        run: cargo doc --workspace --no-deps --all-features --locked
       - name: Warm build for cache refresh (already verified on ci/<topic>)
         if: needs.changes.outputs.verified == 'true' && steps.target-cache.outputs.cache-hit != 'true'
         env:

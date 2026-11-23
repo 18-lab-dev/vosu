@@ -102,7 +102,7 @@ python scripts/land.py [--topic <name>]
 ```
 
 - `prepush.py` refuses a dirty tree. It runs every applicable `ci.yml` check against `HEAD`:
-  - formatting, Linux Clippy and the full workspace tests (unit/integration tests through `cargo nextest run`, doctests through a separate `cargo test --doc`) — a test that runs past `.config/nextest.toml`'s `slow-timeout` bound is killed and reported by name instead of hanging the gate;
+  - formatting, Linux Clippy and the full workspace tests (unit/integration tests through `cargo nextest run`, doctests through a separate `cargo test --doc`) — a test that runs past `.config/nextest.toml`'s `slow-timeout` bound is killed and reported by name instead of hanging the gate; `cargo doc --workspace --no-deps --all-features --locked` with `RUSTDOCFLAGS=-D rustdoc::broken_intra_doc_links` denies broken intra-doc links;
   - the repository check scripts and every `scripts/test_*.py` suite;
   - actionlint when workflows changed;
   - Windows MSVC cross-Clippy;

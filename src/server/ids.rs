@@ -1,5 +1,5 @@
 //! Shared identifier validation for anything routable under a reserved prefix
-//! (currently out-of-process tools, dispatched through [`super::routes::RouteExtension`]).
+//! (currently out-of-process tools, dispatched through [`super::routes::RouteDelegate`]).
 
 /// `^[a-z0-9][a-z0-9-]{0,31}$`
 pub fn valid_id(id: &str) -> bool {

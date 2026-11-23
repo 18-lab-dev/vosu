@@ -24,6 +24,7 @@ CARGO_ENV = {
     "CARGO_TARGET_DIR": os.environ.get("CARGO_TARGET_DIR", "/tmp/vosu-target-prepush"),
 }
 LINUX_ENV = {**CARGO_ENV, "C_INCLUDE_PATH": "/usr/include/x86_64-linux-gnu"}
+DOC_LINUX_ENV = {**LINUX_ENV, "RUSTDOCFLAGS": "-D rustdoc::broken_intra_doc_links"}
 
 # Native commands this file does not run directly; scripts/native-ci.ps1 runs
 # them inside the VM. Keep this in sync with that script's own comment header
@@ -182,6 +183,7 @@ LINUX_STEPS = [
     ("clippy-linux", ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"], LINUX_ENV, ()),
     ("test-linux", ["cargo", "nextest", "run", "--workspace", "--lib", "--bins", "--tests", "--examples", "--all-features", "--locked"], LINUX_ENV, ()),
     ("test-linux-doc", ["cargo", "test", "--workspace", "--doc", "--all-features", "--locked"], LINUX_ENV, ()),
+    ("doc-linux", ["cargo", "doc", "--workspace", "--no-deps", "--all-features", "--locked"], DOC_LINUX_ENV, ()),
     ("doc-links", [sys.executable, "scripts/check-doc-links.py"], None, ()),
     ("file-length", [sys.executable, "scripts/check-file-length.py"], None, ()),
     ("brand", [sys.executable, "scripts/check-brand.py"], None, ()),
@@ -362,7 +364,7 @@ def main():
         "--skip",
         default="",
         help="Comma-separated step names to skip for local iteration (fmt, clippy-linux, test-linux, "
-        "doc-links, file-length, brand, lint-expectations, module-boundaries, license-notices, "
+        "doc-linux, doc-links, file-length, brand, lint-expectations, module-boundaries, license-notices, "
         "asset-hashes, script-tests, deleted-assertions, actionlint, xwin-clippy, standalone-crates, "
         "dashboard, native). "
         "land.py refuses evidence that skipped a required step.",
