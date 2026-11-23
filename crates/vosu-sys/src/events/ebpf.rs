@@ -34,14 +34,18 @@ fn comm_hint_key(hint: &[u8]) -> [u8; COMM_HINT_KEY_LEN] {
     key
 }
 
-const COMM_HINT_LENGTHS_KEY: [u8; 4] = 0_u32.to_ne_bytes();
-
-/// Bit `len - 1` set for every hint length present in `hints`, matching
-/// `comm_hint_lengths` in `bpf/process_events.bpf.c`. `CommHints::new`
-/// bounds every length to `1..=MAX_COMM_HINT_LEN` (15), so this fits in a
-/// `u16`.
-fn hint_lengths_bitmask<'a>(hints: impl Iterator<Item = &'a [u8]>) -> u16 {
-    hints.fold(0_u16, |mask, hint| mask | (1_u16 << (hint.len() - 1)))
+/// One entry per possible hint length (index `len - 1`), matching
+/// `comm_hint_len_slots` in `bpf/process_events.bpf.c`: slot `len - 1`
+/// holds `len` when `hints` has at least one hint of that length, 0
+/// otherwise. `CommHints::new` bounds every length to
+/// `1..=MAX_COMM_HINT_LEN` (15), so every hint maps to a valid slot.
+fn length_slots<'a>(hints: impl Iterator<Item = &'a [u8]>) -> [u8; MAX_COMM_HINT_LEN] {
+    let mut slots = [0_u8; MAX_COMM_HINT_LEN];
+    for hint in hints {
+        let len = hint.len();
+        slots[len - 1] = len as u8;
+    }
+    slots
 }
 
 const EVENT_RECORD_SIZE: usize = 8;
@@ -141,12 +145,12 @@ fn delete_if_present(map: &MapHandle, key: &[u8], label: &str) -> io::Result<()>
 /// add/remove delta to the `comm_hints` BPF map, mirroring
 /// [`EbpfTrackingControl`]'s pattern for the `tracked` map (a
 /// `BPF_MAP_TYPE_HASH` has no atomic bulk-replace). Also keeps
-/// `comm_hint_lengths` -- the length bitmap `candidate_comm` in
+/// `comm_hint_len_slots` -- the per-length slot array `candidate_comm` in
 /// `bpf/process_events.bpf.c` reads to skip lookups for unregistered
 /// lengths -- in step with the diff.
 struct EbpfCommFilter {
     comm_hints: MapHandle,
-    comm_hint_lengths: MapHandle,
+    comm_hint_len_slots: MapHandle,
     shadow: Mutex<BTreeSet<Vec<u8>>>,
 }
 
@@ -171,16 +175,17 @@ impl CommHintMapOps for BpfCommHintOps<'_> {
 }
 
 impl EbpfCommFilter {
-    fn update_lengths(&self, lengths: u16) -> io::Result<()> {
-        self.comm_hint_lengths
-            .update(
-                &COMM_HINT_LENGTHS_KEY,
-                &lengths.to_ne_bytes(),
-                MapFlags::ANY,
-            )
-            .map_err(|error| {
-                io::Error::other(format!("cannot update eBPF comm_hint_lengths map: {error}"))
-            })
+    fn update_length_slots(&self, slots: &[u8; MAX_COMM_HINT_LEN]) -> io::Result<()> {
+        for (index, slot) in slots.iter().enumerate() {
+            self.comm_hint_len_slots
+                .update(&(index as u32).to_ne_bytes(), &[*slot], MapFlags::ANY)
+                .map_err(|error| {
+                    io::Error::other(format!(
+                        "cannot update eBPF comm_hint_len_slots map: {error}"
+                    ))
+                })?;
+        }
+        Ok(())
     }
 }
 
@@ -191,14 +196,13 @@ impl ProcessCommFilter for EbpfCommFilter {
             .lock()
             .map_err(|_| io::Error::other("eBPF comm-hints shadow was poisoned"))?;
 
-        // Widen comm_hint_lengths to the union of the current and target
+        // Widen comm_hint_len_slots to the union of the current and target
         // length sets before touching comm_hints, so every length that is
         // still (or about to become) present stays probed for the whole
         // diff below; only once the diff fully lands do we narrow it to
         // exactly the target lengths.
-        let union_lengths = hint_lengths_bitmask(shadow.iter().map(Vec::as_slice))
-            | hint_lengths_bitmask(hints.iter());
-        self.update_lengths(union_lengths)?;
+        let union_slots = length_slots(shadow.iter().map(Vec::as_slice).chain(hints.iter()));
+        self.update_length_slots(&union_slots)?;
 
         diff_comm_hints(
             &mut shadow,
@@ -208,8 +212,8 @@ impl ProcessCommFilter for EbpfCommFilter {
             },
         )?;
 
-        let final_lengths = hint_lengths_bitmask(shadow.iter().map(Vec::as_slice));
-        self.update_lengths(final_lengths)
+        let final_slots = length_slots(shadow.iter().map(Vec::as_slice));
+        self.update_length_slots(&final_slots)
     }
 }
 
@@ -298,14 +302,14 @@ pub(super) fn open(comm_hints: &CommHints) -> io::Result<EbpfOpened> {
         .load()
         .map_err(|error| io::Error::other(format!("eBPF object load failed: {error}")))?;
 
-    // Seed comm_hints and comm_hint_lengths before attaching any tracepoint
-    // below, so no exec/exit/rename can ever observe a partially-filled or
-    // empty filter.
+    // Seed comm_hints and comm_hint_len_slots before attaching any
+    // tracepoint below, so no exec/exit/rename can ever observe a
+    // partially-filled or empty filter.
     let comm_hints_map = clone_map_handle(&object, "comm_hints")?;
-    let comm_hint_lengths_map = clone_map_handle(&object, "comm_hint_lengths")?;
+    let comm_hint_len_slots_map = clone_map_handle(&object, "comm_hint_len_slots")?;
     let comm_filter: Arc<dyn ProcessCommFilter> = Arc::new(EbpfCommFilter {
         comm_hints: comm_hints_map,
-        comm_hint_lengths: comm_hint_lengths_map,
+        comm_hint_len_slots: comm_hint_len_slots_map,
         shadow: Mutex::new(BTreeSet::new()),
     });
     comm_filter.set_comm_hints(comm_hints)?;

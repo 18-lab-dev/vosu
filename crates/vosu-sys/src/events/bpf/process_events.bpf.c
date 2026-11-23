@@ -86,21 +86,23 @@ struct {
 } comm_hints SEC(".maps");
 
 /*
- * comm_hint_lengths holds one __u16 bitmap at key 0: bit (len - 1) is set
- * when comm_hints currently has at least one hint of that length. Userspace
- * (EbpfCommFilter::set_comm_hints) widens this to the union of the current
- * and target length sets before diffing comm_hints, then narrows it to the
- * target set once the diff lands, so it is always a superset of the lengths
- * actually present. candidate_comm reads it once per call and skips the
- * length loop's bpf_map_lookup_elem entirely for any length with no
- * registered hint, instead of always probing all 15 lengths.
+ * comm_hint_len_slots holds one entry per possible hint length (index
+ * `len - 1`, length 1..=COMM_HINT_MAX_LEN): value `len` means comm_hints
+ * currently has at least one hint of that length, value 0 means skip.
+ * Userspace (EbpfCommFilter::set_comm_hints) widens this to the union of
+ * the current and target length sets before diffing comm_hints, then
+ * narrows it to the target set once the diff lands, so it is always a
+ * superset of the lengths actually present. candidate_comm reads one slot
+ * per outer-loop iteration and skips the inner window scan entirely for
+ * any length with no registered hint, instead of always probing all 15
+ * lengths against comm_hints.
  */
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 1);
+    __uint(max_entries, COMM_HINT_MAX_LEN);
     __type(key, __u32);
-    __type(value, __u16);
-} comm_hint_lengths SEC(".maps");
+    __type(value, __u8);
+} comm_hint_len_slots SEC(".maps");
 
 static __always_inline void record_drop(void)
 {
@@ -128,21 +130,21 @@ static __always_inline void record_drop(void)
  * forks compound multiplicatively across copies; on a real kernel that hit
  * the 1,000,000-processed-instruction verifier budget (total_states 81,783
  * vs. 2,754 at the hardcoded-filter baseline) despite a modest *static*
- * instruction count. See docs/v2/plugin-abi.md Sec 6.1 and the verifier
- * table ebpf-verify.py records for this file's history.
+ * instruction count. A later revision moved the window scan into
+ * bpf_loop() (BPF_FUNC_loop, Linux 5.17+) to get a single call site back,
+ * but that raised this file's floor above the ring buffer's 5.8 for no
+ * matching functional need.
  *
- * This version moves the per-start window scan into bpf_loop(), a kernel
- * helper (BPF_FUNC_loop, Linux 5.17+; see the floor note below) that calls
- * back into match_at_start() up to nr_loops times. The verifier checks a
- * callback function's body exactly once, independent of how many times the
- * runtime will invoke it or how many unrolled call sites would otherwise
- * exist -- so there is exactly one `bpf_map_lookup_elem` call site in the
- * whole translation unit, verified once, no matter how many hints are
- * registered or how long comm is. The per-length outer loop (1..=15) stays
- * #pragma unroll, but it only ever emits cheap branch/call instructions
- * (bitmap test, length comparison, one bpf_loop() call) -- no lookup, no
- * data-dependent forking before a lookup -- so unrolling it does not
- * reintroduce the state explosion.
+ * This version instead keeps both loops as plain, non-unrolled, bounded
+ * `for` loops: the outer loop (COMM_HINT_MAX_LEN slots) and the inner loop
+ * (TASK_COMM_LEN start positions) each have a fixed, compile-time trip
+ * count and no #pragma unroll, so the verifier analyzes each loop's body
+ * once -- the "bounded loops" feature (Linux 5.3+) that lets a plain
+ * `for (i = 0; i < N; i++)` loop pass without unrolling or a bpf_loop()
+ * callback. Because the body is walked once regardless of how many times
+ * it runs at runtime, there is exactly one `bpf_map_lookup_elem` call site
+ * against comm_hints in the whole translation unit, the same property the
+ * bpf_loop() callback had, without requiring 5.17.
  *
  * Two bounded, data-dependent cuts keep the common non-matching case cheap
  * without adding a verifier-unbounded loop:
@@ -150,63 +152,26 @@ static __always_inline void record_drop(void)
  *     probe-read helper used to fill it, zero-fill past the terminator),
  *     and no registered hint may contain a NUL (CommHints::new rejects
  *     that), so a window reaching comm's first NUL byte can never match.
- *     comm_len (the run of non-NUL bytes from byte 0) caps every length's
- *     nr_loops, so bpf_loop() never walks past the terminator and is
- *     skipped entirely for any registered length longer than comm_len.
- *   - comm_hint_lengths (set from userspace) limits the outer loop to
- *     lengths that actually have a registered hint, instead of calling
- *     bpf_loop() for all 15 lengths unconditionally.
+ *     comm_len (the run of non-NUL bytes from byte 0) bounds every
+ *     length's start positions, so the inner loop breaks before walking
+ *     past the terminator.
+ *   - comm_hint_len_slots (set from userspace) limits the outer loop to
+ *     lengths that actually have a registered hint, instead of probing
+ *     comm_hints for all 15 lengths unconditionally.
  * With the default two hints (lengths 4 and 12) a non-matching short comm
- * like "bash" (comm_len 4) now costs one comm_hint_lengths lookup, one
- * bpf_loop() call with a single iteration (length 4) and zero bpf_loop()
- * calls for length 12 (12 > comm_len) -- one comm_hints lookup total, not
- * the previous worst case of up to 16 gated lookups or the original
- * hardcoded filter's fixed 135.
+ * like "bash" (comm_len 4) now costs 15 cheap comm_hint_len_slots lookups
+ * (a COMM_HINT_MAX_LEN-entry BPF_MAP_TYPE_ARRAY, bounded and cheap) plus one
+ * comm_hints lookup for length 4's one valid start position and zero for
+ * length 12 (12 > comm_len) -- one comm_hints lookup total, not the
+ * previous worst case of up to 16 gated lookups or the original hardcoded
+ * filter's fixed 135.
  *
- * Minimum kernel: bpf_loop() (BPF_FUNC_loop) requires Linux 5.17+, raising
- * this file's floor from the ring buffer's 5.8 (process_events.bpf.c's
- * `events` map) to 5.17. On an older kernel the object fails to load and
- * the existing capability-aware eBPF -> CN_PROC -> polling fallback
- * (AGENTS.md "Linux process-event backends") selects CN_PROC instead, same
- * as any other eBPF load failure.
+ * Minimum kernel: 5.8, set by the ring buffer map (`events`) elsewhere in
+ * this file -- comm_hint matching above needs nothing newer than the
+ * bounded-loops verifier feature (5.3).
  */
-struct comm_match_ctx {
-    char comm[TASK_COMM_LEN];
-    __u8 len;
-    __u8 found;
-};
-
-static long match_at_start(__u32 start, void *ctx_ptr)
-{
-    struct comm_match_ctx *ctx = ctx_ptr;
-    struct comm_hint_key key = {};
-
-    key.len = ctx->len;
-#pragma unroll
-    for (int i = 0; i < COMM_HINT_MAX_LEN; i++) {
-        /* The explicit `start + i < TASK_COMM_LEN` bound (not just
-         * `i < ctx->len`) lets the verifier prove this stack read in
-         * bounds directly from start's scalar range, without depending on
-         * bpf_loop() having communicated nr_loops as an index bound. */
-        if (i < ctx->len && start + i < TASK_COMM_LEN)
-            key.bytes[i] = ctx->comm[start + i];
-    }
-    if (bpf_map_lookup_elem(&comm_hints, &key)) {
-        ctx->found = 1;
-        return 1;
-    }
-    return 0;
-}
-
 static __always_inline int candidate_comm(const char comm[TASK_COMM_LEN])
 {
-    __u32 lengths_key = 0;
-    __u16 *lengths_ptr = bpf_map_lookup_elem(&comm_hint_lengths, &lengths_key);
-    __u16 lengths = lengths_ptr ? *lengths_ptr : 0xffff;
-
-    if (!lengths)
-        return 0;
-
     __u8 comm_len = TASK_COMM_LEN;
 #pragma unroll
     for (int i = 0; i < TASK_COMM_LEN; i++) {
@@ -218,27 +183,48 @@ static __always_inline int candidate_comm(const char comm[TASK_COMM_LEN])
     if (comm_len == 0)
         return 0;
 
-    struct comm_match_ctx ctx = {};
-    __builtin_memcpy(ctx.comm, comm, TASK_COMM_LEN);
+    char local_comm[TASK_COMM_LEN];
+    __builtin_memcpy(local_comm, comm, TASK_COMM_LEN);
+
+    struct comm_hint_key key = {};
 
 #pragma clang loop unroll(disable)
-    for (int len = 1; len <= COMM_HINT_MAX_LEN; len++) {
-        if (!(lengths & (1u << (len - 1))))
+    for (__u8 len = 1; len <= COMM_HINT_MAX_LEN; len++) {
+        /* `len` is the loop's own induction variable, not a value trusted
+         * from the map read, so the verifier tracks its range (1..=15)
+         * precisely and cheaply the same way it would for any ordinary
+         * bounded counting loop. A length taken straight from the map's
+         * runtime byte would carry that value's full 0..255 range into
+         * every later comparison and loop bound, which the verifier
+         * cannot resolve against `comm_len`'s precisely tracked range
+         * without the search blowing past its complexity budget
+         * ("infinite loop detected" despite both loops being statically
+         * bounded). `slot` is only ever used as a map key, so its
+         * precision does not matter. */
+        __u32 slot = (__u32)(len - 1);
+        __u8 *slot_ptr = bpf_map_lookup_elem(&comm_hint_len_slots, &slot);
+
+        if (!slot_ptr || *slot_ptr == 0)
             continue;
         if (len > comm_len)
             continue;
 
-        ctx.len = (__u8)len;
-        ctx.found = 0;
-        /* Masked to 5 bits: the true range is 1..=TASK_COMM_LEN (16), but
-         * an explicit mask gives the verifier a tight tnum for nr_loops
-         * instead of inferring it from comm_len/len's wider scalar ranges,
-         * which otherwise costs much more precision-tracking work to
-         * propagate into the once-verified callback. */
-        __u32 nr_loops = ((__u32)(comm_len - len + 1)) & 0x1f;
-        bpf_loop(nr_loops, match_at_start, &ctx, 0);
-        if (ctx.found)
-            return 1;
+        key.len = len;
+
+#pragma clang loop unroll(disable)
+        for (__u32 start = 0; start < TASK_COMM_LEN; start++) {
+            if (start + len > comm_len)
+                break;
+
+#pragma clang loop unroll(full)
+            for (int i = 0; i < COMM_HINT_MAX_LEN; i++) {
+                if (i < len && start + i < TASK_COMM_LEN)
+                    key.bytes[i] = local_comm[start + i];
+            }
+
+            if (bpf_map_lookup_elem(&comm_hints, &key))
+                return 1;
+        }
     }
 
     return 0;
