@@ -24,10 +24,10 @@ fn outstanding_plans_enforces_the_cap_and_cancel_finish_lifecycle() {
         .begin(MAX_OUTSTANDING_ASYNC_PLANS as u64, 1)
         .unwrap();
 
-    outstanding.cancel(1);
+    let _ = outstanding.cancel(1);
     assert_eq!(outstanding.finish(1), FinishOutcome::Cancelled);
     // A plan id never admitted (already finished, or unknown) is a no-op.
-    outstanding.cancel(999);
+    let _ = outstanding.cancel(999);
     assert_eq!(outstanding.finish(999), FinishOutcome::Deliver);
 }
 
@@ -41,7 +41,7 @@ fn cancel_frees_the_slot_immediately_rather_than_waiting_for_finish() {
 
     // Cancelling must free the slot right away, before `finish` ever runs
     // for it (a plugin that cancels slow plans is not still refused).
-    outstanding.cancel(0);
+    let _ = outstanding.cancel(0);
     assert_eq!(outstanding.len(), MAX_OUTSTANDING_ASYNC_PLANS - 1);
     outstanding
         .begin(MAX_OUTSTANDING_ASYNC_PLANS as u64, 1)
@@ -69,7 +69,7 @@ fn begin_refuses_an_id_already_outstanding() {
 
     // Still refused while cancelled-but-not-yet-finished: re-submitting a
     // cancelled id's old id must not resurrect its stale result.
-    outstanding.cancel(5);
+    let _ = outstanding.cancel(5);
     assert_eq!(
         outstanding.begin(5, 1),
         Err(OutstandingPlansError::AlreadyOutstanding)
@@ -86,9 +86,37 @@ fn cancel_session_cancels_only_that_sessions_plans() {
     outstanding.begin(3, 20).unwrap();
     assert_eq!(outstanding.len(), 3);
 
-    outstanding.cancel_session(10);
+    let _ = outstanding.cancel_session(10);
     assert_eq!(outstanding.len(), 1);
     assert_eq!(outstanding.finish(1), FinishOutcome::Cancelled);
     assert_eq!(outstanding.finish(2), FinishOutcome::Cancelled);
     assert_eq!(outstanding.finish(3), FinishOutcome::Deliver);
+}
+
+/// F1: a plan cancelled while its job was still queued (never reached by
+/// a worker) must have its `cancelled`-set bookkeeping forgotten right
+/// at cancel time (`OutstandingPlans::forget_cancelled`), since its own
+/// job closure — the only other thing that ever clears that entry via
+/// `finish` — will now never run. 10,000 submit-cancel-forget iterations
+/// against the same handful of plan ids proves this: a leaked entry
+/// would make at least one of them permanently refuse re-admission with
+/// `AlreadyOutstanding`, which this loop would eventually trip.
+#[test]
+fn forget_cancelled_prevents_the_cancelled_set_from_leaking_queue_removed_plans() {
+    let outstanding = OutstandingPlans::new();
+    for plan in 0..10_000u64 {
+        let plan = plan % (MAX_OUTSTANDING_ASYNC_PLANS as u64);
+        outstanding
+            .begin(plan, 1)
+            .unwrap_or_else(|error| panic!("plan {plan} must still be admittable: {error:?}"));
+        outstanding.set_queue_ticket(plan, plan);
+        let ticket = outstanding
+            .cancel(plan)
+            .unwrap_or_else(|| panic!("plan {plan}'s own ticket must still be set"));
+        assert_eq!(ticket, plan);
+        // Simulates `ScanWorkerPool::cancel` confirming the job was still
+        // queued and so was removed before it could ever run.
+        outstanding.forget_cancelled(plan);
+    }
+    assert_eq!(outstanding.len(), 0);
 }

@@ -161,6 +161,168 @@ fn failed_create_unregisters_the_matcher_so_a_shadowed_plugin_still_gets_the_ses
         "the plugin whose create failed must never receive anything"
     );
 }
+/// A plugin whose own `create` blocks on a test-supplied gate until
+/// released — lets `matcher_registers_only_once_live_so_a_process_during_creating_goes_to_the_live_winner`
+/// hold `create_instance` open across a `process_appeared` call, proving
+/// F3: the `[match]` table is not yet registered while this id is still
+/// `Creating`, so that process can never be attached to it.
+mod gated_matcher_plugin {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Condvar, Mutex};
+
+    use vosu_plugin_api::{Init, Message, Plugin, PluginError, VtableHostServices};
+
+    pub struct CreateGate {
+        release: Mutex<bool>,
+        release_cv: Condvar,
+    }
+
+    impl CreateGate {
+        pub fn new() -> Arc<Self> {
+            Arc::new(Self {
+                release: Mutex::new(false),
+                release_cv: Condvar::new(),
+            })
+        }
+
+        pub fn release(&self) {
+            *self.release.lock().unwrap_or_else(|p| p.into_inner()) = true;
+            self.release_cv.notify_all();
+        }
+
+        fn wait_for_release(&self) {
+            let mut release = self.release.lock().unwrap_or_else(|p| p.into_inner());
+            while !*release {
+                release = self
+                    .release_cv
+                    .wait(release)
+                    .unwrap_or_else(|p| p.into_inner());
+            }
+        }
+    }
+
+    fn gate_registry() -> &'static Mutex<HashMap<String, Arc<CreateGate>>> {
+        static REGISTRY: std::sync::LazyLock<Mutex<HashMap<String, Arc<CreateGate>>>> =
+            std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+        &REGISTRY
+    }
+
+    pub fn register_gate(plugin_id: impl Into<String>, gate: Arc<CreateGate>) {
+        gate_registry()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(plugin_id.into(), gate);
+    }
+
+    pub struct GatedMatcherPlugin;
+
+    impl Plugin for GatedMatcherPlugin {
+        fn create(_host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
+            let gate = gate_registry()
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(&init.plugin_id)
+                .cloned()
+                .unwrap_or_else(|| panic!("no create gate registered for {:?}", init.plugin_id));
+            gate.wait_for_release();
+            Ok(Self)
+        }
+
+        fn on_message(
+            &mut self,
+            _message: Message,
+            _correlation_id: u64,
+        ) -> Result<(), PluginError> {
+            Ok(())
+        }
+    }
+
+    vosu_plugin_api::export_plugin!(bundled GatedMatcherPlugin);
+}
+
+/// F3: a process discovered while a plugin id is still `Creating` must
+/// never be attached to it — the `[match]` table is registered only once
+/// `create_instance` is about to publish the instance `Live`. Gates
+/// plugin A's own `create` open, confirms its `Creating` placeholder
+/// exists, then matches a process against both A (installed first) and
+/// B (installed second, already `Live`): since A's matcher is not yet
+/// registered, B is the only live candidate and gets it directly — A
+/// never receives anything, even once its own `create` finally finishes.
+#[test]
+fn matcher_registers_only_once_live_so_a_process_during_creating_goes_to_the_live_winner() {
+    let plugin_a_id = "testkit.session.gatedmatcher.a";
+    let gate = gated_matcher_plugin::CreateGate::new();
+    gated_matcher_plugin::register_gate(plugin_a_id, Arc::clone(&gate));
+
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let (_log_dir, host) = test_host(runtime.handle().clone());
+
+    let manifest_a = session_manifest(plugin_a_id, &["shared-gatedmatcher.exe"]);
+    let loaded_a = registry::load_bundled(&[registry::BundledPlugin {
+        manifest: &manifest_a,
+        vtable: gated_matcher_plugin::vosu_plugin_vtable,
+    }])
+    .expect("loading the gated-matcher test plugin");
+    let data_dir_a = tempfile::tempdir().unwrap();
+    let id_a = PluginInstanceId::new(1);
+
+    std::thread::scope(|scope| {
+        let host_ref = &host;
+        let loaded_a_ref = &loaded_a[0];
+        let data_dir_a_path = data_dir_a.path().to_path_buf();
+        let create_thread = scope
+            .spawn(move || host_ref.create_instance(id_a, loaded_a_ref, data_dir_a_path, None));
+
+        // Wait for A's `Creating` placeholder to actually exist, rather
+        // than assuming a fixed sleep covers the window before `create`
+        // reaches the gate.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let creating = {
+                let guard = host.instances.lock().unwrap_or_else(|p| p.into_inner());
+                matches!(guard.get(&id_a), Some(InstanceSlot::Creating { .. }))
+            };
+            if creating {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "expected A's Creating placeholder to appear within 5s"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        // B: installed second, but already Live by the time the process
+        // appears — the only live candidate while A is still Creating.
+        // Matches by path pattern, not `process_names` (D18's static
+        // overlap check only compares those), so this does not trip
+        // `register`'s own refusal against A's identical exact name —
+        // `failed_create_unregisters_the_matcher...`'s own doc comment.
+        let events_b = create_session_instance_from_manifest(
+            &host,
+            PluginInstanceId::new(2),
+            "testkit.session.gatedmatcher.b",
+            SessionPluginConfig::default(),
+            &session_manifest_by_path_suffix(
+                "testkit.session.gatedmatcher.b",
+                "shared-gatedmatcher.exe",
+            ),
+        );
+
+        host.process_appeared(test_process(400, "shared-gatedmatcher.exe"));
+        match events_b.recv_timeout(RECV_TIMEOUT).expect("B's attach") {
+            SessionEvent::Attached(attached) => assert_eq!(attached.pid, 400),
+            other => panic!("expected Attached, got {other:?}"),
+        }
+
+        gate.release();
+        create_thread
+            .join()
+            .unwrap()
+            .expect("creating the gated-matcher instance");
+    });
+}
 
 /// §6.2: "If identification does not arrive within 5 seconds of
 /// `SESSION_ATTACHED`, core logs once and keeps the session hidden" —

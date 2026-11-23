@@ -35,6 +35,11 @@ pub enum ReadPlanEvent {
     /// submission, run on this plugin's background reader thread (never
     /// its dispatch thread, D5's own requirement).
     SyncResult(Result<ReadPlanResult, PlanMemoryError>),
+    /// `VOSU_OP_SESSION_DETACHED` arrived (F6: cancel-before-detach
+    /// ordering tests read this against a preceding `AsyncResult`/
+    /// `SyncResult` to prove the already-in-flight answer for a
+    /// declined/detached handle is delivered strictly before this).
+    Detached { handle: u64 },
 }
 
 /// One command a test sends this plugin's background reader thread, so a
@@ -233,6 +238,11 @@ impl Plugin for ReadPlanPlugin {
             }
             Message::ReadPlanResult(result) => {
                 let _ = self.events.send(ReadPlanEvent::AsyncResult(result));
+            }
+            Message::SessionDetached(detached) => {
+                let _ = self.events.send(ReadPlanEvent::Detached {
+                    handle: detached.handle,
+                });
             }
             _ => {}
         }

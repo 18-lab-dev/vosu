@@ -297,7 +297,7 @@ fn cancel_session_frees_only_that_sessions_slots() {
     let _b = outstanding.begin(2).unwrap();
     assert_eq!(outstanding.len(), 2);
 
-    outstanding.cancel_session(1);
+    let _ = outstanding.cancel_session(1);
     assert_eq!(outstanding.len(), 1);
 
     // `a`'s slot is already gone; dropping it must not double-free (and so
@@ -353,6 +353,51 @@ fn one_keys_backlog_never_blocks_another_keys_job() {
 
     rx.recv_timeout(Duration::from_secs(5))
         .expect("key 2's job must run promptly, not behind key 1's whole backlog");
+}
+
+/// F1: cancelling a still-queued job must remove it from its key's own
+/// sub-queue at once, not merely skip it when a worker eventually
+/// reaches it — otherwise a plugin that loops submit-then-cancel against
+/// its own already-admitted cap, while this key's one worker stays busy
+/// on its own other, already-running job, grows the queue without bound
+/// (the second-pass review's own finding). 10,000 iterations against a
+/// single busy worker prove the queue never grows past empty.
+#[test]
+fn cancelled_jobs_never_pile_up_in_their_keys_queue() {
+    let pool = ScanWorkerPool::new(1);
+    let key = 1u64;
+    let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let gate_clone = Arc::clone(&gate);
+    pool.submit(key, move || {
+        let (lock, cvar) = &*gate_clone;
+        let mut released = lock.lock().unwrap();
+        while !*released {
+            released = cvar.wait(released).unwrap();
+        }
+    });
+    // Give the worker a moment to pick up the blocking job so `key`'s
+    // queue is actually empty before this loop runs.
+    std::thread::sleep(Duration::from_millis(50));
+
+    for i in 0..10_000u64 {
+        let ticket = pool.submit(key, || {});
+        let removed = pool.cancel(key, ticket);
+        assert!(
+            removed,
+            "iteration {i}: a just-submitted job must still be queued to cancel, since the \
+             worker is still blocked on the earlier job"
+        );
+        assert_eq!(
+            pool.queue_len_for_tests(key),
+            0,
+            "iteration {i}: a cancelled job must never be left behind in its key's own \
+             sub-queue"
+        );
+    }
+
+    let (lock, cvar) = &*gate;
+    *lock.lock().unwrap() = true;
+    cvar.notify_all();
 }
 
 struct NoModulesSync;
@@ -499,7 +544,7 @@ fn cancel_session_frees_the_slot_and_suppresses_the_workers_own_result() {
     // The scan job is queued behind the blocked job above (same key, so
     // the same sub-queue), so it has not run yet: cancelling now must
     // win the race.
-    outstanding.cancel_session(7);
+    let _ = outstanding.cancel_session(7);
     assert_eq!(outstanding.len(), 0);
 
     let (lock, cvar) = &*release;
@@ -537,7 +582,7 @@ fn cancel_session_racing_admission_still_answers_exactly_once() {
     let handle = 11;
     let outstanding_for_hook = Arc::clone(&outstanding);
     set_race_hook_for_tests(move || {
-        outstanding_for_hook.cancel_session(handle);
+        let _ = outstanding_for_hook.cancel_session(handle);
     });
 
     let memory: Arc<dyn ProcessMemory> = Arc::new(FakeMemory::new(vec![(0x1000, vec![0xaa])]));

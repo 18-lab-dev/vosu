@@ -314,9 +314,20 @@ fn process_exited_detaches_and_recomputes_focus() {
 /// this host ever uses for them. Hammering `recompute_focus`/
 /// `identify_focus` concurrently from several threads, while the main
 /// thread keeps attaching, identifying, and exiting sessions, must
-/// neither deadlock nor panic; every thread finishing within a bounded
-/// timeout is this test's own proof that the fix holds under real
-/// contention, not just by inspection.
+/// neither deadlock nor panic.
+///
+/// F6: a hang is detected through a bounded channel receive, not
+/// `JoinHandle::join` (which has no timeout of its own and would hang
+/// this test's own thread, relying only on the test harness's process-
+/// level timeout to ever notice) — each hammerer signals its own
+/// completion over `done_tx` before this test ever calls `join` on it,
+/// so a genuine deadlock fails with a clear assertion message instead of
+/// hanging silently. F6 also checks event order: every `FOCUS_CHANGED`
+/// this test observes, grouped by handle, must strictly alternate
+/// `focused: true`/`false` — two of the same state in a row for one
+/// handle would mean a concurrent recomputation delivered (or skipped)
+/// an event out of order, the exact race P2-6's `focus`-held-through-
+/// delivery discipline exists to prevent.
 #[test]
 fn concurrent_focus_recomputation_never_deadlocks() {
     let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
@@ -337,17 +348,21 @@ fn concurrent_focus_recomputation_never_deadlocks() {
     };
     events.recv_timeout(RECV_TIMEOUT).expect("focus 1");
 
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
     let hammerers: Vec<_> = (0..8)
         .map(|_| {
             let host = Arc::clone(&host);
+            let done_tx = done_tx.clone();
             std::thread::spawn(move || {
                 for _ in 0..200 {
                     host.recompute_focus();
                     host.identify_focus(h1);
                 }
+                let _ = done_tx.send(());
             })
         })
         .collect();
+    drop(done_tx);
 
     // Concurrently attach, re-identify (ignored — already identified, but
     // still exercises `identify_focus`'s own callers racing the
@@ -358,23 +373,40 @@ fn concurrent_focus_recomputation_never_deadlocks() {
         host.process_exited(pid);
     }
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    for _ in &hammerers {
+        done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a hammerer thread did not finish within 10s — possible deadlock");
+    }
     for hammerer in hammerers {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        // `JoinHandle` has no timed join: a thread that did not finish by
-        // `deadline` would hang this `join` too, so the bound is on the
-        // loop as a whole racing `deadline`, and a genuine deadlock still
-        // fails this test (the process-level test-harness timeout) rather
-        // than hanging silently.
-        assert!(
-            remaining > Duration::ZERO,
-            "a hammerer thread did not finish within the deadline — possible deadlock"
-        );
         hammerer.join().expect("a hammerer thread must not panic");
     }
 
-    // Drain every event the hammerers and the attach/exit rounds above
-    // produced; this test only needs to prove nothing deadlocked or
-    // panicked, not a specific final event sequence.
-    while events.try_recv().is_ok() {}
+    // Every `FOCUS_CHANGED` the attach/exit rounds above produced for
+    // session 2's own handles (a fresh one each round), grouped by
+    // handle, must strictly alternate focused/unfocused — proving
+    // delivery never duplicated or reordered an event for the same
+    // handle under concurrent recomputation. `h1` is excluded: the
+    // hammerers call `identify_focus(h1)` directly, bypassing the normal
+    // `SESSION_IDENTIFY` `AlreadyIdentified` refusal, and
+    // `on_session_identified` always sends one `FOCUS_CHANGED` per call
+    // "even if focus does not change" (its own doc comment) — so h1
+    // legitimately receives repeated `focused: true` here, by this
+    // test's own deliberate construction, not a reordering bug.
+    let mut last_focused: std::collections::HashMap<u64, bool> = std::collections::HashMap::new();
+    while let Ok(event) = events.try_recv() {
+        if let SessionEvent::Focus(focus) = event
+            && focus.handle != h1.0
+        {
+            if let Some(&previous) = last_focused.get(&focus.handle) {
+                assert_ne!(
+                    previous, focus.focused,
+                    "handle {} received two consecutive FOCUS_CHANGED with the same \
+                     focused={} — an event was duplicated or delivered out of order",
+                    focus.handle, focus.focused
+                );
+            }
+            last_focused.insert(focus.handle, focus.focused);
+        }
+    }
 }
