@@ -549,7 +549,7 @@ async fn in_place_rename_that_stops_matching_keeps_the_session_attached() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn hint_set_change_syncs_the_source_and_forces_a_reconcile() {
+async fn hint_set_change_syncs_the_source_and_reoffers_tracked_processes() {
     let runtime = Handle::current();
     let (_log_dir, host) = test_host(
         runtime.clone(),
@@ -596,6 +596,51 @@ async fn hint_set_change_syncs_the_source_and_forces_a_reconcile() {
     // process already present in the source at that point -- inserted
     // silently above, never through `appear`'s own inspect hint.
     expect_attached(&events, 400);
+
+    service.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn matcher_change_forces_a_full_reconcile_of_an_untracked_process() {
+    let runtime = Handle::current();
+    let (_log_dir, host) = test_host(
+        runtime.clone(),
+        Arc::new(focus::SyntheticForegroundSource::new(None)),
+    );
+    let (source, _prefilter) = SyntheticSource::new();
+    let service = DiscoveryService::start(&host, source.clone(), runtime);
+
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId(0),
+        "vosu.testkit.reconcile-first",
+        &["osu!.exe"],
+    );
+
+    // Inserted only now, directly into the source's own state, bypassing
+    // `appear`'s own `inspect` hint (unlike
+    // `hint_set_change_syncs_the_source_and_reoffers_tracked_processes`'s
+    // own pid 400, this one was never present during any earlier pass,
+    // so it cannot already sit in `DiscoveryService`'s own `tracked` map
+    // -- `reoffer_tracked` (the matcher-generation-change path) can
+    // never reach a pid it was never tracking; only `full_reconcile`'s
+    // own `enumerate()` can discover it at all).
+    source.insert(test_process(401, "osu!.exe"));
+
+    // A second, unrelated plugin's registration bumps the matcher
+    // generation (and pre-filter) again, forcing another reconciliation
+    // pass (`run_pass`'s `generation_changed || filter_changed` check) --
+    // proving that pass's own `full_reconcile` really re-derives ground
+    // truth from `source.enumerate()`, picking up pid 401 for the first
+    // time, rather than relying on a record already in `tracked`.
+    create_session_instance(
+        &host,
+        PluginInstanceId(1),
+        "vosu.testkit.reconcile-second",
+        &["other.exe"],
+    );
+
+    expect_attached(&events, 401);
 
     service.stop();
 }
