@@ -634,11 +634,10 @@ async fn hint_set_change_syncs_the_source_and_reoffers_tracked_processes() {
 async fn matcher_change_forces_a_full_reconcile_of_an_untracked_process() {
     let runtime = Handle::current();
     let (_log_dir, host) = test_host(
-        runtime.clone(),
+        runtime,
         Arc::new(focus::SyntheticForegroundSource::new(None)),
     );
     let (source, _prefilter) = SyntheticSource::new();
-    let service = DiscoveryService::start(&host, source.clone(), runtime);
 
     let events = create_session_instance(
         &host,
@@ -647,22 +646,43 @@ async fn matcher_change_forces_a_full_reconcile_of_an_untracked_process() {
         &["osu!.exe"],
     );
 
+    // Drives `run_pass` directly instead of `DiscoveryService`'s
+    // background thread (N3): nothing wakes that thread when a plugin
+    // registers (`SyntheticSource::insert` never notifies, and `wake` is
+    // only notified by `stop`), so the pass that would actually discover
+    // pid 401 through the real service is the periodic `RECONCILE_INTERVAL`
+    // (2s) tick, not the pre-filter/generation change -- `RECV_TIMEOUT`
+    // (5s) is longer than that tick, so the test would still pass with
+    // `filter_changed || generation_changed` deleted from `run_pass`
+    // entirely. Pinning `next_reconcile` far in the future removes that
+    // tick as a possible cause: only the forced-reconcile condition can
+    // make the second `run_pass` call below find pid 401.
+    let mut tracked = HashMap::new();
+    let mut last_filter: Option<Prefilter> = None;
+    let mut last_generation: Option<u64> = None;
+    let far_future = Instant::now() + Duration::from_secs(3600);
+
+    // First pass: syncs the pre-filter/generation to the plugin just
+    // registered above; nothing in the source yet.
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut tracked,
+        &mut last_filter,
+        &mut last_generation,
+        far_future,
+    );
+
     // Inserted only now, directly into the source's own state, bypassing
-    // `appear`'s own `inspect` hint (unlike
-    // `hint_set_change_syncs_the_source_and_reoffers_tracked_processes`'s
-    // own pid 400, this one was never present during any earlier pass,
-    // so it cannot already sit in `DiscoveryService`'s own `tracked` map
-    // -- `reoffer_tracked` (the matcher-generation-change path) can
-    // never reach a pid it was never tracking; only `full_reconcile`'s
-    // own `enumerate()` can discover it at all).
+    // `appear`'s own `inspect` hint: never present during the pass above,
+    // so it cannot already sit in `tracked` -- `reoffer_tracked` (the
+    // matcher-generation-change path) can never reach a pid it was never
+    // tracking; only `full_reconcile`'s own `enumerate()` can discover it
+    // at all.
     source.insert(test_process(401, "osu!.exe"));
 
     // A second, unrelated plugin's registration bumps the matcher
-    // generation (and pre-filter) again, forcing another reconciliation
-    // pass (`run_pass`'s `generation_changed || filter_changed` check) --
-    // proving that pass's own `full_reconcile` really re-derives ground
-    // truth from `source.enumerate()`, picking up pid 401 for the first
-    // time, rather than relying on a record already in `tracked`.
+    // generation (and pre-filter) again.
     create_session_instance(
         &host,
         PluginInstanceId(1),
@@ -670,9 +690,16 @@ async fn matcher_change_forces_a_full_reconcile_of_an_untracked_process() {
         &["other.exe"],
     );
 
-    expect_attached(&events, 401);
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut tracked,
+        &mut last_filter,
+        &mut last_generation,
+        far_future,
+    );
 
-    service.stop();
+    expect_attached(&events, 401);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
