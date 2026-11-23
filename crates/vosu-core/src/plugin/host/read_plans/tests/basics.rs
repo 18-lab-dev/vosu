@@ -427,9 +427,22 @@ fn a_failed_open_is_never_cached_so_the_next_submission_retries_and_succeeds() {
             stages,
         })
         .expect("sending the retry submit command");
+    // N2's retry actually opens and admits the plan this time (unlike
+    // the first submission, rejected before admission), so its
+    // `SubmitStatus` and `READ_PLAN_RESULT` can arrive in either order
+    // (`expect_status_and_async_result`'s own doc comment) — a plain
+    // `expect_status` here raced `AsyncResult` arriving first and
+    // occasionally failed on "expected SubmitStatus, got AsyncResult"
+    // under load, not on the behavior this test actually claims to
+    // check.
+    let (status, result) = expect_status_and_async_result(&events);
     assert_eq!(
-        expect_status(&events),
+        status,
         vosu_status::VOSU_OK,
         "a submission after a failed open must retry the open, not replay the same failure"
+    );
+    assert_eq!(
+        result.plan, 2,
+        "the retry's own READ_PLAN_RESULT must name its own plan id"
     );
 }
