@@ -276,9 +276,11 @@ def run_native(sha, log_dir, evidence_dir, start_vm, applicable):
     code, out, err = vm("put", str(bundle_path), f"{remote_stage}/vosu.bundle")
     if code != 0:
         return failed_all(f"could not upload bundle: {err or out}")
-    code, out, err = vm("put", str(ROOT / "scripts" / "native-ci.ps1"), f"{remote_stage}/native-ci.ps1")
-    if code != 0:
-        return failed_all(f"could not upload native-ci.ps1: {err or out}")
+    # native-ci.ps1 dot-sources windows-ci-env.ps1 from its own directory.
+    for script in ("native-ci.ps1", "windows-ci-env.ps1"):
+        code, out, err = vm("put", str(ROOT / "scripts" / script), f"{remote_stage}/{script}")
+        if code != 0:
+            return failed_all(f"could not upload {script}: {err or out}")
 
     started = time.monotonic()
     run_cmd = (
