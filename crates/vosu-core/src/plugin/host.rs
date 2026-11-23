@@ -162,8 +162,11 @@ pub struct PluginHost {
     /// `Creating` placeholder (publishes it `Live`, or removes it on a
     /// failed/shutdown-raced `create`) — lets [`Self::destroy_all`]'s own
     /// wait for the last `Creating` placeholders to resolve (P3) block on
-    /// this condvar, bounded by a deadline, instead of polling
-    /// `instances` on a fixed sleep.
+    /// this condvar instead of polling `instances` on a fixed sleep.
+    /// Each individual wait is itself bounded only as a backstop
+    /// (`CREATING_WAIT_BACKSTOP`, in case a notification is ever missed),
+    /// not an overall deadline: `destroy_all` keeps re-waiting until
+    /// every placeholder has actually resolved.
     instances_changed: Condvar,
     /// Set once by [`Self::destroy_all`], before it starts draining
     /// `instances`: tells a [`Self::create_instance`] call still racing it
@@ -369,6 +372,18 @@ impl PluginHost {
     /// down the `Live` entry; if it wins the race, this call destroys
     /// the instance itself instead of publishing it, and removes the
     /// placeholder so `destroy_all`'s wait resolves.
+    ///
+    /// Known behaviour, not addressed here (phase (d2) decides): the
+    /// matcher's own install order — which this call's `register` above
+    /// extends — is the order in which concurrent `create_instance` calls
+    /// *finish*, not the order they were called in, since each one only
+    /// registers once its own plugin's `create` has already returned. A
+    /// slower-finishing call started earlier is installed after a
+    /// faster-finishing one started later. That matters for D18's own
+    /// runtime tie-break and the Focus rule's "earliest-installed
+    /// plugin" first-ever tie-break (`FocusCandidate::install_order`'s
+    /// own doc comment) if instances are ever created concurrently; today
+    /// there is no production caller that does.
     pub fn create_instance(
         self: &Arc<Self>,
         id: PluginInstanceId,
