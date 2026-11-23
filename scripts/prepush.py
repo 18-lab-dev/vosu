@@ -30,7 +30,7 @@ LINUX_ENV = {**CARGO_ENV, "C_INCLUDE_PATH": "/usr/include/x86_64-linux-gnu"}
 # and with ci.yml's windows-native job; scripts/test_gate_tooling.py checks it.
 NATIVE_COMMANDS = {
     "native-clippy": "cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings",
-    "native-test-workspace": "cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc",
+    "native-test-workspace": "cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc",
     "native-test-doc": "cargo test --workspace --doc --all-features --locked --target x86_64-pc-windows-msvc",
 }
 
@@ -165,7 +165,8 @@ def run_actionlint(log_dir, applicable):
 LINUX_STEPS = [
     ("fmt", ["cargo", "fmt", "--all", "--", "--check"], CARGO_ENV, ()),
     ("clippy-linux", ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"], LINUX_ENV, ()),
-    ("test-linux", ["cargo", "test", "--workspace", "--all-features", "--locked"], LINUX_ENV, ()),
+    ("test-linux", ["cargo", "nextest", "run", "--workspace", "--lib", "--bins", "--tests", "--examples", "--all-features", "--locked"], LINUX_ENV, ()),
+    ("test-linux-doc", ["cargo", "test", "--workspace", "--doc", "--all-features", "--locked"], LINUX_ENV, ()),
     ("doc-links", [sys.executable, "scripts/check-doc-links.py"], None, ()),
     ("file-length", [sys.executable, "scripts/check-file-length.py"], None, ()),
     ("brand", [sys.executable, "scripts/check-brand.py"], None, ()),

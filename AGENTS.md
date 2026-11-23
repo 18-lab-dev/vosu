@@ -13,7 +13,7 @@
 
 ## Toolchain and commands
 
-Use the pinned Rust 1.96.1 toolchain from `rust-toolchain.toml`, including `rustfmt`, `clippy`, and both native targets. Windows builds require MSVC and the Windows SDK; Linux builds require a GNU C toolchain, Clang, pkg-config, and libelf, zlib, and libbpf development files for the process-event backends (per-distribution packages are in CONTRIBUTING.md). Keep `--locked`. Linux releases explicitly enable `linux-process-events`; Windows releases use no default features. GPU driver development libraries are not required.
+Use the pinned Rust 1.96.1 toolchain from `rust-toolchain.toml`, including `rustfmt`, `clippy`, and both native targets. Windows builds require MSVC and the Windows SDK; Linux builds require a GNU C toolchain, Clang, pkg-config, and libelf, zlib, and libbpf development files for the process-event backends (per-distribution packages are in CONTRIBUTING.md). Keep `--locked`. Linux releases explicitly enable `linux-process-events`; Windows releases use no default features. GPU driver development libraries are not required. Tests run through `cargo-nextest` 0.9.152 (pinned in CONTRIBUTING.md), which kills any individual test that runs past the bound in `.config/nextest.toml` and names it in its output; nextest does not run doctests, so those run separately with plain `cargo test --doc`.
 
 ```sh
 # Local debug build/run
@@ -23,7 +23,8 @@ cargo run --locked
 # CI checks
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --lib --bins --tests --examples --all-features --locked
+cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked
+cargo test --workspace --doc --all-features --locked
 
 # Native release build (select the host target)
 cargo build --release --locked --no-default-features --features linux-process-events --target x86_64-unknown-linux-gnu
@@ -100,12 +101,12 @@ python scripts/land.py [--topic <name>]
 ```
 
 - `prepush.py` refuses a dirty tree. It runs every applicable `ci.yml` check against `HEAD`:
-  - formatting, Linux Clippy and the full workspace tests including doctests;
+  - formatting, Linux Clippy and the full workspace tests (unit/integration tests through `cargo nextest run`, doctests through a separate `cargo test --doc`) — a test that runs past `.config/nextest.toml`'s `slow-timeout` bound is killed and reported by name instead of hanging the gate;
   - the repository check scripts and every `scripts/test_*.py` suite;
   - actionlint when workflows changed;
   - Windows MSVC cross-Clippy;
   - the dashboard smokes when UI paths changed;
-  - native Windows Clippy, tests, and doctests in the VM through `scripts/native-ci.ps1`, but only when `scripts/windows_sensitivity.py` finds the diff against `--base` Windows-sensitive (the native process/platform boundary, updater staging, process/platform-specific modules, the plugin host's native-library loading, Cargo/toolchain manifests, `.cargo/`, `.github/workflows/`, `scripts/native-ci.ps1`/`prepush.py` itself, any `windows`/`win32`-named or `.ps1` path, or an added/removed `cfg(windows)`/`target_os`/`windows_sys`/`unsafe` diff line) or `--force-native` is passed; otherwise it records `not_applicable` with a reason and skips the VM entirely. Hosted CI's `windows-native` job still runs for every Rust change regardless, so this only narrows the slower local VM phase.
+  - native Windows Clippy, nextest tests, and doctests in the VM through `scripts/native-ci.ps1`, but only when `scripts/windows_sensitivity.py` finds the diff against `--base` Windows-sensitive (the native process/platform boundary, updater staging, process/platform-specific modules, the plugin host's native-library loading, Cargo/toolchain manifests, `.cargo/`, `.github/workflows/`, `scripts/native-ci.ps1`/`prepush.py` itself, any `windows`/`win32`-named or `.ps1` path, or an added/removed `cfg(windows)`/`target_os`/`windows_sys`/`unsafe` diff line) or `--force-native` is passed; otherwise it records `not_applicable` with a reason and skips the VM entirely. Hosted CI's `windows-native` job still runs for every Rust change regardless, so this only narrows the slower local VM phase.
 
   It writes `target/prepush/<sha>.json`. `--start-vm` starts the Windows VM only if it is stopped and the native phase is applicable; report that lifecycle action.
 - `land.py` accepts the evidence only when every step passed, or was not applicable, for exactly `HEAD`, and `HEAD` fast-forwards `origin/main`. It then pushes `ci/<topic>`, waits for hosted CI on that commit, fast-forwards `main`, and deletes the branch. Pass `--base <branch>` (and the matching `prepush.py --base <branch>`) to land onto a branch other than `main`, e.g. `v2/main`.

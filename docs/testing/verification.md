@@ -35,14 +35,14 @@ python scripts/check-asset-hashes.py
 python -m unittest discover -s scripts -p 'test_*.py'
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --lib --bins --tests --examples --all-features --locked
+cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked
 cargo xwin clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
 # UI paths changed: build with --features test-harness, then
 python tests/tool_host_smoke.py --binary target/debug/vosu
 python tests/dashboard_smoke.py --binary target/debug/vosu --playwright-module <playwright/index.mjs>
 # Native Windows (scripts/native-ci.ps1 in the VM):
 cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
-cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc
+cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc
 cargo test --workspace --doc --all-features --locked --target x86_64-pc-windows-msvc
 ```
 

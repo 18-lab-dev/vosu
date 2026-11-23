@@ -62,11 +62,12 @@ def normalize(command):
 
 
 # Commands that are a documented strict subset of a broader local/native gate
-# command (e.g. `cargo test --workspace --all-features --locked` already runs
-# every target `--lib --bins --tests --examples` would, plus doctests).
-SUBSET_OF = {
-    "cargo test --workspace --lib --bins --tests --examples --all-features --locked": "cargo test --workspace --all-features --locked",
-}
+# command. Empty now that the Linux gate's nextest command text matches
+# ci.yml's literally (both run plain `cargo nextest run --workspace --lib
+# --bins --tests --examples --all-features --locked`, with doctests covered
+# by a separate "test-linux-doc" gate step); kept for the next command that
+# is a genuine strict subset of a broader one.
+SUBSET_OF = {}
 
 
 def _load_module(name, path):

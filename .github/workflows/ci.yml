@@ -103,6 +103,11 @@ jobs:
           # ("unable to find x86_64 headers") once no cached SDK exists.
           tool: cargo-xwin@0.23.1
           fallback: none
+      - name: Install pinned cargo-nextest
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
+        with:
+          tool: cargo-nextest@0.9.152
+          fallback: none
       - name: Restore Cargo downloads
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -145,7 +150,7 @@ jobs:
         if: needs.changes.outputs.verified != 'true'
         env:
           C_INCLUDE_PATH: /usr/include/x86_64-linux-gnu
-        run: cargo test --workspace --lib --bins --tests --examples --all-features --locked
+        run: cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked
       - name: Warm build for cache refresh (already verified on ci/<topic>)
         if: needs.changes.outputs.verified == 'true' && steps.target-cache.outputs.cache-hit != 'true'
         env:
@@ -274,6 +279,11 @@ jobs:
           toolchain: 1.96.1
           components: clippy
           targets: x86_64-pc-windows-msvc
+      - name: Install pinned cargo-nextest
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
+        with:
+          tool: cargo-nextest@0.9.152
+          fallback: none
       - name: Restore Cargo downloads
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -299,7 +309,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
       - name: Test native Windows workspace
         if: needs.changes.outputs.verified != 'true'
-        run: cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc
+        run: cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc
       - name: Warm build for cache refresh (already verified on ci/<topic>)
         if: needs.changes.outputs.verified == 'true' && steps.target-cache.outputs.cache-hit != 'true'
         run: cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc --no-run

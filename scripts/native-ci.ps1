@@ -14,7 +14,7 @@ param(
 # Covered CI commands (keep in sync with ci.yml's windows-native job and with
 # scripts/prepush.py / scripts/test_gate_tooling.py, which checks this list):
 #   cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings
-#   cargo test --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc
+#   cargo nextest run --workspace --lib --bins --tests --examples --all-features --locked --target x86_64-pc-windows-msvc
 #   cargo test --workspace --doc --all-features --locked --target x86_64-pc-windows-msvc
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -48,7 +48,10 @@ foreach ($line in $devEnvironment) {
 }
 
 $rust = 'C:\Program Files\Rust\1.96.1\bin'
-$env:PATH = $rust + ';' + $env:PATH
+# cargo-nextest.exe is pinned and installed once into this VM's CARGO_HOME
+# (see CONTRIBUTING.md "Install the native build dependencies"), not
+# reinstalled per run; cargo resolves it as a subcommand from PATH.
+$env:PATH = $rust + ';' + (Join-Path 'V:\agent-desktop\.cargo' 'bin') + ';' + $env:PATH
 Remove-Item Env:\C_INCLUDE_PATH -ErrorAction SilentlyContinue
 $cargoTarget = Join-Path $WorkRoot 'target'
 New-Item -ItemType Directory -Force -Path $cargoTarget | Out-Null
@@ -108,7 +111,7 @@ $overallExit = $overallExit -bor (Invoke-Step 'cargo-clippy' @(
         '--target', 'x86_64-pc-windows-msvc', '--', '-D', 'warnings'))
 
 $overallExit = $overallExit -bor (Invoke-Step 'cargo-test-workspace' @(
-        'test', '--workspace', '--lib', '--bins', '--tests', '--examples',
+        'nextest', 'run', '--workspace', '--lib', '--bins', '--tests', '--examples',
         '--all-features', '--locked', '--target', 'x86_64-pc-windows-msvc'))
 
 $overallExit = $overallExit -bor (Invoke-Step 'cargo-test-doc' @(
