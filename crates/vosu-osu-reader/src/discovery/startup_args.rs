@@ -58,7 +58,7 @@ pub struct StartupArgs {
 }
 
 impl StartupArgs {
-    /// Parses an argv array, excluding argv[0]. Each remaining array element is
+    /// Parses an argv array, excluding argv\[0\]. Each remaining array element is
     /// matched independently, like the TypeScript array overload.
     pub fn parse(args: impl IntoIterator<Item = OsString>) -> Self {
         let mut args = args.into_iter();
@@ -66,7 +66,7 @@ impl StartupArgs {
         Self::from_array(args)
     }
 
-    /// Parses argument elements without treating the first element as argv[0].
+    /// Parses argument elements without treating the first element as argv\[0\].
     pub fn from_array(args: impl IntoIterator<Item = OsString>) -> Self {
         let raw = args.into_iter().collect::<Vec<_>>();
         let mut values = IndexMap::new();

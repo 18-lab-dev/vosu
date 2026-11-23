@@ -789,7 +789,7 @@ impl ModuleRegions for WindowsModuleTable {
 /// A snapshot of one Linux process's loaded modules, built once from
 /// `vosu_sys::process::enumerate_modules`'s `/proc/{pid}/maps`-derived
 /// table. Implements both [`ModuleRegions`] and
-/// [`super::read_plan::ModuleResolver`], mirroring [`WindowsModuleTable`].
+/// [`super::read_plan::ModuleResolver`], mirroring `WindowsModuleTable`.
 #[cfg(target_os = "linux")]
 pub struct LinuxModuleTable {
     modules: Vec<ModuleEntry>,

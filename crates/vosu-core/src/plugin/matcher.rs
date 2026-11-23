@@ -236,7 +236,7 @@ impl CompiledMatcher {
     /// `process_names` entry — no `process_path_patterns`/
     /// `command_line_patterns` that could accept a process regardless of
     /// its executable name. The Windows enumeration-cost pre-filter
-    /// ([`NamePrefilter`], M1 §4 phase d2b unit c) is only sound across
+    /// ([`Prefilter`], M1 §4 phase d2b unit c) is only sound across
     /// *every* registered plugin when this holds for all of them: one
     /// plugin matching by path/command-line pattern alone can accept a
     /// process whose name was never in any `process_names` list.
@@ -522,7 +522,7 @@ impl MatcherEngine {
     /// [`Self::register`]/[`Self::unregister`] that actually changes
     /// which plugins are installed. `DiscoveryService` re-reads this on
     /// every reconciliation pass and, on a change, re-offers every
-    /// already-tracked process to [`PluginHost::process_appeared`] — a
+    /// already-tracked process to [`super::PluginHost::process_appeared`] — a
     /// plugin installed (or re-installed) after discovery already saw a
     /// process must still get a chance to match it, and
     /// `PluginHost::process_appeared` is idempotent for one it already

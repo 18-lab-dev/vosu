@@ -31,7 +31,7 @@
 //! process list in production: a pluggable [`discovery::ProcessSource`]
 //! seam — the Linux eBPF/CN_PROC/polling backend
 //! ([`discovery::LinuxSource`], `linux-process-events` feature) and the
-//! Windows polling backend ([`discovery::WindowsProcessSource`], with an
+//! Windows polling backend (`discovery::WindowsProcessSource`, with an
 //! executable-name pre-filter against the enabled plugin set's
 //! `process_names`) both live here too, not the root crate; a synthetic
 //! in-memory source in `discovery`'s own tests — one dedicated
@@ -44,7 +44,7 @@
 //! whether to call it at all (zero cost when no enabled plugin has a
 //! matcher, `PluginHost::has_enabled_matchers`) is
 //! `src/runtime/discovery.rs`'s own concern, alongside picking the
-//! platform `ProcessSource` and starting [`discovery::ForegroundPoller`]
+//! platform `ProcessSource` and starting `discovery::ForegroundPoller`
 //! (Windows only) under the same gate.
 //!
 //! Out of scope for this phase (later milestones): non-owning
