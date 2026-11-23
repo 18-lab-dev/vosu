@@ -14,14 +14,23 @@
 //! calls; this phase only provides and tests them with synthetic process
 //! records.
 //!
+//! Memory read plans (§6.3, `host/read_plans.rs`) and signature scans
+//! (§6.4, `host/scans.rs`) both route through `PluginHost::handle` now,
+//! sharing one per-session cached process handle
+//! ([`PluginHost::session_memory`]), the same ownership check
+//! ([`PluginHost::resolve_owned_session`]), and one bounded worker pool
+//! (`PluginHost::background_pool`) rather than each opening/spawning its
+//! own. `scan`/`read_plan` themselves stay standalone modules (pure
+//! executors, no `PluginHost` state) that `host/scans.rs`/
+//! `host/read_plans.rs` wire into instance/session state; neither pure
+//! module is itself a `PluginHostHandler`.
+//!
 //! Out of scope for this phase (later milestones): discovery itself
 //! (phase (d2): the real OS process list, the Linux conditional fallback,
-//! the kernel/CN_PROC pre-filter); non-owning `STATE_SUBSCRIBE` delivery
-//! of session/focus events (§6.2's "Non-owning plugins" rule, §6.12);
-//! routing scans into `PluginHostHandler::handle` (`scan` is still a
-//! standalone module a later handler calls into; read plans, `§6.3`, now
-//! route through `host/read_plans.rs`); resource/tree/stream operations
-//! and action calls.
+//! the kernel/CN_PROC pre-filter) is the only item left from M1's own
+//! service list; non-owning `STATE_SUBSCRIBE` delivery of session/focus
+//! events (§6.2's "Non-owning plugins" rule, §6.12) and resource/tree/
+//! stream operations and action calls are later milestones entirely.
 
 mod dispatch;
 mod error;
