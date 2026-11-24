@@ -391,6 +391,15 @@ labeled upstream and never count as pilot or full evidence.
   never subtracted through `body`.
 - Every comparison not covered by a rule is exact. A security rule proves
   vosu's stricter result; it never hides an upstream body mismatch elsewhere.
+- Part details: `headers.<name>` takes a string `vosu_value`, or `null` for
+  an absent header, and never names `date`. `ws.handshake` replaces the status
+  and the whole compared header list. `ws.frame` applies to every server text
+  frame of the listed cases. A route with a single recorded case is listed
+  whole by any rule on that case. Every listed case must exist on every
+  listed platform, and a rule whose vosu value equals the upstream part, or
+  two rules on one part of one case, fail. `divergence-rules.json` is
+  optional: without it nothing is subtracted, and when present it is
+  inventoried like every other file.
 
 ## 11. Pin policy (A4b.10)
 
@@ -429,6 +438,30 @@ pilot or full evidence. L1 tooling exit additionally runs the live-parity
 Python suites, the `adapter_capture` endpoint tests, `state_api_compat`,
 `server_compat`, the brand, doc-link and file-length checks, and the native
 Windows replay through `python scripts/vm-test.py --test adapter_golden`.
+
+Until the reviewed fixture commit of the Windows lazer pilot,
+`tests/fixtures/upstream/PENDING_PILOT` holds exactly the Cargo pin on its
+first line and a one-line reason on its second. With it,
+`golden_fixtures_replay_at_the_cargo_pin` passes and prints that it compared
+zero upstream cases; that run is not evidence. The test fails with "no golden
+fixtures for pin `<pin>`" when neither `<pin>/` nor a marker naming that pin
+exists, and it also fails when the marker names another pin or holds more than
+the reason line, when a marker sits beside `<pin>/`, or when another 40-hex
+fixture directory exists. X0 deletes the marker in the fixture commit.
+
+The comparator's own coverage comes from `tests/fixtures/golden-synthetic/`
+and the counterexample tests over it. That tree is written by G0's writer with
+`provenance: "synthetic"` from R0 replays of vosu's corpus source; regenerate
+it with `python tests/adapter_golden/generate_synthetic.py`. A synthetic tree
+is refused under `tests/fixtures/upstream/<pin>/`. A committed capture also
+needs a review receipt, distinct source and vosu attestations, and brand
+inventory lines that are exact allowlist entries. Each replay asset file gets
+the declared modification time 2026-01-01T00:00:00Z, and `header-last-modified`
+holds vosu's `Last-Modified` to it. A recorded `vosu.chart` resource reference
+is backed by the one approved asset with its recorded media type; a platform
+with two approved assets of one media type needs a format extension before
+replay.
+
 Each capture session runs, on its platform:
 
 ```sh
