@@ -36,6 +36,39 @@ original source-generation semantics and are not measurements of this change.
 Windows releases use no default features, so the Windows commands below keep
 `--no-default-features`.
 
+### Interleaved revision comparison (Linux)
+
+Build each revision first, with independent `CARGO_TARGET_DIR` directories and
+identical features and populated fixtures. Then pass the already-built Criterion
+executables, not Cargo commands, to the comparison tool:
+
+```sh
+sudo python3 scripts/bench-compare.py --cpu 7 --rounds 5 \
+  --binary baseline=/absolute/baseline-target/release/deps/hot_paths-HASH \
+  --binary candidate=/absolute/candidate-target/release/deps/hot_paths-HASH \
+  --filter '^raw_snapshot_reads/stable_regular_fields$' \
+  --output /absolute/new-comparison-directory
+```
+
+The tool reads Linux `thread_siblings_list` and reserves the **entire physical
+core** using a temporary cgroup-v2 isolated cpuset partition. Only the benchmark
+enters that partition, pinned to the requested logical CPU; its SMT siblings
+are left idle. This needs sudo and an already-enabled root cpuset controller;
+reservation failure aborts rather than silently falling back to taskset.
+Benchmarks drop privileges to the invoking user. The empty partition is removed
+on exit, returning its CPUs to the host. Kernel IRQs and shared CPU power/cache
+effects are not isolated: stop builds and use a quiet window.
+
+Runs interleave A,B,…,A,B,… for five rounds by default. Every invocation has a
+fresh Criterion home, a saved log, and a bounded timeout (600 seconds by default).
+`summary.json` reports each case's median of round medians, a deterministic
+10,000-resample bootstrap 95% interval, raw round medians, and max–min spread.
+Each candidate is compared with the first revision; a spread at least as large
+as the absolute delta, or overlapping bootstrap intervals, is **inconclusive**.
+Intervals describe these rounds, not immunity to systematic fixture or host
+bias. Repeated `--binary` accepts more than two revisions. Timing controls:
+`--warmup`, `--measurement`, `--samples`, `--rounds`, and `--timeout`.
+
 ### Live reader: native versus plan
 
 The dev-only example attaches read-only to an existing client PID and measures
@@ -800,15 +833,18 @@ not the slope/mean printed in Criterion's terminal summary.
 | lazer native | +3.66% | +2.50% | yes / yes | met |
 | lazer plan | -5.06% | -6.12% | no / no | met |
 
-**D17 missed. Propose C6b before M2:** convert the hottest reader chains to
-dependent multi-stage plans, then rerun these comparisons and populated/live
-capture workloads. C6b is not implemented here. Stable plan is also +1076.97%
-against the same-candidate native fixture; its zero-allocation scalar
-invariant nevertheless passes through the real `PluginHost`.
+**D17 remains unverified.** These single-invocation results do not establish a
+native regression: paired reruns of the exact M0/C6 binaries twice gave median
+pairs 143.00/154.12 ns and 160.10/145.66 ns, so even the delta's sign changed.
+CPU 7's SMT sibling was not reserved. Do not attribute the original +30.67%
+to an L1/L2 commit. Repeat with `bench-compare.py` in a quiet window and C6b's
+corrected, populated stable fixtures before deciding the D17 bar.
 
 Both groups mirror `hot_paths/raw_snapshot_reads`: zero-filled 64 KiB fixtures,
-not populated gameplay. The plan bench asserts decoder-result equality with
-native before timing. Because these fixtures can retry signature resolution,
+not populated gameplay. Stable's zero base underflows its batched address
+calculation into the scalar fallback; menu/gameplay return without useful reads.
+The plan bench asserts decoder-result equality with native before timing, but
+that does not prove successful captures. Because these fixtures retry resolution,
 both use the same direct fixture region walk; scan-broker cost is excluded.
 Plan reads execute the public core executor and SDK interception; host routing
 is excluded from this release bench, not from the allocation/native tests.
