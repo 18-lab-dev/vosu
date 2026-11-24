@@ -178,6 +178,7 @@ pub struct PluginHost {
     pub(super) surfaces: Mutex<crate::state::surface::SurfaceReaders>,
     api_readers: Mutex<crate::api::ApiReaders>,
     resource_state: Mutex<resources::ResourceState>,
+    action_state: Mutex<actions::ActionState>,
     instances: Mutex<HashMap<PluginInstanceId, InstanceSlot>>,
     /// Notified whenever [`Self::create_instance`] resolves a
     /// `Creating` placeholder (publishes it `Live`, or removes it on a
@@ -340,6 +341,7 @@ impl PluginHost {
             surfaces: Mutex::new(Default::default()),
             api_readers: Mutex::new(Default::default()),
             resource_state: Mutex::new(resources::ResourceState::default()),
+            action_state: Mutex::new(actions::ActionState::default()),
             instances: Mutex::new(HashMap::new()),
             instances_changed: Condvar::new(),
             shutting_down: AtomicBool::new(false),
@@ -614,6 +616,10 @@ impl PluginHostHandler for PluginHost {
         correlation_id: u64,
     ) -> vosu_status {
         match message {
+            Message::ActionCall(call) => self.handle_action_call(instance, call),
+            Message::ActionCancel(cancel) => self.handle_action_cancel(instance, cancel),
+            Message::ActionProgress(progress) => self.handle_action_progress(instance, progress),
+            Message::ActionResult(result) => self.handle_action_result(instance, result),
             Message::RootDeclare(request) => self.handle_root_declare(instance, request),
             Message::ResourceResolved(reply) => self.handle_resource_reply(
                 instance,
@@ -693,6 +699,7 @@ impl PluginHostHandler for PluginHost {
                         // after, on serial dispatch.
                         self.cancel_read_plans_for_session(&plugin_id, declined_handle);
                         self.resource_session_detached(declined_handle);
+                        self.action_session_detached(declined_handle);
                         self.cancel_scans_for_session(&plugin_id, declined_handle);
                         self.state_session_detaching(&detached, Some(&plugin_id));
                         self.forget_read_plan_session(declined_handle);
@@ -722,6 +729,7 @@ impl PluginHostHandler for PluginHost {
                         // `ReOffered` arm above.
                         self.cancel_read_plans_for_session(&plugin_id, declined_handle);
                         self.resource_session_detached(declined_handle);
+                        self.action_session_detached(declined_handle);
                         self.cancel_scans_for_session(&plugin_id, declined_handle);
                         self.state_session_detaching(&detached, Some(&plugin_id));
                         self.forget_read_plan_session(declined_handle);
@@ -868,6 +876,8 @@ impl SettingsSchemaSource for PluginHost {
 }
 
 mod api;
+mod actions;
+mod action_delivery;
 mod instances;
 mod lifecycle;
 pub(super) mod read_plans;

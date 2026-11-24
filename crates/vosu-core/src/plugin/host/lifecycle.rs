@@ -139,6 +139,7 @@ impl PluginHost {
                 }
             };
             let (id, instance) = next;
+            self.action_instance_lost(id);
             self.resource_state
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
@@ -230,6 +231,7 @@ impl PluginHost {
     ) {
         self.surface_session_detaching(crate::state::SessionKey(handle.0));
         self.resource_session_detached(handle);
+        self.action_session_detached(handle);
         if let Some(owner) = &owner {
             self.cancel_read_plans_for_session(owner, handle);
             self.cancel_scans_for_session(owner, handle);

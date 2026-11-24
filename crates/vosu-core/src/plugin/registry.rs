@@ -47,7 +47,7 @@ pub struct LoadedPlugin {
     namespace_schemas: Vec<String>,
     action_schemas: std::collections::BTreeMap<String, String>,
     compiled_action_schemas:
-        std::collections::BTreeMap<String, super::action_schema::CompiledActionSchema>,
+        std::collections::BTreeMap<String, Arc<super::action_schema::CompiledActionSchema>>,
     // Shared, not just held: unloading while an instance's `plugin_ctx`
     // still points into the library would be immediate undefined behavior
     // the next `dispatch`/`destroy` call makes, and `LoadedPlugin` alone
@@ -86,7 +86,7 @@ impl LoadedPlugin {
     /// Compiled once during load, keyed by the exact manifest asset path.
     pub fn compiled_action_schemas(
         &self,
-    ) -> &std::collections::BTreeMap<String, super::action_schema::CompiledActionSchema> {
+    ) -> &std::collections::BTreeMap<String, Arc<super::action_schema::CompiledActionSchema>> {
         &self.compiled_action_schemas
     }
 
@@ -366,13 +366,13 @@ fn load_action_schemas(
 
 fn compile_action_schemas(
     schemas: &std::collections::BTreeMap<String, String>,
-) -> Result<std::collections::BTreeMap<String, super::action_schema::CompiledActionSchema>, HostError>
+) -> Result<std::collections::BTreeMap<String, Arc<super::action_schema::CompiledActionSchema>>, HostError>
 {
     schemas
         .iter()
         .map(|(path, text)| {
             super::action_schema::CompiledActionSchema::compile(text)
-                .map(|schema| (path.clone(), schema))
+                .map(|schema| (path.clone(), Arc::new(schema)))
                 .map_err(|error| {
                     HostError::Io(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,

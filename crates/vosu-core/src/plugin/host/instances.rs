@@ -223,6 +223,7 @@ impl PluginHost {
                 return Err(HostError::MatcherRegister(error));
             }
         }
+        self.register_actions(id, plugin);
         let previous = guard.insert(
             id,
             InstanceSlot::Live(InstanceEntry {

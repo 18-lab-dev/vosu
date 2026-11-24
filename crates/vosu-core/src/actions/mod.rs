@@ -8,6 +8,14 @@
 pub mod deadline;
 pub mod jobs;
 pub mod waiters;
+pub mod invocation;
+pub mod registry;
+
+pub use registry::{ActionDescriptor, ActionRegistry};
+pub use invocation::{
+    InvocationError, InvocationExecutor, InvocationId, InvocationPolicy, InvocationResult,
+    InvocationSink, JobSink, Principal, SessionId,
+};
 
 pub use deadline::{DeadlineGuard, DeadlinePolicy};
 pub use jobs::{
