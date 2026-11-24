@@ -221,10 +221,6 @@ impl GenerationIdentity for Instance {
         Instance::pid(self)
     }
 
-    fn process_id(&self) -> Option<Pid> {
-        self.process.process_id()
-    }
-
     fn is_alive(&self) -> bool {
         self.process.is_alive()
     }
@@ -242,8 +238,12 @@ impl GenerationIdentity for Instance {
     }
 
     fn executable_root(&self) -> Result<PathBuf, LazerLoadError> {
-        vosu_osu_reader::memory::lazer_version::process_executable_root(self.pid)
-            .map_err(|error| LazerLoadError::Unavailable("unknown".into(), error.to_string()))
+        vosu_osu_reader::memory::lazer_version::process_executable_root(self.pid).map_err(|error| {
+            LazerLoadError::Unavailable(
+                "unknown".into(),
+                format!("version discovery failed: {error}"),
+            )
+        })
     }
 }
 

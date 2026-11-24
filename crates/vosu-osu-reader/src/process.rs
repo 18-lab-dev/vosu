@@ -13,7 +13,7 @@ use chrono::{DateTime, TimeZone, Utc};
 pub use vosu_sys::process::scanner::{
     BatchScanResult, Pattern, PatternParseError, SCAN_CHUNK_SIZE,
 };
-use vosu_sys::process::{
+pub use vosu_sys::process::{
     MemoryError, MemoryRead, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest, ReadStatus,
 };
 
@@ -26,8 +26,13 @@ const DOTNET_TICKS_PER_SECOND: u64 = 10_000_000;
 /// `scan_*` method routes through it instead of `vosu-sys`'s generic region
 /// walk. `scan_all`/`scan_batch` must return results in the region walk's
 /// own order (ascending region, then ascending offset within a region; at
-/// most one hit per pattern for `scan_batch`) so callers observe identical
-/// behavior regardless of backend (`prop_scan_backend_matches_region_walk`).
+/// most one hit per pattern for `scan_batch`) so `scan_all` and `scan_batch`
+/// observe identical results regardless of backend
+/// (`prop_scan_backend_matches_region_walk`). `scan_first` and
+/// `scan_first_valid` are derived from `scan_all` when a backend is set and
+/// can differ from the region walk's own `scan_first`/`scan_first_valid` in
+/// two cases documented on those methods: an empty pattern, and a region
+/// that becomes unreadable partway through.
 pub trait ScanBackend: Send + Sync {
     /// Every match, in ascending region order then ascending offset.
     fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError>;
@@ -551,6 +556,11 @@ impl ProcessHandle {
     /// (`vosu_sys::process::scanner`'s generic primitive over this
     /// handle's own `ProcessMemory` backend, or the injected `ScanBackend`
     /// when one was given to [`Self::with_scan_backend`]).
+    ///
+    /// With a backend, this is `scan_all(pattern).next()`, which differs
+    /// from the region walk in one case the backend path cannot express:
+    /// an **empty pattern** has no `scan_all` matches, so this returns
+    /// `None`, where the walk returns the first readable region's address.
     pub fn scan_first(&self, pattern: &Pattern) -> Result<Option<usize>, MemoryError> {
         match &self.scans {
             Some(backend) => Ok(backend.scan_all(pattern)?.into_iter().next()),
@@ -559,9 +569,18 @@ impl ProcessHandle {
     }
 
     /// Scans candidates in address order and stops at the first candidate
-    /// accepted by `validate`, without materializing every signature match
-    /// (unless a `ScanBackend` is injected, which must already produce
-    /// every match to answer `scan_all`).
+    /// accepted by `validate`.
+    ///
+    /// Without a backend this stops at the first accepted candidate without
+    /// materializing every match. With a backend, it instead validates every
+    /// `scan_all(pattern)` result in order, which differs from the region
+    /// walk in one case: a **region that becomes unreadable partway
+    /// through** can still have the walk accept a candidate `validate`
+    /// found in an earlier, readable window of that region before it ever
+    /// reaches the later, unreadable one; `scan_all` discards the whole
+    /// region once any window in it fails to read (`scanner.rs`'s
+    /// `scan_all`), so that same candidate is never offered to `validate`
+    /// here.
     pub fn scan_first_valid(
         &self,
         pattern: &Pattern,

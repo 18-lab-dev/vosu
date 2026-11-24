@@ -49,8 +49,6 @@ pub trait GenerationIdentity: Send + Sync + 'static {
     fn client(&self) -> vosu_osu_model::enums::ClientType;
     /// Stable identity of this generation, for log messages.
     fn pid(&self) -> u32;
-    /// The live process id, or `None` once the process has exited.
-    fn process_id(&self) -> Option<u32>;
     fn is_alive(&self) -> bool;
     fn lifecycle_token(&self) -> CancellationToken;
     fn lazer_offsets(&self) -> Option<Arc<LazerOffsets>>;
