@@ -376,3 +376,227 @@ fn execute_bytes_round_trips_through_message_decode_and_encode() {
     assert_eq!(result.plan, 9);
     assert_eq!(result.results, vec![ReadResult::Ok(vec![1, 2, 3, 4])]);
 }
+
+struct BatchCounter {
+    calls: std::sync::atomic::AtomicUsize,
+    fail_batch: bool,
+}
+
+impl ProcessMemory for BatchCounter {
+    fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.fail_batch && address == 0x1004 {
+            dst.fill(0xdd);
+            return Err(MemoryError::Read {
+                address,
+                len: dst.len(),
+                message: "partial test read".into(),
+            });
+        }
+        dst.fill(address as u8);
+        Ok(())
+    }
+
+    fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        for read in reads {
+            read.dst.fill(if self.fail_batch {
+                0xee
+            } else {
+                read.address as u8
+            });
+        }
+        if self.fail_batch {
+            Err(MemoryError::Backend {
+                operation: "merged read",
+                message: "synthetic merged failure".into(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
+        Ok(Vec::new())
+    }
+}
+
+fn counted_batch(memory: &BatchCounter, count: usize) -> ReadPlanResult {
+    let message = Message::ReadPlanSubmit(ReadPlanSubmit {
+        plan: 71,
+        handle: 1,
+        root: PlanBase::Absolute(0x1000),
+        stages: vec![Stage {
+            base: StageBase::Root,
+            base_offset: 0,
+            ops: (0..count).map(|index| op((index * 4) as i64, 4)).collect(),
+        }],
+        sync: false,
+    });
+    let bytes = execute_bytes(
+        &message.encode_payload().unwrap(),
+        message.flags(),
+        memory,
+        ProcessBitness::X64,
+        &NoModules,
+        far_deadline(),
+    )
+    .unwrap();
+    let Message::ReadPlanResult(result) =
+        Message::decode(vosu_opcode::VOSU_OP_READ_PLAN_RESULT, 0, &bytes).unwrap()
+    else {
+        panic!("expected read result");
+    };
+    result
+}
+
+#[test]
+fn independent_ops_use_one_backend_batch_like_native() {
+    let memory = BatchCounter {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        fail_batch: false,
+    };
+    let mut destinations = [[0; 4]; 32];
+    memory
+        .read_many(
+            &mut destinations
+                .each_mut()
+                .into_iter()
+                .enumerate()
+                .map(|(index, dst)| ReadRequest::new(0x1000 + index * 4, dst))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    let native = memory.calls.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let result = counted_batch(&memory, 32);
+    assert_eq!(result.results.len(), 32);
+    assert_eq!(
+        memory.calls.load(std::sync::atomic::Ordering::Relaxed),
+        native
+    );
+    for (index, result) in result.results.iter().enumerate() {
+        assert_eq!(result, &ReadResult::Ok(vec![(index * 4) as u8; 4]));
+    }
+}
+
+#[test]
+fn merged_failure_retries_and_discards_partial_bytes_per_op() {
+    let memory = BatchCounter {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        fail_batch: true,
+    };
+    let result = counted_batch(&memory, 3);
+    assert_eq!(memory.calls.load(std::sync::atomic::Ordering::Relaxed), 4);
+    assert_eq!(result.results[0], ReadResult::Ok(vec![0; 4]));
+    assert_eq!(result.results[2], ReadResult::Ok(vec![8; 4]));
+    let ReadResult::Error { code, message } = &result.results[1] else {
+        panic!("partial read must not return bytes");
+    };
+    assert_eq!(*code, ReadErrorCode::ReadFailed);
+    assert!(message.contains("partial test read"));
+    assert!(!message.contains("synthetic merged failure"));
+}
+
+#[test]
+fn pinned_reads_probe_health_only_on_failure_and_preserve_target_gone() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct PinnedMemory {
+        probes: AtomicUsize,
+        reads: AtomicUsize,
+        alive: bool,
+    }
+    impl ProcessMemory for PinnedMemory {
+        fn read_exact(&self, _: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            if !self.alive {
+                return Err(MemoryError::Backend {
+                    operation: "read dead process handle",
+                    message: "process exited".into(),
+                });
+            }
+            dst.fill(1);
+            Ok(())
+        }
+        fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+            for read in reads {
+                self.read_exact(read.address, read.dst)?;
+            }
+            Ok(())
+        }
+        fn readable_regions(&self) -> Result<Vec<vosu_sys::process::MemoryRegion>, MemoryError> {
+            panic!("an absolute plan must not refresh process regions");
+        }
+        fn process_id(&self) -> Option<u32> {
+            panic!("a pinned plan must not re-resolve the PID");
+        }
+        fn is_alive(&self) -> bool {
+            self.probes.fetch_add(1, Ordering::Relaxed);
+            self.alive
+        }
+        fn reads_pin_process_identity(&self) -> bool {
+            true
+        }
+    }
+    for count in [1, 3] {
+        let submit = ReadPlanSubmit {
+            plan: 72,
+            handle: 1,
+            root: PlanBase::Absolute(0x1000),
+            stages: vec![Stage {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops: vec![op(0, 4); count],
+            }],
+            sync: false,
+        };
+        let message = Message::ReadPlanSubmit(submit.clone());
+        let payload = message.encode_payload().unwrap();
+        for alive in [true, false] {
+            let memory = PinnedMemory {
+                probes: AtomicUsize::new(0),
+                reads: AtomicUsize::new(0),
+                alive,
+            };
+            let raw = execute_bytes(
+                &payload,
+                message.flags(),
+                &memory,
+                ProcessBitness::X64,
+                &NoModules,
+                far_deadline(),
+            );
+            if alive {
+                assert!(raw.is_ok());
+                assert_eq!(memory.probes.load(Ordering::Relaxed), 0);
+                assert_eq!(memory.reads.load(Ordering::Relaxed), count);
+            } else {
+                assert!(matches!(
+                    raw,
+                    Err(ExecuteBytesError::Execute(ReadPlanError::TargetGone))
+                ));
+                assert_eq!(memory.probes.load(Ordering::Relaxed), 1);
+                assert_eq!(memory.reads.load(Ordering::Relaxed), 1);
+            }
+            memory.probes.store(0, Ordering::Relaxed);
+            let owned = execute(
+                &submit,
+                &memory,
+                ProcessBitness::X64,
+                &NoModules,
+                far_deadline(),
+            )
+            .unwrap();
+            assert_eq!(memory.probes.load(Ordering::Relaxed), usize::from(!alive));
+            assert_eq!(
+                owned.results,
+                if alive {
+                    vec![ReadResult::Ok(vec![1; 4]); count]
+                } else {
+                    vec![ReadResult::NotReady; count]
+                }
+            );
+        }
+    }
+}

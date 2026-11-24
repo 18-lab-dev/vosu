@@ -242,7 +242,7 @@ fn read_one_into_tail_raw(
     global_index: usize,
     out: &mut Vec<u8>,
     budget: &mut ErrorBudget,
-) {
+) -> Result<(), ReadPlanError> {
     let region_start = out.len();
     out.resize(region_start + length as usize, 0);
     match memory.read_exact(
@@ -251,6 +251,9 @@ fn read_one_into_tail_raw(
     ) {
         Ok(()) => write_entry(out, global_index, &ok_entry(region_start as u32, length)),
         Err(error) => {
+            if !memory.is_alive() {
+                return Err(ReadPlanError::TargetGone);
+            }
             out.truncate(region_start);
             budget.recover(length);
             write_op_error_entry(
@@ -262,6 +265,7 @@ fn read_one_into_tail_raw(
             );
         }
     }
+    Ok(())
 }
 
 /// Bundles the three values every stage-processing function below needs
@@ -280,9 +284,12 @@ fn process_single_op_raw(
     global_index: usize,
     out: &mut Vec<u8>,
     budget: &mut ErrorBudget,
-) {
+) -> Result<(), ReadPlanError> {
     let op: vosu_plan_op = read_struct_at(ctx.payload, stage.ops_offset as usize);
     let Some(address) = resolve_op_address(base, op.offset) else {
+        if !ctx.memory.is_alive() {
+            return Err(ReadPlanError::TargetGone);
+        }
         budget.recover(op.length);
         write_op_error_entry(
             out,
@@ -291,9 +298,9 @@ fn process_single_op_raw(
             op_overflow_message(base, op.offset),
             budget,
         );
-        return;
+        return Ok(());
     };
-    read_one_into_tail_raw(ctx.memory, address, op.length, global_index, out, budget);
+    read_one_into_tail_raw(ctx.memory, address, op.length, global_index, out, budget)
 }
 
 /// Upper bound on how many sibling ops one [`process_multi_op_raw`] batch
@@ -387,10 +394,12 @@ fn process_multi_op_chunk_raw(
                 );
             }
         } else {
-            // The batch call itself failed (`src/process.rs`'s
-            // `read_many` contract: fill all requests or touch none), so
-            // every reserved byte in `out[region_start..]` is unused;
-            // retract it and re-read each op on its own, appending only
+            if !ctx.memory.is_alive() {
+                return Err(ReadPlanError::TargetGone);
+            }
+            // A failed batch may have touched its destinations. None of
+            // those bytes are a successful per-op result: retract every
+            // reserved byte and re-read each op independently, appending only
             // what actually succeeds, so a failure here recovers its
             // budget exactly like `read_one_into_tail_raw` (F2: matching
             // `super::execute_stage_ops`'s own fallback accounting). Safe
@@ -409,7 +418,7 @@ fn process_multi_op_chunk_raw(
                     global_index_start + op_index,
                     out,
                     budget,
-                );
+                )?;
             }
         }
     }
@@ -462,6 +471,9 @@ fn process_stage_raw(
     let op_size = size_of::<vosu_plan_op>();
     let base = match stage_base {
         Err(failure) => {
+            if !ctx.memory.is_alive() {
+                return Err(ReadPlanError::TargetGone);
+            }
             for op_index in 0..stage.op_count as usize {
                 let op: vosu_plan_op =
                     read_struct_at(ctx.payload, stage.ops_offset as usize + op_index * op_size);
@@ -479,10 +491,7 @@ fn process_stage_raw(
 
     match stage.op_count {
         0 => Ok(()),
-        1 => {
-            process_single_op_raw(ctx, stage, base, global_index_start, out, budget);
-            Ok(())
-        }
+        1 => process_single_op_raw(ctx, stage, base, global_index_start, out, budget),
         _ => process_multi_op_raw(ctx, stage, base, global_index_start, out, budget),
     }
 }
@@ -504,96 +513,127 @@ pub fn execute_into(
     deadline: Instant,
     out: &mut Vec<u8>,
 ) -> Result<(), ExecuteBytesError> {
-    validate_flags(vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT, flags)
-        .map_err(|error| ExecuteBytesError::Message(error.into()))?;
-    validate_read_plan_submit(payload).map_err(|error| ExecuteBytesError::Message(error.into()))?;
+    ValidatedPlan::new(payload, flags)?.execute(memory, bitness, modules, deadline, out)
+}
 
-    // Checked in this order — the ref-op-width check before target
-    // liveness — to match `super::execute`'s own order (P1-3: a plan
-    // validation error takes priority over a runtime/target-state one):
-    // both entry points must reject the same way when a plan is both for
-    // a dead target and wrong-width.
-    let pointer_width = u32::try_from(bitness.pointer_size()).unwrap_or(u32::MAX);
-    validate_read_plan_ref_op_width(payload, pointer_width)
-        .map_err(|_| ExecuteBytesError::Execute(ReadPlanError::RefOpWrongWidth))?;
-    if !memory.is_alive() {
-        return Err(ExecuteBytesError::Execute(ReadPlanError::TargetGone));
+/// Borrows the exact buffer whose structural validation succeeded. Keeping the
+/// payload private prevents the host from accidentally executing a different or
+/// mutated buffer after validating session ownership.
+pub(crate) struct ValidatedPlan<'a> {
+    payload: &'a [u8],
+    header: vosu_read_plan_submit_header,
+}
+
+impl<'a> ValidatedPlan<'a> {
+    pub(crate) fn new(payload: &'a [u8], flags: u32) -> Result<Self, ExecuteBytesError> {
+        validate_flags(vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT, flags)
+            .map_err(|error| ExecuteBytesError::Message(error.into()))?;
+        validate_read_plan_submit(payload)
+            .map_err(|error| ExecuteBytesError::Message(error.into()))?;
+        let header =
+            read_flat_header(payload).map_err(|error| ExecuteBytesError::Message(error.into()))?;
+        Ok(Self { payload, header })
     }
 
-    let header: vosu_read_plan_submit_header =
-        read_flat_header(payload).map_err(|error| ExecuteBytesError::Message(error.into()))?;
-
-    // The root's module name, if any, must be valid UTF-8 before any
-    // per-stage work starts (`validate_read_plan_submit` only bounds-
-    // checks the byte range, matching the owned decode path's own split
-    // between structural validation and `owned_str`'s UTF-8 check).
-    if vosu_plan_base_kind::try_from(header.root.kind) == Ok(vosu_plan_base_kind::VOSU_BASE_MODULE)
-    {
-        module_name_str(payload, &header.root)
-            .map_err(|error| ExecuteBytesError::Message(MessageError::InvalidUtf8(error)))?;
+    pub(crate) fn handle(&self) -> u64 {
+        self.header.handle
     }
 
-    let stage_size = size_of::<vosu_stage_header>();
-    let op_size = size_of::<vosu_plan_op>();
-    let mut total_ops: usize = 0;
-    let mut total_len: u64 = 0;
-    for stage_index in 0..header.stage_count as usize {
-        let stage: vosu_stage_header = read_struct_at(
-            payload,
-            header.stages_offset as usize + stage_index * stage_size,
-        );
-        total_ops += stage.op_count as usize;
-        for op_index in 0..stage.op_count as usize {
-            let op: vosu_plan_op =
-                read_struct_at(payload, stage.ops_offset as usize + op_index * op_size);
-            total_len += u64::from(op.length);
+    pub(crate) fn execute(
+        self,
+        memory: &dyn ProcessMemory,
+        bitness: ProcessBitness,
+        modules: &dyn ModuleResolver,
+        deadline: Instant,
+        out: &mut Vec<u8>,
+    ) -> Result<(), ExecuteBytesError> {
+        let Self { payload, header } = self;
+
+        // Validate width before runtime errors. Successful reads need no
+        // separate liveness syscall: the owned native process handle pins the
+        // process object, so PID reuse cannot redirect a Windows handle read.
+        // Failed reads still probe health to distinguish TARGET_GONE from
+        // an ordinary address/permission fault.
+        let pointer_width = u32::try_from(bitness.pointer_size()).unwrap_or(u32::MAX);
+        validate_read_plan_ref_op_width(payload, pointer_width)
+            .map_err(|_| ExecuteBytesError::Execute(ReadPlanError::RefOpWrongWidth))?;
+        if !memory.reads_pin_process_identity() && !memory.is_alive() {
+            return Err(ExecuteBytesError::Execute(ReadPlanError::TargetGone));
         }
-    }
-    let used = RESULT_HEADER_SIZE
-        + RESULT_ENTRY_SIZE * total_ops
-        + usize::try_from(total_len).unwrap_or(usize::MAX);
-    let mut budget = ErrorBudget::new((VOSU_READ_PLAN_MAX_BYTES as usize).saturating_sub(used));
 
-    out.clear();
-    out.resize(RESULT_HEADER_SIZE + RESULT_ENTRY_SIZE * total_ops, 0);
-    let root_base = resolve_root_raw(payload, &header.root, modules);
-    let ctx = RawContext {
-        payload,
-        memory,
-        deadline,
-    };
-    let mut global_index = 0usize;
-    for stage_index in 0..header.stage_count as usize {
-        if Instant::now() >= deadline {
-            return Err(ExecuteBytesError::Execute(ReadPlanError::TimedOut));
+        // The root's module name, if any, must be valid UTF-8 before any
+        // per-stage work starts (`validate_read_plan_submit` only bounds-
+        // checks the byte range, matching the owned decode path's own split
+        // between structural validation and `owned_str`'s UTF-8 check).
+        if vosu_plan_base_kind::try_from(header.root.kind)
+            == Ok(vosu_plan_base_kind::VOSU_BASE_MODULE)
+        {
+            module_name_str(payload, &header.root)
+                .map_err(|error| ExecuteBytesError::Message(MessageError::InvalidUtf8(error)))?;
         }
-        let stage: vosu_stage_header = read_struct_at(
+
+        let stage_size = size_of::<vosu_stage_header>();
+        let op_size = size_of::<vosu_plan_op>();
+        let mut total_ops: usize = 0;
+        let mut total_len: u64 = 0;
+        for stage_index in 0..header.stage_count as usize {
+            let stage: vosu_stage_header = read_struct_at(
+                payload,
+                header.stages_offset as usize + stage_index * stage_size,
+            );
+            total_ops += stage.op_count as usize;
+            for op_index in 0..stage.op_count as usize {
+                let op: vosu_plan_op =
+                    read_struct_at(payload, stage.ops_offset as usize + op_index * op_size);
+                total_len += u64::from(op.length);
+            }
+        }
+        let used = RESULT_HEADER_SIZE
+            + RESULT_ENTRY_SIZE * total_ops
+            + usize::try_from(total_len).unwrap_or(usize::MAX);
+        let mut budget = ErrorBudget::new((VOSU_READ_PLAN_MAX_BYTES as usize).saturating_sub(used));
+
+        out.clear();
+        out.resize(RESULT_HEADER_SIZE + RESULT_ENTRY_SIZE * total_ops, 0);
+        let root_base = resolve_root_raw(payload, &header.root, modules);
+        let ctx = RawContext {
             payload,
-            header.stages_offset as usize + stage_index * stage_size,
-        );
-        let stage_base = resolve_stage_base_raw(
-            payload,
-            header.stages_offset,
-            &stage,
+            memory,
+            deadline,
+        };
+        let mut global_index = 0usize;
+        for stage_index in 0..header.stage_count as usize {
+            if Instant::now() >= deadline {
+                return Err(ExecuteBytesError::Execute(ReadPlanError::TimedOut));
+            }
+            let stage: vosu_stage_header = read_struct_at(
+                payload,
+                header.stages_offset as usize + stage_index * stage_size,
+            );
+            let stage_base = resolve_stage_base_raw(
+                payload,
+                header.stages_offset,
+                &stage,
+                out,
+                &root_base,
+                bitness,
+            );
+            process_stage_raw(&ctx, &stage, stage_base, global_index, out, &mut budget)
+                .map_err(ExecuteBytesError::Execute)?;
+            global_index += stage.op_count as usize;
+        }
+
+        write_struct_at(
             out,
-            &root_base,
-            bitness,
+            0,
+            &vosu_read_plan_result_header {
+                plan: header.plan,
+                results_offset: RESULT_HEADER_SIZE as u32,
+                result_count: total_ops as u32,
+            },
         );
-        process_stage_raw(&ctx, &stage, stage_base, global_index, out, &mut budget)
-            .map_err(ExecuteBytesError::Execute)?;
-        global_index += stage.op_count as usize;
+        Ok(())
     }
-
-    write_struct_at(
-        out,
-        0,
-        &vosu_read_plan_result_header {
-            plan: header.plan,
-            results_offset: RESULT_HEADER_SIZE as u32,
-            result_count: total_ops as u32,
-        },
-    );
-    Ok(())
 }
 
 /// Convenience wrapper over [`execute_into`] that allocates its own result

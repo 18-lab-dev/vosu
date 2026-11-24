@@ -67,10 +67,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
-use vosu_plugin_api::{
-    Message, ReadPlanCancel, ReadPlanSubmit, read_flat_header, validate_flags,
-    validate_read_plan_submit, vosu_opcode, vosu_read_plan_submit_header, vosu_status,
-};
+use vosu_plugin_api::{Message, ReadPlanCancel, ReadPlanSubmit, vosu_opcode, vosu_status};
 use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory};
 
 use super::super::dispatch::dispatch_raw;
@@ -414,11 +411,11 @@ pub(super) fn is_hooked_for_tests(pid: u32) -> bool {
 /// last snapshot; a snapshot that cannot be built at all still resolves
 /// nothing, which the caller already reports as a per-read
 /// `VOSU_READ_NOT_READY`.
-struct CachingModuleResolver {
-    memory: Arc<SessionMemory>,
+struct CachingModuleResolver<'a> {
+    memory: &'a SessionMemory,
 }
 
-impl ModuleResolver for CachingModuleResolver {
+impl ModuleResolver for CachingModuleResolver<'_> {
     fn resolve(&self, module: &str) -> Option<u64> {
         let pid = self.memory.pid;
         resolve_cached(&self.memory.modules, module, || build_module_table(pid))
@@ -744,29 +741,14 @@ impl PluginHost {
         if read_plan::on_dispatch_thread() {
             return SyncReadPlanError::OnDispatchThread.into();
         }
-        // P3 (F4 review): validated before touching the session or
-        // opening any process memory, exactly like the deleted typed
-        // path (`Message::decode`) and the async path both do — a
-        // malformed or unknown-flag SYNC plan must answer
-        // `VOSU_ERR_INVALID_ARGUMENT`, never `VOSU_ERR_TARGET_GONE`/
-        // `VOSU_ERR_PERMISSION_DENIED` from resolving a session this
-        // submission was never going to execute against anyway
-        // (`execute_into`'s own doc comment: "a plan validation error
-        // takes priority over a runtime/target-state one"). Both
-        // allocation-free; `execute_into` repeats them on the same
-        // `payload` below, which is harmless (idempotent) and keeps its
-        // own contract self-sufficient for every caller, not just this
-        // one.
-        if validate_flags(vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT, flags).is_err()
-            || validate_read_plan_submit(payload).is_err()
-        {
-            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
-        }
-        let header: vosu_read_plan_submit_header = match read_flat_header(payload) {
-            Ok(header) => header,
-            Err(_) => return vosu_status::VOSU_ERR_INVALID_ARGUMENT,
+        // Validate before ownership/liveness lookup so malformed submissions
+        // retain INVALID_ARGUMENT precedence. The borrowed token carries this
+        // proof into the executor without validating the same ops twice.
+        let plan = match read_plan::ValidatedPlan::new(payload, flags) {
+            Ok(plan) => plan,
+            Err(error) => return error.into(),
         };
-        let handle = SessionHandle(header.handle);
+        let handle = SessionHandle(plan.handle());
         let pid = match self.resolve_owned_session_for_instance(instance, handle) {
             Ok(pid) => pid,
             Err(status) => return status,
@@ -775,15 +757,11 @@ impl PluginHost {
             Ok(memory) => memory,
             Err(error) => return error.into(),
         };
-        let modules = CachingModuleResolver {
-            memory: Arc::clone(&memory),
-        };
+        let modules = CachingModuleResolver { memory: &memory };
         let deadline = Instant::now() + self.read_plan_deadline();
         SYNC_RESULT_BUF.with(|buf| {
             let mut buf = buf.borrow_mut();
-            if let Err(error) = read_plan::execute_into(
-                payload,
-                flags,
+            if let Err(error) = plan.execute(
                 memory.process.as_ref(),
                 memory.bitness,
                 &modules,
@@ -882,9 +860,6 @@ impl PluginHost {
         // `begin` (just above) and the job actually being queued.
         #[cfg(test)]
         run_async_submit_race_hook_for_tests(pid);
-        let modules = CachingModuleResolver {
-            memory: Arc::clone(&memory),
-        };
         let deadline_duration = self.read_plan_deadline();
         // P1-2: a `Weak` reference, upgraded only to deliver. A strong
         // `Arc<PluginHost>` here could let a background-pool worker end
@@ -908,6 +883,7 @@ impl PluginHost {
             // the shared pool must not already be expired before a
             // worker even picks it up.
             let deadline = Instant::now() + deadline_duration;
+            let modules = CachingModuleResolver { memory: &memory };
             let result = match read_plan::execute(
                 &submit,
                 memory.process.as_ref(),

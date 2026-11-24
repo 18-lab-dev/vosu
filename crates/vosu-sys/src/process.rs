@@ -192,6 +192,13 @@ pub trait ProcessMemory: Send + Sync {
     fn is_alive(&self) -> bool {
         true
     }
+
+    /// Whether reads target an owned process object rather than a reusable PID.
+    /// Such backends can defer a plan's health probe until a read fails without
+    /// allowing PID reuse to redirect successful reads into another process.
+    fn reads_pin_process_identity(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

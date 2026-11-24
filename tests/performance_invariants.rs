@@ -317,6 +317,152 @@ fn plan_memory_scalar_readers_allocate_nothing() {
     );
 }
 
+#[cfg(feature = "test-harness")]
+#[path = "../benches/support/stable_fixture.rs"]
+mod stable_fixture;
+
+#[cfg(feature = "test-harness")]
+#[test]
+fn plan_memory_stable_capture_backend_call_count() {
+    struct CountedMemory {
+        bytes: Vec<u8>,
+        calls: Arc<AtomicUsize>,
+        ops: Arc<AtomicUsize>,
+        health: Arc<AtomicUsize>,
+    }
+    impl CountedMemory {
+        fn copy(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+            let source = address
+                .checked_add(dst.len())
+                .and_then(|end| self.bytes.get(address..end))
+                .ok_or_else(|| fixture_error("outside stable fixture"))?;
+            dst.copy_from_slice(source);
+            Ok(())
+        }
+    }
+    impl ProcessMemory for CountedMemory {
+        fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.ops.fetch_add(1, Ordering::Relaxed);
+            self.copy(address, dst)
+        }
+        fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            self.ops.fetch_add(reads.len(), Ordering::Relaxed);
+            for read in reads {
+                self.copy(read.address, read.dst)?;
+            }
+            Ok(())
+        }
+        fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
+            panic!("absolute capture must not refresh process regions")
+        }
+        fn process_id(&self) -> Option<u32> {
+            panic!("capture must not reopen or re-resolve the process")
+        }
+        fn is_alive(&self) -> bool {
+            self.health.fetch_add(1, Ordering::Relaxed);
+            true
+        }
+        fn reads_pin_process_identity(&self) -> bool {
+            true
+        }
+    }
+    let make_memory = || {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let ops = Arc::new(AtomicUsize::new(0));
+        let health = Arc::new(AtomicUsize::new(0));
+        let memory = Arc::new(CountedMemory {
+            bytes: stable_fixture::bytes(),
+            calls: Arc::clone(&calls),
+            ops: Arc::clone(&ops),
+            health: Arc::clone(&health),
+        });
+        (memory, calls, ops, health)
+    };
+    let (native, native_calls, native_ops, native_health) = make_memory();
+    let mut native = StableMemory::new(
+        ProcessHandle::new(native, ProcessBitness::X86),
+        stable_fixture::patterns(),
+    );
+    let (plan, plan_calls, plan_ops, plan_health) = make_memory();
+    let pid = 910_600_103;
+    vosu_core::plugin::test_support::set_session_memory(pid, plan, ProcessBitness::X86);
+    struct Cleanup(u32);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            vosu_core::plugin::test_support::clear_session_memory(self.0);
+        }
+    }
+    let _cleanup = Cleanup(pid);
+    let mut record = plan_attachment::native_record(std::process::id()).unwrap();
+    record.pid = pid;
+    record.bitness = vosu_plugin_api::Bitness::X86;
+    let attachment = plan_attachment::Attachment::new(record, "vosu.test.plan.counts").unwrap();
+    let mut plan = StableMemory::new(attachment.process.clone(), stable_fixture::patterns());
+    stable_fixture::assert_capture(&mut native);
+    stable_fixture::assert_capture(&mut plan);
+    for counter in [
+        &native_calls,
+        &native_ops,
+        &native_health,
+        &plan_calls,
+        &plan_ops,
+        &plan_health,
+    ] {
+        counter.store(0, Ordering::Relaxed);
+    }
+    assert_eq!(
+        format!("{:?}", stable_fixture::capture(&mut native)),
+        format!("{:?}", stable_fixture::capture(&mut plan))
+    );
+    let native_regular_calls = native_calls.load(Ordering::Relaxed);
+    let plan_regular_calls = plan_calls.load(Ordering::Relaxed);
+    eprintln!(
+        "stable regular: native calls={native_regular_calls} ops={} health={}; plan calls={plan_regular_calls} ops={} health={}",
+        native_ops.load(Ordering::Relaxed),
+        native_health.load(Ordering::Relaxed),
+        plan_ops.load(Ordering::Relaxed),
+        plan_health.load(Ordering::Relaxed),
+    );
+    assert_eq!(native_regular_calls, 14);
+    assert_eq!(plan_regular_calls, 15);
+    assert_eq!(native_ops.load(Ordering::Relaxed), 56);
+    assert_eq!(plan_ops.load(Ordering::Relaxed), 56);
+    assert_eq!(plan_health.load(Ordering::Relaxed), 0);
+    for counter in [
+        &native_calls,
+        &native_ops,
+        &native_health,
+        &plan_calls,
+        &plan_ops,
+        &plan_health,
+    ] {
+        counter.store(0, Ordering::Relaxed);
+    }
+    let native_precise = native.global_precise().unwrap();
+    let plan_precise = plan.global_precise().unwrap();
+    assert!(matches!(
+        native_precise,
+        vosu_sys::process::ReadStatus::Ready(_)
+    ));
+    assert_eq!(format!("{native_precise:?}"), format!("{plan_precise:?}"));
+    eprintln!(
+        "stable precise (non-playing): native calls={} ops={} health={}; plan calls={} ops={} health={}",
+        native_calls.load(Ordering::Relaxed),
+        native_ops.load(Ordering::Relaxed),
+        native_health.load(Ordering::Relaxed),
+        plan_calls.load(Ordering::Relaxed),
+        plan_ops.load(Ordering::Relaxed),
+        plan_health.load(Ordering::Relaxed),
+    );
+    assert_eq!(
+        plan_calls.load(Ordering::Relaxed),
+        native_calls.load(Ordering::Relaxed)
+    );
+    assert_eq!(plan_health.load(Ordering::Relaxed), 0);
+}
+
 #[test]
 fn scanner_scratch_is_bounded_to_one_mib_plus_overlap() {
     let pattern_len = 257;

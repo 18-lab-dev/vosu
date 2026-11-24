@@ -182,16 +182,23 @@ so this run does **not** meet D17's within-10% bar. Evidence:
 `/tmp/m1-c6b-no-reserve/summary.json`. A quiet rerun is necessary before claiming
 a revision-level speedup.
 
-Separate non-exclusive transport controls measured one plan with 1/18/56
-independent four-byte ops at approximately **83/290/855 ns**. A rough fit to the
-first two gives **71 ns fixed per plan + 12 ns per op**; these are diagnostic
-estimates, not an absolute lower bound for another executor or plan shape.
-The populated capture retains 56 ops across 13 submissions: fixed submission
-cost and per-op validation/result handling are both material, not fixed cost
-alone. Fusing global's four submissions to one and gameplay's five to one would
-remove seven submissions, suggesting about **0.50 µs** saved at unchanged op
-count (roughly 3.22 → 2.72 µs, still well above native). This estimate excludes
-additional dependent-stage overhead and is not a measured speedup.
+With an explicitly **x86** fixture session, regular capture uses native **14
+backend calls / 56 ops**, versus plan **15 calls / 56 ops** (one additional
+dependent stage). Non-playing precise capture uses **1 batch / 2 ops** on both.
+These are backend calls, not measured OS syscalls. The original host additionally
+probed health **13 times per regular / once per precise capture**. Windows handle
+reads now defer that probe until read failure; the pinned fake observes **zero**
+successful-path probes. Linux retains its identity preflight for PID-based reads.
+The host also retains a borrowed validation proof instead of scanning the same
+submission twice, and borrows its module resolver's session reference. Result
+delivery still rechecks the instance, preserving teardown-race behavior.
+
+`cargo run --locked --features test-harness --example plan_process_bench` spawns a
+real child holding the populated graph, translates fixture offsets only at the
+native read boundary, and compares native reads with the real in-process host.
+One CPU-4-pinned debug run measured native/plan medians of **0.762/3.456 µs**
+(one op), **1.413/4.739 µs** (non-playing precise), and **42.761/101.391 µs**
+(regular). These debug diagnostics are not release Criterion exit evidence.
 
 
 ## vosu hot paths
