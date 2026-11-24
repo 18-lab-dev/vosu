@@ -9,6 +9,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Serve published API v1 resources and indexed tree members through bounded,
   range-aware GET/HEAD responses, with revalidated tree indexes, immutable
   resource validators, sandbox/nosniff headers and current-reference redirects.
+- Return API v1 resource/tree 410 errors when a provider reply races with
+  retirement of its published reference; keep failures of current providers
+  distinct from retired resources.
 - Add independent `API_V1_SUBSCRIPTION_DEBOUNCE` configuration and dashboard
   settings, defaulting to 1 ms with a fractional 1–60000 ms range. Legacy V2
   subscription and B1 reader settings retain their own debounce.

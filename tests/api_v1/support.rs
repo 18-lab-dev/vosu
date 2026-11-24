@@ -78,6 +78,11 @@ pub struct Harness {
 }
 impl Harness {
     pub fn new() -> Self {
+        Self::with_console(Arc::new(Console)).0
+    }
+    pub fn with_console(
+        console: Arc<dyn vosu_core::logging::ConsoleSink>,
+    ) -> (Self, vosu_core::logging::Logger) {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -89,26 +94,29 @@ impl Harness {
             vosu_core::logging::Logger::new(
                 root.path(),
                 vosu_core::logging::LoggerOptions::default(),
-                Arc::new(Console),
+                console,
             )
             .unwrap()
         };
         let foreground = Arc::new(plugin::SyntheticForegroundSource::new(None));
         let host = PluginHost::new_with_foreground(
-            logger,
+            logger.clone(),
             Arc::new(plugin::settings::PluginSettingsService::new(Arc::new(
                 Storage,
             ))),
             runtime.handle().clone(),
             foreground.clone(),
         );
-        Self {
-            host,
-            runtime,
-            foreground,
-            root,
-            next: 1,
-        }
+        (
+            Self {
+                host,
+                runtime,
+                foreground,
+                root,
+                next: 1,
+            },
+            logger,
+        )
     }
     pub fn load(
         &mut self,
