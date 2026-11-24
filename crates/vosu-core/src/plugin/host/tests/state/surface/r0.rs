@@ -16,6 +16,7 @@ struct Fixture {
     closed: SyncSender<u64>,
     stream: bool,
     stream_size: std::sync::atomic::AtomicU64,
+    variant: &'static str,
     hold_reads: std::sync::atomic::AtomicBool,
 }
 static FIXTURES: LazyLock<Mutex<std::collections::HashMap<String, Arc<Fixture>>>> =
@@ -38,7 +39,7 @@ impl Plugin for Provider {
                         &Message::SessionIdentify(SessionIdentify {
                             handle: a.handle,
                             game: "testkit".into(),
-                            variant: "stable".into(),
+                            variant: self.fixture.variant.into(),
                             name: "R0".into(),
                             version: "1".into(),
                             focus_priority: false,
@@ -122,6 +123,23 @@ impl Case {
         resource_grant: bool,
         field_grant: bool,
     ) -> Self {
+        Self::variant(
+            name,
+            instance,
+            stream,
+            resource_grant,
+            field_grant,
+            "stable",
+        )
+    }
+    fn variant(
+        name: &str,
+        instance: u64,
+        stream: bool,
+        resource_grant: bool,
+        field_grant: bool,
+        variant: &'static str,
+    ) -> Self {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _enter = rt.enter();
         let (logs, host) = test_host(rt.handle().clone());
@@ -136,7 +154,7 @@ impl Case {
             ""
         };
         let manifest = session_manifest(name, &[name]).replace("[match]", &format!(
-            "root_slots=['songs','nested']\n[[resource_kinds]]\nkind='file'\nfamilies=['chart-text']\n{fields}{requirements}[match]"
+            "root_slots=['songs','files','nested']\n[[resource_kinds]]\nkind='file'\nfamilies=['chart-text']\n{fields}{requirements}[match]"
         ));
         let (attached, attachments) = sync_channel(2);
         let (closed, close_events) = sync_channel(8);
@@ -145,6 +163,7 @@ impl Case {
             attached,
             closed,
             stream,
+            variant,
             stream_size: std::sync::atomic::AtomicU64::new(7),
             hold_reads: std::sync::atomic::AtomicBool::new(false),
         });
@@ -530,4 +549,91 @@ fn surface_published_resource_cannot_borrow_membership_from_another_session() {
         .size,
         7
     );
+}
+
+#[test]
+fn surface_calculation_relative_root_tracks_variant_and_rejects_forgery() {
+    for (variant, name, id) in [
+        ("stable", "test.r0.calc.stable", 18911),
+        ("lazer", "test.r0.calc.lazer", 18912),
+    ] {
+        let case = Case::variant(name, id, false, true, true, variant);
+        let files = tempfile::tempdir().unwrap();
+        std::fs::write(case.dir.path().join("chart.osu"), b"stable-songs").unwrap();
+        std::fs::write(files.path().join("chart.osu"), b"lazer-files").unwrap();
+        assert_eq!(
+            case.host.handle(
+                case.instance,
+                Message::RootDeclare(RootDeclare {
+                    handle: Some(case.handle),
+                    name: "files".into(),
+                    path: files.path().to_str().unwrap().into(),
+                }),
+                0
+            ),
+            vosu_status::VOSU_OK
+        );
+        let opened = case
+            .run(
+                case.requester
+                    .open_calculation_path(&case.selected, "chart.osu"),
+            )
+            .unwrap();
+        assert_eq!(
+            case.run(opened.read(0, 64)).unwrap(),
+            if variant == "lazer" {
+                b"lazer-files".as_slice()
+            } else {
+                b"stable-songs".as_slice()
+            }
+        );
+        let mut forged = case.selected.clone();
+        forged.variant = if variant == "lazer" {
+            "stable"
+        } else {
+            "lazer"
+        }
+        .into();
+        assert!(matches!(
+            case.run(case.requester.open_calculation_path(&forged, "chart.osu")),
+            Err(FileError::PermissionDenied)
+        ));
+    }
+}
+
+#[test]
+fn surface_calculation_rejects_canonical_non_osu_alias() {
+    let case = Case::new("test.r0.calc.extension", 18913, false, true, true);
+    std::fs::write(case.dir.path().join("actual.txt"), b"not-a-chart").unwrap();
+    std::fs::write(case.dir.path().join("actual.osu"), b"chart").unwrap();
+    #[cfg(target_os = "linux")]
+    use std::os::unix::fs::symlink;
+    #[cfg(windows)]
+    use std::os::windows::fs::symlink_file as symlink;
+    symlink("actual.txt", case.dir.path().join("alias.osu")).unwrap();
+    symlink("actual.osu", case.dir.path().join("valid.osu")).unwrap();
+    for spelling in [
+        "alias.osu".to_owned(),
+        case.dir
+            .path()
+            .join("alias.osu")
+            .to_str()
+            .unwrap()
+            .to_owned(),
+    ] {
+        assert!(matches!(
+            case.run(
+                case.requester
+                    .open_calculation_path(&case.selected, &spelling)
+            ),
+            Err(FileError::InvalidPath)
+        ));
+    }
+    let opened = case
+        .run(
+            case.requester
+                .open_calculation_path(&case.selected, "valid.osu"),
+        )
+        .unwrap();
+    assert_eq!(case.run(opened.read(0, 64)).unwrap(), b"chart");
 }
