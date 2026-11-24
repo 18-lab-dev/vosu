@@ -13,12 +13,12 @@ struct ReadyScans {
 }
 impl ScanBackend for ReadyScans {
     fn scan_all(&self, _: &Pattern) -> Result<Vec<usize>, MemoryError> {
-        if let Some(started) = &self.started {
-            started.notify_one();
-        }
         Ok(vec![0x4000])
     }
     fn scan_batch(&self, patterns: &[Pattern]) -> Result<Vec<BatchScanResult>, MemoryError> {
+        if let Some(started) = &self.started {
+            started.notify_one();
+        }
         Ok(patterns
             .iter()
             .enumerate()
@@ -27,6 +27,18 @@ impl ScanBackend for ReadyScans {
                 address: 0x4000 + index * 0x100,
             })
             .collect())
+    }
+}
+// Lazer prepares scalar patterns after offsets arrive; stable prepares batches.
+// Keep their readiness observations separate so neither test accepts the wrong path.
+struct LazerPreparationScans(Arc<tokio::sync::Notify>);
+impl ScanBackend for LazerPreparationScans {
+    fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError> {
+        self.0.notify_one();
+        ReadyScans::default().scan_all(pattern)
+    }
+    fn scan_batch(&self, patterns: &[Pattern]) -> Result<Vec<BatchScanResult>, MemoryError> {
+        ReadyScans::default().scan_batch(patterns)
     }
 }
 fn capture_session(pid: u32, client: ClientType) -> Arc<OsuSession> {
@@ -129,9 +141,7 @@ async fn installing_offsets_wakes_capture_without_waiting_for_retry_delay() {
     let session = capture_session_with_scans(
         61101,
         ClientType::Lazer,
-        Arc::new(ReadyScans {
-            started: Some(preparing.clone()),
-        }),
+        Arc::new(LazerPreparationScans(preparing.clone())),
     );
     let offsets = Arc::new(LazerOffsets::embedded().unwrap());
     session.start_capture(noop_warn(), noop_warn()).await;
