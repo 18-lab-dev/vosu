@@ -141,6 +141,9 @@ pub struct Expected {
     pub body: Body,
     /// `Some` exactly for the `ws` family.
     pub frames: Option<Vec<ExpectedFrame>>,
+    /// Upstream closed the connection without a response byte (`{"outcome":
+    /// "closed"}`); status, headers, body and frames are then empty.
+    pub closed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

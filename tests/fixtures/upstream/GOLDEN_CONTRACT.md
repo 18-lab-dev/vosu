@@ -225,6 +225,14 @@ bytes. Raw WS records keep opcode, fin, mask, length and payload bytes. A
 golden compares the message body after transfer-coding removal; the raw
 framing stays in the private capture.
 
+A connection that the daemon closes or resets before sending any response byte is
+an explicit outcome, not a failure: the record is `{"outcome": "closed"}` with the
+request (and, for the `ws` family, no frames), and it is compared like any other
+record. Both upstream sandwich records must close, and vosu must close too. A
+partial response is never a golden. Golden captures hold only golden-role
+route-matrix cases. Negative and diagnostic cases carry a `negative` or
+`diagnostic` ID segment, and `golden` and `adapter_golden` refuse both.
+
 ### Route matrix families
 
 | Family | Required cases |
@@ -339,7 +347,7 @@ counts by family and the review receipt reference. It contains no private
 path, account, capability or credential. The platform `inventory.json`
 carries the privacy-scan result as `privacy_scan`. A case's `expected` record
 holds the status code, the §6 compared headers plus `date`, the body and the
-frames, all from upstream.
+frames, all from upstream, or exactly `{"outcome": "closed"}` (§6).
 
 Files are deterministic, sorted by platform and case ID. Valid UTF-8 text,
 including every HTTP body and WS text frame, is stored as text so

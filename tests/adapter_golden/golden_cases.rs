@@ -621,3 +621,66 @@ fn golden_ledger_and_scope_matching_are_exact() {
     let spliced = divergence::apply_text(&change, r#"{"a":1.0,"b":[0, 1 ,2],"c":null}"#).unwrap();
     assert_eq!(spliced, r#"{"a":1.0,"b":[0, 2.5 ,2],"c":null}"#);
 }
+
+#[test]
+fn golden_closed_outcome_is_compared_and_never_dropped() {
+    use std::{io::Read, net::TcpListener, thread};
+    // A server that closes without a byte is the `closed` outcome; one that
+    // answers is a response, never silently a close.
+    for answer in [
+        None,
+        Some(&b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"[..]),
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = [0_u8; 256];
+            let _ = stream.read(&mut head).unwrap();
+            if let Some(answer) = answer {
+                std::io::Write::write_all(&mut stream, answer).unwrap();
+            }
+        });
+        let request = b"GET /json/v2 HTTP/1.1\r\nHost: a\r\nHost: b\r\nConnection: close\r\n\r\n";
+        let observed = routes::exchange_or_close(address, request).unwrap();
+        server.join().unwrap();
+        assert_eq!(
+            observed.map(|response| response.status),
+            answer.map(|_| 400)
+        );
+    }
+    const V2: &str = "state-http.get-json-v2";
+    let index = platform().cases.iter().position(|c| c.id == V2).unwrap();
+    let closed = |mut observed: Vec<Result<Observed, String>>| {
+        let entry = observed[index].as_mut().unwrap();
+        (entry.status, entry.closed) = (0, true);
+        observed
+    };
+    let report =
+        |platform: &Platform, observed: &[Result<Observed, String>]| -> Vec<(String, String)> {
+            compare::compare(platform, observed, &[])
+                .mismatches
+                .into_iter()
+                .map(|Mismatch { case, part, .. }| (case, part))
+                .collect()
+        };
+    let mut expected_closed = platform().clone();
+    let case = case_mut(&mut expected_closed, V2);
+    case.expected = fixture::Expected {
+        status: 0,
+        headers: Vec::new(),
+        body: Body::Text(String::new()),
+        frames: None,
+        closed: true,
+    };
+    // Both closed: compared and equal. Either side answering is a mismatch.
+    assert_eq!(report(&expected_closed, &closed(OBSERVED.clone())), []);
+    assert_eq!(
+        report(&expected_closed, &OBSERVED),
+        pairs(&[(V2, "outcome")])
+    );
+    assert_eq!(
+        report(platform(), &closed(OBSERVED.clone())),
+        pairs(&[(V2, "outcome")])
+    );
+}

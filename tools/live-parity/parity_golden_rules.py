@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
-from typing import Callable
+from typing import Any, Callable
 from urllib.parse import quote, unquote
 
 NORMALIZATION_VERSION = 1
@@ -42,6 +42,16 @@ _IMF_FIXDATE = re.compile(
     r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} "
     r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT")
 _ENTITY_TAG = re.compile(r'(W/)?"([\x21\x23-\x7e\x80-\xff]*)"')
+
+
+ENVELOPE_KEYS = ("format", "schema", "provider_generation", "session", "focus_revision",
+                 "roster", "bus_revision", "namespace_revisions", "entries", "derived",
+                 "http", "digest")
+# A record whose connection closed without any response byte (GOLDEN_CONTRACT §6).
+TRANSPORT_OUTCOMES = ("closed",)
+# Route-matrix roles other than golden name themselves in a case ID segment; their
+# records are negative or diagnostic checks and never golden (route_matrix.py).
+NON_GOLDEN_SEGMENTS = frozenset({"negative", "diagnostic"})
 
 
 class GoldenError(ValueError):
@@ -499,3 +509,25 @@ def rewrite_cbor_text(
     if end != len(data):
         raise GoldenError("trailing bytes after CBOR item")
     return bytes(out), texts, blobs
+
+
+def dump_sandwich_difference(before: dict[str, Any], after: dict[str, Any]) -> str | None:
+    """The first envelope field in which a vosu dump sandwich differs, or None.
+
+    `sc` reads release the streamCompanion chart-work handle, so its provider generation
+    and derived revision advance on every read (GOLDEN_CONTRACT §6). For `sc` the
+    sandwich therefore compares everything else: digest, selection, derived status and
+    HTTP bytes. `v1`/`v2`/`v2-precise` keep full equality.
+    """
+    sc = before["schema"] == "sc" and after["schema"] == "sc"
+    for key in ENVELOPE_KEYS:
+        left, right = before[key], after[key]
+        if sc and key == "provider_generation":
+            continue
+        if sc and key == "derived":
+            if left["status"] != right["status"]:
+                return "derived.status"
+            continue
+        if left != right:
+            return key
+    return None

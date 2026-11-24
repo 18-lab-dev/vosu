@@ -223,10 +223,16 @@ schema):
                     "scenario_set": "m4b-dry-run-v1"},
   "capture_root": "C:\\vosu-capture\\m4b-pilot-<utc>",
   "capture_slot": "osu!",
-  "route_roots": {},
+  "route_roots": {"/Songs/": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files",
+                  "/files/beatmap/": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files"},
   "other_roots": {"files": "C:\\vosu-capture\\m4b-pilot-<utc>\\lazer\\files"},
-  "inside_files": {},
-  "fixture_values": {"calc_relative": "<relative chart under files>",
+  "inside_files": {"/Songs/": "<relative file under files>",
+                   "/files/beatmap/": "<relative file under files>"},
+  "fixture_values": {"songs_file": "<relative file under files>",
+                     "songs_dir": "<relative directory under files>",
+                     "beatmap_relative": "<file relative to the current beatmap>",
+                     "skin_file": "<legacy skin file name>",
+                     "calc_relative": "<relative chart under files>",
                      "calc_absolute_inside": "<absolute chart under files>"},
   "sentinel_chart": "<generated vosu-owned .osu to copy outside the roots>",
   "assets": [{"id": "<asset id>", "relative": "<path under capture_root>",
@@ -236,12 +242,26 @@ schema):
 
 Every root the client declares must lie inside `capture_root`, which is
 task-owned. For lazer, point the task-owned test profile's data directory
-inside it. The lazer files slot belongs in `other_roots`: a lazer client has
-no root for the legacy file routes, so those path cases are excluded and
-listed in the transcript. Every other golden case must run. A missing fixture
-value or root fails the run before anything is sent. The authorization must
-name exactly this platform, pin, commit, client version and scenario set,
-or the run is refused before the build.
+inside it. The upstream daemon serves lazer's legacy `/Songs/` and
+`/files/beatmap/` routes from the files store, so both route roots name the
+files slot (also declared in `other_roots`), and those file and path cases run.
+Every golden case runs except these, each listed in the transcript with its
+authority:
+
+| Excluded cases | Platform | Authority |
+|---|---|---|
+| `files.skin.file.{get,head}` | lazer | GOLDEN_CONTRACT §6 stable `/files/skin/<name>` variant; lazer records `files.skin.lazer-file.*` instead (`lazer-legacy-skin-404`) |
+| `files.skin.lazer-file.{get,head}` | stable | GOLDEN_CONTRACT §6 lazer variant (`lazer-legacy-skin-404`) |
+| `path-security.skin.*` | lazer | ledger `lazer-legacy-skin-404`: lazer has no legacy skin root to traverse from |
+| drive, UNC, ADS, trailing dot/space spellings | Linux | GOLDEN_CONTRACT §6 path-security, Windows only |
+| `absolute-encoded`, `absolute-double-slash` spellings | Windows | GOLDEN_CONTRACT §6 path-security, POSIX absolute spellings |
+| `path-security.*.symlink` | Windows, only when the symlink cannot be created | GOLDEN_CONTRACT §6 "where the platform permits" |
+
+Any other unmet prerequisite (a missing fixture value or root) fails the run
+before anything is sent. A case whose connection closes without a response is
+recorded as the `closed` outcome and compared; it never fails the run. The
+authorization must name exactly this platform, pin, commit, client version and
+scenario set, or the run is refused before the build.
 
 1. **Mandatory dry run first.** Use a config whose
    `authorization.scenario_set` is `m4b-dry-run-v1`: the menu barrier and

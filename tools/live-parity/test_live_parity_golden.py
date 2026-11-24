@@ -389,6 +389,31 @@ class CaptureValidationTests(GoldenTestCase):
         revision_only["attempts"][0]["vosu"]["dump_after"]["envelope"] = moved
         self.rejects(capture([revision_only]), "differs in derived")
 
+    def test_closed_connection_is_an_explicit_golden_outcome(self) -> None:
+        closed = {"outcome": "closed"}
+        target = request("GET", "/json/v2", "Host: second")
+        value = capture([case("origin-peer.host.duplicate", target, (closed, closed))])
+        candidate = self.run_golden(value)
+        record = self.case_file(candidate, "origin-peer.host.duplicate")
+        self.assertEqual(record["expected"], {"outcome": "closed"})
+        ws = case("ws.v2.invalid.missing-key", request(), ({**closed, "frames": []},) * 2)
+        self.assertEqual(self.case_file(self.run_golden(capture([ws])), "ws.v2.invalid.missing-key")
+                         ["expected"], {"outcome": "closed"})
+        # One upstream response and one close are a sandwich mismatch, never a golden.
+        mixed = case("origin-peer.host.duplicate", target, (closed, response(text("{}"))))
+        self.rejects(capture([mixed]), "sandwich responses differ")
+        framed = case("ws.v2.invalid.missing-key", request(),
+                      ({**closed, "frames": [{"from": "server"}]},) * 2)
+        self.rejects(capture([framed]), "closed without a response has no frames")
+        self.rejects(capture([case("origin-peer.host.duplicate", target,
+                                   ({"outcome": "reset-by-peer"},) * 2)]), "outcome")
+
+    def test_negative_and_diagnostic_route_cases_are_never_goldens(self) -> None:
+        for case_id in ("state-http.negative.api-v1-suffix", "ws.v2.diagnostic.feed"):
+            value = capture([case(case_id, request(target="/api/v1x"),
+                                  (response(text("{}")), response(text("{}"))))])
+            self.rejects(value, "never goldens")
+
     def test_head_state_route_keeps_its_own_route_status(self) -> None:
         # The dump records the adapter's GET result; HEAD status comes from the route.
         not_ready = '{"error":"osu is not ready/running"}'

@@ -31,7 +31,9 @@ import parity_build
 import parity_golden
 import parity_golden_capture as gc
 from parity_golden_config import validate_golden_config
+from parity_golden_rules import NON_GOLDEN_SEGMENTS
 import route_matrix as rm
+import route_security as rs
 
 FAKE = HERE / "testdata" / "golden_capture_fake_daemon.py"
 ENVELOPES = HERE / "testdata" / "golden-capture-envelopes.json"
@@ -296,20 +298,50 @@ class FakeTraversalTests(CaptureTestCase):
     def test_orphan_processes_are_killed_and_survivors_fail_the_run(self) -> None:
         scenario = gc.ScenarioSet("test-orphan", ("menu",), ("state-http.json-v2.get.menu",))
         pid_file = self.tmp / "orphan.pid"
-        cfg = self.config(scenario, source_options={"orphan_pid_file": str(pid_file)})
-        self.capture(scenario, FakeClient(self.state), cfg)
-        self.assertFalse(Path(f"/proc/{pid_file.read_text()}").exists())
-        self.out.unlink()
-        self.out.with_name("capture.json.transcript.json").unlink()
-        pid_file.unlink()
-        cfg = self.config(scenario, source_options={"orphan_pid_file": str(pid_file)})
-        try:
-            with mock.patch.object(gc, "_kill_group"):
-                self.refuses("orphan process survived source daemon cleanup", scenario,
-                             FakeClient(self.state), cfg)
-        finally:
-            with contextlib.suppress(ProcessLookupError, FileNotFoundError):
-                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+
+        def run(options: dict) -> dict:
+            for path in (self.out, self.out.with_name("capture.json.transcript.json"), pid_file):
+                path.unlink(missing_ok=True)
+            return self.config(scenario, source_options={"orphan_pid_file": str(pid_file),
+                                                         **options})
+
+        # A same-group child and one that left the group via setsid are both killed:
+        # the process group and the recorded process tree are each checked.
+        for options in ({}, {"orphan_setsid": True}):
+            self.capture(scenario, FakeClient(self.state), run(options))
+            self.assertFalse(Path(f"/proc/{pid_file.read_text()}").exists(), options)
+        for options, patched in (({}, ("_kill_group", "_kill_tree")),
+                                 ({"orphan_setsid": True}, ("_kill_tree",))):
+            cfg = run(options)
+            try:
+                with contextlib.ExitStack() as stack:
+                    for name in patched:
+                        stack.enter_context(mock.patch.object(gc, name))
+                    self.refuses("orphan process survived source daemon cleanup", scenario,
+                                 FakeClient(self.state), cfg)
+            finally:
+                with contextlib.suppress(ProcessLookupError, FileNotFoundError):
+                    os.kill(int(pid_file.read_text()), signal.SIGKILL)
+
+    def test_closed_connection_case_is_recorded_not_failed_or_dropped(self) -> None:
+        case_id = "state-http.json-v2.near.trailing-slash"
+        self.assertIn("closed", rm.CASES[case_id].outcomes)
+        scenario = gc.ScenarioSet("test-closed", ("menu",), (case_id, "state-http.json-v2.get.menu"))
+        close = {"close_paths": ["/json/v2/"]}
+        capture = self.capture(scenario, FakeClient(self.state),
+                               self.config(scenario, source_options=close, vosu_options=close))
+        self.assertEqual(sorted(capture["expected_cases"]),
+                         sorted([case_id, "state-http.json-v2.get.menu"]))
+        (closed,) = [case for case in capture["cases"] if case["id"] == case_id]
+        self.assertEqual(len(closed["attempts"]), 1)
+        attempt = closed["attempts"][0]
+        for record in (*attempt["source"], attempt["vosu"]["route"]):
+            self.assertEqual((record["outcome"], sorted(record)),
+                             ("closed", ["attempt", "outcome", "request"]))
+        candidate = self.golden(self.out)
+        written = json.loads((candidate / "linux-lazer" / "cases" / f"{case_id}.json")
+                             .read_text("utf-8"))
+        self.assertEqual(written["expected"], {"outcome": "closed"})
 
 
 class PlanTests(unittest.TestCase):
@@ -321,13 +353,84 @@ class PlanTests(unittest.TestCase):
         self.assertEqual([item.case.id for item in golden],
                          list(gc.SCENARIO_SETS["m4b-dry-run-v1"].cases))
         self.assertEqual(excluded, [])
-        self.assertTrue(gc._platform_exclusion("files.skin.file.get: requires stable client"))
-        self.assertTrue(gc._platform_exclusion(
-            "path-security.skin.encoded-parent: no declared root for /files/skin/ on windows-lazer"))
-        self.assertFalse(gc._platform_exclusion(
-            "path-security.skin.encoded-parent: no declared root for /files/skin/ on windows-stable"))
-        self.assertFalse(gc._platform_exclusion("calculation.relative-path: fixture value "
-                                                "calc_relative not provided"))
+        authority = gc.exclusion_authority
+        self.assertIn("lazer-legacy-skin-404",
+                      authority("files.skin.file.get: requires stable client", "linux-lazer"))
+        self.assertIn("lazer-legacy-skin-404", authority(
+            "path-security.skin.encoded-parent: no declared root for /files/skin/ on windows-lazer",
+            "windows-lazer"))
+        for reason, platform in (
+                ("path-security.skin.encoded-parent: no declared root for /files/skin/ on "
+                 "windows-stable", "windows-stable"),
+                # The lazer files store is the declared root of its legacy file routes.
+                ("path-security.songs.encoded-parent: no declared root for /Songs/ on "
+                 "windows-lazer", "windows-lazer"),
+                ("path-security.beatmap.symlink: symlink fixture unavailable: OSError",
+                 "linux-lazer"),
+                ("calculation.relative-path: fixture value calc_relative not provided",
+                 "linux-lazer")):
+            self.assertIsNone(authority(reason, platform), reason)
+        self.assertIsNotNone(authority(
+            "path-security.beatmap.symlink: symlink fixture unavailable: OSError", "windows-lazer"))
+
+    def test_full_lazer_plan_runs_the_legacy_file_routes_from_the_files_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            capture = Path(tmp).resolve() / "capture"
+            files = capture / "lazer" / "files"
+            chart = files / "ab" / "abcd"
+            chart.parent.mkdir(parents=True)
+            chart.write_text("osu file format v14\n")
+            source = Path(tmp) / "sentinel-source.osu"
+            source.write_text("osu file format v14\n")
+            layout = rs.prepare_security_layout(
+                str(capture), {"/Songs/": str(files), "/files/beatmap/": str(files)}, {},
+                str(source), {"files": str(files)})
+            try:
+                values = {"songs_file": "ab/abcd", "songs_dir": "ab", "beatmap_relative": "abcd",
+                          "skin_file": "skin.ini", "calc_relative": "ab/abcd",
+                          "calc_absolute_inside": str(chart)}
+                golden, others, excluded = gc.plan_cases(
+                    gc.SCENARIO_SETS["m4b-full-v1"],
+                    rm.MatrixContext("linux-lazer", values, layout))
+            finally:
+                rs.remove_security_layout(layout)
+        ids = {item.case.id for item in golden}
+        self.assertTrue({"files.beatmap.relative.get", "files.songs.file.get",
+                         "path-security.beatmap.symlink", "path-security.songs.encoded-parent",
+                         "files.skin.lazer-file.get"} <= ids)
+        self.assertFalse({item.case.id for item in others} & ids)
+        self.assertTrue(all(rm.golden_eligible(item.case) for item in golden))
+        # Every remaining exclusion names its contract or ledger authority.
+        self.assertTrue(all(authority for _case, _reason, authority in excluded))
+        self.assertEqual(sorted(case for case, _reason, _authority in excluded), sorted(
+            ["files.skin.file.get", "files.skin.file.head"]
+            + [c.id for c in rm.MATRIX if c.id.startswith("path-security.skin.")]
+            + [c.id for c in rm.MATRIX if c.security and "windows" in
+               rs.SPELLING_BY_NAME[c.security[1]].oses
+               and "linux" not in rs.SPELLING_BY_NAME[c.security[1]].oses
+               and not c.id.startswith("path-security.skin.")]))
+
+    def test_role_segments_match_the_matrix_roles(self) -> None:
+        # golden and adapter_golden refuse `negative`/`diagnostic` ID segments; that
+        # is exactly the set of non-golden matrix roles.
+        for case in rm.MATRIX:
+            segments = set(case.id.split("."))
+            self.assertEqual(rm.golden_eligible(case),
+                             not segments & NON_GOLDEN_SEGMENTS, case.id)
+
+    def test_process_tree_follows_parents_and_ignores_reused_pids(self) -> None:
+        # pid -> (parent, creation); the parent-PID walk used on Windows and Linux.
+        table = {10: (1, 100), 11: (10, 110), 12: (11, 120), 13: (10, 90), 14: (2, 130)}
+        self.assertEqual(gc.descendants(table, {10: 100}), {10: 100, 11: 110, 12: 120})
+        # A survivor reparented after its daemon died is still in the recorded tree.
+        alive = {11: 110}
+        with mock.patch.object(gc, "_process_table", return_value={11: (1, 110)}), \
+                mock.patch.object(gc, "_alive", side_effect=lambda pid, c: alive.get(pid) == c), \
+                mock.patch.object(gc, "_kill_tree") as kill, \
+                mock.patch.object(gc.time, "sleep"), \
+                mock.patch.object(gc.time, "monotonic", side_effect=[0, 10]):
+            self.assertEqual(gc._tree_survivors({10: 100, 11: 110}), {11: 110})
+        kill.assert_called_once_with({11: 110})
 
     def test_expected_cases_are_cross_checked_against_the_matrix(self) -> None:
         context = rm.MatrixContext("linux-lazer", {})
