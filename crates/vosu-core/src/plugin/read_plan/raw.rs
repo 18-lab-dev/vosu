@@ -538,6 +538,21 @@ pub fn execute_into(
     ValidatedPlan::new(payload, flags)?.execute(memory, bitness, modules, deadline, out)
 }
 
+/// Executes a fresh synchronous submission with the production coarse-budget
+/// policy. Like [`execute_into`], validates the complete payload before reading.
+/// This lets in-process hosts use the same deadline policy as `PluginHost`.
+pub fn execute_sync_into(
+    payload: &[u8],
+    flags: u32,
+    memory: &dyn ProcessMemory,
+    bitness: ProcessBitness,
+    modules: &dyn ModuleResolver,
+    budget: std::time::Duration,
+    out: &mut Vec<u8>,
+) -> Result<(), ExecuteBytesError> {
+    ValidatedPlan::new(payload, flags)?.execute_sync(memory, bitness, modules, budget, out)
+}
+
 /// Borrows the exact buffer whose structural validation succeeded. Keeping the
 /// payload private prevents the host from accidentally executing a different or
 /// mutated buffer after validating session ownership.

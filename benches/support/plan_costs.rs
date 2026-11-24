@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use vosu_core::plugin::execute_into;
+use vosu_core::plugin::execute_sync_into;
 use vosu_osu::memory::PlanProcessMemory;
 use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
 use vosu_plugin_api::{
@@ -38,13 +38,13 @@ pub(super) fn bench(c: &mut Criterion) {
         .encode_payload()
         .unwrap();
         let mut output = Vec::new();
-        execute_into(
+        execute_sync_into(
             &submit,
             VOSU_READ_PLAN_SYNC,
             fixture.as_ref(),
             ProcessBitness::X64,
             &Modules,
-            Instant::now() + Duration::from_secs(1),
+            Duration::from_secs(1),
             &mut output,
         )
         .unwrap();
@@ -67,13 +67,13 @@ pub(super) fn bench(c: &mut Criterion) {
         });
         group.bench_with_input(BenchmarkId::new("execute", &label), &(), |b, _| {
             b.iter(|| {
-                execute_into(
+                execute_sync_into(
                     &submit,
                     VOSU_READ_PLAN_SYNC,
                     fixture.as_ref(),
                     ProcessBitness::X64,
                     &Modules,
-                    Instant::now() + Duration::from_secs(1),
+                    Duration::from_secs(1),
                     &mut output,
                 )
                 .unwrap();

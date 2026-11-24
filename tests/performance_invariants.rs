@@ -421,7 +421,10 @@ fn plan_memory_stable_capture_backend_call_count() {
     let plan_regular_calls = plan_calls.load(Ordering::Relaxed);
     let submissions = attachment.submissions.load(Ordering::Relaxed) - submissions_before;
     assert!(submissions > 0);
-    assert!(submissions <= 13, "regular fixture plan budget: {submissions}");
+    assert!(
+        submissions <= 13,
+        "regular fixture plan budget: {submissions}"
+    );
     eprintln!(
         "stable regular: native calls={native_regular_calls} ops={} health={}; plan calls={plan_regular_calls} ops={} health={}",
         native_ops.load(Ordering::Relaxed),

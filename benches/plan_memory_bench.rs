@@ -5,9 +5,9 @@ use std::{
     ffi::c_void,
     hint::black_box,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
-use vosu_core::plugin::{ModuleResolver, execute_into};
+use vosu_core::plugin::{ModuleResolver, execute_sync_into};
 use vosu_osu::memory::PlanProcessMemory;
 use vosu_osu_reader::{
     memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, lazer_offsets::LazerOffsets},
@@ -22,6 +22,8 @@ use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory
 mod lazer_fixture;
 #[path = "support/plan_costs.rs"]
 mod plan_costs;
+#[path = "support/plan_trace.rs"]
+mod plan_trace;
 #[cfg(windows)]
 #[path = "../examples/live_reader_bench/plan.rs"]
 mod routed;
@@ -183,13 +185,13 @@ impl HostServices for ExecutorHost {
     ) -> vosu_status {
         assert_eq!(opcode, vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT);
         let mut output = self.output.lock().unwrap();
-        execute_into(
+        execute_sync_into(
             payload,
             flags,
             self.memory.as_ref(),
             self.bitness,
             &Modules,
-            Instant::now() + Duration::from_secs(1),
+            Duration::from_secs(1),
             &mut output,
         )
         .unwrap();
@@ -312,6 +314,7 @@ fn bench(c: &mut Criterion) {
     let (mut active_plan, plan_sync) = populated_lazer(true);
     populated_precise(&mut active_native, native_sync);
     populated_precise(&mut active_plan, plan_sync);
+    plan_trace::capture();
     #[cfg(windows)]
     let (_routed_fixture, routed_attachment, mut active_routed, routed_sync) = {
         let offsets = Arc::new(LazerOffsets::embedded().unwrap());
