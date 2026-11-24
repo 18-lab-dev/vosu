@@ -4,7 +4,6 @@ use std::{
     cell::OnceCell,
     collections::{HashMap, hash_map::Entry},
     hash::{Hash, Hasher},
-    io,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError, Weak,
         atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
@@ -13,33 +12,35 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use bytes::{BufMut, Bytes, BytesMut, buf::Writer};
+use bytes::Bytes;
 use rustc_hash::FxHashMap;
-use serde::Serialize;
 use serde_json::Value;
-use serde_json::ser::{Formatter, Serializer};
 use tokio::sync::{Notify, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::ApiError;
 
+pub use super::subscription_wire::{
+    ALREADY_SUBSCRIBED, INVALID_POINTER, INVALID_REQUEST, Outbound as V2SubscriptionOutbound,
+    Receiver as V2SubscriptionReceiver, SERIALIZATION_FAILED, SUBSCRIPTION_TIMEOUT,
+    SubscriptionRequestError, parse_subscription_request,
+};
+use super::subscription_wire::{
+    ALREADY_SUBSCRIBED_MESSAGE, Extraction, FrameArena, INVALID_POINTER_MESSAGE,
+    INVALID_REQUEST_MESSAGE, Mailbox, SERIALIZATION_FAILED_MESSAGE, SUBSCRIPTION_TIMEOUT_MESSAGE,
+    Selected, Selection, changes, error_frame, extract, store_baseline, traverse,
+};
+#[cfg(test)]
+use super::subscription_wire::{
+    FRAME_ARENA_CAPACITY, LINEAR_KEY_SEARCH_MAX, decode_pointer, initial_frame, parse_array_index,
+    update_frame,
+};
+
 const OPEN: u8 = 0;
 const PENDING: u8 = 1;
 const CLOSED: u8 = 2;
 const UNCHECKED: u64 = u64::MAX;
-
-pub const INVALID_REQUEST: u16 = 1;
-pub const INVALID_POINTER: u16 = 2;
-pub const SUBSCRIPTION_TIMEOUT: u16 = 3;
-pub const SERIALIZATION_FAILED: u16 = 4;
-pub const ALREADY_SUBSCRIBED: u16 = 5;
-
-const INVALID_REQUEST_MESSAGE: &str = "invalid subscription request";
-const INVALID_POINTER_MESSAGE: &str = "invalid JSON Pointer";
-const SUBSCRIPTION_TIMEOUT_MESSAGE: &str = "subscription timed out";
-const SERIALIZATION_FAILED_MESSAGE: &str = "state serialization failed";
-const ALREADY_SUBSCRIBED_MESSAGE: &str = "subscription already established";
 
 /// One immutable source snapshot captured at a live publication point.
 pub trait V2SubscriptionSnapshot: Send + Sync {
@@ -55,211 +56,31 @@ pub trait V2SubscriptionProvider: Send + Sync {
     fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot>;
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum V2SubscriptionOutbound {
-    /// Initial or update frame; the transport must call `write_completed` after sending it.
-    Text(Bytes),
-    /// Application error frame. It is always followed by `Close`.
-    Error(Bytes),
-    Pong(Bytes),
-    Close {
-        code: u16,
-    },
-}
-
-/// A client's outbound queues behind one lock and one wakeup, drained terminal first, then
-/// control, then data. Every queue is bounded: terminal frames are queued once per client
-/// (`cleaned`), and an occupied control or data slot refuses the frame. Delivery reserves the
-/// data slot (`PENDING`) until `write_completed`, so data never needs a second slot.
-struct Mailbox {
-    state: Mutex<MailboxState>,
-    ready: Notify,
-}
-
-#[derive(Default)]
-struct MailboxState {
-    /// Queued in order; the second entry is occupied only while the first is.
-    terminal: [Option<V2SubscriptionOutbound>; 2],
-    control: Option<V2SubscriptionOutbound>,
-    data: Option<V2SubscriptionOutbound>,
-    /// The receiver is gone; frames are refused like sends to a closed channel.
-    receiver_closed: bool,
-    /// The client is gone; the receiver ends once the queued frames are drained.
-    senders_closed: bool,
-    /// The receiver found nothing queued and may be waiting. Only the first frame or close
-    /// after that notifies: the woken receiver checks every queue before it waits again.
-    receiver_waiting: bool,
-}
-
-impl MailboxState {
-    fn pop(&mut self) -> Option<V2SubscriptionOutbound> {
-        if let Some(frame) = self.terminal[0].take() {
-            self.terminal[0] = self.terminal[1].take();
-            return Some(frame);
-        }
-        self.control.take().or_else(|| self.data.take())
-    }
-}
-
-impl Mailbox {
-    fn new() -> Self {
-        Self {
-            state: Mutex::new(MailboxState::default()),
-            ready: Notify::new(),
-        }
-    }
-
-    /// Queues `frame` into the slot `select` picks unless it is occupied or the receiver is
-    /// gone.
-    fn try_send(
-        &self,
-        select: impl FnOnce(&mut MailboxState) -> Option<&mut Option<V2SubscriptionOutbound>>,
-        frame: V2SubscriptionOutbound,
-    ) -> Result<(), V2SubscriptionOutbound> {
-        let mut state = lock(&self.state);
-        if state.receiver_closed {
-            return Err(frame);
-        }
-        let Some(slot @ None) = select(&mut state) else {
-            return Err(frame);
-        };
-        *slot = Some(frame);
-        let wake = std::mem::take(&mut state.receiver_waiting);
-        drop(state);
-        if wake {
-            // Stores a permit when the receiver has not started waiting yet, so the wakeup
-            // cannot be lost.
-            self.ready.notify_one();
-        }
-        Ok(())
-    }
-
-    fn try_send_data(&self, frame: V2SubscriptionOutbound) -> Result<(), V2SubscriptionOutbound> {
-        self.try_send(|state| Some(&mut state.data), frame)
-    }
-
-    fn try_send_control(&self, frame: V2SubscriptionOutbound) -> bool {
-        self.try_send(|state| Some(&mut state.control), frame)
-            .is_ok()
-    }
-
-    fn try_send_terminal(&self, frame: V2SubscriptionOutbound) {
-        let _ = self.try_send(
-            |state| state.terminal.iter_mut().find(|slot| slot.is_none()),
-            frame,
-        );
-    }
-}
-
-pub struct V2SubscriptionReceiver {
-    mailbox: Arc<Mailbox>,
-}
-
-impl V2SubscriptionReceiver {
-    pub async fn recv(&mut self) -> Option<V2SubscriptionOutbound> {
-        loop {
-            // A queued frame needs no wait and charges no coop budget. Skipping the budget
-            // cannot starve the runtime: at most four frames can be queued.
-            {
-                let mut state = lock(&self.mailbox.state);
-                if let Some(frame) = state.pop() {
-                    return Some(frame);
-                }
-                if state.senders_closed {
-                    return None;
-                }
-                state.receiver_waiting = true;
-            }
-            // A send between the unlock and this wait sees `receiver_waiting` and leaves a
-            // permit, so it is not lost.
-            self.mailbox.ready.notified().await;
-        }
-    }
-
-    pub fn try_recv(&mut self) -> Option<V2SubscriptionOutbound> {
-        lock(&self.mailbox.state).pop()
-    }
-}
-
-impl Drop for V2SubscriptionReceiver {
-    fn drop(&mut self) {
-        let mut state = lock(&self.mailbox.state);
-        state.receiver_closed = true;
-        state.terminal = [None, None];
-        state.control = None;
-        state.data = None;
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SubscriptionRequestError {
-    InvalidRequest,
-    InvalidPointer,
-    AlreadySubscribed,
-}
-
-impl SubscriptionRequestError {
-    pub const fn code(self) -> u16 {
-        match self {
-            Self::InvalidRequest => INVALID_REQUEST,
-            Self::InvalidPointer => INVALID_POINTER,
-            Self::AlreadySubscribed => ALREADY_SUBSCRIBED,
-        }
-    }
-
-    pub const fn message(self) -> &'static str {
-        match self {
-            Self::InvalidRequest => INVALID_REQUEST_MESSAGE,
-            Self::InvalidPointer => INVALID_POINTER_MESSAGE,
-            Self::AlreadySubscribed => ALREADY_SUBSCRIBED_MESSAGE,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq)]
 struct Plan {
-    pointers: Vec<Vec<String>>,
+    selection: Selection,
     demand: vosu_osu_state::SubscriptionDemand,
 }
 
 impl PartialEq for Plan {
     fn eq(&self, other: &Self) -> bool {
-        self.pointers == other.pointers
+        self.selection == other.selection
     }
 }
 
 impl Hash for Plan {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.pointers.hash(state);
+        self.selection.hash(state);
     }
 }
 
 fn compile_pointers(pointers: Vec<String>) -> Result<Plan, SubscriptionRequestError> {
-    if !(1..=256).contains(&pointers.len()) || pointers.iter().any(|pointer| pointer.len() > 512) {
-        return Err(SubscriptionRequestError::InvalidRequest);
-    }
-
-    let mut compiled = Vec::with_capacity(pointers.len());
-    for pointer in pointers {
-        let tokens = decode_pointer(&pointer).ok_or(SubscriptionRequestError::InvalidPointer)?;
-        if tokens.len() > 32 {
-            return Err(SubscriptionRequestError::InvalidRequest);
-        }
-        if compiled.iter().any(|existing: &Vec<String>| {
-            existing == &tokens || is_prefix(existing, &tokens) || is_prefix(&tokens, existing)
-        }) {
-            return Err(SubscriptionRequestError::InvalidPointer);
-        }
-        compiled.push(tokens);
-    }
-    let demand = compiled.iter().fold(
+    let selection = Selection::compile(pointers)?;
+    let demand = selection.pointers().iter().fold(
         vosu_osu_state::SubscriptionDemand::default(),
         |demand, pointer| demand.union(pointer_demand(pointer)),
     );
-    Ok(Plan {
-        pointers: compiled,
-        demand,
-    })
+    Ok(Plan { selection, demand })
 }
 
 /// Match a selected subtree to fields that actually need faster native sampling.
@@ -324,305 +145,6 @@ fn pointer_demand(pointer: &[String]) -> vosu_osu_state::SubscriptionDemand {
     }
 }
 
-fn decode_pointer(pointer: &str) -> Option<Vec<String>> {
-    if pointer.is_empty() {
-        return Some(Vec::new());
-    }
-    let rest = pointer.strip_prefix('/')?;
-    rest.split('/').map(decode_token).collect()
-}
-
-fn decode_token(token: &str) -> Option<String> {
-    let mut decoded = String::with_capacity(token.len());
-    let mut chars = token.chars();
-    while let Some(ch) = chars.next() {
-        if ch != '~' {
-            decoded.push(ch);
-            continue;
-        }
-        match chars.next()? {
-            '0' => decoded.push('~'),
-            '1' => decoded.push('/'),
-            _ => return None,
-        }
-    }
-    Some(decoded)
-}
-
-fn is_prefix(prefix: &[String], value: &[String]) -> bool {
-    prefix.len() < value.len() && value.starts_with(prefix)
-}
-
-/// Objects up to this size are searched by comparing keys, which is cheaper than hashing the
-/// token with the map's SipHash; keys are unique, so both find the same entry.
-const LINEAR_KEY_SEARCH_MAX: usize = 8;
-
-fn traverse<'a>(document: &'a Value, tokens: &[String]) -> Option<&'a Value> {
-    let mut current = document;
-    for token in tokens {
-        current = match current {
-            Value::Object(object) if object.len() <= LINEAR_KEY_SEARCH_MAX => object
-                .iter()
-                .find_map(|(key, value)| (key == token).then_some(value))?,
-            Value::Object(object) => object.get(token)?,
-            Value::Array(array) => array.get(parse_array_index(token)?)?,
-            _ => return None,
-        };
-    }
-    Some(current)
-}
-
-fn parse_array_index(token: &str) -> Option<usize> {
-    if token == "0" {
-        return Some(0);
-    }
-    if token.starts_with('0')
-        || token.is_empty()
-        || !token.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return None;
-    }
-    token.parse().ok()
-}
-
-/// Values selected by one plan from one document, in pointer order.
-type Extraction = Arc<[Option<Value>]>;
-
-fn extract(plan: &Plan, document: Option<&Value>) -> Extraction {
-    plan.pointers
-        .iter()
-        .map(|tokens| document.and_then(|value| traverse(value, tokens)).cloned())
-        .collect()
-}
-
-/// One selected value, owned by an [`Extraction`] or borrowed from the dispatched document.
-trait Selected {
-    fn value(&self) -> Option<&Value>;
-}
-
-impl Selected for Option<Value> {
-    fn value(&self) -> Option<&Value> {
-        self.as_ref()
-    }
-}
-
-impl Selected for Option<&Value> {
-    fn value(&self) -> Option<&Value> {
-        *self
-    }
-}
-
-/// Collects into `changed`, in id order, the ids whose value differs from `baseline`.
-fn changes(baseline: &[Option<Value>], current: &[impl Selected], changed: &mut Vec<usize>) {
-    debug_assert_eq!(baseline.len(), current.len(), "one plan selects both");
-    changed.clear();
-    changed.extend(
-        baseline
-            .iter()
-            .zip(current)
-            .enumerate()
-            .filter(|(_, (old, new))| old.as_ref() != new.value())
-            .map(|(id, _)| id),
-    );
-}
-
-/// Records `selected` as a client's baseline. A baseline only this subscription holds is not
-/// published, so only the `changed` ids are updated, in place. A shared one is replaced, never
-/// mutated: its other holders, and frame memos keyed on its address, rely on its contents.
-fn store_baseline(
-    baseline: &mut Option<Extraction>,
-    selected: &[Option<&Value>],
-    changed: &[usize],
-) {
-    if let Some(values) = baseline.as_mut().and_then(Arc::get_mut)
-        && values.len() == selected.len()
-    {
-        for &id in changed {
-            values[id] = selected[id].cloned();
-        }
-    } else {
-        *baseline = Some(selected.iter().map(|value| value.cloned()).collect());
-    }
-}
-
-/// Number spelling identical to `crate::api::JsFormatter`, which `crate::api` exports only to
-/// tests; frames are serialized straight into a [`FrameArena`] rather than through
-/// `encode_dto`'s per-frame growing `Vec`.
-struct FrameFormatter;
-
-impl Formatter for FrameFormatter {
-    fn write_f32<W>(&mut self, writer: &mut W, value: f32) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        vosu_osu_model::write_js_json_number(writer, f64::from(value))
-    }
-
-    fn write_f64<W>(&mut self, writer: &mut W, value: f64) -> io::Result<()>
-    where
-        W: ?Sized + io::Write,
-    {
-        vosu_osu_model::write_js_json_number(writer, value)
-    }
-}
-
-/// Initial capacity of each frame arena chunk.
-const FRAME_ARENA_CAPACITY: usize = 4096;
-
-/// Writes a frame's JSON skeleton directly, with the same punctuation and integer spelling as
-/// serde_json's compact output for the equivalent tuple; only selected values go through serde.
-struct FrameWriter<'a>(Writer<&'a mut BytesMut>);
-
-impl FrameWriter<'_> {
-    fn raw(&mut self, bytes: &'static [u8]) {
-        self.0.get_mut().extend_from_slice(bytes);
-    }
-
-    fn integer(&mut self, value: u64) -> serde_json::Result<()> {
-        FrameFormatter
-            .write_u64(&mut self.0, value)
-            .map_err(serde_json::Error::io)
-    }
-
-    /// Writes `[[id,value],...]` followed by `then`, merging the punctuation around the pairs
-    /// into as few writes as possible: `then.0` follows written pairs, `then.1` an empty list.
-    fn pairs<'v>(
-        &mut self,
-        pairs: impl Iterator<Item = (usize, &'v Value)>,
-        then: (&'static [u8], &'static [u8]),
-    ) -> serde_json::Result<()> {
-        /// Ids below ten with their following comma, which spares the formatter.
-        const SMALL_IDS: [&[u8]; 10] = [
-            b"0,", b"1,", b"2,", b"3,", b"4,", b"5,", b"6,", b"7,", b"8,", b"9,",
-        ];
-        let mut written = false;
-        for (id, value) in pairs {
-            self.raw(if written { b",[" } else { b"[[" });
-            written = true;
-            if let Some(&text) = SMALL_IDS.get(id) {
-                self.raw(text);
-            } else {
-                self.integer(id as u64)?;
-                self.raw(b",");
-            }
-            value.serialize(&mut Serializer::with_formatter(&mut self.0, FrameFormatter))?;
-            self.raw(b"]");
-        }
-        self.raw(if written { then.0 } else { then.1 });
-        Ok(())
-    }
-}
-
-/// Frames encoded during one dispatch, split off shared chunks so each frame costs no
-/// allocation of its own and clones only bump a reference count. A queued frame pins at most
-/// its chunk: `FRAME_ARENA_CAPACITY`, or the larger buffer an oversized frame needed.
-#[derive(Default)]
-struct FrameArena {
-    buffer: Option<BytesMut>,
-    /// The revision last written and its digits: a dispatch writes one revision into every
-    /// frame, so it is formatted once.
-    revision: Option<(u64, Vec<u8>)>,
-}
-
-impl FrameArena {
-    /// Encodes `kind` (`[0,` or `[1,`), the revision, and a comma, followed by what `write`
-    /// writes.
-    fn encode(
-        &mut self,
-        kind: &'static [u8],
-        revision: u64,
-        write: impl FnOnce(&mut FrameWriter<'_>) -> serde_json::Result<()>,
-    ) -> Result<Bytes, ApiError> {
-        if self
-            .revision
-            .as_ref()
-            .is_none_or(|(cached, _)| *cached != revision)
-        {
-            let mut digits = Vec::new();
-            FrameFormatter
-                .write_u64(&mut digits, revision)
-                .map_err(|error| ApiError::serialization(error.to_string()))?;
-            self.revision = Some((revision, digits));
-        }
-        let digits = self.revision.as_ref().map_or(&[][..], |(_, digits)| digits);
-        let buffer = self
-            .buffer
-            .get_or_insert_with(|| BytesMut::with_capacity(FRAME_ARENA_CAPACITY));
-        buffer.extend_from_slice(kind);
-        buffer.extend_from_slice(digits);
-        buffer.extend_from_slice(b",");
-        let written = write(&mut FrameWriter((&mut *buffer).writer()));
-        match written {
-            Ok(()) => Ok(buffer.split().freeze()),
-            Err(error) => {
-                buffer.clear();
-                Err(ApiError::serialization(error.to_string()))
-            }
-        }
-    }
-
-    /// `[0,revision,[[id,value],...]]` with every present value.
-    fn initial(&mut self, revision: u64, state: &[impl Selected]) -> Result<Bytes, ApiError> {
-        self.encode(b"[0,", revision, |frame| {
-            frame.pairs(
-                state
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(id, value)| value.value().map(|value| (id, value))),
-                (b"]]", b"[]]"),
-            )
-        })
-    }
-
-    /// `[1,revision,[[id,value],...],[id,...]]`: of the `changed` ids, those now present with
-    /// their values, then those now absent.
-    fn update(
-        &mut self,
-        revision: u64,
-        current: &[impl Selected],
-        changed: &[usize],
-    ) -> Result<Bytes, ApiError> {
-        self.encode(b"[1,", revision, |frame| {
-            frame.pairs(
-                changed
-                    .iter()
-                    .filter_map(|&id| current[id].value().map(|value| (id, value))),
-                (b"],[", b"[],["),
-            )?;
-            let removed = changed.iter().filter(|&&id| current[id].value().is_none());
-            for (index, &id) in removed.enumerate() {
-                if index > 0 {
-                    frame.raw(b",");
-                }
-                frame.integer(id as u64)?;
-            }
-            frame.raw(b"]]");
-            Ok(())
-        })
-    }
-}
-
-#[cfg(test)]
-fn initial_frame(revision: u64, state: &[Option<Value>]) -> Result<Bytes, ApiError> {
-    FrameArena::default().initial(revision, state)
-}
-
-#[cfg(test)]
-fn update_frame(
-    revision: u64,
-    baseline: &[Option<Value>],
-    current: &[Option<Value>],
-) -> Result<Bytes, ApiError> {
-    let mut changed = Vec::new();
-    changes(baseline, current, &mut changed);
-    FrameArena::default().update(revision, current, &changed)
-}
-
-fn error_frame(code: u16, message: &'static str) -> Bytes {
-    crate::api::v2::encode_dto(&(2_u8, code, message))
-        .unwrap_or_else(|_| Bytes::from_static(b"[2,4,\"state serialization failed\"]"))
-}
-
 /// An established selection and its delivery state; released together on close.
 struct Subscription {
     plan: Arc<Plan>,
@@ -669,14 +191,7 @@ impl Client {
 
 impl Drop for Client {
     fn drop(&mut self) {
-        let wake = {
-            let mut state = lock(&self.mailbox.state);
-            state.senders_closed = true;
-            std::mem::take(&mut state.receiver_waiting)
-        };
-        if wake {
-            self.mailbox.ready.notify_one();
-        }
+        self.mailbox.close_senders();
     }
 }
 
@@ -824,7 +339,7 @@ impl V2SubscriptionHub {
                 hub: self.clone(),
                 client,
             },
-            V2SubscriptionReceiver { mailbox },
+            V2SubscriptionReceiver::new(mailbox),
         )
     }
 
@@ -1083,7 +598,8 @@ impl V2SubscriptionHub {
                 self.0.extractions.fetch_add(1, Ordering::Relaxed);
                 selected.clear();
                 selected.extend(
-                    plan.pointers
+                    plan.selection
+                        .pointers()
                         .iter()
                         .map(|tokens| document.and_then(|value| traverse(value, tokens))),
                 );
@@ -1103,7 +619,7 @@ impl V2SubscriptionHub {
                     Entry::Vacant(entry) => {
                         #[cfg(test)]
                         self.0.extractions.fetch_add(1, Ordering::Relaxed);
-                        let current = extract(plan, document);
+                        let current = extract(&plan.selection, document);
                         Arc::clone(&entry.insert((Arc::clone(plan), current)).1)
                     }
                 };
@@ -1198,7 +714,7 @@ impl V2SubscriptionHub {
         drop(cached);
         let pointers: Vec<_> = plans
             .iter()
-            .flat_map(|plan| plan.pointers.iter().map(Vec::as_slice))
+            .flat_map(|plan| plan.selection.pointers().iter().map(Vec::as_slice))
             .collect();
         let snapshot = self.0.provider.capture();
         let revision = snapshot.revision();
@@ -1361,11 +877,6 @@ impl Drop for V2SubscriptionConnection {
     fn drop(&mut self) {
         self.cleanup();
     }
-}
-
-/// Parses one complete client text message as a selector request.
-pub fn parse_subscription_request(data: &[u8]) -> Result<Vec<String>, SubscriptionRequestError> {
-    serde_json::from_slice(data).map_err(|_| SubscriptionRequestError::InvalidRequest)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

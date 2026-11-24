@@ -13,5 +13,6 @@ pub mod runtime;
 pub mod service;
 
 pub mod commands;
+pub mod subscription_wire;
 pub mod v2_subscription;
 pub mod websocket;

@@ -13,9 +13,7 @@
 1211 crates/vosu-sys/src/process/linux.rs
 1230 crates/vosu-osu-reader/src/memory/lazer/tests_core.rs
 1256 src/counters/service.rs
-1323 src/server/v2_subscription/tests.rs
 1364 crates/vosu-osu-state/src/bundle/gameplay.rs
-1376 src/server/v2_subscription.rs
 1416 src/tools/tests.rs
 1465 assets/server/homepage-controls.css
 1559 assets/server/homepage.css
