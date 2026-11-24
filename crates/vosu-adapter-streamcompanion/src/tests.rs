@@ -12,7 +12,7 @@ fn entry(pointer: &str, value: Value) -> StateEntry {
         error: None,
     }
 }
-fn fixture() -> CapturedSelection {
+pub(crate) fn fixture() -> CapturedSelection {
     let mods = json!({"checksum":"DT","number":64,"name":"DT","rate":1.5,"array":[]});
     let counts = json!({"miss":1,"meh":2,"ok":3,"good":4,"great":5,"perfect":6});
     let player = json!({"name":"main\"\\雪","score":123456.0,"combo":12,"maxCombo":34,"mods":mods,"judgements":counts,"team":1,"position":2,"isPassing":true});

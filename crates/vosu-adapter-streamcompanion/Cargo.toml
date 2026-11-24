@@ -14,6 +14,8 @@ bytes = "=1.12.1"
 indexmap = { version = "2.13.0", features = ["serde"] }
 serde = { version = "=1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
+tokio = { version = "=1.52.3", features = ["rt", "sync", "time", "macros"] }
+vosu-osu-calc = { path = "../vosu-osu-calc" }
 vosu-adapter-support = { path = "../vosu-adapter-support" }
 vosu-osu-model = { path = "../vosu-osu-model" }
 vosu-plugin-api = { path = "../vosu-plugin-api" }
