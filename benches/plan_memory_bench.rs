@@ -58,14 +58,25 @@ impl ProcessMemory for SliceMemory {
         #[cfg(windows)]
         {
             for read in reads.iter() {
-                if read.address.checked_add(read.dst.len()).is_none_or(|end| end > self.0.len()) {
-                    return Err(MemoryError::Backend { operation: "bench", message: "outside fixture".into() });
+                if read
+                    .address
+                    .checked_add(read.dst.len())
+                    .is_none_or(|end| end > self.0.len())
+                {
+                    return Err(MemoryError::Backend {
+                        operation: "bench",
+                        message: "outside fixture".into(),
+                    });
                 }
             }
             let base = self.0.as_ptr() as usize;
-            for read in reads.iter_mut() { read.address += base; }
+            for read in reads.iter_mut() {
+                read.address += base;
+            }
             let result = native_fixture().read_many(reads);
-            for read in reads.iter_mut() { read.address -= base; }
+            for read in reads.iter_mut() {
+                read.address -= base;
+            }
             result
         }
     }
@@ -75,7 +86,9 @@ impl ProcessMemory for SliceMemory {
             size: self.0.len(),
         }])
     }
-    fn reads_pin_process_identity(&self) -> bool { cfg!(windows) }
+    fn reads_pin_process_identity(&self) -> bool {
+        cfg!(windows)
+    }
 }
 struct Modules;
 impl ModuleResolver for Modules {
@@ -109,6 +122,16 @@ unsafe impl Send for ExecutorHost {}
 unsafe impl Sync for ExecutorHost {}
 impl ExecutorHost {
     fn new(bitness: ProcessBitness) -> Self {
+        Self::with_memory(
+            bitness,
+            Arc::new(SliceMemory(if bitness == ProcessBitness::X86 {
+                stable_fixture::bytes()
+            } else {
+                vec![0; 64 * 1024]
+            })),
+        )
+    }
+    fn with_memory(bitness: ProcessBitness, memory: Arc<dyn ProcessMemory>) -> Self {
         let vtable = vosu_plugin_api::__vtable_for_serialized::<Intercept>();
         static HOST: vosu_host_services = vosu_host_services {
             struct_size: size_of::<vosu_host_services>() as u32,
@@ -228,6 +251,57 @@ impl ProcessMemory for Sequential {
         self.0.readable_regions()
     }
 }
+fn populated_lazer(plan: bool) -> (LazerMemory, vosu_osu_reader::memory::ReaderSynchronization) {
+    let offsets = Arc::new(LazerOffsets::embedded().unwrap());
+    let fixture = Arc::new(lazer_fixture::Fixture::active_lazer(&offsets));
+    let synchronization = vosu_osu_reader::memory::ReaderSynchronization {
+        game_base: Some(fixture.game_base),
+        current_screen: Some(fixture.player),
+    };
+    let backend: Arc<dyn ProcessMemory> = if plan {
+        Arc::new(PlanProcessMemory::new(
+            ExecutorHost::with_memory(ProcessBitness::X64, fixture),
+            1,
+            910_600_103,
+            ProcessBitness::X64,
+        ))
+    } else {
+        fixture
+    };
+    (
+        LazerMemory::new(
+            ProcessHandle::new(backend, ProcessBitness::X64),
+            offsets,
+            LazerPattern::source_default(),
+        ),
+        synchronization,
+    )
+}
+
+fn populated_precise(
+    reader: &mut LazerMemory,
+    synchronization: vosu_osu_reader::memory::ReaderSynchronization,
+) {
+    use vosu_osu_reader::memory::SynchronizedMemoryReader;
+    reader.synchronize_precise(synchronization, 3);
+    let global = reader.global_precise().unwrap();
+    let keys = reader.key_overlay(3).unwrap();
+    let errors = reader.hit_errors(0).unwrap();
+    match (&global, &keys, &errors) {
+        (
+            vosu_sys::process::ReadStatus::Ready(global),
+            vosu_sys::process::ReadStatus::Ready(keys),
+            vosu_sys::process::ReadStatus::Ready(errors),
+        ) => {
+            assert_eq!(global.time, 322.0);
+            assert_eq!(keys.len(), 18);
+            assert_eq!(errors.index, 0);
+        }
+        _ => panic!("populated lazer precise fixture must be ready"),
+    }
+    black_box((global, keys, errors));
+}
+
 fn bench(c: &mut Criterion) {
     let (mut active_native, native_sync) = populated_lazer(false);
     let (mut active_plan, plan_sync) = populated_lazer(true);
@@ -304,16 +378,34 @@ fn bench(c: &mut Criterion) {
     assert_eq!(value.time, 0.0);
     let mut group = c.benchmark_group("plan_memory");
     #[cfg(windows)]
+    for (name, reader, sync) in [
+        ("native", &mut active_native, native_sync),
+        ("plan", &mut active_plan, plan_sync),
+    ] {
+        let _ = vosu_sys::process::WindowsProcessMemory::take_bench_counts();
+        populated_precise(reader, sync);
+        eprintln!(
+            "WP_FIXTURE lazer {name} precise {:?}",
+            vosu_sys::process::WindowsProcessMemory::take_bench_counts()
+        );
+    }
+    #[cfg(windows)]
     for (name, reader) in [("native", &mut native_stable), ("plan", &mut stable)] {
         let _ = reader.global_precise().unwrap();
         let _ = vosu_sys::process::WindowsProcessMemory::take_bench_counts();
         let _ = reader.global_precise().unwrap();
-        eprintln!("WP_FIXTURE {name} precise {:?}", vosu_sys::process::WindowsProcessMemory::take_bench_counts());
+        eprintln!(
+            "WP_FIXTURE {name} precise {:?}",
+            vosu_sys::process::WindowsProcessMemory::take_bench_counts()
+        );
         let _ = vosu_sys::process::WindowsProcessMemory::take_bench_counts();
         let _ = reader.global();
         let _ = reader.menu("");
         let _ = reader.gameplay(stable_fixture::PLAY_TIME, stable_fixture::FIRST_OBJECT_TIME);
-        eprintln!("WP_FIXTURE {name} regular {:?}", vosu_sys::process::WindowsProcessMemory::take_bench_counts());
+        eprintln!(
+            "WP_FIXTURE {name} regular {:?}",
+            vosu_sys::process::WindowsProcessMemory::take_bench_counts()
+        );
     }
     for sequential in [true, false] {
         let (process, counter) = counted_process(ProcessBitness::X86);

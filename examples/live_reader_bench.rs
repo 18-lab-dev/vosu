@@ -1,8 +1,8 @@
 //! Read-only benchmark of production native capture adapters, not publication.
-#[path = "live_reader_bench/plan.rs"]
-mod plan;
 #[path = "live_reader_bench/counts.rs"]
 mod counts;
+#[path = "live_reader_bench/plan.rs"]
+mod plan;
 use serde::Serialize;
 use std::{
     error::Error,
@@ -159,8 +159,16 @@ fn measure(args: &Args, mut cycle: impl FnMut() -> bool) -> Measurement {
         *time = start.elapsed().as_nanos() as f64 / args.cycles as f64;
     }
     #[cfg(windows)]
-    eprintln!("WP_COUNTS {:?} cycles={}", vosu_sys::process::WindowsProcessMemory::take_bench_counts(), 9 * args.cycles);
-    eprintln!("WP_ALLOCS {} WP_PROFILE {:?}", counts::take(), vosu_plugin_api::read_plan_profile::take_thread_snapshot());
+    eprintln!(
+        "WP_COUNTS {:?} cycles={}",
+        vosu_sys::process::WindowsProcessMemory::take_bench_counts(),
+        9 * args.cycles
+    );
+    eprintln!(
+        "WP_ALLOCS {} WP_PROFILE {:?}",
+        counts::take(),
+        vosu_plugin_api::read_plan_profile::take_thread_snapshot()
+    );
     times.sort_by(f64::total_cmp);
     Measurement {
         warmup: args.warmup,

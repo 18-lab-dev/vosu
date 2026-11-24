@@ -1,6 +1,11 @@
-use std::{alloc::{GlobalAlloc, Layout, System}, cell::Cell};
+use std::{
+    alloc::{GlobalAlloc, Layout, System},
+    cell::Cell,
+};
 thread_local! { static ALLOCS: Cell<u64> = const { Cell::new(0) }; }
-pub fn take() -> u64 { ALLOCS.with(|c| c.replace(0)) }
+pub fn take() -> u64 {
+    ALLOCS.with(|c| c.replace(0))
+}
 struct Counter;
 #[global_allocator]
 static ALLOCATOR: Counter = Counter;
