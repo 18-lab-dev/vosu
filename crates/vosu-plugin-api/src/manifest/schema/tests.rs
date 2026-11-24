@@ -243,7 +243,7 @@ fn manifest_schema_fragment_encoding_and_unused_unsupported_lanes() {
     doc["properties"]["x"] = json!({"$ref": "#/%24defs/a~1b"});
     assert_eq!(run(&doc).unwrap().lanes[0].pointer, "/x");
     doc["properties"]["x"] = json!({"$ref": "#/%GG"});
-    assert!(matches!(run(&doc), Err(SchemaError::InvalidPointer(_))));
+    assert!(matches!(run(&doc), Err(SchemaError::ForeignRef(_))));
     doc["properties"] = json!({});
     doc["$defs"]["unused"] = json!({"not": lane("precise", "gameplay")});
     assert!(matches!(run(&doc), Err(SchemaError::UnsupportedLane(_))));

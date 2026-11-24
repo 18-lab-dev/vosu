@@ -11,6 +11,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Discover manifest-only overlays and prefer `manifest.toml` even when it is
   invalid or unreadable. Legacy `metadata.txt` stays read-only, with its historic
   defaults and separate settings; invalid manifests never fall back to it.
+- Reject the reserved `vosu.sessions` namespace in every capability class.
+  Malformed namespace-schema references report `D7.ref`, distinct from malformed
+  catalog mirror pointers.
 
 ## Unreleased — 2.0 M3
 

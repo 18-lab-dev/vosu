@@ -30,8 +30,12 @@ impl<'a> Compiler<'a> {
         } else {
             return Err(SchemaError::ForeignRef(reference.into()));
         };
-        let decoded = decode_fragment(tail)?;
-        let path = lanes::tokens(&decoded)?;
+        // state-schema.md Sampling lanes: malformed fragments are rejected
+        // references, distinct from malformed catalog mirror pointer records.
+        let decoded =
+            decode_fragment(tail).map_err(|_| SchemaError::ForeignRef(reference.into()))?;
+        let path =
+            lanes::tokens(&decoded).map_err(|_| SchemaError::ForeignRef(reference.into()))?;
         let mut node = if external { self.common } else { self.root };
         let skip = usize::from(external);
         if external && path.first().map(String::as_str) != Some("$defs") {

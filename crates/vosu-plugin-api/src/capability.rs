@@ -87,7 +87,7 @@ fn valid_game_id(s: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// `vosu.sessions` is reserved and never a `field:` id, namespace, or
+/// `vosu.sessions` is reserved and never a capability namespace or a
 /// descendant of one (`docs/v2/naming.md` "Namespaces": "it is never a
 /// plugin id, a published data namespace, or a `field:`/`resource:`/
 /// `action:` capability, in any manifest, schema, or catalog entry").
@@ -95,7 +95,9 @@ const RESERVED_SESSIONS_NAMESPACE: &str = "vosu.sessions";
 
 fn names_reserved_sessions_namespace(suffix: &str) -> bool {
     suffix == RESERVED_SESSIONS_NAMESPACE
-        || suffix.starts_with(&format!("{RESERVED_SESSIONS_NAMESPACE}."))
+        || suffix
+            .strip_prefix(RESERVED_SESSIONS_NAMESPACE)
+            .is_some_and(|tail| tail.starts_with('.'))
 }
 
 /// The five core namespaces (`docs/v2/naming.md` "Namespaces"), the only
@@ -176,12 +178,12 @@ pub fn parse_capability(id: &str) -> Result<CapabilityId<'_>, CapabilityError> {
             .ok_or_else(err);
     }
     if let Some(suffix) = id.strip_prefix("resource:") {
-        return valid_resource_suffix(suffix)
+        return (!names_reserved_sessions_namespace(suffix) && valid_resource_suffix(suffix))
             .then_some(CapabilityId::Resource(suffix))
             .ok_or_else(err);
     }
     if let Some(suffix) = id.strip_prefix("action:") {
-        return valid_action_suffix(suffix)
+        return (!names_reserved_sessions_namespace(suffix) && valid_action_suffix(suffix))
             .then_some(CapabilityId::Action(suffix))
             .ok_or_else(err);
     }
@@ -263,6 +265,17 @@ mod tests {
         assert!(parse_capability("game:Osu").is_err());
         assert!(parse_capability("game:").is_err());
         assert!(parse_capability("game:o.su").is_err());
+    }
+
+    #[test]
+    fn manifest_reserved_sessions_rejected_for_every_capability_class() {
+        for prefix in ["field", "resource", "action", "game"] {
+            for suffix in ["vosu.sessions", "vosu.sessions.child"] {
+                assert!(parse_capability(&format!("{prefix}:{suffix}")).is_err());
+            }
+        }
+        assert!(parse_capability("resource:vosu.sessions2.kind").is_ok());
+        assert!(parse_capability("action:vosu.sessions2.run").is_ok());
     }
 
     #[test]
