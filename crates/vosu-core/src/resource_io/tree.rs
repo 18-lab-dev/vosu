@@ -142,6 +142,8 @@ impl TreeResolver {
                 entry_path,
             }) => {
                 let entry = index.member(&entry_path)?.clone();
+                // Preserve NotFound from the confined open for a removed file;
+                // an unindexed canonical proof above remains InvalidReply.
                 let file = self.bytes.open_file(owner, &root, &path).await?;
                 if file.size() != entry.size {
                     return Err(ResourceRequestError::InvalidReply);

@@ -39,10 +39,14 @@ impl RootCapability {
         if !self.is_current() {
             return Err(ResourceRequestError::Cancelled);
         }
-        let child = self
-            .root
-            .open_child(path)
-            .map_err(|_| ResourceRequestError::InvalidReply)?;
+        let child = self.root.open_child(path).map_err(|error| match error {
+            vosu_sys::fs::SafePathError::Io(error)
+                if error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                ResourceRequestError::NotFound
+            }
+            _ => ResourceRequestError::InvalidReply,
+        })?;
         if !self.is_current() {
             return Err(ResourceRequestError::Cancelled);
         }

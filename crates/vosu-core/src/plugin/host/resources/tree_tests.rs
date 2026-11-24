@@ -130,3 +130,23 @@ fn index_cache_capacity_and_retirement_release_representations() {
     resolver.retire(&first_id.id);
     assert!(!Arc::ptr_eq(&same, &load(&first_id)));
 }
+
+#[test]
+fn indexed_member_with_missing_physical_file_is_not_found() {
+    let test = BytesTest::new("tree-missing-file", 99434);
+    let id = identity("testkit.bytes.tree-missing-file");
+    let resolver = TreeResolver::new(&test.host, Duration::from_secs(2));
+    test.fixture.trees.lock().unwrap().extend([
+        list("missing-r1"),
+        ResourceResolved::TreePath {
+            root: "songs".into(),
+            path: "missing-file".into(),
+            entry_path: "canonical.PNG".into(),
+        },
+    ]);
+    assert!(matches!(
+        test.runtime
+            .block_on(resolver.lookup(test.owner, &id, &["image".into()], "alias.png")),
+        Err(ResourceRequestError::NotFound)
+    ));
+}
