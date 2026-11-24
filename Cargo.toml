@@ -205,6 +205,12 @@ required-features = ["linux-process-events"]
 name = "api_v1_target"
 required-features = ["test-harness"]
 
+# A4b.9: replay needs the feature-gated production composition. A run
+# without the feature is not evidence, so the target never builds without it.
+[[test]]
+name = "adapter_golden"
+required-features = ["test-harness"]
+
 [build-dependencies]
 winresource = "=0.1.31"
 

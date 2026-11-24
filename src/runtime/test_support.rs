@@ -13,6 +13,22 @@ pub struct TestProductionCompositionOptions {
     pub logs_root: PathBuf,
     pub updater: Arc<dyn UpdaterHandoff>,
     pub network: vosu_net::streaming::TestNetworkConfig,
+    /// `None` loads the production game provider. `Some` replaces it.
+    pub game: Option<TestGame>,
+}
+
+/// A fixture game that replaces the production game provider (`BUNDLED[0]`).
+/// The fixture game publishes through the real ABI under its own manifest
+/// grants. The adapters, routes and listener stay the production ones.
+///
+/// The host built for it differs from production in two ways. It uses this
+/// synthetic foreground source, so recorded foreground facts can be
+/// reproduced. Its resource secret is ephemeral. Resource ids are opaque
+/// and are never echoed in adapter route bytes.
+#[cfg(feature = "test-harness")]
+pub struct TestGame {
+    pub plugin: vosu_core::plugin::BundledPlugin<'static>,
+    pub foreground: Arc<vosu_core::plugin::SyntheticForegroundSource>,
 }
 
 /// Owns the real production listener, WebSocket hubs, command workers, and
@@ -35,6 +51,21 @@ pub struct TestProductionComposition {
 impl TestProductionComposition {
     pub fn address(&self) -> std::net::SocketAddr {
         self.address
+    }
+
+    /// The composition's plugin host. Fixture games use it to report
+    /// synthetic process records and foreground changes.
+    pub fn plugins(&self) -> &Arc<PluginHost> {
+        &self.plugins
+    }
+
+    /// The `test-harness` adapter capture of the mounted schema provider:
+    /// one provider snapshot, never a route response.
+    pub fn adapter_capture(
+        &self,
+        schema: WebSocketSchema,
+    ) -> Result<crate::server::adapter_capture::AdapterCaptureSample, String> {
+        self.adapters.provider(schema).capture_for_harness()
     }
 
     pub async fn shutdown(mut self) {
@@ -103,9 +134,23 @@ pub async fn start_test_production_composition(
     let settings = Arc::new(PluginSettingsService::new(Arc::new(
         ConfigSettingsBridgeB2::new(options.config.clone()),
     )));
-    let plugins = api_v1::resource_host(logger.clone(), settings, &plugin_data).await?;
-    let loaded =
-        vosu_core::plugin::load_bundled(crate::plugins::BUNDLED).map_err(io::Error::other)?;
+    let plugins = match &options.game {
+        Some(game) => {
+            fs::create_dir_all(&plugin_data)?;
+            PluginHost::new_with_foreground(
+                logger.clone(),
+                settings,
+                Handle::current(),
+                game.foreground.clone(),
+            )
+        }
+        None => api_v1::resource_host(logger.clone(), settings, &plugin_data).await?,
+    };
+    let mut bundled = crate::plugins::BUNDLED.to_vec();
+    if let Some(game) = &options.game {
+        bundled[0] = game.plugin;
+    }
+    let loaded = vosu_core::plugin::load_bundled(&bundled).map_err(io::Error::other)?;
     let pool = vosu_core::plugin::WorkerPool::new(4, vosu_core::plugin::DEFAULT_QUEUE_CAPACITY);
     for (index, plugin) in loaded.iter().enumerate() {
         plugins

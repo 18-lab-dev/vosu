@@ -445,6 +445,7 @@ async fn production_delegate_flushes_updated_response_before_shutdown_and_ws_100
             network: mock
                 .test_network_config()
                 .expect("exact-listener production network"),
+            game: None,
         }
     ))
     .expect("start actual ProductionRouteDelegate listener");

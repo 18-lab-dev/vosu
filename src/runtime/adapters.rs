@@ -78,7 +78,7 @@ impl Adapters {
             config,
         })
     }
-    fn provider(&self, schema: WebSocketSchema) -> &Arc<BusStateProvider> {
+    pub(super) fn provider(&self, schema: WebSocketSchema) -> &Arc<BusStateProvider> {
         &self.schemas[match schema {
             WebSocketSchema::V1 => 0,
             WebSocketSchema::StreamCompanion => 1,
