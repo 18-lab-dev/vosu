@@ -748,6 +748,9 @@ impl PluginHost {
             Ok(plan) => plan,
             Err(error) => return error.into(),
         };
+        let session_profile = vosu_plugin_api::read_plan_profile::Span::new(
+            vosu_plugin_api::read_plan_profile::Phase::SessionMemory,
+        );
         let handle = SessionHandle(plan.handle());
         let pid = match self.resolve_owned_session_for_instance(instance, handle) {
             Ok(pid) => pid,
@@ -757,19 +760,23 @@ impl PluginHost {
             Ok(memory) => memory,
             Err(error) => return error.into(),
         };
+        drop(session_profile);
         let modules = CachingModuleResolver { memory: &memory };
-        let deadline = Instant::now() + self.read_plan_deadline();
+        let budget = self.read_plan_deadline();
         SYNC_RESULT_BUF.with(|buf| {
             let mut buf = buf.borrow_mut();
-            if let Err(error) = plan.execute(
+            if let Err(error) = plan.execute_sync(
                 memory.process.as_ref(),
                 memory.bitness,
                 &modules,
-                deadline,
+                budget,
                 &mut buf,
             ) {
                 return vosu_status::from(error);
             }
+            let _delivery_profile = vosu_plugin_api::read_plan_profile::Span::new(
+                vosu_plugin_api::read_plan_profile::Phase::ResultDelivery,
+            );
             self.deliver_sync_result_raw(instance, &buf)
         })
     }

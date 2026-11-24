@@ -110,11 +110,13 @@ fn sync_deadline_times_out() {
     set_session_memory_hook_for_tests(
         pid,
         Arc::new(SlowMemory {
-            sleep: Duration::from_millis(50),
+            sleep: Duration::from_millis(200),
         }),
         ProcessBitness::X64,
     );
-    set_read_plan_deadline_for_tests(&host, Duration::from_millis(10));
+    // At least four ~16 ms Windows ticks; the first stage deliberately
+    // exceeds this plus a complete tick before the second stage is admitted.
+    set_read_plan_deadline_for_tests(&host, Duration::from_millis(64));
 
     let (events, commands) = create_read_plan_instance(
         &host,

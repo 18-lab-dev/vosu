@@ -1,25 +1,39 @@
-//! Real child-process reads through the native backend and the in-process PluginHost.
-//! Run in debug mode with `--features test-harness`; release deliberately forbids that feature.
+//! Real-process native/PluginHost diagnostic. Windows (no test-harness required):
+//! `$env:VOSU_READ_PLAN_PROFILE='1'; cargo run --release --locked --example plan_process_bench -- --pid 1234 --cycles 1000`
+//! Optional `--address 0x...` overrides the first readable region. The synthetic
+//! stable/lazer widths repeat that readable address, not arbitrary pointer chases.
+//! Profiling adds two QPC reads per span; application/profiler clocks are separate.
+//! Without `--pid`, debug `--features test-harness` runs the populated child fixture.
+use std::sync::Arc;
+#[cfg(feature = "test-harness")]
 use std::{
     hint::black_box,
     io::{BufRead, BufReader, Read, Write},
     process::{Child, Command, Stdio},
-    sync::{Arc, mpsc::sync_channel},
+    sync::mpsc::sync_channel,
     time::{Duration, Instant},
 };
+#[cfg(feature = "test-harness")]
 use vosu_osu_reader::{
     memory::{MemoryReader, StableMemory},
     process::ProcessHandle,
 };
-use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+use vosu_sys::process::ProcessMemory;
+#[cfg(feature = "test-harness")]
+use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ReadRequest};
+#[path = "plan_process_bench/pid.rs"]
+mod pid;
 #[path = "live_reader_bench/plan.rs"]
 mod plan;
+#[cfg(feature = "test-harness")]
 #[path = "../benches/support/stable_fixture.rs"]
 mod stable_fixture;
 
 type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
+#[cfg(feature = "test-harness")]
 struct ChildGuard(Child);
+#[cfg(feature = "test-harness")]
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -28,11 +42,13 @@ impl Drop for ChildGuard {
 }
 
 // Fixture pointers are x86 offsets. Translating only at the OS boundary preserves
+#[cfg(feature = "test-harness")]
 // the identical populated graph, batching and pointer-chase shape on a 64-bit child.
 struct Translated {
     process: Arc<dyn ProcessMemory>,
     base: usize,
 }
+#[cfg(feature = "test-harness")]
 impl ProcessMemory for Translated {
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> std::result::Result<(), MemoryError> {
         self.process.read_exact(self.base + address, dst)
@@ -73,6 +89,7 @@ fn open(pid: u32) -> Result<Arc<dyn ProcessMemory>> {
     )?))
 }
 
+#[cfg(feature = "test-harness")]
 fn child() -> Result<()> {
     let bytes = stable_fixture::bytes();
     println!("{}", bytes.as_ptr() as usize);
@@ -88,6 +105,7 @@ fn child() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "test-harness")]
 fn capture(shape: &str, handle: &ProcessHandle, reader: &mut StableMemory) {
     match shape {
         "one_op" => {
@@ -103,7 +121,8 @@ fn capture(shape: &str, handle: &ProcessHandle, reader: &mut StableMemory) {
     }
 }
 
-fn main() -> Result<()> {
+#[cfg(feature = "test-harness")]
+fn fixture_run() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("--child") {
         return child();
     }
@@ -174,6 +193,25 @@ fn main() -> Result<()> {
             "{shape}: native_ns={native_ns} plan_ns={plan_ns} ratio={:.3}",
             plan_ns as f64 / native_ns as f64
         );
+        if std::env::var_os("VOSU_READ_PLAN_PROFILE").is_some_and(|value| value == "1") {
+            vosu_plugin_api::read_plan_profile::take_thread_snapshot();
+            capture(shape, &attachment.process, &mut plan_reader);
+            let clocks = vosu_plugin_api::read_plan_profile::take_thread_snapshot();
+            println!(
+                "  plan_clock_reads_per_capture: precise={} coarse={} profiler={}",
+                clocks.precise_clock_reads, clocks.coarse_clock_reads, clocks.profiler_clock_reads
+            );
+        }
     }
     Ok(())
+}
+
+fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--pid") {
+        return pid::run(std::env::args().skip(1));
+    }
+    #[cfg(feature = "test-harness")]
+    return fixture_run();
+    #[cfg(not(feature = "test-harness"))]
+    Err("pass --pid PID, or enable test-harness for the populated child fixture".into())
 }

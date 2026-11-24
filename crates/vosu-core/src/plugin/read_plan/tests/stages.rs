@@ -600,3 +600,39 @@ fn pinned_reads_probe_health_only_on_failure_and_preserve_target_gone() {
         }
     }
 }
+
+#[test]
+fn fresh_single_stage_sync_execution_queries_no_deadline_clock() {
+    let memory = FakeMemory::new(vec![(0x1000, vec![1, 2, 3, 4])]);
+    let message = Message::ReadPlanSubmit(ReadPlanSubmit {
+        plan: 73,
+        handle: 1,
+        root: PlanBase::Absolute(0x1000),
+        stages: vec![Stage {
+            base: StageBase::Root,
+            base_offset: 0,
+            ops: vec![op(0, 4)],
+        }],
+        sync: true,
+    });
+    let payload = message.encode_payload().unwrap();
+    let mut out = Vec::new();
+    super::super::deadline::take_clock_reads();
+    super::super::ValidatedPlan::new(&payload, message.flags())
+        .unwrap()
+        .execute_sync(
+            &memory,
+            ProcessBitness::X64,
+            &NoModules,
+            Duration::from_secs(2),
+            &mut out,
+        )
+        .unwrap();
+    assert_eq!(super::super::deadline::take_clock_reads(), (0, 0));
+    let Message::ReadPlanResult(result) =
+        Message::decode(vosu_opcode::VOSU_OP_READ_PLAN_RESULT, 0, &out).unwrap()
+    else {
+        panic!("expected read result");
+    };
+    assert_eq!(result.results, vec![ReadResult::Ok(vec![1, 2, 3, 4])]);
+}

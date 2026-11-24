@@ -18,7 +18,9 @@
 
 use std::mem::MaybeUninit;
 
+use super::deadline::RawDeadline;
 use super::*;
+use vosu_plugin_api::read_plan_profile::{Phase, Span};
 
 /// Reads a flat header struct out of an already-validated buffer at
 /// `offset`. Every call site in this module only uses offsets
@@ -245,10 +247,13 @@ fn read_one_into_tail_raw(
 ) -> Result<(), ReadPlanError> {
     let region_start = out.len();
     out.resize(region_start + length as usize, 0);
-    match memory.read_exact(
+    let read_profile = Span::new(Phase::Backend).ops(1);
+    let result = memory.read_exact(
         address,
         &mut out[region_start..region_start + length as usize],
-    ) {
+    );
+    drop(read_profile);
+    match result {
         Ok(()) => write_entry(out, global_index, &ok_entry(region_start as u32, length)),
         Err(error) => {
             if !memory.is_alive() {
@@ -274,7 +279,7 @@ fn read_one_into_tail_raw(
 struct RawContext<'a> {
     payload: &'a [u8],
     memory: &'a dyn ProcessMemory,
-    deadline: Instant,
+    deadline: &'a RawDeadline,
 }
 
 fn process_single_op_raw(
@@ -382,6 +387,7 @@ fn process_multi_op_chunk_raw(
                     participant_count,
                 )
             };
+            let _read_profile = Span::new(Phase::Backend).ops(participant_count);
             ctx.memory.read_many(requests).is_ok()
         };
 
@@ -408,7 +414,7 @@ fn process_multi_op_chunk_raw(
             // deferred their own tail writes past this point.
             out.truncate(region_start);
             for &(op_index, address, _, length) in &participants[..participant_count] {
-                if Instant::now() >= ctx.deadline {
+                if ctx.deadline.expired()? {
                     return Err(ReadPlanError::TimedOut);
                 }
                 read_one_into_tail_raw(
@@ -526,6 +532,7 @@ pub(crate) struct ValidatedPlan<'a> {
 
 impl<'a> ValidatedPlan<'a> {
     pub(crate) fn new(payload: &'a [u8], flags: u32) -> Result<Self, ExecuteBytesError> {
+        let _validation_profile = Span::new(Phase::Validation);
         validate_flags(vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT, flags)
             .map_err(|error| ExecuteBytesError::Message(error.into()))?;
         validate_read_plan_submit(payload)
@@ -547,6 +554,35 @@ impl<'a> ValidatedPlan<'a> {
         deadline: Instant,
         out: &mut Vec<u8>,
     ) -> Result<(), ExecuteBytesError> {
+        self.execute_with_deadline(
+            memory,
+            bitness,
+            modules,
+            RawDeadline::Absolute(deadline),
+            out,
+        )
+    }
+
+    pub(crate) fn execute_sync(
+        self,
+        memory: &dyn ProcessMemory,
+        bitness: ProcessBitness,
+        modules: &dyn ModuleResolver,
+        budget: std::time::Duration,
+        out: &mut Vec<u8>,
+    ) -> Result<(), ExecuteBytesError> {
+        self.execute_with_deadline(memory, bitness, modules, RawDeadline::sync(budget), out)
+    }
+
+    fn execute_with_deadline(
+        self,
+        memory: &dyn ProcessMemory,
+        bitness: ProcessBitness,
+        modules: &dyn ModuleResolver,
+        deadline: RawDeadline,
+        out: &mut Vec<u8>,
+    ) -> Result<(), ExecuteBytesError> {
+        let validation_profile = Span::new(Phase::Validation);
         let Self { payload, header } = self;
 
         // Validate width before runtime errors. Successful reads need no
@@ -592,18 +628,28 @@ impl<'a> ValidatedPlan<'a> {
             + RESULT_ENTRY_SIZE * total_ops
             + usize::try_from(total_len).unwrap_or(usize::MAX);
         let mut budget = ErrorBudget::new((VOSU_READ_PLAN_MAX_BYTES as usize).saturating_sub(used));
+        drop(validation_profile);
+        deadline
+            .begin(header.stage_count)
+            .map_err(ExecuteBytesError::Execute)?;
 
         out.clear();
         out.resize(RESULT_HEADER_SIZE + RESULT_ENTRY_SIZE * total_ops, 0);
-        let root_base = resolve_root_raw(payload, &header.root, modules);
+        let root_base = {
+            let _root_profile = Span::new(Phase::RootResolution);
+            resolve_root_raw(payload, &header.root, modules)
+        };
         let ctx = RawContext {
             payload,
             memory,
-            deadline,
+            deadline: &deadline,
         };
         let mut global_index = 0usize;
         for stage_index in 0..header.stage_count as usize {
-            if Instant::now() >= deadline {
+            if deadline
+                .stage_expired(stage_index)
+                .map_err(ExecuteBytesError::Execute)?
+            {
                 return Err(ExecuteBytesError::Execute(ReadPlanError::TimedOut));
             }
             let stage: vosu_stage_header = read_struct_at(

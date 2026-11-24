@@ -229,6 +229,30 @@ One CPU-4-pinned debug run measured native/plan medians of **0.762/3.456 µs**
 (one op), **1.413/4.739 µs** (non-playing precise), and **42.761/101.391 µs**
 (regular). These debug diagnostics are not release Criterion exit evidence.
 
+Fresh successful SYNC plans now make **zero precise clock reads**: a single stage
+also makes zero coarse reads; an N-stage plan makes N coarse reads. Previously
+the host/executor used N+1 `Instant` queries per plan. SDK encoding and
+`PlanProcessMemory` themselves make no clock queries. The host's 2 s budget uses
+~16 ms Windows / typically 1–4 ms Linux ticks and clamps overrides to 64 ms.
+Public `execute_into` absolute deadlines remain precise.
+The populated child fixture reports **0 precise / 0 coarse** queries for one-op
+and non-playing precise captures, and **0 precise / 3 coarse** for regular.
+
+For per-phase Windows diagnostics against an existing process (no test-harness):
+
+```powershell
+$env:VOSU_READ_PLAN_PROFILE='1'
+cargo run --release --locked --example plan_process_bench -- --pid 1234 --cycles 1000
+```
+
+Optional `--address 0x...` selects a known readable address; otherwise the
+diagnostic chooses one readable region once, outside timing. The synthetic
+stable/lazer shapes repeat that address rather than chasing unknown pointers.
+Output separates application precise/coarse clock counts from the profiler's
+own two precise reads per span. Profiling therefore inflates timings, especially
+on a VM with trapping QPC; unset the environment variable for throughput runs.
+Linux can use `--pid self` without changing ptrace permissions.
+
 
 ## vosu hot paths
 

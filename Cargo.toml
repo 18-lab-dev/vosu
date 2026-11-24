@@ -168,7 +168,6 @@ name = "live_reader_bench"
 
 [[example]]
 name = "plan_process_bench"
-required-features = ["test-harness"]
 
 [[example]]
 name = "brokered_reads_target"

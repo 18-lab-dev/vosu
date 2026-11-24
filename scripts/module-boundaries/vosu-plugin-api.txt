@@ -32,6 +32,8 @@ sdk -> limits
 sdk -> message
 sdk -> opcode
 sdk -> primitives
+# Opt-in, wire-ABI-independent per-thread read-plan phase diagnostics.
+sdk -> read_plan_profile
 sdk -> status
 sdk -> vtable
 vtable -> envelope

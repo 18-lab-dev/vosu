@@ -8,6 +8,8 @@ use std::fmt;
 
 use thiserror::Error;
 
+mod clock;
+pub use clock::coarse_monotonic_millis;
 pub mod scanner;
 pub use scanner::{BatchScanResult, Pattern, PatternParseError, SCAN_CHUNK_SIZE};
 

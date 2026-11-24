@@ -94,6 +94,8 @@ pub enum ReadPlanError {
     /// The target session's process was already dead before any read
     /// executed (§5 `VOSU_ERR_TARGET_GONE`).
     TargetGone,
+    /// The platform's coarse monotonic clock was unavailable.
+    ClockUnavailable,
 }
 
 impl From<ReadPlanError> for vosu_status {
@@ -102,6 +104,7 @@ impl From<ReadPlanError> for vosu_status {
             ReadPlanError::RefOpWrongWidth => vosu_status::VOSU_ERR_INVALID_ARGUMENT,
             ReadPlanError::TimedOut => vosu_status::VOSU_ERR_TIMED_OUT,
             ReadPlanError::TargetGone => vosu_status::VOSU_ERR_TARGET_GONE,
+            ReadPlanError::ClockUnavailable => vosu_status::VOSU_ERR_BACKEND,
         }
     }
 }
@@ -587,6 +590,7 @@ fn execute_sync(
     )
 }
 
+mod deadline;
 mod raw;
 pub(crate) use raw::ValidatedPlan;
 pub use raw::{execute_bytes, execute_into};
