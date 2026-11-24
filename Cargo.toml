@@ -130,6 +130,7 @@ libc = "=0.2.186"
 
 [dev-dependencies]
 criterion = "0.7.0"
+jsonschema = { version = "=0.61.2", default-features = false }
 proptest = "1.12"
 serde-value = "=0.7.0"
 vosu-proptest = { path = "crates/vosu-proptest" }
