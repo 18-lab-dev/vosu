@@ -7,9 +7,10 @@
 //! their chance. An observer never attaches sessions, registers matchers,
 //! loads code or changes D18 overlap/pre-filter refusal for installed plugins.
 //!
-//! An observer's extra pre-filter interest is merged into
-//! [`PluginHost::prefilter`] through [`Prefilter::union`] (widening when the
-//! bounded Linux table would overflow), and a change of its
+//! An observer's extra pre-filter interest is a bounded list of hint names,
+//! merged into [`PluginHost::prefilter`] through [`Prefilter::union`]: it can
+//! never widen the filter or displace installed names (separate
+//! `OBSERVER_PREFILTER_BUDGET`), and a change of its
 //! [`DiscoveryObserver::generation`] advances
 //! [`PluginHost::discovery_generation`], which makes discovery re-enumerate and
 //! re-offer every tracked process exactly like an installed-set change.
@@ -30,8 +31,9 @@ pub trait DiscoveryObserver: Send + Sync {
     fn process_observed(&self, process: &ProcessRecord, claimed: bool);
     /// The pid's current occurrence exited (or was superseded by a reused pid).
     fn process_exited(&self, pid: u32);
-    /// Extra enumeration-cost interest; `None` adds nothing.
-    fn prefilter(&self) -> Option<Prefilter>;
+    /// Extra enumeration-cost hint names; empty adds nothing. Observers can
+    /// never request an unfiltered pre-filter, and excess names are ignored.
+    fn prefilter_names(&self) -> Vec<String>;
     /// Monotonic interest revision; any change re-offers tracked processes.
     fn generation(&self) -> u64;
 }
@@ -96,11 +98,8 @@ impl PluginHost {
     /// The observer's extra pre-filter interest, unioned with the installed
     /// matchers' own pre-filter by [`Self::prefilter`].
     pub(super) fn observer_prefilter(&self, installed: Prefilter) -> Prefilter {
-        match self
-            .discovery_observer()
-            .and_then(|observer| observer.prefilter())
-        {
-            Some(extra) => installed.union(extra, host_platform()),
+        match self.discovery_observer() {
+            Some(observer) => installed.union(&observer.prefilter_names(), host_platform()),
             None => installed,
         }
     }

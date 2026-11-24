@@ -11,8 +11,8 @@ use crate::{
     },
     logging::{ConsoleSink, Logger, LoggerOptions},
     plugin::{
-        DiscoveryObserver, MatchPlatform, PluginHost, Prefilter, ProcessRecord,
-        SyntheticForegroundSource,
+        DiscoveryObserver, MatchPlatform, OBSERVER_PREFILTER_BUDGET, PluginHost, Prefilter,
+        ProcessRecord, SyntheticForegroundSource,
         settings::{PluginSettingsService, SettingsError, SettingsStorage},
     },
     state::schema::SchemaRegistry,
@@ -132,8 +132,8 @@ fn catalog_comm_hint_alone_is_prefilter_interest_never_a_userspace_match() {
     )]);
     let offers = linux_offers(&snapshot, &NONE);
     assert_eq!(
-        offers.prefilter(),
-        Some(Prefilter::Names(vec!["mygame".into(), "named".into()]))
+        offers.prefilter_names(),
+        ["mygame".to_owned(), "named".to_owned()]
     );
     offers.process_observed(&process(10, 1, "mygame"), false);
     assert!(offers.offers().is_empty(), "comm hint accepted a process");
@@ -292,7 +292,7 @@ fn disabled_source_or_installed_id_never_offers_and_publication_invalidates() {
     assert!(sources.store.candidate_snapshot().unwrap().is_none());
     offers.refresh(None, sources.generation(), &NONE).unwrap();
     assert!(offers.offers().is_empty());
-    assert_eq!(offers.prefilter(), None);
+    assert!(offers.prefilter_names().is_empty());
     assert!(offers.generation() > generation);
     let snapshot = sources.fetch(vec![("acme/games", bytes("acme.game"))]);
     assert_eq!(
@@ -329,7 +329,7 @@ fn disabled_source_or_installed_id_never_offers_and_publication_invalidates() {
 }
 
 #[test]
-fn offers_are_bounded_and_prefilter_union_widens_past_linux_limit() {
+fn offers_are_bounded_without_eviction() {
     let names: Vec<String> = (0..70).map(|i| format!("game{i:02}")).collect();
     let plugins = names
         .iter()
@@ -348,27 +348,94 @@ fn offers_are_bounded_and_prefilter_union_widens_past_linux_limit() {
         offers.process_observed(&process(pid, 1, name), false);
     }
     assert_eq!(offers.offers().len(), MAX_GAME_OFFERS);
+    assert_eq!(offers.offers()[0].id, "acme.game00");
     offers.process_exited(1);
     offers.process_observed(&process(70, 1, "game69"), false);
     assert_eq!(offers.offers().len(), MAX_GAME_OFFERS);
     assert_eq!(offers.offers().last().unwrap().id, "acme.game69");
-    let installed = Prefilter::Names((0..200).map(|i| format!("i{i}")).collect());
-    let Some(Prefilter::Names(catalog)) = offers.prefilter() else {
-        panic!("catalog names expected");
-    };
-    assert_eq!(catalog.len(), 70);
-    assert!(matches!(
-        installed
-            .clone()
-            .union(Prefilter::Names(catalog.clone()), MatchPlatform::Linux),
+}
+
+#[test]
+fn catalog_interest_is_bounded_never_widens_and_never_displaces_installed() {
+    // One hint-less (path-only) entry plus 300 single-hint entries.
+    let mut plugins = vec![game(
+        "acme.pathonly",
+        "pathonly",
+        json!({"process_path_patterns":["/opt/games/pathonly"]}),
+    )];
+    plugins.extend((0..300).map(|i| {
+        game(
+            &format!("acme.h{i:03}"),
+            &format!("h{i:03}"),
+            json!({"comm_hints":[format!("h{i:03}")]}),
+        )
+    }));
+    let sources = Sources::new(&[input("acme/games", true)]);
+    let snapshot = sources.fetch(vec![("acme/games", catalog(plugins, vec![]))]);
+    let offers = linux_offers(&snapshot, &NONE);
+    let interest = offers.prefilter_names();
+    let expected: Vec<String> = (0..OBSERVER_PREFILTER_BUDGET)
+        .map(|i| format!("h{i:03}"))
+        .collect();
+    assert_eq!(
+        interest, expected,
+        "first entries within the catalog budget"
+    );
+    for (platform, installed_count, total) in [
+        (MatchPlatform::Linux, 10, 10 + OBSERVER_PREFILTER_BUDGET),
+        // Only the kernel/CN_PROC capacity installed plugins leave free.
+        (MatchPlatform::Linux, 230, 256),
+        (MatchPlatform::Linux, 256, 256),
+        (MatchPlatform::Windows, 230, 230 + OBSERVER_PREFILTER_BUDGET),
+    ] {
+        let installed: Vec<String> = (0..installed_count).map(|i| format!("i{i:03}")).collect();
+        let Prefilter::Names(merged) =
+            Prefilter::Names(installed.clone()).union(&interest, platform)
+        else {
+            panic!("catalog interest widened the {platform:?} pre-filter");
+        };
+        assert_eq!(merged.len(), total, "{platform:?}/{installed_count}");
+        assert!(installed.iter().all(|name| merged.contains(name)));
+    }
+    // Invalid observer names never reach the kernel table.
+    let invalid = [
+        "".to_owned(),
+        "a\0b".to_owned(),
+        "sixteen-bytes-xx".to_owned(),
+    ];
+    assert_eq!(
+        Prefilter::Names(Vec::new()).union(&invalid, MatchPlatform::Linux),
+        Prefilter::Names(Vec::new())
+    );
+    // Installed-side rules are unchanged: unfiltered or >256 still widens.
+    let excess: Vec<String> = (0..257).map(|i| format!("i{i:03}")).collect();
+    assert_eq!(
+        Prefilter::Names(excess).union(&[], MatchPlatform::Linux),
         Prefilter::Unfiltered
-    ));
-    let Prefilter::Names(windows) =
-        installed.union(Prefilter::Names(catalog), MatchPlatform::Windows)
-    else {
-        panic!("Windows has no kernel table bound");
-    };
-    assert_eq!(windows.len(), 270);
+    );
+    assert_eq!(
+        Prefilter::Unfiltered.union(&interest, MatchPlatform::Linux),
+        Prefilter::Unfiltered
+    );
+    let mut engine = crate::plugin::MatcherEngine::new(MatchPlatform::Linux);
+    engine
+        .register(
+            "installed.pathonly".into(),
+            vosu_plugin_api::MatchTable {
+                process_path_patterns: vec!["/opt/x".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(engine.prefilter(), Prefilter::Unfiltered);
+    // Degraded but working: the hint-less entry still matches a process
+    // discovery observes for another reason.
+    offers.process_observed(&process(80, 1, "pathonly"), false);
+    offers.process_observed(&process(81, 1, "anything"), false);
+    assert_eq!(
+        offered(&offers),
+        [("acme/games".into(), "acme.pathonly".into())]
+    );
 }
 
 struct Storage;

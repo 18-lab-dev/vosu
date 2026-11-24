@@ -1021,6 +1021,20 @@ matcher). When a running process matches an uninstalled catalog game plugin,
 the dashboard offers "Add support for `<name>`"; accepting it runs the
 normal install plan flow above with `reason: "requested"`.
 
+Catalog matchers add discovery interest only as bounded hint names: on Linux
+the short `process_names`, `comm_hints` and `linux_name_contains` entries, on
+Windows the `process_names` entries, at most 64 names in total (a budget
+separate from installed plugins) and, on Linux, only into the kernel/CN_PROC
+table capacity installed plugins leave free. Catalog content never widens the
+enumeration-cost pre-filter to unfiltered and never displaces installed
+interest; only installed plugins keep `plugin-abi.md` §6.1's widening rule. Detection is
+degraded for a catalog entry with only `process_path_patterns`/
+`command_line_patterns`, or whose hints exceed the budget: it is matched only
+against processes discovery already observes for another reason (admitted by
+another hint, or while an installed matcher has widened the filter). A
+process an installed, enabled game plugin already matched still produces the
+offer; the management view flags it as `installed_match`.
+
 ## Sources and credentials
 
 ### Source forms

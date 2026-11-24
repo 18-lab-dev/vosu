@@ -1,7 +1,9 @@
 //! Compiles offerable catalog game entries with the runtime matcher engine.
 use crate::{
     catalog::sources::{CandidateSnapshot, SourceIdentity},
-    plugin::{CandidateProcess, CompiledMatcher, MatchPlatform, Prefilter},
+    plugin::{
+        CandidateProcess, CompiledMatcher, MatchPlatform, OBSERVER_PREFILTER_BUDGET, Prefilter,
+    },
 };
 use std::collections::HashMap;
 use vosu_plugin_api::{MatchTable, manifest::PackageKind};
@@ -34,8 +36,8 @@ impl GameCandidate {
 #[derive(Default)]
 pub(super) struct CompiledCatalog {
     pub candidates: Vec<GameCandidate>,
-    /// Extra discovery interest; `None` when nothing is offerable.
-    pub prefilter: Option<Prefilter>,
+    /// Bounded extra discovery hint names (never an unfiltered request).
+    pub prefilter_names: Vec<String>,
 }
 
 /// Pure and bounded by S0's `MAX_SNAPSHOT_CANDIDATES`; never touches the
@@ -81,17 +83,18 @@ pub(super) fn compile(
             }
         }
     }
-    let prefilter = (!candidates.is_empty()).then(|| {
-        Prefilter::for_tables(
-            platform,
-            candidates
-                .iter()
-                .flat_map(|candidate| candidate.matchers.iter())
-                .map(|(table, matcher)| (table, matcher)),
-        )
-    });
+    // Path/command-line-only entries and entries past the separate catalog
+    // budget add no interest: remote content never widens the pre-filter.
+    let prefilter_names = Prefilter::hint_names(
+        platform,
+        candidates
+            .iter()
+            .flat_map(|candidate| candidate.matchers.iter())
+            .map(|(table, _)| table),
+        OBSERVER_PREFILTER_BUDGET,
+    );
     CompiledCatalog {
         candidates,
-        prefilter,
+        prefilter_names,
     }
 }

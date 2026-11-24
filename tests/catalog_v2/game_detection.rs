@@ -160,8 +160,8 @@ impl DiscoveryObserver for Acked {
         self.offers.process_exited(pid);
         let _ = self.events.send(Seen::Exited(pid));
     }
-    fn prefilter(&self) -> Option<Prefilter> {
-        self.offers.prefilter()
+    fn prefilter_names(&self) -> Vec<String> {
+        self.offers.prefilter_names()
     }
     fn generation(&self) -> u64 {
         self.offers.generation()
@@ -310,7 +310,7 @@ fn game_detection_existing_discovery_offers_and_invalidates_on_pid_reuse_source_
     source.trigger();
     await_event(&events, Seen::Observed(100, 2, offers.generation()));
     assert!(offers.offers().is_empty());
-    assert_eq!(offers.prefilter(), None);
+    assert!(offers.prefilter_names().is_empty());
 
     source.set(Vec::new());
     await_event(&events, Seen::Exited(100));

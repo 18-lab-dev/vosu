@@ -43,7 +43,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
   alternatives are allowed). Offers are bounded, never download, approve or
   trust anything, and vanish on process exit, PID reuse, source changes or
   install; accepting one builds a normal requested install plan for its exact
-  source. Native Windows observation evidence remains pending.
+  source. Catalog entries add at most 64 bounded pre-filter hint names and
+  never widen or displace the Linux process-event filter, so path-only entries
+  detect only processes already observed. Native Windows observation evidence
+  remains pending.
 
 ## Unreleased — 2.0 M6a
 

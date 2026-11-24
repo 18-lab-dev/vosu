@@ -14,6 +14,16 @@
 //! process an installed, enabled game plugin already matched still produces
 //! offers for matching uninstalled alternatives, flagged `installed_match`.
 //!
+//! Discovery interest is bounded: catalog entries add only usable hint names
+//! (Linux: short `process_names`, `comm_hints`, `linux_name_contains`;
+//! Windows: `process_names`) within the separate
+//! [`crate::plugin::OBSERVER_PREFILTER_BUDGET`], and only into remaining
+//! kernel/CN_PROC table capacity. Catalog content never widens the pre-filter
+//! to unfiltered or displaces installed names. Detection is therefore degraded
+//! for a path/command-line-only entry, or one past the budget: it is offered
+//! only for processes discovery observes anyway (admitted by another installed
+//! or catalog hint, or while an installed matcher has widened the filter).
+//!
 //! Offers are keyed by `(source, plugin id, pid, start_time)`, bounded by
 //! [`MAX_GAME_OFFERS`] and expose only [`GameOfferView`] (no path, argv or
 //! command line). They are dropped on process exit or PID reuse, and every

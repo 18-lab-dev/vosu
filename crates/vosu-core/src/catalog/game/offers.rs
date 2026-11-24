@@ -7,7 +7,7 @@ use crate::{
         sources::{CandidateSnapshot, SourceGeneration, SourceIdentity},
         trust::CurrentPolicy,
     },
-    plugin::{CandidateProcess, DiscoveryObserver, MatchPlatform, Prefilter, ProcessRecord},
+    plugin::{CandidateProcess, DiscoveryObserver, MatchPlatform, ProcessRecord},
 };
 use serde::Serialize;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -315,8 +315,8 @@ impl DiscoveryObserver for GameOffers {
         }
     }
 
-    fn prefilter(&self) -> Option<Prefilter> {
-        self.lock().catalog.prefilter.clone()
+    fn prefilter_names(&self) -> Vec<String> {
+        self.lock().catalog.prefilter_names.clone()
     }
 
     fn generation(&self) -> u64 {

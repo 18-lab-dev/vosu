@@ -605,14 +605,33 @@ impl MatcherEngine {
     }
 }
 
+/// Separate budget for unregistered observer interest (M6b G0 catalog game
+/// offers): at most this many extra pre-filter names, on top of — never
+/// displacing — installed interest, and never past [`PREFILTER_LIMIT`] on
+/// Linux. Remote catalog content can therefore never widen the filter.
+pub const OBSERVER_PREFILTER_BUDGET: usize = 64;
+
+/// The pre-filter names one table contributes: on Linux, `process_names`
+/// short enough to match `comm` plus every `comm_hints`/
+/// `linux_name_contains` entry; on Windows, every `process_names` entry.
+fn table_names(linux: bool, table: &MatchTable) -> impl Iterator<Item = &String> + Clone {
+    table
+        .process_names
+        .iter()
+        .filter(move |name| !linux || name.len() <= 15)
+        .chain(
+            table
+                .comm_hints
+                .iter()
+                .chain(table.linux_name_contains.iter())
+                .filter(move |_| linux),
+        )
+}
+
 impl Prefilter {
-    /// [`MatcherEngine::prefilter`]'s exact rule over matchers that are
-    /// deliberately *not* registered (M6b G0 catalog game offers): no
-    /// overlap or [`PREFILTER_LIMIT`] refusal, since uninstalled catalog
-    /// alternatives may overlap (§6.1). Callers combine the result with
-    /// the registered set through [`Self::union`], never by registering.
-    #[must_use]
-    pub fn for_tables<'a>(
+    /// [`MatcherEngine::prefilter`]'s rule for *registered* (installed)
+    /// matchers, including widening for a pattern matcher with no hint.
+    fn for_tables<'a>(
         platform: MatchPlatform,
         tables: impl Iterator<Item = (&'a MatchTable, &'a CompiledMatcher)> + Clone,
     ) -> Self {
@@ -624,45 +643,73 @@ impl Prefilter {
             return Self::Unfiltered;
         }
         let mut names: Vec<String> = tables
-            .flat_map(|(table, _)| {
-                table
-                    .process_names
-                    .iter()
-                    .filter(move |name| !linux || name.len() <= 15)
-                    .cloned()
-                    .chain(if linux {
-                        table
-                            .comm_hints
-                            .iter()
-                            .chain(table.linux_name_contains.iter())
-                            .cloned()
-                            .collect()
-                    } else {
-                        Vec::new()
-                    })
-            })
+            .flat_map(|(table, _)| table_names(linux, table).cloned())
             .collect();
         names.sort_unstable();
         names.dedup();
         Self::Names(names)
     }
 
-    /// Combines two enumeration-cost pre-filters for one platform. Widening
-    /// is always sound; narrowing past interest never is. On Linux a union
-    /// beyond the bounded kernel/CN_PROC table ([`PREFILTER_LIMIT`]) widens
-    /// to [`Self::Unfiltered`] instead of being truncated or refused: only
-    /// registration of *installed* matchers is subject to that refusal.
+    /// Bounded hint names for matchers that are deliberately *not*
+    /// registered (catalog game offers): never [`Self::Unfiltered`]. A table
+    /// with no usable name (path/command-line only) contributes nothing, and
+    /// a table whose new names would exceed `budget` contributes none of
+    /// them; both can still match processes discovery observes anyway.
     #[must_use]
-    pub fn union(self, other: Self, platform: MatchPlatform) -> Self {
-        let (Self::Names(mut names), Self::Names(other)) = (self, other) else {
+    pub fn hint_names<'a>(
+        platform: MatchPlatform,
+        tables: impl Iterator<Item = &'a MatchTable>,
+        budget: usize,
+    ) -> Vec<String> {
+        let linux = platform == MatchPlatform::Linux;
+        let mut names: Vec<String> = Vec::new();
+        for table in tables {
+            let mut fresh: Vec<&String> = table_names(linux, table)
+                .filter(|name| !names.contains(*name))
+                .collect();
+            fresh.sort_unstable();
+            fresh.dedup();
+            if fresh.is_empty() || names.len() + fresh.len() > budget {
+                continue;
+            }
+            names.extend(fresh.into_iter().cloned());
+        }
+        names
+    }
+
+    /// Adds an observer's bounded extra names to this installed pre-filter.
+    /// The installed side keeps its own rules: [`Self::Unfiltered`] stays
+    /// unfiltered, and an installed Linux set beyond [`PREFILTER_LIMIT`]
+    /// still widens. The observer side can never widen or displace installed
+    /// names: it adds at most [`OBSERVER_PREFILTER_BUDGET`] valid names and,
+    /// on Linux, only into the remaining kernel/CN_PROC table capacity.
+    #[must_use]
+    pub fn union(self, observer: &[String], platform: MatchPlatform) -> Self {
+        let Self::Names(mut names) = self else {
             return Self::Unfiltered;
         };
-        names.extend(other);
-        names.sort_unstable();
-        names.dedup();
-        if platform == MatchPlatform::Linux && names.len() > PREFILTER_LIMIT {
+        let linux = platform == MatchPlatform::Linux;
+        if linux && names.len() > PREFILTER_LIMIT {
             return Self::Unfiltered;
         }
+        let capacity = if linux {
+            OBSERVER_PREFILTER_BUDGET.min(PREFILTER_LIMIT - names.len())
+        } else {
+            OBSERVER_PREFILTER_BUDGET
+        };
+        let mut added = 0;
+        for name in observer {
+            if added == capacity {
+                break;
+            }
+            let usable = !name.is_empty() && !name.contains('\0') && (!linux || name.len() <= 15);
+            if usable && !names.contains(name) {
+                names.push(name.clone());
+                added += 1;
+            }
+        }
+        names.sort_unstable();
+        names.dedup();
         Self::Names(names)
     }
 }
