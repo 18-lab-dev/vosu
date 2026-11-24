@@ -264,6 +264,14 @@ fn bench(c: &mut Criterion) {
         format!("{:?}", lazer.gameplay(0.0, None)),
         format!("{:?}", native_lazer.gameplay(0.0, None))
     );
+    let precise = stable.global_precise().unwrap();
+    let native_precise = native_stable.global_precise().unwrap();
+    assert_eq!(format!("{precise:?}"), format!("{native_precise:?}"));
+    let vosu_sys::process::ReadStatus::Ready(value) = precise else {
+        panic!("populated precise fixture must be ready");
+    };
+    assert_eq!(value.status, 3);
+    assert_eq!(value.time, 0.0);
     let mut group = c.benchmark_group("plan_memory");
     for sequential in [true, false] {
         let (process, counter) = counted_process(ProcessBitness::X86);
@@ -316,6 +324,12 @@ fn bench(c: &mut Criterion) {
         ),
         patterns(),
     );
+    group.bench_function("stable_precise_native", |b| {
+        b.iter(|| black_box(native_stable.global_precise().unwrap()))
+    });
+    group.bench_function("stable_precise_plan", |b| {
+        b.iter(|| black_box(stable.global_precise().unwrap()))
+    });
     group.bench_function("stable_native", |b| {
         b.iter(|| {
             let _ = black_box(native_stable.global());

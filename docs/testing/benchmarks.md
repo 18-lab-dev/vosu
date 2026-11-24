@@ -161,190 +161,164 @@ with one worker (32 sessions, 16 persistent anchors, eight concurrent producers)
 - Live-client and released-tosu measurements are in the
   [released tosu comparison](#released-tosu-comparison).
 
-## Stable dependent-plan comparison
+## M1 PlanMemory precise capture
 
-`benches/support/stable_fixture.rs` is shared by `hot_paths` and
-`plan_memory_bench`. Earlier stable `raw_snapshot_reads` numbers used zero
-`base_addr`/`rulesets_addr`: `global_batched` underflowed into the scalar
-fallback, while menu/gameplay returned immediately. Those historical timings
-are not comparable to this successful-capture workload; backport the shared
-fixture and benchmark setup when comparing older revisions.
+Measured 2026-11-24 on the Ryzen 9 9950X3D with Rust 1.96.1, locked
+dependencies and default Linux features. Baseline is `1b96950`; candidate is
+the precise-plan follow-up on `m1/precise-plan`. Both executables contain the
+same added precise benchmark. Baseline uses a separate ovnfs checkout and
+`CARGO_TARGET_DIR`; no cross-revision Cargo artifacts are shared.
+Builds used `taskset -c 0-7,16-23 nice -n 10`, `RUSTC_WRAPPER=sccache`, and
+candidate target `/home/user/.cache/vosu-targets/m1-pp`.
 
-The corrected fixture checks populated global, full-menu and gameplay values
-and native/plan capture equality before timing. The dependent implementation
-reduces successful-capture submissions from global/menu/gameplay **4/5/5** to
-**4/4/5** by combining the menu's two independent holder chains into one
-multi-stage plan. Its native default still performs the same two backend batches.
-Scalar fallback pointer chains separately fall from 18 to 12 submissions.
+The populated stable x86 graph is shared with `hot_paths`. Before timing,
+both transports must return identical successful global/menu/gameplay values
+and precise status **3**, time **0** (song selection deliberately suppresses
+play time). The new precise cases exercise `global_precise`'s warmed pointer
+and value batch: **one plan, two operations**. They do not include playing
+key overlays, hit-error collection, snapshots, publication, or OS syscalls.
+Regular cases retain the same populated full field workload; lazer's existing
+regular fixture is still zero-filled and is only a regression diagnostic.
 
-Compare already-built binaries, not concurrent builds:
+### Changes and safety
 
-```sh
-python scripts/bench-compare.py --no-reserve \
-  --binary before=/home/user/.cache/vosu-bench-c6c/before \
-  --binary after=/home/user/.cache/vosu-bench-c6c/after-clock-fix \
-  --filter '^plan_memory/' --cpu 4 \
-  --rounds 5 --warmup 1 --measurement 3 --samples 50 \
-  --output /home/user/.cache/vosu-bench-c6c/paired-clock-fix
-```
+Two fixed costs were removed:
 
-The default mode requires administrator-prepared exclusive cpuset support and
-sudo, then drops privileges before running benchmarks. `--no-reserve` needs
-neither: each child is pinned only to the requested logical CPU, never its SMT
-sibling, but other host processes remain unrestricted. Evidence explicitly
-records `exclusive: false`. Both modes interleave revisions, use fresh Criterion
-homes, and report bootstrap confidence intervals and an `inconclusive` flag when
-between-round noise or confidence-interval overlap obscures the revision delta.
+- Two-to-four-operation stages use four-entry scratch arrays rather than
+  clearing the executor's 64-entry participant array. The generic implementation
+  remains shared with larger stages, including address-overflow accounting,
+  failed-batch scalar fallback, per-read errors and fallback deadlines.
+- The host-owned structural proof caches both x86 and x64 dependent-pointer-width
+  checks. Every reuse still compares every structural byte, including operation
+  lengths, references, reserved fields and the session handle. A changed plan
+  rebuilds both proofs; aliased header tables never enter the cache. The executor
+  selects the proof for the actual session bitness before any native read.
 
-Measured 2026-11-24 on the Ryzen 9 9950X3D, Rust 1.96.1, CPU 4 (SMT sibling
-20), **non-exclusive**, with the command above. Before is `ec2d086`; after is
-`050b554` with profiling's environment variable unset. This run precedes the
-follow-up that compiles instrumentation out of default builds.
-Values are medians of five round medians; brackets are bootstrap 95% CIs.
+No SDK trust flag, validation exemption, new unsafe code, or native generation
+check was introduced or removed. The new test covers both bitnesses, changed
+widths, invalid widths and repeated cache hits. Existing batch failure,
+overflow, deadline, PID-generation and warmed zero-allocation tests remain.
+Production single-stage SYNC plans still need no application clock reads;
+dependent-stage coarse deadline checks and public absolute deadlines remain.
 
-| Benchmark | Before, µs | After, µs |
-| --- | ---: | ---: |
-| One-op floor | 0.0832 [0.0807, 0.1115] | 0.1052 [0.0934, 0.1110] |
-| 18-op floor | 0.2878 [0.2847, 0.4119] | 0.3651 [0.3183, 0.4174] |
-| 56-op floor | 0.7406 [0.7357, 2.1121] | 0.9139 [0.7646, 1.1756] |
-| Stable native | 1.275 [1.235, 2.343] | 1.450 [1.236, 1.820] |
-| Stable plan | 3.222 [3.111, 41.254] | 3.876 [3.370, 108.317] |
-| Stable unfused plan | 3.215 [3.191, 5.601] | 4.209 [3.404, 31.386] |
-| Lazer plan | 12.783 [10.817, 27.883] | 13.524 [11.822, 106.373] |
-
-**All seven comparisons report `inconclusive: true`.** Stable plan's +20.28%
-median delta is overwhelmed by between-round noise; no revision-level speedup
-or regression is established. Evidence:
-`/home/user/.cache/vosu-bench-c6c/paired-clock-fix/summary.json`.
-The executor-only benchmark keeps public `execute_into` absolute deadlines and
-excludes `PluginHost`, so it cannot measure removal of the host's QPC calls.
-Default-build profiling elimination and the live Windows D17 bar remain to be
-measured; this noisy run does not establish the within-10% exit bar.
-
-With an explicitly **x86** fixture session, regular capture uses native **14
-backend calls / 56 ops**, versus plan **15 calls / 56 ops** (one additional
-dependent stage). Non-playing precise capture uses **1 batch / 2 ops** on both.
-These are backend calls, not measured OS syscalls. The original host additionally
-probed health **13 times per regular / once per precise capture**. Native Windows
-handle reads and Linux post-read generation-checked reads now defer the plan's
-additional health probe until read failure. Linux still checks identity after
-every native read; PID reuse cannot publish a different process's bytes.
-The host caches one successful ownership/session lookup per reader thread,
-revoked under the session-registry lock on detach/decline; instance shutdown
-bypasses the cache. A bounded host-owned layout proof compares all structural
-bytes before reuse, never trusting an SDK producer flag. Aliased header tables
-are fully validated on every call. Delivery still rechecks the instance.
-
-`cargo run --locked --features test-harness --example plan_process_bench` spawns a
-real child holding the populated graph, translates fixture offsets only at the
-native read boundary, and compares native reads with the real in-process host.
-One CPU-4-pinned debug run measured native/plan medians of **0.762/3.456 µs**
-(one op), **1.413/4.739 µs** (non-playing precise), and **42.761/101.391 µs**
-(regular). These debug diagnostics are not release Criterion exit evidence.
-
-Fresh successful SYNC plans now make **zero precise clock reads**: a single stage
-also makes zero coarse reads; an N-stage plan makes N coarse reads. Previously
-the host/executor used N+1 `Instant` queries per plan. SDK encoding and
-`PlanProcessMemory` themselves make no clock queries. The host's 2 s budget uses
-~16 ms Windows / typically 1–4 ms Linux ticks and clamps overrides to 64 ms.
-Public `execute_into` absolute deadlines remain precise.
-The populated child fixture reports **0 precise / 0 coarse** queries for one-op
-and non-playing precise captures, and **0 precise / 3 coarse** for regular.
-
-For per-phase Windows diagnostics against an existing process (no test-harness):
-
-```powershell
-$env:VOSU_READ_PLAN_PROFILE='1'
-cargo run --release --locked --features read-plan-profile --example plan_process_bench -- --pid 1234 --cycles 1000
-```
-
-Optional `--address 0x...` selects a known readable address; otherwise the
-diagnostic chooses one readable region once, outside timing. The synthetic
-stable/lazer shapes repeat that address rather than chasing unknown pointers.
-Output separates application precise/coarse clock counts from the profiler's
-own two precise reads per span. Profiling therefore inflates timings, especially
-on a VM with trapping QPC; unset the environment variable for throughput runs.
-Linux can use `--pid self` without changing ptrace permissions. For a real-child
-measurement, launch a child that explicitly permits this benchmark's read-only
-ptrace access, then pass its PID; the child must remain alive for both modes.
-The diagnostic Cargo feature is off by default and is not part of packaged
-release feature sets. Default builds compile its spans/counters out entirely.
-
-### Linux synchronous-plan fixed-cost follow-up
-
-Baseline `2983097` versus the host lookup/layout cache and native identity-probe
-cutover, measured on the Linux host with Rust 1.96.1, default features, and locked
-dependencies. Builds used `taskset -c 0-7,16-23 nice -n 10`, with
-`CARGO_TARGET_DIR=/home/user/.cache/vosu-targets/m1-c6d`. Immutable copies of the
-before/after Criterion executables and raw results are retained locally under
-`target/m1-c6d-evidence/`; these ignored artifacts are not repository fixtures.
-
-`cargo run --release --locked --features read-plan-profile --example
-plan_process_bench -- --pid CHILD_PID --cycles 10000`, with
-`VOSU_READ_PLAN_PROFILE=1`, read a real Python child permitting ptrace access.
-Each shape warmed up 100 times, then interleaved 10,000 native/plan captures;
-baseline and candidate campaigns were sequential, not interleaved by revision.
-The first readable ELF region was selected outside timing. Both clock-pair
-floors were 20 ns. Values below are **before → after**, in ns:
-
-| Phase (arithmetic mean per capture) | One op | Two ops | Eighteen ops | Eight stages / 43 ops |
-| --- | ---: | ---: | ---: | ---: |
-| SDK encode | 30 → 31 | 27 → 30 | 47 → 54 | 95 → 87 |
-| Session/memory resolution | 92 → 26 | 87 → 26 | 95 → 26 | 98 → 26 |
-| Validation, including health preflight | 403 → 48 | 422 → 50 | 403 → 54 | 478 → 65 |
-| Backend | 1095 → 1003 | 916 → 1090 | 1107 → 1393 | 8739 → 8081 |
-| Root resolution | 21 → 21 | 24 → 21 | 21 → 21 | 21 → 22 |
-| Result delivery | 53 → 51 | 47 → 53 | 76 → 78 | 107 → 111 |
-| **Whole plan median** | **1794 → 1443** | **1593 → 1593** | **2294 → 1943** | **10139 → 9488** |
-| Native median | 942 → 1022 | 822 → 1122 | 1152 → 1222 | 8416 → 8226 |
-
-Validation has two spans per capture; each other phase has one, except backend
-has eight for the eight-stage shape. Phase means and whole-capture medians are
-not additive. These profiled host diagnostics are noisy and do not isolate the
-individual optimizations: much of the validation reduction is removal of the
-redundant Linux pre-plan health syscall, not layout checking alone. The native
-post-read PID-generation check remains mandatory.
-
-Both revisions report **zero application precise-clock reads** for every shape.
-Coarse reads are **0 / 0 / 0 / 8**; profiler-only precise reads are
-**14 / 14 / 14 / 28**. The supplied `a709550` perf report attributes its 2.03%
-clock self share to Tokio parking, worker sleep, and WebSocket timing, not a
-per-plan precise clock. There was no renewed single-stage plan clock to remove;
-dependent-stage coarse deadline checks remain to preserve bounded execution.
-The lazer visualizer's forty known scalar addresses now use one batch/plan,
-with separate per-op errors rather than widening the read to unrelated bytes.
-
-The requested Criterion comparison used the preserved baseline and candidate:
+### Interleaved Criterion results
 
 ```sh
-python scripts/bench-compare.py --no-reserve --cpu 7 --rounds 5 \
-  --warmup 1 --measurement 2 --samples 30 \
-  --binary before=target/m1-c6d-evidence/before-plan-memory-bench \
-  --binary after=target/m1-c6d-evidence/after-plan-memory-bench \
-  --filter '^plan_memory/' --output target/m1-c6d-evidence/paired
+taskset -c 0-7,16-23 nice -n 10 python scripts/bench-compare.py \
+  --no-reserve --cpu 7 --rounds 5 --warmup 1 --measurement 2 --samples 40 \
+  --binary before=target/m1-pp-evidence/before \
+  --binary after=target/m1-pp-evidence/after \
+  --filter '^plan_memory/' --output target/m1-pp-evidence/paired
 ```
 
-CPU 7 was pinned, **not exclusively reserved**; sibling CPU 23 and other host
-activity were not isolated. Builds and correctness gates had completed before
-measurement. Medians of round medians and bootstrap 95% intervals (ns):
+All task-owned builds and Rust correctness gates had finished before measurement.
+CPU 7 is pinned, **not exclusive**; sibling CPU 23 and other host activity
+remain unrestricted. Five invocations per revision interleave before/after.
+Values are **median of invocation medians [minimum–maximum]**, in ns:
 
-| `plan_memory/` case | Before [95% interval] | After [95% interval] | Change |
+| `plan_memory/` case | Before | After | Median change |
 | --- | ---: | ---: | ---: |
-| `floor_one_op` | 100.74 [93.74, 160.83] | 102.04 [101.04, 106.95] | +1.29% |
-| `floor_eighteen_independent_ops` | 355.82 [320.83, 617.61] | 334.73 [331.94, 414.64] | −5.93% |
-| `floor_fifty_six_independent_ops` | 857.41 [855.81, 2120.23] | 834.93 [824.48, 838.55] | −2.62% |
-| `stable_native` | 1382.94 [1326.44, 4080.55] | 1368.48 [1321.39, 1753.49] | −1.05% |
-| `stable_unfused_plans` | 3695.73 [3583.60, 4646.00] | 3868.12 [3830.69, 4143.96] | +4.66% |
-| `stable_regular_fields` | 3624.35 [3572.80, 3897.99] | 3787.78 [3737.08, 4137.04] | +4.51% |
-| `lazer_regular_fields` | 13802.77 [12083.34, 14188.36] | 14294.34 [13056.32, 28179.38] | +3.56% |
+| `stable_precise_native` | 6.209 [6.152–6.759] | 6.197 [6.007–22.940] | −0.18% |
+| `stable_precise_plan` | 139.079 [133.679–144.656] | 122.468 [121.294–154.897] | −11.94% |
+| `stable_native` | 1517.452 [1390.088–1781.372] | 1407.635 [1319.825–1807.563] | −7.24% |
+| `stable_regular_fields` | 3991.782 [3667.003–6878.063] | 3667.092 [3585.521–4061.990] | −8.13% |
+| `stable_unfused_plans` | 4088.187 [3767.849–6236.055] | 3761.681 [3722.932–4174.076] | −7.99% |
+| `lazer_regular_fields` | 12093.411 [11956.751–18061.446] | 11780.274 [11463.030–12634.608] | −2.59% |
+| `floor_one_op` | 103.497 [100.097–106.643] | 105.843 [101.442–125.632] | +2.27% |
+| `floor_eighteen_independent_ops` | 332.453 [322.610–361.938] | 363.367 [325.957–503.701] | +9.30% |
+| `floor_fifty_six_independent_ops` | 848.811 [834.752–917.807] | 835.003 [819.085–943.015] | −1.63% |
 
-**Every Criterion result is inconclusive** under the comparison script's spread
-or interval rule. Outliers were retained, including the slow first baseline
-round and final lazer candidate round. This benchmark excludes real PluginHost
-routing and native process syscalls; it cannot measure the main lookup and
-health-preflight savings. No daemon CPU, Linux VM, native Windows, or live osu!
-exit claim is made by these host results; the owner must remeasure D17 CPU.
+**Every revision comparison is inconclusive** under the script's spread/interval
+rule; all invocations, including outliers, are retained. The precise plan/native
+ratio of aggregate medians is **22.40× before, 19.76× after**, not a within-10%
+pass. The native fixture is two in-process slice copies, approximately 6 ns,
+whereas the plan still serializes, executes, validates and returns an ABI message.
+Regular plan/native ratios are **2.63× before, 2.61× after**. No regular
+regression is established; neither these ratios nor the noisy point-estimate
+speedup proves the live D17 exit bar.
 
+### Real-process host diagnostic
+
+The normal, profiling-disabled `plan_process_bench` also ran on CPU 7 with
+`--pid self --cycles 100000`: five invocations per revision, alternating
+revision order each round. Within each invocation native/plan order alternates
+every iteration after 100 warmups. This uses real generation-checked Linux
+reads, real `PluginHost` ownership/liveness checks and SDK interception. Widths
+repeat one readable address, not a populated osu! pointer graph.
+
+```sh
+taskset -c 7 nice -n 10 target/m1-pp-evidence/host-after \
+  --pid self --cycles 100000
+```
+
+Nanoseconds, **median of invocation medians [minimum–maximum]**:
+
+| Shape | Before native | Before plan | After native | After plan |
+| --- | ---: | ---: | ---: | ---: |
+| One op | 892 [711–942] | 942 [742–1002] | 942 [712–962] | 1012 [742–1012] |
+| Precise two ops | 972 [762–1002] | 1072 [841–1102] | 1041 [772–1062] | 1133 [842–1172] |
+| Eighteen ops | 832 [821–1123] | 1072 [1062–1453] | 1102 [831–1152] | 1433 [1072–1503] |
+| Eight stages / 43 ops | 7514 [5751–7745] | 8005 [5992–8225] | 7565 [5852–7815] | 8005 [6112–8296] |
+
+Paired precise plan/native overhead, in invocation order:
+**before +10.29%, +11.09%, +9.98%, +10.37%, +10.36%**;
+**after +9.51%, +9.09%, +8.84%, +10.36%, +9.07%**.
+The paired median moves **+10.36% → +9.09%**, but one candidate invocation
+still exceeds 10%. Absolute timings drift substantially with the native
+control too; this is a narrowly favorable host-model point estimate, **not a
+confidence-qualified D17 pass**. The other shapes' paired median overheads
+are one-op **+5.61% → +6.41%**, eighteen-op **+29.35% → +29.77%**, and
+eight-stage **+6.20% → +5.82%**.
+
+Separate profiled invocations (not throughput evidence) report two-op phase
+means, before → after: SDK encode **36 → 27 ns**, session resolution
+**26 → 27 ns**, validation **52 → 47 ns**, root resolution **22 → 22 ns**,
+result delivery **55 → 44 ns**, backend **875 → 875 ns**.
+These noisy means include profiler overhead and are not additive with whole-call
+medians; unchanged SDK/delivery code also varies. Both revisions report
+**zero application precise/coarse clock reads** for single-stage shapes;
+eight-stage shapes retain eight coarse reads. Profiler-only reads are
+14 per single-stage plan and 28 per eight-stage plan. The paired two-op
+plan-minus-native median is **100 → 92 ns**: the residual work is principally
+the ABI path around an unchanged checked native read, not an extra health syscall.
+
+### Profile-backed remaining floor
+
+The baseline Criterion executable was separately rebuilt with
+`CARGO_PROFILE_RELEASE_STRIP=none` for symbolization only; throughput measurements
+above use the normal stripped release profile. A 15-second precise-plan sample:
+
+```sh
+taskset -c 7 nice -n 10 perf record -e cycles:u -F 997 \
+  --call-graph dwarf --user-callchains -o precise-before.perf.data -- \
+  target/m1-pp-evidence/perf-before --bench \
+  '^plan_memory/stable_precise_plan$' --profile-time 15
+perf report --stdio --no-children -i precise-before.perf.data --sort symbol
+```
+
+14,618 samples, zero lost: self shares are **31.21% `PlanMemory::read_flat`**,
+**24.15% raw execution**, **17.88% `PlanProcessMemory::read_many`**,
+**4.12% structural proof lookup**, **1.52% SDK interception**, and **6.42%
+`__vdso_clock_gettime`**. Inlining folds encoding, result validation and copy
+work into these symbols; these are not separately measured phase shares.
+This executor-only benchmark deliberately calls public `execute_into` with an
+absolute deadline and excludes real `PluginHost` routing. Its clock share is
+therefore **not** evidence of renewed production SYNC clock overhead.
+
+The remaining copy-only-fixture gap is an ABI round-trip floor, not an
+allocation or OS-read regression. Closing a roughly 116 ns gap against a
+6 ns native fixture would require avoiding most of the encoding/result delivery
+path, for example a prepared, host-validated executable plan and a scoped
+caller-destination API with equally strong ownership, bounds and result checks.
+Simply skipping validation or the generation check is not an acceptable fix.
+No such ABI redesign, native Windows result, VM result or live-daemon CPU
+claim is implied here. Remeasure live stable and lazer with the
+[native/plan commands above](#live-reader-native-versus-plan), in both orders,
+and retain error counts and start/end state.
+
+Raw Criterion logs, bootstrap intervals, profiler data and preserved executables
+are local ignored evidence under `target/m1-pp-evidence/`; the paired summary is
+`target/m1-pp-evidence/paired/summary.json`.
 
 ## vosu hot paths
 

@@ -7,6 +7,8 @@ use std::cell::RefCell;
 pub(super) struct Layout {
     pub total_ops: usize,
     pub total_len: u64,
+    pub ref_width_x86: bool,
+    pub ref_width_x64: bool,
 }
 
 #[derive(Default)]
@@ -46,6 +48,11 @@ pub(super) fn validate(
         let mut layout = Layout {
             total_ops: 0,
             total_len: 0,
+            // These proofs are reusable only with the exact structural bytes
+            // compared above. Keep both bitnesses: a reader thread may switch
+            // between sessions without changing the encoded plan.
+            ref_width_x86: validate_read_plan_ref_op_width(payload, 4).is_ok(),
+            ref_width_x64: validate_read_plan_ref_op_width(payload, 8).is_ok(),
         };
         // Noncanonical raw input may alias stage/op tables with the ignored
         // header bytes. Execute it after full validation, but never cache it.
@@ -122,6 +129,48 @@ mod tests {
         assert_eq!(header.root.address, 0x2000);
         assert_eq!(layout.total_ops, 1);
         assert_eq!(layout.total_len, 4);
+    }
+
+    #[test]
+    fn cached_width_proofs_follow_layout_not_session_bitness() {
+        for width in [4, 8, 1, 4] {
+            let bytes = Message::ReadPlanSubmit(ReadPlanSubmit {
+                plan: 1,
+                handle: 1,
+                root: PlanBase::Absolute(0x1000),
+                stages: vec![
+                    Stage {
+                        base: StageBase::Root,
+                        base_offset: 0,
+                        ops: vec![PlanOp {
+                            offset: 0,
+                            length: width,
+                        }],
+                    },
+                    Stage {
+                        base: StageBase::Dependent {
+                            ref_stage: 0,
+                            ref_op: 0,
+                        },
+                        base_offset: 0,
+                        ops: vec![PlanOp {
+                            offset: 0,
+                            length: 1,
+                        }],
+                    },
+                ],
+                sync: false,
+            })
+            .encode_payload()
+            .unwrap();
+            // Second validation hits the structural proof cache. Both proofs
+            // must remain valid when a submitting thread switches session.
+            for _ in 0..2 {
+                let (_, layout) = validate(&bytes, 0).unwrap();
+                assert_eq!(layout.ref_width_x86, width == 4);
+                assert_eq!(layout.ref_width_x64, width == 8);
+            }
+        }
     }
 
     #[test]

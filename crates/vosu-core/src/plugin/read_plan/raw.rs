@@ -320,7 +320,7 @@ fn process_single_op_raw(
 /// dozen allocations.
 const MULTI_OP_CHUNK: usize = 64;
 
-fn process_multi_op_chunk_raw(
+fn process_multi_op_chunk_raw<const CAP: usize>(
     ctx: &RawContext<'_>,
     stage: &vosu_stage_header,
     base: u64,
@@ -332,7 +332,7 @@ fn process_multi_op_chunk_raw(
     let op_size = size_of::<vosu_plan_op>();
     // (op_index, address, out_offset, length) for each op in this chunk
     // whose address resolved — a plain stack array, never a `Vec`.
-    let mut participants = [(0usize, 0usize, 0usize, 0u32); MULTI_OP_CHUNK];
+    let mut participants = [(0usize, 0usize, 0usize, 0u32); CAP];
     let mut participant_count = 0usize;
     // An address-overflow op's message is charged against the budget
     // immediately below (in the same op-index order [`super::execute_stage_ops`]'s
@@ -364,8 +364,8 @@ fn process_multi_op_chunk_raw(
         let region_start = participants[0].2;
 
         let batch_ok = {
-            let mut requests: [MaybeUninit<ReadRequest<'_>>; MULTI_OP_CHUNK] =
-                [const { MaybeUninit::uninit() }; MULTI_OP_CHUNK];
+            let mut requests: [MaybeUninit<ReadRequest<'_>>; CAP] =
+                [const { MaybeUninit::uninit() }; CAP];
             let mut remaining: &mut [u8] = &mut out[region_start..];
             let mut cursor = region_start;
             for (slot, &(_, address, out_offset, length)) in
@@ -451,10 +451,24 @@ fn process_multi_op_raw(
     budget: &mut ErrorBudget,
 ) -> Result<(), ReadPlanError> {
     let op_count = stage.op_count as usize;
+    // Precise captures usually contain only the pointer and its current value.
+    // Avoid clearing the full 64-op scratch array for those reads.
+    // The same implementation retains all overflow, fallback and deadline rules.
+    if op_count <= 4 {
+        return process_multi_op_chunk_raw::<4>(
+            ctx,
+            stage,
+            base,
+            global_index_start,
+            0..op_count,
+            out,
+            budget,
+        );
+    }
     let mut chunk_start = 0usize;
     while chunk_start < op_count {
         let chunk_end = (chunk_start + MULTI_OP_CHUNK).min(op_count);
-        process_multi_op_chunk_raw(
+        process_multi_op_chunk_raw::<MULTI_OP_CHUNK>(
             ctx,
             stage,
             base,
@@ -595,9 +609,13 @@ impl<'a> ValidatedPlan<'a> {
         // process object or check its generation after reading, so a second
         // pre-plan health syscall adds no PID-reuse protection. Failed reads
         // still probe health to distinguish TARGET_GONE from address faults.
-        let pointer_width = u32::try_from(bitness.pointer_size()).unwrap_or(u32::MAX);
-        validate_read_plan_ref_op_width(payload, pointer_width)
-            .map_err(|_| ExecuteBytesError::Execute(ReadPlanError::RefOpWrongWidth))?;
+        let ref_width_ok = match bitness {
+            ProcessBitness::X86 => layout.ref_width_x86,
+            ProcessBitness::X64 => layout.ref_width_x64,
+        };
+        if !ref_width_ok {
+            return Err(ExecuteBytesError::Execute(ReadPlanError::RefOpWrongWidth));
+        }
         if (!memory.reads_pin_process_identity() || layout.total_len == 0) && !memory.is_alive() {
             return Err(ExecuteBytesError::Execute(ReadPlanError::TargetGone));
         }
