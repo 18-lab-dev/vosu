@@ -79,12 +79,18 @@ The host serializes calls into one plugin instance (`dispatch`) onto one thread 
 
 **Host lock order (A2b, extended by A3/R36).** When acquiring multiple host
 locks, core must use
-`focus -> state_serial -> instances -> sessions -> registry -> resources -> subscriptions -> invocations -> jobs`.
+`focus -> state_serial -> instances -> sessions -> api_readers -> registry -> resources -> subscriptions -> invocations -> jobs`.
+`api_readers` owns public API watch registrations and their latest snapshots;
 `registry` is the existing state/provider registry; `resources` is reference
 membership, pending resource operations and stream ownership; `invocations`
 includes relay slots/outboxes. Sub-locks within a position are never nested.
 Prepare publication bindings before committing state and resource membership
-under `state_serial`; notifications run after unlock. Reserve pending requests,
+under `state_serial`; notify only after releasing the membership locks.
+`api_committed` acquires `api_readers` under `state_serial` to serialize latest
+API snapshot notifications. Lifecycle/focus snapshots acquire `api_readers`
+after `sessions` while the completed transition is still serialized by `focus`.
+API demand refresh runs after releasing `api_readers` and its later locks.
+Reserve pending requests,
 invocations and job slots under locks, release all locks before dispatch/plugin
 callbacks, and reacquire only to complete. No callback, filesystem I/O, worker
 join or await runs under these locks; completions cannot acquire an earlier

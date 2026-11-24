@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "api_v1.rs"]
+mod api_v1;
+
 /// Process-wide resource owner. Every long-lived production service is retained
 /// here and joined in reverse dependency order.
 pub struct ProductionRuntime {
@@ -19,6 +22,7 @@ pub struct ProductionRuntime {
     dev_tools: Vec<PathBuf>,
     dev_plugins: Vec<PathBuf>,
     plugins: Arc<PluginHost>,
+    api_v1: api_v1::ApiV1Service,
     state_host: AsyncMutex<Option<vosu_surface::state::StateHostInstalled>>,
     /// Bridge B2's `ConfigStore` watch task (§6.9): has no other way to
     /// stop, since `ConfigStore::shutdown` never drops the `changed`
@@ -45,7 +49,23 @@ pub struct ProductionRuntime {
 
 impl ProductionRuntime {
     async fn shutdown(&self) -> io::Result<()> {
+        let plugins = Arc::clone(&self.plugins);
+        self.shutdown_with_plugin_destroy(async move {
+            tokio::task::spawn_blocking(move || {
+                plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE)
+            })
+            .await
+            .map_err(|error| io::Error::other(format!("plugin shutdown task failed: {error}")))
+        })
+        .await
+    }
+
+    async fn shutdown_with_plugin_destroy(
+        &self,
+        destroy: impl Future<Output = io::Result<()>>,
+    ) -> io::Result<()> {
         self.shutdown_token.cancel();
+        self.api_v1.shutdown();
         if let Some(watch) = self.plugin_settings_watch.lock().await.take() {
             watch.abort();
         }
@@ -72,10 +92,7 @@ impl ProductionRuntime {
                     io::Error::other(format!("foreground poller shutdown task failed: {error}"))
                 })?;
         }
-        let plugins = Arc::clone(&self.plugins);
-        tokio::task::spawn_blocking(move || plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE))
-            .await
-            .map_err(|error| io::Error::other(format!("plugin shutdown task failed: {error}")))?;
+        destroy.await?;
         if let Some(bridge) = self.bridge.lock().await.take() {
             bridge.shutdown().await;
         }
@@ -261,6 +278,7 @@ impl ProductionRuntime {
                 ProductionRouteDelegate::new(services)
                     .with_api_keys(Arc::new(api_keys))
                     .with_tools(tools.clone())
+                    .with_api_v1(self.api_v1.router.clone())
             }),
         };
         let mut dashboard_providers = providers.clone();
@@ -553,6 +571,7 @@ impl RuntimeHooks for ProductionRuntime {
                                 }
                             }
                             self.logger.update_debug(effective.debug_log);
+                            self.api_v1.reload(&effective);
                             self.authorizer.reload(&effective.allowed_ips, &effective.server_ip);
                             self.snapshots.set_poll_rates(
                                 poll_duration(effective.poll_rate),
@@ -936,6 +955,7 @@ pub async fn run_cli() -> io::Result<()> {
         tools: AsyncMutex::new(None),
         dev_tools,
         dev_plugins: dev_plugin_dirs,
+        api_v1: api_v1::ApiV1Service::new(&plugin_host, &current),
         plugins: plugin_host,
         state_host: AsyncMutex::new(Some(state_host)),
         plugin_settings_watch: AsyncMutex::new(Some(plugin_settings_watch)),

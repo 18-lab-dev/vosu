@@ -12,6 +12,8 @@ pub struct ApiUpdate {
     pub session: Option<String>,
     /// Source notification sequence, independent of session-state revisions.
     /// The transport hub owns its separate wire sequence.
+    /// Reads report the current notification sequence too (possibly zero when
+    /// no observer has existed), never the session's publication revision.
     pub revision: u64,
     /// Changes on every active rebinding, even if a slow consumer skips a
     /// switch away and back to the same session. Compare this for baseline resets.
@@ -47,6 +49,8 @@ impl ApiStateSource {
     pub fn read(&self, target: &SessionTarget, plan: &ApiPlan) -> Result<ApiUpdate, ApiError> {
         self.0.read(target, plan)
     }
+    /// Establish after transport upgrade validation. `Active` can become absent
+    /// between upgrade and selection; fixed ids must still resolve here.
     pub fn subscribe(
         &self,
         target: SessionTarget,

@@ -2,6 +2,7 @@
 //! instance's dedicated serial worker thread, and the shared
 //! `concurrent_dispatch` worker pool (`docs/v2/plugin-abi.md` §4).
 
+use super::dispatch_queue::DispatchQueue;
 use std::ffi::c_void;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
@@ -213,7 +214,7 @@ fn run_job(job: Job) {
 /// every call onto one thread, matching the existing single-worker-per-
 /// instance model.
 pub(crate) struct SerialWorker {
-    tx: Option<SyncSender<Job>>,
+    queue: Arc<DispatchQueue>,
     worker: Option<JoinHandle<()>>,
     /// Signaled once the worker thread's `recv` loop exits (the queue is
     /// closed and every already-queued job has run), so
@@ -224,30 +225,31 @@ pub(crate) struct SerialWorker {
 
 impl SerialWorker {
     pub(crate) fn spawn(name: String, queue_capacity: usize) -> Self {
-        let (tx, rx) = sync_channel::<Job>(queue_capacity.max(1));
+        let queue = DispatchQueue::new(queue_capacity);
+        let worker_queue = Arc::clone(&queue);
         let (done_tx, done_rx) = sync_channel::<()>(1);
         let worker = std::thread::Builder::new()
             .name(name)
             .spawn(move || {
-                while let Ok(job) = rx.recv() {
+                while let Some(job) = worker_queue.recv() {
                     run_job(job);
                 }
                 let _ = done_tx.send(());
             })
             .expect("spawning this instance's dispatch thread");
         Self {
-            tx: Some(tx),
+            queue,
             worker: Some(worker),
             done_rx,
         }
     }
 
     pub(crate) fn submit(&self, job: Job) -> Result<(), HostError> {
-        self.tx
-            .as_ref()
-            .ok_or(HostError::DispatchQueueFull)?
-            .try_send(job)
-            .map_err(|_| HostError::DispatchQueueFull)
+        self.queue.submit(job)
+    }
+
+    pub(crate) fn queue(&self) -> Arc<DispatchQueue> {
+        Arc::clone(&self.queue)
     }
 
     /// Closes the queue, then waits up to `timeout` for every
@@ -258,7 +260,7 @@ impl SerialWorker {
     /// Returns `false`, detaching the thread without joining it, if that
     /// budget runs out before the thread signals it drained.
     pub(crate) fn shutdown_within(&mut self, timeout: std::time::Duration) -> bool {
-        self.tx.take();
+        self.queue.close();
         match self.done_rx.recv_timeout(timeout) {
             Ok(()) => {
                 if let Some(worker) = self.worker.take() {
@@ -279,49 +281,40 @@ impl SerialWorker {
 /// instead of one dedicated thread per instance. Its queue is bounded by
 /// `queue_capacity` (`AGENTS.md`: no unbounded channels).
 pub struct WorkerPool {
-    tx: Mutex<Option<SyncSender<Job>>>,
+    queue: Arc<DispatchQueue>,
     workers: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl WorkerPool {
     pub fn new(worker_count: usize, queue_capacity: usize) -> Arc<Self> {
-        let (tx, rx) = sync_channel::<Job>(queue_capacity.max(1));
-        let rx = Arc::new(Mutex::new(rx));
+        let queue = DispatchQueue::new(queue_capacity);
         let mut workers = Vec::with_capacity(worker_count.max(1));
         for _ in 0..worker_count.max(1) {
-            let rx = Arc::clone(&rx);
+            let queue = Arc::clone(&queue);
             workers.push(std::thread::spawn(move || {
-                loop {
-                    let job = {
-                        let rx = rx.lock().unwrap_or_else(PoisonError::into_inner);
-                        rx.recv()
-                    };
-                    match job {
-                        Ok(job) => run_job(job),
-                        Err(_) => break,
-                    }
+                while let Some(job) = queue.recv() {
+                    run_job(job);
                 }
             }));
         }
         Arc::new(Self {
-            tx: Mutex::new(Some(tx)),
+            queue,
             workers: Mutex::new(workers),
         })
     }
 
     pub(crate) fn submit(&self, job: Job) -> Result<(), HostError> {
-        let guard = self.tx.lock().unwrap_or_else(PoisonError::into_inner);
-        let tx = guard.as_ref().ok_or(HostError::DispatchQueueFull)?;
-        tx.try_send(job).map_err(|_| HostError::DispatchQueueFull)
+        self.queue.submit(job)
+    }
+
+    pub(crate) fn queue(&self) -> Arc<DispatchQueue> {
+        Arc::clone(&self.queue)
     }
 }
 
 impl Drop for WorkerPool {
     fn drop(&mut self) {
-        self.tx
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        self.queue.close();
         let workers =
             std::mem::take(&mut *self.workers.lock().unwrap_or_else(PoisonError::into_inner));
         for worker in workers {

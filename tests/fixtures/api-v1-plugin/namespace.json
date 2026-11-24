@@ -1,1 +1,1 @@
-{"title":"test.api.fixture","type":"object","properties":{"resources":{"type":"object","x-sampling-lane":"regular"}}}
+{"title":"test.api.fixture","version":"1.0.0","type":"object","properties":{"resources":{"type":"object","x-sampling-lane":{"lane":"regular","activity":"always"}}}}

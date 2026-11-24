@@ -3614,6 +3614,7 @@ dependencies = [
  "rosu-map",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
@@ -3626,6 +3627,7 @@ dependencies = [
  "vosu-plugin-api",
  "vosu-proptest",
  "vosu-surface",
+ "vosu-sys",
  "zip",
 ]
 

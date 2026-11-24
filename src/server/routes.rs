@@ -24,6 +24,9 @@ use super::{
     websocket::UpgradeCallbackTracker,
 };
 
+mod responses;
+use responses::*;
+
 pub const MAX_POST_BODY: usize = 1024 * 1024;
 #[derive(Clone, Copy)]
 pub(crate) struct KeyProtocol;
@@ -39,6 +42,7 @@ pub enum StateRoute {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Endpoint {
+    ApiV1,
     State(StateRoute),
     CalculatePp,
     CounterSearch,
@@ -298,6 +302,21 @@ pub fn service_with_upgrades(
 }
 
 pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Request) -> Response {
+    let api_v1 = request.uri().path() == "/api/v1" || request.uri().path().starts_with("/api/v1/");
+    // API routes have independent methods, credentials and JSON envelopes.
+    // They still pass through the same transport peer and Origin gate below.
+    if api_v1
+        && providers
+            .authorization
+            .origins()
+            .is_some_and(|(_, dashboard)| dashboard)
+    {
+        return super::api_v1::error::error(
+            StatusCode::NOT_FOUND,
+            "invalid_request",
+            "Unknown API route",
+        );
+    }
     let addresses = request
         .extensions()
         .get::<ConnectInfo<ConnectionAddresses>>()
@@ -396,11 +415,26 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
                             .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer")))))
     };
     if !allowed {
+        if api_v1 {
+            return cors(super::api_v1::error::error(
+                StatusCode::FORBIDDEN,
+                "forbidden",
+                "Peer or Origin forbidden",
+            ));
+        }
         return cors(
             Response::builder()
                 .status(StatusCode::FORBIDDEN)
                 .body(Body::from("Not Found"))
                 .unwrap(),
+        );
+    }
+    if api_v1 {
+        return api_v1_cors(
+            providers
+                .delegate
+                .handle(Endpoint::ApiV1, request, Bytes::new())
+                .await,
         );
     }
 
@@ -757,6 +791,9 @@ pub async fn dispatch(State(providers): State<RouteProviders>, mut request: Requ
 
 pub fn classify(method: &Method, path: &str) -> Option<Endpoint> {
     use Endpoint::*;
+    if path == "/api/v1" || path.starts_with("/api/v1/") {
+        return Some(ApiV1);
+    }
     let get = method == Method::GET;
     let file_read = get || method == Method::HEAD;
     let post = method == Method::POST;
@@ -942,63 +979,6 @@ fn parse_mods(value: &str) -> Result<ModsInput, String> {
         return Err("mods JSON must be an object or array".to_owned());
     }
     Ok(ModsInput::Acronyms(value.to_owned()))
-}
-
-fn not_found() -> Response {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(Body::from("Not Found"))
-        .unwrap()
-}
-
-/// An unknown route: the styled 404 page for a person, the plain body for
-/// scripts and API clients (see [`super::pages::wants_page`]).
-fn not_found_for(request: &Request<Body>) -> Response {
-    if !super::pages::wants_page(request.method(), request.headers()) {
-        return not_found();
-    }
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .body(Body::from(Bytes::from_static(super::pages::PAGE_NOT_FOUND)))
-        .unwrap()
-}
-fn not_ready() -> Response {
-    json(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Bytes::from_static(br#"{"error":"osu is not ready/running"}"#),
-    )
-}
-fn error_json(message: &str) -> Bytes {
-    Bytes::from(serde_json::to_vec(&serde_json::json!({"error": message})).unwrap())
-}
-fn json(status: StatusCode, body: Bytes) -> Response {
-    Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(body))
-        .unwrap()
-}
-fn cors(mut response: Response) -> Response {
-    let headers = response.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("Origin, X-Requested-With, Content-Type, Accept"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("POST, GET, PUT, DELETE, OPTIONS"),
-    );
-    headers.insert(
-        HeaderName::from_static("access-control-allow-private-network"),
-        HeaderValue::from_static("true"),
-    );
-    response
 }
 
 #[cfg(test)]

@@ -37,6 +37,7 @@ impl ResourceRequest {
 }
 
 /// Weak host seam for R2/R3; no worker, queue or task exists until requested.
+#[derive(Clone)]
 pub struct ResourceRequests {
     pub(super) host: Weak<PluginHost>,
     pub(super) deadline: Duration,
@@ -73,6 +74,10 @@ pub enum ResourceRequestError {
 pub enum ResourceReply {
     Resolved(ResourceResolved),
     Chunk(StreamChunk),
+    Stream {
+        lease: crate::plugin::StreamLease,
+        entry_path: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -89,7 +94,10 @@ impl Expected {
             Message::ResourceResolve(r) => (Self::Resource, Some(r.handle)),
             Message::TreeList(r) => (Self::List, Some(r.handle)),
             Message::TreeLookup(r) => (Self::Lookup, Some(r.handle)),
-            Message::StreamRead(r) if r.len <= VOSU_STREAM_CHUNK_MAX_BYTES => {
+            Message::StreamRead(r)
+                if r.len <= VOSU_STREAM_CHUNK_MAX_BYTES
+                    && r.offset.checked_add(u64::from(r.len)).is_some() =>
+            {
                 (Self::Read(r.len), None)
             }
             _ => return None,
@@ -129,6 +137,11 @@ struct Pending {
     generation: u64,
     expected: Expected,
     sender: oneshot::Sender<Result<ResourceReply, ResourceRequestError>>,
+    stream: Option<(
+        ResourceOwner,
+        ResourceRequests,
+        crate::plugin::outbox::OutboxSlot,
+    )>,
 }
 
 #[derive(Default)]
@@ -136,6 +149,7 @@ pub(super) struct Requests {
     // Host-wide monotonic ids also prevent a replacement instance answering an old id.
     next: u64,
     entries: HashMap<u64, Pending>,
+    streams: HashMap<(PluginInstanceId, u64), Weak<crate::plugin::resource_lease::LeaseInner>>,
 }
 
 impl Requests {
@@ -188,6 +202,7 @@ impl Requests {
                 handle,
                 expected,
                 sender,
+                stream: None,
             },
         );
         Ok((self.next, receiver))
@@ -197,6 +212,32 @@ impl Requests {
         if let Some(pending) = self.entries.get_mut(&id) {
             pending.handle = Some(handle);
         }
+    }
+
+    pub fn arm_stream(
+        &mut self,
+        id: u64,
+        owner: ResourceOwner,
+        requests: ResourceRequests,
+        slot: crate::plugin::outbox::OutboxSlot,
+    ) {
+        if let Some(pending) = self.entries.get_mut(&id) {
+            pending.stream = Some((owner, requests, slot));
+        }
+    }
+
+    pub fn read_allowed(&self, owner: ResourceOwner, stream: u64) -> bool {
+        self.streams
+            .get(&(owner.instance, stream))
+            .and_then(Weak::upgrade)
+            .is_some_and(|lease| lease.owner == owner && lease.is_current())
+    }
+
+    pub fn stream_is_live(&self, instance: PluginInstanceId, stream: u64) -> bool {
+        self.streams
+            .get(&(instance, stream))
+            .and_then(Weak::upgrade)
+            .is_some_and(|lease| lease.is_current())
     }
 
     pub fn complete(
@@ -215,18 +256,53 @@ impl Requests {
         }
         // A malformed reply terminates its own request, never an unrelated one.
         let valid = pending.expected.accepts(&reply);
-        let pending = self.entries.remove(&id).expect("entry checked above");
+        let mut pending = self.entries.remove(&id).expect("entry checked above");
         let result = if valid {
-            Ok(reply)
+            let stream = match &reply {
+                ResourceReply::Resolved(ResourceResolved::Stream { stream, size }) => {
+                    Some((*stream, *size, None))
+                }
+                ResourceReply::Resolved(ResourceResolved::TreeStream {
+                    stream,
+                    size,
+                    entry_path,
+                }) => Some((*stream, *size, Some(entry_path.clone()))),
+                _ => None,
+            };
+            if let Some((stream, size, entry_path)) = stream {
+                self.streams
+                    .retain(|_, lease| lease.upgrade().is_some_and(|lease| lease.is_current()));
+                if self.streams.contains_key(&(instance, stream)) {
+                    Err(ResourceRequestError::InvalidReply)
+                } else if let Some((owner, requests, slot)) = pending.stream.take() {
+                    let lease =
+                        crate::plugin::StreamLease::new(owner, stream, size, requests, slot);
+                    if self
+                        .streams
+                        .keys()
+                        .filter(|(owner, _)| *owner == instance)
+                        .count()
+                        >= MAX_PENDING_RESOURCE_REQUESTS
+                    {
+                        lease.close();
+                        Err(ResourceRequestError::Busy)
+                    } else {
+                        self.streams
+                            .insert((instance, stream), std::sync::Arc::downgrade(&lease.0));
+                        Ok(ResourceReply::Stream { lease, entry_path })
+                    }
+                } else {
+                    Err(ResourceRequestError::InvalidReply)
+                }
+            } else {
+                Ok(reply)
+            }
         } else {
             Err(ResourceRequestError::InvalidReply)
         };
+        let status = result.as_ref().map(|_| ()).map_err(|error| *error);
         let _ = pending.sender.send(result);
-        if valid {
-            Ok(())
-        } else {
-            Err(ResourceRequestError::InvalidReply)
-        }
+        status
     }
 
     pub fn remove(&mut self, id: u64) {
@@ -236,6 +312,16 @@ impl Requests {
     pub fn cancel(&mut self, instance: PluginInstanceId, handle: Option<u64>) {
         self.entries.retain(|_, pending| {
             !(pending.instance == instance && handle.is_none_or(|h| pending.handle == Some(h)))
+        });
+        self.streams.retain(|(owner, _), lease| {
+            if *owner == instance
+                && let Some(lease) = lease.upgrade()
+                && handle.is_none_or(|h| lease.owner.handle == h)
+            {
+                lease.close();
+                return false;
+            }
+            lease.strong_count() != 0
         });
     }
 }
