@@ -10,6 +10,18 @@ use support::*;
 use vosu_osu::bridge_b1::B1Phase;
 
 #[test]
+fn real_manifest_registers_its_namespace_schema() {
+    let harness = Harness::new("vosu.osu", 0x6a00_0800, 1);
+    harness
+        .host
+        .process_appeared(Harness::record(harness.pids[0], &[]));
+    harness
+        .sink
+        .until(WAIT, |events| !events.published.is_empty());
+    assert_dispatches_ok();
+}
+
+#[test]
 fn stable_session_b1_settings_and_exit() {
     let harness = Harness::new("test.osu.p6.stable", 0x6a00_0000, 1);
     let pid = harness.pids[0];

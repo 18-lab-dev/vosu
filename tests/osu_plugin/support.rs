@@ -372,11 +372,23 @@ impl Harness {
             runtime.handle().clone(),
             foreground.clone(),
         );
-        let manifest = vosu_osu::MANIFEST.replace("id = \"vosu.osu\"", &format!("id = \"{id}\""));
+        let mut manifest: toml::Table = toml::from_str(vosu_osu::MANIFEST).unwrap();
+        let namespace_schemas = if id == "vosu.osu" {
+            &[vosu_osu::OSU_NAMESPACE_SCHEMA][..]
+        } else {
+            // Synthetic plugin identities cannot provide the reserved real
+            // namespace. These B1 lifecycle fixtures retain common coverage.
+            // Real-id schema registration is also covered by tests/state_bus.rs
+            // (K8) and real_manifest_registers_its_namespace_schema.
+            manifest.remove("provides");
+            &[][..]
+        };
+        manifest.insert("id".into(), toml::Value::String(id.into()));
+        let manifest = toml::to_string(&manifest).unwrap();
         let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
             manifest: &manifest,
             settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
-            namespace_schemas: &[],
+            namespace_schemas,
             vtable: vosu_plugin_vtable,
         }])
         .unwrap();
