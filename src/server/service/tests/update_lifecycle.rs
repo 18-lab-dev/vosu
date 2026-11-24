@@ -166,9 +166,14 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
         .await
         .unwrap();
 
-        let mut closing_client = tokio::net::TcpStream::connect(listener.address())
-            .await
-            .unwrap();
+        // Bound the peer's buffers rather than flooding the OS defaults with
+        // megabytes of tiny control frames. Windows takes several seconds to
+        // drain the old 50,000-ping fixture even when this test runs alone.
+        let closing_socket = tokio::net::TcpSocket::new_v4().unwrap();
+        closing_socket.set_recv_buffer_size(4096).unwrap();
+        closing_socket.set_send_buffer_size(4096).unwrap();
+        let mut closing_client = closing_socket.connect(listener.address()).await.unwrap();
+        closing_client.set_nodelay(true).unwrap();
         closing_client
             .write_all(
                 b"GET /websocket/commands?l=counter HTTP/1.1\r\n\
@@ -192,14 +197,58 @@ Sec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n\r\n",
         }
         assert!(closing_response.starts_with(b"HTTP/1.1 101"));
         let mask = [1_u8, 2, 3, 4];
-        let mut backpressure = Vec::with_capacity(131 * 50_000 + 8);
-        for _ in 0..50_000 {
-            backpressure.extend_from_slice(&[0x89, 0xfd]);
-            backpressure.extend_from_slice(&mask);
+        let mut pings = Vec::with_capacity(131 * 64);
+        for _ in 0..64 {
+            pings.extend_from_slice(&[0x89, 0xfd]);
+            pings.extend_from_slice(&mask);
             for index in 0..125 {
-                backpressure.push(mask[index % mask.len()]);
+                pings.push(mask[index % mask.len()]);
             }
         }
+        // Do not read pongs until the full-duplex connection actually stalls.
+        // Stop at its measured fill point, not an OS-dependent guessed volume.
+        let (filled_bytes, offset) = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            async {
+                let mut filled_bytes = 0;
+                let mut offset = 0;
+                loop {
+                    assert!(
+                        filled_bytes < 131 * 50_000,
+                        "peer must become backpressured before the traffic safety cap"
+                    );
+                    match closing_client.try_write(&pings[offset..]) {
+                        Ok(0) => panic!("peer closed while filling its buffers"),
+                        Ok(written) => {
+                            filled_bytes += written;
+                            offset = (offset + written) % pings.len();
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            if tokio::time::timeout(
+                                std::time::Duration::from_millis(25),
+                                closing_client.writable(),
+                            )
+                            .await
+                            .is_err()
+                            {
+                                break (filled_bytes, offset);
+                            }
+                        }
+                        Err(error) => panic!("filling peer buffers: {error}"),
+                    }
+                }
+            },
+        )
+        .await
+        .expect("peer buffers must fill within the bounded observation window");
+        assert!(filled_bytes > 0, "backpressure must follow real traffic");
+        eprintln!("peer write backpressured after {filled_bytes} ping bytes");
+        // Finish any partially written batch before appending the close frame.
+        let mut backpressure = if offset == 0 {
+            Vec::new()
+        } else {
+            pings[offset..].to_vec()
+        };
         backpressure.extend_from_slice(&[0x88, 0x82]);
         backpressure.extend_from_slice(&mask);
         backpressure.extend_from_slice(&[0x03 ^ mask[0], 0xe8 ^ mask[1]]);
@@ -209,7 +258,6 @@ Sec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n\r\n",
                 closing_write.write_all(&backpressure).await.unwrap();
             };
             let reader = async {
-                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
                 let mut websocket_bytes = Vec::new();
                 while !websocket_bytes.contains(&0x88) {
                     let mut chunk = [0_u8; 16 * 1024];
