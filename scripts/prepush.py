@@ -194,6 +194,10 @@ LINUX_STEPS = [
     # for scripts/test_gate_tooling.py's drift check.
     ("test-linux", ["cargo", "nextest", "run", "--workspace", "--lib", "--bins", "--tests", "--examples", "--all-features", "--locked"], LINUX_ENV, ()),
     ("test-linux-doc", ["cargo", "test", "--workspace", "--doc", "--all-features", "--locked"], LINUX_ENV, ()),
+    # ci.yml's catalog-forge job: the D15 real-Forgejo/internal-CA gate. It
+    # needs podman (CI uses docker through VOSU_X1_CONTAINER_ENGINE) and
+    # fails, not skips, when the engine or a pinned image is unavailable.
+    ("catalog-forge", [sys.executable, "scripts/test-catalog-forge.py"], LINUX_ENV, ()),
     ("doc-linux", ["cargo", "doc", "--workspace", "--no-deps", "--all-features", "--locked"], DOC_LINUX_ENV, ()),
     ("doc-links", [sys.executable, "scripts/check-doc-links.py"], None, ()),
     ("file-length", [sys.executable, "scripts/check-file-length.py"], None, ()),
@@ -405,7 +409,7 @@ def main():
     parser.add_argument(
         "--skip",
         default="",
-        help="Comma-separated step names to skip for local iteration (fmt, clippy-linux, test-linux, "
+        help="Comma-separated step names to skip for local iteration (fmt, clippy-linux, test-linux, catalog-forge, "
         "doc-linux, doc-links, file-length, brand, lint-expectations, module-boundaries, license-notices, "
         "asset-hashes, script-tests, deleted-assertions, actionlint, xwin-clippy, standalone-crates, "
         "dashboard, native). "
