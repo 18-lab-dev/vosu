@@ -1,4 +1,6 @@
 catalog -> state
+# I0 compiles staged package action schemas before install publication.
+catalog -> action_schema
 api -> state
 actions -> action_schema
 actions -> identity
@@ -18,5 +20,5 @@ resource_io -> resources
 plugin -> config
 report -> config
 updater -> desktop
-# catalog has no intra-core edges: persistence uses the existing
+# catalog has no other intra-core edges: persistence uses the existing
 # vosu-core -> vosu-sys crate edge for platform::atomic_replace.

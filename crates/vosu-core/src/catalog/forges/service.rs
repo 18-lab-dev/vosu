@@ -91,7 +91,9 @@ impl CatalogFetchService {
         })
         .await
     }
-    async fn refresh_with<F, Fut>(
+    /// Crate-visible so I0's composition fixture can observe the scoped
+    /// credential handed to the exact catalog request (positive control).
+    pub(crate) async fn refresh_with<F, Fut>(
         &self,
         client: &StreamingClient,
         context: FetchContext<'_>,
