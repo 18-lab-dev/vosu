@@ -21,6 +21,7 @@ pub const MAX_DEMAND_SELECTORS: usize = 1024;
 pub enum SubscriberId {
     Plugin(u64),
     Surface(u64),
+    Api(u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -58,7 +59,12 @@ impl SubscriptionRegistry {
         selectors: Vec<(Arc<str>, Pointer)>,
         grant: InternalGrant,
     ) -> Result<(), SubscribeError> {
-        if selectors.len() > MAX_SELECTORS {
+        let limit = if matches!(who, SubscriberId::Api(_)) {
+            MAX_DEMAND_SELECTORS
+        } else {
+            MAX_SELECTORS
+        };
+        if selectors.len() > limit {
             return Err(SubscribeError::TooManySelectors);
         }
         for (i, (ns, p)) in selectors.iter().enumerate() {
@@ -196,6 +202,8 @@ impl SubscriptionRegistry {
         self.subscriptions
             .iter()
             .filter(|s| s.session == outcome.current.key)
+            // API readers project their full snapshots with Audience::Api.
+            .filter(|s| !matches!(s.who, SubscriberId::Api(_)))
             .filter_map(|s| {
                 let entries: Vec<_> = s
                     .selectors

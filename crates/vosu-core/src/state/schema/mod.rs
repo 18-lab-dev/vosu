@@ -171,6 +171,11 @@ impl SchemaRegistry {
         self.namespaces.get(ns)
     }
 
+    /// Namespaces currently available to merged-document API subscriptions.
+    pub fn namespaces(&self) -> impl Iterator<Item = &str> {
+        self.namespaces.keys().map(AsRef::as_ref)
+    }
+
     /// Union of every lane annotation in `ns` that overlaps `tokens` (MJ).
     /// An unknown namespace has no demand.
     pub fn lanes(&self, ns: &str, tokens: &[&str]) -> LaneBits {

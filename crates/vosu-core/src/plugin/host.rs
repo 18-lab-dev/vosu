@@ -176,6 +176,7 @@ pub struct PluginHost {
     state_serial: Mutex<()>,
     state_demand_serial: Mutex<()>,
     pub(super) surfaces: Mutex<crate::state::surface::SurfaceReaders>,
+    api_readers: Mutex<crate::api::ApiReaders>,
     instances: Mutex<HashMap<PluginInstanceId, InstanceSlot>>,
     /// Notified whenever [`Self::create_instance`] resolves a
     /// `Creating` placeholder (publishes it `Live`, or removes it on a
@@ -313,6 +314,7 @@ impl PluginHost {
             state_serial: Mutex::new(()),
             state_demand_serial: Mutex::new(()),
             surfaces: Mutex::new(Default::default()),
+            api_readers: Mutex::new(Default::default()),
             instances: Mutex::new(HashMap::new()),
             instances_changed: Condvar::new(),
             shutting_down: AtomicBool::new(false),
@@ -483,11 +485,15 @@ impl PluginHost {
         let (candidates, priority_holder) = self.focus_inputs();
         let events = focus.recompute(&candidates, priority_holder, self.foreground.as_ref());
         let committed = self.deliver_focus_events(events);
+        let api_demand = self.api_transition(focus.focused());
         drop(focus);
         for outcome in committed {
             self.surface_committed(&outcome);
         }
         self.surface_focus_changed();
+        for key in api_demand {
+            self.refresh_state_demand(key);
+        }
     }
 
     /// `SESSION_IDENTIFY` just exposed `handle`: §6.2 "a plugin that
@@ -513,11 +519,15 @@ impl PluginHost {
         self.open_bus_session(handle, focus.focused() == Some(FocusKey(handle.0)));
         self.state_session_identified(handle);
         let committed = self.deliver_focus_events(events);
+        let api_demand = self.api_transition(focus.focused());
         drop(focus);
         for outcome in committed {
             self.surface_committed(&outcome);
         }
         self.surface_focus_changed();
+        for key in api_demand {
+            self.refresh_state_demand(key);
+        }
     }
 
     /// Discovery's own entry point (phase (d2) calls this from a real OS
@@ -819,6 +829,7 @@ impl SettingsSchemaSource for PluginHost {
     }
 }
 
+mod api;
 mod instances;
 mod lifecycle;
 pub(super) mod read_plans;

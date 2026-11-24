@@ -91,6 +91,7 @@ impl PluginHost {
     /// `create_instance` to resolve its own placeholder closes that race.
     pub fn destroy_all(&self, grace: Duration) {
         self.shutting_down.store(true, Ordering::Release);
+        self.api_shutdown();
         loop {
             let next = {
                 let mut guard = self

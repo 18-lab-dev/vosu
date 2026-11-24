@@ -72,6 +72,7 @@ impl PluginHost {
                 let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
                 self.state_committed(&outcome);
                 self.surface_committed(&outcome);
+                self.api_committed(&outcome);
                 vosu_status::VOSU_OK
             }
             Err(crate::state::CommitError::UnknownSession) => vosu_status::VOSU_ERR_TARGET_GONE,

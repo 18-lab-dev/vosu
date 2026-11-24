@@ -1,7 +1,9 @@
+api -> state
 app -> config
 logging -> config
 plugin -> logging
 plugin -> state
+plugin -> api
 # B2, deleted in M8
 plugin -> config
 report -> config

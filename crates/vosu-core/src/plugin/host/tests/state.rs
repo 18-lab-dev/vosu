@@ -19,6 +19,7 @@ use vosu_plugin_testkit::{
     session::{OnAttach, SessionEvent, SessionPluginConfig},
 };
 
+mod api;
 mod surface;
 
 fn publisher_instance(
@@ -27,9 +28,19 @@ fn publisher_instance(
     instance: u64,
     pid: u32,
 ) -> u64 {
+    publisher_instance_covering(host, id, instance, pid, "field:vosu.play.combo")
+}
+
+fn publisher_instance_covering(
+    host: &Arc<super::super::PluginHost>,
+    id: &str,
+    instance: u64,
+    pid: u32,
+    coverage: &str,
+) -> u64 {
     let manifest = session_manifest(id, &[id]).replace(
         "[match]",
-        "concurrent_dispatch=true\ncovers=['field:vosu.play.combo']\n[match]",
+        &format!("concurrent_dispatch=true\ncovers=['{coverage}']\n[match]"),
     );
     publisher::register_manifest(id, &manifest);
     let events = publisher::register(id);
