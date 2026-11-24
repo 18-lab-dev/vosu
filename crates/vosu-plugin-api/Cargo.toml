@@ -34,3 +34,15 @@ toml = "1.1.2"
 [dev-dependencies]
 proptest = "1.12"
 vosu-proptest = { path = "../vosu-proptest" }
+
+[[test]]
+name = "plan_memory_alloc"
+required-features = ["unstable-sync-reads"]
+
+[[test]]
+name = "plan_memory_validation"
+required-features = ["unstable-sync-reads"]
+
+[[test]]
+name = "plan_memory_unwind"
+required-features = ["unstable-sync-reads"]
