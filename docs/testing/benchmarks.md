@@ -71,6 +71,12 @@ bias. Repeated `--binary` accepts more than two revisions. Timing controls:
 
 ## M3 D17 contract
 
+**Status at the M3 exit (2026-11-24): D17 for M3 is pending.** The official
+pinned comparison has not run yet. The machine was not quiet during the exit,
+so the run was deferred to a scheduled window, using the retained
+`m3-x1-m2-exact` and `m3-x1-prem0` checkouts. Until it runs, the
+provisional results below decide nothing.
+
 **No D17 pass is claimed.** X1 implementation `4f0c6654cb` (base
 `fde820d`) was measured on the shared Linux workstation, pinned to logical CPU
 0, **non-exclusive**: SMT sibling 16 remained available to other work. Builds

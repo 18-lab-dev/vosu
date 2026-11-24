@@ -1207,6 +1207,55 @@ Risks: restart-stable ids require honest content identities and stable immutable
 snapshots; no old id may silently serve changed bytes. Registry and caches stay
 bounded under map-selection churn. Functional coverage is not a D17 pass.
 
+#### M3 outcome
+
+M3 is functionally integrated on `m3/actions` and merged with `v2/main` (M1
+L3 plugin reader cutover and M2 state bus). The overlay listener serves every
+API v1 route in the [final route inventory](../testing/verification.md#final-api-v1-route-inventory):
+sessions and session events, state reads and field subscriptions on their
+own hub, signed resources and indexed trees with ranges, validators and 307
+convenience routes, and authorized actions and jobs. The osu! plugin declares
+its roots and the `file`, `audio`, `background`, `set` and `skin` kinds, owns
+the lazer skin lookup, and provides `vosu.osu.beatmap.import`. The v2 bridge
+(`/tools/_host/v2/bridge.js`), the dotted `vosux <plugin-id> <action>` form
+and alpha data isolation (D21) are in place. Every 1.x route remains served
+through B1 until M4a.
+
+The contract-to-test mapping is the [M3 parity inventory](m3-parity.md). At
+the exit:
+
+- Linux: the full workspace gate passed (2,517 nextest tests), with workspace
+  and Windows cross-Clippy, every repository check, and the tool-host browser
+  and dashboard smokes against a `test-harness` build.
+- Native Windows (VM): `api_v1_compat` 33/33, `server_compat`, `vosu-core`
+  574/574 and `vosu-osu` 196 passed (1 ignored). `vosu-sys` passed 61/61 at High
+  integrity. Its two file-symlink tests need `SeCreateSymbolicLinkPrivilege`,
+  which `vm-test.py`'s LIMITED task does not hold. `daemon_smoke` is Linux-only,
+  so the live campaign below stands in for native daemon evidence.
+- Live Windows stable and lazer, using the VM's own test installations and
+  an isolated alpha program folder: stable passed 51/51 resource, skin-alias,
+  redirect, retirement and legacy checks. Its import was `queued`: one new
+  byte-identical archive in the selected Songs folder, with all 436 existing
+  files unchanged, and the game imported it on restart. Lazer passed 33 of 38
+  checks. All five misses come from the built-in intro map and the built-in
+  argon skin, which publish no background and no indexed skin files. The
+  legacy routes agree. Its import was `submitted` to the selected executable,
+  and the handoff child was reaped. The game did not import the archive
+  within 30 s; this is still open.
+- Concurrent clients kept fixed ids and independent state. One owner's detach
+  left the other session's resources served. A selected-destination import on
+  a just-identified stable session returned `target_gone` before that session
+  had published its chart facts, so this case is unproven.
+- Linux lazer and stable/Wine live runs are pending. Isolated installations
+  exist only in the Linux VM, which cannot run while the Windows VM does.
+
+**D17 for M3 is pending** the official pinned benchmark run; the provisional
+X1 numbers in the [benchmark guide](../testing/benchmarks.md#m3-d17-contract)
+are not a pass. Boundaries: native subprocess crash/kill proof and process
+cancellation grace remain M5; the 1.x tool host and its launch sessions,
+which still authorize the v2 bridge, are replaced in M7; the D20 notices,
+removed-key migration and day-0 gate are M8.
+
 ### M4a: upstream adapters as projections
 
 Scope:

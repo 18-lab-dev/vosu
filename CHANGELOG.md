@@ -4,6 +4,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M3
 
+- `vosu logs` and the tray **Show logs** fallback now read the log directory
+  of the running build's release channel, so an alpha build follows its own
+  `prerelease/` logs instead of a normal installation's.
 - Register `vosu.osu.beatmap.import` for session-scoped API and CLI calls with
   bounded local `.osz` validation, cancellable selected-client preparation and
   honest queued/submitted results. Stable still needs game-owned refresh;
