@@ -292,6 +292,7 @@ pub struct Harness {
     pub memories: Vec<Arc<Memory>>,
     pub pids: Vec<u32>,
     pub foreground: Arc<plugin::SyntheticForegroundSource>,
+    config: Arc<vosu_core::config::ConfigStore>,
     _installed: vosu_surface::Installed,
     _dirs: Vec<tempfile::TempDir>,
     _runtime: tokio::runtime::Runtime,
@@ -355,13 +356,15 @@ impl Harness {
             Arc::new(Console),
         )
         .unwrap();
-        let config = runtime
-            .block_on(vosu_core::config::ConfigStore::initialize(
-                &dirs[1].path().join("vosu.toml"),
-            ))
-            .unwrap();
+        let config = Arc::new(
+            runtime
+                .block_on(vosu_core::config::ConfigStore::initialize(
+                    &dirs[1].path().join("vosu.toml"),
+                ))
+                .unwrap(),
+        );
         let storage = Arc::new(Storage {
-            bridge: plugin::settings::ConfigSettingsBridgeB2::new(Arc::new(config)),
+            bridge: plugin::settings::ConfigSettingsBridgeB2::new(Arc::clone(&config)),
             expected_id: id.into(),
         });
         let settings = Arc::new(plugin::settings::PluginSettingsService::new(storage));
@@ -410,6 +413,7 @@ impl Harness {
             memories,
             pids,
             foreground,
+            config,
             _installed: installed,
             _dirs: dirs,
             _runtime: runtime,
@@ -458,6 +462,13 @@ impl Harness {
 impl Drop for Harness {
     fn drop(&mut self) {
         self.host.destroy_all(WAIT);
+        // B2 writes can still be saving/reloading after the session detaches.
+        // Join the config worker before dropping its directory or Tokio's timer
+        // driver: its spawn_blocking task is not cancelled by runtime shutdown.
+        self._runtime
+            .block_on(async { tokio::time::timeout(WAIT, self.config.shutdown()).await })
+            .expect("config shutdown deadline expired")
+            .expect("config shutdown failed");
         for &pid in &self.pids {
             plugin::test_support::clear_session_memory(pid);
         }
