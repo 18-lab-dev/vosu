@@ -1,5 +1,6 @@
-//! Bridge B1's single process-wide hook slot. Deleted in M4a (see
-//! `crate` docs).
+//! Bridge B1: the interim part of `vosu-surface` (see `crate` docs).
+//! This module and the `vosu-osu -> vosu-surface` edge are deleted in M4a;
+//! the rest of the crate is permanent.
 
 use std::any::Any;
 use std::fmt;
@@ -94,12 +95,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex as StdMutex;
+    use std::sync::{Mutex as StdMutex, MutexGuard, PoisonError};
+    use std::time::Duration;
 
     // `SLOT` is one process-wide global: nextest runs each test binary in
     // its own process, but within this binary these tests must not run
     // concurrently, or one could observe another's install/uninstall.
     static TEST_LOCK: StdMutex<()> = StdMutex::new(());
+
+    fn test_lock() -> MutexGuard<'static, ()> {
+        TEST_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 
     struct RecordingSink {
         events: StdMutex<Vec<u32>>,
@@ -141,7 +147,7 @@ mod tests {
 
     #[test]
     fn install_then_current_returns_the_same_sink() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = test_lock();
         assert!(current::<u32, i64>().is_none());
 
         let (sink, _rx) = RecordingSink::new(0);
@@ -161,11 +167,15 @@ mod tests {
 
     #[test]
     fn current_is_none_for_a_mismatched_type_pair() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = test_lock();
         let (sink, _rx) = RecordingSink::new(0);
         let _installed =
             install::<u32, i64>(sink as Arc<dyn LegacySink<u32, i64>>).expect("slot must be free");
 
+        assert!(
+            current::<u32, i64>().is_some(),
+            "the install above must still be in effect, so the None below isn't vacuous"
+        );
         assert!(
             current::<String, bool>().is_none(),
             "a sink installed for (u32, i64) must not satisfy current::<String, bool>()"
@@ -174,7 +184,7 @@ mod tests {
 
     #[test]
     fn second_install_is_refused_until_the_first_is_dropped() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = test_lock();
         let (first, _rx1) = RecordingSink::new(0);
         let first_installed =
             install::<u32, i64>(first as Arc<dyn LegacySink<u32, i64>>).expect("slot must be free");
@@ -191,28 +201,62 @@ mod tests {
         drop(second_installed);
     }
 
+    /// A sink whose own `Drop` calls `current::<E, I>()`. Regression for
+    /// 935a95a: before that fix, `Installed::drop` held `SLOT`'s lock while
+    /// dropping the previous sink, so this would deadlock on itself.
+    struct DropQueriesCurrent {
+        current_during_drop: Arc<StdMutex<Option<bool>>>,
+    }
+
+    impl LegacySink<u32, i64> for DropQueriesCurrent {
+        fn send(&self, _event: u32) {}
+
+        fn inputs(&self) -> watch::Receiver<i64> {
+            watch::channel(0).1
+        }
+    }
+
+    impl Drop for DropQueriesCurrent {
+        fn drop(&mut self) {
+            let is_some = current::<u32, i64>().is_some();
+            *self.current_during_drop.lock().unwrap() = Some(is_some);
+        }
+    }
+
     #[test]
-    fn inputs_receiver_sees_the_latest_value_only() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        let (sink, _rx) = RecordingSink::new(1);
+    fn uninstalling_a_sink_whose_drop_calls_current_does_not_deadlock() {
+        let _guard = test_lock();
+        let current_during_drop = Arc::new(StdMutex::new(None));
+        let sink = Arc::new(DropQueriesCurrent {
+            current_during_drop: current_during_drop.clone(),
+        });
         let installed = install::<u32, i64>(sink.clone() as Arc<dyn LegacySink<u32, i64>>)
             .expect("slot must be free");
+        // Drop our extra reference so the slot's own `Arc` is the sink's
+        // last owner: dropping `installed` below then runs `DropQueriesCurrent::drop`.
+        drop(sink);
 
-        let got = current::<u32, i64>().expect("must be installed");
-        let receiver = got.inputs();
-        assert_eq!(*receiver.borrow(), 1);
+        // Run the uninstall on its own thread with a bounded wait: a
+        // deadlocked `Installed::drop` hangs that thread forever, and
+        // `recv_timeout` turns that into a test failure instead of a hang.
+        let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
+        let handle = std::thread::spawn(move || {
+            drop(installed);
+            let _ = done_tx.send(());
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("Installed::drop must not deadlock when the sink's own Drop calls current()");
+        handle.join().expect("uninstall thread must not panic");
 
-        sink.inputs_tx.send(2).unwrap();
-        sink.inputs_tx.send(3).unwrap();
-        // `watch::Sender::send` writes directly into the shared cell, so a
-        // receiver's `borrow()` reflects the latest value immediately with
-        // no `.await` needed; it never queues the intermediate `2`.
         assert_eq!(
-            *receiver.borrow(),
-            3,
-            "a watch receiver must observe only the latest sent value, never an intermediate one"
+            *current_during_drop.lock().unwrap(),
+            Some(false),
+            "current() must see the slot already cleared while this sink's own Drop is running"
         );
-
-        drop(installed);
+        assert!(
+            current::<u32, i64>().is_none(),
+            "the slot must be empty once the uninstall completes"
+        );
     }
 }
