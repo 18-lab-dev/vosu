@@ -7,6 +7,12 @@ mod removals;
 
 #[path = "server_compat/declared_roots.rs"]
 mod declared_roots;
+#[path = "server_compat/mounted.rs"]
+mod mounted;
+#[path = "server_compat/mounted_http.rs"]
+mod mounted_http;
+#[path = "server_compat/mounted_ws.rs"]
+mod mounted_ws;
 use std::{
     future::Future,
     io::{self, Write},
