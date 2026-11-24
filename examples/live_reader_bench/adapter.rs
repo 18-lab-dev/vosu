@@ -400,16 +400,30 @@ mod tests {
         )
         .snapshot())
         .clone();
+        // Thread CPU comes from `GetThreadTimes` on Windows, which charges
+        // whole ~15.6 ms scheduler ticks: one commit usually reads 0 there.
+        // Commit distinct scores until a tick is attributed (bounded), then
+        // the asserted score last.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut score = 1.0;
+        while commit_ns.load(Ordering::Relaxed) == 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "commit CPU attributed"
+            );
+            let mut next = snapshot.clone();
+            let regular = Arc::make_mut(&mut next.regular);
+            regular.global.status = 2;
+            regular.gameplay.score = score;
+            score += 1.0;
+            publisher.publish(Arc::new(next), Delivery::All).unwrap();
+        }
         let regular = Arc::make_mut(&mut snapshot.regular);
         regular.global.status = 2;
         regular.gameplay.score = 24_680.0;
         publisher
             .publish(Arc::new(snapshot), Delivery::All)
             .unwrap();
-        assert!(
-            commit_ns.load(Ordering::Relaxed) > 0,
-            "commit CPU attributed"
-        );
         let adapter: Arc<dyn Projection<Filter, Bytes>> =
             Arc::new(vosu_adapter_upstream::provider::Regular);
         let capture = requester
