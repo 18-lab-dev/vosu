@@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::plugin::error::HostError;
 use crate::plugin::host::*;
 use crate::plugin::registry;
 
