@@ -120,6 +120,32 @@ fn manager(base: &oracle::Input) -> Arc<StateBundleSnapshot> {
     Arc::new(state)
 }
 
+/// The selected session carries both spectators' final records on every wire.
+fn aggregate_complete(fixture: &Fixture) -> bool {
+    let document = |schema| match fixture.outcome(schema) {
+        CachedJson::Ready(bytes) => serde_json::from_slice::<Value>(&bytes).ok(),
+        _ => None,
+    };
+    let (Some(v1), Some(v2), Some(precise)) =
+        (document("v1"), document("v2"), document("v2-precise"))
+    else {
+        return false;
+    };
+    let mut scores: Vec<_> = v2["tourney"]["clients"]
+        .as_array()
+        .map(|clients| clients.iter().map(|c| c["play"]["score"].clone()).collect())
+        .unwrap_or_default();
+    scores.sort_by_key(Value::to_string);
+    v2["tourney"]["bestOF"] == 7
+        && scores == [json!(SPECTATORS[1].score), json!(SPECTATORS[0].score)]
+        && precise["tourney"].as_array().is_some_and(|t| {
+            t.len() == 2 && t.iter().all(|client| client["keys"]["k1"]["count"] != 0)
+        })
+        && v1["tourney"]["ipcClients"]
+            .as_array()
+            .is_some_and(|clients| clients.len() == 2)
+}
+
 /// Attaches spectator ipc 2, the manager, then spectator ipc 1 (out of IPC
 /// order) and selects `selected` (0 = manager, 1/2 = spectator ipc id).
 fn aggregate(selected: u8) -> [Value; 3] {
@@ -141,6 +167,27 @@ fn aggregate(selected: u8) -> [Value; 3] {
         let publisher = fixture.attach(settings(ipc), manager_session, selection == selected);
         publisher.publish(state, Delivery::All).unwrap();
         publishers.push(publisher);
+    }
+    // Each roster publication recomputes the aggregate for every stable
+    // session; wait on the selected session's bus revisions (no sleeps) until
+    // it carries the complete aggregate rather than an intermediate roster.
+    let (handle, _) = super::bus::selected_in(&fixture);
+    let mut revisions = fixture
+        .h
+        .host
+        .state()
+        .store
+        .revisions(vosu_core::state::SessionKey(handle))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !aggregate_complete(&fixture) {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        fixture
+            .h
+            .runtime
+            .block_on(async { tokio::time::timeout(remaining, revisions.changed()).await })
+            .expect("stable aggregate deadline")
+            .unwrap();
     }
     let documents = ["v1", "v2", "v2-precise"].map(|schema| {
         let bytes = ready("stable-aggregate", schema, fixture.outcome(schema));

@@ -12,7 +12,10 @@ use vosu_surface::state::SessionTarget;
 
 /// The focused session as resolved through the upstream adapter's own grants.
 pub fn selected(replay: &Replay) -> (u64, String) {
-    let host = &replay.fixture.h.host;
+    selected_in(&replay.fixture)
+}
+pub fn selected_in(fixture: &super::oracle::adapter_fixture::Fixture) -> (u64, String) {
+    let host = &fixture.h.host;
     let capture = host
         .surface_requester(PluginInstanceId::new(2))
         .unwrap()
