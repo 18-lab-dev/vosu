@@ -1,8 +1,6 @@
-instance -> runtime
 api -> model
 runtime -> api
 runtime -> counters
-runtime -> instance
 runtime -> plugins
 runtime -> server
 runtime -> tools

@@ -40,11 +40,9 @@ pub enum LazerLoadError {
 
 /// Narrow view of a process generation that lazer offset resolution needs:
 /// identity, liveness, cancellation, and the per-generation offsets cache.
-/// Defined here (not imported from the root crate's `instance` module) so
-/// that `vosu-osu-reader` does not depend on the root crate
-/// (`scripts/crate-boundaries.txt`: no such edge exists); `instance::Instance`
-/// implements it. `instance` keeps calling the loader until M1 hands the
-/// resolver lifecycle to the osu! plugin.
+/// Implemented by the osu! plugin's session, which owns resolver startup and
+/// shutdown. This reader-side seam keeps offset loading independent of the
+/// plugin and the daemon composition root.
 pub trait GenerationIdentity: Send + Sync + 'static {
     fn client(&self) -> vosu_osu_model::enums::ClientType;
     /// Stable identity of this generation, for log messages.
