@@ -106,6 +106,7 @@ vosu-adapter-gosumemory -> vosu-osu-model
 vosu-adapter-gosumemory -> vosu-plugin-api
 vosu-adapter-gosumemory -> vosu-surface
 vosu-adapter-streamcompanion -> vosu-adapter-support
+vosu-adapter-streamcompanion -> vosu-osu-calc
 vosu-adapter-streamcompanion -> vosu-osu-model
 vosu-adapter-streamcompanion -> vosu-plugin-api
 vosu-adapter-streamcompanion -> vosu-surface
