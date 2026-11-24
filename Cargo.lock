@@ -3549,6 +3549,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "vosu-adapter-upstream"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "bytes",
+ "ciborium",
+ "serde",
+ "serde_json",
+ "vosu-adapter-support",
+ "vosu-core",
+ "vosu-osu",
+ "vosu-osu-model",
+ "vosu-osu-state",
+ "vosu-plugin-api",
+ "vosu-surface",
+]
+
+[[package]]
 name = "vosu-core"
 version = "0.1.0"
 dependencies = [

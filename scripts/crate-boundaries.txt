@@ -100,3 +100,12 @@ vosu-osu -> vosu-proptest
 
 vosu-adapter-support -> vosu-osu-model
 vosu -> vosu-adapter-support
+
+# Upstream projection production edges; core/state/osu below are test-only ingress.
+vosu-adapter-upstream -> vosu-adapter-support
+vosu-adapter-upstream -> vosu-osu-model
+vosu-adapter-upstream -> vosu-plugin-api
+vosu-adapter-upstream -> vosu-surface
+vosu-adapter-upstream -> vosu-core
+vosu-adapter-upstream -> vosu-osu
+vosu-adapter-upstream -> vosu-osu-state
