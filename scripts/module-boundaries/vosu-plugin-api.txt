@@ -19,6 +19,15 @@ message -> validate
 message -> value
 sdk -> cbor
 sdk -> envelope
+# F4: `sdk::plan_memory`'s zero-alloc `read_flat` imports the raw flat
+# read-plan structs/encoder and the `vosu_status`-returning validate
+# helpers directly (re-exported at the crate root), the same ABI-struct
+# layer `message` itself builds on — not a new ownership direction, just
+# one the checker's regex cannot see through a crate-root re-export
+# (comment above).
+sdk -> flags
+sdk -> flat
+sdk -> validate
 sdk -> limits
 sdk -> message
 sdk -> opcode
