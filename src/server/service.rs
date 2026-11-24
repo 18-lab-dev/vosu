@@ -57,6 +57,8 @@ include!("service/routing.rs");
 include!("service/websocket_transport.rs");
 include!("service/dashboard.rs");
 include!("service/responses.rs");
+include!("service/declared_files.rs");
+include!("service/declared_calculate.rs");
 
 #[cfg(test)]
 mod tests {

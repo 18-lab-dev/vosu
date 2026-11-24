@@ -118,7 +118,18 @@ fn osu_lanes_match_1x_pointer_demand() {
         ("vosu.osu", &["play", "pp"], gameplay(true, false)),
         ("vosu.osu", &["leaderboard"], gameplay(true, false)),
         ("vosu.osu", &["rankedPlay"], gameplay(true, false)),
-        ("vosu.osu", &["tourney"], gameplay(true, false)),
+        // A4/T0 clarification: selected stable managers are in Tourney, not
+        // Play. The aggregate and its nested precise leaves must remain
+        // always-active or spectator subscriptions can never request sampling.
+        // The parent also unions unchanged gameplay-regular chart/play leaves.
+        (
+            "vosu.osu",
+            &["tourney"],
+            LaneBits {
+                regular_gameplay: true,
+                ..always(true, true)
+            },
+        ),
         (
             "vosu.osu",
             &["performance", "accuracy"],

@@ -25,6 +25,7 @@ pub struct ProductionRouteDelegate {
     tools: Option<Arc<dyn RouteExtension>>,
     skin_index: Arc<Mutex<files::SkinIndexCache>>,
     api_v1: Option<crate::server::api_v1::router::ApiV1Router>,
+    declared_game_files: Option<vosu_adapter_upstream::files::Provider>,
 }
 
 impl ProductionRouteDelegate {
@@ -34,7 +35,7 @@ impl ProductionRouteDelegate {
             .websocket
             .relays
             .bind_processor(&services.websocket.processor);
-        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, skin_index: Arc::new(Mutex::new(files::SkinIndexCache::default())), api_v1: None }
+        Self { services, api_keys: None, connections: OverlayConnections::default(), removed: RemovedNotices::default(), tools: None, skin_index: Arc::new(Mutex::new(files::SkinIndexCache::default())), api_v1: None, declared_game_files: None }
     }
     /// D20 consumes only bounded notices, revalidating identities before actionable links.
     pub fn removed_notices(&self) -> Vec<RemovedNotice> {
@@ -53,6 +54,11 @@ impl ProductionRouteDelegate {
     }
     pub fn with_api_v1(mut self, router: crate::server::api_v1::router::ApiV1Router) -> Self {
         self.api_v1 = Some(router);
+        self
+    }
+    /// I0 installs the registered upstream requester at the atomic cutover.
+    pub fn with_declared_game_files(mut self, provider: vosu_adapter_upstream::files::Provider) -> Self {
+        self.declared_game_files = Some(provider);
         self
     }
     pub fn services(&self) -> &ProductionServices {
@@ -517,6 +523,11 @@ impl ProductionRouteDelegate {
         path.to_owned()
     }
     async fn file(&self, endpoint: Endpoint, request: Request<Body>) -> Response {
+        if endpoint != Endpoint::CounterStatic
+            && let Some(provider) = &self.declared_game_files
+        {
+            return declared_game_response(provider, endpoint, request).await;
+        }
         if endpoint == Endpoint::CounterStatic
             && let Some(redirect) = self.alias_redirect(&request)
         {

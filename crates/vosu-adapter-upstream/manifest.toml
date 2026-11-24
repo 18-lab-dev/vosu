@@ -18,3 +18,11 @@ version = "^1.3.0"
 [[requires]]
 id = "field:vosu.skin.name"
 version = "^1.0.0"
+
+[[requires]]
+id = "field:vosu.chart.resources.file"
+version = "^1.0.0"
+
+[[requires]]
+id = "resource:chart.file"
+version = "*"

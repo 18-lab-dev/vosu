@@ -4,6 +4,8 @@
 )]
 #[path = "server_compat/removals.rs"] mod removals;
 
+#[path = "server_compat/declared_roots.rs"]
+mod declared_roots;
 use std::{
     future::Future,
     io::{self, Write},
