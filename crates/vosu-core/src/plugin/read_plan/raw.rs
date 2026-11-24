@@ -119,12 +119,18 @@ fn resolve_stage_base_raw(
     out: &[u8],
     root_base: &Result<u64, RawFailure>,
     bitness: ProcessBitness,
+    previous_stage: Option<(u32, u32)>,
 ) -> Result<u64, RawFailure> {
     let unresolved = match vosu_stage_base_kind::try_from(stage.base.kind) {
         Ok(vosu_stage_base_kind::VOSU_STAGE_BASE_ROOT) => (*root_base)?,
         Ok(vosu_stage_base_kind::VOSU_STAGE_BASE_DEPENDENT) => {
-            let ref_index =
-                stage_start_index(payload, stages_offset, stage.base.ref_stage) + stage.base.ref_op;
+            // Pointer chains normally reference the immediately preceding stage.
+            // Its prefix is already known; avoid rescanning every earlier header.
+            let start = match previous_stage {
+                Some((index, start)) if index == stage.base.ref_stage => start,
+                _ => stage_start_index(payload, stages_offset, stage.base.ref_stage),
+            };
+            let ref_index = start + stage.base.ref_op;
             let entry: vosu_read_result_flat = read_struct_at(
                 out,
                 RESULT_HEADER_SIZE + ref_index as usize * RESULT_ENTRY_SIZE,
@@ -538,6 +544,21 @@ pub fn execute_into(
     ValidatedPlan::new(payload, flags)?.execute(memory, bitness, modules, deadline, out)
 }
 
+/// Executes a fresh synchronous submission with the production coarse-budget
+/// policy. Like [`execute_into`], validates the complete payload before reading.
+/// This lets in-process hosts use the same deadline policy as `PluginHost`.
+pub fn execute_sync_into(
+    payload: &[u8],
+    flags: u32,
+    memory: &dyn ProcessMemory,
+    bitness: ProcessBitness,
+    modules: &dyn ModuleResolver,
+    budget: std::time::Duration,
+    out: &mut Vec<u8>,
+) -> Result<(), ExecuteBytesError> {
+    ValidatedPlan::new(payload, flags)?.execute_sync(memory, bitness, modules, budget, out)
+}
+
 /// Borrows the exact buffer whose structural validation succeeded. Keeping the
 /// payload private prevents the host from accidentally executing a different or
 /// mutated buffer after validating session ownership.
@@ -655,6 +676,7 @@ impl<'a> ValidatedPlan<'a> {
             deadline: &deadline,
         };
         let mut global_index = 0usize;
+        let mut previous_stage = None;
         for stage_index in 0..header.stage_count as usize {
             if deadline
                 .stage_expired(stage_index)
@@ -673,9 +695,11 @@ impl<'a> ValidatedPlan<'a> {
                 out,
                 &root_base,
                 bitness,
+                previous_stage,
             );
             process_stage_raw(&ctx, &stage, stage_base, global_index, out, &mut budget)
                 .map_err(ExecuteBytesError::Execute)?;
+            previous_stage = Some((stage_index as u32, global_index as u32));
             global_index += stage.op_count as usize;
         }
 

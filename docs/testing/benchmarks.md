@@ -326,8 +326,9 @@ with one worker (32 sessions, 16 persistent anchors, eight concurrent producers)
 - Synthetic fixtures, not live-game or whole-daemon performance. The stable raw
   snapshot and PlanMemory cases share a populated x86 graph and assert successful,
   non-default global/full-menu/gameplay values before timing. Lazer's raw snapshot
-  fixture remains zero-filled; the deterministic reader validates populated graphs
-  (native self-process lazer reads; slice-copy stable reads).
+  regular fixture remains zero-filled. `plan_memory/lazer_precise_*` shares the
+  populated active lazer graph with the deterministic reader, including 18 keys.
+  Windows fixture reads use native self-process RPM; Linux uses slice copies.
 - Calculation uses a five-object map. Cold serializers exclude setup; cache
   cases clone encoded bytes. Publication includes timer scheduling; neither
   publication nor subscriptions measures network transport.
@@ -1170,60 +1171,143 @@ affect; the realistic edit-loop total falls short of the 15% bar.
 
 ## M1 PlanMemory (paired, D17)
 
-Measured **2026-11-24**: C6 candidate over L2 `7a08a52`, M0 end `fda1625`,
-and pre-M0 `3a91ff9`. Ryzen 9 9950X3D Linux host,
-`7.3.5-2-cachyos-bore`, Rust 1.96.1, performance governor, default release
-features, locked dependencies. Every benchmark process was pinned to **CPU 7**
-(outside the Windows VM's CCD); no CPU/IRQ isolation. The L2 Windows gate
-remained active, so these are shared-host measurements, not idle-machine claims.
-All builds finished before their timed invocation.
+### Decision and final source
 
-Each revision used its own `CARGO_TARGET_DIR` and `CRITERION_HOME`
-(`~/.cache/vosu-targets/{m1-c6-pre,m1-c6-m0,m1-c6}` and the corresponding
-`~/.cache/vosu-criterion/` directories); no cross-revision artifact reuse.
-One invocation per transport/revision, sequential order pre-M0 native →
-M0 native → candidate native → candidate plan. Criterion: 100 samples,
-3 s warm-up, 10 s measurement. Values below are **median estimates with
-their bootstrap 95% CIs**, from `new/estimates.json`'s `median` field,
-not the slope/mean printed in Criterion's terminal summary.
+**D17 is not a pass.** The owner extends the M1 L3 Windows exception to every
+missed row and permits v2/main landing. D17 remains a **hard release gate**,
+re-measured at **M4a X1 and M5**, with Main accountable. Final
+measured source: **`1162fe6de744b3361eaa3f097234e76e9c9b8162`**, 2026-11-24.
+Consume the complete `b741219..m1/wp-fix` branch range, not just its final commit.
+The maintainer's `win-osu/evidence/wp-fix/REPORT.md`, `prefix-raw/` and
+`prefix-summary.json` retain the per-row decision, every sample, executable/source
+hashes, Criterion confidence intervals and a ten-line draft exception.
 
-| Regular fields | Pre-M0 native `3a91ff9` | M0 native `fda1625` | C6 native | C6 plan |
-| --- | ---: | ---: | ---: | ---: |
-| stable, ns | 133.63 (133.36–134.46) | 125.89 (123.95–127.72) | 164.51 (161.67–168.23) | 1936.19 (1871.69–2060.33) |
-| lazer, µs | 11.862 (11.511–12.028) | 11.730 (11.340–11.788) | 12.158 (11.767–13.325) | 11.136 (11.054–11.325) |
+The threshold remains **no median regression above 10%**, with D17's pinned-CPU
+Criterion confidence qualification. A paired point estimate within 10% is not
+a confidence-qualified pass when the interval is inconclusive.
 
-| Candidate path | vs M0 | vs pre-M0 | 95% CIs overlap, M0 / pre-M0 | D17 bar |
-| --- | ---: | ---: | :---: | :---: |
-| stable native | +30.67% | +23.11% | no / no | missed |
-| stable plan | +1437.99% | +1348.97% | no / no | missed |
-| lazer native | +3.66% | +2.50% | yes / yes | met |
-| lazer plan | -5.06% | -6.12% | no / no | met |
+### Protocol
 
-**D17 remains unverified.** These single-invocation results do not establish a
-native regression: paired reruns of the exact M0/C6 binaries twice gave median
-pairs 143.00/154.12 ns and 160.10/145.66 ns, so even the delta's sign changed.
-CPU 7's SMT sibling was not reserved. Do not attribute the original +30.67%
-to an L1/L2 commit. Repeat with `bench-compare.py` in a quiet window and C6b's
-corrected, populated stable fixtures before deciding the D17 bar.
+Windows 11 Pro, native Rust 1.96.1/MSVC, corrected approximately 19 ns QPC,
+normal `--release --locked --no-default-features`, no temporary profiler or
+allocation counters. Live captures use the same menu-state PID per client,
+affinity mask 4, **native/plan/plan/native**, 1,000 warmups and nine samples of
+10,000 captures. Pair rounds 1/2 and 4/3. Strict untimed readiness requires a
+full-length zero-error capture before the accepted sequence.
 
-Both groups mirror `hot_paths/raw_snapshot_reads`: zero-filled 64 KiB fixtures,
-not populated gameplay. Stable's zero base underflows its batched address
-calculation into the scalar fallback; menu/gameplay return without useful reads.
-The plan bench asserts decoder-result equality with native before timing, but
-that does not prove successful captures. Because these fixtures retry resolution,
-both use the same direct fixture region walk; scan-broker cost is excluded.
-Plan reads execute the public core executor and SDK interception; host routing
-is excluded from this release bench, not from the allocation/native tests.
-The lazer result is scan/error-path dominated, not a live-reader speedup claim.
+All eight final live invocations remained `0 -> 0` with zero regular and precise
+errors. Both clients were stopped afterward; the VM remained running. No viewer,
+client GUI interaction, VM reboot or shutdown was used.
 
-```sh
-# In each corresponding checkout, set the independent directories above.
-# Prepare the matching helper bundle for the candidate first:
-python scripts/prepare-offset-generator.py --rid linux-x64
-taskset -c 7 nice -n 10 cargo bench --locked --package vosu --bench hot_paths -- raw_snapshot_reads --warm-up-time 3 --measurement-time 10 --sample-size 100 --noplot
-# Candidate only (release benches must not enable test-harness):
-taskset -c 7 nice -n 10 cargo bench --locked --package vosu --bench plan_memory_bench -- --warm-up-time 3 --measurement-time 10 --sample-size 100 --noplot
-```
+Criterion uses `--bench`, 1 s warmup, 2 s measurement, 30 samples and separate
+invocation directories. Stable populated fixtures run native/flat/flat/native;
+lazer precise runs native/flat/routed/routed/flat/native. Windows fixture reads
+use native self-process RPM, with successful equality/assertion checks before
+timing. Stable regular covers global/menu/gameplay fields. The zero-filled
+lazer regular diagnostic is not a populated acceptance fixture.
+
+### Final fixture verdicts
+
+Times are µs. Each native/plan cell retains both invocation medians in pairing
+order; percentages are the two paired overheads and their mean.
+
+| Fixture / route | Native | Plan | Paired overheads | Mean | Verdict |
+|---|---:|---:|---:|---:|---|
+| stable regular, flat | 14.186 / 14.091 | 16.633 / 17.159 | +17.25% / +21.77% | +19.51% | Miss |
+| stable precise, flat | 0.752 / 0.721 | 0.978 / 0.948 | +30.08% / +31.53% | +30.81% | Miss |
+| lazer regular | — | — | — | — | Not established: no populated fixture |
+| lazer precise, flat | 14.956 / 13.384 | 16.167 / 15.046 | +8.10% / +12.42% | +10.26% | Miss |
+| lazer precise, routed | 14.956 / 13.384 | 16.706 / 15.459 | +11.70% / +15.51% | +13.61% | Miss |
+
+Stable precise's two-pair 95% interval is +21.58..+40.04%; its individual
+Criterion intervals also separate beyond the threshold. The other paired
+fixture intervals are wide and retained in the report. Lazer precise ratios
+of mean invocation medians are +10.14% flat and +13.50% routed; these differ
+from means of paired percentages.
+
+### Final live verdicts
+
+Intervals below use independent invocation pairs (Student-t, df=1), not the
+nine correlated samples within each invocation as independent replicates.
+
+| Capture | Native µs | Routed plan µs | Paired overheads | Mean (95% interval) | Plans/capture | Verdict |
+|---|---:|---:|---:|---:|---:|---|
+| stable regular | 99.693 / 96.789 | 124.164 / 115.745 | +24.55% / +19.58% | +22.07% (-9.46..+53.59%) | 16 | Miss |
+| stable precise | 3.673 / 2.970 | 3.601 / 3.465 | -1.96% / +16.69% | +7.36% (-111.14..+125.87%) | 1 | Point pass only |
+| lazer regular | 203.780 / 181.186 | 215.284 / 232.959 | +5.64% / +28.57% | +17.11% (-128.56..+162.78%) | 87 | Miss |
+| lazer precise | 7.406 / 7.602 | 10.112 / 9.554 | +36.53% / +25.68% | +31.11% (-37.83..+100.05%) | 3 | Miss |
+
+These are transport comparisons, not whole-daemon CPU/tick, read-to-publication
+latency or a new comparison against 1.x `6ffc087`.
+
+### Windows complete-graph attribution
+
+`plan_floor` records the active lazer graph once and replays prebuilt requests
+without adapter construction/reader decoding. The final native replay preserves
+scalar/batch boundaries and native coalescing: **8 submissions, 51 ops, 1,840
+requested bytes, 1,808 submission bytes and 3,192 result bytes**.
+
+Means of two normal-release invocation medians:
+
+| Component | ns |
+|---|---:|
+| Native, matched batching | 12477.45 |
+| Validating executor | 13354.57 |
+| SDK encode + synchronous submission setup | 97.33 |
+| Result validation | 45.56 |
+| Warmed result-buffer copy | 27.83 |
+| Prebuilt flat SDK replay | 15510.98 |
+| Full PluginHost replay | 16022.92 |
+
+Executor minus matched native is **877.12 ns**. Isolated framing, validation
+and ownership-copy operations are required at the M1 boundary, but their
+durations are not claimed optimal or an irreducible timing floor. The remaining
+flat SDK/delivery/access delta after those probes is **1,985.70 ns**; routing's
+descriptive delta is **511.94 ns**. Both require further isolation.
+
+The full populated-capture routed/native gap is **1,912.87 ns**, versus
+**3,545.47 ns** in graph replay: the **-1,632.60 ns** reconciliation and second
+flat graph invocation's drift prohibit an additive causal/frozen-ABI floor
+claim. Do not clamp the residual or transplant the active fixture's costs to
+three-plan menu captures.
+
+Every stable fixture/live and lazer live miss has its complete measured gap
+explicitly marked **unattributed, assigned to Main / M4a X1** in the report.
+Main (the vosu 2.0 orchestrator) owns that end-to-end attribution and the missing
+populated lazer regular fixture. Main owns the **M4a X1 re-measurement** and
+**M5 process-runtime D17 re-check as a release exit gate**: repeat the populated
+fixtures and all four live rows with pinned, zero-error paired captures and the
+unchanged confidence rule;
+close the >10% rows or obtain a fresh explicit exception.
+
+### Correctness, reductions and rejected evidence
+
+Windows module snapshots now retry only errors 24/299, only with module flags,
+for at most eight attempts/seven yields, preserving the final error.
+Injectable policy tests cover success, both codes, excluded flags/errors and
+exhaustion. Origin/main `a92c30483c90` has the same one-shot latent bug and was
+not changed. The host retains 16 exact-byte validated shapes, reuses the
+previous-stage result prefix for immediate dependencies and permits inlining
+of validated SDK result access/application. ABI layout, validation, error
+ordering and owner/generation/liveness rules remain intact.
+
+Final code passed 773 Linux core/osu/reader/SDK tests, both plan allocation and
+full-field invariants, Linux/Windows-target warning-denying Clippy and all nine
+maintained check scripts. Native vm-tests passed: sys 48 (1 ignored), core
+read-plan 61, SDK validation 5, adapter memory 26 and reader memory 155.
+The first native reader run exposed a hardcoded Linux read-count expectation:
+Windows menu prefetch lets later connection consumers reuse the cached value
+even with the scalar Probe. The test now bounds counts by platform while
+retaining all value and injected-failure parity assertions. All 155 native
+reader tests and 191 Linux reader tests passed after this test-only correction.
+No production path/read graph changed; **1162fe6 timings remain valid**.
+Exact commands, the original failure and corrected receipts are in the report.
+
+The original fusion attach error 24 produced no accepted live timing.
+Candidate `80f5e2d` stable native regular had two errors and is rejected,
+not averaged into the final run. The earlier `66d3b35` uncoalesced graph-native
+replay is not a valid floor comparator. Failed diagnostic builds, source-asset
+staging and test-selection attempts remain preserved beside corrected receipts.
 
 ## Released tosu comparison
 

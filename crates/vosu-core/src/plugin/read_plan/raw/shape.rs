@@ -12,9 +12,15 @@ pub(super) struct Layout {
 }
 
 #[derive(Default)]
-struct Cache {
+struct Entry {
     payload: Vec<u8>,
     layout: Option<Layout>,
+}
+
+#[derive(Default)]
+struct Cache {
+    entries: [Entry; 16],
+    next: usize,
 }
 
 thread_local! {
@@ -36,12 +42,14 @@ pub(super) fn validate(
         // bytes, including lengths, offsets, references and reserved fields.
         const ADDRESS: usize = std::mem::offset_of!(vosu_read_plan_submit_header, root)
             + std::mem::offset_of!(vosu_plan_base_flat, address);
-        if payload.len() == last.payload.len()
-            && payload[8..ADDRESS] == last.payload[8..ADDRESS]
-            && payload[ADDRESS + 8..] == last.payload[ADDRESS + 8..]
-            && let Some(layout) = last.layout
-        {
-            return Ok((header, layout));
+        for entry in &last.entries {
+            if payload.len() == entry.payload.len()
+                && payload[8..ADDRESS] == entry.payload[8..ADDRESS]
+                && payload[ADDRESS + 8..] == entry.payload[ADDRESS + 8..]
+                && let Some(layout) = entry.layout
+            {
+                return Ok((header, layout));
+            }
         }
         validate_read_plan_submit(payload)
             .map_err(|error| ExecuteBytesError::Message(error.into()))?;
@@ -74,9 +82,12 @@ pub(super) fn validate(
             }
         }
         if cacheable {
-            last.payload.clear();
-            last.payload.extend_from_slice(payload);
-            last.layout = Some(layout);
+            let next = last.next;
+            let entry = &mut last.entries[next];
+            entry.payload.clear();
+            entry.payload.extend_from_slice(payload);
+            entry.layout = Some(layout);
+            last.next = (next + 1) % last.entries.len();
         }
         Ok((header, layout))
     })
@@ -106,6 +117,32 @@ mod tests {
         })
         .encode_payload()
         .unwrap()
+    }
+
+    #[test]
+    fn alternating_shapes_retain_bounded_exact_proofs() {
+        LAST.with(|cache| *cache.borrow_mut() = Cache::default());
+        let mut plans = Vec::new();
+        for length in 1u32..=16 {
+            let mut bytes = payload();
+            let header: vosu_read_plan_submit_header = read_flat_header(&bytes).unwrap();
+            let stage: vosu_stage_header = read_struct_at(&bytes, header.stages_offset as usize);
+            bytes[stage.ops_offset as usize + 8..stage.ops_offset as usize + 12]
+                .copy_from_slice(&length.to_ne_bytes());
+            assert_eq!(validate(&bytes, 0).unwrap().1.total_len, u64::from(length));
+            plans.push(bytes);
+        }
+        LAST.with(|cache| assert_eq!(cache.borrow().next, 0));
+        for bytes in &plans {
+            validate(bytes, 0).unwrap();
+        }
+        // A hit does not replace any proof, unlike the previous last-only cache.
+        LAST.with(|cache| assert_eq!(cache.borrow().next, 0));
+        let mut invalid = plans[0].clone();
+        let header: vosu_read_plan_submit_header = read_flat_header(&invalid).unwrap();
+        let stage: vosu_stage_header = read_struct_at(&invalid, header.stages_offset as usize);
+        invalid[stage.ops_offset as usize + 12] = 1;
+        assert!(validate(&invalid, 0).is_err());
     }
 
     #[test]

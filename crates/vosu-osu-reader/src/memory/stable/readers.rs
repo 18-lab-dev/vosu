@@ -842,6 +842,9 @@ impl MemoryReader for StableMemory {
         self.not_ready()
     }
     fn global_precise(&mut self) -> MemoryRead<GlobalPrecise> {
+        if let Some(value) = self.precise_cached() {
+            return Ok(ReadStatus::Ready(value));
+        }
         let status = self.status_value()?;
         let time = if status == 3 {
             0.0
@@ -851,10 +854,10 @@ impl MemoryReader for StableMemory {
         Ok(ReadStatus::Ready(GlobalPrecise { status, time }))
     }
     fn mp3_length(&mut self) -> MemoryRead<Mp3Length> {
-        let b = self.ptr2(self.patterns.get_audio_length_ptr)?;
-        Ok(ReadStatus::Ready(js_round_number(
-            self.process.read_f64(self.add(b, 4)?)?,
-        )))
+        let bytes = self.chain(self.patterns.get_audio_length_ptr, &[0, 4])?;
+        Ok(ReadStatus::Ready(js_round_number(f64::from_le_bytes(
+            bytes,
+        ))))
     }
     fn tourney(&mut self) -> MemoryRead<Tourney> {
         self.tourney_sequential().or_else(|_| {

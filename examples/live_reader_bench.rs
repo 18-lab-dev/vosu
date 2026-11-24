@@ -72,6 +72,7 @@ struct Args {
     cycles: usize,
     memory: String,
     bus: bool,
+    submissions: Option<Arc<std::sync::atomic::AtomicU64>>,
 }
 impl Args {
     fn parse(mut values: impl Iterator<Item = String>) -> Result<Self> {
@@ -118,6 +119,7 @@ impl Args {
             cycles,
             memory,
             bus,
+            submissions: None,
         })
     }
 }
@@ -146,6 +148,7 @@ struct Measurement {
     max_ns: f64,
     reads_per_cycle: Option<f64>,
     bytes_per_cycle: Option<f64>,
+    plans_per_cycle: f64,
     errors: usize,
 }
 fn measure(args: &Args, mut cycle: impl FnMut() -> bool) -> Measurement {
@@ -154,6 +157,9 @@ fn measure(args: &Args, mut cycle: impl FnMut() -> bool) -> Measurement {
         errors += usize::from(cycle());
     }
     let mut times = [0.0_f64; 9];
+    let plans_before = args.submissions.as_ref().map_or(0, |counter| {
+        counter.load(std::sync::atomic::Ordering::Relaxed)
+    });
     for time in &mut times {
         let start = Instant::now();
         for _ in 0..args.cycles {
@@ -161,6 +167,9 @@ fn measure(args: &Args, mut cycle: impl FnMut() -> bool) -> Measurement {
         }
         *time = start.elapsed().as_nanos() as f64 / args.cycles as f64;
     }
+    let plans_after = args.submissions.as_ref().map_or(0, |counter| {
+        counter.load(std::sync::atomic::Ordering::Relaxed)
+    });
     times.sort_by(f64::total_cmp);
     Measurement {
         warmup: args.warmup,
@@ -171,6 +180,7 @@ fn measure(args: &Args, mut cycle: impl FnMut() -> bool) -> Measurement {
         max_ns: times[8],
         reads_per_cycle: None,
         bytes_per_cycle: None,
+        plans_per_cycle: (plans_after - plans_before) as f64 / (9 * args.cycles) as f64,
         errors,
     }
 }
@@ -350,7 +360,7 @@ fn main() {
     }
 }
 fn execute() -> Result<()> {
-    let args = Args::parse(std::env::args().skip(1))?;
+    let mut args = Args::parse(std::env::args().skip(1))?;
     let start = Instant::now();
     let attachment = if args.bus {
         Some(plan::Attachment::with_bus(plan::native_record(args.pid)?)?)
@@ -362,6 +372,9 @@ fn execute() -> Result<()> {
     } else {
         None
     };
+    args.submissions = attachment
+        .as_ref()
+        .map(|attachment| attachment.submissions.clone());
     let process = match &attachment {
         Some(attachment) if args.memory == "plan" => attachment.process.clone(),
         _ => open(args.pid)?,

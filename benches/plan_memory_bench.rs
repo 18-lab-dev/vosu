@@ -1,13 +1,13 @@
 //! D17: reader decoding through PlanProcessMemory, public core executor and SDK interception.
-//! Release benches cannot use test-harness; PluginHost routing is intentionally excluded.
+//! Includes native, flat executor+SDK, and Windows full-PluginHost routing.
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::{
     ffi::c_void,
     hint::black_box,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
-use vosu_core::plugin::{ModuleResolver, execute_into};
+use vosu_core::plugin::{ModuleResolver, execute_sync_into};
 use vosu_osu::memory::PlanProcessMemory;
 use vosu_osu_reader::{
     memory::{LazerMemory, LazerPattern, MemoryReader, StableMemory, lazer_offsets::LazerOffsets},
@@ -18,10 +18,29 @@ use vosu_plugin_api::{
     vosu_host_services, vosu_message, vosu_opcode, vosu_status,
 };
 use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+#[path = "support/lazer_fixture.rs"]
+mod lazer_fixture;
+#[path = "support/plan_costs.rs"]
+mod plan_costs;
+#[path = "support/plan_floor.rs"]
+mod plan_floor;
+#[path = "support/plan_trace.rs"]
+mod plan_trace;
+#[cfg(windows)]
+#[path = "../examples/live_reader_bench/plan.rs"]
+mod routed;
 #[path = "support/stable_fixture.rs"]
 mod stable_fixture;
 use stable_fixture::patterns;
 struct SliceMemory(Vec<u8>);
+#[cfg(windows)]
+fn native_fixture() -> &'static vosu_sys::process::WindowsProcessMemory {
+    static PROCESS: std::sync::LazyLock<vosu_sys::process::WindowsProcessMemory> =
+        std::sync::LazyLock::new(|| {
+            vosu_sys::process::WindowsProcessMemory::open(std::process::id()).unwrap()
+        });
+    &PROCESS
+}
 impl ProcessMemory for SliceMemory {
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
         let source = address
@@ -31,20 +50,53 @@ impl ProcessMemory for SliceMemory {
                 operation: "bench",
                 message: "outside fixture".into(),
             })?;
+        #[cfg(not(windows))]
         dst.copy_from_slice(source);
+        #[cfg(windows)]
+        native_fixture().read_exact(source.as_ptr() as usize, dst)?;
         Ok(())
     }
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
-        for read in reads {
-            self.read_exact(read.address, read.dst)?;
+        #[cfg(not(windows))]
+        {
+            for read in reads {
+                self.read_exact(read.address, read.dst)?;
+            }
+            Ok(())
         }
-        Ok(())
+        #[cfg(windows)]
+        {
+            for read in reads.iter() {
+                if read
+                    .address
+                    .checked_add(read.dst.len())
+                    .is_none_or(|end| end > self.0.len())
+                {
+                    return Err(MemoryError::Backend {
+                        operation: "bench",
+                        message: "outside fixture".into(),
+                    });
+                }
+            }
+            let base = self.0.as_ptr() as usize;
+            for read in reads.iter_mut() {
+                read.address += base;
+            }
+            let result = native_fixture().read_many(reads);
+            for read in reads.iter_mut() {
+                read.address -= base;
+            }
+            result
+        }
     }
     fn readable_regions(&self) -> Result<Vec<MemoryRegion>, MemoryError> {
         Ok(vec![MemoryRegion {
             address: 0,
             size: self.0.len(),
         }])
+    }
+    fn reads_pin_process_identity(&self) -> bool {
+        cfg!(windows)
     }
 }
 struct Modules;
@@ -68,7 +120,7 @@ unsafe extern "C" fn noop(_: *mut c_void, _: *const vosu_message) -> u32 {
 struct ExecutorHost {
     context: *mut c_void,
     vtable: vosu_plugin_api::vosu_plugin_vtable,
-    memory: SliceMemory,
+    memory: Arc<dyn ProcessMemory>,
     bitness: ProcessBitness,
     output: Mutex<Vec<u8>>,
 }
@@ -79,6 +131,16 @@ unsafe impl Send for ExecutorHost {}
 unsafe impl Sync for ExecutorHost {}
 impl ExecutorHost {
     fn new(bitness: ProcessBitness) -> Self {
+        Self::with_memory(
+            bitness,
+            Arc::new(SliceMemory(if bitness == ProcessBitness::X86 {
+                stable_fixture::bytes()
+            } else {
+                vec![0; 64 * 1024]
+            })),
+        )
+    }
+    fn with_memory(bitness: ProcessBitness, memory: Arc<dyn ProcessMemory>) -> Self {
         let vtable = vosu_plugin_api::__vtable_for_serialized::<Intercept>();
         static HOST: vosu_host_services = vosu_host_services {
             struct_size: size_of::<vosu_host_services>() as u32,
@@ -106,11 +168,7 @@ impl ExecutorHost {
         Self {
             context,
             vtable,
-            memory: SliceMemory(if bitness == ProcessBitness::X86 {
-                stable_fixture::bytes()
-            } else {
-                vec![0; 64 * 1024]
-            }),
+            memory,
             bitness,
             output: Mutex::new(Vec::new()),
         }
@@ -129,13 +187,13 @@ impl HostServices for ExecutorHost {
     ) -> vosu_status {
         assert_eq!(opcode, vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT);
         let mut output = self.output.lock().unwrap();
-        execute_into(
+        execute_sync_into(
             payload,
             flags,
-            &self.memory,
+            self.memory.as_ref(),
             self.bitness,
             &Modules,
-            Instant::now() + Duration::from_secs(1),
+            Duration::from_secs(1),
             &mut output,
         )
         .unwrap();
@@ -202,7 +260,90 @@ impl ProcessMemory for Sequential {
         self.0.readable_regions()
     }
 }
+fn populated_lazer(plan: bool) -> (LazerMemory, vosu_osu_reader::memory::ReaderSynchronization) {
+    let offsets = Arc::new(LazerOffsets::embedded().unwrap());
+    let fixture = Arc::new(lazer_fixture::Fixture::active_lazer(&offsets));
+    let synchronization = vosu_osu_reader::memory::ReaderSynchronization {
+        game_base: Some(fixture.game_base),
+        current_screen: Some(fixture.player),
+    };
+    let backend: Arc<dyn ProcessMemory> = if plan {
+        Arc::new(PlanProcessMemory::new(
+            ExecutorHost::with_memory(ProcessBitness::X64, fixture),
+            1,
+            910_600_103,
+            ProcessBitness::X64,
+        ))
+    } else {
+        fixture
+    };
+    (
+        LazerMemory::new(
+            ProcessHandle::new(backend, ProcessBitness::X64),
+            offsets,
+            LazerPattern::source_default(),
+        ),
+        synchronization,
+    )
+}
+
+fn populated_precise(
+    reader: &mut LazerMemory,
+    synchronization: vosu_osu_reader::memory::ReaderSynchronization,
+) {
+    use vosu_osu_reader::memory::SynchronizedMemoryReader;
+    reader.synchronize_precise(synchronization, 3);
+    let global = reader.global_precise().unwrap();
+    let keys = reader.key_overlay(3).unwrap();
+    let errors = reader.hit_errors(0).unwrap();
+    match (&global, &keys, &errors) {
+        (
+            vosu_sys::process::ReadStatus::Ready(global),
+            vosu_sys::process::ReadStatus::Ready(keys),
+            vosu_sys::process::ReadStatus::Ready(errors),
+        ) => {
+            assert_eq!(global.time, 322.0);
+            assert_eq!(keys.len(), 18);
+            assert_eq!(errors.index, 0);
+        }
+        _ => panic!("populated lazer precise fixture must be ready"),
+    }
+    black_box((global, keys, errors));
+}
+
 fn bench(c: &mut Criterion) {
+    let (mut active_native, native_sync) = populated_lazer(false);
+    let (mut active_plan, plan_sync) = populated_lazer(true);
+    populated_precise(&mut active_native, native_sync);
+    populated_precise(&mut active_plan, plan_sync);
+    plan_trace::capture();
+    #[cfg(windows)]
+    let (_routed_fixture, routed_attachment, mut active_routed, routed_sync) = {
+        let offsets = Arc::new(LazerOffsets::embedded().unwrap());
+        let fixture = lazer_fixture::Fixture::active_lazer(&offsets);
+        let synchronization = vosu_osu_reader::memory::ReaderSynchronization {
+            game_base: Some(fixture.game_base),
+            current_screen: Some(fixture.player),
+        };
+        let attachment = routed::Attachment::new(
+            routed::native_record(std::process::id()).unwrap(),
+            "vosu.bench.routed-precise",
+        )
+        .unwrap();
+        let mut reader = LazerMemory::new(
+            attachment.process.clone(),
+            offsets,
+            LazerPattern::source_default(),
+        );
+        populated_precise(&mut reader, synchronization);
+        assert!(
+            attachment
+                .submissions
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > 1
+        );
+        (fixture, attachment, reader, synchronization)
+    };
     let mut stable = StableMemory::new(process(ProcessBitness::X86), patterns());
     let mut lazer = LazerMemory::new(
         process(ProcessBitness::X64),
@@ -350,6 +491,18 @@ fn bench(c: &mut Criterion) {
             );
         })
     });
+    group.bench_function("lazer_precise_native", |b| {
+        b.iter(|| populated_precise(&mut active_native, native_sync))
+    });
+    group.bench_function("lazer_precise_plan", |b| {
+        b.iter(|| populated_precise(&mut active_plan, plan_sync))
+    });
+    #[cfg(windows)]
+    group.bench_function("lazer_precise_routed", |b| {
+        b.iter(|| populated_precise(&mut active_routed, routed_sync))
+    });
+    #[cfg(windows)]
+    black_box(&routed_attachment);
     group.bench_function("stable_regular_fields", |b| {
         b.iter(|| {
             let _ = black_box(stable.global());
@@ -368,5 +521,5 @@ fn bench(c: &mut Criterion) {
     });
     group.finish();
 }
-criterion_group!(benches, bench);
+criterion_group!(benches, bench, plan_costs::bench, plan_floor::bench);
 criterion_main!(benches);

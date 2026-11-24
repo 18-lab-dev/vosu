@@ -11,6 +11,8 @@
 use super::readers::{MAX_LEADERBOARD_NAME_BYTES, MAX_LEADERBOARD_PLAYERS};
 use super::*;
 
+mod user;
+
 /// Readability is page-granular: a range is readable exactly when every page it touches is.
 const PAGE: usize = 4096;
 /// UTF-16 bytes requested together with a string's length, so most strings take one read.
@@ -296,42 +298,6 @@ impl StableMemory {
         self.read_batch(slots.iter_mut().filter_map(StringSlot::request))?;
         self.finish_strings(&mut slots)?;
         decode_all(&slots)
-    }
-
-    pub(super) fn user_batched(&self) -> MemoryRead<User> {
-        let (mut profile, mut login) = (Word::new(), Word::new());
-        self.read_batch([
-            profile.request(self.patterns.user_profile_ptr)?,
-            login.request(self.patterns.raw_login_status_ptr)?,
-        ])?;
-        let (mut profile_object, mut login_status) = (Word::new(), Word::new());
-        self.read_batch([
-            profile_object.request(profile.ptr(0))?,
-            login_status.request(login.ptr(0))?,
-        ])?;
-        let (b, login_status) = (profile_object.ptr(0), login_status.ptr(0));
-        if b == 0 {
-            return self.not_ready();
-        }
-        let mut fields = Span::<4, 0xac>::new();
-        self.read_batch([fields.request(b)?])?;
-        let [name] = self.strings([fields.ptr(0x30)])?;
-        Ok(ReadStatus::Ready(User {
-            name,
-            accuracy: fields.f64(4),
-            ranked_score: js_long(fields.i64(0xc)),
-            id: fields.i32(0x70),
-            level: fields.f32(0x74) as f64,
-            play_count: fields.i32(0x7c),
-            play_mode: fields.i32(0x80),
-            rank: fields.i32(0x84),
-            country_code: fields.i32(0x9c),
-            performance_points: fields.i32(0x88) as f64,
-            raw_bancho_status: fields.u8(0x8c) as i8 as i64,
-            background_colour: fields.u32(0xac),
-            raw_login_status: login_status as i64,
-            matchmaking: None,
-        }))
     }
 
     pub(super) fn menu_batched(&self, prev: &str) -> MemoryRead<Menu> {
@@ -624,11 +590,10 @@ impl StableMemory {
                 holder.ptr(0x44)
             }
         };
-        let mut array_holder = Span::<0x10, 4>::new();
-        self.read_batch([array_holder.request(holder)?])?;
-        // The array length at +4 directly precedes its 40 float elements.
+        // Both reads are unconditional: submit the pointer and array span as
+        // one dependent chain while the native backend keeps their exact order.
         let mut array = Span::<4, { 4 + 4 * 40 }>::new();
-        self.read_batch([array.request(array_holder.ptr(0x10))?])?;
+        array.bytes = self.chain(self.add(holder, 0x10)?, &[4])?;
         if array.i32(4) < 40 {
             return self.not_ready();
         }

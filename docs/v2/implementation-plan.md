@@ -692,12 +692,15 @@ hardened generator extraction (DD). Offsets now use
 The bundled manifest's `>=1.2.0, <3.0.0` host range must be revisited at M8's
 2.0.0 version bump; enforcement belongs to M6a, not this cutover.
 
-D17 M1 remains open: the stable PlanMemory microbench measures 2.65x native
-(3.22 vs 1.22 µs per capture, about 71 ns per plan plus 12 ns per op,
-13 plans). The decision is pending a live daemon-CPU comparison; the owner
-will record that outcome later. See the
-[benchmark guide](../testing/benchmarks.md). This microbench alone is not a
-D17 pass.
+D17 is **not a pass** for M1. On the final measured source `1162fe6`, stable
+regular, stable precise (fixture), lazer regular and lazer precise exceed the
+10% bar on native Windows. Zero read errors were recorded on every run. The
+owner granted a documented exception on 2026-11-24 for every missed row. It
+permits the M1 landing on `v2/main` only; D17 remains a hard release gate.
+Main owns the M4a X1 attribution and re-measurement of the unattributed
+residual and the M5 process-runtime re-check. Each over-10% row must close
+there or get a fresh explicit exception. Numbers, attribution and the
+exception text are in the [benchmark guide](../testing/benchmarks.md#m1-planmemory-paired-d17).
 
 The following parity map is the replacement evidence cited by C4's
 `Assertions-Removed` trailer. Old names are from `src/instance/tests.rs`
