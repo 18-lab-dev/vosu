@@ -57,11 +57,20 @@ fn release_version() -> String {
         .to_owned()
 }
 
-fn config_files(directory: &Path) -> Vec<(&'static str, Option<Vec<u8>>)> {
-    ["vosu.toml", "vosu.env", "tosu.env"]
-        .into_iter()
-        .map(|name| (name, fs::read(directory.join(name)).ok()))
-        .collect()
+/// Every regular file directly in `directory` with its bytes. A prerelease's
+/// own `prerelease/` subdirectory is not a file and so is not compared.
+fn config_files(directory: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut files: Vec<_> = fs::read_dir(directory)
+        .expect("list normal config root")
+        .map(|entry| entry.expect("normal config root entry").path())
+        .filter(|path| path.is_file())
+        .map(|path| {
+            let bytes = fs::read(&path).expect("read normal config root file");
+            (path, bytes)
+        })
+        .collect();
+    files.sort();
+    files
 }
 
 async fn wait_for_seeded_counter(client: &reqwest::Client, base: &str) {
