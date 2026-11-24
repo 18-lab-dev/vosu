@@ -69,6 +69,9 @@ fn selected_context_confines_files_and_preserves_stable_lazer_display_contract()
         let songs = root.join("songs");
         let publisher = fixture.attach(settings(), false, true);
         publisher.publish(snapshot.clone(), Delivery::All).unwrap();
+        // Roots (including the skins slot behind `skin.files`) are declared by
+        // the osu! resource worker after this publish, asynchronously.
+        until(|| publisher.settled());
         until(|| fixture.files.tool_context().is_ok());
         if source == ClientType::Stable {
             until(|| {
@@ -95,6 +98,7 @@ fn selected_context_confines_files_and_preserves_stable_lazer_display_contract()
             let mut unfocused = (*snapshot).clone();
             Arc::make_mut(&mut unfocused.regular).menu.checksum = Some("foreign-6881".into());
             other.publish(Arc::new(unfocused), Delivery::All).unwrap();
+            until(|| other.settled());
             assert_eq!(
                 tool_context(&fixture.files, &fixture.h.host)["beatmap"]["checksum"],
                 "selected-1973"
