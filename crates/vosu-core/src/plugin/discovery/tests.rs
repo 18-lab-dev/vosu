@@ -121,6 +121,7 @@ fn test_process(pid: u32, name: &str) -> ProcessRecord {
         command_line: name.to_owned(),
         bitness: Bitness::X64,
         start_time: 1,
+        argv: None,
     }
 }
 

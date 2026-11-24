@@ -32,6 +32,10 @@ fn roundtrip_session_attached() {
         generation: 2,
         pid: 1234,
         bitness: Bitness::X64,
+        name: "osu!.exe".into(),
+        path: "C:/osu/osu!.exe".into(),
+        command_line: "osu!.exe".into(),
+        argv: None,
     });
     roundtrip(SessionAttached {
         session: "s-2".into(),
@@ -39,7 +43,58 @@ fn roundtrip_session_attached() {
         generation: 1,
         pid: 1,
         bitness: Bitness::X86,
+        name: "osu!".into(),
+        path: "/home/user/osu!".into(),
+        command_line: "osu! --tournament".into(),
+        argv: Some(vec!["osu!".into(), "--tournament".into()]),
     });
+}
+
+/// A1b/DA: an older-shape `SESSION_ATTACHED` (minted before the amendment,
+/// no `name`/`path`/`command_line`/`argv` keys at all) still decodes,
+/// with the four additive fields defaulted (§1 "a minor-version producer
+/// may add fields an older reader does not yet understand" applies
+/// symmetrically to a newer reader decoding an older producer's bytes).
+#[test]
+fn session_attached_decodes_pre_amendment_shape() {
+    let bytes = encode(&CborValue::Map(vec![
+        (
+            CborValue::Text("session".into()),
+            CborValue::Text("s-1".into()),
+        ),
+        (
+            CborValue::Text("handle".into()),
+            CborValue::Integer(7.into()),
+        ),
+        (
+            CborValue::Text("generation".into()),
+            CborValue::Integer(2.into()),
+        ),
+        (
+            CborValue::Text("pid".into()),
+            CborValue::Integer(1234.into()),
+        ),
+        (
+            CborValue::Text("bitness".into()),
+            CborValue::Text("x64".into()),
+        ),
+    ]))
+    .expect("encode");
+    let decoded: SessionAttached = decode(&bytes).expect("decode pre-amendment shape");
+    assert_eq!(
+        decoded,
+        SessionAttached {
+            session: "s-1".into(),
+            handle: 7,
+            generation: 2,
+            pid: 1234,
+            bitness: Bitness::X64,
+            name: String::new(),
+            path: String::new(),
+            command_line: String::new(),
+            argv: None,
+        }
+    );
 }
 
 #[test]

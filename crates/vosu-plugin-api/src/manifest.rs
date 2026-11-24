@@ -67,6 +67,13 @@ pub struct MatchTable {
     pub command_line_patterns: Vec<String>,
     #[serde(default)]
     pub comm_hints: Vec<String>,
+    /// Linux-only userspace substring matcher, additive to `comm_hints`
+    /// (A1b/DB revised): a process whose `name` (kernel `comm`) contains
+    /// an entry matches. Each entry is 1-15 bytes (the kernel/CN_PROC
+    /// `comm` field width) and, like `comm_hints`, also feeds the
+    /// kernel/CN_PROC pre-filter. Accepted but unused on Windows.
+    #[serde(default)]
+    pub linux_name_contains: Vec<String>,
 }
 
 /// `[[resource_kinds]]`.

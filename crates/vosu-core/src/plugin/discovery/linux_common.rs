@@ -34,6 +34,13 @@ fn join_command_line(parts: &[OsString]) -> String {
 
 #[must_use]
 pub fn map_metadata(metadata: LinuxProcessMetadata) -> ProcessRecord {
+    let argv = Some(
+        metadata
+            .command_line
+            .iter()
+            .map(|part| part.to_string_lossy().into_owned())
+            .collect(),
+    );
     ProcessRecord {
         pid: metadata.pid,
         name: metadata.name.to_string_lossy().into_owned(),
@@ -41,5 +48,6 @@ pub fn map_metadata(metadata: LinuxProcessMetadata) -> ProcessRecord {
         command_line: join_command_line(&metadata.command_line),
         bitness: map_bitness(metadata.bitness),
         start_time: metadata.start_time,
+        argv,
     }
 }

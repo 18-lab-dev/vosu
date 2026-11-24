@@ -525,6 +525,7 @@ fn injected_session_memory_answers_a_sync_plan() {
         command_line: "proc-injected".to_owned(),
         bitness: vosu_plugin_api::Bitness::X64,
         start_time: 1,
+        argv: None,
     });
 
     let handle = match events

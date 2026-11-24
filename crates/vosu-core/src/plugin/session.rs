@@ -42,11 +42,18 @@ pub struct SessionHandle(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Generation(pub u64);
 
-/// A process discovery observed (synthetic in M1 tests).
-#[derive(Debug, Clone, Copy)]
+/// A process discovery observed (synthetic in M1 tests). Carries the
+/// four process facts `SESSION_ATTACHED` also publishes (A1b/DA,
+/// `docs/v2/plugin-abi.md` §6.2): `name`/`path`/`command_line`/`argv`
+/// make this `Clone`, not `Copy`.
+#[derive(Debug, Clone)]
 pub struct DiscoveredProcess {
     pub pid: u32,
     pub bitness: Bitness,
+    pub name: String,
+    pub path: String,
+    pub command_line: String,
+    pub argv: Option<Vec<String>>,
 }
 
 /// Every way a `SESSION_DECLINE`/`SESSION_IDENTIFY` call can be refused.
@@ -228,6 +235,10 @@ impl SessionRegistry {
             generation: generation.0,
             pid: process.pid,
             bitness: process.bitness,
+            name: process.name.clone(),
+            path: process.path.clone(),
+            command_line: process.command_line.clone(),
+            argv: process.argv.clone(),
         };
         self.pending.insert(
             handle,
@@ -298,6 +309,10 @@ impl SessionRegistry {
             generation: record.generation.0,
             pid: record.process.pid,
             bitness: record.process.bitness,
+            name: record.process.name.clone(),
+            path: record.process.path.clone(),
+            command_line: record.process.command_line.clone(),
+            argv: record.process.argv.clone(),
         };
         record.owner = next_owner;
         record.attached_at = now;
@@ -507,11 +522,19 @@ impl From<SessionError> for vosu_status {
 mod tests {
     use super::*;
 
-    fn process() -> DiscoveredProcess {
+    fn discovered(pid: u32) -> DiscoveredProcess {
         DiscoveredProcess {
-            pid: 1234,
+            pid,
             bitness: Bitness::X64,
+            name: format!("p{pid}.exe"),
+            path: format!("/games/p{pid}.exe"),
+            command_line: format!("p{pid}.exe"),
+            argv: None,
         }
+    }
+
+    fn process() -> DiscoveredProcess {
+        discovered(1234)
     }
 
     fn identify(game: &str, focus_priority: bool) -> SessionIdentify {
@@ -739,14 +762,7 @@ mod tests {
             .unwrap();
 
         let second = registry
-            .attach(
-                DiscoveredProcess {
-                    pid: 5555,
-                    bitness: Bitness::X64,
-                },
-                vec!["vosu.b".into()],
-                now,
-            )
+            .attach(discovered(5555), vec!["vosu.b".into()], now)
             .unwrap();
         let outcome = registry
             .identify("vosu.b", second.handle, identify("osu", true), now)
@@ -768,14 +784,7 @@ mod tests {
             .unwrap();
 
         let second = registry
-            .attach(
-                DiscoveredProcess {
-                    pid: 5555,
-                    bitness: Bitness::X64,
-                },
-                vec!["vosu.b".into()],
-                now,
-            )
+            .attach(discovered(5555), vec!["vosu.b".into()], now)
             .unwrap();
         registry
             .identify("vosu.b", second.handle, identify("osu", true), now)
@@ -786,14 +795,7 @@ mod tests {
         assert_eq!(registry.priority_holder(), None);
 
         let third = registry
-            .attach(
-                DiscoveredProcess {
-                    pid: 7777,
-                    bitness: Bitness::X64,
-                },
-                vec!["vosu.c".into()],
-                now,
-            )
+            .attach(discovered(7777), vec!["vosu.c".into()], now)
             .unwrap();
         registry
             .identify("vosu.c", third.handle, identify("osu", true), now)
@@ -851,14 +853,7 @@ mod tests {
             .unwrap();
 
         let other = registry
-            .attach(
-                DiscoveredProcess {
-                    pid: 2222,
-                    bitness: Bitness::X64,
-                },
-                vec!["vosu.b".into()],
-                now,
-            )
+            .attach(discovered(2222), vec!["vosu.b".into()], now)
             .unwrap();
         registry
             .identify("vosu.b", other.handle, identify("osu", false), now)

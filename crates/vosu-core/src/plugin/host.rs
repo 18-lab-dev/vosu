@@ -132,10 +132,7 @@ const SHUTDOWN_RACE_DESTROY_GRACE: Duration = Duration::from_secs(5);
 
 /// One process discovery (phase (d2)) observed, enough to match it
 /// against every registered game plugin's `[match]` table (§6.1) and
-/// attach a session to the winner (§6.2):
-/// [`PluginHost::process_appeared`]'s own parameter. Synthetic in this
-/// phase's tests (`docs/v2/implementation-plan.md` M1 Exit: "Tests drive
-/// matching with synthetic process records").
+/// attach a session to the winner (§6.2).
 #[derive(Debug, Clone)]
 pub struct ProcessRecord {
     pub pid: u32,
@@ -156,6 +153,8 @@ pub struct ProcessRecord {
     /// not this struct's other fields, so a still-running process that
     /// rewrites its own argv is never churned).
     pub start_time: u64,
+    /// Linux only: the exact NUL-split argv (A1b/DA); `None` on Windows.
+    pub argv: Option<Vec<String>>,
 }
 
 /// Owns every live plugin instance (replacing a bare `Vec<PluginInstance>`,
@@ -744,12 +743,10 @@ impl PluginHost {
     }
 
     /// Discovery's own entry point (phase (d2) calls this from a real OS
-    /// process list; this phase only provides and tests it): matches
-    /// `process` against every registered game plugin's `MatcherEngine`
-    /// (§6.1), attaches a session to the winner (`SessionRegistry::attach`,
-    /// §6.2), and delivers `SESSION_ATTACHED` to it. A no-op when no
-    /// plugin's matcher accepts `process`, or when `SessionRegistry`
-    /// already tracks its pid (a rescan of a still-running process, D6).
+    /// process list; this phase only provides and tests it): matches `process`
+    /// against every registered plugin's `MatcherEngine` (§6.1), attaches a
+    /// session to the winner, and delivers `SESSION_ATTACHED`. A no-op when no
+    /// matcher accepts it, or `SessionRegistry` already tracks its pid (D6).
     pub fn process_appeared(&self, process: ProcessRecord) {
         let candidate = CandidateProcess {
             name: process.name.clone(),
@@ -781,6 +778,10 @@ impl PluginHost {
         let discovered = DiscoveredProcess {
             pid: process.pid,
             bitness: process.bitness,
+            name: process.name,
+            path: process.path,
+            command_line: process.command_line,
+            argv: process.argv,
         };
         let attached = self
             .sessions

@@ -154,6 +154,7 @@ pub(crate) fn build_record(
         command_line,
         bitness,
         start_time,
+        argv: None,
     }
 }
 

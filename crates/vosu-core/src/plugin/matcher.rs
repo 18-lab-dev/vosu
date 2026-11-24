@@ -49,6 +49,9 @@ pub enum MatcherError {
     /// A `comm_hints` entry is longer than 15 bytes, the kernel/CN_PROC
     /// `comm` field width (§6.1, D18).
     HintTooLong { hint: String },
+    /// A `linux_name_contains` entry is empty or longer than 15 bytes,
+    /// the kernel/CN_PROC `comm` field width (§6.1 revised, A1b/DB).
+    InvalidLinuxNameContains { entry: String },
 }
 
 impl fmt::Display for MatcherError {
@@ -62,6 +65,9 @@ impl fmt::Display for MatcherError {
             Self::HintTooLong { hint } => {
                 write!(f, "comm_hints entry {hint:?} exceeds 15 bytes")
             }
+            Self::InvalidLinuxNameContains { entry } => {
+                write!(f, "linux_name_contains entry {entry:?} must be 1-15 bytes")
+            }
         }
     }
 }
@@ -74,6 +80,13 @@ pub struct CompiledMatcher {
     process_names: Vec<String>,
     process_path_patterns: Vec<Regex>,
     command_line_patterns: Vec<Regex>,
+    /// Linux only (empty on Windows, where it is "accepted but unused",
+    /// §6.1): a `linux_name_contains` entry is a userspace matcher in
+    /// its own right (A1b/DB revised) — a process whose `name` (its
+    /// kernel `comm` value) *contains* the entry matches. `comm_hints`
+    /// keeps its unchanged, pre-filter-only meaning and is never stored
+    /// here.
+    linux_name_contains: Vec<String>,
     platform: MatchPlatform,
 }
 
@@ -160,16 +173,27 @@ impl CompiledMatcher {
     /// Compiles `table` for `platform`. `comm_hints` only fills the
     /// kernel/CN_PROC pre-filter in production (§6.1): this matcher
     /// validates its length here but never stores or consults it in
-    /// [`Self::matches`] itself, matching "full matching … always runs in
-    /// userspace against the candidate's full path and argv regardless of
-    /// what the pre-filter already narrowed". The static D18 overlap check
-    /// ([`overlaps`]) reads `comm_hints` from the raw [`MatchTable`]s
-    /// instead, before compilation.
+    /// [`Self::matches`] itself — unchanged by A1b/DB. On Linux,
+    /// `linux_name_contains` fills both the pre-filter *and*
+    /// [`Self::matches`]'s own substring check against `candidate.name`
+    /// (A1b/DB revised, additive field: changing `comm_hints`'s own
+    /// meaning would be a breaking change for an existing plugin that
+    /// declares it only for the pre-filter, §1); on Windows it is
+    /// "accepted but unused" (§6.1) — stored but never consulted. The
+    /// static D18 overlap check ([`overlaps`]) reads both fields from
+    /// the raw [`MatchTable`]s instead, before compilation.
     pub fn compile(platform: MatchPlatform, table: &MatchTable) -> Result<Self, MatcherError> {
         if platform == MatchPlatform::Linux {
             for hint in &table.comm_hints {
                 if hint.len() > 15 {
                     return Err(MatcherError::HintTooLong { hint: hint.clone() });
+                }
+            }
+            for entry in &table.linux_name_contains {
+                if entry.is_empty() || entry.len() > 15 {
+                    return Err(MatcherError::InvalidLinuxNameContains {
+                        entry: entry.clone(),
+                    });
                 }
             }
         }
@@ -202,20 +226,33 @@ impl CompiledMatcher {
             process_names: table.process_names.clone(),
             process_path_patterns,
             command_line_patterns,
+            linux_name_contains: table.linux_name_contains.clone(),
             platform,
         })
     }
 
     /// Whether `candidate` is accepted by this matcher (§6.1): an exact
-    /// `process_names` match, a full-match `process_path_patterns` match
-    /// against the normalized path, or a full-match `command_line_patterns`
-    /// match against the joined argv.
+    /// `process_names` match, a Linux `linux_name_contains` substring
+    /// match against `candidate.name` (A1b/DB revised; never checked on
+    /// Windows, where `linux_name_contains` is accepted but unused), a
+    /// full-match `process_path_patterns` match against the normalized
+    /// path, or a full-match `command_line_patterns` match against the
+    /// joined argv. `comm_hints` is never consulted here — it stays
+    /// pre-filter only, unchanged.
     #[must_use]
     pub fn matches(&self, candidate: &CandidateProcess) -> bool {
         if self
             .process_names
             .iter()
             .any(|name| names_equal(self.platform, name, &candidate.name))
+        {
+            return true;
+        }
+        if self.platform == MatchPlatform::Linux
+            && self
+                .linux_name_contains
+                .iter()
+                .any(|entry| candidate.name.contains(entry.as_str()))
         {
             return true;
         }
@@ -246,9 +283,52 @@ impl CompiledMatcher {
     }
 }
 
-/// D18's statically decidable overlap rule: equal `process_names` entries,
-/// or a `comm_hints` entry of one equal to or a substring of a
-/// `process_names`/`comm_hints` entry of the other (regex overlap on
+/// Greatest `k` such that `x`'s last `k` bytes equal `y`'s first `k`
+/// bytes (a suffix-prefix overlap), used by [`merged_length`].
+fn suffix_prefix_overlap(x: &str, y: &str) -> usize {
+    let max_k = x.len().min(y.len());
+    (1..=max_k)
+        .rev()
+        .find(|&k| x.as_bytes()[x.len() - k..] == y.as_bytes()[..k])
+        .unwrap_or(0)
+}
+
+/// The length of the shortest string containing both `a` and `b` as
+/// substrings: `a.len()`/`b.len()` when one already contains the other,
+/// otherwise `a.len() + b.len()` minus the best suffix-prefix merge in
+/// either direction (D18, A1b/DB revised: "two substring entries …
+/// overlap when some string of at most 15 bytes contains both … one
+/// contains the other, or a suffix/prefix overlap gives a merged length
+/// of at most 15 bytes").
+fn merged_length(a: &str, b: &str) -> usize {
+    if a.contains(b) {
+        return a.len();
+    }
+    if b.contains(a) {
+        return b.len();
+    }
+    let overlap = suffix_prefix_overlap(a, b).max(suffix_prefix_overlap(b, a));
+    a.len() + b.len() - overlap
+}
+
+/// Whether two ≤15-byte substring-matcher entries (`comm_hints`/
+/// `linux_name_contains`) could simultaneously match some process's
+/// `comm` value: some string of at most 15 bytes (the kernel `comm`
+/// field width) contains both as substrings.
+#[must_use]
+fn substring_entries_overlap(a: &str, b: &str) -> bool {
+    merged_length(a, b) <= 15
+}
+
+/// D18's statically decidable overlap rule: equal `process_names`
+/// entries; a `comm_hints` entry of one equal to or a substring of a
+/// `process_names`/`comm_hints` entry of the other (unchanged by A1b/DB:
+/// `comm_hints` stays pre-filter-only); or a `linux_name_contains` entry
+/// of one — a real userspace substring matcher, Linux-only (A1b/DB
+/// revised) — overlapping the other plugin's exact `process_names` (the
+/// name contains the entry, on Linux) or any ≤15-byte substring entry of
+/// either plugin (`comm_hints`/`linux_name_contains`) by
+/// [`substring_entries_overlap`] (regex overlap on
 /// `process_path_patterns`/`command_line_patterns` is undecidable in
 /// general and is never checked here, `docs/v2/plugin-abi.md:121`).
 #[must_use]
@@ -270,8 +350,34 @@ pub fn overlaps(platform: MatchPlatform, a: &MatchTable, b: &MatchTable) -> bool
             })
         })
     };
-    hints_hit(&a.comm_hints, &b.process_names, &b.comm_hints)
+    if hints_hit(&a.comm_hints, &b.process_names, &b.comm_hints)
         || hints_hit(&b.comm_hints, &a.process_names, &a.comm_hints)
+    {
+        return true;
+    }
+    let substring_hit =
+        |entries: &[String], names: &[String], hints: &[String], other_entries: &[String]| {
+            entries.iter().any(|entry| {
+                names.iter().any(|name| name.contains(entry.as_str()))
+                    || hints
+                        .iter()
+                        .any(|hint| substring_entries_overlap(entry, hint))
+                    || other_entries
+                        .iter()
+                        .any(|other| substring_entries_overlap(entry, other))
+            })
+        };
+    substring_hit(
+        &a.linux_name_contains,
+        &b.process_names,
+        &b.comm_hints,
+        &b.linux_name_contains,
+    ) || substring_hit(
+        &b.linux_name_contains,
+        &a.process_names,
+        &a.comm_hints,
+        &a.linux_name_contains,
+    )
 }
 
 /// The enumeration-cost pre-filter (§6.1), unified across both released
@@ -338,13 +444,16 @@ impl fmt::Display for OverlapError {
 impl std::error::Error for OverlapError {}
 
 /// The combined kernel/CN_PROC pre-filter bound (§6.1, D18): `process_names`
-/// entries that fit its 15-byte `comm` field width, plus every `comm_hints`
-/// entry, across every enabled Linux game plugin.
+/// entries that fit its 15-byte `comm` field width, plus every
+/// `comm_hints`/`linux_name_contains` entry, across every enabled Linux
+/// game plugin.
 const PREFILTER_LIMIT: usize = 256;
 
 /// How many of `table`'s entries occupy the combined pre-filter (§6.1): a
 /// `process_names` entry that is itself short enough to match `comm`
-/// directly, plus every `comm_hints` entry.
+/// directly, plus every `comm_hints`/`linux_name_contains` entry (A1b/DB
+/// revised: `linux_name_contains` also feeds the pre-filter, exactly
+/// like `comm_hints`, so declaring it never widens the filter).
 fn prefilter_entries(table: &MatchTable) -> usize {
     table
         .process_names
@@ -352,18 +461,22 @@ fn prefilter_entries(table: &MatchTable) -> usize {
         .filter(|name| name.len() <= 15)
         .count()
         + table.comm_hints.len()
+        + table.linux_name_contains.len()
 }
 
 /// Whether `table`'s own matcher has a hint the pre-filter can narrow
 /// by, used only by [`MatcherEngine::prefilter`]'s widening rule
-/// (§6.1): on Linux, a `comm_hints` entry or a `process_names` entry
-/// short enough to match the kernel `comm` field; on Windows, always
-/// `false` — Windows has no `comm`/CN_PROC pre-filter at all (§6.1:
-/// "accepted but unused on Windows"), so a plugin there never has a
-/// hint to fall back on once it declares a path/command-line pattern.
+/// (§6.1): on Linux, a `comm_hints`/`linux_name_contains` entry or a
+/// `process_names` entry short enough to match the kernel `comm` field;
+/// on Windows, always `false` — Windows has no `comm`/CN_PROC pre-filter
+/// at all (§6.1: "accepted but unused on Windows"), so a plugin there
+/// never has a hint to fall back on once it declares a
+/// path/command-line pattern.
 fn has_usable_hint(linux: bool, table: &MatchTable) -> bool {
     linux
-        && (!table.comm_hints.is_empty() || table.process_names.iter().any(|name| name.len() <= 15))
+        && (!table.comm_hints.is_empty()
+            || !table.linux_name_contains.is_empty()
+            || table.process_names.iter().any(|name| name.len() <= 15))
 }
 
 /// A plugin whose `comm_hints`/short `process_names` would push the
@@ -539,12 +652,13 @@ impl MatcherEngine {
     /// deduplicated union of every registered plugin's hint names. A
     /// plugin's hint names are: on Linux, its `process_names` entries
     /// short enough to match the kernel `comm` field (`≤15` bytes) plus
-    /// every `comm_hints` entry (§6.1); on Windows, every `process_names`
-    /// entry verbatim (Windows has no `comm` field width limit and no
-    /// `comm_hints` concept at all, so a plugin there either matches by
-    /// name alone or widens the whole pre-filter the moment it also
-    /// declares a path/command-line pattern — exactly 1.x's own
-    /// name-filter-or-nothing behavior).
+    /// every `comm_hints`/`linux_name_contains` entry (§6.1, A1b/DB
+    /// revised); on Windows, every `process_names` entry verbatim
+    /// (Windows has no `comm` field width limit and no
+    /// `comm_hints`/`linux_name_contains` concept at all, so a plugin
+    /// there either matches by name alone or widens the whole
+    /// pre-filter the moment it also declares a path/command-line
+    /// pattern — exactly 1.x's own name-filter-or-nothing behavior).
     #[must_use]
     pub fn prefilter(&self) -> Prefilter {
         let linux = self.platform == MatchPlatform::Linux;
@@ -565,7 +679,12 @@ impl MatcherEngine {
                     .filter(move |name| !linux || name.len() <= 15)
                     .cloned()
                     .chain(if linux {
-                        table.comm_hints.clone()
+                        table
+                            .comm_hints
+                            .iter()
+                            .chain(table.linux_name_contains.iter())
+                            .cloned()
+                            .collect()
                     } else {
                         Vec::new()
                     })

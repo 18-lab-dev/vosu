@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use vosu_plugin_api::DetachReason;
+use vosu_plugin_api::{Bitness, DetachReason};
 use vosu_plugin_testkit::session::{self, OnAttach, SessionEvent, SessionPluginConfig};
 
 use crate::plugin::host::*;
@@ -395,4 +395,121 @@ fn identification_timeout_sweep_keeps_an_unidentified_session_hidden() {
         events.try_recv().is_err(),
         "a timed-out session receives no message at all"
     );
+}
+
+/// A1b/DA: `SESSION_ATTACHED` carries the process facts the matcher and
+/// core already have (`name`, `path`, `command_line`, `argv`), not just
+/// `pid`/`bitness`.
+#[test]
+fn attach_carries_process_facts() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let (_log_dir, host) = test_host(runtime.handle().clone());
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId::new(1),
+        "testkit.session.facts",
+        &["facts.exe"],
+        SessionPluginConfig::default(),
+    );
+
+    host.process_appeared(ProcessRecord {
+        pid: 400,
+        name: "facts.exe".to_owned(),
+        path: "/games/facts/facts.exe".to_owned(),
+        command_line: "facts.exe --tournament".to_owned(),
+        bitness: Bitness::X64,
+        start_time: 1,
+        argv: Some(vec!["facts.exe".to_owned(), "--tournament".to_owned()]),
+    });
+
+    match events.recv_timeout(RECV_TIMEOUT).expect("attach") {
+        SessionEvent::Attached(attached) => {
+            assert_eq!(attached.pid, 400);
+            assert_eq!(attached.name, "facts.exe");
+            assert_eq!(attached.path, "/games/facts/facts.exe");
+            assert_eq!(attached.command_line, "facts.exe --tournament");
+            assert_eq!(
+                attached.argv,
+                Some(vec!["facts.exe".to_owned(), "--tournament".to_owned()])
+            );
+        }
+        other => panic!("expected Attached, got {other:?}"),
+    }
+}
+
+/// D6: a `SESSION_DECLINE` re-offer is still the same discovered
+/// occurrence — the process facts travel with it unchanged, not just
+/// `pid`/`bitness`.
+#[test]
+fn reoffer_keeps_process_facts() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let (_log_dir, host) = test_host(runtime.handle().clone());
+    let decliner_events = create_session_instance(
+        &host,
+        PluginInstanceId::new(1),
+        "testkit.session.decliner",
+        &["shared2.exe"],
+        SessionPluginConfig {
+            focus_priority: false,
+            on_attach: OnAttach::Decline,
+            ..Default::default()
+        },
+    );
+    let accepter_events = create_session_instance_from_manifest(
+        &host,
+        PluginInstanceId::new(2),
+        "testkit.session.accepter",
+        SessionPluginConfig::default(),
+        &session_manifest_by_path_suffix("testkit.session.accepter", "shared2.exe"),
+    );
+
+    host.process_appeared(ProcessRecord {
+        pid: 500,
+        name: "shared2.exe".to_owned(),
+        path: "/games/shared/shared2.exe".to_owned(),
+        command_line: "shared2.exe --debug-client-id=1".to_owned(),
+        bitness: Bitness::X64,
+        start_time: 1,
+        argv: Some(vec![
+            "shared2.exe".to_owned(),
+            "--debug-client-id=1".to_owned(),
+        ]),
+    });
+
+    match decliner_events
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("decliner attach")
+    {
+        SessionEvent::Attached(_) => {}
+        other => panic!("expected Attached, got {other:?}"),
+    }
+    match decliner_events
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("decliner detach")
+    {
+        SessionEvent::Detached(_) => {}
+        other => panic!("expected Detached, got {other:?}"),
+    }
+
+    match accepter_events
+        .recv_timeout(RECV_TIMEOUT)
+        .expect("accepter attach")
+    {
+        SessionEvent::Attached(attached) => {
+            assert_eq!(attached.pid, 500);
+            assert_eq!(attached.name, "shared2.exe");
+            assert_eq!(attached.path, "/games/shared/shared2.exe");
+            assert_eq!(attached.command_line, "shared2.exe --debug-client-id=1");
+            assert_eq!(
+                attached.argv,
+                Some(vec![
+                    "shared2.exe".to_owned(),
+                    "--debug-client-id=1".to_owned()
+                ])
+            );
+        }
+        other => panic!("expected Attached, got {other:?}"),
+    }
 }
