@@ -316,6 +316,7 @@ impl<H: HostServices + Send + Sync + 'static> PlanProcessMemory<H> {
 /// `_READ_FAILED`/`_ADDRESS_OVERFLOW`) today. This is not a hot path, so
 /// its one allocation (the UTF-8 message) is fine — only the success path
 /// is zero-allocation.
+#[inline]
 fn apply_result(
     results: &FlatReadResults<'_>,
     index: usize,
