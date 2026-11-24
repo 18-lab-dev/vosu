@@ -1,5 +1,8 @@
 use super::*;
 use semver::Version;
+mod shared_truth_table {
+    include!("../../tests/fixtures/requirement_truth_table.rs");
+}
 
 fn base(kind: &str, id: &str) -> String {
     format!(
@@ -601,4 +604,23 @@ fn manifest_game_self_dependency_and_resource_leaf_boundary() {
             .rule,
         "manifest.capability-boundary"
     );
+}
+
+#[test]
+fn manifest_shared_requirement_resolution_truth_table() {
+    use shared_truth_table::{INVALID_REQUIREMENTS, REQUIREMENT_ROWS};
+    for &(range, version, expected) in REQUIREMENT_ROWS {
+        let requirement = Requirement::parse("field:acme.corpus.combo", range).unwrap();
+        assert_eq!(
+            requirement.satisfied_by("field:acme.corpus", version),
+            expected,
+            "{range} {version}"
+        );
+    }
+    for range in INVALID_REQUIREMENTS {
+        assert!(
+            Requirement::parse("field:acme.corpus", range).is_err(),
+            "{range}"
+        );
+    }
 }
