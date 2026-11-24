@@ -17,6 +17,7 @@
 //! outstanding on the host's own side).
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -181,6 +182,18 @@ impl ScanWaiters {
         handle: vosu_session_id,
         count: usize,
     ) -> Result<Vec<ScanSlot>, MemoryError> {
+        self.register_many_cancellable(handle, count, None)
+    }
+
+    // Lock order: outstanding (admission), then inner (slots). Cancellation
+    // takes both in that order; admission checks liveness under each lock,
+    // closing the gap between taking permits and inserting the slots.
+    fn register_many_cancellable(
+        self: &Arc<Self>,
+        handle: vosu_session_id,
+        count: usize,
+        alive: Option<&AtomicBool>,
+    ) -> Result<Vec<ScanSlot>, MemoryError> {
         assert!(
             count <= MAX_OUTSTANDING_SCANS,
             "a single registration group ({count}) must not exceed the {MAX_OUTSTANDING_SCANS}-permit semaphore's own total capacity"
@@ -197,7 +210,12 @@ impl ScanWaiters {
         let ticket = state.next_ticket;
         state.next_ticket = state.next_ticket.wrapping_add(1);
         state.waiting.insert(ticket);
+        #[cfg(test)]
+        self.permit_freed.notify_all();
         let outcome: Result<(), MemoryError> = loop {
+            if alive.is_some_and(|alive| !alive.load(Ordering::Acquire)) {
+                break Err(cancelled_scan());
+            }
             let is_oldest = state.waiting.iter().next() == Some(&ticket);
             if is_oldest && state.count + count <= MAX_OUTSTANDING_SCANS {
                 state.count += count;
@@ -227,6 +245,11 @@ impl ScanWaiters {
         outcome?;
         let ids: Vec<u64> = {
             let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            if alive.is_some_and(|alive| !alive.load(Ordering::Acquire)) {
+                drop(inner);
+                self.free_permits(count);
+                return Err(cancelled_scan());
+            }
             (0..count)
                 .map(|_| {
                     debug_assert!(
@@ -368,6 +391,23 @@ impl ScanWaiters {
         if release_now {
             self.free_permits(1);
         }
+    }
+
+    /// Atomically closes this session's admission and wakes queued callers.
+    /// The caller retains its flag, so no detached-handle tombstones accumulate.
+    pub fn cancel_session(&self, handle: vosu_session_id, alive: &AtomicBool) {
+        {
+            let _admission = self
+                .outstanding
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let _slots = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            alive.store(false, Ordering::Release);
+        }
+        // Taking the admission lock above prevents a lost wake between a
+        // queued caller checking its flag and entering the condvar wait.
+        self.permit_freed.notify_all();
+        self.detach(handle);
     }
 
     /// Releases every slot pending for `handle` — orphaned or still
@@ -513,6 +553,13 @@ impl ScanSlot {
     }
 }
 
+fn cancelled_scan() -> MemoryError {
+    MemoryError::Backend {
+        operation: "scan",
+        message: "session cancelled before scan admission".to_owned(),
+    }
+}
+
 /// A `ScanBackend` that scans this session's process through host-side
 /// `VOSU_OP_SCAN_REQUEST`s instead of walking readable regions directly,
 /// generic over the `HostServices` implementation so a unit test or C6's
@@ -617,7 +664,11 @@ impl<H: HostServices + Send + Sync + 'static> PlanScanBackend<H> {
         base_index: usize,
         out: &mut Vec<(usize, u64)>,
     ) -> Result<(), MemoryError> {
-        let slots = self.waiters.register_many(self.handle, patterns.len())?;
+        let slots = self.waiters.register_many_cancellable(
+            self.handle,
+            patterns.len(),
+            Some(&self.alive),
+        )?;
         for (slot, pattern) in slots.iter().zip(patterns) {
             self.send_for(slot, pattern, false);
         }
@@ -633,7 +684,11 @@ impl<H: HostServices + Send + Sync + 'static> PlanScanBackend<H> {
 
 impl<H: HostServices + Send + Sync + 'static> ScanBackend for PlanScanBackend<H> {
     fn scan_all(&self, pattern: &Pattern) -> Result<Vec<usize>, MemoryError> {
-        let slot = self.waiters.register(self.handle)?;
+        let slot = self
+            .waiters
+            .register_many_cancellable(self.handle, 1, Some(&self.alive))?
+            .pop()
+            .expect("one reserved scan slot");
         self.send_for(&slot, pattern, true);
         let addresses = slot.wait()?;
         Ok(addresses
