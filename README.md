@@ -627,7 +627,7 @@ while keeping `skin.folder:null` for lazer.
 
 - `GET /`, `/settings`, `/available`, `/favicon.ico` (favicon responses add `X-Vosu-Identity: vosu` for bounded second-launch discovery without changing page bodies)
 - `GET /assets/{path}` and the fallback counter-static route
-- `POST /api/settingsSave` rejects the whole save when a submitted interval or port is not a finite number or is out of range: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` 1–60000, `V2_SUBSCRIPTION_DEBOUNCE` and `API_V1_SUBSCRIPTION_DEBOUNCE` 1–60000 (milliseconds), and both `SERVER_PORT` and `DASHBOARD_PORT` whole numbers 1–65535. Network fields require `_network_action: "apply"` and then `_network_action: "confirm"` from the new origin before the 30-second server timeout.
+- `POST /api/settingsSave` rejects unsupported numeric values: `POLL_RATE` 100–60000, `PRECISE_DATA_POLL_RATE` and `API_V1_SUBSCRIPTION_DEBOUNCE` 1–60000 ms, and both listener ports as integers 1–65535. Retired config keys are ignored. Network fields require `_network_action: "apply"` and `_network_action: "confirm"` from the new origin before the 30-second timeout.
 - `POST /api/runUpdates` returns an HTTP 200 JSON `error` for externally managed installs instead of attempting replacement. A release whose major version exceeds the running build's returns `{"status":"majorAvailable","version":"...","releaseUrl":"..."}` and installs nothing unless the request body is `{"consent":true}`.
 - `POST /api/generateReport`
 - `GET /api/counters/search/{query}[?source=installed|available]` returns card HTML for installed counters by default or for the catalog with `source=available`; any other `source` returns 400. The query keeps letters, digits, and whitespace, and a card matches when any word matches its name, author, or compatible clients. Lookup failures return 502 with an escaped `Error:` body.
@@ -827,7 +827,6 @@ See [ADR 0015](docs/decisions/0015-user-managed-api-keys.md).
 | `/tokens` | streamCompanion regular state |
 | `/websocket/v2` | vosu v2 regular state |
 | `/websocket/v2/precise` | vosu precise state |
-| `/websocket/v2/subscribe` | Selected fields from the vosu v2 document |
 | `/websocket/commands` | Counter settings and filter commands |
 
 Unknown near-miss paths do not upgrade. Frames and assembled messages are limited to 1 MiB. Slow clients receive the latest state instead of building an unbounded backlog. The [upstream tosu wiki](https://github.com/tosuapp/tosu/wiki) documents the compatibility schemas and filter examples.
@@ -836,11 +835,11 @@ Command control queues and the shared relay mailbox each hold at most 16 frames/
 
 Filtered compatibility streams share identical ordered filter plans only within a broadcast pass. The shared cache retains at most 64 variants and 1 MiB of payload bytes; exceeding either limit does not reject a filter, but encodes it without retaining it for reuse. Projection preserves requested ordering and the existing wire schemas.
 
-The selected-field endpoint expects one text message within five seconds: a JSON array of 1–256 non-overlapping RFC 6901 JSON Pointers into the `/json/v2` document. A subscription such as `["/keys","/beatmap/mode","/state/number"]` receives compact initial `[0, revision, [[index, value], ...]]` and update `[1, revision, [[changedIndex, value], ...], [removedIndex, ...]]` frames. Invalid filters receive `[2, code, message]`. The selection is immutable: any later text message, including an application-level `["ping", nonce]`, receives `[2, 5, "subscription already established"]` and closes the connection with code `1008`. Keepalive uses WebSocket control frames only; vosu answers each Ping with a Pong. Reader sampling follows the [selected fields' producing lanes and activity](#renderer-state-v2): slow identity/settings/metadata selectors do not accelerate reads, gameplay-only fields accelerate only during play, and the live song-select clock can request precise sampling outside play. Only demanded active lanes use the smaller of their configured interval and `V2_SUBSCRIPTION_DEBOUNCE`; HTTP and compatibility WebSocket payloads retain their API cadence, except selection changes and resets are promoted immediately. Frames are sent only when a selected value changes, at most once per `V2_SUBSCRIPTION_DEBOUNCE` per client, and always carry the latest snapshot. Faster sampling costs CPU only in the requested lanes; a precise-only selection does not accelerate regular memory reads or live pp calculation.
-
-Selected-field delivery is latest-only, not an append-only event log: a newer pending snapshot replaces an older unsent one. Consumers must use the received values as current state and cannot assume every intermediate revision or input transition will be delivered.
-
-Control-frame backpressure is bounded too: an established selected-field connection whose pong queue is full closes with code `1011` rather than pinning the reader indefinitely.
+API v1 provides selected-field subscriptions with compact initial/update/error
+frames, bounded keepalive queues and latest-only delivery. Select namespace
+pointers rather than paths into an upstream DTO; see the
+[API v1 subscription contract](docs/v2/api-v1.md).
+The removed selected-v2 endpoint is never upgraded.
 
 ## Diagnostic reports and logging
 
