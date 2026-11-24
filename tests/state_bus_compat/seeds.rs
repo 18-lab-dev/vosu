@@ -85,11 +85,26 @@ pub fn coverage(input: &oracle::Input, v2: &Value, precise: &Value, bus: &Value)
     assert_ne!(v2["folders"]["game"], v2["folders"]["songs"]);
     for group in ["folders", "files", "directPath"] {
         for (key, value) in v2[group].as_object().unwrap() {
-            if input.source.as_deref() == Some("lazer") && matches!((group, key.as_str()), ("folders", "skin") | ("directPath", "skinFolder")) {
+            if input.source.as_deref() == Some("lazer")
+                && matches!(
+                    (group, key.as_str()),
+                    ("folders", "skin") | ("directPath", "skinFolder")
+                )
+            {
                 assert_eq!(value, "", "pinned lazer skin echo remains empty");
-                assert!(!input.services.global["skinFolder"].as_str().unwrap().is_empty(), "the rejected synthetic skin source must exist");
+                assert!(
+                    !input.services.global["skinFolder"]
+                        .as_str()
+                        .unwrap()
+                        .is_empty(),
+                    "the rejected synthetic skin source must exist"
+                );
             } else {
-                assert!(value.as_str().is_some_and(|s| !s.is_empty() && s != "."), "{}: empty path source {group}/{key}", input.id);
+                assert!(
+                    value.as_str().is_some_and(|s| !s.is_empty() && s != "."),
+                    "{}: empty path source {group}/{key}",
+                    input.id
+                );
             }
         }
     }
