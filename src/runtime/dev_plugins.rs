@@ -24,13 +24,6 @@ pub(super) const PLUGIN_DESTROY_GRACE: Duration = Duration::from_secs(5);
 /// it across instances is the whole point of `concurrent_dispatch`.
 const PLUGIN_CONCURRENT_WORKERS: usize = 4;
 
-/// A bundled plugin instance has no directory of its own on disk (unlike a
-/// `--plugin <dir>` development plugin): its data directory lives under the
-/// data root, named by its plugin id.
-fn bundled_data_dir(paths: &Paths, plugin_id: &str) -> PathBuf {
-    paths.data().join("plugins").join(plugin_id)
-}
-
 /// Loads the production-required osu! entry first, followed by optional bundled
 /// fixtures. Required-plugin failure aborts composition; optional fixtures keep
 /// warn-and-continue behavior. Array positions remain reserved even on failure.
@@ -62,7 +55,7 @@ pub(super) fn load_bundled(
             host.create_instance(
                 PluginInstanceId::new(index as u64),
                 loaded,
-                bundled_data_dir(paths, plugin_id),
+                paths.bundled_plugin_data_dir(plugin_id),
                 Some(Arc::clone(pool)),
             )
             .map_err(std::io::Error::other)

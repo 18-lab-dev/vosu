@@ -6,7 +6,7 @@ use std::{
     error::Error,
     hint::black_box,
     io,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Instant,
 };
@@ -28,10 +28,40 @@ use vosu_osu_state::{
     RegularSnapshotReader, SnapshotTransition, SourcePreciseReader, SourceRegularReader,
     StateBundle, state_backend::LiveStateCalculationBackend,
 };
+use vosu_sys::platform::{PathResolver, Paths, SystemPathResolver};
 use vosu_sys::process::ReadStatus;
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 fn fail(message: impl Into<String>) -> Box<dyn Error> {
     io::Error::other(message.into()).into()
+}
+
+/// Resolve roots as the daemon beside Cargo's `examples` directory would.
+struct DaemonPathResolver;
+
+impl PathResolver for DaemonPathResolver {
+    fn current_exe(&self) -> io::Result<PathBuf> {
+        let executable = SystemPathResolver.current_exe()?;
+        Ok(daemon_executable(&executable))
+    }
+
+    fn launch_dir(&self) -> io::Result<PathBuf> {
+        SystemPathResolver.launch_dir()
+    }
+
+    fn env_var(&self, name: &str) -> Option<std::ffi::OsString> {
+        SystemPathResolver.env_var(name)
+    }
+}
+
+fn daemon_executable(executable: &Path) -> PathBuf {
+    // Windows stores data beside the daemon executable, one level above a
+    // Cargo example. Linux's XDG roots do not depend on the executable path.
+    match executable.parent() {
+        Some(parent) if parent.file_name().is_some_and(|name| name == "examples") => {
+            parent.with_file_name("vosu")
+        }
+        _ => executable.to_path_buf(),
+    }
 }
 struct Args {
     pid: u32,
@@ -335,7 +365,9 @@ fn execute() -> Result<()> {
         ClientType::Lazer => {
             let executable_root = lazer_version::process_executable_root(args.pid)?;
             let version = lazer_version::discover_from_root(&executable_root)?;
-            let cache = vosu_sys::platform::Paths::system_cache_root()?.join("offsets");
+            let cache = Paths::resolve(&DaemonPathResolver)?
+                .bundled_plugin_data_dir("vosu.osu")
+                .join("offsets");
             let asset = vosu::assets::DaemonAssets::get("offsets.json")
                 .ok_or_else(|| fail("embedded offsets missing"))?;
             let loader = LazerOffsetLoader::new(
@@ -368,6 +400,20 @@ fn execute() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_daemon_beside_cargo_examples() {
+        for profile in ["debug", "release"] {
+            let root = Path::new("target").join(profile);
+            let executable = root.join("examples").join("live_reader_bench.exe");
+            assert_eq!(
+                daemon_executable(&executable).parent(),
+                Some(root.as_path())
+            );
+        }
+        let standalone = Path::new("installed").join("live_reader_bench.exe");
+        assert_eq!(daemon_executable(&standalone), standalone);
+    }
     fn args(extra: &[&str]) -> Result<Args> {
         Args::parse(
             ["--pid", "123", "--client", "lazer"]

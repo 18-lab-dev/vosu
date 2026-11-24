@@ -78,8 +78,11 @@ attaches the same PID to an in-process bundled SDK plugin and reads through
 `PlanProcessMemory`, the real host and SDK. Signature scans use `PlanScanBackend`.
 Setup is excluded; nine sample means follow warm-up. Keep the client in the
 same state for both modes, and reject runs with errors or a changed state.
-Lazer needs cached or embedded offsets for its exact version; run the release
-daemon once to populate the cache if needed. Read/byte counters remain null.
+Lazer needs cached or embedded offsets for its exact version; run the daemon
+once to populate `plugins/vosu.osu/offsets` under its data directory if needed.
+On Linux this is normally `~/.local/share/vosu/plugins/vosu.osu/offsets`;
+on Windows it is beside the daemon, e.g. `target\release\plugins\vosu.osu\offsets`,
+not inside `target\release\examples`. Read/byte counters remain null.
 
 Windows VM (PowerShell, repository root; run once for each `$client`):
 
