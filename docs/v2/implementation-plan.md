@@ -95,8 +95,8 @@ dependencies" lists workspace crates only; it is recorded in a new
 | `crates/vosu-core` | Config, logging, report, updater, desktop integration, generic discovery/generations/focus (generalized `src/instance*`), plugin registry and host (in-process dispatch, `vosu plugin-host` supervision and channel), state bus and demand compiler, listeners/origins/auth/API keys/broker/file confinement/WebSocket hub primitives, API v1 (sessions, subscriptions, reads, resources, trees, jobs), catalog v2, sources, credentials, resolver, 1.x migration, lifecycle. | `vosu-sys`, `vosu-net`, `vosu-plugin-api`, `vosu-surface` |
 | `crates/vosu-osu-model` | osu! value types and osu!-exact helpers shared by reader, calculator, and adapters: `src/model/{memory,states,enums}*` and the calculation root helpers (`src/calculation/root/{helpers,mods,scores}.rs`: JS-compatible rounding and number writing, mods, grades, legacy hits). | none |
 | `crates/vosu-osu-calc` | Live and legacy calculation: `src/calculation/{beatmap,progressive,engine}*` over `crates/vosu-pp` (ADR 0004 contracts unchanged). | `vosu-osu-model`, `vosu-pp` |
-| `crates/vosu-osu-reader` | Client decoding: `src/memory*` (stable, lazer, offsets, loader, snapshots), the pointer-width read layer now in `src/process.rs::ProcessHandle`, the embedded `assets/offsets.json` and generator bundle, `src/runtime/offset_generator*`, osu!-specific discovery inputs (client argv parser `StartupArgs`, Wine path resolution `resolve_osu_path`). | `vosu-osu-model`, `vosu-plugin-api`; interim `vosu-sys` until M1 |
-| `crates/vosu-osu-state` | Reducer, capture scheduling, gameplay state: `src/state*` plus the calculation backend (`src/calculation/state_backend*`). | `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`, `vosu-pp`; interim `vosu-sys` until M1 (the reducer reads the `MemoryRead`/`ReadStatus`/`MemoryError` types directly) |
+| `crates/vosu-osu-reader` | Client decoding: `src/memory*` (stable, lazer, offsets, loader, snapshots), the pointer-width read layer now in `src/process.rs::ProcessHandle`, the embedded `assets/offsets.json` and generator bundle, `src/runtime/offset_generator*`, osu!-specific discovery inputs (client argv parser `StartupArgs`, Wine path resolution `resolve_osu_path`). | `vosu-osu-model`, `vosu-plugin-api`, `vosu-net` (the moved offset-generator's hardened ZIP extraction, `vosu_net::extract_zip_atomic`, DD); interim `vosu-sys` until M5 (DC, re-dated from the original "until M1": the 1.x readers keep reading `ProcessMemory`/`MemoryError`/`ReadStatus`/`ReadRequest`/scanner `Pattern` and publishing offsets through `vosu_sys::platform::atomic_replace` unchanged for all of M1, plan:440; M5's brokered-reads boundary — a plugin may run out of process from M5 on, so direct `vosu-sys` access cannot survive it — is where the reader must move onto `PlanMemory` instead and this edge is removed) |
+| `crates/vosu-osu-state` | Reducer, capture scheduling, gameplay state: `src/state*` plus the calculation backend (`src/calculation/state_backend*`). | `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`, `vosu-pp`; interim `vosu-sys` until M5, same reason and same re-dating as the `vosu-osu-reader` row above (the reducer reads `MemoryRead`/`ReadStatus`/`MemoryError` directly; DC) |
 | `crates/vosu-osu` | The bundled osu! plugin: manifest, matchers, `SESSION_DECLINE` use, session identification, namespace projection (`vosu.osu`, common layer, the paths-only `internal` subtree, D2), roots and resource kinds, settings (D19), the `beatmap.import` action (D8). A `test-harness`-only `cdylib` build with a non-bundled test manifest runs it out of process in M5 (gap 13). | `vosu-plugin-api`, `vosu-osu-state`, `vosu-osu-reader`, `vosu-osu-calc`, `vosu-osu-model`; interim `vosu-surface` for bridge B1, M1→M4a |
 | `crates/vosu-adapter-support` | Shared upstream-wire machinery: `src/api/{json,fixed,wire_fixtures}.rs`, legacy filter parsing, JS-number JSON writer. | `vosu-osu-model` |
 | `crates/vosu-adapter-upstream` | Upstream v2 adapter: `/json/v2`, `/json/v2/precise`, `/websocket/v2`, `/websocket/v2/precise`, `/files/...`, `/Songs/{path}`, `/backgroundImage`, `/api/calculate/pp`, `/api/ingame` (api-v1.md "Route ownership"). | `vosu-surface`, `vosu-plugin-api`, `vosu-adapter-support`, `vosu-osu-model`, `vosu-osu-calc` |
@@ -391,11 +391,47 @@ Exit: `python scripts/check-doc-links.py`, `python scripts/check-brand.py`;
 the owner signs off the amended specs, which are frozen again. Signed off
 2026-11-22.
 
+### A1b: ABI and plan amendment from M1-foundations findings (on `v2/main`, documentation only)
+
+Scope: addendum to A1, closing the two findings unit F0 of
+`m1-remainder-plan.md` found while breaking the M1 milestone into landable
+units (that plan's §9 R1, R2): [plugin ABI](plugin-abi.md) §6.2
+`VOSU_OP_SESSION_ATTACHED` gains `name`, `path`, `command_line`, and an
+optional Linux-only `argv` (process facts the osu! plugin needs for D6's
+argv-based decline and 1.x root resolution; DA, an additive minor revision
+under abi:54, no ABI major bump; absent on an older host means unknown,
+never the empty string a present-but-empty value would mean); §6.1/§8 gain
+a new optional Linux-only `linux_name_contains` matcher field reproducing
+1.x's Linux substring name rule that exact `process_names` cannot express,
+and the static overlap rule is extended to the new field and to
+`comm_hints`-vs-`linux_name_contains` pairs (DB; `comm_hints` itself is
+unchanged — still pre-filter only — and Windows is unchanged); §6.4
+`VOSU_OP_SCAN_RESULT`'s `addresses` order is pinned to ascending region
+then ascending offset, the order core's scanner already produces and
+`scan_first` depends on; the `VOSU_OP_SESSION_ATTACHED` comment at
+`include/vosu_plugin.h:160` (comment only, no layout change); and, in this
+document and `scripts/crate-boundaries.txt`, the crate-dependency table's
+re-dated `vosu-osu-reader`/`vosu-osu-state` interim `vosu-sys` edges (now
+until M5, DC) and new `vosu-osu-reader -> vosu-net` edge (DD), the M1
+scope text's matcher wording, B1 payload list split by direction (plugin →
+root vs. root → plugin, DE), and identify timing (DF); the M1 exit
+criterion's full `src/instance/tests.rs` coverage, restored after an
+over-narrow first edit; and stale `src/instance.rs`/
+`src/instance/discovery.rs` references, `docs/v2/api-v1.md:59`, and
+`docs/v2/catalog-v2.md:549` this document and its siblings carried from
+before the F0–F8 breakdown existed.
+
+Exit: `python scripts/check-doc-links.py`, `python scripts/check-brand.py`;
+the owner delegated sign-off on DA–DI (`m1-remainder-plan.md` §4) to the
+implementing agent. A1b signed off 2026-11-23 (owner delegated decisions
+to the implementing agent).
+
 ### M1: plugin API, in-process host, osu! plugin behind the 1.x surfaces
 
 Scope:
 
-- `vosu-plugin-api`: plugin-abi.md §1–§5 and §9 as amended by A1; layout
+- `vosu-plugin-api`: plugin-abi.md §1–§5 and §9 as amended by A1 and A1b;
+  layout
   tests asserting every size and offset in the §3 table with
   `core::mem::offset_of!`, and a C translation unit with `_Static_assert`s
   on the same table compiled from a test, so header and Rust cannot drift;
@@ -423,18 +459,30 @@ Scope:
   The event backends' hard-coded `osu!`/`osulazer.exe` substring filter
   (`src/instance/events.rs:150-155`,
   `src/instance/events/bpf/process_events.bpf.c:76-92`) becomes a bounded
-  BPF map and CN_PROC set filled from enabled plugins' `comm_hints` (D18),
+  BPF map and CN_PROC set filled from enabled plugins' `comm_hints` and
+  `linux_name_contains` entries (D18, A1b/DB),
   so the measured in-kernel filtering that `AGENTS.md:130` requires is kept.
-- `vosu-osu`: matchers `process_names`/`process_path_patterns` plus
-  `comm_hints = ["osu!", "osulazer.exe"]`; `SESSION_DECLINE` reproduces
+- `vosu-osu`: matchers `process_names = ["osu!.exe", "osulazer.exe"]`/
+  `process_path_patterns`, a pre-filter-only `comm_hints` (unchanged, D18),
+  and a new Linux-only userspace matcher
+  `linux_name_contains = ["osu!", "osulazer.exe"]` (plugin-abi.md §6.1 as
+  amended by A1b/DB); `SESSION_DECLINE` reproduces
   `should_skip` only (`src/instance/discovery.rs:118-123`: `--tournament`
   and `debug-client-id`); the Linux conditional fallback
   (`src/instance/discovery.rs:73-107`, which depends on other processes and
   cannot be a full-match regex, plugin-abi.md:115) is expressed as
   `SESSION_IDENTIFY`'s `variant` instead, never a decline, since 1.x never
-  skips those processes; `-spectateclient N` processes are identified as
+  skips those processes. Identify timing (DF): every non-fallback candidate
+  (a `name` containing `osu!.exe`/`osulazer.exe`) is identified at once; a
+  Linux fallback candidate (a `name` containing `osu!` but neither of
+  those) waits one host-minimum one-shot "settle" timer so siblings
+  attached in the same discovery pass are seen before its variant is
+  fixed, matching 1.x's named-pass-first rule; `version` is the lazer
+  `osu!.deps.json` version, or `""` for stable (m1-remainder-plan.md §9
+  R10; nothing exposes `vosu.client` before M3). `-spectateclient N`
+  processes are identified as
   ordinary sessions with their IPC id in `vosu.osu.session.ipcId`, as 1.x
-  attaches them (`src/instance.rs:68-80`, D6); the lazer offset-resolver
+  attaches them (`src/instance.rs:66-83`, D6); the lazer offset-resolver
   lifecycle moves from `src/instance.rs` into the plugin on
   `SESSION_ATTACHED`; reads through `PlanMemory` with the synchronous flag,
   so the 1.x readers stay unchanged, always from the plugin's own reader
@@ -444,11 +492,24 @@ Scope:
   by its `settings_schema` (D19). **Interim bridge B2** (deleted in M8):
   core serves the plugin's settings from the existing `vosu.toml` values
   until the M8 migration moves them into plugin settings storage.
-- **Interim bridge B1** (deleted in M4a): the osu! plugin hands each
-  `StateBundleSnapshot` to the existing `SnapshotManager`
-  (`src/api/snapshot.rs`) through a `vosu-surface` hook, recorded as the
-  interim `vosu-osu → vosu-surface` edge, so every 1.x route keeps serving
-  unchanged bytes.
+- **Interim bridge B1** (deleted in M4a): byte-identical 1.x surfaces need
+  more than `StateBundleSnapshot`
+  (DE). Plugin → root: `StateBundleSnapshot`; per-session lifecycle phase
+  (dashboard status "resolving offsets"/"starting reader"/"reading",
+  `src/runtime/config.rs:368-386`); `InstanceSettings` (ipcId, spectator,
+  devserver). Root → plugin (`B1Inputs`, `LegacySink::inputs()`): the four
+  non-D19 configuration keys named below (`ENABLE_KEY_OVERLAY`,
+  `ENABLE_MANIA_KEY_HIT_ERRORS`, `ENABLE_HIT_OFFSETS`,
+  `V2_SUBSCRIPTION_DEBOUNCE`) and the V2 subscription demand
+  (`src/runtime/worker.rs:432-447`). The 1.x focus reduction
+  (`src/instance.rs:702-721` + `src/runtime/worker.rs:873-896`, which
+  differs from the api-v1 Focus rule core implements) stays root-side, in
+  `bridge_b1.rs`, computed from the foreground source and the identified
+  sessions it already has — it is never handed over by the plugin. All of
+  this travels through B1 and dies with it in M4a. The plugin's half goes
+  to the existing `SnapshotManager` (`src/api/snapshot.rs`) through a
+  `vosu-surface` hook, recorded as the interim `vosu-osu → vosu-surface`
+  edge, so every 1.x route keeps serving unchanged bytes.
 
 Exit: `cargo test --locked -p vosu-plugin-api` (layout, codecs, `prop_*`
 bounds tests, unknown-flag rejection); `cargo test --locked -p vosu-core` host
@@ -465,10 +526,11 @@ the pointer width, `VOSU_READ_PLAN_SYNC` refused on a dispatch thread and
 timing out with `VOSU_ERR_TIMED_OUT`, log rate limiting, timer
 cancellation); a new `tests/plugin_host.rs` that builds the testkit as a
 `cdylib` and loads it in-process on Linux and Windows; discovery parity:
-every case in `src/instance/tests.rs` and the classification tests in
-`src/instance/discovery.rs` reproduced through matchers plus decline,
+every case in `src/instance/tests.rs` (`:184-319` hold the classification
+cases; `src/instance/discovery.rs` has none)
+reproduced through matchers plus decline,
 including spectator clients selected by lowest PID
-(`src/instance.rs:603-620`); all M0 exit tests unchanged;
+(`src/instance.rs:702-721` + `src/runtime/worker.rs:873-896`); all M0 exit tests unchanged;
 `cargo test --locked --test process_memory -- --nocapture` on both OSes; the
 Linux process-event examples (`examples/process_event_bench.rs`,
 `examples/process_event_lazer_bench.rs`, `Cargo.toml` `[[example]]`
@@ -655,8 +717,8 @@ Scope:
   session is visible in `/api/v1/sessions` and, while it exists, is always
   the focused session regardless of OS foreground or recency (api-v1.md
   "Focus rule"'s `focus_priority` clause), matching 1.x's `select()`,
-  which prefers the manager unconditionally (`src/instance.rs:603-618`,
-  `src/runtime/worker.rs:867-875`) — a deliberate addition to the plain
+  which prefers the manager unconditionally (`src/instance.rs:702-721`,
+  `src/runtime/worker.rs:873-896`) — a deliberate addition to the plain
   rule, not something the
   plain rule already produces. It builds `vosu.osu.tourney` from the
   matched spectators' sessions exactly as 1.x's stable branch does
@@ -1110,10 +1172,11 @@ draft, exposed these gaps. Each is closed by an adopted decision in section
    `src/instance/discovery.rs:74-111`), only a classification choice between
    variants, so it needs no matcher-level gap closed, only somewhere to
    express the choice (`SESSION_IDENTIFY`'s `variant`). Tournament spectator
-   clients are ordinary 1.x instances (`src/instance.rs:68-80`) selected by
-   lowest PID (`src/instance.rs:603-620`); the tournament-manager aggregate
-   is set only by tests (`src/instance.rs:137`, every instance starts
-   `false` at `src/instance.rs:473`). → D6.
+   clients are ordinary 1.x instances (`src/instance.rs:66-83`) selected by
+   lowest PID (`src/instance.rs:702-721` + `src/runtime/worker.rs:873-896`);
+   the tournament-manager aggregate
+   is set only by tests (`src/instance.rs:136`, every instance starts
+   `false` at `src/instance.rs:509`). → D6.
 6. **Third-party namespace schemas.** External plugins have no way to hand
    core their namespace schema, so core cannot compile `x-sampling-lane`
    demand for third-party namespaces. → D7.
@@ -1303,7 +1366,7 @@ states what was adopted and why. Spec amendments land in A1.
   always the focused session regardless of OS foreground or recency — a
   deliberate addition to `docs/v2/api-v1.md`'s Focus rule, matching 1.x's
   `select()`, which prefers the manager unconditionally
-  (`src/instance.rs:603-618`, `src/runtime/worker.rs:867-875`; if two
+  (`src/instance.rs:702-721`, `src/runtime/worker.rs:873-896`; if two
   `--tournament` processes somehow attach at once, 2.0 keeps whichever is
   identified first rather than 1.x's lowest-PID choice, an edge of an edge) — and
   publish the resulting aggregate under `vosu.osu.tourney` to **every**
@@ -1323,9 +1386,9 @@ states what was adopted and why. Spec amendments land in A1.
   task must land — before day-0. "Never identify" is never used as a
   deliberate
   state. Why: 1.x
-  production never marks a tournament manager (`src/instance.rs:137` has
-  only test callers; `src/instance.rs:473`) and exposes spectators as
-  selectable instances (`src/instance.rs:68-80`, `:603-620`), so hiding them
+  production never marks a tournament manager (`src/instance.rs:136` has
+  only test callers; `src/instance.rs:509`) and exposes spectators as
+  selectable instances (`src/instance.rs:66-83`, `:702-721`), so hiding them
   would leave API v1 with no session during a tournament; the 1.x rules
   depend on argv and cannot be written as full-match regex matchers
   (plugin-abi.md:115) for the argv-based skip, and the Linux fallback is a
@@ -1429,16 +1492,38 @@ states what was adopted and why. Spec amendments land in A1.
   measurement. Why: the first draft's benches bypassed the code under
   change, and per-milestone bounds alone compound to about 33%.
 - **D18 Matcher hints and overlap.** `[match]` gains optional
-  `comm_hints` (substrings of at most 15 bytes) used only to fill the bounded
-  in-kernel and CN_PROC pre-filter, with full matching in userspace; if any
+  `comm_hints` (substrings of at most 15 bytes) used only to fill the
+  bounded in-kernel and CN_PROC pre-filter, with full matching in
+  userspace, and a second optional field, Linux-only
+  `linux_name_contains` (A1b/DB, additive under abi §1/§3's growth model —
+  a new manifest field, no existing field's meaning changes, no ABI major
+  bump): a process whose `comm` *contains* an entry matches, 1.x's Linux
+  substring rule; each entry also feeds the pre-filter like a `comm_hints`
+  entry, so declaring it there instead never widens the filter. Windows is
+  unchanged, keeping exact, case-insensitive `process_names`; `comm_hints`
+  itself never matches a process on its own, on either platform. If any
   enabled plugin declares path or command-line patterns without hints, the
   filter widens to all execs and the dashboard says which plugin caused it.
-  Overlap is checked statically on `process_names` and `comm_hints`; at
-  runtime a process matched by two enabled plugins goes to the earlier
-  installed one and core logs once. Why: exact `process_names` cannot
-  express 1.x's substring rules (gap 10), widening the filter would discard
-  the measured benefit `AGENTS.md:130` requires to keep, and regex overlap
-  cannot be decided statically.
+  Overlap is checked statically on `process_names`, `comm_hints`, and
+  `linux_name_contains`: two plugins overlap when a `process_names` entry
+  is shared, when a `linux_name_contains` entry of one is contained in a
+  `process_names` entry of the other, or when a `comm_hints`/
+  `linux_name_contains` entry of one and a `comm_hints`/
+  `linux_name_contains` entry of the other could both match some single
+  `comm` value of 15 bytes or fewer (one contains the other, or a
+  suffix/prefix merge of the two is 15 bytes or fewer); at runtime, any
+  process two enabled plugins' matchers both accept — which that static
+  check cannot always catch — goes to whichever plugin was installed
+  earlier, and core logs once. Why: `process_names` alone is exact and
+  cannot express 1.x's Linux substring rules (gap 10); a separate
+  `linux_name_contains` field, rather than giving `comm_hints` a second
+  meaning, keeps every existing plugin's `comm_hints` declaration
+  unchanged and avoids the overlap gap a dual-purpose `comm_hints` would
+  open (two plugins' hints could jointly match one `comm` value neither
+  hint alone would, e.g. hints `osu!` and `lazer` both matching
+  `osu!lazer`); widening the filter would discard the measured benefit
+  `AGENTS.md:130` requires to keep, and regex overlap cannot be decided
+  statically.
 - **D19 osu!-specific configuration.** `CALCULATE_PP`, `POLL_RATE`,
   `PRECISE_DATA_POLL_RATE`, `SHOW_MP_COMMANDS`, and `READ_MANIA_SCROLL_SPEED`
   become `vosu.osu` settings in its `settings_schema` (M1); bridge B2 serves

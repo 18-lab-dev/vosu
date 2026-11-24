@@ -157,7 +157,7 @@ typedef enum vosu_opcode {
     VOSU_OP_PUBLISH_BATCH = 6,      /* plugin -> host: atomic multi-field publish, see "vosu_publish_batch_header" below (D4) */
 
     /* Session lifecycle and focus. */
-    VOSU_OP_SESSION_ATTACHED = 10,  /* host -> plugin, CBOR */
+    VOSU_OP_SESSION_ATTACHED = 10,  /* host -> plugin, CBOR: adds "name"/"path"/"command_line"/"argv"? process facts (A1b/DA) */
     VOSU_OP_SESSION_DETACHED = 11,  /* host -> plugin, CBOR */
     VOSU_OP_SESSION_IDENTIFY = 12,  /* plugin -> host, CBOR */
     VOSU_OP_FOCUS_CHANGED = 13,     /* host -> plugin, CBOR */

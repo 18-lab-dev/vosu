@@ -6,12 +6,18 @@
 #
 # Interim edges (section 2 "Allowed workspace dependencies" notes, kept only
 # until the named milestone):
-# - vosu-osu-reader -> vosu-sys: interim until M1 hands read-plan access to
-#   `vosu-plugin-api`/`PlanMemory` (section 2 table, `vosu-osu-reader` row).
-# - vosu-osu-state -> vosu-sys: same reason, undocumented in the section 2
-#   row for `vosu-osu-state` but required today for the same ProcessMemory
-#   read types (`MemoryRead`, `ReadStatus`, `MemoryError`) the reducer reads
-#   through; removed alongside the vosu-osu-reader edge above in M1.
+# - vosu-osu-reader -> vosu-sys: interim until M5, DC (re-dated from the
+#   original "until M1" by the A1b amendment: the 1.x readers keep reading
+#   `ProcessMemory`/`MemoryError`/`ReadStatus`/`ReadRequest`/scanner
+#   `Pattern` directly through all of M1, section 2 table, `vosu-osu-reader`
+#   row). M5's brokered-reads boundary is where this edge is removed: a
+#   plugin may run out of process from M5 on, so the reader must move onto
+#   `vosu-plugin-api`/`PlanMemory` instead of touching `vosu-sys` directly.
+# - vosu-osu-state -> vosu-sys: same reason and same M5 re-dating,
+#   undocumented in the section 2 row for `vosu-osu-state` but required
+#   today for the same ProcessMemory read types (`MemoryRead`, `ReadStatus`,
+#   `MemoryError`) the reducer reads through; removed alongside the
+#   vosu-osu-reader edge above at M5.
 vosu-sys
 vosu-proptest
 vosu-osu-model

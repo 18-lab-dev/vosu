@@ -429,7 +429,8 @@ coverage" above.
       "process_names": ["AcmeGame.exe", "acme-game"],
       "process_path_patterns": [],
       "command_line_patterns": [],
-      "comm_hints": []
+      "comm_hints": [],
+      "linux_name_contains": []
     },
     "packages": {
       "x86_64-unknown-linux-gnu": {
@@ -544,9 +545,10 @@ game, not any real supported or planned integration.
   verbatim; the install plan (below) uses it.
 - `matcher` appears only on `plugins` entries that are game plugins and
   mirrors the manifest's `[match]` table verbatim as
-  `{"process_names", "process_path_patterns", "command_line_patterns", "comm_hints"}`
+  `{"process_names", "process_path_patterns", "command_line_patterns", "comm_hints", "linux_name_contains"}`
   (`docs/v2/plugin-abi.md` owns the matching semantics: regex dialect,
-  anchoring, case rules, and the `comm_hints` pre-filter, D18). A non-game plugin omits it.
+  anchoring, case rules, the `comm_hints` pre-filter, and the
+  `linux_name_contains` Linux userspace substring matcher, D18/A1b-DB). A non-game plugin omits it.
 - `packages` is a map from target to `{"url","sha256","size"}`, with the same
   field rules as 1.x `Package` except the size limit (below): absolute HTTPS URL without embedded
   credentials, 64-character hex SHA-256 of the compressed ZIP, exact positive

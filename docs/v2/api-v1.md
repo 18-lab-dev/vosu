@@ -56,7 +56,7 @@ session while it exists, regardless of OS foreground or recency. The osu!
 plugin sets this on the stable tournament-manager session once the M4a-
 or-later aggregate task (`docs/v2/implementation-plan.md`) lands, matching
 1.x's `select()`, which prefers the tournament manager unconditionally
-(`src/instance.rs:603-618`, `src/runtime/worker.rs:867-875`) — nothing
+(`src/instance.rs:702-721`, `src/runtime/worker.rs:873-896`) — nothing
 else in 2.0 sets it at this freeze (if two `--tournament` processes somehow
 attach at once, 2.0 keeps whichever is identified first, which need not be
 1.x's lowest-PID choice; an edge of an edge). Otherwise, exactly
