@@ -213,8 +213,9 @@ pub(super) async fn check_release_and_prepare<'a, 'b, P: UpdatePlatform>(
     }
     let guard = TransactionGuard::begin(program_dir, target, platform)?;
     let metadata_path = guard.record.work.join("release.json");
+    let user_agent = user_agent(current);
     client
-        .download_atomic(release_api, USER_AGENT, &metadata_path, cancel)
+        .download_atomic(release_api, &user_agent, &metadata_path, cancel)
         .await?;
     if fs::metadata(&metadata_path)?.len() > 1024 * 1024 {
         return Err(UpdateError::Metadata(
@@ -247,7 +248,7 @@ pub(super) async fn check_release_and_prepare<'a, 'b, P: UpdatePlatform>(
             Ok(UpdateCheck::MajorAvailable(release))
         }
         ReleaseDecision::Update(release) if prepare_available => Ok(UpdateCheck::Prepared(
-            prepare_update(guard, release, client, cancel).await?,
+            prepare_update(guard, release, &user_agent, client, cancel).await?,
         )),
         ReleaseDecision::Update(release) => {
             let version = release.version;

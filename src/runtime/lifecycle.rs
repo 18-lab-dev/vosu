@@ -141,7 +141,7 @@ impl ProductionRuntime {
             Arc::new(RuntimePages {
                 pages: PageService,
                 counters: Arc::clone(&counters),
-                catalog: CatalogService::production(&current_version().to_string()),
+                catalog: production_catalog(),
                 config: Arc::clone(&self.config),
                 shutdown: self.shutdown_token.clone(),
                 update: self.update_notice.clone(),
@@ -797,10 +797,7 @@ pub async fn run_cli() -> io::Result<()> {
     }
     let logger = Logger::new(
         paths.data().join("logs"),
-        LoggerOptions {
-            debug_log: config.current().debug_log,
-            ..LoggerOptions::default()
-        },
+        production_logger_options(config.current().debug_log),
         Arc::new(StdoutConsole),
     )?;
     if let Some(warning) = recovery_warning {

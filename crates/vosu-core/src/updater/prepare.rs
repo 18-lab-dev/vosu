@@ -3,10 +3,12 @@ pub(super) use vosu_net::streaming::{open_preflighted_zip, preflight_zip_entries
 
 /// Download, verify and extract the one expected root executable. The caller
 /// may then spawn `helper_path`, wait for its exact identity, and call
-/// `TransactionGuard::hand_off` before shutting down the daemon.
+/// `TransactionGuard::hand_off` before shutting down the daemon. `user_agent`
+/// identifies the running executable (see [`user_agent`](super::user_agent)).
 pub async fn prepare_update<'a, P: UpdatePlatform>(
     mut guard: TransactionGuard<'a, P>,
     release: ValidatedRelease,
+    user_agent: &str,
     client: &StreamingClient,
     cancel: &CancellationToken,
 ) -> Result<PreparedUpdate<'a, P>, UpdateError> {
@@ -14,7 +16,7 @@ pub async fn prepare_update<'a, P: UpdatePlatform>(
     guard.persist_phase(InstallPhase::Downloading)?;
     guard.platform.checkpoint(UpdateCut::BeforePartDownload)?;
     client
-        .download_atomic(&release.archive_url, USER_AGENT, &guard.record.part, cancel)
+        .download_atomic(&release.archive_url, user_agent, &guard.record.part, cancel)
         .await?;
     if cancel.is_cancelled() {
         return Err(NetworkError::Cancelled.into());

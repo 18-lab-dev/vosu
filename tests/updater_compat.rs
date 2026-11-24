@@ -19,7 +19,7 @@ use vosu_core::updater::{
     EncodedOsString, INSTALL_RECORD_NAME, InstallPhase, InstallRecord, MajorRelease,
     ProcessIdentity, RecoveryAction, ReleaseDecision, StartupIntent, TransactionGuard, UpdateError,
     UpdatePlatform, classify_recovery, load_record, parse_latest_release,
-    parse_startup_update_args,
+    parse_startup_update_args, user_agent,
 };
 
 fn release(tag: &str, draft: bool, prerelease: bool, assets: serde_json::Value) -> Vec<u8> {
@@ -254,6 +254,52 @@ fn major_version_release_needs_consent_startup_never_supplies_and_asset_unvalida
 
 fn json_empty() -> serde_json::Value {
     serde_json::json!([])
+}
+
+/// The updater compares against and identifies as the executable's own
+/// version (this integration test's `CARGO_PKG_VERSION` is the root
+/// package's), never `vosu-core`'s unrelated package version: 1.2.5 compared
+/// against 0.1.0 and offered its own release as a major update.
+#[test]
+fn running_version_is_the_root_package_version_and_its_own_release_is_not_an_update() {
+    let root = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+    let current = vosu::runtime::current_version();
+    assert_eq!(current, root);
+    assert_eq!(
+        user_agent(&current),
+        format!("vosu/{}", env!("CARGO_PKG_VERSION"))
+    );
+
+    let good_digest = format!("sha256:{}", "ab".repeat(32));
+    let published = |version: &Version| {
+        release(
+            &format!("v{version}"),
+            false,
+            false,
+            serde_json::json!([
+                asset(&format!("vosu-linux-v{version}.zip"), Some(&good_digest)),
+                asset(&format!("vosu-windows-v{version}.zip"), Some(&good_digest)),
+            ]),
+        )
+    };
+    // The published release of the running version is never an update,
+    // whatever the platform or major-update consent.
+    for platform in ["linux", "windows"] {
+        for major_consent in [false, true] {
+            assert_eq!(
+                parse_latest_release(&published(&root), &current, platform, major_consent).unwrap(),
+                ReleaseDecision::Latest(root.clone())
+            );
+        }
+    }
+    // The next patch release still is one.
+    let next = Version::new(root.major, root.minor, root.patch + 1);
+    let ReleaseDecision::Update(update) =
+        parse_latest_release(&published(&next), &current, "linux", false).unwrap()
+    else {
+        panic!("the next patch release must be an update")
+    };
+    assert_eq!(update.version, next);
 }
 
 #[test]

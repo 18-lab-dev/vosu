@@ -83,7 +83,7 @@ use vosu_core::{
     updater::{
         LATEST_RELEASE_API, NativePlatform, RELEASE_PLATFORM, RecoveryAction, StartupDispatch,
         StartupReadiness, UpdateCheck, check_latest_and_prepare, check_startup_and_prepare,
-        current_version, dispatch_startup_role, recover_startup_update,
+        dispatch_startup_role, recover_startup_update,
     },
 };
 use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
@@ -126,6 +126,30 @@ use render::*;
 use service::*;
 use worker::*;
 
+/// The running executable's version: the only app-version authority.
+///
+/// Library crates such as `vosu-core` carry their own unrelated package
+/// versions, so they never report one as the app's; every version they show
+/// or compare (updater checks and User-Agent, console log prefixes, catalog
+/// requests) is passed in from here.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// [`VERSION`] as the `current` version every update check compares against.
+pub fn current_version() -> semver::Version {
+    semver::Version::parse(VERSION).expect("root package version is valid semver")
+}
+
+fn production_logger_options(debug_log: bool) -> LoggerOptions {
+    LoggerOptions {
+        debug_log,
+        ..LoggerOptions::new(VERSION)
+    }
+}
+
+fn production_catalog() -> CatalogService {
+    CatalogService::production(VERSION)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -144,4 +168,5 @@ mod tests {
     include!("runtime/tests/service.rs");
     include!("runtime/tests/update_notice.rs");
     include!("runtime/tests/lifecycle.rs");
+    include!("runtime/tests/version.rs");
 }

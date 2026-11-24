@@ -21,10 +21,17 @@ use tokio_util::sync::CancellationToken;
 
 use vosu_net::streaming::{NetworkError, StreamingClient};
 
-pub const USER_AGENT: &str = concat!("vosu/", env!("CARGO_PKG_VERSION"));
 pub const INSTALL_RECORD_NAME: &str = ".vosu-update.json";
 pub const LATEST_RELEASE_API: &str = "https://api.github.com/repos/18-lab-dev/vosu/releases/latest";
-pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The updater's User-Agent for the running executable's version.
+///
+/// `vosu-core` is versioned independently of the application, so it never
+/// reads its own package version: the root executable owns the app version
+/// and passes it to every updater entry point as `current`.
+pub fn user_agent(current: &Version) -> String {
+    format!("vosu/{current}")
+}
 #[cfg(windows)]
 pub const RELEASE_PLATFORM: &str = "windows";
 #[cfg(target_os = "linux")]

@@ -137,15 +137,19 @@ pub struct ProgressToken(u64);
 
 #[derive(Clone, Debug)]
 pub struct LoggerOptions {
+    /// The running executable's version, shown in every console line. The
+    /// application supplies it; `vosu-core`'s own package version is not the
+    /// app version.
     pub version: String,
     pub debug_log: bool,
     pub queue_capacity: usize,
 }
 
-impl Default for LoggerOptions {
-    fn default() -> Self {
+impl LoggerOptions {
+    /// Default options for the application version `version`.
+    pub fn new(version: impl Into<String>) -> Self {
         Self {
-            version: env!("CARGO_PKG_VERSION").to_owned(),
+            version: version.into(),
             debug_log: false,
             queue_capacity: 4096,
         }

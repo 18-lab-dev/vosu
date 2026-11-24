@@ -4,6 +4,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased
 
+### Updater
+
+- Report and compare the running version correctly. vosu 1.2.5 identified itself as 0.1.0, the version of an internal library, so its update check offered 1.2.5 itself as a major update, and accepting it reinstalled the same version. The dashboard and **Settings / About** also showed 0.1.0, as did console log lines and the User-Agent of update and community-catalog requests. All of them now use the executable's own version.
+
 ### Windows
 
 - Retry transient module-snapshot failures while osu! is loading or unloading modules, avoiding failed attachment at startup. Retries are limited to eight attempts for Windows errors 24 and 299; other snapshot failures still return immediately.

@@ -234,9 +234,15 @@ async fn handle_request(
             )
             .body(Body::empty())
             .expect("valid redirect response"),
-        "/repos/18-lab-dev/vosu/releases/latest" => json(
+        // The published latest release is the running executable's own
+        // version, which must never read as an update.
+        "/repos/18-lab-dev/vosu/releases/latest" => response(
             StatusCode::OK,
-            r#"{"tag_name":"v0.1.0","draft":false,"prerelease":false,"assets":[]}"#,
+            "application/json",
+            Bytes::from(format!(
+                r#"{{"tag_name":"v{}","draft":false,"prerelease":false,"assets":[]}}"#,
+                vosu::runtime::VERSION
+            )),
         ),
         "/offsets/2026.714.0.json" => json(
             StatusCode::OK,

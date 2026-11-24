@@ -104,7 +104,7 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
         .request_json(&mock.endpoints().release_latest, USER_AGENT, &cancel)
         .await
         .expect("release endpoint through reserved host");
-    assert_eq!(release["tag_name"], "v0.1.0");
+    assert_eq!(release["tag_name"], format!("v{}", vosu::runtime::VERSION));
 
     let offsets: serde_json::Value = client
         .request_json(
@@ -153,6 +153,17 @@ async fn exact_listener_policy_drives_all_harness_endpoints_and_counter_lifecycl
     assert_eq!(
         response.json::<serde_json::Value>().await.unwrap(),
         serde_json::json!({"status":"latest"})
+    );
+    // The update route identified itself as the running executable, and the
+    // release of that same version was "latest", not an update.
+    let update_request = mock
+        .requests()
+        .into_iter()
+        .rfind(|request| request.path_and_query == "/repos/18-lab-dev/vosu/releases/latest")
+        .expect("update route consulted the release endpoint");
+    assert_eq!(
+        update_request.user_agent,
+        Some(format!("vosu/{}", vosu::runtime::VERSION))
     );
     update_stop.cancel();
     update_task.await.unwrap().unwrap();

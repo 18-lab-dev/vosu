@@ -111,11 +111,7 @@ pub async fn start_test_production_composition(
         Arc::new(RuntimePages {
             pages: PageService,
             counters: Arc::clone(&counters),
-            catalog: CatalogService::new(
-                test_client,
-                endpoints.catalog,
-                &current_version().to_string(),
-            ),
+            catalog: CatalogService::new(test_client, endpoints.catalog, VERSION),
             config: Arc::clone(&options.config),
             shutdown: CancellationToken::new(),
             update: None,
