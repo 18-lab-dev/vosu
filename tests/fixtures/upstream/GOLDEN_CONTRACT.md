@@ -199,8 +199,13 @@ A case is recorded as:
 3. **vosu sandwich:** call the dump endpoint, send A to the real vosu route,
    call the dump endpoint again. Both dumps must agree on provider generation,
    selected-entry digest, focus and roster revisions and derived-input state,
-   and the route's body bytes must equal the dump's adapter bytes. Status and
-   headers come from the route record.
+   and a state route's `GET` response must equal the dump's adapter status and
+   bytes. Status and headers come from the route record, so a `HEAD` status is
+   not compared with the dump. For the `sc` schema only, `provider_generation`
+   and `derived.revision` are exempt: every `sc` read releases the
+   streamCompanion chart-work handle, so both advance on each read (main
+   decision, 2026-11-24). An `sc` sandwich still compares the whole selection
+   and digest, `derived.status` and the HTTP result.
 4. On failure, retry the **whole case** only, at most three attempts, and
    record every attempt. Attempts are never mixed.
 

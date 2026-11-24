@@ -335,6 +335,57 @@ class CaptureValidationTests(GoldenTestCase):
         tampered["attempts"][0]["vosu"]["dump_after"]["envelope"]["bus_revision"] = 8
         self.rejects(capture([tampered]), "digest")
 
+    def test_sc_sandwich_exempts_only_generation_and_derived_revision(self) -> None:
+        body = '{"sc":1}'
+
+        def sc_case(after: dict) -> dict:
+            before = envelope(body, schema="sc", generation=3)
+            before["derived"] = {"revision": 1, "status": "ready"}
+            before["digest"] = golden_mod.envelope_digest(before)
+            up = response(text(body), [["Content-Type", "application/json"]])
+            return case("state-http.json-sc.get.menu", request(target="/json/sc"), (up, up),
+                        dump=before, dump_after=after, schema="sc")
+
+        def after(generation: int = 4, revision: int = 2, status: str = "ready",
+                  http_body: str = body, entries: list | None = None) -> dict:
+            value = envelope(http_body, schema="sc", generation=generation, entries=entries)
+            value["derived"] = {"revision": revision, "status": status}
+            value["digest"] = golden_mod.envelope_digest(value)
+            return value
+
+        # The real sc provider advances generation and derived revision on every read.
+        candidate = self.run_golden(capture([sc_case(after())]))
+        self.assertEqual(self.case_file(candidate, "state-http.json-sc.get.menu")
+                         ["replay"]["provider_generation"], 3)
+        moved_entries = [{"ns": "vosu.osu", "pointer": "/x",
+                          "value_cbor_b64": base64.b64encode(b"\x01").decode(), "error": None}]
+        self.rejects(capture([sc_case(after(entries=moved_entries))]), "differs in entries")
+        self.rejects(capture([sc_case(after(status="pending"))]), "differs in derived.status")
+        self.rejects(capture([sc_case(after(http_body='{"sc":2}'))]), "differs in http")
+        generation_only = state_case()
+        generation_only["attempts"][0]["vosu"]["dump_after"]["envelope"] = envelope(generation=4)
+        self.rejects(capture([generation_only]), "differs in provider_generation")
+        revision_only = state_case()
+        moved = envelope()
+        moved["derived"]["revision"] = 1
+        revision_only["attempts"][0]["vosu"]["dump_after"]["envelope"] = moved
+        self.rejects(capture([revision_only]), "differs in derived")
+
+    def test_head_state_route_keeps_its_own_route_status(self) -> None:
+        # The dump records the adapter's GET result; HEAD status comes from the route.
+        not_ready = '{"error":"osu is not ready/running"}'
+        dump = envelope(not_ready)
+        dump["http"] = {"kind": "not_ready", "status": 500, "body_utf8": not_ready}
+        dump["digest"] = golden_mod.envelope_digest(dump)
+        up = response(text(""), [["Content-Type", "application/json"]],
+                      status="HTTP/1.1 500 Internal Server Error")
+        head = case("state-http.json-v2.head.no-client", request("HEAD"), (up, up),
+                    vosu=response(text(""), [], status="HTTP/1.1 404 Not Found"), dump=dump)
+        self.run_golden(capture([head]))
+        get = case("state-http.json-v2.get.no-client", request(), (up, up),
+                   vosu=response(text(not_ready), [], status="HTTP/1.1 404 Not Found"), dump=dump)
+        self.rejects(capture([get]), "route status differs")
+
     def test_identity_ordinals_are_verified(self) -> None:
         dump = envelope()
         dump["roster"]["sessions"][0]["ordinal"] = 1
