@@ -223,6 +223,8 @@ fn sessions_subscriber_learns_identified_sessions_only_and_without_process_facts
         subscribe(&host, 8612, None, vec![select("vosu.sessions", "")]),
         vosu_status::VOSU_OK
     );
+    // The serial dispatch fence also makes erroneous queued attachments observable.
+    fence(&host, 8612);
     assert!(events.try_recv().is_err());
     let (_, handle, _) = publisher(&host, 8613);
     let SubscriberEvent::Attached(attached) = events.recv_timeout(RECV_TIMEOUT).unwrap() else {
@@ -422,19 +424,37 @@ fn destroyed_subscriber_drops_demand() {
         vosu_status::VOSU_OK
     );
     assert_eq!(demand(&publisher_events).selectors.len(), 1);
-    let super::super::InstanceSlot::Live(entry) = host
+    // Keep the independent publisher alive outside this host's teardown set:
+    // otherwise closing its session would mask a missing subscriber cleanup.
+    let super::super::InstanceSlot::Live(publisher) = host
         .instances
         .lock()
         .unwrap()
-        .remove(&PluginInstanceId::new(8662))
+        .remove(&PluginInstanceId::new(8661))
         .unwrap()
     else {
-        panic!("live subscriber")
+        panic!("live publisher")
     };
-    host.state_subscriber_removed(PluginInstanceId::new(8662));
-    entry.instance.destroy(Duration::from_secs(5)).unwrap();
-    assert!(demand(&publisher_events).selectors.is_empty());
     host.destroy_all(Duration::from_secs(5));
+    assert!(
+        host.state()
+            .store
+            .current(crate::state::SessionKey(handle))
+            .is_some()
+    );
+    assert!(
+        host.state()
+            .subscriptions
+            .lock()
+            .unwrap()
+            .demand(crate::state::SessionKey(handle), None)
+            .selectors
+            .is_empty()
+    );
+    publisher.instance.destroy(Duration::from_secs(5)).unwrap();
+    host.state()
+        .store
+        .close_session(crate::state::SessionKey(handle));
 }
 
 #[test]
@@ -603,7 +623,7 @@ fn slow_sessions_watcher_coalesces_unannounced_churn() {
         host.process_exited(pid);
         assert_eq!(
             host.lifecycle_backlog_for_tests(PluginInstanceId::new(8692)),
-            (1, true)
+            (0, true)
         );
     }
     release.send(()).unwrap();
@@ -642,7 +662,16 @@ fn lifecycle_cap_loses_announced_sessions_and_resubscribe_replays_current_list()
     observe(&host, 88_902, &events, first);
     let release = block_subscriber(&host, 88_902);
     attach_another(&host, &id, &publisher_events, 889_101);
+    assert_eq!(
+        host.lifecycle_backlog_for_tests(PluginInstanceId::new(88_902)),
+        (1, true)
+    );
     attach_another(&host, &id, &publisher_events, 889_102);
+    assert_eq!(
+        host.lifecycle_backlog_for_tests(PluginInstanceId::new(88_902)),
+        (2, true)
+    );
+    attach_another(&host, &id, &publisher_events, 889_103);
     let (pending, subscribed) = host.lifecycle_backlog_for_tests(PluginInstanceId::new(88_902));
     assert!(pending <= 2);
     assert!(!subscribed);
@@ -652,6 +681,7 @@ fn lifecycle_cap_loses_announced_sessions_and_resubscribe_replays_current_list()
     );
     host.process_exited(889_101);
     host.process_exited(889_102);
+    host.process_exited(889_103);
     release.send(()).unwrap();
     let SubscriberEvent::Detached(lost) = events.recv_timeout(RECV_TIMEOUT).unwrap() else {
         panic!("lost session")
@@ -667,7 +697,28 @@ fn lifecycle_cap_loses_announced_sessions_and_resubscribe_replays_current_list()
     );
     assert_eq!(
         host.lifecycle_backlog_for_tests(PluginInstanceId::new(88_902)),
-        (1, true)
+        (0, true)
     );
     host.destroy_all(Duration::from_secs(5));
 }
+
+fn fence(host: &Host, who: u64) {
+    let (tx, rx) = sync_channel(1);
+    {
+        let instances = host.instances.lock().unwrap();
+        let super::super::InstanceSlot::Live(entry) =
+            instances.get(&PluginInstanceId::new(who)).unwrap()
+        else {
+            panic!("live subscriber")
+        };
+        entry
+            .instance
+            .dispatch_task(Box::new(move |_, _| {
+                tx.send(()).unwrap();
+            }))
+            .unwrap();
+    }
+    rx.recv_timeout(RECV_TIMEOUT).unwrap();
+}
+
+mod review;

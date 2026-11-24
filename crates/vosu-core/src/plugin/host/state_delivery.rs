@@ -336,12 +336,29 @@ impl PluginHost {
                     .collect::<Vec<_>>(),
             )
         };
-        let removed = self
-            .state
-            .subscriptions
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove_subscriber(SubscriberId::Plugin(who.0));
+        {
+            let registry = self
+                .state
+                .registry
+                .read()
+                .unwrap_or_else(|p| p.into_inner());
+            let mut subscriptions = self
+                .state
+                .subscriptions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            for (key, _) in &slots {
+                subscriptions
+                    .replace(
+                        &registry,
+                        SubscriberId::Plugin(who.0),
+                        *key,
+                        Vec::new(),
+                        crate::state::InternalGrant::none(),
+                    )
+                    .expect("empty replacement always unsubscribes");
+            }
+        }
         tracing::warn!(plugin = ?self.plugin_id_of(who), cap, "vosu.sessions lifecycle backlog exceeded; unsubscribing watcher");
         for (key, slot) in slots {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
@@ -362,8 +379,6 @@ impl PluginHost {
                 drop(pending);
                 self.retire_state_slot(who, key, &slot);
             }
-        }
-        for key in removed {
             self.refresh_state_demand(key);
         }
     }
@@ -412,6 +427,23 @@ impl PluginHost {
     }
 
     #[cfg(test)]
+    pub(super) fn state_delivery_idle_for_tests(
+        &self,
+        who: PluginInstanceId,
+        key: SessionKey,
+    ) -> bool {
+        self.state_delivery
+            .lock()
+            .unwrap()
+            .slots
+            .get(&(who, key))
+            .is_none_or(|slot| {
+                let slot = slot.lock().unwrap();
+                !slot.queued && !slot.dirty()
+            })
+    }
+
+    #[cfg(test)]
     pub(super) fn set_lifecycle_cap_for_tests(&self, cap: usize) {
         self.state_delivery.lock().unwrap().lifecycle_cap = cap;
     }
@@ -423,7 +455,12 @@ impl PluginHost {
             delivery
                 .slots
                 .iter()
-                .filter(|((id, _), slot)| *id == who && slot.lock().unwrap().lifecycle)
+                .filter(|((id, _), slot)| {
+                    let slot = slot.lock().unwrap();
+                    *id == who
+                        && slot.lifecycle
+                        && (slot.attached.is_some() || slot.detached.is_some())
+                })
                 .count(),
             delivery.watchers.contains(&who),
         )
@@ -450,7 +487,10 @@ impl PluginHost {
                 .slots
                 .iter()
                 .filter(|((id, _), slot)| {
-                    *id == who && slot.lock().unwrap_or_else(|p| p.into_inner()).lifecycle
+                    let slot = slot.lock().unwrap_or_else(|p| p.into_inner());
+                    *id == who
+                        && slot.lifecycle
+                        && (slot.attached.is_some() || slot.detached.is_some())
                 })
                 .count();
             if count >= delivery.lifecycle_cap {
@@ -540,7 +580,11 @@ impl PluginHost {
             delivery
                 .slots
                 .iter()
-                .filter(|((who, session), _)| *session == key && delivery.watchers.contains(who))
+                .filter(|((who, session), slot)| {
+                    *session == key
+                        && delivery.watchers.contains(who)
+                        && slot.lock().unwrap_or_else(|p| p.into_inner()).lifecycle
+                })
                 .map(|((who, _), slot)| (*who, slot.clone()))
                 .collect::<Vec<_>>()
         };
@@ -564,6 +608,9 @@ impl PluginHost {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let key = SessionKey(event.handle);
+        // Close serializes with the store commit mutex, capturing even a commit
+        // whose notification has not yet acquired state_serial.
+        let final_state = self.state.store.close_session(key);
         if let Some(owner) = owner {
             let owners = self
                 .instances
@@ -584,11 +631,6 @@ impl PluginHost {
                     .known = true;
             }
         }
-        self.state
-            .subscriptions
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove_session(key);
         let slots = {
             let delivery = self
                 .state_delivery
@@ -601,6 +643,32 @@ impl PluginHost {
                 .map(|((who, _), slot)| (*who, slot.clone()))
                 .collect::<Vec<_>>()
         };
+        {
+            let registry = self
+                .state
+                .registry
+                .read()
+                .unwrap_or_else(|p| p.into_inner());
+            let mut subscriptions = self
+                .state
+                .subscriptions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if let Some(final_state) = final_state {
+                for (who, slot) in &slots {
+                    let entries = subscriptions.baseline(
+                        &registry,
+                        SubscriberId::Plugin(who.0),
+                        &final_state,
+                    );
+                    slot.lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .merge_at(final_state.revision, entries);
+                }
+            }
+            subscriptions.remove_session(key);
+        }
+        let mut overflow = Vec::new();
         for (who, slot) in slots {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
             if !pending.known && pending.attached.is_some() {
@@ -616,9 +684,33 @@ impl PluginHost {
             }
             pending.demand = None;
             drop(pending);
+            {
+                let delivery = self
+                    .state_delivery
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                if delivery.watchers.contains(&who) {
+                    let count = delivery
+                        .slots
+                        .iter()
+                        .filter(|((id, _), slot)| {
+                            let slot = slot.lock().unwrap_or_else(|p| p.into_inner());
+                            *id == who
+                                && slot.lifecycle
+                                && (slot.attached.is_some() || slot.detached.is_some())
+                        })
+                        .count();
+                    if count > delivery.lifecycle_cap {
+                        overflow.push(who);
+                    }
+                }
+            }
             self.schedule_state_slot(who, key, slot);
         }
-        self.state.store.close_session(key);
+        drop(_demand);
+        for who in overflow {
+            self.end_sessions_watch(who);
+        }
     }
 
     pub(super) fn state_subscriber_removed(&self, who: PluginInstanceId) {
