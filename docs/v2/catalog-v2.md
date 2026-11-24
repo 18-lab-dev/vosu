@@ -884,6 +884,13 @@ initiate selection/download. Central candidate/search-work bounds must be
 documented and enforced by the solver; exhausting them is a
 `resolution-limit` error, with empty `adds`, not a partial solution.
 
+Core's pure solver caps each invocation at 4096 catalog candidates, 256 graph
+nodes, 256 required edges and 100000 search-work units (requirement visits,
+candidate probes and dependency-graph traversal). Work is shared across all
+backtracking branches, not reset on a failed branch. These bounds are centralized
+in `catalog::resolver`; crossing any bound returns `resolution-limit` with no
+adds or resolved edges.
+
 ### Install plan
 
 Installing any catalog item is one user-facing confirmation, not one per

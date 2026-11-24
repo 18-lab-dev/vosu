@@ -17,6 +17,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add pure current-source native trust policy and exact artifact approvals.
   Revocation clears process approvals and reports running in-process code as
   disabled pending user restart; actual runtime handoff remains M5/W4 work.
+- Resolve catalog capability graphs with bounded deterministic ranked backtracking,
+  retained installed consumers, one version per plugin, dependency-first output,
+  and optional grants that never initiate installation.
 
 ## Unreleased — 2.0 M6a
 

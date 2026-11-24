@@ -23,6 +23,8 @@ mod matcher;
 mod mirror;
 #[path = "catalog_v2/plugin.rs"]
 mod plugin;
+#[path = "catalog_v2/resolver.rs"]
+mod resolver;
 #[path = "catalog_v2/schema.rs"]
 mod schema;
 #[path = "catalog_v2/support.rs"]
