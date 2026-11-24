@@ -1,6 +1,32 @@
 use super::*;
 
 impl LazerMemory {
+    pub(super) fn precise_key_player(&mut self) -> Result<usize, MemoryError> {
+        let screen = self.current_screen;
+        if let Some(cache) = self.precise_player.as_mut()
+            && !cache.key_used
+        {
+            cache.key_used = true;
+            if cache.screen == screen {
+                return Ok(cache.player);
+            }
+        }
+        self.player()
+    }
+
+    pub(super) fn precise_hit_player(&mut self) -> Result<usize, MemoryError> {
+        let screen = self.current_screen;
+        if let Some(cache) = self.precise_player.as_mut()
+            && !cache.hit_used
+        {
+            cache.hit_used = true;
+            if cache.screen == screen {
+                return Ok(cache.player);
+            }
+        }
+        self.player()
+    }
+
     pub fn new(process: ProcessHandle, offsets: Arc<LazerOffsets>, pattern: LazerPattern) -> Self {
         let screen_span = screen_span(&offsets);
         Self {

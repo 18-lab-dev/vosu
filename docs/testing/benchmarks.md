@@ -1021,12 +1021,13 @@ measures a one-op host/SDK round trip and two-/four-op shapes with identical
 native RPM work. The measured address was the stable executable's readable MZ
 header; synthetic widths repeat that address, not an osu! pointer graph.
 
-The Criterion target now includes a successful populated lazer precise graph
-and retains populated stable global/menu/gameplay equality assertions.
-On Windows both transports use native self-process RPM. The Criterion host
-executes the public flat executor and SDK interception, not full PluginHost
-routing; the live example includes that routing. Lazer's old zero-filled
-regular Criterion case remains a diagnostic only.
+The Criterion target includes a successful populated lazer precise graph and
+retains populated stable global/menu/gameplay equality assertions. Its Windows
+variants use native self-process RPM through the native reader, flat executor
+plus SDK, or full PluginHost routing (`lazer_precise_routed`). Native/flat retain
+the fixture's range-check wrapper; routed uses the native backend directly, so
+the differences are coarse attribution, not nanosecond-perfect isolation.
+Lazer's old zero-filled regular Criterion case remains diagnostic only.
 
 ### Native call-count diagnosis
 
@@ -1096,10 +1097,11 @@ whole-daemon comparison against 1.x `6ffc087`.
 Four normal release floor runs measured one-op native **0.8 µs** versus plan
 **0.9–1.0 µs**, an additional **0.1–0.2 µs per submission**. Four-op overhead
 was also 0.1–0.2 µs; 18-op overhead was 0.2–0.3 µs, and 43-op/eight-stage
-overhead was 0.3–0.4 µs. These quantized medians do not prove that 87 or nine
-submissions are minimal, or explain away lazer's remaining regression.
+overhead was 0.3–0.4 µs. This prebuilt `PlanMemory::read_flat` probe bypasses
+`PlanProcessMemory`'s plan construction and destination application. It is not
+a whole-path lower bound and does not explain away lazer's remaining regression.
 
-The populated native-RPM Criterion fixtures also remain above 10%:
+Before the dependency-fusion follow-up, populated Criterion cases also exceeded 10%:
 
 | Fixture | Native µs | Plan µs | Paired overhead |
 | --- | ---: | ---: | ---: |
@@ -1111,6 +1113,30 @@ Criterion uses `--bench`, 1 s warmup, 2 s measurement and 30 samples, with
 separate output directories per ABBA invocation. Fixture equality establishes
 functional parity, not D17 acceptance. Raw accepted and rejected captures,
 executable hashes, scripts and the computed summary are retained together.
+
+### Matched full-route cost accounting
+
+Source `803686637224`, six invocations in native/flat/routed/routed/flat/native
+order, uses the same coarse production deadline policy throughout. Means of
+the two invocation medians, in microseconds:
+
+| Populated lazer precise | Native | Flat executor + SDK | Full PluginHost |
+| --- | ---: | ---: | ---: |
+| Before dependency fusion | 13.126 | 15.313 | 16.412 |
+
+The flat path adds **2.187 µs** and full routing another **1.098 µs**. The
+untimed real-executor trace has **16 submissions, 52 operations**, requesting
+1,848 bytes and returning 3,452 bytes. These are descriptive differences between
+invocations, not additive measurements of individual internal instructions.
+An earlier flat run used absolute deadline checks; its apparent cheaper full
+routing is not comparable and is retained separately as rejected attribution.
+
+Component probes measured result validation at **1.5–14.1 ns** and destination
+copying at **1.2–30.8 ns** for 1×8 through 18×256-byte shapes. Absolute deadline
+construction was **24.4 ns**. Copying is not the missing microseconds; repeated
+whole submissions, adapter framing and routing require reducing the actual
+dependency graph. Raw component and matched-run data remain in
+`cost-matched-raw/` and `cost-matched-summary.json`.
 
 ## Released tosu comparison
 

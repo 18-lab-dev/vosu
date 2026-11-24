@@ -2,33 +2,6 @@ use super::*;
 
 mod audio;
 
-fn read_many_key_fields<const WIDTH: usize>(
-    process: &ProcessHandle,
-    addresses: &[usize; KeyOverlayButton::lazer_button_count()],
-    destinations: &mut [[u8; WIDTH]; KeyOverlayButton::lazer_button_count()],
-    len: usize,
-    pressed_addresses: &[usize],
-    pressed_destinations: &mut [[u8; 1]],
-) -> Result<(), MemoryError> {
-    let request_count = len + pressed_destinations.len();
-    let mut fields = addresses[..len]
-        .iter()
-        .zip(&mut destinations[..len])
-        .map(|(&address, dst)| ReadRequest::new(address, dst))
-        .chain(
-            pressed_addresses
-                .iter()
-                .zip(pressed_destinations)
-                .map(|(&address, dst)| ReadRequest::new(address, dst)),
-        );
-    let mut requests: [_; 30] = std::array::from_fn(|_| {
-        fields
-            .next()
-            .unwrap_or_else(|| ReadRequest::new(0, &mut []))
-    });
-    process.read_many(&mut requests[..request_count])
-}
-
 impl SynchronizedMemoryReader for LazerMemory {
     fn reader_synchronization(&self) -> ReaderSynchronization {
         ReaderSynchronization {
@@ -52,34 +25,6 @@ impl SynchronizedMemoryReader for LazerMemory {
 
     fn synchronize_precise(&mut self, state: ReaderSynchronization, mode: i64) {
         self.prepare_precise(state, mode);
-    }
-}
-
-impl LazerMemory {
-    fn precise_key_player(&mut self) -> Result<usize, MemoryError> {
-        let screen = self.current_screen;
-        if let Some(cache) = self.precise_player.as_mut()
-            && !cache.key_used
-        {
-            cache.key_used = true;
-            if cache.screen == screen {
-                return Ok(cache.player);
-            }
-        }
-        self.player()
-    }
-
-    fn precise_hit_player(&mut self) -> Result<usize, MemoryError> {
-        let screen = self.current_screen;
-        if let Some(cache) = self.precise_player.as_mut()
-            && !cache.hit_used
-        {
-            cache.hit_used = true;
-            if cache.screen == screen {
-                return Ok(cache.player);
-            }
-        }
-        self.player()
     }
 }
 
