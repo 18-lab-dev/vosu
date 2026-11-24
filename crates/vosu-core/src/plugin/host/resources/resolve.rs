@@ -19,18 +19,18 @@ fn identity(plugin: &str) -> ReferenceIdentity {
     .unwrap()
 }
 #[test]
-fn resolve_is_lazy_failed_opens_retry_successes_cache_and_snapshot_bytes() {
+fn resolve_is_lazy_failed_opens_retry_successes_cache_and_mutation_is_gone() {
     let fixture = BytesTest::new("resolve", 99311);
     *fixture.fixture.path.lock().unwrap() = Some("chart.osu".into());
     let identity = identity("testkit.bytes.resolve");
     let resolver = ResourceResolver::new(&fixture.host, Duration::from_secs(2));
     assert_eq!(fixture.fixture.resolves.load(Ordering::SeqCst), 0);
-    assert!(
+    assert!(matches!(
         fixture
             .runtime
-            .block_on(resolver.resolve(fixture.owner, &identity))
-            .is_err()
-    );
+            .block_on(resolver.resolve(fixture.owner, &identity)),
+        Err(ResourceRequestError::NotFound)
+    ));
     assert_eq!(fixture.fixture.resolves.load(Ordering::SeqCst), 1);
     std::fs::write(fixture.dir.path().join("chart.osu"), b"original-chart").unwrap();
     let ResolvedResource::File(file) = fixture
@@ -42,7 +42,27 @@ fn resolve_is_lazy_failed_opens_retry_successes_cache_and_snapshot_bytes() {
     };
     assert_eq!(fixture.fixture.resolves.load(Ordering::SeqCst), 2);
     assert_eq!(fixture.runtime.block_on(file.read(2, 5)).unwrap(), b"igina");
+    let original = std::fs::metadata(fixture.dir.path().join("chart.osu")).unwrap();
+    assert_eq!(file.modified(), Some(original.modified().unwrap()));
+    assert_eq!(
+        file.identity_bytes(),
+        vosu_sys::fs::FileIdentity::of(
+            &std::fs::File::open(fixture.dir.path().join("chart.osu")).unwrap()
+        )
+        .unwrap()
+        .encode()
+    );
     std::fs::write(fixture.dir.path().join("chart.osu"), b"mutated--chart").unwrap();
+    let changed = std::fs::OpenOptions::new()
+        .write(true)
+        .open(fixture.dir.path().join("chart.osu"))
+        .unwrap();
+    changed
+        .set_times(std::fs::FileTimes::new().set_modified(original.modified().unwrap()))
+        .unwrap();
+    let restored = changed.metadata().unwrap();
+    assert_eq!(restored.len(), original.len());
+    assert_eq!(restored.modified().unwrap(), original.modified().unwrap());
     let ResolvedResource::File(cached) = fixture
         .runtime
         .block_on(resolver.resolve(fixture.owner, &identity))
@@ -53,14 +73,18 @@ fn resolve_is_lazy_failed_opens_retry_successes_cache_and_snapshot_bytes() {
     assert!(Arc::ptr_eq(&file, &cached));
     assert_eq!(fixture.fixture.resolves.load(Ordering::SeqCst), 2);
     assert_eq!(
-        fixture.runtime.block_on(cached.read(0, 100)).unwrap(),
-        b"original-chart"
+        fixture.runtime.block_on(cached.read(0, 100)),
+        Err(ResourceRequestError::Gone)
+    );
+    assert_eq!(
+        fixture.runtime.block_on(cached.verify()),
+        Err(ResourceRequestError::Gone)
     );
     resolver.retire(&identity.id);
     assert!(!file.is_current());
     assert_eq!(
         fixture.runtime.block_on(file.read(0, 1)),
-        Err(ResourceRequestError::Cancelled)
+        Err(ResourceRequestError::Gone)
     );
     std::fs::write(fixture.dir.path().join("chart.osu"), b"original-chart").unwrap();
     let ResolvedResource::File(reopened) = fixture

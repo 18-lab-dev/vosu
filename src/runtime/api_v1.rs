@@ -1,6 +1,12 @@
 //! Public API composition owns only a Weak-backed source and an event-driven hub.
-use crate::server::api_v1::{router::ApiV1Router, subscriptions::ApiV1SubscriptionHub};
-use std::sync::Arc;
+use crate::server::api_v1::{
+    resources::ResourceHttp, router::ApiV1Router, subscriptions::ApiV1SubscriptionHub,
+};
+use std::{sync::Arc, time::Duration};
+
+/// Applies independently to resolve/list/lookup and every stream-read reply,
+/// never to the lifetime of a download.
+const RESOURCE_OPERATION_DEADLINE: Duration = Duration::from_secs(5);
 use vosu_core::{config::Config, plugin::PluginHost};
 
 pub(super) struct ApiV1Service {
@@ -34,7 +40,9 @@ impl ApiV1Service {
             config.api_v1_subscription_debounce_duration(),
         );
         Self {
-            router: ApiV1Router::new(source, hub.clone()),
+            router: ApiV1Router::new(source, hub.clone()).with_resources(Arc::new(
+                ResourceHttp::new(host, RESOURCE_OPERATION_DEADLINE),
+            )),
             hub,
             jobs: vosu_core::actions::JobRegistry::new(),
         }
@@ -57,3 +65,6 @@ impl crate::tools::capabilities::InstalledCapabilities for InstalledProviders {
         self.0.upgrade()?.installed_capability_version(capability)
     }
 }
+#[cfg(test)]
+#[path = "api_v1_tests.rs"]
+mod tests;

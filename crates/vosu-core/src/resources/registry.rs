@@ -158,6 +158,18 @@ impl ResourceRegistry {
             .ok_or(RegistryError::Gone)
     }
 
+    /// Authenticated current identity and its bounded set of publication owners.
+    pub fn lookup_bindings(
+        &self,
+        secret: &ResourceSecret,
+        token: &str,
+        known_plugins: &[&str],
+    ) -> Result<(Arc<ReferenceIdentity>, Vec<BindingOwner>), RegistryError> {
+        let identity = self.lookup(secret, token, known_plugins)?;
+        let record = self.records.get(&identity.id).expect("lookup found record");
+        Ok((Arc::clone(&record.identity), record.owners.clone()))
+    }
+
     fn remove_owner(&mut self, owner: &BindingOwner) {
         self.records.retain(|_, record| {
             record.owners.retain(|current| current != owner);

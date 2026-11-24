@@ -4,11 +4,14 @@ mod authorization;
 pub mod error;
 mod http;
 mod jobs;
+mod resource_headers;
+pub mod resources;
 pub mod router;
 mod selection;
 mod session_events;
 pub mod subscriptions;
 mod transport;
+mod trees;
 
 #[cfg(test)]
 mod pointer_properties;

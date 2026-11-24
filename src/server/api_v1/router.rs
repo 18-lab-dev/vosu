@@ -18,6 +18,7 @@ pub struct ApiV1Router {
     source: ApiStateSource,
     hub: ApiV1SubscriptionHub,
     actions: Option<super::actions::ActionRoutes>,
+    resources: Option<Arc<super::resources::ResourceHttp>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -28,6 +29,10 @@ enum Route<'a> {
     Subscribe(Option<&'a str>),
     Action(Option<&'a str>, &'a str),
     Job(&'a str),
+    Resource(&'a str),
+    Tree(&'a str, Option<&'a str>),
+    Chart(&'a str, &'a str),
+    Skin(&'a str, &'a str),
 }
 
 fn classify(path: &str) -> Option<Route<'_>> {
@@ -52,6 +57,26 @@ fn classify(path: &str) -> Option<Route<'_>> {
             return Some(Route::Action(Some(id), action));
         }
         _ => {}
+    }
+    if let Some(token) = path.strip_prefix("resources/") {
+        return (!token.is_empty() && !token.contains('/')).then_some(Route::Resource(token));
+    }
+    if let Some(rest) = path.strip_prefix("trees/") {
+        let (token, path) = rest.split_once('/')?;
+        return (!token.is_empty())
+            .then_some(Route::Tree(token, (!path.is_empty()).then_some(path)));
+    }
+    if let Some(rest) = path.strip_prefix("sessions/") {
+        if let Some((id, path)) = rest.split_once("/skin/") {
+            return (!id.is_empty() && !id.contains('/') && !path.is_empty())
+                .then_some(Route::Skin(id, path));
+        }
+        if let Some((id, kind)) = rest.split_once("/chart/") {
+            return (!id.is_empty()
+                && !id.contains('/')
+                && matches!(kind, "file" | "audio" | "background"))
+            .then_some(Route::Chart(id, kind));
+        }
     }
     let mut segments = path.split('/');
     if segments.next()? != "sessions" {
@@ -81,11 +106,17 @@ impl ApiV1Router {
             source,
             hub,
             actions: None,
+            resources: None,
         }
     }
 
     pub fn with_actions(mut self, actions: super::actions::ActionRoutes) -> Self {
         self.actions = Some(actions);
+        self
+    }
+
+    pub fn with_resources(mut self, resources: Arc<super::resources::ResourceHttp>) -> Self {
+        self.resources = Some(resources);
         self
     }
 
@@ -98,44 +129,64 @@ impl ApiV1Router {
                 "Unknown API route",
             );
         };
+        let secured = matches!(route, Route::Resource(_) | Route::Tree(_, _));
+        let head_allowed = matches!(route, Route::Resource(_) | Route::Tree(_, Some(_)));
         let methods = match route {
             Route::Action(..) => "POST",
             Route::Job(_) => "GET, DELETE",
+            _ if head_allowed => "GET, HEAD",
             _ => "GET",
         };
         if request.method() == Method::OPTIONS {
-            return Response::builder()
+            let response = Response::builder()
                 .status(StatusCode::NO_CONTENT)
                 .header(header::ACCESS_CONTROL_ALLOW_METHODS, methods)
                 .header(header::CACHE_CONTROL, "no-store")
                 .body(Body::empty())
                 .expect("valid preflight");
+            return if secured {
+                super::resource_headers::secure(response)
+            } else {
+                response
+            };
         }
         let method_allowed = match route {
             Route::Action(..) => request.method() == Method::POST,
             Route::Job(_) => matches!(*request.method(), Method::GET | Method::DELETE),
-            _ => request.method() == Method::GET,
+            _ => {
+                request.method() == Method::GET
+                    || (head_allowed && request.method() == Method::HEAD)
+            }
         };
         if !method_allowed {
             let mut response = error(
                 StatusCode::METHOD_NOT_ALLOWED,
                 "method_not_allowed",
-                "Method not allowed",
+                "Unsupported HTTP method",
             );
             response
                 .headers_mut()
                 .insert(header::ALLOW, axum::http::HeaderValue::from_static(methods));
-            return response;
+            return if secured {
+                super::resource_headers::secure(response)
+            } else {
+                response
+            };
         }
         // Only these two exact route shapes may upgrade. A request to a read
         // endpoint with upgrade headers must not silently turn into a read.
         if request.headers().contains_key(header::UPGRADE) && !matches!(route, Route::Subscribe(_))
         {
-            return error(
+            let response = error(
                 StatusCode::NOT_FOUND,
                 "invalid_request",
                 "Unknown WebSocket route",
             );
+            return if secured {
+                super::resource_headers::secure(response)
+            } else {
+                response
+            };
         }
         if matches!(route, Route::Sessions | Route::Session(_))
             && request.uri().query().is_some_and(|query| !query.is_empty())
@@ -165,6 +216,30 @@ impl ApiV1Router {
                     "unauthorized",
                     "Action credential required",
                 ),
+            },
+            Route::Resource(token) => {
+                let Some(resources) = &self.resources else {
+                    return super::resources::unavailable();
+                };
+                resources
+                    .resource(token, request.method(), request.headers())
+                    .await
+            }
+            Route::Tree(token, path) => {
+                let Some(resources) = &self.resources else {
+                    return super::resources::unavailable();
+                };
+                resources
+                    .tree(token, path, request.method(), request.headers())
+                    .await
+            }
+            Route::Chart(id, kind) => match target(id) {
+                Ok(target) => super::trees::redirect(&self.source, &target, Some(kind), None),
+                Err(()) => invalid_target(),
+            },
+            Route::Skin(id, path) => match target(id) {
+                Ok(target) => super::trees::redirect(&self.source, &target, None, Some(path)),
+                Err(()) => invalid_target(),
             },
             Route::Sessions => http::sessions(&self.source),
             Route::Session(id) => match target(id) {
@@ -316,6 +391,26 @@ mod tests {
         assert_eq!(
             classify("/api/v1/sessions/id/state/vosu.play"),
             Some(Route::State("id", Some("vosu.play")))
+        );
+        assert_eq!(
+            classify("/api/v1/resources/token"),
+            Some(Route::Resource("token"))
+        );
+        assert_eq!(
+            classify("/api/v1/trees/token/"),
+            Some(Route::Tree("token", None))
+        );
+        assert_eq!(
+            classify("/api/v1/trees/token/a/b"),
+            Some(Route::Tree("token", Some("a/b")))
+        );
+        assert_eq!(
+            classify("/api/v1/sessions/active/chart/audio"),
+            Some(Route::Chart("active", "audio"))
+        );
+        assert_eq!(
+            classify("/api/v1/sessions/active/skin/a/b"),
+            Some(Route::Skin("active", "a/b"))
         );
         for path in [
             "/api/v1/sessions/",

@@ -3,6 +3,10 @@
 
 #[path = "api_v1/actions.rs"]
 mod actions;
+#[path = "api_v1/resource_redirects.rs"]
+mod resource_redirects;
+#[path = "api_v1/resources.rs"]
+mod resources;
 #[path = "api_v1/security.rs"]
 mod security;
 #[path = "api_v1/sessions.rs"]

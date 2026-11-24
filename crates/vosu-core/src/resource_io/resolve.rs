@@ -13,7 +13,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use vosu_plugin_api::{ResourceResolve, ResourceResolved, VOSU_STREAM_CHUNK_MAX_BYTES};
-use vosu_sys::fs::{SafeChild, SafeRelativePath};
+use vosu_sys::fs::{FileIdentity, SafeChild, SafeRelativePath};
 
 pub const MAX_CACHED_FILE_RESOLUTIONS: usize = 128;
 pub enum ResolvedResource {
@@ -24,11 +24,25 @@ pub struct ResolvedFile {
     root: RootCapability,
     child: Mutex<SafeChild>,
     size: u64,
+    identity: FileIdentity,
+    gone: AtomicBool,
+    modified: Option<std::time::SystemTime>,
     current: AtomicBool,
 }
 impl ResolvedFile {
     pub fn size(&self) -> u64 {
         self.size
+    }
+    /// Metadata validators from the opened representation, without reading bytes.
+    pub fn modified(&self) -> Option<std::time::SystemTime> {
+        self.modified
+    }
+    pub fn identity_bytes(&self) -> [u8; 65] {
+        self.identity.encode()
+    }
+    /// Revalidate a cached capability for HEAD or conditional response headers.
+    pub async fn verify(self: &Arc<Self>) -> Result<(), ResourceRequestError> {
+        self.read(0, 0).await.map(|_| ())
     }
     pub fn is_current(&self) -> bool {
         self.current.load(Ordering::Acquire) && self.root.is_current()
@@ -53,78 +67,42 @@ impl ResolvedFile {
             .map_err(|_| ResourceRequestError::Cancelled)?
     }
     fn read_blocking(&self, offset: u64, len: u32) -> Result<Vec<u8>, ResourceRequestError> {
+        if self.gone.load(Ordering::Acquire) {
+            return Err(ResourceRequestError::Gone);
+        }
         if !self.is_current() {
             return Err(ResourceRequestError::Cancelled);
         }
         let result = (|| {
             let mut child = self.child.lock().unwrap_or_else(|p| p.into_inner());
-            let before = child
-                .file
-                .metadata()
-                .map_err(|_| ResourceRequestError::InvalidReply)?;
-            if before.len() != self.size || before.modified().ok() != child.metadata.modified().ok()
-            {
-                return Err(ResourceRequestError::Cancelled);
+            let before =
+                FileIdentity::of(&child.file).map_err(|_| ResourceRequestError::InvalidReply)?;
+            if before != self.identity {
+                self.gone.store(true, Ordering::Release);
+                return Err(ResourceRequestError::Gone);
             }
             child
                 .file
                 .seek(SeekFrom::Start(offset))
                 .map_err(|_| ResourceRequestError::InvalidReply)?;
             let mut bytes = vec![0; u64::from(len).min(self.size - offset) as usize];
-            child
-                .file
-                .read_exact(&mut bytes)
-                .map_err(|_| ResourceRequestError::InvalidReply)?;
-            let after = child
-                .file
-                .metadata()
-                .map_err(|_| ResourceRequestError::InvalidReply)?;
-            if before.len() != after.len()
-                || before.modified().ok() != after.modified().ok()
-                || !self.is_current()
-            {
+            let read = child.file.read_exact(&mut bytes);
+            let after =
+                FileIdentity::of(&child.file).map_err(|_| ResourceRequestError::InvalidReply)?;
+            if after != self.identity {
+                self.gone.store(true, Ordering::Release);
+                return Err(ResourceRequestError::Gone);
+            }
+            if !self.is_current() {
                 return Err(ResourceRequestError::Cancelled);
             }
+            read.map_err(|_| ResourceRequestError::InvalidReply)?;
             Ok(bytes)
         })();
         if result.is_err() {
             self.invalidate();
         }
         result
-    }
-    fn snapshot(&self) -> Result<(), ResourceRequestError> {
-        let mut child = self.child.lock().unwrap_or_else(|p| p.into_inner());
-        let before = child
-            .file
-            .metadata()
-            .map_err(|_| ResourceRequestError::InvalidReply)?;
-        let mut snapshot = tempfile::tempfile().map_err(|_| ResourceRequestError::InvalidReply)?;
-        child
-            .file
-            .seek(SeekFrom::Start(0))
-            .map_err(|_| ResourceRequestError::InvalidReply)?;
-        let copied = std::io::copy(&mut child.file, &mut snapshot)
-            .map_err(|_| ResourceRequestError::InvalidReply)?;
-        let after = child
-            .file
-            .metadata()
-            .map_err(|_| ResourceRequestError::InvalidReply)?;
-        if copied != self.size
-            || before.len() != after.len()
-            || before.modified().ok() != after.modified().ok()
-            || !self.is_current()
-        {
-            self.invalidate();
-            return Err(ResourceRequestError::Cancelled);
-        }
-        let metadata = snapshot
-            .metadata()
-            .map_err(|_| ResourceRequestError::InvalidReply)?;
-        *child = SafeChild {
-            file: snapshot,
-            metadata,
-        };
-        Ok(())
     }
 }
 struct Cached {
@@ -191,11 +169,6 @@ impl ResourceResolver {
         match reply {
             ResourceReply::Resolved(ResourceResolved::Path { root, path }) => {
                 let file = self.open_file(owner, &root, &path).await?;
-                // Freeze mutable bytes on a cold worker using bounded memory.
-                let snapshot = Arc::clone(&file);
-                tokio::task::spawn_blocking(move || snapshot.snapshot())
-                    .await
-                    .map_err(|_| ResourceRequestError::Cancelled)??;
                 let mut files = self.files.lock().unwrap_or_else(|p| p.into_inner());
                 if !file.is_current() {
                     return Err(ResourceRequestError::Cancelled);
@@ -252,8 +225,13 @@ impl ResourceResolver {
             if !child.metadata.is_file() {
                 return Err(ResourceRequestError::InvalidReply);
             }
+            let identity =
+                FileIdentity::of(&child.file).map_err(|_| ResourceRequestError::InvalidReply)?;
             Ok(Arc::new(ResolvedFile {
-                size: child.metadata.len(),
+                size: identity.size,
+                identity,
+                gone: AtomicBool::new(false),
+                modified: child.metadata.modified().ok(),
                 root,
                 child: Mutex::new(child),
                 current: AtomicBool::new(true),

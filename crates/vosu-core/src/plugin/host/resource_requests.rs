@@ -53,7 +53,17 @@ impl ResourceRequests {
             .host
             .upgrade()
             .ok_or(ResourceRequestError::TargetGone)?;
-        host.resource_request(owner, request, self.deadline).await
+        match host.resource_request(owner, request, self.deadline).await? {
+            ResourceReply::Resolved(ResourceResolved::Error { error })
+            | ResourceReply::Chunk(StreamChunk::Error { error }) => {
+                Err(match error.code.as_str() {
+                    "gone" => ResourceRequestError::Gone,
+                    "not_found" => ResourceRequestError::NotFound,
+                    _ => ResourceRequestError::ProviderFailed,
+                })
+            }
+            reply => Ok(reply),
+        }
     }
 }
 
@@ -63,6 +73,10 @@ pub const MAX_PENDING_RESOURCE_REQUESTS: usize = 64;
 pub enum ResourceRequestError {
     InvalidRequest,
     InvalidReply,
+    /// The provider confirmed that the published representation is no longer valid.
+    Gone,
+    NotFound,
+    ProviderFailed,
     TargetGone,
     Cancelled,
     Busy,

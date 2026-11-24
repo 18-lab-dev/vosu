@@ -18,6 +18,12 @@ use super::resource_requests::{
 use super::{InstanceSlot, PluginHost};
 use crate::identity::PluginInstanceId;
 
+/// A current publication and the live provider authority selected for one read.
+pub struct PublishedResource {
+    pub identity: Arc<crate::resources::ReferenceIdentity>,
+    pub owner: ResourceOwner,
+    pub families: Vec<String>,
+}
 /// Retained authority, not a filesystem path. Cached users must check validity.
 #[derive(Clone, Debug)]
 pub struct RootCapability {
@@ -39,10 +45,14 @@ impl RootCapability {
         if !self.is_current() {
             return Err(ResourceRequestError::Cancelled);
         }
-        let child = self
-            .root
-            .open_child(path)
-            .map_err(|_| ResourceRequestError::InvalidReply)?;
+        let child = self.root.open_child(path).map_err(|error| match error {
+            vosu_sys::fs::SafePathError::Io(error)
+                if error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                ResourceRequestError::NotFound
+            }
+            _ => ResourceRequestError::InvalidReply,
+        })?;
         if !self.is_current() {
             return Err(ResourceRequestError::Cancelled);
         }
@@ -236,6 +246,58 @@ impl PluginHost {
                 .or_insert_with(|| Arc::new(AtomicBool::new(true))),
         ));
         Ok(root)
+    }
+
+    /// Lock order: instances -> reference registry. Release both before checking
+    /// session/root authority; no plugin callback or filesystem work runs locked.
+    pub fn published_resource(
+        &self,
+        token: &str,
+        class: crate::resources::ReferenceClass,
+    ) -> Result<PublishedResource, crate::resources::RegistryError> {
+        use crate::resources::RegistryError;
+        let (identity, bindings, providers) = {
+            let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+            let known: Vec<_> = instances.values().map(InstanceSlot::plugin_id).collect();
+            let store = &self.state.store.resources;
+            let registry = store.registry.lock().unwrap_or_else(|p| p.into_inner());
+            let (identity, bindings) = registry.lookup_bindings(&store.secret, token, &known)?;
+            if identity.class != class {
+                return Err(RegistryError::NotFound);
+            }
+            let providers: Vec<_> = instances
+                .iter()
+                .filter_map(|(&id, slot)| {
+                    let InstanceSlot::Live(entry) = slot else {
+                        return None;
+                    };
+                    if entry.plugin_id != identity.plugin.as_ref() {
+                        return None;
+                    }
+                    let kind = entry
+                        .publisher
+                        .grant
+                        .resource_kind(&identity.reference.kind)?;
+                    Some((id, kind.families.clone()))
+                })
+                .collect();
+            (identity, bindings, providers)
+        };
+        for binding in bindings {
+            if let Some((_, families)) = providers
+                .iter()
+                .find(|(id, _)| *id == PluginInstanceId::new(binding.instance))
+                && let Ok(owner) =
+                    self.resource_owner(PluginInstanceId::new(binding.instance), binding.session)
+            {
+                return Ok(PublishedResource {
+                    identity,
+                    owner,
+                    families: families.clone(),
+                });
+            }
+        }
+        Err(RegistryError::Gone)
     }
 
     /// Identity/provider check without copying a plugin identifier.
@@ -464,3 +526,5 @@ mod byte_tests;
 mod resolve;
 #[cfg(test)]
 mod stream;
+#[cfg(test)]
+mod tree_tests;

@@ -37,6 +37,10 @@ impl PublisherGrant {
         &self.plugin_id
     }
 
+    pub(crate) fn resource_kind(&self, kind: &str) -> Option<&vosu_plugin_api::ResourceKind> {
+        self.resource_kinds.iter().find(|entry| entry.kind == kind)
+    }
+
     pub fn from_manifest(m: &PluginManifest) -> Result<Self, GrantError> {
         m.validate().map_err(GrantError::Manifest)?;
         let mut covers = Vec::new();

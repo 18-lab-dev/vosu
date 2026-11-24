@@ -35,6 +35,38 @@ fn owner(session: u64) -> BindingOwner {
 }
 
 #[test]
+fn resources_lookup_bindings_excludes_retired_owners_and_authenticates_first() {
+    let secret = ResourceSecret::fixture([137; 32]);
+    let identity = identity(&secret, Value::Integer(193.into()));
+    let mut registry = ResourceRegistry::default();
+    let prepared = registry
+        .prepare(
+            &[],
+            vec![
+                (owner(191), identity.clone()),
+                (owner(192), identity.clone()),
+            ],
+        )
+        .unwrap();
+    registry.commit(prepared).unwrap();
+    registry.remove_session(71, 191);
+    let (current, bindings) = registry
+        .lookup_bindings(&secret, identity.id.as_str(), &["test.resource"])
+        .unwrap();
+    assert_eq!(current.id, identity.id);
+    assert_eq!(bindings, vec![owner(192)]);
+    assert!(matches!(
+        registry.lookup_bindings(&secret, identity.id.as_str(), &[]),
+        Err(RegistryError::NotFound)
+    ));
+    registry.remove_session(71, 192);
+    assert!(matches!(
+        registry.lookup_bindings(&secret, identity.id.as_str(), &["test.resource"]),
+        Err(RegistryError::Gone)
+    ));
+}
+
+#[test]
 fn resources_multiple_owners_and_detach_do_not_retire_live_token() {
     let secret = ResourceSecret::fixture([19; 32]);
     let identity = identity(&secret, Value::Integer(37.into()));

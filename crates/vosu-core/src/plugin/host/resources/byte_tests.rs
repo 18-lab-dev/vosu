@@ -18,6 +18,7 @@ pub(super) struct Fixture {
     pub next: std::sync::atomic::AtomicU64,
     pub path: Mutex<Option<String>>,
     pub chunks: Mutex<VecDeque<StreamChunk>>,
+    pub trees: Mutex<VecDeque<ResourceResolved>>,
     pub attached: SyncSender<u64>,
     pub closed: SyncSender<u64>,
     pub reads: SyncSender<(u64, u64, u32)>,
@@ -51,6 +52,15 @@ impl Plugin for BytePlugin {
                         size: 17,
                     },
                 }))
+            }
+            Message::TreeList(_) | Message::TreeLookup(_) => {
+                self.fixture.resolves.fetch_add(1, Ordering::SeqCst);
+                self.fixture
+                    .trees
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .map(Message::ResourceResolved)
             }
             Message::StreamRead(r) => {
                 self.fixture
@@ -124,6 +134,7 @@ impl BytesTest {
             next: std::sync::atomic::AtomicU64::new(101),
             path: Mutex::new(None),
             chunks: Mutex::new(VecDeque::new()),
+            trees: Mutex::new(VecDeque::new()),
             attached,
             closed,
             reads,
