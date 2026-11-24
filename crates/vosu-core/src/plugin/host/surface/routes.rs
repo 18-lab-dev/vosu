@@ -233,13 +233,16 @@ impl PluginHost {
 
     /// Transport performs peer/origin/key admission before calling this seam.
     /// The provider Arc is cloned under the lock and invoked only after release.
-    pub fn dispatch_surface_route(
+    pub async fn dispatch_surface_route(
         &self,
         listener: ListenerRole,
         websocket: bool,
         mut request: SurfaceRequest,
     ) -> Option<ProviderResponse> {
-        if request.body.len() > 1024 * 1024 || request.path.len() > 2048 {
+        if request.body.len() > 1024 * 1024
+            || request.path.len() > 2048
+            || !request.valid_metadata()
+        {
             return None;
         }
         let (id, provider) = {
@@ -258,7 +261,7 @@ impl PluginHost {
                 route.descriptor.listener == listener && route.descriptor.websocket == websocket && route.descriptor.method == request.method && matches(&route.descriptor.path, &request.path)
             }).map(|route| (route.id, route.provider.clone()))
         }?;
-        let response = provider.respond(request);
+        let response = provider.respond(request).await;
         match &response {
             ProviderResponse::Http(_) if websocket => return None,
             ProviderResponse::Feed(feed) => {
@@ -286,6 +289,7 @@ impl PluginHost {
                     return None;
                 }
             }
+            ProviderResponse::Http(response) if !response.valid_metadata() => return None,
             ProviderResponse::Http(_) => {}
         }
         Some(response)

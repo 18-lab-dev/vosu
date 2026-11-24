@@ -42,7 +42,7 @@ pub(crate) struct SurfaceRoute {
     pub reader: String,
     pub descriptor: vosu_surface::routes::RouteDescriptor,
     pub provider: Arc<dyn vosu_surface::routes::RouteProvider>,
-    pub feeds: Vec<std::sync::Weak<vosu_surface::routes::FeedState>>,
+    pub feeds: Vec<std::sync::Weak<dyn vosu_surface::routes::FeedControl>>,
 }
 
 impl Drop for SurfaceRoute {

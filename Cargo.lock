@@ -3848,6 +3848,7 @@ dependencies = [
 name = "vosu-surface"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "tokio",
  "vosu-plugin-api",
 ]

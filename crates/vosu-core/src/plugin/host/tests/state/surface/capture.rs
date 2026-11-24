@@ -47,15 +47,20 @@ fn descriptor(path: RoutePath) -> RouteDescriptor {
 }
 struct Reentrant(Arc<crate::plugin::host::PluginHost>);
 impl RouteProvider for Reentrant {
-    fn respond(&self, request: SurfaceRequest) -> ProviderResponse {
-        // These would deadlock if dispatch retained either registry or instance locks.
-        drop(self.0.surfaces.lock().unwrap());
-        drop(self.0.instances.lock().unwrap());
-        assert!(request.management.is_none());
-        ProviderResponse::Http(SurfaceResponse {
-            status: 200,
-            content_type: "application/json".into(),
-            body: Arc::from(b"42".as_slice()),
+    fn respond(
+        &self,
+        request: SurfaceRequest,
+    ) -> vosu_surface::routes::ResponseFuture<'_, ProviderResponse> {
+        Box::pin(async move {
+            // These would deadlock if dispatch retained either registry or instance locks.
+            drop(self.0.surfaces.lock().unwrap());
+            drop(self.0.instances.lock().unwrap());
+            assert!(request.management.is_none());
+            ProviderResponse::Http(SurfaceResponse {
+                status: 200,
+                headers: vec![("content-type".into(), "application/json".into())],
+                body: vosu_surface::routes::ResponseBody::Bytes(bytes::Bytes::from_static(b"42")),
+            })
         })
     }
 }
@@ -63,10 +68,23 @@ fn request(context: Arc<vosu_surface::state::CapturedSelection>, path: &str) -> 
     SurfaceRequest {
         method: "GET".into(),
         path: path.into(),
+        query: Vec::new(),
+        headers: Vec::new(),
         body: Arc::from([]),
         context,
         management: None,
     }
+}
+fn dispatch(
+    rt: &tokio::runtime::Runtime,
+    host: &crate::plugin::host::PluginHost,
+    request: SurfaceRequest,
+) -> Option<ProviderResponse> {
+    rt.block_on(tokio::time::timeout(
+        RECV_TIMEOUT,
+        host.dispatch_surface_route(ListenerRole::Overlay, false, request),
+    ))
+    .expect("surface dispatch timed out")
 }
 
 #[test]
@@ -224,16 +242,9 @@ fn routes_are_adapter_only_atomic_role_method_scoped_and_raii() {
         Err(RegistrationError::Collision)
     ));
     let context = Arc::new(adapter.capture(SessionTarget::Focused, &[]).unwrap());
+    assert!(dispatch(&rt, &host, request(context.clone(), "/p0-new")).is_none());
     assert!(
-        host.dispatch_surface_route(
-            ListenerRole::Overlay,
-            false,
-            request(context.clone(), "/p0-new")
-        )
-        .is_none()
-    );
-    assert!(
-        matches!(host.dispatch_surface_route(ListenerRole::Overlay, false, request(context.clone(), "/p0-test")), Some(ProviderResponse::Http(response)) if response.status == 200)
+        matches!(dispatch(&rt, &host, request(context.clone(), "/p0-test")), Some(ProviderResponse::Http(response)) if response.status == 200)
     );
     let mut head = route.clone();
     head.method = "HEAD".into();
@@ -246,20 +257,10 @@ fn routes_are_adapter_only_atomic_role_method_scoped_and_raii() {
         .register_routes(vec![(dashboard, provider.clone())])
         .unwrap();
     drop(lease);
-    assert!(
-        host.dispatch_surface_route(
-            ListenerRole::Overlay,
-            false,
-            request(context.clone(), "/p0-test")
-        )
-        .is_none()
-    );
+    assert!(dispatch(&rt, &host, request(context.clone(), "/p0-test")).is_none());
     let lease = other.register_routes(vec![(route, provider)]).unwrap();
     host.destroy_all(RECV_TIMEOUT);
-    assert!(
-        host.dispatch_surface_route(ListenerRole::Overlay, false, request(context, "/p0-test"))
-            .is_none()
-    );
+    assert!(dispatch(&rt, &host, request(context, "/p0-test")).is_none());
     assert!(host.surfaces.lock().unwrap().routes.is_empty());
     drop((lease, head_lease, dashboard_lease));
 }
@@ -322,28 +323,60 @@ fn replacement_is_atomic_and_disconnect_preserves_other_demand() {
 }
 
 struct Feed(Arc<dyn vosu_surface::requester::BundledRequester>);
-impl vosu_surface::routes::FeedEncoder for Feed {
-    fn encode(&self, _update: &vosu_surface::state::SurfaceUpdate) -> SurfaceResponse {
-        SurfaceResponse {
-            status: 200,
-            content_type: "application/json".into(),
-            body: Arc::from(b"{}".as_slice()),
-        }
+struct TestFeed(std::sync::Mutex<Option<vosu_surface::state::SurfaceSubscription>>);
+impl vosu_surface::routes::FeedControl for TestFeed {
+    fn id(&self) -> u64 {
+        1
+    }
+    fn receive(
+        &self,
+        _: vosu_surface::routes::Inbound,
+    ) -> vosu_surface::routes::ResponseFuture<'_, Option<bytes::Bytes>> {
+        Box::pin(async { None })
+    }
+    fn replace_filters(&self, _: bytes::Bytes) -> Result<(), String> {
+        Err("not used".into())
+    }
+    fn write_completed(&self) {}
+    fn send_text(&self, _: bytes::Bytes) -> vosu_surface::routes::ResponseFuture<'_, bool> {
+        Box::pin(async { false })
+    }
+    fn try_send_text(&self, _: bytes::Bytes) -> bool {
+        false
+    }
+    fn close(&self) {
+        self.0.lock().unwrap().take();
+    }
+    fn is_closed(&self) -> bool {
+        self.0.lock().unwrap().is_none()
+    }
+}
+struct TestReceiver;
+impl vosu_surface::routes::FeedReceiver for TestReceiver {
+    fn recv(
+        &mut self,
+    ) -> vosu_surface::routes::ResponseFuture<'_, Option<vosu_surface::routes::Outbound>> {
+        Box::pin(async { None })
     }
 }
 impl RouteProvider for Feed {
-    fn respond(&self, _request: SurfaceRequest) -> ProviderResponse {
-        let subscription = self
-            .0
-            .subscribe(
-                SessionTarget::Focused,
-                vec![selector("vosu.play", "/combo")],
-            )
-            .unwrap();
-        ProviderResponse::Feed(vosu_surface::routes::SurfaceFeed::new(
-            subscription,
-            Arc::new(Feed(self.0.clone())),
-        ))
+    fn respond(
+        &self,
+        _request: SurfaceRequest,
+    ) -> vosu_surface::routes::ResponseFuture<'_, ProviderResponse> {
+        Box::pin(async move {
+            let subscription = self
+                .0
+                .subscribe(
+                    SessionTarget::Focused,
+                    vec![selector("vosu.play", "/combo")],
+                )
+                .unwrap();
+            ProviderResponse::Feed(vosu_surface::routes::SurfaceFeed {
+                state: Arc::new(TestFeed(std::sync::Mutex::new(Some(subscription)))),
+                receiver: Box::new(TestReceiver),
+            })
+        })
     }
 }
 
@@ -370,12 +403,16 @@ fn unregistering_feed_releases_connected_client_demand() {
         Err(RegistrationError::Collision)
     ));
     let context = Arc::new(api.capture(SessionTarget::Focused, &[]).unwrap());
-    let Some(ProviderResponse::Feed(feed)) =
-        host.dispatch_surface_route(ListenerRole::Overlay, true, request(context, "/p0-feed"))
+    let Some(ProviderResponse::Feed(feed)) = rt
+        .block_on(tokio::time::timeout(
+            RECV_TIMEOUT,
+            host.dispatch_surface_route(ListenerRole::Overlay, true, request(context, "/p0-feed")),
+        ))
+        .unwrap()
     else {
         panic!("feed was not opened")
     };
-    assert!(feed.state.updates().is_some());
+    assert!(!feed.state.is_closed());
     assert!(
         !host
             .state()
@@ -387,7 +424,7 @@ fn unregistering_feed_releases_connected_client_demand() {
             .is_empty()
     );
     drop(lease);
-    assert!(feed.state.updates().is_none());
+    assert!(feed.state.is_closed());
     assert!(
         host.state()
             .subscriptions

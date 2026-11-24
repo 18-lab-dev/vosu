@@ -428,6 +428,15 @@ and capability-checked bounded resource readers. These are the exhaustive
 in-process operations covered by the bullets above, not additional C opcodes.
 Provider callbacks and filesystem/async work run outside host locks.
 
+Route providers return asynchronous `ResponseFuture`s. Requests contain decoded
+query pairs (at most 128), at most 32 allow-listed conditional/range headers,
+and at most 16 KiB combined query/header bytes; credentials stay in core.
+Responses contain a checked status, at most 32 allow-listed headers / 16 KiB,
+and empty/shared bytes or a bounded range of an R0 `OpenedFile` lease.
+Feeds expose connection-owned filter replacement, latest-only receive,
+write-completion acknowledgement and synchronous cancellation through the
+surface API. Transport admission and frame limits remain core-owned.
+
 `vosu-surface` grants none of: `ProcessMemory` access outside a plugin's own matched session (a `vosu-surface` plugin still reads memory only through `VOSU_OP_READ_PLAN_SUBMIT` like any other plugin), configuration writes, or credentials — a bundled plugin that needs one of these uses the ordinary ABI services, exactly as any other plugin does. The osu! plugin's bridge into the gosuMemory/streamCompanion adapters' `vosu-surface` registration (crate edge `vosu-osu → vosu-surface`) is interim bridge **B1**, named per the ground rules, and is deleted at M4a when those adapters become ordinary bus projections; M5 (out-of-process plugin hosting) starts only after M4a removes it, since B1 cannot cross a process boundary. A future external HTTP opcode remains possible as an additive minor ABI revision, not a breaking one, but none is defined by this freeze.
 
 ## 8. `manifest.toml` runtime fields for `kind = "plugin"`

@@ -99,6 +99,26 @@ and valid `X-Vosu-CSRF`, not a bool supplied by a provider or forwarded header.
 Overlay routes never inherit that witness. No configuration-write or credential
 accessor is added to surface.
 
+`RouteProvider::respond` returns a sendable asynchronous response future.
+`SurfaceRequest` carries method, raw path, once-decoded ordered query pairs,
+selected context and allow-listed request headers (`range`, `if-none-match`,
+`if-modified-since`, `if-range`). Core rejects more than 128 query pairs,
+32 headers, or 16 KiB combined query/header bytes before invoking a provider.
+It never forwards Origin, API keys, cookies or CSRF credentials.
+`SurfaceResponse` carries a validated status, up to 32 headers / 16 KiB,
+and `ResponseBody::{Empty,Bytes,File}`. File bodies carry an R0 opened-object
+lease plus checked offset/length; the generic transport streams bounded chunks
+without reopening a pathname. Response headers are limited to content type,
+length/range, accept-ranges, validators, cache control, location and CSP.
+
+`SurfaceFeed` exposes a connection-owned `FeedControl` and `FeedReceiver`.
+Replacing bounded legacy-filter JSON atomically replaces the H0 plan/demand;
+rejection retains the prior plan. `Outbound::Text` reserves the single state
+slot until `write_completed` after the actual socket send. Other frames do not
+acknowledge state. Feed close, receiver drop and registration teardown release
+demand synchronously; schema cadence and latest-only coalescing remain H0's
+responsibility. Core retains command authorization and transport framing.
+
 Provider callbacks, encoding, filesystem operations, plugin dispatch and
 awaits run outside host/state/registration/resource locks. Leases unregister
 all routes/feeds on drop and stop admitting new callbacks. In-flight callbacks
