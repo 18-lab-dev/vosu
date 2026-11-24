@@ -325,7 +325,7 @@ fn projection_is_allocation_free_after_warmup() {
 fn parsed_sample() -> StateBundleSnapshot {
     use vosu_osu_calc::beatmap::{BeatmapCache, BeatmapInput, ModSet, Ruleset, ScoringMode};
     let content = "osu file format v14\n[General]\nMode:0\n[Metadata]\nSource:source text\nTags:tag1 tag2\n[Difficulty]\nCircleSize:4\nOverallDifficulty:8\nApproachRate:9\nHPDrainRate:5\n[TimingPoints]\n0,500,4,2,1,80,1,0\n[HitObjects]\n64,192,1000,1,0,0:0:0:0:\n128,192,2000,1,0,0:0:0:0:\n";
-    let mut cache = BeatmapCache::new(vosu_osu_state::state_backend::LiveBeatmapEngine);
+    let mut cache = BeatmapCache::new(vosu_osu_calc::live_beatmap::LiveBeatmapEngine);
     let mut parsed = cache
         .load(
             BeatmapInput::Content {

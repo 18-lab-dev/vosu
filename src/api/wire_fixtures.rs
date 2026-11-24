@@ -13,6 +13,7 @@ use vosu_osu_calc::beatmap::{
     BeatmapCache, BeatmapInput, GraphSeries, ModSet, ParsedBeatmap, Ruleset, ScoringMode,
     StrainGraph,
 };
+use vosu_osu_calc::live_beatmap::LiveBeatmapEngine;
 use vosu_osu_calc::progressive::{PerformanceAttributes, ProgressiveAttributes};
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::launch::InstanceSettings;
@@ -20,7 +21,6 @@ use vosu_osu_model::states::{
     CalculateMods, HitErrorArray, KeyOverlayButton as StateKeyOverlayButton, KeypressButton,
     Statistics,
 };
-use vosu_osu_state::state_backend::LiveBeatmapEngine;
 use vosu_osu_state::{
     PreciseState, RegularState, StateBundle, StateBundleSnapshot, StateCalculationBackend,
     StateCalculationFuture, StateCalculationRequest,

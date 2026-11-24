@@ -8,10 +8,10 @@ use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
 use vosu_osu_calc::beatmap::{
     AppliedMod, BeatmapCache, BeatmapInput, ModSet, ParsedBeatmap, Ruleset, ScoringMode,
 };
+use vosu_osu_calc::live_beatmap::LiveBeatmapEngine;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::memory::{LazerRoom, LazerRoomUser};
 use vosu_osu_model::states::KeypressButton;
-use vosu_osu_state::state_backend::LiveBeatmapEngine;
 use vosu_osu_state::{
     RegularState, StateBundle, StateBundleSnapshot, StateCalculationBackend,
     StateCalculationFuture, StateCalculationRequest, TourneyUserState,
