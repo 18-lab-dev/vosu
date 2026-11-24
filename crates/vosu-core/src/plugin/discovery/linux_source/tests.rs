@@ -29,10 +29,11 @@ use crate::plugin::host_services::PluginInstanceId;
 use crate::plugin::registry;
 use crate::plugin::settings::{PluginSettingsService, SettingsError, SettingsStorage};
 
-/// Covers one `RECONCILE_INTERVAL` (`discovery.rs`, 2s) with margin, since
-/// a backend that degraded to polling (or a CN_PROC exit this source's
-/// own `tracked` bookkeeping does not catch, module doc comment) only
-/// reports a change on the next full reconcile tick.
+/// Covers one full-reconcile tick (`discovery.rs`'s own
+/// `DiscoveryCadence`, at most 5s while events are healthy) with
+/// margin, since a backend that degraded to polling (or a CN_PROC exit
+/// this source's own `tracked` bookkeeping does not catch, module doc
+/// comment) only reports a change on the next full reconcile tick.
 const RECV_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct DummyStorage;
@@ -327,7 +328,7 @@ fn unfiltered_cn_proc_style_source_still_delivers_a_tracked_exit() {
     // = false` (`LinuxProcessEvents::open`), so that path silently drops
     // the event rather than forcing a reconcile -- the exit would be
     // lost outright until the next full reconcile, up to
-    // `RECONCILE_INTERVAL` (2s) later.
+    // `DiscoveryCadence`'s own healthy-events interval (5s) later.
     assert_eq!(
         batch.exit,
         vec![4242],

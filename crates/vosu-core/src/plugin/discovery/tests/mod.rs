@@ -280,7 +280,7 @@ impl SyntheticSource {
     }
 
     /// Queues an `inspect` hint without touching the source's own ground
-    /// truth (F2: `process_event_wakes_are_targeted_and_loss_reconciles_once`
+    /// truth (F2: `cadence::inspect_hint_is_targeted_and_a_loss_flag_reconciles_once_keeping_healthy_cadence`
     /// -- a pure re-check hint, not an `appear`/record change).
     fn request_inspect(&self, pid: u32) {
         let mut state = self
@@ -294,7 +294,7 @@ impl SyntheticSource {
 
     /// Marks the source as having lost events, forcing a full reconcile
     /// on the next [`ProcessSource::drain_events`] (F2:
-    /// `process_event_wakes_are_targeted_and_loss_reconciles_once`).
+    /// `cadence::inspect_hint_is_targeted_and_a_loss_flag_reconciles_once_keeping_healthy_cadence`).
     fn request_reconcile(&self) {
         let mut state = self
             .state

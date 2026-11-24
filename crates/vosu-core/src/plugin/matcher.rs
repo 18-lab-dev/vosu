@@ -205,11 +205,20 @@ impl CompiledMatcher {
     /// static D18 overlap check ([`overlaps`]) reads both fields from
     /// the raw [`MatchTable`]s instead, before compilation.
     pub fn compile(platform: MatchPlatform, table: &MatchTable) -> Result<Self, MatcherError> {
+        for hint in &table.comm_hints {
+            if hint.is_empty() {
+                // Checked on every platform (F2fix review P3): an
+                // empty entry is a substring of everything, so on
+                // Windows (where length/NUL never matter -- this field
+                // is accepted but unused) it would still silently make
+                // `overlaps` refuse every later plugin's own matcher as
+                // overlapping, exactly the freeze this field's
+                // length/NUL checks already guard against on Linux.
+                return Err(MatcherError::HintEmpty);
+            }
+        }
         if platform == MatchPlatform::Linux {
             for hint in &table.comm_hints {
-                if hint.is_empty() {
-                    return Err(MatcherError::HintEmpty);
-                }
                 if hint.len() > 15 {
                     return Err(MatcherError::HintTooLong { hint: hint.clone() });
                 }

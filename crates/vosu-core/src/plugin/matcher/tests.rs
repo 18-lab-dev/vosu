@@ -135,6 +135,25 @@ fn empty_comm_hint_is_rejected() {
     ));
 }
 
+/// F2fix review P3: an empty `comm_hints` entry must be refused on
+/// every platform, not only Linux -- on Windows this field is
+/// "accepted but unused" (length/NUL never matter there), but an empty
+/// entry would still silently make `overlaps` refuse every later
+/// plugin's own matcher as overlapping (empty is a substring of
+/// anything), the same freeze the Linux-only check already guarded
+/// against.
+#[test]
+fn empty_comm_hint_is_rejected_on_windows_too() {
+    let table = MatchTable {
+        comm_hints: vec![String::new()],
+        ..Default::default()
+    };
+    assert!(matches!(
+        CompiledMatcher::compile(MatchPlatform::Windows, &table),
+        Err(MatcherError::HintEmpty)
+    ));
+}
+
 /// P3 (review): same freeze risk as `linux_name_contains` — a
 /// `comm_hints` entry with a NUL byte must be refused here, not later
 /// by `CommHints::new`.

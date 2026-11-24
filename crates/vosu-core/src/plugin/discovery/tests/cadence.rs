@@ -86,7 +86,7 @@ async fn targeted_discovery_inserts_only_the_requested_pid() {
     // appear notification does.
     source.insert(test_process(9, "osu!.exe"));
     source.request_inspect(9);
-    let t1 = next - cadence.active / 2;
+    let t1 = next - cadence.empty / 2;
     run_pass(
         &host,
         source.as_ref(),
@@ -606,10 +606,11 @@ async fn exit_confirmation_backoff_is_capped_at_250ms() {
     assert_no_detach(&events, "still alive; nothing may detach yet");
 
     // Due deadlines, still alive each time: 10, 30, 70, 150, 310
-    // (cumulative backoff 10, 20, 40, 80, 160) -- the sixth check, at
-    // +560, is where 160*2 (320) would exceed the 250ms cap.
+    // (cumulative backoff 10, 20, 40, 80, 160) -- after the fifth check
+    // (at t1+310) the backoff must cap at 250ms (not double to an
+    // uncapped 320ms), so the next due deadline is t1+560.
     let mut now = t1;
-    for delta_ms in [10u64, 20, 40, 80, 160, 250] {
+    for delta_ms in [10u64, 20, 40, 80, 160] {
         now += Duration::from_millis(delta_ms);
         run_pass(
             &host,
@@ -626,10 +627,12 @@ async fn exit_confirmation_backoff_is_capped_at_250ms() {
         );
     }
 
-    // The pid dies now, with no further event. The next due deadline
-    // must be the capped 250ms away, not an uncapped 500ms: declaring
-    // dead and checking at `now + 250ms` must detach, which a 500ms
-    // backoff (still pending) would not.
+    // The pid dies now, with no further event. Checking exactly at
+    // `t1+560` (F2fix review P3's own suggested timing) distinguishes
+    // the cap: that deadline is reached only if the backoff capped at
+    // 250ms after the fifth check; an uncapped doubling to 320ms would
+    // instead schedule the next check at `t1+630`, still pending at
+    // `t1+560` and so never detaching here.
     source.declare_dead(750);
     now += Duration::from_millis(250);
     run_pass(
@@ -742,6 +745,7 @@ async fn pending_exit_overflow_evicts_the_latest_due_entry_and_keeps_the_rest() 
         far_future,
     );
     now += Duration::from_micros(1);
+    let full_scans_before_overflow = counters.full_scans.load(Ordering::Relaxed);
     source.report_exit_hint(129);
     run_pass(
         &host,
@@ -751,6 +755,31 @@ async fn pending_exit_overflow_evicts_the_latest_due_entry_and_keeps_the_rest() 
         &counters,
         now,
         far_future,
+    );
+
+    // F2fix review P3: assert directly on `state.pending_exits` instead
+    // of only inferring eviction from later detach timing (the prior
+    // round's assertions could not fail for the bug they targeted).
+    assert!(
+        !state.pending_exits.contains_key(&128),
+        "pid 128's own entry -- the latest due of the 128 just created -- must have been evicted"
+    );
+    assert!(
+        state.pending_exits.contains_key(&1),
+        "pid 1's own entry must have survived the eviction-forced reconcile"
+    );
+    assert!(
+        state.pending_exits.contains_key(&129),
+        "pid 129's own entry, created by this same pass, must be present"
+    );
+    assert_eq!(
+        state.pending_exits.len(),
+        128,
+        "the 128 bound must hold exactly: pid 128 evicted, pid 129 admitted"
+    );
+    assert!(
+        counters.full_scans.load(Ordering::Relaxed) > full_scans_before_overflow,
+        "the eviction must have forced a full reconcile"
     );
 
     // pid 1's own pending confirmation survived the eviction-forced

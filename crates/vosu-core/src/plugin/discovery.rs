@@ -91,19 +91,23 @@ pub struct ProcessEventBatch {
 pub struct DiscoveryCadence {
     /// Cadence while no process is tracked at all: 1.x polled this fast
     /// specifically so a cold-started osu! is still detected quickly
-    /// (`src/instance.rs:31` `EMPTY_DISCOVERY_INTERVAL`).
+    /// (`src/instance.rs:33` `EMPTY_DISCOVERY_INTERVAL`).
     pub empty: Duration,
     /// Cadence while at least one process is tracked and either the
-    /// source's own event channel is unhealthy/absent or this pass just
-    /// forced an out-of-cadence reconcile — a failure or a loss needs
-    /// confirming soon, not after a long health-gated wait
-    /// (`src/instance.rs:32` `ACTIVE_DISCOVERY_INTERVAL`).
+    /// source's own event channel is unhealthy/absent or this pass was
+    /// `degraded` -- a real enumerate/inspect failure or a
+    /// [`MAX_PENDING_EXIT_CONFIRMATIONS`] eviction, never a bare loss
+    /// flag alone (`cadence_interval`'s own doc comment, which keeps
+    /// [`Self::events_healthy`] for that case instead): a real failure
+    /// or an eviction needs confirming soon, not after a long
+    /// health-gated wait
+    /// (`src/instance.rs:34` `ACTIVE_DISCOVERY_INTERVAL`).
     pub active: Duration,
     /// Cadence while at least one process is tracked and
     /// [`ProcessSource::events_healthy`] reports the event channel is
     /// healthy: the backstop only needs to catch a missed event, which a
     /// healthy channel already makes rare
-    /// (`src/instance.rs:34` `EVENT_RECONCILIATION_INTERVAL`).
+    /// (`src/instance.rs:36` `EVENT_RECONCILIATION_INTERVAL`).
     pub events_healthy: Duration,
 }
 
