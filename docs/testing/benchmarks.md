@@ -90,9 +90,12 @@ are outside both end-to-end measurements. Each legacy iteration gets a fresh
 
 ```sh
 cargo bench --locked --package vosu --bench state_bus_bench
-cargo bench --locked --package vosu --bench hot_paths -- publication serializers
+cargo bench --locked --package vosu --bench hot_paths -- 'publication|serializers'
 cargo nextest run --locked --features test-harness --test performance_invariants
 ```
+
+Criterion accepts one regex filter; the plan's literal two positional filters
+`publication serializers` are rejected, so the command above selects their union.
 
 The invariants use the existing thread-local counting allocator: an active
 publisher must allocate and publish nothing for repeated unchanged source Arcs,
@@ -116,6 +119,7 @@ same latest-only sink. **B1 manager background work, other daemon threads,
 poll scheduling, and network delivery are excluded**; this is not whole-process
 daemon CPU usage. Run the historical M1 binary separately for a revision-level
 live comparison; the in-binary B1-only mode isolates the added bus cost.
+As in the capture-only example, PP calculation is disabled in both modes.
 
 Read-to-commit latency starts immediately before capture and ends when the
 surface subscriber observes the committed revision. It is wall time and includes
@@ -141,6 +145,59 @@ false` and each comparison's `inconclusive` flag in the evidence.
 **D17 is not established by shared-host runs.** A quiet pinned-core run with
 non-overlapping 95% intervals is still required before claiming the 10% milestone
 and cumulative bar.
+
+The 2026-11-24 acceptance run (shared host, not CPU-pinned, concurrent host
+activity) produced the following Criterion estimates. These are instrument
+smoke results, **not D17 evidence** or revision-to-revision speedup claims.
+All values below are microseconds; brackets are Criterion's 95% interval.
+
+| M2 case | Estimate [95% interval], µs |
+|---|---|
+| `bus_commit/regular_batch` | 0.87173 [0.85806, 0.88591] |
+| `bus_commit/precise_batch` | 1.0833 [1.0677, 1.1007] |
+| `osu_projection/cold` | 8.7289 [8.4532, 9.0343] |
+| `osu_projection/incremental_regular` | 10.024 [9.9103, 10.144] |
+| `osu_projection/incremental_precise` | 10.016 [9.9146, 10.123] |
+| `osu_projection/unchanged` | 0.047802 [0.047503, 0.048119] |
+| `end_to_end/bus` | 28.424 [28.031, 28.848] |
+| `end_to_end/legacy` | 1.9737 [1.9309, 2.0213] |
+
+The incremental commit fixture clears the captured cold batch before projecting
+the changed snapshot and asserts that a new batch was sent. Both capture lanes
+carry gameplay status, so a suppressed score change cannot accidentally reuse
+the cold batch. Earlier estimates made before that guard are discarded.
+
+The paired run used CPU 7 (SMT sibling 23 **not** reserved), five interleaved
+rounds, 0.5 s warm-up, 1 s measurement and 30 samples, via
+`scripts/bench-compare.py --no-reserve`. Independent targets were `m2-x2-prem0`,
+`m2-x2-m1`, and `m2-x2`; M2's measured fixture is `aa14d2d1b7`. Both historical
+checkouts had only the legacy benchmark/manifest added; their production code
+remained at the named commits. All rows have `exclusive: false`.
+
+| Case | `3a91ff9`, µs [95% CI] | M1 `ec2d086`, µs [95% CI] | M2, µs [95% CI] | M2 vs M1 / inconclusive | M2 vs pre-M0 / inconclusive |
+|---|---|---|---|---|---|
+| `end_to_end/legacy` | 1.5890 [1.5826, 1.7435] | 1.4936 [1.4874, 1.6451] | 1.6472 [1.6369, 1.8007] | +10.28% / true | +3.67% / true |
+| `publication/unfiltered_clients/1` | 2069.9824 [2057.6718, 2083.3083] | 2082.4614 [2063.4970, 2083.3489] | 2082.9160 [2071.6655, 2083.2494] | +0.02% / true | +0.62% / true |
+| `publication/unfiltered_clients/100` | 2083.2132 [2082.0651, 2083.3373] | 2083.1093 [2081.3086, 2083.2977] | 2082.6621 [2081.5812, 2083.3391] | -0.02% / true | -0.03% / true |
+| `publication/unfiltered_clients/1000` | 2084.1429 [2051.0231, 2094.7761] | 2083.3933 [2079.4761, 2110.0448] | 2088.5412 [2080.5258, 2104.7634] | +0.25% / true | +0.21% / true |
+| `serializers_cold/stream_companion` | 1.3728 [1.3611, 1.3825] | 1.3573 [1.3424, 1.3920] | 1.3718 [1.3525, 1.5485] | +1.07% / true | -0.07% / true |
+| `serializers_cold/v1` | 0.9789 [0.9658, 1.0123] | 0.9949 [0.9801, 1.0046] | 0.9840 [0.9774, 1.0002] | -1.09% / true | +0.52% / true |
+| `serializers_cold/v2` | 2.4318 [2.4150, 2.7425] | 2.4748 [2.4436, 2.4834] | 2.4296 [2.4122, 2.4834] | -1.83% / true | -0.09% / true |
+| `serializers_cold/v2_precise` | 0.8834 [0.8778, 0.9070] | 0.8940 [0.8906, 0.8993] | 0.8777 [0.8666, 0.9376] | -1.82% / true | -0.65% / true |
+
+Numbers are medians of round medians and bootstrap 95% intervals. M2-vs-M1
+flags apply the comparison tool's identical spread/overlap rule to the same
+recorded rounds. Every comparison is **inconclusive**, including the +10.28%
+legacy milestone delta; neither passing nor failing D17 is established.
+The new bus path is materially more work in this fixture than the legacy
+serializers, so its raw smoke estimate must not be presented as satisfying D17.
+
+Local evidence (full round logs, raw estimates and summaries):
+`/home/user/.cache/vosu-bench-results/m2-x2-legacy/summary.json` and
+`/home/user/.cache/vosu-bench-results/m2-x2-hot-paths/summary.json`.
+Actual live-client CPU/latency and Windows-native runs were not performed;
+the unit's no-VM constraint was retained. The synthetic real-host surface test,
+allocation invariants, Linux Clippy and Windows cross-Clippy passed.
 
 ### Live reader: native versus plan
 
