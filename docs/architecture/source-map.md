@@ -80,6 +80,12 @@ so `tools -> server` is the only edge left.
   `scripts/module-boundaries/vosu-osu-reader.txt`; no other module reaches it.
 - `crates/vosu-osu-state/src/bundle/publication.rs` owns immutable snapshot materialization and
   regular/precise Arc reuse; `reducer.rs` owns state transitions.
+- `crates/vosu-osu-state/src/bundle/resources.rs` exposes explicit cold resource facts,
+  retaining the reader's shared lazer set and skin indexes. Accepted selections advance
+  a generation; asynchronous results must pass `ColdResourceFacts::is_current` before
+  publication (including instance/reset and root/skin checks). No capture tick constructs
+  this descriptor, reads more client memory, or allocates/copies a set index. These are
+  internal source facts, not filesystem authority or added public state paths.
 - `crates/vosu-pp/src/beatmap/random.rs` owns deterministic random-map transforms.
   Calculator tests group gradual, hit-window, mod, stateful-oracle, and scoring
   contracts under their existing integration-test entrypoints.

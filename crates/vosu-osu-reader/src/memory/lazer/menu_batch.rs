@@ -344,6 +344,11 @@ impl LazerMemory {
             set_id: le_i32(&set_id) as i64,
             ranked_status,
             object_count: le_i32(&object_count) as i64,
+            resources: Some(Arc::new(vosu_osu_model::memory::BeatmapResources {
+                files: file_map,
+                audio_name,
+                background_name,
+            })),
         }))))
     }
 }

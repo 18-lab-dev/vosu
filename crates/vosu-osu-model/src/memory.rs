@@ -367,6 +367,15 @@ mod ranked_status_number {
     }
 }
 
+/// Cold lazer set index, decoded only when the selected chart changes.
+/// Hashes are content-store identities; names retain their logical tree spelling.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BeatmapResources {
+    pub files: IndexMap<String, String>,
+    pub audio_name: String,
+    pub background_name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MenuFull {
     pub gamemode: i64,
@@ -403,6 +412,9 @@ pub struct MenuFull {
     pub ranked_status: f64,
     #[serde(rename = "objectCount")]
     pub object_count: i64,
+    /// Internal capture facts, never an additional legacy/public wire field.
+    #[serde(skip)]
+    pub resources: Option<Arc<BeatmapResources>>,
 }
 
 /// The short menu result is still data: mode and ranked status must survive

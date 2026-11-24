@@ -355,6 +355,31 @@ fn batched_full_menu_matches_sequential_menu_under_every_read_failure() {
 }
 
 #[test]
+fn cold_set_index_preserves_all_names_and_hashes_in_both_decoders() {
+    let memory = fixture();
+    for scalar in [true, false] {
+        let mut decoder = reader_with(probe(&memory, scalar, None));
+        decoder.set_resolved_state(BASE, 0);
+        let ReadStatus::Ready(Menu::Full(full)) = decoder.menu("").unwrap() else {
+            panic!("expected cold full menu");
+        };
+        let resources = full.resources.unwrap();
+        assert_eq!(resources.audio_name, "audio.mp3");
+        assert_eq!(resources.background_name, "bg.png");
+        assert_eq!(
+            resources.files,
+            [
+                ("audio.mp3".into(), AUDIO.into()),
+                ("bg.png".into(), BACKGROUND.into()),
+                ("map.osu".into(), MD5.into())
+            ]
+            .into_iter()
+            .collect::<IndexMap<String, String>>()
+        );
+    }
+}
+
+#[test]
 fn batched_full_menu_returns_the_checksum_for_an_unchanged_beatmap() {
     let memory = fixture();
     let mut decoder = reader_with(probe(&memory, false, None));

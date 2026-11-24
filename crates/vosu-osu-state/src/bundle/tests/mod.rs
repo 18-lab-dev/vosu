@@ -220,6 +220,7 @@ fn raw_global_paused(status: GameState, time: i64, paused: bool) -> RawGlobal {
 fn menu(checksum: &str) -> MenuFull {
     MenuFull {
         gamemode: 0,
+        resources: None,
         checksum: checksum.into(),
         filename: "map.osu".into(),
         plays: 2,
@@ -282,4 +283,5 @@ fn raw_leaderboard_player() -> LeaderboardPlayer {
 
 mod calculation;
 mod epochs;
+mod resources;
 mod transitions;

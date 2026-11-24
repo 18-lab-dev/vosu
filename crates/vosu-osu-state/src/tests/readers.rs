@@ -90,6 +90,7 @@ impl MemoryReader for LoggingMemoryReader {
             return Ok(ReadStatus::Ready(Menu::Full(
                 vosu_osu_model::memory::MenuFull {
                     gamemode: 0,
+                    resources: None,
                     checksum: checksum.into(),
                     filename: "map.osu".into(),
                     plays: 0,

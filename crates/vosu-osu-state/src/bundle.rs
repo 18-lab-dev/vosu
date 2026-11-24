@@ -76,12 +76,15 @@ mod models;
 mod publication;
 #[path = "bundle/reducer.rs"]
 mod reducer;
+#[path = "bundle/resources.rs"]
+mod resources;
 #[path = "bundle/stable_keys.rs"]
 mod stable_keys;
 
 pub use calculation::*;
 pub use gameplay::*;
 pub use models::*;
+pub use resources::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CalculationApplyOutcome {

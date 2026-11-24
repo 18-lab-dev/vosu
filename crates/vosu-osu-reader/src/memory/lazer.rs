@@ -40,6 +40,7 @@ mod global_batch;
 mod helpers;
 mod menu_batch;
 mod menu_global;
+mod menu_scalar;
 mod models;
 mod presentation;
 mod reader;

@@ -115,6 +115,7 @@ fn menu_checksum_and_full_update_remain_distinct_payloads() {
         ClientType::Stable,
         Ok(ReadStatus::Ready(Menu::Full(MenuFull {
             gamemode: 2,
+            resources: None,
             checksum: "new".into(),
             filename: "map.osu".into(),
             plays: 1,

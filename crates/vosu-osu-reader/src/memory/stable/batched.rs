@@ -402,9 +402,9 @@ impl StableMemory {
             set_id: fields.i32(0xcc),
             ranked_status: ranked,
             object_count: fields.i32(0xf8),
+            resources: None,
         })))
     }
-
     pub(super) fn global_batched(&mut self) -> MemoryRead<Global> {
         self.capture = CapturePrefetch::default();
         let patterns = &self.patterns;

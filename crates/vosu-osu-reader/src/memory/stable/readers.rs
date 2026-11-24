@@ -550,6 +550,7 @@ impl StableMemory {
             set_id: self.i32(self.add(beat, 0xcc)?)?,
             ranked_status: ranked,
             object_count: self.i32(self.add(beat, 0xf8)?)?,
+            resources: None,
         })))
     }
     pub(super) fn leaderboard_sequential(&mut self, mode: i64) -> MemoryRead<Leaderboard> {

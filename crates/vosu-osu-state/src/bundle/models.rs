@@ -343,6 +343,9 @@ pub struct MenuState {
     pub checksum: Option<String>,
     pub object_count: Option<i64>,
     pub mp3_length: Option<f64>,
+    /// Advances only for an accepted cold selection, never on precise/checksum ticks.
+    pub resource_generation: u64,
+    pub resources: Option<Arc<vosu_osu_model::memory::BeatmapResources>>,
     pub(super) previous_md5: String,
     pub(super) pending_checksum: String,
     pub(super) map_change_time: Option<Instant>,
@@ -373,6 +376,11 @@ impl MenuState {
         {
             return false;
         }
+        self.resource_generation = self
+            .resource_generation
+            .checked_add(1)
+            .expect("resource selection generation exhausted");
+        self.resources.clone_from(&full.resources);
         self.gamemode = Some(full.gamemode);
         self.checksum = Some(full.checksum.clone());
         self.filename = Some(safe_join([full.filename.as_str()]));
