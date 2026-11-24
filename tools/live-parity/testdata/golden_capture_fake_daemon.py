@@ -108,7 +108,8 @@ def frame(opcode: int, payload: bytes) -> bytes:
 class Handler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         try:
-            self.respond()
+            if self.respond():
+                return  # Closed without a response byte.
             # Like a real daemon, keep the connection until the client closes it, so
             # the runner can attest which process owns it.
             self.request.settimeout(2)
@@ -117,7 +118,8 @@ class Handler(socketserver.BaseRequestHandler):
         except OSError:
             pass
 
-    def respond(self) -> None:
+    def respond(self) -> bool | None:
+        """Answer one request; True closes the connection without a response."""
         sock: socket.socket = self.request
         sock.settimeout(10)
         data = b""
@@ -132,6 +134,8 @@ class Handler(socketserver.BaseRequestHandler):
         headers = [h.split(":", 1) for h in header_lines if ":" in h]
         values = lambda name: [v.strip() for n, v in headers if n.strip().lower() == name]
         path, _, query = target.partition("?")
+        if path in OPTIONS.get("close_paths", ()):
+            return True
         if MODE == "vosu" and path == ENDPOINT and not OPTIONS.get("no_harness"):
             if values("x-vosu-test-capture") == [CAPABILITY]:
                 if method != "GET":
@@ -169,9 +173,12 @@ class Server(socketserver.ThreadingTCPServer):
 
 if OPTIONS.get("orphan_pid_file"):
     # A same-group child that ignores the polite signal: cleanup must still remove it.
+    # With orphan_setsid it also leaves the daemon's process group, so only the
+    # recorded process tree still ties it to the run.
     child = subprocess.Popen([sys.executable, "-c",
                               "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-                              "time.sleep(600)"])
+                              "time.sleep(600)"],
+                             start_new_session=bool(OPTIONS.get("orphan_setsid")))
     Path(OPTIONS["orphan_pid_file"]).write_text(str(child.pid))
 
 with Server(("127.0.0.1", PORT), Handler) as server:

@@ -25,6 +25,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import signal
@@ -38,6 +39,7 @@ from live_parity import PINNED_SOURCE_REVISION, Sample, barrier_of
 import parity_daemon as daemon_mod
 import parity_golden
 from parity_golden import CAPTURE_FORMAT, ENVELOPE_FORMAT, GoldenError
+from parity_golden_rules import TRANSPORT_OUTCOMES, dump_sandwich_difference
 from parity_probes import HttpProbe, _assert_one_owner
 from parity_process import _process_alive
 import parity_routes as pr
@@ -143,22 +145,49 @@ def stderr_operator(barrier: str, message: str) -> None:
 # ---------------------------------------------------------------- case plan
 
 
-def _platform_exclusion(reason: str) -> bool:
-    """Platform requirements, an unavailable symlink fixture, or a legacy file route
-    that a lazer client has no root for (lazer's files slot is not a route root)."""
-    parts = reason.split(": ", 1)[-1].split("; ")
-    return all(part in ("requires windows", "requires linux", "requires stable client",
-                        "requires lazer client") or part.startswith("symlink fixture unavailable")
-               or (part.startswith("no declared root for /") and part.endswith("-lazer"))
-               for part in parts)
+# The only reasons a golden matrix case may be missing from a run, each with the
+# contract or ledger authority that records it as not applicable on that platform.
+EXCLUSIONS = (
+    (re.compile(r"requires stable client"),
+     "GOLDEN_CONTRACT §6 files: the stable /files/skin/<name> variant; lazer records "
+     "files.skin.lazer-file instead (ledger lazer-legacy-skin-404)"),
+    (re.compile(r"requires lazer client"),
+     "GOLDEN_CONTRACT §6 files: the lazer /files/skin/<name> variant "
+     "(ledger lazer-legacy-skin-404) exists only for lazer"),
+    (re.compile(r"requires windows"),
+     "GOLDEN_CONTRACT §6 path-security: drive, UNC, ADS and trailing dot/space spellings "
+     "are Windows only"),
+    (re.compile(r"requires linux"),
+     "GOLDEN_CONTRACT §6 path-security: POSIX absolute spellings (Windows probes the "
+     "drive spellings)"),
+    (re.compile(r"no declared root for /files/skin/ on (?:windows|linux)-lazer"),
+     "ledger lazer-legacy-skin-404: a lazer client has no legacy skin root to traverse from"),
+    (re.compile(r"symlink fixture unavailable: .+ on windows-(?:stable|lazer)"),
+     "GOLDEN_CONTRACT §6 path-security: a symlink or reparse fixture only where the "
+     "platform permits"),
+)
+
+
+def exclusion_authority(reason: str, platform: str) -> str | None:
+    """The authority admitting every unmet prerequisite in `reason`, or None."""
+    authorities = []
+    for part in reason.split(": ", 1)[-1].split("; "):
+        if part.startswith("symlink fixture unavailable"):
+            part = f"{part} on {platform}"
+        found = [text for pattern, text in EXCLUSIONS if pattern.fullmatch(part)]
+        if not found:
+            return None
+        authorities.append(found[0])
+    return "; ".join(dict.fromkeys(authorities))
 
 
 def plan_cases(scenario: ScenarioSet, context: rm.MatrixContext
                ) -> tuple[list[rm.RenderedCase], list[rm.RenderedCase], list[list[str]]]:
     """(golden cases, other-role cases, exclusions) for the run, in matrix order.
 
-    A golden case may be excluded only for a reason `_platform_exclusion` admits; any
-    other unmet prerequisite makes the case set incomplete."""
+    A golden case may be excluded only for a reason `EXCLUSIONS` attributes to the
+    contract or ledger; any other unmet prerequisite makes the case set incomplete.
+    Exclusions are (case, reason, authority) triples."""
     wanted = set(scenario.cases or ())
     unknown = wanted - {case.id for case in rm.MATRIX if rm.golden_eligible(case)}
     if unknown:
@@ -166,8 +195,10 @@ def plan_cases(scenario: ScenarioSet, context: rm.MatrixContext
     candidates = [case for case in rm.MATRIX if case.barrier in scenario.barriers
                   and (scenario.cases is None or case.id in wanted)]
     rendered, excluded = rm.select(candidates, context)
-    incomplete = [f"{case_id}: {reason}" for case_id, reason in excluded
-                  if rm.CASES[case_id].role == rm.GOLDEN and not _platform_exclusion(reason)]
+    exclusions = [[case_id, reason, exclusion_authority(reason, context.platform)]
+                  for case_id, reason in excluded if rm.golden_eligible(rm.CASES[case_id])]
+    incomplete = [f"{case_id}: {reason}" for case_id, reason, authority in exclusions
+                  if authority is None]
     if incomplete:
         raise CaptureError("incomplete case set; fix the golden configuration: "
                            + "; ".join(incomplete))
@@ -177,7 +208,7 @@ def plan_cases(scenario: ScenarioSet, context: rm.MatrixContext
     others = [item for item in rendered if not rm.golden_eligible(item.case)]
     if not golden:
         raise CaptureError(f"scenario {scenario.id} selects no golden case on {context.platform}")
-    return golden, others, [[case_id, reason] for case_id, reason in excluded]
+    return golden, others, exclusions
 
 
 def check_expected_cases(expected: list[str], scenario: ScenarioSet,
@@ -306,10 +337,21 @@ def _unmask(frame: bytes, mask_hex: str, length: int) -> bytes:
 
 
 def golden_record(record: dict[str, Any], attempt: int, family: str) -> dict[str, Any]:
-    """One P0 raw record as a `vosu-golden-capture-v1` record (body after transfer decoding)."""
+    """One P0 raw record as a `vosu-golden-capture-v1` record (body after transfer decoding).
+
+    A connection closed before any response byte is the explicit transport record
+    `{"outcome": "closed"}`, compared like any other part; it is never dropped."""
     response = record.get("response")
+    if record.get("outcome") in TRANSPORT_OUTCOMES and not response \
+            and record["received"]["length"] == 0:
+        value = {"attempt": attempt, "request": _g0_bytes(pr.decode_bytes(record["request"])),
+                 "outcome": record["outcome"]}
+        if family == "ws":
+            value["frames"] = []
+        return value
     if record.get("outcome") not in RESPONSE_OUTCOMES or not response:
-        raise CaptureError(f"outcome {record.get('outcome')!r} has no HTTP response")
+        raise CaptureError(f"outcome {record.get('outcome')!r} is neither a response nor a "
+                           "connection closed without a response byte")
     value: dict[str, Any] = {
         "attempt": attempt, "request": _g0_bytes(pr.decode_bytes(record["request"])),
         "status_line": response["status_line"], "headers": response["headers"],
@@ -335,6 +377,8 @@ def golden_record(record: dict[str, Any], attempt: int, family: str) -> dict[str
 
 def _comparable(record: dict[str, Any]) -> tuple[Any, ...]:
     """The parts a golden compares; the Date value is normalized, its presence is not."""
+    if "outcome" in record:
+        return (record["outcome"],)
     headers = [[name.lower(), "<date>" if name.lower() == "date" else value]
                for name, value in record["headers"]
                if name.lower() in parity_golden.COMPARED_HEADERS
@@ -358,6 +402,7 @@ class Session:
         self.build, self.client, self.operator = build, client, operator
         self.capability = secrets.token_hex(32)
         self.processes: dict[str, subprocess.Popen[bytes]] = {}
+        self.starts: dict[str, str] = {}
         self.layout: rs.SecurityLayout | None = None
         self.ledger = rm.RequestLedger()
         self.transcript: dict[str, Any] = {
@@ -399,6 +444,7 @@ class Session:
         launch_cfg = {**self.cfg, "daemons": {**self.cfg["daemons"], "vosu": vosu_spec}}
         processes, evidence = daemon_mod.launch(launch_cfg)
         self.processes = processes
+        self.starts = {name: evidence[name]["start_identity"] for name in processes}
         daemons = [Daemon(name, evidence[name]["port"], evidence[name])
                    for name in ("source", "vosu")]
         return daemons[0], daemons[1]
@@ -479,7 +525,7 @@ class Session:
             return str(exc)
         if _comparable(records[0]) != _comparable(records[1]):
             return "upstream sandwich responses differ"
-        differs = parity_golden.dump_sandwich_difference(before, after)
+        differs = dump_sandwich_difference(before, after)
         if differs is not None:
             return f"vosu dump sandwich differs in {differs}"
         validator = case.validator.response_header if case.validator else None
@@ -590,7 +636,7 @@ class Session:
             "assets": self._assets(), "expected_cases": expected, "cases": cases,
         }
         try:
-            parity_golden._platform_files(json.loads(json.dumps(capture)), None)
+            parity_golden._platform_files(json.loads(json.dumps(capture)), None, "captured")
         except GoldenError as exc:
             raise CaptureError(f"golden would reject this capture: {exc}") from exc
         return capture
@@ -611,6 +657,11 @@ class Session:
         if self.client_started:
             errors += step("client", self.client.stop) or []
         groups = {name: process.pid for name, process in self.processes.items()}
+        # Record each daemon's process tree while it still runs: a child that outlives
+        # its daemon is reparented and only this record still ties it to the run.
+        table = step("process table", _process_table) or {}
+        trees = {name: descendants(table, {process.pid: int(self.starts[name])})
+                 for name, process in self.processes.items() if name in self.starts}
         for name, process in self.processes.items():
             step(f"{name} daemon", lambda process=process: daemon_mod._signal_process_tree(process))
         for name, process in self.processes.items():
@@ -620,7 +671,9 @@ class Session:
                 step(f"{name} daemon", lambda process=process: (
                     daemon_mod._signal_process_tree(process, hard=True), process.wait(timeout=5)))
         for name, pgid in groups.items():
-            if not _group_gone(pgid):
+            tree = trees.get(name, {})
+            if not _group_gone(pgid) or step(f"{name} process tree",
+                                             lambda tree=tree: _tree_survivors(tree)):
                 errors.append(f"orphan process survived {name} daemon cleanup")
         for name, process in self.processes.items():
             runtime_dir = getattr(process, "_live_parity_runtime_dir", None)
@@ -639,6 +692,69 @@ class Session:
         report = {"errors": errors, "daemons": sorted(groups)}
         self.transcript["cleanup"] = report
         return report
+
+
+def _process_table() -> dict[int, tuple[int, int]]:
+    """pid -> (parent pid, creation identity) for every live process."""
+    if sys.platform == "win32":
+        from parity_windows_job import windows_process_snapshot
+        return {pid: (record["parent_pid"], int(record["start_identity"]))
+                for pid, record in windows_process_snapshot().items()}
+    table = {}
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            stat = (proc / "stat").read_text(encoding="ascii")
+        except OSError:
+            continue
+        fields = stat[stat.rfind(")") + 2:].split()
+        if fields[0] != "Z":
+            table[int(proc.name)] = (int(fields[1]), int(fields[19]))
+    return table
+
+
+def descendants(table: dict[int, tuple[int, int]], known: dict[int, int]) -> dict[int, int]:
+    """`known` (pid -> creation identity) plus every process descending from it. A
+    child created before its recorded parent is a reused PID, never a descendant."""
+    found = dict(known)
+    grew = True
+    while grew:
+        grew = False
+        for pid, (parent, created) in table.items():
+            if pid not in found and parent in found and created >= found[parent]:
+                found[pid] = created
+                grew = True
+    return found
+
+
+def _alive(pid: int, created: int) -> bool:
+    return _process_alive(pid, str(created))
+
+
+def _kill_tree(tree: dict[int, int]) -> None:
+    for pid, created in tree.items():
+        if _alive(pid, created):
+            try:
+                os.kill(pid, signal.SIGKILL if os.name == "posix" else signal.SIGTERM)
+            except OSError:
+                pass
+
+
+def _tree_survivors(tree: dict[int, int]) -> dict[int, int]:
+    """Members of a daemon's recorded process tree, and their descendants, still alive
+    after the daemon stopped; they are killed once before they count as survivors."""
+    deadline = time.monotonic() + 5
+    while True:
+        alive = {pid: created for pid, created in descendants(_process_table(), tree).items()
+                 if _alive(pid, created)}
+        if not alive:
+            return {}
+        if time.monotonic() > deadline:
+            _kill_tree(alive)
+            time.sleep(0.5)
+            return {pid: created for pid, created in alive.items() if _alive(pid, created)}
+        time.sleep(0.05)
 
 
 def _group_members(pgid: int) -> list[int]:
@@ -664,8 +780,8 @@ def _kill_group(pgid: int) -> None:
 
 
 def _group_gone(pgid: int) -> bool:
-    """True once no live process remains in the daemon's process group (Linux); the
-    group is killed if a member ignored the polite signal."""
+    """True once no live process remains in the daemon's Linux process group; the group
+    is killed if a member ignored the polite signal. Windows has no process groups."""
     if not sys.platform.startswith("linux"):
         return True
     deadline = time.monotonic() + 5
