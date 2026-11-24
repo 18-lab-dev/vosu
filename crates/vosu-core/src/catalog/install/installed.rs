@@ -10,7 +10,7 @@ use crate::catalog::{
 };
 use serde::{Deserialize, Serialize};
 use std::{io::Write as _, path::Path};
-use vosu_plugin_api::manifest::PackageKind;
+use vosu_plugin_api::manifest::{PackageKind, PackageManifest};
 
 pub const RECORDS_FILE: &str = "catalog-installed.json";
 pub const MAX_RECORDS: usize = 1024;
@@ -177,12 +177,35 @@ pub(super) fn publish_json(path: &Path, value: &impl Serialize) -> Result<(), In
     vosu_sys::platform::atomic_replace(&temp, path).map_err(InstallError::io)
 }
 
-pub(super) fn publish_records(
+pub(in crate::catalog) fn publish_records(
     layout: &InstallLayout,
     document: &InstalledDocument,
 ) -> Result<(), InstallError> {
     document.validate()?;
     publish_json(&layout.state.join(RECORDS_FILE), document)
+}
+
+/// The current SDK-validated manifest of one committed package, read through
+/// the same confined, bounded asset reader preparation used. It must still be
+/// the recorded kind/id/version; anything else is a refusal, never a guess.
+pub(in crate::catalog) fn read_manifest(
+    layout: &InstallLayout,
+    record: &InstalledRecord,
+) -> Result<PackageManifest, InstallError> {
+    let mismatch = || InstallError::InstalledManifest(record.id.clone());
+    let root = layout.destination(record.package_kind(), &record.id)?;
+    let text =
+        super::preflight::read_asset(&root, "manifest.toml", super::preflight::MAX_MANIFEST_BYTES)
+            .map_err(|_| mismatch())?;
+    let manifest = PackageManifest::parse(&text).map_err(|_| mismatch())?;
+    let fields = manifest.fields();
+    if manifest.kind() != record.package_kind()
+        || fields.id != record.id
+        || fields.version != record.version
+    {
+        return Err(mismatch());
+    }
+    Ok(manifest)
 }
 
 /// Published installed graph for discovery/load. `open` runs crash recovery
@@ -218,7 +241,7 @@ impl InstalledStore {
             .generation
     }
     /// Publish in memory only after the durable commit point succeeded.
-    pub(super) fn published(&self, document: InstalledDocument) {
+    pub(in crate::catalog) fn published(&self, document: InstalledDocument) {
         *self
             .document
             .lock()

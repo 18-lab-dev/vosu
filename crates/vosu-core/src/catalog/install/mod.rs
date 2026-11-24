@@ -33,11 +33,15 @@ mod tests_commit;
 #[cfg(test)]
 mod tests_prepare;
 
+#[cfg(test)]
+pub(in crate::catalog) use commit::FaultPoint;
+pub(in crate::catalog) use commit::{Faults, commit_removal};
 pub use download::{DownloadFuture, PackageTransport, PublicPackageTransport};
 pub use installed::{
     InstalledDocument, InstalledFor, InstalledKind, InstalledRecord, InstalledStore, MAX_RECORDS,
     RECORDS_FILE,
 };
+pub(in crate::catalog) use installed::{publish_records, read_manifest};
 pub use preflight::MAX_PACKAGE_ENTRIES;
 pub use recovery::{JOURNAL_FILE, Resolution, recover};
 
@@ -157,6 +161,8 @@ pub enum InstallError {
     ReplacementMigration(String),
     #[error("installed catalog records are unreadable or invalid")]
     RecordsInvalid,
+    #[error("installed package {0} is missing or differs from its record")]
+    InstalledManifest(String),
     #[error("catalog install recovery required")]
     RecoveryRequired,
     #[error("invalid install layout")]
