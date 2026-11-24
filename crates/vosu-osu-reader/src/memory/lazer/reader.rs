@@ -55,6 +55,12 @@ impl SynchronizedMemoryReader for LazerMemory {
             state.game_base.unwrap_or_default(),
             state.current_screen.unwrap_or_default(),
         );
+        // RPM has a fixed kernel-transition cost. On Windows, load the same
+        // bounded per-capture root/screen spans used by regular reads instead
+        // of issuing a separate plan and RPM for every classification field.
+        // Failed span reads retain each field's scalar fallback.
+        #[cfg(windows)]
+        self.reset_capture_roots(true);
         self.set_read_context_mode(mode);
     }
 }

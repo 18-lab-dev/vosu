@@ -18,6 +18,8 @@ use vosu_plugin_api::{
     vosu_host_services, vosu_message, vosu_opcode, vosu_status,
 };
 use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
+#[path = "support/lazer_fixture.rs"]
+mod lazer_fixture;
 #[path = "support/stable_fixture.rs"]
 mod stable_fixture;
 use stable_fixture::patterns;
@@ -96,7 +98,7 @@ unsafe extern "C" fn noop(_: *mut c_void, _: *const vosu_message) -> u32 {
 struct ExecutorHost {
     context: *mut c_void,
     vtable: vosu_plugin_api::vosu_plugin_vtable,
-    memory: SliceMemory,
+    memory: Arc<dyn ProcessMemory>,
     bitness: ProcessBitness,
     output: Mutex<Vec<u8>>,
 }
@@ -134,11 +136,7 @@ impl ExecutorHost {
         Self {
             context,
             vtable,
-            memory: SliceMemory(if bitness == ProcessBitness::X86 {
-                stable_fixture::bytes()
-            } else {
-                vec![0; 64 * 1024]
-            }),
+            memory,
             bitness,
             output: Mutex::new(Vec::new()),
         }
@@ -160,7 +158,7 @@ impl HostServices for ExecutorHost {
         execute_into(
             payload,
             flags,
-            &self.memory,
+            self.memory.as_ref(),
             self.bitness,
             &Modules,
             Instant::now() + Duration::from_secs(1),
@@ -231,6 +229,10 @@ impl ProcessMemory for Sequential {
     }
 }
 fn bench(c: &mut Criterion) {
+    let (mut active_native, native_sync) = populated_lazer(false);
+    let (mut active_plan, plan_sync) = populated_lazer(true);
+    populated_precise(&mut active_native, native_sync);
+    populated_precise(&mut active_plan, plan_sync);
     let mut stable = StableMemory::new(process(ProcessBitness::X86), patterns());
     let mut lazer = LazerMemory::new(
         process(ProcessBitness::X64),
@@ -389,6 +391,12 @@ fn bench(c: &mut Criterion) {
                     .gameplay(stable_fixture::PLAY_TIME, stable_fixture::FIRST_OBJECT_TIME),
             );
         })
+    });
+    group.bench_function("lazer_precise_native", |b| {
+        b.iter(|| populated_precise(&mut active_native, native_sync))
+    });
+    group.bench_function("lazer_precise_plan", |b| {
+        b.iter(|| populated_precise(&mut active_plan, plan_sync))
     });
     group.bench_function("stable_regular_fields", |b| {
         b.iter(|| {
