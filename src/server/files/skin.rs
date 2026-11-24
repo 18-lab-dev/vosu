@@ -75,8 +75,8 @@ impl SkinFileIndex {
                 .iter()
                 .take(if all { usize::MAX } else { 1 })
                 .all(|(path, stamp)| {
-                    safe_child(root, path)
-                        .and_then(|child| secure_open(&child))
+                    SafeRelativePath::parse(path)
+                        .and_then(|child| open_child(root, &child))
                         .is_ok_and(|opened| stamp.matches(&opened.metadata, &opened.file))
                 })
     }
@@ -89,8 +89,8 @@ impl SkinFileIndex {
             if let Some(indices) = self.directories.get(&parent.to_lowercase())
                 && !indices.iter().all(|&index| {
                     let (path, stamp) = &self.stamps[index];
-                    safe_child(root, path)
-                        .and_then(|child| secure_open(&child))
+                    SafeRelativePath::parse(path)
+                        .and_then(|child| open_child(root, &child))
                         .is_ok_and(|opened| stamp.matches(&opened.metadata, &opened.file))
                 })
             {
@@ -223,8 +223,8 @@ fn valid_relative(path: &str) -> bool {
 fn case_path(root: &Path, requested: &str) -> Result<Option<String>, SafePathError> {
     let mut relative = String::new();
     for part in requested.split('/') {
-        let child = safe_child(root, &relative)?;
-        let directory = match secure_open(&child) {
+        let child = SafeRelativePath::parse(&relative)?;
+        let directory = match open_child(root, &child) {
             Ok(opened) if opened.metadata.is_dir() => opened,
             _ => return Ok(None),
         };
@@ -275,10 +275,10 @@ fn folder_index(root: Option<&Path>) -> SkinFileIndex {
             index.truncated = true;
             continue;
         }
-        let Ok(child) = safe_child(root, &relative) else {
+        let Ok(child) = SafeRelativePath::parse(&relative) else {
             continue;
         };
-        let Ok(opened) = secure_open(&child) else {
+        let Ok(opened) = open_child(root, &child) else {
             continue;
         };
         if !opened.metadata.is_dir() {
@@ -322,10 +322,10 @@ fn folder_index(root: Option<&Path>) -> SkinFileIndex {
             if !valid_relative(&path) {
                 continue;
             }
-            let Ok(child) = safe_child(root, &path) else {
+            let Ok(child) = SafeRelativePath::parse(&path) else {
                 continue;
             };
-            let opened = match secure_open(&child) {
+            let opened = match open_child(root, &child) {
                 Ok(opened) => opened,
                 Err(SafePathError::Io(_)) => {
                     index.truncated = true;
@@ -376,7 +376,7 @@ fn lazer_index(root: Option<&Path>, skin: Option<&CurrentSkin>) -> SkinFileIndex
     if skin.builtin.is_some() {
         return index;
     }
-    if let Ok(opened) = safe_child(root, "").and_then(|child| secure_open(&child)) {
+    if let Ok(opened) = SafeRelativePath::parse("").and_then(|child| open_child(root, &child)) {
         index
             .stamps
             .push((String::new(), Stamp::of(&opened.metadata)));
@@ -390,10 +390,10 @@ fn lazer_index(root: Option<&Path>, skin: Option<&CurrentSkin>) -> SkinFileIndex
         if !valid_relative(&path) {
             continue;
         }
-        let Ok(child) = safe_child(root, relative) else {
+        let Ok(child) = SafeRelativePath::parse(relative) else {
             continue;
         };
-        let Ok(opened) = secure_open(&child) else {
+        let Ok(opened) = open_child(root, &child) else {
             index.truncated = true;
             continue;
         };

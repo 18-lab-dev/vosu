@@ -1,0 +1,18 @@
+kind = 'tool'
+manifest_version = 1
+id = 'api-v1-fixture'
+name = 'API v1 fixture tool'
+version = '1.0.0'
+host = '>=1.0.0, <3.0.0'
+[ui]
+root = 'web'
+entry = 'index.html'
+[[requires]]
+id = 'action:test.api.fixture.run'
+version = '^1.0.0'
+[[requires]]
+id = 'action:test.api.fixture.fail'
+version = '^1.0.0'
+[[optional]]
+id = 'field:test.api.fixture'
+version = '^1.0.0'

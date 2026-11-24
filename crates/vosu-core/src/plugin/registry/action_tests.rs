@@ -107,3 +107,47 @@ fn development_action_schema_symlink_cannot_escape_package() {
         _ => panic!("escaped schema was not rejected"),
     }
 }
+
+#[test]
+fn action_schema_assets_compile_at_load_and_reject_invalid_contracts() {
+    let text = manifest();
+    let assets = [
+        ("schemas/one.json", r#"{"const":11}"#),
+        ("schemas/two.json", r#"{"const":23}"#),
+        ("schemas/shared.json", r#"{"type":"boolean"}"#),
+    ];
+    let entry = BundledPlugin {
+        manifest: &text,
+        settings_schema: None,
+        namespace_schemas: &[],
+        action_schemas: &assets,
+        vtable: vosu_plugin_testkit::echo::vosu_plugin_vtable,
+    };
+    let loaded = load_bundled(&[entry]).unwrap();
+    let compiled = loaded[0].compiled_action_schemas();
+    assert_eq!(compiled.len(), 3);
+    assert!(
+        compiled["schemas/one.json"]
+            .validate_arguments(&serde_json::json!(11))
+            .is_ok()
+    );
+    assert!(
+        compiled["schemas/two.json"]
+            .validate_arguments(&serde_json::json!(11))
+            .is_err()
+    );
+    assert!(
+        compiled["schemas/shared.json"]
+            .validate_result(&serde_json::json!(true))
+            .is_ok()
+    );
+    let mut bad = assets;
+    bad[1].1 = r#"{"pattern":"silently-ignored-before-F3"}"#;
+    assert!(
+        load_bundled(&[BundledPlugin {
+            action_schemas: &bad,
+            ..entry
+        }])
+        .is_err()
+    );
+}

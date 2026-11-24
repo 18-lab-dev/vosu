@@ -569,7 +569,7 @@ impl ToolHost {
         request: Request,
         body: Bytes,
     ) -> Response {
-        let path = match files::decode_request_path(&path) {
+        let path = match vosu_sys::fs::decode_request_path(&path) {
             Ok(path)
                 if !path.contains('\\')
                     && !path.split('/').any(|part| matches!(part, "." | "..")) =>

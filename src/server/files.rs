@@ -6,7 +6,8 @@
 
 use std::fs;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
+use vosu_sys::fs::{SafeChild, SafePathError, SafeRelativePath, SafeRoot, decode_request_path};
 
 mod directory;
 mod skin;
@@ -53,303 +54,17 @@ pub struct FileTarget {
     pub identity: PathBuf,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum SafePathError {
-    #[error("malformed percent encoding or non-UTF-8 path")]
-    InvalidEncoding,
-    #[error("absolute, parent, prefix, or NUL path component")]
-    InvalidComponent,
-    #[error("resolved path escapes its configured root")]
-    EscapesRoot,
-    #[error("file-system error: {0}")]
-    Io(#[from] io::Error),
-}
-
-#[derive(Debug)]
-pub struct SafeChild {
-    root: PathBuf,
-    relative: PathBuf,
-}
-
-/// Percent-decode a request path exactly once. `+` remains a literal plus because
-/// this is a URL path, not form data.
-pub fn decode_request_path(encoded: &str) -> Result<String, SafePathError> {
-    let bytes = encoded.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            if index + 2 >= bytes.len() {
-                return Err(SafePathError::InvalidEncoding);
-            }
-            let high = hex(bytes[index + 1]).ok_or(SafePathError::InvalidEncoding)?;
-            let low = hex(bytes[index + 2]).ok_or(SafePathError::InvalidEncoding)?;
-            decoded.push((high << 4) | low);
-            index += 3;
-        } else {
-            decoded.push(bytes[index]);
-            index += 1;
-        }
-    }
-
-    let decoded = String::from_utf8(decoded).map_err(|_| SafePathError::InvalidEncoding)?;
-    if decoded.contains('\0') {
-        return Err(SafePathError::InvalidComponent);
-    }
-    Ok(decoded)
-}
-
-fn hex(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-/// Validate a decoded relative request. The returned value intentionally keeps its
-/// root and relative path private: it can only be consumed by the race-safe opener.
-pub fn safe_child(root: &Path, decoded_request: &str) -> Result<SafeChild, SafePathError> {
-    let request = Path::new(decoded_request);
-    if request.is_absolute() {
-        return Err(SafePathError::InvalidComponent);
-    }
-
-    let mut relative = PathBuf::new();
-    for component in request.components() {
-        match component {
-            Component::Normal(value) => {
-                // On Windows a later segment such as `C:` parses as a drive prefix when
-                // pushed on its own, which would replace `relative` with a drive-relative
-                // path outside the root; accept only segments that stay a single Normal.
-                let mut parts = Path::new(value).components();
-                if !matches!(
-                    (parts.next(), parts.next()),
-                    (Some(Component::Normal(_)), None)
-                ) {
-                    return Err(SafePathError::InvalidComponent);
-                }
-                relative.push(value);
-            }
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(SafePathError::InvalidComponent);
-            }
-        }
-    }
-
-    Ok(SafeChild {
-        root: root.to_owned(),
-        relative,
-    })
-}
-
-#[derive(Debug)]
-struct OpenedChild {
-    file: fs::File,
-    metadata: fs::Metadata,
-}
-
-#[cfg(target_os = "linux")]
-fn secure_open(child: &SafeChild) -> Result<OpenedChild, SafePathError> {
-    secure_open_linux(child)
-}
-
-#[cfg(target_os = "linux")]
-fn secure_open_linux(child: &SafeChild) -> Result<OpenedChild, SafePathError> {
-    use std::ffi::CString;
-    use std::os::fd::{AsRawFd, FromRawFd};
-    use std::os::unix::ffi::OsStrExt;
-
-    #[repr(C)]
-    struct OpenHow {
-        flags: u64,
-        mode: u64,
-        resolve: u64,
-    }
-
-    const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
-    const RESOLVE_BENEATH: u64 = 0x08;
-
-    let root = CString::new(child.root.as_os_str().as_bytes())
-        .map_err(|_| SafePathError::InvalidComponent)?;
-    let root_fd = unsafe {
-        // SAFETY: root is NUL terminated and the returned descriptor is owned below.
-        libc::open(
-            root.as_ptr(),
-            libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
-        )
-    };
-    if root_fd < 0 {
-        return Err(io::Error::last_os_error().into());
-    }
-    let root_file = unsafe {
-        // SAFETY: open returned a unique owned descriptor.
-        fs::File::from_raw_fd(root_fd)
-    };
-
-    let relative = if child.relative.as_os_str().is_empty() {
-        CString::new(".").expect("static string")
+fn open_child(root: &Path, path: &SafeRelativePath) -> Result<SafeChild, SafePathError> {
+    // Legacy configured roots may be relative. Resolve only the root spelling;
+    // SafeRoot itself requires a host-native absolute capability declaration.
+    let absolute;
+    let root = if root.is_absolute() {
+        root
     } else {
-        CString::new(child.relative.as_os_str().as_bytes())
-            .map_err(|_| SafePathError::InvalidComponent)?
+        absolute = std::env::current_dir()?.join(root);
+        &absolute
     };
-    let how = OpenHow {
-        flags: (libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK) as u64,
-        mode: 0,
-        resolve: RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS,
-    };
-    let fd = unsafe {
-        // SAFETY: arguments point to initialized data and openat2 does not retain them.
-        libc::syscall(
-            libc::SYS_openat2,
-            root_file.as_raw_fd(),
-            relative.as_ptr(),
-            &how,
-            std::mem::size_of::<OpenHow>(),
-        ) as i32
-    };
-    let file = if fd >= 0 {
-        unsafe {
-            // SAFETY: openat2 returned a unique owned descriptor.
-            fs::File::from_raw_fd(fd)
-        }
-    } else {
-        let error = io::Error::last_os_error();
-        if matches!(error.raw_os_error(), Some(libc::EXDEV | libc::ELOOP)) {
-            return Err(SafePathError::EscapesRoot);
-        }
-        if !matches!(error.raw_os_error(), Some(libc::ENOSYS | libc::EPERM)) {
-            return Err(error.into());
-        }
-
-        secure_open_linux_fallback(child, &root_file)?
-    };
-    let metadata = file.metadata()?;
-    Ok(OpenedChild { file, metadata })
-}
-#[cfg(target_os = "linux")]
-fn secure_open_linux_fallback(
-    child: &SafeChild,
-    root_file: &fs::File,
-) -> Result<fs::File, SafePathError> {
-    use std::ffi::CString;
-    use std::os::fd::{AsRawFd, FromRawFd};
-    use std::os::unix::ffi::OsStrExt;
-
-    let relative = if child.relative.as_os_str().is_empty() {
-        CString::new(".").expect("static string has no NUL")
-    } else {
-        CString::new(child.relative.as_os_str().as_bytes())
-            .map_err(|_| SafePathError::InvalidComponent)?
-    };
-    let fd = unsafe {
-        // SAFETY: relative is NUL terminated; a successful descriptor is owned below.
-        libc::openat(
-            root_file.as_raw_fd(),
-            relative.as_ptr(),
-            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK,
-        )
-    };
-    if fd < 0 {
-        return Err(io::Error::last_os_error().into());
-    }
-    let file = unsafe {
-        // SAFETY: openat returned a unique owned descriptor.
-        fs::File::from_raw_fd(fd)
-    };
-    let root_final = fs::read_link(format!("/proc/self/fd/{}", root_file.as_raw_fd()))?;
-    let target_final = fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
-    if !target_final.starts_with(&root_final) {
-        return Err(SafePathError::EscapesRoot);
-    }
-    Ok(file)
-}
-
-#[cfg(windows)]
-fn secure_open(child: &SafeChild) -> Result<OpenedChild, SafePathError> {
-    secure_open_windows(child)
-}
-
-#[cfg(windows)]
-fn secure_open_windows(child: &SafeChild) -> Result<OpenedChild, SafePathError> {
-    use std::os::windows::fs::OpenOptionsExt;
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Foundation::HANDLE;
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_NAME_NORMALIZED, GetFinalPathNameByHandleW,
-        VOLUME_NAME_DOS,
-    };
-
-    fn final_path(file: &fs::File) -> io::Result<PathBuf> {
-        let handle = file.as_raw_handle() as HANDLE;
-        let required = unsafe {
-            // SAFETY: null buffer with zero length is the documented size query.
-            GetFinalPathNameByHandleW(
-                handle,
-                std::ptr::null_mut(),
-                0,
-                FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
-            )
-        };
-        if required == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let mut buffer = vec![0u16; required as usize + 1];
-        let written = unsafe {
-            // SAFETY: buffer is writable for the reported size.
-            GetFinalPathNameByHandleW(
-                handle,
-                buffer.as_mut_ptr(),
-                buffer.len() as u32,
-                FILE_NAME_NORMALIZED | VOLUME_NAME_DOS,
-            )
-        };
-        if written == 0 || written as usize >= buffer.len() {
-            return Err(io::Error::last_os_error());
-        }
-        buffer.truncate(written as usize);
-        let path = String::from_utf16(&buffer)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid final path"))?;
-        Ok(PathBuf::from(path.strip_prefix(r"\\?\").unwrap_or(&path)))
-    }
-
-    let root_file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(&child.root)?;
-    if !root_file.metadata()?.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotADirectory,
-            "configured root is not a directory",
-        )
-        .into());
-    }
-    let canonical_root = final_path(&root_file)?;
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-        .open(child.root.join(&child.relative))?;
-    let final_target = final_path(&file)?;
-    if !windows_path_is_within(&canonical_root, &final_target) {
-        return Err(SafePathError::EscapesRoot);
-    }
-    let metadata = file.metadata()?;
-    Ok(OpenedChild { file, metadata })
-}
-
-#[cfg(windows)]
-fn windows_path_is_within(root: &Path, child: &Path) -> bool {
-    let root: Vec<_> = root
-        .components()
-        .map(|part| part.as_os_str().to_string_lossy().to_lowercase())
-        .collect();
-    let child: Vec<_> = child
-        .components()
-        .map(|part| part.as_os_str().to_string_lossy().to_lowercase())
-        .collect();
-    child.starts_with(&root)
+    SafeRoot::open(root)?.open_child(path)
 }
 
 /// Resolve a decoded route path. Invalid or escaping paths intentionally collapse
@@ -363,23 +78,24 @@ pub fn resolve_resource(
     let Some(root) = root else {
         return Ok(ResourceOutcome::Missing(missing));
     };
-    let child = match safe_child(root, decoded_request) {
+    let child = match SafeRelativePath::parse(decoded_request) {
         Ok(child) => child,
         Err(SafePathError::InvalidComponent | SafePathError::EscapesRoot) => {
             return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
         }
         Err(error) => return Err(error),
     };
-    resolve_child(child, decoded_request, request_target, missing)
+    resolve_child(root, child, decoded_request, request_target, missing)
 }
 
 fn resolve_child(
-    child: SafeChild,
+    root: &Path,
+    child: SafeRelativePath,
     decoded_request: &str,
     request_target: &str,
     missing: MissingKind,
 ) -> Result<ResourceOutcome, SafePathError> {
-    let opened = match secure_open(&child) {
+    let opened = match open_child(root, &child) {
         Ok(opened) => opened,
         Err(SafePathError::EscapesRoot | SafePathError::InvalidComponent) => {
             return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
@@ -409,8 +125,7 @@ fn resolve_child(
         return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
     }
 
-    let mut identity = child.root;
-    identity.push(child.relative);
+    let identity = root.join(child.as_path());
     Ok(ResourceOutcome::File(FileTarget {
         file: opened.file,
         length: opened.metadata.len(),
@@ -456,7 +171,7 @@ pub fn resolve_encoded_counter_resource(
     let Some(root) = root else {
         return Ok(ResourceOutcome::Missing(missing));
     };
-    let logical_child = match safe_child(root, &decoded) {
+    let logical_child = match SafeRelativePath::parse(&decoded) {
         Ok(child) => child,
         Err(SafePathError::InvalidComponent | SafePathError::EscapesRoot) => {
             return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
@@ -464,9 +179,9 @@ pub fn resolve_encoded_counter_resource(
         Err(error) => return Err(error),
     };
 
-    let mut components = logical_child.relative.components();
+    let mut components = logical_child.as_path().components();
     let Some(alias_name) = components.next() else {
-        return resolve_child(logical_child, &decoded, request_target, missing);
+        return resolve_child(root, logical_child, &decoded, request_target, missing);
     };
     if alias_name
         .as_os_str()
@@ -489,14 +204,14 @@ pub fn resolve_encoded_counter_resource(
         Err(error) => return Err(error.into()),
     };
     if !is_symlink {
-        return resolve_child(logical_child, &decoded, request_target, missing);
+        return resolve_child(root, logical_child, &decoded, request_target, missing);
     }
 
     let is_directory = fs::metadata(&alias_path)
         .map(|metadata| metadata.is_dir())
         .unwrap_or(false);
     if !is_directory {
-        return resolve_child(logical_child, &decoded, request_target, missing);
+        return resolve_child(root, logical_child, &decoded, request_target, missing);
     }
     let mut relative = PathBuf::new();
     for component in components {
@@ -504,10 +219,8 @@ pub fn resolve_encoded_counter_resource(
     }
 
     resolve_child(
-        SafeChild {
-            root: alias_path,
-            relative,
-        },
+        &alias_path,
+        SafeRelativePath::parse(&relative.to_string_lossy())?,
         &decoded,
         request_target,
         missing,

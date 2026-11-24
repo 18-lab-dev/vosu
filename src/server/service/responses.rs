@@ -27,8 +27,8 @@ enum FileRouteError {
     Unsafe,
 }
 
-impl From<files::SafePathError> for FileRouteError {
-    fn from(_: files::SafePathError) -> Self {
+impl From<vosu_sys::fs::SafePathError> for FileRouteError {
+    fn from(_: vosu_sys::fs::SafePathError) -> Self {
         Self::Unsafe
     }
 }
@@ -76,7 +76,7 @@ fn resolve_file_endpoint(
         )?,
         Endpoint::SkinFile if selected.lazer => {
             let encoded = path.strip_prefix("/files/skin/").unwrap_or_default();
-            let name = files::decode_request_path(encoded)?.replace('\\', "/");
+            let name = vosu_sys::fs::decode_request_path(encoded)?.replace('\\', "/");
             if name.is_empty() || name.split('/').any(|p| p.is_empty() || p == "." || p == ".." || p.contains(':')) {
                 return Ok(ResourceOutcome::Missing(MissingKind::NotFound));
             }
@@ -142,7 +142,7 @@ fn resolve_exact(
     root: Option<&Path>,
     relative: Option<&Path>,
     missing: MissingKind,
-) -> Result<ResourceOutcome, files::SafePathError> {
+) -> Result<ResourceOutcome, vosu_sys::fs::SafePathError> {
     let (Some(root), Some(relative)) = (root, relative) else {
         return Ok(ResourceOutcome::Missing(missing));
     };
