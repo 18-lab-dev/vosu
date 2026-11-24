@@ -9,6 +9,8 @@ All notable user-visible changes to vosu are documented here. Older sections are
   initial-origin rejection and request-local credentials. Reconcile credential
   membership before exposing the core fetch service; disabled/failed sources
   contribute no candidates. Real-CA/owner-forge D15 evidence remains pending.
+- Classify credential kind through the shared source parser, including uppercase
+  HTTPS static URLs, without normalizing exact credential identities.
 - Add exact-identity catalog source settings and HTTPS source parsing, with
   dedicated trust/private-network mutations and journaled credential-purge
   recovery. Preserve legacy source lists and migration markers for M8.

@@ -414,3 +414,44 @@ fn windows_directory_acl_inheritance_and_existing_security_metadata_survive_repl
     reopened.reconcile_sources(&sources()).unwrap();
     assert_token(&reopened, FORGE, "replacement-token");
 }
+
+#[test]
+fn credential_kind_uses_source_parser_without_identity_aliases() {
+    let root = tempfile::tempdir().unwrap();
+    let store = CredentialStore::open(root.path());
+    let static_url = "HTTPS://static.test/catalog-v2.json";
+    let repository = "HTTPS://forge.test/group/catalog";
+    let lookalike = "https://forge.test/group/catalog-v2.json.evil";
+    store
+        .reconcile_sources(&[static_url.into(), repository.into(), lookalike.into()])
+        .unwrap();
+    assert!(store.set(static_url, basic()).is_ok());
+    assert_eq!(
+        store.set(static_url, token(TOKEN)),
+        Err(CredentialError::InvalidInput)
+    );
+    assert!(store.set(repository, token(TOKEN)).is_ok());
+    assert_eq!(
+        store.set(repository, basic()),
+        Err(CredentialError::InvalidInput)
+    );
+    assert!(store.set(lookalike, token(TOKEN)).is_ok());
+    assert_eq!(
+        store.set(lookalike, basic()),
+        Err(CredentialError::InvalidInput)
+    );
+    for invalid in [
+        "https://static.test/catalog-v2.json?query=1",
+        "https://x/catalog-v2.json.evil",
+    ] {
+        assert!(crate::catalog::sources::SourceIdentity::parse(invalid).is_err());
+        assert!(!basic().matches_source(invalid));
+        assert!(!token(TOKEN).matches_source(invalid));
+    }
+    assert!(
+        !store
+            .presence("https://static.test/catalog-v2.json")
+            .has_credential
+    );
+    assert!(store.presence(static_url).has_credential);
+}

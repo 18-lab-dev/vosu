@@ -70,8 +70,14 @@ impl CredentialInput {
     }
 
     pub(super) fn matches_source(&self, source: &str) -> bool {
-        // Membership comes exclusively from S0's validated source identities.
-        let static_source = source.starts_with("https://") && source.ends_with("/catalog-v2.json");
+        // Parsing determines fetch kind, never the exact credential/settings key.
+        let Ok(parsed) = crate::catalog::sources::SourceIdentity::parse(source) else {
+            return false;
+        };
+        let static_source = matches!(
+            parsed.location,
+            crate::catalog::sources::SourceLocation::Static { .. }
+        );
         matches!(self, Self::Basic { .. }) == static_source
     }
 }
