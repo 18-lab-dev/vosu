@@ -305,3 +305,33 @@ fn repeated_source_rounding_preserves_sc_bytes_at_boundaries() {
         check(f64::from_bits(state));
     }
 }
+
+#[test]
+fn null_overlay_slots_use_legacy_empty_record_but_absent_and_errors_are_not_ready() {
+    let mut capture = fixture();
+    replace(&mut capture, "/keys/overlay", Value::Null);
+    let view = view::View::decode(capture.clone()).unwrap();
+    let wire = parity(&view, None);
+    let keys: Value = serde_json::from_str(wire["keyOverlay"].as_str().unwrap()).unwrap();
+    for key in ["K1", "K2", "M1", "M2"] {
+        assert_eq!(keys[format!("{key}Count")], 0);
+        assert_eq!(keys[format!("{key}Pressed")], false);
+    }
+    let mut errored = capture.clone();
+    Arc::make_mut(&mut errored.values)
+        .iter_mut()
+        .find(|entry| entry.pointer == "/keys/overlay")
+        .unwrap()
+        .error = Some(vosu_plugin_api::ErrorInfo {
+        code: "forbidden".into(),
+        message: "distinct denied overlay".into(),
+    });
+    assert_eq!(view::View::decode(errored).unwrap_err(), Error::NotReady);
+    capture.values = capture
+        .values
+        .iter()
+        .filter(|entry| entry.pointer != "/keys/overlay")
+        .cloned()
+        .collect();
+    assert_eq!(view::View::decode(capture).unwrap_err(), Error::NotReady);
+}

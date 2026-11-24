@@ -246,7 +246,17 @@ impl View {
                 .ok_or(Error::NotReady)?,
             interface_visible: image.get("/settings/interfaceVisible")?,
             ranking_type: ranking.number.unwrap_or_default(),
-            overlay: image.get("/keys/overlay")?,
+            // ADAPTER_CONTRACT.md /keys/overlay: null is an unavailable legacy
+            // sample, not an errored selection. The pinned SC wire uses zero/
+            // false slots for that case; absent and errored entries still fail.
+            overlay: image
+                .get::<Option<OverlaySlots>>("/keys/overlay")?
+                .unwrap_or(OverlaySlots {
+                    k1: None,
+                    k2: None,
+                    m1: None,
+                    m2: None,
+                }),
             hit_errors: image.get("/play/hitErrors/all")?,
             leaderboard: image.get("/leaderboard")?,
             leaderboard_state: image.get("/leaderboardState")?,
@@ -325,11 +335,12 @@ impl Image<'_> {
                 .find_map(|(key, value)| (key.as_text() == Some(token)).then_some(value))
                 .ok_or(Error::NotReady)?;
         }
-        if matches!(value, CborValue::Null) {
-            return Err(Error::NotReady);
-        }
-        value
-            .deserialized()
-            .map_err(|e| Error::Source(format!("{pointer}: {e}")))
+        value.deserialized().map_err(|e| {
+            if matches!(value, CborValue::Null) {
+                Error::NotReady
+            } else {
+                Error::Source(format!("{pointer}: {e}"))
+            }
+        })
     }
 }
