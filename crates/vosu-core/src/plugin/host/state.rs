@@ -63,11 +63,12 @@ impl PluginHost {
         drop(sessions);
         // StateStore serializes close against commit using the session slot's
         // closed marker. A detached slot cannot be resurrected by this call.
-        match self
-            .state
-            .store
-            .commit(&publisher.grant, SessionKey(raw), entries)
-        {
+        match self.state.store.commit_from_instance(
+            &publisher.grant,
+            SessionKey(raw),
+            instance.0,
+            entries,
+        ) {
             Ok(outcome) => {
                 let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
                 self.state_committed(&outcome);

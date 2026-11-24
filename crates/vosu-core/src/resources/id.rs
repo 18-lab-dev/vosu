@@ -27,6 +27,9 @@ pub struct ReferenceIdentity {
     pub plugin: Arc<str>,
     pub class: ReferenceClass,
     pub reference: Arc<ResourceRef>,
+    /// Assigned by the state transaction; serving must never infer it from a
+    /// resolved filesystem path.
+    pub media_type: &'static str,
     metadata_bytes: usize,
 }
 
@@ -70,6 +73,7 @@ impl ReferenceIdentity {
             plugin: plugin.into(),
             class,
             reference: Arc::new(reference),
+            media_type: "application/octet-stream",
             metadata_bytes,
         })
     }

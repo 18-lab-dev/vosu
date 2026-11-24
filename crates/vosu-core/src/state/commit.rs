@@ -29,8 +29,10 @@ pub enum CommitError {
     Pointer(#[from] PointerError),
     #[error(transparent)]
     Value(#[from] ValueError),
-    #[error("references are unavailable before M3")]
-    ResourceRefBeforeM3,
+    #[error("invalid reference class, kind, or publication location")]
+    InvalidReference,
+    #[error(transparent)]
+    Registry(#[from] crate::resources::RegistryError),
     #[error("session has not identified")]
     NotIdentified,
     #[error("unknown session or mismatched entry handle")]
@@ -67,6 +69,7 @@ pub(super) struct Validated {
     pub ns: Arc<str>,
     pub pointer: Pointer,
     pub value: StateValue,
+    pub reference: Option<Arc<crate::resources::ReferenceIdentity>>,
 }
 
 fn permitted(grant: &PublisherGrant, ns: &str, p: &Pointer) -> Result<(), CommitError> {
@@ -86,6 +89,7 @@ pub(super) fn validate<'a>(
     grant: &PublisherGrant,
     old: &SessionState,
     entries: impl ExactSizeIterator<Item = PublishFieldRef<'a>>,
+    references: &super::ReferenceStore,
 ) -> Result<Vec<Validated>, CommitError> {
     let mut validated: Vec<Validated> = Vec::with_capacity(entries.len());
     let mut lookup = ReadIndex::default();
@@ -95,6 +99,7 @@ pub(super) fn validate<'a>(
         }
         let pointer = Pointer::parse(entry.pointer)?;
         permitted(grant, entry.ns, &pointer)?;
+        let mut reference = None;
         let mut value = match entry.value {
             PublishValueRef::Null => StateValue::Null,
             PublishValueRef::Bool(v) => StateValue::Bool(v),
@@ -104,8 +109,16 @@ pub(super) fn validate<'a>(
             PublishValueRef::String(v) => StateValue::String(Arc::from(v)),
             PublishValueRef::Bytes(v) => StateValue::Bytes(Arc::from(v)),
             PublishValueRef::Cbor(v) => StateValue::from_cbor(v)?,
-            PublishValueRef::ResourceRef(_) | PublishValueRef::TreeRef(_) => {
-                return Err(CommitError::ResourceRefBeforeM3);
+            PublishValueRef::ResourceRef(bytes) | PublishValueRef::TreeRef(bytes) => {
+                let class = if matches!(entry.value, PublishValueRef::TreeRef(_)) {
+                    crate::resources::ReferenceClass::Tree
+                } else {
+                    crate::resources::ReferenceClass::Resource
+                };
+                let (value, identity) =
+                    references.project(grant, entry.ns, &pointer, class, bytes)?;
+                reference = Some(identity);
+                value
             }
         };
         if pointer.is_root() && super::CORE_NAMESPACES.contains(&entry.ns) {
@@ -115,8 +128,23 @@ pub(super) fn validate<'a>(
             && pointer.tokens()[0].as_ref() == "resources"
         {
             validate_protected(grant, entry.ns, "resources", &value)?;
-            if matches!(value, StateValue::Null) {
+            if matches!(value, StateValue::Null | StateValue::Object(_)) {
                 value = empty_object();
+            }
+        }
+        if reference.is_none() {
+            let tokens = pointer.tokens();
+            let protected_leaf = (entry.ns == "vosu.chart"
+                && tokens.first().is_some_and(|t| t.as_ref() == "resources")
+                && tokens.len() > 1)
+                || (entry.ns == "vosu.skin"
+                    && tokens.first().is_some_and(|t| t.as_ref() == "tree"));
+            if protected_leaf
+                && (!matches!(value, StateValue::Null)
+                    || (entry.ns == "vosu.chart" && tokens.len() != 2)
+                    || (entry.ns == "vosu.skin" && tokens.len() != 1))
+            {
+                return Err(CommitError::InvalidReference);
             }
         }
         // abi:212-214: missing intermediates become objects. Null skeleton
@@ -134,6 +162,7 @@ pub(super) fn validate<'a>(
             ns: Arc::from(entry.ns),
             pointer,
             value,
+            reference,
         });
     }
     let mut sorted: Vec<_> = validated.iter().collect();
@@ -185,6 +214,15 @@ fn validate_protected(
                 &Pointer::parse(&format!("/resources/{escaped}"))?,
             )?;
         }
+        if object
+            .iter()
+            .any(|(_, child)| !matches!(child, StateValue::Null))
+        {
+            return Err(CommitError::InvalidReference);
+        }
+    }
+    if ns == "vosu.skin" {
+        return Err(CommitError::InvalidReference);
     }
     Ok(())
 }
@@ -209,7 +247,7 @@ pub(super) fn normalize_core_root(
     let mut found = false;
     for (_, child) in entries.iter_mut().filter(|(key, _)| key.as_ref() == field) {
         found = true;
-        if ns == "vosu.chart" && matches!(child, StateValue::Null) {
+        if ns == "vosu.chart" {
             *child = empty_object();
         }
     }

@@ -63,6 +63,30 @@ fn get(store: &StateStore, ns: &str, pointer: &str) -> Option<StateValue> {
         .cloned()
 }
 
+fn audio_reference(store: &StateStore, grant: &PublisherGrant) -> (Vec<u8>, serde_json::Value) {
+    let reference = vosu_plugin_api::ResourceRef {
+        kind: "audio".into(),
+        key: vosu_plugin_api::CborValue::Integer(23.into()),
+        name: "track.mp3".into(),
+        content_id: vosu_plugin_api::CborValue::Integer(41.into()),
+    };
+    let encoded = vosu_plugin_api::encode(&reference).unwrap();
+    let identity = crate::resources::ReferenceIdentity::new(
+        &store.resources.secret,
+        grant.plugin_id(),
+        crate::resources::ReferenceClass::Resource,
+        reference,
+    )
+    .unwrap();
+    (
+        encoded,
+        serde_json::json!({
+            "url": format!("/api/v1/resources/{}", identity.id.as_str()),
+            "type": "audio/mpeg",
+        }),
+    )
+}
+
 #[test]
 fn covered_namespaces_materialize_null_skeleton_and_resources_empty() {
     let grant = grant(
@@ -159,7 +183,11 @@ fn null_at_resource_member_removes_key() {
         "[[resource_kinds]]\nkind = \"audio\"\nfamilies = [\"audio\"]",
     );
     let store = store(&grant);
-    for value in [PublishValueRef::String("reference"), PublishValueRef::Null] {
+    let (reference, _) = audio_reference(&store, &grant);
+    for value in [
+        PublishValueRef::ResourceRef(&reference),
+        PublishValueRef::Null,
+    ] {
         store
             .commit(
                 &grant,
@@ -317,7 +345,7 @@ fn refusals_leave_revision_and_tree_unchanged() {
             "uncovered" => matches!(error, CommitError::Uncovered { .. }),
             "pointer" => matches!(error, CommitError::Pointer(_)),
             "value" => matches!(error, CommitError::Value(_)),
-            "ref" => matches!(error, CommitError::ResourceRefBeforeM3),
+            "ref" => matches!(error, CommitError::InvalidReference),
             _ => false,
         });
         assert!(Arc::ptr_eq(&old, &store.current(KEY).unwrap()));
@@ -482,6 +510,7 @@ proptest! {
     fn prop_commit_equals_sequential_json_patch(values in prop::collection::vec((0usize..12, any::<i64>(), any::<bool>(), any::<bool>()), 1..60)) {
         let grant = grant("test.commit-property", "", "[[resource_kinds]]\nkind = \"audio\"\nfamilies = [\"audio\"]");
         let store = store(&grant);
+        let (reference, projected_reference) = audio_reference(&store, &grant);
         let mut expected = serde_json::json!({});
         let mut resources = serde_json::json!({});
         for (key, value, clear, remove) in values {
@@ -494,7 +523,7 @@ proptest! {
             let entries = [
                 field("test.commit-property", if clear { &pointer } else { &nested }, if clear { PublishValueRef::Null } else { PublishValueRef::I64(value) }),
                 field("test.commit-property", "/subtree", PublishValueRef::Cbor(&cbor)),
-                field("vosu.chart", "/resources/audio", if remove { PublishValueRef::Null } else { PublishValueRef::String("audio") }),
+                field("vosu.chart", "/resources/audio", if remove { PublishValueRef::Null } else { PublishValueRef::ResourceRef(&reference) }),
             ];
             let old = store.current(KEY).unwrap();
             store.commit(&grant, KEY, entries.into_iter()).unwrap();
@@ -505,7 +534,7 @@ proptest! {
             }
             expected["subtree"] = serde_json::json!({"items": [value, null], "text": "a\\\"b"});
             if remove { resources.as_object_mut().unwrap().remove("audio"); }
-            else { resources["audio"] = "audio".into(); }
+            else { resources["audio"] = projected_reference.clone(); }
             let current = store.current(KEY).unwrap();
             prop_assert_eq!(current.revision, old.revision + 1);
             let mut json = Vec::new();

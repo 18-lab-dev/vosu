@@ -20,6 +20,7 @@ use vosu_plugin_testkit::{
 };
 
 mod api;
+mod resources;
 mod surface;
 
 fn publisher_instance(

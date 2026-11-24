@@ -687,6 +687,16 @@ counts one identity; pressure diagnostics and 410 eviction are explicit. Secret
 creation is atomic/private; malformed/unreadable existing secret fails startup,
 never silently rotates. Composition supplies its channel-aware storage path.
 
+R1 integrates these bindings through `state::ReferenceStore` and
+`StateStore::with_resources` (`StateRuntime::with_resources` for host
+composition). Production supplies one persisted secret and shared registry;
+`StateStore::new` retains process-ephemeral identity only for non-public hosts
+and tests. `ReferenceStore::is_persistent` exposes the secret's actual provenance
+for the public-serving composition check. The lock order is session commit,
+then reference registry; state swap and membership commit precede unlock, and
+revision notification follows unlock. Typed reference publication fixes
+`ReferenceIdentity::media_type`; ordinary CBOR cannot forge a core reference.
+
 **R0–R3 — lazy requests and leases.** `ResourceOwner` identifies exact plugin
 instance, session handle and generation; `ResourceRequest` is resolve/list/
 lookup/read with the ABI payload for that kind, and `ResourceReply` is the

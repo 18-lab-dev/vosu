@@ -9,11 +9,15 @@ pub struct StateRuntime {
 }
 impl StateRuntime {
     pub fn new() -> Self {
+        Self::with_resources(Arc::new(super::ReferenceStore::ephemeral()))
+    }
+
+    pub fn with_resources(resources: Arc<super::ReferenceStore>) -> Self {
         let registry = Arc::new(RwLock::new(
             SchemaRegistry::with_core().expect("embedded core schemas are valid"),
         ));
         Self {
-            store: StateStore::new(registry.clone()),
+            store: StateStore::with_resources(registry.clone(), resources),
             registry,
             subscriptions: Mutex::new(SubscriptionRegistry::default()),
         }

@@ -19,6 +19,7 @@ pub struct PublisherGrant {
     own: bool,
     covers: Vec<(Arc<str>, Pointer)>,
     core_kinds: Vec<Arc<str>>,
+    pub(super) resource_kinds: Vec<vosu_plugin_api::ResourceKind>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +65,7 @@ impl PublisherGrant {
                 })
                 .map(|k| Arc::from(k.kind.as_str()))
                 .collect(),
+            resource_kinds: m.resource_kinds.clone(),
         })
     }
 

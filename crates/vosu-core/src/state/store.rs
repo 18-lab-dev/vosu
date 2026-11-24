@@ -18,6 +18,7 @@ use vosu_plugin_api::PublishFieldRef;
 pub struct StateStore {
     sessions: RwLock<HashMap<SessionKey, Arc<SessionSlot>>>,
     schemas: Arc<RwLock<SchemaRegistry>>,
+    pub resources: Arc<super::ReferenceStore>,
 }
 struct SessionSlot {
     owner: Arc<str>,
@@ -30,6 +31,7 @@ struct SessionSlot {
 struct SlotMeta {
     closed: bool,
     usage: HashMap<Arc<str>, Usage>,
+    bindings: Vec<crate::resources::BindingOwner>,
 }
 
 // D-decision candidate: bound each namespace's JSON projection at 4 MiB
@@ -39,9 +41,17 @@ const MAX_SESSION_KEYS: i64 = 65_536;
 
 impl StateStore {
     pub fn new(schemas: Arc<RwLock<SchemaRegistry>>) -> Self {
+        Self::with_resources(schemas, Arc::new(super::ReferenceStore::ephemeral()))
+    }
+
+    pub fn with_resources(
+        schemas: Arc<RwLock<SchemaRegistry>>,
+        resources: Arc<super::ReferenceStore>,
+    ) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
             schemas,
+            resources,
         }
     }
 
@@ -90,6 +100,7 @@ impl StateStore {
                 commit: Mutex::new(SlotMeta {
                     closed: false,
                     usage,
+                    bindings: Vec::new(),
                 }),
                 current: ArcSwap::from(current.clone()),
                 revisions,
@@ -102,6 +113,15 @@ impl StateStore {
         let slot = self.sessions.write().unwrap().remove(&key)?;
         let mut meta = slot.commit.lock().unwrap();
         meta.closed = true;
+        if !meta.bindings.is_empty() {
+            let mut registry = self.resources.registry.lock().unwrap();
+            let prepared = registry
+                .prepare(&meta.bindings, Vec::new())
+                .expect("removing bindings cannot exceed capacity");
+            registry
+                .commit(prepared)
+                .expect("registry lock excludes stale preparation");
+        }
         Some(slot.current.load_full())
     }
 
@@ -127,6 +147,16 @@ impl StateStore {
         key: SessionKey,
         entries: impl ExactSizeIterator<Item = PublishFieldRef<'a>>,
     ) -> Result<CommitOutcome, CommitError> {
+        self.commit_from_instance(grant, key, 0, entries)
+    }
+
+    pub fn commit_from_instance<'a>(
+        &self,
+        grant: &PublisherGrant,
+        key: SessionKey,
+        instance: u64,
+        entries: impl ExactSizeIterator<Item = PublishFieldRef<'a>>,
+    ) -> Result<CommitOutcome, CommitError> {
         let slot = self
             .sessions
             .read()
@@ -142,7 +172,7 @@ impl StateStore {
             return Err(CommitError::Detached);
         }
         let previous = slot.current.load_full();
-        let validated = validate(grant, &previous, entries)?;
+        let validated = validate(grant, &previous, entries, &self.resources)?;
         if validated.is_empty() {
             return Ok(CommitOutcome {
                 current: previous.clone(),
@@ -157,6 +187,44 @@ impl StateStore {
             MAX_NAMESPACE_BYTES,
             MAX_SESSION_KEYS,
         )?;
+        let removals: Vec<_> = meta
+            .bindings
+            .iter()
+            .filter(|binding| {
+                let pointer = Pointer::parse(&binding.pointer).expect("validated binding");
+                validated.iter().any(|entry| {
+                    entry.ns == binding.namespace && entry.pointer.is_prefix_of(&pointer)
+                })
+            })
+            .cloned()
+            .collect();
+        let additions: Vec<_> = validated
+            .iter()
+            .filter_map(|entry| {
+                entry.reference.as_ref().map(|reference| {
+                    (
+                        crate::resources::BindingOwner {
+                            instance,
+                            session: key.0,
+                            namespace: entry.ns.clone(),
+                            pointer: entry.pointer.to_string().into(),
+                        },
+                        reference.clone(),
+                    )
+                })
+            })
+            .collect();
+        // Ordinary scalar publications never acquire or clone the registry.
+        let mut registry = if removals.is_empty() && additions.is_empty() {
+            None
+        } else {
+            Some(self.resources.registry.lock().unwrap())
+        };
+        let new_bindings: Vec<_> = additions.iter().map(|(owner, _)| owner.clone()).collect();
+        let prepared = registry
+            .as_ref()
+            .map(|registry| registry.prepare(&removals, additions))
+            .transpose()?;
         let mut lookup = WriteIndex::default();
         let mut namespaces = copy_namespaces(&previous);
         let mut touched = Vec::with_capacity(validated.len());
@@ -178,8 +246,20 @@ impl StateStore {
             );
             touched.push((entry.ns, entry.pointer));
         }
+        if let Some(prepared) = prepared {
+            registry
+                .as_mut()
+                .expect("prepared registry")
+                .commit(prepared)?;
+            meta.bindings.retain(|binding| !removals.contains(binding));
+            meta.bindings.extend(new_bindings);
+        }
         meta.usage = usage;
-        Ok(publish(&slot, previous, namespaces, touched))
+        let outcome = publish(&slot, previous, namespaces, touched);
+        drop(registry);
+        drop(meta);
+        notify(&slot, outcome.current.revision);
+        Ok(outcome)
     }
 
     pub fn set_focused(&self, key: SessionKey, focused: bool) -> Option<CommitOutcome> {
@@ -210,12 +290,15 @@ impl StateStore {
             .get_mut("vosu.client")
             .expect("client accounting exists")
             .bytes += if focused { -1 } else { 1 };
-        Some(publish(
+        let outcome = publish(
             &slot,
             previous,
             namespaces,
             vec![(Arc::from("vosu.client"), pointer)],
-        ))
+        );
+        drop(meta);
+        notify(&slot, outcome.current.revision);
+        Some(outcome)
     }
 }
 
@@ -238,12 +321,22 @@ fn publish(
         namespaces,
     ));
     slot.current.store(current.clone());
-    slot.revisions.send_replace(current.revision);
     CommitOutcome {
         previous,
         current,
         touched,
     }
+}
+
+fn notify(slot: &SessionSlot, revision: u64) {
+    // A later writer can notify first after we release the commit lock.
+    slot.revisions.send_if_modified(|current| {
+        if *current >= revision {
+            return false;
+        }
+        *current = revision;
+        true
+    });
 }
 
 #[cfg(test)]
@@ -371,6 +464,16 @@ families = ["image"]
             PublishValueRef::Cbor(&[0xa1, 0x61, b'a', 0x82, 0xf5, 0x21]),
             PublishValueRef::Null,
         ];
+        let references =
+            [("audio", "song.mp3"), ("background", "cover.png")].map(|(kind, name)| {
+                vosu_plugin_api::encode(&vosu_plugin_api::ResourceRef {
+                    kind: kind.into(),
+                    key: vosu_plugin_api::CborValue::Text(format!("key-{kind}")),
+                    name: name.into(),
+                    content_id: vosu_plugin_api::CborValue::Integer(19.into()),
+                })
+                .unwrap()
+            });
         for (i, value) in values.into_iter().enumerate() {
             let pointer = format!("/nested/k{i}");
             store
@@ -403,7 +506,9 @@ families = ["image"]
                                 ns: "vosu.chart",
                                 pointer,
                                 value: if i % 2 == 0 {
-                                    PublishValueRef::String("ref")
+                                    PublishValueRef::ResourceRef(
+                                        &references[usize::from(kind != "audio")],
+                                    )
                                 } else {
                                     PublishValueRef::Null
                                 },

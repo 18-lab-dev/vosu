@@ -11,9 +11,23 @@ use std::{
 /// The supplied directory must be private to the daemon user (including its
 /// inherited Windows ACL). No storage path is inferred here. Call on a blocking
 /// initialization worker, never a Tokio worker. Debug deliberately omits bytes.
-pub struct ResourceSecret(hmac::Key);
+pub struct ResourceSecret(hmac::Key, bool);
 
 impl ResourceSecret {
+    /// Process-local identity for tests and hosts without public resource routes.
+    /// Public-serving composition must supply `open_or_create` instead.
+    pub fn ephemeral() -> io::Result<Self> {
+        let mut bytes = [0; 32];
+        SystemRandom::new()
+            .fill(&mut bytes)
+            .map_err(|_| io::Error::other("secure randomness unavailable"))?;
+        Ok(Self(hmac::Key::new(hmac::HMAC_SHA256, &bytes), false))
+    }
+
+    pub fn is_persistent(&self) -> bool {
+        self.1
+    }
+
     /// Atomically publishes a complete secret without replacing an existing one.
     /// Existing malformed/unreadable files fail closed, never rotate silently.
     pub fn open_or_create(path: &Path) -> io::Result<Self> {
@@ -38,7 +52,7 @@ impl ResourceSecret {
             Ok(_) => {
                 #[cfg(unix)]
                 File::open(parent)?.sync_all()?;
-                Ok(Self(hmac::Key::new(hmac::HMAC_SHA256, &bytes)))
+                Ok(Self(hmac::Key::new(hmac::HMAC_SHA256, &bytes), true))
             }
             Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => Self::read(path),
             Err(error) => Err(error.error),
@@ -72,7 +86,7 @@ impl ResourceSecret {
         }
         let mut bytes = [0; 32];
         file.read_exact(&mut bytes)?;
-        Ok(Self(hmac::Key::new(hmac::HMAC_SHA256, &bytes)))
+        Ok(Self(hmac::Key::new(hmac::HMAC_SHA256, &bytes), true))
     }
 
     pub(super) fn key(&self) -> &hmac::Key {
@@ -81,6 +95,6 @@ impl ResourceSecret {
 
     #[cfg(test)]
     pub(super) fn fixture(bytes: [u8; 32]) -> Self {
-        Self(hmac::Key::new(hmac::HMAC_SHA256, &bytes))
+        Self(hmac::Key::new(hmac::HMAC_SHA256, &bytes), false)
     }
 }

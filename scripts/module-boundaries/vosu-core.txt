@@ -4,6 +4,7 @@ logging -> config
 plugin -> logging
 plugin -> state
 plugin -> api
+state -> resources
 # B2, deleted in M8
 plugin -> config
 report -> config
