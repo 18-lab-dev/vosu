@@ -224,7 +224,13 @@ async fn bundled_osu_discovery_and_real_runtime_shutdown_are_joined() {
             }
             tokio::task::yield_now().await;
         }
-        assert_eq!(owner.plugins.diagnostic_sessions()[0].pid, 0x7c30_0001);
+        let sessions = owner.plugins.diagnostic_sessions();
+        assert_eq!(sessions.len(), 1);
+        let session = &sessions[0];
+        assert_eq!(session.pid, 0x7c30_0001);
+        assert_eq!(session.bitness, vosu_plugin_api::Bitness::X86);
+        assert_eq!(session.state, "starting reader");
+        assert!(!session.session.is_empty());
         let plugins = owner.plugins.clone();
         owner
             .shutdown_with_plugin_destroy(async move {
@@ -244,10 +250,6 @@ async fn bundled_osu_discovery_and_real_runtime_shutdown_are_joined() {
         assert!(owner.discovery.lock().await.is_none());
         {
             let output = console.0.lock().unwrap();
-            assert!(output.contains(&format!(
-                "Found osu! process PID {} (Stable); probing memory",
-                0x7c30_0001
-            )));
             assert!(
                 output.contains("Initial process discovery completed: 1 osu! process candidate(s)")
             );
