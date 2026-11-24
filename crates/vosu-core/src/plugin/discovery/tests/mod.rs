@@ -182,12 +182,17 @@ struct SyntheticState {
     /// Consumed by the next [`ProcessSource::inspect`] call for this pid
     /// (F2: `failed_targeted_inspection_is_not_counted`).
     fail_inspect: HashSet<u32>,
+    /// Backs [`ProcessSource::events_healthy`] (F2 review P2:
+    /// `cadence_follows_tracked_set_and_event_health`); the default,
+    /// `false`, matches the trait default for a source that never calls
+    /// [`SyntheticSource::set_events_healthy`].
+    events_healthy: bool,
 }
 
 /// An in-memory [`ProcessSource`] a test drives directly: every mutation
 /// queues the matching event hint and wakes [`DiscoveryService`]'s
 /// background thread immediately, so tests never wait out
-/// [`RECONCILE_INTERVAL`].
+/// [`DiscoveryCadence`].
 struct SyntheticSource {
     state: Mutex<SyntheticState>,
     notifier: Notify,
@@ -317,6 +322,15 @@ impl SyntheticSource {
             .fail_inspect
             .insert(pid);
     }
+
+    /// Sets what [`ProcessSource::events_healthy`] answers from then on
+    /// (F2 review P2: `cadence_follows_tracked_set_and_event_health`).
+    fn set_events_healthy(&self, healthy: bool) {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .events_healthy = healthy;
+    }
 }
 
 impl ProcessSource for SyntheticSource {
@@ -379,6 +393,16 @@ impl ProcessSource for SyntheticSource {
             .unwrap_or_else(|poison| poison.into_inner())
             .processes
             .contains_key(&pid)
+    }
+
+    /// Answers [`Self::set_events_healthy`]'s last value (F2 review P2:
+    /// `cadence_follows_tracked_set_and_event_health`); the trait
+    /// default (`false`) until a test calls it.
+    fn events_healthy(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .events_healthy
     }
 }
 
@@ -755,17 +779,15 @@ async fn matcher_change_forces_a_full_reconcile_of_an_untracked_process() {
     // background thread (N3): nothing wakes that thread when a plugin
     // registers (`SyntheticSource::insert` never notifies, and `wake` is
     // only notified by `stop`), so the pass that would actually discover
-    // pid 401 through the real service is the periodic `RECONCILE_INTERVAL`
-    // (2s) tick, not the pre-filter/generation change -- `RECV_TIMEOUT`
-    // (5s) is longer than that tick, so the test would still pass with
-    // `filter_changed || generation_changed` deleted from `run_pass`
-    // entirely. Pinning `next_reconcile` far in the future removes that
-    // tick as a possible cause: only the forced-reconcile condition can
-    // make the second `run_pass` call below find pid 401.
-    let mut tracked = HashMap::new();
-    let mut pending_exits = HashMap::new();
-    let mut last_filter: Option<Prefilter> = None;
-    let mut last_generation: Option<u64> = None;
+    // pid 401 through the real service is the periodic `DiscoveryCadence`
+    // (1s active/5s healthy) tick, not the pre-filter/generation change --
+    // `RECV_TIMEOUT` (5s) is longer than the fast tick, so the test
+    // would still pass with `filter_changed || generation_changed`
+    // deleted from `run_pass` entirely. Pinning `next_reconcile` far in
+    // the future removes that tick as a possible cause: only the
+    // forced-reconcile condition can make the second `run_pass` call
+    // below find pid 401.
+    let mut state = DiscoveryState::default();
     let cadence = DiscoveryCadence::default();
     let counters = DiscoveryCounters::default();
     let far_future = Instant::now() + Duration::from_secs(3600);
@@ -775,10 +797,7 @@ async fn matcher_change_forces_a_full_reconcile_of_an_untracked_process() {
     run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         Instant::now(),
@@ -805,10 +824,7 @@ async fn matcher_change_forces_a_full_reconcile_of_an_untracked_process() {
     run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         Instant::now(),

@@ -1,4 +1,4 @@
-//! F2 cadence/exit-confirmation/stats tests (parity rows 13-17,
+//! F2 cadence/exit-confirmation/stats tests (parity rows 2, 13-17,
 //! `m1-remainder-plan.md` §7): split out of `super` to keep that file
 //! under the 1,000-line limit. Shares every helper
 //! (`SyntheticSource`/`test_host`/`create_session_instance`/`test_process`/
@@ -15,6 +15,178 @@ fn assert_no_detach(events: &Receiver<SessionEvent>, message: &str) {
     while let Ok(event) = events.try_recv() {
         assert!(!matches!(event, SessionEvent::Detached(_)), "{message}");
     }
+}
+
+/// Collects `pid_a`'s and `pid_b`'s own `Attached` events regardless of
+/// which arrives first (AGENTS.md: "order-agnostic collection when two
+/// threads deliver"): `expect_attached` alone would discard the other
+/// pid's event while searching, permanently losing it if it happened to
+/// arrive first.
+fn expect_two_attached(
+    events: &Receiver<SessionEvent>,
+    pid_a: u32,
+    pid_b: u32,
+) -> (SessionAttached, SessionAttached) {
+    let mut a = None;
+    let mut b = None;
+    while a.is_none() || b.is_none() {
+        match expect_event(
+            events,
+            |event| matches!(event, SessionEvent::Attached(attached) if attached.pid == pid_a || attached.pid == pid_b),
+        ) {
+            SessionEvent::Attached(attached) if attached.pid == pid_a => a = Some(attached),
+            SessionEvent::Attached(attached) if attached.pid == pid_b => b = Some(attached),
+            _ => unreachable!("expect_event's own predicate only matches pid_a or pid_b"),
+        }
+    }
+    (a.unwrap(), b.unwrap())
+}
+
+/// Parity row 2 (`src/instance/tests.rs:206`,
+/// `targeted_discovery_inserts_only_the_requested_pid`, F2 review P2): an
+/// `inspect` event hint for one untracked pid is handled entirely
+/// through the targeted path -- exactly one successful
+/// [`ProcessSource::inspect`], zero [`ProcessSource::enumerate`] calls,
+/// and only that pid attaches.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn targeted_discovery_inserts_only_the_requested_pid() {
+    let runtime = Handle::current();
+    let (_log_dir, host) = test_host(
+        runtime,
+        Arc::new(focus::SyntheticForegroundSource::new(None)),
+    );
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId(0),
+        "vosu.testkit.targeted-only",
+        &["osu!.exe"],
+    );
+    let (source, _prefilter) = SyntheticSource::new();
+
+    let mut state = DiscoveryState::default();
+    let cadence = DiscoveryCadence::default();
+    let counters = DiscoveryCounters::default();
+    let t0 = Instant::now();
+
+    // Startup pass: nothing in the source, so `tracked` stays empty.
+    let next = run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        t0,
+        t0,
+    );
+    let full_scans_before_target = counters.full_scans.load(Ordering::Relaxed);
+
+    // pid 9 is inserted directly into the source's own ground truth
+    // (bypassing `appear`'s own inspect hint) and then targeted by its
+    // own `inspect` event hint, exactly as a push-event source's single
+    // appear notification does.
+    source.insert(test_process(9, "osu!.exe"));
+    source.request_inspect(9);
+    let t1 = next - cadence.active / 2;
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        t1,
+        next,
+    );
+
+    assert_eq!(
+        counters.full_scans.load(Ordering::Relaxed),
+        full_scans_before_target,
+        "a targeted inspect for one pid must never run a full enumerate()"
+    );
+    assert_eq!(
+        counters.targeted_inspections.load(Ordering::Relaxed),
+        1,
+        "exactly one inspect(9) must have run"
+    );
+    let attached = expect_attached(&events, 9);
+    assert_eq!(attached.pid, 9, "only pid 9 may have attached");
+}
+
+/// Parity F2 review P2 (plan's own `cadence_follows_tracked_set_and_event_health`
+/// acceptance test, not previously added): [`DiscoveryCadence::empty`]
+/// while nothing is tracked, [`DiscoveryCadence::active`] once something
+/// is, and [`DiscoveryCadence::events_healthy`] once
+/// [`ProcessSource::events_healthy`] also reports healthy -- all driven
+/// through the plain periodic-due path (no forced reconcile), proving
+/// [`cadence_interval`]'s own formula end to end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cadence_follows_tracked_set_and_event_health() {
+    let runtime = Handle::current();
+    let (_log_dir, host) = test_host(
+        runtime,
+        Arc::new(focus::SyntheticForegroundSource::new(None)),
+    );
+    let (source, _prefilter) = SyntheticSource::new();
+
+    let mut state = DiscoveryState::default();
+    let cadence = DiscoveryCadence::default();
+    let counters = DiscoveryCounters::default();
+    let t0 = Instant::now();
+
+    // Nothing tracked, events unhealthy (the trait default): empty
+    // cadence.
+    let next = run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        t0,
+        t0,
+    );
+    assert_eq!(
+        next,
+        t0 + cadence.empty,
+        "nothing tracked, unhealthy -> empty cadence"
+    );
+
+    // Tracking one process, still unhealthy: active cadence -- this
+    // pass is a plain periodic-due reconcile (`filter_changed`/
+    // `generation_changed` are already both `false` by now), so nothing
+    // forces the fast cadence regardless of the formula under test.
+    source.insert(test_process(900, "osu!.exe"));
+    let next2 = run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        next,
+        next,
+    );
+    assert_eq!(
+        next2,
+        next + cadence.active,
+        "tracking one process, unhealthy -> active cadence"
+    );
+
+    // Still tracking, now healthy: the healthy-events cadence, even
+    // though the tracked set is non-empty (health takes priority over
+    // tracked-set size in the formula).
+    source.set_events_healthy(true);
+    let next3 = run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        next2,
+        next2,
+    );
+    assert_eq!(
+        next3,
+        next2 + cadence.events_healthy,
+        "tracking one process, healthy -> the healthy-events cadence"
+    );
 }
 
 /// Parity row 13 (`src/instance/tests.rs:618`,
@@ -41,10 +213,7 @@ async fn failed_full_scan_retries_early_and_counts_only_success() {
     let (source, _prefilter) = SyntheticSource::new();
     source.insert(test_process(500, "osu!.exe"));
 
-    let mut tracked = HashMap::new();
-    let mut pending_exits = HashMap::new();
-    let mut last_filter: Option<Prefilter> = None;
-    let mut last_generation: Option<u64> = None;
+    let mut state = DiscoveryState::default();
     let cadence = DiscoveryCadence::default();
     let counters = DiscoveryCounters::default();
     let t0 = Instant::now();
@@ -55,10 +224,7 @@ async fn failed_full_scan_retries_early_and_counts_only_success() {
     let next = run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t0,
@@ -76,10 +242,7 @@ async fn failed_full_scan_retries_early_and_counts_only_success() {
     let retry = run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         next,
@@ -100,10 +263,7 @@ async fn failed_full_scan_retries_early_and_counts_only_success() {
     let after_retry = run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         retry,
@@ -118,7 +278,11 @@ async fn failed_full_scan_retries_early_and_counts_only_success() {
 /// [`ProcessSource::inspect`] forces a reconcile but is never counted
 /// toward [`DiscoveryStats::targeted_inspections`]; a later successful
 /// inspect for the same pid does count, proving the counter itself
-/// works and specifically excludes the failure.
+/// works and specifically excludes the failure. Also proves the forced
+/// reconcile's own interval is `degraded` (F2 review P3): a real
+/// failure forces the fast cadence even while the source otherwise
+/// reports a healthy event channel, unlike a bare loss flag
+/// (`inspect_hint_is_targeted_and_a_loss_flag_reconciles_once_keeping_healthy_cadence`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failed_targeted_inspection_is_not_counted() {
     let runtime = Handle::current();
@@ -134,11 +298,9 @@ async fn failed_targeted_inspection_is_not_counted() {
     );
     let (source, _prefilter) = SyntheticSource::new();
     source.insert(test_process(501, "osu!.exe"));
+    source.set_events_healthy(true);
 
-    let mut tracked = HashMap::new();
-    let mut pending_exits = HashMap::new();
-    let mut last_filter: Option<Prefilter> = None;
-    let mut last_generation: Option<u64> = None;
+    let mut state = DiscoveryState::default();
     let cadence = DiscoveryCadence::default();
     let counters = DiscoveryCounters::default();
     let t0 = Instant::now();
@@ -146,10 +308,7 @@ async fn failed_targeted_inspection_is_not_counted() {
     let next = run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t0,
@@ -159,16 +318,13 @@ async fn failed_targeted_inspection_is_not_counted() {
 
     // Well before `next` is due, so this pass takes the targeted-event
     // branch, not another full reconcile.
-    let t1 = next - cadence.active / 2;
+    let t1 = next - cadence.events_healthy / 2;
     source.fail_next_inspect(501);
     source.request_inspect(501);
     let after_failure = run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t1,
@@ -181,13 +337,20 @@ async fn failed_targeted_inspection_is_not_counted() {
     );
     assert_eq!(
         counters.reconciliation_requests.load(Ordering::Relaxed),
-        2,
-        "a failed inspect must force exactly one additional reconcile (plus the first pass's own forced sync)"
+        1,
+        "the startup pass's own first sync is never counted (it was already due); \
+         only this failed inspect's own out-of-cadence reconcile is"
     );
     assert_eq!(
         counters.full_scans.load(Ordering::Relaxed),
         2,
         "the forced reconcile after a failed inspect must itself still run and succeed"
+    );
+    assert_eq!(
+        after_failure,
+        t1 + cadence.active,
+        "a real inspect failure is `degraded`: it must drop to the fast cadence \
+         even though the source otherwise reports a healthy event channel"
     );
 
     // A later successful inspect for the same pid, well before the new
@@ -197,10 +360,7 @@ async fn failed_targeted_inspection_is_not_counted() {
     run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t2,
@@ -234,10 +394,7 @@ async fn full_reconcile_replaces_a_dead_same_pid_in_one_pass() {
     first.start_time = 1;
     source.insert(first);
 
-    let mut tracked = HashMap::new();
-    let mut pending_exits = HashMap::new();
-    let mut last_filter: Option<Prefilter> = None;
-    let mut last_generation: Option<u64> = None;
+    let mut state = DiscoveryState::default();
     let cadence = DiscoveryCadence::default();
     let counters = DiscoveryCounters::default();
     let t0 = Instant::now();
@@ -245,10 +402,7 @@ async fn full_reconcile_replaces_a_dead_same_pid_in_one_pass() {
     run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t0,
@@ -269,10 +423,7 @@ async fn full_reconcile_replaces_a_dead_same_pid_in_one_pass() {
     run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t0 + cadence.active,
@@ -294,7 +445,11 @@ async fn full_reconcile_replaces_a_dead_same_pid_in_one_pass() {
 /// alive is neither trusted outright nor ignored -- it is re-checked
 /// with backoff, detaching only once the pid is actually confirmed
 /// dead, and specifically *without* another event ever arriving for it
-/// (the backoff recheck itself discovers the death).
+/// (the backoff recheck itself discovers the death). Doubling-sensitive
+/// (F2 review P3): `t3` sits strictly between the un-doubled (10ms) and
+/// the correctly-doubled (20ms) next deadline, so a backoff that failed
+/// to double would already have resolved (and wrongly detached, since
+/// the pid is declared dead before `t3`) by the time this checks it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn live_exit_is_retried_until_the_process_dies_without_another_event() {
     let runtime = Handle::current();
@@ -311,10 +466,7 @@ async fn live_exit_is_retried_until_the_process_dies_without_another_event() {
     let (source, _prefilter) = SyntheticSource::new();
     source.insert(test_process(700, "osu!.exe"));
 
-    let mut tracked = HashMap::new();
-    let mut pending_exits = HashMap::new();
-    let mut last_filter: Option<Prefilter> = None;
-    let mut last_generation: Option<u64> = None;
+    let mut state = DiscoveryState::default();
     let cadence = DiscoveryCadence::default();
     let counters = DiscoveryCounters::default();
     let t0 = Instant::now();
@@ -322,10 +474,7 @@ async fn live_exit_is_retried_until_the_process_dies_without_another_event() {
     let next = run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t0,
@@ -335,16 +484,14 @@ async fn live_exit_is_retried_until_the_process_dies_without_another_event() {
 
     // An exit hint arrives, but the pid is still alive (never removed
     // from `source`'s own ground truth): `handle_exit_hint` must
-    // schedule a backoff recheck, not detach immediately.
+    // schedule a backoff recheck (due at `t1 + 10ms`), not detach
+    // immediately.
     let t1 = t0 + Duration::from_millis(1);
     source.report_exit_hint(700);
     run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t1,
@@ -356,16 +503,13 @@ async fn live_exit_is_retried_until_the_process_dies_without_another_event() {
     );
 
     // The first backoff deadline (10ms) is due, and the pid is still
-    // alive, and no new event arrived: the recheck must retry again
-    // (longer backoff), still not detaching.
+    // alive, and no new event arrived: the recheck must double the
+    // backoff to 20ms (next due at `t2 + 20ms`), still not detaching.
     let t2 = t1 + Duration::from_millis(11);
     run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t2,
@@ -376,33 +520,298 @@ async fn live_exit_is_retried_until_the_process_dies_without_another_event() {
         "a still-alive pid must still not be detached at the first backoff retry",
     );
 
-    // Now the pid actually dies, with no further event -- only the next
-    // due backoff recheck can discover this.
+    // The pid actually dies now, with no further event. `t3` sits 15ms
+    // past `t2` -- past an un-doubled 10ms deadline, but short of the
+    // correctly-doubled 20ms one -- so this must NOT detach yet; only
+    // `resolve_due_pending_exits`'s own backoff-doubling check at `t4`
+    // may discover the death.
     source.declare_dead(700);
-    let t3 = t2 + Duration::from_millis(21);
+    let t3 = t2 + Duration::from_millis(15);
     run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t3,
         next,
     );
+    assert_no_detach(
+        &events,
+        "the backoff must have doubled to 20ms; resolving again at only 10ms \
+         would wrongly detach the already-dead pid here",
+    );
+
+    let t4 = t2 + Duration::from_millis(21);
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        t4,
+        next,
+    );
     expect_detached(&events, attached.handle);
 }
 
-/// Parity row 17 (`src/instance/tests.rs:827`,
-/// `process_event_wakes_are_targeted_and_loss_reconciles_once`): an
-/// `inspect` event hint is handled through the targeted path alone --
-/// counting toward [`DiscoveryStats::targeted_inspections`] without
-/// another [`DiscoveryStats::full_scans`] -- while a single
-/// `needs_reconcile` loss flag forces exactly one additional full scan.
+/// F2 review P3: the exit-confirmation backoff doubles 10, 20, 40, 80,
+/// 160ms and then caps at 250ms (never 320, never 500) -- driven through
+/// six consecutive still-alive backoff deadlines, then confirming the
+/// seventh (post-cap) deadline is still only 250ms later, not the
+/// uncapped 500ms a doubling bug would produce.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn process_event_wakes_are_targeted_and_loss_reconciles_once() {
+async fn exit_confirmation_backoff_is_capped_at_250ms() {
+    let runtime = Handle::current();
+    let (_log_dir, host) = test_host(
+        runtime,
+        Arc::new(focus::SyntheticForegroundSource::new(None)),
+    );
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId(0),
+        "vosu.testkit.backoff-cap",
+        &["osu!.exe"],
+    );
+    let (source, _prefilter) = SyntheticSource::new();
+    source.insert(test_process(750, "osu!.exe"));
+
+    let mut state = DiscoveryState::default();
+    let cadence = DiscoveryCadence::default();
+    let counters = DiscoveryCounters::default();
+    let far_future = Instant::now() + Duration::from_secs(3600);
+
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        Instant::now(),
+        far_future,
+    );
+    let attached = expect_attached(&events, 750);
+
+    let t1 = Instant::now() + Duration::from_millis(1);
+    source.report_exit_hint(750);
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        t1,
+        far_future,
+    );
+    assert_no_detach(&events, "still alive; nothing may detach yet");
+
+    // Due deadlines, still alive each time: 10, 30, 70, 150, 310
+    // (cumulative backoff 10, 20, 40, 80, 160) -- the sixth check, at
+    // +560, is where 160*2 (320) would exceed the 250ms cap.
+    let mut now = t1;
+    for delta_ms in [10u64, 20, 40, 80, 160, 250] {
+        now += Duration::from_millis(delta_ms);
+        run_pass(
+            &host,
+            source.as_ref(),
+            &mut state,
+            &cadence,
+            &counters,
+            now,
+            far_future,
+        );
+        assert_no_detach(
+            &events,
+            "still alive; the backoff recheck must not detach it",
+        );
+    }
+
+    // The pid dies now, with no further event. The next due deadline
+    // must be the capped 250ms away, not an uncapped 500ms: declaring
+    // dead and checking at `now + 250ms` must detach, which a 500ms
+    // backoff (still pending) would not.
+    source.declare_dead(750);
+    now += Duration::from_millis(250);
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        now,
+        far_future,
+    );
+    expect_detached(&events, attached.handle);
+}
+
+/// F2 review P3: [`MAX_PENDING_EXIT_CONFIRMATIONS`] (128) bounds the
+/// pending set. Overflowing it evicts the entry with the *latest* due
+/// deadline -- the most recently added one, 1.x's own `max_by_key`
+/// choice (`src/instance/runtime.rs:158-165`) -- and forces a reconcile
+/// that must not disturb any other still-pending entry (F2 review
+/// finding 1's own fix: `apply_appeared` no longer clears a
+/// same-occurrence pending entry).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pending_exit_overflow_evicts_the_latest_due_entry_and_keeps_the_rest() {
+    let runtime = Handle::current();
+    let (_log_dir, host) = test_host(
+        runtime,
+        Arc::new(focus::SyntheticForegroundSource::new(None)),
+    );
+    // Only pid 1 and pid 128 match this plugin's own `[match]` table and
+    // so are observable through real session events; the other 126
+    // fillers are still fully tracked/pending bookkeeping inside
+    // `DiscoveryState` -- `apply_appeared`/`apply_exited` never consult
+    // whether any plugin matched.
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId(0),
+        "vosu.testkit.overflow",
+        &["target.exe"],
+    );
+    let (source, _prefilter) = SyntheticSource::new();
+
+    let mut state = DiscoveryState::default();
+    let cadence = DiscoveryCadence::default();
+    let counters = DiscoveryCounters::default();
+    let far_future = Instant::now() + Duration::from_secs(3600);
+    let t0 = Instant::now();
+
+    for pid in 1..=128u32 {
+        let name = if pid == 1 || pid == 128 {
+            "target.exe"
+        } else {
+            "filler.exe"
+        };
+        source.insert(test_process(pid, name));
+    }
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        t0,
+        t0,
+    );
+    let (first, last) = expect_two_attached(&events, 1, 128);
+
+    // Exit-hint pids 1..128 one at a time, each its own pass a
+    // microsecond later than the last -- far short of the 10ms initial
+    // backoff, so every pending entry gets its own strictly increasing
+    // due deadline and none resolves early.
+    let report_base = t0 + Duration::from_millis(1);
+    let mut now = report_base;
+    let mut pid1_reported_at = None;
+    let mut pid128_reported_at = None;
+    for pid in 1..=128u32 {
+        source.report_exit_hint(pid);
+        run_pass(
+            &host,
+            source.as_ref(),
+            &mut state,
+            &cadence,
+            &counters,
+            now,
+            far_future,
+        );
+        if pid == 1 {
+            pid1_reported_at = Some(now);
+        }
+        if pid == 128 {
+            pid128_reported_at = Some(now);
+        }
+        now += Duration::from_micros(1);
+    }
+    let pid1_due = pid1_reported_at.unwrap() + Duration::from_millis(10);
+    let pid128_due = pid128_reported_at.unwrap() + Duration::from_millis(10);
+    assert_no_detach(&events, "every pid is still alive; none may detach yet");
+
+    // One more process, tracked through its own `appear` (inspect path),
+    // then exit-hinted: its arrival overflows the 128 bound, evicting
+    // pid 128's own entry -- the one with the latest due deadline of the
+    // 128 just created -- and forcing a reconcile.
+    source.appear(test_process(129, "filler.exe"));
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        now,
+        far_future,
+    );
+    now += Duration::from_micros(1);
+    source.report_exit_hint(129);
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        now,
+        far_future,
+    );
+
+    // pid 1's own pending confirmation survived the eviction-forced
+    // reconcile (F2 review finding 1): declaring it dead and reaching
+    // its original backoff deadline (which arrives before pid 128's
+    // own, since pid 1 was exit-hinted first) must still detach it.
+    // Checked before pid 128's own deadline below: once that later
+    // `now` is reached, pid 1's own still-pending entry would otherwise
+    // also be swept by the same `resolve_due_pending_exits` pass,
+    // extending its backoff past this test's own precomputed deadline.
+    source.declare_dead(1);
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        pid1_due + Duration::from_millis(1),
+        far_future,
+    );
+    expect_detached(&events, first.handle);
+
+    // pid 128's own pending confirmation was evicted: declaring it dead
+    // and reaching its original backoff deadline must NOT detach it --
+    // nothing is left pending to catch it.
+    source.declare_dead(128);
+    run_pass(
+        &host,
+        source.as_ref(),
+        &mut state,
+        &cadence,
+        &counters,
+        pid128_due + Duration::from_millis(1),
+        far_future,
+    );
+    assert_no_detach(
+        &events,
+        "pid 128's exit confirmation was evicted; its own backoff must not fire",
+    );
+    // `last` (pid 128's own attach) is otherwise unused: the eviction
+    // path is proven entirely by `assert_no_detach` above, not a second
+    // `expect_detached` (nothing should ever detach it through this
+    // path).
+    let _ = last;
+}
+
+/// Parity row 17 (`src/instance/tests.rs:827`), renamed from
+/// `process_event_wakes_are_targeted_and_loss_reconciles_once` (F2
+/// review P3: the old name claimed to cover `event_wakes`, which only
+/// [`DiscoveryService`]'s own background thread increments --
+/// `event_wakes_counts_only_a_genuine_source_notifier_wake` covers that
+/// instead through the real loop). An `inspect` event hint is handled
+/// through the targeted path alone -- counting toward
+/// [`DiscoveryStats::targeted_inspections`] without another
+/// [`DiscoveryStats::full_scans`] -- while a single `needs_reconcile`
+/// loss flag forces exactly one additional full scan *keeping* the
+/// healthy-events cadence (F2 review P3): unlike a real failure
+/// (`failed_targeted_inspection_is_not_counted`), a bare loss flag is
+/// never `degraded`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inspect_hint_is_targeted_and_a_loss_flag_reconciles_once_keeping_healthy_cadence() {
     let runtime = Handle::current();
     let (_log_dir, host) = test_host(
         runtime,
@@ -416,11 +825,9 @@ async fn process_event_wakes_are_targeted_and_loss_reconciles_once() {
     );
     let (source, _prefilter) = SyntheticSource::new();
     source.insert(test_process(800, "osu!.exe"));
+    source.set_events_healthy(true);
 
-    let mut tracked = HashMap::new();
-    let mut pending_exits = HashMap::new();
-    let mut last_filter: Option<Prefilter> = None;
-    let mut last_generation: Option<u64> = None;
+    let mut state = DiscoveryState::default();
     let cadence = DiscoveryCadence::default();
     let counters = DiscoveryCounters::default();
     let t0 = Instant::now();
@@ -428,29 +835,28 @@ async fn process_event_wakes_are_targeted_and_loss_reconciles_once() {
     let next = run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t0,
         t0,
     );
     assert_eq!(counters.full_scans.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        next,
+        t0 + cadence.events_healthy,
+        "tracked and healthy from the start -> the healthy-events cadence"
+    );
 
     // A targeted `inspect` event, well before `next` is due: handled
     // through `apply_batch` alone -- no `enumerate()`, so `full_scans`
     // must not move, only `targeted_inspections`.
-    let t1 = next - cadence.active / 2;
+    let t1 = next - cadence.events_healthy / 2;
     source.request_inspect(800);
     run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t1,
@@ -464,18 +870,18 @@ async fn process_event_wakes_are_targeted_and_loss_reconciles_once() {
     );
 
     // A loss flag (no inspect/exit hints at all): must force exactly one
-    // additional full reconcile.
+    // additional full reconcile, but -- unlike a real failure or an
+    // eviction -- must keep the healthy-events cadence, not drop to the
+    // fast one (F2 review P3: 1.x's own `lost` sets `full_reconcile` but
+    // never `retry_reconcile`).
     let full_scans_before = counters.full_scans.load(Ordering::Relaxed);
     let reconciliation_requests_before = counters.reconciliation_requests.load(Ordering::Relaxed);
-    let t2 = next - cadence.active / 4;
+    let t2 = next - cadence.events_healthy / 4;
     source.request_reconcile();
-    run_pass(
+    let after_loss = run_pass(
         &host,
         source.as_ref(),
-        &mut tracked,
-        &mut pending_exits,
-        &mut last_filter,
-        &mut last_generation,
+        &mut state,
         &cadence,
         &counters,
         t2,
@@ -490,4 +896,57 @@ async fn process_event_wakes_are_targeted_and_loss_reconciles_once() {
         counters.reconciliation_requests.load(Ordering::Relaxed),
         reconciliation_requests_before + 1
     );
+    assert_eq!(
+        after_loss,
+        t2 + cadence.events_healthy,
+        "a bare loss flag must keep the healthy-events cadence, not drop to the fast one"
+    );
+}
+
+/// F2 review P3: `event_wakes` is incremented only by
+/// [`DiscoveryService`]'s own background thread, never by [`run_pass`]
+/// directly -- driven through the real [`DiscoveryService::start`] loop
+/// (unlike every other test in this module), so a genuine source
+/// notifier wake (`SyntheticSource::appear`) is actually counted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn event_wakes_counts_only_a_genuine_source_notifier_wake() {
+    let runtime = Handle::current();
+    let (_log_dir, host) = test_host(
+        runtime.clone(),
+        Arc::new(focus::SyntheticForegroundSource::new(None)),
+    );
+    let events = create_session_instance(
+        &host,
+        PluginInstanceId(0),
+        "vosu.testkit.event-wakes-real",
+        &["osu!.exe"],
+    );
+    let (source, _prefilter) = SyntheticSource::new();
+    let service = DiscoveryService::start(&host, source.clone(), runtime);
+
+    // Bounded poll (not a sleep-for-ordering) for the startup full
+    // reconcile to finish: `DiscoveryService::start`'s first pass is
+    // always a full reconcile regardless of any notifier, so an
+    // `appear` racing ahead of it would be picked up by that pass
+    // instead of the notifier-driven targeted path this test means to
+    // prove -- `full_scans >= 1` only once that first pass has
+    // returned.
+    let deadline = Instant::now() + RECV_TIMEOUT;
+    while service.stats().full_scans == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the startup full reconcile never completed"
+        );
+        std::thread::yield_now();
+    }
+
+    source.appear(test_process(850, "osu!.exe"));
+    expect_attached(&events, 850);
+
+    assert!(
+        service.stats().event_wakes >= 1,
+        "a real source notifier wake must be counted"
+    );
+
+    service.stop();
 }

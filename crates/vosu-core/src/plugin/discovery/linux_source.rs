@@ -17,7 +17,7 @@
 //! returns `None` and [`ProcessSource::drain_events`]'s default
 //! (always-empty, never reconcile-forcing) applies, so
 //! [`DiscoveryService`](super::DiscoveryService)'s own
-//! `RECONCILE_INTERVAL` alone drives discovery.
+//! [`DiscoveryCadence`](super::DiscoveryCadence) alone drives discovery.
 //!
 //! Pre-filter handling (§6.1, D18, unified across both targets through
 //! [`crate::plugin::matcher::Prefilter`]): [`ProcessSource::set_prefilter`]
@@ -118,7 +118,7 @@ impl LinuxSource {
     /// backend even while unfiltered: skipping it there would only cost
     /// CN_PROC its own precise, immediate exit recognition for nothing,
     /// degrading every exit to the discovery service's bounded
-    /// `RECONCILE_INTERVAL` cadence without any bound to protect.
+    /// `DiscoveryCadence` cadence without any bound to protect.
     fn sync_tracked(&self, tracked: &HashSet<u32>) {
         let Some(events) = self.events.as_ref() else {
             return;

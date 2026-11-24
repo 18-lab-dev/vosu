@@ -32,11 +32,14 @@
 //! Cadence and exit confirmation (DI, `docs/v2/implementation-plan.md` M1
 //! §4): a flat reconciliation interval regressed Windows detection
 //! latency from 1.x's 100 ms to 2 s, so [`DiscoveryCadence`] instead
-//! mirrors 1.x's own cadence exactly (`src/instance.rs:31-42`,
+//! mirrors 1.x's own cadence exactly (`src/instance.rs:33-42`,
 //! `src/instance/runtime.rs:262-266`) — fast (100 ms) while nothing is
 //! tracked, 1 s while something is, relaxing to 5 s only while
 //! [`ProcessSource::events_healthy`] reports a healthy push-event channel
-//! and nothing just forced an out-of-cadence pass. An `exit` hint is not
+//! and nothing just failed or overflowed [`MAX_PENDING_EXIT_CONFIRMATIONS`]
+//! (a bare pre-filter/matcher-generation change or the source's own
+//! loss flag never does, matching 1.x's own `retry_reconcile`, which
+//! only a real failure or an eviction sets). An `exit` hint is not
 //! trusted outright either: [`ProcessSource::is_alive`] re-confirms it,
 //! and a pid that still reports alive is re-checked with exponential
 //! backoff (10 ms up to 250 ms, at most
@@ -130,6 +133,20 @@ struct PendingExit {
     start_time: u64,
     due: Instant,
     backoff: Duration,
+}
+
+/// [`run_pass`]'s own mutable discovery state, bundled into one
+/// parameter (P3 review: these four fields always travel together, so a
+/// small struct removes the need for a `too_many_arguments` exception
+/// rather than only excusing it): the tracked occurrence per pid, every
+/// still-pending exit confirmation, and the last pre-filter/matcher
+/// generation this service synced.
+#[derive(Default)]
+struct DiscoveryState {
+    tracked: HashMap<u32, ProcessRecord>,
+    pending_exits: HashMap<u32, PendingExit>,
+    last_filter: Option<Prefilter>,
+    last_generation: Option<u64>,
 }
 
 /// Snapshot of [`DiscoveryService`]'s own lifetime counters
@@ -309,12 +326,22 @@ fn same_occurrence(a: &ProcessRecord, b: &ProcessRecord) -> bool {
 /// fresh attach for one whose new name/path a matcher now accepts that
 /// did not accept the old one.
 ///
-/// Also clears any pending exit confirmation for this pid (exit
-/// confirmation, module doc comment): a fresh, repeated, or
-/// reused-pid-superseding appearance is itself live confirmation the pid
-/// is running, which outranks an exit hint this service has not yet
-/// confirmed — stale for the old occurrence on a supersede, redundant
-/// for the current one otherwise.
+/// A reused-pid supersede additionally drops any pending exit
+/// confirmation for the old occurrence (exit confirmation, module doc
+/// comment): `start_time` already guards [`resolve_due_pending_exits`]
+/// against resolving the wrong occurrence, but the old entry is now
+/// certainly stale (a new process owns this pid) and would otherwise
+/// sit pending until its own backoff deadline for nothing. A
+/// same-occurrence observation — including a full reconcile's own
+/// repeat sighting — leaves a pending entry untouched (P2 review): the
+/// `exit` hint that created it has already been consumed, and
+/// `start_time` alone cannot tell "still running, exactly as the
+/// pending entry expects" apart from "a loss event's full reconcile
+/// re-derived ground truth while the real exit is still only
+/// unconfirmed" — only [`resolve_due_pending_exits`]'s own
+/// `ProcessSource::is_alive` recheck may resolve it, exactly 1.x's own
+/// `pending_exits.retain` keyed by generation, never cleared by a mere
+/// re-sighting.
 fn apply_appeared(
     host: &PluginHost,
     tracked: &mut HashMap<u32, ProcessRecord>,
@@ -328,12 +355,12 @@ fn apply_appeared(
             }
         }
         Some(_) => {
+            pending_exits.remove(&record.pid);
             host.process_exited(record.pid);
             host.process_appeared(record.clone());
         }
         None => host.process_appeared(record.clone()),
     }
-    pending_exits.remove(&record.pid);
     tracked.insert(record.pid, record);
 }
 
@@ -444,9 +471,9 @@ fn handle_exit_hint(
 /// dead detaches it; still alive doubles the backoff (capped at
 /// [`EXIT_CONFIRMATION_MAX_BACKOFF`]); an entry whose pid no longer
 /// tracks the same occurrence it was scheduled for (superseded
-/// elsewhere, e.g. [`apply_appeared`]'s own unconditional clear) is
-/// simply dropped, since whatever superseded it already resolved the
-/// session correctly.
+/// elsewhere, e.g. [`apply_appeared`]'s own reused-pid clear) is simply
+/// dropped, since whatever superseded it already resolved the session
+/// correctly.
 fn resolve_due_pending_exits(
     host: &PluginHost,
     source: &dyn ProcessSource,
@@ -485,17 +512,29 @@ fn resolve_due_pending_exits(
     }
 }
 
+/// What [`apply_batch`] learned from one event batch.
+struct BatchOutcome {
+    /// Whether a full reconcile is now needed — the source itself asked
+    /// for one ([`ProcessEventBatch::needs_reconcile`]), an exit
+    /// confirmation evicted another pending entry under
+    /// [`MAX_PENDING_EXIT_CONFIRMATIONS`], or a targeted `inspect`
+    /// failed.
+    needs_reconcile: bool,
+    /// Whether the need came from a real failure or eviction, never a
+    /// bare source loss flag alone (P3 review, [`cadence_interval`]'s
+    /// own doc comment): 1.x's own `retry_reconcile` is set only by an
+    /// inspect failure or an eviction (`src/instance/runtime.rs:262-266`),
+    /// never by `lost` on its own, so only this forces the fast cadence
+    /// — a bare loss flag still keeps the healthy-events interval.
+    degraded: bool,
+}
+
 /// Applies one `source.drain_events()` batch: every `exit` pid through
 /// [`handle_exit_hint`], every `inspect` pid re-read through
 /// [`ProcessSource::inspect`] and applied through [`apply_appeared`] (or
 /// [`apply_exited`] if it is already gone) — a successful `inspect`
 /// (either outcome) counts toward [`DiscoveryStats::targeted_inspections`].
-/// Returns whether a full reconcile is now needed — either because the
-/// source itself asked for one ([`ProcessEventBatch::needs_reconcile`]),
-/// an exit confirmation evicted another pending entry under
-/// [`MAX_PENDING_EXIT_CONFIRMATIONS`], or because a targeted `inspect`
-/// failed, which the caller cannot otherwise tell from a plain `()`
-/// return — a failed inspect is never counted.
+/// A failed inspect is never counted.
 fn apply_batch(
     host: &PluginHost,
     source: &dyn ProcessSource,
@@ -504,10 +543,14 @@ fn apply_batch(
     counters: &DiscoveryCounters,
     now: Instant,
     batch: ProcessEventBatch,
-) -> bool {
+) -> BatchOutcome {
     let mut needs_reconcile = batch.needs_reconcile;
+    let mut degraded = false;
     for pid in batch.exit {
-        needs_reconcile |= handle_exit_hint(host, source, tracked, pending_exits, now, pid);
+        if handle_exit_hint(host, source, tracked, pending_exits, now, pid) {
+            needs_reconcile = true;
+            degraded = true;
+        }
     }
     for pid in batch.inspect {
         match source.inspect(pid) {
@@ -526,10 +569,14 @@ fn apply_batch(
             Err(error) => {
                 tracing::warn!(%error, pid, "discovery targeted inspect failed; forcing a full reconcile");
                 needs_reconcile = true;
+                degraded = true;
             }
         }
     }
-    needs_reconcile
+    BatchOutcome {
+        needs_reconcile,
+        degraded,
+    }
 }
 
 /// Syncs the unified enumeration-cost pre-filter (`MatcherEngine::prefilter`,
@@ -595,19 +642,21 @@ fn reoffer_tracked(host: &PluginHost, tracked: &HashMap<u32, ProcessRecord>) {
 }
 
 /// The next full-reconcile deadline's interval from `now` (DI,
-/// [`DiscoveryCadence`]'s own doc comment). `forced` is `true` for an
-/// out-of-cadence reconcile (a pre-filter/matcher-generation change, or
-/// [`apply_batch`] asking for one): 1.x always re-derived
-/// `discovery_interval()` (never the healthy-events interval) the moment
-/// anything needed a retry, regardless of event health
-/// (`src/instance/runtime.rs:262-266`).
+/// [`DiscoveryCadence`]'s own doc comment). `degraded` is `true` only
+/// for a real failure or a [`MAX_PENDING_EXIT_CONFIRMATIONS`] eviction
+/// ([`BatchOutcome::degraded`]'s own doc comment) — never for a bare
+/// pre-filter/matcher-generation change or the source's own loss flag
+/// alone (P3 review): 1.x's own `retry_reconcile` is set only by an
+/// enumeration/inspect failure or an eviction, never by `lost` alone
+/// (`src/instance/runtime.rs:262-266`), so only a real `degraded` pass
+/// drops to the fast cadence regardless of event health.
 fn cadence_interval(
     cadence: &DiscoveryCadence,
     tracked_empty: bool,
     events_healthy: bool,
-    forced: bool,
+    degraded: bool,
 ) -> Duration {
-    if events_healthy && !forced {
+    if events_healthy && !degraded {
         cadence.events_healthy
     } else if tracked_empty {
         cadence.empty
@@ -663,34 +712,41 @@ fn wait_next(
 /// the full reconcile's own `enumerate()` has run. Takes `now` explicitly
 /// (rather than reading [`Instant::now`] itself) so a test can pin
 /// deadlines and backoff windows deterministically, without a wall-clock
-/// sleep for ordering (`discovery/tests.rs`). Returns the deadline for
-/// the next full reconcile.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "every argument is this pass's own mutable discovery state or a read-only input; splitting it into a struct would not reduce coupling, only hide it (scripts/lint-expectations.txt)"
-)]
+/// sleep for ordering (`discovery/tests/mod.rs`). Returns the deadline
+/// for the next full reconcile.
+///
+/// Only an out-of-cadence reconcile counts toward
+/// [`DiscoveryStats::reconciliation_requests`] (that field's own doc
+/// comment): a pre-filter/matcher-generation change that merely
+/// coincides with an already-due periodic tick does not add a second
+/// one — in particular the very first pass, whose `next_reconcile`
+/// starts already due, is never counted even though `last_filter`/
+/// `last_generation` always "change" from `None` on it.
 fn run_pass(
     host: &PluginHost,
     source: &dyn ProcessSource,
-    tracked: &mut HashMap<u32, ProcessRecord>,
-    pending_exits: &mut HashMap<u32, PendingExit>,
-    last_filter: &mut Option<Prefilter>,
-    last_generation: &mut Option<u64>,
+    state: &mut DiscoveryState,
     cadence: &DiscoveryCadence,
     counters: &DiscoveryCounters,
     now: Instant,
     next_reconcile: Instant,
 ) -> Instant {
-    let filter_changed = sync_prefilter(host, source, last_filter);
-    let generation_changed = sync_generation(host, last_generation);
-    if filter_changed || generation_changed || now >= next_reconcile {
-        let forced = filter_changed || generation_changed;
-        if forced {
+    let filter_changed = sync_prefilter(host, source, &mut state.last_filter);
+    let generation_changed = sync_generation(host, &mut state.last_generation);
+    let periodic_due = now >= next_reconcile;
+    if filter_changed || generation_changed || periodic_due {
+        if (filter_changed || generation_changed) && !periodic_due {
             counters
                 .reconciliation_requests
                 .fetch_add(1, Ordering::Relaxed);
         }
-        if !full_reconcile(host, source, tracked, pending_exits, counters) {
+        if !full_reconcile(
+            host,
+            source,
+            &mut state.tracked,
+            &mut state.pending_exits,
+            counters,
+        ) {
             // Enumeration itself failed: retry promptly regardless of
             // tracked-set size or event health, instead of waiting out
             // whatever interval the formula below would otherwise pick
@@ -698,21 +754,56 @@ fn run_pass(
             return now + cadence.empty;
         }
         if generation_changed {
-            reoffer_tracked(host, tracked);
+            reoffer_tracked(host, &state.tracked);
         }
+        // Never `degraded`: a bare pre-filter/matcher-generation change
+        // (or simply being due) is not a failure or an eviction
+        // (`cadence_interval`'s own doc comment).
         return now
-            + cadence_interval(cadence, tracked.is_empty(), source.events_healthy(), forced);
+            + cadence_interval(
+                cadence,
+                state.tracked.is_empty(),
+                source.events_healthy(),
+                false,
+            );
     }
-    resolve_due_pending_exits(host, source, tracked, pending_exits, now);
+    resolve_due_pending_exits(
+        host,
+        source,
+        &mut state.tracked,
+        &mut state.pending_exits,
+        now,
+    );
     let batch = source.drain_events();
-    if apply_batch(host, source, tracked, pending_exits, counters, now, batch) {
+    let outcome = apply_batch(
+        host,
+        source,
+        &mut state.tracked,
+        &mut state.pending_exits,
+        counters,
+        now,
+        batch,
+    );
+    if outcome.needs_reconcile {
         counters
             .reconciliation_requests
             .fetch_add(1, Ordering::Relaxed);
-        if !full_reconcile(host, source, tracked, pending_exits, counters) {
+        if !full_reconcile(
+            host,
+            source,
+            &mut state.tracked,
+            &mut state.pending_exits,
+            counters,
+        ) {
             return now + cadence.empty;
         }
-        return now + cadence_interval(cadence, tracked.is_empty(), source.events_healthy(), true);
+        return now
+            + cadence_interval(
+                cadence,
+                state.tracked.is_empty(),
+                source.events_healthy(),
+                outcome.degraded,
+            );
     }
     next_reconcile
 }
@@ -752,10 +843,7 @@ impl DiscoveryService {
         let thread = thread::Builder::new()
             .name("vosu-discovery".to_owned())
             .spawn(move || {
-                let mut tracked: HashMap<u32, ProcessRecord> = HashMap::new();
-                let mut pending_exits: HashMap<u32, PendingExit> = HashMap::new();
-                let mut last_filter: Option<Prefilter> = None;
-                let mut last_generation: Option<u64> = None;
+                let mut state = DiscoveryState::default();
                 // Due immediately: the first pass is always a full
                 // reconcile, regardless of what `source` reports before
                 // then.
@@ -767,10 +855,7 @@ impl DiscoveryService {
                     next_reconcile = run_pass(
                         &host,
                         loop_source.as_ref(),
-                        &mut tracked,
-                        &mut pending_exits,
-                        &mut last_filter,
-                        &mut last_generation,
+                        &mut state,
                         &cadence,
                         &loop_counters,
                         Instant::now(),
@@ -787,7 +872,8 @@ impl DiscoveryService {
                     // `wait_next`'s own source notifier nor the periodic
                     // timeout alone would otherwise retry a pending exit
                     // on its own fast schedule.
-                    let deadline = pending_exits
+                    let deadline = state
+                        .pending_exits
                         .values()
                         .map(|pending| pending.due)
                         .fold(next_reconcile, Instant::min);

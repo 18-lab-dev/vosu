@@ -1,6 +1,6 @@
 //! Windows polling [`ProcessSource`] (`docs/v2/implementation-plan.md` M1
 //! §4, phase d2b, unit c): full system enumeration every
-//! [`super::RECONCILE_INTERVAL`] tick — no live event channel exists on
+//! [`super::DiscoveryCadence`] tick — no live event channel exists on
 //! Windows, so [`super::ProcessSource`]'s defaults (`drain_events`,
 //! `notifier`) already do the right thing and this module implements
 //! [`super::ProcessSource::enumerate`]/[`super::ProcessSource::set_prefilter`].
@@ -263,7 +263,7 @@ struct CachedWindowsMetadata {
 }
 
 /// The [`ProcessSource`] itself: full enumeration through `ops` every
-/// [`super::RECONCILE_INTERVAL`] tick, skipping a pid whose bare
+/// [`super::DiscoveryCadence`] tick, skipping a pid whose bare
 /// executable name [`Prefilter::allows`] rejects before ever calling
 /// [`ProcessOps::bitness`]/[`ProcessOps::command_line`]/
 /// [`ProcessOps::image_path`] for it (module doc comment "Enumeration-cost
