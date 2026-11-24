@@ -5,7 +5,10 @@ mod store;
 mod types;
 
 pub use store::CredentialStore;
-pub use types::{CredentialAvailability, CredentialError, CredentialInput, CredentialPresence, MAX_DOCUMENT_BYTES, MAX_ENTRIES, MAX_FIELD_BYTES, MAX_MUTATION_BYTES};
+pub use types::{
+    CredentialAvailability, CredentialError, CredentialInput, CredentialPresence,
+    MAX_DOCUMENT_BYTES, MAX_ENTRIES, MAX_FIELD_BYTES, MAX_MUTATION_BYTES,
+};
 
 #[cfg(test)]
 mod tests;

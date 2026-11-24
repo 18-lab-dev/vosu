@@ -18,7 +18,11 @@ fn github_api_origin_is_exact_and_static_sources_are_literal() {
         github.credential_origin(),
         &Origin::parse("https://api.github.com:443").unwrap()
     );
-    let policy = RequestPolicy::source(RequestPurpose::SourceMetadata, github).unwrap();
+    let policy = RequestPolicy::source(
+        RequestPurpose::SourceMetadata(MetadataAccept::GitHub),
+        github,
+    )
+    .unwrap();
     assert!(policy.credential_eligible(&Url::parse("https://api.github.com/repos/o/r").unwrap()));
     for url in [
         "https://github.com/o/r",
@@ -114,7 +118,7 @@ async fn exact_host_private_exception_is_per_hop_and_port_not_credential_origin(
     ]);
     for purpose in [
         RequestPurpose::Probe,
-        RequestPurpose::SourceMetadata,
+        RequestPurpose::SourceMetadata(MetadataAccept::Json),
         RequestPurpose::CatalogAsset,
     ] {
         let enabled = source_policy(purpose, true);

@@ -1,4 +1,18 @@
 //! Generation-scoped, contextual SDK ingestion; failed sources never retain last-good entries.
+//!
+//! Dashboard status mapping (all reasons are static/redacted):
+//! | Failure | Display |
+//! |---|---|
+//! | Disabled | Source disabled |
+//! | Unavailable | Not found, unavailable or no access; existence unconfirmed |
+//! | CredentialRequired | Credential may be required; existence unconfirmed |
+//! | CredentialRejected | Credential rejected or insufficient read access |
+//! | CredentialStoreUnavailable | Repair unavailable credential store |
+//! | MalformedRelease | Invalid release metadata or missing/ambiguous catalog asset |
+//! | UnsafeAsset | Unsafe initial catalog asset origin |
+//! | UndetectedForge | Could not detect forge type |
+//! | InvalidCatalog | SDK catalog validation failed |
+//! | Limit | Catalog/snapshot limit exceeded |
 use super::{
     SourceCatalog, SourceGeneration, SourceIdentity, SourceRecord, SourceStore, validate_catalogs,
 };
@@ -22,6 +36,18 @@ pub enum SourceFailure {
     InvalidCatalog,
     #[error("catalog snapshot limit exceeded")]
     Limit,
+    #[error("credential may be required; source existence unconfirmed")]
+    CredentialRequired,
+    #[error("credential rejected or insufficient read access")]
+    CredentialRejected,
+    #[error("catalog credential store unavailable")]
+    CredentialStoreUnavailable,
+    #[error("invalid release metadata or ambiguous catalog asset")]
+    MalformedRelease,
+    #[error("unsafe initial catalog asset origin")]
+    UnsafeAsset,
+    #[error("could not detect forge type")]
+    UndetectedForge,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SnapshotError {
