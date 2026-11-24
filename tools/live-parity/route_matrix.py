@@ -318,6 +318,8 @@ def manifest(cases: Iterable[RouteCase] | None = None) -> dict:
     return {"format": MATRIX_FORMAT, "cases": [{
         "id": case.id, "family": case.family, "barrier": case.barrier, "role": case.role,
         "method": case.method, "transport": "websocket" if case.websocket else "http",
+        "target": case.target or None,
+        "security": None if case.security is None else list(case.security),
         "requires": sorted(case.requires), "outcomes": sorted(case.outcomes),
         "ledger": list(case.ledger), "validator": None if case.validator is None else [
             case.validator.request_header, case.validator.response_header],
@@ -637,6 +639,8 @@ def _build() -> tuple[RouteCase, ...]:
             raise ValueError(f"invalid outcomes for {case.id}")
         if "/api/ingame" in case.target.lower():
             raise ValueError("/api/ingame is excluded from M4b (GOLDEN_CONTRACT.md §8)")
+        if any(name.lower() == "x-vosu-test-capture" for name, _ in case.headers):
+            raise ValueError("route cases never carry the harness capability (§7)")
         seen.add(case.id)
     return cases
 

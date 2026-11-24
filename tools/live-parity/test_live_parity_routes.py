@@ -540,13 +540,16 @@ class MatrixTests(unittest.TestCase):
                 self.assertEqual(rm.NEGATIVE, case.role, case.id)
                 self.assertFalse(rm.golden_eligible(case))
                 self.assertEqual(404, case.vosu_status)
-        with self.assertRaisesRegex(ValueError, "api/ingame"):
-            original = rm._origin_cases
-            try:
-                rm._origin_cases = lambda: [rm._http("origin-peer.ingame", "GET", "/api/ingame")]
+        forbidden = {
+            "api/ingame": rm._http("origin-peer.ingame", "GET", "/api/ingame"),
+            "capability": rm._http("origin-peer.capability", "GET", "/json",
+                                   headers=(("X-Vosu-Test-Capture", "00"),)),
+        }
+        for message, case in forbidden.items():
+            with self.subTest(message=message), \
+                    mock.patch.object(rm, "_origin_cases", lambda case=case: [case]), \
+                    self.assertRaisesRegex(ValueError, message):
                 rm._build()
-            finally:
-                rm._origin_cases = original
 
     def test_negative_case_local_expectation(self) -> None:
         case = rm.CASES["state-http.negative.api-v1-suffix"]
@@ -715,6 +718,26 @@ class SecurityTests(unittest.TestCase):
         Path(self.layout.sentinel_chart).write_text("changed")
         with self.assertRaises(rs.SecurityAbort):
             rm.render(rm.CASES["calculation.absolute-outside-root"], self.context)
+
+    def test_non_route_declared_root_admits_inside_paths_and_bounds_sentinels(self) -> None:
+        files = self.root / "lazer" / "files"
+        files.mkdir(parents=True)
+        chart = files / "ab" / "abcd"
+        chart.parent.mkdir()
+        chart.write_text("osu file format v14\n")
+        layout = dataclasses.replace(self.layout, other_roots={"files": str(files)})
+        context = rm.MatrixContext(self.context.platform,
+                                   dict(self.context.values, calc_absolute_inside=str(chart)),
+                                   layout)
+        rm.render(rm.CASES["calculation.absolute-inside-root"], context)
+        with self.assertRaises(rs.SecurityAbort):
+            rm.render(rm.CASES["calculation.absolute-inside-root"], dataclasses.replace(
+                context, values=dict(context.values, calc_absolute_inside=str(Path.home()))))
+        swallowed = dataclasses.replace(
+            layout, other_roots={"files": str(self.root / "vosu-route-probe")})
+        with self.assertRaisesRegex(rs.SecurityAbort, "inside a declared root"):
+            rm.render(rm.CASES["calculation.absolute-outside-root"],
+                      dataclasses.replace(context, security=swallowed))
 
     def test_calculation_paths_are_validated_and_query_encoded(self) -> None:
         outside = rm.render(rm.CASES["calculation.absolute-outside-root"], self.context)

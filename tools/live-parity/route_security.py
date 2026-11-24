@@ -8,6 +8,7 @@ sent (GOLDEN_CONTRACT.md §6, plan §3.7).
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 import hashlib
 import ntpath
@@ -77,6 +78,12 @@ class SecurityLayout:
     sentinel_chart_sha256: str | None = None
     links: Mapping[str, str] = field(default_factory=dict)
     link_errors: Mapping[str, str] = field(default_factory=dict)
+    # Declared roots without a legacy file route (e.g. the lazer files slot used by
+    # calculation), keyed by slot name.
+    other_roots: Mapping[str, str] = field(default_factory=dict)
+
+    def declared_roots(self) -> list[tuple[str, str]]:
+        return [*self.route_roots.items(), *self.other_roots.items()]
 
 
 def host_os() -> str:
@@ -123,18 +130,18 @@ def _check_capture_root(layout: SecurityLayout) -> None:
     if layout.os_name == host_os():
         if _within(pm, os.path.realpath(Path.home()), os.path.realpath(root)):
             raise SecurityAbort("capture root contains the home directory")
-    for prefix, route_root in layout.route_roots.items():
-        if prefix not in ROUTE_PREFIXES:
-            raise SecurityAbort(f"unknown route prefix {prefix!r}")
-        if not _absolute(pm, route_root) or not _within(pm, route_root, root) \
-                or _norm(pm, route_root) == normalized:
-            raise SecurityAbort(f"declared root for {prefix} is not strictly inside the capture root")
+    for name, declared in layout.declared_roots():
+        if name.startswith("/") and name not in ROUTE_PREFIXES:
+            raise SecurityAbort(f"unknown route prefix {name!r}")
+        if not _absolute(pm, declared) or not _within(pm, declared, root) \
+                or _norm(pm, declared) == normalized:
+            raise SecurityAbort(f"declared root {name} is not strictly inside the capture root")
     for path in (layout.sentinel, layout.sentinel_chart):
         if path is None:
             continue
         if not _within(pm, path, root):
             raise SecurityAbort("sentinel is outside the capture root")
-        if any(_within(pm, path, route_root) for route_root in layout.route_roots.values()):
+        if any(_within(pm, path, declared) for _, declared in layout.declared_roots()):
             raise SecurityAbort("sentinel is inside a declared root")
 
 
@@ -299,21 +306,22 @@ def inside_absolute(layout: SecurityLayout, value: str) -> tuple[str, bool]:
     _check_capture_root(layout)
     pm = _pm(layout.os_name)
     if not _absolute(pm, value) or not any(
-            _within(pm, value, root) for root in layout.route_roots.values()):
+            _within(pm, value, root) for _, root in layout.declared_roots()):
         raise SecurityAbort("absolute calculation path is not inside a declared root")
     lexical_only = layout.os_name != host_os()
     if not lexical_only:
         real = os.path.realpath(value)
         if not Path(value).is_file() or not any(
                 _within(os.path, real, os.path.realpath(root))
-                for root in layout.route_roots.values()):
+                for _, root in layout.declared_roots()):
             raise SecurityAbort("absolute calculation path does not canonicalize inside a root")
     return value, lexical_only
 
 
 def prepare_security_layout(capture_root: str, route_roots: Mapping[str, str],
                             inside_files: Mapping[str, str],
-                            chart_source: str | None = None) -> SecurityLayout:
+                            chart_source: str | None = None,
+                            other_roots: Mapping[str, str] | None = None) -> SecurityLayout:
     """Create a fresh marker, sentinel(s) and per-root symlinks; never adopts existing files."""
     capture_root = os.path.abspath(capture_root)
     token = secrets.token_hex(16)
@@ -321,7 +329,8 @@ def prepare_security_layout(capture_root: str, route_roots: Mapping[str, str],
     sentinel = os.path.join(sentinel_dir, SENTINEL_FILE)
     chart = os.path.join(sentinel_dir, SENTINEL_CHART) if chart_source else None
     layout = SecurityLayout(host_os(), capture_root, token, dict(route_roots),
-                            dict(inside_files), sentinel, chart)
+                            dict(inside_files), sentinel, chart,
+                            other_roots=dict(other_roots or {}))
     _check_capture_root(layout)
     if not os.path.isdir(capture_root):
         raise SecurityAbort("capture root does not exist")
@@ -350,8 +359,8 @@ def prepare_security_layout(capture_root: str, route_roots: Mapping[str, str],
             errors[prefix] = type(exc).__name__
             continue
         links[prefix] = created[root_key] = LINK_NAME
-    return SecurityLayout(layout.os_name, capture_root, token, layout.route_roots,
-                          layout.inside_files, sentinel, chart, chart_sha, links, errors)
+    return dataclasses.replace(layout, sentinel_chart_sha256=chart_sha, links=links,
+                               link_errors=errors)
 
 
 def remove_security_layout(layout: SecurityLayout) -> None:
