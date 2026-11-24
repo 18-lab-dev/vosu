@@ -1158,7 +1158,7 @@ async fn a_dropped_receiver_releases_its_frame_and_refuses_state_frames() {
     assert!(!connection.client.send_data(frame, 3, false));
     assert_eq!(
         connection.client.state.load(Ordering::Acquire),
-        CLIENT_OPEN,
-        "a refused frame leaves the client writable"
+        CLIENT_CLOSED,
+        "receiver loss synchronously closes the client and releases demand"
     );
 }
