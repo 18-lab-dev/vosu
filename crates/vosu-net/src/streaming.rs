@@ -666,7 +666,7 @@ pub fn is_global_unicast(address: IpAddr) -> bool {
 mod archive;
 
 pub use archive::{extract_zip_atomic, extract_zip_atomic_validated};
-pub use archive::{open_preflighted_zip, preflight_zip_entries};
+pub use archive::{open_preflighted_zip, preflight_zip_entries, validate_zip_entry};
 
 #[cfg(test)]
 mod tests;

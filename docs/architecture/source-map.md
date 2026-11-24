@@ -88,6 +88,12 @@ so `tools -> server` is the only edge left.
   publication (including instance/reset and root/skin checks). No capture tick constructs
   this descriptor, reads more client memory, or allocates/copies a set index. These are
   internal source facts, not filesystem authority or added public state paths.
+- `crates/vosu-osu/src/actions/import/` owns bounded local `.osz` snapshots,
+  reusing `vosu-net` counter ZIP count/path/type preflight protections. It prepares
+  same-filesystem stable no-clobber stages and selected-context lazer handoffs,
+  never writable action destinations or database writes. The dispatch owner
+  bounds blocking-worker admission, cancels/joins preparation, retains the
+  selected session generation and awaits/reaps handoffs through shutdown.
 - `crates/vosu-pp/src/beatmap/random.rs` owns deterministic random-map transforms.
   Calculator tests group gradual, hit-window, mod, stateful-oracle, and scoring
   contracts under their existing integration-test entrypoints.

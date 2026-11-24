@@ -218,6 +218,27 @@ pub fn open_preflighted_zip(
     }
     Ok(archive)
 }
+/// Shared counter/import entry preflight. Reject nonportable separators and
+/// Windows prefixes/alternate streams even when validation runs on Unix.
+pub fn validate_zip_entry(name: &str, unix_mode: Option<u32>) -> Result<PathBuf, NetworkError> {
+    let path = Path::new(name);
+    if name.is_empty()
+        || name.contains(['\\', ':', '\0'])
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err(NetworkError::UnsafeZip(name.into()));
+    }
+    if unix_mode.is_some_and(|mode| {
+        let kind = mode & 0o170000;
+        kind != 0 && kind != 0o100000 && kind != 0o040000
+    }) {
+        return Err(NetworkError::UnsafeZip("non-regular archive entry".into()));
+    }
+    Ok(path.to_path_buf())
+}
 
 #[cfg(unix)]
 fn sync_directory(path: &Path) -> io::Result<()> {
@@ -449,34 +470,7 @@ pub fn extract_zip_atomic_validated(
             return Err(NetworkError::Cancelled);
         }
         let mut entry = archive.by_index(index)?;
-        let name = entry.name().to_owned();
-        let raw_path = Path::new(&name);
-        if raw_path.is_absolute()
-            || raw_path.components().any(|part| {
-                matches!(
-                    part,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            })
-        {
-            return Err(NetworkError::UnsafeZip(name));
-        }
-        let enclosed = entry
-            .enclosed_name()
-            .ok_or_else(|| NetworkError::UnsafeZip(name.clone()))?;
-        if enclosed.is_absolute()
-            || enclosed
-                .components()
-                .any(|part| !matches!(part, Component::Normal(_)))
-        {
-            return Err(NetworkError::UnsafeZip(name));
-        }
-        if entry.unix_mode().is_some_and(|mode| {
-            let kind = mode & 0o170000;
-            kind != 0 && kind != 0o100000 && kind != 0o040000
-        }) {
-            return Err(NetworkError::UnsafeZip("non-regular archive entry".into()));
-        }
+        let enclosed = validate_zip_entry(entry.name(), entry.unix_mode())?;
         let entry_size = entry.size();
         let remaining = limits
             .max_expanded_bytes

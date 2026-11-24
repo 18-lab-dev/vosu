@@ -20,6 +20,7 @@
 #[cfg(all(feature = "test-harness", not(debug_assertions)))]
 compile_error!("the test-harness feature is forbidden in release builds");
 
+pub mod actions;
 pub mod bridge_b1;
 pub mod capture;
 pub mod classify;

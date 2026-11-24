@@ -3611,11 +3611,14 @@ dependencies = [
  "arc-swap",
  "bytes",
  "proptest",
+ "rosu-map",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror",
  "tokio",
  "tokio-util",
+ "vosu-net",
  "vosu-osu-calc",
  "vosu-osu-model",
  "vosu-osu-reader",
@@ -3623,6 +3626,7 @@ dependencies = [
  "vosu-plugin-api",
  "vosu-proptest",
  "vosu-surface",
+ "zip",
 ]
 
 [[package]]
