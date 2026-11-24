@@ -83,3 +83,73 @@ pub(super) fn check(s: &StateBundleSnapshot, doc: &Value, v2: &Value, precise: &
         );
     }
 }
+
+pub(super) fn independent_sources(
+    s: &StateBundleSnapshot,
+    doc: &Value,
+    private: &Value,
+    v1: &Value,
+) {
+    let primary = &doc["vosu.osu"]["performance"]["graph"]["primary"];
+    equal(
+        "source fidelity",
+        "primary",
+        &json!(s.regular.beatmap.graph.primary),
+        primary,
+    );
+    equal(
+        "source fidelity",
+        "v1 strains",
+        &v1["menu"]["pp"]["strains"],
+        primary,
+    );
+    let current = &private["vosu.osu"]["internal"]["paths"]["current"];
+    for (source, legacy) in [
+        ("beatmapFolder", "folder"),
+        ("beatmapFile", "file"),
+        ("background", "bg"),
+        ("audio", "audio"),
+    ] {
+        assert_eq!(&current[source], &v1["menu"]["bm"]["path"][legacy]);
+    }
+}
+
+#[test]
+fn independent_file_names_match_legacy_v1_through_bus_for_every_presence_mask() {
+    for mask in 0_u8..16 {
+        let mut input = load_input("stable-defaults/input.json");
+        for (index, key, value) in [
+            (0, "folder", "directory"),
+            (1, "filename", "chart.osu"),
+            (2, "backgroundFilename", "背景.png"),
+            (3, "audioFilename", ""),
+        ] {
+            input.services.menu[key] = if mask & (1 << index) != 0 {
+                json!(value)
+            } else {
+                Value::Null
+            };
+        }
+        let mut bus = Bus::new();
+        bus.open(&input, 10);
+        let snapshot = oracle::state(&input);
+        assert!(bus.publish(&snapshot, &facts(&input)) > 0);
+        let public = bus.document(Audience::Api);
+        let grant = InternalGrant::from_subtrees(vec![Pointer::parse("/internal/paths").unwrap()]);
+        let private = bus.document(Audience::Plugin(&grant));
+        let manager = oracle::manager_with(
+            &input,
+            ApiRuntimeSettings {
+                enable_key_overlay: true,
+                enable_mania_key_hit_errors: true,
+                enable_hit_offsets: true,
+            },
+        );
+        let v1: Value = serde_json::from_slice(&oracle::encode("v1", &manager)).unwrap();
+        independent_sources(&snapshot, &public, &private, &v1);
+        assert!(public["vosu.osu"].get("internal").is_none());
+        if mask != 0 {
+            assert!(private["vosu.osu"]["internal"]["paths"]["current"].is_object());
+        }
+    }
+}
