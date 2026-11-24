@@ -3,6 +3,7 @@ use super::OsuSession;
 use crate::{
     bridge_b1::{B1Event, B1Phase, B1Publisher, B1SessionKey, B1Sink},
     capture::{CaptureTarget, create_state_worker, initialize_state_worker},
+    publish::FanoutPublisher,
 };
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -17,7 +18,12 @@ pub(super) type CaptureControls = (
 );
 
 impl OsuSession {
-    pub async fn start_capture(self: &Arc<Self>, sink: Arc<B1Sink>, warn: LogWarn, error: LogWarn) {
+    pub async fn start_capture(
+        self: &Arc<Self>,
+        sink: Option<Arc<B1Sink>>,
+        warn: LogWarn,
+        error: LogWarn,
+    ) {
         let mut task = self.capture.lock().await;
         if task.is_some() || self.lifecycle.is_cancelled() {
             return;
@@ -25,7 +31,20 @@ impl OsuSession {
         let session = Arc::downgrade(self);
         let cancel = self.lifecycle_token();
         let mut settings = self.osu_settings.subscribe();
-        let mut inputs = sink.inputs();
+        let (_fallback_inputs, fallback_receiver) =
+            watch::channel(crate::bridge_b1::B1Inputs::default());
+        let mut inputs = sink
+            .as_ref()
+            .map_or(fallback_receiver, |sink| sink.inputs());
+        let publication = self
+            .publication
+            .get()
+            .expect("publication configured before capture");
+        publication.hub.send_replace(inputs.borrow().demand);
+        let hub = publication.hub.clone();
+        let demand = publication.demand.receiver();
+        let mut bus_demand = publication.demand.bus_receiver();
+        let bus = Arc::clone(&publication.bus);
         let mut offset_ready = self.offset_ready.subscribe();
         #[cfg(test)]
         let offset_waiting = Arc::clone(&self.offset_waiting);
@@ -41,26 +60,38 @@ impl OsuSession {
             if cancel.is_cancelled() {
                 return;
             }
-            sink.send(B1Event::Attached {
-                key,
-                client,
-                settings: instance_settings,
-                is_tournament_manager: false,
-            });
+            send(
+                &sink,
+                B1Event::Attached {
+                    key,
+                    client,
+                    settings: instance_settings,
+                    is_tournament_manager: false,
+                },
+            );
             // Stable also remains in this legacy dashboard phase until its
             // first publication; it never has lazer offsets to mark ready.
-            sink.send(B1Event::Phase {
-                key,
-                phase: B1Phase::ResolvingOffsets,
-            });
-            let (reader_tx, reader) = watch::channel(
-                (*inputs.borrow_and_update()).reader_settings(*settings.borrow_and_update()),
+            send(
+                &sink,
+                B1Event::Phase {
+                    key,
+                    phase: B1Phase::ResolvingOffsets,
+                },
             );
-            let (demand_tx, demand) = watch::channel(inputs.borrow().demand);
+            let (reader_tx, reader) = watch::channel(reader_settings(
+                *inputs.borrow_and_update(),
+                *settings.borrow_and_update(),
+                bus_demand.borrow_and_update().collect_errors,
+            ));
             #[cfg(test)]
             controls.send_replace(Some((reader.clone(), demand.clone())));
             let publisher: Arc<dyn SnapshotPublisher<Arc<StateBundleSnapshot>>> =
-                Arc::new(B1Publisher::new(key, Arc::clone(&sink)));
+                Arc::new(FanoutPublisher {
+                    b1: sink
+                        .as_ref()
+                        .map(|sink| B1Publisher::new(key, Arc::clone(sink))),
+                    bus,
+                });
             let synchronization = Arc::new(Mutex::new(ReaderSynchronization::default()));
             let mut starting = false;
             let last_probe_error = Arc::new(Mutex::new(None::<String>));
@@ -86,7 +117,7 @@ impl OsuSession {
                     }) && !starting
                     {
                         starting = true;
-                        sink.send(B1Event::Phase {
+                        send(&sink, B1Event::Phase {
                             key,
                             phase: B1Phase::StartingReader,
                         });
@@ -138,16 +169,20 @@ impl OsuSession {
                     changed = settings.changed(), if settings_open => {
                         settings_open = changed.is_ok();
                         if settings_open {
-                            reader_tx.send_replace((*inputs.borrow()).reader_settings(*settings.borrow_and_update()));
+                            reader_tx.send_replace(reader_settings(*inputs.borrow(), *settings.borrow_and_update(), bus_demand.borrow().collect_errors));
                         }
                     }
                     changed = inputs.changed(), if inputs_open => {
                         inputs_open = changed.is_ok();
                         if inputs_open {
                             let current = *inputs.borrow_and_update();
-                            reader_tx.send_replace(current.reader_settings(*settings.borrow()));
-                            demand_tx.send_replace(current.demand);
+                            reader_tx.send_replace(reader_settings(current, *settings.borrow(), bus_demand.borrow().collect_errors));
+                            hub.send_replace(current.demand);
                         }
+                    }
+                    changed = bus_demand.changed() => {
+                        if changed.is_err() { break; }
+                        reader_tx.send_replace(reader_settings(*inputs.borrow(), *settings.borrow(), bus_demand.borrow_and_update().collect_errors));
                     }
                 }
             }
@@ -164,9 +199,28 @@ impl OsuSession {
                 let _ =
                     tokio::task::spawn_blocking(move || runtime.block_on(worker.shutdown())).await;
             }
-            sink.send(B1Event::Detached { key });
+            send(&sink, B1Event::Detached { key });
         }));
     }
+}
+
+fn send(sink: &Option<Arc<B1Sink>>, event: B1Event) {
+    if let Some(sink) = sink {
+        sink.send(event);
+    }
+}
+
+pub(super) fn reader_settings(
+    inputs: crate::bridge_b1::B1Inputs,
+    settings: crate::settings::OsuSettings,
+    collect_errors: bool,
+) -> vosu_osu_state::ReaderSettings {
+    let mut reader = inputs.reader_settings(settings);
+    // 2.0 has no ENABLE_* gates. This changes collection only; the root
+    // 1.x adapters still apply the original B1 configuration when serializing.
+    reader.enable_hit_offsets |= collect_errors;
+    reader.enable_mania_key_hit_errors |= collect_errors;
+    reader
 }
 
 fn target(session: &Weak<OsuSession>) -> Option<CaptureTarget> {

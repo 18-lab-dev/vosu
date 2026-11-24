@@ -8,6 +8,23 @@ use vosu_osu_state::{Delivery, SnapshotPublisher, StateBundleSnapshot, StateWork
 use vosu_plugin_api::PublishBatchWriter;
 use vosu_plugin_api::{HostServices, LogLevel, VtableHostServices, vosu_opcode, vosu_status};
 
+/// Type-erased session host, retaining the allocation-free flat send path.
+pub(crate) struct SessionHost(pub Arc<dyn HostServices + Send + Sync>);
+impl HostServices for SessionHost {
+    fn send(&self, message: &vosu_plugin_api::Message, correlation_id: u64) -> vosu_status {
+        self.0.send(message, correlation_id)
+    }
+    fn send_flat(
+        &self,
+        opcode: vosu_opcode,
+        flags: u32,
+        correlation_id: u64,
+        payload: &[u8],
+    ) -> vosu_status {
+        self.0.send_flat(opcode, flags, correlation_id, payload)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PublicationFailure {
     Encoder,
@@ -75,12 +92,13 @@ impl<H: HostServices + Send + Sync + 'static> BusPublisher<H> {
             projections: project::projections(),
         }
     }
-    pub fn set_foreground(&self, foreground: Option<bool>) {
-        if self
-            .foreground
+    pub(crate) fn update_foreground(&self, foreground: Option<bool>) -> bool {
+        self.foreground
             .swap(encode_foreground(foreground), Ordering::AcqRel)
             != encode_foreground(foreground)
-        {
+    }
+    pub fn set_foreground(&self, foreground: Option<bool>) {
+        if self.update_foreground(foreground) {
             self.republish_session_fields();
         }
     }
@@ -243,6 +261,26 @@ impl<H: HostServices + Send + Sync + 'static> SnapshotPublisher<Arc<StateBundleS
     ) -> Result<(), StateWorkerError> {
         self.enqueue(Some(snapshot), false);
         Ok(())
+    }
+}
+/// The legacy sink always receives its publication first. Bus refusals are
+/// handled by BusPublisher and never turn a successful B1 write into failure.
+pub(crate) struct FanoutPublisher {
+    pub b1: Option<crate::bridge_b1::B1Publisher>,
+    pub bus: Arc<crate::publish::BusPublisher<crate::publish::SessionHost>>,
+}
+impl SnapshotPublisher<Arc<StateBundleSnapshot>> for FanoutPublisher {
+    fn publish(
+        &self,
+        snapshot: Arc<StateBundleSnapshot>,
+        delivery: Delivery,
+    ) -> Result<(), StateWorkerError> {
+        let result = self
+            .b1
+            .as_ref()
+            .map_or(Ok(()), |b1| b1.publish(Arc::clone(&snapshot), delivery));
+        let _ = self.bus.publish(snapshot, delivery);
+        result
     }
 }
 

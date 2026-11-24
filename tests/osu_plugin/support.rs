@@ -140,7 +140,7 @@ pub struct Events {
 pub struct Sink {
     pub events: Mutex<Events>,
     changed: Condvar,
-    inputs: tokio::sync::watch::Sender<B1Inputs>,
+    pub inputs: tokio::sync::watch::Sender<B1Inputs>,
 }
 impl Sink {
     pub fn new() -> Arc<Self> {
@@ -213,6 +213,8 @@ pub struct Memory {
     image: Vec<u8>,
     pub reads: AtomicUsize,
     pub plans: AtomicUsize,
+    status: AtomicUsize,
+    status_address: usize,
 }
 impl Memory {
     fn fixture() -> Arc<Self> {
@@ -220,7 +222,15 @@ impl Memory {
             serde_json::from_str(include_str!("../fixtures/raw_memory/stable_patterns.json"))
                 .unwrap();
         let mut image = Vec::new();
-        for item in fixture["patterns"].as_array().unwrap() {
+        let mut status_address = 0;
+        for (index, item) in fixture["patterns"].as_array().unwrap().iter().enumerate() {
+            if index == 9 {
+                // status_ptr is four bytes before its signature. Redirect its
+                // pointer to a separate mutable scalar, leaving scan bytes real.
+                let offset = image.len() - 4;
+                status_address = 0x20_0000;
+                image[offset..].copy_from_slice(&(status_address as u32).to_le_bytes());
+            }
             let pattern = vosu_osu_reader::process::Pattern::parse(
                 item["signature"].as_str().unwrap(),
                 false,
@@ -249,13 +259,22 @@ impl Memory {
             image,
             reads: AtomicUsize::new(0),
             plans: AtomicUsize::new(0),
+            status: AtomicUsize::new(0),
+            status_address,
         })
+    }
+    pub fn set_status(&self, value: usize) {
+        self.status.store(value, Ordering::Release);
     }
 }
 impl ProcessMemory for Memory {
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
         self.reads.fetch_add(1, Ordering::Relaxed);
         dst.fill(0);
+        if address == self.status_address && dst.len() == 4 {
+            dst.copy_from_slice(&(self.status.load(Ordering::Acquire) as u32).to_le_bytes());
+            return Ok(());
+        }
         // Scans read this fixture's entire single region; scalar reader
         // requests are smaller and must have traversed the sync-plan route.
         if dst.len() < self.image.len() {
@@ -292,7 +311,7 @@ pub struct Harness {
     pub memories: Vec<Arc<Memory>>,
     pub pids: Vec<u32>,
     pub foreground: Arc<plugin::SyntheticForegroundSource>,
-    _installed: vosu_surface::Installed,
+    _installed: Option<vosu_surface::Installed>,
     _dirs: Vec<tempfile::TempDir>,
     _runtime: tokio::runtime::Runtime,
     _lease: TestLease,
@@ -423,11 +442,42 @@ impl Harness {
             memories,
             pids,
             foreground,
-            _installed: installed,
+            _installed: Some(installed),
             _dirs: dirs,
             _runtime: runtime,
             _lease: lease,
         }
+    }
+    pub fn remove_b1(&mut self) {
+        self._installed.take();
+    }
+    pub fn subscriber(
+        &self,
+        id: &str,
+    ) -> (
+        std::sync::mpsc::Receiver<vosu_plugin_testkit::subscriber::SubscriberEvent>,
+        std::sync::mpsc::SyncSender<vosu_plugin_testkit::subscriber::SubscribeCommand>,
+    ) {
+        let (events, commands) = vosu_plugin_testkit::subscriber::register(id);
+        let manifest = format!(
+            "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='{id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n"
+        );
+        let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
+            manifest: &manifest,
+            settings_schema: None,
+            namespace_schemas: &[],
+            vtable: vosu_plugin_testkit::subscriber::vosu_plugin_vtable,
+        }])
+        .unwrap();
+        self.host
+            .create_instance(
+                PluginInstanceId::new(2),
+                &loaded[0],
+                self._dirs[2].path().to_path_buf(),
+                Some(plugin::WorkerPool::new(2, 64)),
+            )
+            .unwrap();
+        (events, commands)
     }
     pub fn record(pid: u32, args: &[&str]) -> ProcessRecord {
         ProcessRecord {

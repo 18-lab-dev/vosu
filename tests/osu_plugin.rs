@@ -211,3 +211,156 @@ fn concurrent_plugin_stress_four_workers_eight_threads() {
     );
     assert!(started.elapsed() < Duration::from_secs(45));
 }
+
+fn namespace(harness: &Harness, handle: u64, ns: &str) -> Option<serde_json::Value> {
+    use vosu_core::state::{Audience, Pointer, SessionKey, project_select};
+    let state = harness.host.state().store.current(SessionKey(handle))?;
+    let registry = harness.host.state().registry.read().unwrap();
+    project_select(
+        &registry,
+        &state,
+        ns,
+        &Pointer::parse("").unwrap(),
+        Audience::Api,
+    )
+    .map(|value| {
+        let mut bytes = Vec::new();
+        value.write_json(&mut bytes);
+        serde_json::from_slice(&bytes).unwrap()
+    })
+}
+
+fn session_handle(harness: &Harness) -> u64 {
+    eventually(|| HANDLES.lock().unwrap().contains_key(&harness.pids[0]));
+    HANDLES.lock().unwrap()[&harness.pids[0]]
+}
+
+#[test]
+fn stable_fixture_session_publishes_every_namespace_within_5s() {
+    let harness = Harness::new("vosu.osu", 0x6a00_0900, 1);
+    let started = Instant::now();
+    harness
+        .host
+        .process_appeared(Harness::record(harness.pids[0], &[]));
+    let handle = session_handle(&harness);
+    for ns in [
+        "vosu.client",
+        "vosu.status",
+        "vosu.chart",
+        "vosu.play",
+        "vosu.skin",
+        "vosu.osu",
+    ] {
+        eventually(|| namespace(&harness, handle, ns).is_some());
+        assert!(namespace(&harness, handle, ns).unwrap().is_object(), "{ns}");
+    }
+    assert!(
+        started.elapsed() < WAIT,
+        "all namespaces must publish within five seconds"
+    );
+    let osu = namespace(&harness, handle, "vosu.osu").unwrap();
+    assert!(osu.get("session").is_some());
+    assert!(osu.get("play").is_some());
+    // Full JSON Schema validation is X1's dev-dependency gate.
+    assert_dispatches_ok();
+}
+
+#[test]
+fn no_b1_sink_still_publishes_to_bus() {
+    let mut harness = Harness::new("vosu.osu", 0x6a00_0a00, 1);
+    harness.remove_b1();
+    harness
+        .host
+        .process_appeared(Harness::record(harness.pids[0], &[]));
+    let handle = session_handle(&harness);
+    eventually(|| namespace(&harness, handle, "vosu.osu").is_some());
+    assert!(harness.sink.events.lock().unwrap().published.is_empty());
+    assert!(harness.memory.reads.load(Ordering::Relaxed) > 0);
+    assert_dispatches_ok();
+}
+
+#[test]
+fn bus_demand_unions_with_hub_demand() {
+    use vosu_plugin_api::Selector;
+    use vosu_plugin_testkit::subscriber::{SubscribeCommand, SubscriberEvent};
+    let harness = Harness::new("vosu.osu", 0x6a00_0b00, 1);
+    let (events, commands) = harness.subscriber("test.osu.o6.demand");
+    commands
+        .try_send(SubscribeCommand {
+            session: None,
+            selectors: vec![Selector {
+                ns: "vosu.sessions".into(),
+                pointer: String::new(),
+            }],
+        })
+        .unwrap();
+    harness
+        .host
+        .process_appeared(Harness::record(harness.pids[0], &[]));
+    let deadline = Instant::now() + WAIT;
+    let handle = loop {
+        if let SubscriberEvent::Attached(attached) = events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+        {
+            break attached.handle;
+        }
+    };
+    commands
+        .try_send(SubscribeCommand {
+            session: Some(handle),
+            selectors: vec![Selector {
+                ns: "vosu.osu".into(),
+                pointer: "/play/hitErrors".into(),
+            }],
+        })
+        .unwrap();
+    loop {
+        if let SubscriberEvent::SubscribeStatus(status) = events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+        {
+            assert_eq!(status, vosu_plugin_api::vosu_status::VOSU_OK);
+            break;
+        }
+    }
+    let demand = || vosu_osu::test_support::session_demand(harness.pids[0]);
+    eventually(|| demand().is_some());
+    assert!(
+        !demand().unwrap().precise,
+        "gameplay lane stays dormant in menu"
+    );
+    harness
+        .sink
+        .inputs
+        .send_modify(|inputs| inputs.demand.regular = true);
+    eventually(|| demand().is_some_and(|demand| demand.regular));
+    harness.memory.set_status(2);
+    eventually(|| demand().is_some_and(|demand| demand.precise && demand.regular));
+    harness.memory.set_status(0);
+    eventually(|| demand().is_some_and(|demand| !demand.precise && demand.regular));
+    assert_dispatches_ok();
+}
+
+#[cfg(windows)]
+#[test]
+fn focus_foreground_sets_session_focused() {
+    let harness = Harness::new("vosu.osu", 0x6a00_0c00, 1);
+    let pid = harness.pids[0];
+    harness.host.process_appeared(Harness::record(pid, &[]));
+    let handle = session_handle(&harness);
+    eventually(|| namespace(&harness, handle, "vosu.osu").is_some());
+    harness.foreground.set(Some(pid));
+    harness.host.foreground_changed();
+    eventually(|| {
+        namespace(&harness, handle, "vosu.osu")
+            .is_some_and(|value| value["session"]["focused"] == true)
+    });
+    harness.foreground.set(None);
+    harness.host.foreground_changed();
+    eventually(|| {
+        namespace(&harness, handle, "vosu.osu")
+            .is_some_and(|value| value["session"]["focused"] == false)
+    });
+    assert_dispatches_ok();
+}

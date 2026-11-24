@@ -67,6 +67,14 @@ use crate::settings::OsuSettings;
 const DESTROY_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
+struct PendingControls {
+    foreground: Option<bool>,
+    regular: bool,
+    precise: bool,
+    collect_errors: bool,
+}
+
+#[derive(Default)]
 struct PluginState {
     /// Handles currently attached (inserted at `SESSION_ATTACHED`, removed
     /// at `SESSION_DETACHED`): consulted so a detach racing a concurrent
@@ -110,7 +118,9 @@ struct PluginState {
     /// [`OsuPlugin::join_background_session_detaches`].
     session_detach_joins: Vec<tokio::task::JoinHandle<()>>,
     settings: OsuSettings,
-    missing_sink_logged: bool,
+    // Only live, not-yet-registered handles. IDENTIFY may synchronously cause
+    // focus/demand deliveries before register_session has inserted the session.
+    pending_controls: HashMap<u64, PendingControls>,
     #[cfg(test)]
     settings_before_send: Option<std::sync::mpsc::SyncSender<()>>,
 }
@@ -229,6 +239,69 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
                 Ok(())
             }
             Message::SettingsChanged(changed) => self.update_settings(&changed.values),
+            Message::DemandChanged(changed) => {
+                let collect_errors = changed.precise
+                    || changed.selectors.iter().any(|selector| {
+                        selector.ns == "vosu.osu"
+                            && ["/play/hitOffsets", "/play/keyHitErrors"]
+                                .iter()
+                                .any(|path| {
+                                    selector.pointer.is_empty()
+                                        || *path == selector.pointer
+                                        || path
+                                            .strip_prefix(&selector.pointer)
+                                            .is_some_and(|rest| rest.starts_with('/'))
+                                        || selector
+                                            .pointer
+                                            .strip_prefix(path)
+                                            .is_some_and(|rest| rest.starts_with('/'))
+                                })
+                    });
+                let mut state = self.state.lock().expect("plugin state mutex poisoned");
+                if let Some(session) = state.sessions.get(&changed.handle)
+                    && let Some(publication) = session.publication.get()
+                {
+                    publication.demand.set_bus_collection(
+                        changed.regular,
+                        changed.precise,
+                        collect_errors,
+                    );
+                } else if state.live_handles.contains(&changed.handle) {
+                    let controls = state.pending_controls.entry(changed.handle).or_default();
+                    controls.regular = changed.regular;
+                    controls.precise = changed.precise;
+                    controls.collect_errors = collect_errors;
+                }
+                Ok(())
+            }
+            Message::FocusChanged(changed) => {
+                let bus = {
+                    let mut state = self.state.lock().expect("plugin state mutex poisoned");
+                    if let Some(session) = state.sessions.get(&changed.handle)
+                        && let Some(publication) = session.publication.get()
+                    {
+                        // Only atomics under PluginState; republish can re-enter
+                        // the host and therefore runs after releasing the guard.
+                        publication
+                            .bus
+                            .update_foreground(changed.foreground)
+                            .then(|| Arc::clone(&publication.bus))
+                    } else {
+                        if state.live_handles.contains(&changed.handle) {
+                            state
+                                .pending_controls
+                                .entry(changed.handle)
+                                .or_default()
+                                .foreground = changed.foreground;
+                        }
+                        None
+                    }
+                };
+                if let Some(bus) = bus {
+                    bus.republish_session_fields();
+                }
+                Ok(())
+            }
             // Every other opcode this concurrent dispatch call could see has
             // has no plugin-side action in the current milestone.
             _ => Ok(()),
@@ -280,6 +353,7 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
             let mut state = self.state.lock().expect("plugin state mutex poisoned");
             let was_live = state.live_handles.remove(&detached.handle);
             state.named_stable_handles.remove(&detached.handle);
+            state.pending_controls.remove(&detached.handle);
             state
                 .pending_settle
                 .retain(|_, (handle, _)| *handle != detached.handle);
@@ -676,6 +750,14 @@ fn register_session<H, G>(
     H: HostServices + Send + Sync + Clone + 'static,
     G: OffsetGenerator + 'static,
 {
+    if !state
+        .lock()
+        .expect("plugin state mutex poisoned")
+        .live_handles
+        .contains(&handle)
+    {
+        return;
+    }
     let bitness = to_process_bitness(identified.bitness);
     let memory = Arc::new(PlanProcessMemory::new(
         (**host).clone(),
@@ -705,10 +787,20 @@ fn register_session<H, G>(
             alive,
         }),
     );
+    session.configure_publication(Arc::clone(host), runtime_handle);
     let registered = {
         let mut state = state.lock().expect("plugin state mutex poisoned");
         if state.live_handles.contains(&handle) {
             session.osu_settings.send_replace(state.settings);
+            if let Some(controls) = state.pending_controls.remove(&handle) {
+                let publication = session.publication.get().expect("publication configured");
+                publication.bus.update_foreground(controls.foreground);
+                publication.demand.set_bus_collection(
+                    controls.regular,
+                    controls.precise,
+                    controls.collect_errors,
+                );
+            }
             state.sessions.insert(handle, Arc::clone(&session));
             true
         } else {
@@ -723,30 +815,17 @@ fn register_session<H, G>(
         });
     }
     if registered {
-        if let Some(sink) = vosu_surface::current::<B1Event, B1Inputs>() {
-            let warn = log_warn(host);
-            let error = log_error(host);
-            let session = {
-                let state = state.lock().expect("plugin state mutex poisoned");
-                state.sessions.get(&handle).cloned()
-            };
-            if let Some(session) = session {
-                runtime_handle.spawn(async move {
-                    session.start_capture(sink, warn, error).await;
-                });
-            }
-        } else {
-            let log = {
-                let mut state = state.lock().expect("plugin state mutex poisoned");
-                !std::mem::replace(&mut state.missing_sink_logged, true)
-            };
-            if log {
-                let _ = host.log(
-                    LogLevel::Info,
-                    "Bridge B1 is not installed; osu! capture is disabled",
-                    CborValue::Map(Vec::new()),
-                );
-            }
+        let sink = vosu_surface::current::<B1Event, B1Inputs>();
+        let warn = log_warn(host);
+        let error = log_error(host);
+        let session = {
+            let state = state.lock().expect("plugin state mutex poisoned");
+            state.sessions.get(&handle).cloned()
+        };
+        if let Some(session) = session {
+            runtime_handle.spawn(async move {
+                session.start_capture(sink, warn, error).await;
+            });
         }
     }
 }

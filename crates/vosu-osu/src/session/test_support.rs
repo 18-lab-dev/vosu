@@ -29,3 +29,19 @@ pub fn session_settings(pid: u32) -> Option<OsuSettings> {
         .find(|session| session.pid == pid && !session.lifecycle_token().is_cancelled())
         .map(|session| *session.osu_settings.borrow())
 }
+
+/// Sampling demand on the exact watch receiver passed to capture.
+pub fn session_demand(pid: u32) -> Option<vosu_osu_state::SubscriptionDemand> {
+    SESSIONS
+        .lock()
+        .expect("session observations poisoned")
+        .iter()
+        .filter_map(Weak::upgrade)
+        .find(|session| session.pid == pid && !session.lifecycle.is_cancelled())
+        .and_then(|session| {
+            session
+                .publication
+                .get()
+                .map(|publication| *publication.demand.receiver().borrow())
+        })
+}

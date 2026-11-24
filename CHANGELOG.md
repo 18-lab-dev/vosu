@@ -2,6 +2,13 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M2
+
+- Publish osu! sessions to the state bus alongside the unchanged legacy bridge,
+  including when no legacy sink is installed. Union subscriber demand from both
+  paths, and collect bus-requested hit offsets and key hit errors independently
+  of the legacy output flags.
+
 ## Unreleased — 2.0 M1
 
 - Run osu! discovery and capture through the bundled `vosu.osu` plugin; remove

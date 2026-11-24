@@ -11,3 +11,7 @@ session -> capture
 session -> settings
 session -> scan
 publish -> project
+session -> demand
+session -> project
+session -> publish
+publish -> bridge_b1

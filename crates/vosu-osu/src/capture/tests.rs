@@ -1,4 +1,5 @@
 use super::*;
+use crate::publish::FanoutPublisher;
 use std::sync::atomic::{AtomicUsize, Ordering};
 pub(super) fn state_bundle(generation: u64, reset_epoch: u64) -> Arc<StateBundleSnapshot> {
     use vosu_osu_model::states::HitErrorArray;
@@ -153,4 +154,66 @@ async fn ordinary_initialization_errors_keep_retrying_until_cancelled() {
     assert!(worker.is_none());
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
     assert_eq!(errors.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn fanout_sends_b1_before_bus_and_bus_refusal_never_fails_b1() {
+    use crate::{
+        bridge_b1::*,
+        project::SessionFacts,
+        publish::{BusPublisher, SessionHost},
+    };
+    use vosu_plugin_api::{HostServices, Message, vosu_opcode, vosu_status};
+    struct Host(Arc<Mutex<Vec<&'static str>>>, vosu_status);
+    impl HostServices for Host {
+        fn send(&self, _: &Message, _: u64) -> vosu_status {
+            vosu_status::VOSU_OK
+        }
+        fn send_flat(&self, _: vosu_opcode, _: u32, _: u64, _: &[u8]) -> vosu_status {
+            self.0.lock().unwrap().push("bus");
+            self.1
+        }
+    }
+    struct Sink(Arc<Mutex<Vec<&'static str>>>);
+    impl vosu_surface::LegacySink<B1Event, B1Inputs> for Sink {
+        fn inputs(&self) -> watch::Receiver<B1Inputs> {
+            watch::channel(B1Inputs::default()).1
+        }
+        fn send(&self, event: B1Event) {
+            if matches!(event, B1Event::Publish { .. }) {
+                self.0.lock().unwrap().push("b1");
+            }
+        }
+    }
+    for status in [
+        vosu_status::VOSU_OK,
+        vosu_status::VOSU_ERR_PERMISSION_DENIED,
+    ] {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let publisher = FanoutPublisher {
+            b1: Some(B1Publisher::new(
+                B1SessionKey {
+                    pid: 61104,
+                    generation: 1,
+                },
+                Arc::new(Sink(order.clone())),
+            )),
+            bus: Arc::new(BusPublisher::new(
+                SessionHost(Arc::new(Host(order.clone(), status))),
+                61104,
+                Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                SessionFacts {
+                    client: ClientType::Stable,
+                    settings: InstanceSettings {
+                        tournament_spectator: false,
+                        tournament_ipc_id: None,
+                        devserver_endpoint: None,
+                    },
+                    foreground: None,
+                },
+            )),
+        };
+        assert!(publisher.publish(state_bundle(1, 0), Delivery::All).is_ok());
+        assert_eq!(*order.lock().unwrap(), ["b1", "bus"]);
+    }
 }

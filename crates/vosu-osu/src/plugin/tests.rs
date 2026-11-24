@@ -770,6 +770,19 @@ fn destroy_revokes_a_gated_lazer_lookup_before_it_can_register() {
     let state = Arc::clone(&plugin.state);
     assert!(state.lock().unwrap().live_handles.contains(&904));
     assert!(state.lock().unwrap().sessions.contains_key(&904));
+    // O6 starts capture even without B1. Quiesce the sentinel's legitimate
+    // tasks so the zero-task assertion measures only the late lookup.
+    let sentinel = state.lock().unwrap().sessions[&904].clone();
+    sentinel.cancel();
+    plugin.runtime_handle.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), sentinel.join_resolver())
+            .await
+            .unwrap();
+    });
+    wait_until(
+        || plugin.runtime_handle.metrics().num_alive_tasks() == 0,
+        "sentinel shutdown",
+    );
 
     let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
     let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
@@ -841,5 +854,6 @@ fn destroy_revokes_a_gated_lazer_lookup_before_it_can_register() {
     assert!(state.lock().unwrap().sessions.is_empty());
 }
 
+mod bus;
 mod capture;
 mod stale_session;

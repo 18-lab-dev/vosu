@@ -36,6 +36,11 @@ use crate::scan::ScanWaiters;
 use crate::settings::OsuSettings;
 use std::sync::atomic::AtomicBool;
 
+pub(crate) struct SessionPublication {
+    pub bus: Arc<crate::publish::BusPublisher<crate::publish::SessionHost>>,
+    pub demand: crate::demand::SessionDemand,
+    pub hub: tokio::sync::watch::Sender<vosu_osu_state::SubscriptionDemand>,
+}
 mod capture;
 #[cfg(any(test, feature = "test-harness"))]
 pub mod test_support;
@@ -78,6 +83,7 @@ pub struct OsuSession {
     resolver: tokio::sync::Mutex<Option<LazerResolverHandle>>,
     capture: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     pub(crate) osu_settings: tokio::sync::watch::Sender<OsuSettings>,
+    pub(crate) publication: std::sync::OnceLock<SessionPublication>,
 }
 
 impl OsuSession {
@@ -117,12 +123,43 @@ impl OsuSession {
             resolver: tokio::sync::Mutex::new(None),
             capture: tokio::sync::Mutex::new(None),
             osu_settings: tokio::sync::watch::channel(OsuSettings::default()).0,
+            publication: std::sync::OnceLock::new(),
         });
         #[cfg(any(test, feature = "test-harness"))]
         test_support::register(&session);
         session
     }
 
+    pub(crate) fn configure_publication<
+        H: vosu_plugin_api::HostServices + Send + Sync + 'static,
+    >(
+        &self,
+        host: Arc<H>,
+        runtime: &tokio::runtime::Handle,
+    ) {
+        let (hub, receiver) = tokio::sync::watch::channel(Default::default());
+        let bus = Arc::new(crate::publish::BusPublisher::new(
+            crate::publish::SessionHost(host),
+            self.handle,
+            // Registration happens only after IDENTIFY returned OK.
+            Arc::new(AtomicBool::new(true)),
+            crate::project::SessionFacts {
+                client: self.client,
+                settings: self.settings.clone(),
+                foreground: None,
+            },
+        ));
+        assert!(
+            self.publication
+                .set(SessionPublication {
+                    bus,
+                    demand: crate::demand::SessionDemand::new(receiver, runtime),
+                    hub,
+                })
+                .is_ok(),
+            "publication is installed once before session registration"
+        );
+    }
     #[must_use]
     pub fn lazer_offsets(&self) -> Option<Arc<LazerOffsets>> {
         self.lazer_offsets.load_full()
@@ -140,6 +177,9 @@ impl OsuSession {
     /// [`Self::join_resolver`].
     pub fn cancel(&self) {
         self.lifecycle.cancel();
+        if let Some(publication) = self.publication.get() {
+            publication.demand.cancel();
+        }
         if let Some(scans) = &self.scans {
             scans.cancel(self.handle);
         }

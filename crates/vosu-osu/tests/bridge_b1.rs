@@ -70,7 +70,7 @@ fn root(_: u32, path: Option<&Path>, _: Option<&str>) -> PathBuf {
         .unwrap_or_default()
 }
 #[test]
-fn capture_resolves_b1_at_session_start_and_logs_missing_sink_only_once() {
+fn capture_resolves_b1_at_session_start_and_captures_without_a_sink() {
     let data = tempfile::tempdir().unwrap();
     let host = Host::default();
     let plugin = OsuPlugin::with_generator(
@@ -83,7 +83,7 @@ fn capture_resolves_b1_at_session_start_and_logs_missing_sink_only_once() {
     plugin.dispatch(attached(61056), 0).unwrap();
     plugin.dispatch(attached(61058), 0).unwrap();
     let count = host.0.lock().unwrap().iter().filter(|event| matches!(event, Message::LogRecord(record) if record.message.contains("Bridge B1 is not installed"))).count();
-    assert_eq!(count, 1);
+    assert_eq!(count, 0);
     let (events, receiver) = std::sync::mpsc::sync_channel(8);
     let sink: Arc<B1Sink> = Arc::new(Sink {
         events,
@@ -116,5 +116,13 @@ fn capture_resolves_b1_at_session_start_and_logs_missing_sink_only_once() {
         B1Event::Detached { .. }
     ));
     assert!(receiver.try_recv().is_err());
-    assert!(!host.0.lock().unwrap().iter().any(|event| matches!(event, Message::ScanRequest(scan) if scan.session == 61056 || scan.session == 61058)));
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if host.0.lock().unwrap().iter().any(|event| matches!(event, Message::ScanRequest(scan) if scan.session == 61056 || scan.session == 61058)) { break; }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "bus-only capture must scan"
+        );
+        std::thread::yield_now();
+    }
 }

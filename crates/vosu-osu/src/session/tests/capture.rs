@@ -2,6 +2,12 @@ use super::*;
 use crate::bridge_b1::{B1Event, B1Inputs, B1Phase, B1Sink};
 use vosu_osu_reader::process::{BatchScanResult, Pattern, ScanBackend};
 
+struct PublicationHost;
+impl vosu_plugin_api::HostServices for PublicationHost {
+    fn send(&self, _: &vosu_plugin_api::Message, _: u64) -> vosu_plugin_api::vosu_status {
+        vosu_plugin_api::vosu_status::VOSU_OK
+    }
+}
 #[derive(Default)]
 struct ReadyScans {
     started: Option<Arc<tokio::sync::Notify>>,
@@ -62,7 +68,7 @@ fn capture_session_with_scans(
     client: ClientType,
     scans: Arc<dyn ScanBackend>,
 ) -> Arc<OsuSession> {
-    OsuSession::new(
+    let session = OsuSession::new(
         u64::from(pid),
         pid,
         37,
@@ -76,7 +82,12 @@ fn capture_session_with_scans(
             devserver_endpoint: Some("test.invalid".into()),
         },
         None,
-    )
+    );
+    session.configure_publication(
+        Arc::new(PublicationHost),
+        &tokio::runtime::Handle::current(),
+    );
+    session
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -85,10 +96,10 @@ async fn stable_capture_attaches_scans_reads_and_detaches_after_join() {
     let (sink, mut events) = sink();
     let target: Arc<B1Sink> = sink;
     session
-        .start_capture(target.clone(), noop_warn(), noop_warn())
+        .start_capture(Some(target.clone()), noop_warn(), noop_warn())
         .await;
     session
-        .start_capture(target, noop_warn(), noop_warn())
+        .start_capture(Some(target), noop_warn(), noop_warn())
         .await;
     match event(&mut events).await {
         B1Event::Attached {
@@ -149,7 +160,9 @@ async fn stable_capture_attaches_scans_reads_and_detaches_after_join() {
 async fn lazer_capture_waits_for_offsets_and_cancel_releases_the_session() {
     let session = capture_session(61052, ClientType::Lazer);
     let (sink, mut events) = sink();
-    session.start_capture(sink, noop_warn(), noop_warn()).await;
+    session
+        .start_capture(Some(sink), noop_warn(), noop_warn())
+        .await;
     assert!(matches!(event(&mut events).await, B1Event::Attached { .. }));
     assert!(matches!(
         event(&mut events).await,
@@ -174,7 +187,9 @@ async fn cancelled_session_never_attaches_capture() {
     let session = capture_session(61053, ClientType::Stable);
     let (sink, mut events) = sink();
     session.cancel();
-    session.start_capture(sink, noop_warn(), noop_warn()).await;
+    session
+        .start_capture(Some(sink), noop_warn(), noop_warn())
+        .await;
     assert!(session.capture.lock().await.is_none());
     assert!(events.try_recv().is_err());
 }
@@ -192,7 +207,9 @@ async fn installing_offsets_wakes_capture_without_waiting_for_retry_delay() {
     );
     let offsets = Arc::new(LazerOffsets::embedded().unwrap());
     let (sink, mut events) = sink();
-    session.start_capture(sink, noop_warn(), noop_warn()).await;
+    session
+        .start_capture(Some(sink), noop_warn(), noop_warn())
+        .await;
     assert!(matches!(event(&mut events).await, B1Event::Attached { .. }));
     assert!(matches!(
         event(&mut events).await,
@@ -239,7 +256,7 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
     let session = capture_session(61102, ClientType::Stable);
     let (sink, mut events) = sink();
     session
-        .start_capture(sink.clone(), noop_warn(), noop_warn())
+        .start_capture(Some(sink.clone()), noop_warn(), noop_warn())
         .await;
     assert!(matches!(event(&mut events).await, B1Event::Attached { .. }));
     assert!(matches!(
@@ -346,4 +363,70 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
             .iter()
             .all(|event| matches!(event, B1Event::Publish { .. }))
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bus_collection_and_legacy_enable_flags_are_independent_in_both_directions() {
+    let session = capture_session(61103, ClientType::Stable);
+    let (sink, mut events) = sink();
+    session
+        .start_capture(Some(sink.clone()), noop_warn(), noop_warn())
+        .await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if matches!(event(&mut events).await, B1Event::Publish { .. }) {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let (mut reader, _) = session.capture_controls.borrow().as_ref().unwrap().clone();
+    assert!(!reader.borrow_and_update().enable_hit_offsets);
+    assert!(!reader.borrow().enable_mania_key_hit_errors);
+    let publication = session.publication.get().unwrap();
+    publication.demand.set_bus(false, true);
+    tokio::time::timeout(Duration::from_secs(5), reader.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(reader.borrow_and_update().enable_hit_offsets);
+    assert!(reader.borrow().enable_mania_key_hit_errors);
+    // Bus collection must never mutate the 1.x policy.
+    assert!(!sink.inputs.borrow().enable_hit_offsets);
+    assert!(!sink.inputs.borrow().enable_mania_key_hit_errors);
+    publication.demand.set_bus(false, false);
+    tokio::time::timeout(Duration::from_secs(5), reader.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!reader.borrow_and_update().enable_hit_offsets);
+    assert!(!reader.borrow().enable_mania_key_hit_errors);
+    sink.inputs.send_modify(|inputs| {
+        inputs.enable_hit_offsets = true;
+        inputs.enable_mania_key_hit_errors = true;
+    });
+    tokio::time::timeout(Duration::from_secs(5), reader.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(reader.borrow_and_update().enable_hit_offsets);
+    assert!(reader.borrow().enable_mania_key_hit_errors);
+    publication.demand.set_bus(false, true);
+    tokio::time::timeout(Duration::from_secs(5), reader.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    reader.borrow_and_update();
+    publication.demand.set_bus(false, false);
+    tokio::time::timeout(Duration::from_secs(5), reader.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(reader.borrow_and_update().enable_hit_offsets);
+    assert!(reader.borrow().enable_mania_key_hit_errors);
+    session.cancel();
+    tokio::time::timeout(Duration::from_secs(5), session.join_resolver())
+        .await
+        .unwrap();
 }
