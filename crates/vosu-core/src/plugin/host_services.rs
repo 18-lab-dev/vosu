@@ -10,16 +10,6 @@ use vosu_plugin_api::{
     vosu_message, vosu_opcode, vosu_status,
 };
 
-/// Instance-scoped id a [`PluginHostHandler`] receives with every message,
-/// so one handler implementation can serve every loaded instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PluginInstanceId(pub(crate) u64);
-
-impl PluginInstanceId {
-    pub fn new(raw: u64) -> Self {
-        Self(raw)
-    }
-}
 
 /// Routes every plugin -> host `send` call into host-owned Rust code: the
 /// host-side analog of `vosu_plugin_api::HostServices` on the plugin side.
