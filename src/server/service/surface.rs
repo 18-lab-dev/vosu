@@ -251,13 +251,10 @@ impl RouteProvider for RegisteredProvider {
         Box::pin(async move {
             let response = match self {
                 Self::Feed(hub) => return ProviderResponse::Feed(hub.surface_feed(false)),
-                Self::State { provider, route } => match provider.cached_json(*route).await {
-                    CachedJson::Ready(body) => surface_bytes(200, JSON, body),
-                    CachedJson::NotReady => surface_not_ready(),
-                    CachedJson::Failed { status, body } => {
-                        surface_bytes(status.as_u16(), JSON, body)
-                    }
-                },
+                Self::State { provider, route } => {
+                    let (status, body) = provider.cached_json(*route).await.status_body();
+                    surface_bytes(status.as_u16(), JSON, body)
+                }
                 Self::Calculate(provider) => {
                     let query = url::form_urlencoded::Serializer::new(String::new())
                         .extend_pairs(&request.query)
@@ -304,11 +301,8 @@ fn surface_bytes(status: u16, content_type: &str, body: Bytes) -> SurfaceRespons
     }
 }
 fn surface_not_ready() -> SurfaceResponse {
-    surface_bytes(
-        500,
-        JSON,
-        Bytes::from_static(b"{\"error\":\"osu is not ready/running\"}"),
-    )
+    let (status, body) = CachedJson::NotReady.status_body();
+    surface_bytes(status.as_u16(), JSON, body)
 }
 fn surface_http_response(response: SurfaceResponse) -> Response {
     let body = match response.body {
