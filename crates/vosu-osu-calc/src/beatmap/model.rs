@@ -352,6 +352,8 @@ pub struct ParsedBeatmap {
     pub object_counts: ObjectCounts,
     pub times: BeatmapTimes,
     pub bpm: BpmSummary,
+    /// Map-time BPM summary, unaffected by mods or clock rate.
+    pub bpm_base: BpmSummary,
     pub timing_points: Arc<[TimingPoint]>,
     pub breaks: Arc<[BreakRange]>,
     pub kiais: Arc<[TimeRange]>,
@@ -656,7 +658,12 @@ pub(super) fn parse_map<E: BeatmapEngine>(
     } else {
         source_times.map_or(parsed_full_raw, |times| times.duration_end)
     };
-    let bpm = bpm_summary(&beat_lengths, bpm_end, mods.clock_rate());
+    let bpm_base = bpm_summary(&beat_lengths, bpm_end, 1.0);
+    let bpm = BpmSummary {
+        common: bpm_base.common * mods.clock_rate(),
+        minimum: bpm_base.minimum * mods.clock_rate(),
+        maximum: bpm_base.maximum * mods.clock_rate(),
+    };
     let breaks = source_breaks(&source);
     let kiais = source_kiai_ranges(&source_timing.effects);
     let break_index = RangeIndex::new(
@@ -687,6 +694,7 @@ pub(super) fn parse_map<E: BeatmapEngine>(
             full,
         },
         bpm,
+        bpm_base,
         timing_points: timing_points.into(),
         breaks: breaks.into(),
         kiais: kiais.into(),

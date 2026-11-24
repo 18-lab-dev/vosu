@@ -39,6 +39,41 @@
     }
 
     #[test]
+    fn bpm_base_ignores_clock_rate() {
+        let mut cache = BeatmapCache::new(RecordingEngine::default());
+        let expected = BpmSummary {
+            common: 200.0,
+            minimum: 100.0,
+            maximum: 200.0,
+        };
+        for (mod_string, rate) in [("", 1.0), ("dt", 1.5), ("ht", 0.75)] {
+            let map = cache
+                .load(
+                    BeatmapInput::Content {
+                        content: OSU,
+                        identity_path: None,
+                    },
+                    Ruleset::Osu,
+                    &mods(mod_string, rate),
+                    ScoringMode::Stable,
+                )
+                .unwrap();
+            assert_eq!(map.bpm_base, expected, "{mod_string} at {rate}");
+            for (adjusted, base) in [
+                (map.bpm.common, map.bpm_base.common),
+                (map.bpm.minimum, map.bpm_base.minimum),
+                (map.bpm.maximum, map.bpm_base.maximum),
+            ] {
+                let scaled = base * rate;
+                assert!(
+                    adjusted.to_bits().abs_diff(scaled.to_bits()) <= 1,
+                    "{mod_string}: {adjusted} differs from {base} × {rate}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn cache_identity_covers_content_mode_mods_scoring_and_explicit_invalidation() {
         let mut cache = BeatmapCache::new(RecordingEngine::default());
         let base = mods("base", 1.0);
