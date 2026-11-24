@@ -73,7 +73,9 @@ pub mod timers;
 pub use discovery::LinuxSource;
 #[cfg(target_os = "linux")]
 pub use discovery::linux_common;
-pub use discovery::{DiscoveryService, FOREGROUND_POLL_INTERVAL, ProcessSource};
+pub use discovery::{
+    DiscoveryCadence, DiscoveryService, FOREGROUND_POLL_INTERVAL, ProcessSource, cadence_interval,
+};
 #[cfg(windows)]
 pub use discovery::{ForegroundPoller, WindowsProcessSource};
 pub use dispatch::{OwnedMessage, WorkerPool};

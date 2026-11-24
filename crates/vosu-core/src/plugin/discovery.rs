@@ -654,7 +654,7 @@ fn reoffer_tracked(host: &PluginHost, tracked: &HashMap<u32, ProcessRecord>) {
 /// enumeration/inspect failure or an eviction, never by `lost` alone
 /// (`src/instance/runtime.rs:262-266`), so only a real `degraded` pass
 /// drops to the fast cadence regardless of event health.
-fn cadence_interval(
+pub fn cadence_interval(
     cadence: &DiscoveryCadence,
     tracked_empty: bool,
     events_healthy: bool,

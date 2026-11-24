@@ -5,7 +5,7 @@ use metrics::{
 };
 #[path = "discovery_source.rs"]
 mod discovery_source;
-use discovery_source::{DiscoverySource, OSU_COMM_HINTS};
+use discovery_source::DiscoverySource;
 
 use std::env;
 use std::error::Error;
@@ -18,7 +18,6 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use tokio::runtime::Handle;
 use tokio::time::{Instant as TokioInstant, sleep, sleep_until, timeout_at};
-use vosu_core::plugin::Prefilter;
 
 /// Mirrors `vosu::instance::Pid` (`src/instance.rs:30`); these examples
 /// no longer depend on the 1.x instance module (C5).
@@ -224,16 +223,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
         return Err("timed out preparing the initial-scan target helper".into());
     }
 
-    // SAFETY: no other thread reads or writes environment variables at
-    // this point in `main` — `DiscoverySource::start` below is the first
-    // thing that opens a `LinuxSource`, and it is the only reader of
-    // `VOSU_PROCESS_EVENTS` (mirrors 1.x's own `--mode`-to-env selection,
-    // `NativeProcessProvider::open_process_events`).
+    // SAFETY: `env::set_var` only races with another thread reading or
+    // writing environment variables concurrently; the two Tokio worker
+    // threads already running at this point never touch them, and
+    // `DiscoverySource::start` below — the only reader of
+    // `VOSU_PROCESS_EVENTS` — has not run yet.
     unsafe {
         env::set_var("VOSU_PROCESS_EVENTS", args.mode.name());
     }
-    let prefilter = Prefilter::Names(OSU_COMM_HINTS.iter().map(|hint| (*hint).to_owned()).collect());
-    let runtime = DiscoverySource::start(prefilter, Handle::current())?;
+    let runtime = DiscoverySource::start(Handle::current())?;
 
     wait_for_scan(&runtime, 0).await?;
     if !wait_for_pid(&runtime, initial_scan_helper.pid, true, EVENT_TIMEOUT).await? {
