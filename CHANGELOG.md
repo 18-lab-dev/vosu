@@ -7,6 +7,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add exact-identity catalog source settings and HTTPS source parsing, with
   dedicated trust/private-network mutations and journaled credential-purge
   recovery. Preserve legacy source lists and migration markers for M8.
+- Detect unknown catalog forges through bounded unauthenticated origin-pinned
+  probes; cache success for the source lifetime and retry failures only on
+  refresh or relevant edits. Publish generation-checked SDK-validated candidate
+  snapshots without discarding alternatives or reusing failed-source entries.
 
 ## Unreleased — 2.0 M6a
 
