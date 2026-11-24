@@ -55,7 +55,7 @@ src/server/files.rs 1 upstream doc comment describing upstream tosu file-range c
 crates/vosu-core/src/updater/tests_release.rs 2 migration updater test fixture rejecting the former tosu release asset name
 tests/config_compat.rs 2 migration compatibility test covering the legacy tosu.env migration input
 tests/daemon_smoke.rs 6 migration daemon smoke test covering the legacy tosu config-root migration
-tests/state_api_compat.rs 2 parity source-oracle revision document uses the upstream tosu field name as parity evidence
+tests/state_api_compat/oracle.rs 2 parity source-oracle revision document uses the upstream tosu field name as parity evidence
 tests/updater_compat.rs 2 migration updater compatibility test fixture rejecting the former tosu release asset name
 tests/fixtures/oracle/inventory.json 1 provenance pinned oracle inventory fixture recording the upstream tosu revision
 tools/oracle/** 63 provenance pinned calculator oracle tooling, reference fork, and input fixtures recording the upstream tosu revision and Creator metadata
