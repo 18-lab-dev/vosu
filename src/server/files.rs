@@ -213,14 +213,10 @@ pub fn resolve_encoded_counter_resource(
     if !is_directory {
         return resolve_child(root, logical_child, &decoded, request_target, missing);
     }
-    let mut relative = PathBuf::new();
-    for component in components {
-        relative.push(component.as_os_str());
-    }
 
     resolve_child(
         &alias_path,
-        SafeRelativePath::parse(&relative.to_string_lossy())?,
+        logical_child.strip_first(),
         &decoded,
         request_target,
         missing,

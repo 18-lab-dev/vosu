@@ -550,6 +550,9 @@ async fn rejected_origin_is_403_not_found_and_never_reaches_upgrade() {
 
 #[test]
 fn file_range_mime_and_path_security_matrix_is_strict() {
+    // Approved Windows exceptions to legacy CreateFileW spelling: ADS names
+    // are rejected; trailing dot/space spellings do not alias the base file.
+    // Native Windows file-serving tests pin these requests to 404.
     assert_eq!(parse_range(None, 10).unwrap(), ByteRange::Full);
     assert_eq!(
         parse_range(Some("bytes=2-5"), 10).unwrap(),

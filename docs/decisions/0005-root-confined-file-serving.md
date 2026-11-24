@@ -24,6 +24,8 @@ A top-level counter-directory symlink directly beneath the configured static roo
 
 The native boundary is implemented in [`vosu-sys/fs`](../../crates/vosu-sys/src/fs/mod.rs), HTTP policy in [`server/files.rs`](../../src/server/files.rs), directory rendering in [`server/files/directory.rs`](../../src/server/files/directory.rs), and route integration in [`server/service/responses.rs`](../../src/server/service/responses.rs) and [`server/service/routing.rs`](../../src/server/service/routing.rs).
 
+The retained-root Windows implementation intentionally tightens legacy Win32 spelling behavior: alternate data stream (`:`) requests are rejected, and trailing dots/spaces are not stripped to alias another filename. Thus requests for `map.osu.` or `map.osu%20` return 404 when only `map.osu` exists. These approved security deviations do not change Unix colon filenames.
+
 ## Consequences
 
 - Traversal, root escape, and pathname replacement are checked at the file-serving boundary.

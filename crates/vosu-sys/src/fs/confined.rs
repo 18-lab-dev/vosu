@@ -31,6 +31,9 @@ impl SafeRelativePath {
             return Err(SafePathError::InvalidComponent);
         }
         #[cfg(windows)]
+        // Approved Windows hardening: reject ADS names. Native child opens also
+        // deliberately do not apply CreateFileW's trailing-dot/space stripping;
+        // a request for "map.osu." or "map.osu " does not alias "map.osu".
         if decoded.contains(':') {
             return Err(SafePathError::InvalidComponent);
         }
@@ -54,6 +57,13 @@ impl SafeRelativePath {
     }
     pub fn as_path(&self) -> &Path {
         &self.0
+    }
+    /// Remove the first validated component without interpreting its suffix as
+    /// fresh request text (a Unix suffix may start with a literal backslash).
+    pub fn strip_first(&self) -> Self {
+        let mut components = self.0.components();
+        components.next();
+        Self(components.as_path().to_owned())
     }
 }
 
