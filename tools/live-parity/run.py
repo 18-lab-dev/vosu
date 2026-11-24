@@ -20,6 +20,8 @@ import parity_capture
 import parity_verify
 import parity_compare
 import parity_diff
+# Not merged into this facade: golden is self-contained and shares no monkey-patched names.
+import parity_golden
 
 _MODULES = (
     parity_process,
@@ -88,6 +90,15 @@ def parser() -> argparse.ArgumentParser:
     diff.add_argument("--out-dir", required=True)
     check = sub.add_parser("check-config", help="validate live prerequisites without launching")
     check.add_argument("--config", required=True)
+    gold = sub.add_parser(
+        "golden", help="normalize complete attested golden captures into a new candidate directory")
+    gold.add_argument("--capture", required=True, action="append",
+                      help="private vosu-golden-capture-v1 file; repeat once per platform")
+    gold.add_argument("--candidate-dir", required=True,
+                      help="new or empty directory outside tests/fixtures/upstream/")
+    gold.add_argument("--approved-rules", default=str(parity_golden.DEFAULT_APPROVED_RULES),
+                      help="normalization contract (default: tests/fixtures/upstream/GOLDEN_CONTRACT.md)")
+    gold.add_argument("--review-receipt", help="main's review receipt reference, once reviewed")
     return p
 
 
@@ -104,6 +115,9 @@ def main() -> int:
             return 0
         if args.action == "capture":
             return capture(load_config(args.config), args.out, args.timeout, args.interval_ms)
+        if args.action == "golden":
+            return parity_golden.golden(args.capture, args.candidate_dir, args.approved_rules,
+                                        review_receipt=args.review_receipt)
         if args.action == "diff":
             return export_diffs(args.capture, args.out_dir)
         return compare(args.capture, args.report)
