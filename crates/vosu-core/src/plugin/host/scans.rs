@@ -98,7 +98,7 @@ impl ModuleRegions for UnresolvedModuleRegions {
 /// per pid regardless of which opcode it exercises) or a real snapshot
 /// that failed to build at all (module doc comment).
 fn build_module_regions(pid: u32) -> Arc<dyn ModuleRegions + Send + Sync> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     {
         if super::read_plans::is_hooked_for_tests(pid) {
             return Arc::new(UnresolvedModuleRegions);

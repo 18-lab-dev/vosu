@@ -991,9 +991,7 @@ impl SettingsChangeDelivery for PluginHost {
 }
 
 mod lifecycle;
-/// `pub(crate)`: `test_support` (a sibling module of `host`) names
-/// `host::read_plans::set_session_memory_hook_for_tests` directly.
-pub(crate) mod read_plans;
+pub(super) mod read_plans;
 mod scans;
 
 #[cfg(test)]

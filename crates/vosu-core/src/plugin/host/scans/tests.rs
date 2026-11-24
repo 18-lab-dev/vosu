@@ -240,6 +240,49 @@ fn not_found_pattern_returns_empty_addresses_no_error() {
     assert!(result.error.is_none());
 }
 
+/// A module-scoped scan against a `set_session_memory_hook_for_tests` pid
+/// resolves no real module (F3 P2's own fix): `build_module_regions`
+/// substitutes `UnresolvedModuleRegions` for a hooked pid exactly as
+/// `read_plans.rs` does, so the request answers `module_not_found` rather
+/// than this test host trying (and failing) to read a real `/proc`/loader
+/// table for a synthetic pid that was never actually exec'd.
+#[test]
+fn module_scoped_scan_on_hooked_pid_resolves_no_modules() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let (_log_dir, host) = test_host(runtime.handle().clone());
+    let (events, commands) = create_scan_instance(
+        &host,
+        PluginInstanceId::new(1),
+        "testkit.scan.module",
+        &["proc-scan-module"],
+    );
+
+    let pid = 500_200_012;
+    let base = 0x3_0000_0000usize;
+    set_session_memory_hook_for_tests(
+        pid,
+        Arc::new(FixedMemory {
+            base,
+            bytes: vec![0u8; 64],
+        }),
+        ProcessBitness::X64,
+    );
+
+    host.process_appeared(test_process(pid, "proc-scan-module"));
+    let handle = expect_attached(&events);
+
+    submit(&commands, 9, handle, Some("some.dll"), "DE AD BE EF");
+    let (status, correlation_id, result) = expect_status_and_result(&events);
+    assert_eq!(status, vosu_status::VOSU_OK);
+    assert_eq!(correlation_id, 9);
+    assert!(result.addresses.is_empty());
+    assert_eq!(
+        result.error.expect("module_not_found error").code,
+        "module_not_found"
+    );
+}
+
 /// §5: a malformed `pattern` is refused synchronously
 /// (`VOSU_ERR_INVALID_ARGUMENT`), before any scan ever runs — no
 /// `SCAN_RESULT` follows.

@@ -372,7 +372,7 @@ fn build_module_table(pid: u32) -> Option<Arc<dyn ModuleResolver + Send + Sync>>
 /// `pid`: `host::scans`'s own test-only module-table seam checks the same
 /// hook registry (module doc comment) rather than keeping an independent
 /// one keyed by the same pids.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 pub(super) fn is_hooked_for_tests(pid: u32) -> bool {
     session_memory_hooks()
         .lock()
