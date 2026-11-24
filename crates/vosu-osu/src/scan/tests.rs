@@ -19,6 +19,13 @@ fn deliverer(waiters: &Arc<ScanWaiters>) -> impl Fn(u64, vosu_plugin_api::ScanRe
     move |id, result| waiters.deliver(id, result)
 }
 
+fn ok_result() -> vosu_plugin_api::ScanResult {
+    vosu_plugin_api::ScanResult {
+        addresses: Vec::new(),
+        error: None,
+    }
+}
+
 // ---------------------------------------------------------------------
 // ScanWaiters: bounded capacity, semaphore, timeout, detach, shutdown.
 // ---------------------------------------------------------------------
@@ -123,6 +130,42 @@ fn an_undelivered_slot_times_out_and_orphans_its_permit_until_a_late_result() {
     );
     rx.recv_timeout(Duration::from_secs(5))
         .expect("the permit frees once the late result arrives");
+}
+
+#[test]
+fn a_stale_orphan_is_reclaimed_without_a_detach() {
+    // P3 review item 4: a host that silently drops a reply (its own
+    // dispatch queue full, never retried) leaves an orphaned permit held
+    // forever with no detach/shutdown ever coming. `register_many` must
+    // reclaim it on its own once it has been missing for 2x the result
+    // timeout.
+    let waiters = ScanWaiters::with_timeouts(Duration::from_millis(20), Duration::from_secs(10));
+    let slot = waiters.register(1).expect("register succeeds");
+    let err = slot.wait().expect_err("nothing was ever delivered");
+    assert!(matches!(err, MemoryError::Backend { .. }));
+
+    // Let real time pass beyond 2x the result timeout (40 ms) with no
+    // detach/shutdown ever called, via a bounded wait on a channel
+    // nobody signals rather than a disallowed std::thread::sleep.
+    let (_never_tx, never_rx) = mpsc::sync_channel::<()>(1);
+    let _ = never_rx.recv_timeout(Duration::from_millis(80));
+
+    // The next registration must reclaim the stale orphan on its own:
+    // all 48 permits (one of them freed only by reclamation, with no
+    // detach/shutdown) must become available promptly.
+    let (tx, rx) = mpsc::sync_channel(1);
+    let waiters_for_thread = Arc::clone(&waiters);
+    thread::spawn(move || {
+        let held: Vec<super::ScanSlot> = (0..MAX_OUTSTANDING_SCANS)
+            .map(|_| waiters_for_thread.register(2).expect("register succeeds"))
+            .collect();
+        tx.send(held.len()).unwrap();
+    });
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("the stale orphan's permit was reclaimed"),
+        MAX_OUTSTANDING_SCANS
+    );
 }
 
 #[test]
@@ -240,6 +283,92 @@ fn register_many_atomically_reserves_the_whole_group() {
             .expect("the group registers once 10 are free"),
         10
     );
+}
+
+#[test]
+fn fifo_admission_lets_a_16_permit_group_through_despite_newer_1_permit_requests() {
+    // P2 review item 2: first-fit admission lets a steady stream of
+    // 1-permit requests starve a larger group indefinitely, since a
+    // freed permit always goes to whichever waiter happens to fit. FIFO
+    // ticket order must instead give the *older* request priority, even
+    // though it needs more permits than a newer, smaller one that would
+    // otherwise fit right away.
+    let waiters = ScanWaiters::with_timeouts(Duration::from_secs(30), Duration::from_secs(10));
+    let mut held: Vec<super::ScanSlot> = (0..MAX_OUTSTANDING_SCANS)
+        .map(|_| waiters.register(1).expect("register succeeds"))
+        .collect();
+
+    // The 16-permit group registers first (an older ticket) and blocks,
+    // since all 48 permits are held.
+    let (group_started, group_started_rx) = mpsc::sync_channel(1);
+    let (group_done, group_done_rx) = mpsc::sync_channel(1);
+    let waiters_for_group = Arc::clone(&waiters);
+    thread::spawn(move || {
+        group_started.send(()).unwrap();
+        let slots = waiters_for_group
+            .register_many(1, 16)
+            .expect("the 16-group eventually gets in");
+        group_done.send(slots.len()).unwrap();
+    });
+    group_started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("group thread started");
+    // Bounded real-time margin (not a disallowed std::thread::sleep) for
+    // the group thread to have actually taken its ticket inside
+    // `register_many` before the competitor below takes a later one:
+    // the channel send above only proves the thread started running,
+    // not that it has reached the lock yet.
+    let (_settle_tx, settle_rx) = mpsc::sync_channel::<()>(1);
+    let _ = settle_rx.recv_timeout(Duration::from_millis(50));
+
+    // Free exactly one permit: not enough for the 16-group, but enough
+    // for a 1-permit request — except a newer 1-permit request must
+    // still queue behind the older, larger ticket.
+    let released = held.pop().expect("48 slots were held");
+    waiters.deliver(released.id(), ok_result());
+    drop(released);
+
+    let (competitor_done, competitor_done_rx) = mpsc::sync_channel(1);
+    let waiters_for_competitor = Arc::clone(&waiters);
+    thread::spawn(move || {
+        let _slot = waiters_for_competitor
+            .register(99)
+            .expect("register eventually succeeds");
+        competitor_done.send(()).unwrap();
+    });
+    assert_eq!(
+        competitor_done_rx.recv_timeout(Duration::from_millis(300)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "a newer 1-permit request must queue behind the older, larger ticket, even though it would otherwise fit"
+    );
+
+    // Free 15 more (16 total): the 16-group, being the oldest ticket,
+    // must now be admitted before the still-waiting competitor.
+    for _ in 0..15 {
+        let slot = held.pop().expect("enough slots remain");
+        waiters.deliver(slot.id(), ok_result());
+        drop(slot);
+    }
+    assert_eq!(
+        group_done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the 16-group is admitted once 16 permits are free"),
+        16
+    );
+
+    // Release the remaining 32 originally-held permits too, so there is
+    // room left for the competitor's single permit (the group's own 16
+    // alone would otherwise still fill the semaphore).
+    for slot in held.drain(..) {
+        waiters.deliver(slot.id(), ok_result());
+        drop(slot);
+    }
+
+    // With the older ticket satisfied, the competitor's 1-permit request
+    // can finally proceed too.
+    competitor_done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the competitor is admitted once it becomes the oldest ticket");
 }
 
 #[test]
@@ -362,7 +491,7 @@ fn scan_all_returns_every_match_in_ascending_order() {
 }
 
 #[test]
-fn scan_batch_sorts_results_by_ascending_address_regardless_of_request_order() {
+fn scan_batch_returns_results_in_request_order_matching_the_single_region_walk() {
     let base = 0x2000;
     let (image, patterns) = pattern_image(
         &[("11 22 33 44", 0), ("55 66 77 88", 0), ("99 AA BB CC", 0)],
@@ -379,22 +508,27 @@ fn scan_batch_sorts_results_by_ascending_address_regardless_of_request_order() {
     let backend = PlanScanBackend::new(host, 1, waiters);
 
     // `patterns[0]` matches at the lowest address, `patterns[2]` at the
-    // highest. Request them out of address order (highest first), plus
-    // one that never matches, to prove the result order comes from the
-    // matched address — the `ScanBackend` contract ("the region walk's
-    // own order") — not from the caller's own request order.
+    // highest. Request the higher-address one first, plus one that never
+    // matches, to prove the result order comes from request order (the
+    // single-region native scanner's own pattern-index-within-a-region
+    // order, `vosu-sys/src/process/scanner.rs`), not from the matched
+    // address — sorting by address would put `patterns[0]`'s match
+    // first, which the native walk does not do.
     let missing = Pattern::parse("DE AD BE EF", false).unwrap();
     let requested = [patterns[2].clone(), missing, patterns[0].clone()];
     let results = backend.scan_batch(&requested).expect("batch scan succeeds");
     assert_eq!(results.len(), 2);
-    assert!(results[0].address < results[1].address);
     assert_eq!(
-        results[0].index, 2,
-        "the lower-address match is patterns[0], requested at index 2"
+        results[0].index, 0,
+        "requested[0] (patterns[2], the higher address) must come first: request order, not address order"
     );
     assert_eq!(
-        results[1].index, 0,
-        "the higher-address match is patterns[2], requested at index 0"
+        results[1].index, 2,
+        "requested[2] (patterns[0]) comes second"
+    );
+    assert!(
+        results[0].address > results[1].address,
+        "confirms this is request order, not address order: the first result has the higher address"
     );
 }
 
@@ -472,6 +606,30 @@ fn scan_permission_denied_becomes_memory_error_permission_denied() {
     let err = backend
         .scan_all(&patterns[0])
         .expect_err("a permission-denied scan must not succeed");
+    assert!(matches!(err, MemoryError::PermissionDenied { .. }));
+}
+
+#[test]
+fn scan_submission_permission_denied_becomes_memory_error_permission_denied() {
+    // The host refuses the VOSU_OP_SCAN_REQUEST submission itself
+    // (VOSU_ERR_PERMISSION_DENIED, e.g. it could not open the process at
+    // all), rather than answering with a "permission_denied" scan error
+    // later: send_for must map this the same way (P2 review item 1).
+    let base = 0x3100;
+    let (image, patterns) = pattern_image(&[("11 22 33 44", 0)], 4, 0xEE);
+    let waiters = ScanWaiters::new();
+    let fake = FakeHost::new(
+        deliverer(&waiters),
+        image,
+        base,
+        Arc::new(AtomicBool::new(true)),
+    );
+    fake.deny_scan_submission_with_permission_denied();
+    let host = SharedFakeHost::new(fake);
+    let backend = PlanScanBackend::new(host, 1, waiters);
+    let err = backend
+        .scan_all(&patterns[0])
+        .expect_err("a permission-denied scan submission must not succeed");
     assert!(matches!(err, MemoryError::PermissionDenied { .. }));
 }
 

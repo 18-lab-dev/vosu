@@ -9,10 +9,10 @@
 //! (it needs an owned handle to outlive the spawned thread); a
 //! read-plan-only test may construct it directly.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock, Weak};
 use std::thread;
 
 use vosu_osu_reader::process::Pattern;
@@ -93,39 +93,57 @@ fn init_bytes() -> Vec<u8> {
 /// bytes.len())` answers as an unmapped read rather than panicking,
 /// matching a real `ProcessMemory` backend.
 pub struct FakeHost {
-    plugin_ctx: Cell<*mut c_void>,
-    dispatch: Cell<Option<unsafe extern "C" fn(*mut c_void, *const vosu_message) -> u32>>,
+    /// Written once, in `FakeHost::new`, and never mutated again — see
+    /// the `unsafe impl Send`/`Sync` below.
+    plugin_ctx: *mut c_void,
+    /// Written once, in `FakeHost::new`, and never mutated again. A `fn`
+    /// value is always `Send + Sync` on its own regardless of signature,
+    /// so this needs no atomic wrapper.
+    dispatch: Option<unsafe extern "C" fn(*mut c_void, *const vosu_message) -> u32>,
     bytes: Vec<u8>,
     base: usize,
     alive: Arc<AtomicBool>,
-    submissions: Cell<usize>,
+    submissions: AtomicUsize,
     /// Forces every op at this absolute address to answer
     /// `VOSU_READ_ERROR_PERMISSION_DENIED` instead of the ordinary
-    /// unmapped-address `ReadFailed`.
-    deny_read_permission_at: Cell<Option<usize>>,
+    /// unmapped-address `ReadFailed`. `usize::MAX` means "unset" (no real
+    /// test address uses it).
+    deny_read_permission_at: AtomicUsize,
     /// Forces the next `VOSU_OP_READ_PLAN_SUBMIT` to be rejected outright
     /// with `VOSU_ERR_PERMISSION_DENIED`, simulating a host that refuses
     /// the whole submission rather than one op within it.
-    deny_submission_permission: Cell<bool>,
-    /// Forces every `VOSU_OP_SCAN_REQUEST` to answer with the host's own
-    /// `"permission_denied"` scan error code (§6.4).
-    deny_scan_permission: Cell<bool>,
-    /// An owned handle to this same host, set by [`SharedFakeHost::new`]:
-    /// answering a scan request spawns a thread that must outlive the
-    /// call to `HostServices::scan` that triggered it, so it needs a
-    /// `'static` handle rather than `&self`. `None` for a host
-    /// constructed directly (a read-plan-only test, which never receives
-    /// a `ScanRequest`).
-    self_handle: RefCell<Option<Weak<FakeHost>>>,
+    deny_submission_permission: AtomicBool,
+    /// Forces every `VOSU_OP_SCAN_REQUEST`'s *reply* to carry the host's
+    /// own `"permission_denied"` scan error code (§6.4).
+    deny_scan_permission: AtomicBool,
+    /// Forces every `VOSU_OP_SCAN_REQUEST` *submission* itself
+    /// (`HostServices::scan`'s own return status) to fail with
+    /// `VOSU_ERR_PERMISSION_DENIED`, simulating a host that cannot even
+    /// open the target process (e.g. a Linux ptrace-scope refusal)
+    /// before any reply is ever sent.
+    deny_scan_submission_permission: AtomicBool,
+    /// An owned handle to this same host, set once by
+    /// [`SharedFakeHost::new`]: answering a scan request spawns a thread
+    /// that must outlive the call to `HostServices::scan` that triggered
+    /// it, so it needs a `'static` handle rather than `&self`. Empty for
+    /// a host constructed directly (a read-plan-only test, which never
+    /// receives a `ScanRequest`).
+    self_handle: OnceLock<Weak<FakeHost>>,
 }
 
 // SAFETY: `plugin_ctx` is a raw context from a `HarnessPlugin::create`
-// call and `dispatch` that same plugin's own generated dispatch
-// function; both are documented callable from any thread for the
+// call, and `dispatch` that same plugin's own generated dispatch
+// function pointer — both documented callable from any thread for the
 // plugin instance's whole lifetime (`docs/v2/plugin-abi.md` §4's
 // `concurrent_dispatch` contract, mirrored by `VtableHostServices`'s own
-// identical `unsafe impl` in `sdk/plugin.rs`). Every other field is
-// `Send + Sync` on its own.
+// identical `unsafe impl` in `sdk/plugin.rs`). Both fields are written
+// exactly once, in `FakeHost::new`, before this value is ever shared
+// across threads (`SharedFakeHost::new` wraps it in an `Arc` only after
+// construction finishes), and never mutated again, so concurrent reads
+// from the spawned scan-reply threads (item 7) are not a data race.
+// Every other field is genuinely `Send + Sync` on its own now
+// (`Atomic*`/`OnceLock`), not merely asserted to be — `plugin_ctx` is the
+// only field this `unsafe impl` actually has to vouch for.
 unsafe impl Send for FakeHost {}
 // SAFETY: see `Send` above.
 unsafe impl Sync for FakeHost {}
@@ -144,7 +162,7 @@ impl SharedFakeHost {
     #[must_use]
     pub fn new(host: FakeHost) -> Self {
         let shared = Arc::new(host);
-        *shared.self_handle.borrow_mut() = Some(Arc::downgrade(&shared));
+        let _ = shared.self_handle.set(Arc::downgrade(&shared));
         Self(shared)
     }
 }
@@ -197,16 +215,17 @@ impl FakeHost {
         };
         assert!(!plugin_ctx.is_null(), "HarnessPlugin::create never fails");
         Self {
-            plugin_ctx: Cell::new(plugin_ctx),
-            dispatch: Cell::new(vt.dispatch),
+            plugin_ctx,
+            dispatch: vt.dispatch,
             bytes,
             base,
             alive,
-            submissions: Cell::new(0),
-            deny_read_permission_at: Cell::new(None),
-            deny_submission_permission: Cell::new(false),
-            deny_scan_permission: Cell::new(false),
-            self_handle: RefCell::new(None),
+            submissions: AtomicUsize::new(0),
+            deny_read_permission_at: AtomicUsize::new(usize::MAX),
+            deny_submission_permission: AtomicBool::new(false),
+            deny_scan_permission: AtomicBool::new(false),
+            deny_scan_submission_permission: AtomicBool::new(false),
+            self_handle: OnceLock::new(),
         }
     }
 
@@ -214,26 +233,35 @@ impl FakeHost {
     /// `VOSU_READ_ERROR_PERMISSION_DENIED` instead of a plain unmapped
     /// `ReadFailed`.
     pub fn deny_read_permission_at(&self, address: usize) {
-        self.deny_read_permission_at.set(Some(address));
+        self.deny_read_permission_at
+            .store(address, Ordering::Relaxed);
     }
 
     /// Every later `VOSU_OP_READ_PLAN_SUBMIT` is rejected outright with
     /// `VOSU_ERR_PERMISSION_DENIED`.
     pub fn deny_submission_with_permission_denied(&self) {
-        self.deny_submission_permission.set(true);
+        self.deny_submission_permission
+            .store(true, Ordering::Relaxed);
     }
 
-    /// Every later `VOSU_OP_SCAN_REQUEST` answers with the host's own
+    /// Every later `VOSU_OP_SCAN_REQUEST`'s reply carries the host's own
     /// `"permission_denied"` scan error code.
     pub fn deny_scan_with_permission_denied(&self) {
-        self.deny_scan_permission.set(true);
+        self.deny_scan_permission.store(true, Ordering::Relaxed);
+    }
+
+    /// Every later `VOSU_OP_SCAN_REQUEST` *submission* fails outright
+    /// with `VOSU_ERR_PERMISSION_DENIED`, before any reply is ever sent.
+    pub fn deny_scan_submission_with_permission_denied(&self) {
+        self.deny_scan_submission_permission
+            .store(true, Ordering::Relaxed);
     }
 
     /// How many `VOSU_OP_READ_PLAN_SUBMIT`/`VOSU_OP_SCAN_REQUEST`
     /// messages this host has answered so far — a chunking test's way to
     /// prove a long read actually took more than one round trip.
     pub fn submission_count(&self) -> usize {
-        self.submissions.get()
+        self.submissions.load(Ordering::Relaxed)
     }
 
     fn dispatch_message(&self, correlation_id: u64, message: &Message) {
@@ -247,12 +275,12 @@ impl FakeHost {
                 len: payload.len() as u32,
             },
         };
-        let dispatch = self.dispatch.get().expect("dispatch set by FakeHost::new");
+        let dispatch = self.dispatch.expect("dispatch set by FakeHost::new");
         // SAFETY: `self.plugin_ctx` is a live context from the matching
         // `create` call above, `dispatch` is that same plugin's own
         // generated dispatch function, and `raw`'s payload (`payload`)
         // outlives this call.
-        let raw_status = unsafe { dispatch(self.plugin_ctx.get(), &raw as *const vosu_message) };
+        let raw_status = unsafe { dispatch(self.plugin_ctx, &raw as *const vosu_message) };
         assert_eq!(
             raw_status,
             vosu_status::VOSU_OK as u32,
@@ -261,7 +289,7 @@ impl FakeHost {
     }
 
     fn read_bytes(&self, address: usize, len: usize) -> ReadResult {
-        if self.deny_read_permission_at.get() == Some(address) {
+        if self.deny_read_permission_at.load(Ordering::Relaxed) == address {
             return ReadResult::Error {
                 code: ReadErrorCode::PermissionDenied,
                 message: format!("permission denied reading address {address:#x}"),
@@ -311,7 +339,7 @@ impl FakeHost {
     }
 
     fn execute_scan(&self, request: &vosu_plugin_api::ScanRequest) -> vosu_plugin_api::ScanResult {
-        if self.deny_scan_permission.get() {
+        if self.deny_scan_permission.load(Ordering::Relaxed) {
             return vosu_plugin_api::ScanResult {
                 addresses: Vec::new(),
                 error: Some(vosu_plugin_api::ErrorInfo {
@@ -348,14 +376,17 @@ impl FakeHost {
 
 impl vosu_plugin_api::HostServices for FakeHost {
     fn send(&self, message: &Message, correlation_id: u64) -> vosu_status {
-        self.submissions.set(self.submissions.get() + 1);
+        self.submissions.fetch_add(1, Ordering::Relaxed);
         if !self.alive.load(Ordering::Relaxed) {
             return vosu_status::VOSU_ERR_TARGET_GONE;
         }
         match message {
             Message::ScanRequest(request) => {
+                if self.deny_scan_submission_permission.load(Ordering::Relaxed) {
+                    return vosu_status::VOSU_ERR_PERMISSION_DENIED;
+                }
                 let request = request.clone();
-                let weak = self.self_handle.borrow().clone().expect(
+                let weak = self.self_handle.get().cloned().expect(
                     "a scan-answering FakeHost must be constructed through SharedFakeHost::new",
                 );
                 // Answer from a spawned thread, exactly as a real host's
@@ -384,11 +415,11 @@ impl vosu_plugin_api::HostServices for FakeHost {
         _correlation_id: u64,
         payload: &[u8],
     ) -> vosu_status {
-        self.submissions.set(self.submissions.get() + 1);
+        self.submissions.fetch_add(1, Ordering::Relaxed);
         if !self.alive.load(Ordering::Relaxed) {
             return vosu_status::VOSU_ERR_TARGET_GONE;
         }
-        if self.deny_submission_permission.get() {
+        if self.deny_submission_permission.load(Ordering::Relaxed) {
             return vosu_status::VOSU_ERR_PERMISSION_DENIED;
         }
         assert_eq!(opcode, vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT);

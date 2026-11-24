@@ -16,7 +16,7 @@
 //! a permit this plugin releases too early can still be legitimately
 //! outstanding on the host's own side).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -54,15 +54,32 @@ struct Slot {
     /// caller dropping it before `wait`), but the host may still complete
     /// the scan it answers: the slot stays in the map, holding its
     /// permit, until [`ScanWaiters::deliver`] finally sees a late result
-    /// for it (released immediately then) or [`ScanWaiters::detach`]/
+    /// for it (released immediately then), [`ScanWaiters::detach`]/
     /// [`ScanWaiters::shutdown`] releases it (session torn down, or the
-    /// plugin itself shutting down).
-    orphaned: bool,
+    /// plugin itself shutting down), or it goes stale (below) and is
+    /// reclaimed on its own.
+    orphaned_since: Option<Instant>,
 }
 
 struct Inner {
     next_id: u64,
     slots: HashMap<u64, Slot>,
+}
+
+/// `ScanWaiters::outstanding`'s locked state: how many permits are in use,
+/// and the FIFO admission queue over [`ScanWaiters::register_many`]
+/// callers (P2 review item 2): `notify_one` alone can wake a waiter that
+/// still can't fit its own `count` while a different, smaller waiter that
+/// could fit is never woken, and even with `notify_all`, first-fit
+/// admission lets a steady stream of 1-permit requests indefinitely
+/// starve a 16- or 48-permit group. Admission instead goes strictly in
+/// ticket order: a waiter may take its permits only once it is the
+/// smallest (oldest) ticket still in `waiting`, even if a later ticket
+/// would otherwise fit first.
+struct Outstanding {
+    count: usize,
+    next_ticket: u64,
+    waiting: BTreeSet<u64>,
 }
 
 /// Bounded, plugin-wide map from a `VOSU_OP_SCAN_REQUEST`'s
@@ -74,7 +91,7 @@ struct Inner {
 pub struct ScanWaiters {
     inner: Mutex<Inner>,
     delivered: Condvar,
-    outstanding: Mutex<usize>,
+    outstanding: Mutex<Outstanding>,
     permit_freed: Condvar,
     /// [`ScanSlot::wait`]'s own timeout, waiting for a `VOSU_OP_SCAN_RESULT`.
     result_timeout: Duration,
@@ -109,7 +126,11 @@ impl ScanWaiters {
                 slots: HashMap::new(),
             }),
             delivered: Condvar::new(),
-            outstanding: Mutex::new(0),
+            outstanding: Mutex::new(Outstanding {
+                count: 0,
+                next_ticket: 0,
+                waiting: BTreeSet::new(),
+            }),
             permit_freed: Condvar::new(),
             result_timeout,
             permit_timeout,
@@ -136,13 +157,25 @@ impl ScanWaiters {
     /// block wanting more, with nobody able to finish a group and start
     /// waiting (and so release anything) — "4 interleaved 16-pattern
     /// `scan_batch` calls deadlock permanently" (P3 review item 1).
+    ///
+    /// Admission is strict FIFO over every concurrent `register`/
+    /// `register_many` call (P2 review item 2): this call takes a ticket
+    /// before waiting, and may take its permits only once it is the
+    /// oldest ticket still waiting and enough are free — never because a
+    /// smaller, newer request happened to fit first. Without this, a
+    /// steady stream of 1-permit `scan_all` calls can starve a 16- or
+    /// 48-permit `scan_batch` group indefinitely, since first-fit
+    /// admission always prefers whichever request is smallest.
+    ///
     /// `count` must not exceed [`MAX_OUTSTANDING_SCANS`] (the semaphore's
     /// own total capacity; [`PlanScanBackend::scan_batch`] enforces this
     /// by grouping). Gives up and returns an error after this instance's
     /// own timeout rather than blocking forever if `count` permits never
-    /// free up together. The returned [`ScanSlot`]s each release their
-    /// own permit and slot unconditionally, however consumed or dropped
-    /// (see [`Slot::orphaned`]).
+    /// free up together (removing this ticket from the queue first, so a
+    /// caller that gives up never blocks anyone else). The returned
+    /// [`ScanSlot`]s each release their own permit and slot
+    /// unconditionally, however consumed or dropped (see
+    /// [`Slot::orphaned_since`]).
     pub fn register_many(
         self: &Arc<Self>,
         handle: vosu_session_id,
@@ -155,33 +188,43 @@ impl ScanWaiters {
         if count == 0 {
             return Ok(Vec::new());
         }
+        self.reclaim_stale_orphans();
         let deadline = Instant::now() + self.permit_timeout;
-        {
-            let mut outstanding = self
-                .outstanding
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            loop {
-                if *outstanding + count <= MAX_OUTSTANDING_SCANS {
-                    *outstanding += count;
-                    break;
-                }
-                let now = Instant::now();
-                if now >= deadline {
-                    return Err(MemoryError::Backend {
-                        operation: "scan",
-                        message: format!(
-                            "timed out waiting for {count} outstanding-scan permits together"
-                        ),
-                    });
-                }
-                let (next_guard, _timeout) = self
-                    .permit_freed
-                    .wait_timeout(outstanding, deadline - now)
-                    .unwrap_or_else(PoisonError::into_inner);
-                outstanding = next_guard;
+        let mut state = self
+            .outstanding
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let ticket = state.next_ticket;
+        state.next_ticket = state.next_ticket.wrapping_add(1);
+        state.waiting.insert(ticket);
+        let outcome: Result<(), MemoryError> = loop {
+            let is_oldest = state.waiting.iter().next() == Some(&ticket);
+            if is_oldest && state.count + count <= MAX_OUTSTANDING_SCANS {
+                state.count += count;
+                break Ok(());
             }
-        }
+            let now = Instant::now();
+            if now >= deadline {
+                break Err(MemoryError::Backend {
+                    operation: "scan",
+                    message: format!(
+                        "timed out waiting for {count} outstanding-scan permits together"
+                    ),
+                });
+            }
+            let (next_state, _timeout) = self
+                .permit_freed
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(PoisonError::into_inner);
+            state = next_state;
+        };
+        state.waiting.remove(&ticket);
+        drop(state);
+        // Removing our own ticket (won or gave up) may let a different
+        // ticket become the new oldest: wake every blocked registration
+        // to recheck, not just one.
+        self.permit_freed.notify_all();
+        outcome?;
         let ids: Vec<u64> = {
             let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
             (0..count)
@@ -197,7 +240,7 @@ impl ScanWaiters {
                         Slot {
                             handle,
                             result: None,
-                            orphaned: false,
+                            orphaned_since: None,
                         },
                     );
                     id
@@ -213,18 +256,26 @@ impl ScanWaiters {
             .collect())
     }
 
-    /// Releases `id`'s permit (not its map slot, which the caller has
-    /// already removed, if at all): shared by every path that frees a
-    /// permit without a result ever having arrived for the orphaned case
-    /// this is folded into by [`Self::abandon`].
-    fn free_permit(&self) {
-        let mut outstanding = self
+    /// Releases `n` permits (not any map slot, which the caller has
+    /// already removed, if at all): shared by every path that frees
+    /// permits without a result ever having arrived for the orphaned
+    /// case this is folded into by [`Self::abandon`].
+    fn free_permits(&self, n: usize) {
+        if n == 0 {
+            return;
+        }
+        let mut state = self
             .outstanding
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        *outstanding = outstanding.saturating_sub(1);
-        drop(outstanding);
-        self.permit_freed.notify_one();
+        state.count = state.count.saturating_sub(n);
+        drop(state);
+        // `notify_one` can wake a waiter whose own `count` still doesn't
+        // fit while a different, smaller waiter that could fit sleeps on
+        // (P2 review item 2); every waiter re-checks its own fit (and
+        // FIFO position) on wake, so waking all of them is correct, not
+        // just efficient.
+        self.permit_freed.notify_all();
     }
 
     /// Called by [`ScanSlot`]'s `Drop`, on every path out of a slot's
@@ -234,9 +285,9 @@ impl ScanWaiters {
     /// read it) this fully releases the slot and its permit; otherwise
     /// the host may still be running this scan with no way to cancel it,
     /// so this only *orphans* the slot — it stays in the map, still
-    /// holding its permit, until a late [`Self::deliver`] or a
-    /// [`Self::detach`]/[`Self::shutdown`] finally releases it (P3 review
-    /// item 4).
+    /// holding its permit, until a late [`Self::deliver`], a
+    /// [`Self::detach`]/[`Self::shutdown`], or [`Self::reclaim_stale_orphans`]
+    /// finally releases it (P3 review item 4).
     fn abandon(&self, id: u64) {
         let had_result = {
             let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
@@ -246,15 +297,43 @@ impl ScanWaiters {
                     true
                 }
                 Some(slot) => {
-                    slot.orphaned = true;
+                    slot.orphaned_since = Some(Instant::now());
                     false
                 }
                 None => false,
             }
         };
         if had_result {
-            self.free_permit();
+            self.free_permits(1);
         }
+    }
+
+    /// Reclaims every orphaned slot whose host reply has been missing for
+    /// at least twice [`Self::result_timeout`]: without this, a host that
+    /// silently drops a reply (its own dispatch queue full, logged but
+    /// never retried) leaves that permit held until the session detaches
+    /// or the plugin shuts down — neither of which may ever happen for a
+    /// single long-lived session (P3 review item 4). Called at the start
+    /// of every [`Self::register_many`], so a plugin that keeps scanning
+    /// reclaims stale orphans on its own, with no detach required.
+    fn reclaim_stale_orphans(&self) {
+        let stale_after = self.result_timeout.saturating_mul(2);
+        let released = {
+            let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            let stale: Vec<u64> = inner
+                .slots
+                .iter()
+                .filter_map(|(&id, slot)| {
+                    let since = slot.orphaned_since?;
+                    (since.elapsed() >= stale_after).then_some(id)
+                })
+                .collect();
+            for &id in &stale {
+                inner.slots.remove(&id);
+            }
+            stale.len()
+        };
+        self.free_permits(released);
     }
 
     /// Called from the plugin's own `on_message` for every decoded
@@ -263,13 +342,13 @@ impl ScanWaiters {
     /// it — or, for a slot already orphaned (its own caller gave up
     /// waiting), releases it immediately instead, since nobody is left to
     /// wake. A `correlation_id` this map no longer holds at all (already
-    /// released via `detach`/`shutdown`) is silently ignored — the reply
-    /// arrived too late to matter to anyone.
+    /// released via `detach`/`shutdown`/reclamation) is silently ignored
+    /// — the reply arrived too late to matter to anyone.
     pub fn deliver(&self, correlation_id: u64, result: ScanResult) {
         let release_now = {
             let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
             match inner.slots.get(&correlation_id) {
-                Some(slot) if slot.orphaned => {
+                Some(slot) if slot.orphaned_since.is_some() => {
                     inner.slots.remove(&correlation_id);
                     true
                 }
@@ -287,7 +366,7 @@ impl ScanWaiters {
             }
         };
         if release_now {
-            self.free_permit();
+            self.free_permits(1);
         }
     }
 
@@ -322,7 +401,7 @@ impl ScanWaiters {
                 if !matches(slot) {
                     continue;
                 }
-                if slot.orphaned {
+                if slot.orphaned_since.is_some() {
                     to_release.push(id);
                 } else if slot.result.is_none() {
                     slot.result = Some(ScanResult {
@@ -340,9 +419,7 @@ impl ScanWaiters {
             }
         }
         self.delivered.notify_all();
-        for _ in 0..released {
-            self.free_permit();
-        }
+        self.free_permits(released);
     }
 }
 
@@ -373,8 +450,8 @@ impl ScanSlot {
     /// synthetic error), or this scan's own timeout — whichever comes
     /// first — then returns the scanned addresses or the failure as a
     /// `MemoryError`. On a timeout this slot is orphaned rather than
-    /// released (see [`Slot::orphaned`]); every other outcome removes it
-    /// outright. `"permission_denied"` becomes
+    /// released (see [`Slot::orphaned_since`]); every other outcome
+    /// removes it outright. `"permission_denied"` becomes
     /// [`MemoryError::PermissionDenied`] rather than the generic
     /// [`MemoryError::Backend`] every other scan error code becomes.
     pub fn wait(self) -> Result<Vec<u64>, MemoryError> {
@@ -487,7 +564,13 @@ impl<H: HostServices + Send + Sync + 'static> PlanScanBackend<H> {
     /// immediate synthetic [`ScanWaiters::deliver`] so `slot`'s `wait`
     /// never blocks for a reply that can now never arrive;
     /// `VOSU_ERR_TARGET_GONE` also flips [`Self::alive`] false, same as a
-    /// read plan's rejection does.
+    /// read plan's rejection does. `VOSU_ERR_PERMISSION_DENIED` (the host
+    /// could not even open the target process, e.g. a Linux ptrace-scope
+    /// refusal) delivers the scan error code `"permission_denied"`, the
+    /// same code a rejected *reply* uses (§6.4), so `wait` maps it to
+    /// [`MemoryError::PermissionDenied`] exactly the same way — otherwise
+    /// a session whose very first scan is refused for permission would
+    /// see a generic, retryable error instead (P2 review).
     fn send_for(&self, slot: &ScanSlot, pattern: &Pattern, all_matches: bool) {
         let request = ScanRequest {
             session: self.handle,
@@ -503,12 +586,17 @@ impl<H: HostServices + Send + Sync + 'static> PlanScanBackend<H> {
                 self.alive
                     .store(false, std::sync::atomic::Ordering::Relaxed);
             }
+            let code = if status == vosu_status::VOSU_ERR_PERMISSION_DENIED {
+                "permission_denied"
+            } else {
+                "rejected"
+            };
             self.waiters.deliver(
                 correlation_id,
                 ScanResult {
                     addresses: Vec::new(),
                     error: Some(ErrorInfo {
-                        code: "rejected".to_owned(),
+                        code: code.to_owned(),
                         message: format!("host rejected the scan request: {status:?}"),
                     }),
                 },
@@ -556,22 +644,30 @@ impl<H: HostServices + Send + Sync + 'static> ScanBackend for PlanScanBackend<H>
 
     /// Splits `patterns` into groups of at most [`MAX_OUTSTANDING_SCANS`]
     /// (item 1), resolving one group fully before starting the next, then
-    /// returns every matched pattern's `(index, address)` sorted by
-    /// ascending address — `ScanBackend`'s own contract ("the region
-    /// walk's own order", `vosu-osu-reader/src/process.rs`). This is an
-    /// exact match for a single-region fixture (every test and
-    /// `StablePatterns` today); across several regions it can still
-    /// diverge from the walk's own tie-break in one case the walk's own
-    /// region-at-a-time traversal cannot be reconstructed from addresses
-    /// alone: two different patterns whose *first* match both land in the
-    /// same region, where the walk orders by request index, not by the
-    /// matched offset within that region.
+    /// returns every matched pattern's `(index, address)` **in request
+    /// order** (`scan_group` appends each group's matches in the order it
+    /// sent them, and groups themselves run in order) — exactly `scan_all`'s
+    /// own region-walk reference behaviour for a single region, where
+    /// every pattern shares that one region and the native scanner
+    /// (`vosu-sys/src/process/scanner.rs`) itself walks patterns in index
+    /// order within it. `StablePatterns` and every test today scan a
+    /// single region, so this already matches `ScanBackend`'s contract
+    /// ("the region walk's own order") exactly.
+    ///
+    /// Across *several* regions this backend cannot reconstruct the
+    /// walk's own order, since it has no region-boundary data at all (the
+    /// host answers one pattern at a time): the native walk groups by
+    /// region first, then by pattern index within each region, so two
+    /// patterns whose first match lands in *different* regions could
+    /// come back in a different relative order than request order gives
+    /// here. No current caller is multi-region; a future one needing the
+    /// exact multi-region order would need `module`-scoped per-region
+    /// requests to reconstruct it, which this backend does not attempt.
     fn scan_batch(&self, patterns: &[Pattern]) -> Result<Vec<BatchScanResult>, MemoryError> {
         let mut matches = Vec::with_capacity(patterns.len());
         for (group_index, group) in patterns.chunks(MAX_OUTSTANDING_SCANS).enumerate() {
             self.scan_group(group, group_index * MAX_OUTSTANDING_SCANS, &mut matches)?;
         }
-        matches.sort_by_key(|&(_, address)| address);
         Ok(matches
             .into_iter()
             .map(|(index, address)| BatchScanResult {
