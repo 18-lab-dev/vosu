@@ -11,12 +11,15 @@
 
 mod client;
 mod commit;
+mod demand;
 mod document;
 mod grant;
 mod pointer;
 mod projector;
 pub mod schema;
 mod store;
+mod subscriptions;
+mod update;
 mod value;
 
 #[cfg(test)]
@@ -24,6 +27,7 @@ mod tests;
 
 pub use client::ClientFacts;
 pub use commit::{CommitError, CommitOutcome};
+pub use demand::DemandSnapshot;
 pub use document::{SessionKey, SessionState};
 pub use grant::{GrantError, Permit, PublisherGrant};
 pub use pointer::{Pointer, PointerError};
@@ -35,4 +39,9 @@ pub use schema::{
     SchemaRegistry,
 };
 pub use store::StateStore;
+pub use subscriptions::{
+    MAX_NAMESPACE_BYTES, MAX_SELECTORS, MAX_SUBSCRIPTIONS, MAX_SUBSCRIPTIONS_PER_SUBSCRIBER,
+    SubscribeError, SubscriberId, SubscriptionRegistry,
+};
+pub use update::{PendingUpdate, UpdateError, split_update};
 pub use value::{StateObject, StateValue, ValueError};
