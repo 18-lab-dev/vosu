@@ -45,3 +45,15 @@ The retained-root Windows implementation intentionally tightens legacy Win32 spe
 
 - [Architecture](../architecture/overview.md)
 - [Benchmarks](../testing/benchmarks.md) — file-serving measurements do not weaken the confinement contract.
+
+## M4a bundled authority amendment (2026-11-24)
+
+Adapter roots come only from the captured owning game session's `ROOT_DECLARE`
+capabilities, never internal path echoes. The
+[permanent surface contract](../v2/adapter-surfaces.md#r0-opaque-rootfile-operations)
+exposes opaque retained-root child/inspection/stream operations, not OS paths
+or file handles. Root epochs and detach invalidate future opens; focus changes
+never retry an already selected response against another session.
+Calculation-only absolute spellings are accepted solely after confinement to
+those declared roots, as recorded in ADR 0004's amendment. This does not relax
+ordinary URL child validation or API-v1 reference membership.

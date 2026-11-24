@@ -225,18 +225,17 @@ without a version bump.
   `vosu.chart.resources`, the skin's files at `vosu.skin.tree`. They remain
   exactly as-is in the upstream adapter; API v1 never serves a raw filesystem
   path.
-- 1.x's always-on `keys.k1`/`k2`/`m1`/`m2` upstream-compatible members are
-  replaced by `vosu.osu.keys.all` alone; the mode-specific `B1..BN` mapping
-  that 1.x's `all` array already used (README "Renderer state (v2)" /
-  `keys.all` table) is unchanged and is reproduced below under
-  [`keys`](#keys-vosu-osu-keys).
+- Independent physical/legacy input slots and logical actions are different
+  facts. `vosu.osu.keys.all` retains its mode-specific `B1..BN` semantics;
+  A4 approves an optional `keys.overlay` record for independent k1/k2/m1/m2
+  source slots, not aliases inferred from logical actions (see below).
 - The opt-in flags `ENABLE_MANIA_KEY_HIT_ERRORS`, `ENABLE_HIT_OFFSETS`, and
   `ENABLE_KEY_OVERLAY`/`ENABLE_MANIA_KEY_HIT_ERRORS`-gated fields are removed
   (ADR 0021): subscribing to `vosu.osu.play.keyHitErrors`, `.hitOffsets`, or
   `vosu.osu.keys` is itself the opt-in, same as every other field.
   Bus demand enables the reader collection for `hitOffsets` and
-  `keyHitErrors` with no `ENABLE_*` gate; the 1.x outputs continue to honor
-  their 1.x configuration flags (A2b).
+  `keyHitErrors` with no `ENABLE_*` gate. M4a removes the old adapter flags
+  and extension outputs; actual feed subscriptions supply adapter demand.
 
 ### 1.x-to-2.0 field mapping
 
@@ -283,9 +282,9 @@ carry the same values while subscribed, at different cadences.
 | `play.rank` | `vosu.osu.play.rank` | |
 | `play.pp` | `vosu.osu.play.pp` | osu!-specific calculation; no common-layer equivalent. |
 | `play.unstableRate` | `vosu.osu.play.unstableRate` | |
-| `keys.k1`, `.k2`, `.m1`, `.m2` | removed; use `vosu.osu.keys.all` | See [`keys`](#keys-vosu-osu-keys). |
+| `keys.k1`, `.k2`, `.m1`, `.m2` | approved optional `vosu.osu.keys.overlay.{k1,k2,m1,m2}` (P1, schema 1.3.0) | Independent physical/legacy source slots; never reconstruct from `keys.all`. |
 | `keys.all` | `vosu.osu.keys.all` | |
-| `hitErrors`, `pressHitErrors`, `releaseHitErrors` (precise, tourney-nested) | `vosu.osu.tourney.clients[].play.hitErrors` | The precise document's top-level `tourney[]` becomes part of `vosu.osu.tourney.clients[]`; there is no separate precise document in 2.0 (ADR 0021). In 1.x this `tourney[]` is populated only by the stable manager path, which D6 defers (above); this row has no source to verify against until the stable manager aggregate lands and is excluded from the M2/M4a exits until then. |
+| `hitErrors`, `pressHitErrors`, `releaseHitErrors` (precise, tourney-nested) | `vosu.osu.tourney.clients[].play.hitErrors` | T0 publishes stable spectator all/press/release facts at their actual lanes; adapters remove extension siblings, retaining legitimate upstream all-hit histories. Stable aggregate is mandatory for the completed M4a exit. |
 | `leaderboard[]` | `vosu.osu.leaderboard[]` | Each entry's `statistics.katu` feeds the new `statistics.good` (1.2.0, R5). |
 | `performance.accuracy`, `.graph` | `vosu.osu.performance.accuracy`/`.graph` | |
 | `resultsScreen` | `vosu.osu.result` | Distinct from `vosu.status.status == "results"`, which only marks the coarse status. `hits.katu` feeds the new `statistics.good` (1.2.0, R5). There is deliberately no common cross-game result summary until a second game plugin needs one; adding it then takes its own ADR. |
@@ -313,6 +312,36 @@ Mapping notes (A2b):
 - **Intentional 1.x divergence:** tourney `bestOF` becomes `bestOf` in the
   schema; its value is unchanged.
 - **Intentional 1.x divergence:** room `roomID` becomes `roomId` in the schema; its value is unchanged.
+
+### M4a source fidelity amendment (A4, 2026-11-24)
+
+The normative [per-source fidelity table and endpoint inventory](../../tests/fixtures/upstream/ADAPTER_CONTRACT.md)
+resolve A4.1–A4.6. A schema difference is not an adapter-wire exemption:
+adapters restore `bestOF`/`roomID`, and distinguish pending tournament data
+(omit key) from a present client with a missing score (pinned adapter error).
+API v1 continues to publish accurate null instead of failing the document.
+An optional public `tourneyAvailability` enum records `pending`, `ready`,
+or `missingScore`; it is updated atomically with `tourney`, even when null
+does not change.
+
+P1/T0 implement the approved optional additions in **vosu.osu 1.3.0**:
+`keys.overlay`; `play.score`, `play.combo`, `play.accuracyPercent`,
+`play.healthRaw`, `play.judgements`, `play.retries`,
+`play.preciseUnstableRate`; `beatmap.selectionMode`,
+`beatmap.time.firstHitObject`, `beatmap.time.preview`;
+`session.watchingReplay`; `leaderboardState`; `tourneyAvailability`; and
+corresponding accurate stable spectator facts. The inventory freezes types,
+real producers, lanes, null semantics and required proofs. Ship schema,
+manifest version, partition/dirty dependencies and annotations with producers,
+not as a docs-only claim that the current 1.2.0 implementation fills them.
+No non-path payload is added to `internal`.
+
+Common activity-gated nulls cannot recover out-of-play captured values.
+Accuracy division, health scaling, decimal rounding, legacy hit conversion
+and clamping are not presumed invertible. Preserve accurate raw facts where
+needed and prove final-wire equivalence over the oracle and numeric boundary /
+property cases. The existing common fields retain their accurate units and
+activity rules. A failed proof blocks parity, never permits fabrication.
 
 ### `keys` (`vosu.osu.keys`)
 

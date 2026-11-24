@@ -213,3 +213,20 @@ rationale in `docs/v2/implementation-plan.md` section 10):
   failed on any non-security entry could never pass, since `/api/ingame`'s
   and ADR 0004's entries are permanent and not about security; per-entry
   classes let the gate target exactly the pre-release gaps it should.
+
+**2026-11-24 (A4):** The
+[source fidelity/removal inventory](../../tests/fixtures/upstream/ADAPTER_CONTRACT.md)
+and [permanent bundled surface contract](../v2/adapter-surfaces.md) resolve
+the approved M4a clarifications. They supersede the D6 statement equating
+all tournament nulls with omission: pending data omits the upstream key,
+missing-score data produces the pinned adapter failure, while API v1 remains
+accurate. Independent legacy input slots are public typed facts, never
+guessed from logical actions. The stable manager is mandatory for completed
+M4a; its temporary exemption is closed only with implementation evidence.
+The endpoint inventory removes extension copies from every writer and nested
+tournament path without removing legitimate upstream all-hit histories.
+Legacy calculation accepts relative declared-root children and absolute
+spellings confined inside the selected session's declared roots only; the
+new rejection is a named security divergence. D20 attribution uses validated
+overlay identity, bounded deduplication and separate unknown buckets, never
+Origin alone or arbitrary path/referrer logging.

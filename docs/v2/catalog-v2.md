@@ -133,6 +133,18 @@ version = "^1.0.0"
   manifest with any `action:` id in `requires`/`optional` is invalid, and may
   depend only on `field:`/`resource:` ids.
 
+**A4 adapter grants (2026-11-24).** The three bundled adapter manifests declare
+the common namespace fields they actually consume as well as osu! fields:
+`vosu.client`, `vosu.status`, `vosu.chart`, `vosu.play`, and `vosu.skin`
+are not implied by `field:vosu.osu`. Path echoes require the explicit
+`field:vosu.osu.internal.paths` subtree grant (or narrower descendants).
+Chart-byte consumers require `field:vosu.chart.resources.file` and
+`resource:chart.file`; a reference field grant alone is not byte authority.
+Use the owning schema's version for each requirement. Approved source additions
+ship with their producers in osu! schema 1.3.0, not ahead of them in manifests.
+No corresponding overlay/tool private grant is added. See the
+[adapter surface contract](adapter-surfaces.md#identity-and-authorization).
+
 ### Capability coverage
 
 A provided id satisfies a required id when they are equal, or when the
@@ -1052,6 +1064,17 @@ On first 2.0 start, migration is one-time and idempotent (same pattern as
   field it still receives; only its requests to a route or field M4a
   removed stop working and are the ones flagged, until a
   `kind = "overlay"` `manifest.toml`-bearing update appears.
+
+A4 freezes the attribution policy in
+[adapter surfaces](adapter-surfaces.md#a45-removed-route-attribution): validated
+installed identity or same-origin overlay path provenance only, never Origin
+alone. Unknown is recorded separately. The deduplicated in-memory map holds
+at most 128 known overlays with a 24-hour inactivity TTL, plus one unknown
+bucket per fixed removed-feature enum; no arbitrary path/referrer logging.
+M8's one-time configuration migration removes exactly `ENABLE_KEY_OVERLAY`,
+`ENABLE_MANIA_KEY_HIT_ERRORS`, `ENABLE_HIT_OFFSETS`, and
+`V2_SUBSCRIPTION_DEBOUNCE`; it preserves `API_V1_SUBSCRIPTION_DEBOUNCE` and
+unrelated unknown keys.
 
 ## Day-0 release check
 

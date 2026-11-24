@@ -41,3 +41,14 @@ The separation is visible in [`vosu-osu-calc/src/lib.rs`](../../crates/vosu-osu-
 
 - [Architecture](../architecture/overview.md)
 - [Benchmarks](../testing/benchmarks.md) — calculator results and timings are tied to the recorded code, inputs, build, and machine.
+
+## M4a path-authority amendment (2026-11-24)
+
+A4.4 confines legacy calculation `path` to the captured current session's
+declared roots: a relative child of its songs root, or an absolute spelling
+canonicalizing within one of its declared roots. The eventual open uses
+retained-root confinement, not validation followed by a pathname reopen.
+Outside-root requests are the named `legacy-calculate-declared-roots`
+security divergence; query/mod/result semantics and `LegacyRosuEngine` stay
+unchanged. No-path calculation reads the captured published chart through
+the [surface resource seam](../v2/adapter-surfaces.md#r0-resource-bytes-and-lifetime-budgets).

@@ -616,6 +616,22 @@ routes with them:
 above replaces it for every first-party consumer
 ([ADR 0022](../decisions/0022-install-resolver-and-2-0-transition.md)).
 
+The normative [adapter inventory](../../tests/fixtures/upstream/ADAPTER_CONTRACT.md)
+enumerates removals separately for each endpoint, including nested tournament
+copies. The regular v2 `keys` object is absent entirely; precise upstream
+`k1`/`k2`/`m1`/`m2` and legitimate all-hit histories remain. Both removed exact
+routes (`/websocket/v2/subscribe` and `/files/skin/`) return ordinary 404 without
+upgrade or static fallthrough. Lazer legacy skin lookup is 404; API v1 skin
+trees remain supported. Legacy calculation accepts only a relative child of
+the selected session's declared songs root or an absolute spelling confined
+inside that session's declared roots. The separate calculation engine/query
+contract is unchanged.
+
+Bundled capture and file authority follow [the permanent surface contract](adapter-surfaces.md).
+An active-session change never rebinds an already selected file response.
+Removed-route attribution is bounded, advisory and based on validated overlay
+identity only; API v1 never discloses the private path grant used for echoes.
+
 ## Worked examples
 
 ### Cross-game combo/accuracy overlay

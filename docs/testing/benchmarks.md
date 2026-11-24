@@ -69,6 +69,52 @@ Intervals describe these rounds, not immunity to systematic fixture or host
 bias. Repeated `--binary` accepts more than two revisions. Timing controls:
 `--warmup`, `--measurement`, `--samples`, `--rounds`, and `--timeout`.
 
+## M4a D17 contract
+
+A4 freezes the following exact future case names in `state_bus_bench`; this
+is a contract, not measurement evidence or a claim those cases exist yet:
+
+- `end_to_end/adapter`: source snapshot → real osu! projection → ABI batch →
+  bus commit → coherent surface → actual `/json/v2` bytes **and encoded API-v1
+  subscription frame**, including delivery/write acknowledgement;
+- `end_to_end/adapter_precise`: the same production path for a precise-only
+  change and precise frame, retaining the unchanged regular view;
+- equivalent `end_to_end/legacy` output work from M3 and pre-M0 serializers;
+- `adapter/idle_no_clients`, `adapter/http_then_ws_cache`,
+  `adapter/plain_100_clients`, `adapter/filtered_clients`,
+  `adapter/slow_consumer`, `adapter/focus_switch`,
+  `adapter/sc_unchanged_chart`, `adapter/sc_changed_chart`.
+
+List actual matched names/nonzero work counts before timing. New adapter case
+names require a common harness around both implementations; never pass a
+nonexistent name to a baseline binary. Cold chart I/O/parser cost is reported
+separately. Preserve nonzero distinctive input and equivalent actual output
+work, not a prebuilt DTO or publication-only comparison. Production counters
+prove shared HTTP/WS bytes, one in-flight/latest-only frame, bounded filters,
+zero no-client work, regular-cache retention and unchanged-chart parse count.
+The bounds and instance-owned hooks are in
+[adapter surfaces](../v2/adapter-surfaces.md#derived-work-encoding-and-test-seams).
+
+```sh
+cargo bench --locked -p vosu --bench state_bus_bench -- '^end_to_end/'
+cargo bench --locked -p vosu --bench hot_paths -- 'publication|serializers'
+cargo bench --locked -p vosu --bench state_bus_bench -- '^adapter/'
+```
+
+Build with `taskset -c 0-7,16-23 nice -n 10`, `RUSTC_WRAPPER=sccache` and
+independent `CARGO_TARGET_DIR`/Criterion output directories per checkout.
+Use the interleaved comparison tool above, one approved pinned physical core,
+five paired rounds and an output artifact. Non-exclusive shared-machine runs
+are exploratory, never official D17 evidence. Record commit/binary/harness,
+profile/features, CPU/exclusivity, matched names, equivalent output, medians,
+95% intervals, per-milestone and cumulative pre-M0 deltas; preserve inherited
+M1/M2/M3 findings. The bar remains no >10% median regression judged with
+non-overlapping 95% intervals. Record allocations, clocks, wakeups, CPU/tick
+and source-read-to-real-frame latency for idle/subscribed profiles, separately
+on native Windows stable/lazer and Linux lazer. Existing live reader `--bus`
+mode is not adapter-frame evidence; X1 must add/document the actual adapter
+output mode before measuring. No native/live/capture run is authorized by A4.
+
 ## M3 D17 contract
 
 **No D17 pass is claimed.** X1 implementation `4f0c6654cb` (base
