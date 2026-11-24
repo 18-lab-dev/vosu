@@ -48,9 +48,18 @@ fn publisher_instance(
     )
     .unwrap();
     host.process_appeared(test_process(pid, id));
-    match events.recv_timeout(RECV_TIMEOUT).unwrap() {
-        publisher::PublisherEvent::Attached { handle } => handle,
-        other => panic!("expected attach, got {other:?}"),
+    // Identify may create surface demand on another concurrent dispatch worker
+    // before the publisher records its own attach event.
+    let deadline = std::time::Instant::now() + RECV_TIMEOUT;
+    loop {
+        match events
+            .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+            .unwrap()
+        {
+            publisher::PublisherEvent::Attached { handle } => break handle,
+            publisher::PublisherEvent::Demand(_) => {}
+            other => panic!("expected attach, got {other:?}"),
+        }
     }
 }
 fn batch(handle: u64, fields: &[(&str, &str, PublishValueRef<'_>)]) -> Vec<u8> {

@@ -36,7 +36,6 @@ impl PluginHost {
         raw: u64,
         entries: impl ExactSizeIterator<Item = PublishFieldRef<'a>>,
     ) -> vosu_status {
-        let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
         let publisher = {
             let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
             let Some(InstanceSlot::Live(entry)) = instances.get(&instance) else {
@@ -64,9 +63,15 @@ impl PluginHost {
         drop(sessions);
         // StateStore serializes close against commit using the session slot's
         // closed marker. A detached slot cannot be resurrected by this call.
-        match self.state.store.commit(&publisher.grant, SessionKey(raw), entries) {
+        match self
+            .state
+            .store
+            .commit(&publisher.grant, SessionKey(raw), entries)
+        {
             Ok(outcome) => {
+                let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
                 self.state_committed(&outcome);
+                self.surface_committed(&outcome);
                 vosu_status::VOSU_OK
             }
             Err(crate::state::CommitError::UnknownSession) => vosu_status::VOSU_ERR_TARGET_GONE,
@@ -125,7 +130,8 @@ impl PluginHost {
                 .collect::<Vec<_>>()
         };
         for event in detached {
-            self.state_session_detaching(&event);
+            self.surface_session_detaching(SessionKey(event.handle));
+            self.state_session_detaching(&event, None);
             self.close_bus_session(SessionHandle(event.handle));
         }
     }

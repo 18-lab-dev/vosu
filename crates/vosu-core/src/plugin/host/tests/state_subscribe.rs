@@ -145,7 +145,11 @@ fn subscribe_gets_immediate_baseline_then_changes_only() {
     let _enter = rt.enter();
     let (_, host) = test_host(rt.handle().clone());
     let (id, handle, _) = publisher(&host, 8601);
-    publish(&id, handle, &[("vosu.play", "/combo", PublishValueRef::U64(0))]);
+    publish(
+        &id,
+        handle,
+        &[("vosu.play", "/combo", PublishValueRef::U64(0))],
+    );
     let events = subscriber(&host, 8602, None);
     observe(&host, 8602, &events, handle);
     assert_eq!(
@@ -157,10 +161,7 @@ fn subscribe_gets_immediate_baseline_then_changes_only() {
         ),
         vosu_status::VOSU_OK
     );
-    assert_eq!(
-        next_update(&events)[0].value,
-        Some(0u64.into())
-    );
+    assert_eq!(next_update(&events)[0].value, Some(0u64.into()));
     publish(
         &id,
         handle,
@@ -177,21 +178,20 @@ fn subscribe_gets_immediate_baseline_then_changes_only() {
     // A queued worker fence proves the preceding commit has completed delivery
     // processing without relying on a sleep to infer the absence of an update.
     let (tx, rx) = sync_channel(1);
-    host.instances
-        .lock()
-        .unwrap()
-        .get(&PluginInstanceId::new(8602))
-        .and_then(|slot| match slot {
-            super::super::InstanceSlot::Live(e) => Some(
-                e.instance
-                    .dispatch_task(Box::new(move |_, _| {
-                        tx.send(()).unwrap();
-                    }))
-                    .unwrap(),
-            ),
-            _ => None,
-        })
-        .unwrap();
+    {
+        let instances = host.instances.lock().unwrap();
+        let super::super::InstanceSlot::Live(entry) =
+            instances.get(&PluginInstanceId::new(8602)).unwrap()
+        else {
+            panic!("live subscriber")
+        };
+        entry
+            .instance
+            .dispatch_task(Box::new(move |_, _| {
+                tx.send(()).unwrap();
+            }))
+            .unwrap();
+    }
     rx.recv_timeout(RECV_TIMEOUT).unwrap();
     assert!(events.try_recv().is_err());
     host.destroy_all(Duration::from_secs(5));
@@ -491,5 +491,183 @@ fn subscription_replacement_clears_queued_old_keys() {
     let values = next_update(&events);
     assert_eq!(values.len(), 1);
     assert_eq!(values[0].pointer, "/accuracy");
+    host.destroy_all(Duration::from_secs(5));
+}
+
+#[test]
+fn owner_can_subscribe_before_identify_and_receives_identified_baseline() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let (_, host) = test_host(rt.handle().clone());
+    let events = subscriber(&host, 8681, None);
+    host.process_appeared(test_process(8681, "test.k6.subscriber8681"));
+    let SubscriberEvent::Attached(attached) = events.recv_timeout(RECV_TIMEOUT).unwrap() else {
+        panic!("owner attachment")
+    };
+    assert_eq!(
+        subscribe(
+            &host,
+            8681,
+            Some(attached.handle),
+            vec![select("vosu.client", "/pid")]
+        ),
+        vosu_status::VOSU_OK
+    );
+    assert_eq!(next_update(&events)[0].value, None);
+    assert_eq!(
+        host.handle(
+            PluginInstanceId::new(8681),
+            Message::SessionIdentify(vosu_plugin_api::SessionIdentify {
+                handle: attached.handle,
+                game: "testkit".into(),
+                variant: "subscriber".into(),
+                name: "Pending subscriber".into(),
+                version: "1".into(),
+                focus_priority: false,
+            }),
+            0
+        ),
+        vosu_status::VOSU_OK
+    );
+    assert_eq!(next_update(&events)[0].value, Some(8681u64.into()));
+    host.process_exited(8681);
+    let deadline = Instant::now() + RECV_TIMEOUT;
+    loop {
+        match events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+        {
+            SubscriberEvent::Detached(detached) => {
+                assert_eq!(detached.handle, attached.handle);
+                break;
+            }
+            SubscriberEvent::Focus(_) => {}
+            event => panic!("expected owner detach, got {event:?}"),
+        }
+    }
+    host.destroy_all(Duration::from_secs(5));
+}
+
+fn block_subscriber(host: &Host, who: u64) -> std::sync::mpsc::SyncSender<()> {
+    let (entered_tx, entered_rx) = sync_channel(1);
+    let (release_tx, release_rx) = sync_channel(1);
+    {
+        let instances = host.instances.lock().unwrap();
+        let super::super::InstanceSlot::Live(entry) =
+            instances.get(&PluginInstanceId::new(who)).unwrap()
+        else {
+            panic!("live subscriber")
+        };
+        entry
+            .instance
+            .dispatch_task(Box::new(move |_, _| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv_timeout(RECV_TIMEOUT).unwrap();
+            }))
+            .unwrap();
+    }
+    entered_rx.recv_timeout(RECV_TIMEOUT).unwrap();
+    release_tx
+}
+
+fn attach_another(
+    host: &Host,
+    publisher: &str,
+    events: &Receiver<PublisherEvent>,
+    pid: u32,
+) -> u64 {
+    host.process_appeared(test_process(pid, publisher));
+    let deadline = Instant::now() + RECV_TIMEOUT;
+    loop {
+        match events
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+        {
+            PublisherEvent::Attached { handle } => return handle,
+            PublisherEvent::Detached { .. } | PublisherEvent::Demand(_) => {}
+        }
+    }
+}
+
+#[test]
+fn slow_sessions_watcher_coalesces_unannounced_churn() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let (_, host) = test_host(rt.handle().clone());
+    let (id, first, publisher_events) = publisher(&host, 8691);
+    let events = subscriber(&host, 8692, None);
+    observe(&host, 8692, &events, first);
+    let release = block_subscriber(&host, 8692);
+    for pid in 869_100..869_200 {
+        attach_another(&host, &id, &publisher_events, pid);
+        host.process_exited(pid);
+        assert_eq!(
+            host.lifecycle_backlog_for_tests(PluginInstanceId::new(8692)),
+            (1, true)
+        );
+    }
+    release.send(()).unwrap();
+    let (fence_tx, fence_rx) = sync_channel(1);
+    {
+        let instances = host.instances.lock().unwrap();
+        let super::super::InstanceSlot::Live(entry) =
+            instances.get(&PluginInstanceId::new(8692)).unwrap()
+        else {
+            panic!("live subscriber")
+        };
+        entry
+            .instance
+            .dispatch_task(Box::new(move |_, _| {
+                fence_tx.send(()).unwrap();
+            }))
+            .unwrap();
+    }
+    fence_rx.recv_timeout(RECV_TIMEOUT).unwrap();
+    assert!(events.try_recv().is_err());
+    host.process_exited(8691);
+    assert!(
+        matches!(events.recv_timeout(RECV_TIMEOUT).unwrap(), SubscriberEvent::Detached(d) if d.handle == first)
+    );
+    host.destroy_all(Duration::from_secs(5));
+}
+
+#[test]
+fn lifecycle_cap_loses_announced_sessions_and_resubscribe_replays_current_list() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let (_, host) = test_host(rt.handle().clone());
+    host.set_lifecycle_cap_for_tests(2);
+    let (id, first, publisher_events) = publisher(&host, 88_901);
+    let events = subscriber(&host, 88_902, None);
+    observe(&host, 88_902, &events, first);
+    let release = block_subscriber(&host, 88_902);
+    attach_another(&host, &id, &publisher_events, 889_101);
+    attach_another(&host, &id, &publisher_events, 889_102);
+    let (pending, subscribed) = host.lifecycle_backlog_for_tests(PluginInstanceId::new(88_902));
+    assert!(pending <= 2);
+    assert!(!subscribed);
+    assert_eq!(
+        subscribe(&host, 88_902, None, vec![select("vosu.sessions", "")]),
+        vosu_status::VOSU_OK
+    );
+    host.process_exited(889_101);
+    host.process_exited(889_102);
+    release.send(()).unwrap();
+    let SubscriberEvent::Detached(lost) = events.recv_timeout(RECV_TIMEOUT).unwrap() else {
+        panic!("lost session")
+    };
+    assert_eq!(lost.handle, first);
+    assert_eq!(lost.reason, vosu_plugin_api::DetachReason::Lost);
+    let SubscriberEvent::Attached(attached) = events.recv_timeout(RECV_TIMEOUT).unwrap() else {
+        panic!("replayed current session")
+    };
+    assert_eq!(attached.handle, first);
+    assert!(
+        matches!(events.recv_timeout(RECV_TIMEOUT).unwrap(), SubscriberEvent::Focus(f) if f.handle == first)
+    );
+    assert_eq!(
+        host.lifecycle_backlog_for_tests(PluginInstanceId::new(88_902)),
+        (1, true)
+    );
     host.destroy_all(Duration::from_secs(5));
 }

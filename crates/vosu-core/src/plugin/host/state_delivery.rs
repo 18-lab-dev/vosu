@@ -1,7 +1,9 @@
-//! Latest-only state delivery on the existing instance workers. Lock order:
-//! host lifecycle locks -> subscriptions -> delivery map -> individual slot.
-//! A worker releases all locks before invoking plugin code. Retries retain only
-//! weak host/slot references; at most one queued/running/retrying job owns a slot.
+//! Latest-only state delivery on existing instance workers. Lock order: focus ->
+//! delivery serialization -> instances -> sessions -> schema registry ->
+//! subscriptions -> delivery map -> individual slot. Publication validation/build
+//! never holds delivery serialization, so it cannot stall identify or SYNC reads.
+//! Workers release every lock before plugin code. Retries retain weak host/slot
+//! references; at most one queued/running/retrying job owns each slot.
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -20,10 +22,24 @@ use vosu_plugin_api::{
     vosu_plugin_vtable, vosu_status,
 };
 
-#[derive(Default)]
 pub(super) struct DeliveryState {
     watchers: HashSet<PluginInstanceId>,
+    ending: HashSet<PluginInstanceId>,
+    restart: HashSet<PluginInstanceId>,
+    lifecycle_cap: usize,
     slots: HashMap<(PluginInstanceId, SessionKey), Arc<Mutex<Slot>>>,
+}
+
+impl Default for DeliveryState {
+    fn default() -> Self {
+        Self {
+            watchers: HashSet::new(),
+            ending: HashSet::new(),
+            restart: HashSet::new(),
+            lifecycle_cap: 4096,
+            slots: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -31,7 +47,12 @@ struct Slot {
     queued: bool,
     dead: bool,
     known: bool,
+    lifecycle: bool,
     pending: PendingUpdate,
+    baseline_revision: Option<u64>,
+    // Post-commit notifications can arrive out of revision order. Remember one
+    // revision per selected key (at most 256); wholesale replacement clears it.
+    revisions: Vec<(String, String, u64)>,
     attached: Option<SessionAttached>,
     focus: Option<FocusChanged>,
     last_focus: Option<FocusChanged>,
@@ -46,6 +67,34 @@ impl Slot {
             || self.focus.is_some()
             || self.detached.is_some()
             || self.demand.is_some()
+    }
+
+    fn merge_at(&mut self, revision: u64, mut entries: Vec<vosu_plugin_api::StateEntry>) {
+        if self
+            .baseline_revision
+            .is_some_and(|baseline| revision <= baseline)
+        {
+            return;
+        }
+        entries.retain(|entry| {
+            if let Some((_, _, previous)) = self
+                .revisions
+                .iter_mut()
+                .find(|(ns, pointer, _)| ns == &entry.ns && pointer == &entry.pointer)
+            {
+                if *previous >= revision {
+                    return false;
+                }
+                *previous = revision;
+            } else {
+                self.revisions
+                    .push((entry.ns.clone(), entry.pointer.clone(), revision));
+            }
+            true
+        });
+        self.pending
+            .merge(entries)
+            .expect("subscription is bounded");
     }
 }
 
@@ -65,10 +114,14 @@ impl PluginHost {
         who: PluginInstanceId,
         request: StateSubscribe,
     ) -> vosu_status {
-        let Some(plugin) = self.plugin_id_of(who) else {
-            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
-        };
         let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
+        let plugin = {
+            let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+            match instances.get(&who) {
+                Some(InstanceSlot::Live(entry)) => entry.plugin_id.clone(),
+                _ => return vosu_status::VOSU_ERR_INVALID_ARGUMENT,
+            }
+        };
         let Some(raw) = request.session else {
             if request.selectors.len() != 1
                 || request.selectors[0].ns != "vosu.sessions"
@@ -82,6 +135,10 @@ impl PluginHost {
                     .state_delivery
                     .lock()
                     .unwrap_or_else(|p| p.into_inner());
+                if delivery.ending.contains(&who) {
+                    delivery.restart.insert(who);
+                    return vosu_status::VOSU_OK;
+                }
                 delivery.watchers.insert(who);
                 sessions
                     .identified_sessions()
@@ -117,9 +174,13 @@ impl PluginHost {
         if !owns && !known {
             return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
         }
-        let Some(state) = self.state.store.current(key) else {
+        let state = self.state.store.current(key);
+        if state.is_none() && !owns {
             return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
-        };
+        }
+        let revision = state.as_ref().map(|state| state.revision);
+        let empty = crate::state::SessionState::new(key, 0, Vec::new());
+        let state = state.as_deref().unwrap_or(&empty);
         let selectors = request
             .selectors
             .into_iter()
@@ -150,11 +211,13 @@ impl PluginHost {
         {
             return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
         }
-        let baseline = subscriptions.baseline(&registry, SubscriberId::Plugin(who.0), &state);
+        let baseline = subscriptions.baseline(&registry, SubscriberId::Plugin(who.0), state);
         let slot = self.delivery_slot(who, key);
         {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
             pending.pending.clear(); // replacement must not retain old selector keys
+            pending.baseline_revision = revision;
+            pending.revisions.clear();
             pending
                 .pending
                 .merge(baseline)
@@ -185,11 +248,10 @@ impl PluginHost {
             if let SubscriberId::Plugin(raw) = who {
                 let who = PluginInstanceId(raw);
                 let slot = self.delivery_slot(who, outcome.current.key);
-                slot.lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .pending
-                    .merge(entries)
-                    .expect("subscription is bounded");
+                {
+                    let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
+                    pending.merge_at(outcome.current.revision, entries);
+                }
                 jobs.push((who, slot));
             }
         }
@@ -252,12 +314,157 @@ impl PluginHost {
         self.schedule_state_slot(who, key, slot);
     }
 
+    fn end_sessions_watch(&self, who: PluginInstanceId) {
+        let (cap, slots) = {
+            let mut delivery = self
+                .state_delivery
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if !delivery.watchers.remove(&who) {
+                return;
+            }
+            delivery.ending.insert(who);
+            (
+                delivery.lifecycle_cap,
+                delivery
+                    .slots
+                    .iter()
+                    .filter(|((id, _), slot)| {
+                        *id == who && slot.lock().unwrap_or_else(|p| p.into_inner()).lifecycle
+                    })
+                    .map(|((_, key), slot)| (*key, slot.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let removed = self
+            .state
+            .subscriptions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove_subscriber(SubscriberId::Plugin(who.0));
+        tracing::warn!(plugin = ?self.plugin_id_of(who), cap, "vosu.sessions lifecycle backlog exceeded; unsubscribing watcher");
+        for (key, slot) in slots {
+            let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
+            pending.focus = None;
+            if pending.known {
+                // Revoke handle knowledge before releasing serialization. A
+                // restart is deferred until all lost notifications have drained.
+                pending.known = false;
+                pending.detached = Some(SessionDetached {
+                    handle: key.0,
+                    reason: vosu_plugin_api::DetachReason::Lost,
+                });
+                drop(pending);
+                self.schedule_state_slot(who, key, slot);
+            } else {
+                pending.dead = true;
+                pending.pending.clear();
+                drop(pending);
+                self.retire_state_slot(who, key, &slot);
+            }
+        }
+        for key in removed {
+            self.refresh_state_demand(key);
+        }
+    }
+
+    fn retire_state_slot(&self, who: PluginInstanceId, key: SessionKey, slot: &Arc<Mutex<Slot>>) {
+        let restart = {
+            let mut delivery = self
+                .state_delivery
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if delivery
+                .slots
+                .get(&(who, key))
+                .is_some_and(|current| Arc::ptr_eq(current, slot))
+            {
+                delivery.slots.remove(&(who, key));
+            }
+            if delivery.ending.contains(&who)
+                && !delivery.slots.iter().any(|((id, _), slot)| {
+                    *id == who && slot.lock().unwrap_or_else(|p| p.into_inner()).lifecycle
+                })
+            {
+                delivery.ending.remove(&who);
+                delivery.restart.remove(&who)
+            } else {
+                false
+            }
+        };
+        if restart {
+            let weak = self.self_ref.clone();
+            self.state_runtime.spawn(async move {
+                if let Some(host) = weak.upgrade() {
+                    host.handle_state_subscribe(
+                        who,
+                        StateSubscribe {
+                            session: None,
+                            selectors: vec![vosu_plugin_api::Selector {
+                                ns: "vosu.sessions".into(),
+                                pointer: String::new(),
+                            }],
+                        },
+                    );
+                }
+            });
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_lifecycle_cap_for_tests(&self, cap: usize) {
+        self.state_delivery.lock().unwrap().lifecycle_cap = cap;
+    }
+
+    #[cfg(test)]
+    pub(super) fn lifecycle_backlog_for_tests(&self, who: PluginInstanceId) -> (usize, bool) {
+        let delivery = self.state_delivery.lock().unwrap();
+        (
+            delivery
+                .slots
+                .iter()
+                .filter(|((id, _), slot)| *id == who && slot.lock().unwrap().lifecycle)
+                .count(),
+            delivery.watchers.contains(&who),
+        )
+    }
+
     fn queue_attachment(&self, who: PluginInstanceId, attached: SessionAttached) {
         let key = SessionKey(attached.handle);
-        let slot = self.delivery_slot(who, key);
+        let slot = {
+            let mut delivery = self
+                .state_delivery
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if !delivery.watchers.contains(&who) {
+                return;
+            }
+            if delivery
+                .slots
+                .get(&(who, key))
+                .is_some_and(|s| s.lock().unwrap_or_else(|p| p.into_inner()).lifecycle)
+            {
+                return;
+            }
+            let count = delivery
+                .slots
+                .iter()
+                .filter(|((id, _), slot)| {
+                    *id == who && slot.lock().unwrap_or_else(|p| p.into_inner()).lifecycle
+                })
+                .count();
+            if count >= delivery.lifecycle_cap {
+                drop(delivery);
+                self.end_sessions_watch(who);
+                return;
+            }
+            let slot = delivery.slots.entry((who, key)).or_default().clone();
+            slot.lock().unwrap_or_else(|p| p.into_inner()).lifecycle = true;
+            slot
+        };
         {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
-            if pending.known || pending.attached.is_some() {
+            if pending.attached.is_some() {
                 return;
             }
             pending.focus = Some(FocusChanged {
@@ -310,6 +517,17 @@ impl PluginHost {
                 self.queue_attachment(who, attached.clone());
             }
         }
+        if let Some(current) = self.state.store.current(SessionKey(handle.0)) {
+            let touched = current
+                .namespaces()
+                .map(|(ns, _)| (Arc::from(ns), Pointer::root()))
+                .collect();
+            self.state_committed(&CommitOutcome {
+                previous: Arc::new(crate::state::SessionState::new(current.key, 0, Vec::new())),
+                current,
+                touched,
+            });
+        }
     }
 
     pub(super) fn state_focus_changed(&self, event: FocusChanged) {
@@ -339,13 +557,33 @@ impl PluginHost {
         }
     }
 
-    pub(super) fn state_session_detaching(&self, event: &SessionDetached) {
+    pub(super) fn state_session_detaching(&self, event: &SessionDetached, owner: Option<&str>) {
         let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
         let _demand = self
             .state_demand_serial
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let key = SessionKey(event.handle);
+        if let Some(owner) = owner {
+            let owners = self
+                .instances
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .iter()
+                .filter_map(|(id, slot)| match slot {
+                    InstanceSlot::Live(entry) if entry.plugin_id == owner => Some(*id),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for who in owners {
+                // Owners learned the handle through the original attach path.
+                // Their terminal event must follow any owned state subscription.
+                self.delivery_slot(who, key)
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .known = true;
+            }
+        }
         self.state
             .subscriptions
             .lock()
@@ -365,8 +603,17 @@ impl PluginHost {
         };
         for (who, slot) in slots {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
+            if !pending.known && pending.attached.is_some() {
+                pending.dead = true;
+                pending.pending.clear();
+                drop(pending);
+                self.retire_state_slot(who, key, &slot);
+                continue;
+            }
             // Even a subscriber without vosu.sessions must receive its final pending update.
-            pending.detached = Some(event.clone());
+            if pending.detached.is_none() {
+                pending.detached = Some(event.clone());
+            }
             pending.demand = None;
             drop(pending);
             self.schedule_state_slot(who, key, slot);
@@ -375,6 +622,7 @@ impl PluginHost {
     }
 
     pub(super) fn state_subscriber_removed(&self, who: PluginInstanceId) {
+        let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
         let sessions = self
             .state
             .subscriptions
@@ -387,6 +635,8 @@ impl PluginHost {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner());
             delivery.watchers.remove(&who);
+            delivery.ending.remove(&who);
+            delivery.restart.remove(&who);
             delivery.slots.retain(|(id, _), slot| {
                 if *id != who {
                     return true;
@@ -442,7 +692,8 @@ impl PluginHost {
             self.state_runtime.spawn(async move {
                 tokio::time::sleep(Duration::from_millis(10)).await;
                 if let (Some(host), Some(slot)) = (weak.upgrade(), slot.upgrade()) {
-                    if !slot.lock().unwrap_or_else(|p| p.into_inner()).dead {
+                    let dead = slot.lock().unwrap_or_else(|p| p.into_inner()).dead;
+                    if !dead {
                         host.submit_state_slot(who, key, slot);
                     }
                 }
@@ -458,7 +709,7 @@ impl PluginHost {
         vtable: &vosu_plugin_vtable,
         ctx: PluginCtx,
     ) {
-        let (attached, focus, entries, demand, detached, known) = {
+        let (attached, focus, entries, demand, detached) = {
             let mut pending = slot.lock().unwrap_or_else(|p| p.into_inner());
             if pending.dead {
                 return;
@@ -473,7 +724,6 @@ impl PluginHost {
                 pending.pending.take(),
                 pending.demand.take(),
                 pending.detached.take(),
-                pending.known,
             )
         };
         let send = |message: Message| {
@@ -511,18 +761,42 @@ impl PluginHost {
             send(Message::DemandChanged(demand));
         }
         if let Some(detached) = detached {
-            if known {
-                send(Message::SessionDetached(detached));
-            }
+            send(Message::SessionDetached(detached));
             slot.lock().unwrap_or_else(|p| p.into_inner()).dead = true;
-            self.state_delivery
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .slots
-                .remove(&(who, key));
+            self.retire_state_slot(who, key, slot);
             return;
         }
         slot.lock().unwrap_or_else(|p| p.into_inner()).queued = false;
         self.schedule_state_slot(who, key, slot.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vosu_plugin_api::StateEntry;
+
+    fn entry(pointer: &str, value: u64) -> StateEntry {
+        StateEntry {
+            ns: "vosu.play".into(),
+            pointer: pointer.into(),
+            value: Some(value.into()),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn out_of_order_notifications_keep_newest_per_selected_key() {
+        let mut slot = Slot::default();
+        slot.merge_at(3, vec![entry("/combo", 3)]);
+        slot.merge_at(2, vec![entry("/combo", 2), entry("/accuracy", 2)]);
+        let values = slot.pending.take();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0], entry("/combo", 3));
+        assert_eq!(values[1], entry("/accuracy", 2));
+        slot.baseline_revision = Some(4);
+        slot.revisions.clear();
+        slot.merge_at(3, vec![entry("/combo", 3)]);
+        assert!(slot.pending.is_empty());
     }
 }

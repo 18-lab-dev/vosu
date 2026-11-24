@@ -189,7 +189,7 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
         .unwrap()
         .register(
             "vosu.osu",
-            "field:vosu.osu",
+            "vosu.osu",
             include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../../docs/v2/schemas/vosu.osu.schema.json"

@@ -8,7 +8,7 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use vosu_plugin_api::{DetachReason, Message};
+use vosu_plugin_api::DetachReason;
 
 use super::super::error::HostError;
 use super::super::host_services::PluginInstanceId;
@@ -140,6 +140,7 @@ impl PluginHost {
             let (id, instance) = next;
             self.state_subscriber_removed(id);
             if let Some(plugin_id) = self.plugin_id_of(id) {
+                self.surface_reader_removed(&plugin_id);
                 self.close_bus_sessions_for(&plugin_id);
             }
             self.timers.cancel_all(id);
@@ -222,12 +223,12 @@ impl PluginHost {
         owner: Option<super::super::matcher::PluginId>,
         detached: vosu_plugin_api::SessionDetached,
     ) {
-        self.state_session_detaching(&detached);
-        if let Some(owner) = owner {
-            self.cancel_read_plans_for_session(&owner, handle);
-            self.cancel_scans_for_session(&owner, handle);
-            self.dispatch_to(&owner, &Message::SessionDetached(detached));
+        self.surface_session_detaching(crate::state::SessionKey(handle.0));
+        if let Some(owner) = &owner {
+            self.cancel_read_plans_for_session(owner, handle);
+            self.cancel_scans_for_session(owner, handle);
         }
+        self.state_session_detaching(&detached, owner.as_deref());
         self.forget_read_plan_session(handle);
         self.close_bus_session(handle);
         self.recompute_focus();

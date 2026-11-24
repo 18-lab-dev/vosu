@@ -177,6 +177,7 @@ pub struct PluginHost {
     state_runtime: Handle,
     state_serial: Mutex<()>,
     state_demand_serial: Mutex<()>,
+    pub(super) surfaces: Mutex<crate::state::surface::SurfaceReaders>,
     instances: Mutex<HashMap<PluginInstanceId, InstanceSlot>>,
     /// Notified whenever [`Self::create_instance`] resolves a
     /// `Creating` placeholder (publishes it `Live`, or removes it on a
@@ -311,6 +312,7 @@ impl PluginHost {
             state_runtime: runtime.clone(),
             state_serial: Mutex::new(()),
             state_demand_serial: Mutex::new(()),
+            surfaces: Mutex::new(Default::default()),
             instances: Mutex::new(HashMap::new()),
             instances_changed: Condvar::new(),
             shutting_down: AtomicBool::new(false),
@@ -398,7 +400,8 @@ impl PluginHost {
     /// a non-blocking `try_send` (`SerialWorker::submit`/`WorkerPool`'s
     /// own queue), so holding `focus` across it never risks blocking on a
     /// slow or stuck plugin.
-    fn deliver_focus_events(&self, events: Vec<FocusEvent>) {
+    fn deliver_focus_events(&self, events: Vec<FocusEvent>) -> Vec<crate::state::CommitOutcome> {
+        let mut committed = Vec::new();
         for event in events {
             let handle = SessionHandle(event.handle.0);
             {
@@ -409,6 +412,7 @@ impl PluginHost {
                     .set_focused(crate::state::SessionKey(handle.0), event.focused)
                 {
                     self.state_committed(&outcome);
+                    committed.push(outcome);
                 }
             }
             let owner = {
@@ -436,6 +440,7 @@ impl PluginHost {
                 );
             }
         }
+        committed
     }
 
     /// Recomputes focus from the current session set and delivers any
@@ -454,8 +459,12 @@ impl PluginHost {
             .unwrap_or_else(|poison| poison.into_inner());
         let (candidates, priority_holder) = self.focus_inputs();
         let events = focus.recompute(&candidates, priority_holder, self.foreground.as_ref());
-        self.deliver_focus_events(events);
+        let committed = self.deliver_focus_events(events);
         drop(focus);
+        for outcome in committed {
+            self.surface_committed(&outcome);
+        }
+        self.surface_focus_changed();
     }
 
     /// `SESSION_IDENTIFY` just exposed `handle`: §6.2 "a plugin that
@@ -480,8 +489,12 @@ impl PluginHost {
         );
         self.open_bus_session(handle, focus.focused() == Some(FocusKey(handle.0)));
         self.state_session_identified(handle);
-        self.deliver_focus_events(events);
+        let committed = self.deliver_focus_events(events);
         drop(focus);
+        for outcome in committed {
+            self.surface_committed(&outcome);
+        }
+        self.surface_focus_changed();
     }
 
     /// Discovery's own entry point (phase (d2) calls this from a real OS
@@ -611,7 +624,7 @@ impl PluginHostHandler for PluginHost {
                         // after, on serial dispatch.
                         self.cancel_read_plans_for_session(&plugin_id, declined_handle);
                         self.cancel_scans_for_session(&plugin_id, declined_handle);
-                        self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
+                        self.state_session_detaching(&detached, Some(&plugin_id));
                         self.forget_read_plan_session(declined_handle);
                         // The re-offered handle's own `owner` is already
                         // the next install-order candidate (`decline`'s
@@ -639,7 +652,7 @@ impl PluginHostHandler for PluginHost {
                         // `ReOffered` arm above.
                         self.cancel_read_plans_for_session(&plugin_id, declined_handle);
                         self.cancel_scans_for_session(&plugin_id, declined_handle);
-                        self.dispatch_to(&plugin_id, &Message::SessionDetached(detached));
+                        self.state_session_detaching(&detached, Some(&plugin_id));
                         self.forget_read_plan_session(declined_handle);
                         vosu_status::VOSU_OK
                     }
@@ -789,6 +802,7 @@ pub(super) mod read_plans;
 mod scans;
 mod state;
 mod state_delivery;
+mod surface;
 
 #[cfg(test)]
 mod tests;
