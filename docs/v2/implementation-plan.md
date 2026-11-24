@@ -1402,7 +1402,7 @@ in catalog-v2.md, including reserved names, id prefix rules,
 `provides`/`[[actions]]` pairing, and D7's size, depth, `$ref`, and
 namespace limits.
 
-#### M6a outcome (2026-11-24; native Windows pending)
+#### M6a outcome (2026-11-24)
 
 V0–V6 are integrated at `7ea4958`. The exit corpus contains **266 paired
 rejection controls** and **38 literal semver truth rows**. The SDK `manifest`
@@ -1418,9 +1418,9 @@ Offline Draft 2020-12 schemas cover document structure, not source trust,
 semver resolution or asset-backed equality; use the SDK with schema bytes for
 complete mirror comparison.
 
-**Not a milestone-complete or release claim:** native Windows manifest and
-real consumer/path evidence remains **pending**; cross-Clippy does not replace
-it. No new compiler/load-time performance measurements were taken, and the
+**Not a release claim:** native Windows passed `manifest` (59) and
+`catalog_v2_compat` (23) in the agent VM (see verification). No new
+compiler/load-time performance measurements were taken, and the
 functional results do not establish a performance pass or supersede inherited
 M1/M2/M3 findings. M6b still owns fetching, credentials, trust, source/provider
 selection, graph orchestration and installation; it must reuse the SDK

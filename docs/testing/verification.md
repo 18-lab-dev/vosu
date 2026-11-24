@@ -558,18 +558,18 @@ passed with 198 historical removals acknowledged by an existing trailer.
 Standalone checks passed for 18 workspace members on Linux and Windows
 **xwin**, which is not native Windows execution. No VM action was taken.
 
-### Native Windows evidence: pending
+### Native Windows evidence
 
-**Pending; not run for this outcome.** The VM is busy. V7 neither starts nor
-uses it, and no native path/metadata/consumer completion claim is made.
-Main will run and record results for these exact host-side commands when the
-already-running VM is available:
+Main ran both commands natively in the Windows agent VM on 2026-11-24, over
+`2c349eb`, using the staged HEAD and `--jobs 16`:
 
 ```sh
-taskset -c 0-7,16-23 nice -n 10 python scripts/vm-test.py --package vosu-plugin-api --lib -- manifest
-taskset -c 0-7,16-23 nice -n 10 python scripts/vm-test.py --test catalog_v2_compat
+python scripts/vm-test.py --jobs 16 --package vosu-plugin-api --lib -- manifest
+python scripts/vm-test.py --jobs 16 --test catalog_v2_compat
 ```
 
-M6a remains pending native evidence and the main-owned integrated landing gate.
-Neither cross-Clippy nor portable platform-policy tests replace native Windows
-filesystem, confined asset and manifest/metadata precedence behavior.
+Results: `manifest` **59 passed**, the same count the Linux lib filter lists.
+`catalog_v2_compat` (all features) **23 passed**. Zero failures and zero
+ignored. These runs cover native Windows filesystem, confined-asset and
+manifest/metadata precedence behavior; cross-Clippy alone did not. The
+main-owned integrated landing gate is still required.
