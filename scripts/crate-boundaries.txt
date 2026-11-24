@@ -109,3 +109,11 @@ vosu-adapter-streamcompanion -> vosu-adapter-support
 vosu-adapter-streamcompanion -> vosu-osu-model
 vosu-adapter-streamcompanion -> vosu-plugin-api
 vosu-adapter-streamcompanion -> vosu-surface
+# Upstream projection production edges; core/state/osu below are test-only ingress.
+vosu-adapter-upstream -> vosu-adapter-support
+vosu-adapter-upstream -> vosu-osu-model
+vosu-adapter-upstream -> vosu-plugin-api
+vosu-adapter-upstream -> vosu-surface
+vosu-adapter-upstream -> vosu-core
+vosu-adapter-upstream -> vosu-osu
+vosu-adapter-upstream -> vosu-osu-state

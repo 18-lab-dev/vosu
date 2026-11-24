@@ -4,6 +4,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M4a
 
+- Add the unmounted bus-backed upstream v2/precise projection crate, with
+  explicit private-path grants, source-faithful key slots and tournament
+  readiness, upstream wire names and ADR 0021 field removals.
+
 - Extract shared legacy wire mechanics into `vosu-adapter-support` without
   changing served routes, payloads, filters or transport behavior.
 - Publish osu! schema 1.3 source facts for independent overlay buttons, raw
