@@ -74,6 +74,7 @@ vosu-osu -> vosu-plugin-api
 vosu-osu -> vosu-osu-model
 vosu-osu -> vosu-osu-reader
 vosu-osu -> vosu-osu-state
+vosu-osu -> vosu-osu-calc
 vosu-osu -> vosu-surface
 
 vosu-test-harness -> vosu

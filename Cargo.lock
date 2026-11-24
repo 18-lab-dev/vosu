@@ -3303,6 +3303,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "vosu-osu-calc",
  "vosu-osu-model",
  "vosu-osu-reader",
  "vosu-osu-state",

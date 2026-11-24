@@ -34,3 +34,4 @@ vosu-surface = { path = "../vosu-surface" }
 tempfile = "3.26.0"
 proptest = "1.12"
 vosu-proptest = { path = "../vosu-proptest" }
+vosu-osu-calc = { path = "../vosu-osu-calc" }

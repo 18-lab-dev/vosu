@@ -2,13 +2,17 @@
 //! PascalCase schema path: `OsuBeatmapTimeLive` is `vosu.osu/beatmap/time/live`;
 //! core namespaces omit `Osu`. Arrays and infrequently changing groups are whole
 //! values. O3–O5 add their modules and one function each to `PROJECTIONS`.
+mod beatmap;
+mod common;
 mod keys;
 mod leaderboard;
 mod performance;
 mod play;
 mod pointers;
 mod result;
+mod session;
 mod sink;
+mod status_map;
 pub use pointers::{OsuPointer, Source};
 pub use sink::{DiffSink, LastValues, ProjectionSink};
 use std::sync::Arc;
@@ -24,7 +28,7 @@ pub struct SessionFacts {
 
 pub type Projection = fn(&StateBundleSnapshot, &SessionFacts, &mut dyn ProjectionSink);
 // Each projection unit extends this list without changing publication mechanics.
-const PROJECTIONS: &[Projection] = &[play::project];
+const PROJECTIONS: &[Projection] = &[common::project, play::project];
 
 #[derive(Default)]
 pub(crate) struct Caches {}
