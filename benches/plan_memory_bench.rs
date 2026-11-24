@@ -20,6 +20,11 @@ use vosu_plugin_api::{
 use vosu_sys::process::{MemoryError, MemoryRegion, ProcessBitness, ProcessMemory, ReadRequest};
 #[path = "support/lazer_fixture.rs"]
 mod lazer_fixture;
+#[path = "support/plan_costs.rs"]
+mod plan_costs;
+#[cfg(windows)]
+#[path = "../examples/live_reader_bench/plan.rs"]
+mod routed;
 #[path = "support/stable_fixture.rs"]
 mod stable_fixture;
 use stable_fixture::patterns;
@@ -307,6 +312,33 @@ fn bench(c: &mut Criterion) {
     let (mut active_plan, plan_sync) = populated_lazer(true);
     populated_precise(&mut active_native, native_sync);
     populated_precise(&mut active_plan, plan_sync);
+    #[cfg(windows)]
+    let (_routed_fixture, routed_attachment, mut active_routed, routed_sync) = {
+        let offsets = Arc::new(LazerOffsets::embedded().unwrap());
+        let fixture = lazer_fixture::Fixture::active_lazer(&offsets);
+        let synchronization = vosu_osu_reader::memory::ReaderSynchronization {
+            game_base: Some(fixture.game_base),
+            current_screen: Some(fixture.player),
+        };
+        let attachment = routed::Attachment::new(
+            routed::native_record(std::process::id()).unwrap(),
+            "vosu.bench.routed-precise",
+        )
+        .unwrap();
+        let mut reader = LazerMemory::new(
+            attachment.process.clone(),
+            offsets,
+            LazerPattern::source_default(),
+        );
+        populated_precise(&mut reader, synchronization);
+        assert!(
+            attachment
+                .submissions
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > 1
+        );
+        (fixture, attachment, reader, synchronization)
+    };
     let mut stable = StableMemory::new(process(ProcessBitness::X86), patterns());
     let mut lazer = LazerMemory::new(
         process(ProcessBitness::X64),
@@ -460,6 +492,12 @@ fn bench(c: &mut Criterion) {
     group.bench_function("lazer_precise_plan", |b| {
         b.iter(|| populated_precise(&mut active_plan, plan_sync))
     });
+    #[cfg(windows)]
+    group.bench_function("lazer_precise_routed", |b| {
+        b.iter(|| populated_precise(&mut active_routed, routed_sync))
+    });
+    #[cfg(windows)]
+    black_box(&routed_attachment);
     group.bench_function("stable_regular_fields", |b| {
         b.iter(|| {
             let _ = black_box(stable.global());
@@ -478,5 +516,5 @@ fn bench(c: &mut Criterion) {
     });
     group.finish();
 }
-criterion_group!(benches, bench);
+criterion_group!(benches, bench, plan_costs::bench);
 criterion_main!(benches);
