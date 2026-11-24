@@ -8,6 +8,7 @@
 # below are only visible that way; they are listed deliberately so the
 # graph stays accurate even where the checker itself cannot derive them.
 manifest -> limits
+manifest -> capability
 cbor -> validate
 message -> cbor
 message -> flags

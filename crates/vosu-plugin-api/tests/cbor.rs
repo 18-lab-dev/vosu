@@ -180,7 +180,38 @@ fn roundtrip_session_decline_and_focus_changed() {
     roundtrip(FocusChanged {
         handle: 42,
         focused: true,
+        foreground: None,
     });
+    roundtrip(FocusChanged {
+        handle: 42,
+        focused: true,
+        foreground: Some(true),
+    });
+}
+
+/// An older-shape `FOCUS_CHANGED` message (pre-ME, no `foreground` key at
+/// all) still decodes, with `foreground` defaulting to `None` rather than
+/// collapsing to `Some(false)` (ME's additive, backward-compatible
+/// amendment).
+#[test]
+fn focus_changed_decodes_without_foreground() {
+    let bytes = encode(&CborValue::Map(vec![
+        (
+            CborValue::Text("handle".into()),
+            CborValue::Integer(7.into()),
+        ),
+        (CborValue::Text("focused".into()), CborValue::Bool(true)),
+    ]))
+    .expect("encode");
+    let decoded: FocusChanged = decode(&bytes).expect("decode despite missing foreground key");
+    assert_eq!(
+        decoded,
+        FocusChanged {
+            handle: 7,
+            focused: true,
+            foreground: None,
+        }
+    );
 }
 
 #[test]
@@ -526,7 +557,8 @@ fn unknown_field_is_accepted_and_ignored() {
         decoded,
         FocusChanged {
             handle: 1,
-            focused: true
+            focused: true,
+            foreground: None,
         }
     );
 }

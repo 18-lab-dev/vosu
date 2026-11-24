@@ -126,6 +126,7 @@ fn export_plugin_create_dispatch_destroy_round_trip() {
     let payload = vosu_plugin_api::encode(&vosu_plugin_api::FocusChanged {
         handle: 1,
         focused: true,
+        foreground: None,
     })
     .expect("encode");
     let message = vosu_message {
@@ -172,6 +173,7 @@ fn export_plugin_panic_inside_on_message_never_crosses_ffi() {
     let payload = vosu_plugin_api::encode(&vosu_plugin_api::FocusChanged {
         handle: 0xDEAD,
         focused: true,
+        foreground: None,
     })
     .expect("encode");
     let message = vosu_message {

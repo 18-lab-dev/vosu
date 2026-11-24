@@ -63,6 +63,7 @@ fn echo_message() -> Message {
     Message::FocusChanged(FocusChanged {
         handle: 7,
         focused: true,
+        foreground: None,
     })
 }
 

@@ -1,14 +1,19 @@
 //! `manifest.toml` runtime fields for `kind = "plugin"`
-//! (`docs/v2/plugin-abi.md` §8). Shared identity/display metadata, capability
-//! declarations, and `covers`'s common-namespace coverage rule are owned by
-//! `docs/v2/catalog-v2.md`; this module validates only the ABI-level fields
-//! §8 defines, and tolerates unknown top-level fields so a full manifest
-//! (which also carries those catalog-owned fields) still parses here.
+//! (`docs/v2/plugin-abi.md` §8). Shared identity/display metadata and
+//! `covers`'s common-namespace coverage rule are owned by
+//! `docs/v2/catalog-v2.md`; this module validates the ABI-level fields §8
+//! defines, plus the minimal `[[provides]]`/`[[requires]]`/`[[optional]]`
+//! subset M2 consumes (`crate::capability::parse_capability`). Full
+//! catalog business rules — semver resolution, tool/overlay permission
+//! surfaces, `catalog-v2.json` mirroring — are M6a's; this module
+//! tolerates unknown top-level fields so a full manifest (which also
+//! carries those catalog-owned fields) still parses here.
 
 use std::fmt;
 
 use serde::Deserialize;
 
+use crate::capability::{CapabilityId, parse_capability};
 use crate::limits::VOSU_PLUGIN_ABI_MAJOR;
 
 /// A validated `manifest.toml` for `kind = "plugin"` (`docs/v2/plugin-abi.md`
@@ -36,6 +41,26 @@ pub struct PluginManifest {
     pub matcher: Option<MatchTable>,
     #[serde(default, rename = "resource_kinds")]
     pub resource_kinds: Vec<ResourceKind>,
+    #[serde(default)]
+    pub provides: Vec<Capability>,
+    #[serde(default)]
+    pub requires: Vec<Capability>,
+    #[serde(default)]
+    pub optional: Vec<Capability>,
+}
+
+/// One `[[provides]]`/`[[requires]]`/`[[optional]]` entry
+/// (`docs/v2/catalog-v2.md` "Capability fields"): a capability id, its
+/// version or version requirement, and — only for a whole-namespace
+/// `field:` entry naming the plugin's own namespace (D7) — the path to
+/// that namespace's own schema file.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Capability {
+    pub id: String,
+    pub version: String,
+    #[serde(default)]
+    pub schema: Option<String>,
 }
 
 /// `runtime = "in-process" | "process"` (§7.1's request-only field; the
@@ -116,6 +141,24 @@ pub enum ManifestError {
     Target(String),
     /// A `[[resource_kinds]]` entry's `kind` failed its grammar.
     ResourceKind(String),
+    /// A `[[provides]]`/`[[requires]]`/`[[optional]]` id failed the
+    /// capability id grammar (`crate::capability::parse_capability`).
+    Capability(String),
+    /// A `provides` entry's `version` was not valid semver, or a
+    /// `requires`/`optional` entry's was not a valid semver requirement.
+    CapabilityVersion(String),
+    /// A `game:` capability's `version` was not the literal `"*"`
+    /// (`docs/v2/naming.md` "Game ids").
+    CapabilityGameVersion(String),
+    /// A whole-namespace `field:<own id>` `provides` entry had no
+    /// `schema` (`docs/v2/catalog-v2.md` "Capability fields", D7).
+    CapabilityMissingSchema(String),
+    /// A `field:` `provides` entry named a namespace other than this
+    /// plugin's own id (core namespaces are always built-in providers;
+    /// `docs/v2/catalog-v2.md` "Capability fields").
+    CapabilityForeignNamespace(String),
+    /// A capability id appeared in both `requires` and `optional`.
+    CapabilityDuplicate(String),
 }
 
 impl fmt::Display for ManifestError {
@@ -137,6 +180,24 @@ impl fmt::Display for ManifestError {
             Self::Covers(s) => write!(f, "covers: invalid entry {s:?}"),
             Self::Target(s) => write!(f, "targets: invalid library path {s:?}"),
             Self::ResourceKind(s) => write!(f, "resource_kinds: invalid kind {s:?}"),
+            Self::Capability(s) => write!(f, "invalid capability id {s:?}"),
+            Self::CapabilityVersion(s) => {
+                write!(f, "capability {s:?}: invalid version/version requirement")
+            }
+            Self::CapabilityGameVersion(s) => {
+                write!(f, "capability {s:?}: game: version must be \"*\"")
+            }
+            Self::CapabilityMissingSchema(s) => write!(
+                f,
+                "capability {s:?}: a whole-namespace provides entry for this plugin's own namespace needs a schema"
+            ),
+            Self::CapabilityForeignNamespace(s) => write!(
+                f,
+                "capability {s:?}: a field: provides entry must name this plugin's own namespace"
+            ),
+            Self::CapabilityDuplicate(s) => {
+                write!(f, "capability {s:?}: present in both requires and optional")
+            }
         }
     }
 }
@@ -219,11 +280,9 @@ fn valid_camel_path_segment(s: &str) -> bool {
 /// `field:vosu.chart.resources`/`field:vosu.skin.tree` and everything below
 /// them, which only reserved-name `[[resource_kinds]]` entries cover, never
 /// `covers` ("Coverage matching"). A `field:` id outside a core namespace
-/// (including a plugin's own namespace) is likewise rejected here — this
-/// module has no `provides` field to also check the "own namespace" clause
-/// of that same rule against, since `provides`/`requires`/`optional` are
-/// catalog-owned fields out of this ABI-only module's scope (module doc
-/// comment).
+/// is likewise rejected here: a plugin's own namespace needs no `covers`
+/// entry at all, since its `provides` entry for that namespace already
+/// covers it (`docs/v2/catalog-v2.md` "`kind = \"plugin\"`").
 fn valid_covers_entry(cover: &str) -> bool {
     let Some(rest) = cover.strip_prefix("field:") else {
         return false;
@@ -299,6 +358,51 @@ impl PluginManifest {
         for resource_kind in &self.resource_kinds {
             if !valid_kind_segment(&resource_kind.kind) {
                 return Err(ManifestError::ResourceKind(resource_kind.kind.clone()));
+            }
+        }
+        for cap in &self.provides {
+            let parsed =
+                parse_capability(&cap.id).map_err(|_| ManifestError::Capability(cap.id.clone()))?;
+            match parsed {
+                CapabilityId::Game(_) => {
+                    if cap.version != "*" {
+                        return Err(ManifestError::CapabilityGameVersion(cap.id.clone()));
+                    }
+                }
+                CapabilityId::Field(suffix) => {
+                    semver::Version::parse(&cap.version)
+                        .map_err(|_| ManifestError::CapabilityVersion(cap.id.clone()))?;
+                    if suffix == self.id.as_str() {
+                        if cap.schema.is_none() {
+                            return Err(ManifestError::CapabilityMissingSchema(cap.id.clone()));
+                        }
+                    } else if !suffix.starts_with(&format!("{}.", self.id)) {
+                        return Err(ManifestError::CapabilityForeignNamespace(cap.id.clone()));
+                    }
+                }
+                CapabilityId::Resource(_) | CapabilityId::Action(_) => {
+                    semver::Version::parse(&cap.version)
+                        .map_err(|_| ManifestError::CapabilityVersion(cap.id.clone()))?;
+                }
+            }
+        }
+        for cap in self.requires.iter().chain(self.optional.iter()) {
+            let parsed =
+                parse_capability(&cap.id).map_err(|_| ManifestError::Capability(cap.id.clone()))?;
+            if let CapabilityId::Game(_) = parsed {
+                if cap.version != "*" {
+                    return Err(ManifestError::CapabilityGameVersion(cap.id.clone()));
+                }
+            } else {
+                semver::VersionReq::parse(&cap.version)
+                    .map_err(|_| ManifestError::CapabilityVersion(cap.id.clone()))?;
+            }
+        }
+        let required_ids: std::collections::HashSet<&str> =
+            self.requires.iter().map(|cap| cap.id.as_str()).collect();
+        for cap in &self.optional {
+            if required_ids.contains(cap.id.as_str()) {
+                return Err(ManifestError::CapabilityDuplicate(cap.id.clone()));
             }
         }
         Ok(())
@@ -537,5 +641,89 @@ mod tests {
         assert!(PluginManifest::parse(&text).is_err());
         let text = format!("{}\n[match]\nbogus=1\n", base());
         assert!(PluginManifest::parse(&text).is_err());
+    }
+
+    #[test]
+    fn parses_provides_requires_optional() {
+        let text = format!(
+            "{}\n[[provides]]\nid = 'field:vosu.osu'\nversion = '1.2.0'\nschema = 'schemas/vosu.osu.schema.json'\n\n[[requires]]\nid = 'field:vosu.play.combo'\nversion = '^1.0.0'\n\n[[optional]]\nid = 'resource:chart.background'\nversion = '^1.0.0'\n",
+            base()
+        );
+        let manifest = PluginManifest::parse(&text).unwrap();
+        assert_eq!(manifest.provides.len(), 1);
+        assert_eq!(manifest.provides[0].id, "field:vosu.osu");
+        assert_eq!(
+            manifest.provides[0].schema.as_deref(),
+            Some("schemas/vosu.osu.schema.json")
+        );
+        assert_eq!(manifest.requires.len(), 1);
+        assert_eq!(manifest.requires[0].id, "field:vosu.play.combo");
+        assert_eq!(manifest.optional.len(), 1);
+        assert_eq!(manifest.optional[0].id, "resource:chart.background");
+    }
+
+    #[test]
+    fn own_namespace_provides_requires_schema() {
+        let without_schema = format!(
+            "{}\n[[provides]]\nid = 'field:vosu.osu'\nversion = '1.2.0'\n",
+            base()
+        );
+        assert_eq!(
+            PluginManifest::parse(&without_schema).unwrap_err(),
+            ManifestError::CapabilityMissingSchema("field:vosu.osu".into())
+        );
+        let with_schema = format!(
+            "{}\n[[provides]]\nid = 'field:vosu.osu'\nversion = '1.2.0'\nschema = 'schemas/vosu.osu.schema.json'\n",
+            base()
+        );
+        PluginManifest::parse(&with_schema).unwrap();
+    }
+
+    #[test]
+    fn id_in_requires_and_optional_refused() {
+        let text = format!(
+            "{}\n[[requires]]\nid = 'field:vosu.play.combo'\nversion = '^1.0.0'\n\n[[optional]]\nid = 'field:vosu.play.combo'\nversion = '^1.0.0'\n",
+            base()
+        );
+        assert_eq!(
+            PluginManifest::parse(&text).unwrap_err(),
+            ManifestError::CapabilityDuplicate("field:vosu.play.combo".into())
+        );
+    }
+
+    #[test]
+    fn rejects_field_provides_outside_own_namespace() {
+        let text = format!(
+            "{}\n[[provides]]\nid = 'field:vosu.play'\nversion = '1.0.0'\n",
+            base()
+        );
+        assert_eq!(
+            PluginManifest::parse(&text).unwrap_err(),
+            ManifestError::CapabilityForeignNamespace("field:vosu.play".into())
+        );
+    }
+
+    #[test]
+    fn rejects_bad_game_capability_version() {
+        let text = format!(
+            "{}\n[[provides]]\nid = 'field:vosu.osu'\nversion = '1.2.0'\nschema = 'schemas/vosu.osu.schema.json'\n\n[[requires]]\nid = 'game:osu'\nversion = '^1.0.0'\n",
+            base()
+        );
+        assert_eq!(
+            PluginManifest::parse(&text).unwrap_err(),
+            ManifestError::CapabilityGameVersion("game:osu".into())
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_capability_id() {
+        let text = format!(
+            "{}\n[[requires]]\nid = 'vosu.play.combo'\nversion = '^1.0.0'\n",
+            base()
+        );
+        assert_eq!(
+            PluginManifest::parse(&text).unwrap_err(),
+            ManifestError::Capability("vosu.play.combo".into())
+        );
     }
 }

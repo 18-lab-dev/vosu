@@ -36,7 +36,12 @@ fn counting_host_services() -> vosu_host_services {
 }
 
 fn focus_changed_payload(handle: u64, focused: bool) -> Vec<u8> {
-    vosu_plugin_api::encode(&vosu_plugin_api::FocusChanged { handle, focused }).unwrap()
+    vosu_plugin_api::encode(&vosu_plugin_api::FocusChanged {
+        handle,
+        focused,
+        foreground: None,
+    })
+    .unwrap()
 }
 
 #[test]

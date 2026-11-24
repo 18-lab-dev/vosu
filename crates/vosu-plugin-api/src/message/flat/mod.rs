@@ -1,5 +1,8 @@
 //! Owned, decoded/encoded forms of the five flat hot-path opcodes
-//! (`docs/v2/plugin-abi.md` §3, §6.3, §6.6, §6.7).
+//! (`docs/v2/plugin-abi.md` §3, §6.3, §6.6, §6.7); `publish` (below) adds
+//! the borrowed, allocation-free `VOSU_OP_PUBLISH_FIELD`/`VOSU_OP_PUBLISH_BATCH`
+//! decode and the reusable batch writer (D4, S2), split out to keep this
+//! file under the maintained-file length limit.
 //!
 //! `decode_*` validates the raw bytes with [`crate::validate`] first, then
 //! copies every trailing byte range into owned `String`/`Vec<u8>` data (and,
@@ -27,6 +30,12 @@ use crate::flat::read_plan::{
 use crate::message::MessageError;
 use crate::validate::{self, read_flat_header};
 use crate::value::vosu_value_kind;
+
+mod publish;
+pub use publish::{
+    PublishBatchRef, PublishBatchWriter, PublishFieldRef, PublishValueRef,
+    decode_publish_batch_ref, decode_publish_field_ref,
+};
 
 fn read_header_at<T: Copy>(buffer: &[u8], offset: usize) -> Result<T, MessageError> {
     validate::read_header_at(buffer, offset).map_err(MessageError::from)

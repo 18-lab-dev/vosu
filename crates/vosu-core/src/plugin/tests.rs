@@ -59,6 +59,7 @@ fn focus_changed_message(handle: u64) -> OwnedMessage {
         &Message::FocusChanged(FocusChanged {
             handle,
             focused: true,
+            foreground: None,
         }),
         0,
     )
@@ -447,6 +448,7 @@ mod stack_churn_sender {
                     &Message::FocusChanged(FocusChanged {
                         handle: 0xC0FFEE,
                         focused: true,
+                        foreground: None,
                     }),
                     99,
                 );
@@ -508,7 +510,8 @@ fn send_from_a_thread_long_after_create_reaches_the_live_host_table() {
         message,
         Message::FocusChanged(FocusChanged {
             handle: 0xC0FFEE,
-            focused: true
+            focused: true,
+            ..
         })
     ));
     assert_eq!(correlation_id, 99);
@@ -718,6 +721,7 @@ mod slow_destroy_sends_late {
                 &Message::FocusChanged(FocusChanged {
                     handle: 0xDEAD,
                     focused: false,
+                    foreground: None,
                 }),
                 0,
             );

@@ -12,6 +12,7 @@
     non_camel_case_types,
     reason = "mirrors include/vosu_plugin.h's type and enumerator names exactly, so the header and these Rust types read as the same contract rather than two spellings of it"
 )]
+mod capability;
 mod cbor;
 mod envelope;
 mod flags;
@@ -27,6 +28,7 @@ mod validate;
 mod value;
 mod vtable;
 
+pub use capability::{CapabilityError, CapabilityId, covers, field_to_pointer, parse_capability};
 pub use cbor::action::{
     ActionCall, ActionCancel, ActionInvoke, ActionProgress, ActionResult, ActionStatus, Caller,
     CallerKind,
@@ -61,12 +63,16 @@ pub use limits::{
     VOSU_FRAME_MAX_BYTES, VOSU_PLUGIN_ABI_MAJOR, VOSU_PUBLISH_BATCH_MAX_BYTES,
     VOSU_READ_PLAN_MAX_BYTES, VOSU_STREAM_CHUNK_MAX_BYTES,
 };
-pub use manifest::{ManifestError, MatchTable, PluginManifest, ResourceKind, Runtime, Target};
+pub use manifest::{
+    Capability, ManifestError, MatchTable, PluginManifest, ResourceKind, Runtime, Target,
+};
 #[cfg(feature = "unstable-sync-reads")]
 pub use message::flat::StageRef;
 pub use message::flat::{
-    DemandChanged, FieldSelector, PlanBase, PlanOp, PublishBatch, PublishField, PublishValue,
+    DemandChanged, FieldSelector, PlanBase, PlanOp, PublishBatch, PublishBatchRef,
+    PublishBatchWriter, PublishField, PublishFieldRef, PublishValue, PublishValueRef,
     ReadErrorCode, ReadPlanResult, ReadPlanSubmit, ReadResult, Stage, StageBase,
+    decode_publish_batch_ref, decode_publish_field_ref,
 };
 pub use message::{HostServices, Message, MessageError};
 pub use opcode::vosu_opcode;

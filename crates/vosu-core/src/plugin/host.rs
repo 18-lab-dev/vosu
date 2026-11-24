@@ -401,6 +401,7 @@ impl PluginHost {
                     &Message::FocusChanged(FocusChanged {
                         handle: handle.0,
                         focused: event.focused,
+                        foreground: None,
                     }),
                 );
             }

@@ -87,9 +87,15 @@ pub struct SessionDecline {
     pub handle: u64,
 }
 
-/// `VOSU_OP_FOCUS_CHANGED` (host -> plugin, no reply).
+/// `VOSU_OP_FOCUS_CHANGED` (host -> plugin, no reply). `foreground` is
+/// additive (A1b/DA, `docs/v2/plugin-abi.md` §6.2, ME): `true` when the OS
+/// foreground window's pid is this session's pid, sent only where core has
+/// a real foreground source (Windows) and absent elsewhere — never
+/// collapsed to `false`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub struct FocusChanged {
     pub handle: u64,
     pub focused: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreground: Option<bool>,
 }

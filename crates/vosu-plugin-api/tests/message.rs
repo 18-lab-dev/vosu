@@ -196,6 +196,7 @@ fn roundtrip_a_cbor_opcode_through_the_same_message_api() {
     roundtrip(Message::FocusChanged(FocusChanged {
         handle: 1,
         focused: true,
+        foreground: None,
     }));
 }
 
