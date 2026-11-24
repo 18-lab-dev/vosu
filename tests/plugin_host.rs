@@ -573,3 +573,140 @@ fn injected_session_memory_answers_a_sync_plan() {
     vosu_core::plugin::test_support::clear_session_memory(pid);
     host.destroy_all(DESTROY_GRACE);
 }
+
+/// F4 review item 5: `module_scoped_scan_on_hooked_pid_resolves_no_modules`
+/// (`vosu-core`'s own `host::scans::tests`) runs under `cfg(test)`, which
+/// the F3 P2 fix's own gate (`cfg(any(test, feature = "test-harness"))`)
+/// already satisfies through `test` alone — it would still pass even if
+/// the `test-harness`-only half of that `cfg` were wrong, so it never
+/// actually exercises the gap the fix closed (`host/scans.rs`'s
+/// `is_hooked_for_tests` caller, `build_module_regions`, used to be
+/// `cfg(test)`-only). This integration test is a separate crate that
+/// links `vosu-core` as an ordinary dependency: it compiles `vosu-core`
+/// with `feature = "test-harness"` enabled and *no* `cfg(test)` at all
+/// (that only ever applies to a crate's own unit-test build, never to a
+/// dependent crate), so a module-scoped scan resolving no real module
+/// for `test_support::set_session_memory`'s synthetic pid here proves
+/// the `test-harness`-only branch of that `cfg` actually works, not just
+/// the `cfg(test)` one.
+#[test]
+fn injected_session_memory_resolves_no_modules_for_a_scan() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+
+    let console = Arc::new(RecordingConsole::default());
+    let log_dir = tempfile::tempdir().expect("creating a temp log dir");
+    let logger = vosu_core::logging::Logger::new(
+        log_dir.path(),
+        vosu_core::logging::LoggerOptions {
+            version: "0.1.0".to_owned(),
+            debug_log: true,
+            queue_capacity: 4096,
+        },
+        console.clone(),
+    )
+    .expect("constructing the logger");
+
+    let config_dir = tempfile::tempdir().expect("creating a temp config dir");
+    let config_path = config_dir.path().join("vosu.toml");
+    let config = runtime
+        .block_on(vosu_core::config::ConfigStore::initialize(&config_path))
+        .expect("initializing a throwaway ConfigStore");
+    let storage: Arc<dyn vosu_core::plugin::settings::SettingsStorage> = Arc::new(
+        vosu_core::plugin::settings::ConfigSettingsBridgeB2::new(Arc::new(config)),
+    );
+    let settings = Arc::new(vosu_core::plugin::settings::PluginSettingsService::new(
+        storage,
+    ));
+    let host = vosu_core::plugin::PluginHost::new(logger, settings, runtime.handle().clone());
+
+    let plugin_id = "acme.testkit.scan.injected";
+    let (events, commands) = vosu_plugin_testkit::scan::register(plugin_id);
+    let manifest = format!(
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-scan-injected']\n"
+    );
+    let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
+        manifest: &manifest,
+        vtable: vosu_plugin_testkit::scan::vosu_plugin_vtable,
+    }])
+    .expect("loading the scan testkit plugin");
+
+    let data_dir = tempfile::tempdir().expect("creating a temp plugin data dir");
+    host.create_instance(
+        PluginInstanceId::new(1),
+        &loaded[0],
+        data_dir.path().to_path_buf(),
+        None,
+    )
+    .expect("creating the scan testkit instance");
+
+    // A synthetic pid naming no real OS process: `test_support` is the
+    // only thing that makes this session's memory resolvable, and this
+    // pid was never exec'd, so a real `/proc`/loader-table lookup for its
+    // modules must never even be attempted.
+    let pid: u32 = 0x7FFF_FFFD;
+    let memory: Arc<dyn vosu_sys::process::ProcessMemory> = Arc::new(InjectedBuffer {
+        bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
+    });
+    vosu_core::plugin::test_support::set_session_memory(
+        pid,
+        memory,
+        vosu_sys::process::ProcessBitness::X64,
+    );
+
+    host.process_appeared(vosu_core::plugin::ProcessRecord {
+        pid,
+        name: "proc-scan-injected".to_owned(),
+        path: "/games/proc-scan-injected".to_owned(),
+        command_line: "proc-scan-injected".to_owned(),
+        bitness: vosu_plugin_api::Bitness::X64,
+        start_time: 1,
+        argv: None,
+    });
+
+    let handle = match events
+        .recv_timeout(Duration::from_secs(5))
+        .expect("SESSION_ATTACHED")
+    {
+        vosu_plugin_testkit::scan::ScanEvent::Attached { handle } => handle,
+        other => panic!("expected Attached, got {other:?}"),
+    };
+
+    commands
+        .send(vosu_plugin_testkit::scan::ScanCommand {
+            correlation_id: 11,
+            session: handle,
+            module: Some("some.dll".to_owned()),
+            pattern: "DE AD BE EF".to_owned(),
+            non_zero_mask: false,
+            all_matches: true,
+        })
+        .expect("sending the scan command");
+
+    let mut status = None;
+    let mut result = None;
+    for _ in 0..2 {
+        match events
+            .recv_timeout(Duration::from_secs(5))
+            .expect("submit status or SCAN_RESULT")
+        {
+            vosu_plugin_testkit::scan::ScanEvent::SubmitStatus(value) => status = Some(value),
+            vosu_plugin_testkit::scan::ScanEvent::Result {
+                correlation_id,
+                result: value,
+            } => result = Some((correlation_id, value)),
+            other => panic!("unexpected event {other:?}"),
+        }
+    }
+    assert_eq!(status.expect("SubmitStatus"), vosu_status::VOSU_OK);
+    let (correlation_id, result) = result.expect("SCAN_RESULT");
+    assert_eq!(correlation_id, 11);
+    assert!(result.addresses.is_empty());
+    assert_eq!(
+        result.error.expect("module_not_found error").code,
+        "module_not_found"
+    );
+
+    vosu_core::plugin::test_support::clear_session_memory(pid);
+    host.destroy_all(DESTROY_GRACE);
+}
