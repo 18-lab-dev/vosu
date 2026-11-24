@@ -1,6 +1,11 @@
 //! Forward library diagnostics into the daemon's bounded, non-blocking logger.
 use std::cell::Cell;
 use std::fmt::Write;
+use std::sync::Arc;
+use std::time::Instant;
+
+mod rate_limit;
+use rate_limit::{RateLimiter, WINDOW};
 use tracing::{
     Event, Level, Subscriber,
     field::{Field, Visit},
@@ -10,7 +15,7 @@ use vosu_core::logging::Logger;
 
 thread_local! { static FORWARDING: Cell<bool> = const { Cell::new(false) }; }
 
-struct LoggerLayer(Logger);
+struct LoggerLayer(Arc<RateLimiter>);
 
 #[derive(Default)]
 struct Fields {
@@ -44,6 +49,9 @@ impl<S: Subscriber> Layer<S> for LoggerLayer {
                 }
             }
             let _reset = Reset(active);
+            if !self.0.permit(event.metadata(), Instant::now()) {
+                return;
+            }
             let mut fields = Fields::default();
             event.record(&mut fields);
             fields.message.push_str(&fields.values);
@@ -51,9 +59,9 @@ impl<S: Subscriber> Layer<S> for LoggerLayer {
             // waits for console or disk I/O. The guard also prevents recursion
             // from a field's Debug implementation or future logger internals.
             match *event.metadata().level() {
-                Level::ERROR => self.0.error(fields.message),
-                Level::WARN => self.0.warn(fields.message),
-                Level::INFO => self.0.info(fields.message),
+                Level::ERROR => self.0.logger.error(fields.message),
+                Level::WARN => self.0.logger.warn(fields.message),
+                Level::INFO => self.0.logger.info(fields.message),
                 _ => {}
             }
         });
@@ -61,8 +69,22 @@ impl<S: Subscriber> Layer<S> for LoggerLayer {
 }
 
 pub(super) fn install(logger: Logger) {
+    let limiter = Arc::new(RateLimiter::new(logger, WINDOW));
+    let weak = Arc::downgrade(&limiter);
     // The process owns a single subscriber. Test harnesses may already own one.
-    let _ = tracing::subscriber::set_global_default(Registry::default().with(LoggerLayer(logger)));
+    if tracing::subscriber::set_global_default(Registry::default().with(LoggerLayer(limiter)))
+        .is_ok()
+    {
+        tokio::spawn(async move {
+            let mut summaries = Vec::new();
+            loop {
+                tokio::time::sleep(WINDOW).await;
+                let Some(limiter) = weak.upgrade() else { break };
+                // Flush even when a noisy callsite stops emitting completely.
+                limiter.flush(Instant::now(), &mut summaries);
+            }
+        });
+    }
 }
 
 #[cfg(test)]
@@ -80,7 +102,10 @@ mod tests {
             Arc::new(StdoutConsole),
         )
         .unwrap();
-        let subscriber = Registry::default().with(LoggerLayer(logger.clone()));
+        let subscriber = Registry::default().with(LoggerLayer(Arc::new(RateLimiter::new(
+            logger.clone(),
+            WINDOW,
+        ))));
         tracing::subscriber::with_default(subscriber, || {
             tracing::warn!(target: "vosu_core::plugin::discovery", pid = 4242, error = "denied", "core discovery warning");
             tracing::error!(target: "foreign_library", "foreign error");
@@ -97,5 +122,42 @@ mod tests {
         assert!(log.contains("foreign error"));
         assert!(log.contains("core info"));
         assert!(!log.contains("must be filtered"));
+    }
+
+    #[tokio::test]
+    async fn identical_error_flood_is_bounded_and_summarized_once_per_window() {
+        let root = tempfile::tempdir().unwrap();
+        let logger = Logger::new(
+            root.path(),
+            LoggerOptions::default(),
+            Arc::new(StdoutConsole),
+        )
+        .unwrap();
+        // A long window makes this test independent of wall-clock scheduling.
+        // Expiry is advanced explicitly; no sleep or repeating-timer rendezvous.
+        let window = Duration::from_secs(3600);
+        let limiter = Arc::new(RateLimiter::new(logger.clone(), window));
+        let subscriber = Registry::default().with(LoggerLayer(limiter.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            for _ in 0..10_000 {
+                tracing::error!(target: "vosu_osu_state::flood", "identical calculation failure");
+            }
+            tracing::warn!(target: "independent_callsite", "unrelated warning");
+        });
+        let mut summaries = Vec::new();
+        let expired = Instant::now() + window;
+        limiter.flush(expired, &mut summaries);
+        limiter.flush(expired, &mut summaries);
+        tokio::time::timeout(Duration::from_secs(2), logger.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+        let log = std::fs::read_to_string(root.path().join("latest.log")).unwrap();
+        assert_eq!(
+            log.matches("identical calculation failure").count(),
+            rate_limit::LINES_PER_WINDOW as usize
+        );
+        assert_eq!(log.matches("suppressed 9980 similar messages").count(), 1);
+        assert_eq!(log.matches("unrelated warning").count(), 1);
     }
 }

@@ -429,3 +429,58 @@ async fn regular_and_precise_state_preserve_fractional_and_nonfinite_times() {
     let snapshot = bundle.materialize_current();
     assert_eq!(snapshot.regular.global.play_time, 123.25);
 }
+
+#[tokio::test]
+async fn reducer_error_flood_logs_once_then_rearms_after_success() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tracing::instrument::WithSubscriber;
+    let (subscriber, errors) = crate::test_logging::errors();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        async {
+            let failures = Arc::new(AtomicUsize::new(1000));
+            let mut bundle = StateBundle::new(
+                ClientType::Stable,
+                32001,
+                Arc::new(ControlledCalculation {
+                    requests: Arc::new(std::sync::Mutex::new(Vec::new())),
+                    failures: failures.clone(),
+                }),
+            );
+            bundle.global.status = GameState::Edit.value() as i64;
+            bundle.global.play_time = 400.0;
+            let snapshot = |sequence, checksum| {
+                RawRegularSnapshotBuilder::new(
+                    RegularCaptureContext::new(ClientType::Stable, 32001, 0, sequence),
+                    Ok(ReadStatus::Ready(raw_global(GameState::Edit, 400))),
+                )
+                .menu(Ok(ReadStatus::Ready(RawMenu::Full(menu(checksum)))))
+                .publish()
+            };
+            for sequence in 1..=1000 {
+                bundle
+                    .apply_regular(snapshot(sequence, "failed-map"))
+                    .await
+                    .unwrap();
+                assert_eq!(errors.load(Ordering::Relaxed), usize::from(sequence >= 11));
+            }
+            assert_eq!(bundle.calculation_failures, 1000);
+            bundle
+                .apply_regular(snapshot(1001, "failed-map"))
+                .await
+                .unwrap();
+            assert_eq!(bundle.calculation_failures, 0);
+            failures.store(11, Ordering::Release);
+            for sequence in 1002..=1012 {
+                bundle
+                    .apply_regular(snapshot(sequence, "next-map"))
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(errors.load(Ordering::Relaxed), 2);
+        }
+        .with_subscriber(subscriber),
+    )
+    .await
+    .unwrap();
+}

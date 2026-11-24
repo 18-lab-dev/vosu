@@ -32,3 +32,4 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Media"] }
 [dev-dependencies]
 md-5 = "0.11.0"
 tempfile = "3.26.0"
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["registry"] }

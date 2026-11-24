@@ -3373,6 +3373,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "vosu-osu-calc",
  "vosu-osu-model",
  "vosu-osu-reader",

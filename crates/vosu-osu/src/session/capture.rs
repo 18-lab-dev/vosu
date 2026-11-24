@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tokio::sync::watch;
 use vosu_osu_reader::{memory::ReaderSynchronization, memory::lazer_loader::LogWarn};
-use vosu_osu_state::{SnapshotPublisher, StateBundleSnapshot};
+use vosu_osu_state::{SnapshotPublisher, StateBundleSnapshot, StateWorkerError};
 
 #[cfg(test)]
 pub(super) type CaptureControls = (
@@ -111,25 +111,7 @@ impl OsuSession {
                             }
                             None => Ok(None),
                         };
-                        // One remembered message per session, cleared after success:
-                        // repeated failed probes cannot flood the daemon's log.
-                        if let Err(failure) = &result {
-                            let message = format!("PID {} memory probe failed: {failure}", key.pid);
-                            let changed = {
-                                let mut previous = last_probe_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                                if previous.as_ref() == Some(&message) {
-                                    false
-                                } else {
-                                    *previous = Some(message.clone());
-                                    true
-                                }
-                            };
-                            if changed {
-                                warn(format!("osu! process candidate rejected: {message}"));
-                            }
-                        } else {
-                            last_probe_error.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
-                        }
+                        report_probe(&result, &last_probe_error, key.pid, &warn);
                         result
                     }
                 },
@@ -199,4 +181,87 @@ fn target(session: &Weak<OsuSession>) -> Option<CaptureTarget> {
         is_tournament_manager: false,
         lazer_offsets: session.lazer_offsets(),
     })
+}
+
+fn report_probe<T>(
+    result: &Result<Option<T>, StateWorkerError>,
+    previous: &Mutex<Option<String>>,
+    pid: u32,
+    warn: &LogWarn,
+) {
+    // Permission denial has its own terminal ERROR callback. Not-ready is not
+    // recovery: retain the message until an actual worker is initialized.
+    match result {
+        Err(StateWorkerError::MemoryPermissionDenied { .. }) | Ok(None) => {}
+        Ok(Some(_)) => {
+            previous
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+        }
+        Err(failure) => {
+            let message = format!("PID {pid} memory probe failed: {failure}");
+            let warning = {
+                let mut previous = previous
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if previous.as_ref() == Some(&message) {
+                    None
+                } else {
+                    let warning = format!("osu! process candidate rejected: {message}");
+                    *previous = Some(message);
+                    Some(warning)
+                }
+            };
+            if let Some(warning) = warning {
+                warn(warning);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod probe_log_tests {
+    use super::*;
+
+    #[test]
+    fn permission_denial_does_not_duplicate_the_terminal_error_log() {
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let output = messages.clone();
+        let warn: LogWarn = Arc::new(move |message| output.lock().unwrap().push(message));
+        let previous = Mutex::new(None);
+        let denied: Result<Option<()>, _> = Err(StateWorkerError::MemoryPermissionDenied {
+            address: 16,
+            len: 4,
+            message: "denied".into(),
+        });
+        report_probe(&denied, &previous, 32002, &warn);
+        assert!(messages.lock().unwrap().is_empty());
+        assert!(previous.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn not_ready_preserves_probe_dedup_until_a_worker_really_starts() {
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let output = messages.clone();
+        let previous = Arc::new(Mutex::new(None));
+        let checked = previous.clone();
+        let warn: LogWarn = Arc::new(move |message| {
+            assert!(
+                checked.try_lock().is_ok(),
+                "never call host logging under the dedup lock"
+            );
+            output.lock().unwrap().push(message);
+        });
+        let failure: Result<Option<()>, _> = Err(StateWorkerError::Capture("same failure".into()));
+        for _ in 0..1000 {
+            report_probe(&failure, &previous, 32003, &warn);
+            report_probe(&Ok(None::<()>), &previous, 32003, &warn);
+        }
+        assert_eq!(messages.lock().unwrap().len(), 1);
+        report_probe(&Ok(Some(())), &previous, 32003, &warn);
+        assert!(previous.lock().unwrap().is_none());
+        report_probe(&failure, &previous, 32003, &warn);
+        assert_eq!(messages.lock().unwrap().len(), 2);
+    }
 }
