@@ -1,7 +1,8 @@
-//! Public adapter lock order: focus -> sessions -> API readers -> schema ->
-//! subscriptions -> store. Never call plugins or refresh demand under these
-//! locks. Lifecycle notifications run once, while focus still serializes the
-//! completed transition; publications read the latest store under the API lock.
+//! Public adapter lock order: focus -> state_serial -> instances -> sessions ->
+//! API readers -> schema -> subscriptions -> store (skipping unneeded locks).
+//! `api_committed` takes API readers under the caller's `state_serial` guard.
+//! Never call plugins or refresh demand under the API lock. Lifecycle
+//! notifications run once while focus serializes the completed transition.
 use std::sync::{Arc, Weak, atomic::Ordering};
 
 use tokio::sync::watch;
@@ -168,6 +169,7 @@ impl PluginHost {
         let sessions = self.sessions.lock().unwrap();
         self.api_check_open()?;
         let key = resolve(&sessions, focus.focused(), target).ok_or(ApiError::UnknownSession)?;
+        let api = self.api_readers.lock().unwrap();
         let state = self
             .state
             .store
@@ -178,7 +180,7 @@ impl PluginHost {
             session: sessions
                 .public_id_of(SessionHandle(key.0))
                 .map(str::to_owned),
-            revision: state.revision,
+            revision: api.revision,
             binding: 0,
             values: selection(&registry, Some(&state), plan),
             lanes: plan.lanes(&registry),
@@ -195,10 +197,13 @@ impl PluginHost {
         let focus = self.focus.lock().unwrap();
         let sessions = self.sessions.lock().unwrap();
         self.api_check_open()?;
-        let key = target
-            .as_ref()
-            .map(|t| resolve(&sessions, focus.focused(), t).ok_or(ApiError::UnknownSession))
-            .transpose()?;
+        let key = match target.as_ref() {
+            Some(target @ SessionTarget::Id(_)) => {
+                Some(resolve(&sessions, focus.focused(), target).ok_or(ApiError::UnknownSession)?)
+            }
+            Some(target @ SessionTarget::Active) => resolve(&sessions, focus.focused(), target),
+            None => None,
+        };
         let mut api = self.api_readers.lock().unwrap();
         self.api_check_open()?;
         if api.readers.len() >= MAX_SUBSCRIPTIONS {
@@ -234,7 +239,7 @@ impl PluginHost {
         let initial = ApiUpdate {
             session: key.and_then(|k| sessions.public_id_of(SessionHandle(k.0)).map(str::to_owned)),
             revision: api.revision,
-            binding: api.revision,
+            binding: if target.is_some() { api.revision } else { 0 },
             values,
             lanes: if target.is_some() {
                 plan.lanes(&registry)
@@ -462,7 +467,7 @@ impl PluginHost {
             reader.updates.send_replace(Arc::new(ApiUpdate {
                 session: None,
                 revision,
-                binding: revision,
+                binding: if reader.target.is_some() { revision } else { 0 },
                 values: vec![None; reader.plan.pointers().len()],
                 lanes: LaneBits::default(),
                 ended: true,

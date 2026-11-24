@@ -616,32 +616,74 @@ operations; changed shared shapes require an explicit amendment. `Result<T, E>`
 uses each domain's structured error, never raw provider paths/credentials.
 Opaque ids are typed newtypes, not interchangeable strings.
 
-**S0/S1 — public state.** `SessionTarget = Active | Id(String)`;
-`CompiledApiSelection::compile(&[String]) -> Result<Self, SelectionError>`
-preserves caller order/absence, enforces 1–256 nonoverlapping pointers, 512 bytes
-and 32 decoded tokens, and compiles namespace-relative demand (including future
-public namespaces for `""`). `ApiSnapshot` contains `revision: u64` and an
-immutable `Arc<serde_json::Value>` public document; `SessionSummary` is API's
-exact summary shape.
+**S0/S1 — public state (S0 implementation amendment).**
+`SessionTarget = Active | Id(String)`;
+`ApiPlan::new(&[impl AsRef<str>]) -> Result<Self, ApiError>` preserves caller
+order/absence, enforces 1–256 nonoverlapping pointers, 512 bytes and 32 decoded
+tokens, and precompiles namespace-relative demand (including future public
+namespaces for `""`). `ApiPlan::pointers()` exposes the ordered validated
+pointers; `ApiPlan::lanes(&SchemaRegistry)` returns their schema-derived union.
+
+The implemented names replace the proposed `CompiledApiSelection`,
+`SelectionError`, `ApiSnapshot`, `SessionSummary` and `ApiStateError` shapes;
+there are no compatibility aliases. `ApiError` distinguishes `UnknownSession`,
+`Closed`, `Capacity` and `InvalidSelection(String)`. A summary is a `StateValue`
+with API's exact core-owned `vosu.client` object shape. `sessions()` is fallible
+so a non-owning adapter reports shutdown rather than silently returning an empty
+live-session list.
 
 ```text
-ApiStateSource::sessions(&self) -> Vec<SessionSummary>
-ApiStateSource::session(&self, target: &SessionTarget) -> Result<SessionSummary, ApiStateError>
-ApiStateSource::read(&self, target: &SessionTarget, selection: &CompiledApiSelection)
-    -> Result<ApiSnapshot, ApiStateError>
-ApiStateSource::subscribe(&self, target: SessionTarget, selection: CompiledApiSelection)
-    -> Result<ApiSubscription, ApiStateError>
-ApiStateSource::subscribe_sessions(&self, selection: CompiledApiSelection)
-    -> Result<ApiSubscription, ApiStateError>
-ApiSubscription::current(&self) -> Arc<ApiSnapshot>
-ApiSubscription::changed(&mut self) -> impl Future<Output = Result<Arc<ApiSnapshot>, ApiStateError>> + Send
+ApiUpdate {
+    session: Option<String>,
+    revision: u64,
+    binding: u64,
+    values: Vec<Option<StateValue>>,
+    lanes: LaneBits,
+    ended: bool,
+    error: Option<ApiError>,
+}
+ApiStateSource::sessions(&self) -> Result<Vec<StateValue>, ApiError>
+ApiStateSource::session(&self, target: &SessionTarget) -> Result<StateValue, ApiError>
+ApiStateSource::read(&self, target: &SessionTarget, plan: &ApiPlan)
+    -> Result<ApiUpdate, ApiError>
+ApiStateSource::subscribe(&self, target: SessionTarget, plan: ApiPlan)
+    -> Result<ApiSubscription, ApiError>
+ApiStateSource::subscribe_sessions(&self, plan: ApiPlan)
+    -> Result<ApiSubscription, ApiError>
+ApiSubscription::current(&self) -> Arc<ApiUpdate>
+ApiSubscription::changed(&mut self)
+    -> impl Future<Output = Result<Arc<ApiUpdate>, ApiError>> + Send
+ApiSubscription::updates: watch::Receiver<Arc<ApiUpdate>>
 ```
+
+`values` is a full selected-value snapshot in plan order, not a delta;
+`None` means absent, distinct from `Some(StateValue::Null)`. Immutable
+`StateValue` trees retain shared subtrees and use the existing API JSON encoder
+only at the transport boundary, rather than serializing whole JSON documents on
+every core notification. This replaces the proposed `Arc<serde_json::Value>`
+document while preserving slow-consumer correctness. The public watch receiver
+also permits the transport hub to use native watch operations directly.
+
+`revision` always means the source notification sequence, including on reads;
+it is never a session publication revision. It can remain zero without
+observers, and a read may see committed state ahead of its notification.
+The transport hub owns its separate monotonic wire sequence. `binding` changes
+on every active rebind, including when a slow consumer skips focus away and
+back to the same session with identical selected values; S1 compares it to
+reset the baseline. Session-document bindings are always zero. `ended` is
+sticky terminal state: fixed-id detach sends absent selections then terminates;
+shutdown and unrecoverable capacity errors also carry `error`. These fields
+preserve reset/close reasons that latest-only value snapshots alone cannot.
+`lanes` is the current selection's producing-lane union.
 
 `ApiSubscription` owns latest-value reception and a demand drop guard;
 `SubscriberId::Api` is distinct from plugin/surface consumers. Drop removes
-demand on every exit. Reads are `Audience::Api` with no demand. Events include
-absence/detach so S1 can produce final removals; no client means no periodic
-API task, JSON construction or per-publication clock query.
+demand on every exit. Reads use `Audience::Api` with no demand. Upgrade-time
+validation calls `session(target)` (404 if absent). Subscription establishment
+can subsequently bind `Active` with no focused session: all selected values
+are absent, with no demand, until focus returns. Fixed ids must still resolve
+at establishment. Session events use one coherent lifecycle document. No client
+means no periodic API task, JSON construction or per-publication clock query.
 
 **F0 — retained confinement (vosu-sys).**
 
