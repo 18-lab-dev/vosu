@@ -246,12 +246,9 @@ impl DiscoveryObserver for GameOffers {
         let (catalog, epoch) = {
             let mut state = self.lock();
             // A reused pid is a different occurrence: its old offers go first.
-            state.offers.retain(|offer| {
-                offer.pid != process.pid || (offer.start_time == process.start_time && !claimed)
-            });
-            if claimed {
-                return;
-            }
+            state
+                .offers
+                .retain(|offer| offer.pid != process.pid || offer.start_time == process.start_time);
             (Arc::clone(&state.catalog), state.epoch)
         };
         let candidate = CandidateProcess {
