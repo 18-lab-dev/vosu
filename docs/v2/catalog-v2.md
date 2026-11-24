@@ -309,6 +309,46 @@ absent; catalog-only checks never attest package equivalence. It compares
 all genuinely mirrored metadata, including requirement order, but not
 package-local art paths against remote URLs or an invented catalog UI.
 
+### Offline packaging schemas
+
+The committed Draft 2020-12 schemas are
+[`manifest.schema.json`](schemas/manifest.schema.json) and
+[`catalog-v2.schema.json`](schemas/catalog-v2.schema.json).
+They are self-contained: every `$ref` is a document-local fragment, and
+their fixed HTTPS `$id` values are identifiers, not retrieval instructions.
+Use an offline Draft 2020-12 validator; no network access is necessary.
+For manifests, first parse `manifest.toml` and project its data model to JSON,
+then validate that JSON against the manifest schema. Do not validate raw TOML
+text as JSON. Omitted arrays default to empty; tool UI entry defaults to
+`index.html`. Schema `default` annotations document defaults, not mutations.
+Manifest optional fields are omitted, not JSON null. Catalog metadata and
+art fields may be null; cross-kind fields remain forbidden even when null.
+
+These schemas check packaging structure, required fields, kind discrimination,
+integer bounds, enums and lexical identifier/path/URL/hash shapes. They are
+not complete semantic validators. The SDK remains authoritative for semver
+requirements and prerelease rules, registered namespace boundaries, official
+source identity, cross-entry uniqueness/replacement claims, capability ownership,
+action/provide and namespace-version correspondence, Rust regex syntax, UTF-8
+byte lengths (JSON Schema lengths count Unicode characters), canonical lane
+tables and asset-backed manifest/catalog equality. A schema pass grants no
+permissions, host support, download safety or installation approval.
+In particular, catalog `published` is an informational string, not a required
+date-time format assertion.
+
+The SDK's `tests/packaging_schema.rs` corpus projects TOML to JSON and separates
+shape-invalid rows (both validators reject) from SDK-only semantic rejections
+(structural acceptance is expected). Run offline parity with:
+
+```sh
+cargo test --locked -p vosu-plugin-api manifest_schema
+cargo test --locked -p vosu-plugin-api catalog_schema
+```
+
+Ecosystem packaging scripts may consume these committed files without running
+vosu; full publisher/install validation must still use the SDK and actual
+schema assets. No external ecosystem repository is changed by these schemas.
+
 ### `kind = "plugin"`
 
 Runtime fields — `abi_version`, `runtime`, `concurrent_dispatch`,

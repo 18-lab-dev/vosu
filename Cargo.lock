@@ -3714,6 +3714,7 @@ name = "vosu-plugin-api"
 version = "1.0.0-alpha.0"
 dependencies = [
  "ciborium",
+ "jsonschema",
  "proptest",
  "regex",
  "semver",
