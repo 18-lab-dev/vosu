@@ -109,6 +109,11 @@ fn surface_read_creates_no_demand() {
         Err(SurfaceError::TooManySelectors)
     ));
     host.destroy_all(RECV_TIMEOUT);
+    assert_eq!(
+        host.surface_host()
+            .read(id, SessionTarget::Focused, &selector("vosu.client", "")),
+        Err(SurfaceError::UnknownReader)
+    );
 }
 
 #[test]
@@ -215,12 +220,20 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
         .commit(
             &grant,
             SessionKey(handle),
-            [vosu_plugin_api::PublishFieldRef {
-                handle,
-                ns: "vosu.osu",
-                pointer: "/internal/paths/stable",
-                value: PublishValueRef::String("private-path"),
-            }]
+            [
+                vosu_plugin_api::PublishFieldRef {
+                    handle,
+                    ns: "vosu.osu",
+                    pointer: "/internal/paths/stable",
+                    value: PublishValueRef::String("private-path"),
+                },
+                vosu_plugin_api::PublishFieldRef {
+                    handle,
+                    ns: "vosu.osu",
+                    pointer: "/internal/paths/lazer",
+                    value: PublishValueRef::String("private-sibling"),
+                },
+            ]
             .into_iter(),
         )
         .unwrap();
@@ -232,6 +245,22 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
             .unwrap()
             .value,
         None
+    );
+    let ungranted = api
+        .subscribe(id, SessionTarget::Focused, vec![internal.clone()])
+        .unwrap();
+    let whole = api
+        .read(id, SessionTarget::Focused, &selector("vosu.osu", ""))
+        .unwrap()
+        .value
+        .unwrap();
+    let CborValue::Map(fields) = whole else {
+        panic!("namespace object")
+    };
+    assert!(
+        !fields
+            .iter()
+            .any(|(key, _)| key == &CborValue::Text("internal".into()))
     );
     let granted = "test.k7.granted";
     let manifest = session_manifest(granted, &[granted]).replace(
@@ -298,6 +327,8 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
         subscription.updates.borrow().values[0].value,
         Some(CborValue::Text("new-private-path".into()))
     );
+    assert_eq!(ungranted.updates.borrow().values[0].value, None);
+    assert!(!ungranted.updates.has_changed().unwrap());
     host.destroy_all(RECV_TIMEOUT);
     assert!(subscription.updates.has_changed().is_err());
 }

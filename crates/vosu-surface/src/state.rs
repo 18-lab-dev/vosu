@@ -88,7 +88,7 @@ impl std::error::Error for AlreadyInstalled {}
 
 #[derive(Debug)]
 #[must_use = "dropping this uninstalls the state read host"]
-pub struct StateHostInstalled;
+pub struct StateHostInstalled(());
 impl Drop for StateHostInstalled {
     fn drop(&mut self) {
         // Drop host-owned resources outside the process-wide slot lock.
@@ -105,7 +105,7 @@ pub fn install_state_host(
         return Err(AlreadyInstalled);
     }
     *slot = Some(host);
-    Ok(StateHostInstalled)
+    Ok(StateHostInstalled(()))
 }
 
 pub fn state_host() -> Option<Arc<dyn StateReadHost>> {
