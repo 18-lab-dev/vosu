@@ -4,3 +4,8 @@ requester -> state
 routes -> listener
 routes -> management
 routes -> state
+files -> state
+resources -> files
+resources -> state
+requester -> files
+requester -> resources

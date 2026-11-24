@@ -11,8 +11,9 @@ use super::{InstanceSlot, PluginHost};
 use crate::state::surface::{self, SurfaceReader};
 use crate::state::{CommitOutcome, InternalGrant, MAX_SUBSCRIPTIONS, SessionKey, SubscriberId};
 
-mod capture;
+pub(crate) mod capture;
 mod routes;
+pub(crate) use capture::Requester as SurfaceRequester;
 
 struct SurfaceHost(Weak<PluginHost>);
 struct Unsubscribe {

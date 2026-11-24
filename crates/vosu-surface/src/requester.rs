@@ -7,7 +7,9 @@ use std::sync::Arc;
 use vosu_plugin_api::Selector;
 
 /// Core binds this object to one live bundled instance. No caller supplies an id.
-pub trait BundledRequester: Send + Sync + 'static {
+pub trait BundledRequester:
+    crate::files::FilesRequester + crate::resources::ResourceRequester + Send + Sync + 'static
+{
     fn capture(
         &self,
         target: SessionTarget,

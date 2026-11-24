@@ -3539,6 +3539,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "vosu-adapter-gosumemory"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "serde",
+ "serde_json",
+ "vosu-adapter-support",
+ "vosu-osu-model",
+ "vosu-plugin-api",
+ "vosu-surface",
+]
+
+[[package]]
+name = "vosu-adapter-streamcompanion"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "indexmap",
+ "serde",
+ "serde_json",
+ "vosu-adapter-support",
+ "vosu-osu-model",
+ "vosu-plugin-api",
+ "vosu-surface",
+]
+
+[[package]]
 name = "vosu-adapter-support"
 version = "0.1.0"
 dependencies = [
@@ -3546,6 +3573,23 @@ dependencies = [
  "serde",
  "serde_json",
  "vosu-osu-model",
+]
+
+[[package]]
+name = "vosu-adapter-upstream"
+version = "2.0.0-alpha.1"
+dependencies = [
+ "bytes",
+ "ciborium",
+ "serde",
+ "serde_json",
+ "vosu-adapter-support",
+ "vosu-core",
+ "vosu-osu",
+ "vosu-osu-model",
+ "vosu-osu-state",
+ "vosu-plugin-api",
+ "vosu-surface",
 ]
 
 [[package]]

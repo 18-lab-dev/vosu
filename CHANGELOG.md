@@ -4,6 +4,10 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M4a
 
+- Add the unmounted bus-backed upstream v2/precise projection crate, with
+  explicit private-path grants, source-faithful key slots and tournament
+  readiness, upstream wire names and ADR 0021 field removals.
+
 - Extract shared legacy wire mechanics into `vosu-adapter-support` without
   changing served routes, payloads, filters or transport behavior.
 - Publish osu! schema 1.3 source facts for independent overlay buttons, raw
@@ -17,6 +21,16 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add coherent, demand-free bundled adapter captures with identified session
   rosters, per-namespace revisions and independent foreground observations;
   add atomic route/feed registration and RAII demand/registration cleanup.
+- Add the bus-backed streamCompanion base projection and direct/DTO encoders,
+  with explicit path grants and a chart-resource-derived input seam. The new
+  wire model omits extension-only press/release histories; production route
+  mounting remains unchanged until the adapter cutover.
+- Add the bus-backed gosuMemory builder and borrowing encoder, preserving
+  state-specific values and tournament quirks without extension hit histories.
+  Production routes remain unchanged until the adapter cutover.
+- Add opaque declared-root file/directory operations and capability-checked
+  chart-resource readers for bundled adapters, reusing M3 confinement and stream
+  leases without changing API v1 resource membership or legacy routes.
 
 ## Unreleased — 2.0 M3
 

@@ -892,6 +892,7 @@ mod scans;
 mod state;
 mod state_delivery;
 mod surface;
+pub(crate) use surface::SurfaceRequester;
 
 #[cfg(test)]
 mod tests;
