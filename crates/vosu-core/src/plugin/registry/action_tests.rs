@@ -2,7 +2,7 @@
 use super::*;
 
 fn manifest() -> String {
-    let mut text = "kind='plugin'\nmanifest_version=1\nid='test.assets'\nname='Action assets'\nversion='1.0.0'\nhost='>=1.0.0'\nabi_version=1\nruntime='in-process'\n".to_owned();
+    let mut text = "kind='plugin'\nmanifest_version=1\nid='test.assets'\nname='Action assets'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n".to_owned();
     for name in ["one", "two"] {
         text.push_str(&format!("\n[[provides]]\nid='action:test.assets.{name}'\nversion='1.0.0'\n[[actions]]\nname='{name}'\nversion='1.0.0'\ntitle='{name}'\nargs_schema='schemas/{name}.json'\nresult_schema='schemas/shared.json'\nsession='none'\n"));
     }

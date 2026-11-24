@@ -570,7 +570,7 @@ fn nested_sync_submit_from_result_dispatch_is_refused_not_panicked() {
     let plugin_id = "testkit.readplan.nestedsync";
     let (events, trigger) = nested_sync_plugin::register(plugin_id);
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-nestedsync']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-nestedsync']\n"
     );
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest,

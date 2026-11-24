@@ -116,7 +116,7 @@ fn snapshot() -> StateBundleSnapshot {
     }
 }
 fn grant(cap: &str) -> InternalGrant {
-    InternalGrant::from_manifest(&PluginManifest::parse(&format!("kind='plugin'\nmanifest_version=1\nid='acme.privacy'\nname='Privacy'\nversion='1.0.0'\nhost='>=2.0.0, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[requires]]\nid='field:{cap}'\nversion='*'\n")).unwrap())
+    InternalGrant::from_manifest(&PluginManifest::parse(&format!("kind='plugin'\nmanifest_version=1\nid='acme.privacy'\nname='Privacy'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[requires]]\nid='field:{cap}'\nversion='*'\n")).unwrap())
 }
 #[test]
 fn actual_osu_paths_are_visible_only_to_explicit_internal_grant() {

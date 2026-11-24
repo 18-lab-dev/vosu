@@ -461,7 +461,7 @@ mod tests {
     use super::*;
 
     fn base() -> String {
-        "kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu!'\nversion='2.0.0'\nhost='>=2.0.0, <3.0.0'\nabi_version=1\nruntime='in-process'\n".into()
+        "kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu!'\nversion='2.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n".into()
     }
 
     #[test]
@@ -540,8 +540,10 @@ mod tests {
             ManifestError::Version(_)
         ));
         assert!(matches!(
-            PluginManifest::parse(&base().replace("host='>=2.0.0, <3.0.0'", "host='nonsense'"))
-                .unwrap_err(),
+            PluginManifest::parse(
+                &base().replace("host='>=2.0.0-alpha.1, <3.0.0'", "host='nonsense'")
+            )
+            .unwrap_err(),
             ManifestError::Host(_)
         ));
     }

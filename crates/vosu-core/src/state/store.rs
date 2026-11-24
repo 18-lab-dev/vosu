@@ -262,7 +262,7 @@ manifest_version = 1
 id = "test.store-locking"
 name = "Store locking"
 version = "1.0.0"
-host = "*"
+host = ">=2.0.0-alpha.1, <3.0.0"
 abi_version = 1
 runtime = "in-process"
 [[provides]]

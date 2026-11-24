@@ -36,6 +36,24 @@ This build does not provide the former Electron/asdf-overlay in-game overlay or 
 
 ## Install
 
+### 2.0 alpha builds
+
+This development branch builds **2.0.0-alpha.1**; the plugin SDK retains its
+independent version. Alpha config, data, cache and broker state live under
+`prerelease/` within their normal roots. On first start only, alpha imports
+normal-root settings read-only (`vosu.toml` overrides `vosu.env`, which overrides
+the older legacy env file). An existing alpha config or alpha env file takes
+precedence. Unreadable or malformed import input aborts startup without changing
+it; fix the input and retry. Once alpha has its own config, it never reads the
+normal settings again, even when they change.
+
+The import copies only recognized settings, not broker credentials, resource
+secrets, plugins or overlay files. Imported `STATIC_FOLDER_PATH` values are
+excluded: alpha uses its isolated data root's `static/`. A path deliberately set
+in alpha's own config is an explicit override and may leave isolation, including
+relative paths resolved from the launch directory. Returning to 1.x leaves its
+original settings intact. The stable release below remains available separately.
+
 ### Portable archive
 
 The current release is **1.2.5**. Download `vosu-linux-v1.2.5.zip` or `vosu-windows-v1.2.5.zip` from the [v1.2.5 release](https://github.com/18-lab-dev/vosu/releases/tag/v1.2.5), then:

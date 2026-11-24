@@ -396,7 +396,7 @@ fn in_process_sync_round_trip_allocates_nothing_after_warmup() {
     let plugin_id = "testkit.readplan.coreflat";
     let (events, _commands) = vosu_plugin_testkit::read_plan::register(plugin_id);
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-coreflat']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-coreflat']\n"
     );
     let loaded = crate::plugin::load_bundled(&[crate::plugin::BundledPlugin {
         manifest: &manifest,

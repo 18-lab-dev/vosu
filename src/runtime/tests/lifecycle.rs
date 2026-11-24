@@ -373,3 +373,54 @@ fn static_root_reload_creates_target_and_retains_previous_root_on_failure() {
     assert!(reload_counter_static_root(&paths, &blocked_config, &counters).is_err());
     assert_eq!(counters.current_root(), active);
 }
+
+#[tokio::test]
+async fn prerelease_startup_and_restart_import_only_once_into_isolated_roots() {
+    use vosu_sys::platform::BuildChannel;
+
+    let root = tempfile::tempdir().unwrap();
+    let resolver = RuntimeTestPathResolver {
+        executable: root.path().join("program/vosu"),
+        launch: root.path().to_owned(),
+        root: root.path().to_owned(),
+    };
+    let channel = BuildChannel::from_version(env!("CARGO_PKG_VERSION")).unwrap();
+    assert_eq!(channel, BuildChannel::Prerelease);
+    let normal = Paths::resolve(&resolver, BuildChannel::Release).unwrap();
+    fs::create_dir_all(normal.config()).unwrap();
+    let source = normal.config().join("vosu.toml");
+    let original = "POLL_RATE = 643.0\nSTATIC_FOLDER_PATH = 'normal-write-sentinel'\nUNKNOWN_SENTINEL = 97\n";
+    fs::write(&source, original).unwrap();
+    let alpha = Paths::resolve(&resolver, channel).unwrap();
+    alpha.initialize().unwrap();
+    let store = bounded!(super::config::initialize_startup_config(&alpha, channel)).unwrap();
+    assert_eq!(store.current().poll_rate, 643.0);
+    let static_root = resolved_static_root(&alpha, &store.current()).unwrap();
+    assert_eq!(static_root, alpha.data().join("static"));
+    assert_ne!(static_root, normal.data().join("static"));
+    assert_eq!(fs::read_to_string(&source).unwrap(), original);
+    bounded!(store.shutdown()).unwrap();
+    fs::write(&source, "POLL_RATE = [malformed after import").unwrap();
+    let restarted = bounded!(super::config::initialize_startup_config(&alpha, channel)).unwrap();
+    assert_eq!(restarted.current().poll_rate, 643.0);
+    assert_eq!(
+        fs::read_to_string(&source).unwrap(),
+        "POLL_RATE = [malformed after import"
+    );
+    bounded!(restarted.shutdown()).unwrap();
+}
+#[test]
+fn prerelease_bundled_manifest_accepts_the_executable_version() {
+    let manifest = vosu_plugin_api::PluginManifest::parse(include_str!(
+        "../../../crates/vosu-osu/manifest.toml"
+    ))
+    .unwrap();
+    let host = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+    let requirement = semver::VersionReq::parse(&manifest.host).unwrap();
+    assert!(requirement.matches(&host));
+    assert!(
+        !semver::VersionReq::parse(">=1.2.0, <3.0.0")
+            .unwrap()
+            .matches(&host)
+    );
+}

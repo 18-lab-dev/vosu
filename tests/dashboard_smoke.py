@@ -18,7 +18,7 @@ import signal
 import subprocess
 import tempfile
 import threading
-from tool_host_smoke import ROOT, curl, wait_for
+from tool_host_smoke import ROOT, channel_root, curl, wait_for
 
 # A classic inline script in <body> that opens a socket immediately, like
 # most overlays: the preview marker must already be in place.
@@ -58,8 +58,8 @@ def main():
             folder.mkdir(parents=True)
             (folder / 'index.html').write_text(OVERLAY.format(name=f'overlay-{index}'))
             (folder / 'metadata.txt').write_text(f'Name: Overlay {index}\nAuthor: 18-LAB\nVersion: 1.0.0\nResolution: 400x100\n')
-        config = root / 'config/vosu'
-        config.mkdir()
+        config = channel_root(binary, root / 'config/vosu')
+        config.mkdir(parents=True)
         (config / 'vosu.toml').write_text(f'''ENABLE_AUTOUPDATE = false
 OPEN_DASHBOARD_ON_STARTUP = false
 DEBUG_LOG = false

@@ -1,5 +1,21 @@
 use super::*;
 
+pub(super) async fn initialize_startup_config(
+    paths: &Paths,
+    channel: vosu_sys::platform::BuildChannel,
+) -> io::Result<ConfigStore> {
+    let target = paths.config().join("vosu.toml");
+    match channel {
+        vosu_sys::platform::BuildChannel::Release => ConfigStore::initialize(target).await,
+        vosu_sys::platform::BuildChannel::Prerelease => {
+            let normal = paths.config().parent().ok_or_else(|| {
+                io::Error::other("prerelease configuration root has no normal parent")
+            })?;
+            ConfigStore::initialize_prerelease(target, normal.join("vosu.toml")).await
+        }
+    }
+}
+
 pub(super) struct NetworkChange {
     generation: Arc<()>,
     deadline: tokio::time::Instant,

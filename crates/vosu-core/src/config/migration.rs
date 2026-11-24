@@ -137,7 +137,7 @@ pub(super) fn initialize_file(
 /// documented on `vosu_sys::platform::atomic_replace`. A genuinely first-run,
 /// never-published path still surfaces `None` here, after that helper's
 /// bounded retry latency (at most ~50ms on Windows).
-fn read_authoritative(path: &Path) -> io::Result<Option<String>> {
+pub(super) fn read_authoritative(path: &Path) -> io::Result<Option<String>> {
     match vosu_sys::platform::read_published(path) {
         Ok(bytes) => String::from_utf8(bytes)
             .map(Some)
@@ -158,7 +158,7 @@ fn is_known(binding: &str) -> bool {
         .any(|item| item.binding == binding)
 }
 
-fn legacy_table(values: &HashMap<String, String>) -> toml::Table {
+pub(super) fn legacy_table(values: &HashMap<String, String>) -> toml::Table {
     let mut table = toml::Table::new();
     for item in DEFAULT_SCHEMA.items() {
         let Some(raw) = values.get(item.binding) else {
@@ -277,7 +277,7 @@ fn parse_real_number(raw: &str) -> Option<f64> {
 
 /// Parses the dotenv forms used by the legacy source files. Later duplicate
 /// bindings replace earlier ones, matching `dotenv.parse`.
-fn parse_env(content: &str) -> HashMap<String, String> {
+pub(super) fn parse_env(content: &str) -> HashMap<String, String> {
     let mut parsed = HashMap::new();
 
     for original_line in content.lines() {

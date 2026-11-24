@@ -4,7 +4,7 @@ use vosu_plugin_api::{
     ResourceResolved, decode, encode,
 };
 
-const BASE: &str = "kind='plugin'\nmanifest_version=1\nid='test.actions.plugin'\nname='Actions'\nversion='1.0.0'\nhost='>=1.0.0'\nabi_version=1\nruntime='in-process'\n";
+const BASE: &str = "kind='plugin'\nmanifest_version=1\nid='test.actions.plugin'\nname='Actions'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
 
 fn declaration(name: &str, session: &str) -> String {
     format!(

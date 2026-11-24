@@ -233,6 +233,10 @@ replaces = []                     # optional, default []; grammar matches `id`'s
 - `manifest_version` is the `manifest.toml` *format*'s own version, shared
   by every kind; it is unrelated to a plugin's ABI major version
   (`abi_version`, below) or to any package's own `version`.
+- `host` is matched against the daemon application version, not the independent
+  SDK or ABI version. Alpha packages must explicitly include the prerelease,
+  for example `host = ">=2.0.0-alpha.1, <3.0.0"` for this alpha. A stable-only
+  range such as `>=2.0.0` does not match `2.0.0-alpha.1`.
 - `kind` selects which of the per-kind sections below apply; a field from a
   section that does not apply to the declared `kind` is a manifest
   validation error (for example `[ui]` on `kind = "plugin"`, or `runtime` on

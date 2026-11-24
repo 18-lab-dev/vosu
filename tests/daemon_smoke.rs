@@ -18,37 +18,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use vosu::counters::SettingsStore;
 
-struct ChildGuard(Option<Child>);
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        if let Some(child) = self.0.as_mut() {
-            let _ = child.kill();
-            let _ = vosu_proptest::wait::child(child);
-        }
-    }
-}
-
-fn available_port() -> u16 {
-    TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
-fn legacy_config(port: u16, static_root: &Path) -> String {
-    format!(
-        "ENABLE_AUTOUPDATE=false\nOPEN_DASHBOARD_ON_STARTUP=false\nDEBUG_LOG=false\nPOLL_RATE=150\nPRECISE_DATA_POLL_RATE=10\nSERVER_IP=127.0.0.1\nSERVER_PORT={port}\nDASHBOARD_IP=127.0.0.1\nDASHBOARD_PORT=0\nSTATIC_FOLDER_PATH={}\nALLOWED_IPS=127.0.0.1,localhost,absolute\n",
-        static_root.display(),
-    )
-}
-
-fn toml_config(port: u16, static_root: &Path) -> String {
-    let static_root = toml::Value::String(static_root.to_string_lossy().into_owned());
-    format!(
-        "ENABLE_AUTOUPDATE = false\nOPEN_DASHBOARD_ON_STARTUP = false\nDEBUG_LOG = false\nPOLL_RATE = 150\nPRECISE_DATA_POLL_RATE = 10\nSERVER_IP = \"127.0.0.1\"\nSERVER_PORT = {port}\nDASHBOARD_IP = \"127.0.0.1\"\nDASHBOARD_PORT = 0\nSTATIC_FOLDER_PATH = {static_root}\nALLOWED_IPS = \"127.0.0.1,localhost,absolute\"\n"
-    )
-}
+include!("daemon_smoke/roots.rs");
 
 async fn wait_get(client: &reqwest::Client, url: &str) -> reqwest::Response {
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -94,7 +64,10 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     let config_home = roots.path().join("config");
     let data_home = roots.path().join("data");
     let cache_home = roots.path().join("cache");
-    let settings_root = config_home.join("vosu").join("settings");
+    let channel = smoke_channel();
+    let selected_config = channel.root(config_home.join("vosu"));
+    let selected_data = channel.root(data_home.join("vosu"));
+    let settings_root = selected_config.join("settings");
     let static_root = roots.path().join("counter-static");
     let counter = static_root.join("seeded-counter");
     fs::create_dir_all(&counter).unwrap();
@@ -141,7 +114,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     // The old `tosu` root and both env filenames are one-time migration inputs.
     // The newer legacy filename must win over `tosu.env` for every binding.
     let old_config_dir = config_home.join("tosu");
-    let current_config = config_home.join("vosu").join("vosu.toml");
+    let current_config = selected_config.join("vosu.toml");
     fs::create_dir_all(&old_config_dir).unwrap();
     let port = available_port();
     fs::write(
@@ -154,7 +127,17 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         legacy_config(1, &static_root),
     )
     .unwrap();
-    let old_settings_dir = old_config_dir.join("settings");
+    let old_settings_dir = if channel == vosu_sys::platform::BuildChannel::Release {
+        old_config_dir.join("settings")
+    } else {
+        fs::create_dir_all(&selected_config).unwrap();
+        fs::write(
+            selected_config.join("vosu.env"),
+            legacy_config(port, &static_root),
+        )
+        .unwrap();
+        selected_config.join("settings")
+    };
     fs::create_dir_all(&old_settings_dir).unwrap();
     let legacy_values_json = br#"{"title":"persisted seeded"}"#;
     fs::write(
@@ -716,7 +699,9 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     );
 
     // Native brokers authenticate explicitly, without forging browser provenance.
-    let broker_path = roots.path().join("runtime/vosu/broker.json");
+    let broker_path = channel
+        .root(roots.path().join("runtime/vosu"))
+        .join("broker.json");
     let credential: serde_json::Value =
         serde_json::from_slice(&fs::read(&broker_path).unwrap()).unwrap();
     assert_eq!(credential["version"], 1);
@@ -1086,12 +1071,19 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
     assert!(!counter.exists());
 
     assert!(current_config.is_file(), "migrated config missing");
-    assert!(!config_home.join("vosu/vosu.env").exists());
-    assert!(!config_home.join("vosu/tosu.env").exists());
-    assert!(
-        !old_config_dir.exists(),
-        "legacy config root was not removed"
-    );
+    assert!(!selected_config.join("vosu.env").exists());
+    assert!(!selected_config.join("tosu.env").exists());
+    if channel == vosu_sys::platform::BuildChannel::Release {
+        assert!(
+            !old_config_dir.exists(),
+            "legacy config root was not removed"
+        );
+    } else {
+        assert!(
+            old_config_dir.is_dir(),
+            "alpha must not migrate normal legacy roots"
+        );
+    }
 
     let pid = child.0.as_ref().unwrap().id() as libc::pid_t;
     // SAFETY: `libc::kill` with a valid pid and signal number has no memory
@@ -1112,7 +1104,7 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    let latest_log = fs::read_to_string(data_home.join("vosu").join("logs").join("latest.log"))
+    let latest_log = fs::read_to_string(selected_data.join("logs").join("latest.log"))
         .expect("read flushed production daemon log");
     let info_messages: Vec<&str> = latest_log
         .lines()
@@ -1133,5 +1125,5 @@ async fn production_binary_smoke_uses_public_only_policy_and_cleans_up() {
         "production log missing dashboard URL:\n{latest_log}"
     );
 
-    assert_no_update_artifacts(&cache_home.join("vosu"));
+    assert_no_update_artifacts(&channel.root(cache_home.join("vosu")));
 }

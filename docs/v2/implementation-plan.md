@@ -909,8 +909,11 @@ version `""`, lazer with its deps version. The plugin owns its runtime.
 Reader/state `vosu-sys` edges remain until M5 (DC); reader `vosu-net` owns
 hardened generator extraction (DD). Offsets now use
 `<data>/plugins/vosu.osu/offsets`; old `<cache>/offsets` is not migrated (DH).
-The bundled manifest's `>=1.2.0, <3.0.0` host range must be revisited at M8's
-2.0.0 version bump; enforcement belongs to M6a, not this cutover.
+M3 D1 activates the root application at `2.0.0-alpha.1`, independently of the
+SDK version. Host ranges intended for this alpha must explicitly include its
+prerelease tuple (for example `>=2.0.0-alpha.1, <3.0.0`); `>=2.0.0` and the
+old `>=1.2.0, <3.0.0` range do not match it under semver prerelease rules.
+M8 still owns the final `2.0.0` release; range enforcement belongs to M6a.
 
 D17 M1 remains open: the stable PlanMemory microbench measures 2.65x native
 (3.22 vs 1.22 µs per capture, about 71 ns per plan plus 12 ns per op,

@@ -103,7 +103,7 @@ pub(super) fn session_manifest(plugin_id: &str, process_names: &[&str]) -> Strin
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=[{names}]\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=[{names}]\n"
     )
 }
 
@@ -163,7 +163,7 @@ pub(super) fn create_session_instance_from_manifest(
 /// [`create_session_instance_from_manifest`]'s doc comment.
 pub(super) fn session_manifest_by_path_suffix(plugin_id: &str, name: &str) -> String {
     format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_path_patterns=['.*/{name}']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_path_patterns=['.*/{name}']\n"
     )
 }
 

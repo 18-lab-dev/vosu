@@ -795,7 +795,7 @@ pub async fn run_cli() -> io::Result<()> {
             Some(readiness)
         }
     };
-    let config = Arc::new(ConfigStore::initialize(paths.config().join("vosu.toml")).await?);
+    let config = Arc::new(super::config::initialize_startup_config(&paths, channel).await?);
     if ordinary_role
         && let Ok(target) = dashboard_listen_target(&config.current())
         && let Some(url) = vosu_core::desktop::existing_dashboard(&target.host, target.port).await

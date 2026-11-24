@@ -33,7 +33,7 @@ use super::helpers::{SilentConsole, test_host};
 /// manifest/entry mismatch).
 fn schema_manifest(plugin_id: &str) -> String {
     format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\nsettings_schema='settings.schema.json'\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\nsettings_schema='settings.schema.json'\n"
     )
 }
 
@@ -42,7 +42,7 @@ fn schema_manifest(plugin_id: &str) -> String {
 /// shape, unlike [`schema_manifest`]).
 fn plain_manifest(plugin_id: &str) -> String {
     format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n"
     )
 }
 

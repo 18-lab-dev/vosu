@@ -28,7 +28,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 import zlib
-from tool_host_smoke import ROOT, DASHBOARD, curl, wait_for
+from tool_host_smoke import ROOT, DASHBOARD, channel_root, curl, wait_for
 
 ART_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
 HOSTILE_ICON = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -116,8 +116,8 @@ def main():
             path = root / directory
             path.mkdir(mode=0o700)
             environment[variable] = str(path)
-        config = root / 'config/vosu'
-        config.mkdir()
+        config = channel_root(binary, root / 'config/vosu')
+        config.mkdir(parents=True)
         (config / 'vosu.toml').write_text('''ENABLE_AUTOUPDATE = false
 OPEN_DASHBOARD_ON_STARTUP = false
 DEBUG_LOG = false

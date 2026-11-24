@@ -196,7 +196,7 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
             )),
         )
         .unwrap();
-    let manifest = vosu_plugin_api::PluginManifest::parse("kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu'\nversion='1.0.0'\nhost='>=1.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:vosu.osu'\nversion='1.2.0'\nschema='osu.json'\n").unwrap();
+    let manifest = vosu_plugin_api::PluginManifest::parse("kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='osu'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:vosu.osu'\nversion='1.2.0'\nschema='osu.json'\n").unwrap();
     let grant = PublisherGrant::from_manifest(&manifest).unwrap();
     host.state().store.close_session(SessionKey(handle));
     host.state().store.open_session(

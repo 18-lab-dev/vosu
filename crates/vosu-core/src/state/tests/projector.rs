@@ -170,7 +170,7 @@ fn grant_exposes_only_named_subtree() {
 fn manifest_with(entries: &str) -> vosu_plugin_api::PluginManifest {
     let text = format!(
         "kind='plugin'\nmanifest_version=1\nid='acme.tool'\nname='Acme Tool'\n\
-         version='1.0.0'\nhost='>=2.0.0, <3.0.0'\nabi_version=1\n\
+         version='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\n\
          runtime='in-process'\n\n{entries}"
     );
     vosu_plugin_api::PluginManifest::parse(&text).expect("parses")

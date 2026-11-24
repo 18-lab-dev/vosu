@@ -168,7 +168,7 @@ fn development_plugin_dir() -> tempfile::TempDir {
     std::fs::write(
         dir.path().join("manifest.toml"),
         format!(
-            "kind='plugin'\nmanifest_version=1\nid='acme.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[targets.{}]\nlibrary='lib/{}'\n",
+            "kind='plugin'\nmanifest_version=1\nid='acme.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[targets.{}]\nlibrary='lib/{}'\n",
             current_target_triple(),
             filename.to_str().expect("the cdylib filename is UTF-8"),
         ),
@@ -259,7 +259,7 @@ fn development_settings_schema_is_read_from_the_manifest_dir() {
     std::fs::write(
         dir.path().join("manifest.toml"),
         format!(
-            "kind='plugin'\nmanifest_version=1\nid='acme.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\nsettings_schema='settings.schema.json'\n\n[targets.{}]\nlibrary='lib/{}'\n",
+            "kind='plugin'\nmanifest_version=1\nid='acme.testkit.echo'\nname='Testkit Echo'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\nsettings_schema='settings.schema.json'\n\n[targets.{}]\nlibrary='lib/{}'\n",
             current_target_triple(),
             filename.to_str().expect("the cdylib filename is UTF-8"),
         ),
@@ -378,7 +378,7 @@ fn plugin_host_runs_the_host_services_testkit_plugin_end_to_end() {
     let host =
         vosu_core::plugin::PluginHost::new(logger.clone(), settings, runtime.handle().clone());
 
-    let manifest = "kind='plugin'\nmanifest_version=1\nid='acme.testkit.host-services'\nname='Host Services Testkit'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n";
+    let manifest = "kind='plugin'\nmanifest_version=1\nid='acme.testkit.host-services'\nname='Host Services Testkit'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n";
     let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
         manifest,
         settings_schema: None,
@@ -527,7 +527,7 @@ fn injected_session_memory_answers_a_sync_plan() {
     let plugin_id = "acme.testkit.readplan.injected";
     let (events, commands) = vosu_plugin_testkit::read_plan::register(plugin_id);
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-injected']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-injected']\n"
     );
     let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
         manifest: &manifest,
@@ -677,7 +677,7 @@ fn injected_session_memory_resolves_no_modules_for_a_scan() {
     let plugin_id = "acme.testkit.scan.injected";
     let (events, commands) = vosu_plugin_testkit::scan::register(plugin_id);
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-scan-injected']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-scan-injected']\n"
     );
     let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
         manifest: &manifest,

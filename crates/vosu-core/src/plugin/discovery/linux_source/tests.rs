@@ -92,7 +92,7 @@ fn create_session_instance(
 ) -> Receiver<SessionEvent> {
     let events = session::register_with_config(plugin_id, SessionPluginConfig::default());
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{comm}']\ncomm_hints=['{comm}']\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['{comm}']\ncomm_hints=['{comm}']\n"
     );
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest,

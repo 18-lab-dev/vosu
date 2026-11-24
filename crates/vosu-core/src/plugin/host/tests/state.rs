@@ -392,7 +392,7 @@ fn development_schema_with_x_visibility_refuses_instance() {
         "x86_64-unknown-linux-gnu"
     };
     let manifest = format!(
-        "kind='plugin'\nmanifest_version=1\nid='test.k4.development'\nname='Development'\nversion='1.0.0'\nhost='*'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:test.k4.development'\nversion='1.0.0'\nschema='schema.json'\n[targets.{target}]\nlibrary='{library}'\n"
+        "kind='plugin'\nmanifest_version=1\nid='test.k4.development'\nname='Development'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:test.k4.development'\nversion='1.0.0'\nschema='schema.json'\n[targets.{target}]\nlibrary='{library}'\n"
     );
     std::fs::write(dir.path().join("manifest.toml"), manifest).unwrap();
     std::fs::write(dir.path().join("schema.json"), r#"{"title":"test.k4.development","version":"1.0.0","type":"object","properties":{"internal":{"type":"object","x-visibility":"plugins"}}}"#).unwrap();
@@ -423,7 +423,7 @@ fn development_schema_symlink_cannot_escape_plugin_directory() {
     let dir = tempfile::tempdir().unwrap();
     let outside = tempfile::NamedTempFile::new().unwrap();
     std::os::unix::fs::symlink(outside.path(), dir.path().join("schema.json")).unwrap();
-    std::fs::write(dir.path().join("manifest.toml"), "kind='plugin'\nmanifest_version=1\nid='test.k4.confine'\nname='Confine'\nversion='1.0.0'\nhost='*'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:test.k4.confine'\nversion='1.0.0'\nschema='schema.json'\n").unwrap();
+    std::fs::write(dir.path().join("manifest.toml"), "kind='plugin'\nmanifest_version=1\nid='test.k4.confine'\nname='Confine'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:test.k4.confine'\nversion='1.0.0'\nschema='schema.json'\n").unwrap();
     assert!(
         matches!(registry::load_development(dir.path(), true), Err(crate::plugin::HostError::Io(error)) if error.kind() == std::io::ErrorKind::PermissionDenied)
     );

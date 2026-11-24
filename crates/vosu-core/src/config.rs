@@ -5,6 +5,7 @@ mod io;
 mod migration;
 mod network;
 mod parser;
+mod prerelease;
 mod reload;
 mod schema;
 mod store;

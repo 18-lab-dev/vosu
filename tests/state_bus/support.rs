@@ -169,7 +169,7 @@ impl Drop for Harness {
 }
 pub fn manifest(id: &str) -> String {
     format!(
-        "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='{id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n"
+        "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='{id}'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n"
     )
 }
 pub fn record(pid: u32, id: &str) -> plugin::ProcessRecord {

@@ -95,7 +95,7 @@ fn log_for(plugin_id: &str) -> Log {
 
 fn manifest(id: &str, extra: &str) -> String {
     format!(
-        "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Test'\nversion='1.0.0'\nhost='>=2.0.0, <3.0.0'\nabi_version=1\nruntime='in-process'\n{extra}"
+        "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Test'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n{extra}"
     )
 }
 
@@ -192,7 +192,7 @@ mod dummy_plugin {
 
 #[test]
 fn bundled_manifest_requesting_process_runtime_is_rejected() {
-    let text = "kind='plugin'\nmanifest_version=1\nid='acme.test'\nname='Test'\nversion='1.0.0'\nhost='>=2.0.0, <3.0.0'\nabi_version=1\nruntime='process'\n";
+    let text = "kind='plugin'\nmanifest_version=1\nid='acme.test'\nname='Test'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='process'\n";
     expect_in_process_refused(registry::load_bundled(&[registry::BundledPlugin {
         manifest: text,
         settings_schema: None,

@@ -10,8 +10,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Resolve storage roots and CLI/daemon broker paths from the executable's
   release channel before creating directories. Prerelease versions isolate
   config, data, cache and broker files under `prerelease/` and never migrate
-  normal legacy roots. Explicit static-directory overrides remain user-controlled;
-  automatic read-only settings import and alpha activation follow separately.
+  normal legacy roots. Activate `2.0.0-alpha.1` with a one-time, read-only
+  import of 1.x settings; copied static paths reset to the isolated default.
+  Explicit overrides in alpha's own config remain user-controlled.
 
 ## Unreleased — 2.0 M2
 

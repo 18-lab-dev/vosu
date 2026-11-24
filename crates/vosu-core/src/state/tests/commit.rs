@@ -11,7 +11,7 @@ manifest_version = 1
 id = "{id}"
 name = "Commit test"
 version = "1.0.0"
-host = "*"
+host='>=2.0.0-alpha.1, <3.0.0'
 abi_version = 1
 runtime = "in-process"
 covers = [{covers}]

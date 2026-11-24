@@ -64,11 +64,38 @@ impl ConfigStore {
         path: impl Into<PathBuf>,
         options: ConfigStoreOptions,
     ) -> io::Result<Self> {
-        let path = absolute_config_path(path.into())?;
+        Self::initialize_inner(path.into(), options, None).await
+    }
+
+    /// Initializes alpha settings, importing normal settings read-only only
+    /// when no alpha configuration or alpha migration inputs exist.
+    pub async fn initialize_prerelease(
+        path: impl Into<PathBuf>,
+        source: impl Into<PathBuf>,
+    ) -> io::Result<Self> {
+        Self::initialize_inner(
+            path.into(),
+            ConfigStoreOptions::default(),
+            Some(source.into()),
+        )
+        .await
+    }
+
+    async fn initialize_inner(
+        path: PathBuf,
+        options: ConfigStoreOptions,
+        source: Option<PathBuf>,
+    ) -> io::Result<Self> {
+        let path = absolute_config_path(path)?;
         let initialize_path = path.clone();
         let initialize_replace = options.atomic_replace.clone();
-        let initial = tokio::task::spawn_blocking(move || {
-            initialize_file(&initialize_path, initialize_replace.as_ref())
+        let initial = tokio::task::spawn_blocking(move || match source {
+            Some(source) => super::prerelease::initialize(
+                &initialize_path,
+                &source,
+                initialize_replace.as_ref(),
+            ),
+            None => initialize_file(&initialize_path, initialize_replace.as_ref()),
         })
         .await
         .map_err(join_error)??;

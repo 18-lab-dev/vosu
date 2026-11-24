@@ -153,7 +153,7 @@ fn a_timer_set_during_create_that_fires_before_registration_is_queued_and_replay
         .insert(plugin_id.to_owned(), Arc::clone(&gate));
 
     let manifest_text = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='Gated Timer'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='Gated Timer'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n"
     );
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest_text,
@@ -283,7 +283,7 @@ fn destroy_all_does_not_leak_an_instance_still_creating_when_it_races() {
     race_gated_plugin::DESTROYED.store(false, Ordering::SeqCst);
 
     let manifest_text = format!(
-        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='Race Gated'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n"
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='Race Gated'\nversion='0.1.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n"
     );
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest_text,

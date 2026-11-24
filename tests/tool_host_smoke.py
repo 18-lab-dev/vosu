@@ -15,6 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 OVERLAY = 'http://127.0.0.1:25150'
 DASHBOARD = 'http://127.0.0.1:25151'
 
+def channel_root(binary, normal_root):
+    """Select fixtures from the actual executable version, not build mode."""
+    version = subprocess.check_output([str(binary), '--version'], text=True, timeout=10).strip().split()[-1]
+    return normal_root / 'prerelease' if '-' in version.split('+', 1)[0] else normal_root
+
+
 
 def curl(path, *, dashboard=False, method='GET', headers=None, data=None):
     url = (DASHBOARD if dashboard else OVERLAY) + path
@@ -59,8 +65,8 @@ def main():
             path = root / directory
             path.mkdir(mode=0o700)
             environment[variable] = str(path)
-        config = root / 'config/vosu'
-        config.mkdir()
+        config = channel_root(binary, root / 'config/vosu')
+        config.mkdir(parents=True)
         (config / 'vosu.toml').write_text('''ENABLE_AUTOUPDATE = false
 OPEN_DASHBOARD_ON_STARTUP = false
 DEBUG_LOG = false
@@ -131,7 +137,7 @@ ALLOWED_IPS = "127.0.0.1,localhost,absolute"
                 daemon.send_signal(signal.SIGTERM)
                 assert daemon.wait(timeout=15) == 0
                 assert child_pid is not None and not Path(f'/proc/{child_pid}').exists()
-                marker = root / 'data/vosu/tool-data/fixture/stdin-closed'
+                marker = channel_root(binary, root / 'data/vosu') / 'tool-data/fixture/stdin-closed'
                 assert marker.read_text() == 'yes'
                 print('vosu SIGTERM -> exit 0; child stdin EOF marker=yes; no orphaned child')
             except BaseException:
