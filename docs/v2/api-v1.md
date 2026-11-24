@@ -301,7 +301,7 @@ files are resources the state refers to, never "current file" lookups.
 
 | Route | Serves | Cache-Control | ETag |
 | --- | --- | --- | --- |
-| `GET`/`HEAD /api/v1/resources/{id}` | one file; a single validated byte range | `public, max-age=31536000, immutable` | strong, content-derived |
+| `GET`/`HEAD /api/v1/resources/{id}` | one file; a single validated byte range | `public, max-age=31536000, immutable` | strong, representation-identity-derived |
 | `GET /api/v1/trees/{id}/` | `{"entries":[{"path","size","type","hash"?}],"truncated":bool,"revision":string}` | `no-cache` (store, revalidate) | strong, revalidated |
 | `GET`/`HEAD /api/v1/trees/{id}/{path}` | one file via the plugin's own lookup rules | `no-cache` | strong, revalidated |
 | `GET /api/v1/sessions/{id\|active}/chart/{file\|audio\|background}`, `/api/v1/sessions/{id\|active}/skin/{path}` | `307` to the current resource URL | `no-store` | none |
@@ -322,12 +322,19 @@ later, so the served `Content-Type` for that id is its published type for the
 id's whole lifetime, even if the underlying file later changes. Each tree
 entry is typed independently of its tree's own `name`, from that entry's own
 `path` in the validated index (below). `content_id` is the plugin's content
-identity and feeds the ETag. Mutable stable assets require an immutable
-snapshot, prepared on a cold worker when source facts change, not on capture
-ticks. Changed bytes require a new content identity and publication; an old id
-serves only its original representation or returns 410 after invalidation,
-never silently changed bytes. A path/size/mtime digest alone is not an immutable
-representation. Ids are stable across restarts, unguessable, and
+identity and feeds the ETag. Mutable assets use a disk-backed metadata identity,
+prepared on a cold worker when source facts change, never on capture ticks.
+The opened file's identity includes size and, on Unix, device/inode plus
+nanosecond mtime and ctime; on Windows it includes volume serial, file id,
+LastWriteTime and FILE_BASIC_INFO.ChangeTime. No representation bytes are retained
+in RAM. Each disk stream re-verifies its opened handle immediately before reading
+and after each bounded read, discarding the chunk and returning 410 on mismatch.
+Changed identity requires a new publication and id; an old id serves only its
+original representation or returns 410, never silently changed bytes. Unix ctime
+detects in-place writes even if a user restores size and mtime. Residual risk:
+a privileged Windows actor that resets ChangeTime as well as LastWriteTime can
+defeat this metadata identity; it is not a cryptographic content hash. Ids are
+stable across restarts, unguessable, and
 serve only from a bounded in-memory registry of currently published
 references — there is no route to browse a game folder, and core never
 serves a file that the current state or a published tree index did not

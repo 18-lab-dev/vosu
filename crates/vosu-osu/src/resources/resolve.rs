@@ -1,14 +1,15 @@
 use super::{
     Selection,
-    identity::{MAX_SNAPSHOT_BYTES, digest, snapshot},
+    identity::{digest, identity},
     roots::Root,
     set::{Tree, logical},
     skin,
 };
 use std::{
     collections::BTreeMap,
+    io::{Read, Seek, SeekFrom},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -16,6 +17,7 @@ use vosu_plugin_api::{
     CborValue, ResourceRef, ResourceResolved, RootDeclare, StreamChunk, StreamRead,
     VOSU_STREAM_CHUNK_MAX_BYTES,
 };
+use vosu_sys::fs::{FileIdentity, SafeRelativePath};
 
 pub const CHART: &str = "file";
 pub const AUDIO: &str = "audio";
@@ -26,16 +28,22 @@ const MAX_STREAMS: usize = 64;
 
 struct File {
     reference: ResourceRef,
-    bytes: Arc<[u8]>,
+    path: String,
+    identity: FileIdentity,
 }
 
-/// One immutable, cold-prepared selection. Replace the whole selection when
-/// source facts change. Old selections retain old bytes, never new path bytes.
+struct Lease {
+    file: Mutex<std::fs::File>,
+    identity: FileIdentity,
+}
+
+/// One cold-prepared disk-backed selection. Only identity metadata is retained.
+/// A changed file invalidates the old reference rather than serving new bytes.
 pub struct PreparedResources {
     roots: Vec<Root>,
     files: BTreeMap<&'static str, File>,
     trees: BTreeMap<&'static str, (ResourceRef, Tree)>,
-    streams: BTreeMap<u64, Arc<[u8]>>,
+    streams: BTreeMap<u64, Lease>,
     pub(super) next_stream: Arc<AtomicU64>,
 }
 
@@ -56,7 +64,6 @@ impl PreparedResources {
             next_stream: Arc::new(AtomicU64::new(1)),
         };
         if let Some(root) = result.roots.iter().find(|r| r.name == "songs") {
-            let mut total = 0;
             for (kind, path, name) in [
                 (CHART, selection.chart, selection.chart_name),
                 (AUDIO, selection.audio, selection.audio_name),
@@ -65,14 +72,10 @@ impl PreparedResources {
                 let Some(path) = path.and_then(|p| logical(&p)) else {
                     continue;
                 };
-                let Some(bytes) = snapshot(root, &path) else {
+                let Some(identity) = identity(root, &path) else {
                     continue;
                 };
-                if total + bytes.len() > MAX_SNAPSHOT_BYTES {
-                    continue;
-                }
-                total += bytes.len();
-                let content_id = CborValue::Text(digest(&bytes));
+                let content_id = CborValue::Text(digest(&identity.encode()));
                 // Include content identity in the dispatch key: a stale key
                 // cannot resolve to a replacement selection's changed bytes.
                 let key = CborValue::Array(vec![CborValue::Text(path.clone()), content_id.clone()]);
@@ -88,7 +91,8 @@ impl PreparedResources {
                             name,
                             content_id,
                         },
-                        bytes,
+                        path,
+                        identity,
                     },
                 );
             }
@@ -147,12 +151,31 @@ impl PreparedResources {
         if self.streams.len() >= MAX_STREAMS {
             return None;
         }
+        // This is a blocking resource operation, never a capture-tick or Tokio
+        // worker operation. Re-open beneath the retained root and verify that
+        // exact object before granting the lease.
+        let root = self.roots.iter().find(|r| r.name == "songs")?;
+        let opened = SafeRelativePath::parse(&file.path)
+            .ok()
+            .and_then(|path| root.safe.open_child(&path).ok());
+        let Some(opened) = opened else {
+            return Some(ResourceResolved::Error { error: gone() });
+        };
+        if FileIdentity::of(&opened.file).ok() != Some(file.identity) {
+            return Some(ResourceResolved::Error { error: gone() });
+        }
         let stream = self
             .next_stream
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .ok()?;
-        let size = file.bytes.len() as u64;
-        self.streams.insert(stream, Arc::clone(&file.bytes));
+        let size = file.identity.size;
+        self.streams.insert(
+            stream,
+            Lease {
+                file: Mutex::new(opened.file),
+                identity: file.identity,
+            },
+        );
         Some(ResourceResolved::Stream { stream, size })
     }
     pub fn list(&self, kind: &str, key: &CborValue) -> Option<ResourceResolved> {
@@ -174,14 +197,33 @@ impl PreparedResources {
         if request.len as usize > VOSU_STREAM_CHUNK_MAX_BYTES as usize {
             return None;
         }
-        let bytes = self.streams.get(&request.stream)?;
-        let offset = usize::try_from(request.offset).ok()?.min(bytes.len());
-        let end = offset.saturating_add(request.len as usize).min(bytes.len());
+        let lease = self.streams.get(&request.stream)?;
+        // No callback or plugin/host call occurs under this lease-local lock.
+        let mut file = lease.file.lock().unwrap_or_else(|error| error.into_inner());
+        if FileIdentity::of(&file).ok() != Some(lease.identity) {
+            return Some(StreamChunk::Error { error: gone() });
+        }
+        let offset = request.offset.min(lease.identity.size);
+        let len = u64::from(request.len).min(lease.identity.size - offset) as usize;
+        let mut data = vec![0; len];
+        if file.seek(SeekFrom::Start(offset)).is_err()
+            || file.read_exact(&mut data).is_err()
+            || FileIdentity::of(&file).ok() != Some(lease.identity)
+        {
+            return Some(StreamChunk::Error { error: gone() });
+        }
         Some(StreamChunk::Data {
-            data: vosu_plugin_api::CborBytes(bytes[offset..end].to_vec()),
+            data: vosu_plugin_api::CborBytes(data),
         })
     }
     pub fn close(&mut self, stream: u64) {
         self.streams.remove(&stream);
+    }
+}
+
+fn gone() -> vosu_plugin_api::ErrorInfo {
+    vosu_plugin_api::ErrorInfo {
+        code: "gone".into(),
+        message: "resource representation changed or is unavailable".into(),
     }
 }

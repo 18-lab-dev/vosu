@@ -473,8 +473,9 @@ bindings, without retiring an identical reference another live session owns.
 Minting performs no byte open/hash, plugin round trip or HTTP work.
 The opaque key/content identity uses [plugin-abi.md](plugin-abi.md) §6.5's
 deterministic encoding; public ids exclude transient session/instance facts.
-Mutable stable resources use cold-worker immutable snapshots: changed bytes
-get a new id; the old id serves old bytes or 410, never new bytes. Tree files
+Mutable resources use cold-worker disk-backed metadata identities, including
+file identity and change time as specified by API v1. Changed identity gets a new
+id; an old id serves old bytes or 410, never new bytes. Tree files
 require canonical indexed `entry_path` proof, including alias/fallback lookups;
 truncated-away members are not authority to serve. Published internal path
 strings are never root capabilities. [API v1](api-v1.md#id-registry) owns the

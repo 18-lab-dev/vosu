@@ -560,9 +560,14 @@ These are new M3 decisions, not inherited M2 sign-off. Normative homes:
   `invalid_arguments`/`invalid_result`; default core deadline is 30 seconds.
 - MH/R15: API Id registry and ABI §6.5 require canonical indexed `entry_path`
   proof for aliases/fallback, exclude truncated-away entries, retain confinement.
-- MI/R16: API Id registry and state-schema Resource references require cold
-  immutable snapshots of mutable stable assets; changed bytes/new id, old
-  representation or 410, never changed bytes under an old id.
+- MI/R16 (amended 2026-11-24): mutable assets use cold-prepared disk-backed
+  metadata identity, not byte snapshots. Unix identity includes dev/ino, size,
+  nanosecond mtime/ctime; Windows includes volume serial, file id, size,
+  LastWriteTime and FILE_BASIC_INFO.ChangeTime from the opened handle.
+  Re-verify immediately before and after disk reads; a mismatch yields 410
+  and the next publication mints a new id. No steady file-byte retention in RAM.
+  Residual risk is a privileged Windows actor resetting ChangeTime together
+  with LastWriteTime; this is not a cryptographic content hash.
 - ME/R14/R17/R18: API/ABI freeze transient-free restart identity, multi-owner
   membership, deterministic CBOR/duplicate keys, request-owned stream leases,
   exact cleanup and re-resolution after close. MF's prepared binding transaction

@@ -1,6 +1,9 @@
-#![expect(
-    clippy::disallowed_methods,
-    reason = "Tests write isolated temporary resource fixtures"
+#![cfg_attr(
+    test,
+    expect(
+        clippy::disallowed_methods,
+        reason = "Tests write isolated temporary resource fixtures"
+    )
 )]
 
 use super::*;
@@ -93,17 +96,22 @@ fn resources_five_kinds_and_missing_roots_are_not_cwd() {
 }
 
 #[test]
-fn resources_mutable_files_keep_original_bytes_and_new_identity() {
+fn resources_mutable_files_invalidate_old_identity_and_publish_new_identity() {
     let root = fixture();
     let mut old = PreparedResources::prepare(selected(root.path()));
     let old_ref = reference(&old, CHART);
+    let old_lease = stream(&mut old, &old_ref);
     fs::write(root.path().join("map.osu"), b"mutant chart").unwrap();
     let mut new = PreparedResources::prepare(selected(root.path()));
     let new_ref = reference(&new, CHART);
     assert_ne!(old_ref.content_id, new_ref.content_id);
     assert_ne!(old_ref.key, new_ref.key);
-    let lease = stream(&mut old, &old_ref);
-    assert_eq!(bytes(&old, lease, 0, 100), b"stable chart");
+    assert!(matches!(old.resolve(CHART, &old_ref.key),
+        Some(ResourceResolved::Error { error }) if error.code == "gone"));
+    assert!(
+        matches!(old.read(StreamRead { stream: old_lease, offset: 0, len: 100 }),
+        Some(StreamChunk::Error { error }) if error.code == "gone")
+    );
     assert!(new.resolve(CHART, &old_ref.key).is_none());
     let lease = stream(&mut new, &new_ref);
     assert_eq!(bytes(&new, lease, 0, 100), b"mutant chart");
@@ -256,7 +264,7 @@ fn resources_truncated_index_never_authorizes_omitted_member() {
 
 #[cfg(unix)]
 #[test]
-fn resources_symlink_escape_never_becomes_indexed_or_snapshotted() {
+fn resources_symlink_escape_never_becomes_indexed_or_prepared() {
     let root = fixture();
     let outside = fixture();
     std::os::unix::fs::symlink(
@@ -340,4 +348,58 @@ fn resources_skin_exact_beats_folded_alias_and_failed_open_can_recover() {
     let reference = reference(&recovered, CHART);
     let lease = stream(&mut recovered, &reference);
     assert_eq!(bytes(&recovered, lease, 0, 100), b"late arrival");
+}
+
+#[test]
+fn resources_same_size_write_with_restored_mtime_invalidates_via_change_time() {
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    let root = fixture();
+    let path = root.path().join("map.osu");
+    let before = fs::metadata(&path).unwrap();
+    let before_identity = vosu_sys::fs::FileIdentity::of(&fs::File::open(&path).unwrap())
+        .unwrap()
+        .encode();
+    let mut prepared = PreparedResources::prepare(selected(root.path()));
+    let reference = reference(&prepared, CHART);
+    let lease = stream(&mut prepared, &reference);
+    let mut writer = fs::OpenOptions::new().write(true).open(&path).unwrap();
+    writer.write_all(b"mutant chart").unwrap();
+    writer
+        .set_times(fs::FileTimes::new().set_modified(before.modified().unwrap()))
+        .unwrap();
+    drop(writer);
+    let after = fs::metadata(&path).unwrap();
+    let after_identity = vosu_sys::fs::FileIdentity::of(&fs::File::open(&path).unwrap())
+        .unwrap()
+        .encode();
+    assert_eq!(before_identity[1..33], after_identity[1..33]);
+    assert_eq!(before_identity[33..49], after_identity[33..49]);
+    assert_ne!(before_identity[49..65], after_identity[49..65]);
+    assert_eq!(before.len(), after.len());
+    assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+    #[cfg(unix)]
+    {
+        assert_eq!(before.dev(), after.dev());
+        assert_eq!(before.ino(), after.ino());
+        assert_eq!(
+            (before.mtime(), before.mtime_nsec()),
+            (after.mtime(), after.mtime_nsec())
+        );
+        assert_ne!(
+            (before.ctime(), before.ctime_nsec()),
+            (after.ctime(), after.ctime_nsec())
+        );
+    }
+    assert!(matches!(prepared.resolve(CHART, &reference.key),
+        Some(ResourceResolved::Error { error }) if error.code == "gone"));
+    assert!(
+        matches!(prepared.read(StreamRead { stream: lease, offset: 0, len: 100 }),
+        Some(StreamChunk::Error { error }) if error.code == "gone")
+    );
+    let replacement = PreparedResources::prepare(selected(root.path()));
+    let replacement_ref = self::reference(&replacement, CHART);
+    assert_ne!(reference.content_id, replacement_ref.content_id);
+    assert_ne!(reference.key, replacement_ref.key);
 }
