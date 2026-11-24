@@ -173,3 +173,36 @@ fn whole_namespace_requirement_does_not_grant_internal() {
     };
     assert!(obj.get("internal").is_none());
 }
+
+#[test]
+fn from_manifest_grants_only_internal_subtrees_requires_and_optional_name() {
+    let text = "kind='plugin'\nmanifest_version=1\nid='acme.tool'\nname='Acme Tool'\n\
+                version='1.0.0'\nhost='>=2.0.0, <3.0.0'\nabi_version=1\n\
+                runtime='in-process'\n\n\
+                [[requires]]\nid='field:vosu.osu.internal.paths.stable'\nversion='^1.0.0'\n\n\
+                [[optional]]\nid='field:vosu.osu.internal'\nversion='^1.0.0'\n\n\
+                [[optional]]\nid='field:vosu.play.combo'\nversion='^1.0.0'\n\n\
+                [[optional]]\nid='field:vosu.osu'\nversion='^1.0.0'\n";
+    let manifest = vosu_plugin_api::PluginManifest::parse(text).expect("parses");
+    let grant = InternalGrant::from_manifest(&manifest);
+
+    let (reg, state) = session();
+    let osu = state.namespace("vosu.osu").unwrap();
+    let projected = project_namespace(&reg, "vosu.osu", osu, Audience::Plugin(&grant));
+    let StateValue::Object(obj) = &*projected else {
+        panic!("vosu.osu projects to an object");
+    };
+    // `field:vosu.osu.internal` (bare, in `optional`) already grants the
+    // whole subtree, so both `paths.stable` and `paths.lazer` are visible;
+    // the unrelated `field:vosu.play.combo` and the whole-namespace
+    // `field:vosu.osu` entries name nothing under `/internal` and
+    // contribute no subtree (MG).
+    let StateValue::Object(internal) = obj.get("internal").expect("internal present") else {
+        panic!("internal is an object");
+    };
+    let StateValue::Object(paths) = internal.get("paths").expect("paths present") else {
+        panic!("paths is an object");
+    };
+    assert!(paths.get("stable").is_some());
+    assert!(paths.get("lazer").is_some());
+}

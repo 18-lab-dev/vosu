@@ -46,17 +46,24 @@ impl InternalGrant {
         Self { subtrees }
     }
 
-    /// Resolves a grant from a plugin's manifest. `docs/v2/catalog-v2.md`'s
-    /// `[[requires]]`/`[[optional]]` capability-id parsing is K0's scope;
-    /// `vosu_plugin_api::PluginManifest` does not carry those fields in
-    /// this freeze (`crates/vosu-plugin-api/src/manifest.rs`), so no
-    /// manifest can yet declare an internal subtree and this always
-    /// returns [`InternalGrant::none`]. Once K0 lands `requires`/`optional`
-    /// parsing, this resolves the same way: collect every entry whose id is
-    /// `field:vosu.osu.internal` or names a pointer below it, namespace-
-    /// stripped.
-    pub fn from_manifest(_manifest: &vosu_plugin_api::PluginManifest) -> Self {
-        Self::none()
+    /// Resolves a grant from a plugin's manifest (ss:342-349, MG):
+    /// every `requires`/`optional` entry whose `field:` id is
+    /// `vosu.osu.internal` or names a pointer below it, namespace-stripped
+    /// (`vosu_plugin_api::field_to_pointer`). A whole-namespace
+    /// `field:vosu.osu` entry resolves to the root pointer `""`, which does
+    /// not start with `/internal`, so it grants nothing here — matching
+    /// MG's "a whole-namespace `field:vosu.osu` requirement does not grant
+    /// it".
+    pub fn from_manifest(manifest: &vosu_plugin_api::PluginManifest) -> Self {
+        let subtrees = manifest
+            .requires
+            .iter()
+            .chain(manifest.optional.iter())
+            .filter_map(|cap| vosu_plugin_api::field_to_pointer("vosu.osu", &cap.id))
+            .filter(|ptr| ptr == "/internal" || ptr.starts_with("/internal/"))
+            .filter_map(|ptr| Pointer::parse(&ptr).ok())
+            .collect();
+        Self { subtrees }
     }
 
     /// Whether every token of `subtree` is covered by a granted subtree

@@ -56,12 +56,6 @@ impl Pointer {
         Ok(Self(tokens.into_boxed_slice()))
     }
 
-    /// Builds a pointer directly from already-decoded tokens (the schema
-    /// walker's property path), skipping escaping/parsing entirely.
-    pub(super) fn from_tokens(tokens: Vec<Box<str>>) -> Self {
-        Self(tokens.into_boxed_slice())
-    }
-
     /// The decoded reference tokens, in order.
     pub fn tokens(&self) -> &[Box<str>] {
         &self.0
@@ -197,8 +191,20 @@ mod tests {
             tokens in proptest::collection::vec("[ -~]{0,6}", 0..5)
         ) {
             let boxed: Vec<Box<str>> = tokens.iter().map(|s| Box::from(s.as_str())).collect();
-            let original = Pointer::from_tokens(boxed.clone());
-            let encoded = original.to_string();
+            // Encode independently of `Pointer`'s own `Display` (an oracle,
+            // not a round-trip through the type under test): `~` -> `~0`,
+            // `/` -> `~1`, everything else verbatim.
+            let encoded = tokens.iter().fold(String::new(), |mut s, token| {
+                s.push('/');
+                for ch in token.chars() {
+                    match ch {
+                        '~' => s.push_str("~0"),
+                        '/' => s.push_str("~1"),
+                        other => s.push(other),
+                    }
+                }
+                s
+            });
             let parsed = Pointer::parse(&encoded).expect("round-trip parses");
             proptest::prop_assert_eq!(parsed.tokens(), boxed.as_slice());
         }
