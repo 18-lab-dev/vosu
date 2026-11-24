@@ -251,6 +251,26 @@ impl PluginHost {
             runtime,
             None,
             super::session::IDENTIFICATION_TIMEOUT,
+            StateRuntime::new(),
+        )
+    }
+
+    /// Composition injects one shared registry with a persisted secret. The
+    /// caller chooses its channel-aware data path and checks
+    /// [`crate::state::ReferenceStore::is_persistent`] before starting services.
+    pub fn new_with_resources(
+        logger: Logger,
+        settings: Arc<PluginSettingsService>,
+        runtime: Handle,
+        resources: Arc<crate::state::ReferenceStore>,
+    ) -> Arc<Self> {
+        Self::new_inner(
+            logger,
+            settings,
+            runtime,
+            None,
+            super::session::IDENTIFICATION_TIMEOUT,
+            StateRuntime::with_resources(resources),
         )
     }
     /// Development-only constructor for deterministic foreground changes.
@@ -267,6 +287,7 @@ impl PluginHost {
             runtime,
             Some(foreground),
             super::session::IDENTIFICATION_TIMEOUT,
+            StateRuntime::new(),
         )
     }
 
@@ -292,6 +313,7 @@ impl PluginHost {
             runtime,
             Some(foreground),
             identification_timeout,
+            StateRuntime::new(),
         )
     }
 
@@ -301,6 +323,7 @@ impl PluginHost {
         runtime: Handle,
         foreground: Option<Arc<dyn ForegroundSource>>,
         identification_timeout: Duration,
+        state: StateRuntime,
     ) -> Arc<Self> {
         let (foreground_updates, receiver) = tokio::sync::watch::channel(None);
         let foreground = foreground.unwrap_or_else(|| Arc::new(receiver));
@@ -309,7 +332,7 @@ impl PluginHost {
             log_router: PluginLogRouter::new(logger, runtime.clone()),
             timers: TimerRegistry::new(runtime.clone()),
             settings,
-            state: Arc::new(StateRuntime::new()),
+            state: Arc::new(state),
             state_delivery: Mutex::new(state_delivery::DeliveryState::default()),
             state_runtime: runtime.clone(),
             state_serial: Mutex::new(()),
