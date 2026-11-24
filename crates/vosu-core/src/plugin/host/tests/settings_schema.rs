@@ -94,6 +94,7 @@ fn create_instance_builds_init_settings_from_the_loaded_plugins_own_schema() {
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest,
         settings_schema: Some(SCHEMA_TEXT),
+        namespace_schemas: &[],
         vtable: capturing_plugin::vosu_plugin_vtable,
     }])
     .expect("loading the schema-capturing test plugin");
@@ -136,12 +137,14 @@ fn schema_for_matches_only_the_named_plugin_id_and_none_for_an_unregistered_one(
     let loaded_a = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest_a,
         settings_schema: Some(SCHEMA_TEXT),
+        namespace_schemas: &[],
         vtable: capturing_plugin::vosu_plugin_vtable,
     }])
     .expect("loading plugin a");
     let loaded_b = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest_b,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: capturing_plugin::vosu_plugin_vtable,
     }])
     .expect("loading plugin b");
@@ -279,6 +282,7 @@ fn schema_for_resolves_a_schema_while_the_instance_is_still_creating() {
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest,
         settings_schema: Some(SCHEMA_TEXT),
+        namespace_schemas: &[],
         vtable: gated_plugin::vosu_plugin_vtable,
     }])
     .expect("loading the gated schema test plugin");
@@ -455,6 +459,7 @@ fn a_b2_change_during_a_blocked_create_delivers_the_full_map_once_live() {
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest,
         settings_schema: Some(B2_SHAPED_SCHEMA_TEXT),
+        namespace_schemas: &[],
         vtable: gated_replay_plugin::vosu_plugin_vtable,
     }])
     .expect("loading the gated replay test plugin");

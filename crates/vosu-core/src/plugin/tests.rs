@@ -247,6 +247,7 @@ fn bundled_settings_schema_presence_mismatch_is_refused() {
     match registry::load_bundled(&[registry::BundledPlugin {
         manifest: &declaring_manifest,
         settings_schema: None,
+        namespace_schemas: &[],
         vtable: dummy_plugin::vosu_plugin_vtable,
     }]) {
         Err(HostError::SettingsSchemaMismatch {
@@ -263,6 +264,7 @@ fn bundled_settings_schema_presence_mismatch_is_refused() {
     match registry::load_bundled(&[registry::BundledPlugin {
         manifest: &non_declaring_manifest,
         settings_schema: Some(r#"[{"uniqueID":"RATE","type":"number","value":1.0}]"#),
+        namespace_schemas: &[],
         vtable: dummy_plugin::vosu_plugin_vtable,
     }]) {
         Err(HostError::SettingsSchemaMismatch {
