@@ -68,15 +68,15 @@ use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
 use vosu_plugin_api::{
-    Message, ReadPlanCancel, ReadPlanSubmit, read_flat_header, vosu_opcode,
-    vosu_read_plan_submit_header, vosu_status,
+    Message, ReadPlanCancel, ReadPlanSubmit, read_flat_header, validate_flags,
+    validate_read_plan_submit, vosu_opcode, vosu_read_plan_submit_header, vosu_status,
 };
 use vosu_sys::process::{MemoryError, ProcessBitness, ProcessMemory};
 
 use super::super::dispatch::dispatch_raw;
 use super::super::host_services::PluginInstanceId;
 use super::super::read_plan::{
-    self, FinishOutcome, ModuleResolver, OutstandingPlans, SyncReadPlanError,
+    self, DispatchThreadScope, FinishOutcome, ModuleResolver, OutstandingPlans, SyncReadPlanError,
 };
 use super::super::scan::ScanWorkerPool;
 use super::super::session::SessionHandle;
@@ -737,6 +737,24 @@ impl PluginHost {
         if read_plan::on_dispatch_thread() {
             return SyncReadPlanError::OnDispatchThread.into();
         }
+        // P3 (F4 review): validated before touching the session or
+        // opening any process memory, exactly like the deleted typed
+        // path (`Message::decode`) and the async path both do — a
+        // malformed or unknown-flag SYNC plan must answer
+        // `VOSU_ERR_INVALID_ARGUMENT`, never `VOSU_ERR_TARGET_GONE`/
+        // `VOSU_ERR_PERMISSION_DENIED` from resolving a session this
+        // submission was never going to execute against anyway
+        // (`execute_into`'s own doc comment: "a plan validation error
+        // takes priority over a runtime/target-state one"). Both
+        // allocation-free; `execute_into` repeats them on the same
+        // `payload` below, which is harmless (idempotent) and keeps its
+        // own contract self-sufficient for every caller, not just this
+        // one.
+        if validate_flags(vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT, flags).is_err()
+            || validate_read_plan_submit(payload).is_err()
+        {
+            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        }
         let header: vosu_read_plan_submit_header = match read_flat_header(payload) {
             Ok(header) => header,
             Err(_) => return vosu_status::VOSU_ERR_INVALID_ARGUMENT,
@@ -780,6 +798,19 @@ impl PluginHost {
     /// `self.instances` across that call: the plugin's own `dispatch` may
     /// call back into this host reentrant (e.g. `LOG_RECORD`), which a
     /// lock still held here would deadlock against.
+    ///
+    /// P1 (F4 review): holds [`DispatchThreadScope::enter`] around the
+    /// `dispatch_raw` call, exactly as `dispatch.rs::run_job` already does
+    /// for the ordinary queued delivery path. Without this, a plugin that
+    /// submits `VOSU_READ_PLAN_SYNC` through a raw `send` (not through
+    /// `PlanMemory`, e.g. any C plugin, or an SDK plugin calling
+    /// `HostServices::submit_read_plan_sync` directly) and then submits
+    /// another synchronous plan from inside this very `on_message` call
+    /// would re-enter `handle_read_plan_submit_raw` on the same thread:
+    /// `SYNC_RESULT_BUF.borrow_mut()` would panic (`BorrowMutError`)
+    /// instead of the on-dispatch-thread refusal
+    /// (`include/vosu_plugin.h:396-399`) firing first, and the root
+    /// `panic = "abort"` profile would abort the whole process.
     fn deliver_sync_result_raw(&self, instance: PluginInstanceId, payload: &[u8]) -> vosu_status {
         let target = self
             .instances
@@ -799,6 +830,7 @@ impl PluginHost {
             // instead reports "no result" accurately.
             return vosu_status::VOSU_ERR_NOT_READY;
         };
+        let _dispatch_thread = DispatchThreadScope::enter();
         dispatch_raw(
             &vtable,
             ctx,
