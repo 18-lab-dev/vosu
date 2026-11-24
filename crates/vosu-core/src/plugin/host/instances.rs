@@ -255,6 +255,14 @@ impl PluginHost {
                     grant: publisher,
                     version: plugin.manifest().version.clone(),
                     read_grant: crate::state::InternalGrant::from_manifest(plugin.manifest()),
+                    read_fields: plugin
+                        .manifest()
+                        .requires
+                        .iter()
+                        .chain(&plugin.manifest().optional)
+                        .filter(|cap| cap.id.starts_with("field:"))
+                        .map(|cap| cap.id.clone())
+                        .collect(),
                     bundled: plugin.library_handle().is_none(),
                     _registration: registration,
                 }),

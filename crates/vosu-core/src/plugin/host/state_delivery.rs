@@ -532,6 +532,7 @@ impl PluginHost {
 
     pub(super) fn state_session_identified(&self, handle: SessionHandle) {
         let _serial = self.state_serial.lock().unwrap_or_else(|p| p.into_inner());
+        self.surface_roster_changed();
         let (attached, owner) = {
             let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
             (

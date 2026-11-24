@@ -3,6 +3,8 @@ use crate::state::{ClientFacts, PublisherGrant};
 use vosu_plugin_api::{CborValue, Selector};
 use vosu_surface::state::{SessionTarget, SurfaceError, SurfaceSubscription};
 
+mod capture;
+
 fn selector(ns: &str, pointer: &str) -> Selector {
     Selector {
         ns: ns.into(),
@@ -284,6 +286,21 @@ fn surface_reader_without_grant_never_sees_internal_and_granted_reader_sees_inte
         None,
     )
     .unwrap();
+    let bound = host.surface_requester(PluginInstanceId::new(8706)).unwrap();
+    let captured = bound
+        .capture(SessionTarget::Focused, &[selector("vosu.osu", "")])
+        .unwrap();
+    let expected = CborValue::Map(vec![(
+        CborValue::Text("internal".into()),
+        CborValue::Map(vec![(
+            CborValue::Text("paths".into()),
+            CborValue::Map(vec![(
+                CborValue::Text("stable".into()),
+                CborValue::Text("private-path".into()),
+            )]),
+        )]),
+    )]);
+    assert_eq!(captured.values[0].value, Some(expected));
     let mut subscription = api
         .subscribe(granted, SessionTarget::Focused, vec![internal.clone()])
         .unwrap();

@@ -312,14 +312,16 @@ fn publish(
     namespaces: Vec<(Arc<str>, StateValue)>,
     touched: Vec<(Arc<str>, Pointer)>,
 ) -> CommitOutcome {
-    let current = Arc::new(SessionState::new(
+    let mut current = SessionState::new(
         previous.key,
         previous
             .revision
             .checked_add(1)
             .expect("session revision exhausted"),
         namespaces,
-    ));
+    );
+    current.retain_namespace_revisions(&previous, &touched);
+    let current = Arc::new(current);
     slot.current.store(current.clone());
     CommitOutcome {
         previous,
