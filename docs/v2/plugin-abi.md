@@ -420,6 +420,14 @@ The ABI itself carries no HTTP opcode, and an external or out-of-process plugin 
 - root-confined file responses resolved against the `ROOT_DECLARE` handles declared by the **game plugin that owns the session** (§6.5), never against a path string read off the bus (D2) — an adapter's file route (e.g. `GET /Songs/{path}`) has no root of its own and no path string to open one with; it asks, through `vosu-surface`, for the osu! plugin's already-declared root and a relative path inside it, the same confinement a resource reference resolves through;
 - management-route provenance: a `vosu-surface` management route (for example the dashboard plugin's own settings-save route) still requires dashboard-origin provenance and `X-Vosu-CSRF` exactly as `docs/v2/catalog-v2.md` "API placement" specifies for the catalog routes `vosu-core` itself serves — `vosu-surface` grants no exemption from that rule for any route it carries.
 
+The permanent P0/R0 operation and lifetime contract is
+[Bundled adapter surfaces](adapter-surfaces.md): atomic multi-selector capture
+with an identified coherent roster, demand-free one-shot reads, RAII
+subscriptions and route/feed registrations, opaque retained-root operations,
+and capability-checked bounded resource readers. These are the exhaustive
+in-process operations covered by the bullets above, not additional C opcodes.
+Provider callbacks and filesystem/async work run outside host locks.
+
 `vosu-surface` grants none of: `ProcessMemory` access outside a plugin's own matched session (a `vosu-surface` plugin still reads memory only through `VOSU_OP_READ_PLAN_SUBMIT` like any other plugin), configuration writes, or credentials — a bundled plugin that needs one of these uses the ordinary ABI services, exactly as any other plugin does. The osu! plugin's bridge into the gosuMemory/streamCompanion adapters' `vosu-surface` registration (crate edge `vosu-osu → vosu-surface`) is interim bridge **B1**, named per the ground rules, and is deleted at M4a when those adapters become ordinary bus projections; M5 (out-of-process plugin hosting) starts only after M4a removes it, since B1 cannot cross a process boundary. A future external HTTP opcode remains possible as an additive minor ABI revision, not a breaking one, but none is defined by this freeze.
 
 ## 8. `manifest.toml` runtime fields for `kind = "plugin"`

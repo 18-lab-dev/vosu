@@ -69,6 +69,56 @@ For M2 performance contracts use
 and the scoped commands in the [benchmark guide](benchmarks.md). Performance
 evidence and D17's decision belong there, not in a functional test pass.
 
+## M4a contract and adapter acceptance
+
+A4 resolves the approved choices in the
+[source/removal inventory](../../tests/fixtures/upstream/ADAPTER_CONTRACT.md)
+and [P0/R0 surface contract](../v2/adapter-surfaces.md). Until production
+cutover, retain the original B1 wire guard. At cutover, replace its ingress
+with actual producer → ABI/bus → authorized surface → adapter registration
+and compare raw emitted bytes, preserving the source pin and fixture inventory.
+Do not strip extensions or normalize regular keys away. Nonempty extension
+source facts must exist while the wire keys are absent. Restore schema
+renames on adapter output; schema-only divergences authorize no wire skip.
+
+Required cases cover four distinct physical slots vs logical actions,
+pending/ready/missing-score tournament states, stable aggregate on every stable
+session, nonselected Windows foreground, common null vs out-of-play raw values,
+numeric inverse boundaries/properties, denied private siblings, and no demand
+from HTTP reads. P0/R0 tests additionally cover foreign registration,
+method/matcher collisions, coherent focus/roster cuts, stale root generations,
+same-open-object bytes/metadata, close-once cancellation and native confinement.
+Provider invariants exercise 100-client shared bytes, cache bounds and eviction,
+1,000-update coalescing, RAII demand and zero unchanged-chart parses.
+All waits have explicit finite timeouts and barriers, never ordering sleeps.
+
+```sh
+# A4 docs and unchanged schema contract
+python scripts/check-doc-links.py
+python scripts/check-brand.py
+jq empty docs/v2/schemas/*.json
+# Offline JSON Schema validation through the existing fixture suite
+cargo test --locked --test state_bus_compat
+# P0/P1/R0 implementation gates (after those units land)
+cargo nextest run --locked -p vosu-surface -p vosu-core -p vosu-osu --all-features
+cargo test --locked --features test-harness --test state_bus --test plugin_host --test osu_plugin --test api_v1_compat
+cargo test --locked --test state_api_compat --test server_compat --test state_bus_compat
+cargo test --locked --test performance_invariants --test runtime_wakeups --test config_compat
+cargo test --locked --features test-harness --test daemon_smoke
+# Native Windows, pending when the VM is occupied; never substitute cross-Clippy
+python scripts/vm-test.py --test state_api_compat
+python scripts/vm-test.py --test server_compat
+python scripts/vm-test.py --package vosu-core --lib
+python scripts/vm-test.py --package vosu-sys --lib
+```
+
+Main lists expected names/nonzero counts before the integrated gate; native
+Windows evidence names keys, multi-session foreground/tournament and root
+confinement cases. No VM lifecycle action is implied by these instructions.
+Use `flock /tmp/vosu-smoke.lock` for smokes. D17 names and measurement policy
+are [frozen separately](benchmarks.md#m4a-d17-contract), not passed by functional
+tests. M4b owns live captures/golden tooling and M8 owns migration execution.
+
 ## M3 API, resources and actions
 
 A3 freezes the following exit commands for implementation/integration owners.

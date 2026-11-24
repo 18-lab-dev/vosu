@@ -1214,9 +1214,9 @@ Scope:
   including ADR 0004's `LegacyCalculateProvider`), the stable
   `/files/skin/{path}` behavior, and the WebSocket encoders from
   `src/runtime/projection.rs`. Builders take a typed view assembled from
-  `vosu-surface` reads of `vosu.osu`, `vosu.client`, and
-  `vosu.osu/internal/paths`, which the adapters `require` (D2); the
-  streamCompanion adapter computes `mapStrains`, breaks, kiai points, and
+  `vosu-surface` coherent reads of explicitly granted common namespaces,
+  `vosu.client`, `vosu.osu`, and `vosu.osu.internal.paths` (D2).
+  The streamCompanion adapter computes `mapStrains`, breaks, kiai points, and
   timing points (`src/model/api/sc.rs:132-141`) from `vosu-osu-calc` and the
   chart resource. Core's hub keeps latest-only publication and per-snapshot
   encoding caches (`tests/performance_invariants.rs:509-701`).
@@ -1235,8 +1235,8 @@ Scope:
   list. Requests to a removed route are attributed to the requesting overlay
   for the D20 dashboard notice. Delete bridge B1, its interim crate edge,
   and `src/api/snapshot.rs`.
-- **Stable tournament-manager aggregate (D6, M4a-or-later; must land before
-  the 2.0 release).** The osu! plugin attaches the `--tournament` process
+- **Stable tournament-manager aggregate (D6, mandatory M4a exit).** The osu!
+  plugin attaches the `--tournament` process
   as an identified `stable` session, setting `focus_priority: true` on its
   `SESSION_IDENTIFY` (`docs/v2/plugin-abi.md` §6.2), instead of declining
   it — `--tournament` leaves plugin-abi.md:140's decline list once this task
@@ -1272,10 +1272,10 @@ Scope:
 
 Exit: `cargo test --locked --test state_api_compat`, rewritten to drive the
 adapters from bus input and compared byte for byte with the committed source
-oracle — except `stable-tournament`'s `tourney` members (`v1`, `v2`,
-`v2-precise`), exempted per the temporary divergence above until the
-manager aggregate task lands; `strip_vosu_extensions` (`tests/state_api_compat.rs:198`) is deleted
-because the adapters no longer emit those fields;
+oracle, including the stable manager aggregate. The temporary tournament
+exemption must be closed with T0 evidence before completed M4a; it is not
+removed merely by this A4 contract freeze. Delete `strip_vosu_extensions`
+and ad hoc regular `keys` normalization because encoders no longer emit them;
 `cargo test --locked --test server_compat` updated in the same change for each
 intentional removal, plus traversal attempts proving file routes stay inside
 declared roots; `--test performance_invariants` ported to the adapters;
@@ -1285,6 +1285,44 @@ serializers.
 
 Risks: per-frame projection from the bus may cost more than 1.x encoding
 from typed snapshots (the end-to-end bench decides).
+
+#### A4 approved contract freeze (2026-11-24)
+
+The owner-delegated approvals A4.1–A4.6 are normative:
+
+1. Declare consumed common field namespaces and chart resource authority
+   explicitly; no duplication into private state or loopback HTTP.
+2. Publish missing accurate public facts, including independent physical
+   key slots, with the owning schema version/partition/lanes and producers.
+   Numeric inversions require oracle and boundary/property equivalence.
+3. Distinguish pending tournament data from missing-score failure; only
+   adapters implement upstream omission/500, never API v1.
+4. Legacy calculation paths are relative to the current captured session's
+   declared songs root or absolute spellings confined within its declared
+   roots; all others are rejected as the named
+   `legacy-calculate-declared-roots` security divergence. Keep the engine,
+   query, mods and result contract unchanged.
+5. Attribute removed requests only to validated installed overlay identity;
+   unknown is separate. Retain at most 128 known overlays, deduplicated with
+   24-hour inactivity TTL, plus fixed unknown feature buckets; no path/referrer
+   logging. Notice data and exact lease/cache/worker bounds are frozen below.
+6. Remove extensions endpoint by endpoint, including direct/filtered writers
+   and nested tournament copies. Regular v2 has no `keys`; upstream precise
+   slots and legitimate all-hit histories remain.
+
+P0/R0 implement [permanent bundled surface contracts](adapter-surfaces.md).
+P1/T0 and V0/G0/C0 implement the
+[per-field fidelity and removal inventory](../../tests/fixtures/upstream/ADAPTER_CONTRACT.md).
+Approved public additions ship in osu! schema 1.3.0 together with producers;
+A4 alone does not claim that schema implementation or parity evidence.
+State-schema differences do not exempt adapter wire output. M8 retires
+exactly the four keys listed above, preserving API-v1 debounce/unknown keys.
+M4b retains capture/golden tooling ownership; M8 day-0 execution and separate
+clean-room page work are not completed by M4a.
+
+The approved D17 case names, common baseline harness and evidence requirements
+are [frozen in the benchmark guide](../testing/benchmarks.md#m4a-d17-contract).
+No measurement or D17 pass is claimed by the contract freeze.
 
 ### M4b: golden fixtures from live captures (owner-dependent)
 

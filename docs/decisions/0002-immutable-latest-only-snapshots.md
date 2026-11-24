@@ -42,3 +42,13 @@ The contracts are implemented in [`api/snapshot.rs`](../../src/api/snapshot.rs),
 
 - [Architecture](../architecture/overview.md)
 - [Benchmarks](../testing/benchmarks.md) — snapshot and encoding results characterize measured builds and machines, not a latency promise.
+
+## M4a amendment (2026-11-24)
+
+The root `CombinedSnapshot` transport described above is replaced, not renamed,
+by coherent selected bus capture and adapter-owned immutable typed views.
+The [permanent surface contract](../v2/adapter-surfaces.md) preserves one
+focus/session/roster cut, semantic revision caching, shared unfiltered bytes
+and latest-only delivery with one in-flight frame/client. It does not carry
+reader/state snapshots across surface, and one-shot reads create no demand.
+The old snapshot implementation and both B1 directions are deleted at cutover.
