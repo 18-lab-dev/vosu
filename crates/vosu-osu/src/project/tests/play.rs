@@ -345,7 +345,17 @@ fn graph_published_once_per_change() {
     writer.begin(4);
     let mut caches = super::super::Caches::default();
     projector.project_into(&s, &facts(), &mut writer, &[project], &mut caches);
-    assert_eq!(writer.len(), 19);
+    let mut initial = Vec::new();
+    writer.finish_into(&mut initial).unwrap();
+    let initial = decode_publish_batch_ref(&initial).unwrap();
+    let expected: std::collections::BTreeSet<_> = collect(&s).keys().copied().collect();
+    let actual: std::collections::BTreeSet<_> = initial
+        .entries()
+        .filter(|e| expected.contains(e.pointer))
+        .map(|e| e.pointer)
+        .collect();
+    assert_eq!(actual.len(), 19);
+    assert_eq!(actual, expected);
     let doc = collect(&s);
     for n in 90..=100 {
         assert_eq!(

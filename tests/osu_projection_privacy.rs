@@ -27,6 +27,11 @@ fn object(fields: Vec<(&str, StateValue)>) -> StateValue {
     )))
 }
 fn snapshot() -> StateBundleSnapshot {
+    let mut menu = MenuState::default();
+    menu.folder = Some("private-map".into());
+    menu.filename = Some("private.osu".into());
+    menu.background_filename = Some("private.jpg".into());
+    menu.audio_filename = Some("private.mp3".into());
     StateBundleSnapshot {
         source: ClientType::Stable,
         generation: 1,
@@ -40,13 +45,7 @@ fn snapshot() -> StateBundleSnapshot {
             },
             settings: SettingsState::default(),
             beatmap: BeatmapPPState::default(),
-            menu: MenuState {
-                folder: Some("private-map".into()),
-                filename: Some("private.osu".into()),
-                background_filename: Some("private.jpg".into()),
-                audio_filename: Some("private.mp3".into()),
-                ..Default::default()
-            },
+            menu,
             bass_density: BassDensityState::default(),
             gameplay: GameplayState::default(),
             result_screen: ResultScreenState::default(),

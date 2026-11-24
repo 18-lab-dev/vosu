@@ -54,7 +54,7 @@ fn all_oracle_settings_profile_room_ranked_and_tourney_mapping_rows() {
         r.global.is_replay_ui_hidden = svc["global"]["isReplayUiHidden"].as_bool().unwrap();
         r.global.chat_status = svc["global"]["chatStatus"].as_i64().unwrap();
         r.bass_density.density = svc["bassDensity"]["density"].as_f64().unwrap();
-        r.gameplay.leaderboard_visible = svc["gameplay"]["leaderboardVisible"]
+        r.gameplay.leaderboard_visible = svc["gameplay"]["isLeaderboardVisible"]
             .as_bool()
             .unwrap_or(false);
         r.global.menu_mods = serde_json::from_value(svc["global"]["menuMods"].clone()).unwrap();
@@ -128,7 +128,7 @@ fn all_oracle_settings_profile_room_ranked_and_tourney_mapping_rows() {
                         .as_ref()
                         .unwrap()
                         .statistics;
-                    p.insert("statistics".into(),serde_json::json!({"smallTickMiss":raw.small_tick_miss,"smallTickHit":h["smallTickHits"],"largeTickMiss":raw.large_tick_miss,"largeTickHit":h["largeTickHits"],"smallBonus":raw.small_bonus,"largeBonus":raw.large_bonus,"ignoreMiss":raw.ignore_miss,"ignoreHit":raw.ignore_hit,"comboBreak":raw.combo_break,"sliderTailHit":raw.slider_tail_hit,"sliderBreaks":h["sliderBreaks"],"sliderEndHits":h["sliderEndHits"],"legacyComboIncrease":raw.legacy_combo_increase}));
+                    p.insert("statistics".into(),serde_json::json!({"smallTickMiss":raw.small_tick_miss,"smallTickHit":h["smallTickHits"],"largeTickMiss":raw.large_tick_miss,"largeTickHit":h["largeTickHits"],"smallBonus":raw.small_bonus,"largeBonus":raw.large_bonus,"ignoreMiss":raw.ignore_miss,"ignoreHit":raw.ignore_hit,"comboBreak":raw.combo_break,"sliderTailHit":raw.slider_tail_hit,"sliderBreaks":h["sliderBreaks"],"sliderEndHits":h["sliderEndHits"],"good":h["katu"],"legacyComboIncrease":raw.legacy_combo_increase}));
                 }
             }
             eq(out.get(OsuPointer::OsuTourney), &e, "tourney");

@@ -48,7 +48,19 @@ impl HostServices for TestHost {
                 .unwrap();
         }
         let batch = decode_publish_batch_ref(bytes).unwrap();
-        self.last_batch_len.store(batch.len(), Ordering::Relaxed);
+        // Count only this fixture's subset projection, not stateful skin leaves.
+        let owned = batch
+            .entries()
+            .filter(|field| {
+                matches!(
+                    (field.ns, field.pointer),
+                    ("vosu.play", "/score")
+                        | ("vosu.chart", "/title")
+                        | ("vosu.osu", "/session/focused" | "/profile")
+                )
+            })
+            .count();
+        self.last_batch_len.store(owned, Ordering::Relaxed);
         for field in batch.entries() {
             if field.pointer == "/score"
                 && let PublishValueRef::U64(score) = field.value

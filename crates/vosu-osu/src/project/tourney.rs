@@ -198,7 +198,7 @@ fn client_value(
         c.int(n)
     }
     c.text("statistics");
-    c.map(13);
+    c.map(14);
     for (key, n) in [
         ("smallTickMiss", h.small_tick_miss),
         ("smallTickHit", h.small_tick_hit),
@@ -212,6 +212,7 @@ fn client_value(
         ("sliderTailHit", h.slider_tail_hit),
         ("sliderBreaks", 0),
         ("sliderEndHits", h.slider_tail_hit),
+        ("good", hits.katu),
     ] {
         c.text(key);
         c.int(n)
