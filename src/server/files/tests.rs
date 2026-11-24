@@ -473,3 +473,62 @@ fn legacy_static_and_counter_files_preserve_colon_names() {
         assert_eq!(content, "legacy-colon");
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+#[expect(
+    clippy::join_absolute_paths,
+    reason = "this Linux-only regression requires a literal backslash filename, not a Unix path separator"
+)]
+fn counter_alias_suffix_keeps_validated_literal_backslash() {
+    use std::{io::Read, os::unix::fs::symlink};
+    let root = tempfile::tempdir().unwrap();
+    let mounted = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("dir")).unwrap();
+    fs::write(root.path().join(r"dir/\x"), b"ordinary-directory").unwrap();
+    fs::write(mounted.path().join(r"\x"), b"mounted-directory").unwrap();
+    symlink(mounted.path(), root.path().join("alias")).unwrap();
+    for (request, expected) in [
+        (r"dir/\x", "ordinary-directory"),
+        (r"alias/\x", "mounted-directory"),
+    ] {
+        let ResourceOutcome::File(mut target) = resolve_encoded_counter_resource(
+            Some(root.path()),
+            request,
+            "/counter/file",
+            MissingKind::NotFound,
+        )
+        .unwrap() else {
+            panic!("validated literal backslash must be served: {request}");
+        };
+        let mut content = String::new();
+        target.file.read_to_string(&mut content).unwrap();
+        assert_eq!(content, expected);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_trailing_dot_and_space_do_not_alias_existing_file() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("map.osu"), b"base-chart").unwrap();
+    assert!(matches!(
+        resolve_encoded_resource(
+            Some(root.path()),
+            "map.osu",
+            "/map.osu",
+            MissingKind::NotFound
+        )
+        .unwrap(),
+        ResourceOutcome::File(_)
+    ));
+    for request in ["map.osu.", "map.osu%20"] {
+        let ResourceOutcome::Missing(missing) =
+            resolve_encoded_resource(Some(root.path()), request, "/chart", MissingKind::NotFound)
+                .unwrap()
+        else {
+            panic!("Windows spelling must not alias the base file: {request}");
+        };
+        assert_eq!(missing.status_code(), 404);
+    }
+}

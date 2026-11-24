@@ -207,3 +207,47 @@ fn unix_colon_names_remain_regular_filenames() {
     let root = SafeRoot::open(path.path()).unwrap();
     assert_eq!(read(&root, "name:with-colon"), "unix-colon-file");
 }
+
+#[cfg(windows)]
+#[test]
+fn in_root_file_symlink_follows_its_absolute_target() {
+    use std::os::windows::fs::symlink_file;
+    let path = tempfile::tempdir().unwrap();
+    fs::write(path.path().join("value"), b"absolute-link-target").unwrap();
+    symlink_file(path.path().join("value"), path.path().join("alias")).unwrap();
+    let root = SafeRoot::open(path.path()).unwrap();
+    assert_eq!(read(&root, "alias"), "absolute-link-target");
+}
+
+#[cfg(windows)]
+#[test]
+fn relative_file_symlink_resolves_through_retained_root_directory() {
+    use std::os::windows::fs::symlink_file;
+    let parent = tempfile::tempdir().unwrap();
+    let original = parent.path().join("original");
+    let moved = parent.path().join("moved");
+    fs::create_dir(&original).unwrap();
+    fs::write(original.join("value"), b"retained-relative-target").unwrap();
+    symlink_file("value", original.join("alias")).unwrap();
+    let root = SafeRoot::open(&original).unwrap();
+    assert_eq!(read(&root, "alias"), "retained-relative-target");
+    fs::rename(&original, &moved).unwrap();
+    fs::create_dir(&original).unwrap();
+    fs::write(original.join("value"), b"replacement-target").unwrap();
+    assert_eq!(read(&root, "alias"), "retained-relative-target");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn stripping_first_component_does_not_reparse_unix_suffix() {
+    let path = SafeRelativePath::parse(r"alias/\x").unwrap();
+    assert_eq!(path.strip_first().as_path(), Path::new(r"\x"));
+    assert!(SafeRelativePath::parse(r"\x").is_err());
+    assert_eq!(
+        SafeRelativePath::parse("alias")
+            .unwrap()
+            .strip_first()
+            .as_path(),
+        Path::new("")
+    );
+}
