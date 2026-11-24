@@ -1,35 +1,12 @@
 //! Native process-memory trait operations, kept separate from process discovery.
 use super::*;
-thread_local! {
-    static COUNTS: std::cell::Cell<[u64; 6]> = const { std::cell::Cell::new([0; 6]) };
-}
-pub(super) fn count(index: usize) {
-    COUNTS.with(|counts| {
-        let mut values = counts.get();
-        values[index] += 1;
-        counts.set(values);
-    });
-}
-impl WindowsProcessMemory {
-    pub fn bench_lock() {
-        count(4);
-    }
-    pub fn bench_qpc() {
-        count(5);
-    }
-    pub fn take_bench_counts() -> [u64; 6] {
-        COUNTS.with(|counts| counts.replace([0; 6]))
-    }
-}
 
 impl ProcessMemory for WindowsProcessMemory {
     fn read_exact(&self, address: usize, dst: &mut [u8]) -> Result<(), MemoryError> {
-        count(0);
         read_exact_impl(address, dst, |address, dst| self.raw_read(address, dst))
     }
 
     fn read_many(&self, reads: &mut [ReadRequest<'_>]) -> Result<(), MemoryError> {
-        count(1);
         read_many_impl(reads, |address, dst| self.raw_read(address, dst))
     }
 
@@ -80,7 +57,6 @@ impl ProcessMemory for WindowsProcessMemory {
     }
 
     fn is_alive(&self) -> bool {
-        count(3);
         let mut exit_code = 0;
         // SAFETY: handle remains owned and exit_code is a valid writable pointer.
         unsafe {

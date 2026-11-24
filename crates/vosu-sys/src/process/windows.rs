@@ -647,7 +647,6 @@ impl WindowsProcessMemory {
         if dst.is_empty() {
             return (true, 0);
         }
-        memory::count(2);
         let mut read = 0;
         // SAFETY: the destination is valid for its full length; the remote pointer is treated as opaque.
         let ok = unsafe {

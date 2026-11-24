@@ -1294,6 +1294,12 @@ fn precise_global_reuses_validated_pointer_chains_without_changing_values() {
         }
     );
     assert_eq!(second, first);
+    assert_eq!(memory.reads.load(Ordering::Relaxed), 5);
+    assert_eq!(memory.batches.load(Ordering::Relaxed), 1);
+    let ReadStatus::Ready(third) = reader.global_precise().unwrap() else {
+        panic!()
+    };
+    assert_eq!(third, first);
     assert_eq!(memory.reads.load(Ordering::Relaxed), 6);
     assert_eq!(memory.batches.load(Ordering::Relaxed), 2);
 }

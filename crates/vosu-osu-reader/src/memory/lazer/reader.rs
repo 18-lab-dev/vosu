@@ -362,8 +362,6 @@ impl MemoryReader for LazerMemory {
         if self.player_loading || [fields.0, fields.1, fields.2, fields.3].contains(&0) {
             return self.not_ready();
         }
-        #[cfg(windows)]
-        vosu_sys::process::WindowsProcessMemory::bench_qpc();
         let now = std::time::Instant::now();
         let catcher = match self.catcher_cache {
             Some((screen, catcher, refreshed))

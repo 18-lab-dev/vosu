@@ -50,8 +50,6 @@ impl LazerMemory {
     }
 
     pub fn game_base_address(&self) -> Option<usize> {
-        #[cfg(windows)]
-        vosu_sys::process::WindowsProcessMemory::bench_lock();
         let base = *self.game_base_address.read().ok()?;
         (base != 0).then_some(base)
     }
@@ -65,8 +63,6 @@ impl LazerMemory {
     }
 
     pub fn set_resolved_state(&mut self, game_base: usize, current_screen: usize) {
-        #[cfg(windows)]
-        vosu_sys::process::WindowsProcessMemory::bench_lock();
         *self
             .game_base_address
             .write()
@@ -102,8 +98,6 @@ impl LazerMemory {
             },
         )?;
         if let Some(base) = resolved {
-            #[cfg(windows)]
-            vosu_sys::process::WindowsProcessMemory::bench_lock();
             *self
                 .game_base_address
                 .write()
@@ -162,8 +156,6 @@ impl LazerMemory {
             return Ok(validated);
         }
 
-        #[cfg(windows)]
-        vosu_sys::process::WindowsProcessMemory::bench_lock();
         let cached = *self
             .game_base_address
             .read()
@@ -209,8 +201,6 @@ impl LazerMemory {
             },
         )?;
         if let Some(base) = resolved {
-            #[cfg(windows)]
-            vosu_sys::process::WindowsProcessMemory::bench_lock();
             *self
                 .game_base_address
                 .write()

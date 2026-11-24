@@ -377,36 +377,6 @@ fn bench(c: &mut Criterion) {
     assert_eq!(value.status, 3);
     assert_eq!(value.time, 0.0);
     let mut group = c.benchmark_group("plan_memory");
-    #[cfg(windows)]
-    for (name, reader, sync) in [
-        ("native", &mut active_native, native_sync),
-        ("plan", &mut active_plan, plan_sync),
-    ] {
-        let _ = vosu_sys::process::WindowsProcessMemory::take_bench_counts();
-        populated_precise(reader, sync);
-        eprintln!(
-            "WP_FIXTURE lazer {name} precise {:?}",
-            vosu_sys::process::WindowsProcessMemory::take_bench_counts()
-        );
-    }
-    #[cfg(windows)]
-    for (name, reader) in [("native", &mut native_stable), ("plan", &mut stable)] {
-        let _ = reader.global_precise().unwrap();
-        let _ = vosu_sys::process::WindowsProcessMemory::take_bench_counts();
-        let _ = reader.global_precise().unwrap();
-        eprintln!(
-            "WP_FIXTURE {name} precise {:?}",
-            vosu_sys::process::WindowsProcessMemory::take_bench_counts()
-        );
-        let _ = vosu_sys::process::WindowsProcessMemory::take_bench_counts();
-        let _ = reader.global();
-        let _ = reader.menu("");
-        let _ = reader.gameplay(stable_fixture::PLAY_TIME, stable_fixture::FIRST_OBJECT_TIME);
-        eprintln!(
-            "WP_FIXTURE {name} regular {:?}",
-            vosu_sys::process::WindowsProcessMemory::take_bench_counts()
-        );
-    }
     for sequential in [true, false] {
         let (process, counter) = counted_process(ProcessBitness::X86);
         let process = if sequential {
