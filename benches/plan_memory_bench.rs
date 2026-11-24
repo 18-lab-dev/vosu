@@ -28,6 +28,10 @@ mod plan_floor;
 mod plan_trace;
 #[cfg(windows)]
 #[path = "../examples/live_reader_bench/plan.rs"]
+#[expect(
+    dead_code,
+    reason = "shares the live reader example's attachment; its bus publication helpers serve only that example"
+)]
 mod routed;
 #[path = "support/stable_fixture.rs"]
 mod stable_fixture;
