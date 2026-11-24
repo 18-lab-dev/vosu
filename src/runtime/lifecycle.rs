@@ -827,10 +827,7 @@ pub async fn run_cli() -> io::Result<()> {
     }
     let logger = Logger::new(
         vosu_core::logging::logs_dir(&paths),
-        LoggerOptions {
-            debug_log: config.current().debug_log,
-            ..LoggerOptions::default()
-        },
+        daemon_logger_options(config.current().debug_log),
         Arc::new(StdoutConsole),
     )?;
     super::tracing_log::install(logger.clone());
