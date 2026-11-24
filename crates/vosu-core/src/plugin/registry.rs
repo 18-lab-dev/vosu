@@ -154,7 +154,13 @@ pub fn load_bundled(
     bundled
         .iter()
         .map(|entry| {
-            let manifest = parse_plugin(entry.manifest, application_version, snapshot, true)?;
+            let manifest = parse_plugin(
+                entry.manifest,
+                application_version,
+                snapshot,
+                "bundled",
+                true,
+            )?;
             if manifest.runtime != Runtime::InProcess {
                 return Err(HostError::InProcessRefused {
                     reason: "a bundled plugin's manifest must request runtime = \"in-process\"",
@@ -230,12 +236,49 @@ pub fn load_development(
         });
     }
     let text = std::fs::read_to_string(dir.join("manifest.toml"))?;
-    let manifest = parse_plugin(&text, application_version, snapshot, false)?;
+    let manifest = parse_plugin(&text, application_version, snapshot, "development", false)?;
     if manifest.runtime != Runtime::InProcess {
         return Err(HostError::InProcessRefused {
             reason: "`--plugin <dir>` only loads an in-process development plugin",
         });
     }
+    load_external(manifest, dir)
+}
+
+/// Loads one catalog-installed plugin from its committed package directory
+/// (catalog I0 runtime handoff). Trust is not decided here: the caller must
+/// have run `catalog::trust::CurrentPolicy::authorize_load` for this exact
+/// installed artifact under the catalog operation gate immediately before.
+/// A `runtime = "process"` package is refused with
+/// `ProcessRuntimeUnavailable`: M5 owns real child execution and the daemon
+/// never `dlopen`s it as an in-process substitute.
+pub fn load_installed(
+    application_version: &semver::Version,
+    snapshot: &super::host::ValidationSnapshot,
+    dir: &Path,
+    source: &str,
+    official: bool,
+) -> Result<LoadedPlugin, HostError> {
+    use std::io::Read as _;
+    const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
+    let mut text = String::new();
+    std::fs::File::open(dir.join("manifest.toml"))?
+        .take(MAX_MANIFEST_BYTES + 1)
+        .read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(HostError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "manifest byte budget exceeded",
+        )));
+    }
+    let manifest = parse_plugin(&text, application_version, snapshot, source, official)?;
+    if manifest.runtime != Runtime::InProcess {
+        return Err(HostError::ProcessRuntimeUnavailable);
+    }
+    load_external(manifest, dir)
+}
+
+fn load_external(manifest: PluginManifest, dir: &Path) -> Result<LoadedPlugin, HostError> {
     let root = dir.canonicalize()?;
     let settings_schema = manifest
         .settings_schema
@@ -292,10 +335,11 @@ pub fn load_development(
         .get(triple)
         .ok_or(HostError::MissingTarget)?;
     let library_path = confined_asset(&root, &target.library)?;
-    // SAFETY: `library_path` names a file the developer passed via the
-    // debug-only `--plugin <dir>` flag; loading and running its code
-    // in-process is exactly the trust this development tier accepts
-    // (§7.1), the whole reason this path is refused outside debug builds.
+    // SAFETY: `library_path` is confined to a development directory the
+    // developer passed via the debug-only `--plugin <dir>` flag, or to a
+    // committed catalog package whose exact artifact current §7.1 policy
+    // just authorized for in-process execution; running its code in-process
+    // is exactly the trust either tier accepts.
     let library = unsafe { Library::new(&library_path) }?;
     // SAFETY: a null-terminated symbol name, looked up on a freshly opened
     // library before any plugin code has run.
@@ -373,17 +417,13 @@ fn parse_plugin(
     text: &str,
     application_version: &semver::Version,
     snapshot: &super::host::ValidationSnapshot,
-    bundled: bool,
+    source: &str,
+    official: bool,
 ) -> Result<PluginManifest, HostError> {
     let package =
         vosu_plugin_api::manifest::PackageManifest::parse(text).map_err(HostError::from)?;
     let support = snapshot
-        .validate(
-            &package,
-            application_version,
-            if bundled { "bundled" } else { "development" },
-            bundled,
-        )
+        .validate(&package, application_version, source, official)
         .map_err(HostError::from)?;
     if support != vosu_plugin_api::manifest::HostSupport::Supported {
         return Err(HostError::State(
