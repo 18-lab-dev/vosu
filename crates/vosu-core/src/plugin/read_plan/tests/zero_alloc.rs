@@ -10,8 +10,10 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::hint::black_box;
+use std::sync::Arc;
+use std::time::Duration;
 
-use vosu_plugin_api::Message;
+use vosu_plugin_api::{Bitness, Message, PlanMemory, StageRef, SyncReadBuffers};
 
 use super::helpers::{FakeMemory, NoModules, far_deadline, op};
 use super::*;
@@ -317,4 +319,172 @@ fn execute_into_is_allocation_free_once_warmed_multi_op_dependent_stage() {
         allocations, 0,
         "a warmed 13-sibling dependent multi-op stage must allocate nothing"
     );
+}
+
+/// F4's own core-level acceptance criterion: a real `PluginHost`, F3's
+/// `test_support` memory seam standing in for a real OS process, and a
+/// bundled SDK plugin ([`vosu_plugin_testkit::read_plan::ReadPlanPlugin`])
+/// — `PlanMemory::read_flat` called directly on this test thread against
+/// that plugin's own `VtableHostServices`
+/// ([`vosu_plugin_testkit::read_plan::host_services`]), exercising the
+/// real pipeline `vosu-plugin-api`'s own `plan_memory_alloc.rs` (a fake
+/// host) cannot reach: `PluginHostHandler::handle_read_plan_sync` ->
+/// `PluginHost::handle_read_plan_submit_raw` -> `execute_into` into its
+/// own per-thread reused buffer -> `dispatch_raw` -> the SDK's
+/// `try_intercept_sync_raw` -> `read_flat`'s own `SyncReadBuffers`.
+#[test]
+fn in_process_sync_round_trip_allocates_nothing_after_warmup() {
+    struct DummyStorage;
+    impl crate::plugin::settings::SettingsStorage for DummyStorage {
+        fn load(
+            &self,
+            _plugin_id: &str,
+        ) -> Result<
+            serde_json::Map<String, serde_json::Value>,
+            crate::plugin::settings::SettingsError,
+        > {
+            Ok(serde_json::Map::new())
+        }
+        fn store(
+            &self,
+            _plugin_id: &str,
+            _values: &serde_json::Map<String, serde_json::Value>,
+        ) -> Result<(), crate::plugin::settings::SettingsError> {
+            Ok(())
+        }
+    }
+    struct SilentConsole;
+    impl crate::logging::ConsoleSink for SilentConsole {
+        fn is_tty(&self) -> bool {
+            false
+        }
+        fn write_log(&self, _text: &str) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn clear_progress(&self, _lines: usize) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn write_progress(&self, _text: &str) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+    let log_dir = tempfile::tempdir().unwrap();
+    let logger = crate::logging::Logger::new(
+        log_dir.path(),
+        crate::logging::LoggerOptions {
+            version: "0.1.0".to_owned(),
+            debug_log: false,
+            queue_capacity: 64,
+        },
+        Arc::new(SilentConsole),
+    )
+    .unwrap();
+    let settings = Arc::new(crate::plugin::settings::PluginSettingsService::new(
+        Arc::new(DummyStorage),
+    ));
+    let host = crate::plugin::PluginHost::new_for_tests(
+        logger,
+        settings,
+        runtime.handle().clone(),
+        Arc::new(crate::plugin::SyntheticForegroundSource::new(None)),
+        crate::plugin::IDENTIFICATION_TIMEOUT,
+    );
+
+    let plugin_id = "testkit.readplan.coreflat";
+    let (events, _commands) = vosu_plugin_testkit::read_plan::register(plugin_id);
+    let manifest = format!(
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-coreflat']\n"
+    );
+    let loaded = crate::plugin::load_bundled(&[crate::plugin::BundledPlugin {
+        manifest: &manifest,
+        vtable: vosu_plugin_testkit::read_plan::vosu_plugin_vtable,
+    }])
+    .expect("loading the read-plan testkit plugin");
+    let data_dir = tempfile::tempdir().unwrap();
+    host.create_instance(
+        crate::plugin::PluginInstanceId::new(1),
+        &loaded[0],
+        data_dir.path().to_path_buf(),
+        None,
+    )
+    .expect("creating the read-plan testkit instance");
+
+    let pid = 910_300_200;
+    host.process_appeared(crate::plugin::ProcessRecord {
+        pid,
+        name: "proc-coreflat".to_owned(),
+        path: "/games/proc-coreflat".to_owned(),
+        command_line: "proc-coreflat".to_owned(),
+        bitness: Bitness::X64,
+        start_time: 1,
+        argv: None,
+    });
+    let handle = match events.recv_timeout(Duration::from_secs(5)) {
+        Ok(vosu_plugin_testkit::read_plan::ReadPlanEvent::Attached { handle }) => handle,
+        other => panic!("expected SESSION_ATTACHED, got {other:?}"),
+    };
+
+    // F3's seam: a byte buffer stands in for `pid`'s real process memory,
+    // so this test never needs a real OS process behind it.
+    let bytes: Vec<u8> = (0..16).collect();
+    crate::plugin::test_support::set_session_memory(
+        pid,
+        Arc::new(FakeMemory::new(vec![(0x2000, bytes.clone())])),
+        ProcessBitness::X64,
+    );
+
+    let plan_memory = PlanMemory::new();
+    let host_services = vosu_plugin_testkit::read_plan::host_services(plugin_id);
+    let ops = [op(0, 8), op(8, 8)];
+    let stages = [StageRef {
+        base: StageBase::Root,
+        base_offset: 0,
+        ops: &ops,
+    }];
+    let mut buffers = SyncReadBuffers::new();
+
+    // Warm: grow `buffers` to steady-state capacity, and warm the
+    // thread-local allocator-tracking state, both outside the measured
+    // region.
+    let warm = plan_memory
+        .read_flat(
+            &host_services,
+            900,
+            handle,
+            PlanBase::Absolute(0x2000),
+            &stages,
+            &mut buffers,
+        )
+        .expect("warm-up read_flat call");
+    assert_eq!(warm.len(), 2);
+    let _ = allocations_during(|| ());
+
+    let (results, allocations) = allocations_during(|| {
+        plan_memory
+            .read_flat(
+                black_box(&host_services),
+                black_box(900),
+                black_box(handle),
+                black_box(PlanBase::Absolute(0x2000)),
+                black_box(&stages),
+                black_box(&mut buffers),
+            )
+            .expect("warmed read_flat call")
+    });
+    assert_eq!(results.len(), 2);
+    let (kind0, bytes0) = results.get(0);
+    let (kind1, bytes1) = results.get(1);
+    assert_eq!(kind0, vosu_read_result_kind::VOSU_READ_OK);
+    assert_eq!(kind1, vosu_read_result_kind::VOSU_READ_OK);
+    assert_eq!(bytes0, &bytes[0..8]);
+    assert_eq!(bytes1, &bytes[8..16]);
+    assert_eq!(
+        allocations, 0,
+        "a warmed in-process VOSU_READ_PLAN_SYNC round trip must allocate nothing"
+    );
+
+    crate::plugin::test_support::clear_session_memory(pid);
 }

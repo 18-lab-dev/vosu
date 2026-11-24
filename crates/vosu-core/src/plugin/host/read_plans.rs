@@ -611,6 +611,47 @@ impl PluginHost {
         }
     }
 
+    /// [`Self::resolve_owned_session`]'s allocation-free counterpart
+    /// (D17): resolves `instance`'s owning plugin id and `handle`'s pid
+    /// in one locked step, without [`PluginHost::plugin_id_of`]'s own
+    /// `to_owned()` — on the raw `VOSU_READ_PLAN_SYNC` fast path
+    /// ([`Self::handle_read_plan_submit_raw`], the only caller), that one
+    /// heap allocation per read would be the last one left on this call
+    /// stack (caught by
+    /// `read_plan::tests::zero_alloc::in_process_sync_round_trip_allocates_nothing_after_warmup`,
+    /// the core-level round-trip test the SDK-level
+    /// `vosu-plugin-api::tests::plan_memory_alloc` fake-host test cannot
+    /// reach).
+    ///
+    /// Lock order: `instances` then `sessions`, nested — a pair this host
+    /// has not nested before, but safely: every existing
+    /// `sessions`-then-`dispatch_to`(`instances`) sequence (`handle`'s own
+    /// `SessionIdentify`/`SessionDecline` arms, host.rs) always drops
+    /// `sessions` before it ever touches `instances` again, so the two
+    /// orders never invert against each other.
+    fn resolve_owned_session_for_instance(
+        &self,
+        instance: PluginInstanceId,
+        handle: SessionHandle,
+    ) -> Result<u32, vosu_status> {
+        let instances = self
+            .instances
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let Some(plugin_id) = instances.get(&instance).map(InstanceSlot::plugin_id) else {
+            return Err(vosu_status::VOSU_ERR_INVALID_ARGUMENT);
+        };
+        let sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        match sessions.owner_and_pid(handle) {
+            None => Err(vosu_status::VOSU_ERR_TARGET_GONE),
+            Some((owner, _)) if owner != plugin_id => Err(vosu_status::VOSU_ERR_PERMISSION_DENIED),
+            Some((_, pid)) => Ok(pid),
+        }
+    }
+
     /// `VOSU_OP_READ_PLAN_SUBMIT` without `VOSU_READ_PLAN_SYNC` set (an
     /// async plan). A `VOSU_READ_PLAN_SYNC` submission never reaches this
     /// function at all: `decode_and_handle` (`host_services.rs`)
@@ -693,9 +734,6 @@ impl PluginHost {
         payload: &[u8],
         flags: u32,
     ) -> vosu_status {
-        let Some(plugin_id) = self.plugin_id_of(instance) else {
-            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
-        };
         if read_plan::on_dispatch_thread() {
             return SyncReadPlanError::OnDispatchThread.into();
         }
@@ -704,7 +742,7 @@ impl PluginHost {
             Err(_) => return vosu_status::VOSU_ERR_INVALID_ARGUMENT,
         };
         let handle = SessionHandle(header.handle);
-        let pid = match self.resolve_owned_session(&plugin_id, handle) {
+        let pid = match self.resolve_owned_session_for_instance(instance, handle) {
             Ok(pid) => pid,
             Err(status) => return status,
         };
