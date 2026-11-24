@@ -257,7 +257,16 @@ impl vosu_core::logging::ConsoleSink for Console {
     }
 }
 impl Harness {
+    /// A host with a settable synthetic foreground source.
     pub fn new(id: &str, first_pid: u32, count: u32) -> Self {
+        Self::build(id, first_pid, count, true)
+    }
+    /// A host built like production's (`PluginHost::new`): its foreground
+    /// source is the default poller sample, and `foreground` is unused.
+    pub fn production(id: &str, first_pid: u32, count: u32) -> Self {
+        Self::build(id, first_pid, count, false)
+    }
+    fn build(id: &str, first_pid: u32, count: u32, synthetic: bool) -> Self {
         let lease = TestLease::acquire();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -289,12 +298,16 @@ impl Harness {
         });
         let settings = Arc::new(plugin::settings::PluginSettingsService::new(storage));
         let foreground = Arc::new(plugin::SyntheticForegroundSource::new(None));
-        let host = PluginHost::new_with_foreground(
-            logger,
-            settings.clone(),
-            runtime.handle().clone(),
-            foreground.clone(),
-        );
+        let host = if synthetic {
+            PluginHost::new_with_foreground(
+                logger,
+                settings.clone(),
+                runtime.handle().clone(),
+                foreground.clone(),
+            )
+        } else {
+            PluginHost::new(logger, settings.clone(), runtime.handle().clone())
+        };
         let mut manifest: toml::Table = toml::from_str(vosu_osu::MANIFEST).unwrap();
         let namespace_schemas = if id == "vosu.osu" {
             &[vosu_osu::OSU_NAMESPACE_SCHEMA][..]

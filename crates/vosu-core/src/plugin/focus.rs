@@ -24,9 +24,16 @@ pub trait ForegroundSource: Send + Sync {
     }
 }
 
+/// The production host's cached poller sample. Only Windows has a poller
+/// (`OsForegroundSource`); elsewhere core has no OS-foreground source, so the
+/// sample is unavailable and `foreground` is absent (`docs/v2/plugin-abi.md`
+/// §6.2), never a fabricated `false`.
 impl ForegroundSource for tokio::sync::watch::Receiver<Option<u32>> {
     fn foreground_pid(&self) -> Option<u32> {
         *self.borrow()
+    }
+    fn available(&self) -> bool {
+        cfg!(windows)
     }
 }
 
@@ -563,6 +570,26 @@ mod tests {
                 handle: FocusKey(8414),
                 focused: true,
                 foreground: None,
+            }]
+        );
+    }
+
+    /// The host's default source is the poller's cached sample. It reports
+    /// a foreground fact exactly where `OsForegroundSource` does: on
+    /// Windows a pid that owns nothing is `false`; elsewhere the fact is
+    /// absent, never `false` (plugin-abi.md §6.2).
+    #[test]
+    fn production_sample_reports_foreground_only_where_the_os_source_does() {
+        let (_updates, sample) = tokio::sync::watch::channel(Some(9_000));
+        assert_eq!(sample.available(), OsForegroundSource.available());
+        let mut tracker = FocusTracker::new();
+        let events = tracker.recompute(&[candidate(8414, 8414, 0)], None, &sample);
+        assert_eq!(
+            events,
+            vec![FocusEvent {
+                handle: FocusKey(8414),
+                focused: true,
+                foreground: cfg!(windows).then_some(false),
             }]
         );
     }
