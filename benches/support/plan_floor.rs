@@ -124,6 +124,60 @@ pub(super) fn bench(c: &mut Criterion) {
             }
         })
     });
+    let submissions: Vec<_> = plans
+        .iter()
+        .map(|plan| Message::ReadPlanSubmit(plan.clone()).encode_payload().unwrap())
+        .collect();
+    let mut output = Vec::new();
+    let mut replies = Vec::new();
+    for submit in &submissions {
+        vosu_core::plugin::execute_sync_into(
+            submit, vosu_plugin_api::VOSU_READ_PLAN_SYNC, fixture.as_ref(),
+            ProcessBitness::X64, &super::Modules, std::time::Duration::from_secs(1),
+            &mut output,
+        ).unwrap();
+        replies.push(output.clone());
+    }
+    group.bench_function("execute", |b| {
+        b.iter(|| {
+            for submit in &submissions {
+                vosu_core::plugin::execute_sync_into(
+                    black_box(submit), vosu_plugin_api::VOSU_READ_PLAN_SYNC, fixture.as_ref(),
+                    ProcessBitness::X64, &super::Modules, std::time::Duration::from_secs(1),
+                    &mut output,
+                ).unwrap();
+                black_box(&output);
+            }
+        })
+    });
+    let mut encoded = Vec::new();
+    group.bench_function("encode", |b| {
+        b.iter(|| {
+            for (plan, stages) in plans.iter().zip(&stages) {
+                vosu_plugin_api::message::flat::encode_submit_into(
+                    &mut encoded, plan.plan, plan.handle, &plan.root, stages,
+                );
+                black_box(&encoded);
+            }
+        })
+    });
+    group.bench_function("validate_results", |b| {
+        b.iter(|| {
+            for reply in &replies {
+                vosu_plugin_api::validate_read_plan_result(black_box(reply)).unwrap();
+            }
+        })
+    });
+    let mut copied = Vec::new();
+    group.bench_function("copy_results", |b| {
+        b.iter(|| {
+            for reply in &replies {
+                copied.clear();
+                copied.extend_from_slice(black_box(reply));
+                black_box(&copied);
+            }
+        })
+    });
     let mut buffers = SyncReadBuffers::new();
     let flat = ExecutorHost::with_memory(ProcessBitness::X64, fixture.clone());
     group.bench_function("flat", |b| {
