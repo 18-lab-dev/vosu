@@ -392,3 +392,95 @@ fn api_v1_idle_hub_creates_no_runtime_task() {
     );
     hub.shutdown();
 }
+
+#[path = "../benches/support/adapter/mod.rs"]
+#[expect(
+    dead_code,
+    unused_imports,
+    reason = "The wakeup contract uses only the rig's providers and publisher"
+)]
+mod adapter;
+
+/// Idle production adapter hubs park without a timer: commits with no client
+/// wake no runtime thread, so no cadence clock is ever armed. A connected
+/// client (positive control) arms the 1 ms cadence and wakes the runtime.
+#[test]
+fn idle_adapter_hubs_arm_no_timer_and_wake_nothing() {
+    use vosu::server::websocket::{Schema, WebSocketHub};
+    let rig = adapter::Rig::new();
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .on_thread_unpark({
+            let wakes = Arc::clone(&wakes);
+            move || {
+                wakes.fetch_add(1, Ordering::Relaxed);
+            }
+        })
+        .build()
+        .unwrap();
+    let hubs = [
+        Schema::V1,
+        Schema::StreamCompanion,
+        Schema::V2,
+        Schema::V2Precise,
+    ]
+    .map(|schema| {
+        let (provider, counts) = rig.provider(schema, Duration::from_millis(1));
+        let hub = WebSocketHub::new(schema, provider);
+        let run = runtime.spawn({
+            let hub = hub.clone();
+            async move { hub.run().await }
+        });
+        (hub, run, counts)
+    });
+    // Each run task subscribes and parks; a window far longer than the
+    // cadence would expose any armed timer.
+    let window = |duration| {
+        let (_keep, never) = mpsc::sync_channel::<()>(1);
+        assert!(never.recv_timeout(duration).is_err());
+    };
+    window(Duration::from_millis(50));
+    let before = wakes.load(Ordering::Relaxed);
+    for n in 0..128 {
+        rig.publish(
+            adapter::input::snapshot(1_000.0 + f64::from(n), 7),
+            vosu_osu_state::Delivery::All,
+        );
+    }
+    window(Duration::from_millis(100));
+    assert_eq!(
+        wakes.load(Ordering::Relaxed),
+        before,
+        "idle hubs neither poll a cadence nor wake on commits"
+    );
+    for (_, _, counts) in &hubs {
+        assert_eq!(
+            counts.work(),
+            Default::default(),
+            "no capture, view or encoding"
+        );
+    }
+    // Positive control: one real client holding a frame arms the cadence.
+    let (connection, mut receiver) = {
+        let _enter = runtime.enter();
+        hubs[2].0.connect()
+    };
+    runtime
+        .block_on(adapter::bounded(receiver.recv()))
+        .expect("first frame");
+    let armed = wakes.load(Ordering::Relaxed);
+    window(Duration::from_millis(100));
+    assert!(
+        wakes.load(Ordering::Relaxed) > armed + 10,
+        "instrumentation observes the cadence timer of a real client"
+    );
+    drop((connection, receiver));
+    for (hub, run, _) in hubs {
+        hub.shutdown();
+        runtime
+            .block_on(adapter::bounded(run))
+            .expect("hub run task");
+    }
+}

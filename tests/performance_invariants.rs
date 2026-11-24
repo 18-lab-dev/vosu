@@ -905,5 +905,11 @@ async fn one_thousand_rapid_updates_coalesce_to_latest() {
     bounded!(runner).unwrap();
 }
 
+#[path = "../benches/support/adapter/mod.rs"]
+mod adapter;
+#[path = "performance/adapter.rs"]
+mod adapter_cost;
+#[path = "adapter_fixture/mod.rs"]
+mod adapter_fixture;
 #[path = "performance/api_v1.rs"]
 mod api_v1_cost;
