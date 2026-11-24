@@ -1120,8 +1120,15 @@ ordering and owner/generation/liveness rules remain intact.
 
 Final code passed 773 Linux core/osu/reader/SDK tests, both plan allocation and
 full-field invariants, Linux/Windows-target warning-denying Clippy and all nine
-maintained check scripts. Native Windows receipts and exact vm-test commands
-are retained in the evidence report.
+maintained check scripts. Native vm-tests passed: sys 48 (1 ignored), core
+read-plan 61, SDK validation 5, adapter memory 26 and reader memory 155.
+The first native reader run exposed a hardcoded Linux read-count expectation:
+Windows menu prefetch lets later connection consumers reuse the cached value
+even with the scalar Probe. The test now bounds counts by platform while
+retaining all value and injected-failure parity assertions. All 155 native
+reader tests and 191 Linux reader tests passed after this test-only correction.
+No production path/read graph changed; **1162fe6 timings remain valid**.
+Exact commands, the original failure and corrected receipts are in the report.
 
 The original fusion attach error 24 produced no accepted live timing.
 Candidate `80f5e2d` stable native regular had two errors and is rejected,
