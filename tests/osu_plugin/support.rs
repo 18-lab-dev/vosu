@@ -38,6 +38,13 @@ vosu_plugin_api::export_plugin!(bundled concurrent ObservedPlugin);
 #[derive(Default)]
 pub struct Events {
     pub attached: BTreeSet<B1SessionKey>,
+    pub identified: BTreeMap<
+        B1SessionKey,
+        (
+            vosu_osu_model::enums::ClientType,
+            vosu_osu_model::launch::InstanceSettings,
+        ),
+    >,
     pub phases: BTreeMap<B1SessionKey, Vec<B1Phase>>,
     pub published: BTreeMap<B1SessionKey, usize>,
     pub detached: BTreeSet<B1SessionKey>,
@@ -70,7 +77,13 @@ impl vosu_surface::LegacySink<B1Event, B1Inputs> for Sink {
     fn send(&self, event: B1Event) {
         let mut events = self.events.lock().unwrap();
         match event {
-            B1Event::Attached { key, .. } => {
+            B1Event::Attached {
+                key,
+                client,
+                settings,
+                ..
+            } => {
+                assert!(events.identified.insert(key, (client, settings)).is_none());
                 assert!(events.attached.insert(key));
             }
             B1Event::Phase { key, phase } => {
