@@ -716,6 +716,16 @@ session mode, cli flag and shared compiled argument/result schemas.
 no cookie/raw token; composition authenticates and core rechecks authority.
 `InvocationPolicy` owns `deadline: Duration` (default 30 s).
 
+F3 foundation: `vosu_core::plugin::action_schema` implements the A3 profile
+and centralized schema/value/work limits without a runtime schema-engine
+dependency. `LoadedPlugin::compiled_action_schemas()` retains compiled assets
+by exact manifest path; both bundled and development loading reject malformed
+or unsupported schemas before plugin code is entered. Argument and result
+validation return pointer-only `ValidationError`s; successful validation
+constructs no instance-pointer strings. The root `action_schema` integration
+test uses the pinned dev-only `jsonschema` oracle with document-local refs.
+Invocation/job integration remains J1's responsibility.
+
 ```text
 ActionRegistry::get(&self, action: &str) -> Option<Arc<ActionDescriptor>>
 CompiledActionSchema::compile(bytes: &[u8]) -> Result<Self, SchemaError>

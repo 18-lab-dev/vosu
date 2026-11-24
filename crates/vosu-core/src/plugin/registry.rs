@@ -46,6 +46,8 @@ pub struct LoadedPlugin {
     settings_schema: Option<SettingsSchema>,
     namespace_schemas: Vec<String>,
     action_schemas: std::collections::BTreeMap<String, String>,
+    compiled_action_schemas:
+        std::collections::BTreeMap<String, super::action_schema::CompiledActionSchema>,
     // Shared, not just held: unloading while an instance's `plugin_ctx`
     // still points into the library would be immediate undefined behavior
     // the next `dispatch`/`destroy` call makes, and `LoadedPlugin` alone
@@ -79,6 +81,13 @@ impl LoadedPlugin {
     /// Raw schema assets keyed by exact manifest package path, for compilation.
     pub fn action_schemas(&self) -> &std::collections::BTreeMap<String, String> {
         &self.action_schemas
+    }
+
+    /// Compiled once during load, keyed by the exact manifest asset path.
+    pub fn compiled_action_schemas(
+        &self,
+    ) -> &std::collections::BTreeMap<String, super::action_schema::CompiledActionSchema> {
+        &self.compiled_action_schemas
     }
 
     /// Clones this plugin's `Arc<Library>` handle, so a `PluginInstance`
@@ -171,8 +180,16 @@ pub fn load_bundled(bundled: &[BundledPlugin<'_>]) -> Result<Vec<LoadedPlugin>, 
                     )
                     .into());
                 }
+                if text.len() > super::action_schema::MAX_SCHEMA_BYTES {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "action schema byte budget exceeded",
+                    )
+                    .into());
+                }
                 Ok((*text).to_owned())
             })?;
+            let compiled_action_schemas = compile_action_schemas(&action_schemas)?;
             let vtable = (entry.vtable)();
             check_descriptor(&vtable)?;
             Ok(LoadedPlugin {
@@ -180,6 +197,7 @@ pub fn load_bundled(bundled: &[BundledPlugin<'_>]) -> Result<Vec<LoadedPlugin>, 
                 vtable,
                 settings_schema,
                 action_schemas,
+                compiled_action_schemas,
                 namespace_schemas: entry
                     .namespace_schemas
                     .iter()
@@ -244,8 +262,22 @@ pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, H
             )
             .into());
         }
-        std::fs::read_to_string(path).map_err(HostError::Io)
+        use std::io::Read as _;
+        let limit = super::action_schema::MAX_SCHEMA_BYTES;
+        let mut text = String::new();
+        std::fs::File::open(path)?
+            .take((limit + 1) as u64)
+            .read_to_string(&mut text)?;
+        if text.len() > limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "action schema byte budget exceeded",
+            )
+            .into());
+        }
+        Ok(text)
     })?;
+    let compiled_action_schemas = compile_action_schemas(&action_schemas)?;
     let triple = current_target_triple();
     let target = manifest
         .targets
@@ -292,6 +324,7 @@ pub fn load_development(dir: &Path, debug_build: bool) -> Result<LoadedPlugin, H
         settings_schema,
         namespace_schemas,
         action_schemas,
+        compiled_action_schemas,
         library: Some(Arc::new(library)),
     })
 }
@@ -329,6 +362,25 @@ fn load_action_schemas(
         }
     }
     Ok(schemas)
+}
+
+fn compile_action_schemas(
+    schemas: &std::collections::BTreeMap<String, String>,
+) -> Result<std::collections::BTreeMap<String, super::action_schema::CompiledActionSchema>, HostError>
+{
+    schemas
+        .iter()
+        .map(|(path, text)| {
+            super::action_schema::CompiledActionSchema::compile(text)
+                .map(|schema| (path.clone(), schema))
+                .map_err(|error| {
+                    HostError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("invalid action schema {path}: {error}"),
+                    ))
+                })
+        })
+        .collect()
 }
 
 #[cfg(test)]
