@@ -14,24 +14,29 @@
 //! `VOSU_OP_PUBLISH_FIELD`/`VOSU_OP_PUBLISH_BATCH` submissions from
 //! several test-controlled writer threads at once (`publisher.rs`), and
 //! a `VOSU_OP_STATE_SUBSCRIBE` subscriber reassembling split
-//! `VOSU_OP_STATE_UPDATE` deliveries (`subscriber.rs`). Actions, streams,
-//! and the synthetic game beyond these two fixtures are out of scope for
-//! this phase.
+//! `VOSU_OP_STATE_UPDATE` deliveries (`subscriber.rs`), plus instance-owned
+//! resource/action scripts and a development API fixture (`fixture.rs`).
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 #[cfg(all(feature = "test-harness", not(debug_assertions)))]
 compile_error!("the test-harness feature is forbidden in release builds");
 
 #[cfg(feature = "test-harness")]
+pub mod actions;
+#[cfg(feature = "test-harness")]
 pub mod concurrent;
 #[cfg(feature = "test-harness")]
 pub mod echo;
+#[cfg(feature = "test-harness")]
+pub mod fixture;
 #[cfg(feature = "test-harness")]
 pub mod host_services;
 #[cfg(feature = "test-harness")]
 pub mod publisher;
 #[cfg(feature = "test-harness")]
 pub mod read_plan;
+#[cfg(feature = "test-harness")]
+pub mod resources;
 #[cfg(feature = "test-harness")]
 pub mod scan;
 #[cfg(feature = "test-harness")]

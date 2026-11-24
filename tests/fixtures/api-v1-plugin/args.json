@@ -1,0 +1,1 @@
+{"type":"object","properties":{"mode":{"type":"string","enum":["run","wait","ignore"]},"sentinel":{"type":"string","maxLength":128}},"additionalProperties":false}

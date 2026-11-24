@@ -1,0 +1,69 @@
+kind = 'plugin'
+manifest_version = 1
+id = 'test.api.fixture'
+name = 'API v1 fixture'
+version = '1.0.0'
+host = '>=1.0.0, <3.0.0'
+abi_version = 1
+runtime = 'in-process'
+root_slots = ['fixture']
+
+[targets.x86_64-unknown-linux-gnu]
+library = 'lib/libapi_v1_plugin.so'
+[targets.x86_64-pc-windows-msvc]
+library = 'lib/api_v1_plugin.dll'
+[match]
+process_names = ['api_v1_target', 'api_v1_target.exe']
+
+[[provides]]
+id = 'game:fixture'
+version = '*'
+[[provides]]
+id = 'field:test.api.fixture'
+version = '1.0.0'
+schema = 'namespace.json'
+[[provides]]
+id = 'action:test.api.fixture.run'
+version = '1.0.0'
+[[provides]]
+id = 'action:test.api.fixture.fail'
+version = '1.0.0'
+[[provides]]
+id = 'resource:test.api.fixture.fixture-file'
+version = '1.0.0'
+[[provides]]
+id = 'resource:test.api.fixture.fixture-stream'
+version = '1.0.0'
+[[provides]]
+id = 'resource:test.api.fixture.fixture-tree'
+version = '1.0.0'
+
+[[resource_kinds]]
+kind = 'fixture-file'
+tree = false
+families = ['chart-text']
+[[resource_kinds]]
+kind = 'fixture-stream'
+tree = false
+families = ['chart-text']
+[[resource_kinds]]
+kind = 'fixture-tree'
+tree = true
+families = ['chart-text']
+
+[[actions]]
+name = 'run'
+version = '1.0.0'
+title = 'Fixture run'
+args_schema = 'args.json'
+result_schema = 'result.json'
+session = 'none'
+cli = true
+[[actions]]
+name = 'fail'
+version = '1.0.0'
+title = 'Fixture failure'
+args_schema = 'args.json'
+result_schema = 'result.json'
+session = 'none'
+cli = true

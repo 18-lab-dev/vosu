@@ -187,6 +187,10 @@ required-features = ["linux-process-events"]
 name = "process_event_lazer_bench"
 required-features = ["linux-process-events"]
 
+[[example]]
+name = "api_v1_target"
+required-features = ["test-harness"]
+
 [build-dependencies]
 winresource = "=0.1.31"
 

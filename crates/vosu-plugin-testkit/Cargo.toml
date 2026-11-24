@@ -29,3 +29,8 @@ test-harness = ["vosu-plugin-api/unstable-sync-reads"]
 
 [dependencies]
 vosu-plugin-api = { path = "../vosu-plugin-api" }
+
+[[example]]
+name = "api_v1_plugin"
+crate-type = ["cdylib"]
+required-features = ["test-harness"]
