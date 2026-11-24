@@ -98,7 +98,7 @@ fn capture_resolves_b1_at_session_start_and_logs_missing_sink_only_once() {
     assert!(matches!(
         receiver.recv_timeout(Duration::from_secs(5)).unwrap(),
         B1Event::Phase {
-            phase: B1Phase::StartingReader,
+            phase: B1Phase::ResolvingOffsets,
             ..
         }
     ));

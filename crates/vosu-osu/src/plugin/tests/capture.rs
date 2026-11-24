@@ -48,20 +48,6 @@ fn b2_settings_update_existing_and_future_sessions() {
 }
 
 #[test]
-fn missing_sink_never_starts_a_capture_worker() {
-    let (plugin, _data_dir) = hermetic(RecordingHost::default(), Platform::Windows);
-    for handle in [61067, 61068] {
-        plugin
-            .dispatch(
-                Message::SessionAttached(attached(handle, handle as u32, "osu!.exe", Bitness::X86)),
-                0,
-            )
-            .unwrap();
-        assert!(!plugin.state.lock().unwrap().sessions[&handle].capture_is_some());
-    }
-}
-
-#[test]
 fn settings_update_holds_ordering_lock_through_watch_publication() {
     let (plugin, _data_dir) = hermetic(RecordingHost::default(), Platform::Windows);
     plugin

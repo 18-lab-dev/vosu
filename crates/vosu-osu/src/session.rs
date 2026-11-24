@@ -70,6 +70,11 @@ pub struct OsuSession {
     lifecycle: CancellationToken,
     scans: Option<SessionScanLifecycle>,
     lazer_offsets: ArcSwapOption<LazerOffsets>,
+    offset_ready: tokio::sync::watch::Sender<bool>,
+    #[cfg(test)]
+    offset_waiting: Arc<tokio::sync::Notify>,
+    #[cfg(test)]
+    capture_controls: tokio::sync::watch::Sender<Option<capture::CaptureControls>>,
     resolver: tokio::sync::Mutex<Option<LazerResolverHandle>>,
     capture: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     pub(crate) osu_settings: tokio::sync::watch::Sender<OsuSettings>,
@@ -104,6 +109,11 @@ impl OsuSession {
             lifecycle: CancellationToken::new(),
             scans,
             lazer_offsets: ArcSwapOption::empty(),
+            offset_ready: tokio::sync::watch::channel(false).0,
+            #[cfg(test)]
+            offset_waiting: Arc::new(tokio::sync::Notify::new()),
+            #[cfg(test)]
+            capture_controls: tokio::sync::watch::channel(None).0,
             resolver: tokio::sync::Mutex::new(None),
             capture: tokio::sync::Mutex::new(None),
             osu_settings: tokio::sync::watch::channel(OsuSettings::default()).0,
@@ -180,10 +190,6 @@ impl OsuSession {
             let _ = task.await;
         }
     }
-    #[cfg(test)]
-    pub(crate) fn capture_is_some(&self) -> bool {
-        self.capture.blocking_lock().is_some()
-    }
 
     /// Test-only: whether a resolver task is currently recorded (started
     /// by [`Self::start_lazer_resolver`] and not yet taken by
@@ -230,9 +236,14 @@ impl GenerationIdentity for OsuSession {
         {
             return false;
         }
-        self.lazer_offsets
+        let installed = self
+            .lazer_offsets
             .compare_and_swap(&None::<Arc<LazerOffsets>>, Some(offsets))
-            .is_none()
+            .is_none();
+        if installed {
+            self.offset_ready.send_replace(true);
+        }
+        installed
     }
 
     /// A live `/proc`/module-enumeration read through `pid` (ported from

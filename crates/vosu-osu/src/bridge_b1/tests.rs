@@ -105,7 +105,7 @@ fn publisher_drops_its_lock_before_calling_a_reentrant_sink() {
     );
 }
 #[test]
-fn reader_settings_combine_each_b2_and_b1_field_without_losing_demand() {
+fn reader_settings_combine_non_default_b2_and_b1_fields() {
     let osu = OsuSettings {
         calculate_pp: false,
         poll_rate: 543.0,
@@ -114,9 +114,9 @@ fn reader_settings_combine_each_b2_and_b1_field_without_losing_demand() {
         read_mania_scroll_speed: false,
     };
     let inputs = B1Inputs {
-        enable_key_overlay: true,
+        enable_key_overlay: false,
         enable_mania_key_hit_errors: true,
-        enable_hit_offsets: false,
+        enable_hit_offsets: true,
         v2_subscription_debounce: 87.0,
         demand: SubscriptionDemand {
             regular: true,
@@ -133,14 +133,12 @@ fn reader_settings_combine_each_b2_and_b1_field_without_losing_demand() {
             precise_data_poll_rate: 21.0,
             show_mp_commands: true,
             read_mania_scroll_speed: false,
-            enable_key_overlay: true,
+            enable_key_overlay: false,
             enable_mania_key_hit_errors: true,
-            enable_hit_offsets: false,
+            enable_hit_offsets: true,
             v2_subscription_debounce: 87.0,
         }
     );
-    assert!(inputs.demand.regular && inputs.demand.precise && inputs.demand.gameplay_precise);
-    assert!(!inputs.demand.gameplay_regular);
 }
 
 struct Publication {

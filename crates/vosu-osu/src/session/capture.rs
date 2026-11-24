@@ -10,6 +10,12 @@ use tokio::sync::watch;
 use vosu_osu_reader::{memory::ReaderSynchronization, memory::lazer_loader::LogWarn};
 use vosu_osu_state::{SnapshotPublisher, StateBundleSnapshot};
 
+#[cfg(test)]
+pub(super) type CaptureControls = (
+    watch::Receiver<vosu_osu_state::ReaderSettings>,
+    watch::Receiver<vosu_osu_state::SubscriptionDemand>,
+);
+
 impl OsuSession {
     pub async fn start_capture(self: &Arc<Self>, sink: Arc<B1Sink>, warn: LogWarn) {
         let mut task = self.capture.lock().await;
@@ -20,6 +26,11 @@ impl OsuSession {
         let cancel = self.lifecycle_token();
         let mut settings = self.osu_settings.subscribe();
         let mut inputs = sink.inputs();
+        let mut offset_ready = self.offset_ready.subscribe();
+        #[cfg(test)]
+        let offset_waiting = Arc::clone(&self.offset_waiting);
+        #[cfg(test)]
+        let controls = self.capture_controls.clone();
         let key = B1SessionKey {
             pid: self.pid,
             generation: self.generation,
@@ -36,28 +47,41 @@ impl OsuSession {
                 settings: instance_settings,
                 is_tournament_manager: false,
             });
-            if client == vosu_osu_model::enums::ClientType::Lazer {
-                sink.send(B1Event::Phase {
-                    key,
-                    phase: B1Phase::ResolvingOffsets,
-                });
-            }
+            // Stable also remains in this legacy dashboard phase until its
+            // first publication; it never has lazer offsets to mark ready.
+            sink.send(B1Event::Phase {
+                key,
+                phase: B1Phase::ResolvingOffsets,
+            });
             let (reader_tx, reader) = watch::channel(
                 (*inputs.borrow_and_update()).reader_settings(*settings.borrow_and_update()),
             );
             let (demand_tx, demand) = watch::channel(inputs.borrow().demand);
+            #[cfg(test)]
+            controls.send_replace(Some((reader.clone(), demand.clone())));
             let publisher: Arc<dyn SnapshotPublisher<Arc<StateBundleSnapshot>>> =
                 Arc::new(B1Publisher::new(key, Arc::clone(&sink)));
             let synchronization = Arc::new(Mutex::new(ReaderSynchronization::default()));
             let mut starting = false;
-            let initialize = initialize_state_worker(
+            let initialize = async {
+                if client == vosu_osu_model::enums::ClientType::Lazer {
+                    while !*offset_ready.borrow_and_update() {
+                        #[cfg(test)]
+                        offset_waiting.notify_one();
+                        tokio::select! {
+                            _ = cancel.cancelled() => return None,
+                            changed = offset_ready.changed() => { if changed.is_err() { return None; } }
+                        }
+                    }
+                }
+                initialize_state_worker(
                 &cancel,
                 Duration::from_secs(1),
                 || {
                     let target = target(&session);
                     if target.as_ref().is_some_and(|target| {
-                        target.client == vosu_osu_model::enums::ClientType::Stable
-                            || target.lazer_offsets.is_some()
+                        target.client == vosu_osu_model::enums::ClientType::Lazer
+                            && target.lazer_offsets.is_some()
                     }) && !starting
                     {
                         starting = true;
@@ -92,7 +116,8 @@ impl OsuSession {
                         key.pid, key.generation
                     ))
                 },
-            );
+            ).await
+            };
             tokio::pin!(initialize);
             let mut initialized = false;
             let mut worker = None;
@@ -131,7 +156,11 @@ impl OsuSession {
                 worker = initialize.await;
             }
             if let Some(worker) = worker {
-                let _ = worker.shutdown().await;
+                // shutdown awaits the reducer and synchronously joins reader
+                // threads. Keep both joins off the two plugin runtime workers.
+                let runtime = tokio::runtime::Handle::current();
+                let _ =
+                    tokio::task::spawn_blocking(move || runtime.block_on(worker.shutdown())).await;
             }
             sink.send(B1Event::Detached { key });
         }));
