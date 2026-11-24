@@ -627,3 +627,173 @@ fn adapter_capture_schema_query_names_are_exact() {
         assert_eq!(schema_from_query(near), None, "{near:?}");
     }
 }
+
+// Real envelopes for the Python `golden-capture` fake vosu harness server
+// (tools/live-parity/test_live_parity_golden_capture.py). They come from this
+// encoder through `capture_for_harness`, never from hand-typed JSON. The
+// streamCompanion stand-in releases its derived work on every read, so its
+// generation and derived revision advance per read as the real provider's do.
+const FAKE_ENVELOPES: &str = "tools/live-parity/testdata/golden-capture-envelopes.json";
+const FAKE_READS: usize = 3;
+/// (barrier, recorded client state); `None` is the not-ready no-client image.
+const FAKE_BARRIERS: [(&str, Option<i64>); 5] = [
+    ("no-client", None),
+    ("menu", Some(0)),
+    ("play", Some(1)),
+    ("paused", Some(2)),
+    ("result", Some(3)),
+];
+
+/// Encodes the recorded client state as the barrier-bearing part of a v2-like
+/// body. With `releases` (a client session has chart work), every read's
+/// retained derived work is released afterwards, which advances its revision.
+struct StateEcho {
+    derived: Option<Arc<watch::Sender<u64>>>,
+    releases: bool,
+}
+struct StateView {
+    state: i128,
+    revision: u64,
+}
+struct Released(Arc<watch::Sender<u64>>);
+impl Drop for Released {
+    fn drop(&mut self) {
+        self.0.send_modify(|revision| *revision += 1);
+    }
+}
+impl Projection<Filter, Bytes> for StateEcho {
+    fn selectors(&self) -> Vec<Selector> {
+        Echo::default().selectors()
+    }
+    fn demand_selectors(&self, _: &[Filter]) -> Vec<Selector> {
+        self.selectors()
+    }
+    fn decode(
+        &self,
+        capture: CapturedSelection,
+    ) -> Result<Arc<dyn ProjectionView<Filter, Bytes>>, ProjectionError> {
+        Ok(Arc::new(StateView {
+            state: score(&capture),
+            revision: self.revision(),
+        }))
+    }
+    fn revision(&self) -> u64 {
+        self.derived.as_ref().map_or(0, |derived| *derived.borrow())
+    }
+    fn changes(&self) -> Option<watch::Receiver<u64>> {
+        self.derived.as_ref().map(|derived| derived.subscribe())
+    }
+    fn retain(&self, _: &[Filter]) -> Option<Box<dyn Send + Sync>> {
+        let derived = self.derived.clone().filter(|_| self.releases)?;
+        Some(Box::new(Released(derived)))
+    }
+}
+impl ProjectionView<Filter, Bytes> for StateView {
+    fn revision(&self) -> u64 {
+        self.revision
+    }
+    fn encode(&self, _: &[Filter]) -> Result<Bytes, String> {
+        let (number, name, paused) = match self.state {
+            0 => (0, "menu", false),
+            1 => (2, "play", false),
+            2 => (2, "play", true),
+            3 => (7, "resultScreen", false),
+            other => return Err(format!("unknown recorded state {other}")),
+        };
+        Ok(Bytes::from(
+            json!({"state": {"number": number, "name": name}, "game": {"paused": paused}})
+                .to_string(),
+        ))
+    }
+}
+
+fn fake_vosu_envelopes() -> Value {
+    let mut barriers = serde_json::Map::new();
+    for (barrier, state) in FAKE_BARRIERS {
+        let mut schemas = serde_json::Map::new();
+        for (name, schema) in SCHEMAS {
+            let mut image = image(CborValue::Integer(state.unwrap_or(0).into()));
+            if state.is_none() {
+                image.session = None;
+                image.roster.sessions = Arc::from([]);
+                image.values = Arc::from([entry("/play/score", None)]);
+            }
+            let bus = Bus::new(image, false);
+            let adapter = Arc::new(StateEcho {
+                derived: (schema == Schema::StreamCompanion).then(|| Arc::new(watch::channel(1).0)),
+                releases: state.is_some(),
+            });
+            let provider = BusStateProvider::new(schema, bus, adapter, Duration::from_secs(3600));
+            let reads = (0..FAKE_READS)
+                .map(|_| envelope(&provider.capture_for_harness().unwrap()))
+                .collect();
+            schemas.insert(name.to_owned(), Value::Array(reads));
+        }
+        barriers.insert(barrier.to_owned(), Value::Object(schemas));
+    }
+    json!({
+        "format": "vosu-golden-capture-fake-envelopes-v1",
+        "generator": "src/server/adapter_capture/tests.rs export_golden_capture_fake_envelopes",
+        "reads_per_schema": FAKE_READS,
+        "barriers": barriers,
+    })
+}
+
+fn fake_envelopes_text() -> String {
+    serde_json::to_string_pretty(&fake_vosu_envelopes()).unwrap() + "\n"
+}
+
+#[test]
+fn adapter_capture_fake_envelopes_follow_the_provider_generation_rules() {
+    let value = fake_vosu_envelopes();
+    for (barrier, schemas) in value["barriers"].as_object().unwrap() {
+        for (schema, reads) in schemas.as_object().unwrap() {
+            let reads = reads.as_array().unwrap();
+            let generations: Vec<_> = reads
+                .iter()
+                .map(|r| r["provider_generation"].clone())
+                .collect();
+            let advancing = schema == "sc" && barrier != "no-client";
+            for pair in reads.windows(2) {
+                assert_eq!(pair[0]["digest"], pair[1]["digest"], "{barrier}/{schema}");
+                assert_eq!(pair[0]["http"], pair[1]["http"], "{barrier}/{schema}");
+                assert_eq!(
+                    pair[0]["derived"]["status"], pair[1]["derived"]["status"],
+                    "{barrier}/{schema}"
+                );
+                let step = pair[1]["provider_generation"].as_u64().unwrap()
+                    - pair[0]["provider_generation"].as_u64().unwrap();
+                assert_eq!(
+                    step,
+                    u64::from(advancing),
+                    "{barrier}/{schema} {generations:?}"
+                );
+            }
+            let kind = if barrier == "no-client" {
+                "not_ready"
+            } else {
+                "ready"
+            };
+            assert_eq!(reads[0]["http"]["kind"], kind, "{barrier}/{schema}");
+        }
+    }
+}
+
+#[test]
+fn adapter_capture_fake_envelopes_are_current() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(FAKE_ENVELOPES);
+    let committed = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        committed == fake_envelopes_text(),
+        "{FAKE_ENVELOPES} is stale; regenerate it with `cargo test --locked --features \
+         test-harness -p vosu --lib export_golden_capture_fake_envelopes -- --ignored`"
+    );
+}
+
+#[test]
+#[ignore = "writes the committed golden-capture fake envelopes"]
+fn export_golden_capture_fake_envelopes() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(FAKE_ENVELOPES);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, fake_envelopes_text()).unwrap();
+}
