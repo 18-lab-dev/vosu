@@ -158,7 +158,11 @@ impl Selection {
                 Err(_) => return Outcome::Missing,
             }
         };
-        let relative = if relative.contains('\\') { relative.replace('\\', "/") } else { relative };
+        let relative = if relative.contains('\\') {
+            relative.replace('\\', "/")
+        } else {
+            relative
+        };
         // The declared skins slot already retains the selected stable skin.
         if route == Route::Skin
             && relative
@@ -262,7 +266,11 @@ async fn directory_entries(
 /// Lexical full-path fallback, including case-colliding ancestor directories.
 /// Each scan pages to completion but retains only one candidate per component.
 async fn case_path(root: &RootLease, requested: &str) -> Result<Option<String>, FileError> {
-    let folded: Vec<_> = requested.trim_end_matches('/').split('/').map(str::to_lowercase).collect();
+    let folded: Vec<_> = requested
+        .trim_end_matches('/')
+        .split('/')
+        .map(str::to_lowercase)
+        .collect();
     let mut chosen: Vec<Option<String>> = vec![None; folded.len()];
     let mut depth = 0;
     let mut parent = String::new();
@@ -277,24 +285,22 @@ async fn case_path(root: &RootLease, requested: &str) -> Result<Option<String>, 
         let after = chosen[depth].take();
         let mut best: Option<String> = None;
         match root.directory(&RelativeChild::parse(&parent)?).await {
-            Ok(mut directory) => {
-                loop {
-                    let page = directory.next_page().await?;
-                    for entry in page.entries {
-                        if entry.kind != EntryKind::Other
-                            && (depth + 1 == folded.len() || entry.kind == EntryKind::Directory)
-                            && entry.name.to_lowercase() == folded[depth]
-                            && after.as_ref().is_none_or(|previous| entry.name > *previous)
-                            && best.as_ref().is_none_or(|previous| entry.name < *previous)
-                        {
-                            best = Some(entry.name);
-                        }
-                    }
-                    if !page.truncated {
-                        break;
+            Ok(mut directory) => loop {
+                let page = directory.next_page().await?;
+                for entry in page.entries {
+                    if entry.kind != EntryKind::Other
+                        && (depth + 1 == folded.len() || entry.kind == EntryKind::Directory)
+                        && entry.name.to_lowercase() == folded[depth]
+                        && after.as_ref().is_none_or(|previous| entry.name > *previous)
+                        && best.as_ref().is_none_or(|previous| entry.name < *previous)
+                    {
+                        best = Some(entry.name);
                     }
                 }
-            }
+                if !page.truncated {
+                    break;
+                }
+            },
             Err(FileError::NotFound | FileError::InvalidPath | FileError::Io) => {}
             Err(error) => return Err(error),
         }

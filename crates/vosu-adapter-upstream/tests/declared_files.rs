@@ -1,3 +1,7 @@
+#![expect(
+    clippy::disallowed_methods,
+    reason = "confinement fixtures create and mutate scratch files"
+)]
 mod support;
 use support::{Case, MAP};
 use vosu_adapter_upstream::{
@@ -198,4 +202,31 @@ fn stable_case_fallback_sees_new_files_and_backtracks_colliding_ancestors() {
     assert_eq!(bytes(&case, Route::Skin, "SubDir/new.png"), b"new-entry");
     std::fs::remove_file(root.join("SUBDIR/NEW.PNG")).unwrap();
     assert_eq!(bytes(&case, Route::Skin, "subdir/New.Png"), b"new-entry");
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_reparse_files_and_directories_cannot_escape_declared_routes() {
+    let case = Case::new(false);
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("secret.osu"), MAP).unwrap();
+    std::os::windows::fs::symlink_file(
+        outside.path().join("secret.osu"),
+        case.songs().join("escape.osu"),
+    )
+    .unwrap();
+    std::os::windows::fs::symlink_dir(outside.path(), case.songs().join("escape-dir")).unwrap();
+    for path in ["escape.osu", "escape-dir/secret.osu"] {
+        assert!(matches!(
+            case.run(case.provider.resolve(Route::Songs, path, "/Songs/escape")),
+            Outcome::Missing
+        ));
+        assert!(matches!(
+            case.run(case.provider.calculate(PpQuery {
+                path: Some(path.into()),
+                ..Default::default()
+            })),
+            ResultBody::Failed { status: 400, .. }
+        ));
+    }
 }
