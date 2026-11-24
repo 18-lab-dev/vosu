@@ -1,9 +1,8 @@
 use super::*;
 use crate::identity::PluginInstanceId;
+use vosu_surface::requester::BundledRequester;
 use vosu_surface::routes::{RegistrationError, RegistrationLease, RouteDescriptor, RouteProvider};
-use vosu_surface::state::{
-    BundledRequester, CapturedSelection, IdentifiedRoster, IdentifiedSession,
-};
+use vosu_surface::state::{CapturedSelection, IdentifiedRoster, IdentifiedSession};
 
 pub(super) struct Requester {
     pub host: Weak<PluginHost>,
