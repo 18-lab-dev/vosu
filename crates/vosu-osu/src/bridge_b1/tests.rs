@@ -57,12 +57,12 @@ fn publisher_preserves_key_suppresses_duplicates_and_retains_only_latest() {
     publisher
         .publish(Arc::new((*first).clone()), Delivery::All)
         .unwrap();
-    assert_eq!(sink.count.load(Ordering::SeqCst), 1);
+    assert_eq!(sink.count.load(Ordering::SeqCst), 2);
     let latest = snapshot(2);
     publisher
         .publish(Arc::clone(&latest), Delivery::Live)
         .unwrap();
-    assert_eq!(sink.count.load(Ordering::SeqCst), 2);
+    assert_eq!(sink.count.load(Ordering::SeqCst), 3);
     match sink.latest.lock().unwrap().take().unwrap() {
         B1Event::Publish { key, api, live } => {
             assert_eq!(
@@ -75,7 +75,7 @@ fn publisher_preserves_key_suppresses_duplicates_and_retains_only_latest() {
             assert!(Arc::ptr_eq(&api, &latest));
             assert!(Arc::ptr_eq(&live, &latest));
         }
-        _ => panic!("publisher emits Publish only"),
+        _ => panic!("subsequent publications emit Publish without another phase"),
     }
 }
 #[test]
@@ -101,7 +101,7 @@ fn publisher_drops_its_lock_before_calling_a_reentrant_sink() {
     });
     assert_eq!(
         rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
-        1
+        2
     );
 }
 #[test]
@@ -239,4 +239,48 @@ fn subscriber_samples_reach_live_state_before_api_cadence() {
     let caught_up = state_bundle(1, 11);
     sink.publish(Arc::clone(&caught_up), Delivery::All).unwrap();
     assert!(Arc::ptr_eq(&queue.drain()[&7].api, &caught_up));
+}
+
+#[test]
+fn reading_phase_follows_only_the_first_successful_publication() {
+    #[derive(Default)]
+    struct Events(Mutex<Vec<&'static str>>);
+    impl vosu_surface::LegacySink<B1Event, B1Inputs> for Events {
+        fn send(&self, event: B1Event) {
+            self.0.lock().unwrap().push(match event {
+                B1Event::Publish { .. } => "publish",
+                B1Event::Phase {
+                    phase: B1Phase::Reading,
+                    ..
+                } => "reading",
+                _ => panic!("unexpected publisher event"),
+            });
+        }
+        fn inputs(&self) -> watch::Receiver<B1Inputs> {
+            watch::channel(B1Inputs::default()).1
+        }
+    }
+    let events = Arc::new(Events::default());
+    let publisher = B1Publisher::new(
+        B1SessionKey {
+            pid: 61059,
+            generation: 9,
+        },
+        events.clone(),
+    );
+    assert!(
+        events.0.lock().unwrap().is_empty(),
+        "creating a reader publisher must not mark the session reading"
+    );
+    let first = snapshot(0);
+    publisher.publish(first.clone(), Delivery::All).unwrap();
+    assert_eq!(*events.0.lock().unwrap(), ["publish", "reading"]);
+    publisher.publish(first, Delivery::All).unwrap();
+    assert_eq!(
+        *events.0.lock().unwrap(),
+        ["publish", "reading"],
+        "an equivalent publication emits no second phase"
+    );
+    publisher.publish(snapshot(1), Delivery::All).unwrap();
+    assert_eq!(*events.0.lock().unwrap(), ["publish", "reading", "publish"]);
 }

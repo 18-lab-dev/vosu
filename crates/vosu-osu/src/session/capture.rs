@@ -129,9 +129,6 @@ impl OsuSession {
                     next = &mut initialize, if !initialized => {
                         initialized = true;
                         worker = next;
-                        if worker.is_some() {
-                            sink.send(B1Event::Phase { key, phase: B1Phase::Reading });
-                        }
                     }
                     changed = settings.changed(), if settings_open => {
                         settings_open = changed.is_ok();

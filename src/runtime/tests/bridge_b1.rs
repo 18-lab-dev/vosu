@@ -263,6 +263,9 @@ async fn b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown() {
     bridge.send(attach(21201, 1));
     bridge.send(B1Event::Phase { key: B1SessionKey { pid: 21201, generation: 1 }, phase: B1Phase::ResolvingOffsets });
     assert_eq!(lifecycle.borrow().revision, 2);
+    // Leave old work queued before PID reuse; the manager must drain it
+    // against the new attachment rather than resurrect the old generation.
+    bridge.send(B1Event::Publish { key: B1SessionKey { pid: 21201, generation: 1 }, api: state_bundle(1, 99), live: state_bundle(1, 99) });
     bridge.send(attach(21201, 2));
     bridge.send(B1Event::Detached { key: B1SessionKey { pid: 21201, generation: 1 } });
     assert_eq!(lifecycle.borrow().revision, 3);
@@ -284,12 +287,13 @@ async fn b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown() {
     tokio::time::timeout(Duration::from_secs(2), async {
         while !inputs.borrow_and_update().demand.precise { inputs.changed().await.unwrap(); }
     }).await.unwrap();
+    assert!(!snapshots.load().manager().instances().contains_key(&21201), "queued old-generation work must not become visible after PID reuse");
     let state = state_bundle(2, 12);
     bridge.send(B1Event::Publish { key: B1SessionKey { pid: 21201, generation: 2 }, api: state.clone(), live: state });
     tokio::time::timeout(Duration::from_secs(2), async {
-        while snapshots.load().manager().instances().get(&21201).is_none() { tokio::task::yield_now().await; }
+        while snapshots.load().manager().instances().get(&21201).is_none_or(|entry| entry.state().generation != 2 || entry.state().reset_epoch != 12) { tokio::task::yield_now().await; }
     }).await.unwrap();
-    bridge.send(B1Event::Publish { key: B1SessionKey { pid: 21201, generation: 1 }, api: state_bundle(1, 99), live: state_bundle(1, 99) });
+    assert_eq!(snapshots.load().manager().instances()[&21201].state().generation, 2, "valid new-generation work must be observed before shutdown");
     tokio::time::timeout(Duration::from_secs(2), task.shutdown()).await.unwrap();
     assert!(lifecycle.borrow().sessions.is_empty());
     assert_eq!(snapshots.load().manager().instances()[&21201].state().generation, 2);
@@ -299,4 +303,64 @@ async fn b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown() {
     lifecycle.borrow_and_update();
     drop(bridge);
     assert!(tokio::time::timeout(Duration::from_secs(2), lifecycle.changed()).await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn b1_foreground_poll_and_detach_update_lifecycle_and_manager() {
+    use vosu_osu::bridge_b1::{B1Event, B1SessionKey};
+    use vosu_surface::LegacySink;
+    struct Foreground(std::sync::atomic::AtomicU32);
+    impl vosu_core::plugin::ForegroundSource for Foreground {
+        fn foreground_pid(&self) -> Option<u32> {
+            let pid = self.0.load(Ordering::Acquire);
+            (pid != 0).then_some(pid)
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let logger = Logger::new(root.path(), LoggerOptions::default(), Arc::new(StdoutConsole)).unwrap();
+    let (_config, config_rx) = watch::channel(Arc::new(Config::default()));
+    let (_demand, demand_rx) = watch::channel(Default::default());
+    let snapshots = Arc::new(SnapshotProviders::new(Arc::new(ManagerSnapshot::not_ready(0, ApiRuntimeSettings::default())), Arc::new(ProductionSnapshotEncoder)));
+    let bridge = LegacyBridge::new(config_rx, demand_rx, snapshots.clone(), logger);
+    for (pid, client) in [(21401, ClientType::Lazer), (21402, ClientType::Stable)] {
+        let key = B1SessionKey { pid, generation: 1 };
+        bridge.send(B1Event::Attached { key, client, settings: b1_session(pid, client, false).settings, is_tournament_manager: false });
+        let mut state = (*state_bundle(1, 0)).clone();
+        state.source = client;
+        let state = Arc::new(state);
+        bridge.send(B1Event::Publish { key, api: state.clone(), live: state });
+    }
+    let foreground = Arc::new(Foreground(std::sync::atomic::AtomicU32::new(0)));
+    let lifecycle = bridge.lifecycle();
+    let task = bridge.start(foreground.clone());
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while snapshots.load().manager().focused_pid() != Some(21401) { tokio::task::yield_now().await; }
+    }).await.unwrap();
+    assert_eq!(lifecycle.borrow().focus, FocusState { focused_client: ClientType::Lazer, game_focused: false });
+    #[cfg(windows)]
+    let (detached, remaining, fallback_client) = {
+        foreground.0.store(21402, Ordering::Release);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while lifecycle.borrow().focus != (FocusState { focused_client: ClientType::Stable, game_focused: true })
+                || snapshots.load().manager().focused_pid() != Some(21402) {
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        assert_eq!(lifecycle.borrow().focus, FocusState { focused_client: ClientType::Stable, game_focused: true });
+        assert_eq!(snapshots.load().manager().focused_pid(), Some(21402));
+        (21402, 21401, ClientType::Lazer)
+    };
+    #[cfg(not(windows))]
+    let (detached, remaining, fallback_client) = (21401, 21402, ClientType::Stable);
+    bridge.send(B1Event::Detached { key: B1SessionKey { pid: detached, generation: 1 } });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lifecycle.borrow().focus != (FocusState { focused_client: fallback_client, game_focused: false })
+            || snapshots.load().manager().focused_pid() != Some(remaining) {
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    assert_eq!(lifecycle.borrow().focus, FocusState { focused_client: fallback_client, game_focused: false });
+    assert_eq!(snapshots.load().manager().focused_pid(), Some(remaining));
+    assert!(!snapshots.load().manager().instances().contains_key(&detached));
+    tokio::time::timeout(Duration::from_secs(2), task.shutdown()).await.unwrap();
 }
