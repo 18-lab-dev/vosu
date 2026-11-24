@@ -3261,6 +3261,7 @@ dependencies = [
  "vosu-plugin-api",
  "vosu-plugin-testkit",
  "vosu-proptest",
+ "vosu-surface",
  "vosu-sys",
  "windows-sys 0.61.2",
  "wmi",
@@ -3460,6 +3461,7 @@ name = "vosu-surface"
 version = "0.1.0"
 dependencies = [
  "tokio",
+ "vosu-plugin-api",
 ]
 
 [[package]]

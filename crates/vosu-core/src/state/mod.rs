@@ -22,6 +22,7 @@ mod runtime;
 pub mod schema;
 mod store;
 mod subscriptions;
+pub(crate) mod surface;
 mod update;
 mod value;
 

@@ -43,6 +43,7 @@ toml = "=1.1.2"
 tracing = "=0.1.44"
 vosu-net = { path = "../vosu-net" }
 vosu-plugin-api = { path = "../vosu-plugin-api" }
+vosu-surface = { path = "../vosu-surface" }
 vosu-sys = { path = "../vosu-sys" }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 zmij = "=1.0.23"

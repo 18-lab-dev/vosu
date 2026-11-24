@@ -18,6 +18,7 @@ pub struct ProductionRuntime {
     tools: AsyncMutex<Option<Arc<crate::tools::ToolHost>>>,
     dev_tools: Vec<PathBuf>,
     plugins: Arc<PluginHost>,
+    state_host: AsyncMutex<Option<vosu_surface::state::StateHostInstalled>>,
     /// Bridge B2's `ConfigStore` watch task (§6.9): has no other way to
     /// stop, since `ConfigStore::shutdown` never drops the `changed`
     /// sender this task's `RecvError::Closed` path waits on. Aborted
@@ -34,11 +35,7 @@ pub struct ProductionRuntime {
     instances: AsyncMutex<Option<InstanceRuntime<NativeProcessProvider, EmbeddedOffsetGenerator>>>,
     ordinary_role: bool,
     tray: AsyncMutex<Option<vosu_core::desktop::tray::TrayHandle>>,
-    /// M1 §4 phase d2b unit d: `None` whenever no enabled plugin has a
-    /// `[match]` table (`discovery::start_discovery`'s own doc
-    /// comment) — production `BUNDLED` holds none until `vosu-osu`
-    /// lands, so this is `None` there and 1.x's own discovery
-    /// (`instances`) stays the only active one.
+    /// Active only when an enabled plugin declares a process match table.
     discovery: AsyncMutex<Option<vosu_core::plugin::DiscoveryService>>,
     #[cfg(windows)]
     foreground: AsyncMutex<Option<vosu_core::plugin::ForegroundPoller>>,
@@ -79,6 +76,7 @@ impl ProductionRuntime {
         tokio::task::spawn_blocking(move || plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE))
             .await
             .map_err(|error| io::Error::other(format!("plugin shutdown task failed: {error}")))?;
+        self.state_host.lock().await.take();
         if let Some(mut tray) = self.tray.lock().await.take() {
             tray.shutdown().await;
         }
@@ -361,15 +359,8 @@ impl ProductionRuntime {
         *self.relays.get_mut() = Some(relays);
         *self.supervisor.get_mut() = Some(supervisor);
         *self.instances.get_mut() = Some(instances);
-        // M1 §4 phase d2b unit d: started here (after `instances`, 1.x's
-        // own discovery, is set above) so it only runs after `App::run`'s
-        // Archive/OneDrive guard and update decision (P3 review finding:
-        // starting any earlier could attach sessions to plugins before a
-        // guarded or handed-off run exits); zero cost when no enabled
-        // plugin has a `[match]` table (`discovery::start_discovery`'s own
-        // doc comment). Every exit path from here on routes through
-        // `ProductionRuntime::shutdown`, which stops both before
-        // `plugins.destroy_all`.
+        // Start discovery only after App's startup guards; shutdown stops it
+        // before destroying plugins and uninstalling the state read host.
         let discovery = discovery::start_discovery(&self.plugins, Handle::current(), &self.logger);
         #[cfg(windows)]
         let foreground = discovery
@@ -925,6 +916,8 @@ pub async fn run_cli() -> io::Result<()> {
     let settings_storage: Arc<dyn SettingsStorage> = settings_bridge.clone();
     let plugin_settings = Arc::new(PluginSettingsService::new(settings_storage));
     let plugin_host = PluginHost::new(logger.clone(), plugin_settings, Handle::current());
+    let state_host = vosu_surface::state::install_state_host(plugin_host.surface_host())
+        .map_err(io::Error::other)?;
     let plugin_settings_watch = plugin_host.watch_bridge_b2(&settings_bridge, &Handle::current());
     {
         let host = Arc::clone(&plugin_host);
@@ -966,6 +959,7 @@ pub async fn run_cli() -> io::Result<()> {
         tools: AsyncMutex::new(None),
         dev_tools,
         plugins: plugin_host,
+        state_host: AsyncMutex::new(Some(state_host)),
         plugin_settings_watch: AsyncMutex::new(Some(plugin_settings_watch)),
         listener: AsyncMutex::new(None),
         dashboard_listener: AsyncMutex::new(None),

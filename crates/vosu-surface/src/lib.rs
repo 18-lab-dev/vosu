@@ -14,5 +14,6 @@
 //! continues on as the permanent D3 surface API.
 
 mod bridge_b1;
+pub mod state;
 
 pub use bridge_b1::{AlreadyInstalled, Installed, LegacySink, current, install};

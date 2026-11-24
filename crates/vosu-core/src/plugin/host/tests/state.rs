@@ -19,6 +19,8 @@ use vosu_plugin_testkit::{
     session::{OnAttach, SessionEvent, SessionPluginConfig},
 };
 
+mod surface;
+
 fn publisher_instance(
     host: &Arc<super::super::PluginHost>,
     id: &str,

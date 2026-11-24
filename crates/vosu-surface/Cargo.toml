@@ -14,3 +14,4 @@ path = "src/lib.rs"
 
 [dependencies]
 tokio = { version = "=1.52.3", default-features = false, features = ["sync"] }
+vosu-plugin-api = { path = "../vosu-plugin-api" }
