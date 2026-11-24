@@ -92,3 +92,18 @@ async fn shutdown_releases_demand_even_when_connections_are_retained() {
     let (_rejected, _receiver) = hub.connect();
     assert_eq!(provider.live.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn publication_shutdown_releases_demand_without_inventing_a_close_frame() {
+    let (hub, provider) = setup();
+    let (_connection, mut receiver) = hub.connect();
+    hub.shutdown();
+    assert_eq!(provider.live.load(Ordering::SeqCst), 0);
+    assert_eq!(hub.client_count(), 0);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), receiver.recv())
+            .await
+            .unwrap()
+            .is_none()
+    );
+}

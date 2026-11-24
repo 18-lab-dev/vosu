@@ -110,10 +110,11 @@ dependencies" lists workspace crates only; it is recorded in a new
 | `.` (`vosu`) | `main.rs`, `vosux` and `plugin-host` argv dispatch, Windows resources, the explicit `BUNDLED` registration array (D13), integration tests, benches, examples. | every crate above |
 | `crates/vosu-pp` and members, `crates/vosu-test-harness`, `crates/vosu-release-smoke` | Unchanged roles (`AGENTS.md` "Source ownership"); the harness depends on the specific crates it drives instead of the old monolith. | unchanged |
 
-M4a H0 adds root **dev-dependencies** on the three adapters for real
-producer-to-bus provider/cache tests. The unmounted generic hub consumes only
-the surface projection contract; production registration remains I0's atomic
-cutover, not a second root-owned implementation.
+M4a H0's root provider/cache tests exercise all three adapters through the real
+producer and bus. gosuMemory and streamCompanion are root **dev-dependencies**;
+R1 already supplies the upstream dependency for its unmounted file providers.
+The generic hub consumes only the surface projection contract; production
+registration remains I0's atomic cutover, not a second root-owned implementation.
 
 Layout rules:
 

@@ -552,22 +552,23 @@ async fn sc_key_only_consumer_never_opens_or_parses_chart() {
     assert_eq!(sc.counts().starts, 0);
     assert_eq!(sc.counts().opens, 0);
     assert_eq!(sc.counts().parses, 0);
-    let selected = requester.selections.lock().unwrap();
-    assert!(
-        !selected
-            .last()
-            .unwrap()
-            .iter()
-            .any(|s| s.ns == "vosu.chart")
-    );
-    assert!(
-        !selected
-            .last()
-            .unwrap()
-            .iter()
-            .any(|s| s.pointer == "/play/hitErrors/all")
-    );
-    drop(selected);
+    {
+        let selected = requester.selections.lock().unwrap();
+        assert!(
+            !selected
+                .last()
+                .unwrap()
+                .iter()
+                .any(|s| s.ns == "vosu.chart")
+        );
+        assert!(
+            !selected
+                .last()
+                .unwrap()
+                .iter()
+                .any(|s| s.pointer == "/play/hitErrors/all")
+        );
+    }
     stop(&hub, run).await;
     tokio::time::timeout(Duration::from_secs(2), sc.shutdown())
         .await

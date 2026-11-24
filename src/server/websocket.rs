@@ -676,6 +676,22 @@ impl WebSocketHub {
 
     pub fn shutdown(&self) {
         self.0.shutdown.cancel();
+        // Publication shutdown is not a transport Close command. Keep the
+        // caller's explicit close_all policy while releasing every demand lease.
+        let clients = {
+            let _write = lock_unpoisoned(&self.0.client_writes);
+            self.0.accepting.store(false, Ordering::Release);
+            let clients = self.0.clients.load_full();
+            self.0.clients.store(Arc::new(HashMap::new()));
+            clients
+        };
+        for client in clients.values() {
+            if !client.cleaned.swap(true, Ordering::AcqRel) {
+                client.state.store(CLIENT_CLOSED, Ordering::Release);
+                drop(lock_unpoisoned(&client.demand).take());
+                client.cancellation.cancel();
+            }
+        }
     }
 
     /// Runs the schema publication loop. Spawn exactly one per schema.
@@ -795,7 +811,7 @@ impl WebSocketHub {
                     tokio::time::Instant::now() + self.0.provider.poll_rate(self.0.schema);
             }
         }
-        self.close_all(GOING_AWAY).await;
+        self.shutdown();
     }
 }
 
