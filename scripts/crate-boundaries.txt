@@ -35,6 +35,7 @@ vosu-sys
 vosu-sys -> vosu-proptest
 vosu-proptest
 vosu-osu-model
+vosu-osu-model -> vosu-proptest
 vosu-pp
 vosu-release-smoke
 vosu-surface -> vosu-plugin-api

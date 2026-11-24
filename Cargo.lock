@@ -3333,9 +3333,11 @@ dependencies = [
  "chrono",
  "indexmap",
  "md-5",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",
+ "vosu-proptest",
  "zmij",
 ]
 

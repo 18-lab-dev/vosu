@@ -24,7 +24,17 @@ pub fn fix_decimals_to(value: f64, amount: u32) -> Result<f64, DecimalPlacesErro
     if let Some(rounded) = exact_fixed_round(value, amount) {
         return Ok(rounded);
     }
-    Ok(format!("{value:.amount$}", amount = amount as usize)
+    use std::fmt::Write as _;
+    // |value| < 1e21 and amount <= 100: sign + 22 integral digits +
+    // decimal point + 100 fractional digits fit even when rounding carries.
+    let mut text = FixedText {
+        bytes: [0; 128],
+        len: 0,
+    };
+    write!(&mut text, "{value:.amount$}", amount = amount as usize)
+        .expect("bounded fixed-point output fits the stack buffer");
+    Ok(std::str::from_utf8(&text.bytes[..text.len])
+        .expect("fixed-point output is ASCII")
         .parse()
         .expect("fixed-point output is numeric"))
 }
@@ -60,19 +70,52 @@ fn exact_fixed_round(value: f64, amount: u32) -> Option<f64> {
             quotient + u128::from(right != 0 && remainder >= (1_u128 << (right - 1)))
         }
     };
-    let mut text = integer.to_string();
+    // u128 has at most 39 digits. Write backwards, inserting fractional
+    // zero padding and the decimal point without constructing a String.
+    let mut bytes = [b'0'; 64];
+    let mut start = bytes.len();
+    let mut remaining = integer;
+    for _ in 0..amount {
+        start -= 1;
+        bytes[start] = b'0' + (remaining % 10) as u8;
+        remaining /= 10;
+    }
     if amount != 0 {
-        let amount = amount as usize;
-        if text.len() <= amount {
-            text.insert_str(0, &"0".repeat(amount + 1 - text.len()));
+        start -= 1;
+        bytes[start] = b'.';
+    }
+    loop {
+        start -= 1;
+        bytes[start] = b'0' + (remaining % 10) as u8;
+        remaining /= 10;
+        if remaining == 0 {
+            break;
         }
-        text.insert(text.len() - amount, '.');
     }
     if value.is_sign_negative() {
-        text.insert(0, '-');
+        start -= 1;
+        bytes[start] = b'-';
     }
-    text.parse().ok()
+    std::str::from_utf8(&bytes[start..]).ok()?.parse().ok()
 }
+
+struct FixedText {
+    bytes: [u8; 128],
+    len: usize,
+}
+impl std::fmt::Write for FixedText {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        let end = self.len + text.len();
+        let destination = self.bytes.get_mut(self.len..end).ok_or(std::fmt::Error)?;
+        destination.copy_from_slice(text.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[path = "rounding_tests.rs"]
+mod rounding_tests;
 
 pub fn net_date_binary_to_date(date_data_hi: i32, date_data_lo: i32) -> Option<DateTime<Utc>> {
     let high = (date_data_hi as u32 & 0x3fff_ffff) as u64;
