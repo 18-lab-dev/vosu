@@ -356,3 +356,50 @@ fn tampered_journal_and_invalid_records_are_refused_not_rewritten() {
             .is_ok()
     );
 }
+
+/// Native Windows only: a loaded/locked file (no FILE_SHARE_DELETE) inside the
+/// installed tree makes the directory move fail; the update rolls back.
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_locked_file_in_installed_package_rolls_back_update() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let fixture = Fixture::new(vec![record(OFFICIAL, true)]).await;
+    let mut old = plugin("acme.dep", "1.0.0", "in-process", json!([]));
+    old.publish(&fixture.server, "/dep.zip");
+    let first = fixture
+        .install(
+            plan(
+                &catalog(&[&old], &[]),
+                &record(OFFICIAL, true),
+                PackageKind::Plugin,
+                "acme.dep",
+            ),
+            &[],
+        )
+        .await;
+    assert_eq!(first.status, "completed", "{:?}", first.error);
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1) // FILE_SHARE_READ only, like a mapped library
+        .open(fixture.layout.plugins.join("acme.dep/lib/libacme_dep.so"))
+        .unwrap();
+    let mut new = plugin("acme.dep", "1.1.0", "in-process", json!([]));
+    new.publish(&fixture.server, "/dep2.zip");
+    let job = fixture
+        .install(
+            plan(
+                &catalog(&[&new], &[]),
+                &record(OFFICIAL, true),
+                PackageKind::Plugin,
+                "acme.dep",
+            ),
+            &[],
+        )
+        .await;
+    drop(lock);
+    assert_eq!(job.status, "failed");
+    assert_eq!(installed_version(&fixture), "1.0.0");
+    assert_eq!(names(&fixture.layout.plugins), ["acme.dep"]);
+    assert_eq!(fixture.records().generation, 1);
+    assert!(!fixture.layout.state.join(JOURNAL_FILE).exists());
+}

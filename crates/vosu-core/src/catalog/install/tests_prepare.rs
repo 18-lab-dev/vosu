@@ -221,3 +221,22 @@ fn oversized_entry_is_refused_by_the_pinned_cap() {
         InstallError::UnsafeArchive("expanded size limit exceeded".into())
     );
 }
+
+/// Native Windows only: a junction (reparse point) is never followed.
+#[cfg(windows)]
+#[test]
+fn windows_junction_in_package_tree_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("secret.json"), b"{}").unwrap();
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(root.path().join("linked"))
+        .arg(outside.path())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    // Positive control: the target file itself is readable through the link.
+    assert!(root.path().join("linked/secret.json").is_file());
+    assert!(preflight::confined(root.path(), "linked/secret.json").is_err());
+}
