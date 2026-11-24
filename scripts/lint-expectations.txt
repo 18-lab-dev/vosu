@@ -16,3 +16,4 @@ crates/vosu-osu-reader/src/offset_generator.rs disallowed_methods 1 disposable-i
 crates/vosu-osu-reader/src/offset_generator/client_runtime.rs disallowed_methods 2 disposable-io rewritten runtime manifests belong to a disposable staged runtime, not user state
 crates/vosu-sys/src/platform/windows.rs disallowed_methods 2 bounded-poll native same-directory replacement and a transient missing-name read both retry on a bounded deadline
 examples/support/process_event_bench.rs disallowed_methods 2 benchmark-helper helper process only stays alive as a named discovery target for the benchmark
+crates/vosu-osu/src/plugin/tests.rs disallowed_methods 1 bounded-poll a plain #[test] (no executor of its own) polls for a task spawned onto the plugin's own 2-worker runtime to actually start, bounded by a 5-second deadline

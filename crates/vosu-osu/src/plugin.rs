@@ -37,7 +37,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use tokio::runtime::{Handle, Runtime};
@@ -273,11 +273,11 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
             let join = self
                 .runtime_handle
                 .spawn(async move { session.join_resolver().await });
-            self.state
-                .lock()
-                .expect("plugin state mutex poisoned")
+            let mut state = self.state.lock().expect("plugin state mutex poisoned");
+            state
                 .session_detach_joins
-                .push(join);
+                .retain(|lookup| !lookup.is_finished());
+            state.session_detach_joins.push(join);
         }
     }
 
@@ -525,8 +525,22 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
         // session detach did not already release it (wiring item 8).
         self.scan_waiters.shutdown();
 
+        // abi:82's whole 5 s grace, shared across every bounded step
+        // below (review #1): `join_resolver`'s own timeout, and
+        // `shutdown_timeout`, each get only what remains of it, not a
+        // fresh 5 s apiece.
+        let deadline = Instant::now() + DESTROY_GRACE;
+
+        // `live_handles` is cleared in the very same critical section
+        // that takes `sessions` (review #2): a lazer-version-lookup
+        // thread that only finishes later (joined below, before anything
+        // else) calls `register_session`, whose own live check now sees
+        // an empty `live_handles` and registers nothing — closing the
+        // race where such a lookup would otherwise hand a fresh,
+        // never-cancelled session to nobody.
         let (sessions, detach_joins, lazer_lookups) = {
             let mut state = self.state.lock().expect("plugin state mutex poisoned");
+            state.live_handles.clear();
             (
                 std::mem::take(&mut state.sessions),
                 std::mem::take(&mut state.session_detach_joins),
@@ -536,10 +550,24 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
         for session in sessions.values() {
             session.cancel();
         }
+
+        // Joined first, and unconditionally (review #2): each is a single
+        // bounded read (`resolve_lazer_version`), never the lazer offset
+        // generation itself, so this cannot itself hang; joining it
+        // before the runtime shuts down is what makes the `live_handles`
+        // clear above actually effective against a lookup still in
+        // flight, and also outlives this instance's borrowed
+        // `VtableHostServices` (review #6), whose raw pointers the ABI
+        // documents as valid only until `destroy` returns (abi:82).
+        for lookup in lazer_lookups {
+            let _ = lookup.join();
+        }
+
         // Shut every still-live session down (cancel already ran above;
-        // this joins) within the grace period, then shut the runtime
-        // itself down (DG, abi:82) — exactly what `destroy_concurrent`
-        // runs, via this `Drop`.
+        // this joins) within whatever remains of the grace, then shut
+        // the runtime itself down (DG, abi:82) with whatever remains
+        // after that — exactly what `destroy_concurrent` runs, via this
+        // `Drop`.
         if let Some(runtime) = self
             .runtime
             .lock()
@@ -547,23 +575,20 @@ impl<H: HostServices + Send + Sync + Clone + 'static, G: OffsetGenerator + 'stat
             .take()
         {
             runtime.block_on(async {
-                let _ = tokio::time::timeout(DESTROY_GRACE, async {
-                    for join in detach_joins {
-                        let _ = join.await;
-                    }
-                    for session in sessions.values() {
-                        session.join_resolver().await;
-                    }
-                })
+                let _ = tokio::time::timeout(
+                    deadline.saturating_duration_since(Instant::now()),
+                    async {
+                        for join in detach_joins {
+                            let _ = join.await;
+                        }
+                        for session in sessions.values() {
+                            session.join_resolver().await;
+                        }
+                    },
+                )
                 .await;
             });
-            runtime.shutdown_timeout(DESTROY_GRACE);
-        }
-        // Every lazer-version lookup thread is joined so none outlives
-        // this instance's borrowed `VtableHostServices` (review #6): its
-        // raw pointers are valid only until `destroy` returns (abi:82).
-        for lookup in lazer_lookups {
-            let _ = lookup.join();
+            runtime.shutdown_timeout(deadline.saturating_duration_since(Instant::now()));
         }
     }
 }

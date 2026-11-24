@@ -86,7 +86,11 @@ fn session_with(client: ClientType, memory: Arc<FakeMemory>) -> Arc<OsuSession> 
     let process = ProcessHandle::new(memory, ProcessBitness::X64);
     OsuSession::new(
         1,
-        100,
+        // pid 0 never names a real process, so `executable_root()`'s live
+        // `/proc`/module-enumeration read fails closed deterministically
+        // (P3 review #5), instead of reading the real pid 100 on whatever
+        // machine runs this test.
+        0,
         1,
         client,
         process,
@@ -96,61 +100,77 @@ fn session_with(client: ClientType, memory: Arc<FakeMemory>) -> Arc<OsuSession> 
     )
 }
 
-fn offline_loader() -> Arc<LazerOffsetLoader<OfflineGenerator>> {
-    Arc::new(LazerOffsetLoader::new(
+/// Returns the loader alongside its `TempDir` guard (P3 review #6): the
+/// caller must keep the guard bound for the test's duration, or its
+/// directory is deleted while the loader still references it.
+fn offline_loader() -> (Arc<LazerOffsetLoader<OfflineGenerator>>, tempfile::TempDir) {
+    let cache_dir = tempfile::tempdir().expect("tempdir");
+    let loader = Arc::new(LazerOffsetLoader::new(
         OfflineGenerator,
-        tempfile::tempdir().expect("tempdir").keep(),
+        cache_dir.path().to_owned(),
         Bytes::from_static(b"{}"),
-    ))
+    ));
+    (loader, cache_dir)
 }
 
 fn noop_warn() -> LogWarn {
     Arc::new(|_message: String| {})
 }
 
+/// A [`LogWarn`] that also signals `attempted` the first (and every) time
+/// it is invoked, so a test can wait for the resolver's first failed
+/// attempt to actually be reported before exercising cancellation (P3
+/// review #5), rather than racing `join_resolver` against a background
+/// task that may not have run at all yet.
+fn warn_signal() -> (LogWarn, Arc<tokio::sync::Notify>) {
+    let attempted = Arc::new(tokio::sync::Notify::new());
+    let signal = Arc::clone(&attempted);
+    let warn: LogWarn = Arc::new(move |_message: String| signal.notify_one());
+    (warn, attempted)
+}
+
 #[tokio::test]
 async fn stable_session_never_starts_a_resolver() {
     let session = session_with(ClientType::Stable, FakeMemory::new(true));
-    assert!(
-        !session
-            .start_lazer_resolver(offline_loader(), noop_warn())
-            .await
-    );
+    let (loader, _data_dir) = offline_loader();
+    assert!(!session.start_lazer_resolver(loader, noop_warn()).await);
     assert!(session.resolver.lock().await.is_none());
 }
 
 #[tokio::test]
 async fn lazer_session_starts_at_most_one_resolver() {
     let session = session_with(ClientType::Lazer, FakeMemory::new(true));
+    let (loader, _data_dir) = offline_loader();
     assert!(
         session
-            .start_lazer_resolver(offline_loader(), noop_warn())
+            .start_lazer_resolver(Arc::clone(&loader), noop_warn())
             .await
     );
     assert!(session.resolver.lock().await.is_some());
 
     // A second call while one is already running is a no-op
     // (install-once, ported from `Instance::start_lazer_resolver_inner`).
-    assert!(
-        !session
-            .start_lazer_resolver(offline_loader(), noop_warn())
-            .await
-    );
+    assert!(!session.start_lazer_resolver(loader, noop_warn()).await);
     session.join_resolver().await;
 }
 
 #[tokio::test]
 async fn join_resolver_cancels_and_joins_promptly() {
     let session = session_with(ClientType::Lazer, FakeMemory::new(true));
-    assert!(
-        session
-            .start_lazer_resolver(offline_loader(), noop_warn())
-            .await
-    );
-    // The offline generator fails every attempt, so the resolver is deep
-    // in `retry_pending`'s 30 s-minimum backoff sleep; a bounded timeout
-    // around `join_resolver` only passes if cancellation actually
-    // preempts that sleep rather than waiting it out.
+    let (loader, _data_dir) = offline_loader();
+    let (warn, attempted) = warn_signal();
+    assert!(session.start_lazer_resolver(loader, warn).await);
+    // Wait for the resolver to actually report its first failed attempt
+    // (pid 0's `executable_root()` fails immediately and
+    // deterministically) before cancelling it, so the resolver really is
+    // inside `retry_pending`'s backoff sleep rather than a background
+    // task that has not run yet.
+    tokio::time::timeout(Duration::from_secs(5), attempted.notified())
+        .await
+        .expect("the resolver must report its first failed attempt promptly");
+    // A bounded timeout around `join_resolver` only passes if
+    // cancellation actually preempts that sleep rather than waiting it
+    // out.
     tokio::time::timeout(Duration::from_secs(5), session.join_resolver())
         .await
         .expect("cancellation must preempt the retry backoff, not wait it out");
@@ -159,11 +179,8 @@ async fn join_resolver_cancels_and_joins_promptly() {
 
     // A resolver cannot be restarted on a cancelled session: `join_resolver`
     // is also how `destroy`/detach shut a session down for good.
-    assert!(
-        !session
-            .start_lazer_resolver(offline_loader(), noop_warn())
-            .await
-    );
+    let (loader, _data_dir) = offline_loader();
+    assert!(!session.start_lazer_resolver(loader, noop_warn()).await);
 }
 
 #[test]

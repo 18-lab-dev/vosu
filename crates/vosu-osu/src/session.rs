@@ -143,6 +143,17 @@ impl OsuSession {
             let _ = task.await;
         }
     }
+
+    /// Test-only: whether a resolver task is currently recorded (started
+    /// by [`Self::start_lazer_resolver`] and not yet taken by
+    /// [`Self::join_resolver`]). Synchronous (`blocking_lock`) so a plain
+    /// `#[test]` can assert on it without an executor; safe to call from
+    /// any thread that is not itself inside this session's own async
+    /// runtime.
+    #[cfg(test)]
+    pub(crate) fn resolver_is_some(&self) -> bool {
+        self.resolver.blocking_lock().is_some()
+    }
 }
 
 impl GenerationIdentity for OsuSession {

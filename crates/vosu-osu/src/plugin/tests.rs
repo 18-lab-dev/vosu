@@ -51,19 +51,23 @@ impl OffsetGenerator for OfflineGenerator {
 /// `/proc/<pid>/root` read (review #4) is a deliberate, separate,
 /// bounded syscall this does not (and should not) suppress; tests
 /// that reach it use `pid: 0`, which never names a real process, so
-/// that lookup fails closed deterministically too.
+/// that lookup fails closed deterministically too. Returns the `TempDir`
+/// guard alongside the plugin (P3 review #6): the caller must keep it
+/// bound for the test's duration, or its directory is deleted while the
+/// plugin still references it.
 fn hermetic<H: HostServices + Send + Sync + Clone + 'static>(
     host: H,
     platform: Platform,
-) -> OsuPlugin<H, OfflineGenerator> {
-    let data_dir = tempfile::tempdir().expect("tempdir").keep();
-    OsuPlugin::with_generator(
+) -> (OsuPlugin<H, OfflineGenerator>, tempfile::TempDir) {
+    let data_dir = tempfile::tempdir().expect("tempdir");
+    let plugin = OsuPlugin::with_generator(
         host,
         platform,
         test_root_resolver,
-        data_dir,
+        data_dir.path().to_owned(),
         OfflineGenerator,
-    )
+    );
+    (plugin, data_dir)
 }
 
 fn test_root_resolver(_pid: u32, path: Option<&Path>, _command_line: Option<&str>) -> PathBuf {
@@ -106,10 +110,30 @@ fn identify_for(sent: &[Message], handle: u64) -> &SessionIdentify {
     identify
 }
 
+/// Bounded poll (never an unbounded sleep: it panics past the deadline)
+/// for a condition that becomes true once a task `register_session`
+/// spawned onto the plugin's own runtime actually runs: spawning a task
+/// has no synchronous completion signal a plain `#[test]` (no executor
+/// of its own) can wait on any other way.
+fn wait_until(mut condition: impl FnMut() -> bool, what: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !condition() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "bounded by `deadline` above (panics past it), the only portable way a plain #[test] can wait for a task spawned onto the plugin's own runtime"
+        )]
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 #[test]
 fn decline_is_sent_before_any_identify() {
     let host = RecordingHost::default();
-    let plugin = hermetic(host, Platform::Windows);
+    let (plugin, _data_dir) = hermetic(host, Platform::Windows);
     let mut message = attached(1, 100, "osu!.exe", Bitness::X86);
     message.argv = None;
     message.command_line = Some("osu!.exe --tournament".to_owned());
@@ -126,7 +150,7 @@ fn decline_is_sent_before_any_identify() {
 #[test]
 fn settle_sees_a_named_sibling_attached_in_the_same_pass() {
     let host = RecordingHost::default();
-    let plugin = hermetic(host, Platform::Linux);
+    let (plugin, _data_dir) = hermetic(host, Platform::Linux);
 
     // A lone fallback `osu!` attaches first: no sibling yet, so it
     // requests a settle timer instead of identifying immediately.
@@ -177,7 +201,7 @@ fn settle_sees_a_named_sibling_attached_in_the_same_pass() {
 #[test]
 fn settle_resolves_lazer_without_a_named_sibling() {
     let host = RecordingHost::default();
-    let plugin = hermetic(host, Platform::Linux);
+    let (plugin, _data_dir) = hermetic(host, Platform::Linux);
     // pid 0 never names a real process: the lazer version lookup's
     // own `/proc/<pid>/root` read (review #4) fails closed
     // deterministically, same as the daemon-view fallback below.
@@ -207,7 +231,7 @@ fn settle_resolves_lazer_without_a_named_sibling() {
 #[test]
 fn detached_during_settle_sends_nothing() {
     let host = RecordingHost::default();
-    let plugin = hermetic(host, Platform::Linux);
+    let (plugin, _data_dir) = hermetic(host, Platform::Linux);
     plugin
         .dispatch(
             Message::SessionAttached(attached(1, 100, "osu!", Bitness::X86)),
@@ -267,7 +291,7 @@ fn refused_set_timer_identifies_immediately() {
     }
 
     let host = RefusingTimerHost::default();
-    let plugin = hermetic(host, Platform::Linux);
+    let (plugin, _data_dir) = hermetic(host, Platform::Linux);
     let mut message = attached(1, 0, "osu!", Bitness::X86);
     message.path = Some("/nonexistent-vosu-osu-test-root/osu!".to_owned());
     plugin
@@ -333,7 +357,7 @@ fn non_empty_executable_root_reaches_the_root_fallback() {
 #[test]
 fn a_settled_fallback_does_not_count_as_a_named_sibling() {
     let host = RecordingHost::default();
-    let plugin = hermetic(host, Platform::Linux);
+    let (plugin, _data_dir) = hermetic(host, Platform::Linux);
 
     // Two lone `osu!` fallbacks attach; neither sees a sibling yet.
     plugin
@@ -435,7 +459,8 @@ fn detach_racing_identify_never_leaves_a_stale_named_sibling() {
         }
     }
 
-    let plugin = Arc::new(hermetic(ReentrantHost::default(), Platform::Linux));
+    let (plugin, _data_dir) = hermetic(ReentrantHost::default(), Platform::Linux);
+    let plugin = Arc::new(plugin);
     plugin
         .host
         .plugin
@@ -474,7 +499,7 @@ fn detach_racing_identify_never_leaves_a_stale_named_sibling() {
 #[test]
 fn detached_before_attached_does_not_leak_live_handles() {
     let host = RecordingHost::default();
-    let plugin = hermetic(host, Platform::Linux);
+    let (plugin, _data_dir) = hermetic(host, Platform::Linux);
 
     plugin
         .dispatch(
@@ -518,7 +543,7 @@ fn detached_before_attached_does_not_leak_live_handles() {
 #[test]
 fn windows_variant_identifies_immediately_by_bitness() {
     let host = RecordingHost::default();
-    let plugin = hermetic(host, Platform::Windows);
+    let (plugin, _data_dir) = hermetic(host, Platform::Windows);
     let mut message = attached(1, 0, "osu!.exe", Bitness::X64);
     message.argv = None;
     message.command_line = None;
@@ -567,7 +592,7 @@ fn from_attached_decodes_spectator_settings_from_argv() {
 #[test]
 fn stable_identify_registers_a_session_without_a_resolver() {
     let host = RecordingHost::default();
-    let plugin = hermetic(host, Platform::Linux);
+    let (plugin, _data_dir) = hermetic(host, Platform::Linux);
     plugin
         .dispatch(
             Message::SessionAttached(attached(1, 0, "osu!.exe", Bitness::X86)),
@@ -589,11 +614,13 @@ fn stable_identify_registers_a_session_without_a_resolver() {
 
 /// P4 acceptance: one resolver per lazer session, and detach joins it
 /// (ported from `src/instance/tests.rs`'s
-/// `lazer_discovery_starts_one_resolver_and_shutdown_joins_it`).
+/// `lazer_discovery_starts_one_resolver_and_shutdown_joins_it`: the 1.x
+/// original asserted the resolver task was `Some` after discovery, and
+/// `None` plus cancelled after the join — P4 review #4).
 #[test]
 fn lazer_identify_starts_one_resolver_and_detach_joins_it() {
     let host = RecordingHost::default();
-    let plugin = hermetic(host, Platform::Windows);
+    let (plugin, _data_dir) = hermetic(host, Platform::Windows);
     let mut message = attached(1, 0, "osu!.exe", Bitness::X64);
     message.argv = None;
     message.command_line = None;
@@ -611,6 +638,10 @@ fn lazer_identify_starts_one_resolver_and_detach_joins_it() {
         .get(&1)
         .cloned()
         .expect("lazer identify must register a session");
+    wait_until(
+        || session.resolver_is_some(),
+        "a lazer identify to actually start a resolver task, not just register a session",
+    );
 
     plugin
         .dispatch(
@@ -629,4 +660,95 @@ fn lazer_identify_starts_one_resolver_and_detach_joins_it() {
     assert!(!plugin.state.lock().unwrap().sessions.contains_key(&1));
 
     plugin.join_background_session_detaches();
+    assert!(
+        !session.resolver_is_some(),
+        "the join must actually take the resolver task, not merely cancel it"
+    );
+    assert!(session.lifecycle_token().is_cancelled());
+}
+
+/// P4 acceptance: `destroy` (here, dropping the plugin) shuts every
+/// still-live session down within the grace period — not merely cancels
+/// it, but actually joins the resolver task (P4 review #4). The session
+/// Arc is cloned out before the drop so its state (held alive by the
+/// clone) can still be inspected afterward, even though `Drop` has
+/// already removed it from the plugin's own map.
+#[test]
+fn destroy_joins_every_live_sessions_resolver_within_the_grace_period() {
+    let host = RecordingHost::default();
+    let (plugin, _data_dir) = hermetic(host, Platform::Windows);
+    let mut message = attached(1, 0, "osu!.exe", Bitness::X64);
+    message.argv = None;
+    message.command_line = None;
+    plugin
+        .dispatch(Message::SessionAttached(message), 0)
+        .unwrap();
+    plugin.join_background_lazer_lookups();
+    assert_eq!(identify_for(&plugin.host.sent(), 1).variant, "lazer");
+
+    let session = plugin
+        .state
+        .lock()
+        .unwrap()
+        .sessions
+        .get(&1)
+        .cloned()
+        .expect("lazer identify must register a session");
+    wait_until(
+        || session.resolver_is_some(),
+        "a lazer identify to actually start a resolver task before destroy",
+    );
+
+    // Never detached: still live when the plugin (and so the session) is
+    // destroyed.
+    let started = std::time::Instant::now();
+    drop(plugin);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "destroy must stay within its grace period, took {elapsed:?}"
+    );
+    assert!(
+        !session.resolver_is_some(),
+        "destroy must actually join the resolver task, not just cancel it"
+    );
+    assert!(session.lifecycle_token().is_cancelled());
+}
+
+/// P4 review #2: a lazer-version-lookup thread that only now finishes
+/// (after `destroy` already cleared `live_handles`, or for a handle that
+/// was never attached at all) must register no session — exactly the
+/// check `destroy` relies on to close its own race.
+#[test]
+fn register_session_refuses_a_handle_that_is_not_live() {
+    let host = RecordingHost::default();
+    let (plugin, _data_dir) = hermetic(host, Platform::Windows);
+    assert!(plugin.state.lock().unwrap().live_handles.is_empty());
+    let identified = Identified {
+        client: ClientType::Lazer,
+        settings: InstanceSettings {
+            tournament_spectator: false,
+            tournament_ipc_id: None,
+            devserver_endpoint: None,
+        },
+        root: PathBuf::new(),
+        executable_root: PathBuf::new(),
+        pid: 0,
+        generation: 1,
+        bitness: Bitness::X64,
+        named: false,
+    };
+    register_session(
+        &plugin.host,
+        &plugin.state,
+        &plugin.scan_waiters,
+        &plugin.loader,
+        &plugin.runtime_handle,
+        42,
+        &identified,
+    );
+    assert!(
+        plugin.state.lock().unwrap().sessions.is_empty(),
+        "a handle missing from live_handles must never get a session registered"
+    );
 }
