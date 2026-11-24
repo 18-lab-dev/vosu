@@ -11,8 +11,9 @@ use vosu::api::ApiSchema;
 use vosu::api::{ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot};
 use vosu::runtime::{ProductionSnapshotEncoder, SnapshotEncoder};
 use vosu::server::websocket::{
-    Filter, Outbound, OutboundReceiver, Schema, StateProvider, StateSnapshot, WebSocketHub,
+    Outbound, OutboundReceiver, Schema, StateProvider, StateSnapshot, WebSocketHub,
 };
+use vosu_adapter_support::filtered::Filter;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::{
     enums::ClientType,

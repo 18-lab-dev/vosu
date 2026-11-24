@@ -85,6 +85,12 @@ pub enum ApiError {
     Serialization(Arc<str>),
 }
 
+impl From<serde_json::Error> for ApiError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::serialization(error.to_string())
+    }
+}
+
 impl ApiError {
     /// Creates a serialization error with cheaply cloneable shared context.
     pub fn serialization(message: impl Into<Arc<str>>) -> Self {

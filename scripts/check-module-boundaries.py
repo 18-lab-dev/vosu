@@ -24,6 +24,7 @@ RULES_DIR = ROOT / "scripts/module-boundaries"
 # are out of scope.
 CRATE_ROOTS = {
     "vosu": ROOT,
+    "vosu-adapter-support": ROOT / "crates/vosu-adapter-support",
     "vosu-core": ROOT / "crates/vosu-core",
     "vosu-net": ROOT / "crates/vosu-net",
     "vosu-osu": ROOT / "crates/vosu-osu",

@@ -3,7 +3,6 @@
 1045 crates/vosu-sys/src/platform/linux/capabilities.rs
 1047 crates/vosu-osu-state/src/bundle/reducer.rs
 1059 crates/vosu-osu-reader/src/memory/stable/batched.rs
-1085 src/runtime/tests/projection.rs
 1115 crates/vosu-osu-reader/src/memory/lazer/reader.rs
 1116 crates/vosu-osu-state/src/bundle/tests/epochs.rs
 1197 src/server/websocket/tests.rs
@@ -16,5 +15,4 @@
 1465 assets/server/homepage-controls.css
 1559 assets/server/homepage.css
 1712 crates/vosu-osu-reader/src/memory/stable/tests.rs
-2093 src/runtime/projection.rs
 2146 assets/server/homepage.js

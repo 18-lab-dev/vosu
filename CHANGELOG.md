@@ -2,6 +2,11 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M4a
+
+- Extract shared legacy wire mechanics into `vosu-adapter-support` without
+  changing served routes, payloads, filters or transport behavior.
+
 ## Unreleased — 2.0 M3
 
 - Register `vosu.osu.beatmap.import` for session-scoped API and CLI calls with

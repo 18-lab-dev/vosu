@@ -172,7 +172,7 @@ pub(super) fn encode_json(value: &impl Serialize) -> Result<String, ApiError> {
 }
 
 pub(super) fn encode_json_bytes(value: &impl Serialize) -> Result<Vec<u8>, ApiError> {
-    crate::api::json::encode(value, 0)
+    vosu_adapter_support::json::encode(value, 0).map_err(Into::into)
 }
 
 #[derive(Serialize)]

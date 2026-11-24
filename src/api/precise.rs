@@ -5,9 +5,9 @@ use std::cmp::Ordering;
 use std::io;
 use std::sync::Arc;
 
-use crate::api::json::{write_i64, write_js_number, write_str};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerSnapshot};
 use crate::model::api::v2::{KeyOverlayButton, Keypress, Keys, PreciseResponse, PreciseTourney};
+use vosu_adapter_support::json::{write_i64, write_js_number, write_str};
 use vosu_osu_model::states::{
     KeyOverlayButton as StateKeyOverlayButton, KeypressButton as StateKeypressButton,
 };
@@ -103,8 +103,8 @@ fn write_document(
     }
     if enable_key_hits {
         output.extend_from_slice(b",\"keyHitErrors\":");
-        crate::api::json::Wire::write_wire(
-            &crate::api::json::Serde(
+        vosu_adapter_support::json::Wire::write_wire(
+            &vosu_adapter_support::json::Serde(
                 precise
                     .hit_errors
                     .key
@@ -116,7 +116,7 @@ fn write_document(
     }
     if let Some(catcher) = precise.active_catcher() {
         output.extend_from_slice(b",\"catcher\":");
-        crate::api::json::Wire::write_wire(&catcher, output)?;
+        vosu_adapter_support::json::Wire::write_wire(&catcher, output)?;
     }
     output.extend_from_slice(b",\"tourney\":[");
     for (index, (ipc_id, spectator)) in tourney.iter().enumerate() {

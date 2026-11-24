@@ -11,10 +11,10 @@ use std::{
     },
     time::Duration,
 };
+use vosu_adapter_support::filtered::Filter;
 
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -76,13 +76,6 @@ pub enum Schema {
     StreamCompanion,
     V2,
     V2Precise,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum Filter {
-    Field(String),
-    Nested { field: String, keys: Vec<Filter> },
 }
 
 /// Upper bounds for sharing filtered payloads between clients within one

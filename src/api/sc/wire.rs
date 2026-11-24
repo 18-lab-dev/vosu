@@ -9,11 +9,13 @@
 use std::io::{self, Write};
 
 use super::*;
-use crate::api::json::{Serde, Wire, With, wire_object, write_js_number, write_str_content};
+use vosu_adapter_support::json::{
+    Serde, Wire, With, wire_object, write_js_number, write_str_content,
+};
 use vosu_osu_calc::beatmap::ParsedBeatmap;
 
 /// Encodes the unfiltered streamCompanion document exactly as
-/// `build` serializes through [`JsFormatter`](crate::api::json::JsFormatter).
+/// `build` serializes through [`JsFormatter`](vosu_adapter_support::json::JsFormatter).
 pub(super) fn encode(snapshot: &CombinedSnapshot) -> Result<Vec<u8>, ApiError> {
     let regular = snapshot.regular().ok_or(ApiError::NotReady)?;
     let precise = snapshot.precise().ok_or(ApiError::NotReady)?;

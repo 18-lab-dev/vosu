@@ -4,9 +4,9 @@ use bytes::Bytes;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
 use crate::model::api::v2::*;
+use vosu_adapter_support::fixed::{fix_decimals, fix_decimals_to};
 use vosu_osu_calc::beatmap::ParsedBeatmap;
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::memory::{LazerSpectatorEntry, User};
@@ -186,7 +186,9 @@ fn normalize_javascript_numbers(value: &mut Value) -> Result<(), ApiError> {
 }
 
 pub(crate) fn encode_dto<T: Serialize>(value: &T) -> Result<Bytes, ApiError> {
-    crate::api::json::encode(value, 0).map(Bytes::from)
+    vosu_adapter_support::json::encode(value, 0)
+        .map(Bytes::from)
+        .map_err(Into::into)
 }
 
 mod builders;

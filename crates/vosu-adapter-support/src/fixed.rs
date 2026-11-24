@@ -11,12 +11,12 @@
 use vosu_osu_model::DecimalPlacesError;
 
 /// `Number(value.toFixed(2))`; see [`fix_decimals_to`].
-pub(crate) fn fix_decimals(value: f64) -> f64 {
+pub fn fix_decimals(value: f64) -> f64 {
     fix_decimals_to(value, 2).expect("two decimals are valid")
 }
 
 /// Same result as [`vosu_osu_model::fix_decimals_to`] for every input.
-pub(crate) fn fix_decimals_to(value: f64, amount: u32) -> Result<f64, DecimalPlacesError> {
+pub fn fix_decimals_to(value: f64, amount: u32) -> Result<f64, DecimalPlacesError> {
     const EXACT_INTEGER_LIMIT: u128 = 1 << 53;
     if value == 0.0 || value.is_nan() {
         return if amount > 100 {

@@ -115,7 +115,7 @@ fn escaped_unicode_metadata_and_populated_tournament_reference() {
     use vosu::api::{
         ApiRuntimeSettings, CombinedSnapshot, ManagerInstanceSnapshot, ManagerSnapshot,
     };
-    use vosu::server::websocket::Filter;
+    use vosu_adapter_support::filtered::Filter;
     use vosu_osu_model::launch::InstanceSettings;
     let base = fixture();
     let mut state = (**base.focused().unwrap()).clone();

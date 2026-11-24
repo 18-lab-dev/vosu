@@ -17,6 +17,7 @@ use std::{
     },
     time::Duration,
 };
+use vosu_adapter_support::filtered::Filter;
 
 #[cfg(any(test, feature = "test-harness"))]
 use std::fs;
@@ -58,7 +59,7 @@ use crate::{
         },
         v2_subscription::{V2SubscriptionHub, V2SubscriptionProvider, V2SubscriptionSnapshot},
         websocket::{
-            Filter, Schema as WebSocketSchema, StateProvider as WebSocketStateProvider,
+            Schema as WebSocketSchema, StateProvider as WebSocketStateProvider,
             StateSnapshot as WebSocketStateSnapshot, WebSocketHub,
         },
     },
@@ -133,7 +134,11 @@ mod tests {
     include!("runtime/tests/cli.rs");
     include!("runtime/tests/worker.rs");
     include!("runtime/tests/bridge_b1.rs");
+    use std::borrow::Cow;
+    use vosu_adapter_support::filtered::*;
+    include!("runtime/tests/projection_reference.rs");
     include!("runtime/tests/projection.rs");
+    include!("runtime/tests/subscription_projection.rs");
     include!("runtime/tests/service.rs");
     include!("runtime/tests/update_notice.rs");
     include!("runtime/tests/lifecycle.rs");

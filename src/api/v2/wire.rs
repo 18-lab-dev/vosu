@@ -9,8 +9,8 @@
 use std::io::{self, Write};
 
 use super::*;
-use crate::api::json::{Serde, Wire, With, wire_object};
-use vosu_osu_model::states::{Mod, Statistics};
+use vosu_adapter_support::json::{Serde, Wire, With, wire_object};
+use vosu_osu_model::states::Statistics;
 
 /// `{"number":…,"name":…}` with the number omitted when absent.
 struct NumberNameWire<'a>(Option<i64>, &'a str);
@@ -22,31 +22,8 @@ impl Wire for NumberNameWire<'_> {
     }
 }
 
-impl Wire for CalculateMods {
-    fn write_wire(&self, out: &mut Vec<u8>) -> io::Result<()> {
-        wire_object!(out {
-            "checksum": self.checksum,
-            "number": self.number,
-            "name": self.name,
-            "array": self.array,
-            "rate": self.rate,
-        });
-        Ok(())
-    }
-}
-
-impl Wire for Mod {
-    fn write_wire(&self, out: &mut Vec<u8>) -> io::Result<()> {
-        wire_object!(out {
-            "acronym": self.acronym,
-            "settings"?: self.settings.as_ref().map(Serde),
-        });
-        Ok(())
-    }
-}
-
 /// Encodes the unfiltered V2 document exactly as `build_internal(_, false)`
-/// serializes through [`JsFormatter`](crate::api::json::JsFormatter).
+/// serializes through [`JsFormatter`](vosu_adapter_support::json::JsFormatter).
 pub(super) fn encode(snapshot: &CombinedSnapshot) -> Result<Vec<u8>, ApiError> {
     let focused = snapshot.focused().ok_or(ApiError::NotReady)?;
     let state = focused.regular.as_ref();

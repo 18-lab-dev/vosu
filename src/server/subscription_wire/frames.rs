@@ -62,8 +62,8 @@ pub fn store_baseline(
     }
 }
 
-/// Number spelling identical to `crate::api::JsFormatter`, which `crate::api` exports only to
-/// tests; frames are serialized straight into a [`FrameArena`] rather than through
+/// Number spelling identical to `vosu_adapter_support::json::JsFormatter`;
+/// pointer frames serialize straight into a [`FrameArena`] rather than through
 /// `encode_dto`'s per-frame growing `Vec`.
 struct FrameFormatter;
 

@@ -989,7 +989,7 @@ fn catcher_is_additive_only_during_catch_gameplay_and_both_encoders_agree() {
         let precise_encoded = crate::api::precise::encode(&snapshot).unwrap();
         assert_eq!(
             precise_encoded.as_ref(),
-            crate::api::json::encode(&precise_dto, 0)
+            vosu_adapter_support::json::encode(&precise_dto, 0)
                 .unwrap()
                 .as_slice()
         );

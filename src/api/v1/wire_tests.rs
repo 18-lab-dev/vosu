@@ -3,18 +3,19 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::api::wire_fixtures::{
-    AWKWARD, NUMBERS, populated_precise, populated_regular, snapshot_with,
-};
+use crate::api::wire_fixtures::{populated_precise, populated_regular, snapshot_with};
 use crate::api::{ApiRuntimeSettings, ManagerSnapshot};
+use vosu_adapter_support::wire_fixtures::{AWKWARD, NUMBERS};
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::states::TourneyManagerChatItem;
 use vosu_osu_state::{StateBundleSnapshot, TourneyUserState};
 
 fn assert_direct_matches(snapshot: &CombinedSnapshot) {
     let direct = String::from_utf8(wire::encode(snapshot).unwrap()).unwrap();
-    let dto =
-        String::from_utf8(crate::api::json::encode(&build(snapshot).unwrap(), 0).unwrap()).unwrap();
+    let dto = String::from_utf8(
+        vosu_adapter_support::json::encode(&build(snapshot).unwrap(), 0).unwrap(),
+    )
+    .unwrap();
     assert_eq!(direct, dto);
 }
 

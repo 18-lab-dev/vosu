@@ -6,9 +6,9 @@ use bytes::Bytes;
 use indexmap::IndexMap;
 use serde::Serialize;
 
-use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot};
 use crate::model::api::sc::{MapBreak, MapTimingPoint, Response};
+use vosu_adapter_support::fixed::{fix_decimals, fix_decimals_to};
 use vosu_osu_model::enums::{CountryCodes, Rulesets};
 use vosu_osu_model::states::{CalculateMods, KeyOverlayButton, LeaderboardPlayer};
 use vosu_osu_model::{js_json_number, safe_join, to_legacy_hits};

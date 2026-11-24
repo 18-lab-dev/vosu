@@ -15,6 +15,7 @@ use std::{
     },
     time::Duration,
 };
+use vosu_adapter_support::filtered::Filter;
 use vosu_proptest::bounded;
 
 use axum::{
@@ -52,7 +53,7 @@ use vosu::{
             RuntimeFuture,
         },
         websocket::{
-            Filter, Inbound, MAX_MESSAGE_BYTES, MESSAGE_TOO_BIG, Outbound, Schema, StateProvider,
+            Inbound, MAX_MESSAGE_BYTES, MESSAGE_TOO_BIG, Outbound, Schema, StateProvider,
             StateSnapshot, WebSocketHub,
         },
     },

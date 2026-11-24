@@ -3518,6 +3518,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "vosu-adapter-support",
  "vosu-core",
  "vosu-net",
  "vosu-osu",
@@ -3535,6 +3536,16 @@ dependencies = [
  "winresource",
  "zip",
  "zmij",
+]
+
+[[package]]
+name = "vosu-adapter-support"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "serde",
+ "serde_json",
+ "vosu-osu-model",
 ]
 
 [[package]]

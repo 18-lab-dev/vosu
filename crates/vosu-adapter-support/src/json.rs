@@ -2,8 +2,7 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 use serde_json::ser::{CompactFormatter, Formatter, Serializer};
-
-use super::ApiError;
+use vosu_osu_model::states::{CalculateMods, Mod};
 
 /// Serializer formatter matching JavaScript JSON number spelling.
 ///
@@ -12,7 +11,7 @@ use super::ApiError;
 /// not route through [`write_js_number`]: on the cold v1 document (almost all
 /// zeros) interleaved measurements showed that hook costing ~3%, pushing it
 /// past the regression budget, while only the hand-written writers gain.
-pub(crate) struct JsFormatter;
+pub struct JsFormatter;
 
 impl Formatter for JsFormatter {
     fn write_f32<W>(&mut self, writer: &mut W, value: f32) -> io::Result<()>
@@ -39,7 +38,7 @@ impl Formatter for JsFormatter {
 /// binary value. NaN and infinities fail the round-trip test. The test uses a
 /// conversion round trip rather than `f64::fract`, which is a libm call on the
 /// baseline x86-64 target.
-pub(crate) fn write_js_number(output: &mut Vec<u8>, value: f64) -> io::Result<()> {
+pub fn write_js_number(output: &mut Vec<u8>, value: f64) -> io::Result<()> {
     const EXACT_INTEGER_LIMIT: f64 = 9_007_199_254_740_992.0;
     let integer = value as i64;
     if integer as f64 == value && value.abs() < EXACT_INTEGER_LIMIT {
@@ -56,7 +55,7 @@ pub(crate) fn write_js_number(output: &mut Vec<u8>, value: f64) -> io::Result<()
 /// pushed as one digit instead of going through the general formatter and
 /// `io::Write` adapter.
 #[inline]
-pub(crate) fn write_i64(output: &mut Vec<u8>, value: i64) {
+pub fn write_i64(output: &mut Vec<u8>, value: i64) {
     if (0..10).contains(&value) {
         output.push(b'0' + value as u8);
     } else {
@@ -67,7 +66,7 @@ pub(crate) fn write_i64(output: &mut Vec<u8>, value: i64) {
 }
 
 /// Writes a JSON string with serde_json's exact escape spelling.
-pub(crate) fn write_str(output: &mut Vec<u8>, value: &str) -> io::Result<()> {
+pub fn write_str(output: &mut Vec<u8>, value: &str) -> io::Result<()> {
     output.reserve(value.len() + 2);
     output.push(b'"');
     write_str_content(output, value);
@@ -80,7 +79,7 @@ pub(crate) fn write_str(output: &mut Vec<u8>, value: &str) -> io::Result<()> {
 /// for `"`, `\`, backspace, form feed, newline, carriage return and tab;
 /// lowercase `\u00xx` for other control characters; everything else verbatim.
 /// Escaping is per character, so concatenated parts escape like their join.
-pub(crate) fn write_str_content(output: &mut Vec<u8>, value: &str) {
+pub fn write_str_content(output: &mut Vec<u8>, value: &str) {
     let bytes = value.as_bytes();
     if bytes
         .iter()
@@ -127,7 +126,7 @@ pub(crate) fn write_str_content(output: &mut Vec<u8>, value: &str) {
 /// Implementations must produce exactly what the corresponding serde DTO
 /// field produces through [`JsFormatter`]; the encoders are verified against
 /// the DTO path byte for byte.
-pub(crate) trait Wire {
+pub trait Wire {
     fn write_wire(&self, output: &mut Vec<u8>) -> io::Result<()>;
 }
 
@@ -225,7 +224,7 @@ impl<T: Wire> Wire for Vec<T> {
 
 /// Writes a value through serde and [`JsFormatter`], for rare or dynamic
 /// subtrees whose DTO serialization is the definition of their wire form.
-pub(crate) struct Serde<'a, T: ?Sized>(pub(crate) &'a T);
+pub struct Serde<'a, T: ?Sized>(pub &'a T);
 
 impl<T: Serialize + ?Sized> Wire for Serde<'_, T> {
     fn write_wire(&self, output: &mut Vec<u8>) -> io::Result<()> {
@@ -235,7 +234,7 @@ impl<T: Serialize + ?Sized> Wire for Serde<'_, T> {
 }
 
 /// Writes a value with a closure, for nested structures built in place.
-pub(crate) struct With<F>(pub(crate) F);
+pub struct With<F>(pub F);
 
 impl<F: Fn(&mut Vec<u8>) -> io::Result<()>> Wire for With<F> {
     #[inline]
@@ -259,17 +258,18 @@ impl<F: Fn(&mut Vec<u8>) -> io::Result<()>> Wire for With<F> {
 /// limit allows are written in groups: `wire_object!(@open out first)`, then
 /// `wire_object!(@members out first { ... })` per group, then
 /// `wire_object!(@close out first)`.
+#[macro_export]
 macro_rules! wire_object {
     ($out:ident { $($body:tt)* }) => {{
-        $crate::api::json::wire_object!(@open $out first);
-        $crate::api::json::wire_object!(@field $out first; $($body)*);
-        $crate::api::json::wire_object!(@close $out first);
+        $crate::json::wire_object!(@open $out first);
+        $crate::json::wire_object!(@field $out first; $($body)*);
+        $crate::json::wire_object!(@close $out first);
     }};
     (@open $out:ident $first:ident) => {
         let $first = $out.len();
     };
     (@members $out:ident $first:ident { $($body:tt)* }) => {
-        $crate::api::json::wire_object!(@field $out $first; $($body)*);
+        $crate::json::wire_object!(@field $out $first; $($body)*);
     };
     (@close $out:ident $first:ident) => {
         if $out.len() == $first {
@@ -286,24 +286,24 @@ macro_rules! wire_object {
     };
     (@field $out:ident $first:ident;) => {};
     (@field $out:ident $first:ident; $key:literal : { $($inner:tt)* } $(, $($rest:tt)*)?) => {
-        $crate::api::json::wire_object!(@key $out $first $key);
-        $crate::api::json::wire_object!($out { $($inner)* });
-        $crate::api::json::wire_object!(@field $out $first; $($($rest)*)?);
+        $crate::json::wire_object!(@key $out $first $key);
+        $crate::json::wire_object!($out { $($inner)* });
+        $crate::json::wire_object!(@field $out $first; $($($rest)*)?);
     };
     (@field $out:ident $first:ident; $key:literal ?: $value:expr $(, $($rest:tt)*)?) => {
         if let Some(value) = $value {
-            $crate::api::json::wire_object!(@key $out $first $key);
-            $crate::api::json::Wire::write_wire(&value, $out)?;
+            $crate::json::wire_object!(@key $out $first $key);
+            $crate::json::Wire::write_wire(&value, $out)?;
         }
-        $crate::api::json::wire_object!(@field $out $first; $($($rest)*)?);
+        $crate::json::wire_object!(@field $out $first; $($($rest)*)?);
     };
     (@field $out:ident $first:ident; $key:literal : $value:expr $(, $($rest:tt)*)?) => {
-        $crate::api::json::wire_object!(@key $out $first $key);
-        $crate::api::json::Wire::write_wire(&$value, $out)?;
-        $crate::api::json::wire_object!(@field $out $first; $($($rest)*)?);
+        $crate::json::wire_object!(@key $out $first $key);
+        $crate::json::Wire::write_wire(&$value, $out)?;
+        $crate::json::wire_object!(@field $out $first; $($($rest)*)?);
     };
 }
-pub(crate) use wire_object;
+pub use crate::wire_object;
 impl Wire for vosu_osu_model::memory::Catcher {
     fn write_wire(&self, output: &mut Vec<u8>) -> io::Result<()> {
         wire_object!(output {
@@ -314,13 +314,34 @@ impl Wire for vosu_osu_model::memory::Catcher {
     }
 }
 
-pub(crate) fn encode<T: Serialize>(value: &T, capacity: usize) -> Result<Vec<u8>, ApiError> {
+pub fn encode<T: Serialize>(value: &T, capacity: usize) -> Result<Vec<u8>, serde_json::Error> {
     let mut output = Vec::with_capacity(capacity);
     let mut serializer = Serializer::with_formatter(&mut output, JsFormatter);
-    value
-        .serialize(&mut serializer)
-        .map_err(|error| ApiError::serialization(error.to_string()))?;
+    value.serialize(&mut serializer)?;
     Ok(output)
+}
+
+impl Wire for CalculateMods {
+    fn write_wire(&self, out: &mut Vec<u8>) -> io::Result<()> {
+        wire_object!(out {
+            "checksum": self.checksum,
+            "number": self.number,
+            "name": self.name,
+            "array": self.array,
+            "rate": self.rate,
+        });
+        Ok(())
+    }
+}
+
+impl Wire for Mod {
+    fn write_wire(&self, out: &mut Vec<u8>) -> io::Result<()> {
+        wire_object!(out {
+            "acronym": self.acronym,
+            "settings"?: self.settings.as_ref().map(Serde),
+        });
+        Ok(())
+    }
 }
 
 #[cfg(test)]

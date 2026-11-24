@@ -97,3 +97,6 @@ vosu -> vosu-proptest
 vosu -> vosu-surface
 vosu -> vosu-osu
 vosu-osu -> vosu-proptest
+
+vosu-adapter-support -> vosu-osu-model
+vosu -> vosu-adapter-support

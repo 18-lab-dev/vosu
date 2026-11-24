@@ -2,9 +2,8 @@
 //! byte for byte.
 
 use super::*;
-use crate::api::wire_fixtures::{
-    AWKWARD, NUMBERS, populated_precise, populated_regular, snapshot_with,
-};
+use crate::api::wire_fixtures::{populated_precise, populated_regular, snapshot_with};
+use vosu_adapter_support::wire_fixtures::{AWKWARD, NUMBERS};
 
 fn assert_direct_matches(snapshot: &CombinedSnapshot) {
     let direct = String::from_utf8(super::super::wire::encode(snapshot).unwrap()).unwrap();

@@ -4,10 +4,6 @@
 //! all instance states, and the focused regular/precise components therefore
 //! always come from one atomic publication point.
 
-mod fixed;
-mod json;
-#[cfg(test)]
-pub(crate) use json::JsFormatter;
 pub mod precise;
 pub mod sc;
 pub mod v1;

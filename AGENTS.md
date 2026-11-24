@@ -49,6 +49,7 @@ python tools/live-parity/run.py diff --capture <capture.json> --out-dir <diff-di
 
 ## Source ownership
 
+- `crates/vosu-adapter-support/`: pure legacy JSON/number/rounding/filter mechanics and shared per-pass encoding; only `vosu-osu-model` is a production workspace dependency.
 - `src/api/`: gosuMemory v1, streamCompanion, vosu v2, and precise payload projection/serialization.
 - `src/server/` and `crates/vosu-net/`: HTTP/WebSocket routing, files, commands, pages, connection handling, and hardened outbound streaming/archive extraction.
 - `crates/vosu-osu/`: production bundled `vosu.osu` plugin — classification, decline/identification, session-owned resolver/capture lifecycle over `PlanMemory`, and plugin-owned runtime. `project/` owns osu!-to-namespace projection; `publish.rs` owns changed-value batching to the state bus alongside interim B1 publication; `demand.rs` unions bus/B1 sampling and selector-driven hit-error collection without changing legacy output gates.

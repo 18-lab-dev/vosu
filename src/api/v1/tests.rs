@@ -157,7 +157,7 @@ fn borrowed_encoding_preserves_populated_graph_and_hit_arrays() {
     let owned = build(&snapshot).unwrap();
     assert_eq!(
         encode(&snapshot).unwrap().as_ref(),
-        crate::api::json::encode(&owned, 0).unwrap()
+        vosu_adapter_support::json::encode(&owned, 0).unwrap()
     );
     let decoded: Value = serde_json::from_slice(&encode(&snapshot).unwrap()).unwrap();
     assert_eq!(decoded["menu"]["pp"]["strains"], json!([1.25, 2.5]));

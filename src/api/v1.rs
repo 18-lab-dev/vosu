@@ -12,16 +12,16 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use vosu_osu_model::enums::{ClientType, CountryCodes, GameState};
 
-#[cfg(test)]
-use crate::api::JsFormatter;
 use bytes::Bytes;
 #[cfg(test)]
 use serde::Serialize;
 #[cfg(test)]
 use serde_json::ser::Serializer;
+#[cfg(test)]
+use vosu_adapter_support::json::JsFormatter;
 
-use crate::api::fixed::{fix_decimals, fix_decimals_to};
 use crate::api::{ApiError, ApiSchema, CombinedSnapshot, ManagerInstanceSnapshot};
+use vosu_adapter_support::fixed::{fix_decimals, fix_decimals_to};
 use vosu_osu_model::memory::{LazerSpectatorEntry, Score};
 use vosu_osu_model::states::{CalculateMods, MultiplayerTeamType};
 use vosu_osu_model::{calculate_grade, to_legacy_hits};
@@ -288,8 +288,9 @@ pub fn encode(snapshot: &CombinedSnapshot) -> Result<Bytes, ApiError> {
         let direct = wire::encode(snapshot);
         #[cfg(debug_assertions)]
         {
-            let dto = build_with::<&[f64]>(snapshot)
-                .and_then(|value| crate::api::json::encode(&value, 0));
+            let dto = build_with::<&[f64]>(snapshot).and_then(|value| {
+                vosu_adapter_support::json::encode(&value, 0).map_err(Into::into)
+            });
             assert_eq!(
                 direct.as_deref().map(String::from_utf8_lossy),
                 dto.as_deref().map(String::from_utf8_lossy),

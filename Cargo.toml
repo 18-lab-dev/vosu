@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/vosu-core", "crates/vosu-net", "crates/vosu-osu", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-plugin-api", "crates/vosu-plugin-testkit", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-surface", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
+members = [".", "crates/vosu-adapter-support", "crates/vosu-core", "crates/vosu-net", "crates/vosu-osu", "crates/vosu-osu-calc", "crates/vosu-osu-model", "crates/vosu-osu-reader", "crates/vosu-osu-state", "crates/vosu-pp", "crates/vosu-pp/rosu-map-api", "crates/vosu-pp/rosu-pp-api", "crates/vosu-plugin-api", "crates/vosu-plugin-testkit", "crates/vosu-proptest", "crates/vosu-sys", "crates/vosu-surface", "crates/vosu-test-harness", "crates/vosu-release-smoke"]
 resolver = "3"
 
 [workspace.package]
@@ -104,6 +104,7 @@ tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "
 tokio-util = { version = "0.7.18", features = ["io", "rt"] }
 tokio-tungstenite = "=0.29.0"
 toml = "=1.1.2"
+vosu-adapter-support = { path = "crates/vosu-adapter-support" }
 vosu-pp = { path = "crates/vosu-pp" }
 vosu-core = { path = "crates/vosu-core" }
 vosu-plugin-api = { path = "crates/vosu-plugin-api" }

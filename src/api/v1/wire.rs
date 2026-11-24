@@ -10,10 +10,10 @@
 use std::io::{self, Write};
 
 use super::*;
-use crate::api::json::{Serde, Wire, With, wire_object};
+use vosu_adapter_support::json::{Serde, Wire, With, wire_object};
 
 /// Encodes the unfiltered v1 document exactly as `build_with` serializes
-/// through [`JsFormatter`](crate::api::json::JsFormatter).
+/// through [`JsFormatter`](vosu_adapter_support::json::JsFormatter).
 pub(super) fn encode(snapshot: &CombinedSnapshot) -> Result<Vec<u8>, ApiError> {
     let focused = snapshot.focused().ok_or(ApiError::NotReady)?;
     let regular = &focused.regular;
