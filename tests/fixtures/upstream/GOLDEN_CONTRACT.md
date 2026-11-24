@@ -311,18 +311,22 @@ tests/fixtures/upstream/<pin>/
   inventory.json           SHA-256 and byte size of every file below <pin>/
   divergence-rules.json    §10
   windows-stable/  windows-lazer/  linux-lazer/
-    manifest.json  inventory.json  assets.json  brand-inventory.txt
-    cases/…                one file per case: upstream expected record + replay envelopes
+    manifest.json          platform manifest (format vosu-golden-platform-v1)
+    inventory.json  assets.json  brand-inventory.txt
+    cases/…                one file per case: request, upstream expected record, replay envelope
     assets/…               approved generated assets (§4)
 ```
 
 `<pin>` is the full 40-hex Cargo `source-commit`. Platform directories are
-exactly the `SUPPORTED_MATRIX` pairs. A platform manifest records the format,
+exactly the `SUPPORTED_MATRIX` pairs. A platform manifest records its format,
 `normalization_version` (initially 1), `provenance` (`captured` or
 `synthetic`), pin, platform and client variant/version, vosu commit, harness
-build attestation hash, scenario set, synthetic-root mapping, case counts by
-family and the review receipt reference. It contains no private path,
-account, capability or credential.
+build attestation hash, scenario set, slot-to-synthetic-root mapping, case
+counts by family and the review receipt reference. It contains no private
+path, account, capability or credential. The platform `inventory.json`
+carries the privacy-scan result as `privacy_scan`. A case's `expected` record
+holds the status code, the §6 compared headers plus `date`, the body and the
+frames, all from upstream.
 
 Files are deterministic, sorted by platform and case ID. Valid UTF-8 text,
 including every HTTP body and WS text frame, is stored as text so
@@ -336,8 +340,9 @@ approval or a smaller scenario, never compression that hides content.
 
 `golden` rejects incomplete, wrong-pin or wrong-platform captures, unattested
 binaries, mixed attempts, unknown files or binary text, unredacted capability
-or credential data, private paths and over-budget output, and refuses a
-non-empty or existing committed target directory.
+or credential data, private paths and over-budget output. It refuses a
+candidate directory that is non-empty, contains a git-tracked path or lies
+anywhere under `tests/fixtures/upstream/`.
 
 Before captures exist, `adapter_golden` mechanics tests use tiny
 vosu-generated fixtures with `provenance: "synthetic"`. They are never
