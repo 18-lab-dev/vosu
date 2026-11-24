@@ -1,6 +1,6 @@
 //! Diagnostic decomposition: identical native RPM work versus flat execution,
-//! submission encoding, result validation and the SDK's warmed result-buffer copy.
-use super::{Modules, lazer_fixture};
+//! SDK framing, result validation and the SDK's warmed result-buffer copy.
+use super::{ExecutorHost, Modules, lazer_fixture};
 use criterion::{BenchmarkId, Criterion};
 use std::{
     hint::black_box,
@@ -8,9 +8,10 @@ use std::{
     time::{Duration, Instant},
 };
 use vosu_core::plugin::execute_into;
+use vosu_osu::memory::PlanProcessMemory;
 use vosu_osu_reader::memory::lazer_offsets::LazerOffsets;
 use vosu_plugin_api::{
-    PlanBase, PlanOp, StageBase, StageRef, VOSU_READ_PLAN_SYNC, message::flat::encode_submit_into,
+    Message, PlanBase, PlanOp, ReadPlanSubmit, Stage, StageBase, VOSU_READ_PLAN_SYNC,
     validate_read_plan_result,
 };
 use vosu_sys::process::{ProcessBitness, ProcessMemory, ReadRequest};
@@ -23,13 +24,19 @@ pub(super) fn bench(c: &mut Criterion) {
         let label = format!("{count}x{length}");
         let root = PlanBase::Absolute(fixture.game_base as u64);
         let ops = vec![PlanOp { offset: 0, length }; count];
-        let stages = [StageRef {
-            base: StageBase::Root,
-            base_offset: 0,
-            ops: &ops,
-        }];
-        let mut submit = Vec::new();
-        encode_submit_into(&mut submit, 1, 1, &root, &stages);
+        let submit = Message::ReadPlanSubmit(ReadPlanSubmit {
+            plan: 1,
+            handle: 1,
+            root,
+            stages: vec![Stage {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops,
+            }],
+            sync: true,
+        })
+        .encode_payload()
+        .unwrap();
         let mut output = Vec::new();
         execute_into(
             &submit,
@@ -73,16 +80,16 @@ pub(super) fn bench(c: &mut Criterion) {
                 black_box(&output);
             })
         });
-        let mut encoded = submit.clone();
-        group.bench_with_input(BenchmarkId::new("encode", &label), &(), |b, _| {
+        let flat = PlanProcessMemory::new(
+            ExecutorHost::with_memory(ProcessBitness::X64, fixture.clone()),
+            1,
+            std::process::id(),
+            ProcessBitness::X64,
+        );
+        group.bench_with_input(BenchmarkId::new("flat_roundtrip", &label), &(), |b, _| {
             b.iter(|| {
-                encode_submit_into(
-                    black_box(&mut encoded),
-                    1,
-                    1,
-                    black_box(&root),
-                    black_box(&stages),
-                )
+                flat.read_many(&mut requests).unwrap();
+                black_box(&requests);
             })
         });
         group.bench_with_input(BenchmarkId::new("validate_result", &label), &(), |b, _| {
