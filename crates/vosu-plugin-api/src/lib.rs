@@ -18,7 +18,10 @@ mod envelope;
 mod flags;
 mod flat;
 mod limits;
-mod manifest;
+/// Unified package validation, explicit registration context and pure
+/// requirement matching. Asset-backed namespace extraction/catalog comparison
+/// are separate from intrinsic validity and application host support.
+pub mod manifest;
 mod message;
 mod opcode;
 mod primitives;

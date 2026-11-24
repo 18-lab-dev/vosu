@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use serde::Deserialize;
 
-use super::{ManifestError, PluginManifest, relative, valid_segment};
+use super::{Capability, ManifestError, PluginManifest, relative, valid_segment};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -28,9 +28,14 @@ pub struct ActionDeclaration {
 }
 
 pub(super) fn validate(manifest: &PluginManifest) -> Result<(), ManifestError> {
+    validate_actions(&manifest.id, &manifest.actions, &manifest.provides)
+}
+
+/// Shared exact declaration/provide bijection for manifests and catalog entries.
+pub fn validate_actions(id: &str, actions: &[ActionDeclaration], capabilities: &[Capability]) -> Result<(), ManifestError> {
     let fail = |reason: &str| ManifestError::Action(reason.to_owned());
     let mut names = HashSet::new();
-    for action in &manifest.actions {
+    for action in actions {
         if !action.name.split('.').all(|s| valid_segment(s, 32, false)) {
             return Err(fail("invalid action name"));
         }
@@ -45,8 +50,8 @@ pub(super) fn validate(manifest: &PluginManifest) -> Result<(), ManifestError> {
         if !relative(&action.args_schema) || !relative(&action.result_schema) {
             return Err(fail("action schema must be a confined relative path"));
         }
-        let id = format!("action:{}.{}", manifest.id, action.name);
-        let mut provides = manifest.provides.iter().filter(|p| p.id == id);
+        let id = format!("action:{id}.{}", action.name);
+        let mut provides = capabilities.iter().filter(|p| p.id == id);
         let Some(provided) = provides.next() else {
             return Err(fail("action has no matching provide"));
         };
@@ -57,10 +62,10 @@ pub(super) fn validate(manifest: &PluginManifest) -> Result<(), ManifestError> {
             return Err(fail("action/provide versions differ"));
         }
     }
-    for provided in &manifest.provides {
-        if let Some(id) = provided.id.strip_prefix("action:") {
-            let prefix = format!("{}.", manifest.id);
-            if !id
+    for provided in capabilities {
+        if let Some(action_id) = provided.id.strip_prefix("action:") {
+            let prefix = format!("{id}.");
+            if !action_id
                 .strip_prefix(&prefix)
                 .is_some_and(|name| names.contains(name))
             {

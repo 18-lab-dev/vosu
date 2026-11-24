@@ -1,13 +1,21 @@
-//! `manifest.toml` runtime fields for `kind = "plugin"`
-//! (`docs/v2/plugin-abi.md` §8). Shared identity/display metadata and
-//! `covers`'s common-namespace coverage rule are owned by
-//! `docs/v2/catalog-v2.md`; this module validates the ABI-level fields §8
-//! defines, plus the minimal `[[provides]]`/`[[requires]]`/`[[optional]]`
-//! subset M2 consumes (`crate::capability::parse_capability`). Full
-//! catalog business rules — semver resolution, tool/overlay permission
-//! surfaces, `catalog-v2.json` mirroring — are M6a's; this module
-//! tolerates unknown top-level fields so a full manifest (which also
-//! carries those catalog-owned fields) still parses here.
+//! Unified package validation and typed plugin runtime view.
+//! Intrinsic validation is separate from explicit registration context,
+//! application host support, and V2/V3 asset-backed schema verification.
+//!
+//! Cutover consumers: core `plugin/registry.rs`, `plugin/host/capabilities.rs`,
+//! `state/{grant,projector}.rs` and root `tools/{manifest_v2,capabilities}.rs`.
+//! Core keeps runtime matchers, schema registry lifetimes and live authorization.
+//! `PackageManifest::parse` validates intrinsic rules; `validate_context`
+//! requires complete enabled-source registrations and an application version.
+//! `Requirement`/`candidate_satisfies` are the M6b resolver's shared predicates,
+//! not a source selector, permission grant or installation plan.
+//!
+//! V2 consumes `Capability` (own whole namespace, schema path, version) and
+//! explicit `SchemaProvenance`, returning namespace/version, canonical
+//! pointer/lane/activity triples, required-top-level and visibility metadata.
+//! V3 reuses these declarations and `validate_actions`, and compares loaded
+//! schema metadata plus ordered package fields before attesting equivalence.
+//! Neither intrinsic nor context validation attests absent schema bytes.
 
 use std::fmt;
 
@@ -20,11 +28,25 @@ use crate::capability::{
 use crate::limits::VOSU_PLUGIN_ABI_MAJOR;
 
 mod actions;
-pub use actions::{ActionDeclaration, ActionSessionMode};
+pub use actions::{ActionDeclaration, ActionSessionMode, validate_actions};
+mod shared;
+mod package;
+mod plugin;
+mod requirements;
+mod context;
+mod diagnostics;
+#[cfg(test)]
+mod package_tests;
+pub use shared::{SharedManifest, ValidationError};
+pub use package::{OverlayManifest, PackageFields, PackageManifest, ToolManifest, ToolUi};
+pub use context::{HostSupport, NamespaceIndex, NamespaceRevision, PackageKind, Registration,
+    SchemaProvenance, ValidationContext};
+pub use requirements::{Requirement, candidate_satisfies};
+pub use plugin::valid_native_target;
 
-/// A validated `manifest.toml` for `kind = "plugin"` (`docs/v2/plugin-abi.md`
-/// §8's runtime fields only).
+/// Plugin-specific typed view of the unified package document.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginManifest {
     pub kind: String,
     pub manifest_version: u32,
@@ -32,6 +54,13 @@ pub struct PluginManifest {
     pub name: String,
     pub version: String,
     pub host: String,
+    pub description: Option<String>,
+    pub author: Option<String>,
+    pub homepage: Option<String>,
+    pub icon: Option<String>,
+    pub banner: Option<String>,
+    #[serde(default)]
+    pub replaces: Vec<String>,
     pub abi_version: u32,
     pub runtime: Runtime,
     #[serde(default)]
@@ -180,12 +209,14 @@ pub enum ManifestError {
     CapabilitySelfDependency(String),
     /// An action declaration or its matching provide is invalid.
     Action(String),
+    Rule(ValidationError),
 }
 
 impl fmt::Display for ManifestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Toml(e) => write!(f, "manifest.toml: {e}"),
+            Self::Rule(error) => error.fmt(f),
             Self::Action(reason) => write!(f, "actions: {reason}"),
             Self::Kind => write!(f, "kind must be \"plugin\""),
             Self::ManifestVersion => write!(f, "manifest_version must be 1"),
@@ -244,12 +275,9 @@ impl std::error::Error for ManifestError {}
 /// component is a plain name (mirrors `src/tools/manifest.rs::relative`,
 /// this ABI's manifest having the same confinement need).
 fn relative(path: &str) -> bool {
-    use std::path::{Component, Path};
     !path.is_empty()
         && !path.contains(['\\', '\0', ':'])
-        && Path::new(path)
-            .components()
-            .all(|c| matches!(c, Component::Normal(_)))
+        && path.split('/').all(|c| !matches!(c, "" | "." | ".."))
 }
 
 /// `[a-z0-9][a-z0-9_-]{0,63}` grammar (`root_slots`, `docs/v2/naming.md`
@@ -266,9 +294,9 @@ fn valid_root_slot(s: &str) -> bool {
 /// that equals or extends any core-owned namespace ... is always
 /// rejected, from any source").
 fn valid_plugin_id(id: &str) -> bool {
-    let segments: Vec<&str> = id.split('.').collect();
-    (2..=4).contains(&segments.len())
-        && segments.iter().all(|s| valid_kind_segment(s))
+    (2..=4).contains(&id.split('.').count())
+        && id.split('.').all(valid_kind_segment)
+        && !matches!(id.split('.').next(), Some("chart" | "skin"))
         && !is_reserved_namespace(id)
 }
 
@@ -400,7 +428,7 @@ impl PluginManifest {
                         if cap.schema.is_some() {
                             return Err(ManifestError::CapabilityUnexpectedSchema(cap.id.clone()));
                         }
-                        if !suffix.starts_with(&format!("{}.", self.id)) {
+                        if CORE_NAMESPACES.contains(&suffix) {
                             return Err(ManifestError::CapabilityForeignNamespace(cap.id.clone()));
                         }
                     }
@@ -438,6 +466,9 @@ impl PluginManifest {
                     Some(suffix)
                 }
             };
+            if self.provides.iter().any(|provided| crate::capability::covers(&provided.id, &cap.id)) {
+                return Err(ManifestError::CapabilitySelfDependency(cap.id.clone()));
+            }
             if let Some(suffix) = own_namespace_suffix
                 && (suffix == self.id.as_str() || suffix.starts_with(&format!("{}.", self.id)))
             {
@@ -452,6 +483,7 @@ impl PluginManifest {
             }
         }
         actions::validate(self)?;
+        plugin::validate(self).map_err(ManifestError::Rule)?;
         Ok(())
     }
 }
@@ -475,7 +507,7 @@ mod tests {
     #[test]
     fn accepts_full_targets_match_and_resource_kinds() {
         let text = format!(
-            "{}concurrent_dispatch=true\nsettings_schema='settings.schema.json'\nroot_slots=['songs']\ncovers=['field:vosu.play.combo', 'field:vosu.chart.title']\n\n[targets.x86_64-unknown-linux-gnu]\nlibrary='lib/libvosu_osu.so'\n\n[targets.x86_64-pc-windows-msvc]\nlibrary='lib/vosu_osu.dll'\n\n[match]\nprocess_names=['osu!.exe']\n\n[[resource_kinds]]\nkind='file'\ntree=false\nfamilies=['chart-text']\n",
+            "{}concurrent_dispatch=true\nsettings_schema='settings.schema.json'\nroot_slots=['songs']\ncovers=['field:vosu.play.combo', 'field:vosu.chart.title']\n\n[targets.x86_64-unknown-linux-gnu]\nlibrary='lib/libvosu_osu.so'\n\n[targets.x86_64-pc-windows-msvc]\nlibrary='lib/vosu_osu.dll'\n\n[match]\nprocess_names=['osu!.exe']\n\n[[resource_kinds]]\nkind='file'\ntree=false\nfamilies=['chart-text']\n\n[[provides]]\nid='game:osu'\nversion='*'\n",
             base()
         );
         let manifest = PluginManifest::parse(&text).unwrap();

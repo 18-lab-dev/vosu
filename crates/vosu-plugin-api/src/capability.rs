@@ -1,12 +1,11 @@
 //! Capability id grammar: `field:`/`resource:`/`action:`/`game:` prefixes
 //! over a dotted path (`docs/v2/naming.md` "Capability id grammar",
 //! `docs/v2/catalog-v2.md` "Capability fields"). A capability id's
-//! namespace boundary is ambiguous from the string alone — resolving it
-//! needs the full installed/catalogued namespace set, which is M6a's
-//! "Namespace and kind parsing" in full (`docs/v2/catalog-v2.md:150-187`).
-//! This module only splits the reserved prefix from its dotted suffix and
-//! checks that suffix's own segment grammar; it never locates a namespace
-//! boundary inside it.
+//! namespace boundary is ambiguous from the string alone. This module checks
+//! the prefix/suffix grammar; [`crate::manifest::NamespaceIndex`] resolves
+//! boundaries using explicit bundled/installed/enabled-source registrations.
+//! [`crate::manifest::Requirement`] combines coverage with semver without
+//! conflating capability and package-release versions.
 //!
 //! The segment grammars here (`valid_kind_segment`/`valid_camel_path_segment`)
 //! are also `crate::manifest`'s: a resource kind, action-name segment, and
@@ -168,8 +167,7 @@ fn valid_action_suffix(suffix: &str) -> bool {
 /// Parses one capability id into its prefix and suffix, checking the
 /// suffix's own grammar (`docs/v2/naming.md` "Capability id grammar",
 /// "Kinds", "Game ids", "Namespaces"). Namespace-boundary resolution is
-/// out of scope (module doc comment) — the caller (`crate::manifest`, and
-/// eventually M6a's resolver) checks anything that needs it.
+/// performed by [`crate::manifest::NamespaceIndex`], not guessed here.
 pub fn parse_capability(id: &str) -> Result<CapabilityId<'_>, CapabilityError> {
     let err = || CapabilityError(id.to_string());
     if let Some(suffix) = id.strip_prefix("field:") {

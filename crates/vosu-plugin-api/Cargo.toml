@@ -27,9 +27,11 @@ bundled = []
 # plugin's whole dependency graph to our exact serde/ciborium patch would be
 # a publishable-SDK regression, not just an internal consistency choice.
 ciborium = "0.2.2"
+regex = "1.13.1"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
+url = "2.5.8"
 
 [dev-dependencies]
 proptest = "1.12"
