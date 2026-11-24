@@ -9,17 +9,40 @@ import sys
 import tomllib
 import zipfile
 from pathlib import Path
+from typing import NamedTuple
 
-TAG_RE = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+# SemVer 2.0.0 without build metadata: numeric parts and numeric prerelease
+# identifiers have no leading zeros; identifiers are non-empty ASCII
+# alphanumerics or hyphens. Explicit classes keep Unicode digits out.
+_NUMBER = r"(?:0|[1-9][0-9]*)"
+_IDENTIFIER = rf"(?:{_NUMBER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+VERSION_RE = re.compile(
+    rf"(?P<core>{_NUMBER}\.{_NUMBER}\.{_NUMBER})(?:-(?P<prerelease>{_IDENTIFIER}(?:\.{_IDENTIFIER})*))?"
+)
+# dpkg, rpm and pacman must all order a prerelease below its release and agree
+# with SemVer among prereleases. That holds for one alphabetic label followed
+# by numeric counters (alpha, beta.2, rc.1); other SemVer prereleases are
+# rejected for distribution packaging rather than rendered ambiguously.
+DISTRIBUTION_PRERELEASE_RE = re.compile(rf"[A-Za-z]+(?:\.{_NUMBER})*")
 PLATFORM_EXECUTABLE = {"windows": "vosu.exe", "linux": "vosu"}
 
 
-def version_from_tag(tag: str, manifest: Path) -> str:
-    match = TAG_RE.fullmatch(tag)
+def parse_version(version: str) -> tuple[str, str | None]:
+    """Split a release version into its core and optional prerelease."""
+    match = VERSION_RE.fullmatch(version)
     if match is None:
-        raise ValueError(f"release tag must be stable v<major>.<minor>.<patch>, got {tag!r}")
+        raise ValueError(
+            "release version must be <major>.<minor>.<patch>[-<prerelease>] SemVer without"
+            f" leading zeros or build metadata, got {version!r}"
+        )
+    return match["core"], match["prerelease"]
 
+
+def version_from_tag(tag: str, manifest: Path) -> str:
+    if not tag.startswith("v"):
+        raise ValueError(f"release tag must be v<major>.<minor>.<patch>[-<prerelease>], got {tag!r}")
     version = tag[1:]
+    parse_version(version)
     with manifest.open("rb") as file:
         package_version = tomllib.load(file)["package"]["version"]
     if version != package_version:
@@ -27,6 +50,46 @@ def version_from_tag(tag: str, manifest: Path) -> str:
             f"tag version {version!r} does not match Cargo package version {package_version!r}"
         )
     return version
+
+
+def is_prerelease(version: str) -> bool:
+    return parse_version(version)[1] is not None
+
+
+class DistributionPackage(NamedTuple):
+    # nfpm packager that builds this format.
+    packager: str
+    # Release asset name; it spells the SemVer version, which GitHub keeps as uploaded.
+    asset: str
+    # Distribution-native upstream version recorded in the package metadata.
+    version: str
+
+
+def distribution_packages(version: str) -> tuple[DistributionPackage, ...]:
+    """Render the deb, rpm and Arch packages of one release version.
+
+    A SemVer hyphen is the Debian revision separator and is invalid in an RPM
+    Version or an Arch pkgver, so a prerelease is rendered natively: dpkg and
+    rpm sort `~` before everything, and pacman sorts a trailing alphabetic
+    segment before the bare release. `~` stays out of asset names because
+    GitHub renames it on upload. Stable versions render unchanged.
+    """
+    core, prerelease = parse_version(version)
+    if prerelease is None:
+        debian = rpm = arch = core
+    elif DISTRIBUTION_PRERELEASE_RE.fullmatch(prerelease):
+        debian = rpm = f"{core}~{prerelease}"
+        arch = f"{core}{prerelease}"
+    else:
+        raise ValueError(
+            f"prerelease {prerelease!r} cannot be ordered consistently by dpkg, rpm and pacman;"
+            " use an alphabetic label with optional numeric counters such as alpha.1"
+        )
+    return (
+        DistributionPackage("deb", f"vosu_{version}_amd64.deb", debian),
+        DistributionPackage("rpm", f"vosu-{version}-1.x86_64.rpm", rpm),
+        DistributionPackage("archlinux", f"vosu-{version}-1-x86_64.pkg.tar.zst", arch),
+    )
 
 
 def expected_names(platform: str) -> set[str]:
@@ -53,7 +116,28 @@ def verify_archive(archive: Path, platform: str, license_path: Path = Path("LICE
 
 
 def validate_tag(args: argparse.Namespace) -> None:
-    print(version_from_tag(args.tag, args.manifest))
+    version = version_from_tag(args.tag, args.manifest)
+    # Fail at the first workflow step, not after the native builds, when the
+    # Linux packages cannot carry this version.
+    distribution_packages(version)
+    print(version)
+
+
+def release_flags(version: str) -> dict[str, str]:
+    """GitHub release fields for the draft the release workflow creates.
+
+    A prerelease is never the repository's latest release, so 1.x updaters and
+    `/releases/latest` consumers keep seeing the newest stable release. An
+    empty `make_latest` leaves a stable release on GitHub's default.
+    """
+    if is_prerelease(version):
+        return {"prerelease": "true", "make_latest": "false"}
+    return {"prerelease": "false", "make_latest": ""}
+
+
+def write_release_flags(args: argparse.Namespace) -> None:
+    flags = release_flags(version_from_tag(args.tag, args.manifest))
+    print("".join(f"{key}={value}\n" for key, value in flags.items()), end="")
 
 
 def extract_archive(args: argparse.Namespace) -> None:
@@ -99,23 +183,19 @@ def package(args: argparse.Namespace) -> Path:
 
 def verify_release_set(args: argparse.Namespace) -> None:
     version = version_from_tag(args.tag, args.manifest)
-    expected = {
+    archives = {
         f"vosu-windows-v{version}.zip": "windows",
         f"vosu-linux-v{version}.zip": "linux",
     }
-    packages = {
-        f"vosu_{version}_amd64.deb",
-        f"vosu-{version}-1.x86_64.rpm",
-        f"vosu-{version}-1-x86_64.pkg.tar.zst",
-    }
+    expected = set(archives) | {package.asset for package in distribution_packages(version)}
     actual = {path.name for path in args.directory.iterdir() if path.is_file()}
-    if actual != set(expected) | packages:
+    if actual != expected:
         raise ValueError(
-            f"release directory must contain exactly {sorted(set(expected) | packages)}; found {sorted(actual)}"
+            f"release directory must contain exactly {sorted(expected)}; found {sorted(actual)}"
         )
-    for name, platform in expected.items():
+    for name, platform in archives.items():
         verify_archive(args.directory / name, platform, args.license)
-    print("\n".join(sorted(set(expected) | packages)))
+    print("\n".join(sorted(expected)))
 
 
 REPOSITORY_URL = "https://github.com/18-lab-dev/vosu"
@@ -141,7 +221,9 @@ def pin_repository_links(markdown: str, tag: str) -> str:
 def release_notes(tag: str, changelog: str, signed: bool) -> str:
     version = tag.removeprefix("v")
     section = re.search(
-        rf"^## {re.escape(version)}\b[^\n]*\n(.*?)(?=^## |\Z)", changelog, re.S | re.M
+        # The version must end the heading's first word: `\b` would let a
+        # `## 2.0.0` lookup match the `## 2.0.0-alpha.1` section.
+        rf"^## {re.escape(version)}(?![0-9A-Za-z.+-])[^\n]*\n(.*?)(?=^## |\Z)", changelog, re.S | re.M
     )
     if section is None:
         raise ValueError(f"CHANGELOG.md has no section for {version}")
@@ -207,6 +289,12 @@ def parser() -> argparse.ArgumentParser:
     verify.add_argument("--directory", type=Path, required=True)
     verify.add_argument("--license", type=Path, default=Path("LICENSE"))
     verify.set_defaults(run=verify_release_set)
+
+    flags = subparsers.add_parser(
+        "release-flags", help="print the GitHub release prerelease/make_latest fields as key=value lines"
+    )
+    flags.add_argument("--tag", required=True)
+    flags.set_defaults(run=write_release_flags)
 
     notes = subparsers.add_parser("notes", help="write release notes from the tag's CHANGELOG section")
     notes.add_argument("--tag", required=True)

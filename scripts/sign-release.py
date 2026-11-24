@@ -18,11 +18,15 @@ in a repository secret, where anyone able to change a workflow could use it.
 
 import argparse
 import hashlib
+import importlib.util
 import json
-import re
 import subprocess
 import tempfile
 from pathlib import Path
+
+SPEC = importlib.util.spec_from_file_location("package_release", Path(__file__).with_name("package-release.py"))
+release_version = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(release_version)
 
 RELEASE_KEY = "6F0F0D30C09D3A036246A8102CB6524BB54B2CDA"
 
@@ -69,8 +73,14 @@ def sign(path, key):
 
 
 def is_prerelease_tag(tag):
-    """True for a semver prerelease tag (e.g. v2.0.0-alpha.1), false for a stable one."""
-    return re.match(r"^v?\d+\.\d+\.\d+-", tag) is not None
+    """True for a prerelease tag (e.g. v2.0.0-alpha.1), false for a stable one.
+
+    Uses the packager's SemVer grammar, so a tag the release workflow rejects
+    fails here instead of being published with guessed flags.
+    """
+    if not tag.startswith("v"):
+        raise ValueError(f"release tag must start with v, got {tag!r}")
+    return release_version.is_prerelease(tag[1:])
 
 
 def download(tag, repo, name, directory):
@@ -95,6 +105,11 @@ def main(argv=None):
     parser.add_argument("--publish", action="store_true", help="publish the draft release after signing")
     args = parser.parse_args(argv)
 
+    # Before any download, signature upload or publication.
+    try:
+        prerelease = is_prerelease_tag(args.tag)
+    except ValueError as error:
+        raise SystemExit(f"error: {error}") from None
     release = find_release(args.repo, args.tag)
     names = {asset["name"] for asset in release["assets"]}
     with tempfile.TemporaryDirectory(prefix="release-sign-") as directory:
@@ -125,7 +140,7 @@ def main(argv=None):
             print(f"verified existing signature for {name}")
     if args.publish and release["draft"]:
         fields = ["-F", "draft=false"]
-        if is_prerelease_tag(args.tag):
+        if prerelease:
             # A prerelease tag must not become the repo's "Latest release" or
             # be marked stable: downstream updaters and release pages key off
             # both flags to decide what to offer as a general-availability build.

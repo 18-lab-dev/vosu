@@ -150,6 +150,8 @@ Manage catalog development and production sources in **Settings / Catalog source
 
 The release workflow creates a **draft** release. Sign every file locally with the OpenPGP release key (`6F0F 0D30 C09D 3A03 6246  A810 2CB6 524B B54B 2CDA`, public key in [`packaging/release-signing-key.asc`](../../packaging/release-signing-key.asc)) and publish in one step: `python scripts/sign-release.py --tag v<version> --publish`. The script checks each asset against GitHub's recorded SHA-256 digest, uploads `<asset>.sig`, re-verifies signatures that already exist (so a rerun fails on an asset replaced after signing), and publishes the draft only once every asset is signed. The repository has immutable releases enabled, so a published release accepts no new files: never publish the draft by hand before signing. v1.0.2 was published by the earlier workflow before signing and has no `.sig` files; its assets verify with `gh release verify-asset v1.0.2 <file> --repo 18-lab-dev/vosu`. The key never goes to CI; the same key signs commits and tags. For a semver prerelease tag (`v2.0.0-alpha.1`, `v2.0.0-rc.1`), `sign-release.py --publish` marks the release `prerelease` and does not set it `make_latest`, so it never becomes the repository's advertised "Latest release" or a stable-update target; a stable tag publishes exactly as before.
 
+Release tags are `v<major>.<minor>.<patch>[-<prerelease>]` SemVer without leading zeros or build metadata, and must equal the root `Cargo.toml` package version exactly; `package-release.py validate-tag` enforces both before any build, and `sign-release.py` applies the same grammar before it signs. A prerelease must be an alphabetic label with optional numeric counters (`alpha`, `alpha.1`, `rc.2`) so that dpkg, rpm and pacman order it like SemVer. For a prerelease tag the workflow creates the draft as a GitHub prerelease with `make_latest=false` (`package-release.py release-flags`), so even a draft published by hand never becomes latest. A prerelease build runs on its own `prerelease/` storage roots, and the updater installs only stable releases: an alpha treats a newer stable release such as `2.0.0` as an update and never an older one such as `1.2.5`.
+
 ### SignPath signing setup
 
 Signing is off until the repository variable `SIGNPATH_ORGANIZATION_ID` exists. Without it, the Windows job packages the unsigned executable and `scripts/verify-windows-release.ps1` checks only its version resources; the release notes say the executable is unsigned. With it, the job submits `vosu.exe` to that SignPath organization, project `vosu`, signing policy `release-signing`, packages the signed result, and runs the verifier with `-RequireSignature`. The step passes no artifact-configuration slug, so SignPath uses the project's default artifact configuration. The previously configured organization ID is `5b025426-9c79-4f04-87e8-64cf64131d0b`. Prerequisites outside this repository:
@@ -169,7 +171,7 @@ Signing is off until the repository variable `SIGNPATH_ORGANIZATION_ID` exists. 
    </artifact-configuration>
    ```
 
-   `build.rs` sets `ProductName` to `vosu` and `ProductVersion` to the package version, and `scripts/verify-windows-release.ps1` checks both against the tag after signing. A static configuration cannot pin a per-release version, so the version check stays in the workflow.
+   `build.rs` sets `ProductName` to `vosu` and `ProductVersion` to the package version's numeric `<major>.<minor>.<patch>.0` (a prerelease such as `2.0.0-alpha.1` carries `2.0.0.0`; `vosu --version` reports the full version), and `scripts/verify-windows-release.ps1` checks both against the tag after signing. A static configuration cannot pin a per-release version, so the version check stays in the workflow.
 5. The repository secret `SIGNPATH_API_TOKEN` must belong to a SignPath CI user that can submit to this project, and the variable `SIGNPATH_ORGANIZATION_ID` is added only after everything else here is in place. Once the variable exists, a missing or invalid token fails the tagged release at the signing step rather than publishing an unsigned archive.
 6. Every team member must use MFA for GitHub and SignPath.
 
@@ -198,7 +200,14 @@ This stages the 256px PNG outside checksum-covered assets and builds and
 inspects Debian, RPM, and Arch packages. The published set is exactly the two
 ZIPs, `vosu_<version>_amd64.deb`, `vosu-<version>-1.x86_64.rpm`, and
 `vosu-<version>-1-x86_64.pkg.tar.zst`. `package-release.py verify-set` rejects
-missing or extra assets.
+missing or extra assets. Asset names always spell the SemVer `<version>`
+(`vosu_2.0.0-alpha.1_amd64.deb`); GitHub would rename a `~`. The package
+metadata carries each format's native version from
+`package-release.py`'s `distribution_packages`: a prerelease is
+`2.0.0~alpha.1-1` for Debian and RPM (`~` sorts before the release) and
+`2.0.0alpha.1-1` for Arch, where a hyphen is invalid. `nfpm.yaml` sets
+`version_schema: none` because nfpm's own SemVer split drops the prerelease
+from Arch `.PKGINFO`.
 
 The AUR package is `vosu-git`, which builds `main` from source with
 [`packaging/aur/PKGBUILD`](../../packaging/aur/PKGBUILD) and `vosu.install`.

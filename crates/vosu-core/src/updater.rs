@@ -21,10 +21,15 @@ use tokio_util::sync::CancellationToken;
 
 use vosu_net::streaming::{NetworkError, StreamingClient};
 
-pub const USER_AGENT: &str = concat!("vosu/", env!("CARGO_PKG_VERSION"));
 pub const INSTALL_RECORD_NAME: &str = ".vosu-update.json";
 pub const LATEST_RELEASE_API: &str = "https://api.github.com/repos/18-lab-dev/vosu/releases/latest";
-pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The updater's HTTP User-Agent for the running executable's `current`
+/// version. The root executable owns that version; this crate's own package
+/// version is unrelated, so the updater never reads it.
+pub fn user_agent(current: &Version) -> String {
+    format!("vosu/{current}")
+}
 #[cfg(windows)]
 pub const RELEASE_PLATFORM: &str = "windows";
 #[cfg(target_os = "linux")]

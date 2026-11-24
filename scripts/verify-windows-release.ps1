@@ -17,12 +17,17 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-if ($Tag -notmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
-    throw "Release tag must be v<major>.<minor>.<patch>: $Tag"
+# The same SemVer grammar as scripts/package-release.py validate-tag. Windows
+# version resources hold only the numeric core, so v2.0.0-alpha.1 carries
+# 2.0.0.0 exactly like v2.0.0; the prerelease stays in `vosu --version`.
+$number = '(?:0|[1-9][0-9]*)'
+$identifier = "(?:$number|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+if (-not ($Tag -cmatch "^v(?<core>$number\.$number\.$number)(?:-$identifier(?:\.$identifier)*)?\z")) {
+    throw "Release tag must be v<major>.<minor>.<patch>[-<prerelease>]: $Tag"
 }
 
 $binaryPath = (Resolve-Path -LiteralPath $Binary).Path
-$expectedVersion = $Tag.Substring(1) + ".0"
+$expectedVersion = $Matches['core'] + ".0"
 $expectedVersionParts = [System.Version]::Parse($expectedVersion)
 
 Add-Type -TypeDefinition @'
