@@ -355,6 +355,30 @@ for observed Linux commands, the consumer migration ledger and native Windows
 commands explicitly marked **pending**. Structural parity does not establish
 native filesystem behavior, complete package equality or an installation gate.
 
+#### Package checker (AF.10)
+
+Approved 2026-11-24. Publishers without a vosu checkout run the SDK's own
+validation through `vosu-package-check`, an example binary of the published
+`vosu-plugin-api` crate built only on the SDK's existing manifest, namespace
+and catalog APIs; it is not a second validator, a daemon dependency or a
+user demo. S0 delivers it; it is installed from the registry at the pinned
+SDK version:
+
+```sh
+cargo install --locked --version "$SDK_VERSION" vosu-plugin-api --example vosu-package-check --root "$RUN_ROOT/sdk-tools"
+vosu-package-check --catalog "$DIST/catalog-v2.json" --packages-root "$DIST/extracted" \
+  --host-version "$HOST_VERSION" --source "$OFFICIAL_SOURCE" --registry-context "$REGISTRY_CONTEXT"
+```
+
+It reads already-extracted package roots (each repository's scripts keep
+download, archive-safety and extraction), the explicit application version,
+the exact source identity and a registration-context file whose format S0
+defines from `ValidationContext`. It runs intrinsic, contextual, host-support
+and asset-backed mirror validation for every entry, fails on any error or on
+missing schema bytes, and prints nonzero package, action and schema-asset
+counts plus every target artifact it checked. A pass grants no trust: a
+`vosu.` plugin id validates only with an exact official `--source`.
+
 ### `kind = "plugin"`
 
 Runtime fields — `abi_version`, `runtime`, `concurrent_dispatch`,
@@ -1106,6 +1130,14 @@ ignore `catalog-v2.json` entirely; 2.0 readers reject `catalog_version != 2`
 and ignore `catalog.json` entirely. Neither format's fetcher needs to inspect
 the other.
 
+AF.4 (owner, 2026-11-24): each official repository's `catalog.json` is a
+frozen copy of its last published 1.x catalog, pointing only at immutable
+1.x release assets that were packaged independently of the v2 source. The
+frozen tags, commits and hashes are in the
+[ecosystem release matrix](ecosystem-release-matrix.md#2-repositories-and-frozen-1x-sources).
+No v1 metadata is generated around v2 packages, and no 1.x service code is
+kept in v2 sources. The end of the 1.x support window is decided separately.
+
 ## First-start migration from 1.x
 
 On first 2.0 start, migration is one-time and idempotent (same pattern as
@@ -1145,6 +1177,21 @@ On first 2.0 start, migration is one-time and idempotent (same pattern as
   removed stop working and are the ones flagged, until a
   `kind = "overlay"` `manifest.toml`-bearing update appears.
 
+**Service tools and cross-kind transfer (AF.2, approved 2026-11-24).** A
+1.x official tool with a service becomes a `kind = "plugin"` provider plus,
+where it has a UI, a same-kind `kind = "tool"` successor with a new id
+(`<old-id>-v2`, `vosulay-editor`). `replaces` never names the package's own
+id or an id of another kind, so it cannot carry service data or native
+settings to a plugin. For those tools the `replaces` move above applies only
+to the web tool's presentation settings and its trust/enabled state; durable
+data and native or secret settings move through the closed, one-time map in
+the [ecosystem release matrix](ecosystem-release-matrix.md#5-settings-and-durable-data-transfer),
+executed by M8's core migration, never by plugin code. That map also
+retires `lazer-library`, which has no 2.0 UI: its 1.x record leaves catalog
+management once `vosu.tools.lazer-library` is installed and its row is
+complete. Collisions, offline sources and restarts follow the rules there;
+1.x bytes are copied, never moved or deleted.
+
 ## Day-0 release check
 
 The release workflow checks, for the exact fixed official identities
@@ -1167,6 +1214,11 @@ pre-release exception, such as the stable tournament-manager aggregate's
 deferral, must be resolved before day-0, not merely documented, and every
 entry must carry one of the four recognized classes; the file's
 permanent `security`/`contract`/`licensing` entries never fail the gate.
+
+AF.5 (owner, 2026-11-24): vosu-tools, vosulay, vosu-overlays and the
+quickstart are released publicly when F ships, so the unauthenticated checks
+above stay exactly as written; no credential or private-source exception is
+added. Drafts and prereleases never satisfy `/releases/latest`.
 
 ## Open questions
 

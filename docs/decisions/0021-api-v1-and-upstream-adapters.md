@@ -213,3 +213,30 @@ rationale in `docs/v2/implementation-plan.md` section 10):
   failed on any non-security entry could never pass, since `/api/ingame`'s
   and ADR 0004's entries are permanent and not about security; per-entry
   classes let the gate target exactly the pre-release gaps it should.
+
+**2026-11-24** (AF, ecosystem fan-out contract freeze; full record in
+[`docs/v2/ecosystem-release-matrix.md`](../v2/ecosystem-release-matrix.md)):
+
+- **Job artifacts (AF.12).** Resources stay what this ADR says: references
+  published in session state, public under peer policy. A sessionless or
+  protected output (an offline export, a stored replay, a rendered video) is
+  not a resource. It is an artifact owned by one action job, served only at
+  `GET`/`HEAD /api/v1/jobs/{job}/artifacts/{artifact}` to that job's own
+  launch session or the broker, with `no-store` and the job's retention as
+  its lifetime ([`docs/v2/api-v1.md`](../v2/api-v1.md#job-artifacts-af12)).
+  Formerly private files never become public resources, and no fake session
+  is created to publish one.
+- **Long work and uploads (AF.3, AF.6).** The 30-second invocation deadline
+  stands; long work is a plugin-owned operation behind short actions, and
+  browser uploads use bounded staged upload actions, both specified in
+  `docs/v2/api-v1.md`.
+- **Upstream compatibility inside a private backend (AF.13).** The replay
+  renderer's private replay-overlay backend may serve upstream-compatible
+  routes only to render third-party overlays inside a replay; it is not a
+  vosu adapter, registers nothing with core and is never a first-party
+  fallback. Migrated v2 overlays read replay state there through API v1
+  playback semantics.
+- **`/api/ingame` successor (A7.5).** The dashboard banner's install action
+  targets the `kind = "tool"` entry `vosulay-editor` in
+  `18-lab-dev/vosulay`'s `catalog-v2.json`, whose requirements bring in the
+  `vosu.vosulay` supervisor through the normal install plan.

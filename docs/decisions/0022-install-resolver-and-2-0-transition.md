@@ -85,3 +85,28 @@ frozen and the SDK and web bridge exist, with one owner per repository.
 - **One catalog file with a new version:** rejected; 1.x rejects it.
 - **Hiding 2.0 from the 1.x updater by renaming release assets:** rejected; it
   strands 1.x users with no upgrade path instead of asking them.
+
+## Amendments
+
+**2026-11-24** (AF, ecosystem fan-out contract freeze; full record in
+[`docs/v2/ecosystem-release-matrix.md`](../v2/ecosystem-release-matrix.md)):
+
+- **Trigger.** Ecosystem implementation starts only when M3 and M6a have
+  landed on `v2/main` and the owner has published `v2.0.0-alpha.1` as a
+  GitHub prerelease with `make_latest=false`; external plugin builds also
+  need the owner-published `vosu-plugin-api` `1.0.0-alpha.N` on crates.io.
+  Every push, tag, upload, signature and publication is a separate owner
+  approval with an exact version and target (AF.1).
+- **Identities and transfer (AF.2).** A 1.x service tool becomes a plugin
+  plus, where it has a UI, a new same-kind web tool id that `replaces` the
+  1.x id. Because `replaces` cannot cross kinds, "installed official tools
+  move to their 2.0 releases" above is carried out for durable data and
+  native or secret settings by a closed, one-time map that M8's migration
+  executes; plugin code never reads 1.x tool roots.
+- **Two catalogs (AF.4).** Each official release's `catalog.json` is a
+  frozen copy of that repository's last published 1.x catalog and points
+  only at immutable, independently packaged 1.x assets. When 1.x support
+  ends is decided later.
+- **Day-0 gate (AF.5).** The official repositories and the quickstart are
+  released publicly when F ships, so the unauthenticated latest-release
+  check stays unchanged; prereleases never satisfy it.

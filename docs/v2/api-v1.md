@@ -256,12 +256,12 @@ Every API v1 error response is a JSON body:
 | 400 | `invalid_request` / `invalid_pointer` / `invalid_arguments` | malformed query, body, or pointer |
 | 401 | `unauthorized` | missing/invalid tool-session token or broker credential on an action route |
 | 403 | `forbidden` | peer/Origin policy; or a valid tool session whose action id is not in its resolved `requires`/`optional` |
-| 404 | `unknown_session` / `unknown_namespace` / `unknown_resource` / `unknown_tree` / `unknown_action` / `unknown_job` | id or path never valid for this server; `unknown_job` also for a job another tool session created, so its existence is not disclosed |
+| 404 | `unknown_session` / `unknown_namespace` / `unknown_resource` / `unknown_tree` / `unknown_action` / `unknown_job` / `unknown_artifact` | id or path never valid for this server; `unknown_job` also for a job another tool session created, so its existence is not disclosed; `unknown_artifact` for an artifact id its readable job never declared |
 | 405 | `method_not_allowed` | wrong HTTP method on a route |
-| 410 | `unpublished_resource` / `unpublished_tree` | a structurally valid, correctly signed id no longer in the published registry |
+| 410 | `unpublished_resource` / `unpublished_tree` / `released_artifact` | a structurally valid, correctly signed id no longer in the published registry; an artifact whose job is still readable but whose plugin instance, package or grant is gone |
 | 416 | `invalid_range` | malformed, multiple or unsatisfiable resource/tree-member byte range; includes `Content-Range: bytes */<size>` |
 | 413 | `payload_too_large` | job creation/poll/cancel body over the POST body limit, or a job-creation body within that limit whose CBOR re-encoding would exceed the plugin ABI's 1 MiB frame cap (`docs/v2/plugin-abi.md` §6.8) |
-| 429 | `too_many_jobs` | creating a job while 1024 jobs are still running |
+| 429 | `too_many_jobs` / `too_many_downloads` | creating a job while 1024 jobs are still running; an artifact download beyond the lease bounds of [Job artifacts](#job-artifacts-af12) |
 | 500 | `serialization_failed` | internal encode failure |
 | 502 | `provider_failed` | resource/tree provider failure, malformed reply, invalid indexed-member proof, or source open/read failure |
 | 504 | `provider_timed_out` | resource/tree resolution, listing, lookup or stream-read deadline elapsed |
@@ -465,6 +465,11 @@ long-polling client can detect a change without diffing the whole object.
 once `succeeded`; `error` (the same `{code, message}` shape as HTTP errors)
 only once `failed`.
 
+A `succeeded` job whose invocation declared artifacts also carries
+`"artifacts": [{"id", "name", "type", "size", "url"}]`, filled by core from
+the plugin's declarations, never from the action's `result`; the key is
+absent on every other job ([Job artifacts](#job-artifacts-af12)).
+
 The action's own ABI result maps onto `state` as:
 
 | ABI result | `state` |
@@ -586,6 +591,114 @@ credential is 401 `unauthorized`. There is no API-key scope for actions:
 counter settings/profile writes, unrelated to API v1), and CORS does not
 allow `X-Vosu-Tool-Session` or `Authorization` cross-origin, so no action
 route is reachable from a page on another origin either way.
+
+### Plugin-owned operations (AF.3)
+
+Approved 2026-11-24. The 30-second invocation deadline above is unchanged,
+and `vosu.start` creates an ordinary job: it never extends that deadline.
+Work that can outlast it (renders, downloads, practice generation, skin
+builds and exports) is a **plugin-owned operation** behind short actions:
+
+- `<name>.start` validates and queues bounded work and returns promptly with
+  `{"operationId": "<opaque string>"}`. The operation id is minted by the
+  plugin and is distinct from the API v1 job id of the `start` call, which
+  terminates normally.
+- `<name>.status`, `<name>.cancel` and, where the feature already has them,
+  `<name>.pause`, `<name>.resume` and `<name>.retry` are short actions taking
+  that id.
+- An attached session may also see bounded public progress in the plugin's
+  namespace when the operation is session-scoped and its data is public.
+  A no-game UI polls `.status` only while the operation is active, with
+  bounded cancellable waits, and stops on teardown.
+- The plugin bounds its own registry (count, queued bytes and retained
+  terminal entries) with the feature's existing limits. Existing durable
+  queues (the downloader's) keep their restart semantics; ephemeral work
+  (renders, previews) is not resumable after a restart and reports so. Core
+  has no generic scheduler and no resume guarantee.
+- An operation started against a session stays bound to that session's
+  handle; focus changes never retarget it.
+
+### Staged uploads (AF.6)
+
+Approved 2026-11-24 for the existing browser upload features (replay
+uploads, replay-renderer skin archives and skin-studio uploads). A file is
+uploaded through four short actions of the owning plugin, each an ordinary
+job under the action grant above, never one oversized request:
+
+| Action | Arguments | Result |
+| --- | --- | --- |
+| `<prefix>.upload.begin` | `{"name": string, "size": integer}` | `{"upload": string, "chunkBytes": 524288}` |
+| `<prefix>.upload.append` | `{"upload": string, "offset": integer, "data": string}` | `{"received": integer}` |
+| `<prefix>.upload.finish` | `{"upload": string}` | the feature's own result (for example the stored replay's id) |
+| `<prefix>.upload.abort` | `{"upload": string}` | `{}`; idempotent |
+
+- `data` is standard base64 of 1 to 524,288 bytes (`maxLength` 699,052),
+  which keeps one append inside the 1 MiB POST body and the ABI frame cap.
+  The plugin checks the alphabet and decoded length itself, since the
+  bounded schema profile has no `pattern`.
+- `offset` must equal the bytes received so far. Repeating the immediately
+  preceding append (same offset and bytes) returns the current `received`
+  unchanged, so a client can retry a lost response; any other offset fails
+  with `offset_mismatch` without changing state. Appends past the declared
+  `size` fail.
+- `size` is bounded by the feature's existing limit, unchanged: replay-renderer
+  skin archives at most 512 MiB compressed, 1 GiB expanded and 20,000
+  entries; replay `.osr` uploads and skin-studio uploads 1 MiB. At most 4
+  staged uploads per feature are open per plugin at once.
+- `upload` is an unguessable plugin-minted id of at least 128 random bits,
+  bound to the `ACTION_INVOKE` caller (`kind`, `id`). Core passes the tool
+  id, not the launch, so two launches of one tool are separated by the id
+  itself, which only the `begin` job's own launch can read (job ownership
+  above). A caller mismatch is answered exactly like an unknown id.
+- A staged upload expires 30 minutes after `begin`. Expiry, `abort`, a failed
+  `finish`, plugin unload and restart delete its staged bytes; staged uploads
+  are never resumed after a restart. `finish` requires exactly `size` bytes,
+  validates content with the feature's existing checks (archive
+  traversal, entry count, expanded size) and commits without overwriting;
+  nothing is visible before it succeeds.
+- `name` is a display name only, never a destination path. Error messages do
+  not echo staged bytes or host paths.
+
+### Job artifacts (AF.12)
+
+Approved 2026-11-24, implemented by B0 together with
+[plugin ABI §6.13](plugin-abi.md#613-invocation-owned-artifacts-af12); not
+part of the first alpha. Ordinary resources keep their session-published,
+public semantics above. A protected or sessionless output (an offline skin
+export, a stored replay, a rendered video) is instead an **artifact** owned
+by one job:
+
+- `GET`/`HEAD /api/v1/jobs/{job}/artifacts/{artifact}` serves it. It needs
+  the same credential as `GET /api/v1/jobs/{id}`: the creating launch
+  session or the broker. Another launch, an overlay, an API key and a
+  cross-origin page cannot read it; a job they cannot read is 404
+  `unknown_job`.
+- Headers: `Cache-Control: no-store`, `Content-Security-Policy: sandbox`,
+  `X-Content-Type-Options: nosniff`, `Accept-Ranges: bytes` and
+  `Content-Disposition: attachment` with the declared `name`. The type comes
+  from `name`'s extension against the allowlist above, otherwise
+  `application/octet-stream`. One validated byte range is served as for
+  resources (206, or 416 `invalid_range`); there are no conditional requests.
+- An artifact lives while its job is readable: the 5-minute terminal
+  retention or until the job is evicted. Plugin instance loss, package
+  disable or uninstall, or revoked launch authority make it 410
+  `released_artifact` while the job is still listed.
+- Bounds: at most 4 artifacts per job and 256 live artifacts in total; at
+  most 4 concurrent downloads per artifact and 64 in total (429
+  `too_many_downloads`). The declared `size` is exact; a stream ending early
+  aborts the response rather than returning short or padded bytes. Each open
+  and each stream read has the five-second provider deadline (504
+  `provider_timed_out`); provider failures are 502 `provider_failed`.
+  Core streams chunks and never buffers a whole artifact.
+- Long work first completes its plugin-owned operation; a short action (for
+  example `render.output`) then creates the job that owns the artifact, so
+  the 30-second deadline never bounds rendering.
+- UIs fetch artifacts with the bridge's tool-session header and stream them;
+  no URL bearer token or public resource reference is minted. The broker
+  may read artifacts of any job; `vosux` prints `artifacts` with the job and
+  has no download option in this contract.
+- No new capability id exists: holding the action grant that created the job
+  is the authority.
 
 ## Listener placement, CORS, and limits
 

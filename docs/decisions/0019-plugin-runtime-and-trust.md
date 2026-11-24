@@ -193,3 +193,28 @@ rationale in `docs/v2/implementation-plan.md` section 10):
   [ADR 0021](0021-api-v1-and-upstream-adapters.md)'s "Route ownership"
   table), not the upstream project itself, so the catalog UI never needs a
   `scripts/brand-allowlist.txt` entry for a display string.
+
+**2026-11-24** (AF, ecosystem fan-out contract freeze; full record in
+[`docs/v2/ecosystem-release-matrix.md`](../v2/ecosystem-release-matrix.md)
+and `docs/v2/implementation-plan.md` section 7):
+
+- **Private child transports (AF.13).** Removing 1.x tool services, their
+  proxying, readiness protocol and service tokens does not remove a
+  plugin's own private child processes: the replay renderer's render worker
+  and private replay-overlay backend, and vosulay's CEF preview. These are
+  owned by one plugin instance, never registered with core, and carry no
+  core route, listener, proxy, service token, shell, path or action
+  authority; a loopback listener a child genuinely needs lives only for that
+  child, admits only it, and is reaped with it. They are never a fallback
+  data path for first-party consumers. "Plugins never serve HTTP" is
+  unchanged: nothing here lets a plugin answer a request on a core listener.
+  [`docs/v2/plugin-abi.md`](../v2/plugin-abi.md) §7.5 is normative.
+- **vosulay supervisor (D16, AF.7, AF.8).** `vosu.vosulay` is an external
+  official plugin that requests `in-process` under the official-source rule
+  above; it is never bundled. It supervises a separately installed vosulay
+  runtime and never installs, elevates or provisions a setuid sandbox. Its
+  child reads session state from API v1 itself.
+- **Tool runtime.** Official vosu-tools plugins request `process`; each
+  official plugin, including the supervisor through a separately identified
+  non-CEF fixture child (A8.6), must pass a process-runtime smoke in its own
+  CI before M8.

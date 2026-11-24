@@ -88,7 +88,8 @@ dependencies" lists workspace crates only; it is recorded in a new
 
 | Crate | Responsibility | Allowed workspace dependencies |
 |---|---|---|
-| `crates/vosu-plugin-api` | ABI v1 types mirroring `include/vosu_plugin.h` (`repr(C)`, layout-tested), message codecs (flat hot-path layouts including `PUBLISH_BATCH`, CBOR), the Rust SDK (`Plugin` with `&mut self` behind an SDK lock and `ConcurrentPlugin` with `&self`, D22; `HostServices`; `Message`; `export_plugin!`), manifest validation shared by core and SDK users. `PlanMemory` (synchronous reads, D5) and the bundled-registration glue sit behind the unpublished `unstable-sync-reads` and `bundled` features (D11). Versioned by SDK semver whose major equals the ABI major. | none |
+| `crates/vosu-plugin-api` | ABI v1 types mirroring `include/vosu_plugin.h` (`repr(C)`, layout-tested), message codecs (flat hot-path layouts including `PUBLISH_BATCH`, CBOR), the Rust SDK (`Plugin` with `&mut self` behind an SDK lock and `ConcurrentPlugin` with `&self`, D22; `HostServices`; `Message`; `export_plugin!` for external builds), manifest validation shared by core and SDK users. Published to crates.io (D11). Until S0 implements AF.9, `PlanMemory` (synchronous reads, D5) and the bundled-registration glue still sit behind the `unstable-sync-reads` and `bundled` features; S0 moves them to `vosu-plugin-internal` so the published crate has neither. Versioned by SDK semver whose major equals the ABI major. | none |
+| `crates/vosu-plugin-internal` (AF.9) | `publish = false` companion: `PlanMemory` and the SDK-side synchronous-read interception (D5) and the bundled-registration glue for the root crate's `BUNDLED` array, moved out of `vosu-plugin-api` by S0 with every internal caller (D11). | `vosu-plugin-api` |
 | `crates/vosu-sys` (core-owned) | Native boundary: `src/platform*`, `src/process*` (`ProcessMemory`, Linux/Windows backends, scanner), process-event backends `src/instance/events*` with the eBPF build step. All platform `unsafe`. | none |
 | `crates/vosu-net` (core-owned) | Hardened HTTPS streaming and archive extraction (`src/net*`), later credential origin scoping and the per-host private-network exception (ADR 0023). | `vosu-sys` |
 | `crates/vosu-surface` (core-owned) | Rust-only API for **bundled** surface plugins (D3), listed exhaustively in the ADR 0019 amendment: exact route and WebSocket-feed registration on a listener role; state reads that go through the same subscription, demand, and `requires` path as `STATE_SUBSCRIBE`; root-confined file responses against `ROOT_DECLARE` handles; management-route provenance. No `ProcessMemory`, configuration writes, or credentials. Not part of the C ABI. | `vosu-plugin-api` |
@@ -1034,6 +1035,14 @@ packaged sandbox bootstrap (`vosulay/docs/security.md:265`,
 `vosulay/docs/architecture.md:24`); killing the daemon kills the child on
 both. A failure reopens D16 before M5 starts.
 
+AF.8 (approved 2026-11-24) amends the forwarding in the scope above for the
+production supervisor: the attached child subscribes to API v1 sessions and
+the selected session's state itself, as its single data authority; the
+supervisor's bounded private IPC carries lifecycle, backend configuration,
+the user's chosen-session policy and editor intent, never a second copy of
+session or focus state. The spike's stdin writes were never consumed (the
+child's stdin reader only drains to EOF) and are not evidence of forwarding.
+
 ### M2: state bus and `vosu.*` namespaces
 
 Scope:
@@ -1693,7 +1702,7 @@ each newer alpha deliberately.
 | Repository | Changes (ADR 0022, specs, adopted decisions) |
 |---|---|
 | vosu-tools | Each `[service]` becomes a plugin crate on `vosu-plugin-api` (replacing `crates/vosu-tool-sdk`) with id `vosu.tools.<tool>`: `[api].write` routes become `[[actions]]` with `args_schema`/`result_schema`; read routes that return state become a plugin namespace whose schema `[[provides]]` declares (D7); file-returning routes become resources or trees; `[cli]` becomes actions with `cli = true` (`vosux <plugin-id> <action>`). `[permissions].host = ["context"]` becomes `requires` on `vosu.osu` fields and, where a raw path is truly needed, `vosu.osu/internal/paths` (D8) — replacing the `songs_dir` reinterpretation in `tools/replay-renderer/src/main.rs:628-636`; `songs:write` writers (the downloader, practice) call `vosu.osu.beatmap.import` instead of writing paths (D8). Each `tool.toml` becomes `manifest.toml` `kind = "tool"` with `[ui]` and `requires`/`optional`; plugin manifests carry `runtime`, `[targets.*]`, `provides`. `packages/tool-web` (`src/bridge.d.ts`) adopts the 2.0 bridge; every `/json/v2` and `/websocket/v2/subscribe` consumer moves to API v1 pointers using state-schema.md's mapping table. `scripts/package.py` emits `catalog-v2.json` beside `catalog.json` (catalog-v2.md "1.x coexistence"). CI runs each plugin under `runtime = "process"` against the latest alpha. |
-| vosulay | A small official plugin supervises vosulay's existing host executable as a child process (D16, validated by S1): job object on Windows, `PR_SET_PDEATHSIG` on Linux, session/focus forwarding, start/stop actions; the host keeps its CEF sandbox (`vosulay/docs/security.md:58-60`, `:265`) and its standalone mode against upstream-compatible backends. The editor becomes a `kind = "tool"` UI; consumers of `/websocket/v2/subscribe` and `keys.all` (`src/backend.rs`, `src/runtime/editor/rulesets.rs`) move to API v1 when attached to vosu. It is the `/api/ingame` successor named in the `Link` header. Publishes `catalog-v2.json`; its winget/Scoop/AUR packaging is unchanged. |
+| vosulay | A small external official plugin, `vosu.vosulay` (never bundled), supervises vosulay's separately installed host executable as a child process (D16, validated by S1; AF.7): job object on Windows, `PR_SET_PDEATHSIG` on Linux, start/stop/restart/status actions; the attached child reads session and focus from API v1 itself (AF.8). The host keeps its CEF sandbox (`vosulay/docs/security.md:58-60`, `:265`) and its standalone mode against upstream-compatible backends. The editor becomes the `kind = "tool"` UI `vosulay-editor`; consumers of `/websocket/v2/subscribe` and `keys.all` (`src/backend.rs`, `src/runtime/editor/rulesets.rs`) move to API v1 when attached to vosu. It is the `/api/ingame` successor named in the `Link` header. Publishes `catalog-v2.json`; its winget/Scoop/AUR packaging is unchanged. |
 | vosu-overlays | `metadata.txt` becomes `manifest.toml` `kind = "overlay"` with `requires`/`optional` field ids (common-layer fields where possible so overlays work across games); `overlays/*/overlay.js` move from `/websocket/v2/subscribe` to `WS /api/v1/sessions/active/subscribe`; `scripts/package.py` publishes both catalogs. |
 | vosu-overlay-quickstart | `app.js` (its `/websocket/v2/subscribe` at `app.js:449`) uses API v1 (api-v1.md "Worked examples"), ships a `manifest.toml` template, `TUTORIAL.md` rewritten with a section on porting overlays built from the 1.x template (D20); a release tagged `v2.x` (required by the day-0 check). |
 | packaging (`packaging/` here) | `nfpm.yaml` and AUR install hooks keep running `vosu --setup`; the plugin host is the same executable, so no new file capabilities; the `vosux` symlink stays; the release adds `include/vosu_plugin.h` as an asset for C plugin authors; `scripts/package-release.py` notes describe 2.0. Starts after M5 (plugin host exists). |
@@ -1702,6 +1711,51 @@ each newer alpha deliberately.
 The day-0 gate (M8) passes only when vosu-tools, vosulay, and vosu-overlays
 each have a published release with `catalog-v2.json` and the quickstart's
 latest release is major version 2 (catalog-v2.md "Day-0 release check").
+
+### AF: ecosystem contract freeze (approved 2026-11-24)
+
+The F plan's AF decisions are adopted. The owner decided AF.1, AF.4, AF.5,
+AF.7 and AF.11; Main adopted AF.2, AF.3, AF.6, AF.8, AF.9, AF.10, AF.12
+and AF.13 exactly as recommended, under delegated spec and ecosystem
+authority. The [ecosystem release matrix](ecosystem-release-matrix.md) is
+the normative record of identities, versions, the settings and data map,
+pins, frozen 1.x sources, platforms, publication owners and receipts;
+the specs carry the contract changes:
+
+- **AF.1 release actions.** Every push, tag, upload, signature and
+  publication (host alphas, SDK alphas, ecosystem releases) is a separate
+  owner approval naming its exact version and target. `v2.0.0-alpha.1` is a
+  GitHub prerelease with `make_latest=false`. A version bump never implies
+  a crates.io upload.
+- **AF.2 identities.** Seven `vosu.tools.<name>` plugins, the web tools
+  `<name>-v2` (six companions plus `map-preview-v2`), `vosu.vosulay` with
+  `vosulay-editor`, and `ratings-timeline-v2`; same-kind `replaces` only.
+  Service data and native or secret settings move through the matrix's closed
+  map, executed once by M8 ([catalog v2](catalog-v2.md#first-start-migration-from-1x)).
+- **AF.3 long work** and **AF.6 uploads, exposure and timeline**:
+  [API v1](api-v1.md#plugin-owned-operations-af3) and the matrix's exposure
+  ledger.
+- **AF.4 coexistence** and **AF.5 visibility**: [catalog v2](catalog-v2.md#1x-coexistence)
+  and [ADR 0022](../decisions/0022-install-resolver-and-2-0-transition.md#amendments).
+- **AF.7, AF.8 vosulay**: D16 amendment below.
+- **AF.9 SDK surface** and **AF.10 package checker**: D11 amendment below
+  and [catalog v2](catalog-v2.md#package-checker-af10).
+- **AF.11 live verification**: isolated VM test installs only, under Main's
+  VM ownership.
+- **AF.12 artifacts**: [plugin ABI §6.13](plugin-abi.md#613-invocation-owned-artifacts-af12)
+  and [API v1](api-v1.md#job-artifacts-af12); implemented by B0 in a later
+  host and SDK alpha, not promised by alpha.1.
+- **AF.13 private transports**: [plugin ABI §7.5](plugin-abi.md#75-bundled-only-http-surfaces-d3)
+  and the ADR 0019/0021 amendments.
+
+Recorded facts at the freeze (read-only checks on 2026-11-24): M3 and M6a are
+on `v2/main` at `49e95cf`; `v2.0.0-alpha.1` is not published, so the trigger
+above is not yet met; crates.io has no `vosu-plugin-api`; the frozen 1.x
+catalog sources are vosu-tools `v0.4.3`, vosulay `v1.5.3` and vosu-overlays
+`v0.4.0`; the quickstart repository is private with no release. The 18
+overlays in vosu-overlays `v0.4.0` beyond ratings-timeline have no v2
+source on that repository's `main`; their port or retirement is an open
+overlays-owner decision recorded in the matrix.
 
 ## 8. Build-time goal
 
@@ -1947,8 +2001,9 @@ states what was adopted and why. Spec amendments land in A1.
   directly; in `vosu plugin-host` a dedicated ring-reader thread hands it to
   the blocked submitter), under a deadline that returns `VOSU_ERR_TIMED_OUT`.
   The SDK routes flagged results to a per-plan slot before user code sees
-  them; `PlanMemory` refuses to run on a dispatch thread and ships only behind
-  the unpublished `unstable-sync-reads` feature. The osu! plugin is measured
+  them; `PlanMemory` refuses to run on a dispatch thread and ships only
+  behind the unpublished `unstable-sync-reads` feature, which AF.9 replaces
+  with the `publish = false` `vosu-plugin-internal` crate (see D11). The osu! plugin is measured
   under the process runtime in M5. Why: an optional "host may" behavior is
   one plugins cannot rely on, deadlocks a plugin holding a lock across `send`,
   contradicts the header's "arrives later" contract
@@ -2057,6 +2112,23 @@ states what was adopted and why. Spec amendments land in A1.
   (unpublished features); the C header ships as a release asset. Why: a git
   dependency clones this whole repository (assets, `vosu-pp`, fixtures) into
   every plugin build.
+
+  **AF.9/AF.10 amendment (approved 2026-11-24).** Cargo has no unpublished
+  features: anything in a published crate's source, whatever its feature
+  gate, comment or `#[doc(hidden)]`, ships to crates.io. S0 therefore moves
+  `PlanMemory`, the SDK-side synchronous-read interception and the bundled
+  macro arms and registration glue, unchanged in behavior, into the
+  `publish = false` crate `crates/vosu-plugin-internal`, migrates every
+  internal caller and leaves no re-export. D5's reentrant delivery before
+  `send` returns, serialized and concurrent dispatch, and zero-allocation
+  scalar reads keep their existing tests at the new owner. The published
+  SDK exposes only external `Plugin`/`ConcurrentPlugin` exports, ABI types
+  and codecs, and validators, plus the `vosu-package-check` example
+  ([catalog v2](catalog-v2.md#package-checker-af10)); its package needs no
+  workspace-relative file and no path-only dev-dependency such as
+  `vosu-proptest`, and no source-stripping release variant exists. A version
+  bump is never a publication: each crates.io upload is a separate owner
+  approval (AF.1).
 - **D12 Bridge path.** The 2.0 bridge is served at
   `/tools/_host/v2/bridge.js`; the v1 path is removed in M7. Why: every
   official tool is rebuilt and 1.x user tools are disabled by the migration
@@ -2096,6 +2168,28 @@ states what was adopted and why. Spec amendments land in A1.
   and installs its own signal handlers (`vosulay/docs/architecture.md:35`);
   CEF renderers already run out of process, and the standalone mode for
   upstream-compatible backends keeps working unchanged.
+
+  **AF.7/AF.8 amendment (approved 2026-11-24).** The supervisor is the
+  external official plugin `vosu.vosulay` from `18-lab-dev/vosulay`, never in
+  `BUNDLED`; no id extending it is registered. It discovers and validates a
+  separately installed vosulay runtime (vosulay's own installer, archives,
+  Winget, Scoop, AUR or distribution packages) and shows an actionable
+  missing-runtime state; it never installs the runtime, elevates, creates a
+  setuid helper or falls back to `--no-sandbox` or job breakaway. On
+  Windows it creates the packaged CEF bootstrap suspended with a Medium,
+  unrestricted token even from an elevated daemon, assigns it to its own
+  strict kill-on-close job, then resumes it. On Linux the child has zero
+  permitted, effective, inheritable and ambient capabilities, does not
+  inherit `no_new_privs` (unlike a plugin-host child under A5.1), re-arms
+  `PR_SET_PDEATHSIG` after exec and checks its expected parent; no
+  CAP_SETPCAP is added. Start succeeds only after the child reports CEF and
+  host readiness, not on spawn. The attached child subscribes to API v1
+  itself (AF.8); private IPC carries lifecycle, configuration and concrete
+  editor operations, never a generic message passthrough. A8.6 stands: own
+  CI runs the production supervisor logic under the process runtime against
+  a separately identified non-CEF fixture child, and real in-process CEF
+  sandbox and parent-death smokes run on Linux and Windows; neither
+  substitutes for the other.
 - **D17 Performance gates.** Benches: M1 runs the reader benches and the
   allocation invariant (`scalar_readers_allocate_nothing`) over `PlanMemory`
   with the in-process executor, since `raw_snapshot_reads`
@@ -2204,7 +2298,8 @@ Risks that need no further decision:
 
 - Contracts: [plugin ABI](plugin-abi.md), [`include/vosu_plugin.h`](../../include/vosu_plugin.h),
   [state schema](state-schema.md), [`schemas/`](schemas/), [API v1](api-v1.md),
-  [catalog v2](catalog-v2.md), [brokered reads](brokered-reads.md), ADRs 0019–0023.
+  [catalog v2](catalog-v2.md), [brokered reads](brokered-reads.md),
+  [ecosystem release matrix](ecosystem-release-matrix.md), ADRs 0019–0023.
 - Structure and checks: `Cargo.toml`, `build.rs`, `src/lib.rs`, `src/main.rs`,
   [`scripts/module-boundaries/`](../../scripts/module-boundaries/) (per crate since M0),
   [`scripts/crate-boundaries.txt`](../../scripts/crate-boundaries.txt), `scripts/check-crate-boundaries.py`,

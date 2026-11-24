@@ -277,6 +277,12 @@ dispatch, correlated to instance, request kind and generation, and removed on
 every terminal path. Duplicate, late and wrong-instance replies cannot satisfy
 another request; host-generated request ids are never reused within an instance.
 
+AF.12 (approved 2026-11-24): this session-scoped mechanism is unchanged. A
+plugin-wide root does not mint a reference, and an `ACTION_RESULT` value is
+never registered as a resource. Sessionless or protected outputs use the
+separate invocation-owned artifacts of §6.13, never a fabricated session or
+handle 0.
+
 A game plugin declares which common-namespace `field:` ids it fills in its manifest's `covers` list, and which core resource kinds it fills as reserved-name entries in its `[[resource_kinds]]` table (§8); [`docs/v2/catalog-v2.md`](catalog-v2.md) defines both declarations and what each covers, and this document does not restate them. Its own namespace's fields and resources need no separate coverage declaration, since publishing them is already licensed by `provides`. A `[[resource_kinds]]` entry also bounds which MIME-type families that kind may be typed as; [`docs/v2/api-v1.md`](api-v1.md) owns the allowlist itself (the family tokens are exactly `image`, `audio`, `video`, `chart-text`). The bare kind names `file`, `audio`, `background`, `set`, and `skin` always address the core kinds (`resource:chart.file`/`.audio`/`.background`/`.set`, `resource:skin`); they are forbidden only as the name of a plugin's *own* kind, which must use any other bare name and becomes `resource:<plugin-id>.<kind>` only inside a capability id (`docs/v2/catalog-v2.md` owns this grammar).
 
 ### 6.6 State publication to namespaces
@@ -355,6 +361,13 @@ M3 exercises `plugin_crashed` through the production instance-loss seam;
 native process-host crash/kill and cancellation grace remain M5, not an
 in-process crash claim.
 
+AF.3 (approved 2026-11-24): work that can outlast the deadline is a
+plugin-owned operation behind short `start`/`status`/`cancel` (and, where a
+feature already has them, `pause`/`resume`/`retry`) actions; the plugin's
+operation id is not the core invocation id ([API v1](api-v1.md#plugin-owned-operations-af3)).
+Callbacks only enqueue bounded owned work; no plugin blocks `dispatch` or
+holds a host or operation lock across `send`.
+
 **Oversize core-authored action frames (G5/H4).** `ACTION_INVOKE`'s `args` and a relayed `ACTION_RESULT`'s or `ACTION_PROGRESS`'s remapped `invocation` id can each grow the encoded message past `VOSU_FRAME_MAX_BYTES` without any single CBOR value being at fault — a POST body up to API v1's own 1 MiB limit re-encodes larger as CBOR (a JSON `0.1` is 4 bytes, a CBOR `f64` is 9), and remapping a callee's own `invocation` id onto the caller's can widen a CBOR integer by up to 8 bytes. Core never sends such an oversize frame, in either of its two ways of producing an `ACTION_INVOKE`:
 
 - **From an HTTP request** (a tool, CLI, or broker invocation): an `ACTION_INVOKE` core itself would build over the cap answers the originating request with `413 payload_too_large` instead of ever constructing the ABI message ([`docs/v2/api-v1.md`](api-v1.md) "Status codes and error bodies", extended for this case).
@@ -381,6 +394,47 @@ A plugin reads another plugin's namespace the same way an HTTP client does, gene
 **Delivery coalescing and ordering (H1/H3/I1).** The plugin-host delivery queue (§7.2) never drops a `STATE_UPDATE`'s data, and holds at most two things *waiting* for one session at once: a split sequence still in flight (core has sent some but not yet all of its parts) and a separate pending **merged update** that has not yet begun delivery. An update still carrying an outstanding `more: true` part is never merged into or across — it is not complete until its own `more: false` part arrives, so it occupies only the in-flight slot, never the merged one. Once an update's last part has arrived (a single-message update is already complete; a split sequence completes when its `more: false` part arrives), it is complete, and merges into the session's pending merged update if one is already waiting: the two are merged by (`ns`, `pointer`) key — the newer entry wins per key, equivalent to replaying both updates in that order — rather than the newer replacing the older wholesale, so a key the newer update left unchanged still delivers the older update's value for it; otherwise it simply becomes the new pending merged update. A merged update leaves the pending slot the moment `dispatch` begins delivering its first re-split part, exactly like any other in-progress sequence, freeing the slot for a new pending merged update to start accumulating later complete updates for that same session while the first is still being delivered. A merged update can exceed `VOSU_FRAME_MAX_BYTES` even though every update that fed it did not, so delivery re-splits it at the same cap into one or more parts exactly as core's own splitting does, setting `more: true` on every part but the last — this is why `STATE_UPDATE`'s `more` flag means "more parts of this delivery," not "more parts as core first sent them." Core and `vosu plugin-host` additionally deliver every `STATE_UPDATE` for one session strictly in the order core produced them — one part's `dispatch` call completing before the next part (or the next update) for that same session is dispatched — even when the plugin declares `concurrent_dispatch` (§4): a session's own `STATE_UPDATE` sequence is always serialized, though two different sessions', or two different opcodes', calls to the same instance may still run concurrently under the worker pool.
 
 A plugin invokes another plugin's declared action with `VOSU_OP_ACTION_CALL` (plugin → host, CBOR): `{"invocation": u64 (caller-assigned; never reused for another call within this plugin instance's lifetime), "action": "<plugin-id>.<name>", "session": u64|null, "args": <CBOR>}`. `action` is the bare `{plugin-id}.{name}` form `docs/v2/api-v1.md`'s routes and `vosu.invoke` use, never the `action:` capability-id prefix, which exists only in manifests and the catalog. Core checks that the calling plugin's own manifest `requires`/`optional` ([`docs/v2/catalog-v2.md`](catalog-v2.md)) names that action's capability id before routing it to the target plugin as `ACTION_INVOKE` with `caller: {"kind": "plugin", "id": "<calling plugin id>"}`; the result and any progress messages are delivered back to the calling plugin as `ACTION_RESULT`/`ACTION_PROGRESS` (§6.8) correlated by its own `invocation` id, exactly as a tool's HTTP invocation would see them, and the calling plugin may cancel its own call the same way (§6.8). A plugin instance may have at most 64 `ACTION_CALL`s outstanding at once (issued, awaiting their relayed `ACTION_RESULT`); an `ACTION_CALL` that would exceed this bound is refused with `VOSU_ERR_INVALID_ARGUMENT`, the same code §6.3 and §6.4 reuse for their own outstanding-request caps. A call's slot is freed only by its relayed `ACTION_RESULT`, never by anything else, so core always produces one eventually: when the callee's own `process`-runtime host crashes or is killed after the §6.8 cancellation timeout, or the callee itself exceeds its action's timeout, core synthesizes `{"invocation": u64, "status": "error", "value": null, "code": "plugin_crashed"|"timed_out", "message": string}` for the calling plugin exactly as `docs/v2/api-v1.md`'s "Job object" synthesizes the same two outcomes for an HTTP-originated job — the caller never sees its call left outstanding by the callee simply disappearing.
+
+### 6.13 Invocation-owned artifacts (AF.12)
+
+Approved 2026-11-24 as an additive minor revision; B0 adds the opcodes,
+SDK codecs and header constants below in one change, and until then the
+values are reserved. A host or plugin that predates them answers
+`VOSU_ERR_UNSUPPORTED` (§5); a plugin then fails its action with a clear
+error and never falls back to a public resource. [API v1](api-v1.md#job-artifacts-af12)
+owns the HTTP route, authorization, lifetime and bounds.
+
+- `VOSU_OP_ARTIFACT_DECLARE = 80` (plugin → host, CBOR, nonzero
+  `correlation_id`): `{"invocation": u64, "key": <CBOR>, "name": string,
+  "content_id": <CBOR>, "size": u64}`. Valid only while that invocation is
+  live (before its `ACTION_RESULT`) and only when its caller kind is `tool`
+  or `cli`, which own an API v1 job; a relayed `ACTION_CALL` invocation has
+  no job and cannot own an artifact. `key` is the plugin's opaque lookup key,
+  echoed back unchanged; `name` is one file-name component (no `/`, `\`,
+  NUL or control characters, not `.`/`..`, at most 255 UTF-8 bytes) and fixes
+  the served type; `size` is the exact byte length. No host path is ever
+  sent.
+- `VOSU_OP_ARTIFACT_DECLARED = 81` (host → plugin, CBOR, reply correlated
+  by `correlation_id`): `{"artifact": string}` or
+  `{"error": {"code": string, "message": string}}`, with codes
+  `invocation_finished`, `caller_not_supported`, `too_many_artifacts` and
+  `invalid_name`. A refused declaration does not end the invocation.
+- `VOSU_OP_ARTIFACT_OPEN = 82` (host → plugin, CBOR, correlated):
+  `{"artifact": string, "key": <CBOR>}`, sent per download. The reply is a
+  `VOSU_OP_RESOURCE_RESOLVED` with no session: `{"root", "path"}` against a
+  plugin-wide (`handle: null`) declared root, opened with the same
+  retained-handle confinement and identity checks as §6.5, or
+  `{"stream", "size"}` served through `STREAM_READ`/`STREAM_CHUNK`/`STREAM_CLOSE`
+  as a request-owned lease (A3/R18 above), or an error. A size different from
+  the declared `size` fails the download.
+- `VOSU_OP_ARTIFACT_RELEASE = 83` (host → plugin, CBOR, no reply):
+  `{"artifact": string, "key": <CBOR>}`, sent once after the artifact leaves
+  core's registry (job retention ended or evicted, package disabled or
+  uninstalled) and after every lease has received `STREAM_CLOSE`. The plugin
+  may then delete what backs it. Nothing is sent to a lost instance.
+
+Artifact ids are opaque, unguessable and valid only under their own job;
+they are not resource ids and carry no session, PID or handle.
 
 ## 7. Execution and trust
 
@@ -427,6 +481,23 @@ The ABI itself carries no HTTP opcode, and an external or out-of-process plugin 
 - management-route provenance: a `vosu-surface` management route (for example the dashboard plugin's own settings-save route) still requires dashboard-origin provenance and `X-Vosu-CSRF` exactly as `docs/v2/catalog-v2.md` "API placement" specifies for the catalog routes `vosu-core` itself serves — `vosu-surface` grants no exemption from that rule for any route it carries.
 
 `vosu-surface` grants none of: `ProcessMemory` access outside a plugin's own matched session (a `vosu-surface` plugin still reads memory only through `VOSU_OP_READ_PLAN_SUBMIT` like any other plugin), configuration writes, or credentials — a bundled plugin that needs one of these uses the ordinary ABI services, exactly as any other plugin does. The osu! plugin's bridge into the gosuMemory/streamCompanion adapters' `vosu-surface` registration (crate edge `vosu-osu → vosu-surface`) is interim bridge **B1**, named per the ground rules, and is deleted at M4a when those adapters become ordinary bus projections; M5 (out-of-process plugin hosting) starts only after M4a removes it, since B1 cannot cross a process boundary. A future external HTTP opcode remains possible as an additive minor ABI revision, not a breaking one, but none is defined by this freeze.
+
+**Private child transports (AF.13, approved 2026-11-24).** A plugin's own
+private child processes are not a plugin HTTP surface and not a 1.x tool
+service: the replay renderer's render worker and private replay-overlay
+backend, and vosulay's CEF preview. Such a transport is owned by one plugin
+instance, prefers non-network IPC for control, and is never registered with
+core: no core route, listener, proxy, service token or launch session. A
+loopback listener that a child genuinely needs (frame-sized render data, a
+browser that must load overlay pages) binds an ephemeral loopback port for
+that child's lifetime only, admits only that child through a per-run secret
+or equivalent private origin, carries no shell, filesystem-path or action
+authority, and is torn down and reaped with the child. It is never a
+fallback data path for first-party tools, overlays or UIs. Upstream-compatible
+routes may appear only inside the private replay-overlay backend, to render
+third-party overlays in a replay; migrated v2 overlays read replay state
+there through API v1 playback semantics (a replay session identity and
+deterministic render-clock barriers), never live daemon state.
 
 ## 8. `manifest.toml` runtime fields for `kind = "plugin"`
 
@@ -514,9 +585,10 @@ impl HostServices {
     pub fn call_action(&self, action: &str, session: Option<SessionId>, args: impl Into<CborMap>) -> InvocationId;
 }
 
-// One macro call generates `vosu_plugin_entry_v1` for an external build, or
-// appends to the explicit `BUNDLED` array for a build with `bundled` enabled;
-// the plugin author's code is identical either way.
+// One macro call generates `vosu_plugin_entry_v1` for an external build.
+// Bundled registration into the explicit `BUNDLED` array is provided by the
+// unpublished `vosu-plugin-internal` crate (AF.9, implementation plan D11),
+// never by the published SDK; the plugin author's code is identical either way.
 vosu_plugin_api::export_plugin!(OsuPlugin);
 
 struct OsuPlugin { host: HostServices, /* ... */ }
