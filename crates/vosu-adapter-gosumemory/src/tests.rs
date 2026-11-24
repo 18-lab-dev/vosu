@@ -37,34 +37,66 @@ fn document() -> Value {
     })
 }
 fn capture(doc: &Value, variant: &str) -> CapturedSelection {
-    let session = IdentifiedSession { session: "session-17".into(), generation: 23, owner: "vosu.osu".into(), owner_instance: 31, game: "osu!".into(), variant: variant.into(), foreground: Some(false) };
+    let session = IdentifiedSession {
+        session: "session-17".into(),
+        generation: 23,
+        owner: "vosu.osu".into(),
+        owner_instance: 31,
+        game: "osu!".into(),
+        variant: variant.into(),
+        foreground: Some(false),
+    };
     CapturedSelection {
-        session: Some(session.clone()), focus_revision: 41,
-        roster: IdentifiedRoster { revision: 43, sessions: Arc::from([session]) }, revision: 47,
+        session: Some(session.clone()),
+        focus_revision: 41,
+        roster: IdentifiedRoster {
+            revision: 43,
+            sessions: Arc::from([session]),
+        },
+        revision: 47,
         namespace_revisions: Arc::from([("vosu.osu".into(), 53)]),
-        values: view::POINTERS.iter().map(|p| StateEntry { ns: "vosu.osu".into(), pointer: (*p).into(),
-            value: doc.pointer(p).map(|v| CborValue::serialized(v).unwrap()), error: None }).collect::<Vec<_>>().into(),
+        values: view::POINTERS
+            .iter()
+            .map(|p| StateEntry {
+                ns: "vosu.osu".into(),
+                pointer: (*p).into(),
+                value: doc.pointer(p).map(|v| CborValue::serialized(v).unwrap()),
+                error: None,
+            })
+            .collect::<Vec<_>>()
+            .into(),
     }
 }
-fn decoded(doc: &Value, client: &str) -> View { View::decode(capture(doc, client)).unwrap() }
-fn wire(v: &View) -> Value { serde_json::from_slice(&encode(v).unwrap()).unwrap() }
+fn decoded(doc: &Value, client: &str) -> View {
+    View::decode(capture(doc, client)).unwrap()
+}
+fn wire(v: &View) -> Value {
+    serde_json::from_slice(&encode(v).unwrap()).unwrap()
+}
 fn equivalent(v: &View) {
     let dto = build_with::<&[f64]>(v).unwrap();
-    assert_eq!(encode(v).unwrap().as_ref(), vosu_adapter_support::json::encode(&dto, 0).unwrap());
+    assert_eq!(
+        encode(v).unwrap().as_ref(),
+        vosu_adapter_support::json::encode(&dto, 0).unwrap()
+    );
 }
 #[test]
 fn direct_and_dto_match_with_distinct_source_facts() {
-    let v = decoded(&document(), "stable"); equivalent(&v);
+    let v = decoded(&document(), "stable");
+    equivalent(&v);
     let w = wire(&v);
     assert_eq!(w["gameplay"]["keyOverlay"]["k1"]["count"], 11);
     assert_eq!(w["gameplay"]["keyOverlay"]["k2"]["count"], 22);
     assert_eq!(w["gameplay"]["keyOverlay"]["m1"]["count"], 33);
     assert_eq!(w["gameplay"]["keyOverlay"]["m2"]["count"], 44);
-    assert_eq!(w["gameplay"]["hits"]["hitErrorArray"], json!([1.25,-2.5]));
+    assert_eq!(w["gameplay"]["hits"]["hitErrorArray"], json!([1.25, -2.5]));
     assert!(w["gameplay"]["hits"].get("pressHitErrors").is_none());
     assert!(w["gameplay"]["hits"].get("releaseHitErrors").is_none());
-    assert_eq!(w["menu"]["pp"]["strains"], json!([91.0,92.0]));
-    assert_ne!(w["menu"]["pp"]["strains"], w["menu"]["pp"]["strainsAll"]["series"][0]["data"]);
+    assert_eq!(w["menu"]["pp"]["strains"], json!([91, 92]));
+    assert_ne!(
+        w["menu"]["pp"]["strains"],
+        w["menu"]["pp"]["strainsAll"]["series"][0]["data"]
+    );
     assert_eq!(w["gameplay"]["hp"]["normal"], 123.125);
     assert_eq!(w["menu"]["isChatEnabled"], 1);
     assert_eq!(w["gameplay"]["leaderboard"]["ourplayer"]["name"], "main");
@@ -77,39 +109,59 @@ fn direct_and_dto_match_with_distinct_source_facts() {
 #[test]
 fn selected_mods_are_not_replaced_by_result_or_mode_sources() {
     for (state, number, name) in [(0, 8, "HD"), (2, 64, "DT"), (7, 256, "HT")] {
-        let mut d = document(); d["session"]["state"]["number"] = json!(state);
+        let mut d = document();
+        d["session"]["state"]["number"] = json!(state);
         d["play"]["mods"] = json!({"number":number,"name":name});
-        let v = decoded(&d, "stable"); equivalent(&v);
-        let w = wire(&v); assert_eq!(w["menu"]["mods"]["num"], number);
+        let v = decoded(&d, "stable");
+        equivalent(&v);
+        let w = wire(&v);
+        assert_eq!(w["menu"]["mods"]["num"], number);
         assert_eq!(w["resultsScreen"]["mods"]["num"], 256);
-        assert_eq!(w["menu"]["gameMode"], 1); assert_eq!(w["gameplay"]["gameMode"], 3);
+        assert_eq!(w["menu"]["gameMode"], 1);
+        assert_eq!(w["gameplay"]["gameMode"], 3);
     }
 }
 #[test]
 fn catch_hits_are_converted_once_from_raw_counts_and_ticks() {
-    let mut d = document(); d["play"]["mode"]["number"] = json!(2);
-    let v = decoded(&d, "lazer"); equivalent(&v);
-    let w = wire(&v); let h = &w["gameplay"]["hits"];
-    assert_eq!(h["0"], 12); assert_eq!(h["50"], 8); assert_eq!(h["100"], 9); assert_eq!(h["katu"], 10);
+    let mut d = document();
+    d["play"]["mode"]["number"] = json!(2);
+    let v = decoded(&d, "lazer");
+    equivalent(&v);
+    let w = wire(&v);
+    let h = &w["gameplay"]["hits"];
+    assert_eq!(h["0"], 12);
+    assert_eq!(h["50"], 8);
+    assert_eq!(h["100"], 9);
+    assert_eq!(h["katu"], 10);
     assert_eq!(w["resultsScreen"]["0"], 21);
 }
 #[test]
 fn absent_selection_null_and_explicit_zero_are_not_conflated() {
-    let d = document(); let mut c = capture(&d, "stable");
-    Arc::make_mut(&mut c.values).iter_mut().find(|e| e.pointer == "/play/score").unwrap().value = None;
+    let d = document();
+    let mut c = capture(&d, "stable");
+    Arc::make_mut(&mut c.values)
+        .iter_mut()
+        .find(|e| e.pointer == "/play/score")
+        .unwrap()
+        .value = None;
     assert!(matches!(View::decode(c), Err(Error::NotReady)));
-    let mut d = d; d["play"]["score"] = Value::Null;
-    assert!(View::decode(capture(&d,"stable")).is_err());
-    d["play"]["score"] = json!(0.0); assert_eq!(decoded(&d,"stable").play.score, 0.0);
-    let mut c = capture(&d,"stable"); c.session = None;
+    let mut d = d;
+    d["play"]["score"] = Value::Null;
+    assert!(View::decode(capture(&d, "stable")).is_err());
+    d["play"]["score"] = json!(0.0);
+    assert_eq!(decoded(&d, "stable").play.score, 0.0);
+    let mut c = capture(&d, "stable");
+    c.session = None;
     assert!(matches!(View::decode(c), Err(Error::NotReady)));
 }
 #[test]
 fn omitted_metadata_is_not_null_and_paths_remain_echo_data() {
-    let mut d = document(); d["beatmap"]["artist"] = Value::Null;
+    let mut d = document();
+    d["beatmap"]["artist"] = Value::Null;
     d["internal"]["paths"]["current"]["beatmapFolder"] = Value::Null;
     d["internal"]["paths"]["current"]["beatmapFile"] = Value::Null;
-    let v = decoded(&d,"stable"); equivalent(&v);
+    let v = decoded(&d, "stable");
+    equivalent(&v);
     let w = wire(&v);
     assert!(w["menu"]["bm"]["metadata"].get("artist").is_none());
     assert!(w["menu"]["bm"]["path"].get("folder").is_none());
@@ -119,20 +171,40 @@ fn omitted_metadata_is_not_null_and_paths_remain_echo_data() {
 }
 #[test]
 fn lazer_pending_omits_tourney_but_missing_score_errors_and_ready_empty_is_present() {
-    let mut d = document(); d["session"]["state"]["number"] = json!(11);
-    d["tourney"] = Value::Null; d["tourneyAvailability"] = json!("pending");
-    let v = decoded(&d,"lazer"); equivalent(&v); assert!(wire(&v).get("tourney").is_none());
+    let mut d = document();
+    d["session"]["state"]["number"] = json!(11);
+    d["tourney"] = Value::Null;
+    d["tourneyAvailability"] = json!("pending");
+    let v = decoded(&d, "lazer");
+    equivalent(&v);
+    assert!(wire(&v).get("tourney").is_none());
     d["tourneyAvailability"] = json!("missingScore");
-    let v = decoded(&d,"lazer"); assert!(matches!(encode(&v),Err(Error::Serialization(_))));
-    assert!(matches!(build(&v),Err(Error::Serialization(_))));
-    d["tourney"] = document()["tourney"].clone(); d["tourneyAvailability"] = json!("ready");
-    let v = decoded(&d,"lazer"); equivalent(&v); assert!(wire(&v).get("tourney").is_some());
+    let v = decoded(&d, "lazer");
+    assert!(matches!(encode(&v), Err(Error::Serialization(_))));
+    assert!(matches!(build(&v), Err(Error::Serialization(_))));
+    d["tourney"] = document()["tourney"].clone();
+    d["tourneyAvailability"] = json!("ready");
+    let v = decoded(&d, "lazer");
+    equivalent(&v);
+    assert!(wire(&v).get("tourney").is_some());
 }
 #[test]
 fn selectors_request_no_removed_extensions_and_manifest_has_exact_private_grant() {
-    assert!(view::selectors().iter().any(|s| s.pointer == "/keys/overlay"));
-    assert!(view::selectors().iter().any(|s| s.pointer == "/play/hitErrors/all"));
-    assert!(!view::selectors().iter().any(|s| s.pointer.contains("press") || s.pointer.contains("release") || s.pointer == "/keys/all"));
+    assert!(
+        view::selectors()
+            .iter()
+            .any(|s| s.pointer == "/keys/overlay")
+    );
+    assert!(
+        view::selectors()
+            .iter()
+            .any(|s| s.pointer == "/play/hitErrors/all")
+    );
+    assert!(
+        !view::selectors().iter().any(|s| s.pointer.contains("press")
+            || s.pointer.contains("release")
+            || s.pointer == "/keys/all")
+    );
     let manifest = vosu_plugin_api::PluginManifest::parse(MANIFEST).unwrap();
     assert_eq!(manifest.id, "vosu.adapter.gosumemory");
     assert!(MANIFEST.contains("field:vosu.osu.internal.paths"));
@@ -141,7 +213,10 @@ fn selectors_request_no_removed_extensions_and_manifest_has_exact_private_grant(
 fn path_join_preserves_node_undefined_empty_and_windows_rules() {
     assert_eq!(helpers::join_node_path("", "", '/'), ".");
     assert_eq!(helpers::join_node_path("map", "../bg.jpg", '/'), "bg.jpg");
-    assert_eq!(helpers::join_node_path("C:\\Songs\\Map", "bg.jpg", '\\'), "C:\\Songs\\Map\\bg.jpg");
+    assert_eq!(
+        helpers::join_node_path("C:\\Songs\\Map", "bg.jpg", '\\'),
+        "C:\\Songs\\Map\\bg.jpg"
+    );
 }
 #[test]
 fn tournament_preserves_raw_health_hits_chat_and_nested_removals() {
@@ -165,31 +240,46 @@ fn tournament_preserves_raw_health_hits_chat_and_nested_removals() {
         "clients": [{"team":"left","user":{"name":"spec","country":"JP","id":67,"accuracy":98.2,"rankedScore":12345,"playCount":678,"globalRank":789,"totalPP":9012},
             "play":client_play}],
     });
-    for variant in ["stable","lazer"] {
-        let v = decoded(&d,variant); equivalent(&v);
-        let w = wire(&v); let t = &w["tourney"];
-        assert_eq!(t["manager"]["bestOF"],7);
+    for variant in ["stable", "lazer"] {
+        let v = decoded(&d, variant);
+        equivalent(&v);
+        let w = wire(&v);
+        let t = &w["tourney"];
+        assert_eq!(t["manager"]["bestOF"], 7);
         assert!(t["manager"].get("bestOf").is_none());
-        assert_eq!(t["manager"]["chat"][0]["team"],"left");
-        assert_eq!(t["manager"]["chat"][1]["team"],"bot");
-        assert_eq!(t["manager"]["chat"][2]["team"],"unknown");
+        assert_eq!(t["manager"]["chat"][0]["team"], "left");
+        assert_eq!(t["manager"]["chat"][1]["team"], "bot");
+        assert_eq!(t["manager"]["chat"][2]["team"], "unknown");
         let p = &t["ipcClients"][0]["gameplay"];
-        assert_eq!(p["hits"]["100"],3);
-        assert_eq!(p["hp"]["normal"],123.125);
-        assert_eq!(p["hp"]["smooth"],177.25);
-        assert_eq!(p["hits"]["hitErrorArray"],json!([1.25,-2.5]));
+        assert_eq!(p["hits"]["100"], 3);
+        assert_eq!(p["hp"]["normal"], 123.125);
+        assert_eq!(p["hp"]["smooth"], 177.25);
+        assert_eq!(p["hits"]["hitErrorArray"], json!([1.25, -2.5]));
         assert!(p["hits"].get("pressHitErrors").is_none());
         assert!(p["hits"].get("releaseHitErrors").is_none());
-        assert_eq!(p["hits"]["grade"]["maxThisPlay"],if variant == "lazer" { "" } else { "SH" });
+        assert_eq!(
+            p["hits"]["grade"]["maxThisPlay"],
+            if variant == "lazer" { "" } else { "SH" }
+        );
     }
 }
 #[test]
 fn numeric_boundary_bits_survive_cbor_decode_without_percent_inversion() {
-    for n in [-0.0, f64::from_bits(97.125f64.to_bits()-1), 97.125, f64::from_bits(97.125f64.to_bits()+1), 9007199254740992.0] {
-        let mut c = capture(&document(),"stable");
-        Arc::make_mut(&mut c.values).iter_mut().find(|e|e.pointer == "/play/accuracyPercent").unwrap().value = Some(CborValue::Float(n));
+    for n in [
+        -0.0,
+        f64::from_bits(97.125f64.to_bits() - 1),
+        97.125,
+        f64::from_bits(97.125f64.to_bits() + 1),
+        9007199254740992.0,
+    ] {
+        let mut c = capture(&document(), "stable");
+        Arc::make_mut(&mut c.values)
+            .iter_mut()
+            .find(|e| e.pointer == "/play/accuracyPercent")
+            .unwrap()
+            .value = Some(CborValue::Float(n));
         let v = View::decode(c).unwrap();
-        assert_eq!(v.play.accuracy.to_bits(),n.to_bits());
+        assert_eq!(v.play.accuracy.to_bits(), n.to_bits());
         equivalent(&v);
     }
 }

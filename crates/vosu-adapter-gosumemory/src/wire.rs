@@ -1,29 +1,43 @@
 //! Direct writer: histories and strings stay borrowed from the immutable view.
+use crate::view;
+use crate::{Error, View, game_folder, helpers::joined_path, legacy_hits, songs_folder};
 use std::io;
 use vosu_adapter_support::json::{Wire, With, wire_object};
-use crate::{Error, View, game_folder, songs_folder, legacy_hits, helpers::joined_path};
-use crate::view;
 
 pub(super) fn encode(v: &View) -> Result<Vec<u8>, Error> {
     // Tournament failure is evaluated before emitting any response bytes.
     crate::tourney::check(v)?;
-    let mut out = Vec::with_capacity(4096 + 24 * (v.play.hit_errors.len() + v.performance.graph.primary.len() + v.performance.graph.xaxis.len()));
+    let mut out = Vec::with_capacity(
+        4096 + 24
+            * (v.play.hit_errors.len()
+                + v.performance.graph.primary.len()
+                + v.performance.graph.xaxis.len()),
+    );
     document(&mut out, v).map_err(|e| Error::Serialization(e.to_string()))?;
     Ok(out)
 }
 struct Mods<'a>(&'a view::Mods);
 impl Wire for Mods<'_> {
     fn write_wire(&self, out: &mut Vec<u8>) -> io::Result<()> {
-        wire_object!(out { "num": self.0.number, "str": self.0.name }); Ok(())
+        wire_object!(out { "num": self.0.number, "str": self.0.name });
+        Ok(())
     }
 }
 fn document(out: &mut Vec<u8>, v: &View) -> io::Result<()> {
-    let b = &v.beatmap; let s = &b.stats; let p = &v.play; let h = legacy_hits(p);
-    let r = &v.result; let g = &v.performance.graph; let paths = v.paths.current.as_ref();
+    let b = &v.beatmap;
+    let s = &b.stats;
+    let p = &v.play;
+    let h = legacy_hits(p);
+    let r = &v.result;
+    let g = &v.performance.graph;
+    let paths = v.paths.current.as_ref();
     let pp = |key: &str| v.performance.accuracy.get(key).copied().unwrap_or(0.0);
-    let key = |button: Option<vosu_osu_model::source::OverlayButton>| With(move |out: &mut Vec<u8>| {
-        wire_object!(out { "isPressed": button.is_some_and(|b| b.is_pressed), "count": button.map_or(0, |b| b.count) }); Ok(())
-    });
+    let key = |button: Option<vosu_osu_model::source::OverlayButton>| {
+        With(move |out: &mut Vec<u8>| {
+            wire_object!(out { "isPressed": button.is_some_and(|b| b.is_pressed), "count": button.map_or(0, |b| b.count) });
+            Ok(())
+        })
+    };
     wire_object!(@open out first);
     wire_object!(@members out first {
         "client": v.client,
@@ -119,12 +133,28 @@ fn document(out: &mut Vec<u8>, v: &View) -> io::Result<()> {
         }),
         "tourney"?: crate::tourney::source(v).map(|source| With(move |out: &mut Vec<u8>| crate::tourney::write(out, v, source))),
     });
-    wire_object!(@close out first); Ok(())
+    wire_object!(@close out first);
+    Ok(())
 }
-#[expect(clippy::too_many_arguments, reason = "writes two differently shaped upstream leaderboard source records without allocating")]
-fn player(out: &mut Vec<u8>, name: &str, score: f64, combo: i64, max_combo: i64, mods: &str, h: &vosu_osu_model::source::Judgements, team: i64, position: i64, passing: bool) -> io::Result<()> {
+#[expect(
+    clippy::too_many_arguments,
+    reason = "writes two differently shaped upstream leaderboard source records without allocating"
+)]
+fn player(
+    out: &mut Vec<u8>,
+    name: &str,
+    score: f64,
+    combo: i64,
+    max_combo: i64,
+    mods: &str,
+    h: &vosu_osu_model::source::Judgements,
+    team: i64,
+    position: i64,
+    passing: bool,
+) -> io::Result<()> {
     wire_object!(out { "name": name, "score": score, "combo": combo, "maxCombo": max_combo, "mods": mods,
         "h300": h.great, "geki": h.perfect, "h100": h.ok, "katu": h.good, "h50": h.meh, "h0": h.miss,
         "team": team, "position": position, "isPassing": i64::from(passing),
-    }); Ok(())
+    });
+    Ok(())
 }

@@ -1,11 +1,13 @@
+use crate::{Error, View, model::*, view};
 use std::io;
 use vosu_adapter_support::json::{With, wire_object};
 use vosu_osu_model::source::TourneyAvailability;
-use crate::{Error, View, model::*, view};
 
 pub(super) fn check(v: &View) -> Result<(), Error> {
     if v.tourney_availability == TourneyAvailability::MissingScore {
-        return Err(Error::Serialization("lazer tournament spectator has no score".into()));
+        return Err(Error::Serialization(
+            "lazer tournament spectator has no score".into(),
+        ));
     }
     if v.tourney_availability == TourneyAvailability::Ready && v.tourney.is_none() {
         return Err(Error::NotReady);
@@ -14,39 +16,116 @@ pub(super) fn check(v: &View) -> Result<(), Error> {
 }
 /// Pending source data omits the wire key; a ready empty aggregate is an object.
 pub(super) fn source(v: &View) -> Option<&view::Tourney> {
-    if v.tourney_availability == TourneyAvailability::Pending { None } else { v.tourney.as_ref() }
+    if v.tourney_availability == TourneyAvailability::Pending {
+        None
+    } else {
+        v.tourney.as_ref()
+    }
 }
 fn chat_team<'a>(t: &'a view::Tourney, name: &str) -> &'a str {
-    t.clients.iter().find(|c| c.user.name == name).map(|c| c.team.as_str())
-        .unwrap_or(if name == "BanchoBot" { "bot" } else { "unknown" })
+    t.clients
+        .iter()
+        .find(|c| c.user.name == name)
+        .map(|c| c.team.as_str())
+        .unwrap_or(if name == "BanchoBot" {
+            "bot"
+        } else {
+            "unknown"
+        })
 }
 fn gameplay(p: &view::ClientPlay, lazer: bool) -> TourneyGameplay {
     let h = &p.raw_judgements;
     TourneyGameplay {
-        game_mode: p.mode.number, name: p.player_name.clone(), score: p.score, accuracy: p.accuracy,
-        combo: Combo { current: p.combo.current, max: p.combo.max }, hp: Health { normal: p.health_raw.normal, smooth: p.health_raw.smooth },
-        hits: TourneyHits { h300: h.great, geki: h.perfect, h100: h.ok, katu: h.good, h50: h.meh, h0: h.miss,
+        game_mode: p.mode.number,
+        name: p.player_name.clone(),
+        score: p.score,
+        accuracy: p.accuracy,
+        combo: Combo {
+            current: p.combo.current,
+            max: p.combo.max,
+        },
+        hp: Health {
+            normal: p.health_raw.normal,
+            smooth: p.health_raw.smooth,
+        },
+        hits: TourneyHits {
+            h300: h.great,
+            geki: h.perfect,
+            h100: h.ok,
+            katu: h.good,
+            h50: h.meh,
+            h0: h.miss,
             slider_breaks: p.statistics.slider_breaks,
-            grade: GameplayGrade { current: p.rank.current.clone(), max_this_play: if lazer { String::new() } else { p.rank.max_this_play.clone() } },
-            unstable_rate: p.unstable_rate, hit_error_array: p.hit_errors.all.to_vec(),
-        }, mods: crate::mods(&p.mods),
+            grade: GameplayGrade {
+                current: p.rank.current.clone(),
+                max_this_play: if lazer {
+                    String::new()
+                } else {
+                    p.rank.max_this_play.clone()
+                },
+            },
+            unstable_rate: p.unstable_rate,
+            hit_error_array: p.hit_errors.all.to_vec(),
+        },
+        mods: crate::mods(&p.mods),
     }
 }
 pub(super) fn build(v: &View) -> Result<Option<Tourney>, Error> {
     check(v)?;
-    let Some(t) = source(v) else { return Ok(None); };
+    let Some(t) = source(v) else {
+        return Ok(None);
+    };
     Ok(Some(Tourney {
-        manager: TourneyManager { ipc_state: t.ipc_state, best_of: t.best_of,
-            team_name: TourneyName { left: t.team.left.clone(), right: t.team.right.clone() }, stars: TourneyStars { left: t.points.left, right: t.points.right },
-            bools: TourneyBools { score_visible: t.score_visible, stars_visible: t.stars_visible },
-            chat: t.chat.iter().map(|m| TourneyMessage { team: chat_team(t, &m.name).into(), time: m.timestamp.clone(), name: m.name.clone(), message_body: m.message.clone() }).collect(),
-            gameplay: TourneyManagerGameplay { score: TourneyScore { left: t.total_score.left, right: t.total_score.right } },
+        manager: TourneyManager {
+            ipc_state: t.ipc_state,
+            best_of: t.best_of,
+            team_name: TourneyName {
+                left: t.team.left.clone(),
+                right: t.team.right.clone(),
+            },
+            stars: TourneyStars {
+                left: t.points.left,
+                right: t.points.right,
+            },
+            bools: TourneyBools {
+                score_visible: t.score_visible,
+                stars_visible: t.stars_visible,
+            },
+            chat: t
+                .chat
+                .iter()
+                .map(|m| TourneyMessage {
+                    team: chat_team(t, &m.name).into(),
+                    time: m.timestamp.clone(),
+                    name: m.name.clone(),
+                    message_body: m.message.clone(),
+                })
+                .collect(),
+            gameplay: TourneyManagerGameplay {
+                score: TourneyScore {
+                    left: t.total_score.left,
+                    right: t.total_score.right,
+                },
+            },
         },
-        ipc_clients: t.clients.iter().map(|c| TourneyIpcClient {
-            team: c.team.clone(), spectating: TourneyIpcSpec { name: c.user.name.clone(), country: c.user.country.clone(), user_id: c.user.id,
-                accuracy: c.user.accuracy, ranked_score: c.user.ranked_score, play_count: c.user.play_count, global_rank: c.user.global_rank, total_pp: c.user.total_pp },
-            gameplay: gameplay(&c.play, v.client == "lazer"),
-        }).collect(),
+        ipc_clients: t
+            .clients
+            .iter()
+            .map(|c| TourneyIpcClient {
+                team: c.team.clone(),
+                spectating: TourneyIpcSpec {
+                    name: c.user.name.clone(),
+                    country: c.user.country.clone(),
+                    user_id: c.user.id,
+                    accuracy: c.user.accuracy,
+                    ranked_score: c.user.ranked_score,
+                    play_count: c.user.play_count,
+                    global_rank: c.user.global_rank,
+                    total_pp: c.user.total_pp,
+                },
+                gameplay: gameplay(&c.play, v.client == "lazer"),
+            })
+            .collect(),
     }))
 }
 pub(super) fn write(out: &mut Vec<u8>, v: &View, source: &view::Tourney) -> io::Result<()> {
@@ -91,5 +170,6 @@ pub(super) fn write(out: &mut Vec<u8>, v: &View, source: &view::Tourney) -> io::
             }
             out.push(b']'); Ok(())
         }),
-    }); Ok(())
+    });
+    Ok(())
 }
