@@ -1,7 +1,9 @@
 //! Raw HTTP/1.1 exchanges with the replay's real listener. The request bytes
 //! are sent exactly as given, nothing is followed or retried, and the status,
 //! ordered headers and message body come back as received (transfer coding
-//! removed).
+//! removed). The body is framed by the response itself (`content-length`,
+//! chunked, no body, or connection close), so a recorded request without
+//! `Connection: close` does not wait for the server's idle timeout.
 use super::replay::WAIT;
 use std::{
     io::{Read, Write},
@@ -10,11 +12,14 @@ use std::{
 use vosu::server::websocket::Schema;
 
 /// Larger than the 8 MiB capture budget, so a bound hit is a failure.
-const MAX_RESPONSE: u64 = 16 * 1024 * 1024;
+const MAX_RESPONSE: usize = 16 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct RawResponse {
+    /// The status line as received, without its CRLF.
+    pub status_line: String,
     pub status: u16,
+    /// Every header in received order, names as sent, values trimmed.
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
@@ -46,96 +51,155 @@ pub fn get(address: SocketAddr, path: &str) -> RawResponse {
     .unwrap_or_else(|error| panic!("GET {path}: {error}"))
 }
 
-/// Sends `request` verbatim and reads the response until the server closes.
+/// Sends `request` verbatim and reads exactly one response. When the
+/// request asks the server to close, nothing may follow that response (a
+/// `HEAD` response carrying a body fails here).
 pub fn exchange(address: SocketAddr, request: &[u8]) -> Result<RawResponse, String> {
-    let mut stream = TcpStream::connect_timeout(&address, WAIT).map_err(|e| e.to_string())?;
-    stream
-        .set_read_timeout(Some(WAIT))
-        .and_then(|()| stream.set_write_timeout(Some(WAIT)))
-        .map_err(|e| e.to_string())?;
-    stream.write_all(request).map_err(|e| e.to_string())?;
-    let mut raw = Vec::new();
-    stream
-        .take(MAX_RESPONSE + 1)
-        .read_to_end(&mut raw)
-        .map_err(|e| e.to_string())?;
-    if raw.len() as u64 > MAX_RESPONSE {
-        return Err("response exceeds the replay bound".into());
+    let mut wire = Wire::connect(address)?;
+    wire.send(request)?;
+    let response = wire.response(request.starts_with(b"HEAD "))?;
+    let head = String::from_utf8_lossy(request).to_ascii_lowercase();
+    if head.contains("\r\nconnection: close\r\n") && !wire.rest()?.is_empty() {
+        return Err("bytes follow the response".into());
     }
-    parse(&raw, request.starts_with(b"HEAD "))
-}
-
-fn parse(raw: &[u8], head: bool) -> Result<RawResponse, String> {
-    let end = raw
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .ok_or("response has no header terminator")?;
-    let text = std::str::from_utf8(&raw[..end]).map_err(|_| "response head is not UTF-8")?;
-    let mut lines = text.split("\r\n");
-    let status_line = lines.next().ok_or("empty response")?;
-    let status = status_line
-        .strip_prefix("HTTP/1.1 ")
-        .and_then(|rest| rest.get(..3))
-        .and_then(|code| code.parse().ok())
-        .ok_or_else(|| format!("bad status line {status_line:?}"))?;
-    let headers = lines
-        .map(|line| {
-            line.split_once(':')
-                .map(|(name, value)| (name.to_owned(), value.trim().to_owned()))
-                .ok_or_else(|| format!("bad header {line:?}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut response = RawResponse {
-        status,
-        headers,
-        body: Vec::new(),
-    };
-    let rest = &raw[end + 4..];
-    if head {
-        if !rest.is_empty() {
-            return Err("HEAD response carries a body".into());
-        }
-        return Ok(response);
-    }
-    response.body = if response
-        .header("transfer-encoding")
-        .is_some_and(|coding| coding.eq_ignore_ascii_case("chunked"))
-    {
-        dechunk(rest)?
-    } else if let Some(length) = response.header("content-length") {
-        let length: usize = length.parse().map_err(|_| "bad content-length")?;
-        if rest.len() != length {
-            return Err(format!(
-                "body is {} bytes, content-length {length}",
-                rest.len()
-            ));
-        }
-        rest.to_vec()
-    } else {
-        rest.to_vec()
-    };
     Ok(response)
 }
 
-fn dechunk(mut rest: &[u8]) -> Result<Vec<u8>, String> {
-    let mut body = Vec::new();
-    loop {
-        let line = rest
-            .windows(2)
-            .position(|window| window == b"\r\n")
-            .ok_or("unterminated chunk size")?;
-        let size = std::str::from_utf8(&rest[..line])
-            .ok()
-            .and_then(|size| usize::from_str_radix(size.split(';').next()?.trim(), 16).ok())
-            .ok_or("bad chunk size")?;
-        rest = &rest[line + 2..];
-        if size == 0 {
-            return Ok(body);
+/// One buffered client connection.
+pub struct Wire {
+    stream: TcpStream,
+    buffer: Vec<u8>,
+    read: usize,
+}
+
+impl Wire {
+    pub fn connect(address: SocketAddr) -> Result<Self, String> {
+        let stream = TcpStream::connect_timeout(&address, WAIT).map_err(|e| e.to_string())?;
+        stream
+            .set_read_timeout(Some(WAIT))
+            .and_then(|()| stream.set_write_timeout(Some(WAIT)))
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
+            stream,
+            buffer: Vec::new(),
+            read: 0,
+        })
+    }
+
+    pub fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
+        self.stream.write_all(bytes).map_err(|e| e.to_string())
+    }
+
+    /// Reads more bytes; `Ok(false)` at end of stream.
+    fn fill(&mut self) -> Result<bool, String> {
+        let mut chunk = [0_u8; 16 * 1024];
+        let count = self.stream.read(&mut chunk).map_err(|e| e.to_string())?;
+        self.read += count;
+        if self.read > MAX_RESPONSE {
+            return Err("response exceeds the replay bound".into());
         }
-        if rest.len() < size + 2 || &rest[size..size + 2] != b"\r\n" {
-            return Err("truncated chunk".into());
+        self.buffer.extend_from_slice(&chunk[..count]);
+        Ok(count != 0)
+    }
+
+    /// Takes exactly `count` bytes.
+    pub fn take(&mut self, count: usize) -> Result<Vec<u8>, String> {
+        while self.buffer.len() < count {
+            if !self.fill()? {
+                return Err(format!(
+                    "connection closed after {} of {count} bytes",
+                    self.buffer.len()
+                ));
+            }
         }
-        body.extend_from_slice(&rest[..size]);
-        rest = &rest[size + 2..];
+        Ok(self.buffer.drain(..count).collect())
+    }
+
+    /// Takes everything up to and including `delimiter`, returning the part
+    /// before it.
+    fn until(&mut self, delimiter: &[u8]) -> Result<Vec<u8>, String> {
+        loop {
+            if let Some(at) = self
+                .buffer
+                .windows(delimiter.len())
+                .position(|window| window == delimiter)
+            {
+                let mut part: Vec<u8> = self.buffer.drain(..at + delimiter.len()).collect();
+                part.truncate(at);
+                return Ok(part);
+            }
+            if !self.fill()? {
+                return Err("connection closed inside a delimited part".into());
+            }
+        }
+    }
+
+    fn rest(&mut self) -> Result<Vec<u8>, String> {
+        while self.fill()? {}
+        Ok(std::mem::take(&mut self.buffer))
+    }
+
+    /// Reads one response. `head` marks a response to `HEAD`, which never
+    /// has a body.
+    pub fn response(&mut self, head: bool) -> Result<RawResponse, String> {
+        let raw = self.until(b"\r\n\r\n")?;
+        let text = std::str::from_utf8(&raw).map_err(|_| "response head is not UTF-8")?;
+        let mut lines = text.split("\r\n");
+        let status_line = lines.next().ok_or("empty response")?.to_owned();
+        let status = status_line
+            .strip_prefix("HTTP/1.1 ")
+            .and_then(|rest| rest.get(..3))
+            .and_then(|code| code.parse().ok())
+            .ok_or_else(|| format!("bad status line {status_line:?}"))?;
+        let headers = lines
+            .map(|line| {
+                line.split_once(':')
+                    .map(|(name, value)| (name.to_owned(), value.trim().to_owned()))
+                    .ok_or_else(|| format!("bad header {line:?}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut response = RawResponse {
+            status_line,
+            status,
+            headers,
+            body: Vec::new(),
+        };
+        if head || status == 101 || status == 204 || status == 304 || status < 200 {
+            return Ok(response);
+        }
+        response.body = if response
+            .header("transfer-encoding")
+            .is_some_and(|coding| coding.eq_ignore_ascii_case("chunked"))
+        {
+            self.dechunk()?
+        } else if let Some(length) = response.header("content-length") {
+            let length: usize = length.parse().map_err(|_| "bad content-length")?;
+            self.take(length)?
+        } else {
+            self.rest()?
+        };
+        Ok(response)
+    }
+
+    fn dechunk(&mut self) -> Result<Vec<u8>, String> {
+        let mut body = Vec::new();
+        loop {
+            let line = self.until(b"\r\n")?;
+            let size = std::str::from_utf8(&line)
+                .ok()
+                .and_then(|size| usize::from_str_radix(size.split(';').next()?.trim(), 16).ok())
+                .ok_or("bad chunk size")?;
+            if size == 0 {
+                // No trailers are expected; the final CRLF ends the message.
+                if !self.until(b"\r\n")?.is_empty() {
+                    return Err("unexpected chunked trailer".into());
+                }
+                return Ok(body);
+            }
+            body.extend(self.take(size)?);
+            if self.take(2)? != b"\r\n" {
+                return Err("truncated chunk".into());
+            }
+        }
     }
 }
