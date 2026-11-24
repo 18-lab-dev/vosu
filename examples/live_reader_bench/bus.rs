@@ -6,7 +6,7 @@ use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_state::{Delivery, SnapshotPublisher};
 
 #[cfg(target_os = "linux")]
-fn thread_cpu_ns() -> Result<u128> {
+pub(super) fn thread_cpu_ns() -> Result<u128> {
     let mut time = std::mem::MaybeUninit::<libc::timespec>::uninit();
     // SAFETY: time points to writable storage and the clock id is a valid thread clock.
     if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, time.as_mut_ptr()) } != 0 {
@@ -17,7 +17,7 @@ fn thread_cpu_ns() -> Result<u128> {
     Ok(time.tv_sec as u128 * 1_000_000_000 + time.tv_nsec as u128)
 }
 #[cfg(windows)]
-fn thread_cpu_ns() -> Result<u128> {
+pub(super) fn thread_cpu_ns() -> Result<u128> {
     use windows_sys::Win32::{
         Foundation::FILETIME,
         System::Threading::{GetCurrentThread, GetThreadTimes},

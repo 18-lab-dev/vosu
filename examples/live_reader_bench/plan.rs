@@ -20,16 +20,22 @@ use vosu_plugin_api::{HostServices, Init, Message, Plugin, PluginError, VtableHo
 use vosu_sys::process::ProcessBitness;
 
 type Attached = (VtableHostServices, u64, Arc<ScanWaiters>);
-static ATTACH: LazyLock<Mutex<HashMap<String, SyncSender<Attached>>>> =
+/// Per plugin id: the attachment channel and the identified client variant.
+type Registration = (SyncSender<Attached>, &'static str);
+static ATTACH: LazyLock<Mutex<HashMap<String, Registration>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Attachments registering the same plugin id (concurrent tests) create one
+/// at a time; the registry entry lives only for that creation.
+static CREATE: Mutex<()> = Mutex::new(());
 struct ReaderPlugin {
     host: VtableHostServices,
     sender: SyncSender<Attached>,
+    variant: &'static str,
     scans: Arc<ScanWaiters>,
 }
 impl Plugin for ReaderPlugin {
     fn create(host: VtableHostServices, init: Init) -> Result<Self, PluginError> {
-        let sender = ATTACH
+        let (sender, variant) = ATTACH
             .lock()
             .unwrap()
             .remove(&init.plugin_id)
@@ -37,15 +43,21 @@ impl Plugin for ReaderPlugin {
         Ok(Self {
             host,
             sender,
+            variant,
             scans: ScanWaiters::new(),
         })
     }
     fn on_message(&mut self, message: Message, correlation: u64) -> Result<(), PluginError> {
         match message {
             Message::SessionAttached(session) => {
-                let status =
-                    self.host
-                        .identify_session(session.handle, "osu", "bench", "bench", "", false);
+                let status = self.host.identify_session(
+                    session.handle,
+                    "osu",
+                    self.variant,
+                    "bench",
+                    "",
+                    false,
+                );
                 if status != vosu_plugin_api::vosu_status::VOSU_OK {
                     return Err(PluginError(status));
                 }
@@ -84,10 +96,12 @@ impl ConsoleSink for Silent {
 pub struct Attachment {
     pub process: ProcessHandle,
     pub publication: Option<(VtableHostServices, u64)>,
+    /// The bundled upstream adapter's own surface requester (`--adapter` only).
+    pub adapter: Option<Arc<dyn vosu_surface::requester::BundledRequester>>,
     host: Arc<PluginHost>,
     pid: u32,
     submitter: (VtableHostServices, u64),
-    _runtime: tokio::runtime::Runtime,
+    runtime: tokio::runtime::Runtime,
     _directories: Vec<tempfile::TempDir>,
 }
 impl AsRef<(VtableHostServices, u64)> for Attachment {
@@ -97,10 +111,22 @@ impl AsRef<(VtableHostServices, u64)> for Attachment {
 }
 impl Attachment {
     pub fn new(record: ProcessRecord, id: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::new_inner(record, id, false)
+        Self::new_inner(record, id, false, None)
     }
     pub fn with_bus(record: ProcessRecord) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::new_inner(record, "vosu.osu", true)
+        Self::new_inner(record, "vosu.osu", true, None)
+    }
+    /// The production osu! grants (manifest minus actions/settings) plus the
+    /// bundled upstream adapter, so adapters read through their own surface
+    /// requester. `variant` is the identified client (`stable`/`lazer`).
+    pub fn with_adapter(
+        record: ProcessRecord,
+        variant: &'static str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::new_inner(record, "vosu.osu", true, Some(variant))
+    }
+    pub fn runtime(&self) -> &tokio::runtime::Runtime {
+        &self.runtime
     }
     pub fn subscribe(
         &self,
@@ -118,6 +144,7 @@ impl Attachment {
         record: ProcessRecord,
         id: &str,
         bus: bool,
+        adapter: Option<&'static str>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let runtime = tokio::runtime::Runtime::new()?;
         let entered = runtime.enter();
@@ -146,7 +173,31 @@ impl Attachment {
             "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Reader benchmark'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n[match]\nprocess_names=[{}]\n",
             serde_json::to_string(&record.name)?
         );
-        let manifest = if bus {
+        let manifest = if adapter.is_some() {
+            let mut production: toml::Table =
+                toml::from_str(include_str!("../../crates/vosu-osu/manifest.toml"))?;
+            for key in ["actions", "concurrent_dispatch", "settings_schema"] {
+                production.remove(key);
+            }
+            if let Some(provides) = production
+                .get_mut("provides")
+                .and_then(toml::Value::as_array_mut)
+            {
+                provides.retain(|provide| {
+                    !provide
+                        .get("id")
+                        .and_then(toml::Value::as_str)
+                        .is_some_and(|id| id.starts_with("action:"))
+                });
+            }
+            let mut matcher = toml::Table::new();
+            matcher.insert(
+                "process_names".into(),
+                toml::Value::Array(vec![record.name.clone().into()]),
+            );
+            production.insert("match".into(), matcher.into());
+            toml::to_string(&production)?
+        } else if bus {
             let production = vosu_plugin_api::PluginManifest::parse(include_str!(
                 "../../crates/vosu-osu/manifest.toml"
             ))?;
@@ -161,7 +212,9 @@ impl Attachment {
         let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
             manifest: &manifest,
             settings_schema: None,
-            namespace_schemas: if bus {
+            namespace_schemas: if adapter.is_some() {
+                &[vosu_osu::OSU_NAMESPACE_SCHEMA]
+            } else if bus {
                 &[include_str!("../../docs/v2/schemas/vosu.osu.schema.json")]
             } else {
                 &[]
@@ -169,7 +222,16 @@ impl Attachment {
             action_schemas: &[],
             vtable: || vosu_plugin_api::__vtable_for_serialized::<ReaderPlugin>(),
         }])?;
-        assert!(ATTACH.lock().unwrap().insert(id.into(), tx).is_none());
+        let creating = CREATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            ATTACH
+                .lock()
+                .unwrap()
+                .insert(id.into(), (tx, adapter.unwrap_or("bench")))
+                .is_none()
+        );
         let created = host.create_instance(
             PluginInstanceId::new(1),
             &loaded[0],
@@ -177,7 +239,23 @@ impl Attachment {
             None,
         );
         ATTACH.lock().unwrap().remove(id);
+        drop(creating);
         created?;
+        let requester = match adapter {
+            Some(_) => {
+                let upstream = plugin::load_bundled(&[plugin::BundledPlugin {
+                    manifest: vosu_adapter_upstream::MANIFEST,
+                    settings_schema: None,
+                    namespace_schemas: &[],
+                    action_schemas: &[],
+                    vtable: vosu_adapter_upstream::vosu_plugin_vtable,
+                }])?;
+                let id = PluginInstanceId::new(2);
+                host.create_instance(id, &upstream[0], data.path().join("upstream"), None)?;
+                Some(host.surface_requester(id)?)
+            }
+            None => None,
+        };
         let pid = record.pid;
         let bitness = match record.bitness {
             vosu_plugin_api::Bitness::X86 => ProcessBitness::X86,
@@ -192,10 +270,11 @@ impl Attachment {
         Ok(Self {
             process,
             publication: bus.then_some((services, handle)),
+            adapter: requester,
             host,
             pid,
             submitter: (services, handle),
-            _runtime: runtime,
+            runtime,
             _directories: vec![logs, config_dir, data],
         })
     }

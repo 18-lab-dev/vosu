@@ -1,4 +1,9 @@
-//! Read-only production capture and opt-in B1/state-bus tick benchmark.
+//! Read-only production capture plus opt-in state-bus (`--bus`) and adapter
+//! output (`--adapter`) tick benchmarks. `--bus` stops at the bus commit and a
+//! surface notification; `--adapter` attributes read/reduce/projection/commit/
+//! surface-view/encode CPU and measures read-to-real-`/json/v2`-frame latency.
+#[path = "live_reader_bench/adapter.rs"]
+mod adapter;
 #[path = "live_reader_bench/bus.rs"]
 mod bus;
 #[path = "live_reader_bench/plan.rs"]
@@ -68,15 +73,20 @@ struct Args {
     cycles: usize,
     memory: String,
     bus: bool,
+    adapter: bool,
 }
 impl Args {
     fn parse(mut values: impl Iterator<Item = String>) -> Result<Self> {
         let (mut pid, mut client, mut warmup, mut cycles) = (None, None, 100, 1000);
         let mut memory = "native".to_owned();
-        let mut bus = false;
+        let (mut bus, mut adapter) = (false, false);
         while let Some(flag) = values.next() {
-            if flag == "--bus" {
-                bus = true;
+            match flag.as_str() {
+                "--bus" => bus = true,
+                "--adapter" => adapter = true,
+                _ => {}
+            }
+            if matches!(flag.as_str(), "--bus" | "--adapter") {
                 continue;
             }
             let value = values
@@ -105,6 +115,9 @@ impl Args {
         if cycles == 0 {
             return Err(fail("cycles must be positive"));
         }
+        if bus && adapter {
+            return Err(fail("choose one of --bus or --adapter"));
+        }
         Ok(Self {
             pid: pid
                 .filter(|pid| *pid != 0)
@@ -114,6 +127,7 @@ impl Args {
             cycles,
             memory,
             bus,
+            adapter,
         })
     }
 }
@@ -269,24 +283,26 @@ fn run<R: SynchronizedMemoryReader + 'static>(
         request.plan = transition.next_capture;
     }
     let state_start = context.status;
-    if args.bus {
-        let result = bus::measure_ticks(
-            args,
-            bus::Readers {
-                regular: &mut regular,
-                precise: &mut precise,
-                synchronization: &synchronization,
-                context,
-            },
-            &mut bundle,
-            &mut request,
-            &rt,
-            attachment.ok_or_else(|| fail("bus host missing"))?,
-        )?;
-        println!(
-            "{}",
-            serde_json::json!({"product":"vosu","client_version":version,"client":if args.client == ClientType::Lazer {"lazer"} else {"stable"},"memory":args.memory,"pid":args.pid,"calculate_pp":false,"state":format!("{state_start} -> {}", bundle.snapshot().precise.status),"bus":result})
-        );
+    if args.bus || args.adapter {
+        let readers = bus::Readers {
+            regular: &mut regular,
+            precise: &mut precise,
+            synchronization: &synchronization,
+            context,
+        };
+        let attachment = attachment.ok_or_else(|| fail("bus host missing"))?;
+        let (key, result) = if args.adapter {
+            let result =
+                adapter::measure_ticks(args, readers, &mut bundle, &mut request, &rt, attachment)?;
+            ("adapter", result)
+        } else {
+            let result =
+                bus::measure_ticks(args, readers, &mut bundle, &mut request, &rt, attachment)?;
+            ("bus", result)
+        };
+        let mut output = serde_json::json!({"product":"vosu","client_version":version,"client":if args.client == ClientType::Lazer {"lazer"} else {"stable"},"memory":args.memory,"pid":args.pid,"calculate_pp":false,"state":format!("{state_start} -> {}", bundle.snapshot().precise.status)});
+        output[key] = result;
+        println!("{output}");
         return Ok(());
     }
     let setup_ns = start.elapsed().as_nanos();
@@ -348,7 +364,17 @@ fn main() {
 fn execute() -> Result<()> {
     let args = Args::parse(std::env::args().skip(1))?;
     let start = Instant::now();
-    let attachment = if args.bus {
+    let attachment = if args.adapter {
+        let variant = if args.client == ClientType::Lazer {
+            "lazer"
+        } else {
+            "stable"
+        };
+        Some(plan::Attachment::with_adapter(
+            plan::native_record(args.pid)?,
+            variant,
+        )?)
+    } else if args.bus {
         Some(plan::Attachment::with_bus(plan::native_record(args.pid)?)?)
     } else if args.memory == "plan" {
         Some(plan::Attachment::new(
@@ -446,6 +472,9 @@ mod tests {
         assert_eq!(args(&[]).unwrap().cycles, 1000);
         assert!(args(&["--bus"]).unwrap().bus);
         assert!(args(&["--bus", "--cycles", "3"]).unwrap().bus);
+        assert!(args(&["--adapter"]).unwrap().adapter);
+        assert!(!args(&["--adapter"]).unwrap().bus);
+        assert!(args(&["--bus", "--adapter"]).is_err());
     }
     #[test]
     fn retains_failed_cycles() {
