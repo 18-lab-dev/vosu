@@ -19,6 +19,7 @@ use std::time::Duration;
 use vosu_core::logging::Logger;
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::launch::InstanceSettings;
+use vosu_osu_reader::discovery::{instance_settings, should_skip};
 use vosu_osu_reader::memory::lazer_loader::{
     GenerationIdentity, LazerLoadError, LazerOffsetLoader, OffsetGenerator, resolve_for_instance,
     resolve_for_instance_with_logger,
@@ -51,8 +52,7 @@ mod runtime;
 #[cfg(any(target_os = "linux", windows))]
 pub use discovery::NativeProcessProvider;
 pub use discovery::{
-    ClassifiedCandidate, DiscoveryPlatform, ProcessDescriptor, ProcessProvider,
-    classify_candidates, instance_settings, should_skip,
+    ClassifiedCandidate, DiscoveryPlatform, ProcessDescriptor, ProcessProvider, classify_candidates,
 };
 
 #[derive(Debug)]

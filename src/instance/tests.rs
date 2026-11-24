@@ -272,32 +272,6 @@ fn linux_named_first_pass_is_stable_and_fallback_is_lazer() {
 }
 
 #[test]
-fn command_filters_follow_presence_and_truthiness() {
-    assert!(should_skip(&StartupArgs::from_array([OsString::from(
-        "--tournament="
-    )])));
-    assert!(!should_skip(&StartupArgs::from_array([OsString::from(
-        "--debug-client-id=false"
-    )])));
-    assert!(!should_skip(&StartupArgs::from_array([OsString::from(
-        "--debug-client-id=0"
-    )])));
-    assert!(should_skip(&StartupArgs::from_array([OsString::from(
-        "--debug-client-id=1"
-    )])));
-    assert!(should_skip(&StartupArgs::from_array([OsString::from(
-        "--debug-client-id=x"
-    )])));
-    assert!(!should_skip(&StartupArgs::parse([OsString::from(
-        "/opt/osu!/osu!"
-    )])));
-    assert!(should_skip(&StartupArgs::parse([
-        OsString::from("/opt/osu!/osu!"),
-        OsString::from("--tournament"),
-    ])));
-}
-
-#[test]
 fn spectator_and_devserver_settings_are_typed() {
     let provider = provider(
         DiscoveryPlatform::Windows,

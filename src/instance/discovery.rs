@@ -17,7 +17,6 @@ use vosu_osu_model::enums::ClientType;
 use vosu_osu_reader::discovery::{
     StartupArgs, is_linux_candidate_name, is_linux_named_name, windows_client,
 };
-pub use vosu_osu_reader::discovery::{instance_settings, should_skip};
 use vosu_osu_reader::process::ProcessHandle;
 use vosu_sys::process::{MemoryError, ProcessBitness};
 

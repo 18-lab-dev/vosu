@@ -291,7 +291,6 @@ mod tests {
 
     use super::*;
     use crate::api::{ApiRuntimeSettings, ManagerInstanceSnapshot, ManagerSnapshot};
-    use crate::instance::Pid;
     use vosu_osu_model::enums::ClientType;
     use vosu_osu_model::launch::InstanceSettings;
     use vosu_osu_model::states::HitErrorArray;
@@ -375,7 +374,7 @@ mod tests {
     }
 
     fn entry(
-        pid: Pid,
+        pid: u32,
         state: Arc<StateBundleSnapshot>,
         tournament_manager: bool,
         ipc_id: Option<f64>,
@@ -393,7 +392,7 @@ mod tests {
     }
 
     fn snapshot(
-        focused_pid: Option<Pid>,
+        focused_pid: Option<u32>,
         instances: Vec<ManagerInstanceSnapshot>,
     ) -> CombinedSnapshot {
         CombinedSnapshot::from_manager(Arc::new(ManagerSnapshot::new(

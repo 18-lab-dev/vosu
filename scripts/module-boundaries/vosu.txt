@@ -1,4 +1,3 @@
-api -> instance
 api -> model
 runtime -> api
 runtime -> assets

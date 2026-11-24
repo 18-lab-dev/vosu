@@ -12,7 +12,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use arc_swap::ArcSwap;
 use bytes::Bytes;
 
-use crate::instance::Pid;
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_state::{PreciseState, RegularState, StateBundleSnapshot};
@@ -109,7 +108,7 @@ impl Error for ApiError {}
 /// Immutable lifecycle/role metadata paired with one instance state bundle.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ManagerInstanceSnapshot {
-    pid: Pid,
+    pid: u32,
     settings: InstanceSettings,
     tournament_manager: bool,
     state: Arc<StateBundleSnapshot>,
@@ -118,7 +117,7 @@ pub struct ManagerInstanceSnapshot {
 impl ManagerInstanceSnapshot {
     /// Captures the API-visible metadata of one discovered instance.
     pub fn new(
-        pid: Pid,
+        pid: u32,
         settings: InstanceSettings,
         tournament_manager: bool,
         state: Arc<StateBundleSnapshot>,
@@ -132,7 +131,7 @@ impl ManagerInstanceSnapshot {
     }
 
     /// Native process identifier used for deterministic ordering.
-    pub const fn pid(&self) -> Pid {
+    pub const fn pid(&self) -> u32 {
         self.pid
     }
 
@@ -185,11 +184,11 @@ impl Default for ApiRuntimeSettings {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ManagerSnapshot {
     revision: u64,
-    focused_pid: Option<Pid>,
+    focused_pid: Option<u32>,
     focused_client: Option<ClientType>,
     game_focused: bool,
     runtime_settings: ApiRuntimeSettings,
-    instances: BTreeMap<Pid, ManagerInstanceSnapshot>,
+    instances: BTreeMap<u32, ManagerInstanceSnapshot>,
 }
 
 impl ManagerSnapshot {
@@ -199,7 +198,7 @@ impl ManagerSnapshot {
     /// cannot disagree with the focused state bundle.
     pub fn new(
         revision: u64,
-        focused_pid: Option<Pid>,
+        focused_pid: Option<u32>,
         game_focused: bool,
         runtime_settings: ApiRuntimeSettings,
         instances: impl IntoIterator<Item = ManagerInstanceSnapshot>,
@@ -233,7 +232,7 @@ impl ManagerSnapshot {
     }
 
     /// PID selected for public API output, or `None` when not ready.
-    pub const fn focused_pid(&self) -> Option<Pid> {
+    pub const fn focused_pid(&self) -> Option<u32> {
         self.focused_pid
     }
 
@@ -253,7 +252,7 @@ impl ManagerSnapshot {
     }
 
     /// All instances in deterministic ascending PID order.
-    pub fn instances(&self) -> &BTreeMap<Pid, ManagerInstanceSnapshot> {
+    pub fn instances(&self) -> &BTreeMap<u32, ManagerInstanceSnapshot> {
         &self.instances
     }
 

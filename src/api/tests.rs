@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 
-use crate::instance::Pid;
 use vosu_osu_model::enums::ClientType;
 use vosu_osu_model::launch::InstanceSettings;
 use vosu_osu_model::states::{HitErrorArray, KeypressButton};
@@ -69,7 +68,7 @@ fn bundle(
     })
 }
 
-fn entry(pid: Pid, state: Arc<StateBundleSnapshot>) -> ManagerInstanceSnapshot {
+fn entry(pid: u32, state: Arc<StateBundleSnapshot>) -> ManagerInstanceSnapshot {
     ManagerInstanceSnapshot::new(
         pid,
         InstanceSettings {
@@ -82,7 +81,7 @@ fn entry(pid: Pid, state: Arc<StateBundleSnapshot>) -> ManagerInstanceSnapshot {
     )
 }
 
-fn manager(pid: Pid, state: Arc<StateBundleSnapshot>) -> Arc<ManagerSnapshot> {
+fn manager(pid: u32, state: Arc<StateBundleSnapshot>) -> Arc<ManagerSnapshot> {
     Arc::new(ManagerSnapshot::new(
         state.generation,
         Some(pid),

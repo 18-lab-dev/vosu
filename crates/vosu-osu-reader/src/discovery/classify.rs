@@ -120,9 +120,10 @@ mod tests {
     }
 
     #[test]
-    fn linux_named_pass_requires_the_exact_executable_names() {
+    fn linux_named_pass_matches_by_substring_not_exact_name() {
         assert!(is_linux_named_name(OsStr::new("osu!.exe")));
         assert!(is_linux_named_name(OsStr::new("osulazer.exe")));
+        assert!(is_linux_named_name(OsStr::new("wine-osu!.exe")));
         assert!(!is_linux_named_name(OsStr::new("osu!")));
         assert!(is_linux_candidate_name(OsStr::new("osu!")));
     }

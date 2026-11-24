@@ -20,7 +20,7 @@ Start with the owning boundary below rather than searching the whole tree. The [
 | Bundled plugins | `src/plugins.rs` | The explicit `BUNDLED` array (D13): every linked-in plugin's embedded manifest text and vtable-builder function, loaded by `src/runtime/dev_plugins.rs` at startup |
 | Native access | `crates/vosu-sys/` | Linux/Windows process handles, memory reads, paths, OS behavior, and process-exit-event backends; all platform `unsafe` lives here |
 | osu! value types | `crates/vosu-osu-model/` | osu! memory/state/enum models and the calculation root helpers (JS-compatible rounding/number writing, mods, grades, legacy hits) shared by the reader, calculator, and adapters |
-| Client decoding | `crates/vosu-osu-reader/` | Stable/lazer memory readers and offsets, the pointer-width managed-heap read layer (`ProcessHandle`, AOB scanning), and osu!-specific discovery inputs (client argv parser, Wine data-path resolution) |
+| Client decoding | `crates/vosu-osu-reader/` | Stable/lazer memory readers and offsets, the pointer-width managed-heap read layer (`ProcessHandle`, AOB scanning), and osu!-specific discovery inputs (client argv parser, Wine data-path resolution, classification predicates in `discovery::classify`) |
 | State reduction | `crates/vosu-osu-state/` | Capture scheduling, stale-sample rejection, retention, gameplay state |
 | Public APIs | `src/api/`, `src/model/api/` | v1, stream companion, v2, precise schemas and serialization |
 | Server and transport | `src/server/`, `crates/vosu-net/` | Exact routes, auth, files, pages, WebSockets, commands, and hardened outbound streaming |
