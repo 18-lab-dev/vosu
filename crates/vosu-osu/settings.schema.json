@@ -1,0 +1,7 @@
+[
+    {"uniqueID":"CALCULATE_PP","type":"checkbox","title":"Calculate pp","value":true},
+    {"uniqueID":"POLL_RATE","type":"number","title":"Poll rate","value":150.0},
+    {"uniqueID":"PRECISE_DATA_POLL_RATE","type":"number","title":"Precise data poll rate","value":10.0},
+    {"uniqueID":"SHOW_MP_COMMANDS","type":"checkbox","title":"Show multiplayer commands","value":false},
+    {"uniqueID":"READ_MANIA_SCROLL_SPEED","type":"checkbox","title":"Read mania scroll speed","value":true}
+]

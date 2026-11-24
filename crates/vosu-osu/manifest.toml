@@ -1,0 +1,17 @@
+kind = "plugin"
+manifest_version = 1
+id = "vosu.osu"
+name = "osu!"
+version = "2.0.0-alpha.0"
+host = ">=1.2.0, <3.0.0"
+abi_version = 1
+runtime = "in-process"
+concurrent_dispatch = true
+settings_schema = "settings.schema.json"
+
+[match]
+process_names = ["osu!.exe", "osulazer.exe"]   # Windows: exact, case-insensitive (1.x src/instance/discovery.rs:62-63)
+process_path_patterns = []
+command_line_patterns = []
+comm_hints = []                                # Linux: pre-filter only (DB revised); no exact-name hint needed
+linux_name_contains = ["osu!", "osulazer.exe"] # Linux: userspace substring match on comm (DB revised, 1.x discovery.rs:45-48)

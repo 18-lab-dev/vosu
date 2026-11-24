@@ -26,6 +26,7 @@ CRATE_ROOTS = {
     "vosu": ROOT,
     "vosu-core": ROOT / "crates/vosu-core",
     "vosu-net": ROOT / "crates/vosu-net",
+    "vosu-osu": ROOT / "crates/vosu-osu",
     "vosu-osu-calc": ROOT / "crates/vosu-osu-calc",
     "vosu-osu-model": ROOT / "crates/vosu-osu-model",
     "vosu-osu-reader": ROOT / "crates/vosu-osu-reader",

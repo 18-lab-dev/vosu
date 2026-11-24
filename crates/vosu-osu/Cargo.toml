@@ -1,0 +1,30 @@
+[package]
+name = "vosu-osu"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+# Per-crate test-harness seam (mirrors vosu-core, vosu-osu-state): never
+# enabled in a release build (src/lib.rs's `compile_error!` guard).
+test-harness = []
+
+[dependencies]
+arc-swap = "1.8.2"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }
+tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-util = { version = "0.7.18", features = ["io", "rt"] }
+vosu-osu-model = { path = "../vosu-osu-model" }
+vosu-osu-reader = { path = "../vosu-osu-reader" }
+vosu-osu-state = { path = "../vosu-osu-state" }
+vosu-plugin-api = { path = "../vosu-plugin-api", features = ["bundled", "unstable-sync-reads"] }
+vosu-surface = { path = "../vosu-surface" }
