@@ -677,19 +677,20 @@ impl LazerMemory {
             return None;
         }
         let mut bytes = [([0u8; 4], [0u8; 8]); 32];
-        let mut requests: [_; 64] = std::array::from_fn(|_| ReadRequest::new(0, &mut []));
-        for (index, ((key, value), requests)) in bytes
-            .iter_mut()
-            .zip(requests.chunks_exact_mut(2))
-            .take(len)
-            .enumerate()
         {
-            let entry = add(entries, 0x10 + (start + index) * 0x18).ok()?;
-            requests[0] = ReadRequest::new(add(entry, 0x10).ok()?, key);
-            requests[1] = ReadRequest::new(entry, value);
+            let mut requests: [_; 64] = std::array::from_fn(|_| ReadRequest::new(0, &mut []));
+            for (index, ((key, value), requests)) in bytes
+                .iter_mut()
+                .zip(requests.chunks_exact_mut(2))
+                .take(len)
+                .enumerate()
+            {
+                let entry = add(entries, 0x10 + (start + index) * 0x18).ok()?;
+                requests[0] = ReadRequest::new(add(entry, 0x10).ok()?, key);
+                requests[1] = ReadRequest::new(entry, value);
+            }
+            self.process.read_many(&mut requests[..2 * len]).ok()?;
         }
-        self.process.read_many(&mut requests[..2 * len]).ok()?;
-        drop(requests);
         let mut out = [(0, 0); 32];
         for (out, (key, value)) in out.iter_mut().zip(bytes).take(len) {
             *out = (i32::from_le_bytes(key), le_pointer(&value)?);
