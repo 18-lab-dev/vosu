@@ -1,1 +1,2 @@
 plugin -> classify
+plugin -> scan

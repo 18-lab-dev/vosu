@@ -61,10 +61,18 @@ pub struct AttachFacts {
     /// `path`'s parent (R19); empty when `path` is absent.
     pub executable_root: PathBuf,
 }
-
 impl AttachFacts {
     #[must_use]
     pub fn from_attached(message: &SessionAttached) -> Self {
+        Self::from_attached_with(message, resolve_root)
+    }
+
+    /// Like [`Self::from_attached`], with an injectable root resolver
+    /// (P3 review #7): a test uses this to avoid the real `/proc`/env-var
+    /// reads [`resolve_root`] performs; production code always goes
+    /// through [`Self::from_attached`].
+    #[must_use]
+    pub fn from_attached_with(message: &SessionAttached, root_resolver: RootResolver) -> Self {
         let path = message.path.as_ref().map(PathBuf::from);
         let args = if let Some(argv) = &message.argv {
             Some(StartupArgs::parse(argv.iter().cloned().map(OsString::from)))
@@ -74,7 +82,7 @@ impl AttachFacts {
                 .as_deref()
                 .map(StartupArgs::parse_command_line)
         };
-        let root = resolve_root(
+        let root = root_resolver(
             message.pid,
             path.as_deref(),
             message.command_line.as_deref(),
@@ -98,6 +106,10 @@ impl AttachFacts {
     }
 }
 
+/// A root resolver function: see [`AttachFacts::from_attached_with`] and
+/// [`resolve_root`] (the real, default one).
+pub type RootResolver = fn(u32, Option<&Path>, Option<&str>) -> PathBuf;
+
 fn parent_or_default(path: Option<&Path>) -> PathBuf {
     path.and_then(Path::parent)
         .map(Path::to_path_buf)
@@ -118,6 +130,7 @@ pub struct PendingIdentify {
     pub settings: InstanceSettings,
     pub root: PathBuf,
     pub executable_root: PathBuf,
+    pub pid: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -126,6 +139,15 @@ pub struct Identified {
     pub settings: InstanceSettings,
     pub root: PathBuf,
     pub executable_root: PathBuf,
+    pub pid: u32,
+    /// Whether this identification came from the Linux "named" rule
+    /// (`is_linux_named_name`: the name contains `osu!.exe`/
+    /// `osulazer.exe`). Only a named identification counts as a sibling
+    /// for a later fallback's settle check (R3; P2 review #2) — not a
+    /// settled fallback that itself resolved to stable because a sibling
+    /// was already present, a Windows client (chosen by bitness, not
+    /// name), or a Linux attach with no name fact at all.
+    pub named: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -175,24 +197,25 @@ pub fn decide(
         .args
         .as_ref()
         .map_or_else(default_settings, instance_settings);
-    let client = match platform {
-        Platform::Windows => windows_client(to_process_bitness(facts.bitness)),
+    let (client, named) = match platform {
+        Platform::Windows => (windows_client(to_process_bitness(facts.bitness)), false),
         Platform::Linux => match facts.name_os() {
-            Some(name) if is_linux_named_name(&name) => ClientType::Stable,
+            Some(name) if is_linux_named_name(&name) => (ClientType::Stable, true),
             Some(name) if is_linux_candidate_name(&name) => {
                 if named_sibling_attached {
-                    ClientType::Stable
+                    (ClientType::Stable, false)
                 } else {
                     return AttachDecision::Settle(PendingIdentify {
                         settings,
                         root: facts.root.clone(),
                         executable_root: facts.executable_root.clone(),
+                        pid: facts.pid,
                     });
                 }
             }
             // No `name` fact at all (pre-amendment host): conservative
             // identify, not an endless settle (see doc comment above).
-            _ => ClientType::Stable,
+            _ => (ClientType::Stable, false),
         },
     };
     AttachDecision::Identify(Identified {
@@ -200,6 +223,8 @@ pub fn decide(
         settings,
         root: facts.root.clone(),
         executable_root: facts.executable_root.clone(),
+        pid: facts.pid,
+        named,
     })
 }
 
@@ -209,7 +234,7 @@ pub fn decide(
 /// [`windows_root_from_command_line`] (the "cfg(windows) root rule" the
 /// native vm-test exercises directly, without the env var, to stay
 /// deterministic under parallel tests).
-fn resolve_root(pid: u32, path: Option<&Path>, command_line: Option<&str>) -> PathBuf {
+pub(crate) fn resolve_root(pid: u32, path: Option<&Path>, command_line: Option<&str>) -> PathBuf {
     #[cfg(target_os = "linux")]
     {
         let _ = command_line;
@@ -302,6 +327,9 @@ mod tests {
             panic!("expected Identify");
         };
         assert_eq!(identified.client, ClientType::Stable);
+        // Windows identifications are never "named" (review #2): bitness
+        // decides the variant, not a name match.
+        assert!(!identified.named);
     }
 
     /// §7 row 4: `linux_named_first_pass_is_stable_and_fallback_is_lazer`.
@@ -312,6 +340,7 @@ mod tests {
             panic!("expected Identify");
         };
         assert_eq!(identified.client, ClientType::Stable);
+        assert!(identified.named);
 
         let lone = facts(Some("osu!"), Bitness::X86, no_args());
         assert_eq!(
@@ -320,14 +349,18 @@ mod tests {
                 settings: default_settings(),
                 root: PathBuf::from("/osu"),
                 executable_root: PathBuf::from("/osu"),
+                pid: 123,
             })
         );
 
-        // A named sibling already attached: no need to wait.
+        // A named sibling already attached: no need to wait — but this
+        // resolution is a settled fallback, not a "named" identification
+        // (review #2): it must not itself count as a sibling later.
         let AttachDecision::Identify(identified) = decide(&lone, Platform::Linux, true) else {
             panic!("expected Identify");
         };
         assert_eq!(identified.client, ClientType::Stable);
+        assert!(!identified.named);
     }
 
     /// §7 row 5: `command_filters_follow_presence_and_truthiness`.
@@ -356,6 +389,18 @@ mod tests {
         );
         assert!(matches!(
             decide(&falsy_debug, Platform::Windows, false),
+            AttachDecision::Identify(_)
+        ));
+
+        // The literal string `"false"` (not just a falsy number) is also
+        // not truthy: `=false` never declines either (review #7 gap).
+        let falsy_debug_literal = facts(
+            Some("osu!.exe"),
+            Bitness::X86,
+            args(&["--debug-client-id=false"]),
+        );
+        assert!(matches!(
+            decide(&falsy_debug_literal, Platform::Windows, false),
             AttachDecision::Identify(_)
         ));
     }
