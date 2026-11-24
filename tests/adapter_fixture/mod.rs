@@ -275,7 +275,9 @@ impl Fixture {
         }
         publisher
     }
-    pub fn encode(&self, schema: &str) -> Vec<u8> {
+    /// The provider's typed result, so callers can reject a vacuous not-ready
+    /// response instead of comparing its corpus placeholder bytes.
+    pub fn outcome(&self, schema: &str) -> CachedJson {
         let (index, route) = match schema {
             "v1" => (0, StateRoute::V1),
             "sc" => (1, StateRoute::StreamCompanion),
@@ -283,7 +285,7 @@ impl Fixture {
             "v2-precise" => (3, StateRoute::V2Precise),
             _ => panic!("unknown schema"),
         };
-        let result = self.h.runtime.block_on(async {
+        self.h.runtime.block_on(async {
             let _lease = (index == 1 && self.has_chart)
                 .then(|| self.chart.retain(&[]))
                 .flatten();
@@ -301,8 +303,10 @@ impl Fixture {
             } else {
                 first
             }
-        });
-        match result {
+        })
+    }
+    pub fn encode(&self, schema: &str) -> Vec<u8> {
+        match self.outcome(schema) {
             CachedJson::Ready(bytes) => bytes.to_vec(),
             // The source-oracle corpus records the typed not-ready outcome,
             // not the transport's legacy error envelope (covered separately).
