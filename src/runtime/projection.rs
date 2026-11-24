@@ -328,35 +328,6 @@ impl StateJsonProvider for SnapshotProviders {
     }
 }
 
-struct V2SubscriptionSnapshotView {
-    snapshot: Arc<CombinedSnapshot>,
-}
-
-impl V2SubscriptionSnapshot for V2SubscriptionSnapshotView {
-    fn revision(&self) -> u64 {
-        self.snapshot.manager().revision()
-    }
-
-    fn document(&self, pointers: &[&[String]]) -> Result<Option<serde_json::Value>, ApiError> {
-        match ProductionSnapshotEncoder::subscription_document(&self.snapshot, pointers) {
-            Ok(document) => Ok(Some(document)),
-            Err(ApiError::NotReady) => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-}
-
-impl V2SubscriptionProvider for SnapshotProviders {
-    fn subscribe(&self) -> watch::Receiver<u64> {
-        self.live_event.subscribe()
-    }
-
-    fn capture(&self) -> Arc<dyn V2SubscriptionSnapshot> {
-        Arc::new(V2SubscriptionSnapshotView {
-            snapshot: self.live.load(),
-        })
-    }
-}
 
 pub(super) struct WebSocketSnapshotView {
     snapshot: Arc<CombinedSnapshot>,

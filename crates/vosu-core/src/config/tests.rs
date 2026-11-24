@@ -78,13 +78,8 @@ SHOW_MP_COMMANDS = false
 CALCULATE_PP = true
 READ_MANIA_SCROLL_SPEED = true
 
-ENABLE_KEY_OVERLAY = true
-
-ENABLE_MANIA_KEY_HIT_ERRORS = false
-ENABLE_HIT_OFFSETS = false
 POLL_RATE = 150.0
 PRECISE_DATA_POLL_RATE = 10.0
-V2_SUBSCRIPTION_DEBOUNCE = 1.0
 API_V1_SUBSCRIPTION_DEBOUNCE = 1.0
 
 SERVER_IP = \"127.0.0.1\"
@@ -113,12 +108,8 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
             "START_AT_LOGIN",
             "DEBUG_LOG",
             "CALCULATE_PP",
-            "ENABLE_KEY_OVERLAY",
-            "ENABLE_MANIA_KEY_HIT_ERRORS",
-            "ENABLE_HIT_OFFSETS",
             "POLL_RATE",
             "PRECISE_DATA_POLL_RATE",
-            "V2_SUBSCRIPTION_DEBOUNCE",
             "API_V1_SUBSCRIPTION_DEBOUNCE",
             "SHOW_MP_COMMANDS",
             "READ_MANIA_SCROLL_SPEED",
@@ -133,39 +124,20 @@ fn defaults_and_serialization_match_canonical_toml_bytes() {
 }
 
 #[test]
-fn mania_key_hit_errors_defaults_off_and_round_trips() {
-    assert!(
-        !ConfigDocument::parse("")
-            .unwrap()
-            .config()
-            .enable_mania_key_hit_errors
-    );
-    let document = ConfigDocument::parse("ENABLE_MANIA_KEY_HIT_ERRORS = true\n").unwrap();
-    assert!(document.config().enable_mania_key_hit_errors);
-    assert!(
-        ConfigDocument::parse(&document.serialize())
-            .unwrap()
-            .config()
-            .enable_mania_key_hit_errors
-    );
-}
-
-#[test]
-fn hit_offsets_defaults_off_and_round_trips() {
-    assert!(
-        !ConfigDocument::parse("")
-            .unwrap()
-            .config()
-            .enable_hit_offsets
-    );
-    let document = ConfigDocument::parse("ENABLE_HIT_OFFSETS = true\n").unwrap();
-    assert!(document.config().enable_hit_offsets);
-    assert!(
-        ConfigDocument::parse(&document.serialize())
-            .unwrap()
-            .config()
-            .enable_hit_offsets
-    );
+fn retired_keys_have_no_schema_or_runtime_storage() {
+    for key in [
+        "ENABLE_KEY_OVERLAY",
+        "ENABLE_MANIA_KEY_HIT_ERRORS",
+        "ENABLE_HIT_OFFSETS",
+        "V2_SUBSCRIPTION_DEBOUNCE",
+    ] {
+        let mut document = ConfigDocument::parse(&format!("{key} = true\n")).unwrap();
+        assert_eq!(document.config(), &Config::default());
+        assert!(!DEFAULT_SCHEMA.items().iter().any(|item| item.binding == key));
+        assert!(!document.serialize().lines().any(|line| line.starts_with(key)));
+        assert!(document.refresh(&format!("{key} = \"ignored\"\n")).unwrap().is_empty());
+        assert_eq!(document.config(), &Config::default());
+    }
 }
 
 #[test]

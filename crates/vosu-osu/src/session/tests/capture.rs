@@ -286,29 +286,15 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
         gameplay_precise: true,
     };
     sink.inputs.send_replace(B1Inputs {
-        enable_key_overlay: false,
-        enable_mania_key_hit_errors: true,
-        enable_hit_offsets: true,
-        v2_subscription_debounce: 43.0,
         demand: next_demand,
     });
-    tokio::time::timeout(Duration::from_millis(500), reader.changed())
-        .await
-        .unwrap()
-        .unwrap();
     tokio::time::timeout(Duration::from_millis(500), demand.changed())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(
         *reader.borrow_and_update(),
-        ReaderSettings {
-            enable_key_overlay: false,
-            enable_mania_key_hit_errors: true,
-            enable_hit_offsets: true,
-            v2_subscription_debounce: 43.0,
-            ..ReaderSettings::default()
-        }
+        ReaderSettings::default()
     );
     assert_eq!(*demand.borrow_and_update(), next_demand);
     session.osu_settings.send_replace(OsuSettings {
@@ -330,10 +316,7 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
             precise_data_poll_rate: 37.0,
             show_mp_commands: true,
             read_mania_scroll_speed: false,
-            enable_key_overlay: false,
-            enable_mania_key_hit_errors: true,
-            enable_hit_offsets: true,
-            v2_subscription_debounce: 43.0,
+            collect_hit_errors: false,
         }
     );
     assert_eq!(*demand.borrow(), next_demand);
@@ -343,14 +326,13 @@ async fn running_capture_forwards_changed_b1_inputs_and_b2_settings() {
     };
     sink.inputs.send_modify(|inputs| {
         inputs.demand = final_demand;
-        inputs.enable_key_overlay = true;
     });
     tokio::time::timeout(Duration::from_millis(500), demand.changed())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(*demand.borrow_and_update(), final_demand);
-    assert!(reader.borrow().enable_key_overlay);
+    assert!(!reader.borrow().collect_hit_errors);
     assert_eq!(reader.borrow().poll_rate, 731.0);
     session.cancel();
     tokio::time::timeout(Duration::from_secs(5), session.join_resolver())

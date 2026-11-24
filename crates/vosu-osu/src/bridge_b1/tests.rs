@@ -114,10 +114,6 @@ fn reader_settings_combine_non_default_b2_and_b1_fields() {
         read_mania_scroll_speed: false,
     };
     let inputs = B1Inputs {
-        enable_key_overlay: false,
-        enable_mania_key_hit_errors: true,
-        enable_hit_offsets: true,
-        v2_subscription_debounce: 87.0,
         demand: SubscriptionDemand {
             regular: true,
             precise: true,
@@ -133,10 +129,7 @@ fn reader_settings_combine_non_default_b2_and_b1_fields() {
             precise_data_poll_rate: 21.0,
             show_mp_commands: true,
             read_mania_scroll_speed: false,
-            enable_key_overlay: false,
-            enable_mania_key_hit_errors: true,
-            enable_hit_offsets: true,
-            v2_subscription_debounce: 87.0,
+            collect_hit_errors: false,
         }
     );
 }

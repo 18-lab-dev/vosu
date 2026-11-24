@@ -97,7 +97,6 @@ fn equivalent_state_publication_preserves_revision_and_snapshot() {
 #[tokio::test]
 async fn live_selection_promotes_file_and_checksum_before_api_cadence() {
     use crate::server::service::CurrentBeatmapProvider;
-    use crate::server::v2_subscription::V2SubscriptionProvider;
     use md5::{Digest, Md5};
     let md5 = |bytes: &[u8]| Md5::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect::<String>();
 
@@ -151,17 +150,13 @@ async fn live_selection_promotes_file_and_checksum_before_api_cadence() {
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 let api = providers.load();
-                let subscription = V2SubscriptionProvider::capture(providers.as_ref()).document(&[&[]]).unwrap();
-                if api.focused().is_some_and(|s| s.regular.menu.checksum.as_deref() == Some(hash.as_str()))
-                    && subscription.as_ref().is_some_and(|s| s["beatmap"]["checksum"] == hash) {
+                if api.focused().is_some_and(|s| s.regular.menu.checksum.as_deref() == Some(hash.as_str())) {
                     break;
                 }
                 tokio::task::yield_now().await;
             }
         }).await.unwrap();
         assert!(Arc::ptr_eq(providers.load().focused().unwrap(), &state));
-        let subscription = V2SubscriptionProvider::capture(providers.as_ref()).document(&[&[]]).unwrap().unwrap();
-        assert_eq!(subscription["beatmap"]["checksum"], hash);
         assert_eq!(files.tool_context()["beatmap"]["checksum"], hash);
         let actual = files.current_beatmap_bytes().unwrap().unwrap();
         assert_eq!(actual.as_ref(), bytes);
@@ -291,18 +286,9 @@ async fn b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown() {
     let mut inputs = bridge.inputs();
     let (_foreground, foreground_rx) = watch::channel(None);
     let task = bridge.start(foreground_rx);
-    let mut next = Config::default(); next.enable_key_overlay = !next.enable_key_overlay;
-    next.enable_mania_key_hit_errors = !next.enable_mania_key_hit_errors;
-    next.enable_hit_offsets = !next.enable_hit_offsets;
-    next.v2_subscription_debounce = 73.0;
+    let mut next = Config::default();
     next.api_v1_subscription_debounce = 31.25;
-    config.send(Arc::new(next.clone())).unwrap();
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while inputs.borrow_and_update().enable_key_overlay != next.enable_key_overlay { inputs.changed().await.unwrap(); }
-    }).await.unwrap();
-    assert_eq!(inputs.borrow().enable_mania_key_hit_errors, next.enable_mania_key_hit_errors);
-    assert_eq!(inputs.borrow().enable_hit_offsets, next.enable_hit_offsets);
-    assert_eq!(inputs.borrow().v2_subscription_debounce, 73.0);
+    config.send(Arc::new(next)).unwrap();
     demand.send(vosu_osu_state::SubscriptionDemand { precise: true, ..Default::default() }).unwrap();
     tokio::time::timeout(Duration::from_secs(2), async {
         while !inputs.borrow_and_update().demand.precise { inputs.changed().await.unwrap(); }

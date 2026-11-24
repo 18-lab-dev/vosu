@@ -99,14 +99,6 @@ impl ConfigDocument {
             self.config.precise_data_poll_rate = 1.0;
         }
 
-        if self.config.v2_subscription_debounce < 1.0 {
-            warnings.push(format!(
-                "Config %V2_SUBSCRIPTION_DEBOUNCE% value %{}% is below the minimum %1%, clamping.",
-                format_number(self.config.v2_subscription_debounce)
-            ));
-            self.config.v2_subscription_debounce = 1.0;
-        }
-
         if self.config.api_v1_subscription_debounce < 1.0 {
             warnings.push(format!(
                 "Config %API_V1_SUBSCRIPTION_DEBOUNCE% value %{}% is below the minimum %1%, clamping.",
@@ -120,10 +112,6 @@ impl ConfigDocument {
             (
                 "PRECISE_DATA_POLL_RATE",
                 &mut self.config.precise_data_poll_rate,
-            ),
-            (
-                "V2_SUBSCRIPTION_DEBOUNCE",
-                &mut self.config.v2_subscription_debounce,
             ),
             (
                 "API_V1_SUBSCRIPTION_DEBOUNCE",
@@ -170,9 +158,6 @@ impl ConfigDocument {
             ConfigKey::StartAtLogin => self.config.start_at_login = value,
             ConfigKey::DebugLog => self.config.debug_log = value,
             ConfigKey::CalculatePp => self.config.calculate_pp = value,
-            ConfigKey::EnableKeyOverlay => self.config.enable_key_overlay = value,
-            ConfigKey::EnableManiaKeyHitErrors => self.config.enable_mania_key_hit_errors = value,
-            ConfigKey::EnableHitOffsets => self.config.enable_hit_offsets = value,
             ConfigKey::ShowMpCommands => self.config.show_mp_commands = value,
             ConfigKey::ReadManiaScrollSpeed => self.config.read_mania_scroll_speed = value,
             _ => unreachable!("schema boolean key has boolean storage"),
@@ -183,7 +168,6 @@ impl ConfigDocument {
         match key {
             ConfigKey::PollRate => self.config.poll_rate = value,
             ConfigKey::PreciseDataPollRate => self.config.precise_data_poll_rate = value,
-            ConfigKey::V2SubscriptionDebounce => self.config.v2_subscription_debounce = value,
             ConfigKey::ApiV1SubscriptionDebounce => {
                 self.config.api_v1_subscription_debounce = value
             }
@@ -212,14 +196,8 @@ impl ConfigDocument {
             "START_AT_LOGIN" => toml::Value::Boolean(self.config.start_at_login),
             "DEBUG_LOG" => toml::Value::Boolean(self.config.debug_log),
             "CALCULATE_PP" => toml::Value::Boolean(self.config.calculate_pp),
-            "ENABLE_KEY_OVERLAY" => toml::Value::Boolean(self.config.enable_key_overlay),
-            "ENABLE_MANIA_KEY_HIT_ERRORS" => {
-                toml::Value::Boolean(self.config.enable_mania_key_hit_errors)
-            }
-            "ENABLE_HIT_OFFSETS" => toml::Value::Boolean(self.config.enable_hit_offsets),
             "POLL_RATE" => toml::Value::Float(self.config.poll_rate),
             "PRECISE_DATA_POLL_RATE" => toml::Value::Float(self.config.precise_data_poll_rate),
-            "V2_SUBSCRIPTION_DEBOUNCE" => toml::Value::Float(self.config.v2_subscription_debounce),
             "API_V1_SUBSCRIPTION_DEBOUNCE" => {
                 toml::Value::Float(self.config.api_v1_subscription_debounce)
             }

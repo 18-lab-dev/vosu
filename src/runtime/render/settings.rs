@@ -130,24 +130,6 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
                 "Expose the current mania scroll speed from game memory.",
                 config.read_mania_scroll_speed,
             ),
-            switch(
-                "ENABLE_KEY_OVERLAY",
-                "Read key overlay data",
-                "Expose live K1, K2, M1, and M2 input state to overlays.",
-                config.enable_key_overlay,
-            ),
-            switch(
-                "ENABLE_MANIA_KEY_HIT_ERRORS",
-                "Per-key mania hit errors",
-                "Expose opt-in press and release timing arrays for known mania columns.",
-                config.enable_mania_key_hit_errors,
-            ),
-            switch(
-                "ENABLE_HIT_OFFSETS",
-                "Standard hit offsets",
-                "Expose cursor offsets and timing errors for standard circle and slider-head hits.",
-                config.enable_hit_offsets,
-            ),
             interval(
                 "POLL_RATE",
                 "Common poll interval",
@@ -163,16 +145,9 @@ pub(super) fn render_runtime_settings(config: &Config) -> String {
                 1.0,
             ),
             interval(
-                "V2_SUBSCRIPTION_DEBOUNCE",
-                "V2 subscription debounce",
-                "Wait at least this long between updates sent to overlays that request selected V2 fields.",
-                config.v2_subscription_debounce,
-                1.0,
-            ),
-            interval(
                 "API_V1_SUBSCRIPTION_DEBOUNCE",
                 "API v1 subscription debounce",
-                "Wait at least this long between API v1 subscription updates, independently of selected V2 fields.",
+                "Wait at least this long between API v1 subscription updates.",
                 config.api_v1_subscription_debounce,
                 1.0,
             ),

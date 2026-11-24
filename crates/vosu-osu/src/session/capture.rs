@@ -218,10 +218,8 @@ pub(super) fn reader_settings(
     collect_errors: bool,
 ) -> vosu_osu_state::ReaderSettings {
     let mut reader = inputs.reader_settings(settings);
-    // 2.0 has no ENABLE_* gates. This changes collection only; the root
-    // 1.x adapters still apply the original B1 configuration when serializing.
-    reader.enable_hit_offsets |= collect_errors;
-    reader.enable_mania_key_hit_errors |= collect_errors;
+    // Collection follows the authorized bus selector demand, never legacy config flags.
+    reader.collect_hit_errors = collect_errors;
     reader
 }
 

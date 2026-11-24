@@ -57,7 +57,6 @@ use crate::{
             SnapshotStateProvider, UpdateRouteResult, UpdaterHandoff, WebSocketEndpoints,
             WebSocketRelaySink,
         },
-        v2_subscription::{V2SubscriptionHub, V2SubscriptionProvider, V2SubscriptionSnapshot},
         websocket::{
             Schema as WebSocketSchema, StateProvider as WebSocketStateProvider,
             StateSnapshot as WebSocketStateSnapshot, WebSocketHub,

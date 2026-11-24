@@ -166,9 +166,9 @@ pub(super) fn build_manager_snapshot(
     let semantics = ManagerSemantics {
         focused_pid,
         game_focused: lifecycle.focus.game_focused,
-        enable_key_overlay: config.enable_key_overlay,
-        enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
-        enable_hit_offsets: config.enable_hit_offsets,
+        enable_key_overlay: true,
+        enable_mania_key_hit_errors: false,
+        enable_hit_offsets: false,
         instances: ready
             .iter()
             .map(|(entry, _)| {
@@ -196,9 +196,9 @@ pub(super) fn build_manager_snapshot(
         focused_pid,
         lifecycle.focus.game_focused,
         ApiRuntimeSettings {
-            enable_key_overlay: config.enable_key_overlay,
-            enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
-            enable_hit_offsets: config.enable_hit_offsets,
+            enable_key_overlay: true,
+            enable_mania_key_hit_errors: false,
+            enable_hit_offsets: false,
         },
         entries,
     )))
@@ -413,7 +413,7 @@ impl LegacyBridge {
                 tokio::select! {
                     _ = task_cancel.cancelled() => break,
                     changed = config.changed() => if changed.is_err() { break; },
-                    changed = demand.changed() => if changed.is_err() { break; },
+                    changed = demand.changed(), if demand.has_changed().is_ok() => if changed.is_err() { break; },
                     changed = lifecycle.changed() => if changed.is_err() { break; },
                     _ = &mut notified => {},
                     changed = foreground.changed() => if changed.is_err() { break; },
@@ -436,14 +436,8 @@ impl LegacyBridge {
         self.publish_lifecycle(&state);
     }
 }
-fn bridge_inputs(config: &Config, demand: vosu_osu_state::SubscriptionDemand) -> B1Inputs {
-    B1Inputs {
-        enable_key_overlay: config.enable_key_overlay,
-        enable_mania_key_hit_errors: config.enable_mania_key_hit_errors,
-        enable_hit_offsets: config.enable_hit_offsets,
-        v2_subscription_debounce: config.v2_subscription_debounce,
-        demand,
-    }
+fn bridge_inputs(_config: &Config, demand: vosu_osu_state::SubscriptionDemand) -> B1Inputs {
+    B1Inputs { demand }
 }
 impl LegacySink<B1Event, B1Inputs> for LegacyBridge {
     fn inputs(&self) -> watch::Receiver<B1Inputs> {

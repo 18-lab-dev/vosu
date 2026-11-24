@@ -1,3 +1,53 @@
+/// Safe advisory D20 data; no URLs, credentials, or unvalidated names are retained.
+#[derive(Clone, Debug)]
+pub struct RemovedNotice {
+    pub overlay: Option<String>,
+    pub feature: super::routes::RemovedFeature,
+    pub first_seen: std::time::Instant,
+    pub last_seen: std::time::Instant,
+    pub attempts: u64,
+}
+
+#[derive(Clone, Default)]
+struct RemovedNotices(Arc<Mutex<Vec<RemovedNotice>>>);
+
+impl RemovedNotices {
+    const TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+    fn expire(notices: &mut Vec<RemovedNotice>, now: std::time::Instant) {
+        notices.retain(|notice| now.saturating_duration_since(notice.last_seen) < Self::TTL);
+    }
+
+    fn record(&self, overlay: Option<String>, feature: super::routes::RemovedFeature, now: std::time::Instant) {
+        let mut notices = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        Self::expire(&mut notices, now);
+        if let Some(notice) = notices.iter_mut().find(|notice| notice.overlay == overlay && notice.feature == feature) {
+            notice.last_seen = now;
+            notice.attempts = notice.attempts.saturating_add(1);
+            return;
+        }
+        if overlay.is_some() && !notices.iter().any(|notice| notice.overlay == overlay) {
+            let known: std::collections::HashSet<_> = notices.iter().filter_map(|notice| notice.overlay.as_deref()).collect();
+            if known.len() == 128 {
+                let oldest = known.into_iter().min_by_key(|id| notices.iter()
+                    .filter(|notice| notice.overlay.as_deref() == Some(*id))
+                    .map(|notice| notice.last_seen).max()).unwrap().to_owned();
+                notices.retain(|notice| notice.overlay.as_deref() != Some(&oldest));
+            }
+        }
+        notices.push(RemovedNotice { overlay, feature, first_seen: now, last_seen: now, attempts: 1 });
+    }
+
+    fn snapshot(&self, now: std::time::Instant, installed: impl Fn(&str) -> bool) -> Vec<RemovedNotice> {
+        let snapshot = {
+            let mut notices = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            Self::expire(&mut notices, now);
+            notices.clone()
+        };
+        snapshot.into_iter().filter(|notice| notice.overlay.as_deref().is_none_or(&installed)).collect()
+    }
+}
+
 /// Counts sockets, not people or browser sources. Only explicit overlay identities count.
 #[derive(Clone, Default)]
 struct OverlayConnections(Arc<Mutex<HashMap<String, usize>>>);
@@ -90,5 +140,31 @@ mod dashboard_tests {
         drop(second);
         assert!(registry.counts().is_empty());
         assert!(registry.register(None).is_none());
+    }
+}
+
+#[cfg(test)]
+mod removed_notice_tests {
+    use super::*;
+    use super::super::routes::RemovedFeature::{LegacySkinIndex, SelectedV2Feed};
+
+    #[test]
+    fn bounded_deduplicated_unknown_cannot_evict_known_and_expiry_is_lazy() {
+        let notices = RemovedNotices::default();
+        let now = std::time::Instant::now();
+        for index in 0..129 {
+            notices.record(Some(format!("overlay-{index}")), SelectedV2Feed, now + std::time::Duration::from_secs(index));
+        }
+        for _ in 0..1000 {
+            notices.record(None, SelectedV2Feed, now);
+            notices.record(None, LegacySkinIndex, now);
+        }
+        let snapshot = notices.snapshot(now, |_| true);
+        assert_eq!(snapshot.len(), 130);
+        assert!(!snapshot.iter().any(|notice| notice.overlay.as_deref() == Some("overlay-0")));
+        assert_eq!(snapshot.iter().filter(|notice| notice.overlay.is_none()).count(), 2);
+        assert!(snapshot.iter().filter(|notice| notice.overlay.is_none()).all(|notice| notice.attempts == 1000));
+        assert_eq!(notices.snapshot(now, |_| false).len(), 2);
+        assert!(notices.snapshot(now + RemovedNotices::TTL + std::time::Duration::from_secs(129), |_| true).is_empty());
     }
 }
