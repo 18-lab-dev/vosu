@@ -581,3 +581,39 @@ impl UpdaterHandoff for RuntimeUpdater {
 pub(super) fn startup_role_allows_update_check(readiness: Option<&StartupReadiness>) -> bool {
     readiness.is_none()
 }
+pub(super) fn listen_target(config: &Config) -> io::Result<ListenTarget> {
+    if !config.server_port.is_finite()
+        || config.server_port.fract() != 0.0
+        || config.server_port < 0.0
+        || config.server_port > u16::MAX as f64
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "SERVER_PORT must be an integral value in the u16 range",
+        ));
+    }
+    Ok(ListenTarget::new(
+        config.server_ip.clone(),
+        config.server_port as u16,
+    ))
+}
+pub(super) fn dashboard_listen_target(config: &Config) -> io::Result<ListenTarget> {
+    let mut dashboard = config.clone();
+    dashboard.server_ip = config.dashboard_ip.clone();
+    dashboard.server_port = config.dashboard_port;
+    listen_target(&dashboard)
+}
+
+pub(super) fn resolved_static_root(paths: &Paths, config: &Config) -> io::Result<PathBuf> {
+    paths.static_path(&config.static_folder_path)
+}
+
+pub(super) fn reload_counter_static_root(
+    paths: &Paths,
+    config: &Config,
+    counters: &ReloadableCounterService,
+) -> io::Result<()> {
+    let static_root = resolved_static_root(paths, config)?;
+    counters.reload_static_root(static_root);
+    Ok(())
+}

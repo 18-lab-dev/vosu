@@ -1003,6 +1003,40 @@ rather than guessing. After commit, each plugin is authorized against current
 source policy and approval; a `process` plugin is recorded and reported as
 requiring the M5 process runtime and is never loaded in-process instead.
 
+**K0 composition contract (`vosu-core::catalog::runtime`, root
+`src/runtime/catalog.rs`).** One daemon-lifetime `CatalogRuntime` owns the
+composed services. Startup order: `CatalogFetchService::open` (S0 recovery
+reconciles C0 credential membership first), `InstalledStore::open` (I0 crash
+recovery), one executor and the G0 offer service registered as the plugin
+host's discovery observer, then the committed graph loads under current
+policy; discovery starts only afterwards and routes after that. Shutdown
+removes the observer, then cancels and joins the executor before plugins are
+destroyed. A corrupt or unrecoverable source or installed store is never
+rewritten: that feature is disabled and reported, and the daemon keeps
+running. Schema registration provenance comes from the loader: the bundled
+array and a package installed from an exact official identity register
+`TrustedOfficial` (so the official `x-visibility` rule works), every other
+installed source and the debug `--plugin` override register as third-party.
+Source removal and untrust run under the shared operation gate: T0's cleared
+approvals are durably published (a new installed generation) **before** the
+source change, then running in-process plugins whose authority was removed
+get the daemon-lifetime "revocation pending restart" marker; re-trust never
+clears it, only a daemon restart does. While installed records are unreadable,
+a trust-lowering change is refused rather than risking a resurrected approval.
+G0 refreshes after every source
+publication or mutation and every installed change with the installed
+generation P0 pins. Install roots, until M7 replaces the legacy web hosts:
+records and journal in `<data>/catalog`; plugin package trees in
+`<data>/catalog/plugins/<id>` with durable data kept outside them in
+`<data>/plugins/<id>` (the bundled convention); tools in the legacy tool
+host's user root `<data>/tools`, served by that host after a rescan; overlays
+in the static folder resolved at startup, served by the existing overlay
+host. The overlay root is pinned for the daemon lifetime: after a runtime
+static-folder change, catalog overlays keep installing into the startup folder
+until restart. I0 never overwrites a directory it did not install, and its
+`.stage-*`/`.vosu-backup-*` transaction names differ from the legacy
+installers'; the tool host ignores hidden directories.
+
 ### Dependency-only autoremove
 
 Each installed plugin's origin is recorded as `installed_for: "requested"` (the

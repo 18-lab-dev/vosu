@@ -490,6 +490,111 @@ fn development_schema_with_x_visibility_refuses_instance() {
     );
 }
 
+/// M6b K0: a dlopened catalog package registers its schema with the
+/// provenance of its exact installed source, not "dlopened = untrusted".
+/// The same real library and `x-visibility` schema registers only when
+/// installed from an official identity; a trusted/user source and the debug
+/// `--plugin` override keep the third-party refusal.
+#[test]
+fn installed_schema_provenance_follows_the_official_source_identity() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let library = if cfg!(windows) {
+        "vosu_plugin_testkit.dll"
+    } else {
+        "libvosu_plugin_testkit.so"
+    };
+    let built = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(library);
+    assert!(
+        built.is_file(),
+        "testkit cdylib must be built beside this test binary"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(built, dir.path().join(library)).unwrap();
+    let target = if cfg!(windows) {
+        "x86_64-pc-windows-msvc"
+    } else {
+        "x86_64-unknown-linux-gnu"
+    };
+    std::fs::write(
+        dir.path().join("manifest.toml"),
+        format!(
+            "kind='plugin'\nmanifest_version=1\nid='vosu.osu'\nname='Official'\nversion='1.0.0'\nhost='>=2.0.0-alpha.1, <3.0.0'\nabi_version=1\nruntime='in-process'\n[[provides]]\nid='field:vosu.osu'\nversion='1.1.0'\nschema='schema.json'\n[targets.{target}]\nlibrary='{library}'\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("schema.json"), r#"{"title":"vosu.osu","version":"1.1.0","type":"object","properties":{"internal":{"type":"object","x-visibility":"plugins"}}}"#).unwrap();
+    let version = semver::Version::parse("2.0.0-alpha.1").unwrap();
+    let snapshot = crate::plugin::ValidationSnapshot::default();
+    let registered = |host: &Arc<crate::plugin::PluginHost>| {
+        host.state()
+            .registry
+            .read()
+            .unwrap()
+            .get("vosu.osu")
+            .is_some()
+    };
+
+    use vosu_plugin_api::manifest::schema::SchemaProvenance;
+    let (_logs, host) = test_host(rt.handle().clone());
+    let official = registry::load_installed(
+        &version,
+        &snapshot,
+        dir.path(),
+        "18-lab-dev/vosu-tools",
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        official.schema_provenance(),
+        SchemaProvenance::TrustedOfficial
+    );
+    host.create_instance(
+        PluginInstanceId::new(8412),
+        &official,
+        dir.path().to_owned(),
+        None,
+    )
+    .unwrap();
+    assert!(registered(&host));
+    host.destroy_all(Duration::from_secs(5));
+    assert!(!registered(&host));
+
+    // A `vosu.` id is reserved to official identities; the same package
+    // from a user source is refused by the SDK context before any dlopen.
+    assert!(matches!(
+        registry::load_installed(&version, &snapshot, dir.path(), "alice/plugins", false),
+        Err(crate::plugin::HostError::Manifest(_))
+    ));
+    // A trusted/user installed package and the debug `--plugin` override
+    // (unchanged) get `Untrusted`, so their `x-visibility` stays refused.
+    let text = std::fs::read_to_string(dir.path().join("manifest.toml"))
+        .unwrap()
+        .replace("vosu.osu", "test.k0.osu");
+    std::fs::write(dir.path().join("manifest.toml"), text).unwrap();
+    std::fs::write(dir.path().join("schema.json"), r#"{"title":"test.k0.osu","version":"1.1.0","type":"object","properties":{"internal":{"type":"object","x-visibility":"plugins"}}}"#).unwrap();
+    let (_logs, host) = test_host(rt.handle().clone());
+    for loaded in [
+        registry::load_development(&version, &snapshot, dir.path(), true).unwrap(),
+        registry::load_installed(&version, &snapshot, dir.path(), "alice/plugins", false).unwrap(),
+    ] {
+        assert_eq!(loaded.schema_provenance(), SchemaProvenance::Untrusted);
+        assert!(matches!(
+            host.create_instance(
+                PluginInstanceId::new(8413),
+                &loaded,
+                dir.path().to_owned(),
+                None
+            ),
+            Err(crate::plugin::HostError::State(_))
+        ));
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn development_schema_symlink_cannot_escape_plugin_directory() {

@@ -247,4 +247,33 @@ impl InstalledStore {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = document;
     }
+    /// T0/A6b.7 revocation persistence: durably clear the approvals of the
+    /// named installed plugins before any later load or restart can observe
+    /// them, advancing the generation (plans pinned to the old one go stale).
+    /// The caller holds the shared catalog operation gate. Returns the
+    /// published generation; nothing to clear publishes nothing.
+    pub fn clear_approvals(&self, plugins: &[&str]) -> Result<u64, InstallError> {
+        let mut document = self.snapshot();
+        let mut changed = false;
+        for record in &mut document.records {
+            if record.kind == InstalledKind::Plugin
+                && record.approval.is_some()
+                && plugins.contains(&record.id.as_str())
+            {
+                record.approval = None;
+                changed = true;
+            }
+        }
+        if !changed {
+            return Ok(document.generation);
+        }
+        document.generation = document
+            .generation
+            .checked_add(1)
+            .ok_or(InstallError::RecordsInvalid)?;
+        publish_records(&self.layout, &document)?;
+        let generation = document.generation;
+        self.published(document);
+        Ok(generation)
+    }
 }

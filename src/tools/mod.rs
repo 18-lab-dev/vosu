@@ -668,6 +668,12 @@ impl ToolHost {
             self.stop(&entry).await;
         }
     }
+    /// Catalog v2 installation's web-package handoff (M6b I0/K0): v2 tools
+    /// commit into this host's user root and are served after this rescan
+    /// until M7 replaces the legacy host.
+    pub async fn rescan_installed(self: &Arc<Self>) {
+        self.rescan().await;
+    }
     async fn rescan(self: &Arc<Self>) {
         let _gate = self.gate.lock().await;
         if let Err(error) = self.recover_replacement() {
@@ -684,6 +690,10 @@ impl ToolHost {
                     .flatten()
                     .filter_map(Result::ok)
                     .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                    // Installer transaction directories (`.stage-*`, catalog
+                    // `.vosu-backup-*`, legacy `.extract-*`) are never tools;
+                    // a hidden name is never a valid tool id either.
+                    .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
                     .map(|e| e.path())
                     .collect()
             };

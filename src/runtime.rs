@@ -85,6 +85,7 @@ use vosu_osu_reader::discovery::{StartupArgs, StartupValue};
 use vosu_osu_state::{StateBundleSnapshot, StateWorkerError, duration_from_millis_saturating};
 
 pub(crate) mod bridge_b1;
+mod catalog;
 mod cli;
 mod config;
 mod dev_plugins;
@@ -99,6 +100,7 @@ mod test_support;
 mod tracing_log;
 mod worker;
 
+pub use catalog::{CatalogComposition, CatalogRoots, catalog_target};
 #[cfg(feature = "test-harness")]
 pub use config::test_updater_handoff;
 pub use lifecycle::{ProductionRuntime, is_startup_owner_conflict, run_cli};

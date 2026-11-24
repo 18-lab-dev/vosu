@@ -57,6 +57,13 @@ pub struct LoadedPlugin {
     // for as long as either side needs it. `None` for a bundled plugin,
     // which is linked into this executable rather than `dlopen`ed.
     library: Option<Arc<Library>>,
+    /// Namespace-schema registration authority, decided by the loader from
+    /// provenance: `TrustedOfficial` only for the compiled `BUNDLED` array
+    /// and catalog packages installed from an exact official source identity
+    /// (the same rule catalog I0 compiles staged schemas with). Debug
+    /// `--plugin` overrides and trusted/user-source packages stay
+    /// `Untrusted`; a dlopened library never implies official authority.
+    schema_provenance: vosu_plugin_api::manifest::schema::SchemaProvenance,
 }
 
 impl LoadedPlugin {
@@ -95,6 +102,12 @@ impl LoadedPlugin {
     /// `LoadedPlugin` itself stays alive. `None` for a bundled plugin.
     pub(crate) fn library_handle(&self) -> Option<Arc<Library>> {
         self.library.clone()
+    }
+
+    /// Provenance the state registry compiles this plugin's namespace
+    /// schemas with (`x-visibility` requires `TrustedOfficial`).
+    pub fn schema_provenance(&self) -> vosu_plugin_api::manifest::schema::SchemaProvenance {
+        self.schema_provenance
     }
 }
 
@@ -214,6 +227,8 @@ pub fn load_bundled(
                     .map(|s| (*s).to_owned())
                     .collect(),
                 library: None,
+                schema_provenance:
+                    vosu_plugin_api::manifest::schema::SchemaProvenance::TrustedOfficial,
             })
         })
         .collect()
@@ -242,13 +257,22 @@ pub fn load_development(
             reason: "`--plugin <dir>` only loads an in-process development plugin",
         });
     }
-    load_external(manifest, dir)
+    // A debug override is never installed-source authority.
+    load_external(
+        manifest,
+        dir,
+        vosu_plugin_api::manifest::schema::SchemaProvenance::Untrusted,
+    )
 }
 
 /// Loads one catalog-installed plugin from its committed package directory
 /// (catalog I0 runtime handoff). Trust is not decided here: the caller must
 /// have run `catalog::trust::CurrentPolicy::authorize_load` for this exact
 /// installed artifact under the catalog operation gate immediately before.
+/// `official` is that decision's tier (`TrustTier::Official`, i.e. the exact
+/// installed source identity is a fixed official one): it selects the SDK
+/// context and `TrustedOfficial` schema registration, matching how I0
+/// compiled the staged schemas. A trusted user source stays `Untrusted`.
 /// A `runtime = "process"` package is refused with
 /// `ProcessRuntimeUnavailable`: M5 owns real child execution and the daemon
 /// never `dlopen`s it as an in-process substitute.
@@ -275,10 +299,20 @@ pub fn load_installed(
     if manifest.runtime != Runtime::InProcess {
         return Err(HostError::ProcessRuntimeUnavailable);
     }
-    load_external(manifest, dir)
+    use vosu_plugin_api::manifest::schema::SchemaProvenance;
+    let provenance = if official {
+        SchemaProvenance::TrustedOfficial
+    } else {
+        SchemaProvenance::Untrusted
+    };
+    load_external(manifest, dir, provenance)
 }
 
-fn load_external(manifest: PluginManifest, dir: &Path) -> Result<LoadedPlugin, HostError> {
+fn load_external(
+    manifest: PluginManifest,
+    dir: &Path,
+    schema_provenance: vosu_plugin_api::manifest::schema::SchemaProvenance,
+) -> Result<LoadedPlugin, HostError> {
     let root = dir.canonicalize()?;
     let settings_schema = manifest
         .settings_schema
@@ -378,6 +412,7 @@ fn load_external(manifest: PluginManifest, dir: &Path) -> Result<LoadedPlugin, H
         action_schemas,
         compiled_action_schemas,
         library: Some(Arc::new(library)),
+        schema_provenance,
     })
 }
 
