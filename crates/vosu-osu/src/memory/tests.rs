@@ -374,12 +374,16 @@ fn mixed_chains_share_one_submission_and_target_pointer_width() {
         let host = FakeHost::new(|_, _| {}, bytes, 0, Arc::new(AtomicBool::new(true)));
         let process = PlanProcessMemory::new(host, 1, 4242, bitness);
         let (mut direct, mut dependent, mut null) = ([7; 4], [7; 4], [7; 4]);
+        let (mut direct_address, mut dependent_address, mut null_address) = (999, 999, 999);
         process
             .read_chains(
                 &mut [
-                    ChainReadRequest::new(80, &[], &mut direct),
-                    ChainReadRequest::new(0, &[4, 8], &mut dependent),
-                    ChainReadRequest::new(88, &[0], &mut null),
+                    ChainReadRequest::new(80, &[], &mut direct)
+                        .with_resolved_address(&mut direct_address),
+                    ChainReadRequest::new(0, &[4, 8], &mut dependent)
+                        .with_resolved_address(&mut dependent_address),
+                    ChainReadRequest::new(88, &[0], &mut null)
+                        .with_resolved_address(&mut null_address),
                 ],
                 bitness,
             )
@@ -387,6 +391,10 @@ fn mixed_chains_share_one_submission_and_target_pointer_width() {
         assert_eq!(u32::from_le_bytes(direct), 456);
         assert_eq!(u32::from_le_bytes(dependent), 123);
         assert_eq!(u32::from_le_bytes(null), 32);
+        assert_eq!(
+            (direct_address, dependent_address, null_address),
+            (80, 72, 0)
+        );
         assert_eq!(process.host.submission_count(), 1);
     }
 }
@@ -398,12 +406,15 @@ fn mixed_chains_publish_destinations_and_errors_in_request_order() {
     bytes[72..76].copy_from_slice(&123u32.to_le_bytes());
     let process = memory(bytes, 0);
     let (mut first, mut failed, mut last) = ([7; 4], [7; 4], [7; 4]);
+    let (mut first_address, mut failed_address, mut last_address) = (999, 999, 999);
     let error = process
         .read_chains(
             &mut [
-                ChainReadRequest::new(72, &[], &mut first),
-                ChainReadRequest::new(0, &[4], &mut failed),
-                ChainReadRequest::new(72, &[], &mut last),
+                ChainReadRequest::new(72, &[], &mut first)
+                    .with_resolved_address(&mut first_address),
+                ChainReadRequest::new(0, &[4], &mut failed)
+                    .with_resolved_address(&mut failed_address),
+                ChainReadRequest::new(72, &[], &mut last).with_resolved_address(&mut last_address),
             ],
             ProcessBitness::X64,
         )
@@ -412,6 +423,10 @@ fn mixed_chains_publish_destinations_and_errors_in_request_order() {
     assert_eq!(u32::from_le_bytes(first), 123);
     assert_eq!(failed, [7; 4]);
     assert_eq!(last, [7; 4]);
+    assert_eq!(
+        (first_address, failed_address, last_address),
+        (72, 999, 999)
+    );
 }
 
 #[test]
@@ -439,6 +454,22 @@ fn mixed_chains_bound_stack_chunks_and_accept_the_maximum_chain_depth() {
         .unwrap();
     assert_eq!(process.host.submission_count(), 1);
     assert_eq!(bytes, [[0]; 24]);
+}
+
+#[test]
+fn mixed_chain_fallback_preserves_resolved_address_reporting() {
+    let process = memory(vec![0; 8], 0);
+    let mut dst = [7];
+    let mut address = 999;
+    process
+        .read_chains(
+            &mut [ChainReadRequest::new(0, &[0; 8], &mut dst).with_resolved_address(&mut address)],
+            ProcessBitness::X64,
+        )
+        .unwrap();
+    assert_eq!(dst, [0]);
+    assert_eq!(address, 0);
+    assert_eq!(process.host.submission_count(), 9);
 }
 
 mod zero_alloc;

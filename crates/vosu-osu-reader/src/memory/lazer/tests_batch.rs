@@ -287,6 +287,67 @@ fn precise_menu_probe_reuses_connection_and_clock_without_rechecking() {
 }
 
 #[test]
+fn precise_player_probe_matches_classification_and_selected_clock() {
+    let offsets = LazerOffsets::embedded().unwrap();
+    for with_drawable in [true, false] {
+        let (mut memory, base, screen) = player_screen(&offsets);
+        if !with_drawable {
+            memory.ptr(
+                screen
+                    + offsets
+                        .osu_game_screens_play_player
+                        .drawable_ruleset_k_backing_field,
+                0,
+            );
+        }
+        let memory = Arc::new(memory);
+        let mut scalar = decoder_with(Arc::new(ScalarOnly(memory.clone())), offsets.clone());
+        scalar.set_resolved_state(base, screen);
+        let player = scalar.player().unwrap();
+        let expected = (
+            scalar.check_spectator(screen).unwrap(),
+            scalar.check_watching_replay(screen, player).unwrap(),
+            scalar.current_time_for_player(player).unwrap(),
+        );
+        let mut batched = decoder(memory);
+        batched.set_resolved_state(base, screen);
+        batched.reset_capture_roots(true);
+        batched.prefetch_precise_roots().unwrap();
+        assert_eq!(batched.prefetch_precise_player(player).unwrap(), expected);
+    }
+}
+
+#[test]
+fn chained_collection_headers_preserve_list_and_inline_array_addresses() {
+    for inline in [false, true] {
+        let mut memory = SparseMemory::default();
+        let (root, list, items) = (0x1000, 0x2000, 0x3000);
+        memory.ptr(root, list);
+        memory.put(list + 8, [0; 12]);
+        if inline {
+            memory.i32(list + 8, 3);
+            memory.i32(list + 0x10, 10_000_001);
+        } else {
+            memory.ptr(list + 8, items);
+            memory.i32(list + 0x10, 3);
+        }
+        let decoder = decoder(Arc::new(memory));
+        assert_eq!(
+            decoder.chained_list_header(root, &[8]),
+            Some((list, 3, if inline { list + 0x10 } else { items + 0x10 })),
+        );
+    }
+    let mut memory = SparseMemory::default();
+    memory.ptr(0x1000, 0);
+    memory.put(8, [0; 12]);
+    assert!(
+        decoder(Arc::new(memory))
+            .chained_list_header(0x1000, &[8])
+            .is_none()
+    );
+}
+
+#[test]
 fn batched_global_matches_sequential_decoding_for_a_player_screen() {
     let offsets = LazerOffsets::embedded().unwrap();
     let decode = |batched: bool| {

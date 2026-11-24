@@ -203,20 +203,27 @@ impl MemoryReader for LazerMemory {
                 .osu_game_screens_play_player
                 .hudoverlay_k_backing_field,
         )?;
-        let controller = self.ptr(add(
+        let controller_address = add(
             overlay,
             self.offsets
                 .osu_game_screens_play_hudoverlay
                 .input_count_controller,
-        )?)?;
-        let bindable = self.ptr(add(
-            controller,
-            self.offsets
-                .osu_game_screens_play_hud_input_count_controller
-                .triggers,
-        )?)?;
-        let collection = self.ptr(add(bindable, 0x18)?)?;
-        let (size, items) = self.list_info(collection)?;
+        )?;
+        let triggers_offset = self
+            .offsets
+            .osu_game_screens_play_hud_input_count_controller
+            .triggers;
+        let (collection, size, items) = if let Some(header) =
+            self.chained_list_header(controller_address, &[triggers_offset, 0x18, 8])
+        {
+            header
+        } else {
+            let controller = self.ptr(controller_address)?;
+            let bindable = self.ptr(add(controller, triggers_offset)?)?;
+            let collection = self.ptr(add(bindable, 0x18)?)?;
+            let (size, items) = self.list_info(collection)?;
+            (collection, size, items)
+        };
         const BUTTON_COUNT: usize = KeyOverlayButton::lazer_button_count();
         if size > BUTTON_COUNT {
             return Err(corrupt("managed collection", collection, "invalid size"));
@@ -319,19 +326,24 @@ impl MemoryReader for LazerMemory {
             "hit errors player",
             self.current_screen,
         )?;
-        let processor = self.ptr(add(
+        let processor = self.screen_ptr(
             p,
             self.offsets
                 .osu_game_screens_play_player
                 .score_processor_k_backing_field,
-        )?)?;
-        let list = self.ptr(add(
+        )?;
+        let list_address = add(
             processor,
             self.offsets
                 .osu_game_rulesets_scoring_score_processor
                 .hit_events,
-        )?)?;
-        let (size, items) = self.hybrid_list_info(list)?;
+        )?;
+        let (size, items) =
+            if let Some((_, size, items)) = self.chained_list_header(list_address, &[8]) {
+                (size, items)
+            } else {
+                self.hybrid_list_info(self.ptr(list_address)?)?
+            };
         Ok(ReadStatus::Ready(
             self.read_hit_error_suffix(items, size, last)?,
         ))
@@ -559,12 +571,26 @@ impl MemoryReader for LazerMemory {
         };
         let playing = player != 0 || is_loader;
         #[cfg(windows)]
+        let prefetched = if playing && self.menu_global.beatmap_time.is_none() {
+            self.prefetch_precise_player(player)
+        } else {
+            None
+        };
+        #[cfg(not(windows))]
+        let prefetched: Option<(bool, bool, f64)> = None;
+        #[cfg(windows)]
         if !playing && self.menu_global.multi.is_none() {
             let _ = self.prefetch_precise_menu();
         }
         if playing {
-            let spectator = self.check_spectator(self.current_screen)?;
-            let replay = self.check_watching_replay(self.current_screen, player)?;
+            let (spectator, replay) = if let Some((spectator, replay, _)) = prefetched {
+                (spectator, replay)
+            } else {
+                (
+                    self.check_spectator(self.current_screen)?,
+                    self.check_watching_replay(self.current_screen, player)?,
+                )
+            };
             self.set_playback_source(replay, spectator);
         } else {
             self.watching_replay = false;
@@ -594,7 +620,11 @@ impl MemoryReader for LazerMemory {
         };
         self.status = status as i64;
         self.player_loading = is_loader;
-        let time = js_round_number(self.current_time_for_player(player)?);
+        let time = js_round_number(if let Some((_, _, time)) = prefetched {
+            time
+        } else {
+            self.current_time_for_player(player)?
+        });
         self.precise_player = (player != 0).then_some(PrecisePlayerCache {
             screen: self.current_screen,
             player,

@@ -10,7 +10,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
-pub use vosu_sys::process::read_indirect_many_default;
 pub use vosu_sys::process::scanner::{
     BatchScanResult, Pattern, PatternParseError, SCAN_CHUNK_SIZE,
 };
@@ -18,6 +17,7 @@ pub use vosu_sys::process::{
     ChainReadRequest, IndirectReadRequest, MemoryError, MemoryRead, MemoryRegion, ProcessBitness,
     ProcessMemory, ReadRequest, ReadStatus,
 };
+pub use vosu_sys::process::{read_chains_default, read_indirect_many_default};
 
 const MAX_MANAGED_STRING_LENGTH: usize = 4095;
 const MAX_MANAGED_COLLECTION_LENGTH: usize = 1_000_000;

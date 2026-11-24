@@ -437,11 +437,13 @@ fn mixed_chains_are_allocation_free_once_warmed() {
     host.expected_stages = 4;
     let process = PlanProcessMemory::new(host, 1, 123, ProcessBitness::X64);
     let (mut direct, mut dependent) = ([0; 4], [0; 4]);
+    let mut resolved = 0;
     let mut read = || {
         process.read_chains(
             &mut [
                 vosu_osu_reader::process::ChainReadRequest::new(72, &[], &mut direct),
-                vosu_osu_reader::process::ChainReadRequest::new(0, &[4, 8], &mut dependent),
+                vosu_osu_reader::process::ChainReadRequest::new(0, &[4, 8], &mut dependent)
+                    .with_resolved_address(&mut resolved),
             ],
             ProcessBitness::X64,
         )
@@ -451,6 +453,7 @@ fn mixed_chains_are_allocation_free_once_warmed() {
     result.unwrap();
     assert_eq!(u32::from_le_bytes(direct), 123);
     assert_eq!(u32::from_le_bytes(dependent), 123);
+    assert_eq!(resolved, 72);
     assert_eq!(
         allocations, 0,
         "mixed dependency graphs must remain stack-only"

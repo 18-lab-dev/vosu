@@ -270,6 +270,9 @@ impl<H: HostServices + Send + Sync + 'static> PlanProcessMemory<H> {
                 let read = &mut reads[read_index];
                 if depth == read.offsets.len() {
                     apply_result(results, index, address, read.dst)?;
+                    if let Some(dst) = read.resolved_address.as_deref_mut() {
+                        *dst = address;
+                    }
                     read_index += 1;
                     depth = 0;
                     if let Some(next) = reads.get(read_index) {
@@ -474,9 +477,7 @@ impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemor
                             .all(|&offset| i64::try_from(offset).is_ok())
                 });
             if !eligible {
-                for read in chunk {
-                    self.read_chain(read.address, read.offsets, bitness, read.dst)?;
-                }
+                vosu_osu_reader::process::read_chains_default(self, chunk, bitness)?;
                 continue;
             }
             let ops: usize = chunk.iter().map(|read| read.offsets.len() + 1).sum();
@@ -487,9 +488,7 @@ impl<H: HostServices + Send + Sync + 'static> ProcessMemory for PlanProcessMemor
                     .checked_add((read.offsets.len() + 1).checked_mul(RESULT_ENTRY_BYTES)?)
             });
             if bytes.is_none_or(|bytes| bytes > PLAN_CAP) {
-                for read in chunk {
-                    self.read_chain(read.address, read.offsets, bitness, read.dst)?;
-                }
+                vosu_osu_reader::process::read_chains_default(self, chunk, bitness)?;
             } else if ops <= 8 {
                 self.submit_chains::<8>(chunk, ops)?;
             } else if ops <= 32 {

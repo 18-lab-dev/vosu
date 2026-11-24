@@ -360,6 +360,34 @@ impl LazerMemory {
         list_shape(list, marker, value)
     }
 
+    /// A chain ending at a collection's `+8` header returns both its shape and
+    /// resolved object address, without rereading any pointer to interpret arrays.
+    pub(super) fn chained_list_header(
+        &self,
+        address: usize,
+        offsets: &[usize],
+    ) -> Option<(usize, usize, usize)> {
+        if usize::BITS != 64 || self.process.pointer_size() != 8 {
+            return None;
+        }
+        let mut header = [0u8; 12];
+        let mut resolved = 0;
+        self.process
+            .read_chains(
+                &mut [
+                    crate::process::ChainReadRequest::new(address, offsets, &mut header)
+                        .with_resolved_address(&mut resolved),
+                ],
+                self.process.bitness(),
+            )
+            .ok()?;
+        let list = resolved.checked_sub(8).filter(|list| *list != 0)?;
+        let marker = i32::from_le_bytes(header[8..12].try_into().unwrap());
+        let value = u64::from_le_bytes(header[..8].try_into().unwrap());
+        let (size, items) = list_shape(list, marker, value).ok()?;
+        Some((list, size, items))
+    }
+
     pub(super) fn list_items(
         &self,
         list: usize,
@@ -521,6 +549,79 @@ impl LazerMemory {
             return Ok(None);
         };
         Ok((clock != 0).then_some(clock))
+    }
+
+    /// Playback classification and the first clock dependency are independent.
+    /// Keep the selected clock's next read separate instead of speculatively
+    /// reading both branches of a nullable clock source.
+    #[cfg(any(windows, test))]
+    pub(super) fn prefetch_precise_player(&self, player: usize) -> Option<(bool, bool, f64)> {
+        if self.process.pointer_size() != 8 {
+            return None;
+        }
+        let clock = match self.gameplay_clock_for_player(player).ok()? {
+            Some(clock) => clock,
+            None => self.beatmap_clock().ok()?,
+        };
+        let drawable = if player == 0 {
+            0
+        } else {
+            self.screen_ptr(
+                player,
+                self.offsets
+                    .osu_game_screens_play_player
+                    .drawable_ruleset_k_backing_field,
+            )
+            .ok()?
+        };
+        let replay_address = if drawable == 0 {
+            0
+        } else {
+            add(
+                drawable,
+                self.offsets
+                    .osu_game_rulesets_ui_drawable_ruleset
+                    .replay_score_k_backing_field,
+            )
+            .ok()?
+        };
+        let (mut api, mut decoupled, mut replay) = ([0; 8], [0; 8], [0; 8]);
+        let mut reads = [
+            crate::process::ChainReadRequest::new(
+                add(self.current_screen, 0x3f0).ok()?,
+                &[],
+                &mut api,
+            ),
+            crate::process::ChainReadRequest::new(
+                add(
+                    clock,
+                    self.offsets
+                        .osu_game_beatmaps_framed_beatmap_clock
+                        .decoupled_track,
+                )
+                .ok()?,
+                &[],
+                &mut decoupled,
+            ),
+            crate::process::ChainReadRequest::new(replay_address, &[], &mut replay),
+        ];
+        self.process
+            .read_chains(
+                &mut reads[..if drawable == 0 { 2 } else { 3 }],
+                self.process.bitness(),
+            )
+            .ok()?;
+        let pointer = |bytes| usize::try_from(u64::from_le_bytes(bytes)).ok();
+        let spectator = self
+            .spectator_from_api(self.current_screen, pointer(api)?)
+            .ok()?;
+        let replay = self
+            .watching_replay_from_score(self.current_screen, pointer(replay)?)
+            .ok()?;
+        let time = self
+            .clock_time_after_probe(clock, pointer(decoupled)?)
+            .ok()?;
+        Some((spectator, replay, time))
     }
 
     /// The two menu classifiers share a connection value; its chain and the
