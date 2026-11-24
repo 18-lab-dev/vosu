@@ -7,6 +7,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add exact-identity catalog source settings and HTTPS source parsing, with
   dedicated trust/private-network mutations and journaled credential-purge
   recovery. Preserve legacy source lists and migration markers for M8.
+- Add pure current-source native trust policy and exact artifact approvals.
+  Revocation clears process approvals and reports running in-process code as
+  disabled pending user restart; actual runtime handoff remains M5/W4 work.
 
 ## Unreleased — 2.0 M6a
 

@@ -1543,6 +1543,20 @@ instance generations and uses M5 cleanup; running in-process revocation
 remains pending user restart. A5.1's owner-pending Linux privilege policy and
 M5/S1 native gates remain external blockers, not permission to weaken §7.3.
 
+W2's pure `catalog::trust::CurrentPolicy` consumes a fresh S0 generation and
+records at plan/confirm/load. `catalog::approvals::{Artifact,Approval}` bind
+id, exact source, version, hash and runtime; neither a saved tier nor a matching
+hash grants trust. `InstalledPolicy::source_changed` clears prior approvals on
+trusted-to-user transitions (including source removal), returning `StopProcess`
+or `PendingRestart` for running code. W4 persists the cleared approval through
+I0 before another load/restart, applies M5 stop effects and retains the
+in-process disabled marker for the daemon lifetime, even after re-trust/rescan.
+`authorize_load` is a current-policy check, not a durable load permit; the
+shared operation gate must cover its final check and execution admission.
+H0 owns dashboard-listener/provenance/CSRF checks and shows `TRUST_WARNING`
+before every false-to-true grant. `TrustChange` accepts only `trusted`;
+`warning_shown` is rejected, not an authorization credential.
+
 **M7 seam:** core owns source/credential/trust/plan/install/remove/job
 handlers and bounded redacted views. Current root server handlers become thin
 listener/provenance/CSRF/DTO facades to those services; current web hosts retain
