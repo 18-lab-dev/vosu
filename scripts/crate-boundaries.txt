@@ -117,3 +117,5 @@ vosu-adapter-upstream -> vosu-surface
 vosu-adapter-upstream -> vosu-core
 vosu-adapter-upstream -> vosu-osu
 vosu-adapter-upstream -> vosu-osu-state
+vosu-adapter-upstream -> vosu-osu-calc
+vosu -> vosu-adapter-upstream

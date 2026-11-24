@@ -169,3 +169,26 @@ response failure) authorize **no** adapter-wire deviation: restore bestOF /
 roomID and use availability to distinguish omission from failure. The stable
 manager temporary entry remains until T0 supplies its actual evidence; A4
 does not mark it closed. No other temporary exemption is approved.
+
+## R1 declared-root files and calculation
+
+The requester-injected providers retain the captured session and declared
+root epoch; private path echoes cannot provide root authority. The `skins`
+slot is already the selected stable skin directory, not its parent. Case
+fallback pages retained directories to completion without a full-tree cache.
+Lazer legacy skin requests and the retired metadata index return 404; API v1
+tree/resource resolution and membership are unchanged.
+
+Legacy HTML directory listings admit **131,072 entries / 16 MiB of names**.
+At either overflow they emit an explicit truncated marker. The named
+`security` divergence `legacy-directory-listing-budget` bounds directory
+allocation without cutting off ordinary heavy-user 20k–50k Songs roots.
+Case lookup does not share this representation cap or report false absence.
+Synthetic tests distinguish exact limits from limit + 1 for both budgets.
+
+Explicit calculation paths use the current session's songs slot (lazer:
+files), or the most-specific containing declared root for absolute spellings.
+Both requested and canonical retained-object extensions must be `.osu`;
+an `alias.osu` resolving to a non-chart extension remains rejected. No-path
+calculation reads the captured published chart resource. `LegacyRosuEngine`
+and all query, mod and result mappings remain unchanged.

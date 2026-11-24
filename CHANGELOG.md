@@ -28,6 +28,11 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Add opaque declared-root file/directory operations and capability-checked
   chart-resource readers for bundled adapters, reusing M3 confinement and stream
   leases without changing API v1 resource membership or legacy routes.
+- Add requester-injected upstream file/calculation providers for the M4a atomic
+  cutover: retained declared-root reads, stable case/directory lookup, lazer
+  legacy skin 404 and root-confined legacy calculation without changing its engine.
+  Legacy directory HTML has a 131,072-entry / 16 MiB name budget and explicit
+  truncation marker. Production mounting remains with I0.
 
 ## Unreleased — 2.0 M3
 

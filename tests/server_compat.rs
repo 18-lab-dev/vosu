@@ -2,7 +2,8 @@
     clippy::disallowed_methods,
     reason = "test fixtures write scratch files and sleep"
 )]
-
+#[path = "server_compat/declared_roots.rs"]
+mod declared_roots;
 use std::{
     future::Future,
     io::{self, Write},

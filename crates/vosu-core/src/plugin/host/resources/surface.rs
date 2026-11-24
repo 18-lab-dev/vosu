@@ -113,8 +113,13 @@ impl FilesRequester for Requester {
             let owner = self.selected_owner(&host, &selected)?;
             if !Path::new(&spelling).is_absolute() {
                 let path = RelativeChild::parse(&spelling)?;
-                let slot = if selected.variant == "lazer" { "files" } else { "songs" };
-                let root = host.resource_root(owner.instance, owner.handle, slot)
+                let slot = if selected.variant == "lazer" {
+                    "files"
+                } else {
+                    "songs"
+                };
+                let root = host
+                    .resource_root(owner.instance, owner.handle, slot)
                     .map_err(request_error)?;
                 let authority = self.authority();
                 return tokio::task::spawn_blocking(move || {
@@ -122,7 +127,9 @@ impl FilesRequester for Requester {
                     let path = vosu_sys::fs::SafeRelativePath::parse(path.as_str())
                         .map_err(super::surface_files::native_error)?;
                     opened_calculation(super::surface_files::open_root(&root, &path)?)
-                }).await.map_err(|_| FileError::TargetGone)?;
+                })
+                .await
+                .map_err(|_| FileError::TargetGone)?;
             }
             let mut slots = {
                 let state = host.resource_state.lock().unwrap();
@@ -173,8 +180,12 @@ impl FilesRequester for Requester {
 }
 
 fn opened_calculation(child: vosu_sys::fs::SafeChild) -> Result<OpenedFile, FileError> {
-    let canonical = child.canonical_path().map_err(super::surface_files::native_error)?;
-    if canonical.extension().and_then(|ext| ext.to_str())
+    let canonical = child
+        .canonical_path()
+        .map_err(super::surface_files::native_error)?;
+    if canonical
+        .extension()
+        .and_then(|ext| ext.to_str())
         .is_none_or(|ext| !ext.eq_ignore_ascii_case("osu"))
     {
         return Err(FileError::InvalidPath);
