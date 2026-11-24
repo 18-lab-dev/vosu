@@ -57,6 +57,13 @@ pub(super) fn run(mut args: impl Iterator<Item = String>) -> Result<()> {
     let attachment = plan::Attachment::new(plan::native_record(pid)?, "vosu.bench.pid-phases")?;
     // Prime the same adapter used by live_reader_bench before profiling flat plans.
     black_box(attachment.process.read_u32(address)?);
+    println!(
+        "setup_plans={}",
+        attachment
+            .submissions
+            .load(std::sync::atomic::Ordering::Relaxed)
+            - 1
+    );
     let (host, handle) = attachment.as_ref();
     let profiling = std::env::var_os("VOSU_READ_PLAN_PROFILE").is_some_and(|value| value == "1");
     if profiling && !read_plan_profile::COMPILED_IN {

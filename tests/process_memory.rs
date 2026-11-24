@@ -683,6 +683,12 @@ fn plan_memory_reads_this_process() {
             .unwrap(),
         MARKER
     );
+    assert_eq!(
+        attachment
+            .submissions
+            .load(std::sync::atomic::Ordering::Relaxed),
+        2
+    );
 }
 
 #[cfg(target_os = "linux")]

@@ -62,6 +62,17 @@ impl LazerMemory {
         self.selected_gamemode = mode;
     }
 
+    pub(super) fn prepare_precise(&mut self, state: ReaderSynchronization, mode: i64) {
+        self.set_resolved_state(
+            state.game_base.unwrap_or_default(),
+            state.current_screen.unwrap_or_default(),
+        );
+        // Windows RPM's fixed cost favors the bounded per-capture root/screen
+        // spans already used by regular reads. Failed spans keep scalar fallback.
+        #[cfg(windows)]
+        self.reset_capture_roots(true);
+        self.set_read_context_mode(mode);
+    }
     pub fn set_resolved_state(&mut self, game_base: usize, current_screen: usize) {
         *self
             .game_base_address
@@ -212,6 +223,36 @@ impl LazerMemory {
     }
     pub(super) fn ptr(&self, address: usize) -> Result<usize, MemoryError> {
         self.process.read_pointer(address)
+    }
+    pub(super) fn chain<const N: usize>(
+        &self,
+        address: usize,
+        offsets: &[usize],
+    ) -> Result<[u8; N], MemoryError> {
+        let mut bytes = [0; N];
+        self.process
+            .read_chain(address, offsets, self.process.bitness(), &mut bytes)?;
+        Ok(bytes)
+    }
+    pub(super) fn pointer_chain(
+        &self,
+        address: usize,
+        offsets: &[usize],
+    ) -> Result<usize, MemoryError> {
+        let mut bytes = [0; 8];
+        self.process.read_chain(
+            address,
+            offsets,
+            self.process.bitness(),
+            &mut bytes[..self.process.pointer_size()],
+        )?;
+        usize::try_from(u64::from_le_bytes(bytes)).map_err(|_| {
+            corrupt(
+                "pointer",
+                address,
+                "target pointer does not fit the host address width",
+            )
+        })
     }
     pub(super) fn i32(&self, address: usize) -> Result<i64, MemoryError> {
         Ok(self.process.read_i32(address)? as i64)
@@ -603,15 +644,57 @@ impl LazerMemory {
             return Err(corrupt("config store", store, "null entries"));
         }
         let mut result = IndexMap::new();
-        for index in 0..count as usize {
-            let entry = add(entries, 0x10 + index * 0x18)?;
-            let key = self.process.read_i32(add(entry, 0x10)?)?;
-            let value = self.ptr(entry)?;
-            if value != 0 {
-                result.insert(key, add(value, 0x40)?);
+        for start in (0..count as usize).step_by(32) {
+            let len = (count as usize - start).min(32);
+            if let Some(values) = self.config_entry_chunk(entries, start, len) {
+                for &(key, value) in &values[..len] {
+                    if value != 0 {
+                        result.insert(key, add(value, 0x40)?);
+                    }
+                }
+            } else {
+                // Preserve the first scalar error when an entry batch fails.
+                for index in start..start + len {
+                    let entry = add(entries, 0x10 + index * 0x18)?;
+                    let key = self.process.read_i32(add(entry, 0x10)?)?;
+                    let value = self.ptr(entry)?;
+                    if value != 0 {
+                        result.insert(key, add(value, 0x40)?);
+                    }
+                }
             }
         }
         Ok(result)
+    }
+
+    fn config_entry_chunk(
+        &self,
+        entries: usize,
+        start: usize,
+        len: usize,
+    ) -> Option<[(i32, usize); 32]> {
+        if self.process.pointer_size() != 8 {
+            return None;
+        }
+        let mut bytes = [([0u8; 4], [0u8; 8]); 32];
+        let mut requests: [_; 64] = std::array::from_fn(|_| ReadRequest::new(0, &mut []));
+        for (index, ((key, value), requests)) in bytes
+            .iter_mut()
+            .zip(requests.chunks_exact_mut(2))
+            .take(len)
+            .enumerate()
+        {
+            let entry = add(entries, 0x10 + (start + index) * 0x18).ok()?;
+            requests[0] = ReadRequest::new(add(entry, 0x10).ok()?, key);
+            requests[1] = ReadRequest::new(entry, value);
+        }
+        self.process.read_many(&mut requests[..2 * len]).ok()?;
+        drop(requests);
+        let mut out = [(0, 0); 32];
+        for (out, (key, value)) in out.iter_mut().zip(bytes).take(len) {
+            *out = (i32::from_le_bytes(key), le_pointer(&value)?);
+        }
+        Some(out)
     }
 }
 

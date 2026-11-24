@@ -299,16 +299,22 @@ impl StableMemory {
     }
 
     pub(super) fn user_batched(&self) -> MemoryRead<User> {
-        let (mut profile, mut login) = (Word::new(), Word::new());
-        self.read_batch([
-            profile.request(self.patterns.user_profile_ptr)?,
-            login.request(self.patterns.raw_login_status_ptr)?,
-        ])?;
         let (mut profile_object, mut login_status) = (Word::new(), Word::new());
-        self.read_batch([
-            profile_object.request(profile.ptr(0))?,
-            login_status.request(login.ptr(0))?,
-        ])?;
+        self.process.read_indirect_many(
+            &mut [
+                crate::process::IndirectReadRequest::new(
+                    self.patterns.user_profile_ptr,
+                    0,
+                    &mut profile_object.bytes,
+                ),
+                crate::process::IndirectReadRequest::new(
+                    self.patterns.raw_login_status_ptr,
+                    0,
+                    &mut login_status.bytes,
+                ),
+            ],
+            crate::process::ProcessBitness::X86,
+        )?;
         let (b, login_status) = (profile_object.ptr(0), login_status.ptr(0));
         if b == 0 {
             return self.not_ready();
@@ -624,11 +630,10 @@ impl StableMemory {
                 holder.ptr(0x44)
             }
         };
-        let mut array_holder = Span::<0x10, 4>::new();
-        self.read_batch([array_holder.request(holder)?])?;
-        // The array length at +4 directly precedes its 40 float elements.
+        // Both reads are unconditional: submit the pointer and array span as
+        // one dependent chain while the native backend keeps their exact order.
         let mut array = Span::<4, { 4 + 4 * 40 }>::new();
-        self.read_batch([array.request(array_holder.ptr(0x10))?])?;
+        array.bytes = self.chain(self.add(holder, 0x10)?, &[4])?;
         if array.i32(4) < 40 {
             return self.not_ready();
         }
