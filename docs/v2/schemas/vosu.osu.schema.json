@@ -151,6 +151,7 @@
             "rhythm": { "type": "number" },
             "color": { "type": "number" },
             "reading": { "type": "number" },
+            "hitWindow": { "type": "number" },
             "total": { "type": "number" }
           }
         },

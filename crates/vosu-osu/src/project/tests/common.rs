@@ -293,18 +293,12 @@ fn beatmap_metadata_rows_and_missing_parsed_defaults() {
         stats["objects"],
         json!({"circles":0,"sliders":0,"spinners":0,"holds":0,"total":0})
     );
-    assert_eq!(
-        stats["hitWindow"],
-        json!({"miss":null,"meh":null,"ok":null,"good":null,"great":null,"perfect":null})
-    );
+    assert_eq!(stats["hitWindow"], json!({}));
     assert_eq!(
         stats["bpm"],
         json!({"realtime":0.0,"common":0.0,"min":0.0,"max":0.0})
     );
-    assert_eq!(
-        stats["stars"],
-        json!({"live":0.0,"total":0.0,"aim":null,"speed":null,"flashlight":null,"sliderFactor":null,"stamina":null,"rhythm":null,"color":null,"reading":null,"hitWindow":null})
-    );
+    assert_eq!(stats["stars"], json!({"live":0.0,"total":0.0}));
     assert_eq!(stats["maxCombo"], 0);
 }
 #[test]
@@ -377,6 +371,9 @@ fn parsed_sample() -> StateBundleSnapshot {
         spinners: 3,
         holds: 4,
     };
+    parsed.bpm.common = 180.123456;
+    parsed.bpm.minimum = 120.234567;
+    parsed.bpm.maximum = 240.345678;
     let mut s = sample();
     let r = Arc::make_mut(&mut s.regular);
     r.beatmap.parsed = Some(Arc::new(parsed));
@@ -423,7 +420,7 @@ fn beatmap_stats_rows_preserve_rounding_and_hit_windows() {
     assert_eq!(stats["maxCombo"], 123);
     assert_eq!(
         stats["bpm"],
-        json!({"realtime":180.1235,"common":180.0,"min":180.0,"max":180.0})
+        json!({"realtime":180.1235,"common":180.1235,"min":120.2346,"max":240.3457})
     );
     assert_eq!(d["vosu.skin"]["name"], "test skin");
 }
@@ -537,6 +534,13 @@ fn truthy_star_components_and_ranked_status_names_match_1x() {
             .aim = value;
         let d = document(&s, &facts());
         assert_eq!(
+            d["vosu.osu"]["beatmap"]["stats"]["stars"]
+                .as_object()
+                .unwrap()
+                .contains_key("aim"),
+            value.is_some_and(|v| v != 0.0 && !v.is_nan())
+        );
+        assert_eq!(
             d["vosu.osu"]["beatmap"]["stats"]["stars"]["aim"],
             value
                 .filter(|v| *v != 0.0 && !v.is_nan())
@@ -620,5 +624,46 @@ fn focused_is_null_without_platform_foreground_source() {
     for foreground in [None, Some(false), Some(true)] {
         f.foreground = foreground;
         assert!(document(&s, &f)["vosu.osu"]["session"]["focused"].is_null());
+    }
+}
+
+#[test]
+fn optional_stats_omit_only_missing_components_and_match_embedded_schema() {
+    let mut s = parsed_sample();
+    let r = Arc::make_mut(&mut s.regular);
+    let p = Arc::make_mut(r.beatmap.parsed.as_mut().unwrap());
+    p.engine.difficulty.aim = None;
+    p.engine.difficulty.speed = Some(0.0);
+    p.engine.difficulty.reading = Some(f64::NAN);
+    p.engine.hit_windows.miss = None;
+    p.engine.hit_windows.good = None;
+    p.engine.hit_windows.perfect = Some(0.0);
+    let d = document(&s, &facts());
+    let stats = &d["vosu.osu"]["beatmap"]["stats"];
+    assert_eq!(
+        stats["hitWindow"],
+        json!({"meh":150.123456,"ok":100.123456,"great":50.123456,"perfect":0.0})
+    );
+    assert_eq!(
+        stats["stars"],
+        json!({"live":7.89,"total":6.12,"flashlight":3.12,"sliderFactor":4.12,"stamina":5.12,"rhythm":6.12,"color":7.12,"hitWindow":50.12})
+    );
+    let schema: Value = serde_json::from_str(crate::OSU_NAMESPACE_SCHEMA).unwrap();
+    assert_eq!(schema["version"], "1.2.0");
+    assert_eq!(
+        schema["$defs"]["stats"]["properties"]["stars"]["properties"]["hitWindow"],
+        json!({"type":"number"})
+    );
+    for (group, properties) in [
+        (
+            "stars",
+            &schema["$defs"]["stats"]["properties"]["stars"]["properties"],
+        ),
+        ("hitWindow", &schema["$defs"]["hitWindow"]["properties"]),
+    ] {
+        for (key, value) in stats[group].as_object().unwrap() {
+            assert_eq!(properties[key]["type"], "number", "{group}.{key}");
+            assert!(value.is_number(), "{group}.{key}");
+        }
     }
 }

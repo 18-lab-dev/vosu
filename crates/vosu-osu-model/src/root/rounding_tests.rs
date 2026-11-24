@@ -69,6 +69,10 @@ proptest! {
         let value = f64::from_bits(bits);
         prop_assert_eq!(fix_decimals_to(value, amount).unwrap().to_bits(), original_fix_decimals_to(value, amount).unwrap().to_bits());
     }
+    #[test]
+    fn prop_ordinary_rounding_is_bit_identical_to_allocating_oracle(value in -1e7_f64..1e7_f64, amount in 0_u32..=22) {
+        prop_assert_eq!(fix_decimals_to(value, amount).unwrap().to_bits(), original_fix_decimals_to(value, amount).unwrap().to_bits());
+    }
 }
 #[test]
 fn rounding_edges_and_every_api_precision_match_original_bits() {

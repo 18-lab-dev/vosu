@@ -105,7 +105,7 @@ pub(super) fn project(
         scalar(out, V::String("stars"));
         let truthy =
             |v: Option<f64>| number(v.filter(|v| *v != 0.0 && !v.is_nan()).map(fix_decimals));
-        map(
+        map_present(
             out,
             &[
                 (
@@ -165,7 +165,7 @@ pub(super) fn project(
         }
         scalar(out, V::String("hitWindow"));
         let w = p.map(|p| &p.engine.hit_windows);
-        map(
+        map_present(
             out,
             &[
                 ("miss", number(w.and_then(|v| v.miss))),
@@ -220,4 +220,15 @@ pub(super) fn project(
         scalar(out, V::String("maxCombo"));
         scalar(out, V::U64(a.map_or(0, |v| u64::from(v.max_combo))));
     });
+}
+
+// 1.x omits unsupported components rather than encoding null. Count the
+// populated stack-resident entries before writing a definite CBOR map.
+fn map_present(out: &mut Vec<u8>, fields: &[(&str, V<'_>)]) {
+    let present = fields.iter().filter(|(_, value)| !matches!(value, V::Null));
+    head(out, 5, present.clone().count() as u64);
+    for (key, value) in present {
+        scalar(out, V::String(key));
+        scalar(out, *value);
+    }
 }
