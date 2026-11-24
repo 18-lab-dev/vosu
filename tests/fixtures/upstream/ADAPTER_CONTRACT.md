@@ -173,9 +173,11 @@ present in the bus fixture while their raw emitted keys are absent.
 
 State-schema differences (`bestOf`, `roomId`, accurate null rather than whole
 response failure) authorize **no** adapter-wire deviation: restore bestOF /
-roomID and use availability to distinguish omission from failure. The stable
-manager temporary entry remains until T0 supplies its actual evidence; A4
-does not mark it closed. No other temporary exemption is approved.
+roomID and use availability to distinguish omission from failure. The former
+stable-manager temporary exemption is closed: T0 supplied the aggregate and X0
+the distinct manager/spectator evidence, and the
+[divergence ledger](DIVERGENCES.md) records the closure and contains no
+temporary entry. No temporary exemption is approved.
 
 ## R1 declared-root files and calculation
 
