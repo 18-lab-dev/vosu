@@ -166,6 +166,7 @@ impl Attachment {
             } else {
                 &[]
             },
+            action_schemas: &[],
             vtable: || vosu_plugin_api::__vtable_for_serialized::<ReaderPlugin>(),
         }])?;
         assert!(ATTACH.lock().unwrap().insert(id.into(), tx).is_none());

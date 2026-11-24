@@ -413,6 +413,7 @@ impl Harness {
             manifest: &manifest,
             settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
             namespace_schemas,
+            action_schemas: &[],
             vtable: vosu_plugin_vtable,
         }])
         .unwrap();
