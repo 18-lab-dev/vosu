@@ -32,6 +32,10 @@ pub enum Permit {
 }
 
 impl PublisherGrant {
+    pub(crate) fn plugin_id(&self) -> &str {
+        &self.plugin_id
+    }
+
     pub fn from_manifest(m: &PluginManifest) -> Result<Self, GrantError> {
         m.validate().map_err(GrantError::Manifest)?;
         let mut covers = Vec::new();

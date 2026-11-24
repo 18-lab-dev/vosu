@@ -125,6 +125,9 @@ fn decode_and_handle(ctx: &HostContext, raw: &vosu_message) -> vosu_status {
     let Ok(opcode) = vosu_opcode::try_from(raw.opcode) else {
         return vosu_status::VOSU_ERR_UNSUPPORTED;
     };
+    if vosu_plugin_api::validate_flags(opcode, raw.flags).is_err() {
+        return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+    }
     if opcode == vosu_opcode::VOSU_OP_READ_PLAN_SUBMIT
         && raw.flags & VOSU_READ_PLAN_SYNC != 0
         && let Some(status) = ctx

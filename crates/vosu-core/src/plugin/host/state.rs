@@ -1,5 +1,6 @@
-//! Host publication routing. Lock order: focus -> sessions -> instances ->
-//! store; no callback into plugin code runs while these locks are held.
+//! Host lock order: focus -> instances -> sessions -> matcher -> store/registry.
+//! Publication snapshots authority and releases both global mutexes before
+//! committing. No plugin callback runs under these locks.
 use super::{InstanceSlot, PluginHost};
 use crate::plugin::{host_services::PluginInstanceId, session::SessionHandle};
 use crate::state::{ClientFacts, SessionKey};
@@ -29,20 +30,21 @@ impl PluginHost {
         }
     }
 
-    fn commit_publication<'a>(
+    pub(super) fn commit_publication<'a>(
         &self,
         instance: PluginInstanceId,
         raw: u64,
         entries: impl ExactSizeIterator<Item = PublishFieldRef<'a>>,
     ) -> vosu_status {
-        // Keep sessions locked through commit so detach cannot race an accepted
-        // publication back into the document store after closing the session.
-        let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
-        let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
-        let Some(InstanceSlot::Live(entry)) = instances.get(&instance) else {
-            return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+        let publisher = {
+            let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+            let Some(InstanceSlot::Live(entry)) = instances.get(&instance) else {
+                return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
+            };
+            entry.publisher.clone()
         };
         let handle = SessionHandle(raw);
+        let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
         let Some((owner, _)) = sessions.owner_and_pid(handle) else {
             // Session handles are monotonic and never reused. The registry
             // exposes its issued high-water mark rather than retaining tombstones.
@@ -52,19 +54,29 @@ impl PluginHost {
                 vosu_status::VOSU_ERR_INVALID_ARGUMENT
             };
         };
-        if owner != &entry.plugin_id {
+        if owner != publisher.grant.plugin_id() {
             return vosu_status::VOSU_ERR_PERMISSION_DENIED;
         }
         if sessions.identify_of(handle).is_none() {
             return vosu_status::VOSU_ERR_INVALID_ARGUMENT;
         }
+        drop(sessions);
+        // StateStore serializes close against commit using the session slot's
+        // closed marker. A detached slot cannot be resurrected by this call.
         self.state
             .store
-            .commit(&entry.publisher.grant, SessionKey(raw), entries)
-            .map_or_else(Into::into, |_| vosu_status::VOSU_OK)
+            .commit(&publisher.grant, SessionKey(raw), entries)
+            .map_or_else(
+                |error| match error {
+                    crate::state::CommitError::UnknownSession => vosu_status::VOSU_ERR_TARGET_GONE,
+                    other => other.into(),
+                },
+                |_| vosu_status::VOSU_OK,
+            )
     }
 
     pub(super) fn open_bus_session(&self, handle: SessionHandle, focused: bool) {
+        let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
         let sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
         let Some(identify) = sessions.identify_of(handle) else {
             return;
@@ -72,7 +84,6 @@ impl PluginHost {
         let Some((owner, pid)) = sessions.owner_and_pid(handle) else {
             return;
         };
-        let instances = self.instances.lock().unwrap_or_else(|p| p.into_inner());
         let Some(entry) = instances.values().find_map(|slot| match slot {
             InstanceSlot::Live(entry) if &entry.plugin_id == owner => Some(entry),
             _ => None,

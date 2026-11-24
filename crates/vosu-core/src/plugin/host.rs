@@ -82,7 +82,7 @@ struct InstanceEntry {
     /// plugin-initiated cancel opcode of its own (`scans.rs`'s own module
     /// doc comment).
     outstanding_scans: Arc<OutstandingScans>,
-    publisher: Box<state::Publisher>,
+    publisher: Arc<state::Publisher>,
 }
 
 /// One `instances` map slot's lifecycle state. Every state keeps
@@ -356,11 +356,10 @@ impl PluginHost {
     /// The Focus rule's current inputs (`docs/v2/api-v1.md` "Focus
     /// rule"): every identified session re-keyed to [`FocusKey`] with its
     /// owning plugin's install order, plus the current `focus_priority`
-    /// holder. Locks `sessions` then `matcher`, in that order — callers
-    /// (P2-6) already hold `focus` before calling this, so the full lock
-    /// order every focus-recomputing call site below uses is `focus`,
-    /// then `sessions`, then `matcher`, so two such calls never deadlock
-    /// against each other.
+    /// holder. Locks `sessions` then `matcher` while holding `focus`, a
+    /// subsequence of the host order: focus -> instances -> sessions ->
+    /// matcher -> store/registry. These guards are released before any
+    /// subsequent instance lookup or delivery.
     fn focus_inputs(&self) -> (Vec<FocusCandidate>, Option<FocusKey>) {
         let sessions = self
             .sessions

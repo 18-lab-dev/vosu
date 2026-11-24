@@ -215,7 +215,7 @@ impl PluginHost {
                 settings_schema: schema,
                 outstanding_plans: Arc::new(OutstandingPlans::new()),
                 outstanding_scans: OutstandingScans::new(),
-                publisher: Box::new(super::state::Publisher {
+                publisher: Arc::new(super::state::Publisher {
                     grant: publisher,
                     version: plugin.manifest().version.clone(),
                     _registration: registration,

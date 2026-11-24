@@ -630,12 +630,8 @@ impl PluginHost {
     /// `vosu-plugin-api::tests::plan_memory_alloc` fake-host test cannot
     /// reach).
     ///
-    /// Lock order: `instances` then `sessions`, nested — a pair this host
-    /// has not nested before, but safely: every existing
-    /// `sessions`-then-`dispatch_to`(`instances`) sequence (`handle`'s own
-    /// `SessionIdentify`/`SessionDecline` arms, host.rs) always drops
-    /// `sessions` before it ever touches `instances` again, so the two
-    /// orders never invert against each other.
+    /// Host lock order: focus -> instances -> sessions -> matcher ->
+    /// store/registry. No sessions guard may be held while acquiring instances.
     fn resolve_owned_session_for_instance(
         &self,
         instance: PluginInstanceId,

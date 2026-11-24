@@ -491,10 +491,10 @@ fn in_process_sync_round_trip_allocates_nothing_after_warmup() {
     crate::plugin::test_support::clear_session_memory(pid);
 }
 
-/// K4's raw publication path borrows namespace/pointer/scalar values.
-/// K3's persistent-tree commit allocates by design; X2 measures that cost.
+/// Measures borrowed wire decoding only, not K4 routing or K3 persistent-tree
+/// commits (which allocate by design and are measured by M2/X2).
 #[test]
-fn raw_publish_path_allocates_only_for_values() {
+fn borrowed_publish_batch_decode_allocates_nothing() {
     use vosu_plugin_api::{PublishBatchWriter, PublishValueRef, decode_publish_batch_ref};
     let mut writer = PublishBatchWriter::new();
     writer.begin(8410);

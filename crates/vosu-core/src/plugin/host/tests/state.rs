@@ -478,3 +478,166 @@ fn publish_field_and_owning_fallback_share_commit_path() {
     );
     host.destroy_all(Duration::from_secs(5));
 }
+
+#[test]
+fn unknown_publish_flags_are_refused_before_commit() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let (_logs, host) = test_host(rt.handle().clone());
+    let id = "test.k4.flags";
+    let handle = publisher_instance(&host, id, 8420, 8420);
+    let before = host.state().store.current(SessionKey(handle)).unwrap();
+    let field = vosu_plugin_api::Message::PublishField(vosu_plugin_api::PublishField {
+        handle,
+        ns: "vosu.play".into(),
+        pointer: "/combo".into(),
+        value: vosu_plugin_api::PublishValue::U64(42),
+    })
+    .encode_payload()
+    .unwrap();
+    let batch = batch(handle, &[("vosu.play", "/combo", PublishValueRef::U64(42))]);
+    for (opcode, payload) in [
+        (vosu_opcode::VOSU_OP_PUBLISH_FIELD, field),
+        (vosu_opcode::VOSU_OP_PUBLISH_BATCH, batch),
+    ] {
+        assert_eq!(
+            publisher::host_services(id).send_flat(opcode, 1 << 31, 0, &payload),
+            vosu_status::VOSU_ERR_INVALID_ARGUMENT
+        );
+        assert!(Arc::ptr_eq(
+            &before,
+            &host.state().store.current(SessionKey(handle)).unwrap()
+        ));
+    }
+    host.destroy_all(Duration::from_secs(5));
+}
+
+/// The iterator rendezvous runs *inside* StateStore validation. Both a raw
+/// SYNC read (instances -> sessions) and identify (focus -> instances ->
+/// sessions) must finish before publication continues. Holding either global
+/// mutex across commit deterministically times out here; no scheduling luck
+/// or production-only test hook is required.
+#[test]
+fn sync_read_and_identify_progress_during_publication() {
+    use std::sync::mpsc::sync_channel;
+    use vosu_plugin_api::{
+        Message, PlanBase, PlanOp, PublishFieldRef, ReadPlanSubmit, SessionIdentify, Stage,
+        StageBase, VOSU_READ_PLAN_SYNC,
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _enter = rt.enter();
+    let (_logs, host) = test_host(rt.handle().clone());
+    let id = PluginInstanceId::new(8421);
+    let plugin_id = "test.k4.lock-order";
+    let manifest = session_manifest(plugin_id, &["k4-lock-order"])
+        .replace("[match]", "covers=['field:vosu.play.combo']\n[match]");
+    let events = super::helpers::create_session_instance_from_manifest(
+        &host,
+        id,
+        plugin_id,
+        SessionPluginConfig {
+            on_attach: OnAttach::Ignore,
+            ..Default::default()
+        },
+        &manifest,
+    );
+    let identify = |handle| {
+        Message::SessionIdentify(SessionIdentify {
+            handle,
+            game: "testkit".into(),
+            variant: "lock-order".into(),
+            name: "Lock order".into(),
+            version: "1".into(),
+            focus_priority: false,
+        })
+    };
+    host.process_appeared(test_process(930_842_100, "k4-lock-order"));
+    let SessionEvent::Attached(first) = events.recv_timeout(RECV_TIMEOUT).unwrap() else {
+        panic!("attach")
+    };
+    assert_eq!(
+        host.handle(id, identify(first.handle), 0),
+        vosu_status::VOSU_OK
+    );
+    assert!(matches!(
+        events.recv_timeout(RECV_TIMEOUT).unwrap(),
+        SessionEvent::Focus(_)
+    ));
+
+    let (read_tx, read_rx) = sync_channel::<Vec<u8>>(1);
+    let (read_done_tx, read_done_rx) = sync_channel(1);
+    let reader_host = host.clone();
+    let reader = std::thread::spawn(move || {
+        while let Ok(payload) = read_rx.recv_timeout(RECV_TIMEOUT) {
+            let status = reader_host.handle_read_plan_sync(id, &payload, VOSU_READ_PLAN_SYNC);
+            read_done_tx.send(status).unwrap();
+        }
+    });
+    let (identify_tx, identify_rx) = sync_channel::<u64>(1);
+    let (identify_done_tx, identify_done_rx) = sync_channel(1);
+    let identify_host = host.clone();
+    let identifier = std::thread::spawn(move || {
+        while let Ok(handle) = identify_rx.recv_timeout(RECV_TIMEOUT) {
+            identify_done_tx
+                .send(identify_host.handle(id, identify(handle), 0))
+                .unwrap();
+        }
+    });
+
+    for iteration in 0..64 {
+        host.process_appeared(test_process(930_842_101 + iteration, "k4-lock-order"));
+        let SessionEvent::Attached(attached) = events.recv_timeout(RECV_TIMEOUT).unwrap() else {
+            panic!("attach")
+        };
+        let payload = Message::ReadPlanSubmit(ReadPlanSubmit {
+            plan: u64::from(iteration),
+            handle: first.handle,
+            root: PlanBase::Absolute(0),
+            stages: vec![Stage {
+                base: StageBase::Root,
+                base_offset: 0,
+                ops: vec![PlanOp {
+                    offset: 0,
+                    length: 8,
+                }],
+            }],
+            sync: true,
+        })
+        .encode_payload()
+        .unwrap();
+        let entries = std::iter::once(PublishFieldRef {
+            handle: first.handle,
+            ns: "vosu.play",
+            pointer: "/combo",
+            value: PublishValueRef::U64(u64::from(iteration)),
+        })
+        .inspect(|_| {
+            read_tx.send(payload.clone()).unwrap();
+            identify_tx.send(attached.handle).unwrap();
+            assert_eq!(
+                read_done_rx
+                    .recv_timeout(RECV_TIMEOUT)
+                    .expect("SYNC read blocked by publication's global locks"),
+                Some(vosu_status::VOSU_ERR_TARGET_GONE)
+            );
+            assert_eq!(
+                identify_done_rx
+                    .recv_timeout(RECV_TIMEOUT)
+                    .expect("identify blocked by publication's global locks"),
+                vosu_status::VOSU_OK
+            );
+        });
+        assert_eq!(
+            host.commit_publication(id, first.handle, entries),
+            vosu_status::VOSU_OK
+        );
+        assert!(
+            matches!(events.recv_timeout(RECV_TIMEOUT).unwrap(), SessionEvent::Focus(event) if event.handle == attached.handle)
+        );
+    }
+    drop(read_tx);
+    drop(identify_tx);
+    reader.join().unwrap();
+    identifier.join().unwrap();
+    host.destroy_all(Duration::from_secs(5));
+}
