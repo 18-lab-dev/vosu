@@ -10,7 +10,10 @@ pub(super) struct Chart {
     slot: &'static str,
 }
 impl Chart {
-    #[expect(clippy::disallowed_methods, reason = "Disposable immutable oracle chart fixture, never user configuration or state") ]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "Disposable immutable oracle chart fixture, never user configuration or state"
+    )]
     pub(super) fn new(root: &std::path::Path, content: &str, lazer: bool) -> Self {
         std::fs::write(root.join("oracle-chart.osu"), content).unwrap();
         Self {
