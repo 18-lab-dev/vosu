@@ -19,7 +19,14 @@ fn module_snapshot_retries_only_transient_errors() {
     ] {
         let mut calls = 0;
         assert_eq!(
-            snapshot_with_retry::<()>(flags, || { calls += 1; Err(code) }, || panic!("unexpected retry")),
+            snapshot_with_retry::<()>(
+                flags,
+                || {
+                    calls += 1;
+                    Err(code)
+                },
+                || panic!("unexpected retry"),
+            ),
             Err(code)
         );
         assert_eq!(calls, 1);
@@ -32,7 +39,10 @@ fn module_snapshot_retry_is_bounded_and_preserves_final_error() {
     assert_eq!(
         snapshot_with_retry::<()>(
             TH32CS_SNAPMODULE,
-            || { calls += 1; Err(ERROR_PARTIAL_COPY) },
+            || {
+                calls += 1;
+                Err(ERROR_PARTIAL_COPY)
+            },
             || yields += 1,
         ),
         Err(ERROR_PARTIAL_COPY)

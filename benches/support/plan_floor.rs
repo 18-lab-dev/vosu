@@ -126,38 +126,71 @@ pub(super) fn bench(c: &mut Criterion) {
     });
     let submissions: Vec<_> = plans
         .iter()
-        .map(|plan| Message::ReadPlanSubmit(plan.clone()).encode_payload().unwrap())
+        .map(|plan| {
+            Message::ReadPlanSubmit(plan.clone())
+                .encode_payload()
+                .unwrap()
+        })
         .collect();
     let mut output = Vec::new();
     let mut replies = Vec::new();
     for submit in &submissions {
         vosu_core::plugin::execute_sync_into(
-            submit, vosu_plugin_api::VOSU_READ_PLAN_SYNC, fixture.as_ref(),
-            ProcessBitness::X64, &super::Modules, std::time::Duration::from_secs(1),
+            submit,
+            vosu_plugin_api::VOSU_READ_PLAN_SYNC,
+            fixture.as_ref(),
+            ProcessBitness::X64,
+            &super::Modules,
+            std::time::Duration::from_secs(1),
             &mut output,
-        ).unwrap();
+        )
+        .unwrap();
         replies.push(output.clone());
     }
     group.bench_function("execute", |b| {
         b.iter(|| {
             for submit in &submissions {
                 vosu_core::plugin::execute_sync_into(
-                    black_box(submit), vosu_plugin_api::VOSU_READ_PLAN_SYNC, fixture.as_ref(),
-                    ProcessBitness::X64, &super::Modules, std::time::Duration::from_secs(1),
+                    black_box(submit),
+                    vosu_plugin_api::VOSU_READ_PLAN_SYNC,
+                    fixture.as_ref(),
+                    ProcessBitness::X64,
+                    &super::Modules,
+                    std::time::Duration::from_secs(1),
                     &mut output,
-                ).unwrap();
+                )
+                .unwrap();
                 black_box(&output);
             }
         })
     });
-    let mut encoded = Vec::new();
-    group.bench_function("encode", |b| {
+    // Encoding and synchronous-slot setup, with no execution or result delivery.
+    struct RejectSubmit;
+    impl HostServices for RejectSubmit {
+        fn send(&self, _: &Message) -> vosu_status {
+            vosu_status::VOSU_ERR_INVALID_ARGUMENT
+        }
+        fn send_flat(&self, _: vosu_opcode, _: u32, _: u64, payload: &[u8]) -> vosu_status {
+            black_box(payload);
+            vosu_status::VOSU_ERR_INVALID_ARGUMENT
+        }
+    }
+    let mut encoding_buffers = SyncReadBuffers::new();
+    group.bench_function("encode_sdk_submit", |b| {
         b.iter(|| {
             for (plan, stages) in plans.iter().zip(&stages) {
-                vosu_plugin_api::message::flat::encode_submit_into(
-                    &mut encoded, plan.plan, plan.handle, &plan.root, stages,
+                black_box(
+                    PlanMemory::new()
+                        .read_flat(
+                            &RejectSubmit,
+                            plan.plan,
+                            plan.handle,
+                            plan.root.clone(),
+                            stages,
+                            &mut encoding_buffers,
+                        )
+                        .err(),
                 );
-                black_box(&encoded);
             }
         })
     });
