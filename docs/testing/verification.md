@@ -116,6 +116,29 @@ waiter saturation, first-terminal races and 64-call relay-slot pressure.
 M3 `plugin_crashed` uses the production instance-loss seam; native subprocess
 crash/kill proof and process cancellation grace are M5, not simulated M3 proof.
 
+J3 composition cases live in `tests/api_v1/{actions,jobs,relay,cli,import}.rs`.
+They exercise retained terminals versus running-job pressure, per-job/global
+waiter limits and recovery, genuine late ABI results after timeout, exact launch
+ownership, and terminal relay delivery while the real dispatch queue is full.
+`vosux_production_action_routes` launches the actual CLI binary against J2 routes
+and the real private broker credential adapter; its roots use executable-channel
+policy. It covers required/optional/none routing, explicit sessions, revision
+polling, detached zero-GET behavior, and Linux SIGINT-to-DELETE. All waits are
+bounded. Run subprocess-bearing integration smokes under `flock /tmp/vosu-smoke.lock`.
+In-process instance-loss tests are not evidence of an OS crash or kill: that
+process-host lifecycle evidence remains explicitly assigned to M5.
+The real osu import case supplies a live-reader resource observation to the actual
+session, then dispatches import through HTTP and the real plugin ABI. It checks
+`queued`, exact committed archive bytes, preserved existing bytes, the selected
+Songs directory, and exactly one emitted success terminal after cancellation/
+shutdown. A test-only forwarding `HostServices` wrapper counts every production
+osu plugin `ACTION_RESULT` before host acceptance, including rejected duplicates.
+J3 also fixes the registration boundary: the plugin's action-target session is
+installed before `SESSION_IDENTIFY` publishes it; rejection rolls that preparation
+back. Capture/B1 still starts only after acceptance, and B2 settings delivery is
+still serialized by the same plugin-state lock. A re-entrant identify/action
+regression tests the formerly missing-target window deterministically.
+
 The browser phase must use a real launch exchange and testkit, actual API-v1
 subscribe/invoke/start/progress/abort traffic, no forbidden cross-origin headers,
 no token persistence/disclosure, and unchanged v1 bridge smoke; no silent skip.

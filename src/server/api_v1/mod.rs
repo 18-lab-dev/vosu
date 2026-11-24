@@ -10,6 +10,8 @@ pub mod router;
 mod selection;
 mod session_events;
 pub mod subscriptions;
+#[cfg(feature = "test-harness")]
+pub mod test_support;
 mod transport;
 mod trees;
 

@@ -61,3 +61,19 @@ pub fn session_error_collection(pid: u32) -> Option<bool> {
                 .map(|publication| publication.demand.bus_receiver().borrow().collect_errors)
         })
 }
+
+/// Stands in for a live stable reader's observation of resource paths. Feeds the
+/// same resource-observation path used by production publication, not a separate
+/// import target field. The caller must select a live, uniquely identified pid.
+#[cfg(feature = "test-harness")]
+pub fn observe_resource_snapshot(pid: u32, snapshot: &vosu_osu_state::StateBundleSnapshot) -> bool {
+    let session = SESSIONS
+        .lock()
+        .expect("session observations poisoned")
+        .iter()
+        .filter_map(Weak::upgrade)
+        .find(|session| session.pid == pid && !session.lifecycle_token().is_cancelled());
+    session
+        .and_then(|session| session.publication.get()?.bus.resources.get().cloned())
+        .is_some_and(|resources| resources.observe(snapshot))
+}

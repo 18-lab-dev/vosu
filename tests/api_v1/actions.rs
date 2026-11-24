@@ -270,6 +270,38 @@ fn action_jobs_authority_limits_and_lifecycle() {
                 .status(),
             StatusCode::NOT_FOUND
         );
+        assert_eq!(
+            api.handle(request(
+                Method::DELETE,
+                &location,
+                Some(&foreign),
+                Value::Null
+            ))
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            value(
+                api.handle(request(Method::GET, &location, Some(&first), Value::Null))
+                    .await
+            )
+            .await["state"],
+            "running"
+        );
+        let foreign_job = api
+            .handle(request(
+                Method::POST,
+                &format!("{path}?wait=0"),
+                Some(&foreign),
+                json!({"arguments":"pending"}),
+            ))
+            .await;
+        assert_eq!(foreign_job.status(), StatusCode::ACCEPTED);
+        let foreign_location = foreign_job.headers()["location"]
+            .to_str()
+            .unwrap()
+            .to_owned();
         let response = api
             .handle(request(
                 Method::GET,
@@ -316,7 +348,7 @@ fn action_jobs_authority_limits_and_lifecycle() {
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(value(response).await["error"]["code"], "args_too_large");
         // Rejected preparation must not leave a running job occupying capacity.
-        for _ in 0..vosu_core::actions::jobs::MAX_JOBS {
+        for _ in 1..vosu_core::actions::jobs::MAX_JOBS {
             assert!(
                 jobs.create(
                     vosu_core::actions::Principal::Broker,
@@ -356,6 +388,23 @@ fn action_jobs_authority_limits_and_lifecycle() {
             StatusCode::PAYLOAD_TOO_LARGE
         );
         tools.revoke_action_session(&first);
+        assert_eq!(
+            api.handle(request(
+                Method::GET,
+                &foreign_location,
+                Some(&foreign),
+                Value::Null
+            ))
+            .await
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            api.handle(request(Method::GET, &location, Some(&foreign), Value::Null))
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
         assert_eq!(
             api.handle(request(Method::GET, &location, Some(&first), Value::Null))
                 .await

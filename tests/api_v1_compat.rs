@@ -3,8 +3,18 @@
 
 #[path = "api_v1/actions.rs"]
 mod actions;
+#[path = "api_v1/cli.rs"]
+mod cli;
 #[path = "api_v1/import.rs"]
 mod import;
+#[path = "api_v1/import_fixture.rs"]
+mod import_fixture;
+#[path = "api_v1/job_fixture.rs"]
+mod job_fixture;
+#[path = "api_v1/jobs.rs"]
+mod jobs;
+#[path = "api_v1/relay.rs"]
+mod relay;
 #[path = "api_v1/resource_lifecycle.rs"]
 mod resource_lifecycle;
 #[path = "api_v1/resource_redirects.rs"]
