@@ -20,6 +20,7 @@ path = "src/lib.rs"
 [dependencies]
 arc-swap = "1.8.2"
 axum = { version = "=0.8.9", default-features = false }
+base64 = "=0.22.1"
 bytes = "=1.12.1"
 chrono = { version = "0.4.44", features = ["serde"] }
 ciborium = "=0.2.2"
@@ -30,6 +31,7 @@ libloading = "0.8.6"
 notify = "=8.2.0"
 open = "=5.4.0"
 regex = "1.13.1"
+ring = "=0.17.14"
 semver = "=1.0.28"
 serde = { version = "=1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "=1.0.150", features = ["preserve_order", "raw_value"] }

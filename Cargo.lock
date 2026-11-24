@@ -3543,6 +3543,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "axum",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "ciborium",
@@ -3557,6 +3558,7 @@ dependencies = [
  "png",
  "proptest",
  "regex",
+ "ring",
  "semver",
  "serde",
  "serde_json",
