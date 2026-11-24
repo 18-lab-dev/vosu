@@ -15,6 +15,10 @@
 //! `docs/v2/implementation-plan.md` M1's exit criteria test it.
 
 use std::collections::HashMap;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::{Duration, Instant};
 
 use vosu_plugin_api::{
@@ -138,6 +142,8 @@ pub struct SessionRegistry {
     next_handle: u64,
     next_public_id: u64,
     identification_timeout: Duration,
+    /// Revoked under the registry lock, before a retired handle can be reused.
+    read_epoch: Arc<AtomicU64>,
     pending: HashMap<SessionHandle, PendingSession>,
     identified: HashMap<SessionHandle, IdentifiedSession>,
     /// The one session currently holding `focus_priority`, if any (§6.2:
@@ -173,6 +179,7 @@ impl SessionRegistry {
             next_handle: 0,
             next_public_id: 0,
             identification_timeout,
+            read_epoch: Arc::new(AtomicU64::new(0)),
             pending: HashMap::new(),
             identified: HashMap::new(),
             priority_holder: None,
@@ -305,6 +312,7 @@ impl SessionRegistry {
             Some(_) => {}
         }
         let mut record = self.pending.remove(&handle).expect("checked above");
+        self.invalidate_read_cache();
         let detached = SessionDetached {
             handle: handle.0,
             reason: DetachReason::Declined,
@@ -394,6 +402,7 @@ impl SessionRegistry {
         if !was_identified && !was_pending {
             return None;
         }
+        self.invalidate_read_cache();
         if self.priority_holder == Some(handle) {
             self.priority_holder = None;
         }
@@ -523,6 +532,18 @@ impl SessionRegistry {
         self.pending
             .get(&handle)
             .map(|record| (&record.owner, record.process.pid))
+    }
+
+    pub(crate) fn read_cache_epoch(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.read_epoch)
+    }
+
+    fn invalidate_read_cache(&self) {
+        self.read_epoch
+            .fetch_update(Ordering::Release, Ordering::Relaxed, |epoch| {
+                epoch.checked_add(1)
+            })
+            .expect("session read-cache epoch exhausted");
     }
 
     /// The current handle for `pid`, pending or identified, for

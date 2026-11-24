@@ -66,6 +66,34 @@ impl<'a> IndirectReadRequest<'a> {
     }
 }
 
+/// An ordered pointer chain ending in a byte read. Empty offsets are a direct
+/// read, so a batch can combine independent spans and dependent scalar fields.
+pub struct ChainReadRequest<'a> {
+    pub address: usize,
+    pub offsets: &'a [usize],
+    pub dst: &'a mut [u8],
+    /// Receives the final byte-read address only after this request succeeds.
+    pub resolved_address: Option<&'a mut usize>,
+}
+
+impl<'a> ChainReadRequest<'a> {
+    #[must_use]
+    pub fn new(address: usize, offsets: &'a [usize], dst: &'a mut [u8]) -> Self {
+        Self {
+            address,
+            offsets,
+            dst,
+            resolved_address: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_resolved_address(mut self, dst: &'a mut usize) -> Self {
+        self.resolved_address = Some(dst);
+        self
+    }
+}
+
 impl fmt::Debug for ReadRequest<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -134,6 +162,49 @@ pub enum ReadStatus<T> {
 
 pub type MemoryRead<T> = Result<ReadStatus<T>, MemoryError>;
 
+fn resolve_chain<M: ProcessMemory + ?Sized>(
+    memory: &M,
+    mut address: usize,
+    offsets: &[usize],
+    bitness: ProcessBitness,
+) -> Result<usize, MemoryError> {
+    for &offset in offsets {
+        let mut bytes = [0; 8];
+        memory.read_exact(address, &mut bytes[..bitness.pointer_size()])?;
+        let pointer =
+            usize::try_from(u64::from_le_bytes(bytes)).map_err(|_| MemoryError::Corrupt {
+                context: "pointer",
+                address,
+                message: "target pointer does not fit the host address width",
+            })?;
+        address = pointer
+            .checked_add(offset)
+            .ok_or(MemoryError::AddressOverflow {
+                base: pointer,
+                offset,
+            })?;
+    }
+    Ok(address)
+}
+
+/// Ordered fallback for backends without a mixed-chain executor.
+pub fn read_chains_default<M: ProcessMemory + ?Sized>(
+    memory: &M,
+    reads: &mut [ChainReadRequest<'_>],
+    bitness: ProcessBitness,
+) -> Result<(), MemoryError> {
+    for read in reads {
+        if let Some(dst) = read.resolved_address.as_deref_mut() {
+            let address = resolve_chain(memory, read.address, read.offsets, bitness)?;
+            memory.read_exact(address, read.dst)?;
+            *dst = address;
+        } else {
+            memory.read_chain(read.address, read.offsets, bitness, read.dst)?;
+        }
+    }
+    Ok(())
+}
+
 /// Object-safe syscall boundary. Implementations own their native process
 /// resource and release it when the final backend `Arc` is dropped.
 pub trait ProcessMemory: Send + Sync {
@@ -144,28 +215,22 @@ pub trait ProcessMemory: Send + Sync {
     /// Backends may execute the dependencies together without changing read order.
     fn read_chain(
         &self,
-        mut address: usize,
+        address: usize,
         offsets: &[usize],
         bitness: ProcessBitness,
         dst: &mut [u8],
     ) -> Result<(), MemoryError> {
-        for &offset in offsets {
-            let mut bytes = [0; 8];
-            self.read_exact(address, &mut bytes[..bitness.pointer_size()])?;
-            let pointer =
-                usize::try_from(u64::from_le_bytes(bytes)).map_err(|_| MemoryError::Corrupt {
-                    context: "pointer",
-                    address,
-                    message: "target pointer does not fit the host address width",
-                })?;
-            address = pointer
-                .checked_add(offset)
-                .ok_or(MemoryError::AddressOverflow {
-                    base: pointer,
-                    offset,
-                })?;
-        }
+        let address = resolve_chain(self, address, offsets, bitness)?;
         self.read_exact(address, dst)
+    }
+    /// Executes chains in request order. Backends may combine their dependency
+    /// stages, but must publish destinations and report errors in that order.
+    fn read_chains(
+        &self,
+        reads: &mut [ChainReadRequest<'_>],
+        bitness: ProcessBitness,
+    ) -> Result<(), MemoryError> {
+        read_chains_default(self, reads, bitness)
     }
     /// Reads pointer holders together, then their pointees together, in chunks
     /// of at most 24. Native backends retain two batches; plan backends may
@@ -197,9 +262,10 @@ pub trait ProcessMemory: Send + Sync {
         true
     }
 
-    /// Whether reads target an owned process object rather than a reusable PID.
+    /// Whether successful reads are tied to this process identity, either by
+    /// an owned OS object or a generation check after every native read.
     /// Such backends can defer a plan's health probe until a read fails without
-    /// allowing PID reuse to redirect successful reads into another process.
+    /// allowing PID reuse to publish bytes from another process.
     fn reads_pin_process_identity(&self) -> bool {
         false
     }

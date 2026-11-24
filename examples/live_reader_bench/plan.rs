@@ -84,6 +84,7 @@ impl ConsoleSink for Silent {
 pub struct Attachment {
     pub process: ProcessHandle,
     pub publication: Option<(VtableHostServices, u64)>,
+    pub submissions: Arc<std::sync::atomic::AtomicU64>,
     host: Arc<PluginHost>,
     pid: u32,
     submitter: (VtableHostServices, u64),
@@ -186,12 +187,14 @@ impl Attachment {
         host.process_appeared(record);
         let (services, handle, scans) = rx.recv_timeout(Duration::from_secs(5))?;
         let memory = PlanProcessMemory::new(services, handle, pid, bitness);
+        let submissions = memory.plan_counter();
         let scan = PlanScanBackend::new(services, handle, scans);
         let process = ProcessHandle::with_scan_backend(Arc::new(memory), bitness, Arc::new(scan));
         drop(entered);
         Ok(Self {
             process,
             publication: bus.then_some((services, handle)),
+            submissions,
             host,
             pid,
             submitter: (services, handle),

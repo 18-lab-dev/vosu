@@ -94,6 +94,7 @@ mod preview_scheme;
 mod projection;
 mod render;
 mod service;
+mod signals;
 #[cfg(feature = "test-harness")]
 mod test_support;
 mod tracing_log;
@@ -119,6 +120,8 @@ use lifecycle::*;
 use projection::*;
 use render::*;
 use service::*;
+#[cfg(test)]
+use signals::cancel_on_signal;
 #[cfg(test)]
 use vosu_osu_state::{Delivery, SnapshotPublisher};
 
