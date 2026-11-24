@@ -676,6 +676,7 @@ fn injected_session_memory_resolves_no_modules_for_a_scan() {
     );
     let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
         manifest: &manifest,
+        settings_schema: None,
         vtable: vosu_plugin_testkit::scan::vosu_plugin_vtable,
     }])
     .expect("loading the scan testkit plugin");

@@ -568,6 +568,7 @@ fn nested_sync_submit_from_result_dispatch_is_refused_not_panicked() {
     );
     let loaded = registry::load_bundled(&[registry::BundledPlugin {
         manifest: &manifest,
+        settings_schema: None,
         vtable: nested_sync_plugin::vosu_plugin_vtable,
     }])
     .expect("loading the nested-sync testkit plugin");
