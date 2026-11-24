@@ -16,6 +16,8 @@ All notable user-visible changes to vosu are documented here. Older sections are
 - Reduce synchronous plugin-read overhead with revocable host lookup and
   validated-layout caches, retain Linux PID-generation checks at the native
   read boundary, and batch lazer's forty visualizer amplitudes in one plan.
+- Finish shutdown cleanup after a background task panics, joining the config
+  and log writers before returning the original error instead of hanging on exit.
 
 ## 1.2.5 - 2026-11-22
 
