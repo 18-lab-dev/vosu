@@ -107,7 +107,7 @@ impl View {
             state: state.number,
             interface_visible: get(&capture, "/settings/interfaceVisible")?,
             replay_ui_visible: get(&capture, "/settings/replayUIVisible")?,
-            chat_status: get(&capture, "/settings/chatVisibilityStatus")?,
+            chat_status: get::<Number>(&capture, "/settings/chatVisibilityStatus")?.number,
             bass_density: get(&capture, "/settings/bassDensity")?,
             beatmap: get(&capture, "/beatmap")?,
             paths: get(&capture, "/internal/paths")?,

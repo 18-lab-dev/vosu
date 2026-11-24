@@ -7,7 +7,7 @@ use vosu_surface::state::{CapturedSelection, IdentifiedRoster, IdentifiedSession
 fn document() -> Value {
     json!({
         "session": {"state": {"number": 2, "name": "play"}},
-        "settings": {"interfaceVisible": true, "replayUIVisible": false, "chatVisibilityStatus": -3, "bassDensity": 0.75},
+        "settings": {"interfaceVisible": true, "replayUIVisible": false, "chatVisibilityStatus": {"number": -3, "name": "unknown"}, "bassDensity": 0.75},
         "beatmap": {
             "selectionMode": 1, "id": 27, "set": 51, "checksum": "md5", "status": {"number": 4},
             "artist": "artist", "artistUnicode": "芸術家", "title": "title", "titleUnicode": "題", "mapper": "mapper", "version": "Hard",
