@@ -376,6 +376,7 @@ impl Harness {
         let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
             manifest: &manifest,
             settings_schema: Some(vosu_osu::SETTINGS_SCHEMA),
+            namespace_schemas: &[],
             vtable: vosu_plugin_vtable,
         }])
         .unwrap();
