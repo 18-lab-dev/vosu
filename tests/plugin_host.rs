@@ -390,3 +390,185 @@ fn plugin_host_runs_the_host_services_testkit_plugin_end_to_end() {
 
     host.destroy_all(DESTROY_GRACE);
 }
+
+// --- `vosu-core` `test-harness` memory seam (F3) ------------------------
+
+/// A [`vosu_sys::process::ProcessMemory`] backed by a plain in-memory
+/// byte buffer, standing in for a real OS process: `address` indexes
+/// straight into `bytes`, exactly the way
+/// `vosu_core::plugin::test_support::set_session_memory` injects it for
+/// `PluginHost::session_memory` to pick up in place of opening a real
+/// `pid`.
+struct InjectedBuffer {
+    bytes: Vec<u8>,
+}
+
+impl vosu_sys::process::ProcessMemory for InjectedBuffer {
+    fn read_exact(
+        &self,
+        address: usize,
+        dst: &mut [u8],
+    ) -> Result<(), vosu_sys::process::MemoryError> {
+        let end = address.checked_add(dst.len()).ok_or(
+            vosu_sys::process::MemoryError::AddressOverflow {
+                base: address,
+                offset: dst.len(),
+            },
+        )?;
+        let slice =
+            self.bytes
+                .get(address..end)
+                .ok_or_else(|| vosu_sys::process::MemoryError::Read {
+                    address,
+                    len: dst.len(),
+                    message: "out of injected buffer bounds".to_owned(),
+                })?;
+        dst.copy_from_slice(slice);
+        Ok(())
+    }
+
+    fn read_many(
+        &self,
+        reads: &mut [vosu_sys::process::ReadRequest<'_>],
+    ) -> Result<(), vosu_sys::process::MemoryError> {
+        for read in reads {
+            self.read_exact(read.address, read.dst)?;
+        }
+        Ok(())
+    }
+
+    fn readable_regions(
+        &self,
+    ) -> Result<Vec<vosu_sys::process::MemoryRegion>, vosu_sys::process::MemoryError> {
+        Ok(vec![vosu_sys::process::MemoryRegion {
+            address: 0,
+            size: self.bytes.len(),
+        }])
+    }
+}
+
+/// F3's own acceptance test: a real `PluginHost` and a real plugin
+/// instance (`vosu-plugin-testkit`'s read-plan plugin) answer a
+/// `VOSU_READ_PLAN_SYNC` submission against process memory
+/// `vosu_core::plugin::test_support::set_session_memory` injected for a
+/// synthetic pid that names no real OS process at all — proving the
+/// `test_support` seam, not just `host::read_plans`'s own private hook,
+/// reaches a real `PluginHost::session_memory` lookup end to end.
+#[test]
+fn injected_session_memory_answers_a_sync_plan() {
+    let runtime = tokio::runtime::Runtime::new().expect("building a Tokio runtime");
+    let _enter = runtime.enter();
+
+    let console = Arc::new(RecordingConsole::default());
+    let log_dir = tempfile::tempdir().expect("creating a temp log dir");
+    let logger = vosu_core::logging::Logger::new(
+        log_dir.path(),
+        vosu_core::logging::LoggerOptions {
+            version: "0.1.0".to_owned(),
+            debug_log: true,
+            queue_capacity: 4096,
+        },
+        console.clone(),
+    )
+    .expect("constructing the logger");
+
+    let config_dir = tempfile::tempdir().expect("creating a temp config dir");
+    let config_path = config_dir.path().join("vosu.toml");
+    let config = runtime
+        .block_on(vosu_core::config::ConfigStore::initialize(&config_path))
+        .expect("initializing a throwaway ConfigStore");
+    let storage: Arc<dyn vosu_core::plugin::settings::SettingsStorage> = Arc::new(
+        vosu_core::plugin::settings::ConfigSettingsBridgeB2::new(Arc::new(config)),
+    );
+    let settings = Arc::new(vosu_core::plugin::settings::PluginSettingsService::new(
+        storage,
+    ));
+    let host = vosu_core::plugin::PluginHost::new(logger, settings, runtime.handle().clone());
+
+    let plugin_id = "acme.testkit.readplan.injected";
+    let (events, commands) = vosu_plugin_testkit::read_plan::register(plugin_id);
+    let manifest = format!(
+        "kind='plugin'\nmanifest_version=1\nid='{plugin_id}'\nname='{plugin_id}'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n\n[match]\nprocess_names=['proc-injected']\n"
+    );
+    let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
+        manifest: &manifest,
+        vtable: vosu_plugin_testkit::read_plan::vosu_plugin_vtable,
+    }])
+    .expect("loading the read-plan testkit plugin");
+
+    let data_dir = tempfile::tempdir().expect("creating a temp plugin data dir");
+    host.create_instance(
+        PluginInstanceId::new(1),
+        &loaded[0],
+        data_dir.path().to_path_buf(),
+        None,
+    )
+    .expect("creating the read-plan testkit instance");
+
+    // A synthetic pid naming no real OS process: `test_support` is the
+    // only thing that makes this session's memory resolvable.
+    let pid: u32 = 0x7FFF_FFFE;
+    let marker: u64 = 0xABCD_EF01_2345_6789;
+    let memory: Arc<dyn vosu_sys::process::ProcessMemory> = Arc::new(InjectedBuffer {
+        bytes: marker.to_le_bytes().to_vec(),
+    });
+    vosu_core::plugin::test_support::set_session_memory(
+        pid,
+        memory,
+        vosu_sys::process::ProcessBitness::X64,
+    );
+
+    host.process_appeared(vosu_core::plugin::ProcessRecord {
+        pid,
+        name: "proc-injected".to_owned(),
+        path: "/games/proc-injected".to_owned(),
+        command_line: "proc-injected".to_owned(),
+        bitness: vosu_plugin_api::Bitness::X64,
+        start_time: 1,
+    });
+
+    let handle = match events
+        .recv_timeout(Duration::from_secs(5))
+        .expect("SESSION_ATTACHED")
+    {
+        vosu_plugin_testkit::read_plan::ReadPlanEvent::Attached { handle } => handle,
+        other => panic!("expected Attached, got {other:?}"),
+    };
+
+    commands
+        .send(
+            vosu_plugin_testkit::read_plan::ReadPlanCommand::SubmitSync {
+                plan: 1,
+                handle,
+                root: vosu_plugin_api::PlanBase::Absolute(0),
+                stages: vec![vosu_plugin_api::Stage {
+                    base: vosu_plugin_api::StageBase::Root,
+                    base_offset: 0,
+                    ops: vec![vosu_plugin_api::PlanOp {
+                        offset: 0,
+                        length: 8,
+                    }],
+                }],
+            },
+        )
+        .expect("sending the sync submit command");
+
+    match events
+        .recv_timeout(Duration::from_secs(5))
+        .expect("sync result")
+    {
+        vosu_plugin_testkit::read_plan::ReadPlanEvent::SyncResult(Ok(result)) => {
+            assert_eq!(result.plan, 1);
+            match &result.results[0] {
+                vosu_plugin_api::ReadResult::Ok(bytes) => {
+                    assert_eq!(bytes.as_slice(), &marker.to_le_bytes());
+                }
+                other => panic!("expected Ok, got {other:?}"),
+            }
+        }
+        other => panic!("expected an Ok SyncResult, got {other:?}"),
+    }
+
+    vosu_core::plugin::test_support::clear_session_memory(pid);
+    host.destroy_all(DESTROY_GRACE);
+}

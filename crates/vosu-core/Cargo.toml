@@ -12,6 +12,7 @@ workspace = true
 [features]
 default = []
 linux-process-events = ["vosu-sys/linux-process-events"]
+test-harness = []
 
 [lib]
 path = "src/lib.rs"

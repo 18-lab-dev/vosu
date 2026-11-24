@@ -11,6 +11,9 @@
 //! startup decisions: the daemon-wide operational services shared by every
 //! runtime composition.
 
+#[cfg(all(feature = "test-harness", not(debug_assertions)))]
+compile_error!("the test-harness feature is forbidden in release builds");
+
 pub mod app;
 pub mod config;
 pub mod desktop;

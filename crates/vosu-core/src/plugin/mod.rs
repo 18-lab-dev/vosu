@@ -66,8 +66,9 @@ mod registry;
 mod scan;
 mod session;
 pub mod settings;
+#[cfg(any(test, feature = "test-harness"))]
+pub mod test_support;
 pub mod timers;
-
 #[cfg(all(target_os = "linux", feature = "linux-process-events"))]
 pub use discovery::LinuxSource;
 #[cfg(target_os = "linux")]

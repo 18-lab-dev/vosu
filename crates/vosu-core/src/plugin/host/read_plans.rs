@@ -59,7 +59,7 @@
 //! `VOSU_ERR_TARGET_GONE`; a live one this host simply failed to open is
 //! `VOSU_ERR_PERMISSION_DENIED`/`VOSU_ERR_BACKEND`, P2-8).
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
@@ -246,17 +246,17 @@ fn build_module_table_real(pid: u32) -> Option<Arc<dyn ModuleResolver + Send + S
 /// synthetic pid ([`set_session_memory_hook_for_tests`]), which has no
 /// real `/proc`/loader table to enumerate and whose test plans never use
 /// `VOSU_BASE_MODULE` anyway.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 struct NoModules;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 impl ModuleResolver for NoModules {
     fn resolve(&self, _module: &str) -> Option<u64> {
         None
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 fn session_memory_hooks() -> &'static Mutex<HashMap<u32, Arc<SessionMemory>>> {
     static HOOKS: std::sync::LazyLock<Mutex<HashMap<u32, Arc<SessionMemory>>>> =
         std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -271,7 +271,7 @@ fn session_memory_hooks() -> &'static Mutex<HashMap<u32, Arc<SessionMemory>>> {
 /// `pid`, not a single global override, so independent tests running in
 /// the same process never collide as long as each picks its own synthetic
 /// pid.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-harness"))]
 pub(crate) fn set_session_memory_hook_for_tests(
     pid: u32,
     process: Arc<dyn ProcessMemory>,
@@ -290,6 +290,20 @@ pub(crate) fn set_session_memory_hook_for_tests(
             }),
         );
 }
+
+/// Removes `pid`'s hook, the inverse of
+/// [`set_session_memory_hook_for_tests`]:
+/// `vosu_core::plugin::test_support::clear_session_memory` exposes this
+/// so a test can retire a synthetic pid once it is done with it instead
+/// of leaking it in the registry for the rest of the process's life.
+#[cfg(any(test, feature = "test-harness"))]
+pub(crate) fn clear_session_memory_hook_for_tests(pid: u32) {
+    session_memory_hooks()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(&pid);
+}
+
 /// N2: lets a test make [`open_session_memory`] fail `pid`'s next
 /// `count` calls with `VOSU_ERR_PERMISSION_DENIED` before falling
 /// through to [`session_memory_hooks`]'s own success hook — proving a
@@ -324,7 +338,7 @@ fn open_session_memory(pid: u32) -> Result<Arc<SessionMemory>, SessionMemoryErro
             return Err(SessionMemoryError::PermissionDenied);
         }
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     {
         let hooked = session_memory_hooks()
             .lock()
@@ -341,7 +355,7 @@ fn open_session_memory(pid: u32) -> Result<Arc<SessionMemory>, SessionMemoryErro
 }
 
 fn build_module_table(pid: u32) -> Option<Arc<dyn ModuleResolver + Send + Sync>> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-harness"))]
     {
         let hooked = session_memory_hooks()
             .lock()
