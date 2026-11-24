@@ -1,0 +1,9 @@
+<!doctype html>
+<html><head><title>Tool v2 fixture</title><link rel="stylesheet" href="/tools/_host/v1/theme.css"></head>
+<body><h1>Tool v2 fixture</h1><script type="module">
+import {vosu} from '/tools/_host/v2/bridge.js';
+await vosu.ready;
+document.body.dataset.write = vosu.canWrite;
+// Expose the actual client for the daemon/browser composition smoke.
+window.fixture = vosu;
+</script></body></html>

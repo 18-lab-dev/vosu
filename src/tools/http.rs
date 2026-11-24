@@ -337,6 +337,9 @@ impl ToolHost {
             .strip_prefix("/tools/")
             .unwrap_or_default()
             .to_owned();
+        if path == "_host/v2/bridge.js" && request.method() == Method::GET {
+            return self.browser_bridge(true);
+        }
         if let Some(host) = path.strip_prefix("_host/v1/") {
             if host == "cli" || host.starts_with("cli/") {
                 return self.cli_api(host, request, &body).await;
@@ -454,6 +457,34 @@ impl ToolHost {
             _ => error(StatusCode::NOT_FOUND, "not found"),
         }
     }
+    fn browser_bridge(&self, v2: bool) -> Response {
+        let entries = self
+            .entries
+            .lock()
+            .values()
+            .filter_map(|e| {
+                e.manifest
+                    .as_ref()
+                    .map(|m| json!({"id":m.id,"name":m.name,"version":m.version}))
+            })
+            .collect::<Vec<_>>();
+        let asset = if v2 {
+            include_str!("../../assets/server/tool-bridge.js")
+        } else {
+            include_str!("../../assets/server/tool-bridge-v1.js")
+        };
+        let source = format!(
+            "const metadata = {};\nconst dashboardUrl = {};\n{}",
+            json!(entries),
+            json!(self.dashboard_url()),
+            asset
+        );
+        (
+            [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+            source,
+        )
+            .into_response()
+    }
     // Takes the request's parts, not `&Request`: the body type is not `Sync`,
     // so holding a request reference across the overlay listing's await
     // would make the future `!Send`.
@@ -465,27 +496,7 @@ impl ToolHost {
         body: &[u8],
     ) -> Response {
         if method == Method::GET && action == "bridge.js" {
-            let entries = self
-                .entries
-                .lock()
-                .values()
-                .filter_map(|e| {
-                    e.manifest
-                        .as_ref()
-                        .map(|m| json!({"id":m.id,"name":m.name,"version":m.version}))
-                })
-                .collect::<Vec<_>>();
-            let source = format!(
-                "const metadata = {};\nconst dashboardUrl = {};\n{}",
-                json!(entries),
-                json!(self.dashboard_url()),
-                include_str!("../../assets/server/tool-bridge.js")
-            );
-            return (
-                [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-                source,
-            )
-                .into_response();
+            return self.browser_bridge(false);
         }
         if method == Method::GET && action == "theme.css" {
             // One source for the dashboard and tools: the dashboard's tokens,
@@ -775,6 +786,62 @@ async fn bridge_websocket(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn browser_bridge_versions_are_exact_and_preserve_v1() {
+        let root = tempfile::tempdir().unwrap();
+        let host = vosu_proptest::bounded!(ToolHost::new(
+            root.path().join("config"),
+            root.path().join("data"),
+            root.path().join("cache"),
+            ExtraRoots { dev: vec![] },
+            "http://127.0.0.1:25150".into(),
+            "http://127.0.0.1:25151".into(),
+            Arc::new(|| json!({}))
+        ))
+        .unwrap();
+        for (version, asset) in [
+            ("v1", include_str!("../../assets/server/tool-bridge-v1.js")),
+            ("v2", include_str!("../../assets/server/tool-bridge.js")),
+        ] {
+            let request = Request::builder()
+                .uri(format!("/tools/_host/{version}/bridge.js"))
+                .body(Body::empty())
+                .unwrap();
+            let response = vosu_proptest::bounded!(host.overlay(request, Bytes::new()));
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers()[header::CONTENT_TYPE],
+                "text/javascript; charset=utf-8"
+            );
+            let bytes =
+                vosu_proptest::bounded!(axum::body::to_bytes(response.into_body(), 1024 * 1024))
+                    .unwrap();
+            assert!(std::str::from_utf8(&bytes).unwrap().ends_with(asset));
+        }
+        for (method, path) in [
+            (Method::GET, "/tools/_host/v2/bridge.js/"),
+            (Method::GET, "/tools/_host/v2/bridge.js-extra"),
+            (Method::GET, "/tools/_host/v2/theme.css"),
+            (Method::GET, "/tools/_host/v1/bridge-v2.js"),
+            (Method::POST, "/tools/_host/v2/bridge.js"),
+            (Method::HEAD, "/tools/_host/v2/bridge.js"),
+        ] {
+            let request = Request::builder()
+                .method(method)
+                .uri(path)
+                .body(Body::empty())
+                .unwrap();
+            let response = vosu_proptest::bounded!(host.overlay(request, Bytes::new()));
+            // Unknown v1 host operations retain their existing auth-first
+            // rejection; none may accidentally serve the v2 asset.
+            let expected = if path.contains("/v1/") {
+                StatusCode::UNAUTHORIZED
+            } else {
+                StatusCode::NOT_FOUND
+            };
+            assert_eq!(response.status(), expected, "{path}");
+        }
+    }
     #[test]
     fn strips_proxy_credentials_and_connection_named_headers() {
         let mut headers = HeaderMap::new();

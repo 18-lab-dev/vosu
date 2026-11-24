@@ -124,6 +124,7 @@ The `/tools` path prefix is reserved on the overlay listener: overlays cannot be
 | `/tools/<id>/<path>` | Static file from `[ui].root` (root-confined, traversal-safe); `/tools/<id>/` serves `entry`. `/tools/<id>/_icon` and `/tools/<id>/_banner` serve the manifest art in any status. 404 for service-only tools. |
 | `GET /tools/<id>/_settings` | `{"values": {"<setting id>": value}}`: effective `settings.json` values with defaults applied, for the tool's UI. Read-only and open like other tool reads (overlays can read it too), so `password` settings are never included. 503 while the tool is unavailable. |
 | `/tools/_host/v1/*` | Host API and browser bridge (below) |
+| `GET /tools/_host/v2/bridge.js` | API v1 session subscriptions and plugin-action job client (below); no other v2 host assets or operations are exposed. |
 | `GET` / `HEAD /files/skin/` | Current-skin metadata retains `client`, `name`, `files:boolean`, `builtin`, `base` and adds `entries:[{path,size,modified?,hash?}]`, `truncated:boolean`. Relative paths use `/`; stable entries have mtime milliseconds (`modified`), lazer entries have store `hash` instead. Built-ins have no entries. At most 20,000 files / 40,000 visited directory entries; incomplete enumeration sets `truncated:true`. Cached by skin identity/root, validated against filesystem changes on metadata reads. Same overlay peer policy/CORS; no absolute paths. |
 | `GET` / `HEAD /files/skin/<path>` | Current stable/imported lazer skin file, case-insensitive on both clients and confined to its selected root. Exact stable paths win; complete-index case collisions choose the lexicographically smallest path. Truncated/new paths fall back to exact-then-lexical component lookup. Missing/unavailable lazer files return 404. Built-ins report `files:false` and `builtin` (`argon`, `argon-pro`, `triangles`, `legacy`, `retro`); use your own defaults. |
 | `GET` / `HEAD /files/beatmap/*` | Existing current beatmap/background/audio and relative file reads, with unchanged readiness, range, peer and CORS behaviour. |
@@ -196,6 +197,40 @@ await vosu.settings();                   // GET /tools/<id>/_settings → values
 `vosu.colorScheme` is read once when the bridge loads: the launch fragment's `theme=` value when present, otherwise `prefers-color-scheme`. The bridge applies it as `data-theme` on `<html>`, so `theme.css` renders in the dashboard's mode and sets the matching CSS `color-scheme` for native controls (select popups, scrollbars, pickers). A tool may change `data-theme` afterwards. Older bridges lack the property; tools can fall back with `vosu.colorScheme ?? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")`.
 
 Launch: the dashboard's **Open** calls `POST /api/tools/<id>/launch` (dashboard origin, CSRF) and opens the returned URL `<overlay origin>/tools/<id>/#vosu-launch=<code>&theme=<dark|light>` in a new tab without an opener. The code is single-use and expires after 60 seconds; the bridge exchanges it via `POST /tools/_host/v1/session` `{"tool","code"}` → `{"session"}`, keeps the session only in the page's JavaScript memory, and strips the fragment. Never persist it to `sessionStorage`, `localStorage`, IndexedDB, or cookies: those are shared with every overlay that later loads in the same tab. Sessions last until vosu restarts. A UI opened without a launch code, or reloaded, is read-only until opened from the dashboard again. Tool UIs must not open same-origin pages without `noopener` or embed overlays in frames, because such documents can script the tool page and use its session.
+
+### Browser bridge v2
+
+New tools import `/tools/_host/v2/bridge.js`. The exact v1 route and its
+legacy subscription behavior remain unchanged until M7. Both versions use
+the same page-memory launch exchange and the existing v1 theme asset.
+
+V2 retains `ready`, `tool`, `dashboardUrl`, `colorScheme`, `canWrite`,
+`fetch`, and `settings`. Its
+`subscribe(fields, onFrame, onStatus?, {session = "active"}?)` connects to
+`/api/v1/sessions/{session}/subscribe`, preserving the JSON Pointer array,
+frames and reconnection behavior. The fourth argument chooses an explicit
+session; subscriptions cannot use `null`. Unknown option keys, non-object
+options and an explicitly invalid `session` (including `undefined` or an
+empty string) throw synchronously before opening a socket; they never fall
+back to `"active"`. Omitting the fourth argument preserves v1's selection
+wire bytes, frame delivery and status behavior at the API v1 route.
+
+`await vosu.invoke(actionId, args, {session, onProgress, signal}?)` returns
+the action result or rejects with an error carrying the job's error `code`;
+cancelled jobs reject with `code: "cancelled"`. `await vosu.start(actionId,
+args, {session}?)` returns `{id, done, onProgress(fn), cancel()}`. `done`
+settles like `invoke`; `onProgress` schedules the current progress for a
+newly registered callback and returns an unsubscribe function. Later
+progress changes are delivered once per change. At most 256 listeners may
+be registered on one running handle; unsubscribe releases a slot.
+`cancel()` requests advisory cancellation; a completed job's result still stands.
+
+For actions, omitted `session` means `"active"`, a string selects that
+session, and `null` selects the session-less action route. Requests use the
+API v1 action/job routes and `X-Vosu-Tool-Session`, never browser storage.
+Aborting before creation sends no POST. Aborting during POST preserves its
+response so the created job can be cancelled by ID; aborting during polling
+sends DELETE, and aborting after completion does nothing.
 
 ## Dashboard API (dashboard listener only)
 
