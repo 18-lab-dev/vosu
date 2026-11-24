@@ -315,3 +315,31 @@ async fn api_v1_debounce_changes_publish_and_persist_without_changing_legacy_deb
     assert_eq!(reloaded.current().v2_subscription_debounce, 29.5);
     bounded!(reloaded.shutdown()).unwrap();
 }
+
+#[test]
+fn api_v1_debounce_duration_uses_validated_fractional_milliseconds() {
+    for (input, expected) in [
+        ("", Duration::from_millis(1)),
+        (
+            "API_V1_SUBSCRIPTION_DEBOUNCE = 7.375\n",
+            Duration::from_micros(7_375),
+        ),
+        (
+            "API_V1_SUBSCRIPTION_DEBOUNCE = 0.5\n",
+            Duration::from_millis(1),
+        ),
+        (
+            "API_V1_SUBSCRIPTION_DEBOUNCE = 1e100\n",
+            Duration::from_secs(60),
+        ),
+    ] {
+        let document =
+            ConfigDocument::parse(&format!("{input}V2_SUBSCRIPTION_DEBOUNCE = 19.25\n")).unwrap();
+        assert_eq!(
+            document.config().api_v1_subscription_debounce_duration(),
+            expected,
+            "{input}"
+        );
+        assert_eq!(document.config().v2_subscription_debounce, 19.25);
+    }
+}

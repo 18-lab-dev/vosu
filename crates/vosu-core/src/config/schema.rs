@@ -54,6 +54,13 @@ impl Default for Config {
     }
 }
 
+impl Config {
+    /// Effective API v1 hub debounce after configuration validation.
+    pub fn api_v1_subscription_debounce_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs_f64(self.api_v1_subscription_debounce / 1_000.0)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfigKey {
     EnableAutoUpdate,
