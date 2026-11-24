@@ -8,9 +8,15 @@
 //! `SESSION_ATTACHED`/`SESSION_DETACHED`/`FOCUS_CHANGED` back to a test
 //! (`session.rs`), a read-plan plugin driving async and
 //! `VOSU_READ_PLAN_SYNC` submissions from a test-controlled background
-//! thread (`read_plan.rs`), and a signature-scan plugin driving
-//! `VOSU_OP_SCAN_REQUEST` submissions the same way (`scan.rs`). Actions,
-//! streams, and the synthetic game are out of scope for this phase.
+//! thread (`read_plan.rs`), a signature-scan plugin driving
+//! `VOSU_OP_SCAN_REQUEST` submissions the same way (`scan.rs`), a
+//! `concurrent_dispatch` state-bus publisher driving
+//! `VOSU_OP_PUBLISH_FIELD`/`VOSU_OP_PUBLISH_BATCH` submissions from
+//! several test-controlled writer threads at once (`publisher.rs`), and
+//! a `VOSU_OP_STATE_SUBSCRIBE` subscriber reassembling split
+//! `VOSU_OP_STATE_UPDATE` deliveries (`subscriber.rs`). Actions, streams,
+//! and the synthetic game beyond these two fixtures are out of scope for
+//! this phase.
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 #[cfg(all(feature = "test-harness", not(debug_assertions)))]
@@ -23,8 +29,12 @@ pub mod echo;
 #[cfg(feature = "test-harness")]
 pub mod host_services;
 #[cfg(feature = "test-harness")]
+pub mod publisher;
+#[cfg(feature = "test-harness")]
 pub mod read_plan;
 #[cfg(feature = "test-harness")]
 pub mod scan;
 #[cfg(feature = "test-harness")]
 pub mod session;
+#[cfg(feature = "test-harness")]
+pub mod subscriber;
