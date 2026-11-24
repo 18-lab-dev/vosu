@@ -1,5 +1,7 @@
 //! Reloadable HTTP and WebSocket service.
 
+#[cfg(feature = "test-harness")]
+pub mod adapter_capture;
 pub mod api_keys;
 pub mod api_v1;
 pub mod auth;
