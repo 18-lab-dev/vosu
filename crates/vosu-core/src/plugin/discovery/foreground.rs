@@ -4,13 +4,10 @@
 //! which eBPF/CN_PROC push on Linux), only a point-in-time query
 //! (`vosu_sys::process::foreground_process_id`,
 //! `GetForegroundWindow` + `GetWindowThreadProcessId`), so this polls it
-//! on its own dedicated thread and calls
-//! [`super::host::PluginHost::foreground_changed`] only when the owning
-//! pid actually changes — that call takes no process id itself (it
-//! re-reads the live foreground owner through
-//! [`super::super::focus::OsForegroundSource`] when it recomputes focus,
-//! `host/lifecycle.rs`'s own doc comment); this poller's only job is
-//! noticing *when* to trigger that recompute.
+//! on its own dedicated thread. Each sample is cached in the host and
+//! published through its foreground watch before focus is recomputed.
+//! Both plugin focus and the interim B1 reduction consume that same
+//! sample; neither performs another OS foreground query.
 //!
 //! # Cadence
 //! [`FOREGROUND_POLL_INTERVAL`] is 100 ms, reusing 1.x's own
@@ -44,16 +41,9 @@ use std::time::Duration;
 /// Polling cadence (see module doc "Cadence").
 pub const FOREGROUND_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Pure foreground-owner change detector: whether `current` differs from
-/// `previous`, including a transition to or from "no foreground window"
-/// (`None`) — either direction is a real change the Focus rule must
-/// re-run (`docs/v2/api-v1.md` "Focus rule": losing a tracked foreground
-/// owner falls through to the most-recently-focused session, exactly
-/// like gaining one promotes it, so both edges matter). Used by both
-/// [`ForegroundPoller`]'s `#[cfg(windows)]` polling loop and this
-/// module's own `tests` on every target (`#[cfg(any(windows, test))]`):
-/// otherwise a non-Windows, non-test build has no caller at all, which
-/// `-D warnings`' `dead_code` lint correctly rejects.
+/// Pure foreground-owner change detector, including transitions to and
+/// from "no foreground window". Used by the poller's cached publication
+/// and its target-independent transition regression tests below.
 #[cfg(any(windows, test))]
 #[must_use]
 pub(crate) fn foreground_owner_changed(previous: Option<u32>, current: Option<u32>) -> bool {
@@ -70,7 +60,7 @@ mod backend {
     use tokio::sync::Notify;
 
     use super::super::super::host::PluginHost;
-    use super::{FOREGROUND_POLL_INTERVAL, foreground_owner_changed};
+    use super::FOREGROUND_POLL_INTERVAL;
 
     /// Owns the foreground-poller background thread. [`Self::start`]
     /// unconditionally starts it; like [`super::super::DiscoveryService`],
@@ -109,16 +99,12 @@ mod backend {
             let thread = thread::Builder::new()
                 .name("vosu-foreground".to_owned())
                 .spawn(move || {
-                    let mut last: Option<u32> = None;
+                    let source = super::super::super::focus::OsForegroundSource;
                     while !loop_cancel.load(Ordering::Acquire) {
                         let Some(host) = loop_host.upgrade() else {
                             break;
                         };
-                        let current = vosu_sys::process::foreground_process_id();
-                        if foreground_owner_changed(last, current) {
-                            host.foreground_changed();
-                            last = current;
-                        }
+                        host.poll_foreground(&source);
                         drop(host);
                         if loop_cancel.load(Ordering::Acquire) {
                             break;

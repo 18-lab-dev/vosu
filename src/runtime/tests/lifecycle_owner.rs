@@ -244,9 +244,7 @@ async fn bundled_osu_discovery_and_real_runtime_shutdown_are_joined() {
             ordered_detach: AtomicBool::new(false),
         });
         *owner.bridge_installed.get_mut() = Some(vosu_surface::install(sink.clone()).unwrap());
-        *owner.bridge.get_mut() = Some(bridge.start(Arc::new(
-            vosu_core::plugin::SyntheticForegroundSource::new(None),
-        )));
+        *owner.bridge.get_mut() = Some(bridge.start(owner.plugins.subscribe_foreground()));
         let mut lifecycle = bridge.lifecycle();
         dev_plugins::load_all(&owner.plugins, vec![], &owner.paths, &owner.logger).unwrap();
         let source = Arc::new(super::super::discovery::operational::LoggedSource::new(

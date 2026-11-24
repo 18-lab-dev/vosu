@@ -41,9 +41,7 @@ use vosu_plugin_api::{
 };
 
 use super::dispatch::OwnedMessage;
-use super::focus::{
-    FocusCandidate, FocusEvent, FocusKey, FocusTracker, ForegroundSource, OsForegroundSource,
-};
+use super::focus::{FocusCandidate, FocusEvent, FocusKey, FocusTracker, ForegroundSource};
 use super::host_services::{PluginHostHandler, PluginInstanceId};
 use super::instance::PluginInstance;
 use super::logging::PluginLogRouter;
@@ -198,9 +196,9 @@ pub struct PluginHost {
     /// currently focused session and recency fallback.
     focus: Mutex<FocusTracker>,
     /// Which process (if any) owns the OS foreground window, for the
-    /// Focus rule: [`OsForegroundSource`] in production,
-    /// `focus::SyntheticForegroundSource` in tests.
+    /// Focus rule: the poller's cached sample in production, synthetic in tests.
     foreground: Arc<dyn ForegroundSource>,
+    foreground_updates: tokio::sync::watch::Sender<Option<u32>>,
     /// Read-plan routing's per-session cached process handle (§6.3,
     /// `read_plans.rs`): opened once per [`SessionHandle`], reused until
     /// the session detaches. A module table is deliberately not cached
@@ -241,7 +239,7 @@ impl PluginHost {
             logger,
             settings,
             runtime,
-            Arc::new(OsForegroundSource),
+            None,
             super::session::IDENTIFICATION_TIMEOUT,
         )
     }
@@ -257,7 +255,7 @@ impl PluginHost {
             logger,
             settings,
             runtime,
-            foreground,
+            Some(foreground),
             super::session::IDENTIFICATION_TIMEOUT,
         )
     }
@@ -282,7 +280,7 @@ impl PluginHost {
             logger,
             settings,
             runtime,
-            foreground,
+            Some(foreground),
             identification_timeout,
         )
     }
@@ -291,9 +289,11 @@ impl PluginHost {
         logger: Logger,
         settings: Arc<PluginSettingsService>,
         runtime: Handle,
-        foreground: Arc<dyn ForegroundSource>,
+        foreground: Option<Arc<dyn ForegroundSource>>,
         identification_timeout: Duration,
     ) -> Arc<Self> {
+        let (foreground_updates, receiver) = tokio::sync::watch::channel(None);
+        let foreground = foreground.unwrap_or_else(|| Arc::new(receiver));
         let host = Arc::new_cyclic(|self_ref| Self {
             self_ref: self_ref.clone(),
             log_router: PluginLogRouter::new(logger, runtime.clone()),
@@ -308,6 +308,7 @@ impl PluginHost {
             )),
             focus: Mutex::new(FocusTracker::new()),
             foreground,
+            foreground_updates,
             read_plan_memory: Mutex::new(HashMap::new()),
             background_pool: read_plans::new_background_pool(),
             read_plan_deadline_ms: AtomicU64::new(
@@ -327,6 +328,28 @@ impl PluginHost {
         // `Arc` to weaken.
         runtime.spawn(identification_sweep_loop(Arc::downgrade(&host)));
         host
+    }
+
+    /// Latest foreground sample, shared with the interim B1 focus reduction.
+    pub fn subscribe_foreground(&self) -> tokio::sync::watch::Receiver<Option<u32>> {
+        self.foreground_updates.subscribe()
+    }
+
+    /// One OS query per poll; focus recomputation only reads the cached value.
+    #[cfg(any(windows, test))]
+    pub(crate) fn poll_foreground(&self, source: &dyn ForegroundSource) {
+        let pid = source.foreground_pid();
+        let changed = self.foreground_updates.send_if_modified(|current| {
+            if !super::discovery::foreground_owner_changed(*current, pid) {
+                false
+            } else {
+                *current = pid;
+                true
+            }
+        });
+        if changed {
+            self.foreground_changed();
+        }
     }
 
     /// `self.self_ref` always upgrades while any `&self` call (this one

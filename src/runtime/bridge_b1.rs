@@ -341,7 +341,7 @@ impl LegacyBridge {
     }
     pub(super) fn start(
         self: &Arc<Self>,
-        _foreground: Arc<dyn vosu_core::plugin::ForegroundSource>,
+        mut foreground: watch::Receiver<Option<u32>>,
     ) -> LegacyBridgeTask {
         let cancel = CancellationToken::new();
         let task_cancel = cancel.clone();
@@ -352,8 +352,6 @@ impl LegacyBridge {
         let task = tokio::spawn(async move {
             let mut api = ManagerView::default();
             let mut live = ManagerView::default();
-            #[cfg(windows)]
-            let mut poll = tokio::time::interval(Duration::from_millis(100));
             loop {
                 let Some(owner) = bridge.upgrade() else {
                     break;
@@ -361,10 +359,15 @@ impl LegacyBridge {
                 // All manager inputs are observed under the lifecycle lock, so detach
                 // cannot race a stale queued publication back into the manager.
                 {
-                    let state = owner
+                    let mut state = owner
                         .state
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let pid = *foreground.borrow_and_update();
+                    if state.foreground != pid {
+                        state.foreground = pid;
+                        owner.publish_lifecycle(&state);
+                    }
                     let current = owner.lifecycle.borrow();
                     let desired = state
                         .sessions
@@ -413,21 +416,7 @@ impl LegacyBridge {
                     changed = demand.changed() => if changed.is_err() { break; },
                     changed = lifecycle.changed() => if changed.is_err() { break; },
                     _ = &mut notified => {},
-                    pid = async {
-                        #[cfg(windows)]
-                        {
-                            poll.tick().await;
-                            _foreground.foreground_pid()
-                        }
-                        #[cfg(not(windows))]
-                        std::future::pending::<Option<u32>>().await
-                    } => {
-                        if let Some(owner) = bridge.upgrade() {
-                            let mut state = owner.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                            state.foreground = pid;
-                            owner.publish_lifecycle(&state);
-                        }
-                    }
+                    changed = foreground.changed() => if changed.is_err() { break; },
                 }
             }
             if let Some(owner) = bridge.upgrade() {
