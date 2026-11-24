@@ -49,15 +49,22 @@ pub struct ProductionRuntime {
 
 impl ProductionRuntime {
     async fn shutdown(&self) -> io::Result<()> {
+        let plugins = Arc::clone(&self.plugins);
+        self.shutdown_with_plugin_destroy(async move {
+            tokio::task::spawn_blocking(move || {
+                plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE)
+            })
+            .await
+            .map_err(|error| io::Error::other(format!("plugin shutdown task failed: {error}")))
+        })
+        .await
+    }
+
+    async fn shutdown_with_plugin_destroy(
+        &self,
+        destroy: impl Future<Output = io::Result<()>>,
+    ) -> io::Result<()> {
         self.shutdown_token.cancel();
-        let dashboard_listener = self.dashboard_listener.lock().await.take();
-        if let Some(listener) = dashboard_listener.as_ref() {
-            listener.stop_accepting();
-        }
-        let listener = self.listener.lock().await.take();
-        if let Some(listener) = listener.as_ref() {
-            listener.stop_accepting();
-        }
         self.api_v1.shutdown();
         if let Some(watch) = self.plugin_settings_watch.lock().await.take() {
             watch.abort();
@@ -85,10 +92,7 @@ impl ProductionRuntime {
                     io::Error::other(format!("foreground poller shutdown task failed: {error}"))
                 })?;
         }
-        let plugins = Arc::clone(&self.plugins);
-        tokio::task::spawn_blocking(move || plugins.destroy_all(dev_plugins::PLUGIN_DESTROY_GRACE))
-            .await
-            .map_err(|error| io::Error::other(format!("plugin shutdown task failed: {error}")))?;
+        destroy.await?;
         if let Some(bridge) = self.bridge.lock().await.take() {
             bridge.shutdown().await;
         }
@@ -96,6 +100,14 @@ impl ProductionRuntime {
         self.state_host.lock().await.take();
         if let Some(mut tray) = self.tray.lock().await.take() {
             tray.shutdown().await;
+        }
+        let dashboard_listener = self.dashboard_listener.lock().await.take();
+        if let Some(listener) = dashboard_listener.as_ref() {
+            listener.stop_accepting();
+        }
+        let listener = self.listener.lock().await.take();
+        if let Some(listener) = listener.as_ref() {
+            listener.stop_accepting();
         }
         if let Some(hubs) = self.hubs.lock().await.take() {
             hubs.shutdown().await;

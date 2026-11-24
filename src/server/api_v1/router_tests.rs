@@ -58,6 +58,14 @@ async fn api_v1_http_and_session_events_use_real_transport() {
             response.json::<serde_json::Value>().await.unwrap(),
             serde_json::json!({"sessions": []})
         );
+        for path in ["sessions?unknown=1", "sessions/active?pointer=/focused"] {
+            let response = client.get(format!("{base}/{path}")).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+            assert_eq!(
+                response.json::<serde_json::Value>().await.unwrap()["error"]["code"],
+                "invalid_request"
+            );
+        }
         for method in [Method::POST, Method::HEAD, Method::DELETE] {
             let response = client
                 .request(method.clone(), format!("{base}/sessions"))
@@ -147,6 +155,14 @@ async fn api_v1_http_and_session_events_use_real_transport() {
         stop.cancel();
         server.await.unwrap();
         host.destroy_all(Duration::ZERO);
+        // Establish against a source closed independently of the hub's token.
+        let closed_hub = ApiV1SubscriptionHub::new(host.api_state_source(), Duration::ZERO);
+        let (connection, mut frames) = closed_hub.connect_sessions();
+        connection.text(b"[\"\"]");
+        assert_eq!(
+            frames.recv().await,
+            Some(crate::server::subscription_wire::Outbound::Close { code: 1001 })
+        );
         config.shutdown().await.unwrap();
         logger.shutdown().await.unwrap();
     });

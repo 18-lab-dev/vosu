@@ -93,6 +93,15 @@ impl ApiV1Router {
                 "Unknown WebSocket route",
             );
         }
+        if matches!(route, Route::Sessions | Route::Session(_))
+            && request.uri().query().is_some_and(|query| !query.is_empty())
+        {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "Unexpected session query",
+            );
+        }
         match route {
             Route::Sessions => http::sessions(&self.source),
             Route::Session(id) => match target(id) {

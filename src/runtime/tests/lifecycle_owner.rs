@@ -6,6 +6,9 @@ use vosu_surface::LegacySink;
 
 const WAIT: Duration = Duration::from_secs(10);
 
+#[path = "shutdown_close.rs"]
+mod shutdown_close;
+
 #[derive(Default)]
 struct Console(Mutex<String>);
 impl ConsoleSink for Console {

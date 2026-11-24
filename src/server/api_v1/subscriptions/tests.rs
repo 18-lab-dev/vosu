@@ -87,14 +87,18 @@ async fn slow_receiver_skips_intermediate_and_preserves_distinct_keys() {
         1,
         vec![Some(StateValue::I64(9)), Some(StateValue::I64(8))],
     ));
-    tx.send_replace(update(
-        1,
-        vec![Some(StateValue::I64(9)), Some(StateValue::I64(12))],
-    ));
+    // Give the producer a turn while the first Text is still in flight.
+    tokio::time::timeout(WAIT, tokio::task::yield_now())
+        .await
+        .unwrap();
     assert!(
         rx.try_recv().is_none(),
         "dequeue alone must not release the write slot"
     );
+    tx.send_replace(update(
+        1,
+        vec![Some(StateValue::I64(9)), Some(StateValue::I64(12))],
+    ));
     c.write_completed();
     assert_eq!(
         text(&mut rx).await,

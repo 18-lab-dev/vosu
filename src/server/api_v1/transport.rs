@@ -16,6 +16,7 @@ pub(super) async fn bridge(
     let writer = async move {
         loop {
             let frame = tokio::select! {
+                biased;
                 _ = peer_close.notified() => { let _ = sink.flush().await; break; }
                 frame = outbound.recv() => frame,
             };
@@ -45,6 +46,7 @@ pub(super) async fn bridge(
             }
             if terminal {
                 let _ = sink.flush().await;
+                let _ = tokio::time::timeout(Duration::from_secs(1), peer_close.notified()).await;
                 break;
             }
         }

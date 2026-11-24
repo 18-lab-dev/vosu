@@ -220,6 +220,10 @@ async fn establish(
             c.error(6, "unknown session");
             return;
         }
+        Err(ApiError::Closed) => {
+            c.close(1001);
+            return;
+        }
         Err(_) => {
             c.close(1011);
             return;
