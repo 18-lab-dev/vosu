@@ -783,6 +783,12 @@ dashboard-listener only, like other 1.x management mutations
 `<source>`, `<plan_id>`, and `<id>` path segments are percent-encoded, since a
 source string routinely contains `/` (`owner/repo`, or a full URL).
 
+Decode each path segment exactly once; malformed encoding and near-miss paths
+do not broaden a route. API keys, broker/tool tokens and overlay provenance
+never substitute for dashboard provenance and CSRF. The frozen
+[M6b service and route inventory](implementation-plan.md#m6b-frozen-service-interfaces)
+defines the core-owned handlers; M7 moves presentation, not this authority.
+
 ## Resolver algorithm
 
 ### Built-in providers
@@ -832,22 +838,21 @@ strict and needs no user choice:
    to every source form ADR 0023 adds: a GitHub URL spelling of an official
    repository is not itself the official identity, matching 1.x's existing
    "tagged, differently cased, HTTPS … spellings are not aliases" rule).
-2. **Then source order.** Among remaining candidates, the one whose source
-   appears earliest in the user's ordered, enabled source list wins (1.x's
-   existing "earlier sources win" shadowing rule, extended from tool/overlay
-   ids to capability ids).
-3. **Then catalog order.** Within one source, the first matching entry in
-   that catalog's `plugins` array wins.
+2. **Then source order.** Among remaining candidates, try sources in the
+   user's ordered, enabled source list.
+3. **Then catalog order.** Within one source, try matching entries in
+   that catalog's `plugins` array in order.
 
-This is deterministic and needs no prompt, matching ADR 0022.
+This is deterministic ranked search, not a greedy irrevocable choice or a
+newest-version sort: choose the first complete satisfying assignment.
 
 ### Version solving
 
 A capability requirement resolves to a *plugin*, and a plugin is installed at
 one version, so solving works per plugin, not per capability id:
 
-1. Start the frontier at the requested items (the tool/overlay/plugin the
-   user asked to install) plus every plugin already installed and kept.
+1. Start the frontier at the requested items plus **all kept installed
+   consumers**, including tools and overlays, not only plugins.
 2. For each requirement (`requires`, and `optional` only when a satisfying
    provider is already built-in, already selected, or already installed — an
    unmet `optional` is dropped silently, never an error, and never triggers a
@@ -867,6 +872,17 @@ one version, so solving works per plugin, not per capability id:
    generalized from tool ids to capability ids).
 6. The output is a dependency-first install order (dependencies before
    dependents), like 1.x `Catalog::order`.
+
+**A6b.5 (approved 2026-11-24):** use bounded deterministic backtracking in
+the ranking above, with one assignment per plugin across all requirements
+on all its capabilities. Backtrack on a dead end rather than fail merely
+because the first ranked candidate fails later. Retain installed plugin
+versions unless explicitly updated or visibly replaced by the approved plan.
+Compute satisfied optional edges to a deterministic fixed point using only
+built-in, installed and required-selected providers; optional edges never
+initiate selection/download. Central candidate/search-work bounds must be
+documented and enforced by the solver; exhausting them is a
+`resolution-limit` error, with empty `adds`, not a partial solution.
 
 ### Install plan
 
@@ -925,17 +941,41 @@ failed (conflict or cycle messages, see above); `adds` is then empty and the
 plan cannot be confirmed. Confirming returns `{"job_id"}`, polled exactly as
 1.x catalog jobs are.
 
+**A6b.6/.8 (approved 2026-11-24):** the registry holds at most 64 pending
+plans, each with a 10-minute TTL; expire on ingress/access, not a sweep timer.
+Only one catalog operation may run. Plans pin immutable catalog entries,
+hashes/sizes, app version, target, checked package byte limit, installed
+fingerprint and source/order/trust/private/credential generations.
+Confirmation rechecks all of these under the operation gate and consumes
+the plan once; it never recomputes an unseen replacement plan.
+Approvals bind exact plugin id/source/version/hash/runtime, not a future
+artifact with the same id. Missing/extraneous approval IDs or a plan with
+errors return 400; stale/already-consumed/busy return 409; unknown/expired
+IDs return 404. Capacity refusal is busy (409), not silent eviction of a
+live plan. A successful confirmation returns the existing `{"job_id"}`.
+
+`MAX_PACKAGE_MIB` defaults to 512; it is an integer in `1..=4096`, converted
+with checked multiplication by 1,048,576. Solver and streaming use the same
+pinned cap. A larger positive catalog size remains document-valid but
+unsupported for installation at that cap.
+
+Prepare **every** package before publication: public-only unauthenticated
+streaming, exact compressed size/hash, ZIP preflight, confined assets and
+SDK asset-backed manifest/schema/catalog equality. Journal same-filesystem
+directory and installed-record replacements; failure rolls back the
+unpublished batch, and crash recovery runs before discovery/load.
+Expose/load only a completely committed dependency graph. No partial
+dependency install may become visible because a later root failed.
+
 ### Dependency-only autoremove
 
 Each installed plugin's origin is recorded as `installed_for: "requested"` (the
 user chose to install it directly, including when accepted from game
 detection below) or `"dependency"` (the resolver added it). Built-in
 providers carry no such record at all: they are never installed, so they are
-never counted or removed. This flag is the only persisted state for a
-catalog-installed plugin; its current reference count is always recomputed
-from the currently-installed set's manifests at resolution time (requires a
-fresh graph walk, not an incrementally-maintained counter, so it cannot drift
-out of sync with what is actually installed).
+never counted or removed. Persist origin/provenance and approval records
+alongside this flag, but **never persist reference counts**: reconstruct
+the selected-provider graph from current validated installed manifests.
 
 Uninstalling a tool, overlay, or `installed_for: "requested"` plugin removes
 it, then recomputes every remaining plugin's reference count; any
@@ -943,6 +983,13 @@ it, then recomputes every remaining plugin's reference count; any
 too, recursively (its own now-unreferenced dependency-only plugins are
 removed next). A `"requested"` plugin is never auto-removed regardless of its
 reference count; only an explicit uninstall of it removes it.
+
+Explicitly requesting an installed dependency promotes it to `"requested"`.
+Refuse explicit removal of a provider still required by a kept consumer,
+naming the dependents; optional edges may be dropped. Count only actually
+resolved optional edges, not every matching provider. Recursive
+dependency-only removal preserves durable settings/data and is one serialized,
+recoverable operation (A6b.7).
 
 ### Game detection
 
@@ -967,9 +1014,28 @@ A source string is one of:
   Codeberg, or a self-hosted GitLab, Gitea, or Forgejo instance.
 - An HTTPS URL ending in `/catalog-v2.json` on any web server.
 
+**A6b.2 (approved 2026-11-24):** URL forms require HTTPS and reject userinfo,
+query and fragment. Static classification uses the parsed path ending
+exactly `/catalog-v2.json` (no extra trailing slash). Repository URLs select
+latest; only GitHub shorthand supports tag pinning. One trailing slash and
+an optional `.git` suffix are repository-fetch conveniences, never identity
+aliases. Encode tags as URL path components and the entire nested GitLab
+project path as one project-ID component.
+
+Keep the verbatim configured string as the settings/credential/officialness
+key; parsing, URL case/default-port normalization, tags and HTTPS aliases
+never transfer authority. At most 32 sources, no duplicate exact identities.
+Replacement accepts source/enabled/order only, not trust/private flags.
+Dedicated routes change those flags. Disabling retains saved settings but
+fetches nothing and contributes no candidates. Removal purges associated
+trust/private/credentials, invalidates fetches/plans, and re-add starts
+untrusted with private permission false (fixed officials remain trusted and
+never receive private permission). Cross-store mutations require durable
+rollback/recovery, not hidden partial success (A6b.4).
+
 ### Forge detection
 
-Detection runs once per source, cached until the source string changes:
+Successful detection is cached for that exact source's lifetime:
 
 1. Host is exactly `github.com` → GitHub forge, no probe.
 2. Host is exactly `gitlab.com` → GitLab forge, no probe.
@@ -988,6 +1054,14 @@ Detection runs once per source, cached until the source string changes:
    is fetched as a plain static HTTPS URL (HTTP Basic credential only, no
    forge API).
 
+Probes never authenticate, including when a credential is saved. Each has a
+5-second **total** deadline and a bounded JSON body with `version`; a
+cross-origin redirect cannot establish forge identity. The source's own
+exact-host private permission also applies to probes. Failed detection is
+retried only on explicit refresh or relevant source/private-setting edit;
+there is no periodic retry or permanent hidden blacklist. Removal/edit
+invalidates success and failure state and rejects stale completions.
+
 ### Per-forge private asset retrieval
 
 - **GitHub**: `GET /repos/<owner>/<repo>/releases/latest` (or
@@ -996,25 +1070,40 @@ Detection runs once per source, cached until the source string changes:
   its `url` field (the API asset endpoint, not `browser_download_url`) with
   `Accept: application/octet-stream` and the same bearer header. The API
   response is a redirect to presigned storage; the downloader follows it
-  itself (`src/net/streaming.rs`'s existing no-auto-redirect client) and drops
+  itself (`vosu-net`'s existing no-auto-redirect client) and drops
   `Authorization` once the redirect target's origin differs, per origin
   scoping below.
-- **GitLab**: `GET /api/v4/projects/<url-encoded path>/releases/<tag-or-permalink/latest>`
+- **GitLab**: `GET /api/v4/projects/<encoded-project>/releases/<tag>` or
+  `/api/v4/projects/<encoded-project>/releases/permalink/latest`
   with `Authorization: Bearer <token>`; find the release's asset link whose
   name is `catalog-v2.json`; GET its `direct_asset_url` with the same bearer
   header, dropped on an origin change.
 - **Gitea-compatible**: `GET /api/v1/repos/<owner>/<repo>/releases/latest`
-  (or `/tags/<tag>`) with `Authorization: token <token>`; find the asset named
+  (or `/releases/tags/<tag>`) with `Authorization: token <token>`; find the asset named
   `catalog-v2.json`; GET its `browser_download_url` with the same header,
   dropped on an origin change.
 - **Static HTTPS source**: GET the literal configured URL; attach HTTP Basic
   auth only when a `basic` credential is configured for that exact source.
 
+Asset names are exact and case-sensitive; reject zero or multiple matching
+`catalog-v2.json` assets. Bound metadata bytes, asset count and text lengths;
+do not paginate indefinitely or guess another release/asset. Validate every
+initial returned asset URL before requesting it, not only its redirects.
+A foreign origin never receives the source credential. Distinguish malformed
+source, undetected forge, credential required/rejected, unsupported host/target,
+unavailable source, invalid catalog and resolution conflict without upstream
+body/URL leakage. A 404 alone does not prove a private repository exists:
+offer credential guidance without asserting existence.
+
 ### Credentials
 
 `catalog-credentials.toml` in the config root, one array-of-tables per
 credentialed source, replaced atomically in the same directory (0600 on
-Linux, matching ADR 0015's `api-keys.toml` handling):
+Linux, matching ADR 0015's `api-keys.toml` handling).
+The root is channel-aware and separate from release/install roots. Windows
+inherits the destination directory ACL; this is not encryption, DPAPI, a
+keyring or a custom owner-only DACL. A broadly readable portable config
+directory retains its security limitations.
 
 ```toml
 [[sources]]
@@ -1047,31 +1136,64 @@ Credentials, once set, are invisible to plugins, tools, and overlays; catalog
 (ADR 0023), regardless of origin, even when the catalog/release-metadata
 fetch that produced them used a credential.
 
+**A6b.3/.4 (approved 2026-11-24):** credential documents are at most
+256 KiB with at most 32 exact-source entries; each field is at most 8 KiB
+UTF-8 and mutation bodies at most 32 KiB. Reject invalid/control-bearing
+header tokens (including CR/LF), never truncate. Forge sources accept tokens,
+static sources Basic pairs only. Secret types have no derived Debug or
+general Serialize; only the private persistence path serializes them.
+No masked previews, usernames, presigned query strings, upstream response
+bodies or full request URLs enter responses/logs/reports/caches/browser storage.
+
+Serialize mutations; create same-directory NamedTempFile with Unix 0600
+from creation, write/flush/sync, close replacement handle, then use shared
+`atomic_replace`, preserving destination security metadata. Read with
+`read_published` or the documented same-writer lock. Publish memory only
+after durable success. Missing means no credential; malformed/unreadable
+means all credential use is disabled with redacted diagnostic and no rewrite.
+An explicit validated replacement may repair the store; deletion of an
+unknown credential is idempotent only while the source exists. Mutation
+invalidates source fetch/plan generations; an already-sent request cannot
+be recalled. Removal must not resurrect credentials on re-add.
+
 ### Origin scoping on redirects
 
-"Origin" is `(scheme, host, port)`. A credential header (`Authorization`,
-`PRIVATE-TOKEN`, HTTP Basic) attaches only to a request whose target origin
-equals the source's exact configured origin. The fetch client parses `3xx`
-`Location` itself (no automatic redirect following, as 1.x already does for
-package downloads) and drops every credential header before re-requesting
-whenever the new origin differs from the one the header was sent to. This
-applies to the catalog/release-metadata fetch and the forge's own asset
-response; it never applies to `packages`/`icon_url`/`banner_url` downloads,
-which carry no credential at all per the previous section.
+A credential's network origin is `(scheme, host, effective port)`, distinct
+from its verbatim source identity. **A6b.1 (approved 2026-11-24):** GitHub
+shorthand and repository URLs on `https://github.com` derive exactly
+`https://api.github.com:443` for release metadata/API catalog asset requests.
+Static GitHub-host URLs retain their literal origin. Other forges use their
+repository origin. There is no arbitrary API-host override, enterprise-host
+inference or credential transfer between source spellings.
+
+Credentials attach only at the approved initial origin. Any redirect origin
+change strips **all** credential headers permanently for that chain:
+A→B→A never reattaches. Check the initial asset URL separately. Use typed
+immutable purpose (`Probe`, `SourceMetadata`, `CatalogAsset`, `Package`,
+`Artwork`, updater/counter), never ambient authenticated client state.
+Probes, packages, artwork, updater and counter requests never carry source
+credentials. Same-host package/art requests remain public-only; inaccessible
+private artifacts fail honestly and need public/presigned HTTPS URLs.
 
 ### Private networks
 
 A source gains an optional `private_network: bool` (default `false`),
 settable only by the user for their own added source:
 `POST /api/catalog/sources/<source>/private-network {"allowed": true|false}`.
-When `true`, catalog and credentialed-asset requests to that source's own
-exact configured host may target a private or reserved destination; HTTPS
+When `true`, catalog, unauthenticated forge-probe and source-asset requests
+to that source's own exact configured host may target a private or reserved destination; HTTPS
 remains mandatory and certificate validation still uses the OS trust store
 (so an installed internal CA is honored). The exception never extends to
 `packages`/`icon_url`/`banner_url` URLs, even when they resolve to the same
 host, and never extends to any other source's host (ADR 0023). This narrows,
 for that one host, the private-destination rule `AGENTS.md` otherwise states
 for all downloads.
+
+Same host on another port remains host-eligible but is a different credential
+origin. No suffix, subdomain, CNAME-target-name or foreign redirect-host grant.
+Before each connection/hop validate all DNS answers (including mapped IPv6),
+reject empty/mixed forbidden answers, and pin resolved addresses; preserve
+no-proxy/manual redirects, public roots and TLS hostname/certificate checks.
 
 ### Trust
 
@@ -1090,6 +1212,16 @@ exactly as ADR 0019's eligibility table describes for "a source the user
 explicitly trusts". Untrusted-source plugins remain eligible only for
 `runtime = "process"`, after the same per-plugin approval 1.x already
 requires for user tools (the install plan's `needs_approval` above).
+
+**A6b.7/.8 (approved 2026-11-24):** trust changes immediately invalidate
+plans and block new loads under current policy. Previously source-trusted
+process plugins stop and require approval if now user-trust; revoking their
+approval also blocks subsequent loads. Running in-process code cannot be
+safely unloaded: mark disabled for next load, report **revocation pending
+restart**, and leave restart to the user; no automatic daemon restart.
+Credential/private permission/hash integrity grants no author trust.
+The backend checks provenance/CSRF but cannot attest what a human read:
+caller-supplied `warning_shown` is not authority.
 
 ## 1.x coexistence
 

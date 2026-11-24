@@ -573,3 +573,110 @@ taskset -c 0-7,16-23 nice -n 10 python scripts/vm-test.py --test catalog_v2_comp
 M6a remains pending native evidence and the main-owned integrated landing gate.
 Neither cross-Clippy nor portable platform-policy tests replace native Windows
 filesystem, confined asset and manifest/metadata precedence behavior.
+
+## M6b contract and evidence obligations
+
+A6b freezes contracts over baseline `2c349eb`; it does **not** implement
+private fetching, persistence, solving, installation or M5 process execution.
+A6b.1–A6b.8 were approved 2026-11-24; .7 specifically leaves restart to
+the user with an honest **revocation pending restart** state.
+The [interface inventory and baseline ledger](../v2/implementation-plan.md#m6b-frozen-service-interfaces),
+[catalog contract](../v2/catalog-v2.md#sources-and-credentials) and
+[ADR 0023](../decisions/0023-authenticated-catalog-sources.md) are normative.
+
+### Required paired counterexamples
+
+The IDs below are required scenario identities, not claims of existing test
+functions or observed passes. X0/X1 extend existing `catalog_v2_compat`,
+`server_compat` and `network_integration`, retaining the M6a corpus.
+Each rejection has a minimally different positive control and independently
+specified expected graph/header/bytes. List actual tests and nonzero matches,
+then record exact command/filter/features/target/count and commit.
+
+| ID / owner | Positive and discriminating negative |
+| --- | --- |
+| A6b.1 / N0,F0 | Private GitHub release/API asset receives scoped Bearer + octet-stream Accept; initial foreign asset and API→storage→API receive no token after origin change. Static github.com retains literal origin; no enterprise/API override. |
+| A6b.2 / S0,F0 | Literal static URL/no probe; GitHub latest/tag; nested encoded GitLab path; ordered unauthenticated GitLab→Gitea probes. Reject userinfo/query/fragment/HTTP, duplicate matching asset, cross-origin probe identity; failure retries only on explicit refresh/edit and stale completion cannot publish. |
+| A6b.3 / C0,N0 | Token/Basic positive receipt, 256 KiB/32-entry/8 KiB field/32 KiB body bounds and boundary+1 rejects. Malformed/unreadable input stays unchanged with credentials disabled; explicit validated repair succeeds. Failed sync/replace never changes memory/file. |
+| A6b.4 / C0,S0 | Disable retains settings but no candidates; removal/re-add purges secrets/trust/private. Reject list-injected flags, aliases inheriting officialness and partial cross-store success; native replacement/concurrent set/delete and alpha-root isolation. |
+| A6b.5 / R0,U0 | First-ranked complete solution, later candidate after early dead end, one plugin satisfying multiple capabilities, kept installed tools/overlays, optional fixed point. Conflict/cycle/search-limit returns empty adds; built-ins never add/refcount/install/replaces/remove. |
+| A6b.6 / P0,I0 | Exact artifact approval and one confirmation/job; reject changed hash/source/runtime/generation/cap/target, missing/extraneous approve IDs, replay/concurrent confirm, expired/65th plan. Fault/crash at each directory/record journal boundary restores coherent graph before load. |
+| A6b.7 / T0,U0 | Current source trust/load check, process stop and reapproval, in-process pending user restart. Named required-dependent removal refused; requested promotion/diamond/chain autoremove preserves data/settings; absent optional never counts. |
+| A6b.8 / P0,H0 | 512 default, checked integer 1..=4096, solver/download same cap; oversized entry still catalog-valid. Browser sees exact warning before each trust grant, no remembered bypass or warning_shown authority. |
+| D8 / P0 | Resolved internal subtree requirement true; whole namespace, lookalike and unsatisfied optional false; no change to trust/native approval. |
+| D18 / G0 | Same real matcher semantics for installed/catalog alternatives, PID-generation invalidation, no pre-click package load/download; overlaps allowed until enabled registration. |
+| Route boundary / H0 | Every inventory method/path/listener, source encoded slash once, wrong/double decoding/near miss; absent/wrong CSRF, overlay/API-key/broker/tool tokens never authorize management. Credentials return 204/no-store, all views write-only. |
+
+Secret-disclosure evidence is meaningful only after the authenticated fixture
+received three **distinct** token/username/password sentinels. Then assert
+absence from all list/plan/job/status/error/log/report/cache/browser-storage
+surfaces, including malicious upstream error text and presigned query URLs.
+Fixture recorders keep sensitive headers in memory; retained artifacts contain
+redacted assertions, never credentials/full presigned URLs.
+
+### D15 real TLS fixture workflow
+
+X1 must implement the bounded `scripts/test-catalog-forge.py` runner and wire
+its actual invocation into local/hosted gates before using it as evidence.
+Provision a pinned real Gitea/Forgejo private repository/release with exactly
+named catalog asset behind a named private HTTPS host and fixture internal CA.
+Read-only fixture token and fixture state are instance-owned. Fail explicitly
+if container, production TLS path, certificate provisioning or endpoint
+prerequisites are missing; missing prerequisites are not zero-test success.
+
+Main provisions CA trust **only in an isolated test environment**: install
+into that environment's OS trust store, run the unmodified production client
+builder, then remove the CA/container/private key/token and retain cleanup
+receipts. Native Windows installs/removes the CA in the guest OS store with
+its native runner; staging source via vm-test does not provision trust.
+Workers do not change host/system trust, run private probes or control VMs.
+
+Required order/controls: missing CA fails; OS-installed CA with correct
+hostname succeeds; wrong hostname still fails; public roots still work.
+Private flag false fails, true permits only configured exact host for
+catalog/probe/asset. Same-host changed port may keep private permission but
+strips credential; foreign/subdomain/suffix/CNAME-target grant fails.
+Mixed DNS/empty DNS/mapped IPv6 and per-hop pinning are exercised. Package/art
+on the **same** private host remain public-only and credential-free; a
+catalog exception never authorizes an artifact exception. Redirect A→B→A
+stays stripped. Record production-client header/address decisions, not only
+mock request objects. HTTP loopback allowance and per-client
+`add_root_certificate` do not prove OS trust-store/internal-CA support.
+
+### Owner forge scopes and outstanding exits
+
+Owner-authorized one-time D15 checks remain separate from CI fixtures:
+GitHub private API asset→presigned redirect, GitLab nested private project,
+Codeberg Gitea-compatible behavior and one self-hosted Gitea/Forgejo.
+Inject tokens out of band; never commit/echo them. Scope guidance must match
+the actual forge/version and token type: GitHub fine-grained repository
+Contents read (classic private-repository tokens may require broader `repo`);
+GitLab repository/release API read (`read_api`, scoped to the intended project);
+Gitea/Forgejo repository-read scope where that version supports scoped tokens.
+Codeberg/older forge token capabilities and actual minimal accepted scopes
+must be verified, not labeled read-only from token syntax alone. Record
+forge/version, source form, documented scope names, endpoint/header-strip
+results and receipt IDs, never token values. A 404 is not private-existence
+evidence. Unavailable owner credentials leave the corresponding rows pending.
+
+At this contract landing, native Windows persistence/ACL/rename/TLS, real
+OS-CA forge, browser request/job flows, owner D15 and M5 real-process exits
+are **pending**, not waived. M5 A5.1's owner security decision is still
+external; no process execution substitute or §7.3 weakening is approved.
+M7 owns final bundled host/presentation extraction and legacy-tool deletion;
+M8 owns one-time migration/day-0. Neither is completed by freezing these seams.
+
+### A6b documentation acceptance
+
+Run in the assigned `m6b-a6b` checkout after `source scripts/dev-env.sh`,
+with `CARGO_TARGET_DIR=/home/user/.cache/vosu-targets/m6b-a6b`:
+
+```sh
+taskset -c 0-7,16-23 nice -n 10 python scripts/check-doc-links.py
+taskset -c 0-7,16-23 nice -n 10 python scripts/check-brand.py
+```
+
+Observed: 66 maintained Markdown files, zero missing local paths; 114
+tracked files with historical-brand occurrences, zero brand errors.
+Documentation-only change: no runtime tests added or run, no VM/network/CA
+operations, no native/browser/owner-forge or performance evidence claimed.

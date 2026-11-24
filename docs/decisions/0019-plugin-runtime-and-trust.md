@@ -106,6 +106,14 @@ An out-of-process plugin is isolated from daemon crashes but is not sandboxed:
 it runs with the user's filesystem and network access. Approval for untrusted
 plugins therefore remains a trust decision, as for 1.x user tools.
 
+**A6b.7 amendment (2026-11-24):** load/restart recheck current exact-source
+policy and artifact-bound approval, never a saved trust label. Revocation
+invalidates plans and blocks new loads. Stop process plugins that lose their
+source-trusted eligibility until user approval; disable running in-process
+plugins for next load and report **revocation pending restart**. Restart is
+the user's action, not automatic, and native code is not safely forcibly
+unloaded. See [ABI §7.1](../v2/plugin-abi.md#71-runtime-request-and-the-hosts-decision).
+
 ### Source layout
 
 The workspace splits along the existing module boundaries

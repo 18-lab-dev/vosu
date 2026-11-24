@@ -44,6 +44,18 @@ Plugins declare what they provide.
   catalog plugin that is not installed, the dashboard offers to add support for
   that game.
 
+**A6b.5–A6b.8 amendment (2026-11-24):** ranked bounded backtracking selects
+the first complete satisfying graph with one assignment per plugin, including
+kept tool/overlay consumers. Optional edges never initiate installation.
+Plans pin exact artifacts/policy generations (64 pending, 10-minute TTL,
+single use, one running operation); confirmation cannot recompute unseen work.
+Prepare all packages and journal same-filesystem publication/rollback before
+loading any committed graph; recover before discovery. Requested promotion
+and recursive dependency-only removal preserve settings/data; explicit removal
+of a still-required provider is refused with named dependents. Package limit
+defaults to 512 MiB, integer `1..=4096`. The full
+[resolver contract](../v2/catalog-v2.md#resolver-algorithm) is normative.
+
 ### Catalog format
 
 2.0 reads `catalog-v2.json`, a separate release asset whose entries declare the

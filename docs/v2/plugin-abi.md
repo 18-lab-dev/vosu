@@ -167,6 +167,13 @@ The JSON mirror (used in `catalog-v2.json` plugin entries) is `"matcher": {"proc
 
 A matched process becomes a candidate instance exactly as 1.x client detection does; acceptance, generation assignment, and PID-order retention are unchanged core behavior, now parameterized by which plugin's matchers accepted the process.
 
+Catalog offers reuse these userspace matchers against validated metadata,
+without loading/downloading code. Overlapping uninstalled alternatives are
+allowed; enabled-set overlap/prefilter limits apply only at registration.
+Offers are generation-scoped, bounded and invalidated on process exit/PID reuse
+or source/install changes; acceptance uses the ordinary requested install plan,
+not automatic approval/trust or plugin attachment (M6b/D18).
+
 ### 6.2 Session lifecycle
 
 A **session** (naming contract) is one attached client; its lifecycle, generation, and selection semantics are exactly [ADR 0001](../decisions/0001-single-daemon-multi-instance-lifecycle.md)'s, generalized across game plugins by [ADR 0020](../decisions/0020-game-agnostic-data-model.md). The plugin never opens or closes a session itself — core owns discovery and sends:
@@ -390,6 +397,24 @@ A manifest requests `runtime = "in-process"` or `runtime = "process"` (§8). `in
 
 `runtime = "process"` is available to any plugin regardless of trust tier. **Approval** (the same user-approval flow 1.x applies to user tools, required before the plugin runs at all) applies only to a plugin that is **not** eligible for `in-process` (`user` trust, per the table above); a bundled, official, or user-trusted-source plugin that happens to request `process` runs without a separate approval step, since the user already trusted its source.
 
+**A6b.7, approved 2026-11-24:** source trust and native approval are checked
+at plan, confirmation, load and restart using exact source/artifact provenance
+and current policy. Credentials, private-network permission and a correct hash
+are not author trust. User-process approval binds exact id/source/version/hash
+and runtime; changed bytes require approval again. Revocation invalidates plans
+and prevents new loads. A previously source-trusted process plugin stops and
+requires approval under its new user-trust tier. Running in-process code is
+disabled for next load and reported as **revocation pending restart**; vosu
+does not automatically restart or claim unsafe unloading erases native access.
+
+The [M6b registry seam](implementation-plan.md#m6b-frozen-service-interfaces)
+passes validated package location, target library and exact artifact approval
+to M5's execution backend. A process request must never be validated by
+parent-side `dlopen` or replaced by in-process execution. Until real M5 runtime
+and its security prerequisites exist, source/solver work may land but native
+user-plugin execution evidence remains pending. M5's A5.1 Linux privilege
+bootstrap decision remains owner-pending; M6b does not amend §7.3.
+
 ### 7.2 The `vosu plugin-host` process protocol
 
 For a `process`-runtime grant, core spawns `vosu plugin-host` once per plugin instance (not shared across plugins, so one crash is isolated to its own plugin).
@@ -425,6 +450,14 @@ The ABI itself carries no HTTP opcode, and an external or out-of-process plugin 
 - state reads that go through the same subscription, demand, and `requires`/`optional` capability path as `VOSU_OP_STATE_SUBSCRIBE` (§6.12) — a second entry point onto the same state bus, not a second data path, so `/websocket/v2/precise` and every other adapter route keeps receiving precise-lane sampling exactly as a normal subscriber would;
 - root-confined file responses resolved against the `ROOT_DECLARE` handles declared by the **game plugin that owns the session** (§6.5), never against a path string read off the bus (D2) — an adapter's file route (e.g. `GET /Songs/{path}`) has no root of its own and no path string to open one with; it asks, through `vosu-surface`, for the osu! plugin's already-declared root and a relative path inside it, the same confinement a resource reference resolves through;
 - management-route provenance: a `vosu-surface` management route (for example the dashboard plugin's own settings-save route) still requires dashboard-origin provenance and `X-Vosu-CSRF` exactly as `docs/v2/catalog-v2.md` "API placement" specifies for the catalog routes `vosu-core` itself serves — `vosu-surface` grants no exemption from that rule for any route it carries.
+
+M6b catalog/source/credential/trust/plan/install/job handlers remain **core**
+dashboard-listener handlers. Root and later M7 bundled dashboard render bounded
+redacted views and call those guarded HTTP routes; they receive no secret values,
+generic configuration writer or core service handle through `vosu-surface`.
+M7's management-presentation seam is a separate dependency, not a new ABI
+operation. Moving presentation must retain the same exact methods, listener,
+provenance/CSRF and write-only credential semantics.
 
 `vosu-surface` grants none of: `ProcessMemory` access outside a plugin's own matched session (a `vosu-surface` plugin still reads memory only through `VOSU_OP_READ_PLAN_SUBMIT` like any other plugin), configuration writes, or credentials — a bundled plugin that needs one of these uses the ordinary ABI services, exactly as any other plugin does. The osu! plugin's bridge into the gosuMemory/streamCompanion adapters' `vosu-surface` registration (crate edge `vosu-osu → vosu-surface`) is interim bridge **B1**, named per the ground rules, and is deleted at M4a when those adapters become ordinary bus projections; M5 (out-of-process plugin hosting) starts only after M4a removes it, since B1 cannot cross a process boundary. A future external HTTP opcode remains possible as an additive minor ABI revision, not a breaking one, but none is defined by this freeze.
 
