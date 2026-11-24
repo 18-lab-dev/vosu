@@ -276,8 +276,10 @@ impl PluginHost {
             StateRuntime::with_resources(resources),
         )
     }
-    /// Development-only constructor for deterministic foreground changes.
-    #[cfg(any(test, feature = "test-harness"))]
+    /// Bench-only deterministic foreground injection. Optimized benches cannot
+    /// use `test-harness` (which rejects release builds); production never enables
+    /// `bench-harness`. Tests inherit this seam through `test-harness`.
+    #[cfg(any(test, feature = "bench-harness"))]
     pub fn new_with_foreground(
         logger: Logger,
         settings: Arc<PluginSettingsService>,

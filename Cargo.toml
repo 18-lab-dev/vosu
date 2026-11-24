@@ -136,6 +136,8 @@ jsonschema = { version = "=0.61.2", default-features = false }
 proptest = "1.12"
 serde-value = "=0.7.0"
 vosu-proptest = { path = "crates/vosu-proptest" }
+vosu-core = { path = "crates/vosu-core", features = ["bench-harness"] }
+vosu-plugin-testkit = { path = "crates/vosu-plugin-testkit", features = ["bench-harness"] }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [[bench]]
@@ -168,6 +170,10 @@ harness = false
 
 [[bench]]
 name = "state_bus_bench"
+harness = false
+
+[[bench]]
+name = "api_v1_bench"
 harness = false
 
 [[example]]

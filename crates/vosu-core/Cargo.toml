@@ -12,7 +12,10 @@ workspace = true
 [features]
 default = []
 linux-process-events = ["vosu-sys/linux-process-events"]
-test-harness = []
+# Bench-only deterministic foreground injection. Unlike test-harness it permits
+# optimized release benches; production must never enable it.
+bench-harness = []
+test-harness = ["bench-harness"]
 
 [lib]
 path = "src/lib.rs"

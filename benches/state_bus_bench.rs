@@ -1,3 +1,7 @@
+#[path = "support/api_e2e.rs"]
+mod api_e2e;
+#[path = "support/api_v1.rs"]
+mod support;
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use std::{
     hint::black_box,
@@ -283,6 +287,7 @@ fn bench(c: &mut Criterion) {
         )
     });
     end.finish();
+    api_e2e::bench(c, "end_to_end", "api_frame");
 }
 criterion_group!(benches, bench);
 criterion_main!(benches);

@@ -18,6 +18,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
   normal legacy roots. Activate `2.0.0-alpha.1` with a one-time, read-only
   import of 1.x settings; copied static paths reset to the isolated default.
   Explicit overrides in alpha's own config remain user-controlled.
+- Add API v1 production-path benchmarks, separate cold resource-identity IO,
+  and idle allocation/task plus slow-consumer invariants. Shared-host numbers
+  remain provisional; they do not establish a D17 performance pass.
 
 ## Unreleased — 2.0 M2
 

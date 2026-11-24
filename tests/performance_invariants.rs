@@ -936,3 +936,6 @@ async fn one_thousand_rapid_updates_coalesce_to_latest() {
     hub.shutdown();
     bounded!(runner).unwrap();
 }
+
+#[path = "performance/api_v1.rs"]
+mod api_v1_cost;

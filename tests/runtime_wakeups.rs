@@ -368,3 +368,47 @@ fn tournament_eight_session_publication_latency() {
         );
     }
 }
+
+#[path = "../benches/support/api_v1.rs"]
+mod api_v1_idle;
+
+#[test]
+fn api_v1_idle_hub_creates_no_runtime_task() {
+    use vosu::server::api_v1::subscriptions::ApiV1SubscriptionHub;
+    use vosu_core::api::SessionTarget;
+    let id = "test.x1.wakeups";
+    let fixture = api_v1_idle::Telemetry::new(id, 992002);
+    let source = fixture.h.host.api_state_source();
+    let before = fixture.h.runtime.metrics().num_alive_tasks();
+    let hub = ApiV1SubscriptionHub::new(source.clone(), Duration::from_millis(16));
+    assert_eq!(
+        fixture.h.runtime.metrics().num_alive_tasks(),
+        before,
+        "an idle API hub must not spawn a periodic producer"
+    );
+    for n in 0..128 {
+        fixture.publish(id, 1700 + n);
+    }
+    assert_eq!(
+        source
+            .read(&SessionTarget::Active, &api_v1_idle::Telemetry::plan(id))
+            .unwrap()
+            .revision,
+        0
+    );
+    assert_eq!(
+        fixture.h.runtime.metrics().num_alive_tasks(),
+        before,
+        "unobserved publications must not schedule API delivery work"
+    );
+    // Positive control: a real transport client must spawn its establishment task.
+    let (_connection, _receiver) = {
+        let _enter = fixture.h.runtime.enter();
+        hub.connect(SessionTarget::Active).unwrap()
+    };
+    assert!(
+        fixture.h.runtime.metrics().num_alive_tasks() > before,
+        "task instrumentation must observe a real API connection"
+    );
+    hub.shutdown();
+}

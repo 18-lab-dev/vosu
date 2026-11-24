@@ -25,7 +25,10 @@ default = []
 # `PlanMemory` use (D5): only the test-harness build needs it, never a
 # published build of this crate (which never ships at all, `publish =
 # false` above, but the split still documents the boundary).
-test-harness = ["vosu-plugin-api/unstable-sync-reads"]
+# Bench-only production-host fixtures; test-harness rejects release builds.
+# Production must never enable this feature.
+bench-harness = []
+test-harness = ["bench-harness", "vosu-plugin-api/unstable-sync-reads"]
 
 [dependencies]
 vosu-plugin-api = { path = "../vosu-plugin-api" }

@@ -21,21 +21,21 @@
 #[cfg(all(feature = "test-harness", not(debug_assertions)))]
 compile_error!("the test-harness feature is forbidden in release builds");
 
-#[cfg(feature = "test-harness")]
+#[cfg(feature = "bench-harness")]
 pub mod actions;
 #[cfg(feature = "test-harness")]
 pub mod concurrent;
 #[cfg(feature = "test-harness")]
 pub mod echo;
-#[cfg(feature = "test-harness")]
+#[cfg(feature = "bench-harness")]
 pub mod fixture;
 #[cfg(feature = "test-harness")]
 pub mod host_services;
-#[cfg(feature = "test-harness")]
+#[cfg(feature = "bench-harness")]
 pub mod publisher;
 #[cfg(feature = "test-harness")]
 pub mod read_plan;
-#[cfg(feature = "test-harness")]
+#[cfg(feature = "bench-harness")]
 pub mod resources;
 #[cfg(feature = "test-harness")]
 pub mod scan;
