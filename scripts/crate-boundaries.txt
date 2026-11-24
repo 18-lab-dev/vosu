@@ -1,8 +1,8 @@
 # Allowed workspace-crate dependency edges, enforced by
 # scripts/check-crate-boundaries.py against `cargo metadata`. Mirrors
 # docs/v2/implementation-plan.md section 2 "Target workspace layout" for the
-# crates M0 has extracted so far; a bare crate name with no edges still must
-# be listed so introducing a crate is a deliberate, reviewed change.
+# current extracted crates; a bare crate name with no edges still must be
+# listed so introducing a crate is a deliberate, reviewed change.
 #
 # Interim edges (section 2 "Allowed workspace dependencies" notes, kept only
 # until the named milestone):
@@ -23,8 +23,8 @@
 #   `vosu_net::{ZipLimits, extract_zip_atomic}` for hardened extraction of
 #   its embedded bundle; not interim, unlike the vosu-sys edges above.
 # - vosu-osu -> vosu-surface: interim bridge B1 (P1, plan D3/plan:447-452),
-#   M1->M4a. The root installs the process-wide `LegacySink` slot (plan
-#   P5); `vosu-osu` needs this edge only to call
+#   until M4a. The root installs the process-wide `LegacySink` slot;
+#   `vosu-osu` needs this edge only to call
 #   `vosu_surface::bridge_b1::current()` and reach it, because the ABI's
 #   `create(host, init)` has no Rust-level parameter to thread a
 #   per-instance hook through instead (`crates/vosu-surface/src/lib.rs`

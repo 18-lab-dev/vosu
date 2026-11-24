@@ -542,6 +542,73 @@ each on the calling thread; if D17's `PlanMemory` reader benches miss the
 bar, convert the hottest chains (brokered-reads.md "Plan shapes") to
 dependent multi-stage plans before M2.
 
+#### M1 outcome
+
+Production `BUNDLED` now contains `vosu.osu`; generic discovery belongs to core
+and osu!-specific classification, resolvers and capture belong to the plugin.
+The 1.x `src/instance.rs` and `src/instance/` runtime and tests are deleted.
+B1 alone retains the root-side legacy selection/publication contract until
+M4a; B2 retains the configuration-to-plugin-settings bridge until M8.
+
+Startup is fail-closed: required `vosu.osu` load/create failure, a missing
+required plugin, or absent discovery fails composition. Zero candidates is
+valid. The first successful scan logs
+`Initial process discovery completed: N osu! process candidate(s)`.
+Operational attachment/phase/detach logs remain available, and the daemon
+tracing subscriber forwards WARN/ERROR from all targets and INFO from
+`vosu_*` targets into `Logger`.
+
+A1b was signed off on 2026-11-23 under the owner's delegated authority:
+attached process facts (`name`, `path`, `command_line`, optional Linux `argv`),
+Linux-only `linux_name_contains` (not a change to pre-filter-only `comm_hints`),
+ascending-region/offset scan ordering, and the DA–DI decisions above are the
+implemented contract. Linux fallback identification settles once against
+same-pass siblings and is fixed for the generation; stable identifies with
+version `""`, lazer with its deps version. The plugin owns its runtime.
+Reader/state `vosu-sys` edges remain until M5 (DC); reader `vosu-net` owns
+hardened generator extraction (DD). Offsets now use
+`<data>/plugins/vosu.osu/offsets`; old `<cache>/offsets` is not migrated (DH).
+The bundled manifest's `>=1.2.0, <3.0.0` host range must be revisited at M8's
+2.0.0 version bump; enforcement belongs to M6a, not this cutover.
+
+D17's corrected stable fixture and C6b dependent multi-stage plans are in
+progress. Final comparisons await a quiet-host run: see the
+[benchmark guide](../testing/benchmarks.md). No D17 pass or new performance
+number is claimed here.
+
+The following parity map is the replacement evidence cited by C4's
+`Assertions-Removed` trailer. Old names are from `src/instance/tests.rs`
+(M1 remainder plan §7); replacement names are present at this cutover.
+Paths are relative to the repository root.
+
+| Deleted 1.x test | Replacement tests at cutover |
+|---|---|
+| `windows_names_and_bitness_classify_and_btree_orders` | `tests/discovery_parity.rs`: `manifest_matches_both_platform_name_tables`, `windows_names_and_bitness`; B1 lifecycle ordering below |
+| `targeted_discovery_inserts_only_the_requested_pid` | Core discovery `tests/cadence.rs`: `targeted_discovery_inserts_only_the_requested_pid` |
+| `targeted_discovery_replaces_a_dead_same_pid_generation` | Core discovery `tests/mod.rs`: `reused_pid_with_a_new_start_time_is_reported_as_exit_then_a_fresh_appearance`; `tests/discovery_parity.rs`: `explicit_exit_then_appearance_advances_plugin_generation` |
+| `linux_named_first_pass_is_stable_and_fallback_is_lazer` | `tests/discovery_parity.rs`: `linux_named_sibling_and_lone_fallback_variants` |
+| `command_filters_follow_presence_and_truthiness` | `tests/discovery_parity.rs`: `command_filters_decline_and_suppress_reoffers`; `tests/osu_plugin.rs`: `tournament_and_debug_clients_decline_without_b1` |
+| `spectator_and_devserver_settings_are_typed` | `tests/discovery_parity.rs`: `spectator_devserver_settings_reach_b1`; `tests/osu_plugin.rs`: `stable_session_b1_settings_and_exit` |
+| `duplicate_discovery_and_removal_are_idempotent_and_close_once` | `tests/discovery_parity.rs`: `duplicate_discovery_and_removal_close_memory_once` |
+| `tournament_precedence_matching_and_fallback_selection` | `src/runtime/tests/bridge_b1.rs`: `b1_tournament_precedence_lowest_pid_and_absent_client` |
+| `foreground_exact_match_and_unavailable_focus_fallback` | `src/runtime/tests/bridge_b1.rs`: `b1_foreground_exact_and_unavailable_focus_fallback` |
+| `lifecycle_snapshots_are_pid_ordered_and_semantic_exactly_once` | `src/runtime/tests/bridge_b1.rs`: `b1_lifecycle_current_order_semantics_inputs_and_joined_shutdown` |
+| `lazer_discovery_starts_one_resolver_and_shutdown_joins_it` | `crates/vosu-osu/src/plugin/tests.rs`: `lazer_identify_starts_one_resolver_and_detach_joins_it`, `destroy_joins_every_live_sessions_resolver_within_the_grace_period` |
+| `discovery_runtime_publishes_current_then_closes_after_joined_shutdown` | B1 lifecycle test above; `src/runtime/tests/lifecycle_owner.rs`: `bundled_osu_discovery_and_real_runtime_shutdown_are_joined` |
+| `failed_full_scan_retries_early_and_counts_only_success` | Core discovery `tests/cadence.rs`: `failed_full_scan_retries_early_and_counts_only_success` |
+| `failed_targeted_inspection_is_not_counted` | Core discovery `tests/cadence.rs`: `failed_targeted_inspection_is_not_counted` |
+| `full_reconcile_replaces_a_dead_same_pid_in_one_pass` | Core discovery `tests/cadence.rs`: `full_reconcile_replaces_a_dead_same_pid_in_one_pass` |
+| `live_exit_is_retried_until_the_process_dies_without_another_event` | Core discovery `tests/cadence.rs`: `live_exit_is_retried_until_the_process_dies_without_another_event` |
+| `process_event_wakes_are_targeted_and_loss_reconciles_once` | Core discovery `tests/cadence.rs`: `inspect_hint_is_targeted_and_a_loss_flag_reconciles_once_keeping_healthy_cadence` |
+
+Core discovery test paths above are under
+`crates/vosu-core/src/plugin/discovery/`. The additional production contract,
+spectator clients selected by lowest PID, is covered by B1's tournament/fallback
+selection test: manager precedence is retained, then the lowest PID matching
+the focused client, with no selection for an absent client. Production manager
+identification remains false until the D6 task at M4a or later.
+
+
 ### S1: vosulay supervisor-plugin spike (Linux and Windows, before M5)
 
 Scope (D16): a throwaway official-trust plugin built on M1's SDK, running

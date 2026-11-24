@@ -9,6 +9,23 @@ description: Reproduce the current 2026.921.0 offsets and skin-resource extensio
 This is a maintainer procedure for `assets/offsets.json`. It is not a user or
 contributor prerequisite: daemon builds and runtime offset generation never run it.
 
+## M1 runtime cache ownership (DH)
+
+The production `vosu.osu` plugin resolves offsets under its host-provided
+`data_dir`: `<data>/plugins/vosu.osu/offsets/<version>.json`. Linux defaults to
+`${XDG_DATA_HOME:-$HOME/.local/share}/vosu/plugins/vosu.osu/offsets`; Windows
+uses `plugins\vosu.osu\offsets` below the portable executable directory.
+The extracted generator and scratch workspace are under the sibling
+`offset-generator` directory, not the daemon's old cache root.
+
+M1 intentionally does not migrate `<cache>/offsets` (DH). An exact-version
+embedded asset may satisfy the first load; otherwise the first load of each
+lazer version regenerates its cache locally. Existing old cache files are
+left untouched; M8 migration may remove that stale directory. Entry validation,
+atomic installation, exact-PID generation, and the no-download rule are unchanged.
+
+## Retained asset provenance
+
 The 1.1.0 template adds eight class fields: `osu.Game.Rulesets.Mania.Objects.ManiaHitObject.column`, the catch fields below, and `OsuHitObject.position`, `stackHeight` and `scale`. Readers skip a feature whose fields are zero, so a template entry may ship as a zero placeholder only until it is measured. On 2026-10-15 all eight were generated for the retained `2026.921.0` asset by the embedded generator against a running instance of the verification AppImage, re-hosted on its bundled runtime as the daemon does; every earlier field came out unchanged. Generated caches for `2026.1005.0` have identical values.
 
 The readers also use constants for layouts inside constructed generic types, which the assembly generator does not measure: `HitObjectProperty<T>` holds the `Bindable<T>` reference at +0 and `backingValue` at +8; `Bindable<int>` and `Bindable<float>` keep `value` at +0x40, but `Bindable<Vector2>` keeps it at +0x44 because the `disabled` bool precedes the 8-byte value; `HitEvent.Position` is a `Nullable<Vector2>` at +0x30 with its value at +4; `Lazy<Playfield>._value` is at +0x18. These were measured on both clients' bundled runtime (`10.0.12-dev`, the client's own CoreLib) with a throwaway probe that takes `ldflda` field addresses, the same technique as the generator's `--assemblies-only` mode. Re-measure them whenever the asset moves to a release with a different runtime.

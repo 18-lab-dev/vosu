@@ -2,6 +2,18 @@
 
 All notable user-visible changes to vosu are documented here. Older sections are retained release history and use the product names and artifact names that were current at the time.
 
+## Unreleased — 2.0 M1
+
+- Run osu! discovery and capture through the bundled `vosu.osu` plugin; remove
+  the former instance runtime while retaining the existing HTTP/WebSocket
+  surfaces through the interim B1 bridge.
+- Fail startup if the required osu! plugin cannot load/create or discovery is
+  absent. Report the first successful scan's candidate count, attachment probes,
+  plugin startup errors, and plugin/core tracing in the daemon logs.
+- Store versioned lazer offsets and the embedded generator under
+  `<data>/plugins/vosu.osu/`, without migrating the old offsets cache; a version
+  not satisfied by embedded offsets regenerates locally on first use.
+
 ## 1.2.5 - 2026-11-22
 
 ### Server
