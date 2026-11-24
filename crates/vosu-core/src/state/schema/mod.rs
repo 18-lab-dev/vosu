@@ -78,6 +78,8 @@ pub enum SchemaError {
     TooLarge,
     #[error("schema structure exceeds the 32-level JSON nesting bound (D7)")]
     TooDeep,
+    #[error("schema expands to more structural nodes than the bound allows (D7)")]
+    TooManyNodes,
     #[error("$ref {0:?} is outside the schema itself and common-defs (D7)")]
     ForeignRef(String),
     #[error("$ref {0:?} does not resolve to a known $defs entry")]
@@ -90,6 +92,8 @@ pub enum SchemaError {
     TitleMismatch { title: String, provides: String },
     #[error("{0:?} is a reserved namespace")]
     ReservedNamespace(String),
+    #[error("{0:?} is already registered to a different owner")]
+    NamespaceConflict(String),
     #[error("invalid x-sampling-lane: {0}")]
     InvalidLane(String),
     #[error("invalid schema JSON: {0}")]
@@ -110,6 +114,18 @@ impl SchemaRegistry {
     /// The common-defs `$defs` map plus the 5 core namespaces and
     /// `vosu.osu`, every one embedded (`include_str!`) from
     /// `docs/v2/schemas`.
+    ///
+    /// **Deviation (S6/O6):** the plan routes `vosu.osu`'s schema through
+    /// `vosu-osu`'s own `BundledPlugin.namespace_schemas`, registered as
+    /// `SchemaOwner::Plugin("vosu.osu")`, not loaded here as `Core`. That
+    /// wiring (O6) does not exist yet, so this bring-up fixture loads
+    /// `vosu.osu` as `Core` instead — the only way its schema enters the
+    /// registry today. `register`'s conflict check (below) and the
+    /// owner-gated `x-visibility` carve-out (`visibility::owner_eligible`)
+    /// both treat `Core` and `Plugin("vosu.osu")` as equally eligible, so
+    /// this stand-in cannot be silently replaced or unregistered by an
+    /// unrelated plugin id; O6 can later switch this to a `register` call
+    /// without changing either check.
     pub fn with_core() -> Result<Self, SchemaError> {
         let common_doc: Value = serde_json::from_str(embedded::COMMON_DEFS)
             .map_err(|e| SchemaError::Json(e.to_string()))?;
@@ -135,7 +151,12 @@ impl SchemaRegistry {
     /// Registers a plugin-provided namespace schema (development plugins,
     /// O2): `provider` is the owning plugin id; `provides_id` is the
     /// namespace this text's `title` must equal verbatim (cat:73-76). A
-    /// core namespace or `vosu.sessions` id is refused.
+    /// core namespace or `vosu.sessions` id is refused, and so is a
+    /// `provides_id` already registered to a different owner — otherwise a
+    /// second plugin (or the same plugin under another id) could silently
+    /// replace another provider's namespace, including the `vosu.osu`
+    /// `with_core` loads (finding 3). Re-registering under the *same*
+    /// owner (a plugin reloading its own schema) is allowed.
     pub fn register(
         &mut self,
         provider: &str,
@@ -145,7 +166,13 @@ impl SchemaRegistry {
         if CORE_NAMESPACES.contains(&provides_id) || provides_id == SESSIONS_NAMESPACE {
             return Err(SchemaError::ReservedNamespace(provides_id.to_string()));
         }
-        self.load(provides_id, SchemaOwner::Plugin(Arc::from(provider)), text)
+        let owner = SchemaOwner::Plugin(Arc::from(provider));
+        if let Some(existing) = self.namespaces.get(provides_id)
+            && existing.owner != owner
+        {
+            return Err(SchemaError::NamespaceConflict(provides_id.to_string()));
+        }
+        self.load(provides_id, owner, text)
     }
 
     /// Drops every namespace schema owned by `provider` (a development
@@ -183,7 +210,7 @@ impl SchemaRegistry {
         owner: SchemaOwner,
         text: &str,
     ) -> Result<Arc<NamespaceSchema>, SchemaError> {
-        let walked = walker::walk(namespace, text, &self.common_defs)?;
+        let walked = walker::walk(namespace, &owner, text, &self.common_defs)?;
         let schema = Arc::new(NamespaceSchema {
             namespace: Arc::from(namespace),
             version: walked.version,

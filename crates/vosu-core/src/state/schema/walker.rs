@@ -1,10 +1,12 @@
 //! The hand-written lane walker (S7, S12; plan:574-579, D7, D13;
-//! ss:297-311, ss:386-442): walks one namespace schema document's
-//! `properties`/`items`/`oneOf`/`anyOf`/`allOf`/`$ref` tree, building the
-//! sampling-lane table and the `x-visibility` hidden-subtree list, and
-//! enforcing the D7 bounds (cat:58-85) and the `x-visibility` carve-out
-//! (ss:297-311). Not a general JSON Schema evaluator: it reads exactly the
-//! keywords above plus `x-sampling-lane`/`x-visibility`/`title`/`version`/
+//! ss:386-442): walks one namespace schema document's `properties`/
+//! `items`/`additionalProperties`/`oneOf`/`anyOf`/`allOf`/`$ref` tree,
+//! building the sampling-lane table, and enforcing the D7 bounds
+//! (cat:58-85). The `x-visibility` carve-out itself is validated
+//! separately, over the *entire* document ([`visibility::scan`]), since the
+//! carve-out must hold regardless of which keywords this walker follows
+//! for lanes (ss:297-311). Not a general JSON Schema evaluator: it reads
+//! exactly the keywords above plus `x-sampling-lane`/`title`/`version`/
 //! `required`, and nothing else.
 
 use std::collections::HashSet;
@@ -12,14 +14,22 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::SchemaError;
 use super::lanes::LaneBits;
 use super::visibility;
+use super::{SchemaError, SchemaOwner};
 
 /// At most 256 KiB of schema text (D7, cat:66).
 const MAX_BYTES: usize = 256 * 1024;
 /// At most 32 levels of JSON structural nesting (D7, cat:66).
 const MAX_DEPTH: usize = 32;
+/// Total schema nodes (and so lane entries) one walk will visit before
+/// refusing to continue. Not a named D7 bound, but the same intent: a
+/// schema within the byte/depth bounds can still re-expand a shared `$ref`
+/// exponentially through `allOf`/`oneOf` fan-out (a handful of KB, 6 levels
+/// deep, ~2^40 node visits for a 40-def chain each referencing its
+/// successor twice) — this cap turns that into a bounded, fast error
+/// instead of unbounded work.
+const MAX_NODE_VISITS: usize = 50_000;
 
 /// What the walker extracts from one namespace schema document.
 pub(super) struct Walked {
@@ -31,10 +41,14 @@ pub(super) struct Walked {
 }
 
 /// Walks `text`, a namespace schema document whose `title` must equal
-/// `namespace`. `common_defs` is the parsed `common-defs.schema.json`'s
-/// `$defs` object, for `common-defs.schema.json#/$defs/*` refs.
+/// `namespace`. `owner` is who is registering it: the `x-visibility`
+/// carve-out is gated on the owner as well as the title, so a same-titled
+/// schema registered under a different owner never gets it (finding 3).
+/// `common_defs` is the parsed `common-defs.schema.json`'s `$defs` object,
+/// for `common-defs.schema.json#/$defs/*` refs.
 pub(super) fn walk(
     namespace: &str,
+    owner: &SchemaOwner,
     text: &str,
     common_defs: &Value,
 ) -> Result<Walked, SchemaError> {
@@ -57,6 +71,10 @@ pub(super) fn walk(
         });
     }
 
+    // Independent of the lane walk below: reject any x-visibility anywhere
+    // outside the one allowed, owner-gated location (ss:297-311, cat:70-72).
+    visibility::scan(namespace, owner, &root)?;
+
     let version_str = root
         .get("version")
         .and_then(Value::as_str)
@@ -72,12 +90,11 @@ pub(super) fn walk(
 
     let own_defs = root.get("$defs");
     let mut walker = Walker {
-        namespace,
         own_defs,
         common_defs,
         visiting: HashSet::new(),
+        node_visits: 0,
         lanes: Vec::new(),
-        hidden: Vec::new(),
     };
 
     if let Some(props) = root.get("properties").and_then(Value::as_object) {
@@ -91,52 +108,46 @@ pub(super) fn walk(
         version,
         required_top_level,
         lanes: walker.lanes,
-        hidden: walker.hidden,
+        hidden: visibility::hidden_subtrees(namespace, owner, &root),
     })
 }
 
 /// JSON value nesting depth: an object/array one level deeper than its
-/// deepest child, a scalar depth 1 (cat:66's "levels of JSON structural
-/// nesting", independent of schema semantics).
+/// deepest child; a plain value (string, number, bool, null) contributes no
+/// nesting of its own, so an empty object/array is depth 1 (cat:66's "at
+/// most 32 levels of JSON structural nesting" — 32 levels of pure object
+/// nesting must pass, 33 must not).
 fn json_depth(v: &Value) -> usize {
     match v {
         Value::Object(m) => 1 + m.values().map(json_depth).max().unwrap_or(0),
         Value::Array(a) => 1 + a.iter().map(json_depth).max().unwrap_or(0),
-        _ => 1,
+        _ => 0,
     }
 }
 
 struct Walker<'a> {
-    namespace: &'a str,
     own_defs: Option<&'a Value>,
     common_defs: &'a Value,
     /// `$ref` strings currently being resolved, for `CyclicRef` detection.
     visiting: HashSet<String>,
+    /// Total `node` calls so far this walk (`MAX_NODE_VISITS`).
+    node_visits: usize,
     lanes: Vec<(Vec<Arc<str>>, LaneBits)>,
-    hidden: Vec<Arc<str>>,
 }
 
 impl Walker<'_> {
-    /// Walks one schema node at `path`, recording its `x-visibility`/
-    /// `x-sampling-lane` annotations (if any) and recursing into
-    /// `$ref`/`properties`/`items`/`oneOf`/`anyOf`/`allOf`.
+    /// Walks one schema node at `path`, recording its `x-sampling-lane`
+    /// annotation (if any) and recursing into `$ref`/`properties`/`items`/
+    /// `additionalProperties`/`oneOf`/`anyOf`/`allOf`.
     fn node(&mut self, node: &Value, path: &mut Vec<Arc<str>>) -> Result<(), SchemaError> {
+        self.node_visits += 1;
+        if self.node_visits > MAX_NODE_VISITS {
+            return Err(SchemaError::TooManyNodes);
+        }
+
         let Some(obj) = node.as_object() else {
             return Ok(());
         };
-
-        if let Some(vis) = obj.get("x-visibility") {
-            let value = vis.as_str().ok_or_else(|| {
-                SchemaError::InvalidLane(format!(
-                    "x-visibility at /{} is not a string",
-                    path.join("/")
-                ))
-            })?;
-            let tokens: Vec<&str> = path.iter().map(Arc::as_ref).collect();
-            visibility::check(self.namespace, &tokens, value)?;
-            self.hidden
-                .push(Arc::from(format!("/{}", tokens.join("/"))));
-        }
 
         if let Some(lane) = obj.get("x-sampling-lane") {
             let lane_obj = lane.as_object().ok_or_else(|| {
@@ -177,6 +188,18 @@ impl Walker<'_> {
         if let Some(items) = obj.get("items") {
             path.push(Arc::from("*"));
             self.node(items, path)?;
+            path.pop();
+        }
+
+        // A schema-shaped additionalProperties is a map value's shape
+        // (`true`/`false` carry no schema to walk): a lane annotation there
+        // must still raise demand for a selector into the map, never be
+        // silently dropped (reviewer finding 1).
+        if let Some(additional) = obj.get("additionalProperties")
+            && additional.is_object()
+        {
+            path.push(Arc::from("*"));
+            self.node(additional, path)?;
             path.pop();
         }
 

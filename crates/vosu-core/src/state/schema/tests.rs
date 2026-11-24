@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use serde_json::{Value, json};
 
 use super::*;
@@ -9,6 +11,14 @@ const COMMON: &str = embedded::COMMON_DEFS;
 fn common_defs_map() -> Value {
     let doc: Value = serde_json::from_str(COMMON).expect("common-defs parses");
     doc.get("$defs").cloned().expect("common-defs has $defs")
+}
+
+fn core() -> SchemaOwner {
+    SchemaOwner::Core
+}
+
+fn plugin(id: &str) -> SchemaOwner {
+    SchemaOwner::Plugin(Arc::from(id))
 }
 
 #[test]
@@ -43,12 +53,16 @@ fn osu_lanes_match_1x_pointer_demand() {
         ..Default::default()
     };
     let cases: &[(&str, &[&str], LaneBits)] = &[
-        // precise
+        // precise: `state` (1.x) splits into both of these (MA, R1).
+        ("vosu.status", &["status"], always(false, true)),
+        ("vosu.osu", &["session", "state"], always(false, true)),
         (
             "vosu.osu",
             &["beatmap", "time", "live"],
             always(false, true),
         ),
+        // precise, "also feeds" targets of beatmap.time.live (ss:232).
+        ("vosu.play", &["progress"], always(false, true)),
         // regular (always)
         ("vosu.osu", &["session", "playTime"], always(true, false)),
         (
@@ -84,6 +98,9 @@ fn osu_lanes_match_1x_pointer_demand() {
         ("vosu.osu", &["play", "mode"], gameplay(true, false)),
         ("vosu.play", &["score"], gameplay(true, false)),
         ("vosu.play", &["accuracy"], gameplay(true, false)),
+        // "also feeds" targets of play.healthBar/.accuracy (ss:244-245).
+        ("vosu.play", &["health"], gameplay(true, false)),
+        ("vosu.play", &["rate"], gameplay(true, false)),
         ("vosu.osu", &["play", "healthBar"], gameplay(true, false)),
         ("vosu.osu", &["play", "statistics"], gameplay(true, false)),
         ("vosu.play", &["judgements"], gameplay(true, false)),
@@ -226,7 +243,7 @@ fn x_visibility_rejected_outside_osu_internal() {
         v["properties"]["session"]["x-visibility"] = json!("plugins");
     });
     assert!(matches!(
-        walker::walk("vosu.osu", &mutated, &common_defs),
+        walker::walk("vosu.osu", &core(), &mutated, &common_defs),
         Err(SchemaError::VisibilityNotAllowed { .. })
     ));
 
@@ -235,7 +252,7 @@ fn x_visibility_rejected_outside_osu_internal() {
         v["properties"]["internal"]["properties"]["paths"]["x-visibility"] = json!("plugins");
     });
     assert!(matches!(
-        walker::walk("vosu.osu", &mutated, &common_defs),
+        walker::walk("vosu.osu", &core(), &mutated, &common_defs),
         Err(SchemaError::VisibilityNotAllowed { .. })
     ));
 
@@ -244,17 +261,18 @@ fn x_visibility_rejected_outside_osu_internal() {
         v["properties"]["game"]["x-visibility"] = json!("plugins");
     });
     assert!(matches!(
-        walker::walk("vosu.client", &mutated, &common_defs),
+        walker::walk("vosu.client", &core(), &mutated, &common_defs),
         Err(SchemaError::VisibilityNotAllowed { .. })
     ));
 
-    // 4. Inside a $defs entry reachable from a non-internal property
-    //    (numberName, referenced e.g. by beatmap.status).
+    // 4. Inside a *used* $defs entry (numberName, referenced e.g. by
+    //    beatmap.status) — the carve-out must sit literally at
+    //    /properties/internal, not inside a definition $ref reaches.
     let mutated = mutate(OSU, |v| {
         v["$defs"]["numberName"]["x-visibility"] = json!("plugins");
     });
     assert!(matches!(
-        walker::walk("vosu.osu", &mutated, &common_defs),
+        walker::walk("vosu.osu", &core(), &mutated, &common_defs),
         Err(SchemaError::VisibilityNotAllowed { .. })
     ));
 
@@ -263,12 +281,157 @@ fn x_visibility_rejected_outside_osu_internal() {
         v["properties"]["internal"]["x-visibility"] = json!("admins");
     });
     assert!(matches!(
-        walker::walk("vosu.osu", &mutated, &common_defs),
+        walker::walk("vosu.osu", &core(), &mutated, &common_defs),
         Err(SchemaError::VisibilityNotAllowed { .. })
     ));
 
     // The unmutated schema still loads (the carve-out itself is accepted).
-    assert!(walker::walk("vosu.osu", OSU, &common_defs).is_ok());
+    assert!(walker::walk("vosu.osu", &core(), OSU, &common_defs).is_ok());
+}
+
+#[test]
+fn x_visibility_rejected_at_schema_root() {
+    let common_defs = common_defs_map();
+    let mutated = mutate(OSU, |v| {
+        v["x-visibility"] = json!("plugins");
+    });
+    assert!(matches!(
+        walker::walk("vosu.osu", &core(), &mutated, &common_defs),
+        Err(SchemaError::VisibilityNotAllowed { .. })
+    ));
+}
+
+#[test]
+fn x_visibility_rejected_in_unused_defs_entry() {
+    let common_defs = common_defs_map();
+    // A brand new $defs entry nothing in the document $refs.
+    let mutated = mutate(OSU, |v| {
+        v["$defs"]["neverUsed"] = json!({ "type": "object", "x-visibility": "plugins" });
+    });
+    assert!(matches!(
+        walker::walk("vosu.osu", &core(), &mutated, &common_defs),
+        Err(SchemaError::VisibilityNotAllowed { .. })
+    ));
+}
+
+#[test]
+fn x_visibility_rejected_in_other_json_schema_keywords() {
+    let common_defs = common_defs_map();
+    let mutations: &[fn(&mut Value)] = &[
+        |v| {
+            v["properties"]["session"]["additionalProperties"] =
+                json!({ "x-visibility": "plugins" })
+        },
+        |v| {
+            v["properties"]["session"]["patternProperties"] =
+                json!({ "^x$": { "x-visibility": "plugins" } })
+        },
+        |v| v["properties"]["session"]["prefixItems"] = json!([{ "x-visibility": "plugins" }]),
+        |v| v["properties"]["session"]["not"] = json!({ "x-visibility": "plugins" }),
+        |v| v["properties"]["session"]["if"] = json!({ "x-visibility": "plugins" }),
+        |v| v["properties"]["session"]["then"] = json!({ "x-visibility": "plugins" }),
+        |v| v["properties"]["session"]["else"] = json!({ "x-visibility": "plugins" }),
+        |v| {
+            v["properties"]["session"]["dependentSchemas"] =
+                json!({ "playTime": { "x-visibility": "plugins" } })
+        },
+    ];
+    for (i, apply) in mutations.iter().enumerate() {
+        let mutated = mutate(OSU, *apply);
+        assert!(
+            matches!(
+                walker::walk("vosu.osu", &core(), &mutated, &common_defs),
+                Err(SchemaError::VisibilityNotAllowed { .. })
+            ),
+            "mutation #{i} must be rejected"
+        );
+    }
+}
+
+#[test]
+fn x_visibility_rejected_through_ref_oneof_indirection() {
+    let common_defs = common_defs_map();
+    // /internal itself becomes a oneOf branch that $refs a $defs entry
+    // carrying x-visibility: the annotation's *literal* location is inside
+    // $defs, never /properties/internal itself, so it must still be
+    // rejected even though the indirection ends up "at" /internal.
+    let mutated = mutate(OSU, |v| {
+        v["$defs"]["indirectInternal"] = json!({ "type": "object", "x-visibility": "plugins" });
+        v["properties"]["internal"] = json!({
+            "oneOf": [
+                { "$ref": "#/$defs/indirectInternal" },
+                { "type": "null" },
+            ],
+        });
+    });
+    assert!(matches!(
+        walker::walk("vosu.osu", &core(), &mutated, &common_defs),
+        Err(SchemaError::VisibilityNotAllowed { .. })
+    ));
+}
+
+#[test]
+fn x_visibility_non_string_value_rejected() {
+    let common_defs = common_defs_map();
+    let mutated = mutate(OSU, |v| {
+        v["properties"]["internal"]["x-visibility"] = json!(true);
+    });
+    assert!(matches!(
+        walker::walk("vosu.osu", &core(), &mutated, &common_defs),
+        Err(SchemaError::VisibilityNotAllowed { .. })
+    ));
+}
+
+#[test]
+fn x_visibility_owner_gated_not_just_title() {
+    let common_defs = common_defs_map();
+    // A schema titled "vosu.osu" with the canonical carve-out, loaded under
+    // an owner that is neither Core nor the vosu.osu plugin: must still be
+    // rejected (finding 3's "base the exception on the owner as well as
+    // the title").
+    assert!(matches!(
+        walker::walk("vosu.osu", &plugin("some.other.plugin"), OSU, &common_defs),
+        Err(SchemaError::VisibilityNotAllowed { .. })
+    ));
+    // The eligible owners both succeed.
+    assert!(walker::walk("vosu.osu", &core(), OSU, &common_defs).is_ok());
+    assert!(walker::walk("vosu.osu", &plugin("vosu.osu"), OSU, &common_defs).is_ok());
+}
+
+#[test]
+fn additional_properties_lane_is_walked_not_dropped() {
+    let common_defs = common_defs_map();
+    let text = json!({
+        "title": "dev.plugin",
+        "version": "1.0.0",
+        "type": "object",
+        "properties": {
+            "scores": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "number",
+                    "x-sampling-lane": { "lane": "regular", "activity": "always" },
+                },
+            },
+        },
+    })
+    .to_string();
+    let walked = walker::walk("dev.plugin", &plugin("dev.plugin"), &text, &common_defs)
+        .expect("valid schema walks");
+    let expected_path: Vec<Arc<str>> = vec![Arc::from("scores"), Arc::from("*")];
+    assert!(
+        walked
+            .lanes
+            .iter()
+            .any(|(path, bits)| *path == expected_path
+                && *bits
+                    == LaneBits {
+                        regular_always: true,
+                        ..Default::default()
+                    }),
+        "a lane inside additionalProperties must be recorded, not silently dropped: {:?}",
+        walked.lanes
+    );
 }
 
 #[test]
@@ -281,25 +444,28 @@ fn bounds_enforced() {
         "x".repeat(257 * 1024)
     );
     assert!(matches!(
-        walker::walk("vosu.osu", &oversized, &common_defs),
+        walker::walk("vosu.osu", &core(), &oversized, &common_defs),
         Err(SchemaError::TooLarge)
     ));
 
-    // 33 levels of JSON object nesting (plain data nesting, not schema
-    // semantics: cat:66's "levels of JSON structural nesting").
-    let mut nested = json!("leaf");
-    for _ in 0..33 {
-        nested = json!({ "nest": nested });
-    }
-    let too_deep = json!({
-        "title": "vosu.osu",
-        "version": "1.0.0",
-        "type": "object",
-        "properties": { "padding": nested },
-    })
-    .to_string();
+    // Exactly 32 levels of JSON object nesting passes (plain data nesting,
+    // not schema semantics: cat:66's "at most 32 levels").
+    let exactly_32 = format!(
+        r#"{{"title":"vosu.osu","version":"1.0.0","type":"object","properties":{{"padding":{}}}}}"#,
+        nested_object_json(29)
+    );
+    assert!(
+        walker::walk("vosu.osu", &core(), &exactly_32, &common_defs).is_ok(),
+        "exactly 32 levels of nesting must pass"
+    );
+
+    // 33 levels must not.
+    let exactly_33 = format!(
+        r#"{{"title":"vosu.osu","version":"1.0.0","type":"object","properties":{{"padding":{}}}}}"#,
+        nested_object_json(30)
+    );
     assert!(matches!(
-        walker::walk("vosu.osu", &too_deep, &common_defs),
+        walker::walk("vosu.osu", &core(), &exactly_33, &common_defs),
         Err(SchemaError::TooDeep)
     ));
 
@@ -312,9 +478,77 @@ fn bounds_enforced() {
     })
     .to_string();
     assert!(matches!(
-        walker::walk("vosu.osu", &foreign_ref, &common_defs),
+        walker::walk("vosu.osu", &core(), &foreign_ref, &common_defs),
         Err(SchemaError::ForeignRef(r)) if r == "https://example.com/schema.json#/foo"
     ));
+}
+
+/// Builds `{"nest": {"nest": ... {"type": "object"} ...}}` with `extra_wraps`
+/// additional `"nest"` levels around a depth-1 leaf object, so the whole
+/// document (root object -> `properties` object -> `padding` -> this value)
+/// measures exactly `extra_wraps + 3` total levels: `nested_object_json(29)`
+/// gives a document depth of exactly 32, `nested_object_json(30)` exactly 33.
+fn nested_object_json(extra_wraps: usize) -> String {
+    let mut value = json!({ "type": "object" });
+    for _ in 0..extra_wraps {
+        value = json!({ "nest": value });
+    }
+    value.to_string()
+}
+
+#[test]
+fn exponential_ref_fanout_bounded() {
+    let common_defs = common_defs_map();
+    // A chain of defs, each referencing its successor twice through allOf:
+    // a_i = {"allOf": [{"$ref": "#/$defs/a_{i+1}"}, {"$ref": "#/$defs/a_{i+1}"}]},
+    // a_N a plain leaf. A naive walker re-expands this to ~2^N node visits;
+    // this must instead fail fast with a bounded error (reviewer finding 2).
+    const CHAIN_LEN: usize = 40;
+    let mut defs = serde_json::Map::new();
+    for i in 0..CHAIN_LEN {
+        defs.insert(
+            format!("a{i}"),
+            json!({
+                "allOf": [
+                    { "$ref": format!("#/$defs/a{}", i + 1) },
+                    { "$ref": format!("#/$defs/a{}", i + 1) },
+                ],
+            }),
+        );
+    }
+    defs.insert(
+        format!("a{CHAIN_LEN}"),
+        json!({
+            "type": "object",
+            "properties": {
+                "leaf": {
+                    "type": "number",
+                    "x-sampling-lane": { "lane": "regular", "activity": "always" },
+                },
+            },
+        }),
+    );
+    let text = json!({
+        "title": "dev.plugin",
+        "version": "1.0.0",
+        "type": "object",
+        "$defs": Value::Object(defs),
+        "properties": { "field": { "$ref": "#/$defs/a0" } },
+    })
+    .to_string();
+
+    let start = Instant::now();
+    let result = walker::walk("dev.plugin", &plugin("dev.plugin"), &text, &common_defs);
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "walk must be bounded, took {elapsed:?}"
+    );
+    assert!(
+        matches!(result, Err(SchemaError::TooManyNodes)),
+        "an exponential-fanout schema must fail with a bounded node-count error"
+    );
 }
 
 #[test]
@@ -352,6 +586,56 @@ fn register_refuses_core_and_sessions_namespaces() {
 }
 
 #[test]
+fn register_refuses_conflicting_owner_for_vosu_osu() {
+    let mut registry = SchemaRegistry::with_core().unwrap();
+    let text = json!({
+        "title": "vosu.osu",
+        "version": "1.0.0",
+        "type": "object",
+        "properties": {},
+    })
+    .to_string();
+    let err = registry
+        .register("unrelated.plugin", "vosu.osu", &text)
+        .expect_err("an unrelated provider must not be able to replace the Core vosu.osu");
+    assert!(matches!(err, SchemaError::NamespaceConflict(ns) if ns == "vosu.osu"));
+    // The Core-loaded schema is untouched.
+    assert_eq!(registry.get("vosu.osu").unwrap().owner, SchemaOwner::Core);
+}
+
+#[test]
+fn register_refuses_conflicting_owner_between_two_plugins() {
+    let mut registry = SchemaRegistry::with_core().unwrap();
+    let text = |title: &str| {
+        json!({ "title": title, "version": "1.0.0", "type": "object", "properties": {} })
+            .to_string()
+    };
+    registry
+        .register("plugin.a", "custom.ns", &text("custom.ns"))
+        .expect("first registration succeeds");
+    let err = registry
+        .register("plugin.b", "custom.ns", &text("custom.ns"))
+        .expect_err("a second plugin must not silently take over another's namespace");
+    assert!(matches!(err, SchemaError::NamespaceConflict(ns) if ns == "custom.ns"));
+}
+
+#[test]
+fn register_allows_same_owner_to_reregister() {
+    let mut registry = SchemaRegistry::with_core().unwrap();
+    let text = |version: &str| {
+        json!({ "title": "custom.ns", "version": version, "type": "object", "properties": {} })
+            .to_string()
+    };
+    registry
+        .register("plugin.a", "custom.ns", &text("1.0.0"))
+        .expect("first registration succeeds");
+    let updated = registry
+        .register("plugin.a", "custom.ns", &text("1.1.0"))
+        .expect("the same owner reloading its own schema must be allowed");
+    assert_eq!(updated.version, semver::Version::new(1, 1, 0));
+}
+
+#[test]
 fn cyclic_ref_rejected() {
     let common_defs = common_defs_map();
     let cyclic = json!({
@@ -363,7 +647,7 @@ fn cyclic_ref_rejected() {
     })
     .to_string();
     assert!(matches!(
-        walker::walk("vosu.osu", &cyclic, &common_defs),
+        walker::walk("vosu.osu", &core(), &cyclic, &common_defs),
         Err(SchemaError::CyclicRef(_))
     ));
 }
@@ -379,7 +663,7 @@ fn unresolved_ref_rejected() {
     })
     .to_string();
     assert!(matches!(
-        walker::walk("vosu.osu", &text, &common_defs),
+        walker::walk("vosu.osu", &core(), &text, &common_defs),
         Err(SchemaError::UnresolvedRef(_))
     ));
 }
@@ -415,7 +699,8 @@ fn synthetic_schema_lane_and_visibility_rules() {
     })
     .to_string();
 
-    let walked = walker::walk("dev.plugin", &text, &common_defs).expect("valid schema walks");
+    let walked = walker::walk("dev.plugin", &plugin("dev.plugin"), &text, &common_defs)
+        .expect("valid schema walks");
     assert_eq!(walked.required_top_level.len(), 1);
     assert_eq!(walked.required_top_level[0].as_ref(), "list");
     assert!(walked.hidden.is_empty());
@@ -445,7 +730,12 @@ fn synthetic_schema_lane_and_visibility_rules() {
     })
     .to_string();
     assert!(matches!(
-        walker::walk("dev.plugin", &with_visibility, &common_defs),
+        walker::walk(
+            "dev.plugin",
+            &plugin("dev.plugin"),
+            &with_visibility,
+            &common_defs
+        ),
         Err(SchemaError::VisibilityNotAllowed { .. })
     ));
 }
