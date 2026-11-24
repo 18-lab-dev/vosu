@@ -4,6 +4,9 @@ All notable user-visible changes to vosu are documented here. Older sections are
 
 ## Unreleased — 2.0 M4a
 
+- Add unmounted bus-backed HTTP/WS providers with shared latest-only encoding
+  caches and per-connection selector demand. Remove idle hub polling and release
+  sampling demand on disconnect, receiver loss, filter replacement and shutdown.
 - Share the pure chart calculation engine from `vosu-osu-calc`, independently of state orchestration.
 - Derive streamCompanion strains, breaks, timing and kiai facts from authorized chart resources with bounded latest-only, joined workers; preserve the upstream empty `mapKiaiPoints` wire quirk.
 

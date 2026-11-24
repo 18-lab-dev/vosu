@@ -132,6 +132,10 @@ windows-sys = { version = "=0.61.2", features = ["Wdk_System_SystemInformation",
 libc = "=0.2.186"
 
 [dev-dependencies]
+ciborium = "=0.2.2"
+vosu-adapter-upstream = { path = "crates/vosu-adapter-upstream" }
+vosu-adapter-gosumemory = { path = "crates/vosu-adapter-gosumemory" }
+vosu-adapter-streamcompanion = { path = "crates/vosu-adapter-streamcompanion" }
 criterion = "0.7.0"
 jsonschema = { version = "=0.61.2", default-features = false }
 proptest = "1.12"

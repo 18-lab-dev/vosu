@@ -17,6 +17,7 @@ mod bridge_b1;
 pub mod files;
 pub mod listener;
 pub mod management;
+pub mod projection;
 pub mod requester;
 pub mod resources;
 pub mod routes;

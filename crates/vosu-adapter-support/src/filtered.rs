@@ -23,6 +23,24 @@ pub enum Filter {
     Nested { field: String, keys: Vec<Filter> },
 }
 
+/// Whether a legacy plan can observe a wire path. Empty plans mean the whole
+/// document; an explicitly empty nested plan observes no descendants.
+pub fn selects_path(filters: &[Filter], path: &[&str]) -> bool {
+    filters.is_empty() || selects_nonempty(filters, path)
+}
+
+fn selects_nonempty(filters: &[Filter], path: &[&str]) -> bool {
+    let Some((head, tail)) = path.split_first() else {
+        return true;
+    };
+    filters.iter().any(|filter| match filter {
+        Filter::Field(field) => field == head,
+        Filter::Nested { field, keys } => {
+            field == head && !keys.is_empty() && (tail.is_empty() || selects_nonempty(keys, tail))
+        }
+    })
+}
+
 /// A wire document and what the plans projected from it so far share.
 pub struct SharedDocument<D> {
     document: D,
@@ -214,3 +232,35 @@ impl SharedProperties {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod demand_tests {
+    use super::*;
+    #[test]
+    fn observation_matches_whole_nested_and_explicitly_empty_plans() {
+        assert!(selects_path(&[], &["play", "hitErrors"]));
+        assert!(selects_path(
+            &[Filter::Field("play".into())],
+            &["play", "hitErrors"]
+        ));
+        assert!(!selects_path(
+            &[Filter::Field("game".into())],
+            &["play", "hitErrors"]
+        ));
+        let only_score = Filter::Nested {
+            field: "play".into(),
+            keys: vec![Filter::Field("score".into())],
+        };
+        assert!(!selects_path(&[only_score], &["play", "hitErrors"]));
+        let empty = Filter::Nested {
+            field: "keys".into(),
+            keys: vec![],
+        };
+        assert!(!selects_path(&[empty], &["keys"]));
+        let key = Filter::Nested {
+            field: "keys".into(),
+            keys: vec![Filter::Field("k1".into())],
+        };
+        assert!(selects_path(&[key], &["keys"]));
+    }
+}

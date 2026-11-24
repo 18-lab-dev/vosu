@@ -100,6 +100,9 @@ vosu-osu -> vosu-proptest
 
 vosu-adapter-support -> vosu-osu-model
 vosu -> vosu-adapter-support
+vosu -> vosu-adapter-upstream
+vosu -> vosu-adapter-gosumemory
+vosu -> vosu-adapter-streamcompanion
 
 vosu-adapter-gosumemory -> vosu-adapter-support
 vosu-adapter-gosumemory -> vosu-osu-model

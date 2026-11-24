@@ -5,6 +5,7 @@ pub mod chart;
 pub mod derived;
 pub mod dto;
 mod helpers;
+pub mod provider;
 pub mod view;
 pub use builder::{build, encode};
 

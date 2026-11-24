@@ -4,6 +4,7 @@
 pub mod dto;
 mod paths;
 pub mod precise;
+pub mod provider;
 pub mod regular;
 mod source;
 pub mod view;

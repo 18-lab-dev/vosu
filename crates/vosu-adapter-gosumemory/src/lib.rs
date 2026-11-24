@@ -2,6 +2,7 @@
 mod helpers;
 pub mod model;
 mod number;
+pub mod provider;
 mod tourney;
 pub mod view;
 mod wire;

@@ -8,3 +8,6 @@ derived -> chart
 derived -> dto
 derived -> helpers
 derived -> view
+provider -> derived
+provider -> dto
+provider -> view

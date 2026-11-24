@@ -17,6 +17,12 @@ pub struct ChartKey {
     pub(crate) scoring: ScoringMode,
     pub(crate) audio_length: Option<u64>,
 }
+impl ChartKey {
+    /// Inspect dependencies without starting, retrying or retaining chart work.
+    pub fn from_view(view: &View) -> Result<Option<Self>, Error> {
+        Job::from_view(view).map(|job| job.map(|job| job.key))
+    }
+}
 #[derive(Clone)]
 pub(crate) struct Job {
     pub key: ChartKey,

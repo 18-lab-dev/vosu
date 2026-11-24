@@ -9,3 +9,5 @@ regular -> view
 regular -> wire
 source -> dto
 wire -> dto
+provider -> precise
+provider -> regular
