@@ -264,7 +264,7 @@ fn scalar_readers_allocate_nothing() {
 
 #[cfg(feature = "test-harness")]
 #[path = "../examples/live_reader_bench/plan.rs"]
-mod plan_attachment;
+pub mod plan_attachment;
 
 #[cfg(feature = "test-harness")]
 #[test]
@@ -789,4 +789,130 @@ async fn one_thousand_rapid_updates_coalesce_to_latest() {
 
     hub.shutdown();
     bounded!(runner).unwrap();
+}
+
+#[test]
+fn unchanged_snapshot_publishes_and_allocates_nothing() {
+    use std::sync::atomic::AtomicBool;
+    use vosu_osu::{project::SessionFacts, publish::BusPublisher};
+    use vosu_osu_model::{enums::ClientType, launch::InstanceSettings};
+    use vosu_osu_state::{Delivery, SnapshotPublisher, StateBundle};
+    use vosu_plugin_api::{HostServices, Message, vosu_opcode, vosu_status};
+    struct Counter(Arc<AtomicUsize>);
+    impl HostServices for Counter {
+        fn send(&self, _: &Message, _: u64) -> vosu_status {
+            vosu_status::VOSU_OK
+        }
+        fn send_flat(&self, _: vosu_opcode, _: u32, _: u64, _: &[u8]) -> vosu_status {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            vosu_status::VOSU_OK
+        }
+    }
+    let sends = Arc::new(AtomicUsize::new(0));
+    let publisher = BusPublisher::new(
+        Counter(sends.clone()),
+        8203,
+        Arc::new(AtomicBool::new(true)),
+        SessionFacts {
+            client: ClientType::Stable,
+            settings: InstanceSettings {
+                tournament_spectator: false,
+                tournament_ipc_id: None,
+                devserver_endpoint: None,
+            },
+            foreground: None,
+        },
+    );
+    let snapshot = StateBundle::new(
+        ClientType::Stable,
+        1,
+        Arc::new(vosu_osu_state::state_backend::LiveStateCalculationBackend::new()),
+    )
+    .snapshot();
+    publisher.publish(snapshot.clone(), Delivery::All).unwrap();
+    assert_eq!(
+        sends.load(Ordering::Relaxed),
+        1,
+        "the publisher must be active, not unidentified"
+    );
+    let (_, allocations) = allocations_during(|| {
+        for _ in 0..100 {
+            publisher.publish(snapshot.clone(), Delivery::All).unwrap();
+        }
+    });
+    assert_eq!(allocations, 0);
+    assert_eq!(sends.load(Ordering::Relaxed), 1);
+    let mut changed = (*snapshot).clone();
+    let mut precise = (*changed.precise).clone();
+    precise.play_time = 1234.0;
+    changed.precise = Arc::new(precise);
+    publisher
+        .publish(Arc::new(changed), Delivery::Precise)
+        .unwrap();
+    assert_eq!(
+        sends.load(Ordering::Relaxed),
+        2,
+        "a changed precise input must publish"
+    );
+}
+
+#[test]
+fn steady_state_scalar_commit_allocations_bounded() {
+    use std::sync::RwLock;
+    use vosu_core::state::{
+        ClientFacts, Pointer, PublisherGrant, SchemaRegistry, SessionKey, StateStore, StateValue,
+    };
+    use vosu_plugin_api::{PluginManifest, PublishFieldRef, PublishValueRef};
+    let grant = PublisherGrant::from_manifest(
+        &PluginManifest::parse(include_str!("../crates/vosu-osu/manifest.toml")).unwrap(),
+    )
+    .unwrap();
+    let store = StateStore::new(Arc::new(RwLock::new(SchemaRegistry::with_core().unwrap())));
+    let key = SessionKey(8204);
+    store.open_session(
+        key,
+        &grant,
+        ClientFacts {
+            game: "osu".into(),
+            variant: "stable".into(),
+            name: "bench".into(),
+            version: "1".into(),
+            pid: 8204,
+            session: "invariant".into(),
+            plugin_id: "vosu.osu".into(),
+            plugin_version: "2.0.0-alpha.0".into(),
+        },
+        true,
+    );
+    let commit = |n| {
+        store
+            .commit(
+                &grant,
+                key,
+                [PublishFieldRef {
+                    handle: key.0,
+                    ns: "vosu.osu",
+                    pointer: "/bench/scalar",
+                    value: PublishValueRef::I64(n),
+                }]
+                .into_iter(),
+            )
+            .unwrap()
+    };
+    drop(commit(0));
+    let mut maximum = 0;
+    for n in 1..=100 {
+        let (outcome, allocations) = allocations_during(|| commit(n));
+        maximum = maximum.max(allocations);
+        assert_eq!(outcome.current.revision, n as u64 + 1);
+        assert_eq!(
+            outcome
+                .current
+                .get("vosu.osu", &Pointer::parse("/bench/scalar").unwrap()),
+            Some(&StateValue::I64(n))
+        );
+    }
+    // A fixed-size scalar update must not grow with session revision/history.
+    // This ceiling covers validation, persistent path copies and commit metadata.
+    assert!(maximum <= 64, "scalar commit allocated {maximum} times");
 }

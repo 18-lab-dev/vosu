@@ -1,4 +1,6 @@
-//! Read-only benchmark of production native capture adapters, not publication.
+//! Read-only production capture and opt-in B1/state-bus tick benchmark.
+#[path = "live_reader_bench/bus.rs"]
+mod bus;
 #[path = "live_reader_bench/plan.rs"]
 mod plan;
 use serde::Serialize;
@@ -33,18 +35,43 @@ type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 fn fail(message: impl Into<String>) -> Box<dyn Error> {
     io::Error::other(message.into()).into()
 }
+fn daemon_cache_root() -> io::Result<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        let executable = std::env::current_exe()?;
+        let directory = executable
+            .parent()
+            .ok_or_else(|| io::Error::other("example executable has no parent"))?;
+        let daemon = if directory.file_name().is_some_and(|name| name == "examples") {
+            directory
+                .parent()
+                .ok_or_else(|| io::Error::other("examples directory has no parent"))?
+        } else {
+            directory
+        };
+        Ok(daemon.join(".cache"))
+    }
+    #[cfg(not(windows))]
+    vosu_sys::platform::Paths::system_cache_root()
+}
 struct Args {
     pid: u32,
     client: ClientType,
     warmup: usize,
     cycles: usize,
     memory: String,
+    bus: bool,
 }
 impl Args {
     fn parse(mut values: impl Iterator<Item = String>) -> Result<Self> {
         let (mut pid, mut client, mut warmup, mut cycles) = (None, None, 100, 1000);
         let mut memory = "native".to_owned();
+        let mut bus = false;
         while let Some(flag) = values.next() {
+            if flag == "--bus" {
+                bus = true;
+                continue;
+            }
             let value = values
                 .next()
                 .ok_or_else(|| fail(format!("missing value for {flag}")))?;
@@ -79,6 +106,7 @@ impl Args {
             warmup,
             cycles,
             memory,
+            bus,
         })
     }
 }
@@ -181,6 +209,7 @@ fn run<R: SynchronizedMemoryReader + 'static>(
     precise_memory: R,
     version: String,
     start: Instant,
+    attachment: Option<&plan::Attachment>,
 ) -> Result<()> {
     let synchronization = Arc::new(Mutex::new(ReaderSynchronization::default()));
     let mut regular =
@@ -233,6 +262,26 @@ fn run<R: SynchronizedMemoryReader + 'static>(
         request.plan = transition.next_capture;
     }
     let state_start = context.status;
+    if args.bus {
+        let result = bus::measure_ticks(
+            args,
+            bus::Readers {
+                regular: &mut regular,
+                precise: &mut precise,
+                synchronization: &synchronization,
+                context,
+            },
+            &mut bundle,
+            &mut request,
+            &rt,
+            attachment.ok_or_else(|| fail("bus host missing"))?,
+        )?;
+        println!(
+            "{}",
+            serde_json::json!({"product":"vosu","client_version":version,"pid":args.pid,"bus":result})
+        );
+        return Ok(());
+    }
     let setup_ns = start.elapsed().as_nanos();
     let regular_result = measure(args, || match regular.capture_regular(&request) {
         Ok(snapshot) => {
@@ -292,7 +341,9 @@ fn main() {
 fn execute() -> Result<()> {
     let args = Args::parse(std::env::args().skip(1))?;
     let start = Instant::now();
-    let attachment = if args.memory == "plan" {
+    let attachment = if args.bus {
+        Some(plan::Attachment::with_bus(plan::native_record(args.pid)?)?)
+    } else if args.memory == "plan" {
         Some(plan::Attachment::new(
             plan::native_record(args.pid)?,
             "vosu.bench.live",
@@ -301,8 +352,8 @@ fn execute() -> Result<()> {
         None
     };
     let process = match &attachment {
-        Some(attachment) => attachment.process.clone(),
-        None => open(args.pid)?,
+        Some(attachment) if args.memory == "plan" => attachment.process.clone(),
+        _ => open(args.pid)?,
     };
     match args.client {
         ClientType::Stable => {
@@ -330,12 +381,13 @@ fn execute() -> Result<()> {
                 StableMemory::new(process, patterns),
                 version,
                 start,
+                attachment.as_ref(),
             )
         }
         ClientType::Lazer => {
             let executable_root = lazer_version::process_executable_root(args.pid)?;
             let version = lazer_version::discover_from_root(&executable_root)?;
-            let cache = vosu_sys::platform::Paths::system_cache_root()?.join("offsets");
+            let cache = daemon_cache_root()?.join("offsets");
             let asset = vosu::assets::DaemonAssets::get("offsets.json")
                 .ok_or_else(|| fail("embedded offsets missing"))?;
             let loader = LazerOffsetLoader::new(
@@ -361,6 +413,7 @@ fn execute() -> Result<()> {
                 LazerMemory::new(process, offsets, pattern),
                 version,
                 start,
+                attachment.as_ref(),
             )
         }
     }
@@ -384,6 +437,8 @@ mod tests {
         assert!(args(&["--memory", "invalid"]).is_err());
         assert_eq!(args(&["--memory", "plan"]).unwrap().memory, "plan");
         assert_eq!(args(&[]).unwrap().cycles, 1000);
+        assert!(args(&["--bus"]).unwrap().bus);
+        assert!(args(&["--bus", "--cycles", "3"]).unwrap().bus);
     }
     #[test]
     fn retains_failed_cycles() {

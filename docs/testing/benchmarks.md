@@ -69,6 +69,79 @@ Intervals describe these rounds, not immunity to systematic fixture or host
 bias. Repeated `--binary` accepts more than two revisions. Timing controls:
 `--warmup`, `--measurement`, `--samples`, `--rounds`, and `--timeout`.
 
+## Performance changes for M2
+
+`state_bus_bench` measures the production `BusPublisher` projection/diff/flat
+encoding path, not a second implementation of the osu! projector:
+
+| Group | Timed work |
+|---|---|
+| `bus_commit/regular_batch`, `precise_batch` | Borrowed decode and `StateStore::commit` of a pre-encoded incremental batch |
+| `osu_projection/cold` | Fresh publisher projection, diff, encoding and capture sink |
+| `osu_projection/incremental_regular`, `incremental_precise` | Alternating one changed source lane, warmed publisher and reusable encoding buffers |
+| `osu_projection/unchanged` | Same regular/precise Arcs; no publication |
+| `end_to_end/bus` | Alternating gameplay snapshots → projector → flat batch → commit → `api_json` → changed selection and one `STATE_UPDATE` encoding for a ten-selector subscriber |
+| `end_to_end/legacy` | The same gameplay snapshot → uncached v2 and precise serializers |
+
+The fixture changes score and play time; it is not an oracle for every client
+state or a long hit-error-history stress test. Setup and snapshot allocation
+are outside both end-to-end measurements. Each legacy iteration gets a fresh
+`CombinedSnapshot`, so it cannot time a cached `Bytes` clone.
+
+```sh
+cargo bench --locked --package vosu --bench state_bus_bench
+cargo bench --locked --package vosu --bench hot_paths -- publication serializers
+cargo nextest run --locked --features test-harness --test performance_invariants
+```
+
+The invariants use the existing thread-local counting allocator: an active
+publisher must allocate and publish nothing for repeated unchanged source Arcs,
+and repeated scalar commits must stay under a fixed allocation ceiling while
+actually advancing revisions and replacing values.
+
+### Live B1 and bus ticks
+
+```sh
+cargo build --release --locked --example live_reader_bench
+taskset -c 7 target/release/examples/live_reader_bench \
+  --pid CLIENT_PID --client lazer --memory native --bus --warmup 100 --cycles 1000
+```
+
+`--bus` attaches a real in-process plugin host and a real `vosu-surface`
+subscription. For both regular and precise lanes it compares B1-only (the M1
+publication shape) with B1 + bus. It measures the current tick thread's CPU
+clock around capture, reducer and synchronous publication, not elapsed wall
+time relabelled as CPU. Both modes use the production `B1Publisher` and the
+same latest-only sink. **B1 manager background work, other daemon threads,
+poll scheduling, and network delivery are excluded**; this is not whole-process
+daemon CPU usage. Run the historical M1 binary separately for a revision-level
+live comparison; the in-binary B1-only mode isolates the added bus cost.
+
+Read-to-commit latency starts immediately before capture and ends when the
+surface subscriber observes the committed revision. It is wall time and includes
+the synchronous publisher return and subscriber-observation overhead. Unchanged
+ticks have no update and are counted separately, never reported as zero latency.
+Each observation wait is bounded. Reject errors, changed client states, or a run
+without changed-tick latency observations.
+
+`--memory plan` uses the host read-plan adapter; `native` uses the OS reader even
+when the bus host is attached. On Windows the example uses the daemon's
+`<release directory>/.cache/offsets`, not `examples/.cache/offsets`; Linux retains
+the platform cache root. No VM is required to build or run these instruments.
+
+### M2 comparison status
+
+Shared-host comparisons must use `scripts/bench-compare.py --no-reserve`, separate
+target directories for HEAD, M1 `ec2d086`, and pre-M0 `3a91ff9`, and fresh Criterion
+homes per invocation. The bus does not exist at either historical revision:
+their executable comparison is the identical legacy serializer fixture, not a
+backported M2 bus mislabeled as historical production. Preserve `exclusive:
+false` and each comparison's `inconclusive` flag in the evidence.
+
+**D17 is not established by shared-host runs.** A quiet pinned-core run with
+non-overlapping 95% intervals is still required before claiming the 10% milestone
+and cumulative bar.
+
 ### Live reader: native versus plan
 
 The dev-only example attaches read-only to an existing client PID and measures

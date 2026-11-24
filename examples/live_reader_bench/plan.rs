@@ -83,6 +83,7 @@ impl ConsoleSink for Silent {
 /// Owns host/runtime/directories for at least as long as its process handle.
 pub struct Attachment {
     pub process: ProcessHandle,
+    pub publication: Option<(VtableHostServices, u64)>,
     host: Arc<PluginHost>,
     pid: u32,
     _runtime: tokio::runtime::Runtime,
@@ -90,6 +91,28 @@ pub struct Attachment {
 }
 impl Attachment {
     pub fn new(record: ProcessRecord, id: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::new_inner(record, id, false)
+    }
+    pub fn with_bus(record: ProcessRecord) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::new_inner(record, "vosu.osu", true)
+    }
+    pub fn subscribe(
+        &self,
+    ) -> Result<vosu_surface::state::SurfaceSubscription, Box<dyn std::error::Error>> {
+        Ok(self.host.surface_host().subscribe(
+            "vosu.osu",
+            vosu_surface::state::SessionTarget::Focused,
+            vec![vosu_plugin_api::Selector {
+                ns: "vosu.osu".into(),
+                pointer: "".into(),
+            }],
+        )?)
+    }
+    fn new_inner(
+        record: ProcessRecord,
+        id: &str,
+        bus: bool,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let runtime = tokio::runtime::Runtime::new()?;
         let entered = runtime.enter();
         let logs = tempfile::tempdir()?;
@@ -117,10 +140,26 @@ impl Attachment {
             "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Reader benchmark'\nversion='0.1.0'\nhost='>=1.0.0, <2.0.0'\nabi_version=1\nruntime='in-process'\n[match]\nprocess_names=[{}]\n",
             serde_json::to_string(&record.name)?
         );
+        let manifest = if bus {
+            let production = vosu_plugin_api::PluginManifest::parse(include_str!(
+                "../../crates/vosu-osu/manifest.toml"
+            ))?;
+            format!(
+                "kind='plugin'\nmanifest_version=1\nid='{id}'\nname='Bus benchmark'\nversion='2.0.0-alpha.0'\nhost='*'\nabi_version=1\nruntime='in-process'\ncovers={}\n[[provides]]\nid='field:vosu.osu'\nversion='1.2.0'\nschema='schema.json'\n[match]\nprocess_names=[{}]\n",
+                serde_json::to_string(&production.covers)?,
+                serde_json::to_string(&record.name)?
+            )
+        } else {
+            manifest
+        };
         let loaded = plugin::load_bundled(&[plugin::BundledPlugin {
             manifest: &manifest,
             settings_schema: None,
-            namespace_schemas: &[],
+            namespace_schemas: if bus {
+                &[include_str!("../../docs/v2/schemas/vosu.osu.schema.json")]
+            } else {
+                &[]
+            },
             vtable: || vosu_plugin_api::__vtable_for_serialized::<ReaderPlugin>(),
         }])?;
         assert!(ATTACH.lock().unwrap().insert(id.into(), tx).is_none());
@@ -145,6 +184,7 @@ impl Attachment {
         drop(entered);
         Ok(Self {
             process,
+            publication: bus.then_some((services, handle)),
             host,
             pid,
             _runtime: runtime,

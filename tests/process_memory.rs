@@ -656,7 +656,7 @@ fn windows_native_backend_opens_and_reads_this_process() {
 }
 
 #[path = "../examples/live_reader_bench/plan.rs"]
-mod plan_attachment;
+pub mod plan_attachment;
 
 fn plan_memory_reads_this_process() {
     static MARKER: u64 = 0x6a91_b72c_34df_0805;
